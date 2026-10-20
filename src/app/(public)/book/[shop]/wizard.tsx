@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Slot, SlotPicker } from "@/components/slot-picker";
@@ -358,9 +359,9 @@ function Closed({ shop, msg }: { shop: ShopInfo; msg: string }) {
     <div className="mx-auto max-w-lg rounded-xl bg-white p-6 text-center ring-1 ring-zinc-200">
       <h1 className="text-xl font-bold">Ray&apos;z {shop.name}</h1>
       <p className="mt-2 text-zinc-600">{msg}</p>
-      <a href="/" className="mt-4 inline-block text-sm font-medium text-brand-600">
+      <Link href="/" className="mt-4 inline-block text-sm font-medium text-brand-600">
         ← Choose another shop
-      </a>
+      </Link>
     </div>
   );
 }

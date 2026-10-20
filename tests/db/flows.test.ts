@@ -219,6 +219,51 @@ describe("checkout → reports → loyalty", () => {
     expect(r.rows.length).toBeGreaterThan(0);
     for (const row of r.rows) expect(row.totalTipsCents).toBe(row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents - row.tipRefundsCents);
   });
+
+  it("daily, monthly, per-shop, and per-barber reports reconcile with the summary", async () => {
+    const shopIds = (await m.db.db.select({ id: m.schema.shops.id }).from(m.schema.shops)).map((s) => s.id);
+    const scope = { shopIds, from: m.time.addDays(m.time.todayLocal(), -40), to: m.time.todayLocal() };
+    const [sum, daily, monthly, shops, barbers] = await Promise.all([
+      m.reports.salesSummary(scope),
+      m.reports.dailyTotals(scope),
+      m.reports.monthlyTotals(scope),
+      m.reports.byShop(scope),
+      m.reports.byBarber(scope),
+    ]);
+    const total = <T>(xs: T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
+    expect(sum.tickets).toBeGreaterThan(0);
+    expect(daily.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.day))).toBe(true);
+    expect(total(daily, (d) => d.tickets)).toBe(sum.tickets);
+    expect(total(daily, (d) => d.grossCents)).toBe(sum.grossSalesCents);
+    expect(monthly.every((x) => /^\d{4}-\d{2}$/.test(x.month))).toBe(true);
+    expect(total(monthly, (x) => x.tickets)).toBe(sum.tickets);
+    expect(total(shops, (x) => x.tickets)).toBe(sum.tickets);
+    expect(shops.find((x) => x.name === "Dubuque")?.tickets).toBe(0);
+    expect(total(barbers, (x) => x.tipsCents)).toBeLessThanOrEqual(sum.tipsCents);
+
+    const one = barbers[0];
+    const mine = await m.reports.salesSummary({ ...scope, staffId: one.staffId });
+    expect(mine.tickets).toBe(one.tickets);
+    expect(mine.netServicesCents).toBe(one.netServicesCents);
+  });
+
+  it("KPIs: rates are bounded and the heatmap is in shop-local days and hours", async () => {
+    const shopIds = (await m.db.db.select({ id: m.schema.shops.id }).from(m.schema.shops)).map((s) => s.id);
+    const k = await m.reports.kpis({ shopIds, from: m.time.addDays(m.time.todayLocal(), -2), to: m.time.todayLocal() });
+    for (const rate of [k.rebookRate, k.retentionRate]) {
+      if (rate === null) continue;
+      expect(rate).toBeGreaterThanOrEqual(0);
+      expect(rate).toBeLessThanOrEqual(1);
+    }
+    expect(k.newClients + k.returningClients).toBeGreaterThan(0);
+    expect(k.heatmap.length).toBeGreaterThan(0);
+    for (const h of k.heatmap) {
+      expect(h.dow).toBeGreaterThanOrEqual(1); // closed Sundays
+      expect(h.dow).toBeLessThanOrEqual(6);
+      expect(h.hour).toBeGreaterThanOrEqual(6);
+      expect(h.hour).toBeLessThanOrEqual(21);
+    }
+  });
 });
 
 describe("Squire importer", () => {
