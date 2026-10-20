@@ -1,0 +1,7 @@
+Appointment ID,Date,Time,Location,Barber,Client ID,Client Name,Phone,Service,Price,Duration,Status
+SQA-1,9/14/2026,10:00 AM,Coralville,Michelle,SQ-10001,Alex Sample,(319) 555-7001,Haircut w/ Shampoo,33.00,40,Checked Out
+SQA-2,9/28/2026,2:30 PM,Coralville,Makenna,SQ-10002,Brian Sample,319-555-7002,Buzz Cut,24.00,15,No Show
+SQA-3,10/2/2026,11:00 AM,Kimberly,Beth,SQ-10003,Carla Sample,5635557003,Ray'z Cut (No Shampoo),24.00,20,Cancelled
+SQA-4,12/1/2026,9:00 AM,Coralville,Michelle,SQ-10001,Alex Sample,(319) 555-7001,Haircut w/ Shampoo,33.00,40,Booked
+SQA-5,12/1/2026,9:15 AM,Rock Island,Taylor,,Walk In,,Ray'z Cut (No Shampoo),22.00,20,Booked
+SQA-6,12/2/2026,10:00 AM,Clinton,Someone,,Nobody,,Haircut,20,20,Booked
