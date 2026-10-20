@@ -1,0 +1,254 @@
+import { allocateProportionally, applyRate, formatCents, formatRate } from "@/lib/money";
+
+export type LineKind = "service" | "addon" | "product" | "gift_card";
+export type CardFunding = "credit" | "debit" | "prepaid" | "unknown";
+export type PrimaryMethod = "cash" | "card" | "none";
+
+export interface CartLine {
+  key: string;
+  kind: LineKind;
+  name: string;
+  unitPriceCents: number;
+  qty: number;
+  staffId?: string | null;
+  refId?: string | null;
+}
+
+export type DiscountTarget = "services" | "products" | "all";
+
+export interface Discount {
+  source: "promo" | "manual" | "loyalty";
+  label: string;
+  /** percent: value is whole percent (10 = 10%). amount: value is cents. */
+  type: "percent" | "amount";
+  value: number;
+  appliesTo: DiscountTarget;
+  refId?: string | null;
+}
+
+export interface TaxRates {
+  /** Fractions, e.g. 0.07. Configured per shop, never hard-coded. */
+  serviceRate: number;
+  productRate: number;
+}
+
+export interface CardFeeConfig {
+  enabled: boolean;
+  /** Fraction, e.g. 0.03. Clamped to MAX_CARD_FEE_RATE. */
+  rate: number;
+  /** Whether the fee is charged on the tip portion paid by card. */
+  appliesToTip: boolean;
+  /** "surcharge" = "Credit card surcharge"; "cash_discount" = posted card price with cash discount wording. */
+  mode: "surcharge" | "cash_discount";
+}
+
+export const MAX_CARD_FEE_RATE = 0.03;
+
+export interface TenderPlan {
+  giftCardCents?: number;
+  /** Max redeemable from the gift card (its balance). */
+  giftCardBalanceCents?: number;
+  method: PrimaryMethod;
+  /** From Stripe: PaymentMethod.card.funding (or card_present.funding for Terminal). */
+  cardFunding?: CardFunding | null;
+}
+
+export interface CheckoutInput {
+  lines: CartLine[];
+  discounts?: Discount[];
+  taxRates: TaxRates;
+  tipCents?: number;
+  cardFee: CardFeeConfig;
+  tender: TenderPlan;
+}
+
+export interface LineResult extends CartLine {
+  grossCents: number;
+  discountCents: number;
+  netCents: number;
+  taxCents: number;
+}
+
+export interface CheckoutTotals {
+  lines: LineResult[];
+  serviceGrossCents: number;
+  productGrossCents: number;
+  giftCardSalesCents: number;
+  discountCents: number;
+  discountBreakdown: { label: string; source: Discount["source"]; cents: number; refId?: string | null }[];
+  serviceNetCents: number;
+  productNetCents: number;
+  serviceTaxCents: number;
+  productTaxCents: number;
+  taxCents: number;
+  tipCents: number;
+  /** Everything the customer owes before any card fee. */
+  preFeeTotalCents: number;
+  giftCardAppliedCents: number;
+  /** Amount charged to the primary method, excluding the card fee. */
+  primaryBaseCents: number;
+  cardFeeBaseCents: number;
+  cardFeeCents: number;
+  cardFeeRate: number;
+  totalCents: number;
+  primaryChargeCents: number;
+  /** Net service dollars after discounts, before tax. Products, tips and gift cards never count. */
+  loyaltyEligibleCents: number;
+  disclosures: string[];
+}
+
+const isService = (k: LineKind) => k === "service" || k === "addon";
+
+function eligible(line: CartLine, target: DiscountTarget) {
+  if (line.kind === "gift_card") return false;
+  if (target === "all") return true;
+  if (target === "services") return isService(line.kind);
+  return line.kind === "product";
+}
+
+export function feeLabel(cfg: Pick<CardFeeConfig, "mode" | "rate">): string {
+  return cfg.mode === "cash_discount"
+    ? `Card price adjustment (${formatRate(cfg.rate)})`
+    : `Credit card surcharge (${formatRate(cfg.rate)})`;
+}
+
+export function feeDisclosure(cfg: Pick<CardFeeConfig, "mode" | "rate" | "enabled">): string | null {
+  if (!cfg.enabled || cfg.rate <= 0) return null;
+  const r = formatRate(Math.min(cfg.rate, MAX_CARD_FEE_RATE));
+  return cfg.mode === "cash_discount"
+    ? `Posted prices reflect a ${r} discount for cash. A ${r} adjustment applies to credit cards only; no fee on debit, prepaid, or cash.`
+    : `A ${r} surcharge applies to credit card payments only. It does not exceed our cost of acceptance. No surcharge on debit, prepaid, gift card, or cash.`;
+}
+
+export function computeCheckout(input: CheckoutInput): CheckoutTotals {
+  const lines: LineResult[] = input.lines.map((l) => ({
+    ...l,
+    grossCents: Math.max(0, Math.round(l.unitPriceCents * l.qty)),
+    discountCents: 0,
+    netCents: 0,
+    taxCents: 0,
+  }));
+
+  // Percent discounts first (on gross), then fixed amounts, each capped at what's left.
+  const discounts = [...(input.discounts ?? [])].sort((a, b) =>
+    a.type === b.type ? 0 : a.type === "percent" ? -1 : 1,
+  );
+  const discountBreakdown: CheckoutTotals["discountBreakdown"] = [];
+  for (const d of discounts) {
+    const idx = lines.map((l, i) => (eligible(l, d.appliesTo) ? i : -1)).filter((i) => i >= 0);
+    const remaining = idx.map((i) => lines[i].grossCents - lines[i].discountCents);
+    const base = remaining.reduce((a, b) => a + b, 0);
+    if (base <= 0) continue;
+    let amount =
+      d.type === "percent" ? applyRate(base, Math.min(100, Math.max(0, d.value)) / 100) : Math.max(0, Math.round(d.value));
+    amount = Math.min(amount, base);
+    if (amount <= 0) continue;
+    const parts = allocateProportionally(amount, remaining);
+    idx.forEach((li, k) => (lines[li].discountCents += parts[k]));
+    discountBreakdown.push({ label: d.label, source: d.source, cents: amount, refId: d.refId });
+  }
+
+  for (const l of lines) l.netCents = l.grossCents - l.discountCents;
+
+  const sum = (f: (l: LineResult) => boolean, g: (l: LineResult) => number) =>
+    lines.filter(f).reduce((a, l) => a + g(l), 0);
+
+  const serviceGrossCents = sum((l) => isService(l.kind), (l) => l.grossCents);
+  const productGrossCents = sum((l) => l.kind === "product", (l) => l.grossCents);
+  const giftCardSalesCents = sum((l) => l.kind === "gift_card", (l) => l.grossCents);
+  const serviceNetCents = sum((l) => isService(l.kind), (l) => l.netCents);
+  const productNetCents = sum((l) => l.kind === "product", (l) => l.netCents);
+
+  // Tax is computed on each category's net total (one rounding per category), then spread to lines.
+  const serviceTaxCents = applyRate(serviceNetCents, input.taxRates.serviceRate);
+  const productTaxCents = applyRate(productNetCents, input.taxRates.productRate);
+  const svcIdx = lines.map((l, i) => (isService(l.kind) ? i : -1)).filter((i) => i >= 0);
+  const prdIdx = lines.map((l, i) => (l.kind === "product" ? i : -1)).filter((i) => i >= 0);
+  allocateProportionally(serviceTaxCents, svcIdx.map((i) => lines[i].netCents)).forEach((t, k) => (lines[svcIdx[k]].taxCents = t));
+  allocateProportionally(productTaxCents, prdIdx.map((i) => lines[i].netCents)).forEach((t, k) => (lines[prdIdx[k]].taxCents = t));
+
+  const taxCents = serviceTaxCents + productTaxCents;
+  const discountCents = discountBreakdown.reduce((a, d) => a + d.cents, 0);
+  const tipCents = Math.max(0, Math.round(input.tipCents ?? 0));
+  const preFeeTotalCents = serviceNetCents + productNetCents + giftCardSalesCents + taxCents + tipCents;
+
+  // Gift cards can't buy gift cards.
+  const giftPayable = preFeeTotalCents - giftCardSalesCents;
+  const requestedGift = Math.max(0, input.tender.giftCardCents ?? 0);
+  const giftCardAppliedCents = Math.min(
+    requestedGift,
+    input.tender.giftCardBalanceCents ?? requestedGift,
+    giftPayable,
+  );
+  const primaryBaseCents = preFeeTotalCents - giftCardAppliedCents;
+
+  const cfg = input.cardFee;
+  const cardFeeRate = Math.min(Math.max(cfg.rate, 0), MAX_CARD_FEE_RATE);
+  const feeApplies =
+    cfg.enabled && cardFeeRate > 0 && input.tender.method === "card" && input.tender.cardFunding === "credit";
+  // The tip is treated as the last thing paid, so it lands on the primary method.
+  const tipOnPrimary = Math.min(tipCents, primaryBaseCents);
+  const cardFeeBaseCents = feeApplies ? primaryBaseCents - (cfg.appliesToTip ? 0 : tipOnPrimary) : 0;
+  const cardFeeCents = feeApplies ? applyRate(cardFeeBaseCents, cardFeeRate) : 0;
+
+  const disclosures: string[] = [];
+  const d = feeDisclosure({ ...cfg, rate: cardFeeRate });
+  if (d) disclosures.push(d);
+  if (feeApplies && cardFeeCents > 0) disclosures.push(`${feeLabel({ ...cfg, rate: cardFeeRate })}: ${formatCents(cardFeeCents)}`);
+
+  return {
+    lines,
+    serviceGrossCents,
+    productGrossCents,
+    giftCardSalesCents,
+    discountCents,
+    discountBreakdown,
+    serviceNetCents,
+    productNetCents,
+    serviceTaxCents,
+    productTaxCents,
+    taxCents,
+    tipCents,
+    preFeeTotalCents,
+    giftCardAppliedCents,
+    primaryBaseCents,
+    cardFeeBaseCents,
+    cardFeeCents,
+    cardFeeRate,
+    totalCents: preFeeTotalCents + cardFeeCents,
+    primaryChargeCents: primaryBaseCents + cardFeeCents,
+    loyaltyEligibleCents: serviceNetCents,
+    disclosures,
+  };
+}
+
+/** Suggested tip amounts, based on the pre-discount service subtotal (what the barber did). */
+export function tipSuggestions(serviceGrossCents: number, percents: number[]): { percent: number; cents: number }[] {
+  return percents.map((p) => ({ percent: p, cents: Math.round((serviceGrossCents * p) / 100) }));
+}
+
+export interface SaleBreakdown {
+  serviceNetCents: number;
+  productNetCents: number;
+  giftCardSalesCents: number;
+  taxCents: number;
+  tipCents: number;
+  cardFeeCents: number;
+}
+
+/** Splits a (partial) refund across the sale's components so reports stay consistent. */
+export function allocateRefund(sale: SaleBreakdown, alreadyRefunded: SaleBreakdown | null, amountCents: number): SaleBreakdown {
+  const keys: (keyof SaleBreakdown)[] = [
+    "serviceNetCents",
+    "productNetCents",
+    "giftCardSalesCents",
+    "taxCents",
+    "tipCents",
+    "cardFeeCents",
+  ];
+  const remaining = keys.map((k) => sale[k] - (alreadyRefunded?.[k] ?? 0));
+  const cap = remaining.reduce((a, b) => a + b, 0);
+  const amt = Math.min(Math.max(0, amountCents), cap);
+  const parts = allocateProportionally(amt, remaining.map((r) => Math.max(0, r)));
+  return Object.fromEntries(keys.map((k, i) => [k, parts[i]])) as unknown as SaleBreakdown;
+}
