@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { appointments, customers, payments, refunds, saleItems, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, LinkButton, Notice } from "@/components/ui";
 import { formatCents, formatRate } from "@/lib/money";
+import { formatPhone } from "@/lib/phone";
 import { feeLabel } from "@/domain/checkout";
 import { formatDateTime, localDateOf } from "@/lib/time";
 import { assertShopAccess, requireStaff } from "@/server/auth/staff";
@@ -70,7 +71,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           <div className="text-center">
             <div className="text-lg font-semibold">Ray&apos;z Barber Shop · {shop?.name}</div>
             <div className="text-xs text-zinc-500">
-              {shop?.address}, {shop?.city}, {shop?.state} {shop?.zip} · {shop?.phone}
+              {shop?.address}, {shop?.city}, {shop?.state} {shop?.zip} · {formatPhone(shop?.phone) || shop?.phone}
             </div>
             <div className="mt-2 text-xs text-zinc-500">
               Ticket #{sale.number} · {formatDateTime(sale.paidAt ?? sale.createdAt)}

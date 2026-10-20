@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Badge, Button, Field, Input, LinkButton, Notice, Select, StatusBadge, Textarea, buttonClass, cx } from "@/components/ui";
+import { formatPhone } from "@/lib/phone";
 import type { CalAppt, CalColumn, DayCalendarData } from "@/server/calendar";
 import {
   createBlockAction,
@@ -175,7 +176,7 @@ export function DayCalendar({
       ) : (
         <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
           <div ref={scroller} className="max-h-[calc(100dvh-14rem)] overflow-auto">
-            <div className="flex min-w-max">
+            <div className="flex w-max min-w-full">
               {/* time gutter */}
               <div className="sticky left-0 z-20 w-14 shrink-0 border-r border-zinc-200 bg-white">
                 <div className="sticky top-0 z-10 h-11 border-b border-zinc-200 bg-white" />
@@ -269,7 +270,7 @@ function Column({
   const booked = col.appts.filter((a) => !["cancelled", "no_show"].includes(a.status)).length;
 
   return (
-    <div className="w-40 shrink-0 border-r border-zinc-100 last:border-r-0 sm:w-48">
+    <div className="min-w-40 max-w-sm flex-1 border-r border-zinc-100 last:border-r-0 sm:min-w-48">
       <div className="sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-zinc-200 bg-white px-2">
         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: col.color }} />
         <span className="truncate text-sm font-semibold">{col.label}</span>
@@ -411,7 +412,7 @@ function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalCo
             <dt className="text-zinc-500">Phone</dt>
             <dd className="col-span-2">
               <a className="underline" href={`tel:${appt.phone}`}>
-                {appt.phone}
+                {formatPhone(appt.phone)}
               </a>
             </dd>
           </>

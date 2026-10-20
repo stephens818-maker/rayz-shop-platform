@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxRates, computeCheckout, feeLabel, tipSuggestions } from "@/domain/checkout";
+import { formatPhone } from "@/lib/phone";
 import { searchCustomersAction } from "../../calendar/actions";
 import { attachCustomerAction, finalizeAction, giftCardAction, inspectCardAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
 import { StripeCardEntry } from "./stripe-card";
@@ -592,7 +593,7 @@ function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: 
             <div className="absolute inset-x-0 z-10 mt-1 divide-y divide-zinc-100 rounded-lg bg-white shadow-lg ring-1 ring-zinc-200">
               {found.map((f) => (
                 <button key={f.id} onClick={() => attach(f.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50">
-                  {f.firstName} {f.lastName} <span className="text-zinc-500">{f.phone}</span>
+                  {f.firstName} {f.lastName} <span className="text-zinc-500">{formatPhone(f.phone)}</span>
                 </button>
               ))}
             </div>
