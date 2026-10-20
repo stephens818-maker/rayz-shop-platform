@@ -43,7 +43,8 @@ export function ReportFilters({
           </Link>
         ))}
       </div>
-      <form className="flex flex-wrap items-end gap-2 text-sm" action={base}>
+      {/* Keyed so the uncontrolled inputs reset when a preset link changes the range client-side. */}
+      <form key={`${from}|${to}|${shop}|${staff}`} className="flex flex-wrap items-end gap-2 text-sm" action={base}>
         <label>
           <span className="block text-xs text-zinc-500">From</span>
           <input type="date" name="from" defaultValue={from} className="h-9 rounded-lg px-2 ring-1 ring-zinc-300" />
