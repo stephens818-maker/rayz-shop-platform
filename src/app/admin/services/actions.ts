@@ -1,0 +1,72 @@
+"use server";
+
+import { eq } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+import { db } from "@/db";
+import { services, shopServices } from "@/db/schema";
+import { slugify } from "@/lib/ids";
+import { safe } from "@/server/action";
+import { audit } from "@/server/audit";
+import { assertShopAccess, requireStaff } from "@/server/auth/staff";
+import { AppError } from "@/server/errors";
+
+const Override = z.object({
+  enabled: z.boolean(),
+  bookableOnline: z.boolean(),
+  priceCents: z.number().int().min(0).nullable(),
+  durationMin: z.number().int().min(5).max(480).nullable(),
+  nameOverride: z.string().trim().max(80).nullable(),
+});
+
+export async function saveShopServiceAction(shopId: string, serviceId: string, raw: z.input<typeof Override>) {
+  return safe(async () => {
+    const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+    assertShopAccess(ctx, shopId);
+    const o = Override.parse(raw);
+    const values = { ...o, nameOverride: o.nameOverride || null };
+    await db
+      .insert(shopServices)
+      .values({ shopId, serviceId, ...values })
+      .onConflictDoUpdate({ target: [shopServices.shopId, shopServices.serviceId], set: values });
+    await audit(ctx.actor, "service.shop_override", "service", serviceId, values, shopId);
+    revalidatePath("/admin/services");
+    return null;
+  });
+}
+
+const Master = z.object({
+  id: z.string().uuid().nullable(),
+  name: z.string().trim().min(1),
+  kind: z.enum(["service", "addon"]),
+  category: z.string().trim().min(1),
+  description: z.string().trim().nullable(),
+  defaultPriceCents: z.number().int().min(0),
+  defaultDurationMin: z.number().int().min(5).max(480),
+  active: z.boolean(),
+  sortOrder: z.number().int(),
+});
+
+export async function saveMasterServiceAction(raw: z.input<typeof Master>) {
+  return safe(async () => {
+    const ctx = await requireStaff(["brand_admin"]);
+    const m = Master.parse(raw);
+    const { id, ...values } = m;
+    let serviceId = id;
+    if (id) {
+      await db.update(services).set(values).where(eq(services.id, id));
+    } else {
+      const base = slugify(m.name);
+      if (!base) throw new AppError("bad_request", "Name needs letters or numbers");
+      const exists = await db.query.services.findFirst({ where: eq(services.slug, base) });
+      const [row] = await db
+        .insert(services)
+        .values({ ...values, slug: exists ? `${base}-${Date.now().toString(36).slice(-4)}` : base })
+        .returning({ id: services.id });
+      serviceId = row.id;
+    }
+    await audit(ctx.actor, id ? "service.update" : "service.create", "service", serviceId!, values, null);
+    revalidatePath("/admin/services");
+    return { id: serviceId };
+  });
+}

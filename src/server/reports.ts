@@ -156,27 +156,27 @@ export async function byShop(s: ReportScope) {
 export async function dailyTotals(s: ReportScope) {
   return rows<{ day: string; tickets: number; grossCents: number; netCents: number; tipsCents: number; cardCents: number; cashCents: number }>(sql`
     with d as (
-      select business_date day, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
+      select business_date as day, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
         sum(service_net_cents+product_net_cents)::int net, sum(tip_cents)::int tips
       from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
       ${staffFilter(sql`staff_id`, s)}
       group by 1
     ), p as (
-      select p.business_date day, sum(case when p.method='card' then p.amount_cents else 0 end)::int card,
+      select p.business_date as day, sum(case when p.method='card' then p.amount_cents else 0 end)::int card,
         sum(case when p.method='cash' then p.amount_cents else 0 end)::int cash
       from payments p join sales s on s.id = p.sale_id
       where p.shop_id in ${ids(s)} and p.business_date between ${s.from} and ${s.to} and s.status <> 'voided'
       ${staffFilter(sql`s.staff_id`, s)}
       group by 1
     )
-    select to_char(d.day, 'YYYY-MM-DD') day, d.tickets, d.gross "grossCents", d.net "netCents", d.tips "tipsCents",
+    select to_char(d.day, 'YYYY-MM-DD') as day, d.tickets, d.gross "grossCents", d.net "netCents", d.tips "tipsCents",
       coalesce(p.card,0) "cardCents", coalesce(p.cash,0) "cashCents"
     from d left join p on p.day = d.day order by d.day`);
 }
 
 export async function monthlyTotals(s: ReportScope) {
   return rows<{ month: string; tickets: number; grossCents: number; netServicesCents: number; netProductsCents: number; tipsCents: number }>(sql`
-    select to_char(date_trunc('month', business_date), 'YYYY-MM') month, count(*)::int tickets,
+    select to_char(date_trunc('month', business_date), 'YYYY-MM') as month, count(*)::int tickets,
       sum(service_gross_cents+product_gross_cents)::int "grossCents", sum(service_net_cents)::int "netServicesCents",
       sum(product_net_cents)::int "netProductsCents", sum(tip_cents)::int "tipsCents"
     from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
@@ -251,10 +251,11 @@ export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[
 // ───────────────────────────── KPIs (not available in Squire) ─────────────────────────────
 
 export async function kpis(s: ReportScope) {
-  const start = startOfLocalDay(s.from);
-  const end = endOfLocalDay(s.to);
+  // Raw SQL params must be strings; postgres-js won't serialize Date here.
+  const start = startOfLocalDay(s.from).toISOString();
+  const end = endOfLocalDay(s.to).toISOString();
   const len = diffDays(s.to, s.from) + 1;
-  const prevStart = startOfLocalDay(addDays(s.from, -len));
+  const prevStart = startOfLocalDay(addDays(s.from, -len)).toISOString();
   const sf = staffFilter(sql`a.staff_id`, s);
 
   const [rebook, visitors, retention, outcomes, heat] = await Promise.all([
@@ -276,7 +277,7 @@ export async function kpis(s: ReportScope) {
         select a.customer_id, min(a.starts_at) first_at from appointments a join v using (customer_id)
         where a.status = 'completed' group by 1
       )
-      select count(*) filter (where first_at >= ${start})::int "newClients", count(*) filter (where first_at < ${start})::int returning from first`),
+      select count(*) filter (where first_at >= ${start})::int "newClients", count(*) filter (where first_at < ${start})::int "returning" from first`),
     rows<{ prior: number; retained: number }>(sql`
       with prior as (
         select distinct a.customer_id from appointments a
@@ -292,8 +293,8 @@ export async function kpis(s: ReportScope) {
       where a.shop_id in ${ids(s)} and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
       group by 1`),
     rows<{ dow: number; hour: number; n: number }>(sql`
-      select extract(dow from a.starts_at at time zone 'America/Chicago')::int dow,
-        extract(hour from a.starts_at at time zone 'America/Chicago')::int hour, count(*)::int n
+      select extract(dow from a.starts_at at time zone 'America/Chicago')::int as dow,
+        extract(hour from a.starts_at at time zone 'America/Chicago')::int as hour, count(*)::int as n
       from appointments a
       where a.shop_id in ${ids(s)} and a.status in ('completed','booked','confirmed','checked_in','in_service')
         and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
