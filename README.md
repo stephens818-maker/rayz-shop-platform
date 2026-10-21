@@ -64,6 +64,8 @@ pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
 pnpm import:squire clients samples/squire/clients.csv            # dry run
 pnpm import:squire clients samples/squire/clients.csv --commit   # write
+pnpm import:squire appointments appts.csv --errors=skipped.csv   # also write skipped rows to a CSV
+npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (deterministic)
 ```
 
 ---
@@ -72,12 +74,14 @@ pnpm import:squire clients samples/squire/clients.csv --commit   # write
 
 ### Customer booking (web + API)
 
-- The flow goes shop, then service plus add-ons, then barber or "Any barber", then a time slot, then contact details. There's a confirmation page and a manage page with cancel and reschedule; both are blocked inside 30 minutes of the appointment.
+- The flow goes shop, then service plus add-ons, then barber or "Any barber", then a time slot, then contact details. There's a confirmation page and a manage page with cancel and reschedule. Online changes close at the 30-minute mark itself, and the page and the API agree on that.
+- Online and API bookings must start on one of the offered times (the shop's slot grid). Staff booking from the calendar can pick any minute.
 - Booking URLs carry only an opaque appointment code and the barber's public slug (first name plus a number, e.g. `makenna-3549`), never a surname.
 - Barbers appear by their **display label** (e.g. "Olivia A.", "Taylor B."), and each has a unique staff ID (`S-0007`).
 - Dubuque has no barbers. It shows as "Opening soon", its booking page explains why, and the API returns empty lists rather than errors.
 - Slot math runs in `America/Chicago` with Luxon and is DST-safe; the spring-forward and fall-back days are covered by tests. "Any barber" spreads bookings to the least-booked barber.
-- **No double-booking, ever.** The app checks every shop's appointments and schedules, and a Postgres exclusion constraint (`appointments_no_double_booking`) rejects any overlapping booking for the same barber, even across shops and even if app code is bypassed.
+- **No double-booking, ever.** The app checks every shop's appointments and schedules, and a Postgres exclusion constraint (`appointments_no_double_booking`) rejects any overlapping booking for the same barber, even across shops and even if app code is bypassed. The constraint includes the shop's buffer between appointments (stored on each appointment when it's booked). Booked, confirmed, checked-in, and in-service appointments hold the chair; a completed one frees it, so a cut that finishes early opens the rest of its slot.
+- A time staff type that doesn't exist (2:30 AM on a spring-forward morning) is refused instead of being moved an hour.
 - **Versioned REST API at `/api/v1`** with an OpenAPI 3.1 spec at `/api/v1/openapi.json` and readable docs at `/docs/api`. It covers shops, services, barbers, availability (day and month views), booking, appointment lookup, cancel, reschedule, customer auth, profile, "my appointments", and loyalty balance. The public web booking UI calls this same API. See [Booking API and the mobile app](#booking-api-and-the-mobile-app).
 
 ### Front desk
@@ -95,10 +99,11 @@ pnpm import:squire clients samples/squire/clients.csv --commit   # write
 
 ### Schedules and staff
 
-- Each barber has a weekly schedule *per shop*, can work at several shops, and has days off and time off with a reason.
+- Each barber has a weekly schedule *per shop*, can work at several shops, and has days off and time off with a reason. A manager can block time only for barbers who work at their shop; an all-shops day off is allowed for a barber whose shops are all theirs, and a brand admin can do it for anyone.
+- Shops are closed Sundays. Only a brand admin can open a shop on a Sunday or change its Sunday hours.
 - Saving a schedule that overlaps the barber's hours at another shop is refused with a clear message.
 - Duplicate first names are handled with unique staff IDs plus admin-set display labels. Saving a duplicate active label is refused, and the error suggests an alternative.
-- Roles are brand admin, shop manager (scoped to their shop), and barber.
+- Roles are brand admin, shop manager (scoped to their shop), and barber. Only a brand admin can change someone's role or managed shop, including their own.
 
 ### Catalog, POS, and money
 
@@ -110,10 +115,13 @@ pnpm import:squire clients samples/squire/clients.csv --commit   # write
   - Gift cards: sell them, check the balance, redeem them as partial payment.
   - Cash with quick-tender buttons and change due, or card through the reader (simulated Stripe Terminal) or keyed in (Stripe Elements).
   - One-tap rebook after payment.
-- **Totals are computed by one pure function** (`src/domain/checkout.ts`) that both the POS screen and the server use. The server recomputes from its own prices and refuses the charge if the totals don't match what the cashier saw.
+- **Totals are computed by one pure function** (`src/domain/checkout.ts`) that both the POS screen and the server use. The server prices every service, add-on, and product from the shop's menu and ignores prices sent by the browser. A manager can override a line's price with a reason; the override is stored next to the menu price and audited. It refuses the charge if the totals don't match what the cashier saw.
+- **Double-submits are safe.** The ticket is locked before the card is charged, a second submit waits and then sees the ticket already paid, and the app only ever refunds a charge that the same request created.
 - **Taxes:** each shop has separate service and product rates stored in the database, so nothing is hard-coded. Only the brand admin can edit them, and every change is audited. The seeded rates are placeholders marked "unverified" (see [Data caveats](#data-caveats)).
 - **Credit card fee:** optional, set per shop, and the default is 3%. A database check caps it at 3%. It's applied only when Stripe reports the card's funding as `credit`; debit, prepaid, gift card, and cash pay no fee. The fee is disclosed before charging, on the POS, and on the receipt.
-- **Refunds and voids:** managers only, and a reason is required. Refunds can be partial and can restock items, and they go back to the original tender. Voids are same-day only and are blocked once the drawer is closed.
+- **Refunds and voids:** managers only, and a reason is required. A refund picks the lines (with quantity), the tip, and optionally the card fee; tax follows the lines. It can restock items and goes back to the original tender. Refunding a gift card sale voids the card. If part of it has been spent, a full-ticket refund gives back only what's left on it, and a fully spent card can't be refunded. Refunds reverse loyalty progress and revoke a reward the ticket earned. Voids are same-day only and are blocked once the drawer is closed.
+- **Refunds issued in the Stripe dashboard** reach the books through the webhook (`charge.refunded`) and run the same reversal as a refund from the POS.
+- **Split tender:** a gift card plus one cash or card payment. Paying the remainder half in cash and half on a card isn't supported yet.
 - **End-of-day drawer:** a denomination counter, expected against counted cash with the variance, and history.
 - **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, and settings changes, including before and after values where it matters. Entries are append-only.
 - **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope.
@@ -140,26 +148,49 @@ pnpm import:squire clients samples/squire/clients.csv --commit   # write
 - Date presets cover today, this week, this month, the current or last pay period, last 30 days, and year to date, and you can pick any custom range. Every table exports to CSV.
 - **Payroll tips:** bi-weekly periods that end on Saturdays, anchored on Sat 2026-10-03. Tips are broken out per barber and per shop, split into card, cash, and gift card, with refunded tips netted out, and export to CSV. There's no clock-in; hours stay in iSolved.
 - **KPIs Squire doesn't have:**
-  - Rebook rate: the next appointment was booked by the end of the visit plus 24 hours.
+  - Rebook rate: the next appointment was booked by the end of the visit plus 24 hours. Imported visits whose next booking has no booking time in Squire are left out rather than counted as not rebooked.
   - Retention against the previous window of the same length.
-  - New versus returning clients.
+  - New versus returning clients, measured within the report's shops (a first visit to Coralville is new there even if the client has been to Moline), with new-to-brand shown alongside.
   - No-show and cancellation counts with their dollar value.
   - A day-by-hour heatmap of when the shop is busiest.
 - Reports are fast. They're indexed SQL aggregates run in parallel, and the page shows its own load time. On the seeded data (about 8 weeks across 8 shops), a brand-wide year-to-date report loads in about 90 ms and 30 days in about 40 ms.
 
 ### Loyalty (brand-wide)
 
-- Every $300 of **net service spend** (after discounts, before tax) earns a $15 reward. Products, tips, tax, and gift card sales don't count. Refunds reverse the earned progress.
-- The redemption rules and expiry are configuration, not code (**Settings**, brand admin only). Settings include the threshold, reward amount, reward expiry (default 365 days), optional progress expiry, what rewards can be spent on, the per-ticket maximum, and whether rewards stack with promos.
+- Every $300 of **net service spend** (after discounts, before tax) earns a $15 reward. Products, tips, tax, and gift card sales don't count. Refunds and voids put progress back and revoke an unspent reward the ticket earned.
+- Balance updates lock the account row, and a reward can only be redeemed once, even from two shops at the same moment. A reward that would discount nothing (say, a products-only ticket) isn't used up.
+- The redemption rules and expiry are configuration, not code (**Settings**, brand admin only). Settings include the threshold, reward amount, reward expiry (default 365 days), optional progress expiry, what rewards can be spent on, and whether rewards stack with promos. One reward per visit.
+- Imported Squire tickets never earn loyalty here; the imported loyalty balance already includes them.
 - Rewards show up as one-tap chips at checkout. Balances appear on the client page, on the receipt, and in the customer API (`GET /api/v1/me/loyalty`).
+
+### Clients (brand-wide)
+
+- **One client record across all eight shops.** Booking, walk-ins, sign-in, the import, and New client all use the same match order:
+  1. Squire client ID;
+  2. email with a compatible name;
+  3. phone with a compatible name.
+
+  A compatible first name is the same name, a common nickname (Mike/Michael), or a prefix of at least three letters; last names must not contradict. A contact with no name to compare only matches when exactly one client has it. A database lock serializes find-or-create, so two bookings at the same moment can't create two records.
+- Families sharing a phone stay separate people. Signing in by code on a shared phone asks which profile you are instead of picking one.
+- **Duplicates and merge** (**Clients → Duplicates**, managers): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
+- **Profile:** visit count, no-shows, cancellations, last visit, and lifetime spend come from SQL over the client's whole history, net of refunds. Lifetime spend includes Squire visits that have no imported ticket. The profile also shows the full visit history with shop, barber, services, and prices, plus home shop, preferred barber, loyalty, gift cards, notes, and consent.
+- **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. Managers search the whole brand. A barber's search covers clients who've visited their shops, with the phone masked to its last 4 digits. A barber can open the profile of a client they've served and see notes, loyalty, and visits, but not the phone or email.
+- Client notes show on the calendar panel and the POS ticket.
+- **Consent:** SMS and email opt-in default to no. Each booking sends an explicit choice, an explicit no always sticks, and a missing answer keeps what's on file. Reminder texts and the waitlist "you're up" text are only sent to clients who opted in.
+- Every walk-in becomes a client, even without a phone.
 
 ### Squire importer
 
-- **Admin → Import**, or the `pnpm import:squire` CLI. It imports clients, appointment history plus future bookings, loyalty balances, and gift card balances.
-- Every file gets a **dry run** first: each row is validated inside a transaction that's then rolled back, and you see what would be added, updated, or skipped, with the reason for each skipped row.
-- It matches Squire's varied column headers, matches clients by Squire ID, then phone, then email, and is safe to re-run.
-- Future bookings that would double-book a barber are skipped and reported rather than forced in.
-- Sample files are in `samples/squire/`.
+- **Admin → Import**, or the `pnpm import:squire` CLI. Import the five Squire exports in this order: clients, appointments, transactions, loyalty, gift cards.
+  - **Clients:** name, phone (any format), email, notes, Squire ID, client-since, home shop, preferred barber, SMS and email opt-in.
+  - **Appointments:** past visits with shop, barber, services, add-ons, prices, and status (completed, no-show, cancelled), plus upcoming bookings. Barbers who've left are created as inactive staff so their history keeps its name. Walk-ins with no client stay unlinked.
+  - **Transactions:** purchases, tips, tax, and totals, linked to their visit. Voided tickets are kept as voided.
+  - **Loyalty** progress and rewards, and **gift card** balances (with where the card was used).
+- Every file gets a **dry run** first: rows are validated inside transactions that are rolled back. Real runs commit in batches of 500 rows.
+- After each run you get a **reconciliation summary**: clients created, updated, and merged; appointments by status, with upcoming and former barbers; tickets imported, voided, and linked to visits. Skipped rows are counted by reason, and each run has a **downloadable error file** of skipped rows with their original columns, so they can be fixed and re-imported. The import page also shows live totals of what's in the database.
+- Re-running a file is safe: rows are matched by Squire ID, corrected fields (a fixed phone, a changed consent) land on the existing record, loyalty replaces the imported balance instead of adding to it, and future bookings that would double-book a barber are skipped and reported.
+- Imported history feeds reports, KPIs, and the client profile, and never double counts: imported tickets don't earn loyalty and aren't part of a drawer close, and a Squire visit with a linked ticket is counted once.
+- `samples/squire/` has small example files. `samples/squire/realistic/` is a messy, deterministic export of about 200 clients, 635 appointments, and 478 tickets (missing emails, phones in mixed formats, the same person at two shops, families sharing a phone, placeholder and nameless rows, former barbers), with the expected reconciliation in `expected.json`. The DB tests import it and check every person against the ground truth.
 
 ---
 
@@ -213,7 +244,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
   - `GET /appointments/{code}`, `POST /appointments/{code}/cancel`, `POST /appointments/{code}/reschedule`
 - **Customer auth for mobile:**
   1. `POST /auth/otp/start` sends a one-time code by SMS or email.
-  2. `POST /auth/otp/verify` returns `{ accessToken, refreshToken }`. The access token is a JWT valid for 1 hour and is sent as `Authorization: Bearer …`; the refresh token lasts 60 days.
+  2. `POST /auth/otp/verify` returns `{ accessToken, refreshToken }`. The access token is a JWT valid for 1 hour and is sent as `Authorization: Bearer …`; the refresh token lasts 60 days. When several clients share that phone or email (a family), it returns `chooseProfile: true` with a short-lived `selectionToken` and the first names; the app then calls `POST /auth/otp/complete` with the chosen profile.
   3. `POST /auth/refresh` rotates the refresh token. Re-using an old refresh token revokes every session for that customer, which is the standard defense against stolen tokens.
   4. `POST /auth/logout` revokes the session.
 - **Signed-in endpoints:** `GET /me`, `GET /me/appointments`, `GET /me/loyalty`. Booking while signed in links the appointment to the account.
@@ -239,7 +270,9 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 - **Floaters:** Casey is listed at 7 shops but only has sales at Le Claire, so the sample schedule puts Casey only at Le Claire. Leilah had Coralville sales but is no longer listed, so she's seeded as inactive. Charles ($60 in 90 days, likely an owner or test account) is seeded as not bookable.
 - **Duplicate names** are seeded as "Olivia A."/"Olivia B." and "Taylor A."/"Taylor B." Admins can rename these labels.
 - **Loyalty type:** Squire's earlier note said "transaction based", but the saved setting is "Value based": $300 spent earns $15, excluding products and tips. This build implements the dollar-based rule, which matches both the brief and Squire's saved setting.
-- **Clients are brand-wide**, as in Squire: one client record across all shops, and loyalty is brand-wide. Shop managers can look up any client so they can serve them, but sales, reports, and the calendar are scoped to their shop.
+- **Clients are brand-wide**, as in Squire: one client record across all shops, and loyalty is brand-wide. Shop managers can look up and edit any client so they can serve them (every edit is audited), but sales, reports, and the calendar are scoped to their shop. The client list defaults to clients whose home shop is this one or who've visited it.
+- **Re-importing after cutover:** the clients file carries Squire's contact details and consent, so re-running it after go-live overwrites changes made here with Squire's values. Re-running loyalty after rewards have been spent here re-issues them. Run both one final time at cutover, then stop.
+- **Booking time:** Squire doesn't always export when a booking was made. Rows without it are marked unknown and left out of the rebook rate.
 - **Sample history:** the appointments, sales, clients, and gift cards in the seed are generated so the reports have something to show. The real history arrives through the importer.
 
 ---
@@ -276,8 +309,8 @@ samples/squire/      example Squire CSV exports for the importer
 2. Run migrations with `MIGRATE_DATABASE_URL=… pnpm db:migrate`. Don't run the seed in production; load real data with the importer instead.
 3. Import the repo into Vercel. Set the environment variables:
    - `AUTH_SECRET` (long and random)
-   - `AUTH_DEV_CODES=false`
-   - `CRON_SECRET`
+   - `AUTH_DEV_CODES=false` (production builds never return sign-in codes regardless)
+   - `CRON_SECRET` (required: without it the cron endpoint refuses every request)
    - `APP_BASE_URL`
    - the Stripe keys
    - `NOTIFICATIONS_*_PROVIDER` (leave as `disabled` until cutover)
@@ -292,7 +325,7 @@ samples/squire/      example Squire CSV exports for the importer
 
 - Confirm tax rates per shop with the accountant.
 - Enter real barber schedules.
-- Import Squire clients, loyalty balances, and gift card balances, dry-running each file first.
+- Import Squire clients, appointments, transactions, loyalty balances, and gift card balances, in that order, dry-running each file first. Check the reconciliation summary against Squire's own client and appointment counts, and fix and re-import rows from the error file.
 - Train Coralville staff, which takes about 30 minutes. The flows mirror Squire.
 
 **Weeks 1–4: parallel run at Coralville**
