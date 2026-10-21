@@ -98,6 +98,42 @@ export async function scheduleAppointmentNotifications(
   return rows.length;
 }
 
+/**
+ * Deliver immediately and keep only `storedBody` in the outbox. Used for one-time codes, which must
+ * never sit in the database or show up on the outbox page.
+ */
+export async function sendNow(job: { kind: NotificationKind; channel: "sms" | "email"; to: string; subject?: string; body: string; storedBody: string; customerId?: string | null }) {
+  const provider = job.channel === "sms" ? smsProvider() : emailProvider();
+  let status: "sent" | "suppressed" | "failed" = "suppressed";
+  let lastError: string | null = null;
+  if (provider.enabled) {
+    try {
+      if (job.channel === "sms") await smsProvider().sendSms(job.to, job.body);
+      else await emailProvider().sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body);
+      status = "sent";
+    } catch (e) {
+      status = "failed";
+      lastError = (e as Error).message.slice(0, 500);
+    }
+  }
+  const now = new Date();
+  await db.insert(notificationJobs).values({
+    kind: job.kind,
+    channel: job.channel,
+    to: job.to,
+    subject: job.subject ?? null,
+    body: job.storedBody,
+    customerId: job.customerId ?? null,
+    runAt: now,
+    status,
+    attempts: 1,
+    provider: provider.name,
+    lastError,
+    sentAt: status === "sent" ? now : null,
+  });
+  return status;
+}
+
 export async function enqueueRaw(job: { kind: NotificationKind; channel: "sms" | "email"; to: string; subject?: string; body: string; customerId?: string | null }) {
   await db.insert(notificationJobs).values({ ...job, subject: job.subject ?? null, customerId: job.customerId ?? null, runAt: new Date() });
 }

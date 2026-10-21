@@ -77,3 +77,31 @@ describe("review P3: display labels never include the surname", () => {
     expect(labelContainsSurname("Jack", null)).toBe(false);
   });
 });
+
+describe("review P1#19: cron and sign-in codes fail closed", () => {
+  it("cron needs a configured secret and the exact bearer token", async () => {
+    const { cronAuthorized } = await import("@/server/notifications/cron");
+    expect(cronAuthorized(null, undefined)).toBe(false);
+    expect(cronAuthorized("Bearer anything", "")).toBe(false);
+    expect(cronAuthorized("Bearer wrong", "s3cret")).toBe(false);
+    expect(cronAuthorized("Bearer s3cret", "s3cret")).toBe(true);
+  });
+
+  it("dev codes are never on in a production build", async () => {
+    const { devCodesEnabled } = await import("@/server/auth/customer");
+    const env = process.env as Record<string, string | undefined>;
+    const prev = { node: env.NODE_ENV, dev: env.AUTH_DEV_CODES, vercel: env.VERCEL_ENV };
+    try {
+      env.AUTH_DEV_CODES = "true";
+      env.VERCEL_ENV = "preview";
+      env.NODE_ENV = "production";
+      expect(devCodesEnabled()).toBe(false);
+      env.NODE_ENV = "development";
+      expect(devCodesEnabled()).toBe(true);
+    } finally {
+      env.NODE_ENV = prev.node;
+      env.AUTH_DEV_CODES = prev.dev;
+      env.VERCEL_ENV = prev.vercel;
+    }
+  });
+});

@@ -29,6 +29,13 @@
       "when": 1792542938919,
       "tag": "0003_drop_cash_discount",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792543243180,
+      "tag": "0004_redact_otp_outbox",
+      "breakpoints": true
     }
   ]
 }

@@ -387,3 +387,15 @@ describe("P1#9–10 payroll and reports are net of refunds", () => {
     expect(sum.netServicesCents).toBe(svc.priceCents);
   });
 });
+
+describe("P1#19 sign-in codes never land in the outbox", () => {
+  it("stores a redacted body", async () => {
+    const auth = await import("@/server/auth/customer");
+    const phone = "+13195553999";
+    await auth.startOtp({ phone });
+    const jobs = await m.db.db.select().from(m.schema.notificationJobs).where(m.drizzle.and(eq(m.schema.notificationJobs.to, phone), eq(m.schema.notificationJobs.kind, "otp")));
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].body).not.toMatch(/\d{6}/);
+    expect(jobs[0].status).not.toBe("pending");
+  });
+});

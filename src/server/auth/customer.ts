@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { customers, otpCodes, refreshTokens } from "@/db/schema";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { AppError } from "@/server/errors";
-import { enqueueRaw } from "@/server/notifications/queue";
+import { sendNow } from "@/server/notifications/queue";
 import { randomToken, sha256, signToken, verifyToken } from "./tokens";
 
 export const ACCESS_TTL_SECONDS = 60 * 60; // 1 hour
@@ -21,8 +21,9 @@ export function normalizeIdentifier(input: { phone?: string | null; email?: stri
   throw new AppError("bad_request", "Provide a valid US phone number or email");
 }
 
+/** Never in a production build, whatever the env flag says. */
 export function devCodesEnabled() {
-  return process.env.AUTH_DEV_CODES === "true" && process.env.VERCEL_ENV !== "production";
+  return process.env.NODE_ENV !== "production" && process.env.AUTH_DEV_CODES === "true";
 }
 
 export async function startOtp(input: { phone?: string | null; email?: string | null }) {
@@ -34,13 +35,15 @@ export async function startOtp(input: { phone?: string | null; email?: string | 
   if (recent.length >= OTP_PER_HOUR) throw new AppError("rate_limited", "Too many codes requested. Try again later.");
   const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
   await db.insert(otpCodes).values({ identifier, codeHash: sha256(`${identifier}:${code}`), expiresAt: new Date(Date.now() + OTP_TTL_MS) });
-  await enqueueRaw({
+  const status = await sendNow({
     kind: "otp",
     channel,
     to: identifier,
     subject: "Your Ray'z sign-in code",
     body: `Your Ray'z Barber Shop code is ${code}. It expires in 10 minutes.`,
+    storedBody: "Your Ray'z Barber Shop code is ••••••. It expires in 10 minutes.",
   });
+  if (status === "failed") throw new AppError("internal", "We couldn't send your code. Try again in a minute.");
   return { channel, expiresInSeconds: OTP_TTL_MS / 1000, ...(devCodesEnabled() ? { devCode: code } : {}) };
 }
 
