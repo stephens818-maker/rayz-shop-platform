@@ -40,7 +40,7 @@ pnpm dev                      # http://localhost:3000
 | Regional | `regional@rayz.test` | Regional Manager, Moline and Rock Island | Manager tools and every report, for those two shops only |
 | Michelle | `michelle@rayz.test` | Shop Manager, Coralville | Manager tools and Coralville's reports |
 | Front desk | `frontdesk@rayz.test` | Front Desk, Coralville | Calendar, walk-ins, checkout for every barber, the drawer, discounts up to 10%, and two reports (view only) |
-| Makenna | `makenna@rayz.test` | Barber, Coralville | Her own calendar column, appointments, clients, and sales |
+| Makenna | `makenna@rayz.test` | Barber, Coralville | Her own calendar column, appointments, clients, and sales (My sales shows only her own numbers) |
 
 What each role can do is editable under **Permissions** (see [Roles and permissions](#roles-and-permissions)).
 
@@ -171,7 +171,7 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | --- | --- | --- |
 | My sales and tips | `my_sales` | The signed-in person's own tickets, services, products, and tips |
 | Sales summary | `sales_summary` | Gross to net, tax, tips, fees, by shop, by day and by month |
-| Sales by barber | `sales_by_barber` | Services, products, tips, tickets, and average ticket per barber |
+| Barber performance | `sales_by_barber` | Per barber: service and product sales, card and cash tips, discounts, refunds, average ticket; appointments, walk-ins, no-shows, cancellations, rebook rate, retention, new vs returning clients; hours booked vs available; ratings given |
 | Services vs products | `services_vs_products` | Each category and item, with quantity, net, and share |
 | Tips and payroll export | `tips_payroll` | Bi-weekly tips per barber, card/cash/gift card |
 | Card vs cash | `card_vs_cash` | Tender mix: credit, debit, cash, gift card, card fees |
@@ -203,11 +203,11 @@ When more than one shop is selected, a **Combined / By location** switch picks t
 - **Combined** shows one set of numbers for everything selected.
 - **By location** shows each shop side by side:
   - Summary tables get a column per shop and a total column: "Brand total" when every shop is selected, otherwise "Total (N shops)".
-  - Lists get a Location column, a **subtotal per shop** (shops with no activity show zeros rather than disappearing), and the total row. The barber report lists each barber under their shop, with the shop's subtotal.
+  - Lists get a Location column, a **subtotal per shop** (shops with no activity show zeros rather than disappearing), and the total row.
   - Rates such as average ticket, rebook rate, and attach rate are recomputed for each subtotal and total, not added up.
   - Counts of distinct clients (retention, new vs returning, loyalty members) aren't additive: a client seen at two shops counts once at each and once in the total. The table says so.
 
-**Barbers who work at several shops.** Sales, tips, refunds, and payroll go to the shop where each ticket was rung up, not the barber's home shop. Sales by barber and payroll add a **Barbers at more than one shop** table with the barber's row at each shop and their combined total underneath. Payroll lists a barber once per shop per period, which is how each shop pays them out. The combined payroll view merges those rows into one line per barber, with a Locations column.
+**Barbers who work at several shops.** Sales, tips, refunds, and payroll go to the shop where each ticket was rung up, not the barber's home shop. Barber performance and payroll add a **Barbers at more than one shop** table with the barber's row at each shop and their combined total underneath. Payroll lists a barber once per shop per period, which is how each shop pays them out. The combined payroll view merges those rows into one line per barber, with a Locations column.
 
 **CSV follows the view.**
 - Combined downloads have no Location column.
@@ -225,18 +225,72 @@ When more than one shop is selected, a **Combined / By location** switch picks t
 
 <img alt="Location menu with saved groups and shop checkboxes" src="docs/screenshots/reports-location-picker.png" width="800" />
 
-<img alt="Sales by barber by location, with barbers at more than one shop" src="docs/screenshots/reports-barbers-by-location.png" width="800" />
-
 <img alt="Payroll tips by location" src="docs/screenshots/payroll-by-location.png" width="800" />
 
 <img alt="Location groups" src="docs/screenshots/location-groups.png" width="800" />
+
+### Reports by barber
+
+Every report that can be broken down by staff (my sales, sales summary, barber performance, services vs products, tips and payroll, card vs cash, discounts and refunds, KPIs, the heatmap, client ratings, and the payroll page) has a **Barbers** menu next to Locations:
+
+- **All barbers**: everyone at the selected shops. This is the only choice that also counts tickets with no barber on them (retail-only sales), shown as a **No barber** row.
+- **Saved groups**, such as Floaters or Senior barbers.
+- **Pick barbers**: tick one barber or any combination, with a search box. Barbers at the selected shops come first, then your other shops, then former barbers, so past reports can still name them.
+
+The layout switch has four choices, and works with the location filter:
+
+| View | What it shows |
+| --- | --- |
+| Combined | One set of numbers for every selected barber and shop |
+| By location | A column (or subtotal) per shop, as in [Reports across locations](#reports-across-locations) |
+| By barber | A row per barber with a column per metric, then the total row |
+| By location and barber | Each barber under each shop they worked at, a **subtotal per shop**, then the total row. For example: Jamie and Amanda at Moline and Silvis, broken out by barber and by shop |
+
+- A single barber is never broken out by barber; the view is combined (or by location).
+- The total row is labelled "Total (2 barbers, 2 shops)" and the like, or "Brand total" when every shop and barber is selected.
+- Lists (daily totals, items, discounts, payroll, the refund log) put a Barber column in front and add a subtotal for each barber with more than one row.
+- The barber performance report has three tables (sales and tips; appointments and clients; time and ratings), plus **Barbers at more than one shop** when anyone selected worked at two or more of the selected shops.
+
+**How each number is counted.**
+- Service credit, tips, discounts, and refunds go to the barber on the ticket, at the shop where it was rung up. A refund counts on the day it was issued, so a barber can show a negative day.
+- Card and cash tips come from how each ticket was paid, net of refunded tips. Total tips also include tips paid by gift card.
+- Appointments count everything that started in the range. Walk-ins are appointments with the walk-in source.
+- **Hours booked** is the scheduled length of appointments that weren't cancelled or no-shows. **Hours available** is the barber's weekly schedule at each shop on each date, less shop closures and their time off (blocks at that shop or at every shop). **Utilization** is booked over available. Availability uses current schedules, so a past range uses today's.
+- New vs returning and retention are measured within the same barber and shop: a client's first visit with Jamie is new for Jamie even if they've seen Amanda before. These distinct-client counts don't add up across barbers or shops, so each subtotal and total is counted on its own. Every other count and amount adds up exactly; tests check that per-barber numbers sum to each shop and to the brand.
+- **Ratings given** are the client ratings the barber left, at the shop of the visit, with their average stars.
+
+**Names.** Barbers appear only by their display label (first name, or a label like "Olivia A." set by an admin), on screen and in CSVs. Surnames never appear in reports.
+
+**Who sees what.** Report access follows the à la carte permissions above, and one more: `reports.all_staff` lets someone see other barbers' numbers. Brand Admin, Regional Manager, Shop Manager, and Front Desk have it by default; Barber doesn't.
+- Without it, every report shows only your own numbers, the Barbers menu is replaced by a note, and asking for anyone else by URL or CSV link gets a 403 ("You can only see your own numbers").
+- **My sales** is always your own tickets, whatever the URL says.
+- A barber sees barber reports only if their role or a per-person override grants that report. Makenna, for example, sees only My sales until someone grants her Barber performance, and then she sees only her own row.
+- With `reports.all_staff`, you can pick barbers who work at any of your shops. Others are refused with a 403, not dropped.
+
+**Saved barber groups** (**Setup → Barber groups**, `/admin/barber-groups`) need the `barber_groups.manage` permission (Brand Owner and Brand Admin by default) and access to every shop, since a group can include barbers from any shop.
+- A group needs a unique name and at least two barbers. The editor has "Add everyone at 2+ shops" and "Add everyone at…" shortcuts, plus search.
+- Creating, editing, and deleting a group are audited.
+- Each group has a **Barber performance** link that opens the report for that group across all shops, by location and barber.
+- Anyone who can see all staff can use a group as a filter. They see only the barbers in it who work at their shops, and a note says how many were left out.
+
+**CSV follows the view.** Each table's CSV is the on-screen table, cell for cell: the Location and Barber columns, the subtotal and total rows, and hours to two decimals. File names end in `-by-location`, `-by-barber`, or `-by-location-and-barber`. Tests compare every table's CSV with the screen in all four views.
+
+<img alt="Barber performance by location and barber: Jamie and Amanda at Moline and Silvis" src="docs/screenshots/barbers-by-location-and-barber.png" width="800" />
+
+<img alt="Barber performance by barber" src="docs/screenshots/barbers-by-barber.png" width="800" />
+
+<img alt="Barbers menu with saved groups and checkboxes" src="docs/screenshots/barbers-picker.png" width="800" />
+
+<img alt="Payroll tips by location and barber" src="docs/screenshots/payroll-by-location-and-barber.png" width="800" />
+
+<img alt="Barber groups" src="docs/screenshots/barber-groups.png" width="800" />
 
 ### Roles and permissions
 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 32 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 34 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
