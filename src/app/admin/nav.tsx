@@ -61,3 +61,13 @@ export function ShopSwitcher({ shops, current, brandWide }: { shops: { id: strin
     </select>
   );
 }
+
+/** Brand-wide staff looking at one shop can step back out to every shop. */
+export function BackToBrand() {
+  const [pending, start] = useTransition();
+  return (
+    <button className="text-[11px] text-zinc-400 underline hover:text-white disabled:opacity-50" disabled={pending} onClick={() => start(() => switchShop("all"))}>
+      Back to all shops
+    </button>
+  );
+}
