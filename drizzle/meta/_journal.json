@@ -57,6 +57,13 @@
       "when": 1792546165671,
       "tag": "0007_appointment_buffer",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792549125740,
+      "tag": "0008_client_ratings",
+      "breakpoints": true
     }
   ]
 }

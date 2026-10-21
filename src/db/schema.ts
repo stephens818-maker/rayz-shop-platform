@@ -673,6 +673,38 @@ export const importRuns = pgTable("import_runs", {
   createdAt: createdAt(),
 });
 
+/**
+ * Staff-only rating of a client for one visit (an appointment, or a ticket with no appointment).
+ * Never part of any customer-facing payload. One rating per rater per visit.
+ */
+export const clientRatings = pgTable(
+  "client_ratings",
+  {
+    id: id(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "cascade" }),
+    saleId: uuid("sale_id").references(() => sales.id, { onDelete: "set null" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id),
+    stars: smallint("stars").notNull(),
+    note: text("note"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("client_ratings_customer_idx").on(t.customerId),
+    index("client_ratings_shop_customer_idx").on(t.shopId, t.customerId),
+    uniqueIndex("client_ratings_staff_appt_uq").on(t.staffId, t.appointmentId).where(sql`appointment_id is not null`),
+    uniqueIndex("client_ratings_staff_sale_uq").on(t.staffId, t.saleId).where(sql`appointment_id is null and sale_id is not null`),
+  ],
+);
+
 export type Shop = typeof shops.$inferSelect;
 export type Staff = typeof staff.$inferSelect;
 export type Service = typeof services.$inferSelect;

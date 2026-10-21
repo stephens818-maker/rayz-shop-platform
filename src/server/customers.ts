@@ -2,6 +2,7 @@ import { and, eq, inArray, or, sql, SQL } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import {
   appointments,
+  clientRatings,
   customerSquireIds,
   customers,
   giftCards,
@@ -157,6 +158,7 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     await repoint("ledger", tx.update(loyaltyLedger).set({ customerId: keepId }).where(eq(loyaltyLedger.customerId, dropId)).returning({ id: loyaltyLedger.id }));
     await repoint("sessions", tx.update(refreshTokens).set({ customerId: keepId }).where(eq(refreshTokens.customerId, dropId)).returning({ id: refreshTokens.id }));
     await repoint("squireIds", tx.update(customerSquireIds).set({ customerId: keepId }).where(eq(customerSquireIds.customerId, dropId)).returning({ squireId: customerSquireIds.squireId }));
+    await repoint("ratings", tx.update(clientRatings).set({ customerId: keepId }).where(eq(clientRatings.customerId, dropId)).returning({ id: clientRatings.id }));
 
     const [dropAcct] = await tx.select().from(loyaltyAccounts).where(eq(loyaltyAccounts.customerId, dropId)).for("update");
     let rewardsIssued = 0;

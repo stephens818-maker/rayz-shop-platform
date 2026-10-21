@@ -130,6 +130,10 @@ export function canManage(ctx: StaffContext) {
   return ctx.isAdmin || ctx.isManager;
 }
 
+export function ratingViewer(ctx: StaffContext) {
+  return { staffId: ctx.staff.id, role: ctx.staff.role, shopIds: ctx.shopIds };
+}
+
 export function caller(ctx: StaffContext): Caller {
   return { staffId: ctx.staff.id, isAdmin: ctx.isAdmin, shopIds: ctx.shopIds };
 }
