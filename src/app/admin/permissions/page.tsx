@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { roles, shops, staff, staffAccessShops } from "@/db/schema";
 import { Badge, Card, CardHeader, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
@@ -12,10 +12,7 @@ export const metadata: Metadata = { title: "Permissions" };
 export default async function PermissionsPage() {
   const ctx = await guardPage("/admin/permissions");
   const [roleRows, people, access] = await Promise.all([
-    db
-      .select({ r: roles, n: sql<number>`(select count(*)::int from staff s where s.role_id = ${roles.id} and s.active)` })
-      .from(roles)
-      .orderBy(asc(roles.sortOrder), asc(roles.name)),
+    db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)),
     db
       .select({ s: staff, role: roles })
       .from(staff)
@@ -54,15 +51,16 @@ export default async function PermissionsPage() {
             </tr>
           </thead>
           <tbody>
-            {roleRows.map(({ r, n }) => {
+            {roleRows.map((r) => {
               const a = effectiveAccess(r);
+              const n = people.filter((p) => p.role.id === r.id).length;
               return (
                 <tr key={r.id}>
                   <Td>
                     <div className="font-medium">
                       {r.name} {!r.key && <Badge tone="blue">custom</Badge>}
                     </div>
-                    <div className="max-w-md text-xs text-zinc-500">{r.description}</div>
+                    <div className="max-w-md whitespace-normal text-xs text-zinc-500">{r.description}</div>
                   </Td>
                   <Td>{SCOPE_LABEL[r.defaultScope]}</Td>
                   <Td right>{r.key === OWNER_ROLE_KEY ? "All" : a.permissions.size}</Td>
@@ -110,7 +108,7 @@ export default async function PermissionsPage() {
                   <Td right>{a.permissions.has("pos.discount") ? `${a.maxDiscountPct}%${s.maxDiscountPct !== null ? " (own)" : ""}` : "None"}</Td>
                   <Td right>
                     <Link className="text-sm underline" href={`/admin/permissions/people/${s.id}`}>
-                      {s.id === ctx.staff.id ? "View" : "Edit"}
+                      {s.id === ctx.staff.id || (role.key === OWNER_ROLE_KEY && !ctx.isOwner) ? "View" : "Edit"}
                     </Link>
                   </Td>
                 </tr>
