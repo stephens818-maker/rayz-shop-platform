@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
 import {
+  BRAND_ONLY,
   FEATURE_PERMISSIONS,
   OWNER_ONLY,
   OWNER_ROLE_KEY,
@@ -69,10 +70,10 @@ export function PersonAccessEditor({
   const isOwnerRole = role.key === OWNER_ROLE_KEY;
   const before = useMemo(() => {
     const r = roles.find((x) => x.id === initial.roleId)!;
-    return effectiveAccess(r, initial.overrides, initial.maxDiscountPct);
+    return effectiveAccess(r, initial.overrides, initial.maxDiscountPct, initial.scope);
   }, [roles, initial]);
   const fromRole = effectiveAccess(role);
-  const after = effectiveAccess(role, isOwnerRole ? {} : s.overrides, isOwnerRole ? null : s.maxDiscountPct);
+  const after = effectiveAccess(role, isOwnerRole ? {} : s.overrides, isOwnerRole ? null : s.maxDiscountPct, isOwnerRole ? "all" : s.scope);
   const diff = diffPermissions(before.permissions, after.permissions);
   const locked = !!readOnly;
 
@@ -215,6 +216,9 @@ export function PersonAccessEditor({
                       <li key={p} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
                         <span className="min-w-0 flex-1">
                           {permissionLabel(p)}
+                          {BRAND_ONLY.has(p) && (
+                            <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">{s.scope === "all" ? "All shops only" : "All shops only: off with this shop access"}</span>
+                          )}
                           {lack && <span className="ml-2 text-xs text-zinc-400">you don&apos;t have this</span>}
                         </span>
                         <span className="w-16 text-xs text-zinc-500">{fromRole.permissions.has(p) ? "role: yes" : "role: no"}</span>

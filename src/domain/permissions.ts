@@ -13,6 +13,8 @@ interface PermissionDef {
   hint?: string;
   /** Only the Brand Owner role ever has it; it can't be put in another role or granted per user. */
   ownerOnly?: boolean;
+  /** Works on records every shop shares, so it only takes effect for people with access to all shops. */
+  brandOnly?: boolean;
 }
 
 export const FEATURE_PERMISSIONS = [
@@ -31,13 +33,13 @@ export const FEATURE_PERMISSIONS = [
   { key: "clients.view_all", group: "Clients", label: "Look up any client in the brand", hint: "Without it, only clients of their shops, and full profiles only for clients they've served." },
   { key: "clients.contact", group: "Clients", label: "See client phone numbers and emails" },
   { key: "clients.edit", group: "Clients", label: "Add clients and edit client details" },
-  { key: "clients.merge", group: "Clients", label: "Merge duplicate clients" },
+  { key: "clients.merge", group: "Clients", label: "Merge duplicate clients", brandOnly: true },
   { key: "clients.rate", group: "Clients", label: "Rate clients" },
   { key: "clients.ratings_all", group: "Clients", label: "See every rating and note, and rate any visit at their shops", hint: "Without it, people see their own ratings and rate only visits they served." },
   { key: "clients.ratings_moderate", group: "Clients", label: "Remove anyone's rating" },
   { key: "loyalty.grant", group: "Clients", label: "Grant courtesy loyalty rewards" },
   { key: "catalog.prices", group: "Catalog and inventory", label: "Edit services and prices at their shops" },
-  { key: "catalog.manage", group: "Catalog and inventory", label: "Manage the brand catalog, bulk upload items, and push them to shops" },
+  { key: "catalog.manage", group: "Catalog and inventory", label: "Manage the brand catalog, bulk upload items, and push them to shops", brandOnly: true },
   {
     key: "inventory.manage",
     group: "Catalog and inventory",
@@ -47,27 +49,28 @@ export const FEATURE_PERMISSIONS = [
   { key: "inventory.adjust", group: "Catalog and inventory", label: "Adjust stock by hand: damage, theft, back bar, count corrections" },
   { key: "inventory.transfer", group: "Catalog and inventory", label: "Transfer stock between their shops" },
   { key: "inventory.stocktake", group: "Catalog and inventory", label: "Run cycle counts and full stocktakes" },
-  { key: "vendors.manage", group: "Catalog and inventory", label: "Add and edit vendors and what they sell" },
+  { key: "vendors.manage", group: "Catalog and inventory", label: "Add and edit vendors and what they sell", brandOnly: true },
   { key: "po.create", group: "Catalog and inventory", label: "Create and edit purchase orders" },
   { key: "po.approve", group: "Catalog and inventory", label: "Approve purchase orders over the approval limit" },
   { key: "po.send", group: "Catalog and inventory", label: "Send purchase orders to vendors" },
   { key: "po.receive", group: "Catalog and inventory", label: "Receive deliveries against purchase orders" },
   { key: "staff.manage", group: "Staff", label: "Add and edit staff profiles" },
   { key: "permissions.manage", group: "Staff", label: "Manage roles, permissions and shop access" },
+  { key: "logins.manage", group: "Staff", label: "Create and disable shop logins and reset their passwords", hint: "For the shops in their access." },
   {
     key: "reports.all_staff",
     group: "Staff",
     label: "See every barber's numbers in reports",
     hint: "Without it, reports that break down by barber show only the person's own tickets, appointments, tips and ratings.",
   },
-  { key: "barber_groups.manage", group: "Staff", label: "Create and edit saved barber groups for reports", hint: "Groups can include barbers at any shop, so this also needs access to all shops." },
+  { key: "barber_groups.manage", group: "Staff", label: "Create and edit saved barber groups for reports", brandOnly: true },
   { key: "settings.shop", group: "Settings and data", label: "Edit shop info, weekday hours, closures and booking rules" },
   { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
   { key: "settings.brand", group: "Settings and data", label: "Change brand-level settings: loyalty program, new shops, Sunday hours", ownerOnly: true },
-  { key: "import.run", group: "Settings and data", label: "Run the Squire import" },
+  { key: "import.run", group: "Settings and data", label: "Run the Squire import", brandOnly: true },
   { key: "notifications.view", group: "Settings and data", label: "See the notification outbox" },
   { key: "notifications.send", group: "Settings and data", label: "Send due notifications now" },
-  { key: "locations.manage", group: "Settings and data", label: "Create and edit saved location groups for reports", hint: "Groups cover shops across the brand, so this also needs access to all shops." },
+  { key: "locations.manage", group: "Settings and data", label: "Create and edit saved location groups for reports", brandOnly: true },
 ] as const satisfies readonly PermissionDef[];
 
 export type FeaturePermission = (typeof FEATURE_PERMISSIONS)[number]["key"];
@@ -106,6 +109,7 @@ export const REPORT_PERMISSIONS: ReportPermission[] = REPORTS.flatMap((r) => [re
 export const ALL_PERMISSIONS: Permission[] = [...FEATURE_PERMISSIONS.map((p) => p.key), ...REPORT_PERMISSIONS];
 const KNOWN = new Set<string>(ALL_PERMISSIONS);
 export const OWNER_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "ownerOnly" in p && p.ownerOnly).map((p) => p.key));
+export const BRAND_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "brandOnly" in p && p.brandOnly).map((p) => p.key));
 
 export const isPermission = (s: unknown): s is Permission => typeof s === "string" && KNOWN.has(s);
 
@@ -163,7 +167,6 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "clients.view_all",
   "clients.contact",
   "clients.edit",
-  "clients.merge",
   "clients.rate",
   "clients.ratings_all",
   "catalog.prices",
@@ -179,8 +182,8 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "notifications.view",
   "reports.all_staff",
 ];
-/** Regional managers also run vendors and approve big orders for their shops. */
-const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "vendors.manage", "po.approve"];
+/** Regional managers also approve big orders and run the shop logins for their shops. */
+const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "logins.manage", "po.approve"];
 
 export interface RoleTemplate extends RoleDef {
   key: RoleTemplateKey;
@@ -289,9 +292,10 @@ const clampPct = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? 
 
 /**
  * The role's permissions with the user's overrides applied. Owner-only permissions come only from
- * the Brand Owner role, and exporting a report needs viewing it too.
+ * the Brand Owner role, brand-only ones only with access to all shops, and exporting a report
+ * needs viewing it too. Without a scope it's what the role grants at every shop.
  */
-export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDiscountOverride: number | null = null): Access {
+export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDiscountOverride: number | null = null, scope: ShopScope = "all"): Access {
   if (role.key === OWNER_ROLE_KEY) return { isOwner: true, permissions: new Set(ALL_PERMISSIONS), maxDiscountPct: 100 };
   const perms = new Set<Permission>(role.permissions.filter(isPermission));
   for (const [k, v] of Object.entries(cleanOverrides(overrides))) {
@@ -299,6 +303,7 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
     else perms.delete(k as Permission);
   }
   for (const p of OWNER_ONLY) perms.delete(p);
+  if (scope !== "all") for (const p of BRAND_ONLY) perms.delete(p);
   for (const r of REPORTS) if (!perms.has(reportView(r.key))) perms.delete(reportExport(r.key));
   const maxDiscountPct = perms.has("pos.discount") ? clampPct(maxDiscountOverride ?? role.maxDiscountPct) : 0;
   return { isOwner: false, permissions: perms, maxDiscountPct };
@@ -396,7 +401,7 @@ export function staffEditDenied(caller: Grantor, target: UserAccessState & { wor
 export function assignableRoles<R extends RoleDef & { id: string }>(caller: Grantor, roles: R[]): R[] {
   return roles.filter((r) => {
     if (r.key === OWNER_ROLE_KEY) return caller.isOwner;
-    const a = effectiveAccess(r);
+    const a = effectiveAccess(r, {}, null, caller.scope === "all" ? "all" : "selected");
     return missing(caller, a.permissions).length === 0 && a.maxDiscountPct <= caller.maxDiscountPct;
   });
 }

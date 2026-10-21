@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, cx } from "@/components/ui";
-import { FEATURE_PERMISSIONS, OWNER_ONLY, PERMISSION_GROUPS, Permission, REPORTS, SCOPE_LABEL, SHOP_SCOPES, ShopScope, reportExport, reportView } from "@/domain/permissions";
+import { BRAND_ONLY, FEATURE_PERMISSIONS, OWNER_ONLY, PERMISSION_GROUPS, Permission, REPORTS, SCOPE_LABEL, SHOP_SCOPES, ShopScope, reportExport, reportView } from "@/domain/permissions";
 import { deleteRoleAction, resetRoleAction, saveRoleAction } from "../../actions";
 
 type RoleForm = { id: string; key: string | null; name: string; description: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope };
@@ -162,6 +162,7 @@ export function RoleEditor({
                   />
                   <label htmlFor={p.key} className="flex-1 text-sm">
                     <span className="font-medium">{p.label}</span>
+                    {BRAND_ONLY.has(p.key) && <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">All shops only</span>}
                     {"hint" in p && p.hint && <span className="block text-xs text-zinc-500">{p.hint}</span>}
                     {p.key === "pos.discount" && perms.has("pos.discount") && (
                       <span className="mt-1.5 flex items-center gap-2 text-xs text-zinc-600">

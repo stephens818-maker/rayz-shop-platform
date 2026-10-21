@@ -94,8 +94,8 @@ export default async function PermissionsPage() {
           <tbody>
             {visible.map(({ s, role }) => {
               const o = cleanOverrides(s.permissionOverrides);
-              const a = effectiveAccess(role, o, s.maxDiscountPct);
               const scope = role.key === OWNER_ROLE_KEY ? "all" : s.shopScope;
+              const a = effectiveAccess(role, o, s.maxDiscountPct, scope);
               return (
                 <tr key={s.id}>
                   <Td>

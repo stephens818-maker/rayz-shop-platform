@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { roles, shops, staff, staffAccessShops, staffShops } from "@/db/schema";
-import { Access, Grantor, Permission, ShopScope, UserAccessState, cleanOverrides, effectiveAccess } from "@/domain/permissions";
+import { Access, Grantor, Permission, ShopScope, UserAccessState, OWNER_ROLE_KEY, cleanOverrides, effectiveAccess } from "@/domain/permissions";
 
 export interface StaffAccess extends Access {
   staffId: string;
@@ -9,7 +9,7 @@ export interface StaffAccess extends Access {
   scope: ShopScope;
   /** Shops this person may see and act on. */
   shopIds: string[];
-  shops: { id: string; name: string; slug: string }[];
+  shops: { id: string; name: string; slug: string; address: string | null; city: string | null }[];
 }
 
 /** A person's effective permissions and shop scope, straight from the database. */
@@ -20,9 +20,9 @@ export async function loadStaffAccess(staffId: string, tx: DBorTx = db): Promise
 }
 
 export async function accessFor(s: typeof staff.$inferSelect, role: typeof roles.$inferSelect, tx: DBorTx = db): Promise<StaffAccess> {
-  const a = effectiveAccess(role, cleanOverrides(s.permissionOverrides), s.maxDiscountPct);
-  const scope: ShopScope = a.isOwner ? "all" : s.shopScope;
-  const cols = { id: shops.id, name: shops.name, slug: shops.slug };
+  const scope: ShopScope = role.key === OWNER_ROLE_KEY ? "all" : s.shopScope;
+  const a = effectiveAccess(role, cleanOverrides(s.permissionOverrides), s.maxDiscountPct, scope);
+  const cols = { id: shops.id, name: shops.name, slug: shops.slug, address: shops.address, city: shops.city };
   const shopRows =
     scope === "all"
       ? await tx.select(cols).from(shops).orderBy(asc(shops.name))

@@ -153,7 +153,7 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
       const found = await db.select({ id: shops.id }).from(shops).where(inArray(shops.id, shopIds));
       if (found.length !== shopIds.length) throw notFound("Shop");
     }
-    const next = effectiveAccess(role, overrides, owner ? null : p.maxDiscountPct);
+    const next = effectiveAccess(role, overrides, owner ? null : p.maxDiscountPct, scope);
     const denied = userAccessChangeDenied(
       staffGrantor(ctx),
       accessState(current),
