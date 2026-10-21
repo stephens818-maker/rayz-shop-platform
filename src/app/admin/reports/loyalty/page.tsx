@@ -5,5 +5,5 @@ import type { ReportParams } from "../scope";
 export const metadata: Metadata = { title: "Loyalty" };
 
 export default async function Page({ searchParams }: { searchParams: Promise<ReportParams> }) {
-  return <ReportPage report="loyalty" searchParams={await searchParams} />;
+  return ReportPage({ report: "loyalty", searchParams: await searchParams });
 }

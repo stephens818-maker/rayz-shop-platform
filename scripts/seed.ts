@@ -82,6 +82,7 @@ async function main() {
     .values(
       SERVICES.map((s, i) => ({
         slug: s.slug,
+        sku: s.slug.toUpperCase(),
         name: s.name,
         kind: s.kind,
         category: s.category,
@@ -160,7 +161,17 @@ async function main() {
   // ── Retail ──
   const productRows = await db
     .insert(t.products)
-    .values(PRODUCTS.map(([brand, name, , category], i) => ({ sku: `${slugify(brand)}-${slugify(name)}`.slice(0, 40) + `-${i}`, brand, name, category })))
+    .values(
+      PRODUCTS.map(([brand, name, price, category], i) => ({
+        sku: `${slugify(brand).slice(0, 6)}-${slugify(name).slice(0, 26)}`.replace(/-+$/, "").toUpperCase() + `-${String(i + 1).padStart(3, "0")}`,
+        barcode: `850012${String(100000 + i * 37).padStart(6, "0")}`,
+        brand,
+        name,
+        category,
+        priceCents: price * 100,
+        costCents: Math.round(price * 100 * 0.5),
+      })),
+    )
     .returning();
   const shopProductRows = shopRows
     .filter((s) => s.slug !== "dubuque")

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, notInArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { importRuns, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
@@ -66,6 +66,7 @@ export default async function ImportPage() {
       .select({ r: importRuns, by: staff.displayLabel })
       .from(importRuns)
       .leftJoin(staff, eq(staff.id, importRuns.staffId))
+      .where(notInArray(importRuns.kind, ["catalog", "catalog_stock"]))
       .orderBy(desc(importRuns.createdAt))
       .limit(30),
     liveTotals(),
