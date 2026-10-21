@@ -5,6 +5,7 @@ import { assertShopAccess, requireStaff } from "@/server/auth/staff";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { loadCheckoutContext } from "@/server/checkout";
 import { getLoyaltyConfig, loyaltyBalance } from "@/server/loyalty";
+import { ratingSummaries } from "@/server/ratings";
 import { TEST_CARDS, paymentsMode, terminal } from "@/server/payments/processor";
 import { Pos } from "./pos";
 
@@ -17,11 +18,12 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
   assertShopAccess(ctx, c.shop.id);
   if (ctx.isBarber && c.sale.staffId !== ctx.staff.id) redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
-  const [catalog, barbers, loyalty, loyaltyCfg] = await Promise.all([
+  const [catalog, barbers, loyalty, loyaltyCfg, ratings] = await Promise.all([
     shopCatalog(c.shop.id),
     shopBarbers(c.shop.id),
     c.customer ? loyaltyBalance(c.customer.id) : null,
     getLoyaltyConfig(),
+    ratingSummaries([c.customer?.id]),
   ]);
   return (
     <Pos
@@ -33,7 +35,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
         const menu = i.kind === "product" ? c.retail.find((p) => p.productId === i.refId)?.priceCents : catalog.find((s) => s.id === i.refId)?.priceCents;
         return { kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: menu ?? i.unitPriceCents, qty: i.qty };
       })}
-      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: c.customer.phone, notes: c.customer.notes } : null}
+      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: c.customer.phone, notes: c.customer.notes, rating: ratings.get(c.customer.id) ?? null } : null}
       barber={c.barber ? { id: c.barber.id, label: c.barber.displayLabel } : null}
       barbers={barbers.map((b) => ({ id: b.id, label: b.displayName }))}
       services={catalog.map((s) => ({ id: s.id, name: s.name, kind: s.kind, priceCents: s.priceCents }))}

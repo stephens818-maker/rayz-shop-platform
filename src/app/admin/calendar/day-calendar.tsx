@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Badge, Button, Field, Input, LinkButton, Notice, Select, StatusBadge, Textarea, buttonClass, cx } from "@/components/ui";
+import { Badge, Button, Field, Input, LinkButton, Notice, Select, StarBadge, StatusBadge, Textarea, buttonClass, cx } from "@/components/ui";
+import type { RatingSummary } from "@/domain/ratings";
 import { formatPhone } from "@/lib/phone";
 import type { CalAppt, CalColumn, DayCalendarData } from "@/server/calendar";
 import {
@@ -327,9 +328,10 @@ function Column({
               )}
               style={{ top: top(a.startMin), height: Math.max(hh, 18), borderLeftColor: col.color }}
             >
-              <div className="truncate font-semibold">
-                {a.customerName}
-                {a.source === "walk_in" && <span className="ml-1 font-normal opacity-70">(walk-in)</span>}
+              <div className="flex items-center gap-1 font-semibold">
+                <span className="truncate">{a.customerName}</span>
+                <StarBadge rating={a.rating} showCount={false} />
+                {a.source === "walk_in" && <span className="shrink-0 font-normal opacity-70">(walk-in)</span>}
               </div>
               {hh > 30 && <div className="truncate opacity-80">{a.services.join(" + ")}</div>}
               {hh > 48 && (
@@ -398,7 +400,16 @@ function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalCo
     <div className="space-y-4">
       <div>
         <StatusBadge status={s} />
-        <h2 className="mt-2 text-lg font-semibold">{appt.customerName}</h2>
+        <h2 className="mt-2 flex items-center gap-2 text-lg font-semibold">
+          {appt.customerId ? (
+            <Link className="hover:underline" href={`/admin/customers/${appt.customerId}`}>
+              {appt.customerName}
+            </Link>
+          ) : (
+            appt.customerName
+          )}
+          <StarBadge rating={appt.rating} />
+        </h2>
         <div className="text-sm text-zinc-500">
           {label(appt.startMin)}–{label(appt.endMin)} with {col.label}
           {appt.anyBarber && " (any barber)"}
@@ -519,7 +530,7 @@ function BlockPanel({ block, col, onDone }: { block: CalColumn["blocks"][number]
   );
 }
 
-type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; phoneHint: string | null; email: string | null; notes: string | null };
+type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; phoneHint: string | null; email: string | null; notes: string | null; rating: RatingSummary | null };
 
 function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColumn; data: DayCalendarData; startMin: number; services: Svc[]; own: boolean; onDone: () => void }) {
   const [tab, setTab] = useState<"appt" | "block">("appt");
@@ -612,8 +623,9 @@ function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColu
             {picked ? (
               <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2 text-sm ring-1 ring-zinc-200">
                 <div>
-                  <div className="font-medium">
+                  <div className="flex items-center gap-1.5 font-medium">
                     {picked.firstName} {picked.lastName}
+                    <StarBadge rating={picked.rating} />
                   </div>
                   <div className="text-xs text-zinc-500">{picked.phone ?? picked.phoneHint ?? picked.email}</div>
                   {picked.notes && <div className="mt-1 text-xs text-amber-700">{picked.notes}</div>}
@@ -632,6 +644,7 @@ function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColu
                         <span className="font-medium">
                           {f.firstName} {f.lastName}
                         </span>{" "}
+                        <StarBadge rating={f.rating} />{" "}
                         <span className="text-zinc-500">{f.phone ?? f.phoneHint ?? f.email}</span>
                       </button>
                     ))}

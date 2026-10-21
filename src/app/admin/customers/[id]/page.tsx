@@ -4,12 +4,15 @@ import { notFound, redirect } from "next/navigation";
 import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, customerSquireIds, customers, loyaltyLedger, sales, shops, staff } from "@/db/schema";
-import { Badge, Card, CardHeader, PageHeader, Stat, StatusBadge, Table, Td, Th } from "@/components/ui";
+import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
+import { formatAverage, seesAllRatings } from "@/domain/ratings";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
-import { canManage, requireStaff } from "@/server/auth/staff";
+import { canManage, ratingViewer, requireStaff } from "@/server/auth/staff";
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
+import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
+import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
 
 export const metadata: Metadata = { title: "Client" };
@@ -75,6 +78,10 @@ export default async function CustomerPage({ params, searchParams }: { params: P
       : [],
   ]);
   const staffLabel = async (sid: string | null) => (sid ? ((await db.query.staff.findFirst({ where: eq(staff.id, sid) }))?.displayLabel ?? null) : null);
+  const viewer = ratingViewer(ctx);
+  const [rating, ratings, rateable] = await Promise.all([ratingSummary(id), ratingHistory(viewer, id), rateableVisits(viewer, id)]);
+  const visitStars = new Map<string, number[]>();
+  for (const r of ratings) if (r.appointmentId) visitStars.set(r.appointmentId, [...(visitStars.get(r.appointmentId) ?? []), r.stars]);
   const [preferred, usual, homeShop] = await Promise.all([
     staffLabel(c.preferredStaffId),
     staffLabel(stats.usualBarberId),
@@ -95,7 +102,12 @@ export default async function CustomerPage({ params, searchParams }: { params: P
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader
-        title={`${c.firstName} ${c.lastName ?? ""}`}
+        title={
+          <span className="flex items-center gap-2">
+            {`${c.firstName} ${c.lastName ?? ""}`}
+            <StarBadge rating={rating} />
+          </span>
+        }
         subtitle={
           <>
             Client since {formatDate(c.createdAt, "MMM d, yyyy")}
@@ -111,7 +123,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
       />
       {sp.existing && <div className="rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">This client was already on file, so no new record was made.</div>}
       {sp.merged && <div className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">Merged. History, tickets, loyalty, and gift cards from the other record are now on this client.</div>}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Stat label="Visits" value={stats.visits} hint={[stats.noShows && `${stats.noShows} no-shows`, stats.cancellations && `${stats.cancellations} cancelled`].filter(Boolean).join(" · ") || undefined} tone={stats.noShows ? "down" : undefined} />
         <Stat label="Last visit" value={stats.lastVisit ? formatDate(stats.lastVisit, "MMM d, yyyy") : "—"} hint={stats.upcoming ? `${stats.upcoming} upcoming` : stats.firstVisit ? `first ${formatDate(stats.firstVisit, "MMM yyyy")}` : undefined} />
         {full && (
@@ -123,6 +135,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
         )}
         <Stat label="Loyalty progress" value={`${formatCents(loyalty.progressCents)} / ${formatCents(loyalty.thresholdCents)}`} hint={`${formatCents(loyalty.remainingCents)} to next ${formatCents(loyalty.rewardCents)}`} />
         <Stat label="Rewards ready" value={formatCents(loyalty.availableCents)} hint={`${loyalty.rewards.length} reward${loyalty.rewards.length === 1 ? "" : "s"}`} />
+        <Stat label="Staff rating" value={rating.count ? `★ ${formatAverage(rating.avg)}` : "—"} hint={rating.count ? `${rating.count} rating${rating.count === 1 ? "" : "s"} · staff only` : "not rated yet"} tone={rating.count && rating.avg < 3 ? "down" : undefined} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
@@ -191,6 +204,55 @@ export default async function CustomerPage({ params, searchParams }: { params: P
         </div>
         <div className="space-y-4">
           <Card>
+            <CardHeader
+              title="Staff ratings"
+              subtitle={
+                seesAllRatings(viewer)
+                  ? "Private to staff. Never shown to the client, on the booking site, or in the app."
+                  : `Average from every barber's ratings. You see the ratings you gave.`
+              }
+            />
+            {rating.count > 0 && (
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 pt-3 text-xs text-zinc-600">
+                <span className="text-sm">
+                  <span className="font-semibold">{formatAverage(rating.avg)}</span> average from {rating.count} rating{rating.count === 1 ? "" : "s"}
+                </span>
+                {([5, 4, 3, 2, 1] as const).map((n) => (
+                  <span key={n} className="tabular">
+                    {n}★ {rating.byStars[n]}
+                  </span>
+                ))}
+              </div>
+            )}
+            {ratings.length > 0 && (
+              <RatingHistory
+                canRemoveAny={ctx.isAdmin}
+                rows={ratings.map((r) => ({
+                  id: r.id,
+                  stars: r.stars,
+                  note: r.note,
+                  ratedBy: r.ratedBy,
+                  when: formatDateTime(r.createdAt),
+                  edited: r.updatedAt.getTime() - r.createdAt.getTime() > 1000,
+                  shop: r.shop,
+                  visit: `${r.visitAt ? `visit ${formatDate(r.visitAt, "MMM d, yyyy")}` : "visit"}${r.saleNumber ? ` (ticket #${r.saleNumber})` : ""}`,
+                  visitHref: r.saleId && full && ctx.shopIds.includes(r.shopId) ? `/admin/sales/${r.saleId}` : null,
+                  mine: r.mine,
+                }))}
+              />
+            )}
+            <RateVisitForm
+              customerId={c.id}
+              visits={rateable.map((v) => ({
+                key: v.appointmentId ?? `sale:${v.saleId}`,
+                appointmentId: v.appointmentId,
+                saleId: v.saleId,
+                label: `${formatDate(v.at, "MMM d, yyyy")} · ${v.shop}${v.barber ? ` · ${v.barber}` : ""} · ${v.label}`,
+                myRating: v.myRating,
+              }))}
+            />
+          </Card>
+          <Card>
             <CardHeader title="Visit history" subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every shop, including Squire history`} />
             <Table>
               <thead>
@@ -201,6 +263,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                   <Th>Services</Th>
                   <Th right>Price</Th>
                   <Th>Status</Th>
+                  <Th>Rating</Th>
                 </tr>
               </thead>
               <tbody>
@@ -217,6 +280,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                     <Td>
                       <StatusBadge status={v.a.status} />
                     </Td>
+                    <Td className="whitespace-nowrap text-xs">{visitStars.get(v.a.id)?.map((n, k) => <Stars key={k} n={n} />) ?? null}</Td>
                   </tr>
                 ))}
               </tbody>

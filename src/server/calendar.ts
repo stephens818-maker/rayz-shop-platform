@@ -2,7 +2,9 @@ import "server-only";
 import { and, asc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
+import type { RatingSummary } from "@/domain/ratings";
 import { LocalDate, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, weekdayOf } from "@/lib/time";
+import { ratingSummaries } from "./ratings";
 
 export interface CalAppt {
   id: string;
@@ -18,6 +20,8 @@ export interface CalAppt {
   services: string[];
   estimateCents: number;
   notes: string | null;
+  /** Staff-only star average for the client. */
+  rating: RatingSummary | null;
   anyBarber: boolean;
   saleId: string | null;
   saleStatus: string | null;
@@ -91,7 +95,7 @@ export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaff
   cols.sort((a, b) => a.label.localeCompare(b.label));
   const ids = cols.map((c) => c.id);
 
-  const [blocks, elsewhere, items] = await Promise.all([
+  const [blocks, elsewhere, items, ratings] = await Promise.all([
     ids.length
       ? db
           .select()
@@ -116,6 +120,7 @@ export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaff
     apptRows.length
       ? db.select().from(appointmentItems).where(inArray(appointmentItems.appointmentId, apptRows.map((r) => r.a.id))).orderBy(asc(appointmentItems.kind))
       : [],
+    ratingSummaries(apptRows.map((r) => r.a.customerId)),
   ]);
 
   // Barbers working elsewhere today also show their other-shop schedule as "elsewhere".
@@ -155,6 +160,7 @@ export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaff
         services: items.filter((i) => i.appointmentId === r.a.id).map((i) => i.name),
         estimateCents: r.a.estimateCents,
         notes: r.a.notes,
+        rating: r.a.customerId ? (ratings.get(r.a.customerId) ?? null) : null,
         anyBarber: r.a.anyBarber,
         saleId: r.saleId,
         saleStatus: r.saleStatus,

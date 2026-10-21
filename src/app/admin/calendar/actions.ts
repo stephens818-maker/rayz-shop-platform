@@ -12,6 +12,7 @@ import { createAppointment, rescheduleAppointment, setAppointmentStatus, staffWa
 import { openSaleForAppointment } from "@/server/checkout";
 import { maskPhone, searchCustomers } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
+import { ratingSummaries } from "@/server/ratings";
 
 async function barberShops(staffId: string) {
   return (await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId))).map((l) => l.shopId);
@@ -58,6 +59,7 @@ export async function searchCustomersAction(q: string) {
     if (term.length < 2) return [];
     const full = canManage(ctx);
     const rows = await searchCustomers(term, full ? {} : { restrictToShops: ctx.shopIds }, 8);
+    const ratings = await ratingSummaries(rows.map((r) => r.id));
     return rows.map((r) => ({
       id: r.id,
       firstName: r.firstName,
@@ -66,6 +68,7 @@ export async function searchCustomersAction(q: string) {
       phoneHint: full ? null : maskPhone(r.phone),
       email: full ? r.email : null,
       notes: r.notes,
+      rating: ratings.get(r.id) ?? null,
     }));
   });
 }

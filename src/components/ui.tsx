@@ -59,6 +59,25 @@ export function Badge({ tone = "gray", children, className }: { tone?: keyof typ
   return <span className={cx("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ring-transparent", tones[tone], className)}>{children}</span>;
 }
 
+const STAR_TONE = { red: "bg-red-50 text-red-700 ring-red-200", amber: "bg-amber-50 text-amber-800 ring-amber-200", green: "bg-emerald-50 text-emerald-700 ring-emerald-200" };
+
+/** Staff-only star badge: the client's average rating. Renders nothing for an unrated client. */
+export function StarBadge({ rating, showCount = true, className }: { rating: { avg: number; count: number } | null | undefined; showCount?: boolean; className?: string }) {
+  if (!rating || rating.count === 0) return null;
+  const avg = (Math.round(rating.avg * 10) / 10).toFixed(1);
+  const tone = rating.avg < 3 ? "red" : rating.avg < 4 ? "amber" : "green";
+  return (
+    <span
+      title={`${avg} average from ${rating.count} staff rating${rating.count === 1 ? "" : "s"}`}
+      aria-label={`Rated ${avg} out of 5 by staff`}
+      className={cx("inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-px text-[11px] font-semibold tabular ring-1 ring-inset", STAR_TONE[tone], className)}
+    >
+      ★ {avg}
+      {showCount && <span className="font-normal opacity-70">({rating.count})</span>}
+    </span>
+  );
+}
+
 export const STATUS_TONE: Record<string, keyof typeof tones> = {
   booked: "blue",
   confirmed: "blue",

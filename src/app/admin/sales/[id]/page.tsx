@@ -4,14 +4,16 @@ import { notFound, redirect } from "next/navigation";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, customers, payments, refunds, saleItems, sales, shops, staff } from "@/db/schema";
-import { Badge, Card, LinkButton, Notice } from "@/components/ui";
+import { Badge, Card, LinkButton, Notice, StarBadge } from "@/components/ui";
 import { formatCents, formatRate } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
 import { feeLabel } from "@/domain/checkout";
 import { formatDateTime, localDateOf } from "@/lib/time";
-import { assertShopAccess, requireStaff } from "@/server/auth/staff";
+import { assertShopAccess, ratingViewer, requireStaff } from "@/server/auth/staff";
 import { refundableState } from "@/server/checkout";
 import { loyaltyBalance } from "@/server/loyalty";
+import { ratingSummaries, visitForSale } from "@/server/ratings";
+import { QuickRate } from "../../customers/ratings";
 import { PrintButton, SaleActions } from "./sale-actions";
 
 export const metadata: Metadata = { title: "Receipt" };
@@ -34,7 +36,11 @@ export default async function SalePage({ params, searchParams }: { params: Promi
     sale.customerId ? db.query.customers.findFirst({ where: eq(customers.id, sale.customerId) }) : null,
     sp.rebook ? db.query.appointments.findFirst({ where: eq(appointments.code, sp.rebook) }) : null,
   ]);
-  const loyalty = customer ? await loyaltyBalance(customer.id) : null;
+  const [loyalty, rateable, ratingMap] = await Promise.all([
+    customer ? loyaltyBalance(customer.id) : null,
+    customer ? visitForSale(ratingViewer(ctx), id) : null,
+    ratingSummaries([customer?.id]),
+  ]);
   const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { rate: number } };
   const manager = ctx.isAdmin || ctx.isManager;
   const refundable = manager && ["paid", "partially_refunded"].includes(sale.status) ? await refundableState(id) : null;
@@ -172,6 +178,15 @@ export default async function SalePage({ params, searchParams }: { params: Promi
         </Card>
         <div className="no-print space-y-3">
           <PrintButton />
+          {customer && (
+            <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm ring-1 ring-zinc-200">
+              <Link className="font-medium underline" href={`/admin/customers/${customer.id}`}>
+                {customer.firstName} {customer.lastName}
+              </Link>
+              <StarBadge rating={ratingMap.get(customer.id)} />
+            </div>
+          )}
+          {customer && rateable && <QuickRate customerId={customer.id} firstName={customer.firstName} appointmentId={rateable.appointmentId} saleId={id} myRating={rateable.myRating} />}
           {manager && refundable && (
             <SaleActions
               saleId={sale.id}
