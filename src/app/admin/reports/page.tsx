@@ -93,9 +93,17 @@ export default async function ReportsPage({ searchParams }: { searchParams: Prom
 
       <h2 className="mb-3 mt-8 text-sm font-semibold uppercase tracking-wide text-zinc-500">Client KPIs</h2>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Rebook rate" value={pct(k.rebookRate)} hint={`${k.rebooked} of ${k.visits} visits rebooked within 24h`} />
+        <Stat
+          label="Rebook rate"
+          value={pct(k.rebookRate)}
+          hint={`${k.rebooked} of ${k.visits} visits rebooked within 24h${k.visitsWithoutBookingTime ? ` · ${k.visitsWithoutBookingTime} Squire visits without booking times left out` : ""}`}
+        />
         <Stat label="Retention" value={pct(k.retentionRate)} hint={`${k.retainedClients} of ${k.priorClients} clients from prior ${k.priorWindow.from} – ${k.priorWindow.to} came back`} />
-        <Stat label="New vs returning" value={`${k.newClients} / ${k.returningClients}`} hint={k.newClients + k.returningClients ? `${Math.round((k.newClients / (k.newClients + k.returningClients)) * 100)}% new` : undefined} />
+        <Stat
+          label="New vs returning"
+          value={`${k.newClients} / ${k.returningClients}`}
+          hint={k.newClients + k.returningClients ? `${Math.round((k.newClients / (k.newClients + k.returningClients)) * 100)}% new to ${scope.shopIds.length > 1 ? "these shops" : "this shop"} · ${k.newToBrand} new to Ray'z` : undefined}
+        />
         <Stat label="No-shows" value={k.noShows.n} hint={`${formatCents(k.noShows.cents)} lost · ${k.cancellations.n} cancellations`} tone={k.noShows.n ? "down" : undefined} />
       </div>
 

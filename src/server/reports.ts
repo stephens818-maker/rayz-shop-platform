@@ -307,25 +307,31 @@ export async function kpis(s: ReportScope) {
   const sf = staffFilter(sql`a.staff_id`, s);
 
   const [rebook, visitors, retention, outcomes, heat] = await Promise.all([
-    rows<{ visits: number; rebooked: number }>(sql`
-      select count(*)::int visits, count(*) filter (where exists (
-        select 1 from appointments b where b.customer_id = a.customer_id and b.id <> a.id
+    // Squire rows exported without a booked-at time can't say when the next visit was booked, so
+    // those visits are left out rather than counted as not rebooked.
+    rows<{ visits: number; rebooked: number; unknown: number }>(sql`
+      select count(*) filter (where a.booked_at_known)::int visits, count(*) filter (where a.booked_at_known and exists (
+        select 1 from appointments b where b.customer_id = a.customer_id and b.id <> a.id and b.booked_at_known
           and b.starts_at > a.starts_at
           and b.created_at between a.starts_at and coalesce(a.completed_at, a.ends_at) + interval '24 hours'
-      ))::int rebooked
+      ))::int rebooked, count(*) filter (where not a.booked_at_known)::int unknown
       from appointments a
       where a.shop_id in ${ids(s)} and a.status = 'completed' and a.customer_id is not null
         and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}`),
-    rows<{ newClients: number; returning: number }>(sql`
+    rows<{ newClients: number; returning: number; newToBrand: number }>(sql`
       with v as (
         select distinct a.customer_id from appointments a
         where a.shop_id in ${ids(s)} and a.status = 'completed' and a.customer_id is not null
           and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
       ), first as (
-        select a.customer_id, min(a.starts_at) first_at from appointments a join v using (customer_id)
+        select a.customer_id,
+          min(a.starts_at) filter (where a.shop_id in ${ids(s)}) first_here,
+          min(a.starts_at) first_any
+        from appointments a join v using (customer_id)
         where a.status = 'completed' group by 1
       )
-      select count(*) filter (where first_at >= ${start})::int "newClients", count(*) filter (where first_at < ${start})::int "returning" from first`),
+      select count(*) filter (where first_here >= ${start})::int "newClients", count(*) filter (where first_here < ${start})::int "returning",
+        count(*) filter (where first_any >= ${start})::int "newToBrand" from first`),
     rows<{ prior: number; retained: number }>(sql`
       with prior as (
         select distinct a.customer_id from appointments a
@@ -357,7 +363,10 @@ export async function kpis(s: ReportScope) {
     rebookRate: r.visits ? r.rebooked / r.visits : null,
     rebooked: r.rebooked,
     visits: r.visits,
+    visitsWithoutBookingTime: r.unknown,
+    /** First visit at these shops falls in the range; newToBrand: first visit at any Ray'z shop. */
     newClients: v.newClients,
+    newToBrand: v.newToBrand,
     returningClients: v.returning,
     retentionRate: ret.prior ? ret.retained / ret.prior : null,
     retainedClients: ret.retained,
