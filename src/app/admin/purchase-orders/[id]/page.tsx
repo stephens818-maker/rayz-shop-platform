@@ -36,6 +36,10 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
   const editable = can(ctx, "po.create") && (po.status === "draft" || po.status === "approved");
   const units = d.lines.reduce((a, l) => a + l.qtyOrdered, 0);
   const received = d.lines.reduce((a, l) => a + l.qtyReceived, 0);
+  // Orders loaded from elsewhere (the demo seed, imports) have no audit trail; show what the order itself records.
+  const history = [...d.history];
+  if (!history.some((h) => h.action === "po.send") && po.sentAt) history.push({ at: po.sentAt, who: d.people.sentBy, action: "po.send", details: {} });
+  if (!history.some((h) => h.action === "po.create")) history.push({ at: po.createdAt, who: d.people.createdBy, action: "po.create", details: {} });
 
   return (
     <div className="mx-auto max-w-7xl space-y-5">
@@ -81,7 +85,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
       )}
       {po.status === "cancelled" && <Notice tone="red">Cancelled{po.cancelReason ? `: ${po.cancelReason}` : ""}.</Notice>}
       {po.closedShort && <Notice>Closed short{po.cancelReason ? `: ${po.cancelReason}` : ""}. What didn&apos;t arrive is no longer on order.</Notice>}
-      <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
+      <div className="grid gap-5 2xl:grid-cols-[1fr_340px]">
         <div className="space-y-5">
           <PoEditor
             po={{ id, number: po.number, status: po.status, expectedOn: po.expectedOn, notes: po.notes, leadTimeDays: vendor.leadTimeDays, minimumOrderCents: vendor.minimumOrderCents, today: d.today }}
@@ -129,7 +133,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
             </Card>
           )}
         </div>
-        <div className="space-y-5">
+        <div className="grid content-start gap-5 md:grid-cols-2 2xl:grid-cols-1">
           <PoActions
             po={{ id, number: po.number, status: po.status, overLimit: d.overLimit, lines: d.lines.length }}
             vendor={{ name: vendor.name, email: vendor.email, sendCsv: vendor.sendCsv }}
@@ -176,11 +180,11 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
           <Card>
             <CardHeader title="History" />
             <ol className="space-y-2 px-4 py-3 text-sm">
-              {d.history.map((h, i) => {
+              {history.map((h, i) => {
                 const det = (h.details ?? {}) as Record<string, unknown>;
                 return (
                   <li key={i}>
-                    <span className="font-medium">{ACTION_LABEL[h.action] ?? h.action}</span> <span className="text-zinc-500">· {h.who?.split(":").pop()}</span>
+                    <span className="font-medium">{ACTION_LABEL[h.action] ?? h.action}</span> {h.who && <span className="text-zinc-500">· {h.who.split(":").pop()}</span>}
                     <div className="text-xs text-zinc-500">{formatDateTime(h.at)}</div>
                     {typeof det.reopened === "string" && <div className="text-xs text-amber-700">{det.reopened}</div>}
                     {typeof det.autoApproved === "string" && <div className="text-xs text-zinc-500">Approved on send: {det.autoApproved.toLowerCase()}</div>}

@@ -141,16 +141,19 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 }
 
 export const inputClass =
-  "block w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-300 placeholder:text-zinc-400 focus:ring-2 focus:ring-inset focus:ring-brand-600";
+  "block rounded-lg border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-300 placeholder:text-zinc-400 focus:ring-2 focus:ring-inset focus:ring-brand-600";
+
+/** Full width unless the caller sizes it (classes don't merge, so `w-full` would win). */
+const fieldClass = (extra?: string) => cx(inputClass, !/(^|\s)w-/.test(extra ?? "") && "w-full", extra);
 
 export function Input(props: ComponentProps<"input">) {
-  return <input {...props} className={cx(inputClass, props.className)} />;
+  return <input {...props} className={fieldClass(props.className)} />;
 }
 export function Select(props: ComponentProps<"select">) {
-  return <select {...props} className={cx(inputClass, "pr-8", props.className)} />;
+  return <select {...props} className={cx(fieldClass(props.className), "pr-8")} />;
 }
 export function Textarea(props: ComponentProps<"textarea">) {
-  return <textarea {...props} className={cx(inputClass, props.className)} />;
+  return <textarea {...props} className={fieldClass(props.className)} />;
 }
 export function Field({ label, hint, children, className }: { label: string; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (

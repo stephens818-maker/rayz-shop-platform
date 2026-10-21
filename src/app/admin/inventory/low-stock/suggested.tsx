@@ -25,7 +25,7 @@ export function SuggestedOrders({ orders, canCreate, multiShop }: { orders: (Sug
         subtitle="One per shop and vendor: everything at or below the reorder point, ordered up to par after what's already coming, rounded up to whole cases. Created as drafts to review before sending."
         action={
           canCreate ? (
-            <Button disabled={pending || !chosen.length} onClick={() => run(() => createPosAction({ picks: chosen.map((o) => ({ shopId: o.shopId, vendorId: o.vendorId })), fill: "suggested" }), (r) => setCreated(r.created))}>
+            <Button className="whitespace-nowrap" disabled={pending || !chosen.length} onClick={() => run(() => createPosAction({ picks: chosen.map((o) => ({ shopId: o.shopId, vendorId: o.vendorId })), fill: "suggested" }), (r) => setCreated(r.created))}>
               Create {chosen.length} draft {chosen.length === 1 ? "order" : "orders"}
             </Button>
           ) : undefined
@@ -46,6 +46,7 @@ export function SuggestedOrders({ orders, canCreate, multiShop }: { orders: (Sug
           . Review and send them from Purchase orders.
         </div>
       )}
+      {orders.length === 0 && !created && <div className="px-4 py-3 text-sm text-zinc-500">Nothing to order: everything low is already on a draft, on order, or in transit.</div>}
       <div className="divide-y divide-zinc-100">
         {orders.map((o) => {
           const k = key(o);

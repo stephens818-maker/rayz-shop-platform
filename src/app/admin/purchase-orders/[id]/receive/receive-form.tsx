@@ -45,7 +45,7 @@ export function ReceiveForm({ po, lines }: { po: { id: string; number: number };
         subtitle="Enter what's in the box. Anything left stays on order for the next delivery. If the invoice price differs, change the unit cost; the shelf cost moves to the weighted average."
         action={
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setQty(Object.fromEntries(lines.map((l) => [l.lineId, String(due(l))])))}>
+            <Button variant="secondary" size="sm" className="whitespace-nowrap" onClick={() => setQty(Object.fromEntries(lines.map((l) => [l.lineId, String(due(l))])))}>
               Everything due
             </Button>
             <Button variant="ghost" size="sm" onClick={() => setQty({})}>

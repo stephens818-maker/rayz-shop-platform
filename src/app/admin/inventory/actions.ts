@@ -82,7 +82,7 @@ export async function saveInventorySettingsAction(raw: z.input<typeof ShopInvent
 
 export async function savePoApprovalThresholdAction(cents: number | null) {
   return safe(async () => {
-    const { ctx, who } = await staffFor(["inventory.manage", "settings.brand"]);
+    const { ctx, who } = await staffFor("settings.brand");
     if (!ctx.brandWide) throw forbidden("The approval limit applies at every shop, so it needs access to all shops");
     await savePoApprovalThreshold(who, cents);
     revalidatePath("/admin/inventory/settings");

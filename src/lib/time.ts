@@ -5,11 +5,14 @@ export const SHOP_TZ = "America/Chicago";
 
 export type LocalDate = string; // YYYY-MM-DD in SHOP_TZ
 
+/** ISO strings, or Postgres timestamptz text ("2026-10-01 17:00:00.123+00") from raw SQL rows. */
+function fromText(s: string): DateTime {
+  const iso = DateTime.fromISO(s, { setZone: true });
+  return iso.isValid ? iso : DateTime.fromSQL(s, { setZone: true });
+}
+
 export function toZoned(instant: Date | number | string): DateTime {
-  const dt =
-    typeof instant === "string"
-      ? DateTime.fromISO(instant, { setZone: true })
-      : DateTime.fromMillis(typeof instant === "number" ? instant : instant.getTime());
+  const dt = typeof instant === "string" ? fromText(instant) : DateTime.fromMillis(typeof instant === "number" ? instant : instant.getTime());
   return dt.setZone(SHOP_TZ);
 }
 
@@ -68,8 +71,9 @@ export function formatTime(instant: Date | number | string): string {
   return toZoned(instant).toFormat("h:mm a");
 }
 
-export function formatDate(date: LocalDate | Date, fmt = "EEE, MMM d"): string {
-  const dt = typeof date === "string" ? DateTime.fromISO(date, { zone: SHOP_TZ }) : toZoned(date);
+/** A local date ("2026-10-21") as that day; an instant (Date, or a timestamp string) as its day in the shop's zone. */
+export function formatDate(date: LocalDate | Date | string, fmt = "EEE, MMM d"): string {
+  const dt = typeof date === "string" && date.length === 10 ? DateTime.fromISO(date, { zone: SHOP_TZ }) : toZoned(date);
   return dt.toFormat(fmt);
 }
 

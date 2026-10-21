@@ -1,4 +1,5 @@
 import { formatCents } from "@/lib/money";
+import { formatPhone } from "@/lib/phone";
 import { PdfDoc, fitText } from "@/lib/pdf";
 import { poNumber, poTotalCents } from "./inventory";
 
@@ -15,6 +16,7 @@ export interface PoDocument {
 }
 
 const dollars = (c: number) => (c / 100).toFixed(2);
+const phone = (p: string | null) => (p ? formatPhone(p) || p : null);
 
 function csvCell(v: string | number | null): string {
   const s = v === null ? "" : String(v);
@@ -76,10 +78,10 @@ export function poPdf(d: PoDocument): Uint8Array {
     d.vendor.name,
     d.vendor.contactName ? `Attn: ${d.vendor.contactName}` : null,
     ...(d.vendor.address ?? "").split("\n"),
-    d.vendor.phone,
+    phone(d.vendor.phone),
     d.vendor.email,
   ]);
-  const right = block(320, "SHIP TO", [`${d.brand} - ${d.shop.name}`, d.shop.address, cityLine, d.shop.phone, d.shop.email]);
+  const right = block(320, "SHIP TO", [`${d.brand} - ${d.shop.name}`, d.shop.address, cityLine, phone(d.shop.phone), d.shop.email]);
   y = Math.max(left, right) + 8;
   const terms = [
     d.vendor.accountNumber ? `Account ${d.vendor.accountNumber}` : null,
@@ -92,13 +94,13 @@ export function poPdf(d: PoDocument): Uint8Array {
   }
 
   const cols = [
-    { label: "Vendor SKU", x: L, w: 78 },
-    { label: "Our SKU", x: L + 82, w: 88 },
-    { label: "Product", x: L + 174, w: 150 },
-    { label: "Pack", x: L + 352, right: true },
-    { label: "Cases", x: L + 392, right: true },
-    { label: "Units", x: L + 430, right: true },
-    { label: "Unit cost", x: L + 478, right: true },
+    { label: "Vendor SKU", x: L, w: 72 },
+    { label: "Our SKU", x: L + 76, w: 84 },
+    { label: "Product", x: L + 164, w: 148 },
+    { label: "Pack", x: L + 340, right: true },
+    { label: "Cases", x: L + 374, right: true },
+    { label: "Units", x: L + 406, right: true },
+    { label: "Unit cost", x: L + 456, right: true },
     { label: "Total", x: R, right: true },
   ];
   const tableHead = () => {
@@ -125,8 +127,8 @@ export function poPdf(d: PoDocument): Uint8Array {
 
   const total = poTotalCents(d.lines);
   y += 6;
-  pdf.text(L + 430, y, `${d.lines.reduce((a, l) => a + l.qtyOrdered, 0)} units`, { size: 9, align: "right", gray: 0.35 });
-  pdf.text(L + 478, y, "Total", { size: 11, bold: true, align: "right" });
+  pdf.text(L + 164, y, `${d.lines.length} ${d.lines.length === 1 ? "line" : "lines"} · ${d.lines.reduce((a, l) => a + l.qtyOrdered, 0)} units`, { size: 9, gray: 0.35 });
+  pdf.text(L + 406, y, "Total", { size: 11, bold: true, align: "right" });
   pdf.text(R, y, formatCents(total), { size: 11, bold: true, align: "right" });
   y += 22;
   if (d.notes) {
@@ -137,7 +139,7 @@ export function poPdf(d: PoDocument): Uint8Array {
       y += 13;
     }
   }
-  const contact = [d.shop.phone, d.shop.email].filter(Boolean).join(" · ");
+  const contact = [phone(d.shop.phone), d.shop.email].filter(Boolean).join(" · ");
   pdf.text(L, pdf.height - 40, fitText(`Please put ${poNumber(d.number)} on the invoice and packing slip.${contact ? ` Questions: ${contact}` : ""}`, R - L - 60, 8), { size: 8, gray: 0.45 });
   return pdf.toBytes();
 }

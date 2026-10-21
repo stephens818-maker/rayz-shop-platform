@@ -28,10 +28,13 @@ export default async function TransferPage({ params }: { params: Promise<{ id: s
   const canReceive = t.status === "sent" && atTo && (can(ctx, "inventory.transfer") || can(ctx, "po.receive"));
   const source = editable ? (await stockLevels([t.fromShopId])).filter((s) => s.active) : [];
   const units = d.lines.reduce((a, l) => a + l.qty, 0);
+  const history = [...d.history];
+  if (!history.some((h) => h.action === "transfer.send") && t.sentAt) history.push({ at: t.sentAt, who: d.people.sentBy, action: "transfer.send", details: {} });
+  if (!history.some((h) => h.action === "transfer.create")) history.push({ at: t.createdAt, who: d.people.createdBy, action: "transfer.create", details: {} });
   const value = d.lines.reduce((a, l) => a + l.qty * (l.unitCostCents ?? l.atSource?.costCents ?? 0), 0);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5">
+    <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader
         title={
           <span className="flex items-center gap-3">
@@ -93,11 +96,11 @@ export default async function TransferPage({ params }: { params: Promise<{ id: s
       <Card>
         <CardHeader title="History" />
         <ol className="space-y-2 px-4 py-3 text-sm">
-          {d.history.map((h, i) => {
+          {history.map((h, i) => {
             const det = (h.details ?? {}) as { lostInTransit?: { productId: string; qty: number }[] };
             return (
               <li key={i}>
-                <span className="font-medium">{ACTION_LABEL[h.action] ?? h.action}</span> <span className="text-zinc-500">· {h.who?.split(":").pop()}</span>
+                <span className="font-medium">{ACTION_LABEL[h.action] ?? h.action}</span> {h.who && <span className="text-zinc-500">· {h.who.split(":").pop()}</span>}
                 <div className="text-xs text-zinc-500">{formatDateTime(h.at)}</div>
                 {det.lostInTransit?.length ? (
                   <div className="text-xs text-red-600">

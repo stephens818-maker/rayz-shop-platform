@@ -180,12 +180,12 @@ export function PoEditor({
               const offCase = pack > 1 && qty % pack !== 0;
               return (
                 <tr key={r.productId} className="border-b border-zinc-100 align-top">
-                  <td className="px-3 py-2">
+                  <td className="min-w-56 px-3 py-2">
                     <div className="font-medium">{r.name}</div>
-                    <div className="text-xs text-zinc-500">{r.sku}</div>
+                    <div className="text-xs break-all text-zinc-500">{r.sku}</div>
                   </td>
                   <td className="px-3 py-2">{editable ? <Input className="w-28 py-1" value={r.vendorSku} onChange={(e) => set(i, { vendorSku: e.target.value })} /> : <span className="text-zinc-600">{r.vendorSku}</span>}</td>
-                  <td className="px-3 py-2 text-right text-xs text-zinc-600">
+                  <td className="px-3 py-2 text-right text-xs whitespace-nowrap text-zinc-600">
                     {r.stock ? (
                       <>
                         <div className={cx(r.stock.available <= r.stock.reorderPoint && "font-semibold text-red-600")}>{r.stock.available} available</div>
@@ -219,7 +219,7 @@ export function PoEditor({
                     )}
                     {pack > 1 && <div className={cx("mt-0.5 text-[11px]", offCase ? "text-amber-700" : "text-zinc-500")}>{offCase ? `not a whole case of ${pack}` : `${qty / pack} ${qty / pack === 1 ? "case" : "cases"}`}</div>}
                   </td>
-                  <td className="px-3 py-2 text-right">{editable ? <Input className="ml-auto w-20 py-1 text-right" inputMode="decimal" value={r.cost} onChange={(e) => set(i, { cost: e.target.value })} /> : $(toCents(r.cost))}</td>
+                  <td className="px-3 py-2 text-right">{editable ? <Input className="ml-auto w-24 py-1 text-right" inputMode="decimal" aria-label={`Unit cost of ${r.name}`} value={r.cost} onChange={(e) => set(i, { cost: e.target.value })} /> : $(toCents(r.cost))}</td>
                   <td className="px-3 py-2 text-right tabular font-medium">{$(qty * toCents(r.cost))}</td>
                   {showReceived && (
                     <td className={cx("px-3 py-2 text-right tabular", r.qtyReceived < qty ? "text-amber-700" : "text-emerald-700")}>

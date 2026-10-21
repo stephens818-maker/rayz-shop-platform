@@ -11,7 +11,6 @@ export const metadata: Metadata = { title: "Inventory settings" };
 export default async function InventorySettingsPage() {
   const ctx = await guardPage("/admin/inventory/settings");
   const shopIds = ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds;
-  const brandWide = ctx.brandWide && !ctx.currentShopId;
   const [shopRows, [brand], levels] = await Promise.all([
     db
       .select({ id: shops.id, name: shops.name, email: shops.email, negativeStock: shops.negativeStock, inventoryAlertEmail: shops.inventoryAlertEmail })
@@ -60,10 +59,10 @@ export default async function InventorySettingsPage() {
       </Card>
       <Card>
         <CardHeader title="Purchase order approval" subtitle="Sending needs “Send purchase orders”. Above the limit, someone with “Approve purchase orders” approves first." />
-        {brandWide && can(ctx, "settings.brand") ? (
+        {ctx.brandWide && can(ctx, "settings.brand") ? (
           <ApprovalLimit cents={brand?.t ?? null} />
         ) : (
-          <div className="p-4 text-sm text-zinc-600">{brand?.t != null ? `Orders over $${(brand.t / 100).toFixed(2)} need approval.` : "No approval step is set."} The limit is a brand setting.</div>
+          <div className="p-4 text-sm text-zinc-600">{brand?.t != null ? `Orders over $${(brand.t / 100).toFixed(2)} need approval.` : "No approval step is set."} The limit is a brand setting, changed by the Brand Owner.</div>
         )}
       </Card>
       <Card>

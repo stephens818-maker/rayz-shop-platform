@@ -48,7 +48,7 @@ export default async function LowStockPage() {
         <Stat label="Already coming" value={low.reduce((a, l) => a + l.onOrder + l.inTransit, 0)} hint="units on order or in transit" />
       </div>
 
-      {orders.length > 0 && <SuggestedOrders orders={orders} canCreate={can(ctx, "po.create")} multiShop={shopIds.length > 1} />}
+      {(orders.length > 0 || (can(ctx, "po.create") && low.length > 0)) && <SuggestedOrders orders={orders} canCreate={can(ctx, "po.create")} multiShop={shopIds.length > 1} />}
       {noVendor.length > 0 && (
         <Card>
           <CardHeader title="Due, but no vendor sells it" subtitle="Link these products to a vendor to get them on a suggested order." />
