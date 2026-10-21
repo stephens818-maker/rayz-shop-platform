@@ -191,6 +191,28 @@ export const locationGroupShops = pgTable(
   (t) => [primaryKey({ columns: [t.groupId, t.shopId] })],
 );
 
+/** Saved sets of barbers for report filters, e.g. "Floaters". Brand-wide; each viewer sees only the barbers in them they can see. */
+export const staffGroups = pgTable(
+  "staff_groups",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("staff_groups_name_unique").on(sql`lower(${t.name})`)],
+);
+
+export const staffGroupMembers = pgTable(
+  "staff_group_members",
+  {
+    groupId: uuid("group_id").notNull().references(() => staffGroups.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id").notNull().references(() => staff.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.staffId] })],
+);
+
 export const staffSchedules = pgTable(
   "staff_schedules",
   {

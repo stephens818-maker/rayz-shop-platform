@@ -78,6 +78,13 @@
       "when": 1792555959395,
       "tag": "0010_location_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792558539065,
+      "tag": "0011_barber_groups",
+      "breakpoints": true
     }
   ]
 }

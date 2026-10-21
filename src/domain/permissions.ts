@@ -41,6 +41,13 @@ export const FEATURE_PERMISSIONS = [
   { key: "inventory.manage", group: "Catalog and inventory", label: "Manage inventory: stock, cost, price and low-stock levels at their shops" },
   { key: "staff.manage", group: "Staff", label: "Add and edit staff profiles" },
   { key: "permissions.manage", group: "Staff", label: "Manage roles, permissions and shop access" },
+  {
+    key: "reports.all_staff",
+    group: "Staff",
+    label: "See every barber's numbers in reports",
+    hint: "Without it, reports that break down by barber show only the person's own tickets, appointments, tips and ratings.",
+  },
+  { key: "barber_groups.manage", group: "Staff", label: "Create and edit saved barber groups for reports", hint: "Groups can include barbers at any shop, so this also needs access to all shops." },
   { key: "settings.shop", group: "Settings and data", label: "Edit shop info, weekday hours, closures and booking rules" },
   { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
   { key: "settings.brand", group: "Settings and data", label: "Change brand-level settings: loyalty program, new shops, Sunday hours", ownerOnly: true },
@@ -56,7 +63,7 @@ export type FeaturePermission = (typeof FEATURE_PERMISSIONS)[number]["key"];
 export const REPORTS = [
   { key: "my_sales", label: "My sales and tips", href: "/admin/reports/my-sales", hint: "The signed-in person's own tickets only." },
   { key: "sales_summary", label: "Sales summary", href: "/admin/reports/sales" },
-  { key: "sales_by_barber", label: "Sales by barber", href: "/admin/reports/barbers" },
+  { key: "sales_by_barber", label: "Barber performance", href: "/admin/reports/barbers" },
   { key: "services_vs_products", label: "Services vs products", href: "/admin/reports/services-products" },
   { key: "tips_payroll", label: "Tips and payroll export", href: "/admin/payroll" },
   { key: "card_vs_cash", label: "Card vs cash", href: "/admin/reports/tender" },
@@ -147,6 +154,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "staff.manage",
   "settings.shop",
   "notifications.view",
+  "reports.all_staff",
 ];
 
 export interface RoleTemplate extends RoleDef {
@@ -204,6 +212,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       "clients.view_all",
       "clients.contact",
       "clients.edit",
+      "reports.all_staff",
       ...reports(["card_vs_cash", "cash_drawer"], false),
     ],
     maxDiscountPct: 10,
