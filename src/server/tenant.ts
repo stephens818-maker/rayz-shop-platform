@@ -31,7 +31,6 @@ export interface Tenant {
 
 /** How a shop outside the caller's workspace is named wherever a record has to mention one. */
 export const OTHER_SHOP = "Another Ray'z shop";
-export const OTHER_BARBER = "A barber at another shop";
 
 export const hasShop = (t: Pick<Tenant, "shopIds">, shopId: string | null | undefined) => !!shopId && t.shopIds.includes(shopId);
 
