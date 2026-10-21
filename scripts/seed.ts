@@ -8,7 +8,7 @@ import { DEFAULT_LOYALTY, accrue, rewardExpiry } from "@/domain/loyalty";
 import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
 import { addDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
-import { COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
+import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "rayz2026!";
 const HISTORY_DAYS = Number(process.env.SEED_HISTORY_DAYS ?? 56);
@@ -40,7 +40,7 @@ async function main() {
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
     inventory_adjustments, shop_products, products, shop_services, services, time_blocks,
-    location_group_shops, location_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours, shops, brand_settings
+    location_group_shops, location_groups, staff_group_members, staff_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours, shops, brand_settings
     RESTART IDENTITY CASCADE`);
 
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
@@ -161,6 +161,10 @@ async function main() {
     }),
   );
   await db.insert(t.staffSchedules).values(scheduleRows);
+  for (const g of BARBER_GROUPS) {
+    const [row] = await db.insert(t.staffGroups).values({ name: g.name }).returning();
+    await db.insert(t.staffGroupMembers).values(g.staff.map((key) => ({ groupId: row.id, staffId: staffByKey.get(key)!.id })));
+  }
 
   // ── Retail ──
   const productRows = await db

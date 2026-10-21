@@ -55,6 +55,12 @@ export const LOCATION_GROUPS: { name: string; shops: string[] }[] = [
   { name: "Illinois shops", shops: ["moline", "rock-island", "silvis"] },
 ];
 
+/** SAMPLE saved barber filters, under Setup → Barber groups. Keys are STAFF keys. */
+export const BARBER_GROUPS: { name: string; staff: string[] }[] = [
+  { name: "Floaters", staff: ["jamie", "daisey", "olivia-a", "taylor-a", "olivia-b"] },
+  { name: "Senior barbers", staff: ["casey", "kat", "amanda", "skylar"] },
+];
+
 export const SHOP_DESCRIPTION =
   "Ray'z Barber Shop is a place where modern meets retro. Ray'z offers the original old school barbershop feel with men's modern haircutting and style techniques. Ray'z specializes in helping guyz look their best.";
 
