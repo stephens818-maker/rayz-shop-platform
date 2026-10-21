@@ -14,6 +14,8 @@ function walk(dir: string): string[] {
 
 /** Dynamic admin URLs whose record has no shop of its own, and how they stay inside the workspace. */
 const BRAND_LEVEL: Record<string, string> = {
+  "customers/[id]/page.tsx":
+    "Clients are brand-wide and their visit history follows them to every shop; ratings and notes are filtered to the viewer's shops, and only their own shops' tickets are linked",
   "import/[runId]/errors/route.ts": "Import runs are brand-level; the route needs import.run, which only all-shops access keeps",
   "inventory/[id]/page.tsx": "A product is brand catalog; stock, ledger and orders on the page are filtered to the viewer's shops",
   "permissions/roles/[id]/page.tsx": "Roles are brand-level templates; editing needs roles.manage",

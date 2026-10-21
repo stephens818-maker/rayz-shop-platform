@@ -10,7 +10,6 @@ import { formatPhone } from "@/lib/phone";
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { clientSearchScope, maskPhone, scopedSearchWhere, shopClientsScope, visitedScope } from "@/server/customers";
-import { OTHER_SHOP, hasShop } from "@/server/tenant";
 
 export const metadata: Metadata = { title: "Clients" };
 
@@ -46,14 +45,13 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   // Barbers: clients they've cut. Otherwise a shop's own clients (home shop or any visit there),
   // and when searching, anyone the search reaches: see clientSearchScope.
   const scope = !full ? visitedScope({ staffId: ctx.staff.id }) : search ? undefined : ctx.currentShopId ? shopClientsScope([ctx.currentShopId]) : scoped ? shopClientsScope(ctx.shopIds) : undefined;
-  const here = scoped ? sql`and a.shop_id in (${sql.join(ctx.shopIds.length ? ctx.shopIds.map((x) => sql`${x}::uuid`) : [sql`null::uuid`], sql`, `)})` : sql``;
   const rows = await db
     .select({
       c: customers,
       shop: shops.name,
       progress: loyaltyAccounts.progressCents,
-      lastVisit: sql<string | null>`(select max(starts_at) from appointments a where a.customer_id = ${customers.id} and a.status = 'completed' ${here})`,
-      visits: sql<number>`(select count(*)::int from appointments a where a.customer_id = ${customers.id} and a.status = 'completed' ${here})`,
+      lastVisit: sql<string | null>`(select max(starts_at) from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
+      visits: sql<number>`(select count(*)::int from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
       ratingAvg: r.avg,
       ratingCount: r.count,
     })
@@ -78,7 +76,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
     ? "Clients you've had in your chair."
     : scoped
       ? q
-        ? `${yours} clients matching your search, plus any Ray'z client whose exact phone, email or full name you entered. Visits and spend are for your shops.`
+        ? `${yours} clients matching your search, plus any Ray'z client whose exact phone, email or full name you entered. Visits count every Ray'z shop.`
         : `${yours} clients (home shop or a visit here). To book a client from another Ray'z shop, search their exact phone, email or full name.`
       : q
         ? "Searching every Ray'z shop. Clients and loyalty are shared across shops."
@@ -150,7 +148,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   </Td>
                   <Td>{contact ? formatPhone(c.phone) || "—" : (maskPhone(c.phone) ?? "—")}</Td>
                   {contact && <Td className="text-zinc-600">{c.email ?? "—"}</Td>}
-                  <Td>{c.homeShopId && scoped && !hasShop(ctx, c.homeShopId) ? OTHER_SHOP : (shop ?? "—")}</Td>
+                  <Td>{shop ?? "—"}</Td>
                   <Td right>{visits}</Td>
                   <Td>{lastVisit ? formatDate(new Date(lastVisit), "MMM d, yyyy") : "—"}</Td>
                   <Td right>{formatCents(progress ?? 0)}</Td>
