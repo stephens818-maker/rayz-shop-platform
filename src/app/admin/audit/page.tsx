@@ -1,43 +1,40 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { Fragment } from "react";
 import { db } from "@/db";
-import { auditLog, shops } from "@/db/schema";
+import { auditLog } from "@/db/schema";
 import { Card, Empty, Input, PageHeader, Select, Table, Td, Th, buttonClass } from "@/components/ui";
 import { formatDateTime } from "@/lib/time";
 import { auditScope } from "@/server/audit";
 import { can, guardPage } from "@/server/auth/staff";
+import { auditRows } from "@/server/report-data";
+import { LocationField, LocationNotice, ViewToggle, locationProps, reportQuery } from "../reports/filters";
 import { ReportTabs } from "../reports/report-view";
+import { resolveLocations } from "../reports/scope";
 
 export const metadata: Metadata = { title: "Audit log" };
 
 const PAGE = 100;
 
-export default async function AuditPage({ searchParams }: { searchParams: Promise<{ q?: string; entity?: string; page?: string }> }) {
+export default async function AuditPage({ searchParams }: { searchParams: Promise<{ q?: string; entity?: string; page?: string; shop?: string | string[]; view?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/audit");
   const page = Math.max(0, Number(sp.page) || 0);
   const q = sp.q?.trim();
+  const l = await resolveLocations(ctx, sp);
 
-  const scope = auditScope(ctx);
-  const where = and(
-    scope,
-    sp.entity ? eq(auditLog.entity, sp.entity) : undefined,
-    q ? or(ilike(auditLog.action, `%${q}%`), ilike(auditLog.actorLabel, `%${q}%`), ilike(auditLog.entityId, `%${q}%`), sql`${auditLog.details}::text ilike ${`%${q}%`}`) : undefined,
-  );
   const [rows, areas] = await Promise.all([
+    auditRows({ viewer: ctx, loc: l.loc, q, entity: sp.entity, limit: PAGE + 1, offset: page * PAGE }),
     db
-      .select({ a: auditLog, shop: shops.name })
+      .selectDistinct({ entity: auditLog.entity })
       .from(auditLog)
-      .leftJoin(shops, eq(shops.id, auditLog.shopId))
-      .where(where)
-      .orderBy(desc(auditLog.at))
-      .limit(PAGE + 1)
-      .offset(page * PAGE),
-    db.selectDistinct({ entity: auditLog.entity }).from(auditLog).where(scope).orderBy(auditLog.entity),
+      .where(auditScope({ ...ctx, currentShopId: null }))
+      .orderBy(auditLog.entity),
   ]);
   const more = rows.length > PAGE;
-  const qs = (p: number) => `/admin/audit?${new URLSearchParams({ ...(q ? { q } : {}), ...(sp.entity ? { entity: sp.entity } : {}), page: String(p) })}`;
+  const filters = { q: q || null, entity: sp.entity || null };
+  const qs = (p: number) => `/admin/audit?${reportQuery(l, { ...filters, page: String(p) })}`;
+  const grouped = l.loc.view === "shops";
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -46,14 +43,15 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
         subtitle="Every sale, void, refund, price, tax, schedule, permission and settings change, with who did it. Entries can't be edited or deleted."
         actions={
           can(ctx, "report.audit_log.export") ? (
-            <a className={buttonClass("secondary")} href={`/admin/reports/export?type=audit_log${q ? `&q=${encodeURIComponent(q)}` : ""}${sp.entity ? `&entity=${encodeURIComponent(sp.entity)}` : ""}`}>
+            <a className={buttonClass("secondary")} href={`/admin/reports/export?${reportQuery(l, { type: "audit_log", ...filters })}`}>
               Export CSV
             </a>
           ) : undefined
         }
       />
       <ReportTabs ctx={ctx} active="audit_log" />
-      <form className="mb-3 flex flex-wrap gap-2" method="get">
+      <form key={l.shopParam ?? ""} className="no-print mb-3 flex flex-wrap items-end gap-2 text-sm" method="get">
+        {ctx.shops.length > 1 && <LocationField p={locationProps(ctx, l)} />}
         <Input name="q" defaultValue={q} placeholder="Search action, person, ID, details…" className="max-w-xs" />
         <Select name="entity" defaultValue={sp.entity ?? ""} className="max-w-48">
           <option value="">All areas</option>
@@ -64,7 +62,13 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
           ))}
         </Select>
         <button className={buttonClass("secondary")}>Filter</button>
+        {l.selection.shopIds.length > 1 && (
+          <div className="ml-auto self-center">
+            <ViewToggle view={l.loc.view} href={(v) => `/admin/audit?${reportQuery({ ...l, loc: { ...l.loc, view: v } }, filters)}`} />
+          </div>
+        )}
       </form>
+      <LocationNotice locations={l} />
       <Card>
         {rows.length === 0 ? (
           <Empty title="Nothing logged yet" />
@@ -80,19 +84,28 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, PAGE).map(({ a, shop }) => (
-                <tr key={a.id} className="align-top">
-                  <Td className="whitespace-nowrap">{formatDateTime(a.at)}</Td>
-                  <Td className="whitespace-nowrap">{a.actorLabel ?? "—"}</Td>
-                  <Td className="whitespace-nowrap">
-                    <span className="font-mono text-xs">{a.action}</span>
-                    {a.entityId && <div className="max-w-40 truncate font-mono text-[11px] text-zinc-400">{a.entityId}</div>}
-                  </Td>
-                  <Td className="whitespace-nowrap">{shop ?? "Brand"}</Td>
-                  <Td>
-                    <Details value={a.details} />
-                  </Td>
-                </tr>
+              {rows.slice(0, PAGE).map(({ a, shop }, i, list) => (
+                <Fragment key={a.id}>
+                  {grouped && (i === 0 || list[i - 1].a.shopId !== a.shopId) && (
+                    <tr className="bg-zinc-50">
+                      <td colSpan={5} className="border-b border-zinc-200 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-600">
+                        {shop ?? "Brand"}
+                      </td>
+                    </tr>
+                  )}
+                  <tr className="align-top">
+                    <Td className="whitespace-nowrap">{formatDateTime(a.at)}</Td>
+                    <Td className="whitespace-nowrap">{a.actorLabel ?? "—"}</Td>
+                    <Td className="whitespace-nowrap">
+                      <span className="font-mono text-xs">{a.action}</span>
+                      {a.entityId && <div className="max-w-40 truncate font-mono text-[11px] text-zinc-400">{a.entityId}</div>}
+                    </Td>
+                    <Td className="whitespace-nowrap">{shop ?? "Brand"}</Td>
+                    <Td>
+                      <Details value={a.details} />
+                    </Td>
+                  </tr>
+                </Fragment>
               ))}
             </tbody>
           </Table>

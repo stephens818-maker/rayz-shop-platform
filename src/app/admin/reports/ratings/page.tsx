@@ -4,6 +4,8 @@ import { Card, CardHeader, Empty, PageHeader, StarBadge, Table, Td, Th } from "@
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { RatedClientRow, ratingsByShop } from "@/server/ratings";
+import { LocationView } from "@/domain/report-views";
+import { LocationField, LocationNotice, ViewToggle, locationProps, reportQuery } from "../filters";
 import { ReportTabs } from "../report-view";
 import { MIN_RATINGS, PERIODS, RatingsParams, resolveRatingsParams } from "./params";
 
@@ -49,12 +51,12 @@ function ClientTable({ title, rows }: { title: string; rows: RatedClientRow[] })
 
 export default async function RatingsReportPage({ searchParams }: { searchParams: Promise<RatingsParams> }) {
   const ctx = await guardPage("/admin/reports/ratings");
-  const p = resolveRatingsParams(ctx, await searchParams);
+  const p = await resolveRatingsParams(ctx, await searchParams);
   const t0 = performance.now();
-  const shops = await ratingsByShop({ shopIds: p.shopIds, minRatings: p.min, since: p.since, limit: 10 });
+  const shops = await ratingsByShop(p.query);
   const ms = Math.round(performance.now() - t0);
-  const csv = new URLSearchParams({ min: String(p.min), period: p.period });
-  if (p.shopParam) csv.set("shop", p.shopParam);
+  const csv = reportQuery(p, { min: String(p.min), period: p.period });
+  const here = (view: LocationView) => `/admin/reports/ratings?${reportQuery({ ...p, loc: { ...p.loc, view } }, { min: String(p.min), period: p.period })}`;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -62,7 +64,8 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
         title="Client ratings"
         subtitle={
           <>
-            Lowest- and highest-rated clients at each shop, from staff ratings given there. Staff only.
+            {p.label} · {p.query.combined ? "Lowest- and highest-rated clients across these shops" : "Lowest- and highest-rated clients at each shop"}, from staff ratings given
+            there. Staff only.
             <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
           </>
         }
@@ -75,34 +78,30 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
         }
       />
       <ReportTabs ctx={ctx} active="client_ratings" />
-      <form className="mb-4 flex flex-wrap items-end gap-2 text-sm" action="/admin/reports/ratings">
-        {ctx.shops.length > 1 && (
-          <select name="shop" defaultValue={p.shopParam ?? ""} aria-label="Shop" className="h-10 rounded-lg px-2 ring-1 ring-zinc-300">
-            <option value="">Current selection</option>
-            <option value="all">All my shops</option>
-            {ctx.shops.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        )}
-        <select name="period" defaultValue={p.period} aria-label="Period" className="h-10 rounded-lg px-2 ring-1 ring-zinc-300">
+      <form key={p.shopParam ?? ""} className="no-print mb-4 flex flex-wrap items-end gap-2 text-sm" action="/admin/reports/ratings">
+        {ctx.shops.length > 1 && <LocationField p={locationProps(ctx, p)} />}
+        <select name="period" defaultValue={p.period} aria-label="Period" className="h-9 rounded-lg px-2 ring-1 ring-zinc-300">
           {Object.entries(PERIODS).map(([k, v]) => (
             <option key={k} value={k}>
               {v}
             </option>
           ))}
         </select>
-        <select name="min" defaultValue={String(p.min)} aria-label="Minimum ratings" className="h-10 rounded-lg px-2 ring-1 ring-zinc-300">
+        <select name="min" defaultValue={String(p.min)} aria-label="Minimum ratings" className="h-9 rounded-lg px-2 ring-1 ring-zinc-300">
           {MIN_RATINGS.map((m) => (
             <option key={m} value={m}>
               {m === 1 ? "Any number of ratings" : `At least ${m} ratings`}
             </option>
           ))}
         </select>
-        <button className="h-10 rounded-lg bg-ink-900 px-4 font-medium text-white">Show</button>
+        <button className="h-9 rounded-lg bg-ink-900 px-4 font-medium text-white">Show</button>
+        {p.selection.shopIds.length > 1 && (
+          <div className="ml-auto self-center">
+            <ViewToggle view={p.loc.view} href={here} />
+          </div>
+        )}
       </form>
+      <LocationNotice locations={p} />
       {shops.length === 0 ? (
         <Empty title="No shops in scope" />
       ) : (

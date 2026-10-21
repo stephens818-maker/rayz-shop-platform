@@ -1,226 +1,317 @@
 import "server-only";
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, shops } from "@/db/schema";
 import { ReportKey } from "@/domain/permissions";
+import { Cell, Column, ColumnKind, ListRow, Metric, ReportTable, ViewCtx, csvTable, listTable, metricTable, splitTable } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
-import { auditScope } from "./audit";
 import {
   ReportScope,
+  TenderTotals,
   appointmentHeatmap,
   byBarber,
-  byShop,
-  cents,
   dailyTotals,
   discountBreakdown,
   drawerHistory,
-  giftCardActivity,
+  giftCardTotalsByShop,
+  giftCardsIssued,
   inventoryStatus,
   itemMix,
   kpis,
+  kpisByShop,
   loyaltyActivity,
+  loyaltyByShop,
   monthlyTotals,
   payrollTips,
   refundLog,
-  salesSummary,
-  tenderBreakdown,
+  refundTotals,
+  salesSummaryByShop,
+  sumSalesTotals,
+  tenderByShop,
   toCsv,
 } from "./reports";
 
 /**
  * Every a la carte report is one loader returning stats and tables. The report page renders them
  * and the export route turns the same tables into CSV, so what you see is what you download.
+ *
+ * Loaders fetch rows per shop and the table builders add them up, so the combined view, the
+ * per-location columns and their totals all come from the same numbers.
  */
 
-export type Cell = string | number | boolean | null;
-export type ColumnKind = "text" | "int" | "money" | "pct" | "bool";
-export interface ReportTable {
-  id: string;
-  title: string;
-  subtitle?: string;
-  columns: { label: string; kind?: ColumnKind }[];
-  rows: Cell[][];
-  /** Shown as stat tiles on the page; still downloadable. */
-  exportOnly?: boolean;
-}
+export type { Cell, ColumnKind, ReportTable } from "@/domain/report-views";
+
 export interface ReportStat {
   label: string;
   value: string;
   hint?: string;
   tone?: "up" | "down";
 }
+export interface Heatmap {
+  title: string;
+  cells: { dow: number; hour: number; n: number }[];
+}
 export interface ReportData {
   stats: ReportStat[];
   tables: ReportTable[];
-  heatmap?: { dow: number; hour: number; n: number }[];
+  heatmaps?: Heatmap[];
   notes?: string[];
 }
 
 export interface ReportInput {
   scope: ReportScope;
+  /** Combined or by location, over the selected shops. */
+  loc: ViewCtx;
   /** The viewer's access: brand-level rows (no shop) are only for people with every shop. */
   viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[] };
   params: Record<string, string | undefined>;
 }
 
 const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%`);
-const money = (label: string): { label: string; kind: ColumnKind } => ({ label, kind: "money" });
-const int = (label: string): { label: string; kind: ColumnKind } => ({ label, kind: "int" });
-const text = (label: string): { label: string; kind?: ColumnKind } => ({ label });
+const ratio = (a: number, b: number) => (b ? a / b : null);
+const money = (label: string): Column => ({ label, kind: "money" });
+const int = (label: string): Column => ({ label, kind: "int" });
+const text = (label: string): Column => ({ label });
+/** Numbers that identify or describe a row rather than add up. */
+const id = (label: string, kind: ColumnKind = "int"): Column => ({ label, kind, sum: false });
 
-async function salesTables(s: ReportScope, withShops: boolean): Promise<ReportTable[]> {
-  const [shopRows, daily, monthly] = await Promise.all([withShops && s.shopIds.length > 1 ? byShop(s) : Promise.resolve([]), dailyTotals(s), monthlyTotals(s)]);
-  const out: ReportTable[] = [];
-  if (shopRows.length)
-    out.push({
-      id: "shops",
-      title: "By shop",
-      columns: [text("Shop"), int("Tickets"), money("Gross"), money("Refunds"), money("Net services"), money("Net products"), money("Tips")],
-      rows: shopRows.map((x) => [x.name, x.tickets, x.grossCents, x.refundCents, x.netServicesCents, x.netProductsCents, x.tipsCents]),
-    });
-  out.push({
+const byDay = (a: Cell[], b: Cell[]) => String(a[0]).localeCompare(String(b[0]));
+const byDayDesc = (a: Cell[], b: Cell[]) => String(b[0]).localeCompare(String(a[0]));
+const sum = <T>(xs: Record<string, T>, f: (x: T) => number) => Object.values(xs).reduce((a, x) => a + f(x), 0);
+const each = <T>(xs: Record<string, T>, f: (x: T) => number | null) => Object.fromEntries(Object.entries(xs).map(([k, x]) => [k, f(x)]));
+
+/** One value per shop, for a metric that adds up across shops. */
+const m = <T>(label: string, kind: ColumnKind, xs: Record<string, T>, f: (x: T) => number): Metric => ({ label, kind, byShop: each(xs, f) });
+
+function tenderTotal(t: Record<string, TenderTotals>): TenderTotals {
+  return {
+    cardCents: sum(t, (x) => x.cardCents),
+    cardCreditCents: sum(t, (x) => x.cardCreditCents),
+    cardDebitCents: sum(t, (x) => x.cardDebitCents),
+    cashCents: sum(t, (x) => x.cashCents),
+    giftCardCents: sum(t, (x) => x.giftCardCents),
+    cardTipsCents: sum(t, (x) => x.cardTipsCents),
+    cashTipsCents: sum(t, (x) => x.cashTipsCents),
+  };
+}
+
+async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+  const [byShopTotals, tender, daily, monthly] = await Promise.all([
+    salesSummaryByShop(scope),
+    tenderByShop(scope),
+    dailyTotals(scope, { byShop: true }),
+    monthlyTotals(scope, { byShop: true }),
+  ]);
+  const s = sumSalesTotals(Object.values(byShopTotals));
+  const t = tenderTotal(tender);
+  const x = byShopTotals;
+  const summary = metricTable(loc, {
+    id: "summary",
+    title: loc.view === "shops" ? "Summary by location" : "Summary",
+    exportOnly: loc.view !== "shops",
+    metrics: [
+      m("Tickets", "int", x, (v) => v.tickets),
+      m("Gross sales", "money", x, (v) => v.grossSalesCents),
+      m("Discounts", "money", x, (v) => v.discountCents),
+      m("Refunds", "money", x, (v) => v.refundCents),
+      m("Net services", "money", x, (v) => v.netServicesCents),
+      m("Net products", "money", x, (v) => v.netProductsCents),
+      m("Net sales", "money", x, (v) => v.netSalesCents),
+      { label: "Avg ticket", kind: "money", byShop: each(x, (v) => v.avgTicketCents), total: s.avgTicketCents },
+      m("Tickets with retail", "int", x, (v) => v.productTickets),
+      m("Tax", "money", x, (v) => v.taxCents),
+      m("Tips", "money", x, (v) => v.tipsCents),
+      m("Card surcharges", "money", x, (v) => v.cardFeeCents),
+      m("Gift cards sold", "money", x, (v) => v.giftCardsSoldCents),
+      m("Card", "money", tender, (v) => v.cardCents),
+      m("Card (credit)", "money", tender, (v) => v.cardCreditCents),
+      m("Card (debit/prepaid)", "money", tender, (v) => v.cardDebitCents),
+      m("Cash", "money", tender, (v) => v.cashCents),
+      m("Gift card redemptions", "money", tender, (v) => v.giftCardCents),
+    ],
+  });
+  const dailyTable = listTable(loc, {
     id: "daily",
     title: "Daily totals",
     columns: [text("Date"), int("Tickets"), money("Gross"), money("Refunds"), money("Net"), money("Tips"), money("Card"), money("Cash")],
-    rows: daily.map((x) => [x.day, x.tickets, x.grossCents, x.refundCents, x.netCents, x.tipsCents, x.cardCents, x.cashCents]),
+    rows: daily.map((d) => ({ shopId: d.shopId!, key: d.day, cells: [d.day, d.tickets, d.grossCents, d.refundCents, d.netCents, d.tipsCents, d.cardCents, d.cashCents] })),
+    merge: true,
+    sort: byDay,
   });
-  out.push({
+  const monthlyTable = listTable(loc, {
     id: "monthly",
     title: "Monthly totals",
     columns: [text("Month"), int("Tickets"), money("Gross"), money("Refunds"), money("Net services"), money("Net products"), money("Tips")],
-    rows: monthly.map((x) => [x.month, x.tickets, x.grossCents, x.refundCents, x.netServicesCents, x.netProductsCents, x.tipsCents]),
+    rows: monthly.map((d) => ({ shopId: d.shopId!, key: d.month, cells: [d.month, d.tickets, d.grossCents, d.refundCents, d.netServicesCents, d.netProductsCents, d.tipsCents] })),
+    merge: true,
+    sort: byDay,
   });
-  return out;
+  return {
+    stats: [
+      { label: "Gross sales", value: formatCents(s.grossSalesCents), hint: `${s.tickets} tickets · avg ${formatCents(s.avgTicketCents)}` },
+      { label: "Net services", value: formatCents(s.netServicesCents), hint: s.discountCents ? `after ${formatCents(s.discountCents)} discounts` : undefined },
+      { label: "Net products", value: formatCents(s.netProductsCents), hint: `${s.productTickets} tickets with retail` },
+      { label: "Tips", value: formatCents(s.tipsCents), hint: `card ${formatCents(t.cardTipsCents)} · cash ${formatCents(t.cashTipsCents)}` },
+      { label: "Tax collected", value: formatCents(s.taxCents), hint: `gift cards sold ${formatCents(s.giftCardsSoldCents)}` },
+      { label: "Refunds", value: formatCents(s.refundCents) },
+      { label: "Card surcharges", value: formatCents(s.cardFeeCents) },
+      { label: "Card / cash", value: `${formatCents(t.cardCents)} / ${formatCents(t.cashCents)}` },
+    ],
+    tables: [summary, dailyTable, monthlyTable],
+  };
 }
 
-async function summaryStats(s: ReportScope): Promise<ReportStat[]> {
-  const [summary, tender] = await Promise.all([salesSummary(s), tenderBreakdown(s)]);
-  return [
-    { label: "Gross sales", value: formatCents(summary.grossSalesCents), hint: `${summary.tickets} tickets · avg ${formatCents(summary.avgTicketCents)}` },
-    { label: "Net services", value: formatCents(summary.netServicesCents), hint: summary.discountCents ? `after ${formatCents(summary.discountCents)} discounts` : undefined },
-    { label: "Net products", value: formatCents(summary.netProductsCents), hint: `${summary.productTickets} tickets with retail` },
-    { label: "Tips", value: formatCents(summary.tipsCents), hint: `card ${formatCents(tender.cardTipsCents)} · cash ${formatCents(tender.cashTipsCents)}` },
-    { label: "Tax collected", value: formatCents(summary.taxCents), hint: `gift cards sold ${formatCents(summary.giftCardsSoldCents)}` },
-    { label: "Refunds", value: formatCents(summary.refundCents) },
-    { label: "Card surcharges", value: formatCents(summary.cardFeeCents) },
-    { label: "Card / cash", value: `${formatCents(tender.cardCents)} / ${formatCents(tender.cashCents)}` },
-  ];
-}
+/** Net services, net products, refunds and tips per barber; the average ticket is before refunds. */
+const BARBER_COLUMNS = [text("Barber"), int("Tickets"), int("Services"), money("Net services"), money("Net products"), money("Refunds"), money("Tips"), id("Avg ticket", "money")];
+const barberDerive = (c: Cell[]): Cell[] => {
+  const n = Number(c[1]) || 0;
+  const out = [...c];
+  out[7] = n ? Math.round((Number(c[3]) + Number(c[4]) + Number(c[5])) / n) : 0;
+  return out;
+};
+const byNetServices = (a: Cell[], b: Cell[]) => Number(b[3]) - Number(a[3]) || String(a[0]).localeCompare(String(b[0]));
 
 export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<ReportData>> = {
-  async my_sales({ scope }) {
-    return { stats: await summaryStats(scope), tables: await salesTables(scope, false) };
+  async my_sales({ scope, loc }) {
+    return salesData(scope, loc);
   },
 
-  async sales_summary({ scope }) {
-    const [summary, t] = await Promise.all([salesSummary(scope), tenderBreakdown(scope)]);
-    const totals: ReportTable = {
-      id: "summary",
-      title: "Summary",
-      exportOnly: true,
-      columns: [text("Metric"), money("Amount"), int("Count")],
-      rows: [
-        ["Tickets", null, summary.tickets],
-        ["Gross sales", summary.grossSalesCents, null],
-        ["Discounts", summary.discountCents, null],
-        ["Refunds", summary.refundCents, null],
-        ["Net services", summary.netServicesCents, null],
-        ["Net products", summary.netProductsCents, summary.productTickets],
-        ["Tax", summary.taxCents, null],
-        ["Tips", summary.tipsCents, null],
-        ["Card surcharges", summary.cardFeeCents, null],
-        ["Gift cards sold", summary.giftCardsSoldCents, null],
-        ["Card", t.cardCents, null],
-        ["Card (credit)", t.cardCreditCents, null],
-        ["Card (debit/prepaid)", t.cardDebitCents, null],
-        ["Cash", t.cashCents, null],
-        ["Gift card redemptions", t.giftCardCents, null],
-      ],
-    };
-    return { stats: await summaryStats(scope), tables: [totals, ...(await salesTables(scope, true))] };
+  async sales_summary({ scope, loc }) {
+    return salesData(scope, loc);
   },
 
-  async sales_by_barber({ scope }) {
-    const r = await byBarber(scope);
+  async sales_by_barber({ scope, loc }) {
+    const r = await byBarber(scope, { byShop: true });
+    const rows: ListRow[] = r.map((x) => ({
+      shopId: x.shopId!,
+      key: x.staffId,
+      cells: [x.label, x.tickets, x.services, x.netServicesCents, x.netProductsCents, x.refundCents, x.tipsCents, x.avgTicketCents],
+    }));
+    const spec = { columns: BARBER_COLUMNS, rows, derive: barberDerive, sort: byNetServices };
+    const split = splitTable(loc, { id: "split", title: "Barbers at more than one shop", subtitle: "Each ticket counts at the shop where it was rung up.", ...spec });
     return {
       stats: [],
       tables: [
-        {
+        listTable(loc, {
           id: "barbers",
-          title: "By barber",
-          subtitle: "Service credit and tips go to the barber on the ticket.",
-          columns: [text("Barber"), int("Tickets"), int("Services"), money("Net services"), money("Net products"), money("Tips"), money("Avg ticket")],
-          rows: r.map((x) => [x.label, x.tickets, x.services, x.netServicesCents, x.netProductsCents, x.tipsCents, x.avgTicketCents]),
-        },
+          title: loc.view === "shops" ? "By barber, by location" : "By barber",
+          subtitle: "Service credit and tips go to the barber on the ticket, at the shop where the ticket was rung up.",
+          ...spec,
+          merge: true,
+          shopsColumnAt: loc.shops.length > 1 ? 1 : undefined,
+        }),
+        ...(split ? [split] : []),
       ],
     };
   },
 
-  async services_vs_products({ scope }) {
-    const [summary, mix] = await Promise.all([salesSummary(scope), itemMix(scope)]);
-    const total = summary.netServicesCents + summary.netProductsCents;
-    const row = (x: (typeof mix)[number]): Cell[] => [x.name, x.qty, x.tickets, x.grossCents, x.discountCents, x.netCents];
+  async services_vs_products({ scope, loc }) {
+    const [x, mix] = await Promise.all([salesSummaryByShop(scope), itemMix(scope, { byShop: true })]);
+    const s = sumSalesTotals(Object.values(x));
+    const total = s.netServicesCents + s.netProductsCents;
     const cols = [text("Item"), int("Qty"), int("Tickets"), money("Gross"), money("Discounts"), money("Net")];
+    const items = (f: (k: string) => boolean): ListRow[] =>
+      mix.filter((i) => f(i.kind)).map((i) => ({ shopId: i.shopId!, key: `${i.kind}|${i.name}`, cells: [i.name, i.qty, i.tickets, i.grossCents, i.discountCents, i.netCents] }));
+    const byNet = (a: Cell[], b: Cell[]) => Number(b[5]) - Number(a[5]) || String(a[0]).localeCompare(String(b[0]));
     return {
       stats: [
-        { label: "Net services", value: formatCents(summary.netServicesCents), hint: total ? `${Math.round((summary.netServicesCents / total) * 100)}% of sales` : undefined },
-        { label: "Net products", value: formatCents(summary.netProductsCents), hint: total ? `${Math.round((summary.netProductsCents / total) * 100)}% of sales` : undefined },
-        { label: "Retail attach rate", value: pct(summary.tickets ? summary.productTickets / summary.tickets : null), hint: `${summary.productTickets} of ${summary.tickets} tickets` },
-        { label: "Avg ticket", value: formatCents(summary.avgTicketCents) },
+        { label: "Net services", value: formatCents(s.netServicesCents), hint: total ? `${Math.round((s.netServicesCents / total) * 100)}% of sales` : undefined },
+        { label: "Net products", value: formatCents(s.netProductsCents), hint: total ? `${Math.round((s.netProductsCents / total) * 100)}% of sales` : undefined },
+        { label: "Retail attach rate", value: pct(ratio(s.productTickets, s.tickets)), hint: `${s.productTickets} of ${s.tickets} tickets` },
+        { label: "Avg ticket", value: formatCents(s.avgTicketCents) },
       ],
       tables: [
-        { id: "services", title: "Services and add-ons", columns: cols, rows: mix.filter((x) => x.kind !== "product").map(row) },
-        { id: "products", title: "Retail products", columns: cols, rows: mix.filter((x) => x.kind === "product").map(row) },
+        metricTable(loc, {
+          id: "mix",
+          title: "Services and products by location",
+          exportOnly: loc.view !== "shops",
+          metrics: [
+            m("Net services", "money", x, (v) => v.netServicesCents),
+            m("Net products", "money", x, (v) => v.netProductsCents),
+            {
+              label: "Services share",
+              kind: "pct",
+              byShop: each(x, (v) => ratio(v.netServicesCents, v.netServicesCents + v.netProductsCents)),
+              total: ratio(s.netServicesCents, total),
+            },
+            m("Tickets", "int", x, (v) => v.tickets),
+            m("Tickets with retail", "int", x, (v) => v.productTickets),
+            { label: "Retail attach rate", kind: "pct", byShop: each(x, (v) => ratio(v.productTickets, v.tickets)), total: ratio(s.productTickets, s.tickets) },
+            { label: "Avg ticket", kind: "money", byShop: each(x, (v) => v.avgTicketCents), total: s.avgTicketCents },
+          ],
+        }),
+        listTable(loc, { id: "services", title: "Services and add-ons", columns: cols, rows: items((k) => k !== "product"), merge: true, sort: byNet }),
+        listTable(loc, { id: "products", title: "Retail products", columns: cols, rows: items((k) => k === "product"), merge: true, sort: byNet }),
       ],
       notes: ["Item lines come from paid tickets in the range; refunds are on the Discounts & refunds report."],
     };
   },
 
-  async tips_payroll({ scope }) {
+  async tips_payroll({ scope, loc }) {
     const r = await payrollTips(scope);
+    const columns = [
+      text("Period start"),
+      text("Period end"),
+      text("Staff ID"),
+      text("Barber"),
+      int("Tickets"),
+      money("Service sales"),
+      money("Product sales"),
+      money("Card tips"),
+      money("Cash tips"),
+      money("Gift card tips"),
+      money("Tip refunds (already subtracted)"),
+      money("Total tips"),
+    ];
+    const rows: ListRow[] = r.rows.map((x) => ({
+      shopId: x.shopId,
+      key: `${x.periodStart}|${x.staffId}`,
+      cells: [
+        x.periodStart,
+        x.periodEnd,
+        x.staffCode,
+        x.label,
+        x.tickets,
+        x.serviceSalesCents,
+        x.productSalesCents,
+        x.cardTipsCents,
+        x.cashTipsCents,
+        x.giftCardTipsCents,
+        x.tipRefundsCents,
+        x.totalTipsCents,
+      ],
+    }));
+    const order = (a: Cell[], b: Cell[]) => String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3]));
+    const split = splitTable(loc, {
+      id: "split",
+      title: "Barbers at more than one shop",
+      subtitle: "Tips and sales are paid out from the shop where each ticket was rung up; the total is what the barber made across shops.",
+      columns,
+      rows,
+      sort: order,
+      shopAt: 4,
+    });
     return {
       stats: [],
       tables: [
-        {
+        listTable(loc, {
           id: "payroll",
-          title: "Tips by pay period",
-          columns: [
-            text("Period start"),
-            text("Period end"),
-            text("Staff ID"),
-            text("Barber"),
-            text("Shop"),
-            int("Tickets"),
-            money("Service sales"),
-            money("Product sales"),
-            money("Card tips"),
-            money("Cash tips"),
-            money("Gift card tips"),
-            money("Tip refunds (already subtracted)"),
-            money("Total tips"),
-          ],
-          rows: r.rows.map((x) => [
-            x.periodStart,
-            x.periodEnd,
-            x.staffCode,
-            x.label,
-            x.shop,
-            x.tickets,
-            x.serviceSalesCents,
-            x.productSalesCents,
-            x.cardTipsCents,
-            x.cashTipsCents,
-            x.giftCardTipsCents,
-            x.tipRefundsCents,
-            x.totalTipsCents,
-          ]),
-        },
+          title: loc.view === "shops" ? "Tips by pay period, by location" : "Tips by pay period",
+          columns,
+          rows,
+          merge: true,
+          shopsColumnAt: loc.shops.length > 1 ? 4 : undefined,
+          labelAt: 3,
+          sort: order,
+        }),
+        ...(split ? [split] : []),
       ],
     };
   },
 
-  async card_vs_cash({ scope }) {
-    const [t, daily] = await Promise.all([tenderBreakdown(scope), dailyTotals(scope)]);
+  async card_vs_cash({ scope, loc }) {
+    const [tender, daily] = await Promise.all([tenderByShop(scope), dailyTotals(scope, { byShop: true })]);
+    const t = tenderTotal(tender);
     const all = t.cardCents + t.cashCents + t.giftCardCents;
     return {
       stats: [
@@ -230,101 +321,185 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         { label: "Gift card redemptions", value: formatCents(t.giftCardCents) },
       ],
       tables: [
-        {
+        metricTable(loc, {
           id: "tender",
           title: "Tender totals",
           subtitle: "Takings by tender after refunds, including tips and surcharges.",
-          columns: [text("Tender"), money("Amount"), money("Tips")],
-          rows: [
-            ["Card (credit)", t.cardCreditCents, null],
-            ["Card (debit / prepaid)", t.cardDebitCents, null],
-            ["Card (all)", t.cardCents, t.cardTipsCents],
-            ["Cash", t.cashCents, t.cashTipsCents],
-            ["Gift card", t.giftCardCents, null],
+          label: "Tender",
+          metrics: [
+            m("Card (credit)", "money", tender, (v) => v.cardCreditCents),
+            m("Card (debit / prepaid)", "money", tender, (v) => v.cardDebitCents),
+            m("Card (all)", "money", tender, (v) => v.cardCents),
+            m("Card tips", "money", tender, (v) => v.cardTipsCents),
+            m("Cash", "money", tender, (v) => v.cashCents),
+            m("Cash tips", "money", tender, (v) => v.cashTipsCents),
+            m("Gift card", "money", tender, (v) => v.giftCardCents),
           ],
-        },
-        {
+        }),
+        listTable(loc, {
           id: "daily",
           title: "Card and cash by day",
           columns: [text("Date"), int("Tickets"), money("Card"), money("Cash")],
-          rows: daily.map((x) => [x.day, x.tickets, x.cardCents, x.cashCents]),
-        },
+          rows: daily.map((d) => ({ shopId: d.shopId!, key: d.day, cells: [d.day, d.tickets, d.cardCents, d.cashCents] })),
+          merge: true,
+          sort: byDay,
+        }),
       ],
     };
   },
 
-  async discounts_refunds({ scope }) {
-    const [summary, d, r] = await Promise.all([salesSummary(scope), discountBreakdown(scope), refundLog(scope)]);
-    const refunds = r.filter((x) => x.kind === "refund");
-    const voids = r.filter((x) => x.kind === "void");
+  async discounts_refunds({ scope, loc }) {
+    const [x, d, totals, log] = await Promise.all([salesSummaryByShop(scope), discountBreakdown(scope, { byShop: true }), refundTotals(scope, { byShop: true }), refundLog(scope)]);
+    const s = sumSalesTotals(Object.values(x));
+    const kind = (k: string) => totals.filter((t) => t.kind === k);
+    const per = (k: string, f: (t: (typeof totals)[number]) => number) =>
+      Object.fromEntries(
+        loc.shops.map((sh) => [
+          sh.id,
+          kind(k)
+            .filter((t) => t.shopId === sh.id)
+            .reduce((a, t) => a + f(t), 0),
+        ]),
+      );
+    const refunds = { n: kind("refund").reduce((a, t) => a + t.n, 0), cents: kind("refund").reduce((a, t) => a + t.amountCents, 0) };
+    const voids = { n: kind("void").reduce((a, t) => a + t.n, 0), cents: kind("void").reduce((a, t) => a + t.amountCents, 0) };
     return {
       stats: [
-        { label: "Discounts", value: formatCents(summary.discountCents), hint: `${d.reduce((a, x) => a + x.tickets, 0)} discounted lines` },
-        { label: "Refunds", value: formatCents(refunds.reduce((a, x) => a + x.amountCents, 0)), hint: `${refunds.length} refunds` },
-        { label: "Voids", value: formatCents(voids.reduce((a, x) => a + x.amountCents, 0)), hint: `${voids.length} voided tickets` },
-        { label: "Gross sales", value: formatCents(summary.grossSalesCents) },
+        { label: "Discounts", value: formatCents(s.discountCents), hint: `${d.reduce((a, r) => a + r.tickets, 0)} discounted lines` },
+        { label: "Refunds", value: formatCents(refunds.cents), hint: `${refunds.n} refunds` },
+        { label: "Voids", value: formatCents(voids.cents), hint: `${voids.n} voided tickets` },
+        { label: "Gross sales", value: formatCents(s.grossSalesCents) },
       ],
       tables: [
-        {
+        metricTable(loc, {
+          id: "totals",
+          title: "Discounts and refunds by location",
+          exportOnly: loc.view !== "shops",
+          metrics: [
+            m("Gross sales", "money", x, (v) => v.grossSalesCents),
+            m("Discounts", "money", x, (v) => v.discountCents),
+            { label: "Refunds", kind: "int", byShop: per("refund", (t) => t.n) },
+            { label: "Refunded", kind: "money", byShop: per("refund", (t) => t.amountCents) },
+            { label: "Voids", kind: "int", byShop: per("void", (t) => t.n) },
+            { label: "Voided", kind: "money", byShop: per("void", (t) => t.amountCents) },
+          ],
+        }),
+        listTable(loc, {
           id: "discounts",
           title: "Discounts by type",
           columns: [text("Type"), text("Label"), int("Tickets"), money("Amount")],
-          rows: d.map((x) => [x.source, x.label, x.tickets, x.cents]),
-        },
-        {
+          rows: d.map((r) => ({ shopId: r.shopId!, key: `${r.source}|${r.label}`, cells: [r.source, r.label, r.tickets, r.cents] })),
+          merge: true,
+          sort: (a, b) => Number(b[3]) - Number(a[3]),
+        }),
+        listTable(loc, {
           id: "refunds",
           title: "Refunds and voids",
-          columns: [text("Date"), int("Ticket"), text("Shop"), text("Barber"), text("Kind"), text("Tender"), money("Amount"), money("Tip"), text("Reason"), text("Issued by")],
-          rows: r.map((x) => [x.day, x.number, x.shop, x.barber, x.kind, x.method, x.amountCents, x.tipCents, x.reason, x.by ?? (x.source === "stripe_dashboard" ? "Stripe dashboard" : null)]),
-        },
+          subtitle: log.length >= 2000 ? "Showing the latest 2,000." : undefined,
+          columns: [text("Date"), id("Ticket"), text("Barber"), text("Kind"), text("Tender"), money("Amount"), money("Tip"), text("Reason"), text("Issued by")],
+          rows: log.map((r) => ({
+            shopId: r.shopId,
+            cells: [r.day, r.number, r.barber, r.kind, r.method, r.amountCents, r.tipCents, r.reason, r.by ?? (r.source === "stripe_dashboard" ? "Stripe dashboard" : null)],
+          })),
+          keepShop: loc.shops.length > 1,
+          sort: byDayDesc,
+        }),
       ],
     };
   },
 
-  async inventory({ scope }) {
+  async inventory({ scope, loc }) {
     const r = await inventoryStatus(scope);
     const low = r.filter((x) => x.low);
     return {
       stats: [
-        { label: "Products carried", value: String(r.length) },
-        { label: "Low stock", value: String(low.length), tone: low.length ? "down" : undefined },
+        { label: "Products carried", value: String(new Set(r.map((x) => x.productId)).size), hint: loc.shops.length > 1 ? `${r.length} shop listings` : undefined },
+        {
+          label: "Low stock",
+          value: String(low.length),
+          tone: low.length ? "down" : undefined,
+          hint: loc.shops.length > 1 ? "shop listings at or under reorder level" : undefined,
+        },
         { label: "Stock at cost", value: formatCents(r.reduce((a, x) => a + x.valueCents, 0)) },
         { label: "Sold in range", value: String(r.reduce((a, x) => a + x.sold, 0)), hint: `${r.reduce((a, x) => a + x.received, 0)} received` },
       ],
       tables: [
-        {
+        listTable(loc, {
           id: "stock",
-          title: "Stock by shop",
+          title: loc.view === "shops" || loc.shops.length === 1 ? "Stock by location" : "Stock across locations",
           subtitle: "On hand now. Received, sold, damaged and count changes are for the selected dates.",
-          columns: [text("Shop"), text("SKU"), text("Product"), int("On hand"), int("Reorder at"), { label: "Low", kind: "bool" }, money("Cost"), money("Price"), money("Value at cost"), int("Received"), int("Sold"), int("Damaged"), int("Count changes")],
-          rows: r.map((x) => [x.shop, x.sku, x.product, x.stock, x.threshold, x.low, x.costCents, x.priceCents, x.valueCents, x.received, x.sold, x.damaged, x.counted]),
-        },
+          columns: [
+            text("SKU"),
+            text("Product"),
+            int("On hand"),
+            id("Reorder at"),
+            { label: "Low", kind: "bool" },
+            id("Cost", "money"),
+            id("Price", "money"),
+            money("Value at cost"),
+            int("Received"),
+            int("Sold"),
+            int("Damaged"),
+            int("Count changes"),
+          ],
+          rows: r.map((x) => ({
+            shopId: x.shopId,
+            key: x.productId,
+            cells: [x.sku, x.product, x.stock, x.threshold, x.low, x.costCents, x.priceCents, x.valueCents, x.received, x.sold, x.damaged, x.counted],
+          })),
+          merge: true,
+          shopsColumnAt: loc.shops.length > 1 ? 2 : undefined,
+          sort: (a, b) => Number(b[4] === true) - Number(a[4] === true) || String(a[1]).localeCompare(String(b[1])),
+        }),
       ],
+      notes:
+        loc.view === "combined" && loc.shops.length > 1
+          ? ["Combined rows add up stock across shops. Low is shown only when every shop agrees; switch to By location for each shop's level."]
+          : undefined,
     };
   },
 
-  async gift_cards({ scope }) {
-    const { totals, issued } = await giftCardActivity(scope);
+  async gift_cards({ scope, loc }) {
+    const [x, issued] = await Promise.all([giftCardTotalsByShop(scope), giftCardsIssued(scope)]);
     return {
       stats: [
-        { label: "Issued", value: formatCents(totals.issuedCents), hint: `${totals.issuedN} cards` },
-        { label: "Redeemed here", value: formatCents(totals.redeemedCents) },
-        { label: "Outstanding", value: formatCents(totals.outstandingCents), hint: `${totals.outstandingN} cards issued at these shops` },
+        { label: "Issued", value: formatCents(sum(x, (v) => v.issuedCents)), hint: `${sum(x, (v) => v.issuedN)} cards` },
+        { label: "Redeemed here", value: formatCents(sum(x, (v) => v.redeemedCents)) },
+        { label: "Outstanding", value: formatCents(sum(x, (v) => v.outstandingCents)), hint: `${sum(x, (v) => v.outstandingN)} cards issued at these shops` },
       ],
       tables: [
-        {
+        metricTable(loc, {
+          id: "totals",
+          title: "Gift cards by location",
+          exportOnly: loc.view !== "shops",
+          metrics: [
+            m("Cards issued", "int", x, (v) => v.issuedN),
+            m("Issued", "money", x, (v) => v.issuedCents),
+            m("Redeemed here", "money", x, (v) => v.redeemedCents),
+            m("Cards with a balance", "int", x, (v) => v.outstandingN),
+            m("Outstanding", "money", x, (v) => v.outstandingCents),
+          ],
+        }),
+        listTable(loc, {
           id: "issued",
           title: "Cards issued",
-          columns: [text("Code"), text("Shop"), text("Source"), money("Initial"), money("Balance"), text("Status"), text("Issued")],
-          rows: issued.map((x) => [x.code, x.shop, x.source, x.initialCents, x.balanceCents, x.status, x.created]),
-        },
+          columns: [text("Code"), text("Source"), money("Initial"), money("Balance"), text("Status"), text("Issued")],
+          rows: issued.map((g) => ({ shopId: g.shopId, cells: [g.code, g.source, g.initialCents, g.balanceCents, g.status, g.created] })),
+          keepShop: loc.shops.length > 1,
+        }),
       ],
       notes: ["Balances work at every shop, so a card issued here can be redeemed elsewhere."],
     };
   },
 
-  async loyalty({ scope, viewer }) {
-    const t = await loyaltyActivity(scope, viewer.brandWide && scope.shopIds.length === viewer.shopIds.length);
+  async loyalty({ scope, loc, viewer }) {
+    const includeBrand = viewer.brandWide && scope.shopIds.length === viewer.shopIds.length;
+    const [combined, split] = await Promise.all([loyaltyActivity(scope, includeBrand), loc.view === "shops" ? loyaltyByShop(scope, includeBrand) : null]);
+    const t = combined;
+    const BRAND = "brand";
+    const cols: Record<string, typeof t> = split ? { ...split.shops, ...(split.brand ? { [BRAND]: split.brand } : {}) } : Object.fromEntries(loc.shops.map((s) => [s.id, t]));
+    const v: ViewCtx = split?.brand ? { ...loc, shops: [...loc.shops, { id: BRAND, name: "Brand (no ticket)" }] } : loc;
+    const lm = (label: string, kind: ColumnKind, f: (x: typeof t) => number, total?: number): Metric => ({ label, kind, byShop: each(cols, f), total: total ?? f(t) });
     return {
       stats: [
         { label: "Progress earned", value: formatCents(t.earnedCents), hint: `${t.members} clients earned` },
@@ -333,18 +508,23 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         { label: "Reversed by refunds", value: formatCents(t.reversedCents) },
       ],
       tables: [
-        {
+        metricTable(v, {
           id: "loyalty",
           title: "Loyalty activity",
-          columns: [text("Metric"), int("Count"), money("Amount")],
-          rows: [
-            ["Progress earned", t.members, t.earnedCents],
-            ["Progress reversed by refunds", null, t.reversedCents],
-            ["Rewards issued", t.rewardsIssued, t.rewardsIssuedCents],
-            ["Rewards redeemed", t.rewardsRedeemed, t.rewardsRedeemedCents],
+          subtitle: loc.view === "shops" ? "Clients who earned at more than one shop count once in the total." : undefined,
+          metrics: [
+            lm("Clients who earned", "int", (x) => x.members),
+            lm("Progress earned", "money", (x) => x.earnedCents),
+            lm("Progress reversed by refunds", "money", (x) => x.reversedCents),
+            lm("Rewards issued", "int", (x) => x.rewardsIssued),
+            lm("Rewards issued ($)", "money", (x) => x.rewardsIssuedCents),
+            lm("Rewards redeemed", "int", (x) => x.rewardsRedeemed),
+            lm("Rewards redeemed ($)", "money", (x) => x.rewardsRedeemedCents),
+            ...(includeBrand ? [lm("Manual rewards", "int", (x) => x.manualRewards)] : []),
           ],
-        },
+        }),
       ],
+      notes: includeBrand ? undefined : ["Manual rewards have no ticket or shop, so they're counted only when every shop is selected."],
     };
   },
 
@@ -352,8 +532,15 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     return { stats: [], tables: [] };
   },
 
-  async kpis({ scope }) {
-    const k = await kpis(scope);
+  async kpis({ scope, loc }) {
+    const [k, per] = await Promise.all([kpis(scope), loc.view === "shops" ? kpisByShop(scope) : null]);
+    const src = per ?? Object.fromEntries(loc.shops.map((s) => [s.id, k]));
+    const km = (label: string, kind: ColumnKind, f: (x: typeof k) => number | null, additive: boolean): Metric => ({
+      label,
+      kind,
+      byShop: each(src, f),
+      total: additive && per ? undefined : f(k),
+    });
     return {
       stats: [
         {
@@ -367,89 +554,166 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           value: `${k.newClients} / ${k.returningClients}`,
           hint: k.newClients + k.returningClients ? `${Math.round((k.newClients / (k.newClients + k.returningClients)) * 100)}% new · ${k.newToBrand} new to Ray'z` : undefined,
         },
-        { label: "No-shows", value: String(k.noShows.n), hint: `${formatCents(k.noShows.cents)} lost · ${k.cancellations.n} cancellations`, tone: k.noShows.n ? "down" : undefined },
+        {
+          label: "No-shows",
+          value: String(k.noShows.n),
+          hint: `${formatCents(k.noShows.cents)} lost · ${k.cancellations.n} cancellations`,
+          tone: k.noShows.n ? "down" : undefined,
+        },
       ],
       tables: [
-        {
+        metricTable(loc, {
           id: "kpis",
           title: "Client KPIs",
-          columns: [text("Metric"), text("Value"), int("Count"), int("Out of")],
-          rows: [
-            ["Rebook rate", pct(k.rebookRate), k.rebooked, k.visits],
-            ["Retention", pct(k.retentionRate), k.retainedClients, k.priorClients],
-            ["New clients", null, k.newClients, null],
-            ["New to Ray'z", null, k.newToBrand, null],
-            ["Returning clients", null, k.returningClients, null],
-            ["No-shows", null, k.noShows.n, k.appointments],
-            ["Cancellations", null, k.cancellations.n, k.appointments],
+          subtitle:
+            loc.view === "shops"
+              ? "Visit and appointment counts add up across shops. Client counts don't: a client seen at two shops counts at each, and once in the total."
+              : undefined,
+          metrics: [
+            km("Rebook rate", "pct", (x) => x.rebookRate, false),
+            km("Visits rebooked within 24h", "int", (x) => x.rebooked, true),
+            km("Visits with booking times", "int", (x) => x.visits, true),
+            km("Retention", "pct", (x) => x.retentionRate, false),
+            km("Clients retained", "int", (x) => x.retainedClients, false),
+            km("Clients in the prior window", "int", (x) => x.priorClients, false),
+            km("New clients", "int", (x) => x.newClients, false),
+            km("New to Ray'z", "int", (x) => x.newToBrand, false),
+            km("Returning clients", "int", (x) => x.returningClients, false),
+            km("Appointments", "int", (x) => x.appointments, true),
+            km("No-shows", "int", (x) => x.noShows.n, true),
+            km("No-show value", "money", (x) => x.noShows.cents, true),
+            km("Cancellations", "int", (x) => x.cancellations.n, true),
           ],
-        },
+        }),
       ],
     };
   },
 
-  async heatmap({ scope }) {
-    const h = await appointmentHeatmap(scope);
+  async heatmap({ scope, loc }) {
+    const h = await appointmentHeatmap(scope, { byShop: true });
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const combine = (cells: typeof h) => {
+      const out = new Map<string, { dow: number; hour: number; n: number }>();
+      for (const c of cells) {
+        const k = `${c.dow}|${c.hour}`;
+        const cur = out.get(k) ?? { dow: c.dow, hour: c.hour, n: 0 };
+        cur.n += c.n;
+        out.set(k, cur);
+      }
+      return [...out.values()];
+    };
+    const heatmaps: Heatmap[] =
+      loc.view === "shops" && loc.shops.length > 1
+        ? [...loc.shops.map((s) => ({ title: s.name, cells: h.filter((c) => c.shopId === s.id) })), { title: loc.totalLabel, cells: combine(h) }]
+        : [{ title: loc.shops.length === 1 ? loc.shops[0].name : loc.totalLabel, cells: combine(h) }];
     return {
       stats: [{ label: "Appointments", value: String(h.reduce((a, x) => a + x.n, 0)) }],
-      heatmap: h,
+      heatmaps,
       tables: [
-        {
+        listTable(loc, {
           id: "heatmap",
           title: "Appointments by day and hour",
-          columns: [text("Weekday"), int("Hour"), int("Appointments")],
-          rows: [...h].sort((a, b) => a.dow - b.dow || a.hour - b.hour).map((x) => [["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][x.dow], x.hour, x.n]),
-        },
+          exportOnly: true,
+          columns: [text("Weekday"), id("Hour"), int("Appointments")],
+          rows: [...h].sort((a, b) => a.dow - b.dow || a.hour - b.hour).map((x) => ({ shopId: x.shopId!, key: `${x.dow}|${x.hour}`, cells: [days[x.dow], x.hour, x.n] })),
+          merge: true,
+        }),
       ],
     };
   },
 
-  async cash_drawer({ scope }) {
+  async cash_drawer({ scope, loc }) {
     const r = await drawerHistory(scope);
     const closed = r.filter((x) => x.countedCents !== null);
     return {
       stats: [
         { label: "Drawers closed", value: String(closed.length), hint: `${r.length - closed.length} not closed` },
         { label: "Cash sales", value: formatCents(r.reduce((a, x) => a + x.cashSalesCents, 0)) },
-        { label: "Net over / short", value: formatCents(closed.reduce((a, x) => a + (x.varianceCents ?? 0), 0)), tone: closed.some((x) => (x.varianceCents ?? 0) < 0) ? "down" : undefined },
+        {
+          label: "Net over / short",
+          value: formatCents(closed.reduce((a, x) => a + (x.varianceCents ?? 0), 0)),
+          tone: closed.some((x) => (x.varianceCents ?? 0) < 0) ? "down" : undefined,
+        },
         { label: "Payouts", value: formatCents(r.reduce((a, x) => a + x.payoutsCents, 0)) },
       ],
       tables: [
-        {
+        listTable(loc, {
           id: "drawers",
           title: "Drawer closes",
-          columns: [text("Date"), text("Shop"), money("Opening float"), money("Cash sales"), money("Cash refunds"), money("Payouts"), money("Expected"), money("Counted"), money("Over / short"), text("Closed by"), text("Notes")],
-          rows: r.map((x) => [x.day, x.shop, x.openingCents, x.cashSalesCents, x.cashRefundsCents, x.payoutsCents, x.expectedCents, x.countedCents, x.varianceCents, x.closedBy, x.notes]),
-        },
+          columns: [
+            text("Date"),
+            money("Opening float"),
+            money("Cash sales"),
+            money("Cash refunds"),
+            money("Payouts"),
+            money("Expected"),
+            money("Counted"),
+            money("Over / short"),
+            text("Closed by"),
+            text("Notes"),
+          ],
+          rows: r.map((x) => ({
+            shopId: x.shopId,
+            cells: [x.day, x.openingCents, x.cashSalesCents, x.cashRefundsCents, x.payoutsCents, x.expectedCents, x.countedCents, x.varianceCents, x.closedBy, x.notes],
+          })),
+          keepShop: loc.shops.length > 1,
+          sort: byDayDesc,
+        }),
       ],
     };
   },
 
-  async audit_log({ viewer, params }) {
-    const q = params.q?.trim();
-    const where = and(
-      auditScope(viewer),
-      params.entity ? eq(auditLog.entity, params.entity) : undefined,
-      q ? or(ilike(auditLog.action, `%${q}%`), ilike(auditLog.actorLabel, `%${q}%`), ilike(auditLog.entityId, `%${q}%`), sql`${auditLog.details}::text ilike ${`%${q}%`}`) : undefined,
-    );
-    const r = await db.select({ a: auditLog, shop: shops.name }).from(auditLog).leftJoin(shops, eq(shops.id, auditLog.shopId)).where(where).orderBy(desc(auditLog.at)).limit(10000);
+  async audit_log({ viewer, loc, params }) {
+    const r = await auditRows({ viewer, loc, q: params.q, entity: params.entity, limit: 10000, offset: 0 });
+    const v = auditView(viewer, loc);
     return {
       stats: [],
       tables: [
-        {
+        listTable(v, {
           id: "audit",
           title: "Audit log",
-          columns: [text("When"), text("Who"), text("Action"), text("Area"), text("Record"), text("Shop"), text("Details")],
-          rows: r.map(({ a, shop }) => [a.at.toISOString(), a.actorLabel, a.action, a.entity, a.entityId, shop ?? "Brand", JSON.stringify(a.details ?? {})]),
-        },
+          columns: [text("When"), text("Who"), text("Action"), text("Area"), text("Record"), text("Details")],
+          rows: r.map(({ a }) => ({ shopId: a.shopId ?? BRAND_ROW, cells: [a.at.toISOString(), a.actorLabel, a.action, a.entity, a.entityId, JSON.stringify(a.details ?? {})] })),
+          keepShop: true,
+          totals: false,
+        }),
       ],
     };
   },
 };
 
-export function tableCsv(t: ReportTable): string {
-  return toCsv(
-    t.columns.map((c) => c.label),
-    t.rows.map((r) => r.map((v, i) => (v === null ? null : t.columns[i]?.kind === "money" && typeof v === "number" ? cents(v) : typeof v === "boolean" ? (v ? "yes" : "no") : v))),
+const BRAND_ROW = "brand";
+
+/** Brand-level entries (no shop: roles, groups, brand settings) are for people with every shop, whichever shops are picked. */
+const auditIncludesBrand = (viewer: ReportInput["viewer"]) => viewer.brandWide;
+
+export function auditView(viewer: ReportInput["viewer"], loc: ViewCtx): ViewCtx {
+  return auditIncludesBrand(viewer) ? { ...loc, shops: [...loc.shops, { id: BRAND_ROW, name: "Brand" }] } : loc;
+}
+
+/** Audit entries at the selected shops, newest first, or grouped by shop for the by-location view. */
+export async function auditRows(o: { viewer: ReportInput["viewer"]; loc: ViewCtx; q?: string; entity?: string; limit: number; offset: number }) {
+  const q = o.q?.trim();
+  const ids = o.loc.shops.map((s) => s.id);
+  const where = and(
+    or(ids.length ? inArray(auditLog.shopId, ids) : sql`false`, auditIncludesBrand(o.viewer) ? isNull(auditLog.shopId) : undefined),
+    o.entity ? eq(auditLog.entity, o.entity) : undefined,
+    q
+      ? or(ilike(auditLog.action, `%${q}%`), ilike(auditLog.actorLabel, `%${q}%`), ilike(auditLog.entityId, `%${q}%`), sql`${auditLog.details}::text ilike ${`%${q}%`}`)
+      : undefined,
   );
+  const order = o.loc.view === "shops" ? [sql`${auditLog.shopId} is null`, asc(shops.name), desc(auditLog.at)] : [desc(auditLog.at)];
+  return db
+    .select({ a: auditLog, shop: shops.name })
+    .from(auditLog)
+    .leftJoin(shops, eq(shops.id, auditLog.shopId))
+    .where(where)
+    .orderBy(...order)
+    .limit(o.limit)
+    .offset(o.offset);
+}
+
+export function tableCsv(t: ReportTable): string {
+  const c = csvTable(t);
+  return toCsv(c.headers, c.rows);
 }

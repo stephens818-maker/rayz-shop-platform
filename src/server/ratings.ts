@@ -311,20 +311,22 @@ export interface ShopRatings {
 
 /**
  * Lowest- and highest-rated clients per shop, from the ratings given at that shop. A small shop
- * splits its rated clients between the two lists so nobody appears in both.
+ * splits its rated clients between the two lists so nobody appears in both. `combined` ranks
+ * clients across all the shops together, from every rating given at any of them.
  */
-export async function ratingsByShop(opts: { shopIds: string[]; minRatings?: number; limit?: number; since?: Date | null }): Promise<ShopRatings[]> {
+export async function ratingsByShop(opts: { shopIds: string[]; minRatings?: number; limit?: number; since?: Date | null; combined?: { label: string } | null }): Promise<ShopRatings[]> {
   if (!opts.shopIds.length) return [];
+  const shopCol = opts.combined ? sql`null::uuid` : sql`r.shop_id`;
   const minRatings = Math.max(1, Math.floor(opts.minRatings ?? 1));
   const limit = Math.max(1, Math.floor(opts.limit ?? 10));
   const shopList = sql.join(opts.shopIds.map((s) => sql`${s}::uuid`), sql`, `);
   const rows = (await db.execute(sql`
     with agg as (
-      select r.shop_id, r.customer_id, avg(r.stars)::float8 as avg, count(*)::int as n, max(r.created_at) as last_at,
+      select ${shopCol} shop_id, r.customer_id, avg(r.stars)::float8 as avg, count(*)::int as n, max(r.created_at) as last_at,
         (array_agg(r.note order by r.created_at desc) filter (where r.note is not null))[1] as last_note
       from client_ratings r
       where r.shop_id in (${shopList})${opts.since ? sql` and r.created_at >= ${opts.since.toISOString()}` : sql``}
-      group by r.shop_id, r.customer_id
+      group by 1, 2
       having count(*) >= ${minRatings}
     ), ranked as (
       select agg.*, count(*) over (partition by shop_id)::int as rated,
@@ -336,8 +338,10 @@ export async function ratingsByShop(opts: { shopIds: string[]; minRatings?: numb
     where low_rank <= least(${limit}, ceil(rated / 2.0))
        or rated - low_rank + 1 <= least(${limit}, rated - least(${limit}, ceil(rated / 2.0)))
     order by shop_id, low_rank
-  `)) as unknown as { shop_id: string; customer_id: string; avg: number; n: number; last_at: string; last_note: string | null; rated: number; low_rank: number; first_name: string; last_name: string | null }[];
-  const names = await db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, opts.shopIds)).orderBy(shops.name);
+  `)) as unknown as { shop_id: string | null; customer_id: string; avg: number; n: number; last_at: string; last_note: string | null; rated: number; low_rank: number; first_name: string; last_name: string | null }[];
+  const names = opts.combined
+    ? [{ id: null, name: opts.combined.label }]
+    : await db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, opts.shopIds)).orderBy(shops.name);
   return names.map((s) => {
     const mine = rows.filter((r) => r.shop_id === s.id);
     const rated = mine[0]?.rated ?? 0;
@@ -351,7 +355,7 @@ export async function ratingsByShop(opts: { shopIds: string[]; minRatings?: numb
       lastNote: r.last_note,
     });
     return {
-      shopId: s.id,
+      shopId: s.id ?? "all",
       shop: s.name,
       ratedClients: rated,
       lowest: mine.filter((r) => r.low_rank <= split.lowest).map(toRow),

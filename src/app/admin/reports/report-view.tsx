@@ -9,7 +9,7 @@ import { formatCents } from "@/lib/money";
 import { WEEKDAYS, formatDate } from "@/lib/time";
 import { StaffContext, can, guardPage } from "@/server/auth/staff";
 import { Cell, ColumnKind, REPORT_LOADERS, ReportTable } from "@/server/report-data";
-import { ReportFilters } from "./filters";
+import { LocationNotice, ReportFilters, locationProps, reportQuery } from "./filters";
 import { ReportParams, resolveScope } from "./scope";
 
 /** Reports that can be narrowed to one barber's tickets or appointments. */
@@ -38,12 +38,18 @@ export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportK
 function formatCell(v: Cell, kind: ColumnKind | undefined) {
   if (v === null || v === "") return "—";
   if (kind === "money" && typeof v === "number") return formatCents(v);
+  if (kind === "pct" && typeof v === "number") return `${Math.round(v * 100)}%`;
   if (kind === "bool") return v ? "Yes" : "";
   return String(v);
 }
 
-function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null }) {
+const ROW_STYLE = { subtotal: "bg-zinc-50 font-medium", total: "bg-zinc-100 font-semibold" } as const;
+
+/** One report table: per-row number formats for metric tables, shaded subtotal and total rows. */
+export function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null }) {
   const right = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct";
+  const kindAt = (i: number, j: number) => (t.rowKinds?.[i] && j > 0 ? t.rowKinds[i] : t.columns[j]?.kind);
+  const last = t.columns.length - 1;
   return (
     <Card className="mt-4">
       <CardHeader
@@ -62,26 +68,33 @@ function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null }) {
           <Empty title="Nothing in this range" />
         </div>
       ) : (
-        <Table className="max-h-[520px] overflow-y-auto">
+        <Table className="max-h-[560px] overflow-y-auto">
           <thead>
             <tr>
-              {t.columns.map((c) => (
-                <Th key={c.label} right={right(c.kind)}>
+              {t.columns.map((c, j) => (
+                <Th key={j} right={t.rowKinds ? j > 0 : right(c.kind)} className={cx(t.totalColumn && j === last && "bg-zinc-100 text-zinc-700")}>
                   {c.label}
                 </Th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {t.rows.map((r, i) => (
-              <tr key={i}>
-                {r.map((v, j) => (
-                  <Td key={j} right={right(t.columns[j]?.kind)}>
-                    {formatCell(v, t.columns[j]?.kind)}
-                  </Td>
-                ))}
-              </tr>
-            ))}
+            {t.rows.map((r, i) => {
+              const style = t.rowStyles?.[i];
+              return (
+                <tr key={i} className={style ? ROW_STYLE[style] : undefined}>
+                  {r.map((v, j) => (
+                    <Td
+                      key={j}
+                      right={right(kindAt(i, j))}
+                      className={cx(t.totalColumn && j === last && "bg-zinc-50 font-semibold", style === "total" && "border-t border-zinc-300")}
+                    >
+                      {formatCell(v, kindAt(i, j))}
+                    </Td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </Table>
       )}
@@ -89,12 +102,12 @@ function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null }) {
   );
 }
 
-function Heatmap({ cells }: { cells: { dow: number; hour: number; n: number }[] }) {
+function Heatmap({ title, cells }: { title: string; cells: { dow: number; hour: number; n: number }[] }) {
   const max = Math.max(1, ...cells.map((h) => h.n));
   const hours = Array.from({ length: 13 }, (_, i) => i + 8);
   return (
     <Card className="mt-4">
-      <CardHeader title="Busiest times" subtitle="Appointments by day and hour (Chicago time)" />
+      <CardHeader title={`Busiest times: ${title}`} subtitle={`Appointments by day and hour (Chicago time) · ${cells.reduce((a, c) => a + c.n, 0)} appointments`} />
       <div className="overflow-x-auto p-4">
         <table className="text-xs">
           <thead>
@@ -140,15 +153,17 @@ function Heatmap({ cells }: { cells: { dow: number; hour: number; n: number }[] 
 /**
  * One a la carte report. The page needs that report's view permission (via PAGE_ACCESS), shops are
  * limited to the viewer's access, and CSV links only appear with the report's export permission.
+ * Every report covers one shop, any set of shops, a saved group or all shops, combined or by location.
  */
-export async function ReportPage({ report, searchParams }: { report: ReportKey; searchParams: ReportParams & Record<string, string | undefined> }) {
+export async function ReportPage({ report, searchParams }: { report: ReportKey; searchParams: ReportParams & Record<string, string | string[] | undefined> }) {
   const meta = reportFor(report);
   const ctx = await guardPage(meta.href);
-  const scope = resolveScope(ctx, searchParams, report);
+  const scope = await resolveScope(ctx, searchParams, report);
   const canExport = can(ctx, reportExport(report));
   const t0 = performance.now();
+  const params = Object.fromEntries(Object.entries(searchParams).map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
   const [data, barbers] = await Promise.all([
-    REPORT_LOADERS[report]({ scope, viewer: ctx, params: searchParams }),
+    REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, params }),
     BARBER_FILTER.has(report)
       ? db
           .selectDistinct({ id: staff.id, label: staff.displayLabel })
@@ -161,14 +176,11 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
   const ms = Math.round(performance.now() - t0);
   const csv = (table: string) => {
     if (!canExport) return null;
-    const q = new URLSearchParams({ type: report, table, from: scope.from, to: scope.to });
-    if (scope.shopParam) q.set("shop", scope.shopParam);
-    if (scope.staffId && report !== "my_sales") q.set("staff", scope.staffId);
+    const q = reportQuery(scope, { type: report, table, from: scope.from, to: scope.to, staff: scope.staffId && report !== "my_sales" ? scope.staffId : null });
     return `/admin/reports/export?${q}`;
   };
-  const scopeLabel =
-    scope.shopIds.length === 1 ? ctx.shops.find((s) => s.id === scope.shopIds[0])?.name : scope.shopIds.length === ctx.shops.length ? "All my shops" : `${scope.shopIds.length} shops`;
-  const exportAll = data.tables.find((t) => t.exportOnly);
+  const exportAll = data.tables.find((t) => t.exportOnly && t.id !== "heatmap");
+  const heatmapCsv = data.heatmaps && data.tables.some((t) => t.id === "heatmap") ? csv("heatmap") : null;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -176,9 +188,10 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
         title={meta.label}
         subtitle={
           <>
-            {scopeLabel} · {formatDate(scope.from, "MMM d, yyyy")}
+            {scope.label} · {formatDate(scope.from, "MMM d, yyyy")}
             {scope.to !== scope.from && ` – ${formatDate(scope.to, "MMM d, yyyy")}`}
             {scope.staffId && report !== "my_sales" && ` · ${barbers?.find((b) => b.id === scope.staffId)?.label ?? "barber"}`}
+            {scope.loc.view === "shops" && " · by location"}
             <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
           </>
         }
@@ -196,12 +209,11 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
         preset={scope.preset}
         from={scope.from}
         to={scope.to}
-        shop={scope.shopParam}
         staff={report === "my_sales" ? null : (scope.staffId ?? null)}
-        shops={ctx.shops}
         barbers={barbers}
-        showShop={ctx.shops.length > 1}
+        location={ctx.shops.length > 1 ? locationProps(ctx, scope) : null}
       />
+      <LocationNotice locations={scope} />
       {data.stats.length > 0 && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {data.stats.map((s) => (
@@ -209,15 +221,21 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
           ))}
         </div>
       )}
-      {data.heatmap && <Heatmap cells={data.heatmap} />}
+      {data.heatmaps && (
+        <div className={cx(data.heatmaps.length > 1 && "grid gap-x-4 xl:grid-cols-2")}>
+          {data.heatmaps.map((h) => (
+            <Heatmap key={h.title} title={h.title} cells={h.cells} />
+          ))}
+        </div>
+      )}
       {data.tables
-        .filter((t) => !t.exportOnly && !(data.heatmap && t.id === "heatmap"))
+        .filter((t) => !t.exportOnly)
         .map((t) => (
           <ReportTableCard key={t.id} t={t} csv={csv(t.id)} />
         ))}
-      {data.heatmap && canExport && (
+      {heatmapCsv && (
         <p className="mt-2 text-right text-xs">
-          <a className="underline" href={csv("heatmap")!}>
+          <a className="underline" href={heatmapCsv}>
             Download heatmap CSV
           </a>
         </p>
