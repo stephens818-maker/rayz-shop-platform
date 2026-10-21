@@ -380,6 +380,10 @@ export function planUpload(parsed: ParsedUpload, catalog: Catalog, opts: PlanOpt
       raw: r.raw,
     });
     if (!r.sku) return out(null, false);
+    if (opts.mode === "stock" && !exP) {
+      errors.push(exS ? "Only retail products have stock" : "Unknown SKU. Adding items needs catalog access.");
+      return out(null, false);
+    }
     if (!kind) {
       errors.push("New item: add a type (product, service or addon)");
       return out(null, false);
