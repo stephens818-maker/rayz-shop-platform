@@ -50,6 +50,13 @@
       "when": 1792543762218,
       "tag": "0006_client_search",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792546165671,
+      "tag": "0007_appointment_buffer",
+      "breakpoints": true
     }
   ]
 }

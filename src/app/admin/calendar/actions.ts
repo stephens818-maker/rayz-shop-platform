@@ -4,12 +4,11 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { appointments, staffShops, timeBlocks } from "@/db/schema";
-import { zonedWallTime } from "@/lib/time";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, assertShopAccess, caller, canManage, requireStaff } from "@/server/auth/staff";
-import { createAppointment, rescheduleAppointment, setAppointmentStatus } from "@/server/booking";
+import { createAppointment, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
 import { maskPhone, searchCustomers } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
@@ -87,7 +86,7 @@ export async function createStaffAppointmentAction(input: {
     assertShopAccess(ctx, input.shopId);
     if (ctx.isBarber && input.staffId !== ctx.staff.id) throw forbidden("Barbers can only book into their own column");
     if (!input.customerId && !input.customer?.firstName) throw new AppError("bad_request", "Pick a client or enter a name");
-    const startsAt = zonedWallTime(input.date, input.startMin).toJSDate();
+    const startsAt = staffWallTime(input.date, input.startMin);
     const appt = await createAppointment({
       shopRef: input.shopId,
       serviceId: input.serviceId,
@@ -111,7 +110,7 @@ export async function moveAppointmentAction(id: string, staffId: string, date: s
     const ctx = await requireStaff();
     const a = await loadAppt(ctx, id);
     if (ctx.isBarber && staffId !== ctx.staff.id) throw forbidden("You can only move your own appointments within your own column");
-    await rescheduleAppointment(a.code, { startsAt: zonedWallTime(date, startMin).toJSDate(), barberRef: staffId, actor: ctx.actor, byCustomer: false });
+    await rescheduleAppointment(a.code, { startsAt: staffWallTime(date, startMin), barberRef: staffId, actor: ctx.actor, byCustomer: false });
     revalidatePath("/admin/calendar");
     return null;
   });
@@ -133,8 +132,8 @@ export async function createBlockAction(input: { shopId: string; staffId: string
       .values({
         staffId: input.staffId,
         shopId,
-        startsAt: zonedWallTime(input.date, input.startMin).toJSDate(),
-        endsAt: zonedWallTime(input.date, input.endMin).toJSDate(),
+        startsAt: staffWallTime(input.date, input.startMin),
+        endsAt: staffWallTime(input.date, input.endMin),
         reason: input.reason.trim(),
         kind: "block",
         createdBy: ctx.staff.id,

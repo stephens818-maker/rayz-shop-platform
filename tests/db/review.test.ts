@@ -399,3 +399,69 @@ describe("P1#19 sign-in codes never land in the outbox", () => {
     expect(jobs[0].status).not.toBe("pending");
   });
 });
+
+describe("P2/P3 booking rules", () => {
+  async function openSlot() {
+    const svc = (await m.public.publicServices("coralville")).services.find((s) => s.slug === "rayz-cut-shampoo")!;
+    for (let i = 4; i < 20; i++) {
+      const date = m.time.addDays(m.time.todayLocal(), i);
+      const a = await m.booking.getAvailability({ shopRef: "coralville", date, serviceId: svc.id, barberRef: "any" });
+      if (a.slots.length > 4) return { date, slot: a.slots[a.slots.length - 1], svc };
+    }
+    throw new Error("no slots");
+  }
+  const book = (svc: { id: string }, barberRef: string, startsAt: string | Date, source: "online" | "staff" = "online") =>
+    m.booking.createAppointment({ shopRef: "coralville", serviceId: svc.id, barberRef, startsAt, customer: { firstName: "Rule", phone: `+1319555${String(3500 + ++phoneSeq)}` }, source, actor });
+
+  it("P2#22: the database enforces the buffer, not just the app", async () => {
+    const { slot } = await openSlot();
+    const s = await shop();
+    const start = new Date(slot.startsAt);
+    const end = new Date(start.getTime() + 30 * 60_000);
+    const base = { staffId: slot.barberIds[0], shopId: s.id, status: "booked" as const, source: "staff" as const };
+    const [first] = await m.db.db.insert(m.schema.appointments).values({ ...base, code: "TESTBUFF01", startsAt: start, endsAt: end, bufferMinutes: 15 }).returning();
+    expect(first.busyUntil!.getTime()).toBe(end.getTime() + 15 * 60_000);
+    const inside = new Date(end.getTime() + 10 * 60_000);
+    await expect(m.db.db.insert(m.schema.appointments).values({ ...base, code: "TESTBUFF02", startsAt: inside, endsAt: new Date(inside.getTime() + 30 * 60_000) })).rejects.toThrow();
+    const after = new Date(end.getTime() + 15 * 60_000);
+    await m.db.db.insert(m.schema.appointments).values({ ...base, code: "TESTBUFF03", startsAt: after, endsAt: new Date(after.getTime() + 30 * 60_000) });
+    // Raising the buffer later can't sneak past the neighbour either.
+    await expect(m.db.db.update(m.schema.appointments).set({ bufferMinutes: 20 }).where(eq(m.schema.appointments.id, first.id))).rejects.toThrow();
+    await m.db.db.delete(m.schema.appointments).where(m.drizzle.inArray(m.schema.appointments.code, ["TESTBUFF01", "TESTBUFF03"]));
+  });
+
+  it("P2#24: online bookings must start on an offered time; staff can still pick any minute", async () => {
+    const { slot, svc } = await openSlot();
+    const offGrid = new Date(new Date(slot.startsAt).getTime() - 7 * 60_000);
+    await expect(book(svc, slot.barberIds[0], offGrid)).rejects.toMatchObject({ code: "bad_request" });
+    const staffBooked = await book(svc, slot.barberIds[0], offGrid, "staff");
+    expect(new Date(staffBooked.startsAt).getTime()).toBe(offGrid.getTime());
+    await m.booking.cancelAppointment(staffBooked.code, { actor, byCustomer: false });
+  });
+
+  it("P3#33: at exactly the cutoff the manage page and the API both say no", async () => {
+    const { slot, svc } = await openSlot();
+    const a = await book(svc, slot.barberIds[0], slot.startsAt);
+    const atCutoff = new Date(new Date(a.startsAt).getTime() - 30 * 60_000);
+    expect((await m.booking.getAppointmentByCode(a.code, atCutoff)).canCancel).toBe(false);
+    await expect(m.booking.cancelAppointment(a.code, { actor, byCustomer: true, now: atCutoff })).rejects.toMatchObject({ code: "cutoff_passed" });
+    await expect(m.booking.rescheduleAppointment(a.code, { startsAt: a.startsAt, actor, byCustomer: true, now: atCutoff })).rejects.toMatchObject({ code: "cutoff_passed" });
+    const justBefore = new Date(atCutoff.getTime() - 1000);
+    expect((await m.booking.getAppointmentByCode(a.code, justBefore)).canCancel).toBe(true);
+    expect((await m.booking.cancelAppointment(a.code, { actor, byCustomer: true, now: justBefore })).status).toBe("cancelled");
+  });
+
+  it("P3#34: a completed appointment frees the chair in the app, as it already did in the database", async () => {
+    const { slot, svc } = await openSlot();
+    const a = await book(svc, slot.barberIds[0], slot.startsAt);
+    await m.db.db.update(m.schema.appointments).set({ status: "completed" }).where(eq(m.schema.appointments.id, a.id));
+    const again = await book(svc, slot.barberIds[0], slot.startsAt);
+    expect(again.status).toBe("booked");
+    await m.booking.cancelAppointment(again.code, { actor, byCustomer: false });
+  });
+
+  it("P3#35: staff can't enter a time that doesn't exist on the spring-forward morning", () => {
+    expect(() => m.booking.staffWallTime("2027-03-14", 2 * 60 + 30)).toThrow(/doesn't exist/);
+    expect(m.booking.staffWallTime("2027-03-14", 3 * 60 + 30).toISOString()).toBe("2027-03-14T08:30:00.000Z");
+  });
+});

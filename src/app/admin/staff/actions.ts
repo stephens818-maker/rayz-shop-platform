@@ -8,7 +8,8 @@ import { db } from "@/db";
 import { shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import { findScheduleConflicts } from "@/domain/availability";
 import { labelContainsSurname, staffPublicSlug } from "@/lib/ids";
-import { WEEKDAYS, addDays, minutesToLabel, startOfLocalDay, zonedWallTime } from "@/lib/time";
+import { WEEKDAYS, addDays, minutesToLabel, startOfLocalDay } from "@/lib/time";
+import { staffWallTime } from "@/server/booking";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { staffProfileChangeDenied, timeBlockChangeDenied } from "@/server/auth/policy";
@@ -167,8 +168,8 @@ export async function addTimeOffAction(input: { staffId: string; shopId: string 
     const denied = timeBlockChangeDenied(caller(ctx), { staffId: input.staffId, shopId: input.shopId }, await barberShops(input.staffId));
     if (denied) throw forbidden(denied);
     if (input.to < input.from) throw new AppError("bad_request", "End date is before start date");
-    const startsAt = input.allDay ? startOfLocalDay(input.from) : zonedWallTime(input.from, input.startMin).toJSDate();
-    const endsAt = input.allDay ? startOfLocalDay(addDays(input.to, 1)) : zonedWallTime(input.to, input.endMin).toJSDate();
+    const startsAt = input.allDay ? startOfLocalDay(input.from) : staffWallTime(input.from, input.startMin);
+    const endsAt = input.allDay ? startOfLocalDay(addDays(input.to, 1)) : staffWallTime(input.to, input.endMin);
     if (endsAt <= startsAt) throw new AppError("bad_request", "End must be after start");
     const [b] = await db
       .insert(timeBlocks)

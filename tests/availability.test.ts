@@ -5,10 +5,11 @@ import {
   computeDaySlots,
   findScheduleConflicts,
   isSlotFree,
+  onSlotGrid,
   pickBarber,
   totalDuration,
 } from "@/domain/availability";
-import { zonedWallTime } from "@/lib/time";
+import { existingWallTime, zonedWallTime } from "@/lib/time";
 
 const SHOP = "coralville";
 const OTHER = "kimberly";
@@ -232,5 +233,50 @@ describe("availability: DST weekends (America/Chicago)", () => {
     expect(new Set(fall.map((s) => s.start)).size).toBe(7);
     // Every slot is exactly 60 real minutes.
     for (const s of [...fall, ...spring]) expect(s.end - s.start).toBe(3_600_000);
+  });
+});
+
+describe("review P2#24: bookings sit on the offered grid", () => {
+  it("accepts every offered start and refuses one between grid lines", () => {
+    const day = input();
+    for (const s of computeDaySlots(day)) expect(onSlotGrid(day, s.start)).toBe(true);
+    expect(onSlotGrid(day, at("2026-10-19", 10, 7))).toBe(false);
+    expect(onSlotGrid(day, at("2026-10-19", 10, 15) + 1000)).toBe(false);
+  });
+
+  it("follows the shop's interval and the real opening time on a DST morning", () => {
+    expect(onSlotGrid(input({ slotIntervalMin: 30 }), at("2026-10-19", 10, 15))).toBe(false);
+    expect(onSlotGrid(input({ slotIntervalMin: 30 }), at("2026-10-19", 10, 30))).toBe(true);
+    expect(onSlotGrid(input({ date: "2026-11-02" }), at("2026-11-02", 9, 15))).toBe(true);
+  });
+
+  it("refuses a start before the shop opens", () => {
+    expect(onSlotGrid(input(), at("2026-10-19", 8, 45))).toBe(false);
+  });
+});
+
+describe("review P3#34: the app and the database agree on what holds the chair", () => {
+  const done = { staffId: "michelle", shopId: SHOP, startsAt: at("2026-10-19", 10), endsAt: at("2026-10-19", 11), status: "completed" };
+
+  it("a completed appointment no longer blocks its slot (a cut that finished early frees the chair)", () => {
+    expect(isSlotFree(input({ appointments: [done] }), "michelle", at("2026-10-19", 10, 30))).toBe(true);
+    expect(isSlotFree(input({ appointments: [{ ...done, status: "in_service" }] }), "michelle", at("2026-10-19", 10, 30))).toBe(false);
+  });
+
+  it("time already worked still counts as load when spreading 'any barber' bookings", () => {
+    expect(pickBarber(["michelle", "makenna"], [done], "2026-10-19")).toBe("makenna");
+  });
+});
+
+describe("review P3#35: times that don't exist on the spring-forward morning", () => {
+  it("2:30 AM on 2027-03-14 doesn't exist; 1:30 and 3:30 do", () => {
+    expect(existingWallTime("2027-03-14", 2 * 60 + 30)).toBeNull();
+    expect(existingWallTime("2027-03-14", 60 + 30)?.toISO()).toBe("2027-03-14T01:30:00.000-06:00");
+    expect(existingWallTime("2027-03-14", 3 * 60 + 30)?.toISO()).toBe("2027-03-14T03:30:00.000-05:00");
+  });
+
+  it("the repeated hour in the fall and end-of-day both exist", () => {
+    expect(existingWallTime("2026-11-01", 60 + 30)).not.toBeNull();
+    expect(existingWallTime("2026-10-19", 24 * 60)).not.toBeNull();
   });
 });

@@ -18,12 +18,13 @@ import {
   DayAvailabilityInput,
   computeDaySlots,
   isSlotFree,
+  onSlotGrid,
   pickBarber,
   totalDuration,
 } from "@/domain/availability";
 import { appointmentCode } from "@/lib/ids";
 import { normalizePhone } from "@/lib/phone";
-import { LocalDate, addDays, endOfLocalDay, localDateOf, startOfLocalDay, todayLocal } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, existingWallTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers } from "./catalog";
 import { CustomerInput, findOrCreateCustomer } from "./customers";
@@ -211,6 +212,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
     if (input.customerId && !customer) throw notFound("Customer");
 
     const day = await loadDayInput(r.shop, date, { durationMin: r.durationMin, staffIds: r.staffIds, now, staffOverride }, tx);
+    if (!staffOverride && !onSlotGrid(day, start.getTime())) throw new AppError("bad_request", "Pick one of the offered times");
     const free = r.staffIds.filter((id) => isSlotFree(day, id, start.getTime()));
     if (free.length === 0) throw new AppError("slot_unavailable", "That time was just taken — please pick another");
     const ordered = r.requestedStaffId ? free : [pickBarber(free, day.appointments, date)!, ...free].filter((v, i, a) => a.indexOf(v) === i);
@@ -227,6 +229,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
               customerId: customer?.id ?? null,
               startsAt: start,
               endsAt: end,
+              bufferMinutes: r.shop.bufferMinutes,
               status: input.source === "walk_in" ? "checked_in" : "booked",
               checkedInAt: input.source === "walk_in" ? now : null,
               source: input.source,
@@ -297,6 +300,16 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
   };
 }
 
+/** A wall-clock time typed by staff. Refuses one that doesn't exist instead of silently moving it an hour. */
+export function staffWallTime(date: LocalDate, minutesAfterMidnight: number): Date {
+  const dt = existingWallTime(date, minutesAfterMidnight);
+  if (!dt) throw new AppError("bad_request", `${minutesToLabel(minutesAfterMidnight % (24 * 60))} doesn't exist on ${date}: clocks spring forward that night`);
+  return dt.toJSDate();
+}
+
+/** Online changes close at the cutoff itself, so the manage page and the API always agree. */
+export const pastCutoff = (now: Date, startsAt: Date, cutoffMinutes: number) => now.getTime() >= startsAt.getTime() - cutoffMinutes * 60_000;
+
 export async function getAppointmentByCode(code: string, now: Date = new Date()) {
   const [row] = await db
     .select({ a: appointments, shop: shops, barberName: staff.displayLabel, barberSlug: staff.publicSlug, customer: customers })
@@ -308,7 +321,7 @@ export async function getAppointmentByCode(code: string, now: Date = new Date())
   if (!row) throw notFound("Appointment");
   const items = await db.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, row.a.id)).orderBy(asc(appointmentItems.kind));
   const cutoffAt = new Date(row.a.startsAt.getTime() - row.shop.cancelCutoffMinutes * 60_000);
-  const changeable = (ACTIVE_STATUSES as readonly string[]).includes(row.a.status) && row.a.status !== "in_service" && now < cutoffAt;
+  const changeable = (ACTIVE_STATUSES as readonly string[]).includes(row.a.status) && row.a.status !== "in_service" && !pastCutoff(now, row.a.startsAt, row.shop.cancelCutoffMinutes);
   return {
     id: row.a.id,
     code: row.a.code,
@@ -345,7 +358,7 @@ export async function cancelAppointment(
   const { a, shop } = await loadForChange(code);
   if (opts.customerId && a.customerId !== opts.customerId) throw notFound("Appointment");
   if (!(ACTIVE_STATUSES as readonly string[]).includes(a.status)) throw new AppError("conflict", `Appointment is already ${a.status}`);
-  if (opts.byCustomer && now.getTime() > a.startsAt.getTime() - shop.cancelCutoffMinutes * 60_000) {
+  if (opts.byCustomer && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
     throw new AppError("cutoff_passed", `Online changes close ${shop.cancelCutoffMinutes} minutes before the appointment. Please call the shop.`);
   }
   await db.transaction(async (tx) => {
@@ -367,7 +380,7 @@ export async function rescheduleAppointment(
   const { a, shop } = await loadForChange(code);
   if (opts.customerId && a.customerId !== opts.customerId) throw notFound("Appointment");
   if (!["booked", "confirmed"].includes(a.status)) throw new AppError("conflict", `Can't reschedule an appointment that is ${a.status}`);
-  if (opts.byCustomer && now.getTime() > a.startsAt.getTime() - shop.cancelCutoffMinutes * 60_000) {
+  if (opts.byCustomer && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
     throw new AppError("cutoff_passed", `Online changes close ${shop.cancelCutoffMinutes} minutes before the appointment. Please call the shop.`);
   }
   const items = await db.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, a.id));
@@ -390,6 +403,7 @@ export async function rescheduleAppointment(
 
   await db.transaction(async (tx) => {
     const day = await loadDayInput(shop, date, { durationMin, staffIds, now, ignoreAppointmentId: a.id, staffOverride }, tx);
+    if (!staffOverride && !onSlotGrid(day, start.getTime())) throw new AppError("bad_request", "Pick one of the offered times");
     const free = staffIds.filter((id) => isSlotFree(day, id, start.getTime()));
     if (!free.length) throw new AppError("slot_unavailable", "That time isn't available");
     const staffId = free.includes(a.staffId) ? a.staffId : pickBarber(free, day.appointments, date)!;

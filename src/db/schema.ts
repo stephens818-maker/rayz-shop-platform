@@ -314,6 +314,10 @@ export const appointments = pgTable(
     customerId: uuid("customer_id").references(() => customers.id),
     startsAt: ts("starts_at").notNull(),
     endsAt: ts("ends_at").notNull(),
+    /** The shop's buffer when booked. The chair is held until ends_at + buffer. */
+    bufferMinutes: integer("buffer_minutes").notNull().default(0),
+    /** Set by a trigger (ends_at + buffer_minutes); the no-double-booking constraint covers [starts_at, busy_until). */
+    busyUntil: ts("busy_until"),
     status: appointmentStatus("status").notNull().default("booked"),
     source: appointmentSource("source").notNull().default("online"),
     anyBarber: boolean("any_barber").notNull().default(false),

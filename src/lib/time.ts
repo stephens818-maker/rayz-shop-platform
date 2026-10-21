@@ -22,6 +22,12 @@ export function zonedWallTime(date: LocalDate, minutesAfterMidnight: number): Da
   return day.set({ hour, minute });
 }
 
+/** Like zonedWallTime, but null for a time that doesn't exist (the hour skipped when clocks spring forward). */
+export function existingWallTime(date: LocalDate, minutesAfterMidnight: number): DateTime | null {
+  const dt = zonedWallTime(date, minutesAfterMidnight);
+  return dt.hour * 60 + dt.minute === minutesAfterMidnight % (24 * 60) ? dt : null;
+}
+
 export function startOfLocalDay(date: LocalDate): Date {
   return DateTime.fromISO(date, { zone: SHOP_TZ }).startOf("day").toJSDate();
 }

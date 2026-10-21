@@ -34,8 +34,14 @@ export interface BusyAppointment {
   status: string;
 }
 
-/** Statuses that occupy a barber's chair. Cancelled and no-show free the time. */
-export const BUSY_STATUSES = ["booked", "confirmed", "checked_in", "in_service", "completed"] as const;
+/**
+ * Statuses that occupy a barber's chair: the same set the database's no-double-booking constraint
+ * covers. A completed appointment frees the chair (a cut that finishes early opens the rest of its
+ * slot); cancelled and no-show free it too.
+ */
+export const BUSY_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as const;
+/** For spreading "any barber" bookings: time already worked today counts as load. */
+const LOAD_STATUSES: readonly string[] = [...BUSY_STATUSES, "completed"];
 
 export interface DayAvailabilityInput {
   date: LocalDate;
@@ -198,6 +204,12 @@ export function computeDaySlots(input: DayAvailabilityInput): Slot[] {
   return [...byStart.values()].sort((a, b) => a.start - b.start);
 }
 
+/** Does `start` sit on the grid computeDaySlots offers (whole intervals after an opening)? */
+export function onSlotGrid(input: DayAvailabilityInput, start: number): boolean {
+  const interval = (input.slotIntervalMin ?? 15) * 60_000;
+  return toSpans(input.date, input.shopHours).some((open) => start >= open.start && (start - open.start) % interval === 0);
+}
+
 /** Is [start, start+duration) bookable for this barber? Used to validate a booking request server-side. */
 export function isSlotFree(input: DayAvailabilityInput, staffId: string, start: number): boolean {
   const span = { start, end: start + input.durationMin * 60_000 };
@@ -217,7 +229,7 @@ export function pickBarber(candidates: string[], appointments: BusyAppointment[]
   const load = new Map<string, number>(candidates.map((c) => [c, 0]));
   for (const a of appointments) {
     if (!load.has(a.staffId)) continue;
-    if (!(BUSY_STATUSES as readonly string[]).includes(a.status)) continue;
+    if (!LOAD_STATUSES.includes(a.status)) continue;
     const s = Math.max(ms(a.startsAt), dayStart);
     const e = Math.min(ms(a.endsAt), dayEnd);
     if (e > s) load.set(a.staffId, load.get(a.staffId)! + (e - s));
