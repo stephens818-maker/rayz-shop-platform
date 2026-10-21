@@ -37,7 +37,7 @@ async function main() {
   await db.execute(sql`TRUNCATE TABLE
     audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
-    waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
+    client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
     inventory_adjustments, shop_products, products, shop_services, services, time_blocks,
     staff_schedules, staff_shops, staff, shop_closures, shop_hours, shops, brand_settings
     RESTART IDENTITY CASCADE`);
@@ -446,6 +446,33 @@ async function main() {
     { shopId: coralville.id, name: "Chris W.", phone: "+13195550111", serviceId: svcBySlug.get("rayz-cut")!.id, quotedWaitMin: 20, joinedAt: new Date(now.getTime() - 12 * 60_000) },
     { shopId: coralville.id, name: "Dad + 2 kids", serviceId: svcBySlug.get("kidz-cut")!.id, quotedWaitMin: 35, joinedAt: new Date(now.getTime() - 4 * 60_000), notes: "3 cuts" },
   ]);
+
+  // Sample staff ratings on some past visits, by the barber who did the cut. Last, so the random
+  // sequence for everything above is unchanged.
+  const ratingNotes: Record<number, string[]> = {
+    1: ["No-call no-show twice", "Rude to the front desk"],
+    2: ["20 min late", "Difficult, redid the fade twice"],
+    3: ["Running late", "Particular about the line-up"],
+    4: ["Easy cut", "On time"],
+    5: ["Great tipper", "Regular, always on time", "Brings his son too"],
+  };
+  const ratingRows = appts
+    .filter((a) => a.customerId && a.status === "completed" && chance(0.18))
+    .map((a) => {
+      const stars = pick([5, 5, 5, 4, 4, 4, 3, 2, 1]);
+      return {
+        customerId: a.customerId!,
+        shopId: a.shopId,
+        appointmentId: a.id!,
+        staffId: a.staffId,
+        stars,
+        note: chance(0.4) ? pick(ratingNotes[stars]) : null,
+        createdAt: a.endsAt!,
+        updatedAt: a.endsAt!,
+      };
+    });
+  await chunked(ratingRows, 2000, (c) => db.insert(t.clientRatings).values(c));
+  console.log(`  ${ratingRows.length} sample staff ratings`);
 
   console.log("Seed complete.");
   console.log(`  Logins (password: ${DEMO_PASSWORD}): owner@rayz.test (brand admin), michelle@rayz.test (Coralville manager), makenna@rayz.test (barber)`);
