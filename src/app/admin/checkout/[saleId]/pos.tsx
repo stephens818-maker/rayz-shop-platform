@@ -27,7 +27,7 @@ export function Pos(props: {
   config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[] };
   feeNotice: string | null;
   initialLines: Omit<Line, "key">[];
-  customer: { id: string; name: string; phone: string | null } | null;
+  customer: { id: string; name: string; phone: string | null; notes: string | null } | null;
   barber: { id: string; label: string } | null;
   barbers: { id: string; label: string }[];
   services: { id: string; name: string; kind: "service" | "addon"; priceCents: number }[];
@@ -606,10 +606,10 @@ function TenderBtn({ on, onClick, title, sub }: { on: boolean; onClick: () => vo
   );
 }
 
-function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: { id: string; name: string; phone: string | null } | null; onError: (e: string) => void }) {
+function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: { id: string; name: string; phone: string | null; notes: string | null } | null; onError: (e: string) => void }) {
   const router = useRouter();
   const [q, setQ] = useState("");
-  const [found, setFound] = useState<{ id: string; firstName: string; lastName: string | null; phone: string | null }[]>([]);
+  const [found, setFound] = useState<{ id: string; firstName: string; lastName: string | null; phone: string | null; phoneHint: string | null }[]>([]);
   useEffect(() => {
     if (q.trim().length < 2) return setFound([]);
     const t = setTimeout(async () => {
@@ -628,12 +628,15 @@ function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: 
     <div className="relative">
       <div className="mb-1 text-xs font-medium text-zinc-700">Client</div>
       {customer ? (
-        <div className="flex h-[38px] items-center justify-between rounded-lg bg-zinc-50 px-3 text-sm ring-1 ring-zinc-200">
-          <span className="truncate font-medium">{customer.name}</span>
-          <button className="text-xs underline" onClick={() => attach(null)}>
-            Remove
-          </button>
-        </div>
+        <>
+          <div className="flex h-[38px] items-center justify-between rounded-lg bg-zinc-50 px-3 text-sm ring-1 ring-zinc-200">
+            <span className="truncate font-medium">{customer.name}</span>
+            <button className="text-xs underline" onClick={() => attach(null)}>
+              Remove
+            </button>
+          </div>
+          {customer.notes && <p className="mt-1 whitespace-pre-line rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">{customer.notes}</p>}
+        </>
       ) : (
         <>
           <Input placeholder="Search to attach (for loyalty)" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -641,7 +644,7 @@ function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: 
             <div className="absolute inset-x-0 z-10 mt-1 divide-y divide-zinc-100 rounded-lg bg-white shadow-lg ring-1 ring-zinc-200">
               {found.map((f) => (
                 <button key={f.id} onClick={() => attach(f.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50">
-                  {f.firstName} {f.lastName} <span className="text-zinc-500">{formatPhone(f.phone)}</span>
+                  {f.firstName} {f.lastName} <span className="text-zinc-500">{formatPhone(f.phone) || f.phoneHint}</span>
                 </button>
               ))}
             </div>

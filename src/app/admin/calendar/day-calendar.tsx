@@ -519,7 +519,7 @@ function BlockPanel({ block, col, onDone }: { block: CalColumn["blocks"][number]
   );
 }
 
-type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; email: string | null };
+type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; phoneHint: string | null; email: string | null; notes: string | null };
 
 function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColumn; data: DayCalendarData; startMin: number; services: Svc[]; own: boolean; onDone: () => void }) {
   const [tab, setTab] = useState<"appt" | "block">("appt");
@@ -615,7 +615,8 @@ function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColu
                   <div className="font-medium">
                     {picked.firstName} {picked.lastName}
                   </div>
-                  <div className="text-xs text-zinc-500">{picked.phone ?? picked.email}</div>
+                  <div className="text-xs text-zinc-500">{picked.phone ?? picked.phoneHint ?? picked.email}</div>
+                  {picked.notes && <div className="mt-1 text-xs text-amber-700">{picked.notes}</div>}
                 </div>
                 <button className="text-xs underline" onClick={() => setPicked(null)}>
                   Change
@@ -631,7 +632,7 @@ function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColu
                         <span className="font-medium">
                           {f.firstName} {f.lastName}
                         </span>{" "}
-                        <span className="text-zinc-500">{f.phone ?? f.email}</span>
+                        <span className="text-zinc-500">{f.phone ?? f.phoneHint ?? f.email}</span>
                       </button>
                     ))}
                   </div>

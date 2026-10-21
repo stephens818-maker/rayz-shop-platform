@@ -1,76 +1,152 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { desc, eq, sql } from "drizzle-orm";
+import { notFound, redirect } from "next/navigation";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointments, customers, loyaltyLedger, sales, shops, staff } from "@/db/schema";
-import { Card, CardHeader, PageHeader, Stat, StatusBadge, Table, Td, Th } from "@/components/ui";
+import { appointments, customerSquireIds, customers, loyaltyLedger, sales, shops, staff } from "@/db/schema";
+import { Badge, Card, CardHeader, PageHeader, Stat, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
-import { formatDateTime } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
+import { formatDate, formatDateTime } from "@/lib/time";
+import { canManage, requireStaff } from "@/server/auth/staff";
+import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
-import { CustomerEditor, GrantReward } from "./editor";
+import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
 
 export const metadata: Metadata = { title: "Client" };
 
-export default async function CustomerPage({ params }: { params: Promise<{ id: string }> }) {
+const VISITS_PAGE = 25;
+const SALES_PAGE = 15;
+
+export default async function CustomerPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ v?: string; s?: string; merged?: string; existing?: string }> }) {
   const { id } = await params;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const sp = await searchParams;
+  const ctx = await requireStaff();
+  const access = await customerAccess({ staffId: ctx.staff.id, canManage: canManage(ctx) }, id);
+  if (!access) redirect("/admin/customers");
+  const full = access === "full";
   const c = await db.query.customers.findFirst({ where: eq(customers.id, id) });
   if (!c) notFound();
-  const [visits, saleRows, loyalty, ledger, [stats]] = await Promise.all([
+  const vPage = Math.max(1, Number(sp.v) || 1);
+  const sPage = Math.max(1, Number(sp.s) || 1);
+
+  const [stats, visits, [{ visitCount }], saleRows, [{ saleCount }], loyalty, ledger, squireIds, dupes, barberOptions] = await Promise.all([
+    customerStats(id),
     db
-      .select({ a: appointments, shop: shops.name, barber: staff.displayLabel, items: sql<string>`(select string_agg(name, ' + ') from appointment_items i where i.appointment_id = ${appointments.id})` })
+      .select({
+        a: appointments,
+        shop: shops.name,
+        barber: staff.displayLabel,
+        items: sql<string>`(select string_agg(name, ' + ' order by kind, name) from appointment_items i where i.appointment_id = ${appointments.id})`,
+        paid: sql<number | null>`(select s.total_cents from sales s where s.appointment_id = ${appointments.id} and s.status <> 'voided' limit 1)`,
+      })
       .from(appointments)
       .innerJoin(shops, eq(shops.id, appointments.shopId))
       .innerJoin(staff, eq(staff.id, appointments.staffId))
       .where(eq(appointments.customerId, id))
       .orderBy(desc(appointments.startsAt))
-      .limit(40),
-    db
-      .select({ s: sales, shop: shops.name })
-      .from(sales)
-      .innerJoin(shops, eq(shops.id, sales.shopId))
-      .where(eq(sales.customerId, id))
-      .orderBy(desc(sales.createdAt))
-      .limit(30),
+      .limit(VISITS_PAGE)
+      .offset((vPage - 1) * VISITS_PAGE),
+    db.select({ visitCount: sql<number>`count(*)::int` }).from(appointments).where(eq(appointments.customerId, id)),
+    full
+      ? db
+          .select({
+            s: sales,
+            shop: shops.name,
+            refunded: sql<number>`(select coalesce(sum(r.amount_cents), 0)::int from refunds r where r.sale_id = ${sales.id} and r.kind = 'refund')`,
+          })
+          .from(sales)
+          .innerJoin(shops, eq(shops.id, sales.shopId))
+          .where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`))
+          .orderBy(desc(sales.businessDate), desc(sales.createdAt))
+          .limit(SALES_PAGE)
+          .offset((sPage - 1) * SALES_PAGE)
+      : [],
+    full ? db.select({ saleCount: sql<number>`count(*)::int` }).from(sales).where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`)) : [{ saleCount: 0 }],
     loyaltyBalance(id),
     db.select().from(loyaltyLedger).where(eq(loyaltyLedger.customerId, id)).orderBy(desc(loyaltyLedger.createdAt)).limit(20),
-    db
-      .select({
-        spend: sql<number>`coalesce(sum(${sales.serviceNetCents} + ${sales.productNetCents}) filter (where ${sales.status} in ('paid','partially_refunded')), 0)::int`,
-        tips: sql<number>`coalesce(sum(${sales.tipCents}) filter (where ${sales.status} in ('paid','partially_refunded')), 0)::int`,
-      })
-      .from(sales)
-      .where(eq(sales.customerId, id)),
+    db.select().from(customerSquireIds).where(eq(customerSquireIds.customerId, id)).orderBy(asc(customerSquireIds.createdAt)),
+    full ? duplicatePairs({ forId: id, limit: 10 }) : [],
+    full
+      ? db
+          .select({ id: staff.id, label: staff.displayLabel, active: staff.active })
+          .from(staff)
+          .where(or(and(eq(staff.active, true), eq(staff.isBookable, true)), c.preferredStaffId ? eq(staff.id, c.preferredStaffId) : undefined))
+          .orderBy(asc(staff.displayLabel))
+      : [],
   ]);
-  const completed = visits.filter((v) => v.a.status === "completed").length;
-  const noShows = visits.filter((v) => v.a.status === "no_show").length;
+  const staffLabel = async (sid: string | null) => (sid ? ((await db.query.staff.findFirst({ where: eq(staff.id, sid) }))?.displayLabel ?? null) : null);
+  const [preferred, usual, homeShop] = await Promise.all([
+    staffLabel(c.preferredStaffId),
+    staffLabel(stats.usualBarberId),
+    c.homeShopId ? db.query.shops.findFirst({ where: eq(shops.id, c.homeShopId) }) : null,
+  ]);
   const canSeeSale = (shopId: string) => ctx.shopIds.includes(shopId);
+  const pager = (key: "v" | "s", pageNo: number, total: number, size: number) =>
+    total > size && (
+      <div className="flex items-center justify-between px-4 py-3 text-sm">
+        {pageNo > 1 ? <Link href={`?${key}=${pageNo - 1}`}>‹ Newer</Link> : <span />}
+        <span className="text-zinc-500">
+          {(pageNo - 1) * size + 1}–{Math.min(total, pageNo * size)} of {total}
+        </span>
+        {pageNo * size < total ? <Link href={`?${key}=${pageNo + 1}`}>Older ›</Link> : <span />}
+      </div>
+    );
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader
         title={`${c.firstName} ${c.lastName ?? ""}`}
-        subtitle={`Client since ${formatDateTime(c.createdAt)}${c.squireId ? ` · Squire ID ${c.squireId}` : ""}`}
+        subtitle={
+          <>
+            Client since {formatDate(c.createdAt, "MMM d, yyyy")}
+            {homeShop && ` · Home shop ${homeShop.name}`}
+            {squireIds.length > 0 && ` · Squire ID${squireIds.length > 1 ? "s" : ""} ${squireIds.map((s) => s.squireId).join(", ")}`}
+          </>
+        }
         actions={
           <Link className="text-sm underline" href="/admin/customers">
-            All clients
+            {full ? "All clients" : "My clients"}
           </Link>
         }
       />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Visits" value={completed} hint={noShows ? `${noShows} no-shows` : undefined} tone={noShows ? "down" : undefined} />
-        <Stat label="Lifetime spend" value={formatCents(stats.spend)} hint={`tips ${formatCents(stats.tips)}`} />
+      {sp.existing && <div className="rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">This client was already on file, so no new record was made.</div>}
+      {sp.merged && <div className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">Merged. History, tickets, loyalty, and gift cards from the other record are now on this client.</div>}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <Stat label="Visits" value={stats.visits} hint={[stats.noShows && `${stats.noShows} no-shows`, stats.cancellations && `${stats.cancellations} cancelled`].filter(Boolean).join(" · ") || undefined} tone={stats.noShows ? "down" : undefined} />
+        <Stat label="Last visit" value={stats.lastVisit ? formatDate(stats.lastVisit, "MMM d, yyyy") : "—"} hint={stats.upcoming ? `${stats.upcoming} upcoming` : stats.firstVisit ? `first ${formatDate(stats.firstVisit, "MMM yyyy")}` : undefined} />
+        {full && (
+          <Stat
+            label="Lifetime spend"
+            value={formatCents(stats.lifetimeSpendCents)}
+            hint={`tips ${formatCents(stats.tipsCents)}${stats.squireVisitSpendCents ? ` · ${formatCents(stats.squireVisitSpendCents)} from Squire visit prices` : ""}`}
+          />
+        )}
         <Stat label="Loyalty progress" value={`${formatCents(loyalty.progressCents)} / ${formatCents(loyalty.thresholdCents)}`} hint={`${formatCents(loyalty.remainingCents)} to next ${formatCents(loyalty.rewardCents)}`} />
         <Stat label="Rewards ready" value={formatCents(loyalty.availableCents)} hint={`${loyalty.rewards.length} reward${loyalty.rewards.length === 1 ? "" : "s"}`} />
       </div>
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
-          <CustomerEditor
-            id={c.id}
-            initial={{ firstName: c.firstName, lastName: c.lastName ?? "", phone: c.phone ?? "", email: c.email ?? "", notes: c.notes ?? "", smsOptIn: c.smsOptIn, emailOptIn: c.emailOptIn }}
-          />
+          {full ? (
+            <CustomerEditor
+              id={c.id}
+              initial={{
+                firstName: c.firstName,
+                lastName: c.lastName ?? "",
+                phone: c.phone ?? "",
+                email: c.email ?? "",
+                notes: c.notes ?? "",
+                smsOptIn: c.smsOptIn,
+                emailOptIn: c.emailOptIn,
+                homeShopId: c.homeShopId,
+                preferredStaffId: c.preferredStaffId,
+              }}
+              shops={await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name))}
+              barbers={barberOptions.map((b) => ({ id: b.id, label: b.active ? b.label : `${b.label} (inactive)` }))}
+              usualBarber={usual}
+            />
+          ) : (
+            <NotesEditor id={c.id} initial={c.notes ?? ""} preferred={preferred} usual={usual} />
+          )}
           <Card>
             <CardHeader title="Loyalty" subtitle={loyalty.rules.earn} />
             <ul className="divide-y divide-zinc-100 text-sm">
@@ -83,7 +159,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
               {ledger.map((l) => (
                 <li key={l.id} className="flex justify-between px-4 py-1.5 text-xs text-zinc-600">
                   <span className="capitalize">
-                    {l.kind.replace("_", " ")} · {formatDateTime(l.createdAt)}
+                    {l.kind.replace(/_/g, " ")} · {formatDateTime(l.createdAt)}
                   </span>
                   <span className="tabular">{l.progressDeltaCents ? formatCents(l.progressDeltaCents, { sign: true }) : formatCents(l.rewardCents, { sign: true })}</span>
                 </li>
@@ -91,10 +167,31 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
             </ul>
             {ctx.isAdmin && <GrantReward customerId={c.id} />}
           </Card>
+          {full && (
+            <Card>
+              <CardHeader title="Duplicates" subtitle="Merge another record into this client. Its visits, tickets, loyalty, gift cards, and Squire IDs move here." />
+              {dupes.length > 0 && (
+                <ul className="divide-y divide-zinc-100 text-sm">
+                  {dupes.map((d) => {
+                    const other = d.a.id === c.id ? d.b : d.a;
+                    return (
+                      <li key={other.id} className="flex items-center justify-between gap-2 px-4 py-2">
+                        <Link className="truncate underline" href={`/admin/customers/${other.id}`}>
+                          {other.firstName} {other.lastName}
+                        </Link>
+                        <Badge tone={d.kind === "likely" ? "amber" : "gray"}>{d.kind === "likely" ? "likely same" : d.kind === "same_name" ? "same name" : "shares contact"}</Badge>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <MergeInto keepId={c.id} keepName={`${c.firstName} ${c.lastName ?? ""}`.trim()} suggestions={dupes.map((d) => (d.a.id === c.id ? d.b : d.a)).map((o) => ({ id: o.id, label: `${o.firstName} ${o.lastName ?? ""}`.trim() }))} />
+            </Card>
+          )}
         </div>
         <div className="space-y-4">
           <Card>
-            <CardHeader title="Appointments" />
+            <CardHeader title="Visit history" subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every shop, including Squire history`} />
             <Table>
               <thead>
                 <tr>
@@ -102,16 +199,21 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
                   <Th>Shop</Th>
                   <Th>Barber</Th>
                   <Th>Services</Th>
+                  <Th right>Price</Th>
                   <Th>Status</Th>
                 </tr>
               </thead>
               <tbody>
                 {visits.map((v) => (
                   <tr key={v.a.id}>
-                    <Td>{formatDateTime(v.a.startsAt)}</Td>
+                    <Td className="whitespace-nowrap">{formatDateTime(v.a.startsAt)}</Td>
                     <Td>{v.shop}</Td>
                     <Td>{v.barber}</Td>
-                    <Td className="max-w-xs truncate">{v.items}</Td>
+                    <Td className="max-w-xs truncate">
+                      {v.items}
+                      {v.a.source === "import" && <span className="ml-1 text-xs text-zinc-400">Squire</span>}
+                    </Td>
+                    <Td right>{formatCents(v.paid ?? v.a.estimateCents)}</Td>
                     <Td>
                       <StatusBadge status={v.a.status} />
                     </Td>
@@ -119,38 +221,48 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
                 ))}
               </tbody>
             </Table>
+            {pager("v", vPage, visitCount, VISITS_PAGE)}
           </Card>
-          <Card>
-            <CardHeader title="Purchases" />
-            <Table>
-              <thead>
-                <tr>
-                  <Th>#</Th>
-                  <Th>Date</Th>
-                  <Th>Shop</Th>
-                  <Th right>Services</Th>
-                  <Th right>Products</Th>
-                  <Th right>Tip</Th>
-                  <Th right>Total</Th>
-                  <Th>Status</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {saleRows.map(({ s, shop }) => (
-                  <tr key={s.id}>
-                    <Td>{canSeeSale(s.shopId) ? <Link className="underline" href={`/admin/sales/${s.id}`}>{s.number}</Link> : s.number}</Td>
-                    <Td>{s.businessDate}</Td>
-                    <Td>{shop}</Td>
-                    <Td right>{formatCents(s.serviceNetCents)}</Td>
-                    <Td right>{formatCents(s.productNetCents)}</Td>
-                    <Td right>{formatCents(s.tipCents)}</Td>
-                    <Td right>{formatCents(s.totalCents)}</Td>
-                    <Td className="capitalize">{s.status.replace("_", " ")}</Td>
+          {full && (
+            <Card>
+              <CardHeader title="Purchases" subtitle={`${saleCount} ticket${saleCount === 1 ? "" : "s"} · lifetime ${formatCents(stats.ticketSpendCents)} after refunds`} />
+              <Table>
+                <thead>
+                  <tr>
+                    <Th>#</Th>
+                    <Th>Date</Th>
+                    <Th>Shop</Th>
+                    <Th right>Services</Th>
+                    <Th right>Products</Th>
+                    <Th right>Tip</Th>
+                    <Th right>Total</Th>
+                    <Th>Status</Th>
                   </tr>
-                ))}
-              </tbody>
-            </Table>
-          </Card>
+                </thead>
+                <tbody>
+                  {saleRows.map(({ s, shop, refunded }) => (
+                    <tr key={s.id}>
+                      <Td>{canSeeSale(s.shopId) ? <Link className="underline" href={`/admin/sales/${s.id}`}>{s.number}</Link> : s.number}</Td>
+                      <Td>{s.businessDate}</Td>
+                      <Td>{shop}</Td>
+                      <Td right>{formatCents(s.serviceNetCents)}</Td>
+                      <Td right>{formatCents(s.productNetCents)}</Td>
+                      <Td right>{formatCents(s.tipCents)}</Td>
+                      <Td right>
+                        {formatCents(s.totalCents)}
+                        {refunded > 0 && <div className="text-xs text-red-600">−{formatCents(refunded)} refunded</div>}
+                      </Td>
+                      <Td className="capitalize">
+                        {s.status.replace("_", " ")}
+                        {s.isImported && <span className="ml-1 text-xs text-zinc-400">Squire</span>}
+                      </Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
+              {pager("s", sPage, saleCount, SALES_PAGE)}
+            </Card>
+          )}
         </div>
       </div>
     </div>

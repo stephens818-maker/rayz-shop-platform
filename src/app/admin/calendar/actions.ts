@@ -1,10 +1,9 @@
 "use server";
 
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { appointments, customers, staffShops, timeBlocks } from "@/db/schema";
-import { normalizePhone } from "@/lib/phone";
+import { appointments, staffShops, timeBlocks } from "@/db/schema";
 import { zonedWallTime } from "@/lib/time";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
@@ -12,6 +11,7 @@ import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, assertShopAccess, caller, canManage, requireStaff } from "@/server/auth/staff";
 import { createAppointment, rescheduleAppointment, setAppointmentStatus } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
+import { maskPhone, searchCustomers } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 
 async function barberShops(staffId: string) {
@@ -48,30 +48,26 @@ export async function startCheckoutAction(appointmentId: string) {
   });
 }
 
+/**
+ * Managers search the shared book. Barbers only find clients who have been to their shops, and
+ * see the last four digits of the phone instead of the number and no email.
+ */
 export async function searchCustomersAction(q: string) {
   return safe(async () => {
     const ctx = await requireStaff();
-    if (!canManage(ctx) && !ctx.isBarber) throw forbidden();
     const term = q.trim();
     if (term.length < 2) return [];
-    const phone = normalizePhone(term);
-    const digits = term.replace(/\D/g, "");
-    const [first, ...rest] = term.split(/\s+/);
-    const rows = await db
-      .select({ id: customers.id, firstName: customers.firstName, lastName: customers.lastName, phone: customers.phone, email: customers.email })
-      .from(customers)
-      .where(
-        phone
-          ? eq(customers.phone, phone)
-          : digits.length >= 4
-            ? ilike(customers.phone, `%${digits}%`)
-            : rest.length
-              ? and(ilike(customers.firstName, `${first}%`), ilike(customers.lastName, `${rest.join(" ")}%`))
-              : or(ilike(customers.firstName, `${term}%`), ilike(customers.lastName, `${term}%`), ilike(customers.email, `${term}%`)),
-      )
-      .orderBy(desc(customers.createdAt))
-      .limit(8);
-    return rows;
+    const full = canManage(ctx);
+    const rows = await searchCustomers(term, full ? {} : { restrictToShops: ctx.shopIds }, 8);
+    return rows.map((r) => ({
+      id: r.id,
+      firstName: r.firstName,
+      lastName: r.lastName,
+      phone: full ? r.phone : null,
+      phoneHint: full ? null : maskPhone(r.phone),
+      email: full ? r.email : null,
+      notes: r.notes,
+    }));
   });
 }
 
@@ -99,8 +95,9 @@ export async function createStaffAppointmentAction(input: {
       barberRef: input.staffId,
       startsAt,
       customerId: input.customerId ?? null,
-      customer: input.customerId ? null : input.customer && (input.customer.phone || input.customer.email) ? input.customer : null,
-      notes: input.customerId || input.customer?.phone || input.customer?.email ? input.notes || null : `Walk-in: ${input.customer?.firstName} ${input.customer?.lastName ?? ""}`.trim(),
+      customer: input.customerId ? null : (input.customer ?? null),
+      allowNoContact: true,
+      notes: input.notes || null,
       source: "staff",
       actor: ctx.actor,
     });

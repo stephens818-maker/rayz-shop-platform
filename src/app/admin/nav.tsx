@@ -19,7 +19,7 @@ const SECTIONS: { title: string; items: { href: string; label: string; roles: Ro
       { href: "/admin/walk-ins", label: "Walk-ins & waitlist", roles: MGR },
       { href: "/admin/sales", label: "Sales & checkout", roles: MGR },
       { href: "/admin/drawer", label: "Cash drawer", roles: MGR },
-      { href: "/admin/customers", label: "Clients", roles: MGR },
+      { href: "/admin/customers", label: "Clients", roles: ALL },
     ],
   },
   {

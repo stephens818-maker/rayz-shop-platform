@@ -1,32 +1,35 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, loyaltyAccounts, shops } from "@/db/schema";
-import { Card, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
+import { Card, Empty, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
-import { formatPhone, normalizePhone } from "@/lib/phone";
+import { formatPhone } from "@/lib/phone";
 import { formatDate } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
+import { canManage, requireStaff } from "@/server/auth/staff";
+import { customerSearchWhere, maskPhone, visitedScope } from "@/server/customers";
 
 export const metadata: Metadata = { title: "Clients" };
 
+const PAGE = 50;
+
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await requireStaff();
+  const full = canManage(ctx);
   const q = (sp.q ?? "").trim();
   const page = Math.max(1, Number(sp.page) || 1);
-  const phone = normalizePhone(q);
-  const [first, ...rest] = q.split(/\s+/);
-  const where = q
-    ? phone
-      ? eq(customers.phone, phone)
-      : rest.length
-        ? and(ilike(customers.firstName, `${first}%`), ilike(customers.lastName, `${rest.join(" ")}%`))
-        : or(ilike(customers.firstName, `${q}%`), ilike(customers.lastName, `${q}%`), ilike(customers.email, `%${q}%`), ilike(customers.phone, `%${q.replace(/\D/g, "") || "x"}%`))
-    : ctx.currentShopId
-      ? eq(customers.homeShopId, ctx.currentShopId)
-      : undefined;
+  const search = customerSearchWhere(q);
+  // Barbers: clients they've cut. Managers: the shared book when searching; otherwise this shop's
+  // clients, meaning home shop here or any visit here.
+  const scope = !full
+    ? visitedScope({ staffId: ctx.staff.id })
+    : search
+      ? undefined
+      : ctx.currentShopId
+        ? or(eq(customers.homeShopId, ctx.currentShopId), visitedScope({ shopIds: [ctx.currentShopId] }))
+        : undefined;
   const rows = await db
     .select({
       c: customers,
@@ -38,14 +41,35 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
     .from(customers)
     .leftJoin(shops, eq(shops.id, customers.homeShopId))
     .leftJoin(loyaltyAccounts, eq(loyaltyAccounts.customerId, customers.id))
-    .where(where)
+    .where(and(search, scope))
     .orderBy(desc(customers.createdAt))
-    .limit(50)
-    .offset((page - 1) * 50);
+    .limit(PAGE)
+    .offset((page - 1) * PAGE);
+  const shopName = ctx.shops.find((s) => s.id === ctx.currentShopId)?.name;
+  const subtitle = !full
+    ? "Clients you've had in your chair."
+    : q
+      ? "Searching every Ray'z shop. Clients and loyalty are shared across shops."
+      : shopName
+        ? `${shopName} clients (home shop or a visit here). Search to find anyone at any shop.`
+        : "All Ray'z clients.";
 
   return (
     <div className="mx-auto max-w-6xl">
-      <PageHeader title="Clients" subtitle="Clients and loyalty are shared across all Ray'z shops." />
+      <PageHeader
+        title={full ? "Clients" : "My clients"}
+        subtitle={subtitle}
+        actions={
+          full && (
+            <div className="flex gap-2">
+              <LinkButton variant="secondary" href="/admin/customers/duplicates">
+                Duplicates
+              </LinkButton>
+              <LinkButton href="/admin/customers/new">New client</LinkButton>
+            </div>
+          )
+        }
+      />
       <form className="mb-4 flex gap-2" action="/admin/customers">
         <input name="q" defaultValue={q} placeholder="Search name, phone or email" className="h-10 w-full max-w-md rounded-lg px-3 text-sm ring-1 ring-zinc-300" autoFocus />
         <button className="h-10 rounded-lg bg-ink-900 px-4 text-sm font-medium text-white">Search</button>
@@ -59,7 +83,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
               <tr>
                 <Th>Name</Th>
                 <Th>Phone</Th>
-                <Th>Email</Th>
+                {full && <Th>Email</Th>}
                 <Th>Home shop</Th>
                 <Th right>Visits</Th>
                 <Th>Last visit</Th>
@@ -74,8 +98,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                       {c.firstName} {c.lastName}
                     </Link>
                   </Td>
-                  <Td>{formatPhone(c.phone) || "—"}</Td>
-                  <Td className="text-zinc-600">{c.email ?? "—"}</Td>
+                  <Td>{full ? formatPhone(c.phone) || "—" : (maskPhone(c.phone) ?? "—")}</Td>
+                  {full && <Td className="text-zinc-600">{c.email ?? "—"}</Td>}
                   <Td>{shop ?? "—"}</Td>
                   <Td right>{visits}</Td>
                   <Td>{lastVisit ? formatDate(new Date(lastVisit), "MMM d, yyyy") : "—"}</Td>
@@ -86,7 +110,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
           </Table>
           <div className="flex justify-between px-4 py-3 text-sm">
             {page > 1 ? <Link href={`/admin/customers?q=${encodeURIComponent(q)}&page=${page - 1}`}>‹ Previous</Link> : <span />}
-            {rows.length === 50 && <Link href={`/admin/customers?q=${encodeURIComponent(q)}&page=${page + 1}`}>Next ›</Link>}
+            {rows.length === PAGE && <Link href={`/admin/customers?q=${encodeURIComponent(q)}&page=${page + 1}`}>Next ›</Link>}
           </div>
         </Card>
       )}

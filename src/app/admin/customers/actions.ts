@@ -4,14 +4,17 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { customers, loyaltyLedger, loyaltyRewards } from "@/db/schema";
+import { customers, loyaltyLedger, loyaltyRewards, shops, staff } from "@/db/schema";
 import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { requireStaff } from "@/server/auth/staff";
-import { AppError } from "@/server/errors";
+import { canManage, requireStaff } from "@/server/auth/staff";
+import { customerAccess, findOrCreateCustomer, matchCustomer, mergeCustomers, searchCustomers } from "@/server/customers";
+import { AppError, forbidden } from "@/server/errors";
 import { getLoyaltyConfig } from "@/server/loyalty";
+
+const MGR = ["brand_admin", "shop_manager"] as const;
 
 const Profile = z.object({
   firstName: z.string().trim().min(1),
@@ -21,21 +24,92 @@ const Profile = z.object({
   notes: z.string().trim(),
   smsOptIn: z.boolean(),
   emailOptIn: z.boolean(),
+  homeShopId: z.string().uuid().nullable(),
+  preferredStaffId: z.string().uuid().nullable(),
 });
 
+function contact(p: { phone: string; email: string }) {
+  const phone = p.phone ? normalizePhone(p.phone) : null;
+  if (p.phone && !phone) throw new AppError("bad_request", "Phone number doesn't look like a US number");
+  const email = p.email ? normalizeEmail(p.email) : null;
+  if (p.email && !email) throw new AppError("bad_request", "Email doesn't look right");
+  return { phone, email };
+}
+
+async function checkRefs(p: { homeShopId: string | null; preferredStaffId: string | null }) {
+  if (p.homeShopId && !(await db.query.shops.findFirst({ where: eq(shops.id, p.homeShopId) }))) throw new AppError("bad_request", "Unknown shop");
+  if (p.preferredStaffId && !(await db.query.staff.findFirst({ where: eq(staff.id, p.preferredStaffId) }))) throw new AppError("bad_request", "Unknown barber");
+}
+
+/** The client record is shared by every shop, so any manager may correct it; every change is audited. */
 export async function updateCustomerAction(id: string, raw: z.input<typeof Profile>) {
   return safe(async () => {
-    const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+    const ctx = await requireStaff([...MGR]);
     const p = Profile.parse(raw);
-    const phone = p.phone ? normalizePhone(p.phone) : null;
-    if (p.phone && !phone) throw new AppError("bad_request", "Phone number doesn't look like a US number");
-    const email = p.email ? normalizeEmail(p.email) : null;
-    if (p.email && !email) throw new AppError("bad_request", "Email doesn't look right");
-    const values = { firstName: p.firstName, lastName: p.lastName || null, phone, email, notes: p.notes || null, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn };
+    await checkRefs(p);
+    const before = await db.query.customers.findFirst({ where: eq(customers.id, id) });
+    if (!before) throw new AppError("not_found", "Client not found");
+    const values = { firstName: p.firstName, lastName: p.lastName || null, ...contact(p), notes: p.notes || null, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn, homeShopId: p.homeShopId, preferredStaffId: p.preferredStaffId };
     await db.update(customers).set(values).where(eq(customers.id, id));
-    await audit(ctx.actor, "customer.update", "customer", id, values, ctx.currentShopId);
+    const changed = Object.fromEntries(Object.entries(values).filter(([k, v]) => before[k as keyof typeof before] !== v).map(([k, v]) => [k, { from: before[k as keyof typeof before], to: v }]));
+    await audit(ctx.actor, "customer.update", "customer", id, changed, ctx.currentShopId);
     revalidatePath(`/admin/customers/${id}`);
     return null;
+  });
+}
+
+/** Barbers keep cut notes for clients they've served. */
+export async function updateNotesAction(id: string, notes: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    const access = await customerAccess({ staffId: ctx.staff.id, canManage: canManage(ctx) }, id);
+    if (!access) throw forbidden("You can only edit notes for your own clients");
+    const value = notes.trim().slice(0, 2000) || null;
+    await db.update(customers).set({ notes: value }).where(eq(customers.id, id));
+    await audit(ctx.actor, "customer.notes", "customer", id, { notes: value }, ctx.currentShopId);
+    revalidatePath(`/admin/customers/${id}`);
+    return null;
+  });
+}
+
+const NewClient = Profile.omit({ notes: true }).extend({ notes: z.string().trim().default("") });
+
+/** Runs the same matching as booking: an existing client with this phone/email and a compatible name is returned instead. */
+export async function createCustomerAction(raw: z.input<typeof NewClient>) {
+  return safe(async () => {
+    const ctx = await requireStaff([...MGR]);
+    const p = NewClient.parse(raw);
+    await checkRefs(p);
+    const c = contact(p);
+    const existing = c.phone || c.email ? await matchCustomer(db, { firstName: p.firstName, lastName: p.lastName, ...c }) : null;
+    if (existing) return { id: existing.customer.id, existed: true };
+    const created = await db.transaction(async (tx) => {
+      const row = await findOrCreateCustomer({ firstName: p.firstName, lastName: p.lastName, ...c, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn }, p.homeShopId ?? ctx.currentShopId, tx, { allowNoContact: true });
+      await tx.update(customers).set({ notes: p.notes || null, preferredStaffId: p.preferredStaffId }).where(eq(customers.id, row.id));
+      return row;
+    });
+    await audit(ctx.actor, "customer.create", "customer", created.id, { firstName: p.firstName }, ctx.currentShopId);
+    revalidatePath("/admin/customers");
+    return { id: created.id, existed: false };
+  });
+}
+
+export async function mergeCustomersAction(keepId: string, dropId: string) {
+  return safe(async () => {
+    const ctx = await requireStaff([...MGR]);
+    const r = await mergeCustomers(keepId, dropId, ctx.actor);
+    revalidatePath("/admin/customers");
+    revalidatePath("/admin/customers/duplicates");
+    revalidatePath(`/admin/customers/${keepId}`);
+    return r;
+  });
+}
+
+export async function findClientsAction(q: string) {
+  return safe(async () => {
+    await requireStaff([...MGR]);
+    if (q.trim().length < 2) return [];
+    return (await searchCustomers(q, {}, 8)).map((c) => ({ id: c.id, firstName: c.firstName, lastName: c.lastName, phone: c.phone, email: c.email }));
   });
 }
 
