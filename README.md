@@ -10,6 +10,7 @@ Booking, front desk, POS, and reporting for Ray'z Barber Shop's 8 locations (Cor
 | 1b | POS (services, retail, tips, discounts, promos, gift cards, refunds/voids), drawer close, inventory, audit log | Done |
 | 1c | Sales reports, CSV exports, bi-weekly payroll tips, KPIs, loyalty | Done |
 | Inventory | Stock ledger per shop, par levels and low-stock alerts, vendors, purchase orders (suggest, approve, email, receive), transfers, counts, inventory reports | Done |
+| Shop workspaces | A login per shop, each shop its own workspace on one database; brand logins over all of them; isolation enforced by a central tenant guard and tested | Done |
 
 Screenshots of the key screens are in the PR description.
 
@@ -42,6 +43,8 @@ pnpm dev                      # http://localhost:3000
 | Michelle | `michelle@rayz.test` | Shop Manager, Coralville | Manager tools and Coralville's reports |
 | Front desk | `frontdesk@rayz.test` | Front Desk, Coralville | Calendar, walk-ins, checkout for every barber, the drawer, discounts up to 10%, and two reports (view only) |
 | Makenna | `makenna@rayz.test` | Barber, Coralville | Her own calendar column, appointments, clients, and sales (My sales shows only her own numbers) |
+| Morgan | `manager.moline@rayz.test` | Shop Manager, Moline | Manager tools and Moline's reports, inside the Moline workspace |
+| Shop logins | `coralville@rayz.test`, `kimberly@rayz.test`, `le-claire@rayz.test`, `moline@rayz.test`, `rock-island@rayz.test`, `dubuque@rayz.test`, `silvis@rayz.test`, `utica@rayz.test` | Front Desk, that one shop | The shared front-desk sign-in for that shop's workspace (see [Shop workspaces](#shop-workspaces)) |
 
 What each role can do is editable under **Permissions** (see [Roles and permissions](#roles-and-permissions)).
 
@@ -61,6 +64,7 @@ Handy demo data:
 4. The receipt shows taxes with their rates, the tip, the fee, the payment, and loyalty progress. Sign in as `owner@rayz.test` and check **Reports** (Sales summary), **Tips and payroll export**, and the client's page under **Clients**.
 5. As `admin@rayz.test`, open **Permissions**, edit the Front Desk role, or open a person to give them a one-off permission or change their shops. Under **Bulk upload**, download the template, fill in a few rows, and preview the upload before saving it.
 6. As `owner@rayz.test` with **All shops** selected, open **Inventory → Low stock**, tick a few suggested orders, and click **Create purchase orders**. Open one over $500 (the seeded PO-1005 at Coralville is one), approve it, and **Send** it by email; the PDF and CSV show up under **Notifications**. Then **Receive** part of it at a different price, and check the product's ledger and **Reports → Stock movement and shrink**.
+7. Sign in as `moline@rayz.test`. The sidebar says **Shop workspace** with Moline's name and address, and every page (calendar, sales, drawer, stock, reports) covers Moline only. Search **Clients** for a Coralville client's full phone number to book them; a partial search won't find them. Then sign in as `regional@rayz.test` and open **Setup → Shop logins** to create a login for Moline or reset the Moline desk's password.
 
 ### Other commands
 
@@ -70,7 +74,8 @@ pnpm test          # unit tests: availability/DST, checkout totals, payroll, loy
 pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + seeds it first), incl. every page/action/route per login
                    # and per-location totals adding up to multi-location and brand totals (refunds, multi-shop barbers);
                    # stock ledger math across sales, refunds, voids, receiving, transfers and concurrent sales, partial receiving,
-                   # and inventory and purchasing permissions
+                   # and inventory and purchasing permissions; shop isolation (tests/db/tenant.test.ts): canary records at
+                   # Coralville never reach Moline's logins through any page, URL, export, API route, action, job or login flow
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -393,12 +398,45 @@ The layout switch has four choices, and works with the location filter:
 
 <img alt="Barber groups" src="docs/screenshots/barber-groups.png" width="800" />
 
+### Shop workspaces
+
+One codebase and one database, but each shop works like its own system. The brand login is the umbrella over all of them.
+
+- **Shop logins.** Every shop has a shared sign-in for its front desk (`moline@rayz.test` and so on), next to that shop's personal manager and barber logins. A shop login is scoped to exactly one shop, is never bookable, and shows "shared shop login" in the sidebar. **Setup → Shop logins** (`/admin/shop-logins`, permission `logins.manage`, held by Brand Admin and Regional Manager) lists each shop in your access with its address and logins. From there you can create a login (its password is shown once), disable or re-enable it, and reset its password. Resetting or disabling signs out every session that login has open. A regional manager manages logins only for their own shops and can't give a login a role above their own. Every change is audited against the shop.
+- **What a shop user sees.** Only their shop: its calendar, appointments, walk-ins, POS, cash drawer, inventory, purchase orders, transfers and counts, staff and schedules, the settings they may change, notifications, and reports. Other shops don't appear in the shop switcher, report location filters, barber filters, or staff lists. The sidebar shows the shop's own name and address.
+- **Other shops in shared records.** Where a record has to mention another shop, it's named generically: a barber's booking elsewhere shows as "At another shop" on the calendar, a gift card bought elsewhere as "Another Ray'z shop", and a barber who doesn't work at your shops as "A barber at another shop".
+- **Clients stay brand-wide.** History and loyalty follow the client, but a shop user sees full visit details only for visits at their shop (see [Clients](#clients-brand-wide)). They find other shops' clients by exact phone, email, or full name to book them, and can't browse, export, or merge the brand-wide list.
+- **Brand logins.** Owner and admin start over **every shop** with combined reports (and side-by-side "by location" views), and can switch into any one shop's view and back ("Brand · viewing one shop"). They manage the catalog and pricing, permissions, vendors, bulk uploads, and every shop's logins. Regional managers are scoped to the shops they're given.
+- **One accepted exception:** the transfer form lists every shop as a destination, because stock can be sent to a sister shop. Only shop names are listed, and the receiving shop sees the transfer once it's sent.
+
+**Enforcement is on the server, in one place.** `src/server/tenant.ts` is the tenant guard:
+
+- `inShops()` filters list queries to the caller's shops.
+- `assertShop()` refuses a shop that came from a form or the URL.
+- `inTenant()` and `requireInTenant()` check a record ID against its shop (or both shops, for a transfer). A record outside the workspace is reported as **not found**, exactly like one that doesn't exist, so IDs from another shop reveal nothing.
+
+Every dynamic admin page, route handler (PO PDFs, email attachments), and server action that takes a record ID goes through it. A unit test fails if a dynamic admin URL doesn't, apart from four brand-level records listed with reasons. Report exports refuse a shop outside your access with 403. Queue processing from the admin is limited to your shops, and every queued message carries its shop: the database refuses a message without one, except sign-in codes. Postgres row-level security isn't used because the app connects through a pooled role; the guard plays that part.
+
+**Tested** (`tests/db/tenant.test.ts`). The test seeds Coralville with canary records carrying unique strings: a client, a barber who works only there, visits, a sale and a void, ratings, a PO and its email, a count, a transfer, a drawer, a text message, a promo, a gift card, a walk-in, a time block, and an audit entry. Then the Moline shop login, Moline's manager, and the regional manager each:
+
+- open every admin page, with and without Coralville in the query string;
+- open every dynamic URL with Coralville's IDs;
+- download every report, ratings, and catalog export, and the PO and attachment routes;
+- call the customer API with a staff session;
+- call 59 server actions aimed at Coralville's records.
+
+No canary may appear anywhere, every action must be refused as not found or outside their access, and Coralville's rows must be unchanged. The brand owner sees every canary, so their absence is meaningful. The suite also covers exact versus partial client search, queue processing, and creating, resetting, and disabling shop logins.
+
+<img alt="Moline shop workspace" src="docs/screenshots/shop-workspace.png" width="800" />
+
+<img alt="Shop logins" src="docs/screenshots/shop-logins.png" width="800" />
+
 ### Roles and permissions
 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 42 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 43 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -410,8 +448,9 @@ The layout switch has four choices, and works with the location filter:
 - Nobody can grant a permission they don't have, set a discount limit above their own, or change their own access.
 - Roles apply at every shop, so only people with access to all shops can edit roles. Someone with limited shops can only manage people wholly inside their shops, and can only give access to those shops.
 - You can't edit, reset the password of, or deactivate someone who has access you don't.
+- **Brand-only permissions** change records every shop shares: the catalog (`catalog.manage`), vendors, client merges, bulk imports, locations, and barber groups. They take effect only with access to all shops. A role or override can include them, but for someone scoped to some shops they're off, and the editors mark them **All shops only**.
 
-**Enforcement.** Every admin page calls `guardPage()`, which checks the page's required permissions from one table (`PAGE_ACCESS` in `src/domain/navigation.ts`) and renders a "no access" page otherwise. Every server action calls `authorize()` with the permission it needs, and every route handler (CSV exports, templates, error files) goes through `routeStaff()`, which returns 401 or 403. Nav items you can't use are hidden, but hiding is cosmetic: the server checks again. A unit test fails the build if a page, action file, or route under `/admin` has no guard, and a DB test signs in as each of the six demo logins and loads **every admin page**, checking the outcome against that login's permissions.
+**Enforcement.** Shop scope is part of every check (see [Shop workspaces](#shop-workspaces)). Every admin page calls `guardPage()`, which checks the page's required permissions from one table (`PAGE_ACCESS` in `src/domain/navigation.ts`) and renders a "no access" page otherwise. Every server action calls `authorize()` with the permission it needs, and every route handler (CSV exports, templates, error files) goes through `routeStaff()`, which returns 401 or 403. Nav items you can't use are hidden, but hiding is cosmetic: the server checks again. A unit test fails the build if a page, action file, or route under `/admin` has no guard, and a DB test signs in as each of the six demo logins and loads **every admin page**, checking the outcome against that login's permissions.
 
 **Audited.** Creating, editing, resetting, and deleting a role, and every change to a person's role, overrides, discount limit, or shops, is in the audit log, with the permissions granted and removed listed by name.
 
@@ -456,8 +495,8 @@ Existing staff were migrated automatically: brand admins became Brand Owner, sho
 
 - Families sharing a phone stay separate people. Signing in by code on a shared phone asks which profile you are instead of picking one.
 - **Duplicates and merge** (**Clients → Duplicates**, needs the merge permission): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, staff ratings, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
-- **Profile:** visit count, no-shows, cancellations, last visit, and lifetime spend come from SQL over the client's whole history, net of refunds. Lifetime spend includes Squire visits that have no imported ticket. The profile also shows the full visit history with shop, barber, services, and prices, plus home shop, preferred barber, loyalty, gift cards, notes, and consent.
-- **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. People who can look up any client (managers and front desk by default) search the whole brand. Everyone else's search covers clients who've visited their shops, and they can open the full profile only of a client they've served. Phone numbers and emails need the contact permission; without it the phone is masked to its last 4 digits and the email is hidden.
+- **Profile:** visit count, no-shows, cancellations, last visit, and lifetime spend come from SQL over the client's whole history, net of refunds. In a shop workspace they cover that shop's visits only, along with the client's name, contact (with permission), loyalty balance, and average rating, and a count of visits at other Ray'z shops. Lifetime spend includes Squire visits that have no imported ticket. The profile also shows the full visit history with shop, barber, services, and prices, plus home shop, preferred barber, loyalty, gift cards, notes, and consent.
+- **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. Brand-wide staff who can look up any client search the whole brand. In a shop workspace, search covers that shop's clients (home shop or a visit there), plus any brand client by an **exact** phone, email, or full name, so the desk can book them; partial searches and the client list never show other shops' clients. Without "look up any client", people can open the full profile only of a client they've served. Phone numbers and emails need the contact permission; without it the phone is masked to its last 4 digits and the email is hidden.
 - Client notes show on the calendar panel and the POS ticket.
 - **Consent:** SMS and email opt-in default to no. Each booking sends an explicit choice, an explicit no always sticks, and a missing answer keeps what's on file. Reminder texts and the waitlist "you're up" text are only sent to clients who opted in.
 - Every walk-in becomes a client, even without a phone.
