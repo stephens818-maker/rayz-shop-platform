@@ -207,7 +207,7 @@ describe("barber views", () => {
   ];
   const byDay = (x: (string | number | boolean | null)[], y: (string | number | boolean | null)[]) => String(x[0]).localeCompare(String(y[0]));
 
-  it("lists by barber: each barber's rows merged across shops, a subtotal per barber, and the total", () => {
+  it("lists by barber: each barber's rows merged across shops, a subtotal per barber with more than one row, and the total", () => {
     const t = listTable(bv("combined"), { id: "x", title: "X", columns, rows, merge: true, sort: byDay });
     expect(t.columns.map((c) => c.label)).toEqual(["Barber", "Date", "Tickets", "Net"]);
     expect(t.rows).toEqual([
@@ -215,14 +215,12 @@ describe("barber views", () => {
       ["Sam", "d2", 1, 2000],
       ["Sam", "Subtotal", 3, 5000],
       ["Jo", "d1", 1, 3000],
-      ["Jo", "Subtotal", 1, 3000],
       ["No barber", "d2", 1, 500],
-      ["No barber", "Subtotal", 1, 500],
       [TL, null, 5, 8500],
     ]);
   });
 
-  it("lists by location and barber: each barber at each shop, all barbers per shop, and the total", () => {
+  it("lists by location and barber: each barber at each shop, a subtotal per shop, and the total", () => {
     const t = listTable(bv("shops"), { id: "x", title: "X", columns, rows, merge: true, sort: byDay });
     expect(t.columns.map((c) => c.label)).toEqual(["Location", "Barber", "Date", "Tickets", "Net"]);
     expect(t.rows).toEqual([
@@ -230,22 +228,16 @@ describe("barber views", () => {
       ["Coralville", "Sam", "d2", 1, 2000],
       ["Coralville", "Sam", "Subtotal", 2, 4000],
       ["Coralville", "Jo", "d1", 1, 3000],
-      ["Coralville", "Jo", "Subtotal", 1, 3000],
-      ["Coralville", "All barbers", "Subtotal", 3, 7000],
+      ["Coralville", "Subtotal", null, 3, 7000],
       ["Moline", "Sam", "d1", 1, 1000],
-      ["Moline", "Sam", "Subtotal", 1, 1000],
       ["Moline", "No barber", "d2", 1, 500],
-      ["Moline", "No barber", "Subtotal", 1, 500],
-      ["Moline", "All barbers", "Subtotal", 2, 1500],
+      ["Moline", "Subtotal", null, 2, 1500],
       [TL, null, null, 5, 8500],
     ]);
     expect(styledRows(t, "subtotal").map((r) => r.slice(0, 2))).toEqual([
       ["Coralville", "Sam"],
-      ["Coralville", "Jo"],
-      ["Coralville", "All barbers"],
-      ["Moline", "Sam"],
-      ["Moline", "No barber"],
-      ["Moline", "All barbers"],
+      ["Coralville", "Subtotal"],
+      ["Moline", "Subtotal"],
     ]);
   });
 });

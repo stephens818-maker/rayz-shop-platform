@@ -364,8 +364,10 @@ export function listTable(v: ViewCtx, t: ListSpec): ReportTable {
       t.merge ? mergeByKey(t, mineOf(s), derive).map((x) => x.cells) : mineOf(s).map((r) => (logShop ? [shopName.get(r.shopId) ?? "", ...r.cells] : r.cells));
     const sub = (rs: ListRow[], label: string | null) => (logShop ? [null, ...sumUp(rs, label)] : sumUp(rs, label));
     const pushSeg = (s: Segment) => {
-      for (const cells of logShop ? body(s).sort((a, b) => (t.sort ? t.sort(a.slice(1), b.slice(1)) : 0)) : sorted(body(s))) push([...s.labels, ...cells]);
-      if (totals) push([...s.labels, ...sub(mineOf(s), "Subtotal")], "subtotal");
+      const cells = logShop ? body(s).sort((a, b) => (t.sort ? t.sort(a.slice(1), b.slice(1)) : 0)) : sorted(body(s));
+      for (const c of cells) push([...s.labels, ...c]);
+      // A barber's subtotal only when there is something to add up; one row is its own subtotal.
+      if (totals && cells.length > 1) push([...s.labels, ...sub(mineOf(s), "Subtotal")], "subtotal");
     };
     if (v.view === "shops")
       for (const shop of v.shops) {
@@ -374,10 +376,10 @@ export function listTable(v: ViewCtx, t: ListSpec): ReportTable {
           push(
             [
               shop.name,
-              "All barbers",
+              "Subtotal",
               ...sumUp(
                 t.rows.filter((r) => r.shopId === shop.id),
-                "Subtotal",
+                null,
               ),
             ],
             "subtotal",
