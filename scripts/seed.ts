@@ -8,7 +8,7 @@ import { DEFAULT_LOYALTY, accrue, rewardExpiry } from "@/domain/loyalty";
 import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
 import { addDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
-import { COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
+import { COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "rayz2026!";
 const HISTORY_DAYS = Number(process.env.SEED_HISTORY_DAYS ?? 56);
@@ -40,7 +40,7 @@ async function main() {
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
     inventory_adjustments, shop_products, products, shop_services, services, time_blocks,
-    staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours, shops, brand_settings
+    location_group_shops, location_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours, shops, brand_settings
     RESTART IDENTITY CASCADE`);
 
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
@@ -73,6 +73,10 @@ async function main() {
       Object.entries(s.hours).map(([wd, [o, c]]) => ({ shopId: shopBySlug.get(s.slug)!.id, weekday: Number(wd), openMin: o * 60, closeMin: c * 60 })),
     ),
   );
+  for (const g of LOCATION_GROUPS) {
+    const [row] = await db.insert(t.locationGroups).values({ name: g.name }).returning();
+    await db.insert(t.locationGroupShops).values(g.shops.map((slug) => ({ groupId: row.id, shopId: shopBySlug.get(slug)!.id })));
+  }
   // Thanksgiving: closed everywhere (example of a closure date).
   await db.insert(t.shopClosures).values(shopRows.map((s) => ({ shopId: s.id, date: "2026-11-26", reason: "Thanksgiving" })));
 

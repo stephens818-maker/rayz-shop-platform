@@ -48,6 +48,13 @@ export const SHOPS: ShopSeed[] = [
   { slug: "utica", name: "Utica", address: "5262 Utica Ridge Road", city: "Davenport", state: "IA", zip: "52807", phone: null, email: "Rayzbsutica@outlook.com", hours: std, ...IA_TAX },
 ];
 
+/** Saved report filters the brand admin can edit under Setup → Location groups. */
+export const LOCATION_GROUPS: { name: string; shops: string[] }[] = [
+  { name: "Quad Cities", shops: ["kimberly", "utica", "le-claire", "moline", "rock-island", "silvis"] },
+  { name: "Iowa shops", shops: ["coralville", "dubuque", "kimberly", "le-claire", "utica"] },
+  { name: "Illinois shops", shops: ["moline", "rock-island", "silvis"] },
+];
+
 export const SHOP_DESCRIPTION =
   "Ray'z Barber Shop is a place where modern meets retro. Ray'z offers the original old school barbershop feel with men's modern haircutting and style techniques. Ray'z specializes in helping guyz look their best.";
 
