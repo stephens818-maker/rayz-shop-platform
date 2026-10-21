@@ -30,6 +30,7 @@ interface Totals {
   cancellations: number;
   upcoming: number;
   tickets: number;
+  voided_tickets: number;
   ticket_cents: number;
   tip_cents: number;
   gift_cards: number;
@@ -47,7 +48,8 @@ async function liveTotals(): Promise<Totals> {
       (select count(*) from appointments where source = 'import' and status = 'no_show')::int as no_shows,
       (select count(*) from appointments where source = 'import' and status = 'cancelled')::int as cancellations,
       (select count(*) from appointments where source = 'import' and status in ('booked', 'confirmed') and starts_at > now())::int as upcoming,
-      (select count(*) from sales where is_imported)::int as tickets,
+      (select count(*) from sales where is_imported and status <> 'voided')::int as tickets,
+      (select count(*) from sales where is_imported and status = 'voided')::int as voided_tickets,
       (select coalesce(sum(total_cents), 0) from sales where is_imported and status <> 'voided')::int as ticket_cents,
       (select coalesce(sum(tip_cents), 0) from sales where is_imported and status <> 'voided')::int as tip_cents,
       (select count(*) from gift_cards where source = 'import')::int as gift_cards,
@@ -69,14 +71,14 @@ export default async function ImportPage() {
     liveTotals(),
   ]);
 
-  const anyImported = totals.squire_ids + totals.past_visits + totals.tickets + totals.gift_cards > 0;
+  const anyImported = totals.squire_ids + totals.past_visits + totals.tickets + totals.voided_tickets + totals.gift_cards > 0;
   const live: [string, string][] = [
     ["Clients in the system", String(totals.clients)],
     ["Clients carried over from Squire", `${totals.squire_clients}${totals.squire_ids > totals.squire_clients ? ` (from ${totals.squire_ids} Squire records)` : ""}`],
     ["Past visits from Squire", String(totals.past_visits)],
     ["No-shows / cancellations", `${totals.no_shows} / ${totals.cancellations}`],
     ["Upcoming bookings from Squire", String(totals.upcoming)],
-    ["Tickets from Squire", `${totals.tickets} · ${$(totals.ticket_cents)} incl. ${$(totals.tip_cents)} tips`],
+    ["Tickets from Squire", `${totals.tickets} · ${$(totals.ticket_cents)} incl. ${$(totals.tip_cents)} tips${totals.voided_tickets ? ` (+${totals.voided_tickets} voided)` : ""}`],
     ["Gift cards from Squire", `${totals.gift_cards} · ${$(totals.gift_card_cents)} outstanding`],
     ["Former barbers (inactive, history only)", String(totals.former_barbers)],
   ];
