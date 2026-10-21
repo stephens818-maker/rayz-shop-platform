@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { shops, staff, staffShops } from "@/db/schema";
 import { Actor } from "@/server/audit";
 import { forbidden } from "@/server/errors";
+import type { Caller } from "./policy";
 import { signToken, verifyToken } from "./tokens";
 
 export const SESSION_COOKIE = "rayz_session";
@@ -127,4 +128,8 @@ export function reportShopIds(ctx: StaffContext, requested?: string | null): str
 
 export function canManage(ctx: StaffContext) {
   return ctx.isAdmin || ctx.isManager;
+}
+
+export function caller(ctx: StaffContext): Caller {
+  return { staffId: ctx.staff.id, isAdmin: ctx.isAdmin, shopIds: ctx.shopIds };
 }

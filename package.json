@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run tests/availability.test.ts tests/checkout.test.ts tests/payroll-loyalty.test.ts tests/misc.test.ts",
+    "test": "vitest run --exclude \"tests/db/**\"",
     "test:db": "vitest run tests/db",
     "test:all": "vitest run",
     "db:generate": "drizzle-kit generate",

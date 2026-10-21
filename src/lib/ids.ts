@@ -27,6 +27,16 @@ export function staffPublicSlug(firstName: string): string {
   return `${slugify(firstName) || "barber"}-${shortSuffix()}`;
 }
 
+/** A display label may carry the surname's initial ("Taylor R.") but never the surname itself. */
+export function labelContainsSurname(label: string, lastName: string | null | undefined): boolean {
+  if (!lastName) return false;
+  const s = slugify(lastName);
+  if (s.length < 2) return false;
+  return slugify(label)
+    .split("-")
+    .some((part) => part === s || (s.length >= 3 && part.includes(s)));
+}
+
 export function slugContainsSurname(slug: string, lastName: string | null | undefined): boolean {
   if (!lastName) return false;
   const s = slugify(lastName);

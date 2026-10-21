@@ -7,11 +7,12 @@ import { z } from "zod";
 import { db } from "@/db";
 import { shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import { findScheduleConflicts } from "@/domain/availability";
-import { staffPublicSlug } from "@/lib/ids";
+import { labelContainsSurname, staffPublicSlug } from "@/lib/ids";
 import { WEEKDAYS, addDays, minutesToLabel, startOfLocalDay, zonedWallTime } from "@/lib/time";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { StaffContext, requireStaff } from "@/server/auth/staff";
+import { staffProfileChangeDenied, timeBlockChangeDenied } from "@/server/auth/policy";
+import { StaffContext, caller, requireStaff } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
 
 const MGR = ["brand_admin", "shop_manager"] as const;
@@ -48,11 +49,21 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
     const ctx = await requireStaff([...MGR]);
     const p = ProfileSchema.parse(raw);
     if (!ctx.isAdmin) {
-      if (p.role !== "barber" && p.id !== ctx.staff.id) throw forbidden("Only the brand admin can assign manager or admin roles");
-      if (p.shopIds.some((s) => !ctx.shopIds.includes(s))) throw forbidden("You can only add people to your own shop");
-      if (p.id) await assertCanEdit(ctx, p.id);
+      let current = null;
+      if (p.id) {
+        await assertCanEdit(ctx, p.id);
+        const row = await db.query.staff.findFirst({ where: eq(staff.id, p.id) });
+        if (!row) throw notFound("Staff member");
+        const links = await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, p.id));
+        current = { ...row, shopIds: links.map((l) => l.shopId) };
+      }
+      const denied = staffProfileChangeDenied(caller(ctx), current, p);
+      if (denied) throw forbidden(denied);
     }
     if (p.role === "shop_manager" && !p.managerShopId) throw new AppError("bad_request", "Pick the shop this manager runs");
+    if (p.lastName && labelContainsSurname(p.displayLabel, p.lastName)) {
+      throw new AppError("bad_request", `The display label is shown to customers, so it can't include the last name. Try "${p.firstName} ${p.lastName[0]}."`);
+    }
     const dup = await db.query.staff.findFirst({
       where: and(sql`lower(${staff.displayLabel}) = lower(${p.displayLabel})`, eq(staff.active, true), p.id ? ne(staff.id, p.id) : undefined),
     });
@@ -149,7 +160,8 @@ export async function addTimeOffAction(input: { staffId: string; shopId: string 
     const ctx = await requireStaff([...MGR]);
     await assertCanEdit(ctx, input.staffId);
     if (!input.reason.trim()) throw new AppError("bad_request", "A reason is required");
-    if (input.shopId && !ctx.shopIds.includes(input.shopId)) throw forbidden();
+    const denied = timeBlockChangeDenied(caller(ctx), input.shopId);
+    if (denied) throw forbidden(denied);
     if (input.to < input.from) throw new AppError("bad_request", "End date is before start date");
     const startsAt = input.allDay ? startOfLocalDay(input.from) : zonedWallTime(input.from, input.startMin).toJSDate();
     const endsAt = input.allDay ? startOfLocalDay(addDays(input.to, 1)) : zonedWallTime(input.to, input.endMin).toJSDate();
@@ -170,6 +182,8 @@ export async function deleteTimeOffAction(id: string) {
     const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
     if (!b) throw notFound("Time off");
     await assertCanEdit(ctx, b.staffId);
+    const denied = timeBlockChangeDenied(caller(ctx), b.shopId);
+    if (denied) throw forbidden(denied);
     await db.delete(timeBlocks).where(eq(timeBlocks.id, id));
     await audit(ctx.actor, "block.delete", "time_block", id, { reason: b.reason }, b.shopId);
     revalidatePath(`/admin/staff/${b.staffId}`);
