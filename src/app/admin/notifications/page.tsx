@@ -22,6 +22,8 @@ const KIND_LABEL: Record<string, string> = {
   reschedule: "Rescheduled",
   otp: "Sign-in code",
   waitlist_ready: "Waitlist: ready",
+  purchase_order: "Purchase order",
+  low_stock: "Low stock",
 };
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
@@ -30,8 +32,10 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   const contact = can(ctx, "clients.contact");
   const status = STATUSES.find((s) => s === sp.status);
 
-  // Managers only see jobs tied to their shop's appointments; brand admins also see OTP and waitlist texts.
-  const scope: SQL | undefined = ctx.brandWide && !ctx.currentShopId ? undefined : inArray(appointments.shopId, ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds);
+  // Managers only see jobs for their shops (a booking's shop, or the shop a purchase order or stock alert is for);
+  // brand admins also see OTP and waitlist texts.
+  const jobShop = sql`coalesce(${notificationJobs.shopId}, ${appointments.shopId})`;
+  const scope: SQL | undefined = ctx.brandWide && !ctx.currentShopId ? undefined : inArray(jobShop, ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds);
   const where = and(scope, status ? eq(notificationJobs.status, status) : undefined);
 
   const [counts, jobs] = await Promise.all([
@@ -45,7 +49,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
       .select({ j: notificationJobs, shop: shops.name, code: appointments.code })
       .from(notificationJobs)
       .leftJoin(appointments, eq(appointments.id, notificationJobs.appointmentId))
-      .leftJoin(shops, eq(shops.id, appointments.shopId))
+      .leftJoin(shops, eq(shops.id, jobShop))
       .where(where)
       .orderBy(desc(notificationJobs.runAt))
       .limit(150),
@@ -59,7 +63,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Notifications"
-        subtitle="Confirmations and 24h / 2h reminders queued for each booking. Cancelling or rescheduling a booking cancels its pending reminders."
+        subtitle="Confirmations and 24h / 2h reminders queued for each booking, plus purchase orders emailed to vendors and low-stock alerts. Cancelling or rescheduling a booking cancels its pending reminders."
         actions={can(ctx, "notifications.send") ? <ProcessNowButton /> : undefined}
       />
       {off && (
@@ -89,7 +93,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                 <Th>Type</Th>
                 <Th>To</Th>
                 <Th>Message</Th>
-                <Th>Booking</Th>
+                <Th>For</Th>
                 <Th>Status</Th>
               </tr>
             </thead>
@@ -101,14 +105,35 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                     {KIND_LABEL[j.kind] ?? j.kind}
                     <div className="text-xs uppercase text-zinc-400">{j.channel}</div>
                   </Td>
-                  <Td className="whitespace-nowrap">{!contact ? (j.channel === "sms" ? (maskPhone(j.to) ?? "—") : "hidden") : j.channel === "sms" ? formatPhone(j.to) || j.to : j.to}</Td>
-                  <Td className="max-w-md text-xs text-zinc-600">{j.body}</Td>
+                  <Td className="whitespace-nowrap">{j.shopId ? j.to : !contact ? (j.channel === "sms" ? (maskPhone(j.to) ?? "—") : "hidden") : j.channel === "sms" ? formatPhone(j.to) || j.to : j.to}</Td>
+                  <Td className="max-w-md text-xs text-zinc-600">
+                    {j.subject && j.channel === "email" && <div className="font-medium text-zinc-800">{j.subject}</div>}
+                    <div className="whitespace-pre-line">{j.body}</div>
+                    {(j.attachments ?? []).length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {(j.attachments ?? []).map((a, i) => (
+                          <a key={a.filename} className="text-brand-700 underline" href={`/admin/notifications/${j.id}/attachment?i=${i}`}>
+                            {a.filename}
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                  </Td>
                   <Td className="whitespace-nowrap text-xs">
                     {code ? (
                       <>
                         <span className="font-mono">{code}</span>
                         <div className="text-zinc-400">{shop}</div>
                       </>
+                    ) : j.purchaseOrderId ? (
+                      <>
+                        <a className="underline" href={`/admin/purchase-orders/${j.purchaseOrderId}`}>
+                          Purchase order
+                        </a>
+                        <div className="text-zinc-400">{shop}</div>
+                      </>
+                    ) : shop ? (
+                      shop
                     ) : (
                       "—"
                     )}

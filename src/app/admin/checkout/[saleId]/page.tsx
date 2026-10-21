@@ -41,6 +41,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
       barbers={barbers.map((b) => ({ id: b.id, label: b.displayName }))}
       services={catalog.map((s) => ({ id: s.id, name: s.name, kind: s.kind, priceCents: s.priceCents }))}
       retail={c.retail}
+      negativeStock={c.negativeStock}
       loyalty={
         loyalty && loyalty.enabled
           ? { rewards: loyalty.rewards, progressCents: loyalty.progressCents, thresholdCents: loyalty.thresholdCents, redeemableOn: loyaltyCfg.redeemableOn }

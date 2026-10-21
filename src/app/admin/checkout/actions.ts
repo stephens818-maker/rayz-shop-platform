@@ -9,6 +9,7 @@ import { safe } from "@/server/action";
 import { StaffContext, assertShopAccess, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
 import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale, validatePromo } from "@/server/checkout";
 import { AppError, forbidden, notFound } from "@/server/errors";
+import { holdRetail } from "@/server/inventory/stock";
 import { inspectPaymentMethod, terminal } from "@/server/payments/processor";
 
 async function loadSale(ctx: StaffContext, saleId: string) {
@@ -103,6 +104,16 @@ export async function finalizeAction(input: {
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     const rebook = r.rebooked && "code" in r.rebooked ? { code: r.rebooked.code, startsAt: r.rebooked.startsAt } : r.rebooked && "error" in r.rebooked ? { error: r.rebooked.error } : null;
-    return { saleId: r.saleId, rewardsIssued: r.rewardsIssued, giftCards: r.issuedGiftCards, rebook };
+    return { saleId: r.saleId, rewardsIssued: r.rewardsIssued, giftCards: r.issuedGiftCards, rebook, stockWarnings: r.stockWarnings };
+  });
+}
+
+/** Saves the retail on an open ticket so it counts as committed stock until the ticket is paid or voided. */
+export async function holdRetailAction(saleId: string, lines: { productId: string; qty: number }[]) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadSale(ctx, saleId);
+    await holdRetail(saleId, lines);
+    return null;
   });
 }

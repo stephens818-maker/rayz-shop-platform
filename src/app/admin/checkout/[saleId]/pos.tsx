@@ -7,7 +7,7 @@ import type { RatingSummary } from "@/domain/ratings";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
 import { formatPhone } from "@/lib/phone";
 import { searchCustomersAction } from "../../calendar/actions";
-import { attachCustomerAction, finalizeAction, giftCardAction, inspectCardAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
+import { attachCustomerAction, finalizeAction, giftCardAction, holdRetailAction, inspectCardAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
 import { StripeCardEntry } from "./stripe-card";
 
 type Line = { key: string; kind: LineKind; refId: string | null; name: string; unitPriceCents: number; qty: number; override?: { unitPriceCents: number; reason: string } | null };
@@ -32,7 +32,8 @@ export function Pos(props: {
   barber: { id: string; label: string } | null;
   barbers: { id: string; label: string }[];
   services: { id: string; name: string; kind: "service" | "addon"; priceCents: number }[];
-  retail: { productId: string; name: string; brand: string; priceCents: number; stock: number }[];
+  retail: { productId: string; name: string; brand: string; priceCents: number; stock: number; available: number }[];
+  negativeStock: "block" | "warn";
   loyalty: { rewards: { id: string; amountCents: number; expiresAt: string | null }[]; progressCents: number; thresholdCents: number; redeemableOn: "services" | "all" } | null;
   payments: { mode: "stripe" | "simulator"; publishableKey: string | null; terminalLabel: string; testCards: { id: string; label: string; funding: string }[] };
   taxCategories: Record<string, TaxCategory>;
@@ -138,12 +139,30 @@ export function Pos(props: {
         if (d.rebook && "code" in d.rebook && d.rebook.code) q.set("rebook", d.rebook.code);
         if (d.rebook && "error" in d.rebook && d.rebook.error) q.set("rebookError", d.rebook.error);
         if (d.rewardsIssued) q.set("rewards", String(d.rewardsIssued));
+        if (d.stockWarnings.length) q.set("stock", d.stockWarnings.join("\n"));
         router.push(`/admin/sales/${d.saleId}?${q}`);
       },
     );
 
   const ready = lines.length > 0 && (method === "none" || method === "cash" || (method === "card" && !!card));
   const change = cashTendered != null ? cashTendered - totals.primaryChargeCents : 0;
+  // Retail on the ticket is held (counts as committed) while the ticket is open.
+  const held = lines
+    .filter((l) => l.kind === "product" && l.refId)
+    .map((l) => `${l.refId}:${l.qty}`)
+    .sort()
+    .join(",");
+  const [savedHold, setSavedHold] = useState(() => held);
+  useEffect(() => {
+    if (held === savedHold) return;
+    const t = setTimeout(() => {
+      const list = held ? held.split(",").map((x) => ({ productId: x.split(":")[0], qty: Number(x.split(":")[1]) })) : [];
+      holdRetailAction(props.sale.id, list).then((r) => r.ok && setSavedHold(held));
+    }, 600);
+    return () => clearTimeout(t);
+  }, [held, savedHold, props.sale.id]);
+  const onTicket = (productId: string) => lines.filter((l) => l.kind === "product" && l.refId === productId).reduce((a, l) => a + l.qty, 0);
+  const short = props.retail.filter((p) => onTicket(p.productId) > p.available);
   const filteredRetail = props.retail.filter((p) => !productQ || `${p.brand} ${p.name}`.toLowerCase().includes(productQ.toLowerCase())).slice(0, 12);
 
   return (
@@ -310,11 +329,17 @@ export function Pos(props: {
                     <div className="truncate text-sm font-medium">{p.name}</div>
                     <div className="mt-0.5 flex justify-between text-xs">
                       <span className="tabular">{$short(p.priceCents)}</span>
-                      <span className={p.stock <= 0 ? "text-red-600" : "text-zinc-400"}>{p.stock} left</span>
+                      <span className={p.available - onTicket(p.productId) <= 0 ? "text-red-600" : "text-zinc-400"}>{Math.max(0, p.available - onTicket(p.productId))} left</span>
                     </div>
                   </button>
                 ))}
               </div>
+              {short.length > 0 && (
+                <div className={cx("mt-2 rounded-md px-3 py-2 text-xs", props.negativeStock === "block" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800")}>
+                  {short.map((p) => `${p.brand} ${p.name}: ${Math.max(0, p.available)} available`).join(" · ")}.{" "}
+                  {props.negativeStock === "block" ? "Checkout is refused if the shelf runs out; count it in Inventory if the shelf disagrees." : "This shop allows it; on-hand will go below zero until it's counted."}
+                </div>
+              )}
             </div>
           </Card>
 

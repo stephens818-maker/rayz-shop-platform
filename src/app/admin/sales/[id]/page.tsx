@@ -18,7 +18,7 @@ import { PrintButton, SaleActions } from "./sale-actions";
 
 export const metadata: Metadata = { title: "Receipt" };
 
-export default async function SalePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ done?: string; rebook?: string; rebookError?: string; rewards?: string }> }) {
+export default async function SalePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ done?: string; rebook?: string; rebookError?: string; rewards?: string; stock?: string }> }) {
   const { id } = await params;
   const sp = await searchParams;
   const ctx = await guardPage("/admin/sales/[id]");
@@ -63,6 +63,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
             </Notice>
           )}
           {sp.rebookError && <Notice tone="amber">Couldn&apos;t rebook: {sp.rebookError}</Notice>}
+          {sp.stock && <Notice tone="amber">{sp.stock}</Notice>}
           <div className="flex flex-wrap gap-2">
             <LinkButton href="/admin/calendar">Back to calendar</LinkButton>
             {can(ctx, "walkins.manage") && (

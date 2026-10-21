@@ -1,5 +1,9 @@
 import { Permission, REPORTS, ReportKey, reportExport, reportView } from "./permissions";
 
+/** Anyone who works with stock can see it. */
+const STOCK_VIEW: Permission[] = ["inventory.manage", "inventory.adjust", "inventory.transfer", "inventory.stocktake", "po.create", "po.receive", "catalog.manage", "catalog.prices"];
+const PURCHASING: Permission[] = ["po.create", "po.approve", "po.send", "po.receive"];
+
 /**
  * What each admin page needs: any one of the listed permissions, or null for any signed-in staff
  * member (those pages limit what they show instead). Pages call requirePage(PAGE_ACCESS[...]) and
@@ -23,7 +27,19 @@ export const PAGE_ACCESS = {
   "/admin/permissions/roles/[id]": ["permissions.manage"],
   "/admin/permissions/people/[id]": ["permissions.manage"],
   "/admin/services": ["catalog.prices", "catalog.manage"],
-  "/admin/inventory": ["inventory.manage", "catalog.manage"],
+  "/admin/inventory": STOCK_VIEW,
+  "/admin/inventory/[id]": STOCK_VIEW,
+  "/admin/inventory/low-stock": STOCK_VIEW,
+  "/admin/inventory/counts": ["inventory.stocktake"],
+  "/admin/inventory/counts/[id]": ["inventory.stocktake"],
+  "/admin/inventory/transfers": ["inventory.transfer", "po.receive"],
+  "/admin/inventory/transfers/[id]": ["inventory.transfer", "po.receive"],
+  "/admin/inventory/settings": ["inventory.manage", "settings.shop"],
+  "/admin/vendors": ["vendors.manage", "po.create"],
+  "/admin/vendors/[id]": ["vendors.manage", "po.create"],
+  "/admin/purchase-orders": PURCHASING,
+  "/admin/purchase-orders/[id]": PURCHASING,
+  "/admin/purchase-orders/[id]/receive": ["po.receive"],
   "/admin/catalog": ["catalog.manage", "inventory.manage"],
   "/admin/promos": ["promos.manage", "giftcards.issue", "giftcards.void"],
   "/admin/settings": ["settings.shop", "settings.taxes", "settings.brand"],
@@ -61,6 +77,18 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/customers", label: "Clients" },
     ],
   },
+  {
+    title: "Inventory",
+    items: [
+      { href: "/admin/inventory", label: "Stock" },
+      { href: "/admin/inventory/low-stock", label: "Low stock" },
+      { href: "/admin/purchase-orders", label: "Purchase orders" },
+      { href: "/admin/vendors", label: "Vendors" },
+      { href: "/admin/inventory/transfers", label: "Transfers" },
+      { href: "/admin/inventory/counts", label: "Counts" },
+      { href: "/admin/inventory/settings", label: "Inventory settings" },
+    ],
+  },
   { title: "Insights", items: [{ href: "/admin/reports", label: "Reports" }] },
   {
     title: "Setup",
@@ -68,7 +96,6 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/staff", label: "Staff & schedules" },
       { href: "/admin/permissions", label: "Permissions" },
       { href: "/admin/services", label: "Services" },
-      { href: "/admin/inventory", label: "Inventory" },
       { href: "/admin/catalog", label: "Bulk upload" },
       { href: "/admin/promos", label: "Promos & gift cards" },
       { href: "/admin/settings", label: "Shop settings" },
