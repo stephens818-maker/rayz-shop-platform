@@ -9,6 +9,7 @@ import type { ReportKey } from "@/domain/permissions";
 import type { ReportTable, ViewCtx } from "@/domain/report-views";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
+import { BARBER_REPORTS } from "@/app/admin/reports/scope";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -21,6 +22,7 @@ let exportCsv: typeof import("@/app/admin/reports/export/route").GET;
 const ids: Record<string, string> = {};
 const shop: Record<string, { id: string; name: string }> = {};
 let allShops: { id: string; name: string }[] = [];
+let staffNames: Record<string, string> = {};
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 
 const at = (d: string) => new Date(`${d}T18:00:00Z`);
@@ -53,6 +55,7 @@ beforeAll(async () => {
   R = await import("@/server/reports");
   L = await import("@/server/report-data");
   exportCsv = (await import("@/app/admin/reports/export/route")).GET;
+  staffNames = await (await import("@/server/barbers")).staffLabels();
   for (const l of ["owner", "admin", "regional", "michelle"]) ids[l] = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, `${l}@rayz.test`) }))!.id;
   allShops = (await m.db.db.select({ id: m.schema.shops.id, name: m.schema.shops.name, slug: m.schema.shops.slug }).from(m.schema.shops).orderBy(m.schema.shops.name)).map((s) => {
     shop[s.slug] = { id: s.id, name: s.name };
@@ -67,7 +70,16 @@ beforeAll(async () => {
   await sell("moline", fx.floater, "2027-04-07", 300, cash);
   const refunded = await sell("moline", fx.floater, "2027-04-08", 200, credit);
   const item = (await m.checkout.refundableState(refunded)).items[0];
-  await m.checkout.refundSale({ saleId: refunded, items: [{ saleItemId: item.id, qty: 1 }], tipCents: 200, refundCardFee: false, reason: "Redo", restock: false, actor, now: at("2027-04-09") });
+  await m.checkout.refundSale({
+    saleId: refunded,
+    items: [{ saleItemId: item.id, qty: 1 }],
+    tipCents: 200,
+    refundCardFee: false,
+    reason: "Redo",
+    restock: false,
+    actor,
+    now: at("2027-04-09"),
+  });
   // A Coralville-only barber with one ticket refunded in full.
   fx.coralOnly = await barberAt("coralville", [fx.floater]);
   const full = await sell("coralville", fx.coralOnly, "2027-04-06", 0, cash);
@@ -149,7 +161,14 @@ async function reconciles(scope: { shopIds: string[]; from: string; to: string }
   const k = await R.kpis(scope);
   const kShops = Object.values(await R.kpisByShop(scope));
   const add = (f: (x: typeof k) => number) => kShops.reduce((a, x) => a + f(x), 0);
-  for (const f of [(x: typeof k) => x.visits, (x: typeof k) => x.rebooked, (x: typeof k) => x.appointments, (x: typeof k) => x.noShows.n, (x: typeof k) => x.noShows.cents, (x: typeof k) => x.cancellations.n])
+  for (const f of [
+    (x: typeof k) => x.visits,
+    (x: typeof k) => x.rebooked,
+    (x: typeof k) => x.appointments,
+    (x: typeof k) => x.noShows.n,
+    (x: typeof k) => x.noShows.cents,
+    (x: typeof k) => x.cancellations.n,
+  ])
     expect(add(f)).toBe(f(k));
 
   for (const inc of [false, true]) {
@@ -197,18 +216,31 @@ describe("per-location totals add up", () => {
 
   it("a barber whose only activity is a refund still shows, at the refunding shop", async () => {
     const rows = (await R.byBarber(scopeOf(THREE), { byShop: true })).filter((r) => r.staffId === fx.rockOnly);
-    expect(rows).toEqual([expect.objectContaining({ shopId: shop["rock-island"].id, tickets: 0, refundCents: fx.svcPrice["rock-island"], netServicesCents: -fx.svcPrice["rock-island"], tipsCents: -100 })]);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        shopId: shop["rock-island"].id,
+        tickets: 0,
+        refundCents: fx.svcPrice["rock-island"],
+        netServicesCents: -fx.svcPrice["rock-island"],
+        tipsCents: -100,
+      }),
+    ]);
   });
 });
 
-const view = (slugs: string[] | "all", v: "combined" | "shops", brandAll = false): ViewCtx => {
+const view = (slugs: string[] | "all", v: "combined" | "shops", brandAll = false, byBarber = false): ViewCtx => {
   const shops = slugs === "all" ? allShops : slugs.map((s) => shop[s]);
-  return { view: v, shops, totalLabel: brandAll ? "Brand total" : shops.length > 1 ? `Total (${shops.length} shops)` : "Total" };
+  return { view: v, byBarber, shops, staffNames, totalLabel: brandAll ? "Brand total" : shops.length > 1 ? `Total (${shops.length} shops)` : "Total" };
 };
 const admin = { brandWide: true, currentShopId: null, shopIds: [] as string[] };
-async function load(report: ReportKey, slugs: string[] | "all", v: "combined" | "shops") {
-  const loc = view(slugs, v, slugs === "all");
-  return L.REPORT_LOADERS[report]({ scope: { shopIds: loc.shops.map((s) => s.id), from: FROM, to: TO }, loc, viewer: { ...admin, shopIds: allShops.map((s) => s.id) }, params: {} });
+async function load(report: ReportKey, slugs: string[] | "all", v: "combined" | "shops", byBarber = report === "sales_by_barber") {
+  const loc = view(slugs, v, slugs === "all", byBarber);
+  return L.REPORT_LOADERS[report]({
+    scope: { shopIds: loc.shops.map((s) => s.id), from: FROM, to: TO },
+    loc,
+    viewer: { ...admin, shopIds: allShops.map((s) => s.id) },
+    params: {},
+  });
 }
 const table = (d: { tables: ReportTable[] }, id: string) => d.tables.find((t) => t.id === id)!;
 const col = (t: ReportTable, label: string) => t.columns.findIndex((c) => c.label === label);
@@ -225,20 +257,26 @@ describe("report tables in both views", () => {
         const label = String(r[0]);
         const total = r.at(-1);
         expect(combined.rows.find((c) => c[0] === label)![1], label).toBe(total);
-        if (label !== "Avg ticket") expect(r.slice(1, -1).reduce<number>((a, v) => a + Number(v), 0), label).toBe(total);
+        if (label !== "Avg ticket")
+          expect(
+            r.slice(1, -1).reduce<number>((a, v) => a + Number(v), 0),
+            label,
+          ).toBe(total);
         expect(shops.rowKinds![i]).toBeDefined();
       });
     }
   });
 
   it("by barber, by location: a subtotal per shop that matches that shop's sales, and a total that matches the combined view", async () => {
-    const shops = table(await load("sales_by_barber", THREE, "shops"), "barbers");
-    const combined = table(await load("sales_by_barber", THREE, "combined"), "barbers");
+    const shops = table(await load("sales_by_barber", THREE, "shops"), "sales");
+    const combined = table(await load("sales_by_barber", THREE, "combined"), "sales");
     const sales = await R.salesSummaryByShop(scopeOf(THREE));
-    const ns = col(shops, "Net services");
-    const tips = col(shops, "Tips");
+    const ns = col(shops, "Service sales");
+    const tips = col(shops, "Total tips");
     const subs = styled(shops, "subtotal");
-    expect(subs.map((r) => r[0])).toEqual(THREE.map((s) => shop[s].name).sort((a, b) => view(THREE, "shops").shops.findIndex((x) => x.name === a) - view(THREE, "shops").shops.findIndex((x) => x.name === b)));
+    expect(subs.map((r) => r[0])).toEqual(
+      THREE.map((s) => shop[s].name).sort((a, b) => view(THREE, "shops").shops.findIndex((x) => x.name === a) - view(THREE, "shops").shops.findIndex((x) => x.name === b)),
+    );
     for (const sub of subs) {
       const id = Object.values(shop).find((s) => s.name === sub[0])!.id;
       const rows = styled(shops, undefined).filter((r) => r[0] === sub[0]);
@@ -250,8 +288,8 @@ describe("report tables in both views", () => {
     const [combinedTotal] = styled(combined, "total");
     expect(total[0]).toBe("Total (3 shops)");
     expect(total[ns]).toBe(subs.reduce((a, r) => a + Number(r[ns]), 0));
-    expect(combinedTotal[col(combined, "Net services")]).toBe(total[ns]);
-    expect(combinedTotal[col(combined, "Tips")]).toBe(total[tips]);
+    expect(combinedTotal[col(combined, "Service sales")]).toBe(total[ns]);
+    expect(combinedTotal[col(combined, "Total tips")]).toBe(total[tips]);
     expect(combinedTotal[col(combined, "Avg ticket")]).toBe(total[col(shops, "Avg ticket")]);
   });
 
@@ -259,12 +297,15 @@ describe("report tables in both views", () => {
     for (const v of ["combined", "shops"] as const) {
       const split = table(await load("sales_by_barber", THREE, v), "split");
       const loc = col(split, "Location");
-      const ns = col(split, "Net services");
+      const ns = col(split, "Service sales");
       const label = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, fx.floater) }))!.displayLabel;
       const mine = split.rows.filter((r) => r[0] === label);
-      expect(mine.map((r) => r[loc])).toEqual([...[shop.coralville.name, shop.moline.name].sort((a, b) => view(THREE, v).shops.findIndex((x) => x.name === a) - view(THREE, v).shops.findIndex((x) => x.name === b)), "All 2 shops"]);
+      expect(mine.map((r) => r[loc])).toEqual([
+        ...[shop.coralville.name, shop.moline.name].sort((a, b) => view(THREE, v).shops.findIndex((x) => x.name === a) - view(THREE, v).shops.findIndex((x) => x.name === b)),
+        "All 2 shops",
+      ]);
       expect(mine[2][ns]).toBe(Number(mine[0][ns]) + Number(mine[1][ns]));
-      expect(mine[2][col(split, "Tips")]).toBe(800);
+      expect(mine[2][col(split, "Total tips")]).toBe(800);
     }
   });
 
@@ -279,20 +320,41 @@ describe("report tables in both views", () => {
   });
 
   it("every report loads in both views over three shops and the brand, and list totals add up", async () => {
-    const keys: ReportKey[] = ["my_sales", "sales_summary", "sales_by_barber", "services_vs_products", "tips_payroll", "card_vs_cash", "discounts_refunds", "inventory", "gift_cards", "loyalty", "kpis", "heatmap", "cash_drawer", "audit_log"];
+    const keys: ReportKey[] = [
+      "my_sales",
+      "sales_summary",
+      "sales_by_barber",
+      "services_vs_products",
+      "tips_payroll",
+      "card_vs_cash",
+      "discounts_refunds",
+      "inventory",
+      "gift_cards",
+      "loyalty",
+      "kpis",
+      "heatmap",
+      "cash_drawer",
+      "audit_log",
+    ];
     for (const k of keys)
       for (const slugs of [THREE, "all"] as const)
-        for (const v of ["combined", "shops"] as const) {
-          const d = await load(k, slugs, v);
+        for (const [v, byBarber] of [
+          ["combined", false],
+          ["shops", false],
+          ["combined", true],
+          ["shops", true],
+        ] as const) {
+          if (byBarber && !BARBER_REPORTS.has(k)) continue;
+          const d = await load(k, slugs, v, byBarber);
           for (const t of d.tables) {
             if (t.totalColumn) continue;
             const [total] = styled(t, "total");
             if (!total) continue;
             const body = styled(t, undefined);
             t.columns.forEach((c, j) => {
-              if (!(c.kind === "money" || c.kind === "int") || c.sum === false) return;
+              if (!(c.kind === "money" || c.kind === "int" || c.kind === "hours") || c.sum === false) return;
               if (t.id === "split") return;
-              expect(total[j], `${k} ${v} ${t.id} ${c.label}`).toBe(body.reduce((a, r) => a + (Number(r[j]) || 0), 0));
+              expect(total[j], `${k} ${v} ${byBarber ? "by barber" : ""} ${t.id} ${c.label}`).toBe(body.reduce((a, r) => a + (Number(r[j]) || 0), 0));
             });
           }
         }
@@ -304,7 +366,11 @@ describe("CSV follows the view", () => {
     const res = await exportCsv(new Request(`http://localhost/admin/reports/export?${new URLSearchParams(q)}`));
     return { status: res.status, text: await res.text(), name: res.headers.get("Content-Disposition") ?? "" };
   };
-  const lines = (t: string) => t.trim().split("\n").map((l) => l.split(","));
+  const lines = (t: string) =>
+    t
+      .trim()
+      .split("\n")
+      .map((l) => l.split(","));
   const three = () => THREE.map((s) => shop[s].id).join(",");
 
   it("combined has no Location column; by location has one on every row, with subtotals and the total", async () => {
@@ -313,17 +379,20 @@ describe("CSV follows the view", () => {
     expect(c.status).toBe(200);
     expect(lines(c.text)[0][0]).toBe("Barber");
     expect(lines(c.text)[0]).not.toContain("Location");
-    const s = await get({ type: "sales_by_barber", shop: three(), view: "shops", from: FROM, to: TO });
-    expect(s.name).toContain("-by-location-");
+    const s = await get({ type: "sales_by_barber", shop: three(), view: "shops_barbers", from: FROM, to: TO });
+    expect(s.name).toContain("-by-location-and-barber-");
     const [head, ...rows] = lines(s.text);
     expect(head[0]).toBe("Location");
     const names = new Set(THREE.map((x) => shop[x].name));
     expect(rows.slice(0, -1).every((r) => names.has(r[0]))).toBe(true);
     expect(rows.filter((r) => r[1] === "Subtotal")).toHaveLength(3);
     expect(rows.at(-1)![0]).toBe("Total (3 shops)");
-    const ns = head.indexOf("Net services");
+    const ns = head.indexOf("Service sales");
     const body = rows.filter((r) => names.has(r[0]) && r[1] !== "Subtotal");
-    expect(Number(rows.at(-1)![ns])).toBeCloseTo(body.reduce((a, r) => a + Number(r[ns]), 0), 2);
+    expect(Number(rows.at(-1)![ns])).toBeCloseTo(
+      body.reduce((a, r) => a + Number(r[ns]), 0),
+      2,
+    );
   });
 
   it("the summary by location downloads a row per shop and the brand total row", async () => {
@@ -349,11 +418,18 @@ describe("CSV follows the view", () => {
 
 describe("the shop filter stays inside each person's shops", () => {
   const get = async (q: Record<string, string>) => {
-    const res = await exportCsv(new Request(`http://localhost/admin/reports/export?${new URLSearchParams({ type: "sales_summary", table: "summary", from: FROM, to: TO, view: "shops", ...q })}`));
+    const res = await exportCsv(
+      new Request(`http://localhost/admin/reports/export?${new URLSearchParams({ type: "sales_summary", table: "summary", from: FROM, to: TO, view: "shops", ...q })}`),
+    );
     return { status: res.status, text: await res.text() };
   };
   const groupId = async (name: string) => (await m.db.db.query.locationGroups.findFirst({ where: eq(m.schema.locationGroups.name, name) }))!.id;
-  const firstColumn = (t: string) => t.trim().split("\n").slice(1).map((l) => l.split(",")[0]);
+  const firstColumn = (t: string) =>
+    t
+      .trim()
+      .split("\n")
+      .slice(1)
+      .map((l) => l.split(",")[0]);
 
   it("refuses shops outside access, alone or mixed in with theirs", async () => {
     await signInAs(ids.regional);
@@ -416,8 +492,14 @@ describe("saved location groups", () => {
   it("people without the permission, or without every shop, can't change groups", async () => {
     await signInAs(ids.regional);
     expect(await save(null, { name: "Mine", shopIds: [shop.moline.id, shop["rock-island"].id] })).toMatchObject({ ok: false, error: "You don't have permission to do that" });
-    await m.db.db.update(m.schema.staff).set({ permissionOverrides: { "locations.manage": true } }).where(eq(m.schema.staff.id, ids.regional));
-    expect(await save(null, { name: "Mine", shopIds: [shop.moline.id, shop["rock-island"].id] })).toMatchObject({ ok: false, error: expect.stringContaining("access to all shops") });
+    await m.db.db
+      .update(m.schema.staff)
+      .set({ permissionOverrides: { "locations.manage": true } })
+      .where(eq(m.schema.staff.id, ids.regional));
+    expect(await save(null, { name: "Mine", shopIds: [shop.moline.id, shop["rock-island"].id] })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("access to all shops"),
+    });
     await m.db.db.update(m.schema.staff).set({ permissionOverrides: {} }).where(eq(m.schema.staff.id, ids.regional));
     await signInAs(ids.michelle);
     expect(await save(null, { name: "Mine", shopIds: [shop.coralville.id, shop.dubuque.id] })).toMatchObject({ ok: false });
