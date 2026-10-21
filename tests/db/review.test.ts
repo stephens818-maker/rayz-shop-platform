@@ -465,3 +465,33 @@ describe("P2/P3 booking rules", () => {
     expect(m.booking.staffWallTime("2027-03-14", 3 * 60 + 30).toISOString()).toBe("2027-03-14T08:30:00.000Z");
   });
 });
+
+describe("P2#29 stock and promo caps hold under concurrent checkouts", () => {
+  it("two tickets racing for the last bottle: one sells it, the other is refused, stock never goes negative", async () => {
+    const s = await shop();
+    const a = await m.checkout.openBlankSale(s.id, actor);
+    const b = await m.checkout.openBlankSale(s.id, actor);
+    const product = (await m.checkout.loadCheckoutContext(a.id)).retail.find((p) => p.stock > 0)!;
+    const where = m.drizzle.and(eq(m.schema.shopProducts.shopId, s.id), eq(m.schema.shopProducts.productId, product.productId));
+    await m.db.db.update(m.schema.shopProducts).set({ stock: 1 }).where(where);
+    const sell = (saleId: string) => m.checkout.finalizeSale({ saleId, lines: [{ kind: "product", refId: product.productId, qty: 1 }], tipCents: 0, tender: cash, actor });
+    const out = await Promise.allSettled([sell(a.id), sell(b.id)]);
+    expect(out.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    const lost = out.find((o) => o.status === "rejected") as PromiseRejectedResult;
+    expect(lost.reason).toMatchObject({ code: "conflict" });
+    expect((await m.db.db.query.shopProducts.findFirst({ where }))!.stock).toBe(0);
+    await m.db.db.update(m.schema.shopProducts).set({ stock: product.stock }).where(where);
+  });
+
+  it("a one-use promo applied on two tickets at once is redeemed once", async () => {
+    await m.db.db.insert(m.schema.promoCodes).values({ code: "ONCEONLY", type: "amount", value: 500, maxRedemptions: 1 });
+    const a = await ticket();
+    const b = await ticket();
+    const pay = (t: Awaited<ReturnType<typeof ticket>>) =>
+      m.checkout.finalizeSale({ saleId: t.sale.id, lines: [{ kind: "service", refId: t.svc.id, qty: 1 }], promoCode: "ONCEONLY", tipCents: 0, tender: cash, actor });
+    const out = await Promise.allSettled([pay(a), pay(b)]);
+    expect(out.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    const p = await m.db.db.query.promoCodes.findFirst({ where: eq(m.schema.promoCodes.code, "ONCEONLY") });
+    expect(p!.redemptions).toBe(1);
+  });
+});
