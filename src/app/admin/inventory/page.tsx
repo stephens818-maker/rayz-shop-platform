@@ -4,13 +4,14 @@ import { db } from "@/db";
 import { products, shopProducts, shops } from "@/db/schema";
 import { Card, CardHeader, PageHeader, Table, Td, Th, cx } from "@/components/ui";
 import { formatCents } from "@/lib/money";
-import { requireStaff } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
 import { InventoryTable, NewProductForm } from "./editors";
 
 export const metadata: Metadata = { title: "Inventory" };
 
 export default async function InventoryPage() {
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/inventory");
+  const canCreate = can(ctx, "catalog.manage");
   const shopId = ctx.currentShopId;
   const [all, stocked, shopRows] = await Promise.all([
     db.select().from(products).orderBy(asc(products.brand), asc(products.name)),
@@ -31,8 +32,8 @@ export default async function InventoryPage() {
     return (
       <div className="mx-auto max-w-6xl space-y-5">
         <PageHeader title="Retail inventory" subtitle={`${visibleShops.find((s) => s.id === shopId)?.name} · ${here.length} products · ${low} low · stock at cost ${formatCents(value)}`} />
-        <InventoryTable shopId={shopId} rows={rows} />
-        {ctx.isAdmin && <NewProductForm />}
+        <InventoryTable shopId={shopId} rows={rows} canPrice={can(ctx, "catalog.prices") || canCreate} canStock={can(ctx, "inventory.manage")} />
+        {canCreate && <NewProductForm />}
       </div>
     );
   }
@@ -71,7 +72,7 @@ export default async function InventoryPage() {
           </tbody>
         </Table>
       </Card>
-      {ctx.isAdmin && <NewProductForm />}
+      {canCreate && <NewProductForm />}
     </div>
   );
 }

@@ -6,19 +6,26 @@ import { appointmentItems, appointments, customers, products, shopProducts, shop
 import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { addDays, endOfLocalDay, formatDate, formatTime, startOfLocalDay, todayLocal } from "@/lib/time";
-import { reportShopIds, requireStaff } from "@/server/auth/staff";
+import { reportsFor } from "@/domain/navigation";
+import { can, guardPage, reportShopIds } from "@/server/auth/staff";
 import { byShop, salesSummary } from "@/server/reports";
 
 export const metadata: Metadata = { title: "Today" };
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ denied?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff();
+  const ctx = await guardPage("/admin");
   const today = todayLocal();
   const shopIds = reportShopIds(ctx);
-  const staffId = ctx.isBarber ? ctx.staff.id : null;
-  const scope = { shopIds, from: today, to: today, staffId };
-  const lastWeek = { shopIds, from: addDays(today, -7), to: addDays(today, -7), staffId };
+  const ownBook = !can(ctx, "calendar.manage");
+  const ownSales = !can(ctx, "sales.view");
+  const salesStaffId = ownSales ? ctx.staff.id : null;
+  const staffId = ownBook ? ctx.staff.id : null;
+  const scope = { shopIds, from: today, to: today, staffId: salesStaffId };
+  const lastWeek = { shopIds, from: addDays(today, -7), to: addDays(today, -7), staffId: salesStaffId };
+  const seesWalkins = can(ctx, "walkins.manage");
+  const seesStock = can(ctx, "inventory.manage");
+  const seesSettings = can(ctx, "settings.shop") || can(ctx, "settings.taxes");
   const now = new Date();
   const apptWhere = and(
     inArray(appointments.shopId, shopIds),
@@ -50,10 +57,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       .where(and(apptWhere, gt(appointments.endsAt, now), inArray(appointments.status, ["booked", "confirmed", "checked_in", "in_service"])))
       .orderBy(asc(appointments.startsAt))
       .limit(10),
-    ctx.isBarber
+    !seesWalkins
       ? Promise.resolve([{ n: 0 }])
       : db.select({ n: sql<number>`count(*)::int` }).from(waitlistEntries).where(and(inArray(waitlistEntries.shopId, shopIds), eq(waitlistEntries.status, "waiting"))),
-    ctx.isBarber
+    !seesStock
       ? Promise.resolve([])
       : db
           .select({ name: products.name, brand: products.brand, stock: shopProducts.stock, shop: shops.name })
@@ -63,13 +70,13 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           .where(and(inArray(shopProducts.shopId, shopIds), eq(shopProducts.active, true), lte(shopProducts.stock, shopProducts.lowStockThreshold)))
           .orderBy(asc(shopProducts.stock))
           .limit(8),
-    ctx.currentShopId === null ? byShop(scope) : Promise.resolve([]),
+    ctx.currentShopId === null && !ownSales ? byShop(scope) : Promise.resolve([]),
     db.select({ name: shops.name }).from(shops).where(and(inArray(shops.id, shopIds), eq(shops.taxRatesVerified, false))),
   ]);
   const count = (s: string[]) => statusCounts.filter((c) => s.includes(c.status)).reduce((a, c) => a + c.n, 0);
   const delta = (a: number, b: number) => (b ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs last ${formatDate(today, "EEEE")}` : undefined);
   const notificationsOff = (process.env.NOTIFICATIONS_SMS_PROVIDER ?? "disabled") === "disabled" && (process.env.NOTIFICATIONS_EMAIL_PROVIDER ?? "disabled") === "disabled";
-  const scopeName = ctx.currentShopId === null ? "All shops" : ctx.shops.find((s) => s.id === ctx.currentShopId)?.name;
+  const scopeName = ctx.currentShopId === null ? (ctx.brandWide ? "All shops" : "All my shops") : ctx.shops.find((s) => s.id === ctx.currentShopId)?.name;
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
@@ -81,12 +88,12 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             <LinkButton href="/admin/calendar" variant="secondary">
               Calendar
             </LinkButton>
-            {!ctx.isBarber && <LinkButton href="/admin/walk-ins">+ Quick walk-in</LinkButton>}
+            {seesWalkins && <LinkButton href="/admin/walk-ins">+ Quick walk-in</LinkButton>}
           </>
         }
       />
       {sp.denied && <Notice tone="red">You don&apos;t have access to that page.</Notice>}
-      {!ctx.isBarber && taxShops.length > 0 && (
+      {seesSettings && taxShops.length > 0 && (
         <Notice>
           Tax rates are unverified placeholders for {taxShops.map((s) => s.name).join(", ")}. Confirm them in{" "}
           <Link className="underline" href="/admin/settings">
@@ -95,7 +102,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           before going live.
         </Notice>
       )}
-      {!ctx.isBarber && notificationsOff && (
+      {can(ctx, "notifications.view") && notificationsOff && (
         <Notice tone="blue">
           Customer texts and emails are off (stub provider). Reminders are queued and marked &ldquo;suppressed&rdquo;; see{" "}
           <Link className="underline" href="/admin/notifications">
@@ -106,10 +113,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label={ctx.isBarber ? "My services today" : "Net sales today"} value={formatCents(summary.netSalesCents)} hint={delta(summary.netSalesCents, prior.netSalesCents)} tone={summary.netSalesCents >= prior.netSalesCents ? "up" : "down"} />
+        <Stat label={ownSales ? "My services today" : "Net sales today"} value={formatCents(summary.netSalesCents)} hint={delta(summary.netSalesCents, prior.netSalesCents)} tone={summary.netSalesCents >= prior.netSalesCents ? "up" : "down"} />
         <Stat label="Tips today" value={formatCents(summary.tipsCents)} hint={`${summary.tickets} tickets`} />
         <Stat label="Appointments" value={count(["booked", "confirmed", "checked_in", "in_service", "completed"])} hint={`${count(["completed"])} done · ${count(["no_show"])} no-show`} />
-        <Stat label={ctx.isBarber ? "Waiting for me" : "Waiting now"} value={count(["checked_in"]) + (waitlist[0]?.n ?? 0)} hint={ctx.isBarber ? undefined : `${waitlist[0]?.n ?? 0} on waitlist`} />
+        <Stat label={ownBook ? "Waiting for me" : "Waiting now"} value={count(["checked_in"]) + (waitlist[0]?.n ?? 0)} hint={!seesWalkins ? undefined : `${waitlist[0]?.n ?? 0} on waitlist`} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
@@ -145,7 +152,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           )}
         </Card>
         <div className="space-y-4">
-          {!ctx.isBarber && (
+          {seesStock && (
             <Card>
               <CardHeader title="Low stock" action={<Link className="text-xs underline" href="/admin/inventory">Inventory</Link>} />
               {lowStock.length === 0 ? (
@@ -181,9 +188,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                 <dd>{formatCents(summary.avgTicketCents)}</dd>
               </div>
             </dl>
-            <Link className="mt-3 inline-block text-xs underline" href="/admin/reports">
-              Full reports
-            </Link>
+            {reportsFor(ctx.permissions).length > 0 && (
+              <Link className="mt-3 inline-block text-xs underline" href="/admin/reports">
+                Full reports
+              </Link>
+            )}
           </Card>
         </div>
       </div>

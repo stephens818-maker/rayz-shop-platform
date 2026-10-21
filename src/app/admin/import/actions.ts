@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { safe } from "@/server/action";
-import { requireStaff } from "@/server/auth/staff";
+import { authorize } from "@/server/auth/staff";
 import { IMPORT_KINDS, runImport, type ImportResult } from "@/server/importer";
 
 const Input = z.object({
@@ -16,7 +16,7 @@ const Input = z.object({
 /** The full error list (with the original rows) is kept on the run; the page shows the first 2,000. */
 export async function importAction(raw: z.input<typeof Input>) {
   return safe<ImportResult & { errorsTruncated: number }>(async () => {
-    const ctx = await requireStaff(["brand_admin"]);
+    const ctx = await authorize("import.run");
     const p = Input.parse(raw);
     const result = await runImport(p.kind as ImportResult["kind"], p.csv, { dryRun: p.dryRun, actor: ctx.actor, filename: p.filename });
     if (!p.dryRun) revalidatePath("/admin/import");

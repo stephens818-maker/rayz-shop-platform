@@ -2,17 +2,15 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { shops, staff, staffSchedules, staffShops } from "@/db/schema";
+import { roles, shops, staff, staffSchedules, staffShops } from "@/db/schema";
 import { Badge, Card, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
-import { requireStaff } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
 
 export const metadata: Metadata = { title: "Staff" };
 
-const ROLE = { brand_admin: "Brand admin", shop_manager: "Manager", barber: "Barber" } as const;
-
 export default async function StaffPage({ searchParams }: { searchParams: Promise<{ inactive?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/staff");
   const links = await db
     .select({ staffId: staffShops.staffId, shopId: staffShops.shopId, shop: shops.name })
     .from(staffShops)
@@ -20,8 +18,9 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
     .orderBy(asc(shops.name));
   const scopeIds = ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds;
   const visible = new Set(links.filter((l) => scopeIds.includes(l.shopId)).map((l) => l.staffId));
-  const all = await db.select().from(staff).orderBy(asc(staff.displayLabel));
-  const people = all.filter((s) => (visible.has(s.id) || (ctx.isAdmin && !ctx.currentShopId)) && (sp.inactive || s.active));
+  const all = await db.select({ s: staff, role: roles.name }).from(staff).innerJoin(roles, eq(roles.id, staff.roleId)).orderBy(asc(staff.displayLabel));
+  const roleOf = new Map(all.map((r) => [r.s.id, r.role]));
+  const people = all.map((r) => r.s).filter((s) => (visible.has(s.id) || (ctx.brandWide && !ctx.currentShopId)) && (sp.inactive || s.active));
   const scheds = people.length ? await db.select().from(staffSchedules).where(inArray(staffSchedules.staffId, people.map((p) => p.id))) : [];
   const shopName = ctx.currentShopId ? ctx.shops.find((s) => s.id === ctx.currentShopId)?.name : "All shops";
 
@@ -35,7 +34,7 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
             <Link className="text-sm underline" href={sp.inactive ? "/admin/staff" : "/admin/staff?inactive=1"}>
               {sp.inactive ? "Hide inactive" : "Show inactive"}
             </Link>
-            <LinkButton href="/admin/staff/new">Add staff</LinkButton>
+            {can(ctx, "staff.manage") && <LinkButton href="/admin/staff/new">Add staff</LinkButton>}
           </>
         }
       />
@@ -65,7 +64,7 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
                       {p.displayLabel}
                     </Link>
                   </Td>
-                  <Td>{ROLE[p.role]}</Td>
+                  <Td>{roleOf.get(p.id)}</Td>
                   <Td className="whitespace-normal">
                     {myShops.map((l) => (
                       <span key={l.shopId} className="mr-1 inline-block">

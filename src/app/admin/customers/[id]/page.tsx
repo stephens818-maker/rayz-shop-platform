@@ -8,7 +8,7 @@ import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Tabl
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
-import { canManage, ratingViewer, requireStaff } from "@/server/auth/staff";
+import { can, guardPage, ratingViewer } from "@/server/auth/staff";
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
 import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
@@ -23,10 +23,12 @@ const SALES_PAGE = 15;
 export default async function CustomerPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ v?: string; s?: string; merged?: string; existing?: string }> }) {
   const { id } = await params;
   const sp = await searchParams;
-  const ctx = await requireStaff();
-  const access = await customerAccess({ staffId: ctx.staff.id, canManage: canManage(ctx) }, id);
+  const ctx = await guardPage("/admin/customers/[id]");
+  const access = await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, id);
   if (!access) redirect("/admin/customers");
   const full = access === "full";
+  const showContact = can(ctx, "clients.contact");
+  const canMerge = full && can(ctx, "clients.merge");
   const c = await db.query.customers.findFirst({ where: eq(customers.id, id) });
   if (!c) notFound();
   const vPage = Math.max(1, Number(sp.v) || 1);
@@ -68,7 +70,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
     loyaltyBalance(id),
     db.select().from(loyaltyLedger).where(eq(loyaltyLedger.customerId, id)).orderBy(desc(loyaltyLedger.createdAt)).limit(20),
     db.select().from(customerSquireIds).where(eq(customerSquireIds.customerId, id)).orderBy(asc(customerSquireIds.createdAt)),
-    full ? duplicatePairs({ forId: id, limit: 10 }) : [],
+    canMerge ? duplicatePairs({ forId: id, limit: 10 }) : [],
     full
       ? db
           .select({ id: staff.id, label: staff.displayLabel, active: staff.active })
@@ -139,14 +141,15 @@ export default async function CustomerPage({ params, searchParams }: { params: P
       </div>
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
-          {full ? (
+          {full && can(ctx, "clients.edit") ? (
             <CustomerEditor
               id={c.id}
+              showContact={showContact}
               initial={{
                 firstName: c.firstName,
                 lastName: c.lastName ?? "",
-                phone: c.phone ?? "",
-                email: c.email ?? "",
+                phone: showContact ? (c.phone ?? "") : "",
+                email: showContact ? (c.email ?? "") : "",
                 notes: c.notes ?? "",
                 smsOptIn: c.smsOptIn,
                 emailOptIn: c.emailOptIn,
@@ -178,9 +181,9 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                 </li>
               ))}
             </ul>
-            {ctx.isAdmin && <GrantReward customerId={c.id} />}
+            {can(ctx, "loyalty.grant") && <GrantReward customerId={c.id} />}
           </Card>
-          {full && (
+          {canMerge && (
             <Card>
               <CardHeader title="Duplicates" subtitle="Merge another record into this client. Its visits, tickets, loyalty, gift cards, and Squire IDs move here." />
               {dupes.length > 0 && (
@@ -226,7 +229,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
             )}
             {ratings.length > 0 && (
               <RatingHistory
-                canRemoveAny={ctx.isAdmin}
+                canRemoveAny={viewer.moderates}
                 rows={ratings.map((r) => ({
                   id: r.id,
                   stars: r.stars,

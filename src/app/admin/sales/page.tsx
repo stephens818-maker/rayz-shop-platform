@@ -6,7 +6,7 @@ import { customers, payments, sales, shops, staff } from "@/db/schema";
 import { Badge, Button, Card, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatTime, isValidLocalDate, todayLocal } from "@/lib/time";
-import { reportShopIds, requireStaff } from "@/server/auth/staff";
+import { can, guardPage, reportShopIds } from "@/server/auth/staff";
 import { newSaleAction } from "../checkout/actions";
 
 export const metadata: Metadata = { title: "Sales" };
@@ -15,7 +15,7 @@ const TONE = { paid: "green", open: "amber", voided: "gray", refunded: "red", pa
 
 export default async function SalesPage({ searchParams }: { searchParams: Promise<{ date?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/sales");
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : todayLocal();
   const shopIds = reportShopIds(ctx);
   const rows = await db
@@ -57,7 +57,7 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
             <Link className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/sales?date=${addDays(date, 1)}`}>
               Next ›
             </Link>
-            {ctx.currentShopId && (
+            {ctx.currentShopId && can(ctx, "checkout.any") && (
               <form action={newSaleAction}>
                 <Button>New sale (retail / gift card)</Button>
               </form>

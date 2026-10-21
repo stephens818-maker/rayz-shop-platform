@@ -2,11 +2,11 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { importRuns } from "@/db/schema";
 import { errorsCsv } from "@/lib/import-errors";
-import { getStaffContext } from "@/server/auth/staff";
+import { routeStaff } from "@/server/auth/staff";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ runId: string }> }) {
-  const ctx = await getStaffContext();
-  if (!ctx?.isAdmin) return new Response("Forbidden", { status: 403 });
+  const ctx = await routeStaff("import.run");
+  if (ctx instanceof Response) return ctx;
   const { runId } = await params;
   const run = await db.query.importRuns.findFirst({ where: eq(importRuns.id, runId) });
   if (!run) return new Response("Not found", { status: 404 });

@@ -5,14 +5,16 @@ import { customers, giftCardLedger, giftCards, promoCodes, shops } from "@/db/sc
 import { Badge, Card, CardHeader, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { formatDateTime, todayLocal } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
 import { GiftCardTools, PromoForm, PromoToggle, VoidGiftCard } from "./editors";
 
 export const metadata: Metadata = { title: "Promos & gift cards" };
 
 export default async function PromosPage({ searchParams }: { searchParams: Promise<{ gc?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/promos");
+  const managesPromos = can(ctx, "promos.manage");
+  const canVoid = can(ctx, "giftcards.void");
   const today = todayLocal();
   const [promos, shopRows, cards, [liability]] = await Promise.all([
     db.select().from(promoCodes).orderBy(desc(promoCodes.active), desc(promoCodes.createdAt)),
@@ -29,7 +31,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
       .select({ n: sql<number>`count(*) filter (where ${giftCards.status} = 'active' and ${giftCards.balanceCents} > 0)::int`, cents: sql<number>`coalesce(sum(${giftCards.balanceCents}) filter (where ${giftCards.status} = 'active'), 0)::int` })
       .from(giftCards),
   ]);
-  const visible = promos.filter((p) => ctx.isAdmin || !p.shopId || ctx.shopIds.includes(p.shopId));
+  const visible = promos.filter((p) => ctx.brandWide || !p.shopId || ctx.shopIds.includes(p.shopId));
   const single = cards.length === 1 ? cards[0] : null;
   const ledger = single ? await db.select().from(giftCardLedger).where(eq(giftCardLedger.giftCardId, single.g.id)).orderBy(asc(giftCardLedger.createdAt)) : [];
   const shopId = ctx.currentShopId ?? ctx.shopIds[0];
@@ -55,7 +57,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
           <tbody>
             {visible.map((p) => {
               const expired = p.endsOn && p.endsOn < today;
-              const editable = ctx.isAdmin || (!!p.shopId && ctx.shopIds.includes(p.shopId));
+              const editable = managesPromos && (ctx.brandWide || (!!p.shopId && ctx.shopIds.includes(p.shopId)));
               return (
                 <tr key={p.id}>
                   <Td className="font-mono font-semibold">{p.code}</Td>
@@ -77,7 +79,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
             })}
           </tbody>
         </Table>
-        <PromoForm shops={shopRows.filter((s) => ctx.shopIds.includes(s.id))} isAdmin={ctx.isAdmin} />
+        {managesPromos && <PromoForm shops={shopRows.filter((s) => ctx.shopIds.includes(s.id))} allShops={ctx.brandWide} />}
       </Card>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -87,7 +89,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
 
       <Card>
         <CardHeader title="Gift cards" subtitle="Sell gift cards from checkout. Balances work at every shop." />
-        <GiftCardTools shopId={shopId} initialQuery={sp.gc ?? ""} />
+        <GiftCardTools shopId={shopId} initialQuery={sp.gc ?? ""} canIssue={can(ctx, "giftcards.issue")} />
         <Table>
           <thead>
             <tr>
@@ -99,7 +101,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
               <Th>Client</Th>
               <Th>Status</Th>
               <Th>Created</Th>
-              {ctx.isAdmin && <Th />}
+              {canVoid && <Th />}
             </tr>
           </thead>
           <tbody>
@@ -117,7 +119,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
                   <Badge tone={g.status === "active" ? "green" : "gray"}>{g.status}</Badge>
                 </Td>
                 <Td className="text-xs">{formatDateTime(g.createdAt)}</Td>
-                {ctx.isAdmin && <Td>{g.status === "active" && <VoidGiftCard id={g.id} />}</Td>}
+                {canVoid && <Td>{g.status === "active" && (ctx.brandWide || (g.issuedShopId && ctx.shopIds.includes(g.issuedShopId))) && <VoidGiftCard id={g.id} />}</Td>}
               </tr>
             ))}
           </tbody>

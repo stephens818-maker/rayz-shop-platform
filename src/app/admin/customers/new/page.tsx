@@ -3,13 +3,13 @@ import { asc, eq, and } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, staff } from "@/db/schema";
 import { PageHeader } from "@/components/ui";
-import { requireStaff } from "@/server/auth/staff";
+import { guardPage } from "@/server/auth/staff";
 import { NewClientForm } from "./form";
 
 export const metadata: Metadata = { title: "New client" };
 
 export default async function NewClientPage() {
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/customers/new");
   const [shopRows, barbers] = await Promise.all([
     db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name)),
     db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(and(eq(staff.active, true), eq(staff.isBookable, true))).orderBy(asc(staff.displayLabel)),

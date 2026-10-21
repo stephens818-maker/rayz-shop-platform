@@ -1,3 +1,4 @@
+import { eq, inArray, isNull, or, type SQL } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { auditLog } from "@/db/schema";
 
@@ -27,4 +28,13 @@ export async function audit(
     entityId,
     details,
   });
+}
+
+/**
+ * Audit entries someone may read. People with access to every shop also see brand-level entries
+ * (no shop); everyone else sees only entries for their shops.
+ */
+export function auditScope(v: { brandWide: boolean; currentShopId: string | null; shopIds: string[] }): SQL | undefined {
+  if (v.brandWide) return v.currentShopId ? or(eq(auditLog.shopId, v.currentShopId), isNull(auditLog.shopId)) : undefined;
+  return inArray(auditLog.shopId, v.currentShopId ? [v.currentShopId] : v.shopIds.length ? v.shopIds : ["00000000-0000-0000-0000-000000000000"]);
 }

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { services, shopHours, shopServices, shops, staff, staffSchedules, staffShops, Shop } from "@/db/schema";
+import { services, shopHours, shopServices, shops, staff, staffSchedules, staffShops, Shop, TaxCategory } from "@/db/schema";
 import { notFound } from "./errors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,6 +23,7 @@ export interface EffectiveService {
   durationMin: number;
   bookableOnline: boolean;
   sortOrder: number;
+  taxCategory: TaxCategory;
 }
 
 /** Master catalog merged with the shop's overrides. Only services enabled at the shop are returned. */
@@ -45,6 +46,7 @@ export async function shopCatalog(shopId: string, opts: { onlineOnly?: boolean }
       durationMin: o.durationMin ?? s.defaultDurationMin,
       bookableOnline: o.bookableOnline,
       sortOrder: s.sortOrder,
+      taxCategory: s.taxCategory,
     }))
     .filter((s) => !opts.onlineOnly || s.bookableOnline);
 }

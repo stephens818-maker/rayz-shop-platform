@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { sales } from "@/db/schema";
 import { safe } from "@/server/action";
-import { StaffContext, assertShopAccess, canManage, requireStaff, workingShopId } from "@/server/auth/staff";
+import { StaffContext, assertShopAccess, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
 import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale, validatePromo } from "@/server/checkout";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { inspectPaymentMethod, terminal } from "@/server/payments/processor";
@@ -15,12 +15,12 @@ async function loadSale(ctx: StaffContext, saleId: string) {
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
   if (!sale) throw notFound("Sale");
   assertShopAccess(ctx, sale.shopId);
-  if (ctx.isBarber && sale.staffId !== ctx.staff.id) throw forbidden("You can only check out your own clients");
+  if (sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) throw forbidden("You can only check out your own clients");
   return sale;
 }
 
 export async function newSaleAction() {
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await authorize("checkout.any");
   const shopId = workingShopId(ctx);
   if (!shopId) throw new AppError("bad_request", "Pick a shop first");
   const sale = await openBlankSale(shopId, ctx.actor);
@@ -71,7 +71,7 @@ export async function attachCustomerAction(saleId: string, customerId: string | 
 
 export async function setBarberAction(saleId: string, staffId: string | null) {
   return safe(async () => {
-    const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+    const ctx = await authorize("checkout.any");
     const sale = await loadSale(ctx, saleId);
     if (staffId) await assertStaffAtShop(staffId, sale.shopId);
     await db.update(sales).set({ staffId }).where(and(eq(sales.id, saleId), eq(sales.status, "open")));
@@ -95,11 +95,11 @@ export async function finalizeAction(input: {
   return safe(async () => {
     const ctx = await requireStaff();
     await loadSale(ctx, input.saleId);
-    if (input.manualDiscount && input.manualDiscount.value > 0 && !canManage(ctx)) throw forbidden("Only managers can give manual discounts");
+    if (input.manualDiscount && input.manualDiscount.value > 0 && !can(ctx, "pos.discount")) throw forbidden("You don't have permission to give discounts");
     if (input.manualDiscount && input.manualDiscount.value > 0 && !input.manualDiscount.reason.trim()) {
       throw new AppError("bad_request", "Add a reason for the discount");
     }
-    const r = await finalizeSale({ ...input, canOverridePrice: canManage(ctx), actor: ctx.actor });
+    const r = await finalizeSale({ ...input, canOverridePrice: can(ctx, "pos.price_override"), maxManualDiscountPct: ctx.maxDiscountPct, actor: ctx.actor });
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     const rebook = r.rebooked && "code" in r.rebooked ? { code: r.rebooked.code, startsAt: r.rebooked.startsAt } : r.rebooked && "error" in r.rebooked ? { error: r.rebooked.error } : null;

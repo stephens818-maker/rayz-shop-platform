@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
-import { CardFeeConfig, CardFunding, Discount, LineKind, TaxRates, computeCheckout, feeLabel, tipSuggestions } from "@/domain/checkout";
+import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
 import { formatPhone } from "@/lib/phone";
 import { searchCustomersAction } from "../../calendar/actions";
 import { attachCustomerAction, finalizeAction, giftCardAction, inspectCardAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
@@ -35,7 +35,8 @@ export function Pos(props: {
   retail: { productId: string; name: string; brand: string; priceCents: number; stock: number }[];
   loyalty: { rewards: { id: string; amountCents: number; expiresAt: string | null }[]; progressCents: number; thresholdCents: number; redeemableOn: "services" | "all" } | null;
   payments: { mode: "stripe" | "simulator"; publishableKey: string | null; terminalLabel: string; testCards: { id: string; label: string; funding: string }[] };
-  canDiscount: boolean;
+  taxCategories: Record<string, TaxCategory>;
+  perms: { discount: boolean; maxDiscountPct: number; priceOverride: boolean; reassign: boolean };
 }) {
   const router = useRouter();
   const [lines, setLines] = useState<Line[]>(() => props.initialLines.map((l) => ({ ...l, key: key() })));
@@ -71,9 +72,12 @@ export function Pos(props: {
     return d;
   }, [promo, manual, reward, props.loyalty]);
 
+  const priced = lines.map((l) => ({ ...l, unitPriceCents: priceOf(l), taxCategory: l.refId ? props.taxCategories[l.refId] : undefined }));
+  const manualValue = manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value);
+  const discountProblem = props.perms.discount ? manualDiscountProblem({ type: manual.type, value: manualValue }, priced, props.perms.maxDiscountPct) : null;
   const preview = (method: "cash" | "card" | "none", funding: CardFunding | null) =>
     computeCheckout({
-      lines: lines.map((l) => ({ ...l, unitPriceCents: priceOf(l) })),
+      lines: priced,
       discounts,
       taxRates: props.config.taxRates,
       tipCents,
@@ -168,7 +172,7 @@ export function Pos(props: {
                 <div className="mb-1 text-xs font-medium text-zinc-700">Barber (gets service credit + tip)</div>
                 <Select
                   value={props.sale.staffId ?? ""}
-                  disabled={!props.canDiscount}
+                  disabled={!props.perms.reassign}
                   onChange={(e) => act(() => setBarberAction(props.sale.id, e.target.value || null), () => router.refresh())}
                 >
                   <option value="">Unassigned</option>
@@ -211,10 +215,10 @@ export function Pos(props: {
                       Remove
                     </button>
                   )}
-                  {props.canDiscount && l.kind !== "gift_card" ? (
+                  {props.perms.priceOverride && l.kind !== "gift_card" ? (
                     <button
                       className={cx("w-20 text-right text-sm tabular underline decoration-dotted underline-offset-2", l.override && "text-amber-700")}
-                      title="Change price (manager)"
+                      title="Change price"
                       onClick={() => setEditing({ key: l.key, price: (priceOf(l) / 100).toFixed(2), reason: l.override?.reason ?? "" })}
                     >
                       {$(priceOf(l) * l.qty)}
@@ -354,7 +358,7 @@ export function Pos(props: {
                   )}
                 </div>
               )}
-              {props.canDiscount && (
+              {props.perms.discount && (
                 <div className="grid grid-cols-[90px_1fr] gap-2 sm:grid-cols-[90px_110px_1fr]">
                   <Select value={manual.type} onChange={(e) => setManual({ ...manual, type: e.target.value as "percent" | "amount" })}>
                     <option value="percent">%</option>
@@ -362,6 +366,9 @@ export function Pos(props: {
                   </Select>
                   <Input placeholder={manual.type === "percent" ? "10" : "5.00"} inputMode="decimal" value={manual.value} onChange={(e) => setManual({ ...manual, value: e.target.value })} />
                   <Input className="col-span-2 sm:col-span-1" placeholder="Reason (required)" value={manual.reason} onChange={(e) => setManual({ ...manual, reason: e.target.value })} />
+                  <div className={cx("col-span-2 text-xs sm:col-span-3", discountProblem ? "text-red-600" : "text-zinc-500")}>
+                    {discountProblem ?? (props.perms.maxDiscountPct < 100 ? `Your discount limit: ${props.perms.maxDiscountPct}%` : null)}
+                  </div>
                 </div>
               )}
             </div>

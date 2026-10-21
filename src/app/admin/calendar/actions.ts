@@ -7,7 +7,7 @@ import { appointments, staffShops, timeBlocks } from "@/db/schema";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { timeBlockChangeDenied } from "@/server/auth/policy";
-import { StaffContext, assertShopAccess, caller, canManage, requireStaff } from "@/server/auth/staff";
+import { StaffContext, assertShopAccess, can, caller, requireStaff } from "@/server/auth/staff";
 import { createAppointment, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
 import { maskPhone, searchCustomers } from "@/server/customers";
@@ -18,11 +18,14 @@ async function barberShops(staffId: string) {
   return (await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId))).map((l) => l.shopId);
 }
 
-async function loadAppt(ctx: StaffContext, id: string) {
+/** Without "manage the calendar", people work only in their own column. */
+const ownColumnOnly = (ctx: StaffContext) => !can(ctx, "calendar.manage");
+
+async function loadAppt(ctx: StaffContext, id: string, othersNeed: "calendar.manage" | "checkout.any" = "calendar.manage") {
   const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
   if (!a) throw notFound("Appointment");
   assertShopAccess(ctx, a.shopId);
-  if (ctx.isBarber && a.staffId !== ctx.staff.id) throw forbidden("You can only change your own appointments");
+  if (a.staffId !== ctx.staff.id && !can(ctx, othersNeed)) throw forbidden("You can only change your own appointments");
   return a;
 }
 
@@ -42,31 +45,32 @@ export async function setStatusAction(id: string, status: Status) {
 export async function startCheckoutAction(appointmentId: string) {
   return safe(async () => {
     const ctx = await requireStaff();
-    await loadAppt(ctx, appointmentId);
+    await loadAppt(ctx, appointmentId, "checkout.any");
     const sale = await openSaleForAppointment(appointmentId, ctx.actor);
     return { saleId: sale.id, status: sale.status };
   });
 }
 
 /**
- * Managers search the shared book. Barbers only find clients who have been to their shops, and
- * see the last four digits of the phone instead of the number and no email.
+ * With "every client" you search the shared book; otherwise only clients who have been to your
+ * shops. Without contact access you see the last four digits of the phone and no email.
  */
 export async function searchCustomersAction(q: string) {
   return safe(async () => {
     const ctx = await requireStaff();
     const term = q.trim();
     if (term.length < 2) return [];
-    const full = canManage(ctx);
+    const full = can(ctx, "clients.view_all");
+    const contact = can(ctx, "clients.contact");
     const rows = await searchCustomers(term, full ? {} : { restrictToShops: ctx.shopIds }, 8);
     const ratings = await ratingSummaries(rows.map((r) => r.id));
     return rows.map((r) => ({
       id: r.id,
       firstName: r.firstName,
       lastName: r.lastName,
-      phone: full ? r.phone : null,
-      phoneHint: full ? null : maskPhone(r.phone),
-      email: full ? r.email : null,
+      phone: contact ? r.phone : null,
+      phoneHint: contact ? null : maskPhone(r.phone),
+      email: contact ? r.email : null,
       notes: r.notes,
       rating: ratings.get(r.id) ?? null,
     }));
@@ -87,7 +91,7 @@ export async function createStaffAppointmentAction(input: {
   return safe(async () => {
     const ctx = await requireStaff();
     assertShopAccess(ctx, input.shopId);
-    if (ctx.isBarber && input.staffId !== ctx.staff.id) throw forbidden("Barbers can only book into their own column");
+    if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only book into your own column");
     if (!input.customerId && !input.customer?.firstName) throw new AppError("bad_request", "Pick a client or enter a name");
     const startsAt = staffWallTime(input.date, input.startMin);
     const appt = await createAppointment({
@@ -112,7 +116,7 @@ export async function moveAppointmentAction(id: string, staffId: string, date: s
   return safe(async () => {
     const ctx = await requireStaff();
     const a = await loadAppt(ctx, id);
-    if (ctx.isBarber && staffId !== ctx.staff.id) throw forbidden("You can only move your own appointments within your own column");
+    if (ownColumnOnly(ctx) && staffId !== ctx.staff.id) throw forbidden("You can only move your own appointments within your own column");
     await rescheduleAppointment(a.code, { startsAt: staffWallTime(date, startMin), barberRef: staffId, actor: ctx.actor, byCustomer: false });
     revalidatePath("/admin/calendar");
     return null;
@@ -123,7 +127,7 @@ export async function createBlockAction(input: { shopId: string; staffId: string
   return safe(async () => {
     const ctx = await requireStaff();
     assertShopAccess(ctx, input.shopId);
-    if (ctx.isBarber && input.staffId !== ctx.staff.id) throw forbidden();
+    if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only block time in your own column");
     if (!input.reason.trim()) throw new AppError("bad_request", "Add a reason for the block");
     if (input.endMin <= input.startMin) throw new AppError("bad_request", "End must be after start");
     const shopId = input.allShops ? null : input.shopId;
@@ -153,7 +157,7 @@ export async function deleteBlockAction(id: string) {
     const ctx = await requireStaff();
     const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
     if (!b) throw notFound("Block");
-    if (ctx.isBarber && b.staffId !== ctx.staff.id) throw forbidden();
+    if (ownColumnOnly(ctx) && b.staffId !== ctx.staff.id) throw forbidden("You can only remove blocks in your own column");
     const denied = timeBlockChangeDenied(caller(ctx), b, await barberShops(b.staffId));
     if (denied) throw forbidden(denied);
     await db.delete(timeBlocks).where(eq(timeBlocks.id, id));

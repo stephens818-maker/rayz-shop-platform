@@ -212,8 +212,8 @@ export interface RateableVisit {
 
 /** Recent visits this viewer may rate, newest first, with their own rating if they gave one. */
 export async function rateableVisits(viewer: RatingViewer, customerId: string, limit = 25): Promise<RateableVisit[]> {
-  const shopScope = (col: typeof appointments.shopId | typeof sales.shopId) =>
-    viewer.role === "shop_manager" ? (viewer.shopIds.length ? inArray(col, viewer.shopIds) : sql`false`) : undefined;
+  if (!viewer.canRate) return [];
+  const shopScope = (col: typeof appointments.shopId | typeof sales.shopId) => (viewer.shopIds.length ? inArray(col, viewer.shopIds) : sql`false`);
   const [appts, tickets, mine] = await Promise.all([
     db
       .select({
@@ -233,7 +233,7 @@ export async function rateableVisits(viewer: RatingViewer, customerId: string, l
           eq(appointments.customerId, customerId),
           inArray(appointments.status, [...RATEABLE_APPOINTMENT_STATUSES]),
           shopScope(appointments.shopId),
-          viewer.role === "barber"
+          !viewer.seesAll
             ? or(eq(appointments.staffId, viewer.staffId), sql`exists (select 1 from sales s where s.appointment_id = ${appointments.id} and s.staff_id = ${viewer.staffId}::uuid and s.status <> 'voided')`)
             : undefined,
         ),
@@ -251,7 +251,7 @@ export async function rateableVisits(viewer: RatingViewer, customerId: string, l
           isNull(sales.appointmentId),
           inArray(sales.status, [...RATEABLE_SALE_STATUSES]),
           shopScope(sales.shopId),
-          viewer.role === "barber" ? eq(sales.staffId, viewer.staffId) : undefined,
+          !viewer.seesAll ? eq(sales.staffId, viewer.staffId) : undefined,
         ),
       )
       .orderBy(desc(sales.createdAt))

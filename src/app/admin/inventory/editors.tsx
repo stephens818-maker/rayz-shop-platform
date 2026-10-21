@@ -8,7 +8,7 @@ import { adjustStockAction, createProductAction, saveShopProductAction } from ".
 type Row = { productId: string; sku: string; name: string; brand: string; category: string; stocked: boolean; costCents: number; priceCents: number; stock: number; lowStockThreshold: number; active: boolean };
 const d = (c: number) => (c / 100).toFixed(2);
 
-export function InventoryTable({ shopId, rows }: { shopId: string; rows: Row[] }) {
+export function InventoryTable({ shopId, rows, canPrice, canStock }: { shopId: string; rows: Row[]; canPrice: boolean; canStock: boolean }) {
   const [q, setQ] = useState("");
   const [onlyLow, setOnlyLow] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -43,7 +43,7 @@ export function InventoryTable({ shopId, rows }: { shopId: string; rows: Row[] }
           </thead>
           <tbody>
             {list.map((r) => (
-              <InvRow key={r.productId} shopId={shopId} r={r} />
+              <InvRow key={r.productId} shopId={shopId} r={r} canPrice={canPrice} canStock={canStock} />
             ))}
           </tbody>
         </table>
@@ -52,7 +52,7 @@ export function InventoryTable({ shopId, rows }: { shopId: string; rows: Row[] }
   );
 }
 
-function InvRow({ shopId, r }: { shopId: string; r: Row }) {
+function InvRow({ shopId, r, canPrice, canStock }: { shopId: string; r: Row; canPrice: boolean; canStock: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [s, setS] = useState({ cost: d(r.costCents), price: d(r.priceCents), low: String(r.lowStockThreshold), active: r.active });
@@ -81,20 +81,20 @@ function InvRow({ shopId, r }: { shopId: string; r: Row }) {
         {err && <div className="text-xs text-red-600">{err}</div>}
       </td>
       <td className="px-3 py-2">
-        <Input className="w-20 py-1" inputMode="decimal" value={s.cost} onChange={(e) => setS({ ...s, cost: e.target.value })} />
+        <Input className="w-20 py-1" inputMode="decimal" disabled={!canPrice} value={s.cost} onChange={(e) => setS({ ...s, cost: e.target.value })} />
       </td>
       <td className="px-3 py-2">
-        <Input className="w-20 py-1" inputMode="decimal" value={s.price} onChange={(e) => setS({ ...s, price: e.target.value })} />
+        <Input className="w-20 py-1" inputMode="decimal" disabled={!canPrice} value={s.price} onChange={(e) => setS({ ...s, price: e.target.value })} />
       </td>
       <td className={cx("px-3 py-2 tabular", margin < 30 ? "text-amber-700" : "text-zinc-600")}>{margin}%</td>
       <td className="px-3 py-2">
-        <Input className="w-16 py-1" inputMode="numeric" value={s.low} onChange={(e) => setS({ ...s, low: e.target.value })} />
+        <Input className="w-16 py-1" inputMode="numeric" disabled={!canStock && !canPrice} value={s.low} onChange={(e) => setS({ ...s, low: e.target.value })} />
       </td>
       <td className="px-3 py-2">
-        <input type="checkbox" checked={s.active} onChange={(e) => setS({ ...s, active: e.target.checked })} />
+        <input type="checkbox" disabled={!canPrice} checked={s.active} onChange={(e) => setS({ ...s, active: e.target.checked })} />
       </td>
       <td className="px-3 py-2">
-        {dirty && (
+        {dirty && (canPrice || r.stocked) && (
           <Button size="sm" disabled={pending} onClick={() => go(() => saveShopProductAction(shopId, r.productId, { costCents: cost, priceCents: price, lowStockThreshold: Number(s.low) || 0, active: s.active }))}>
             {r.stocked ? "Save" : "Carry"}
           </Button>
@@ -109,7 +109,7 @@ function InvRow({ shopId, r }: { shopId: string; r: Row }) {
         )}
       </td>
       <td className="px-3 py-2">
-        {r.stocked && (
+        {r.stocked && canStock && (
           <div className="flex items-center gap-1">
             <Select className="w-28 py-1" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
               <option value="receive">Receive +</option>

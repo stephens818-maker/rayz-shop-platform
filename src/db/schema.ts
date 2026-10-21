@@ -20,7 +20,6 @@ const id = () => uuid("id").primaryKey().defaultRandom();
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
 const ts = (name: string) => timestamp(name, { withTimezone: true });
 
-export const staffRole = pgEnum("staff_role", ["brand_admin", "shop_manager", "barber"]);
 export const appointmentStatus = pgEnum("appointment_status", [
   "booked",
   "confirmed",
@@ -103,6 +102,22 @@ export const shopClosures = pgTable(
 
 // ───────────────────────────── Staff ─────────────────────────────
 
+/** Permission roles. Templates (key set) can be edited but not deleted; custom roles have no key. */
+export const roles = pgTable("roles", {
+  id: id(),
+  key: text("key").unique(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull().default(""),
+  /** Permission keys from src/domain/permissions.ts. */
+  permissions: jsonb("permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  maxDiscountPct: smallint("max_discount_pct").notNull().default(0),
+  /** Suggested shop access for people given this role. */
+  defaultScope: text("default_scope").$type<"all" | "selected" | "one">().notNull().default("one"),
+  sortOrder: integer("sort_order").notNull().default(100),
+  createdAt: createdAt(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
 export const staff = pgTable("staff", {
   id: id(),
   /** Short human-friendly unique staff ID (e.g. "S-0007"). */
@@ -117,9 +132,15 @@ export const staff = pgTable("staff", {
   email: text("email").unique(),
   phone: text("phone"),
   color: text("color").notNull().default("#64748b"),
-  role: staffRole("role").notNull().default("barber"),
-  /** Shop managers are scoped to exactly this shop. */
-  managerShopId: uuid("manager_shop_id").references(() => shops.id),
+  roleId: uuid("role_id")
+    .notNull()
+    .references(() => roles.id),
+  /** all = every shop; selected / one = the shops in staff_access_shops. */
+  shopScope: text("shop_scope").$type<"all" | "selected" | "one">().notNull().default("selected"),
+  /** Per-person changes on top of the role: { "pos.discount": true, "sales.refund": false }. */
+  permissionOverrides: jsonb("permission_overrides").$type<Record<string, boolean>>().notNull().default(sql`'{}'::jsonb`),
+  /** Replaces the role's discount limit for this person. */
+  maxDiscountPct: smallint("max_discount_pct"),
   isBookable: boolean("is_bookable").notNull().default(true),
   active: boolean("active").notNull().default(true),
   passwordHash: text("password_hash"),
@@ -136,6 +157,16 @@ export const staffShops = pgTable(
     isPrimary: boolean("is_primary").notNull().default(false),
   },
   (t) => [primaryKey({ columns: [t.staffId, t.shopId] })],
+);
+
+/** Shops a person may see and act on, when their scope isn't "all". Separate from where they work. */
+export const staffAccessShops = pgTable(
+  "staff_access_shops",
+  {
+    staffId: uuid("staff_id").notNull().references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.staffId, t.shopId] }), index("staff_access_shops_shop_idx").on(t.shopId)],
 );
 
 export const staffSchedules = pgTable(
@@ -170,15 +201,21 @@ export const timeBlocks = pgTable(
 
 // ───────────────────────────── Catalog ─────────────────────────────
 
+/** Which of the shop's tax rates applies to an item. */
+export type TaxCategory = "service" | "product" | "exempt";
+
 export const services = pgTable("services", {
   id: id(),
   slug: text("slug").notNull().unique(),
+  /** Matches rows on bulk upload. Unique across services and products (checked by the app). */
+  sku: text("sku").unique(),
   name: text("name").notNull(),
   kind: serviceKind("kind").notNull().default("service"),
   category: text("category").notNull().default("Haircuts"),
   description: text("description"),
   defaultPriceCents: integer("default_price_cents").notNull(),
   defaultDurationMin: integer("default_duration_min").notNull(),
+  taxCategory: text("tax_category").$type<TaxCategory>().notNull().default("service"),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(100),
   createdAt: createdAt(),
@@ -202,8 +239,15 @@ export const products = pgTable("products", {
   id: id(),
   sku: text("sku").notNull().unique(),
   name: text("name").notNull(),
+  /** The maker, e.g. "Reuzel". */
   brand: text("brand").notNull(),
   category: text("category").notNull().default("Styling"),
+  barcode: text("barcode").unique(),
+  taxCategory: text("tax_category").$type<TaxCategory>().notNull().default("product"),
+  /** Brand-level cost and price; each shop starts from these and can override its price. */
+  costCents: integer("cost_cents").notNull().default(0),
+  priceCents: integer("price_cents").notNull().default(0),
+  lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
   active: boolean("active").notNull().default(true),
   createdAt: createdAt(),
 });
@@ -227,7 +271,7 @@ export const inventoryAdjustments = pgTable("inventory_adjustments", {
   shopId: uuid("shop_id").notNull().references(() => shops.id),
   productId: uuid("product_id").notNull().references(() => products.id),
   delta: integer("delta").notNull(),
-  reason: text("reason").notNull(), // sale | refund | receive | count | damage
+  reason: text("reason").notNull(), // sale | refund | receive | count | damage | upload
   saleId: uuid("sale_id"),
   staffId: uuid("staff_id"),
   createdAt: createdAt(),
@@ -707,6 +751,7 @@ export const clientRatings = pgTable(
 
 export type Shop = typeof shops.$inferSelect;
 export type Staff = typeof staff.$inferSelect;
+export type Role = typeof roles.$inferSelect;
 export type Service = typeof services.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
 export type Customer = typeof customers.$inferSelect;

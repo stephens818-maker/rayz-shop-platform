@@ -12,7 +12,11 @@ export interface CartLine {
   qty: number;
   staffId?: string | null;
   refId?: string | null;
+  /** Which shop rate applies. Defaults by kind: services and add-ons at the service rate, products at the product rate. */
+  taxCategory?: TaxCategory;
 }
+
+export type TaxCategory = "service" | "product" | "exempt";
 
 export type DiscountTarget = "services" | "products" | "all";
 
@@ -96,12 +100,26 @@ export interface CheckoutTotals {
 }
 
 const isService = (k: LineKind) => k === "service" || k === "addon";
+const taxBucket = (l: CartLine): TaxCategory | null => (l.kind === "gift_card" ? null : (l.taxCategory ?? (isService(l.kind) ? "service" : "product")));
 
 function eligible(line: CartLine, target: DiscountTarget) {
   if (line.kind === "gift_card") return false;
   if (target === "all") return true;
   if (target === "services") return isService(line.kind);
   return line.kind === "product";
+}
+
+/**
+ * A manual discount must stay within the person's limit: a percent no higher than it, or an
+ * amount no more than that share of the ticket (gift cards excluded).
+ */
+export function manualDiscountProblem(d: { type: "percent" | "amount"; value: number } | null, lines: CartLine[], maxPct: number): string | null {
+  if (!d || !(d.value > 0)) return null;
+  if (maxPct <= 0) return "You can't give manual discounts";
+  if (d.type === "percent") return d.value > maxPct ? `Your discount limit is ${maxPct}%` : null;
+  const gross = lines.filter((l) => l.kind !== "gift_card").reduce((a, l) => a + Math.max(0, Math.round(l.unitPriceCents * l.qty)), 0);
+  const cap = Math.floor((gross * maxPct) / 100);
+  return d.value > cap ? `Your discount limit is ${maxPct}% of the ticket (${formatCents(cap)} here)` : null;
 }
 
 export function feeLabel(cfg: Pick<CardFeeConfig, "rate">): string {
@@ -153,11 +171,11 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
   const serviceNetCents = sum((l) => isService(l.kind), (l) => l.netCents);
   const productNetCents = sum((l) => l.kind === "product", (l) => l.netCents);
 
-  // Tax is computed on each category's net total (one rounding per category), then spread to lines.
-  const serviceTaxCents = applyRate(serviceNetCents, input.taxRates.serviceRate);
-  const productTaxCents = applyRate(productNetCents, input.taxRates.productRate);
-  const svcIdx = lines.map((l, i) => (isService(l.kind) ? i : -1)).filter((i) => i >= 0);
-  const prdIdx = lines.map((l, i) => (l.kind === "product" ? i : -1)).filter((i) => i >= 0);
+  // Tax is computed on each tax category's net total (one rounding per category), then spread to lines.
+  const serviceTaxCents = applyRate(sum((l) => taxBucket(l) === "service", (l) => l.netCents), input.taxRates.serviceRate);
+  const productTaxCents = applyRate(sum((l) => taxBucket(l) === "product", (l) => l.netCents), input.taxRates.productRate);
+  const svcIdx = lines.map((l, i) => (taxBucket(l) === "service" ? i : -1)).filter((i) => i >= 0);
+  const prdIdx = lines.map((l, i) => (taxBucket(l) === "product" ? i : -1)).filter((i) => i >= 0);
   allocateProportionally(serviceTaxCents, svcIdx.map((i) => lines[i].netCents)).forEach((t, k) => (lines[svcIdx[k]].taxCents = t));
   allocateProportionally(productTaxCents, prdIdx.map((i) => lines[i].netCents)).forEach((t, k) => (lines[prdIdx[k]].taxCents = t));
 

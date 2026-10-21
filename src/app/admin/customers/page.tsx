@@ -8,7 +8,7 @@ import { CLIENT_SORTS, RATING_FILTERS, parseClientSort, parseRatingFilter } from
 import { formatCents } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
 import { formatDate } from "@/lib/time";
-import { canManage, requireStaff } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
 import { customerSearchWhere, maskPhone, visitedScope } from "@/server/customers";
 
 export const metadata: Metadata = { title: "Clients" };
@@ -17,8 +17,9 @@ const PAGE = 50;
 
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string; rating?: string; sort?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff();
-  const full = canManage(ctx);
+  const ctx = await guardPage("/admin/customers");
+  const full = can(ctx, "clients.view_all");
+  const contact = can(ctx, "clients.contact");
   const q = (sp.q ?? "").trim();
   const page = Math.max(1, Number(sp.page) || 1);
   const search = customerSearchWhere(q);
@@ -91,10 +92,12 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         actions={
           full && (
             <div className="flex gap-2">
-              <LinkButton variant="secondary" href="/admin/customers/duplicates">
-                Duplicates
-              </LinkButton>
-              <LinkButton href="/admin/customers/new">New client</LinkButton>
+              {can(ctx, "clients.merge") && (
+                <LinkButton variant="secondary" href="/admin/customers/duplicates">
+                  Duplicates
+                </LinkButton>
+              )}
+              {can(ctx, "clients.edit") && <LinkButton href="/admin/customers/new">New client</LinkButton>}
             </div>
           )
         }
@@ -127,7 +130,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
               <tr>
                 <Th>Name</Th>
                 <Th>Phone</Th>
-                {full && <Th>Email</Th>}
+                {contact && <Th>Email</Th>}
                 <Th>Home shop</Th>
                 <Th right>Visits</Th>
                 <Th>Last visit</Th>
@@ -143,8 +146,8 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                       {c.firstName} {c.lastName}
                     </Link>
                   </Td>
-                  <Td>{full ? formatPhone(c.phone) || "—" : (maskPhone(c.phone) ?? "—")}</Td>
-                  {full && <Td className="text-zinc-600">{c.email ?? "—"}</Td>}
+                  <Td>{contact ? formatPhone(c.phone) || "—" : (maskPhone(c.phone) ?? "—")}</Td>
+                  {contact && <Td className="text-zinc-600">{c.email ?? "—"}</Td>}
                   <Td>{shop ?? "—"}</Td>
                   <Td right>{visits}</Td>
                   <Td>{lastVisit ? formatDate(new Date(lastVisit), "MMM d, yyyy") : "—"}</Td>

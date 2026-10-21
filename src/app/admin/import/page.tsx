@@ -6,7 +6,7 @@ import { importRuns, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
 import { splitRunStats, statLines } from "@/lib/import-stats";
 import { formatDateTime } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
+import { guardPage } from "@/server/auth/staff";
 import { Importer } from "./importer";
 
 export const metadata: Metadata = { title: "Import from Squire" };
@@ -60,7 +60,7 @@ async function liveTotals(): Promise<Totals> {
 }
 
 export default async function ImportPage() {
-  await requireStaff(["brand_admin"]);
+  await guardPage("/admin/import");
   const [runs, totals] = await Promise.all([
     db
       .select({ r: importRuns, by: staff.displayLabel })

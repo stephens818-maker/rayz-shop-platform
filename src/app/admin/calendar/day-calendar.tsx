@@ -71,7 +71,7 @@ export function DayCalendar({
   today: string;
   nowMin: number | null;
   services: Svc[];
-  canManage: boolean;
+  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean };
   meId: string;
   initialApptId: string | null;
 }) {
@@ -143,7 +143,7 @@ export function DayCalendar({
             </button>
           </div>
           <input type="date" value={data.date} onChange={(e) => e.target.value && go(e.target.value)} className="h-9 rounded-lg px-2 text-sm ring-1 ring-zinc-300" />
-          {canManage && (
+          {canManage.walkins && (
             <LinkButton href="/admin/walk-ins" size="sm" className="h-9">
               + Walk-in
             </LinkButton>
@@ -156,7 +156,7 @@ export function DayCalendar({
         <Badge tone="amber">{counts.waiting} waiting</Badge>
         <Badge tone="violet">{counts.inChair} in chair</Badge>
         <Badge tone="green">{counts.done} done</Badge>
-        {canManage && <Badge>{money(counts.est)} est.</Badge>}
+        {canManage.sales && <Badge>{money(counts.est)} est.</Badge>}
         <label className="ml-auto flex items-center gap-1.5 text-zinc-600">
           <input type="checkbox" checked={hideCancelled} onChange={(e) => setHideCancelled(e.target.checked)} /> Hide cancelled
         </label>
@@ -167,7 +167,7 @@ export function DayCalendar({
         <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-12 text-center">
           <div className="text-sm font-medium">No barbers scheduled at {data.shop.name} on this day</div>
           <div className="mt-1 text-sm text-zinc-500">
-            {canManage ? (
+            {canManage.schedules ? (
               <>
                 Add weekly hours under <Link className="underline" href="/admin/staff">Staff &amp; schedules</Link>. Customers see &ldquo;No barbers are taking bookings&rdquo; until then.
               </>
@@ -384,7 +384,7 @@ function useAction() {
   return { pending, error, run, router };
 }
 
-function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalColumn; canManage: boolean; onDone: () => void }) {
+function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalColumn; canManage: { sales: boolean; clients: boolean }; onDone: () => void }) {
   const { pending, error, run, router } = useAction();
   const s = appt.status;
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
@@ -494,13 +494,13 @@ function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalCo
           Restore appointment
         </Button>
       )}
-      {s === "completed" && appt.saleId && canManage && (
+      {s === "completed" && appt.saleId && canManage.sales && (
         <LinkButton href={`/admin/sales/${appt.saleId}`} variant="secondary" className="w-full">
           View receipt
         </LinkButton>
       )}
       <div className="flex flex-wrap gap-3 border-t border-zinc-100 pt-3 text-sm">
-        {appt.customerId && canManage && (
+        {appt.customerId && canManage.clients && (
           <Link className="text-zinc-700 underline" href={`/admin/customers/${appt.customerId}`}>
             Client profile
           </Link>

@@ -3,8 +3,8 @@ import Link from "next/link";
 import { Card, CardHeader, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatPhone } from "@/lib/phone";
 import { formatDate } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
-import { DuplicateKind, duplicatePairs } from "@/server/customers";
+import { can, guardPage } from "@/server/auth/staff";
+import { DuplicateKind, duplicatePairs, maskPhone } from "@/server/customers";
 import { MergeButtons } from "./merge-buttons";
 
 export const metadata: Metadata = { title: "Duplicate clients" };
@@ -16,7 +16,8 @@ const GROUPS: { kind: DuplicateKind; title: string; subtitle: string }[] = [
 ];
 
 export default async function DuplicatesPage() {
-  await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/customers/duplicates");
+  const contact = can(ctx, "clients.contact");
   const pairs = await duplicatePairs({ limit: 200 });
   const person = (c: (typeof pairs)[number]["a"]) => (
     <div>
@@ -24,7 +25,7 @@ export default async function DuplicatesPage() {
         {c.firstName} {c.lastName}
       </Link>
       <div className="text-xs text-zinc-500">
-        {[formatPhone(c.phone), c.email, `since ${formatDate(c.createdAt, "MMM yyyy")}`].filter(Boolean).join(" · ")}
+        {[contact ? formatPhone(c.phone) : maskPhone(c.phone), contact ? c.email : null, `since ${formatDate(c.createdAt, "MMM yyyy")}`].filter(Boolean).join(" · ")}
       </div>
     </div>
   );

@@ -263,7 +263,9 @@ export interface StaffSeed {
   schedule: Record<string, number[]>;
   active?: boolean;
   bookable?: boolean;
-  role?: "brand_admin" | "shop_manager" | "barber";
+  /** Role template key; barber when unset. */
+  role?: "brand_owner" | "shop_manager" | "barber";
+  /** The one shop a shop manager has access to. */
   managerShop?: string;
   email?: string;
   note?: string;
@@ -312,8 +314,15 @@ export const STAFF: StaffSeed[] = [
   { key: "sarah", firstName: "Sarah", displayLabel: "Sarah", listedAt: ["utica"], schedule: { utica: [1, 2, 3, 4, 5] } },
   { key: "kate", firstName: "Kate", displayLabel: "Kate", listedAt: ["utica"], schedule: { utica: [2, 3, 4, 5, 6] } },
   { key: "lindsay", firstName: "Lindsay", displayLabel: "Lindsay", listedAt: ["utica"], schedule: { utica: [1, 3, 4, 6] } },
-  // Owner (brand admin, not bookable)
-  { key: "owner", firstName: "Ray", displayLabel: "Owner", listedAt: [], schedule: {}, bookable: false, role: "brand_admin", email: "owner@rayz.test" },
+  // Owner (Brand Owner, not bookable)
+  { key: "owner", firstName: "Ray", displayLabel: "Owner", listedAt: [], schedule: {}, bookable: false, role: "brand_owner", email: "owner@rayz.test" },
+];
+
+/** Extra demo logins for trying the permission templates. Inserted after the sample history so it doesn't change. */
+export const DEMO_LOGINS: { firstName: string; displayLabel: string; email: string; role: "brand_admin" | "regional_manager" | "front_desk"; shops: string[] }[] = [
+  { firstName: "Dana", displayLabel: "Dana (admin)", email: "admin@rayz.test", role: "brand_admin", shops: [] },
+  { firstName: "Reggie", displayLabel: "Reggie (regional)", email: "regional@rayz.test", role: "regional_manager", shops: ["moline", "rock-island"] },
+  { firstName: "Frankie", displayLabel: "Frankie (desk)", email: "frontdesk@rayz.test", role: "front_desk", shops: ["coralville"] },
 ];
 
 export const COLORS = ["#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e", "#14b8a6", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899"];

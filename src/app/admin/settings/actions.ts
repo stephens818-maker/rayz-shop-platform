@@ -10,11 +10,9 @@ import { hoursProblem } from "@/domain/hours";
 import { slugify } from "@/lib/ids";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { assertShopAccess, requireStaff } from "@/server/auth/staff";
+import { assertShopAccess, authorize, can } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import { saveLoyaltyConfig } from "@/server/loyalty";
-
-const MGR = ["brand_admin", "shop_manager"] as const;
 
 const Info = z.object({
   name: z.string().trim().min(1),
@@ -36,7 +34,7 @@ const Info = z.object({
 
 export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Info>) {
   return safe(async () => {
-    const ctx = await requireStaff([...MGR]);
+    const ctx = await authorize("settings.shop");
     assertShopAccess(ctx, shopId);
     const v = Info.parse(raw);
     const values = { ...v, phone: v.phone || null, email: v.email || null, description: v.description || null };
@@ -56,10 +54,11 @@ const Money = z.object({
   cardFeeAppliesToTip: z.boolean(),
 });
 
-/** Taxes and card fees are compliance settings: brand admin only. */
+/** Taxes and card fees are compliance settings with their own permission. */
 export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Money>) {
   return safe(async () => {
-    const ctx = await requireStaff(["brand_admin"]);
+    const ctx = await authorize("settings.taxes");
+    assertShopAccess(ctx, shopId);
     const v = Money.parse(raw);
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
     await db
@@ -81,10 +80,10 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
 
 export async function saveHoursAction(shopId: string, rows: { weekday: number; openMin: number; closeMin: number }[]) {
   return safe(async () => {
-    const ctx = await requireStaff([...MGR]);
+    const ctx = await authorize("settings.shop");
     assertShopAccess(ctx, shopId);
     const sunday = await db.query.shopHours.findFirst({ where: and(eq(shopHours.shopId, shopId), eq(shopHours.weekday, 0)) });
-    const problem = hoursProblem(rows, { isAdmin: ctx.isAdmin, currentSunday: sunday ?? null });
+    const problem = hoursProblem(rows, { canSetSunday: can(ctx, "settings.brand"), currentSunday: sunday ?? null });
     if (problem) throw new AppError(problem.code, problem.message);
     await db.transaction(async (tx) => {
       await tx.delete(shopHours).where(eq(shopHours.shopId, shopId));
@@ -98,8 +97,8 @@ export async function saveHoursAction(shopId: string, rows: { weekday: number; o
 
 export async function addClosureAction(shopId: string, date: string, reason: string, allShops: boolean) {
   return safe(async () => {
-    const ctx = await requireStaff([...MGR]);
-    const ids = allShops && ctx.isAdmin ? ctx.shopIds : [shopId];
+    const ctx = await authorize("settings.shop");
+    const ids = allShops ? ctx.shopIds : [shopId];
     for (const id of ids) {
       assertShopAccess(ctx, id);
       await db.insert(shopClosures).values({ shopId: id, date, reason: reason || "Closed" }).onConflictDoNothing();
@@ -112,7 +111,7 @@ export async function addClosureAction(shopId: string, date: string, reason: str
 
 export async function removeClosureAction(shopId: string, date: string) {
   return safe(async () => {
-    const ctx = await requireStaff([...MGR]);
+    const ctx = await authorize("settings.shop");
     assertShopAccess(ctx, shopId);
     await db.delete(shopClosures).where(and(eq(shopClosures.shopId, shopId), eq(shopClosures.date, date)));
     await audit(ctx.actor, "shop.closure_remove", "shop", shopId, { date }, shopId);
@@ -133,7 +132,7 @@ const Loyalty = z.object({
 
 export async function saveLoyaltyAction(raw: z.input<typeof Loyalty>) {
   return safe(async () => {
-    const ctx = await requireStaff(["brand_admin"]);
+    const ctx = await authorize("settings.brand", "Only the Brand Owner can change the loyalty program");
     const v = Loyalty.parse(raw);
     await saveLoyaltyConfig(v);
     await audit(ctx.actor, "loyalty.config", "brand", "1", v, null);
@@ -147,7 +146,7 @@ const NewShop = z.object({ name: z.string().trim().min(2), city: z.string().trim
 /** New locations start with the full brand menu at default prices, Mon–Sat hours, and booking off until staffed. */
 export async function createShopAction(raw: z.input<typeof NewShop>) {
   return safe(async () => {
-    const ctx = await requireStaff(["brand_admin"]);
+    const ctx = await authorize("settings.brand", "Only the Brand Owner can open a new shop");
     const v = NewShop.parse(raw);
     const slug = slugify(v.name);
     if (await db.query.shops.findFirst({ where: eq(shops.slug, slug) })) throw new AppError("conflict", "A shop with that name already exists");

@@ -24,12 +24,14 @@ export function CustomerEditor({
   shops,
   barbers,
   usualBarber,
+  showContact,
 }: {
   id: string;
   initial: P;
   shops: { id: string; name: string }[];
   barbers: { id: string; label: string }[];
   usualBarber: string | null;
+  showContact: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -45,12 +47,18 @@ export function CustomerEditor({
         <Field label="Last name">
           <Input value={p.lastName} onChange={(e) => setP({ ...p, lastName: e.target.value })} />
         </Field>
-        <Field label="Mobile" className="col-span-2">
-          <Input value={p.phone} onChange={(e) => setP({ ...p, phone: e.target.value })} />
-        </Field>
-        <Field label="Email" className="col-span-2">
-          <Input value={p.email} onChange={(e) => setP({ ...p, email: e.target.value })} />
-        </Field>
+        {showContact ? (
+          <>
+            <Field label="Mobile" className="col-span-2">
+              <Input value={p.phone} onChange={(e) => setP({ ...p, phone: e.target.value })} />
+            </Field>
+            <Field label="Email" className="col-span-2">
+              <Input value={p.email} onChange={(e) => setP({ ...p, email: e.target.value })} />
+            </Field>
+          </>
+        ) : (
+          <p className="col-span-2 text-xs text-zinc-500">Phone and email are hidden: your role doesn&apos;t include client contact info.</p>
+        )}
         <Field label="Home shop">
           <Select value={p.homeShopId ?? ""} onChange={(e) => setP({ ...p, homeShopId: e.target.value || null })}>
             <option value="">—</option>

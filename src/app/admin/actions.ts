@@ -6,7 +6,7 @@ import { requireStaff, SHOP_COOKIE } from "@/server/auth/staff";
 
 export async function switchShop(shopId: string) {
   const ctx = await requireStaff();
-  if (shopId === "all" ? !ctx.isAdmin : !ctx.shopIds.includes(shopId)) return;
+  if (shopId === "all" ? ctx.shopIds.length < 2 : !ctx.shopIds.includes(shopId)) return;
   (await cookies()).set(SHOP_COOKIE, shopId, { path: "/", sameSite: "lax", maxAge: 60 * 60 * 24 * 365 });
   revalidatePath("/admin", "layout");
 }

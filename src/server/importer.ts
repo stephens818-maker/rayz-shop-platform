@@ -20,6 +20,7 @@ import {
   sales,
   shops,
   staff,
+  staffAccessShops,
   staffShops,
 } from "@/db/schema";
 import { LoyaltyConfig, rewardExpiry } from "@/domain/loyalty";
@@ -27,6 +28,7 @@ import { appointmentCode } from "@/lib/ids";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { SHOP_TZ, localDateOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
+import { roleByKey } from "./auth/access";
 import { EffectiveService, shopCatalog } from "./catalog";
 import { Customer, matchCustomer, mergeNotes } from "./customers";
 import { isDoubleBookingError } from "./errors";
@@ -481,13 +483,15 @@ async function resolveBarber(c: Row, name: string, shopId: string | null, opts: 
       lastName: rest.join(" ") || null,
       displayLabel: `${firstName} (former)`,
       publicSlug: `former-${randomBytes(5).toString("hex")}`,
-      role: "barber",
+      roleId: (await roleByKey("barber", c.tx)).id,
+      shopScope: "selected",
       isBookable: false,
       active: false,
       squireName: name.trim(),
     })
     .returning({ id: staff.id });
   await c.tx.insert(staffShops).values({ staffId: row.id, shopId, visibleOnline: false }).onConflictDoNothing();
+  await c.tx.insert(staffAccessShops).values({ staffId: row.id, shopId }).onConflictDoNothing();
   bump(c, "formerBarbersCreated");
   return remember(row.id);
 }

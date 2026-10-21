@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { appointments, services, staffSchedules } from "@/db/schema";
 import { Empty, PageHeader } from "@/components/ui";
 import { localMinutesOf, todayLocal, weekdayOf } from "@/lib/time";
-import { requireStaff, workingShopId } from "@/server/auth/staff";
+import { guardPage, workingShopId } from "@/server/auth/staff";
 import { estimateWait, waitlistForShop } from "@/server/booking";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { WalkIns } from "./walk-ins";
@@ -12,7 +12,7 @@ import { WalkIns } from "./walk-ins";
 export const metadata: Metadata = { title: "Walk-ins" };
 
 export default async function WalkInsPage() {
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/walk-ins");
   const shopId = workingShopId(ctx);
   if (!shopId) return <Empty title="No shop selected" />;
   const shop = ctx.shops.find((s) => s.id === shopId)!;

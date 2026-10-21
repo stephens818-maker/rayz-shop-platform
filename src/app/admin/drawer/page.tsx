@@ -6,7 +6,7 @@ import { cashDrawers, staff } from "@/db/schema";
 import { Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, isValidLocalDate, todayLocal } from "@/lib/time";
-import { requireStaff, workingShopId } from "@/server/auth/staff";
+import { guardPage, workingShopId } from "@/server/auth/staff";
 import { drawerSummary } from "@/server/checkout";
 import { CloseDrawerForm } from "./close-form";
 
@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: "Cash drawer" };
 
 export default async function DrawerPage({ searchParams }: { searchParams: Promise<{ date?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/drawer");
   const shopId = workingShopId(ctx);
   if (!shopId) return <Empty title="No shop selected" />;
   const shop = ctx.shops.find((s) => s.id === shopId)!;

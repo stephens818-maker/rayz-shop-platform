@@ -5,17 +5,15 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { shops, waitlistEntries } from "@/db/schema";
 import { safe } from "@/server/action";
-import { assertShopAccess, requireStaff } from "@/server/auth/staff";
+import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { quickWalkIn, seatFromWaitlist, updateWaitlistStatus } from "@/server/booking";
 import { textingDeclined } from "@/server/customers";
 import { AppError, notFound } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
 
-const MGR = ["brand_admin", "shop_manager"] as const;
-
 export async function walkInAction(input: { shopId: string; serviceId: string; name: string; phone: string; preferredStaffId: string | null }) {
   return safe(async () => {
-    const ctx = await requireStaff([...MGR]);
+    const ctx = await authorize("walkins.manage");
     assertShopAccess(ctx, input.shopId);
     const r = await quickWalkIn({ ...input, phone: input.phone || null, actor: ctx.actor });
     revalidatePath("/admin/walk-ins");
@@ -27,7 +25,7 @@ export async function walkInAction(input: { shopId: string; serviceId: string; n
 }
 
 async function entryFor(entryId: string) {
-  const ctx = await requireStaff([...MGR]);
+  const ctx = await authorize("walkins.manage");
   const e = await db.query.waitlistEntries.findFirst({ where: eq(waitlistEntries.id, entryId) });
   if (!e) throw notFound("Waitlist entry");
   assertShopAccess(ctx, e.shopId);

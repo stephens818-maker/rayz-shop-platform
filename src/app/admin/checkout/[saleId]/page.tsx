@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { feeDisclosure } from "@/domain/checkout";
-import { assertShopAccess, requireStaff } from "@/server/auth/staff";
+import { assertShopAccess, can, guardPage } from "@/server/auth/staff";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { loadCheckoutContext } from "@/server/checkout";
 import { getLoyaltyConfig, loyaltyBalance } from "@/server/loyalty";
@@ -13,10 +13,11 @@ export const metadata: Metadata = { title: "Checkout" };
 
 export default async function CheckoutPage({ params }: { params: Promise<{ saleId: string }> }) {
   const { saleId } = await params;
-  const ctx = await requireStaff();
+  const ctx = await guardPage("/admin/checkout/[saleId]");
   const c = await loadCheckoutContext(saleId);
+  if (!ctx.shopIds.includes(c.shop.id)) redirect("/admin?denied=1");
   assertShopAccess(ctx, c.shop.id);
-  if (ctx.isBarber && c.sale.staffId !== ctx.staff.id) redirect("/admin/calendar");
+  if (c.sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
   const [catalog, barbers, loyalty, loyaltyCfg, ratings] = await Promise.all([
     shopCatalog(c.shop.id),
@@ -35,7 +36,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
         const menu = i.kind === "product" ? c.retail.find((p) => p.productId === i.refId)?.priceCents : catalog.find((s) => s.id === i.refId)?.priceCents;
         return { kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: menu ?? i.unitPriceCents, qty: i.qty };
       })}
-      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: c.customer.phone, notes: c.customer.notes, rating: ratings.get(c.customer.id) ?? null } : null}
+      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: can(ctx, "clients.contact") ? c.customer.phone : null, notes: c.customer.notes, rating: ratings.get(c.customer.id) ?? null } : null}
       barber={c.barber ? { id: c.barber.id, label: c.barber.displayLabel } : null}
       barbers={barbers.map((b) => ({ id: b.id, label: b.displayName }))}
       services={catalog.map((s) => ({ id: s.id, name: s.name, kind: s.kind, priceCents: s.priceCents }))}
@@ -51,7 +52,13 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
         terminalLabel: terminal.readerLabel,
         testCards: Object.entries(TEST_CARDS).map(([id, c]) => ({ id, label: c.label, funding: c.funding })),
       }}
-      canDiscount={ctx.isAdmin || ctx.isManager}
+      taxCategories={Object.fromEntries([...catalog.map((s) => [s.id, s.taxCategory] as const), ...c.retail.map((p) => [p.productId, p.taxCategory] as const)])}
+      perms={{
+        discount: can(ctx, "pos.discount") && ctx.maxDiscountPct > 0,
+        maxDiscountPct: ctx.maxDiscountPct,
+        priceOverride: can(ctx, "pos.price_override"),
+        reassign: can(ctx, "checkout.any"),
+      }}
     />
   );
 }

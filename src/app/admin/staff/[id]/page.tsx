@@ -3,22 +3,25 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
-import { shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
-import { PageHeader } from "@/components/ui";
+import { roles, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
+import { Notice, PageHeader } from "@/components/ui";
+import { assignableRoles, staffEditDenied } from "@/domain/permissions";
 import { formatDateTime } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
+import { accessState, loadStaffAccess } from "@/server/auth/access";
+import { can, guardPage, staffGrantor } from "@/server/auth/staff";
 import { ProfileForm, ScheduleEditor, TimeOff } from "./editors";
 
 export const metadata: Metadata = { title: "Staff member" };
 
 export default async function StaffDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/staff/[id]");
   const isNew = id === "new";
+  if (isNew && !can(ctx, "staff.manage")) notFound();
   const person = isNew ? null : await db.query.staff.findFirst({ where: eq(staff.id, id) });
   if (!isNew && !person) notFound();
   const allShops = await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name));
-  const editableShops = ctx.isAdmin ? allShops : allShops.filter((s) => ctx.shopIds.includes(s.id));
+  const editableShops = ctx.brandWide ? allShops : allShops.filter((s) => ctx.shopIds.includes(s.id));
   const [links, scheds, hours, blocks] = person
     ? await Promise.all([
         db.select().from(staffShops).where(eq(staffShops.staffId, person.id)),
@@ -27,7 +30,20 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         db.select().from(timeBlocks).where(and(eq(timeBlocks.staffId, person.id), gt(timeBlocks.endsAt, new Date()))).orderBy(asc(timeBlocks.startsAt)).limit(50),
       ])
     : [[], [], await db.select().from(shopHours), []];
-  if (person && !ctx.isAdmin && !links.some((l) => ctx.shopIds.includes(l.shopId))) notFound();
+  const target = person ? await loadStaffAccess(person.id) : null;
+  if (person && target && !ctx.brandWide && person.id !== ctx.staff.id) {
+    const theirs = [...links.map((l) => l.shopId), ...(target.scope === "all" ? [] : target.shopIds)];
+    if (!theirs.some((s) => ctx.shopIds.includes(s))) notFound();
+  }
+  const editDenied = !can(ctx, "staff.manage")
+    ? "You can view this person but not edit their profile."
+    : target
+      ? staffEditDenied(staffGrantor(ctx), { ...accessState(target), workShopIds: links.map((l) => l.shopId) })
+      : null;
+  const roleChoices = isNew
+    ? assignableRoles(staffGrantor(ctx), await db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name))).filter((r) => r.defaultScope !== "all" || ctx.brandWide)
+    : [];
+  const canSchedule = can(ctx, "schedules.edit");
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -36,22 +52,31 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         subtitle={
           person ? (
             <>
-              {person.staffCode} · booking link slug <span className="font-mono">{person.publicSlug}</span> (first name only)
+              {person.staffCode} · {target?.role.name} · booking link slug <span className="font-mono">{person.publicSlug}</span> (first name only)
             </>
           ) : (
             "Staff ID and booking slug are generated automatically."
           )
         }
         actions={
-          <Link className="text-sm underline" href="/admin/staff">
-            All staff
-          </Link>
+          <div className="flex gap-3 text-sm">
+            {person && can(ctx, "permissions.manage") && (
+              <Link className="underline" href={`/admin/permissions/people/${person.id}`}>
+                Role & permissions
+              </Link>
+            )}
+            <Link className="underline" href="/admin/staff">
+              All staff
+            </Link>
+          </div>
         }
       />
+      {editDenied && <Notice tone="blue">{editDenied}</Notice>}
       <ProfileForm
-        isAdmin={ctx.isAdmin}
+        readOnly={!!editDenied}
         shops={editableShops}
         allShops={allShops}
+        roles={roleChoices.map((r) => ({ id: r.id, name: r.name, description: r.description, defaultScope: r.defaultScope }))}
         initial={
           person
             ? {
@@ -62,8 +87,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
                 email: person.email ?? "",
                 phone: person.phone ?? "",
                 color: person.color,
-                role: person.role,
-                managerShopId: person.managerShopId,
+                roleId: person.roleId,
                 isBookable: person.isBookable,
                 active: person.active,
                 squireName: person.squireName ?? "",
@@ -73,7 +97,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
             : null
         }
       />
-      {person && (
+      {person && canSchedule && (
         <>
           <ScheduleEditor
             staffId={person.id}

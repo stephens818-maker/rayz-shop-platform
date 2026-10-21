@@ -7,12 +7,16 @@ export const RATEABLE_APPOINTMENT_STATUSES = ["checked_in", "in_service", "compl
 /** Ticket statuses that count as a visit (open and voided tickets don't). */
 export const RATEABLE_SALE_STATUSES = ["paid", "partially_refunded", "refunded"] as const;
 
-export type RatingRole = "brand_admin" | "shop_manager" | "barber";
-
+/** What the signed-in person may do with ratings, from their permissions. */
 export interface RatingViewer {
   staffId: string;
-  role: RatingRole;
   shopIds: string[];
+  /** clients.rate */
+  canRate: boolean;
+  /** clients.ratings_all: every rating and note, and any visit at their shops. */
+  seesAll: boolean;
+  /** clients.ratings_moderate: remove anyone's rating. */
+  moderates: boolean;
 }
 
 export interface RatingSummary {
@@ -30,12 +34,13 @@ export function cleanRating(input: { stars: unknown; note?: unknown }): { stars:
 }
 
 /**
- * Who may rate a visit: the brand admin any visit, a manager visits at their shops, a barber only
- * visits they served (they booked the chair or rang up the ticket).
+ * Who may rate a visit: someone who sees every rating may rate any visit at their shops; anyone
+ * else only visits they served (they booked the chair or rang up the ticket).
  */
 export function rateVisitDenied(viewer: RatingViewer, visit: { shopId: string; servedBy: (string | null)[] }): string | null {
-  if (viewer.role === "brand_admin") return null;
-  if (viewer.role === "shop_manager") return viewer.shopIds.includes(visit.shopId) ? null : "That visit was at a shop outside your access";
+  if (!viewer.canRate) return "You don't have permission to rate clients";
+  if (!viewer.shopIds.includes(visit.shopId)) return "That visit was at a shop outside your access";
+  if (viewer.seesAll) return null;
   return visit.servedBy.includes(viewer.staffId) ? null : "You can only rate visits you served";
 }
 
@@ -44,14 +49,15 @@ export function editRatingDenied(viewer: RatingViewer, rating: { staffId: string
   return rating.staffId === viewer.staffId ? null : "You can only change your own ratings";
 }
 
-/** The author can remove their rating; the brand admin can remove any (for a note that shouldn't be there). */
-export function deleteRatingDenied(viewer: RatingViewer, rating: { staffId: string }): string | null {
-  if (viewer.role === "brand_admin" || rating.staffId === viewer.staffId) return null;
+/** The author can remove their rating; a moderator can remove any at their shops (for a note that shouldn't be there). */
+export function deleteRatingDenied(viewer: RatingViewer, rating: { staffId: string; shopId: string }): string | null {
+  if (rating.staffId === viewer.staffId) return null;
+  if (viewer.moderates && viewer.shopIds.includes(rating.shopId)) return null;
   return "You can only remove your own ratings";
 }
 
-/** Managers and the brand admin read every rating and note; barbers read the average plus their own. */
-export const seesAllRatings = (viewer: Pick<RatingViewer, "role">) => viewer.role !== "barber";
+/** Managers read every rating and note; everyone else reads the average plus their own. */
+export const seesAllRatings = (viewer: Pick<RatingViewer, "seesAll">) => viewer.seesAll;
 
 export const formatAverage = (avg: number) => (Math.round(avg * 10) / 10).toFixed(1);
 

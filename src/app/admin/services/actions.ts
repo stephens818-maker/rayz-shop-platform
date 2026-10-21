@@ -8,7 +8,7 @@ import { services, shopServices } from "@/db/schema";
 import { slugify } from "@/lib/ids";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { assertShopAccess, requireStaff } from "@/server/auth/staff";
+import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 
 const Override = z.object({
@@ -21,7 +21,7 @@ const Override = z.object({
 
 export async function saveShopServiceAction(shopId: string, serviceId: string, raw: z.input<typeof Override>) {
   return safe(async () => {
-    const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+    const ctx = await authorize(["catalog.prices", "catalog.manage"]);
     assertShopAccess(ctx, shopId);
     const o = Override.parse(raw);
     const values = { ...o, nameOverride: o.nameOverride || null };
@@ -49,7 +49,7 @@ const Master = z.object({
 
 export async function saveMasterServiceAction(raw: z.input<typeof Master>) {
   return safe(async () => {
-    const ctx = await requireStaff(["brand_admin"]);
+    const ctx = await authorize("catalog.manage");
     const m = Master.parse(raw);
     const { id, ...values } = m;
     let serviceId = id;

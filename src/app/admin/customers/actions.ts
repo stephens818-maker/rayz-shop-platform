@@ -9,12 +9,10 @@ import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { canManage, requireStaff } from "@/server/auth/staff";
+import { authorize, can, requireStaff } from "@/server/auth/staff";
 import { customerAccess, findOrCreateCustomer, matchCustomer, mergeCustomers, searchCustomers } from "@/server/customers";
 import { AppError, forbidden } from "@/server/errors";
 import { getLoyaltyConfig } from "@/server/loyalty";
-
-const MGR = ["brand_admin", "shop_manager"] as const;
 
 const Profile = z.object({
   firstName: z.string().trim().min(1),
@@ -41,15 +39,19 @@ async function checkRefs(p: { homeShopId: string | null; preferredStaffId: strin
   if (p.preferredStaffId && !(await db.query.staff.findFirst({ where: eq(staff.id, p.preferredStaffId) }))) throw new AppError("bad_request", "Unknown barber");
 }
 
-/** The client record is shared by every shop, so any manager may correct it; every change is audited. */
+/**
+ * The client record is shared by every shop, so anyone who may edit clients may correct it; every
+ * change is audited. Without contact access the phone and email are hidden, so they stay as they are.
+ */
 export async function updateCustomerAction(id: string, raw: z.input<typeof Profile>) {
   return safe(async () => {
-    const ctx = await requireStaff([...MGR]);
+    const ctx = await authorize("clients.edit");
     const p = Profile.parse(raw);
     await checkRefs(p);
     const before = await db.query.customers.findFirst({ where: eq(customers.id, id) });
     if (!before) throw new AppError("not_found", "Client not found");
-    const values = { firstName: p.firstName, lastName: p.lastName || null, ...contact(p), notes: p.notes || null, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn, homeShopId: p.homeShopId, preferredStaffId: p.preferredStaffId };
+    const reach = can(ctx, "clients.contact") ? contact(p) : { phone: before.phone, email: before.email };
+    const values = { firstName: p.firstName, lastName: p.lastName || null, ...reach, notes: p.notes || null, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn, homeShopId: p.homeShopId, preferredStaffId: p.preferredStaffId };
     await db.update(customers).set(values).where(eq(customers.id, id));
     const changed = Object.fromEntries(Object.entries(values).filter(([k, v]) => before[k as keyof typeof before] !== v).map(([k, v]) => [k, { from: before[k as keyof typeof before], to: v }]));
     await audit(ctx.actor, "customer.update", "customer", id, changed, ctx.currentShopId);
@@ -62,7 +64,7 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
 export async function updateNotesAction(id: string, notes: string) {
   return safe(async () => {
     const ctx = await requireStaff();
-    const access = await customerAccess({ staffId: ctx.staff.id, canManage: canManage(ctx) }, id);
+    const access = await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, id);
     if (!access) throw forbidden("You can only edit notes for your own clients");
     const value = notes.trim().slice(0, 2000) || null;
     await db.update(customers).set({ notes: value }).where(eq(customers.id, id));
@@ -77,7 +79,7 @@ const NewClient = Profile.omit({ notes: true }).extend({ notes: z.string().trim(
 /** Runs the same matching as booking: an existing client with this phone/email and a compatible name is returned instead. */
 export async function createCustomerAction(raw: z.input<typeof NewClient>) {
   return safe(async () => {
-    const ctx = await requireStaff([...MGR]);
+    const ctx = await authorize("clients.edit");
     const p = NewClient.parse(raw);
     await checkRefs(p);
     const c = contact(p);
@@ -96,7 +98,7 @@ export async function createCustomerAction(raw: z.input<typeof NewClient>) {
 
 export async function mergeCustomersAction(keepId: string, dropId: string) {
   return safe(async () => {
-    const ctx = await requireStaff([...MGR]);
+    const ctx = await authorize("clients.merge");
     const r = await mergeCustomers(keepId, dropId, ctx.actor);
     revalidatePath("/admin/customers");
     revalidatePath("/admin/customers/duplicates");
@@ -107,15 +109,16 @@ export async function mergeCustomersAction(keepId: string, dropId: string) {
 
 export async function findClientsAction(q: string) {
   return safe(async () => {
-    await requireStaff([...MGR]);
+    const ctx = await authorize("clients.merge");
     if (q.trim().length < 2) return [];
-    return (await searchCustomers(q, {}, 8)).map((c) => ({ id: c.id, firstName: c.firstName, lastName: c.lastName, phone: c.phone, email: c.email }));
+    const reach = can(ctx, "clients.contact");
+    return (await searchCustomers(q, {}, 8)).map((c) => ({ id: c.id, firstName: c.firstName, lastName: c.lastName, phone: reach ? c.phone : null, email: reach ? c.email : null }));
   });
 }
 
 export async function grantRewardAction(customerId: string, reason: string) {
   return safe(async () => {
-    const ctx = await requireStaff(["brand_admin"]);
+    const ctx = await authorize("loyalty.grant");
     if (!reason.trim()) throw new AppError("bad_request", "Add a reason");
     const cfg = await getLoyaltyConfig();
     const now = new Date();

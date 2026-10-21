@@ -64,6 +64,13 @@
       "when": 1792549125740,
       "tag": "0008_client_ratings",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792551554139,
+      "tag": "0009_permissions_and_catalog",
+      "breakpoints": true
     }
   ]
 }

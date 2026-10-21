@@ -5,7 +5,8 @@ import { appointments, notificationJobs, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { formatPhone } from "@/lib/phone";
 import { formatDateTime } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
+import { maskPhone } from "@/server/customers";
 import { emailProvider, smsProvider } from "@/server/notifications/providers";
 import { ProcessNowButton } from "./process-button";
 
@@ -25,11 +26,12 @@ const KIND_LABEL: Record<string, string> = {
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/notifications");
+  const contact = can(ctx, "clients.contact");
   const status = STATUSES.find((s) => s === sp.status);
 
   // Managers only see jobs tied to their shop's appointments; brand admins also see OTP and waitlist texts.
-  const scope: SQL | undefined = ctx.isAdmin && !ctx.currentShopId ? undefined : inArray(appointments.shopId, ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds);
+  const scope: SQL | undefined = ctx.brandWide && !ctx.currentShopId ? undefined : inArray(appointments.shopId, ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds);
   const where = and(scope, status ? eq(notificationJobs.status, status) : undefined);
 
   const [counts, jobs] = await Promise.all([
@@ -58,7 +60,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
       <PageHeader
         title="Notifications"
         subtitle="Confirmations and 24h / 2h reminders queued for each booking. Cancelling or rescheduling a booking cancels its pending reminders."
-        actions={ctx.isAdmin ? <ProcessNowButton /> : undefined}
+        actions={can(ctx, "notifications.send") ? <ProcessNowButton /> : undefined}
       />
       {off && (
         <Notice>
@@ -99,7 +101,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                     {KIND_LABEL[j.kind] ?? j.kind}
                     <div className="text-xs uppercase text-zinc-400">{j.channel}</div>
                   </Td>
-                  <Td className="whitespace-nowrap">{j.channel === "sms" ? formatPhone(j.to) || j.to : j.to}</Td>
+                  <Td className="whitespace-nowrap">{!contact ? (j.channel === "sms" ? (maskPhone(j.to) ?? "—") : "hidden") : j.channel === "sms" ? formatPhone(j.to) || j.to : j.to}</Td>
                   <Td className="max-w-md text-xs text-zinc-600">{j.body}</Td>
                   <Td className="whitespace-nowrap text-xs">
                     {code ? (

@@ -317,9 +317,9 @@ export async function searchCustomers(term: string, scope: SearchScope = {}, lim
 
 export type CustomerAccess = "full" | "barber" | null;
 
-/** Managers and admins: full record. Barbers: name, notes, loyalty, and visits for clients they've served. */
-export async function customerAccess(viewer: { staffId: string; canManage: boolean }, customerId: string): Promise<CustomerAccess> {
-  if (viewer.canManage) return "full";
+/** With "every client": the full record. Otherwise name, notes, loyalty, and visits for clients they've served. */
+export async function customerAccess(viewer: { staffId: string; viewAll: boolean }, customerId: string): Promise<CustomerAccess> {
+  if (viewer.viewAll) return "full";
   const [hit] = await db
     .select({ id: appointments.id })
     .from(appointments)

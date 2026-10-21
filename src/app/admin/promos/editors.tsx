@@ -15,11 +15,11 @@ export function PromoToggle({ id, active }: { id: string; active: boolean }) {
   );
 }
 
-export function PromoForm({ shops, isAdmin }: { shops: { id: string; name: string }[]; isAdmin: boolean }) {
+export function PromoForm({ shops, allShops }: { shops: { id: string; name: string }[]; allShops: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [v, setV] = useState({ code: "", description: "", type: "percent" as "percent" | "amount", value: "", appliesTo: "services" as "services" | "products" | "all", shopId: isAdmin ? "" : (shops[0]?.id ?? ""), startsOn: "", endsOn: "", max: "" });
+  const [v, setV] = useState({ code: "", description: "", type: "percent" as "percent" | "amount", value: "", appliesTo: "services" as "services" | "products" | "all", shopId: allShops ? "" : (shops[0]?.id ?? ""), startsOn: "", endsOn: "", max: "" });
   return (
     <div className="border-t border-zinc-100 p-4">
       <div className="mb-2 text-sm font-semibold">New promo</div>
@@ -45,7 +45,7 @@ export function PromoForm({ shops, isAdmin }: { shops: { id: string; name: strin
         </Field>
         <Field label="Shop">
           <Select value={v.shopId} onChange={(e) => setV({ ...v, shopId: e.target.value })}>
-            {isAdmin && <option value="">All shops</option>}
+            {allShops && <option value="">All shops</option>}
             {shops.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -101,7 +101,7 @@ export function PromoForm({ shops, isAdmin }: { shops: { id: string; name: strin
   );
 }
 
-export function GiftCardTools({ shopId, initialQuery }: { shopId: string; initialQuery: string }) {
+export function GiftCardTools({ shopId, initialQuery, canIssue }: { shopId: string; initialQuery: string; canIssue: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [q, setQ] = useState(initialQuery);
@@ -124,7 +124,7 @@ export function GiftCardTools({ shopId, initialQuery }: { shopId: string; initia
           Search
         </Button>
       </form>
-      <div className="flex flex-wrap items-end gap-2">
+      <div className={canIssue ? "flex flex-wrap items-end gap-2" : "hidden"}>
         <Field label="Comp gift card $">
           <Input className="w-24" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
         </Field>

@@ -26,8 +26,10 @@ import {
   CartLine,
   Discount,
   LineKind,
+  TaxCategory,
   TaxRates,
   computeCheckout,
+  manualDiscountProblem,
 } from "@/domain/checkout";
 import { giftCardCode } from "@/lib/ids";
 import { formatCents } from "@/lib/money";
@@ -107,7 +109,7 @@ export async function loadCheckoutContext(saleId: string) {
   const customer = sale.customerId ? await db.query.customers.findFirst({ where: eq(customers.id, sale.customerId) }) : null;
   const appt = sale.appointmentId ? await db.query.appointments.findFirst({ where: eq(appointments.id, sale.appointmentId) }) : null;
   const retail = await db
-    .select({ productId: products.id, name: products.name, brand: products.brand, priceCents: shopProducts.priceCents, stock: shopProducts.stock })
+    .select({ productId: products.id, name: products.name, brand: products.brand, priceCents: shopProducts.priceCents, stock: shopProducts.stock, taxCategory: products.taxCategory })
     .from(shopProducts)
     .innerJoin(products, eq(products.id, shopProducts.productId))
     .where(and(eq(shopProducts.shopId, shop.id), eq(shopProducts.active, true)))
@@ -172,8 +174,10 @@ export interface FinalizeInput {
   /** Total the UI showed; refuse to charge if the server computes something different. */
   expectedTotalCents?: number | null;
   rebookInWeeks?: number | null;
-  /** Set by the caller from the signed-in role, never from the request body. */
+  /** Set by the caller from the signed-in person's permissions, never from the request body. */
   canOverridePrice?: boolean;
+  /** Largest manual discount allowed, in whole percent of the ticket (gift cards excluded). Defaults to no limit. */
+  maxManualDiscountPct?: number;
   actor: Actor;
   now?: Date;
 }
@@ -225,7 +229,7 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
   const productIds = input.lines.filter((l) => l.kind === "product" && l.refId).map((l) => l.refId!) as string[];
   const inv = productIds.length
     ? await db
-        .select({ productId: shopProducts.productId, priceCents: shopProducts.priceCents, stock: shopProducts.stock, name: products.name, brand: products.brand })
+        .select({ productId: shopProducts.productId, priceCents: shopProducts.priceCents, stock: shopProducts.stock, name: products.name, brand: products.brand, taxCategory: products.taxCategory })
         .from(shopProducts)
         .innerJoin(products, eq(products.id, shopProducts.productId))
         .where(and(eq(shopProducts.shopId, ctx.shop.id), eq(shopProducts.active, true), inArray(shopProducts.productId, productIds)))
@@ -236,16 +240,19 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
     if (l.qty <= 0 || !Number.isInteger(l.qty)) throw new AppError("bad_request", "Quantities must be whole numbers");
     let name: string;
     let catalog: number;
+    let taxCategory: TaxCategory;
     if (l.kind === "service" || l.kind === "addon") {
       const s = l.refId ? menu.find((x) => x.id === l.refId && x.kind === l.kind) : null;
       if (!s) throw new AppError("bad_request", `${l.name ?? "That service"} isn't on the ${ctx.shop.name} menu`);
       name = s.name;
       catalog = s.priceCents;
+      taxCategory = s.taxCategory;
     } else if (l.kind === "product") {
       const p = inv.find((x) => x.productId === l.refId);
       if (!p) throw new AppError("bad_request", `${l.name ?? "That product"} isn't stocked at this shop`);
       name = `${p.brand} ${p.name}`;
       catalog = p.priceCents;
+      taxCategory = p.taxCategory;
     } else {
       const face = l.unitPriceCents ?? 0;
       if (!Number.isInteger(face) || face < GIFT_CARD_MIN_CENTS || face > GIFT_CARD_MAX_CENTS) {
@@ -259,15 +266,17 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
     let reason: string | null = null;
     const o = l.priceOverride;
     if (o && o.unitPriceCents !== catalog) {
-      if (!input.canOverridePrice) throw forbidden("Only a manager can change a price");
+      if (!input.canOverridePrice) throw forbidden("You don't have permission to change prices");
       if (!Number.isInteger(o.unitPriceCents) || o.unitPriceCents < 0) throw new AppError("bad_request", "Prices must be whole cents and not negative");
       if (!o.reason?.trim()) throw new AppError("bad_request", `Add a reason for changing the price of ${name}`);
       unit = o.unitPriceCents;
       reason = o.reason.trim();
     }
     meta.push({ catalogPriceCents: catalog, overrideReason: reason });
-    return { key: String(i), kind: l.kind, name, unitPriceCents: unit, qty: l.qty, refId: l.refId ?? null, staffId: l.kind === "product" ? null : staffId };
+    return { key: String(i), kind: l.kind, name, unitPriceCents: unit, qty: l.qty, refId: l.refId ?? null, staffId: l.kind === "product" ? null : staffId, taxCategory };
   });
+  const problem = manualDiscountProblem(input.manualDiscount ?? null, lines, input.maxManualDiscountPct ?? 100);
+  if (problem) throw forbidden(problem);
 
   const totals = computeCheckout({
     lines,

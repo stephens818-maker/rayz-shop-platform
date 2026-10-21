@@ -42,8 +42,7 @@ type Profile = {
   email: string;
   phone: string;
   color: string;
-  role: "brand_admin" | "shop_manager" | "barber";
-  managerShopId: string | null;
+  roleId: string | null;
   isBookable: boolean;
   active: boolean;
   squireName: string;
@@ -51,7 +50,22 @@ type Profile = {
   hasLogin: boolean;
 };
 
-export function ProfileForm({ initial, shops, allShops, isAdmin }: { initial: Profile | null; shops: { id: string; name: string }[]; allShops: { id: string; name: string }[]; isAdmin: boolean }) {
+type RoleChoice = { id: string; name: string; description: string; defaultScope: string };
+const SCOPE_HINT: Record<string, string> = { all: "every shop", selected: "the shops they work at", one: "one shop" };
+
+export function ProfileForm({
+  initial,
+  shops,
+  allShops,
+  roles,
+  readOnly,
+}: {
+  initial: Profile | null;
+  shops: { id: string; name: string }[];
+  allShops: { id: string; name: string }[];
+  roles: RoleChoice[];
+  readOnly: boolean;
+}) {
   const { pending, error, ok, run, router } = useRun();
   const [p, setP] = useState<Profile>(
     initial ?? {
@@ -62,8 +76,7 @@ export function ProfileForm({ initial, shops, allShops, isAdmin }: { initial: Pr
       email: "",
       phone: "",
       color: "#2563eb",
-      role: "barber",
-      managerShopId: null,
+      roleId: roles.find((r) => r.name === "Barber")?.id ?? roles[0]?.id ?? null,
       isBookable: true,
       active: true,
       squireName: "",
@@ -77,7 +90,7 @@ export function ProfileForm({ initial, shops, allShops, isAdmin }: { initial: Pr
   return (
     <Card>
       <CardHeader title="Profile" subtitle="The display label is what customers and the calendar show. Use an initial when first names collide (Taylor A. / Taylor B.)." />
-      <div className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
+      <fieldset disabled={readOnly} className="grid gap-4 p-4 disabled:opacity-80 sm:grid-cols-2 lg:grid-cols-3">
         <Field label="First name">
           <Input
             value={p.firstName}
@@ -106,20 +119,18 @@ export function ProfileForm({ initial, shops, allShops, isAdmin }: { initial: Pr
         <Field label="Calendar color">
           <Input type="color" className="h-[38px] p-1" value={p.color} onChange={(e) => set({ color: e.target.value })} />
         </Field>
-        <Field label="Role">
-          <Select value={p.role} disabled={!isAdmin} onChange={(e) => set({ role: e.target.value as Profile["role"] })}>
-            <option value="barber">Barber: own schedule and sales</option>
-            <option value="shop_manager">Shop manager: one shop</option>
-            <option value="brand_admin">Brand admin: all shops</option>
-          </Select>
-        </Field>
-        {p.role === "shop_manager" && (
-          <Field label="Manages">
-            <Select value={p.managerShopId ?? ""} disabled={!isAdmin} onChange={(e) => set({ managerShopId: e.target.value || null })}>
-              <option value="">Choose shop…</option>
-              {allShops.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
+        {!p.id && (
+          <Field
+            label="Role"
+            hint={(() => {
+              const r = roles.find((x) => x.id === p.roleId);
+              return r ? `Access to ${SCOPE_HINT[r.defaultScope] ?? "selected shops"}. Fine-tune later under Permissions.` : "You can only give roles with permissions you have.";
+            })()}
+          >
+            <Select value={p.roleId ?? ""} onChange={(e) => set({ roleId: e.target.value || null })}>
+              {roles.map((r) => (
+                <option key={r.id} value={r.id} title={r.description}>
+                  {r.name}
                 </option>
               ))}
             </Select>
@@ -160,8 +171,8 @@ export function ProfileForm({ initial, shops, allShops, isAdmin }: { initial: Pr
             <input type="checkbox" checked={p.active} onChange={(e) => set({ active: e.target.checked })} /> Active
           </label>
         </div>
-      </div>
-      <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
+      </fieldset>
+      <div className={cx("flex items-center gap-3 border-t border-zinc-100 px-4 py-3", readOnly && "hidden")}>
         <Button
           disabled={pending}
           onClick={() =>

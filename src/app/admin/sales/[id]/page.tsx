@@ -9,7 +9,7 @@ import { formatCents, formatRate } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
 import { feeLabel } from "@/domain/checkout";
 import { formatDateTime, localDateOf } from "@/lib/time";
-import { assertShopAccess, ratingViewer, requireStaff } from "@/server/auth/staff";
+import { can, guardPage, ratingViewer } from "@/server/auth/staff";
 import { refundableState } from "@/server/checkout";
 import { loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries, visitForSale } from "@/server/ratings";
@@ -21,11 +21,11 @@ export const metadata: Metadata = { title: "Receipt" };
 export default async function SalePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ done?: string; rebook?: string; rebookError?: string; rewards?: string }> }) {
   const { id } = await params;
   const sp = await searchParams;
-  const ctx = await requireStaff();
+  const ctx = await guardPage("/admin/sales/[id]");
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, id) });
   if (!sale) notFound();
-  assertShopAccess(ctx, sale.shopId);
-  if (ctx.isBarber && sale.staffId !== ctx.staff.id) redirect("/admin");
+  if (!ctx.shopIds.includes(sale.shopId)) redirect("/admin?denied=1");
+  if (sale.staffId !== ctx.staff.id && !can(ctx, "sales.view") && !can(ctx, "checkout.any")) redirect("/admin?denied=1");
   if (sale.status === "open") redirect(`/admin/checkout/${id}`);
   const [shop, items, pays, refs, barber, customer, rebooked] = await Promise.all([
     db.query.shops.findFirst({ where: eq(shops.id, sale.shopId) }),
@@ -42,7 +42,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
     ratingSummaries([customer?.id]),
   ]);
   const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { rate: number } };
-  const manager = ctx.isAdmin || ctx.isManager;
+  const manager = can(ctx, "sales.refund");
   const refundable = manager && ["paid", "partially_refunded"].includes(sale.status) ? await refundableState(id) : null;
 
   return (
@@ -65,7 +65,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           {sp.rebookError && <Notice tone="amber">Couldn&apos;t rebook: {sp.rebookError}</Notice>}
           <div className="flex flex-wrap gap-2">
             <LinkButton href="/admin/calendar">Back to calendar</LinkButton>
-            {manager && (
+            {can(ctx, "walkins.manage") && (
               <LinkButton href="/admin/walk-ins" variant="secondary">
                 Next walk-in
               </LinkButton>

@@ -147,7 +147,7 @@ export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; init
   const [fee, setFee] = useState((initial.cardFeeRate * 100).toFixed(2).replace(/\.?0+$/, ""));
   return (
     <Card>
-      <CardHeader title="Tax & card fee" subtitle={canEdit ? "Rates are stored per shop and snapshotted on every receipt." : "Only the brand admin can change taxes and card fees."} />
+      <CardHeader title="Tax & card fee" subtitle={canEdit ? "Rates are stored per shop and snapshotted on every receipt." : "You can see but not change taxes and card fees."} />
       <fieldset disabled={!canEdit} className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Service tax %">
           <Input inputMode="decimal" value={svc} onChange={(e) => setSvc(e.target.value)} />
@@ -184,12 +184,12 @@ export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; init
   );
 }
 
-export function HoursEditor({ shopId, initial, isAdmin }: { shopId: string; initial: { weekday: number; openMin: number; closeMin: number }[]; isAdmin: boolean }) {
+export function HoursEditor({ shopId, initial, canSetSunday }: { shopId: string; initial: { weekday: number; openMin: number; closeMin: number }[]; canSetSunday: boolean }) {
   const { pending, msg, save } = useSave();
   const [rows, setRows] = useState(initial);
   return (
     <Card>
-      <CardHeader title="Opening hours" subtitle={`Barbers can only be booked inside shop hours. All shops are closed Sundays${isAdmin ? "; opening one is up to you." : "; only a brand admin can change that."}`} />
+      <CardHeader title="Opening hours" subtitle={`Barbers can only be booked inside shop hours. All shops are closed Sundays${canSetSunday ? "; opening one is up to you." : "; only the Brand Owner can change that."}`} />
       <div className="divide-y divide-zinc-100">
         {[1, 2, 3, 4, 5, 6, 0].map((d) => {
           const r = rows.find((x) => x.weekday === d);
@@ -199,7 +199,7 @@ export function HoursEditor({ shopId, initial, isAdmin }: { shopId: string; init
                 <input
                   type="checkbox"
                   checked={!!r}
-                  disabled={d === 0 && !isAdmin && !r}
+                  disabled={d === 0 && !canSetSunday && !r}
                   onChange={(e) => setRows(e.target.checked ? [...rows, { weekday: d, openMin: 9 * 60, closeMin: 18 * 60 }] : rows.filter((x) => x.weekday !== d))}
                 />
                 {DAYS[d]}
@@ -222,7 +222,7 @@ export function HoursEditor({ shopId, initial, isAdmin }: { shopId: string; init
   );
 }
 
-export function ClosuresEditor({ shopId, closures, isAdmin }: { shopId: string; closures: { date: string; reason: string }[]; isAdmin: boolean }) {
+export function ClosuresEditor({ shopId, closures, multiShop }: { shopId: string; closures: { date: string; reason: string }[]; multiShop: boolean }) {
   const { pending, msg, save } = useSave();
   const [date, setDate] = useState("");
   const [reason, setReason] = useState("");
@@ -250,9 +250,9 @@ export function ClosuresEditor({ shopId, closures, isAdmin }: { shopId: string; 
         <Field label="Reason" className="min-w-48 flex-1">
           <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Christmas Day" />
         </Field>
-        {isAdmin && (
+        {multiShop && (
           <label className="flex items-center gap-2 pb-2 text-sm">
-            <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All shops
+            <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All my shops
           </label>
         )}
         <Button disabled={pending || !date} onClick={() => save(() => addClosureAction(shopId, date, reason, all), "Added")}>

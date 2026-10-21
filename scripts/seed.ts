@@ -5,9 +5,10 @@ import { db, closeDb } from "@/db";
 import * as t from "@/db/schema";
 import { computeCheckout, CartLine } from "@/domain/checkout";
 import { DEFAULT_LOYALTY, accrue, rewardExpiry } from "@/domain/loyalty";
+import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
 import { addDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
-import { COLORS, FIRST_NAMES, LAST_NAMES, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
+import { COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "rayz2026!";
 const HISTORY_DAYS = Number(process.env.SEED_HISTORY_DAYS ?? 56);
@@ -39,8 +40,11 @@ async function main() {
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
     inventory_adjustments, shop_products, products, shop_services, services, time_blocks,
-    staff_schedules, staff_shops, staff, shop_closures, shop_hours, shops, brand_settings
+    staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours, shops, brand_settings
     RESTART IDENTITY CASCADE`);
+
+  const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
+  const roleId = (key: string) => roleRows.find((r) => r.key === key)!.id;
 
   await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY });
 
@@ -118,14 +122,21 @@ async function main() {
         email: s.email ?? null,
         passwordHash: s.email ? hash : null,
         color: COLORS[i % COLORS.length],
-        role: s.role ?? "barber",
-        managerShopId: s.managerShop ? shopBySlug.get(s.managerShop)!.id : null,
+        roleId: roleId(s.role ?? "barber"),
+        shopScope: templateFor(s.role ?? "barber")!.defaultScope,
         isBookable: s.bookable ?? true,
         active: s.active ?? true,
       })),
     )
     .returning();
   const staffByKey = new Map(STAFF.map((s, i) => [s.key, staffRows[i]]));
+  const accessRows = STAFF.flatMap((s) => {
+    const scope = templateFor(s.role ?? "barber")!.defaultScope;
+    if (scope === "all") return [];
+    const list = scope === "one" ? [s.managerShop ?? s.listedAt[0]] : s.listedAt;
+    return list.filter(Boolean).map((shop) => ({ staffId: staffByKey.get(s.key)!.id, shopId: shopBySlug.get(shop!)!.id }));
+  });
+  if (accessRows.length) await db.insert(t.staffAccessShops).values(accessRows);
   await db.insert(t.staffShops).values(
     STAFF.flatMap((s) =>
       s.listedAt.map((shop) => ({
@@ -474,8 +485,35 @@ async function main() {
   await chunked(ratingRows, 2000, (c) => db.insert(t.clientRatings).values(c));
   console.log(`  ${ratingRows.length} sample staff ratings`);
 
+  // ── Demo logins for the other role templates (not bookable, no history) ──
+  for (const [i, d] of DEMO_LOGINS.entries()) {
+    const tpl = templateFor(d.role)!;
+    const [row] = await db
+      .insert(t.staff)
+      .values({
+        staffCode: `S-${String(STAFF.length + i + 1).padStart(4, "0")}`,
+        firstName: d.firstName,
+        displayLabel: d.displayLabel,
+        publicSlug: staffPublicSlug(d.firstName),
+        email: d.email,
+        passwordHash: hash,
+        color: COLORS[(STAFF.length + i) % COLORS.length],
+        roleId: roleId(d.role),
+        shopScope: tpl.defaultScope,
+        isBookable: false,
+      })
+      .returning();
+    if (d.shops.length) await db.insert(t.staffAccessShops).values(d.shops.map((s) => ({ staffId: row.id, shopId: shopBySlug.get(s)!.id })));
+  }
+
   console.log("Seed complete.");
-  console.log(`  Logins (password: ${DEMO_PASSWORD}): owner@rayz.test (brand admin), michelle@rayz.test (Coralville manager), makenna@rayz.test (barber)`);
+  console.log(`  Logins (password: ${DEMO_PASSWORD}):`);
+  console.log("    owner@rayz.test      Brand Owner, every shop");
+  console.log("    admin@rayz.test      Brand Admin, every shop");
+  console.log("    regional@rayz.test   Regional Manager, Moline + Rock Island");
+  console.log("    michelle@rayz.test   Shop Manager, Coralville");
+  console.log("    frontdesk@rayz.test  Front Desk, Coralville");
+  console.log("    makenna@rayz.test    Barber, Coralville");
 }
 
 main()

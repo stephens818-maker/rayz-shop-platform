@@ -4,13 +4,13 @@ import { db } from "@/db";
 import { services, shopServices, shops } from "@/db/schema";
 import { Card, CardHeader, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
-import { requireStaff } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
 import { MasterEditor, ShopOverrides } from "./editors";
 
 export const metadata: Metadata = { title: "Services" };
 
 export default async function ServicesPage() {
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/services");
   const [master, overrides, shopRows] = await Promise.all([
     db.select().from(services).orderBy(asc(services.kind), asc(services.sortOrder), asc(services.name)),
     db.select().from(shopServices),
@@ -89,7 +89,7 @@ export default async function ServicesPage() {
           </Table>
         </Card>
       )}
-      {ctx.isAdmin && (
+      {can(ctx, "catalog.manage") && (
         <MasterEditor
           rows={master.map((m) => ({
             id: m.id,
