@@ -245,19 +245,35 @@ export const customers = pgTable(
     phone: text("phone"),
     email: text("email"),
     notes: text("notes"),
-    smsOptIn: boolean("sms_opt_in").notNull().default(true),
-    emailOptIn: boolean("email_opt_in").notNull().default(true),
-    squireId: text("squire_id"),
+    /** Consent is opt-in: nothing is sent until the client (or their Squire record) says yes. */
+    smsOptIn: boolean("sms_opt_in").notNull().default(false),
+    emailOptIn: boolean("email_opt_in").notNull().default(false),
     homeShopId: uuid("home_shop_id").references(() => shops.id),
+    preferredStaffId: uuid("preferred_staff_id").references(() => staff.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [
     // Not unique: Squire data has families sharing one phone number.
     index("customers_phone_idx").on(t.phone),
     index("customers_email_idx").on(t.email),
-    uniqueIndex("customers_squire_uq").on(t.squireId),
     index("customers_name_idx").on(t.firstName, t.lastName),
+    index("customers_home_shop_idx").on(t.homeShopId),
+    // Trigram indexes for substring search live in drizzle/0006_client_search.sql.
   ],
+);
+
+/** One client can carry several Squire client IDs (the same person was a separate record at two shops). */
+export const customerSquireIds = pgTable(
+  "customer_squire_ids",
+  {
+    squireId: text("squire_id").primaryKey(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").references(() => shops.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("customer_squire_ids_customer_idx").on(t.customerId)],
 );
 
 export const otpCodes = pgTable(
@@ -306,6 +322,8 @@ export const appointments = pgTable(
     idempotencyKey: text("idempotency_key").unique(),
     rebookedFromId: uuid("rebooked_from_id"),
     squireId: text("squire_id").unique(),
+    /** False for Squire rows whose export had no booked-at time; created_at is then a stand-in and rebook KPIs skip them. */
+    bookedAtKnown: boolean("booked_at_known").notNull().default(true),
     cancelledAt: ts("cancelled_at"),
     cancelledBy: text("cancelled_by"),
     checkedInAt: ts("checked_in_at"),
@@ -428,6 +446,8 @@ export const sales = pgTable(
     voidedAt: ts("voided_at"),
     voidReason: text("void_reason"),
     isImported: boolean("is_imported").notNull().default(false),
+    /** Squire transaction ID (or a content hash when the export has none), so re-imports don't duplicate. */
+    squireRef: text("squire_ref").unique(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -625,6 +645,14 @@ export const auditLog = pgTable(
   (t) => [index("audit_shop_at_idx").on(t.shopId, t.at), index("audit_entity_idx").on(t.entity, t.entityId)],
 );
 
+export interface ImportRowError {
+  row: number;
+  reason: string;
+  message: string;
+  /** The original CSV row, so the error file can be fixed and re-imported. */
+  data?: Record<string, string>;
+}
+
 export const importRuns = pgTable("import_runs", {
   id: id(),
   kind: text("kind").notNull(),
@@ -634,7 +662,9 @@ export const importRuns = pgTable("import_runs", {
   inserted: integer("inserted").notNull().default(0),
   updated: integer("updated").notNull().default(0),
   skipped: integer("skipped").notNull().default(0),
-  errors: jsonb("errors").$type<{ row: number; message: string }[]>().notNull().default(sql`'[]'::jsonb`),
+  errors: jsonb("errors").$type<ImportRowError[]>().notNull().default(sql`'[]'::jsonb`),
+  /** Reconciliation counts (see ImportStats in server/importer.ts). */
+  stats: jsonb("stats").$type<Record<string, number>>(),
   staffId: uuid("staff_id"),
   createdAt: createdAt(),
 });

@@ -47,7 +47,7 @@ export async function loyaltyBalance(customerId: string, now = new Date(), tx: D
 const dollars = (c: number) => `$${(c / 100).toFixed(c % 100 ? 2 : 0)}`;
 
 /** Creates the account if needed and takes a row lock on it for the rest of the transaction. */
-async function lockAccount(tx: DBorTx, customerId: string) {
+export async function lockAccount(tx: DBorTx, customerId: string) {
   await tx.insert(loyaltyAccounts).values({ customerId }).onConflictDoNothing();
   const [acct] = await tx.select().from(loyaltyAccounts).where(eq(loyaltyAccounts.customerId, customerId)).for("update");
   return acct;

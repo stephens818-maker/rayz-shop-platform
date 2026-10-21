@@ -42,6 +42,8 @@ export function openApiDocument(baseUrl: string) {
     OtpVerify: S.OtpVerify,
     TokenResponse: S.TokenResponse,
     NeedsProfile: S.NeedsProfile,
+    ChooseProfile: S.ChooseProfile,
+    OtpComplete: S.OtpComplete,
     RefreshBody: S.RefreshBody,
     RefreshResponse: S.RefreshResponse,
     Me: S.Me,
@@ -135,9 +137,21 @@ export function openApiDocument(baseUrl: string) {
         post: {
           tags: ["Auth"],
           summary: "Exchange the code for tokens",
-          description: "If no account exists and no firstName is supplied, returns `{needsProfile: true}`; call again with firstName.",
+          description:
+            "One profile on this phone/email: tokens. None: `{needsProfile: true, selectionToken}`. Several (families share phones): `{chooseProfile: true, selectionToken, profiles}`. Finish either case with /auth/otp/complete; the code is not needed again. Sending firstName here does the same matching up front.",
           requestBody: { required: true, content: jsonContent("OtpVerify") },
-          responses: { 200: { description: "Tokens or needsProfile", content: { "application/json": { schema: { oneOf: [ref("TokenResponse"), ref("NeedsProfile")] } } } }, 401: err("Bad/expired code") },
+          responses: {
+            200: { description: "Tokens, needsProfile, or chooseProfile", content: { "application/json": { schema: { oneOf: [ref("TokenResponse"), ref("NeedsProfile"), ref("ChooseProfile")] } } } },
+            401: err("Bad/expired code"),
+          },
+        },
+      },
+      "/auth/otp/complete": {
+        post: {
+          tags: ["Auth"],
+          summary: "Pick a profile or create one after verifying a code",
+          requestBody: { required: true, content: jsonContent("OtpComplete") },
+          responses: { 200: ok("TokenResponse"), 401: err("Selection expired"), 403: err("Profile isn't on this phone/email") },
         },
       },
       "/auth/refresh": { post: { tags: ["Auth"], summary: "Rotate tokens", requestBody: { required: true, content: jsonContent("RefreshBody") }, responses: { 200: ok("RefreshResponse"), 401: err("Invalid") } } },

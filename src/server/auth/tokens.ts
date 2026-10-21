@@ -10,7 +10,8 @@ function secret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-export type TokenType = "staff_session" | "customer_access";
+/** otp_select: proof that the bearer just verified a code for one phone/email, used to pick or create a profile. */
+export type TokenType = "staff_session" | "customer_access" | "otp_select";
 
 export async function signToken(payload: Record<string, unknown>, typ: TokenType, ttlSeconds: number): Promise<string> {
   return new SignJWT({ ...payload, typ })

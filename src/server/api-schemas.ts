@@ -83,7 +83,8 @@ export const CustomerInput = z.object({
   lastName: z.string().max(60).optional().nullable().describe("Stored privately; never shown publicly or put in URLs"),
   phone: z.string().optional().nullable(),
   email: z.string().email().optional().nullable(),
-  smsOptIn: z.boolean().optional(),
+  smsOptIn: z.boolean().optional().describe("Omit to keep the client's current choice; false always wins"),
+  emailOptIn: z.boolean().optional().describe("Omit to keep the client's current choice; false always wins"),
 });
 
 export const CreateAppointment = z.object({
@@ -151,7 +152,23 @@ export const TokenResponse = z.object({
   expiresIn: z.number().int().describe("Access token lifetime in seconds"),
   customer: Me,
 });
-export const NeedsProfile = z.object({ needsProfile: z.literal(true) });
+const SelectionToken = z.string().describe("Valid 10 minutes. Send to /auth/otp/complete; no second code needed.");
+export const NeedsProfile = z.object({ needsProfile: z.literal(true), selectionToken: SelectionToken });
+export const ChooseProfile = z.object({
+  needsProfile: z.literal(false),
+  chooseProfile: z.literal(true),
+  selectionToken: SelectionToken,
+  profiles: z
+    .array(z.object({ id: z.string().uuid(), firstName: z.string(), lastInitial: z.string().nullable() }))
+    .describe("Everyone on this phone or email (families share). Ask which one is signing in."),
+});
+export const OtpComplete = z.object({
+  selectionToken: z.string(),
+  customerId: z.string().uuid().optional().describe("One of the profiles from chooseProfile"),
+  firstName: z.string().min(1).max(60).optional().describe("Or a name: matches a profile on this phone, else creates one"),
+  lastName: z.string().max(60).optional(),
+  deviceName: z.string().max(80).optional(),
+});
 export const RefreshBody = z.object({ refreshToken: z.string() });
 export const RefreshResponse = z.object({ accessToken: z.string(), refreshToken: z.string(), tokenType: z.literal("Bearer"), expiresIn: z.number().int() });
 export const UpdateMe = z.object({

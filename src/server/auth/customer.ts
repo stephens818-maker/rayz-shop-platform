@@ -1,8 +1,9 @@
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { db } from "@/db";
 import { customers, otpCodes, refreshTokens } from "@/db/schema";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
+import { findOrCreateCustomer, lockIdentity, matchCustomer } from "@/server/customers";
 import { AppError } from "@/server/errors";
 import { sendNow } from "@/server/notifications/queue";
 import { randomToken, sha256, signToken, verifyToken } from "./tokens";
@@ -69,27 +70,61 @@ export async function verifyOtp(input: {
   }
   await db.update(otpCodes).set({ consumedAt: new Date() }).where(eq(otpCodes.id, otp.id));
 
-  const where = channel === "sms" ? eq(customers.phone, identifier) : eq(customers.email, identifier);
-  // Families can share a phone; the most recently created profile is the account holder by default.
-  let customer = await db.query.customers.findFirst({ where, orderBy: desc(customers.createdAt) });
-  let isNew = false;
-  if (!customer) {
-    if (!input.firstName?.trim()) {
-      return { needsProfile: true as const };
-    }
-    [customer] = await db
-      .insert(customers)
-      .values({
-        firstName: input.firstName.trim(),
-        lastName: input.lastName?.trim() || null,
-        phone: channel === "sms" ? identifier : null,
-        email: channel === "email" ? identifier : null,
-      })
-      .returning();
-    isNew = true;
+  const profiles = await profilesFor(identifier, channel);
+  const selectionToken = await signToken({ sub: identifier, ch: channel }, "otp_select", SELECTION_TTL_SECONDS);
+  if (input.firstName?.trim()) return completeSignIn({ selectionToken, firstName: input.firstName, lastName: input.lastName, deviceName: input.deviceName });
+  if (profiles.length === 1) return signIn(profiles[0], false, input.deviceName);
+  if (profiles.length === 0) return { needsProfile: true as const, selectionToken };
+  // Families share phones: never guess which person this is.
+  return {
+    needsProfile: false as const,
+    chooseProfile: true as const,
+    selectionToken,
+    profiles: profiles.map((p) => ({ id: p.id, firstName: p.firstName, lastInitial: p.lastName?.[0]?.toUpperCase() ?? null })),
+  };
+}
+
+const SELECTION_TTL_SECONDS = 10 * 60;
+
+async function profilesFor(identifier: string, channel: "sms" | "email") {
+  return db
+    .select()
+    .from(customers)
+    .where(channel === "sms" ? eq(customers.phone, identifier) : eq(customers.email, identifier))
+    .orderBy(asc(customers.createdAt))
+    .limit(10);
+}
+
+async function signIn(customer: typeof customers.$inferSelect, isNew: boolean, deviceName?: string | null) {
+  const tokens = await issueTokens(customer.id, deviceName ?? null);
+  return { needsProfile: false as const, chooseProfile: false as const, isNew, customer, ...tokens };
+}
+
+/**
+ * Second step after a verified code: pick one of the profiles on that phone/email, or give a name.
+ * A name matches an existing profile with the shared rules, otherwise creates a new one (a family
+ * member on the same phone).
+ */
+export async function completeSignIn(input: { selectionToken: string; customerId?: string | null; firstName?: string | null; lastName?: string | null; deviceName?: string | null }) {
+  const t = await verifyToken<{ sub: string; ch: "sms" | "email" }>(input.selectionToken, "otp_select");
+  if (!t) throw new AppError("unauthorized", "Code expired. Request a new one.");
+  const identifier = t.sub;
+  if (input.customerId) {
+    const pick = (await profilesFor(identifier, t.ch)).find((p) => p.id === input.customerId);
+    if (!pick) throw new AppError("forbidden", "That profile isn't on this phone number");
+    return signIn(pick, false, input.deviceName);
   }
-  const tokens = await issueTokens(customer.id, input.deviceName ?? null);
-  return { needsProfile: false as const, isNew, customer, ...tokens };
+  const firstName = input.firstName?.trim();
+  if (!firstName) throw new AppError("bad_request", "Pick a profile or tell us your first name");
+  const contact = t.ch === "sms" ? { phone: identifier } : { email: identifier };
+  const { customer, isNew } = await db.transaction(async (tx) => {
+    await lockIdentity(tx, [identifier]);
+    const m = await matchCustomer(tx, { firstName, lastName: input.lastName, ...contact });
+    if (m) return { customer: m.customer, isNew: false };
+    const c = await findOrCreateCustomer({ firstName, lastName: input.lastName, ...contact }, null, tx);
+    return { customer: c, isNew: true };
+  });
+  return signIn(customer, isNew, input.deviceName);
 }
 
 export async function issueTokens(customerId: string, deviceName: string | null) {

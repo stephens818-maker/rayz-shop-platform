@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, ilike, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import {
   appointmentItems,
@@ -22,10 +22,11 @@ import {
   totalDuration,
 } from "@/domain/availability";
 import { appointmentCode } from "@/lib/ids";
-import { normalizeEmail, normalizePhone } from "@/lib/phone";
+import { normalizePhone } from "@/lib/phone";
 import { LocalDate, addDays, endOfLocalDay, localDateOf, startOfLocalDay, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers } from "./catalog";
+import { CustomerInput, findOrCreateCustomer } from "./customers";
 import { AppError, isDoubleBookingError, notFound } from "./errors";
 import { AppointmentMessageContext, cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
 
@@ -157,39 +158,7 @@ export async function getAvailableDays(q: Omit<AvailabilityQuery, "date"> & { fr
 
 // ───────────────────────────── Customers ─────────────────────────────
 
-export interface CustomerInput {
-  firstName: string;
-  lastName?: string | null;
-  phone?: string | null;
-  email?: string | null;
-  smsOptIn?: boolean;
-}
-
-/** Match on phone + first name (families share phones), then email; otherwise create. */
-export async function findOrCreateCustomer(input: CustomerInput, homeShopId: string | null, tx: DBorTx = db) {
-  const phone = normalizePhone(input.phone);
-  const email = normalizeEmail(input.email);
-  const firstName = input.firstName.trim();
-  if (!firstName) throw new AppError("bad_request", "First name is required");
-  if (!phone && !email) throw new AppError("bad_request", "A phone number or email is required");
-  let existing = phone
-    ? await tx.query.customers.findFirst({ where: and(eq(customers.phone, phone), ilike(customers.firstName, firstName)) })
-    : undefined;
-  if (!existing && email) existing = await tx.query.customers.findFirst({ where: and(eq(customers.email, email), ilike(customers.firstName, firstName)) });
-  if (existing) {
-    const patch: Partial<typeof customers.$inferInsert> = {};
-    if (!existing.email && email) patch.email = email;
-    if (!existing.phone && phone) patch.phone = phone;
-    if (!existing.lastName && input.lastName) patch.lastName = input.lastName.trim();
-    if (Object.keys(patch).length) await tx.update(customers).set(patch).where(eq(customers.id, existing.id));
-    return { ...existing, ...patch };
-  }
-  const [row] = await tx
-    .insert(customers)
-    .values({ firstName, lastName: input.lastName?.trim() || null, phone, email, homeShopId, smsOptIn: input.smsOptIn ?? true })
-    .returning();
-  return row;
-}
+export { findOrCreateCustomer, type CustomerInput };
 
 // ───────────────────────────── Appointments ─────────────────────────────
 
@@ -201,6 +170,8 @@ export interface CreateAppointmentInput {
   startsAt: string | Date;
   customerId?: string | null;
   customer?: CustomerInput | null;
+  /** Walk-ins: create a client even without a phone or email. */
+  allowNoContact?: boolean;
   source: "online" | "api" | "staff" | "walk_in" | "rebook";
   notes?: string | null;
   idempotencyKey?: string | null;
@@ -235,7 +206,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
     const customer = input.customerId
       ? await tx.query.customers.findFirst({ where: eq(customers.id, input.customerId) })
       : input.customer
-        ? await findOrCreateCustomer(input.customer, r.shop.id, tx)
+        ? await findOrCreateCustomer(input.customer, r.shop.id, tx, { allowNoContact: input.allowNoContact })
         : null;
     if (input.customerId && !customer) throw notFound("Customer");
 
@@ -293,7 +264,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
   return getAppointmentByCode(created.code);
 }
 
-async function messageContext(appointmentId: string, tx: DBorTx = db): Promise<AppointmentMessageContext> {
+export async function messageContext(appointmentId: string, tx: DBorTx = db): Promise<AppointmentMessageContext> {
   const [row] = await tx
     .select({
       id: appointments.id,
@@ -496,7 +467,8 @@ export async function quickWalkIn(input: {
   const day = await loadDayInput(shop, localDateOf(now), { durationMin: service.durationMin, staffIds: candidates.map((c) => c.id), now, staffOverride: true });
   const free = candidates.map((c) => c.id).filter((id) => isSlotFree(day, id, start.getTime()));
   const [firstName, ...rest] = input.name.trim().split(/\s+/);
-  const customer = input.phone ? { firstName, lastName: rest.join(" ") || null, phone: input.phone } : null;
+  if (!firstName) throw new AppError("bad_request", "Add the client's name");
+  const customer = { firstName, lastName: rest.join(" ") || null, phone: input.phone || null };
 
   if (free.length) {
     const staffId = pickBarber(free, day.appointments, localDateOf(now))!;
@@ -506,20 +478,22 @@ export async function quickWalkIn(input: {
       barberRef: staffId,
       startsAt: start,
       customer,
+      allowNoContact: true,
       source: "walk_in",
       actor: input.actor,
       now,
       silent: true,
-      notes: customer ? null : `Walk-in: ${input.name}`,
     });
     return { seated: true as const, appointment: appt };
   }
 
   const wait = await estimateWait(shop.id, candidates.map((c) => c.id), now);
+  const client = await db.transaction((tx) => findOrCreateCustomer(customer, shop.id, tx, { allowNoContact: true, smsOptInIfNew: true }));
   const [entry] = await db
     .insert(waitlistEntries)
     .values({
       shopId: shop.id,
+      customerId: client.id,
       name: input.name.trim(),
       phone: normalizePhone(input.phone),
       serviceId: service.id,
@@ -576,12 +550,13 @@ export async function seatFromWaitlist(entryId: string, staffId: string, actor: 
     serviceId: entry.serviceId,
     barberRef: staffId,
     startsAt: new Date(Math.ceil(now.getTime() / 60_000) * 60_000),
-    customer: entry.phone ? { firstName, lastName: rest.join(" ") || null, phone: entry.phone } : null,
+    customerId: entry.customerId,
+    customer: entry.customerId ? null : { firstName, lastName: rest.join(" ") || null, phone: entry.phone },
+    allowNoContact: true,
     source: "walk_in",
     actor,
     now,
     silent: true,
-    notes: entry.phone ? null : `Walk-in: ${entry.name}`,
   });
   await db.update(waitlistEntries).set({ status: "serving", appointmentId: appt.id, updatedAt: now }).where(eq(waitlistEntries.id, entryId));
   await audit(actor, "waitlist.seat", "waitlist", entryId, { appointmentId: appt.id, staffId }, entry.shopId);

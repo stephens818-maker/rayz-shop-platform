@@ -64,7 +64,8 @@ export async function cancelPendingReminders(appointmentId: string, tx: DBorTx =
 }
 
 export async function scheduleAppointmentNotifications(
-  event: "created" | "rescheduled" | "cancelled",
+  /** "imported": an upcoming Squire booking; reminders only, the client already has a confirmation. */
+  event: "created" | "rescheduled" | "cancelled" | "imported",
   c: AppointmentMessageContext,
   tx: DBorTx = db,
   now: Date = new Date(),
@@ -73,7 +74,7 @@ export async function scheduleAppointmentNotifications(
   const jobs: { kind: NotificationKind; runAt: Date }[] = [];
   if (event === "cancelled") jobs.push({ kind: "cancellation", runAt: now });
   else {
-    jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
+    if (event !== "imported") jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
     const r24 = new Date(c.startsAt.getTime() - 24 * 3_600_000);
     const r2 = new Date(c.startsAt.getTime() - 2 * 3_600_000);
     if (r24 > now) jobs.push({ kind: "reminder_24h", runAt: r24 });

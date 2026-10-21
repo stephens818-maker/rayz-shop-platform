@@ -29,6 +29,14 @@ interface Appt {
   items: { name: string }[];
 }
 
+interface Profile {
+  id: string;
+  firstName: string;
+  lastInitial: string | null;
+}
+type Tokens = { needsProfile: false; accessToken: string; refreshToken: string; expiresIn: number };
+type Verified = Tokens | { needsProfile: true; selectionToken: string } | { chooseProfile: true; selectionToken: string; profiles: Profile[] };
+
 export default function AccountPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
@@ -38,6 +46,7 @@ export default function AccountPage() {
   const [firstName, setFirstName] = useState("");
   const [stage, setStage] = useState<"phone" | "code" | "profile">("phone");
   const [devCode, setDevCode] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{ token: string; profiles: Profile[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -73,20 +82,28 @@ export default function AccountPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ needsProfile: boolean; accessToken: string; refreshToken: string; expiresIn: number }>("/auth/otp/verify", {
-        method: "POST",
-        auth: false,
-        body: JSON.stringify({ phone, code, firstName: stage === "profile" ? firstName : undefined, deviceName: "web" }),
-      });
-      if (r.needsProfile) {
-        // Code is consumed; request a fresh one together with the name.
-        const s = await api<{ devCode?: string }>("/auth/otp/start", { method: "POST", auth: false, body: JSON.stringify({ phone }) });
-        setDevCode(s.devCode ?? null);
-        setCode("");
+      const r = await api<Verified>("/auth/otp/verify", { method: "POST", auth: false, body: JSON.stringify({ phone, code, deviceName: "web" }) });
+      if ("selectionToken" in r) {
+        setSelection({ token: r.selectionToken, profiles: "profiles" in r ? r.profiles : [] });
         setStage("profile");
         return;
       }
       setTokens(r);
+      await loadMe();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function complete(pick: { customerId: string } | { firstName: string }) {
+    if (!selection) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api<Tokens>("/auth/otp/complete", { method: "POST", auth: false, body: JSON.stringify({ selectionToken: selection.token, deviceName: "web", ...pick }) });
+      setTokens(r);
+      setSelection(null);
       await loadMe();
     } catch (e) {
       setError((e as Error).message);
@@ -111,12 +128,22 @@ export default function AccountPage() {
           <Field label="Mobile phone">
             <Input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={stage !== "phone"} placeholder="(319) 555-0100" />
           </Field>
+          {stage === "profile" && selection && selection.profiles.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Who&apos;s signing in?</div>
+              {selection.profiles.map((p) => (
+                <Button key={p.id} variant="secondary" className="w-full" disabled={busy} onClick={() => complete({ customerId: p.id })}>
+                  {p.firstName} {p.lastInitial ? `${p.lastInitial}.` : ""}
+                </Button>
+              ))}
+            </div>
+          )}
           {stage === "profile" && (
-            <Field label="First name" hint="New here? Tell us what to call you.">
+            <Field label="First name" hint={selection?.profiles.length ? "Someone else on this phone? Add your name." : "New here? Tell us what to call you."}>
               <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
             </Field>
           )}
-          {stage !== "phone" && (
+          {stage === "code" && (
             <Field label="6-digit code" hint={devCode ? `Dev mode: your code is ${devCode}` : "Check your texts."}>
               <Input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} />
             </Field>
@@ -126,9 +153,13 @@ export default function AccountPage() {
             <Button className="w-full" disabled={busy || phone.replace(/\D/g, "").length < 10} onClick={start}>
               Text me a code
             </Button>
-          ) : (
-            <Button className="w-full" disabled={busy || code.length < 6 || (stage === "profile" && !firstName.trim())} onClick={verify}>
+          ) : stage === "code" ? (
+            <Button className="w-full" disabled={busy || code.length < 6} onClick={verify}>
               Sign in
+            </Button>
+          ) : (
+            <Button className="w-full" disabled={busy || !firstName.trim()} onClick={() => complete({ firstName })}>
+              Continue
             </Button>
           )}
         </div>

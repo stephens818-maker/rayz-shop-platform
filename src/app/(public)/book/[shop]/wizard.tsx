@@ -46,7 +46,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
   const [barber, setBarber] = useState<string>(params.get("barber") ?? "any");
   const [slot, setSlot] = useState<Slot | null>(null);
   const [step, setStep] = useState<Step>("service");
-  const [form, setForm] = useState({ firstName: "", lastName: "", phone: "", email: "", smsOptIn: true });
+  const [form, setForm] = useState({ firstName: "", lastName: "", phone: "", email: "", smsOptIn: true, emailOptIn: false });
   const [signedIn, setSignedIn] = useState<{ firstName: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +107,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
           addonIds,
           barberId: barber === "any" ? null : barber,
           startsAt: slot.startsAt,
-          customer: signedIn ? undefined : { firstName: form.firstName, lastName: form.lastName || null, phone: form.phone, email: form.email || null, smsOptIn: form.smsOptIn },
+          customer: signedIn ? undefined : { firstName: form.firstName, lastName: form.lastName || null, phone: form.phone, email: form.email || null, smsOptIn: form.smsOptIn, ...(form.emailOptIn ? { emailOptIn: true } : {}) },
         }),
       });
       router.push(`/a/${r.appointment.code}?new=1`);
@@ -261,6 +261,12 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
                 <input type="checkbox" checked={form.smsOptIn} onChange={(e) => setForm({ ...form, smsOptIn: e.target.checked })} />
                 Text me a confirmation and reminders (24 hours and 2 hours before)
               </label>
+              {form.email.trim() && (
+                <label className="flex items-center gap-2 text-sm text-zinc-600 sm:col-span-2">
+                  <input type="checkbox" checked={form.emailOptIn} onChange={(e) => setForm({ ...form, emailOptIn: e.target.checked })} />
+                  Email me confirmations and reminders too
+                </label>
+              )}
             </div>
           )}
           {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}

@@ -7,7 +7,8 @@ import { shops, waitlistEntries } from "@/db/schema";
 import { safe } from "@/server/action";
 import { assertShopAccess, requireStaff } from "@/server/auth/staff";
 import { quickWalkIn, seatFromWaitlist, updateWaitlistStatus } from "@/server/booking";
-import { notFound } from "@/server/errors";
+import { textingDeclined } from "@/server/customers";
+import { AppError, notFound } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
 
 const MGR = ["brand_admin", "shop_manager"] as const;
@@ -55,8 +56,9 @@ export async function notifyAction(entryId: string) {
   return safe(async () => {
     const { ctx, e } = await entryFor(entryId);
     if (!e.phone) throw new Error("No phone number on this entry");
+    if (await textingDeclined(e.customerId, e.phone)) throw new AppError("conflict", "This client has opted out of texts. Call or wave them in instead.");
     const shop = await db.query.shops.findFirst({ where: eq(shops.id, e.shopId) });
-    await enqueueRaw({ kind: "waitlist_ready", channel: "sms", to: e.phone, body: `Ray'z ${shop?.name}: ${e.name.split(" ")[0]}, your chair is ready! Please head in.` });
+    await enqueueRaw({ kind: "waitlist_ready", channel: "sms", to: e.phone, customerId: e.customerId, body: `Ray'z ${shop?.name}: ${e.name.split(" ")[0]}, your chair is ready! Please head in.` });
     await updateWaitlistStatus(entryId, "notified", ctx.actor);
     revalidatePath("/admin/walk-ins");
     return null;

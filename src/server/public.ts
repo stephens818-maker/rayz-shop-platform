@@ -65,6 +65,18 @@ export async function publicMe(customerId: string) {
   return { id: c.id, firstName: c.firstName, lastName: c.lastName, phone: c.phone, email: c.email, smsOptIn: c.smsOptIn, emailOptIn: c.emailOptIn };
 }
 
+export async function tokenResponse(r: { isNew: boolean; accessToken: string; refreshToken: string; tokenType: "Bearer"; expiresIn: number; customer: { id: string } }) {
+  return {
+    needsProfile: false,
+    isNew: r.isNew,
+    accessToken: r.accessToken,
+    refreshToken: r.refreshToken,
+    tokenType: r.tokenType,
+    expiresIn: r.expiresIn,
+    customer: await publicMe(r.customer.id),
+  };
+}
+
 export async function myAppointments(customerId: string, now = new Date()) {
   const [upcoming, past] = await Promise.all([
     db

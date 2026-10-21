@@ -36,6 +36,20 @@
       "when": 1792543243180,
       "tag": "0004_redact_otp_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792543749430,
+      "tag": "0005_clients",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792543762218,
+      "tag": "0006_client_search",
+      "breakpoints": true
     }
   ]
 }
