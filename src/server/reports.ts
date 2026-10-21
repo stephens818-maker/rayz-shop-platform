@@ -87,22 +87,27 @@ export async function tenderBreakdown(s: ReportScope) {
     where p.shop_id in ${ids(s)} and p.business_date between ${s.from} and ${s.to} and s.status <> 'voided' and p.status <> 'voided'
     ${staffFilter(sql`s.staff_id`, s)}
     group by 1, 2`);
-  const ref = await rows<{ method: string; cents: number }>(sql`
-    select r.method::text method, coalesce(sum(r.amount_cents),0)::int cents
-    from refunds r join sales s on s.id = r.sale_id
+  // Refunds go back onto the tender (and card funding) that took the money.
+  const ref = await rows<{ method: string; funding: string | null; cents: number; tips: number }>(sql`
+    select r.method::text method, p.card_funding funding, coalesce(sum(r.amount_cents),0)::int cents, coalesce(sum(r.tip_cents),0)::int tips
+    from refunds r join sales s on s.id = r.sale_id left join payments p on p.id = r.payment_id
     where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund'
     ${staffFilter(sql`s.staff_id`, s)}
-    group by 1`);
-  const sum = (m: string, f?: (x: (typeof pay)[number]) => boolean) => pay.filter((p) => p.method === m && (!f || f(p))).reduce((a, p) => a + p.cents, 0);
-  const refunded = (m: string) => ref.find((r) => r.method === m)?.cents ?? 0;
+    group by 1, 2`);
+  type Row = { method: string; funding: string | null; cents: number; tips: number };
+  const pick = (xs: Row[], m: string, f?: (x: Row) => boolean) => xs.filter((p) => p.method === m && (!f || f(p)));
+  const net = (m: string, f?: (x: Row) => boolean) =>
+    pick(pay, m, f).reduce((a, p) => a + p.cents, 0) - pick(ref, m, f).reduce((a, p) => a + p.cents, 0);
+  const netTips = (m: string) => pick(pay, m).reduce((a, p) => a + p.tips, 0) - pick(ref, m).reduce((a, p) => a + p.tips, 0);
+  const debitLike = (p: Row) => p.funding === "debit" || p.funding === "prepaid";
   return {
-    cardCents: sum("card") - refunded("card"),
-    cardCreditCents: sum("card", (p) => p.funding === "credit"),
-    cardDebitCents: sum("card", (p) => p.funding === "debit" || p.funding === "prepaid"),
-    cashCents: sum("cash") - refunded("cash"),
-    giftCardCents: sum("gift_card") - refunded("gift_card"),
-    cardTipsCents: pay.filter((p) => p.method === "card").reduce((a, p) => a + p.tips, 0),
-    cashTipsCents: pay.filter((p) => p.method === "cash").reduce((a, p) => a + p.tips, 0),
+    cardCents: net("card"),
+    cardCreditCents: net("card", (p) => p.funding === "credit"),
+    cardDebitCents: net("card", debitLike),
+    cashCents: net("cash"),
+    giftCardCents: net("gift_card"),
+    cardTipsCents: netTips("card"),
+    cashTipsCents: netTips("cash"),
   };
 }
 
@@ -143,18 +148,29 @@ export async function byBarber(s: ReportScope) {
 }
 
 export async function byShop(s: ReportScope) {
-  return rows<{ shopId: string; name: string; tickets: number; grossCents: number; netServicesCents: number; netProductsCents: number; tipsCents: number }>(sql`
-    select sh.id "shopId", sh.name, count(s.id)::int tickets,
-      coalesce(sum(s.service_gross_cents + s.product_gross_cents),0)::int "grossCents",
-      coalesce(sum(s.service_net_cents),0)::int "netServicesCents", coalesce(sum(s.product_net_cents),0)::int "netProductsCents",
-      coalesce(sum(s.tip_cents),0)::int "tipsCents"
-    from shops sh left join sales s on s.shop_id = sh.id and s.business_date between ${s.from} and ${s.to} and s.status in ${PAID}
+  return rows<{ shopId: string; name: string; tickets: number; grossCents: number; refundCents: number; netServicesCents: number; netProductsCents: number; tipsCents: number }>(sql`
+    with v as (
+      select s.shop_id, count(*)::int tickets, sum(s.service_gross_cents + s.product_gross_cents)::int gross,
+        sum(s.service_net_cents)::int sn, sum(s.product_net_cents)::int pn, sum(s.tip_cents)::int tips
+      from sales s where s.shop_id in ${ids(s)} and s.business_date between ${s.from} and ${s.to} and s.status in ${PAID}
+      group by 1
+    ), rf as (
+      select r.shop_id, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn, sum(r.tip_cents)::int tips
+      from refunds r where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund'
+      group by 1
+    )
+    select sh.id "shopId", sh.name, coalesce(v.tickets,0) tickets, coalesce(v.gross,0) "grossCents",
+      (coalesce(rf.sn,0) + coalesce(rf.pn,0)) "refundCents",
+      (coalesce(v.sn,0) - coalesce(rf.sn,0)) "netServicesCents", (coalesce(v.pn,0) - coalesce(rf.pn,0)) "netProductsCents",
+      (coalesce(v.tips,0) - coalesce(rf.tips,0)) "tipsCents"
+    from shops sh left join v on v.shop_id = sh.id left join rf on rf.shop_id = sh.id
     where sh.id in ${ids(s)}
-    group by sh.id, sh.name order by "netServicesCents" desc`);
+    order by "netServicesCents" desc`);
 }
 
+/** Sales count on the day they were paid; refunds on the day they were issued, so a day can be refund-only. */
 export async function dailyTotals(s: ReportScope) {
-  return rows<{ day: string; tickets: number; grossCents: number; netCents: number; tipsCents: number; cardCents: number; cashCents: number }>(sql`
+  return rows<{ day: string; tickets: number; grossCents: number; refundCents: number; netCents: number; tipsCents: number; cardCents: number; cashCents: number }>(sql`
     with d as (
       select business_date as day, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
         sum(service_net_cents+product_net_cents)::int net, sum(tip_cents)::int tips
@@ -165,23 +181,46 @@ export async function dailyTotals(s: ReportScope) {
       select p.business_date as day, sum(case when p.method='card' then p.amount_cents else 0 end)::int card,
         sum(case when p.method='cash' then p.amount_cents else 0 end)::int cash
       from payments p join sales s on s.id = p.sale_id
-      where p.shop_id in ${ids(s)} and p.business_date between ${s.from} and ${s.to} and s.status <> 'voided'
+      where p.shop_id in ${ids(s)} and p.business_date between ${s.from} and ${s.to} and s.status <> 'voided' and p.status <> 'voided'
       ${staffFilter(sql`s.staff_id`, s)}
       group by 1
-    )
-    select to_char(d.day, 'YYYY-MM-DD') as day, d.tickets, d.gross "grossCents", d.net "netCents", d.tips "tipsCents",
-      coalesce(p.card,0) "cardCents", coalesce(p.cash,0) "cashCents"
-    from d left join p on p.day = d.day order by d.day`);
+    ), rf as (
+      select r.business_date as day, sum(r.service_net_cents + r.product_net_cents)::int net, sum(r.tip_cents)::int tips,
+        sum(case when r.method='card' then r.amount_cents else 0 end)::int card,
+        sum(case when r.method='cash' then r.amount_cents else 0 end)::int cash
+      from refunds r join sales s on s.id = r.sale_id
+      where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund'
+      ${staffFilter(sql`s.staff_id`, s)}
+      group by 1
+    ), days as (select day from d union select day from rf)
+    select to_char(days.day, 'YYYY-MM-DD') as day, coalesce(d.tickets,0) tickets, coalesce(d.gross,0) "grossCents",
+      coalesce(rf.net,0) "refundCents", (coalesce(d.net,0) - coalesce(rf.net,0)) "netCents", (coalesce(d.tips,0) - coalesce(rf.tips,0)) "tipsCents",
+      (coalesce(p.card,0) - coalesce(rf.card,0)) "cardCents", (coalesce(p.cash,0) - coalesce(rf.cash,0)) "cashCents"
+    from days left join d on d.day = days.day left join p on p.day = days.day left join rf on rf.day = days.day
+    order by days.day`);
 }
 
 export async function monthlyTotals(s: ReportScope) {
-  return rows<{ month: string; tickets: number; grossCents: number; netServicesCents: number; netProductsCents: number; tipsCents: number }>(sql`
-    select to_char(date_trunc('month', business_date), 'YYYY-MM') as month, count(*)::int tickets,
-      sum(service_gross_cents+product_gross_cents)::int "grossCents", sum(service_net_cents)::int "netServicesCents",
-      sum(product_net_cents)::int "netProductsCents", sum(tip_cents)::int "tipsCents"
-    from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
-    ${staffFilter(sql`staff_id`, s)}
-    group by 1 order by 1`);
+  return rows<{ month: string; tickets: number; grossCents: number; refundCents: number; netServicesCents: number; netProductsCents: number; tipsCents: number }>(sql`
+    with v as (
+      select date_trunc('month', business_date) as m, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
+        sum(service_net_cents)::int sn, sum(product_net_cents)::int pn, sum(tip_cents)::int tips
+      from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
+      ${staffFilter(sql`staff_id`, s)}
+      group by 1
+    ), rf as (
+      select date_trunc('month', r.business_date) as m, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn, sum(r.tip_cents)::int tips
+      from refunds r join sales s on s.id = r.sale_id
+      where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund'
+      ${staffFilter(sql`s.staff_id`, s)}
+      group by 1
+    ), months as (select m from v union select m from rf)
+    select to_char(months.m, 'YYYY-MM') as month, coalesce(v.tickets,0) tickets, coalesce(v.gross,0) "grossCents",
+      (coalesce(rf.sn,0) + coalesce(rf.pn,0)) "refundCents",
+      (coalesce(v.sn,0) - coalesce(rf.sn,0)) "netServicesCents", (coalesce(v.pn,0) - coalesce(rf.pn,0)) "netProductsCents",
+      (coalesce(v.tips,0) - coalesce(rf.tips,0)) "tipsCents"
+    from months left join v on v.m = months.m left join rf on rf.m = months.m
+    order by months.m`);
 }
 
 export interface PayrollRow {
@@ -192,55 +231,64 @@ export interface PayrollRow {
   label: string;
   shop: string;
   tickets: number;
+  /** Net of refunds issued in the period. */
   serviceSalesCents: number;
   productSalesCents: number;
+  /** Tips by the tender that took them, less tip refunds issued from that tender in the period. */
   cardTipsCents: number;
   cashTipsCents: number;
   giftCardTipsCents: number;
+  /** Already subtracted from the tender columns; shown so payroll can see the adjustment. */
   tipRefundsCents: number;
   totalTipsCents: number;
 }
 
-/** Tips per barber per shop per bi-weekly pay period (hours stay in iSolved). */
+/**
+ * Tips per barber per shop per bi-weekly pay period (hours stay in iSolved). Sales land in the
+ * period they were paid; refunds in the period they were issued, which can be a later one.
+ */
 export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[]; rows: PayrollRow[] }> {
   const periods = payPeriodsBetween(s.from, s.to);
   const out: PayrollRow[] = [];
   await Promise.all(
     periods.map(async (p) => {
       const r = await rows<Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents">>(sql`
-        with t as (
+        with v as (
+          select s.staff_id, s.shop_id, count(*)::int tickets, sum(s.service_net_cents)::int sn, sum(s.product_net_cents)::int pn
+          from sales s where s.shop_id in ${ids(s)} and s.business_date between ${p.start} and ${p.end} and s.status in ${PAID}
+            and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
+          group by 1, 2
+        ), t as (
           select s.staff_id, s.shop_id,
-            sum(case when p.method='card' then p.tip_cents else 0 end)::int card_tips,
-            sum(case when p.method='cash' then p.tip_cents else 0 end)::int cash_tips,
-            sum(case when p.method='gift_card' then p.tip_cents else 0 end)::int gc_tips
+            sum(case when p.method='card' then p.tip_cents else 0 end)::int card,
+            sum(case when p.method='cash' then p.tip_cents else 0 end)::int cash,
+            sum(case when p.method='gift_card' then p.tip_cents else 0 end)::int gc
           from payments p join sales s on s.id = p.sale_id
           where s.shop_id in ${ids(s)} and s.business_date between ${p.start} and ${p.end} and s.status in ${PAID}
-          ${staffFilter(sql`s.staff_id`, s)}
-          group by 1, 2
-        ), v as (
-          select staff_id, shop_id, count(*)::int tickets, sum(service_net_cents)::int sn, sum(product_net_cents)::int pn
-          from sales s where s.shop_id in ${ids(s)} and s.business_date between ${p.start} and ${p.end} and s.status in ${PAID}
-          ${staffFilter(sql`s.staff_id`, s)}
+            and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
         ), rf as (
-          select s.staff_id, s.shop_id, sum(r.tip_cents)::int tips from refunds r join sales s on s.id = r.sale_id
+          select s.staff_id, s.shop_id, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn,
+            sum(case when r.method='card' then r.tip_cents else 0 end)::int card,
+            sum(case when r.method='cash' then r.tip_cents else 0 end)::int cash,
+            sum(case when r.method='gift_card' then r.tip_cents else 0 end)::int gc
+          from refunds r join sales s on s.id = r.sale_id
           where r.shop_id in ${ids(s)} and r.business_date between ${p.start} and ${p.end} and r.kind = 'refund'
+            and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
-        )
-        select st.id "staffId", st.staff_code "staffCode", st.display_label label, sh.name shop, v.tickets,
-          v.sn "serviceSalesCents", v.pn "productSalesCents", coalesce(t.card_tips,0) "cardTipsCents",
-          coalesce(t.cash_tips,0) "cashTipsCents", coalesce(t.gc_tips,0) "giftCardTipsCents", coalesce(rf.tips,0) "tipRefundsCents"
-        from v join staff st on st.id = v.staff_id join shops sh on sh.id = v.shop_id
-        left join t on t.staff_id = v.staff_id and t.shop_id = v.shop_id
-        left join rf on rf.staff_id = v.staff_id and rf.shop_id = v.shop_id
+        ), k as (select staff_id, shop_id from v union select staff_id, shop_id from rf)
+        select st.id "staffId", st.staff_code "staffCode", st.display_label label, sh.name shop, coalesce(v.tickets,0) tickets,
+          (coalesce(v.sn,0) - coalesce(rf.sn,0)) "serviceSalesCents", (coalesce(v.pn,0) - coalesce(rf.pn,0)) "productSalesCents",
+          (coalesce(t.card,0) - coalesce(rf.card,0)) "cardTipsCents", (coalesce(t.cash,0) - coalesce(rf.cash,0)) "cashTipsCents",
+          (coalesce(t.gc,0) - coalesce(rf.gc,0)) "giftCardTipsCents",
+          (coalesce(rf.card,0) + coalesce(rf.cash,0) + coalesce(rf.gc,0)) "tipRefundsCents"
+        from k join staff st on st.id = k.staff_id join shops sh on sh.id = k.shop_id
+        left join v on v.staff_id = k.staff_id and v.shop_id = k.shop_id
+        left join t on t.staff_id = k.staff_id and t.shop_id = k.shop_id
+        left join rf on rf.staff_id = k.staff_id and rf.shop_id = k.shop_id
         order by st.display_label, sh.name`);
       for (const row of r) {
-        out.push({
-          ...row,
-          periodStart: p.start,
-          periodEnd: p.end,
-          totalTipsCents: row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents - row.tipRefundsCents,
-        });
+        out.push({ ...row, periodStart: p.start, periodEnd: p.end, totalTipsCents: row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents });
       }
     }),
   );

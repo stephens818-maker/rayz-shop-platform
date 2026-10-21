@@ -76,7 +76,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
                 <Th right>Card tips</Th>
                 <Th right>Cash tips</Th>
                 <Th right>Gift card tips</Th>
-                <Th right>Tip refunds</Th>
+                <Th right>Tip refunds (netted)</Th>
                 <Th right>Total tips</Th>
               </tr>
             </thead>

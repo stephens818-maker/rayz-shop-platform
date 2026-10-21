@@ -29,31 +29,31 @@ export async function GET(req: Request) {
     case "shops": {
       const r = await byShop(scope);
       csv = toCsv(
-        ["Shop", "Tickets", "Gross", "Net services", "Net products", "Tips"],
-        r.map((x) => [x.name, x.tickets, cents(x.grossCents), cents(x.netServicesCents), cents(x.netProductsCents), cents(x.tipsCents)]),
+        ["Shop", "Tickets", "Gross", "Refunds", "Net services", "Net products", "Tips"],
+        r.map((x) => [x.name, x.tickets, cents(x.grossCents), cents(x.refundCents), cents(x.netServicesCents), cents(x.netProductsCents), cents(x.tipsCents)]),
       );
       break;
     }
     case "daily": {
       const r = await dailyTotals(scope);
       csv = toCsv(
-        ["Date", "Tickets", "Gross", "Net", "Tips", "Card", "Cash"],
-        r.map((x) => [x.day, x.tickets, cents(x.grossCents), cents(x.netCents), cents(x.tipsCents), cents(x.cardCents), cents(x.cashCents)]),
+        ["Date", "Tickets", "Gross", "Refunds", "Net", "Tips", "Card", "Cash"],
+        r.map((x) => [x.day, x.tickets, cents(x.grossCents), cents(x.refundCents), cents(x.netCents), cents(x.tipsCents), cents(x.cardCents), cents(x.cashCents)]),
       );
       break;
     }
     case "monthly": {
       const r = await monthlyTotals(scope);
       csv = toCsv(
-        ["Month", "Tickets", "Gross", "Net services", "Net products", "Tips"],
-        r.map((x) => [x.month, x.tickets, cents(x.grossCents), cents(x.netServicesCents), cents(x.netProductsCents), cents(x.tipsCents)]),
+        ["Month", "Tickets", "Gross", "Refunds", "Net services", "Net products", "Tips"],
+        r.map((x) => [x.month, x.tickets, cents(x.grossCents), cents(x.refundCents), cents(x.netServicesCents), cents(x.netProductsCents), cents(x.tipsCents)]),
       );
       break;
     }
     case "payroll": {
       const r = await payrollTips(scope);
       csv = toCsv(
-        ["Period start", "Period end", "Staff ID", "Barber", "Shop", "Tickets", "Service sales", "Product sales", "Card tips", "Cash tips", "Gift card tips", "Tip refunds", "Total tips"],
+        ["Period start", "Period end", "Staff ID", "Barber", "Shop", "Tickets", "Service sales", "Product sales", "Card tips", "Cash tips", "Gift card tips", "Tip refunds (already subtracted)", "Total tips"],
         r.rows.map((x) => [
           x.periodStart,
           x.periodEnd,

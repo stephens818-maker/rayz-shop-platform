@@ -319,3 +319,71 @@ describe("P1#20 a refund issued in the Stripe dashboard reaches the books", () =
     expect((await m.loyalty.loyaltyBalance(c.id)).progressCents).toBe(0);
   });
 });
+
+describe("P1#9–10 payroll and reports are net of refunds", () => {
+  async function coralvilleBarber(shopId: string) {
+    const [link] = await m.db.db.select().from(m.schema.staffShops).where(eq(m.schema.staffShops.shopId, shopId)).limit(1);
+    return link.staffId;
+  }
+  const at = (d: string) => new Date(`${d}T18:00:00Z`);
+
+  it("a card tip refunded in a later pay period nets out there, with its own row", async () => {
+    const s = await shop();
+    const staffId = await coralvilleBarber(s.id);
+    const sale = await m.checkout.openBlankSale(s.id, actor, staffId);
+    const svc = await cut(s.id);
+    await m.checkout.finalizeSale({ saleId: sale.id, lines: [{ kind: "service", refId: svc.id, qty: 1 }], tipCents: 1000, tender: credit, actor, now: at("2026-09-26") });
+    const scope = { shopIds: [s.id], staffId };
+    const sept = await m.reports.payrollTips({ ...scope, from: "2026-09-20", to: "2026-10-03" });
+    const row = sept.rows.find((r) => r.staffId === staffId)!;
+    expect(row.cardTipsCents).toBe(1000);
+
+    await m.checkout.refundSale({ saleId: sale.id, items: [], tipCents: 1000, refundCardFee: false, reason: "Tip entered twice", restock: false, actor, now: at("2027-06-12") });
+    const sept2 = await m.reports.payrollTips({ ...scope, from: "2026-09-20", to: "2026-10-03" });
+    expect(sept2.rows.find((r) => r.staffId === staffId)!.cardTipsCents).toBe(1000);
+    const june = await m.reports.payrollTips({ ...scope, from: "2027-06-06", to: "2027-06-19" });
+    const j = june.rows.find((r) => r.staffId === staffId)!;
+    expect(j).toMatchObject({ tickets: 0, cardTipsCents: -1000, cashTipsCents: 0, tipRefundsCents: 1000, totalTipsCents: -1000, serviceSalesCents: 0 });
+  });
+
+  it("a service refund in the same period nets service sales and the tender column that took the tip", async () => {
+    const s = await shop();
+    const staffId = await coralvilleBarber(s.id);
+    const sale = await m.checkout.openBlankSale(s.id, actor, staffId);
+    const svc = await cut(s.id);
+    await m.checkout.finalizeSale({ saleId: sale.id, lines: [{ kind: "service", refId: svc.id, qty: 1 }], tipCents: 600, tender: cash, actor, now: at("2027-01-05") });
+    const item = (await m.checkout.refundableState(sale.id)).items[0];
+    await m.checkout.refundSale({ saleId: sale.id, items: [{ saleItemId: item.id, qty: 1 }], tipCents: 600, refundCardFee: false, reason: "Redo", restock: false, actor, now: at("2027-01-06") });
+    const r = await m.reports.payrollTips({ shopIds: [s.id], staffId, from: "2027-01-03", to: "2027-01-16" });
+    expect(r.rows.find((x) => x.staffId === staffId)).toMatchObject({ tickets: 1, serviceSalesCents: 0, cashTipsCents: 0, totalTipsCents: 0, tipRefundsCents: 600 });
+  });
+
+  it("credit/debit split, daily, monthly, and per-shop totals all subtract refunds and agree with the summary", async () => {
+    const s = await shop();
+    const svc = await cut(s.id);
+    const a = await m.checkout.openBlankSale(s.id, actor);
+    await m.checkout.finalizeSale({ saleId: a.id, lines: [{ kind: "service", refId: svc.id, qty: 1 }], tipCents: 0, tender: credit, actor, now: at("2027-02-02") });
+    const b = await m.checkout.openBlankSale(s.id, actor);
+    await m.checkout.finalizeSale({ saleId: b.id, lines: [{ kind: "service", refId: svc.id, qty: 1 }], tipCents: 0, tender: { ...credit, paymentMethodId: "pm_card_visa_debit" }, actor, now: at("2027-02-02") });
+    const out = await m.checkout.refundEverything(a.id, "Wrong client", false, actor, at("2027-02-03"));
+
+    const scope = { shopIds: [s.id], from: "2027-02-01", to: "2027-02-28" };
+    const [sum, tender, daily, monthly, shops] = await Promise.all([
+      m.reports.salesSummary(scope),
+      m.reports.tenderBreakdown(scope),
+      m.reports.dailyTotals(scope),
+      m.reports.monthlyTotals(scope),
+      m.reports.byShop(scope),
+    ]);
+    expect(tender.cardCreditCents).toBe(0);
+    expect(tender.cardCreditCents + tender.cardDebitCents).toBe(tender.cardCents);
+    expect(out.refundedCents).toBeGreaterThan(0);
+    const total = <T>(xs: T[], f: (x: T) => number) => xs.reduce((acc, x) => acc + f(x), 0);
+    expect(daily.find((d) => d.day === "2027-02-03")).toMatchObject({ tickets: 0, netCents: -svc.priceCents });
+    expect(total(daily, (d) => d.netCents)).toBe(sum.netSalesCents);
+    expect(total(daily, (d) => d.cardCents)).toBe(tender.cardCents);
+    expect(total(monthly, (x) => x.netServicesCents)).toBe(sum.netServicesCents);
+    expect(shops.find((x) => x.shopId === s.id)!.netServicesCents).toBe(sum.netServicesCents);
+    expect(sum.netServicesCents).toBe(svc.priceCents);
+  });
+});

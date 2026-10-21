@@ -189,7 +189,7 @@ describe("checkout → reports → loyalty", () => {
     const r = await m.reports.payrollTips({ shopIds: shops, from: m.time.addDays(m.time.todayLocal(), -3), to: m.time.todayLocal() });
     expect(r.periods.length).toBeGreaterThan(0);
     expect(r.rows.length).toBeGreaterThan(0);
-    for (const row of r.rows) expect(row.totalTipsCents).toBe(row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents - row.tipRefundsCents);
+    for (const row of r.rows) expect(row.totalTipsCents).toBe(row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents);
   });
 
   it("daily, monthly, per-shop, and per-barber reports reconcile with the summary", async () => {
@@ -207,6 +207,9 @@ describe("checkout → reports → loyalty", () => {
     expect(daily.every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d.day))).toBe(true);
     expect(total(daily, (d) => d.tickets)).toBe(sum.tickets);
     expect(total(daily, (d) => d.grossCents)).toBe(sum.grossSalesCents);
+    expect(total(daily, (d) => d.netCents)).toBe(sum.netSalesCents);
+    expect(total(monthly, (x) => x.netServicesCents)).toBe(sum.netServicesCents);
+    expect(total(shops, (x) => x.netServicesCents)).toBe(sum.netServicesCents);
     expect(monthly.every((x) => /^\d{4}-\d{2}$/.test(x.month))).toBe(true);
     expect(total(monthly, (x) => x.tickets)).toBe(sum.tickets);
     expect(total(shops, (x) => x.tickets)).toBe(sum.tickets);
