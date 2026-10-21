@@ -123,7 +123,7 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 - **Refunds issued in the Stripe dashboard** reach the books through the webhook (`charge.refunded`) and run the same reversal as a refund from the POS.
 - **Split tender:** a gift card plus one cash or card payment. Paying the remainder half in cash and half on a card isn't supported yet.
 - **End-of-day drawer:** a denomination counter, expected against counted cash with the variance, and history.
-- **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, and settings changes, including before and after values where it matters. Entries are append-only.
+- **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, and settings changes, including before and after values where it matters. Entries are append-only.
 - **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope.
 
 ### Inventory
@@ -145,7 +145,7 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
   - Gross, discounts, refunds, net services, net products, tax, tips, and card fees.
   - Card (credit/debit) against cash and gift card.
   - Breakdowns by barber and by shop, plus daily and monthly totals.
-- Date presets cover today, this week, this month, the current or last pay period, last 30 days, and year to date, and you can pick any custom range. Every table exports to CSV.
+- Date presets cover today, this week, this month, the current or last pay period, last 30 days, and year to date, and you can pick any custom range. Every table exports to CSV. A cell that starts with `=`, `+`, `-`, `@`, or a tab is prefixed with `'`, so a client named "=HYPERLINK(…)" can't run as a formula in Excel. Negative numbers are left alone.
 - **Payroll tips:** bi-weekly periods that end on Saturdays, anchored on Sat 2026-10-03. Tips are broken out per barber and per shop, split into card, cash, and gift card, with refunded tips netted out, and export to CSV. There's no clock-in; hours stay in iSolved.
 - **KPIs Squire doesn't have:**
   - Rebook rate: the next appointment was booked by the end of the visit plus 24 hours. Imported visits whose next booking has no booking time in Squire are left out rather than counted as not rebooked.
@@ -172,12 +172,27 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 
   A compatible first name is the same name, a common nickname (Mike/Michael), or a prefix of at least three letters; last names must not contradict. A contact with no name to compare only matches when exactly one client has it. A database lock serializes find-or-create, so two bookings at the same moment can't create two records.
 - Families sharing a phone stay separate people. Signing in by code on a shared phone asks which profile you are instead of picking one.
-- **Duplicates and merge** (**Clients → Duplicates**, managers): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
+- **Duplicates and merge** (**Clients → Duplicates**, managers): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, staff ratings, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
 - **Profile:** visit count, no-shows, cancellations, last visit, and lifetime spend come from SQL over the client's whole history, net of refunds. Lifetime spend includes Squire visits that have no imported ticket. The profile also shows the full visit history with shop, barber, services, and prices, plus home shop, preferred barber, loyalty, gift cards, notes, and consent.
 - **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. Managers search the whole brand. A barber's search covers clients who've visited their shops, with the phone masked to its last 4 digits. A barber can open the profile of a client they've served and see notes, loyalty, and visits, but not the phone or email.
 - Client notes show on the calendar panel and the POS ticket.
 - **Consent:** SMS and email opt-in default to no. Each booking sends an explicit choice, an explicit no always sticks, and a missing answer keeps what's on file. Reminder texts and the waitlist "you're up" text are only sent to clients who opted in.
 - Every walk-in becomes a client, even without a phone.
+
+### Client ratings (staff only)
+
+- **Rate a visit, 1 to 5 stars,** with an optional private note (up to 500 characters: "late", "great tipper", "difficult"). Rate from the receipt right after checkout, or from **Staff ratings** on the client profile, which lists the client's recent visits. Each rating belongs to one visit (an appointment, or a walk-in ticket with no appointment). Each staff member gets one rating per visit, and rating the same visit again changes it.
+- **Who can do what:**
+  - The brand admin can rate any visit, and a manager any visit at their shops. A barber can rate only visits they served: they had the appointment or rang up the ticket. Only completed, in-progress, and no-show visits and paid tickets can be rated.
+  - Managers and the brand admin see every rating and note. Barbers see the average and count, plus only the ratings they gave themselves.
+  - Only the person who gave a rating can edit it. The author or the brand admin can remove it, so the admin can moderate without rewriting someone else's words.
+- **The profile** shows the average, the number of ratings, a 1-to-5 star breakdown, and the history: stars, note, who rated, when, the shop, and the visit, with a link to the ticket. The visit history has a Rating column.
+- **Star badge** (for example "★ 4.3 (7)", red below 3, amber below 4, green otherwise) next to the client's name on the day calendar block and side panel, at checkout (POS and receipt), and in client search on the calendar, the POS, and the client list. Unrated clients show no badge.
+- **Clients list:** filter by rated, low (below 3), high (4 and up), or unrated, and sort by highest or lowest rating.
+- **Report** (**Reports → Client ratings**, managers and the admin): for each shop, the lowest- and highest-rated clients by their average from ratings given at that shop, with the count, the last rated date, and the latest note. Filters cover the period (all time, 12 months, 90 days) and a minimum number of ratings. A shop with few rated clients splits them between the two lists, so nobody appears in both. Managers see their own shops. The report exports to CSV.
+- **Audited:** every create, edit, and removal is in the audit log with the shop, the client, and the before and after stars and note.
+- **Never shown to customers.** Ratings live in their own table, `client_ratings`, and no customer-facing code reads it. Tests check this two ways. A static check walks the import graph of `/api/v1`, the public pages, and the API client and fails if any of them can reach the ratings code or table. A DB test signs in as a rated client and calls every `GET` under `/api/v1`, plus booking, profile update, sign-in, and the OpenAPI document. It asserts that no star count, the word "rating", or the private note appears anywhere.
+- Merging duplicate clients carries their ratings over. The database rejects stars outside 1 to 5, a note over 500 characters, and a rating with no visit.
 
 ### Squire importer
 
@@ -227,6 +242,7 @@ These were built in response to the owner's request: "mimic Squire, but make it 
 - Every money-affecting action is in an append-only audit log.
 - The importer always dry-runs first, and re-running it is safe. Every run ends with a reconciliation summary and a downloadable file of skipped rows.
 - One brand-wide client record with a duplicates screen and merge, and a profile with the whole Squire history, lifetime spend, and loyalty in one place.
+- Private staff ratings per visit, with a star badge wherever the client's name appears at the front desk and a lowest- and highest-rated report by shop. Each rating is tied to a visit and an author, and every change is audited. Tests prove ratings never reach the customer API.
 - Booking URLs never contain surnames. Squire's personal booking links do.
 - Duplicate first names get unique IDs and admin-set labels instead of guesswork.
 - An API-first booking backend is ready for a mobile app.
