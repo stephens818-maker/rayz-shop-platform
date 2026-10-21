@@ -17,10 +17,10 @@ import { toCsv } from "@/server/reports";
 
 const CORALVILLE = "11111111-1111-1111-1111-111111111111";
 const MOLINE = "22222222-2222-2222-2222-222222222222";
-const admin: RatingViewer = { staffId: "owner", role: "brand_admin", shopIds: [CORALVILLE, MOLINE] };
-const manager: RatingViewer = { staffId: "michelle", role: "shop_manager", shopIds: [CORALVILLE] };
-const barber: RatingViewer = { staffId: "makenna", role: "barber", shopIds: [CORALVILLE] };
-const otherBarber: RatingViewer = { staffId: "olivia", role: "barber", shopIds: [CORALVILLE] };
+const admin: RatingViewer = { staffId: "owner", shopIds: [CORALVILLE, MOLINE], canRate: true, seesAll: true, moderates: true };
+const manager: RatingViewer = { staffId: "michelle", shopIds: [CORALVILLE], canRate: true, seesAll: true, moderates: false };
+const barber: RatingViewer = { staffId: "makenna", shopIds: [CORALVILLE], canRate: true, seesAll: false, moderates: false };
+const otherBarber: RatingViewer = { staffId: "olivia", shopIds: [CORALVILLE], canRate: true, seesAll: false, moderates: false };
 
 describe("client ratings: input", () => {
   it("accepts 1 to 5 whole stars and trims the note", () => {
@@ -58,12 +58,17 @@ describe("client ratings: who may do what", () => {
     expect(editRatingDenied(admin, barbersRating)).not.toBeNull();
   });
 
-  it("the author or the brand admin can remove a rating; a manager can't remove a barber's", () => {
-    const barbersRating = { staffId: "makenna" };
+  it("the author or a moderator can remove a rating; a manager without moderation can't remove a barber's", () => {
+    const barbersRating = { staffId: "makenna", shopId: CORALVILLE };
     expect(deleteRatingDenied(barber, barbersRating)).toBeNull();
     expect(deleteRatingDenied(admin, barbersRating)).toBeNull();
     expect(deleteRatingDenied(manager, barbersRating)).not.toBeNull();
     expect(deleteRatingDenied(otherBarber, barbersRating)).not.toBeNull();
+    expect(deleteRatingDenied({ ...admin, shopIds: [MOLINE] }, barbersRating)).not.toBeNull();
+  });
+
+  it("rating needs clients.rate", () => {
+    expect(rateVisitDenied({ ...manager, canRate: false }, { shopId: CORALVILLE, servedBy: [] })).toMatch(/permission/);
   });
 
   it("managers and the admin read every rating; barbers don't", () => {

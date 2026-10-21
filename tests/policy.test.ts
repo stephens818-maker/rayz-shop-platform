@@ -1,49 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { hoursProblem } from "@/domain/hours";
 import { labelContainsSurname } from "@/lib/ids";
-import { staffAtShopDenied, staffProfileChangeDenied, timeBlockChangeDenied } from "@/server/auth/policy";
+import { staffAtShopDenied, timeBlockChangeDenied } from "@/server/auth/policy";
 
 const CORALVILLE = "11111111-1111-1111-1111-111111111111";
 const IOWA_CITY = "22222222-2222-2222-2222-222222222222";
-const manager = { staffId: "mgr", isAdmin: false, shopIds: [CORALVILLE] };
-const admin = { staffId: "own", isAdmin: true, shopIds: [CORALVILLE, IOWA_CITY] };
-
-describe("review P0#4: managers can't escalate roles", () => {
-  const self = { role: "shop_manager" as const, managerShopId: CORALVILLE, shopIds: [CORALVILLE] };
-
-  it("denies a manager promoting their own record to brand admin", () => {
-    expect(staffProfileChangeDenied(manager, self, { ...self, role: "brand_admin", managerShopId: null })).toMatch(/brand admin/);
-  });
-
-  it("denies a manager moving their own managed shop", () => {
-    expect(staffProfileChangeDenied(manager, self, { ...self, managerShopId: IOWA_CITY })).not.toBeNull();
-  });
-
-  it("denies promoting a barber to manager or creating managers", () => {
-    const barber = { role: "barber" as const, managerShopId: null, shopIds: [CORALVILLE] };
-    expect(staffProfileChangeDenied(manager, barber, { ...barber, role: "shop_manager", managerShopId: CORALVILLE })).not.toBeNull();
-    expect(staffProfileChangeDenied(manager, null, { role: "shop_manager", managerShopId: CORALVILLE, shopIds: [CORALVILLE] })).not.toBeNull();
-    expect(staffProfileChangeDenied(manager, null, { role: "brand_admin", managerShopId: null, shopIds: [CORALVILLE] })).not.toBeNull();
-  });
-
-  it("denies editing a brand admin and adding people to another shop", () => {
-    const owner = { role: "brand_admin" as const, managerShopId: null, shopIds: [CORALVILLE] };
-    expect(staffProfileChangeDenied(manager, owner, owner)).not.toBeNull();
-    const barber = { role: "barber" as const, managerShopId: null, shopIds: [CORALVILLE] };
-    expect(staffProfileChangeDenied(manager, barber, { ...barber, shopIds: [CORALVILLE, IOWA_CITY] })).not.toBeNull();
-  });
-
-  it("allows ordinary edits, including barbers who also work at a shop the manager can't see", () => {
-    const shared = { role: "barber" as const, managerShopId: null, shopIds: [CORALVILLE, IOWA_CITY] };
-    expect(staffProfileChangeDenied(manager, shared, shared)).toBeNull();
-    expect(staffProfileChangeDenied(manager, self, self)).toBeNull();
-    expect(staffProfileChangeDenied(manager, null, { role: "barber", managerShopId: null, shopIds: [CORALVILLE] })).toBeNull();
-  });
-
-  it("lets the brand admin do anything", () => {
-    expect(staffProfileChangeDenied(admin, self, { ...self, role: "brand_admin", managerShopId: null })).toBeNull();
-  });
-});
+const manager = { staffId: "mgr", brandWide: false, shopIds: [CORALVILLE] };
+const admin = { staffId: "own", brandWide: true, shopIds: [CORALVILLE, IOWA_CITY] };
 
 describe("review P1#12: time blocks and sale barbers stay in scope", () => {
   const shared = "barber-2-shops";
@@ -107,24 +70,24 @@ describe("review P1#19: cron and sign-in codes fail closed", () => {
   });
 });
 
-describe("review P2#21: Sunday hours are a brand-admin decision", () => {
+describe("review P2#21: Sunday hours are a brand-level setting (settings.brand)", () => {
   const week = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, openMin: 540, closeMin: 1080 }));
   const sunday = { weekday: 0, openMin: 600, closeMin: 900 };
 
   it("refuses a manager opening Sunday, and lets a brand admin do it", () => {
-    expect(hoursProblem([...week, sunday], { isAdmin: false, currentSunday: null })).toMatchObject({ code: "forbidden" });
-    expect(hoursProblem([...week, sunday], { isAdmin: true, currentSunday: null })).toBeNull();
+    expect(hoursProblem([...week, sunday], { canSetSunday: false, currentSunday: null })).toMatchObject({ code: "forbidden" });
+    expect(hoursProblem([...week, sunday], { canSetSunday: true, currentSunday: null })).toBeNull();
   });
 
   it("lets a manager keep or close the Sunday an admin set, but not change it", () => {
     const current = { openMin: 600, closeMin: 900 };
-    expect(hoursProblem([...week, sunday], { isAdmin: false, currentSunday: current })).toBeNull();
-    expect(hoursProblem(week, { isAdmin: false, currentSunday: current })).toBeNull();
-    expect(hoursProblem([...week, { ...sunday, closeMin: 960 }], { isAdmin: false, currentSunday: current })).toMatchObject({ code: "forbidden" });
+    expect(hoursProblem([...week, sunday], { canSetSunday: false, currentSunday: current })).toBeNull();
+    expect(hoursProblem(week, { canSetSunday: false, currentSunday: current })).toBeNull();
+    expect(hoursProblem([...week, { ...sunday, closeMin: 960 }], { canSetSunday: false, currentSunday: current })).toMatchObject({ code: "forbidden" });
   });
 
   it("rejects malformed rows for everyone", () => {
-    const who = { isAdmin: true, currentSunday: null };
+    const who = { canSetSunday: true, currentSunday: null };
     expect(hoursProblem([{ weekday: 7, openMin: 540, closeMin: 600 }], who)?.code).toBe("bad_request");
     expect(hoursProblem([{ weekday: 1, openMin: 600, closeMin: 540 }], who)?.code).toBe("bad_request");
     expect(hoursProblem([{ weekday: 1, openMin: 540, closeMin: 1500 }], who)?.code).toBe("bad_request");

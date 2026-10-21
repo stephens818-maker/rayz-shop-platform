@@ -499,9 +499,9 @@ describe("profiles, search, and access", () => {
 
     const makenna = await staffNamed("Makenna");
     const beth = await staffNamed("Beth");
-    expect(await m.customers.customerAccess({ staffId: makenna.id, canManage: false }, c.id)).toBe("barber");
-    expect(await m.customers.customerAccess({ staffId: beth.id, canManage: false }, c.id)).toBeNull();
-    expect(await m.customers.customerAccess({ staffId: beth.id, canManage: true }, c.id)).toBe("full");
+    expect(await m.customers.customerAccess({ staffId: makenna.id, viewAll: false }, c.id)).toBe("barber");
+    expect(await m.customers.customerAccess({ staffId: beth.id, viewAll: false }, c.id)).toBeNull();
+    expect(await m.customers.customerAccess({ staffId: beth.id, viewAll: true }, c.id)).toBe("full");
   });
 });
 

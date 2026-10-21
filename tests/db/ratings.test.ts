@@ -6,6 +6,7 @@
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { Permission } from "@/domain/permissions";
 import type { RatingViewer } from "@/domain/ratings";
 import { Mods, actor, loadModules } from "./setup";
 
@@ -84,8 +85,9 @@ async function ticket(o: { customerId: string; shop?: string; staffId?: string |
 
 async function viewerFor(label: string, override: Partial<RatingViewer> = {}): Promise<RatingViewer> {
   const s = await staffNamed(label);
-  const shops = await m.db.db.select().from(m.schema.staffShops).where(eq(m.schema.staffShops.staffId, s.id));
-  return { staffId: s.id, role: s.role, shopIds: shops.map((x) => x.shopId), ...override };
+  const a = (await (await import("@/server/auth/access")).loadStaffAccess(s.id))!;
+  const has = (p: Permission) => a.permissions.has(p);
+  return { staffId: s.id, shopIds: a.shopIds, canRate: has("clients.rate"), seesAll: has("clients.ratings_all"), moderates: has("clients.ratings_moderate"), ...override };
 }
 
 const auditFor = (ratingId: string) =>
@@ -103,7 +105,7 @@ beforeAll(async () => {
   manager = await viewerFor("Michelle");
   barber = await viewerFor("Makenna");
   otherBarber = await viewerFor("Jessica");
-  molineManager = await viewerFor("Jen", { role: "shop_manager" });
+  molineManager = await viewerFor("Jen", { seesAll: true });
   coralvilleId = (await shopNamed("coralville")).id;
 });
 
