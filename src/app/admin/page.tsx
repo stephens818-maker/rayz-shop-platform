@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, asc, eq, gt, inArray, lt, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointmentItems, appointments, customers, products, shopProducts, shops, staff, waitlistEntries } from "@/db/schema";
+import { appointmentItems, appointments, customers, shops, staff, waitlistEntries } from "@/db/schema";
 import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { addDays, endOfLocalDay, formatDate, formatTime, startOfLocalDay, todayLocal } from "@/lib/time";
 import { reportsFor } from "@/domain/navigation";
-import { can, guardPage, reportShopIds } from "@/server/auth/staff";
+import { can, canAny, guardPage, reportShopIds } from "@/server/auth/staff";
+import { stockLevels } from "@/server/inventory/stock";
 import { byShop, salesSummary } from "@/server/reports";
 
 export const metadata: Metadata = { title: "Today" };
@@ -24,7 +25,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const scope = { shopIds, from: today, to: today, staffId: salesStaffId };
   const lastWeek = { shopIds, from: addDays(today, -7), to: addDays(today, -7), staffId: salesStaffId };
   const seesWalkins = can(ctx, "walkins.manage");
-  const seesStock = can(ctx, "inventory.manage");
+  const seesStock = canAny(ctx, ["inventory.manage", "inventory.adjust", "po.create"]);
   const seesSettings = can(ctx, "settings.shop") || can(ctx, "settings.taxes");
   const now = new Date();
   const apptWhere = and(
@@ -62,14 +63,12 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       : db.select({ n: sql<number>`count(*)::int` }).from(waitlistEntries).where(and(inArray(waitlistEntries.shopId, shopIds), eq(waitlistEntries.status, "waiting"))),
     !seesStock
       ? Promise.resolve([])
-      : db
-          .select({ name: products.name, brand: products.brand, stock: shopProducts.stock, shop: shops.name })
-          .from(shopProducts)
-          .innerJoin(products, eq(products.id, shopProducts.productId))
-          .innerJoin(shops, eq(shops.id, shopProducts.shopId))
-          .where(and(inArray(shopProducts.shopId, shopIds), eq(shopProducts.active, true), lte(shopProducts.stock, shopProducts.lowStockThreshold)))
-          .orderBy(asc(shopProducts.stock))
-          .limit(8),
+      : stockLevels(shopIds).then((rows) =>
+          rows
+            .filter((r) => r.low)
+            .sort((a, b) => a.available - b.available)
+            .slice(0, 8),
+        ),
     ctx.currentShopId === null && !ownSales ? byShop(scope) : Promise.resolve([]),
     db.select({ name: shops.name }).from(shops).where(and(inArray(shops.id, shopIds), eq(shops.taxRatesVerified, false))),
   ]);
@@ -154,7 +153,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <div className="space-y-4">
           {seesStock && (
             <Card>
-              <CardHeader title="Low stock" action={<Link className="text-xs underline" href="/admin/inventory">Inventory</Link>} />
+              <CardHeader title="Low stock" action={<Link className="text-xs underline" href="/admin/inventory/low-stock">Reorder</Link>} />
               {lowStock.length === 0 ? (
                 <div className="px-4 py-3 text-sm text-zinc-500">All products above their reorder point.</div>
               ) : (
@@ -165,7 +164,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                         {p.brand} {p.name}
                         {ctx.currentShopId === null && <span className="text-xs text-zinc-500"> · {p.shop}</span>}
                       </span>
-                      <span className={p.stock <= 0 ? "font-semibold text-red-600" : "text-amber-700"}>{p.stock}</span>
+                      <span className={p.available <= 0 ? "font-semibold text-red-600" : "text-amber-700"}>
+                        {p.available}
+                        {p.onOrder + p.inTransit > 0 && <span className="text-xs text-zinc-500"> +{p.onOrder + p.inTransit} coming</span>}
+                      </span>
                     </li>
                   ))}
                 </ul>

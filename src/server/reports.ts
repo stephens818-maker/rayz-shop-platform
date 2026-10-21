@@ -746,47 +746,6 @@ export async function refundTotals(s: ReportScope, o?: Grain) {
     group by 1, 2, 3`);
 }
 
-/** Stock on hand now, with what happened to it in the range. */
-export async function inventoryStatus(s: ReportScope) {
-  const start = startOfLocalDay(s.from).toISOString();
-  const end = endOfLocalDay(s.to).toISOString();
-  return rows<{
-    shopId: string;
-    productId: string;
-    shop: string;
-    sku: string;
-    product: string;
-    stock: number;
-    threshold: number;
-    low: boolean;
-    costCents: number;
-    priceCents: number;
-    valueCents: number;
-    received: number;
-    sold: number;
-    damaged: number;
-    counted: number;
-  }>(sql`
-    with adj as (
-      select a.shop_id, a.product_id,
-        sum(case when a.reason = 'receive' then a.delta else 0 end)::int received,
-        sum(case when a.reason in ('sale','refund') then -a.delta else 0 end)::int sold,
-        sum(case when a.reason = 'damage' then -a.delta else 0 end)::int damaged,
-        sum(case when a.reason in ('count', 'upload') then a.delta else 0 end)::int counted
-      from inventory_adjustments a
-      where a.shop_id in ${ids(s)} and a.created_at >= ${start} and a.created_at < ${end}
-      group by 1, 2
-    )
-    select sh.id "shopId", p.id "productId", sh.name shop, p.sku, (p.brand || ' ' || p.name) product, sp.stock, sp.low_stock_threshold threshold,
-      (sp.active and sp.stock <= sp.low_stock_threshold) low, sp.cost_cents "costCents", sp.price_cents "priceCents",
-      (greatest(sp.stock, 0) * sp.cost_cents)::int "valueCents",
-      coalesce(adj.received, 0) received, coalesce(adj.sold, 0) sold, coalesce(adj.damaged, 0) damaged, coalesce(adj.counted, 0) counted
-    from shop_products sp join products p on p.id = sp.product_id join shops sh on sh.id = sp.shop_id
-      left join adj on adj.shop_id = sp.shop_id and adj.product_id = sp.product_id
-    where sp.shop_id in ${ids(s)} and (sp.active or sp.stock <> 0)
-    order by low desc, sh.name, p.brand, p.name`);
-}
-
 export interface GiftCardTotals {
   issuedN: number;
   issuedCents: number;

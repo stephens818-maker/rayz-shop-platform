@@ -473,14 +473,15 @@ describe("P2#29 stock and promo caps hold under concurrent checkouts", () => {
     const b = await m.checkout.openBlankSale(s.id, actor);
     const product = (await m.checkout.loadCheckoutContext(a.id)).retail.find((p) => p.stock > 0)!;
     const where = m.drizzle.and(eq(m.schema.shopProducts.shopId, s.id), eq(m.schema.shopProducts.productId, product.productId));
-    await m.db.db.update(m.schema.shopProducts).set({ stock: 1 }).where(where);
+    const setTo = (to: number) => m.db.db.transaction((tx) => m.ledger.setOnHand(tx, { shopId: s.id, productId: product.productId, to, kind: "adjust", reason: "count_correction" }, { actor, negative: "allow" }));
+    await setTo(1);
     const sell = (saleId: string) => m.checkout.finalizeSale({ saleId, lines: [{ kind: "product", refId: product.productId, qty: 1 }], tipCents: 0, tender: cash, actor });
     const out = await Promise.allSettled([sell(a.id), sell(b.id)]);
     expect(out.filter((o) => o.status === "fulfilled")).toHaveLength(1);
     const lost = out.find((o) => o.status === "rejected") as PromiseRejectedResult;
     expect(lost.reason).toMatchObject({ code: "conflict" });
     expect((await m.db.db.query.shopProducts.findFirst({ where }))!.stock).toBe(0);
-    await m.db.db.update(m.schema.shopProducts).set({ stock: product.stock }).where(where);
+    await setTo(product.stock);
   });
 
   it("a one-use promo applied on two tickets at once is redeemed once", async () => {

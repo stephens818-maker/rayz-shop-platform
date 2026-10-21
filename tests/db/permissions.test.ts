@@ -198,13 +198,13 @@ describe("server actions", () => {
     const settings = await import("@/app/admin/settings/actions");
     const sp = (await m.db.db.select().from(m.schema.shopProducts).where(eq(m.schema.shopProducts.shopId, shopId.moline)).limit(1))[0];
     await as("michelle");
-    expect(await inv.adjustStockAction(shopId.moline, sp.productId, "receive", 2)).toMatchObject({ ok: false, error: "That shop is outside your access" });
+    expect(await inv.adjustStockAction({ shopId: shopId.moline, productId: sp.productId, mode: "add", qty: 2, reason: "found" })).toMatchObject({ ok: false, error: "That shop is outside your access" });
     expect(await settings.saveShopInfoAction(shopId.moline, {} as never)).toMatchObject({ ok: false, error: "That shop is outside your access" });
     expect(await settings.saveShopMoneyAction(shopId.coralville, {} as never)).toMatchObject({ ok: false, error: expect.stringMatching(/permission/) });
     const mine = (await m.db.db.select().from(m.schema.shopProducts).where(eq(m.schema.shopProducts.shopId, shopId.coralville)).limit(1))[0];
-    expect(await inv.adjustStockAction(shopId.coralville, mine.productId, "receive", 2)).toMatchObject({ ok: true });
+    expect(await inv.adjustStockAction({ shopId: shopId.coralville, productId: mine.productId, mode: "add", qty: 2, reason: "found" })).toMatchObject({ ok: true });
     await as("frontdesk");
-    expect(await inv.adjustStockAction(shopId.coralville, mine.productId, "receive", 2)).toMatchObject({ ok: false });
+    expect(await inv.adjustStockAction({ shopId: shopId.coralville, productId: mine.productId, mode: "add", qty: 2, reason: "found" })).toMatchObject({ ok: false });
   });
 
   it("the POS caps a manual discount at the person's limit", async () => {

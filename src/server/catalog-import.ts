@@ -112,7 +112,7 @@ export async function uploadCatalog(input: UploadInput): Promise<ClientPlan> {
         for (const s of op.shops) {
           const where = and(eq(shopProducts.shopId, s.shopId), eq(shopProducts.productId, id));
           if (s.create) {
-            const { stock: _opening, lowStockThreshold, ...rest } = s.create;
+            const { stock, lowStockThreshold, ...rest } = s.create;
             const brandLevel = op.create?.lowStockThreshold ?? (await tx.select({ v: products.lowStockThreshold }).from(products).where(eq(products.id, id)))[0].v;
             await tx.insert(shopProducts).values({ shopId: s.shopId, productId: id, ...rest, lowStockThreshold: lowStockThreshold === brandLevel ? null : lowStockThreshold });
           } else if (s.patch && Object.keys(s.patch).length) await tx.update(shopProducts).set(s.patch).where(where);

@@ -48,9 +48,11 @@ async function checkLines(tx: Tx, fromShopId: string, lines: { productId: string
 export async function createTransfer(who: Who, raw: z.input<typeof TransferInput>) {
   const v = TransferInput.parse(raw);
   if (v.fromShopId === v.toShopId) throw new AppError("bad_request", "Pick two different shops");
+  // Sending only needs the source shop: a manager can send stock to a sister shop, which checks it in.
   assertShop(who, v.fromShopId);
-  assertShop(who, v.toShopId);
   return db.transaction(async (tx) => {
+    const [dest] = await tx.select({ id: shops.id }).from(shops).where(eq(shops.id, v.toShopId));
+    if (!dest) throw notFound("Shop");
     await checkLines(tx, v.fromShopId, v.lines);
     const [t] = await tx.insert(stockTransfers).values({ fromShopId: v.fromShopId, toShopId: v.toShopId, note: v.note, createdBy: who.actor.staffId ?? null }).returning();
     if (v.lines.length) await tx.insert(stockTransferLines).values(v.lines.map((l) => ({ transferId: t.id, ...l })));

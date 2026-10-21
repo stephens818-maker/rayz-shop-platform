@@ -25,6 +25,13 @@ export async function loadModules() {
     webhook: await import("@/server/payments/webhook"),
     drizzle: await import("drizzle-orm"),
     time: await import("@/lib/time"),
+    ledger: await import("@/server/inventory/ledger"),
+    stock: await import("@/server/inventory/stock"),
+    purchasing: await import("@/server/inventory/purchasing"),
+    transfers: await import("@/server/inventory/transfers"),
+    counts: await import("@/server/inventory/counts"),
+    adjust: await import("@/server/inventory/adjust"),
+    invReports: await import("@/server/inventory/reports"),
   };
 }
 

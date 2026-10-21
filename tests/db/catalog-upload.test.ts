@@ -78,8 +78,8 @@ describe("bulk upload", () => {
         [shopId.moline, 2000, 6],
       ].sort(),
     );
-    const adj = await m.db.db.select().from(m.schema.inventoryAdjustments).where(eq(m.schema.inventoryAdjustments.productId, p.id));
-    expect(adj.map((a) => [a.reason, a.delta, a.staffId]).sort()).toEqual([["upload", 10, ids.admin], ["upload", 6, ids.admin]].sort());
+    const adj = await m.db.db.select().from(m.schema.inventoryLedger).where(eq(m.schema.inventoryLedger.productId, p.id));
+    expect(adj.map((a) => [a.kind, a.delta, a.balanceAfter, a.staffId]).sort()).toEqual([["upload", 10, 10, ids.admin], ["upload", 6, 6, ids.admin]].sort());
     const audit = await m.db.db.select().from(m.schema.auditLog).where(eq(m.schema.auditLog.entityId, p.id));
     expect(audit.map((a) => a.action).sort()).toEqual(["catalog.product_create", "inventory.upload_add", "inventory.upload_add"]);
     const run = (await m.db.db.select().from(m.schema.importRuns).where(eq(m.schema.importRuns.id, plan.runId!)))[0];
@@ -148,8 +148,8 @@ describe("bulk upload", () => {
     expect(await productBySku("TEST-NEW-9")).toBeUndefined();
     const run = (await m.db.db.select().from(m.schema.importRuns).where(eq(m.schema.importRuns.id, plan.runId!)))[0];
     expect(run.kind).toBe("catalog_stock");
-    const adj = await m.db.db.select().from(m.schema.inventoryAdjustments).where(m.drizzle.and(eq(m.schema.inventoryAdjustments.productId, p.id), eq(m.schema.inventoryAdjustments.staffId, ids.regional)));
-    expect(adj).toMatchObject([{ delta: -5, reason: "upload", shopId: shopId.moline }]);
+    const adj = await m.db.db.select().from(m.schema.inventoryLedger).where(m.drizzle.and(eq(m.schema.inventoryLedger.productId, p.id), eq(m.schema.inventoryLedger.staffId, ids.regional)));
+    expect(adj).toMatchObject([{ delta: -5, kind: "upload", balanceAfter: 3, shopId: shopId.moline }]);
   });
 
   it("shop scope: columns or shops outside your access block the upload", async () => {
