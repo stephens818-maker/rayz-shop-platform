@@ -1,4 +1,5 @@
 import { REPORTS, ReportKey, reportExport, reportView } from "@/domain/permissions";
+import { viewOf } from "@/domain/report-views";
 import { can, routeStaff } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import { REPORT_LOADERS, tableCsv } from "@/server/report-data";
@@ -16,7 +17,8 @@ const ALIASES: Record<string, { report: ReportKey; table?: string; view?: string
 
 /**
  * CSV for one report table. Needs both "view" and "export" for that report, for shops in your
- * access. The file follows the page's view: combined, or by location with a Location column.
+ * access, and only the barbers the viewer may see. The file follows the page's view: combined, by
+ * location, by barber, or by location and barber, with Location and Barber columns to match.
  */
 export async function GET(req: Request) {
   const ctx = await routeStaff(null);
@@ -31,7 +33,7 @@ export async function GET(req: Request) {
   if (key === "client_ratings") return Response.redirect(new URL(`/admin/reports/ratings/export?${url.searchParams}`, url), 307);
   let scope;
   try {
-    scope = await resolveScope(ctx, { ...p, shop: url.searchParams.getAll("shop"), view: p.view ?? alias?.view }, key);
+    scope = await resolveScope(ctx, { ...p, shop: url.searchParams.getAll("shop"), staff: url.searchParams.getAll("staff"), view: p.view ?? alias?.view }, key);
   } catch (e) {
     return new Response(e instanceof AppError ? e.message : "Bad request", { status: 403 });
   }
@@ -40,7 +42,7 @@ export async function GET(req: Request) {
   const table = tableId ? data.tables.find((t) => t.id === tableId) : data.tables[0];
   if (!table) return new Response("Unknown table", { status: 404 });
   const csv = tableCsv(table);
-  const view = scope.loc.view === "shops" ? "-by-location" : "";
+  const view = { combined: "", shops: "-by-location", barbers: "-by-barber", shops_barbers: "-by-location-and-barber" }[viewOf(scope.loc)];
   const name =
     key === "audit_log"
       ? `rayz-audit-log${view}-${new Date().toISOString().slice(0, 10)}`

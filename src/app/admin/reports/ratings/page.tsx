@@ -4,9 +4,10 @@ import { Card, CardHeader, Empty, PageHeader, StarBadge, Table, Td, Th } from "@
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { RatedClientRow, ratingsByShop } from "@/server/ratings";
-import { LocationView } from "@/domain/report-views";
-import { LocationField, LocationNotice, ViewToggle, locationProps, reportQuery } from "../filters";
-import { ReportTabs } from "../report-view";
+import { ratingsGivenTable } from "@/server/report-data";
+import { ReportView } from "@/domain/report-views";
+import { BarberField, LocationField, LocationNotice, ViewInput, ViewToggle, locationProps, reportQuery, withView } from "../filters";
+import { ReportTableCard, ReportTabs } from "../report-view";
 import { MIN_RATINGS, PERIODS, RatingsParams, resolveRatingsParams } from "./params";
 
 export const metadata: Metadata = { title: "Client ratings" };
@@ -53,10 +54,12 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
   const ctx = await guardPage("/admin/reports/ratings");
   const p = await resolveRatingsParams(ctx, await searchParams);
   const t0 = performance.now();
-  const shops = await ratingsByShop(p.query);
+  const [shops, given] = await Promise.all([ratingsByShop(p.query), ratingsGivenTable(p.scope, p.loc)]);
   const ms = Math.round(performance.now() - t0);
+  const canExport = can(ctx, "report.client_ratings.export");
   const csv = reportQuery(p, { min: String(p.min), period: p.period });
-  const here = (view: LocationView) => `/admin/reports/ratings?${reportQuery({ ...p, loc: { ...p.loc, view } }, { min: String(p.min), period: p.period })}`;
+  const here = (view: ReportView) => `/admin/reports/ratings?${reportQuery(withView(p, view), { min: String(p.min), period: p.period })}`;
+  const barbers = p.barbers?.pickable && p.barbers.selection.staffIds ? ` · rated by ${p.barbers.label}` : "";
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -64,13 +67,14 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
         title="Client ratings"
         subtitle={
           <>
-            {p.label} · {p.query.combined ? "Lowest- and highest-rated clients across these shops" : "Lowest- and highest-rated clients at each shop"}, from staff ratings given
-            there. Staff only.
+            {p.label}
+            {barbers} · {p.query.combined ? "Lowest- and highest-rated clients across these shops" : "Lowest- and highest-rated clients at each shop"}, from staff ratings
+            given there. Staff only.
             <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
           </>
         }
         actions={
-          can(ctx, "report.client_ratings.export") ? (
+          canExport ? (
             <a className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/reports/ratings/export?${csv}`}>
               Export CSV
             </a>
@@ -78,8 +82,10 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
         }
       />
       <ReportTabs ctx={ctx} active="client_ratings" />
-      <form key={p.shopParam ?? ""} className="no-print mb-4 flex flex-wrap items-end gap-2 text-sm" action="/admin/reports/ratings">
+      <form key={`${p.shopParam ?? ""}|${p.staffParam ?? ""}`} className="no-print mb-4 flex flex-wrap items-end gap-2 text-sm" action="/admin/reports/ratings">
         {ctx.shops.length > 1 && <LocationField p={locationProps(ctx, p)} />}
+        <BarberField l={p} />
+        <ViewInput l={p} />
         <select name="period" defaultValue={p.period} aria-label="Period" className="h-9 rounded-lg px-2 ring-1 ring-zinc-300">
           {Object.entries(PERIODS).map(([k, v]) => (
             <option key={k} value={k}>
@@ -95,13 +101,13 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
           ))}
         </select>
         <button className="h-9 rounded-lg bg-ink-900 px-4 font-medium text-white">Show</button>
-        {p.selection.shopIds.length > 1 && (
-          <div className="ml-auto self-center">
-            <ViewToggle view={p.loc.view} href={here} />
-          </div>
-        )}
+        <div className="ml-auto self-center">
+          <ViewToggle l={p} href={here} />
+        </div>
       </form>
       <LocationNotice locations={p} />
+      <ReportTableCard t={given} csv={canExport ? `/admin/reports/ratings/export?${reportQuery(p, { period: p.period, table: "given" })}` : null} />
+      <div className="h-4" />
       {shops.length === 0 ? (
         <Empty title="No shops in scope" />
       ) : (

@@ -8,7 +8,7 @@ import { formatDateTime } from "@/lib/time";
 import { auditScope } from "@/server/audit";
 import { can, guardPage } from "@/server/auth/staff";
 import { auditRows } from "@/server/report-data";
-import { LocationField, LocationNotice, ViewToggle, locationProps, reportQuery } from "../reports/filters";
+import { LocationField, LocationNotice, ViewInput, ViewToggle, locationProps, reportQuery, withView } from "../reports/filters";
 import { ReportTabs } from "../reports/report-view";
 import { resolveLocations } from "../reports/scope";
 
@@ -62,11 +62,10 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
           ))}
         </Select>
         <button className={buttonClass("secondary")}>Filter</button>
-        {l.selection.shopIds.length > 1 && (
-          <div className="ml-auto self-center">
-            <ViewToggle view={l.loc.view} href={(v) => `/admin/audit?${reportQuery({ ...l, loc: { ...l.loc, view: v } }, filters)}`} />
-          </div>
-        )}
+        <ViewInput l={l} />
+        <div className="ml-auto self-center">
+          <ViewToggle l={l} href={(v) => `/admin/audit?${reportQuery(withView(l, v), filters)}`} />
+        </div>
       </form>
       <LocationNotice locations={l} />
       <Card>

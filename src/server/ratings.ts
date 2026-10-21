@@ -314,18 +314,27 @@ export interface ShopRatings {
  * splits its rated clients between the two lists so nobody appears in both. `combined` ranks
  * clients across all the shops together, from every rating given at any of them.
  */
-export async function ratingsByShop(opts: { shopIds: string[]; minRatings?: number; limit?: number; since?: Date | null; combined?: { label: string } | null }): Promise<ShopRatings[]> {
-  if (!opts.shopIds.length) return [];
+export async function ratingsByShop(opts: {
+  shopIds: string[];
+  /** Only ratings given by these barbers. Null or absent: everyone's. */
+  staffIds?: string[] | null;
+  minRatings?: number;
+  limit?: number;
+  since?: Date | null;
+  combined?: { label: string } | null;
+}): Promise<ShopRatings[]> {
+  if (!opts.shopIds.length || opts.staffIds?.length === 0) return [];
   const shopCol = opts.combined ? sql`null::uuid` : sql`r.shop_id`;
   const minRatings = Math.max(1, Math.floor(opts.minRatings ?? 1));
   const limit = Math.max(1, Math.floor(opts.limit ?? 10));
   const shopList = sql.join(opts.shopIds.map((s) => sql`${s}::uuid`), sql`, `);
+  const raters = opts.staffIds ? sql` and r.staff_id in (${sql.join(opts.staffIds.map((s) => sql`${s}::uuid`), sql`, `)})` : sql``;
   const rows = (await db.execute(sql`
     with agg as (
       select ${shopCol} shop_id, r.customer_id, avg(r.stars)::float8 as avg, count(*)::int as n, max(r.created_at) as last_at,
         (array_agg(r.note order by r.created_at desc) filter (where r.note is not null))[1] as last_note
       from client_ratings r
-      where r.shop_id in (${shopList})${opts.since ? sql` and r.created_at >= ${opts.since.toISOString()}` : sql``}
+      where r.shop_id in (${shopList})${raters}${opts.since ? sql` and r.created_at >= ${opts.since.toISOString()}` : sql``}
       group by 1, 2
       having count(*) >= ${minRatings}
     ), ranked as (

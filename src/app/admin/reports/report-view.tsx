@@ -1,19 +1,14 @@
 import Link from "next/link";
-import { asc, eq, inArray } from "drizzle-orm";
-import { db } from "@/db";
-import { staff, staffShops } from "@/db/schema";
 import { Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
 import { reportFor, reportsFor } from "@/domain/navigation";
 import { ReportKey, reportExport } from "@/domain/permissions";
+import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
 import { WEEKDAYS, formatDate } from "@/lib/time";
 import { StaffContext, can, guardPage } from "@/server/auth/staff";
 import { Cell, ColumnKind, REPORT_LOADERS, ReportTable } from "@/server/report-data";
 import { LocationNotice, ReportFilters, locationProps, reportQuery } from "./filters";
 import { ReportParams, resolveScope } from "./scope";
-
-/** Reports that can be narrowed to one barber's tickets or appointments. */
-const BARBER_FILTER: ReadonlySet<ReportKey> = new Set(["sales_summary", "sales_by_barber", "services_vs_products", "card_vs_cash", "discounts_refunds", "kpis", "heatmap"]);
 
 /** The strip of reports this person may open. Reports they lack aren't shown at all. */
 export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportKey }) {
@@ -39,6 +34,8 @@ function formatCell(v: Cell, kind: ColumnKind | undefined) {
   if (v === null || v === "") return "—";
   if (kind === "money" && typeof v === "number") return formatCents(v);
   if (kind === "pct" && typeof v === "number") return `${Math.round(v * 100)}%`;
+  if (kind === "hours" && typeof v === "number") return (v / 60).toFixed(1);
+  if (kind === "decimal" && typeof v === "number") return v.toFixed(2);
   if (kind === "bool") return v ? "Yes" : "";
   return String(v);
 }
@@ -47,7 +44,7 @@ const ROW_STYLE = { subtotal: "bg-zinc-50 font-medium", total: "bg-zinc-100 font
 
 /** One report table: per-row number formats for metric tables, shaded subtotal and total rows. */
 export function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null }) {
-  const right = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct";
+  const right = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct" || k === "hours" || k === "decimal";
   const kindAt = (i: number, j: number) => (t.rowKinds?.[i] && j > 0 ? t.rowKinds[i] : t.columns[j]?.kind);
   const last = t.columns.length - 1;
   return (
@@ -162,23 +159,11 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
   const canExport = can(ctx, reportExport(report));
   const t0 = performance.now();
   const params = Object.fromEntries(Object.entries(searchParams).map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
-  const [data, barbers] = await Promise.all([
-    REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, params }),
-    BARBER_FILTER.has(report)
-      ? db
-          .selectDistinct({ id: staff.id, label: staff.displayLabel })
-          .from(staffShops)
-          .innerJoin(staff, eq(staff.id, staffShops.staffId))
-          .where(inArray(staffShops.shopId, scope.shopIds))
-          .orderBy(asc(staff.displayLabel))
-      : Promise.resolve(null),
-  ]);
+  const data = await REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, params });
   const ms = Math.round(performance.now() - t0);
-  const csv = (table: string) => {
-    if (!canExport) return null;
-    const q = reportQuery(scope, { type: report, table, from: scope.from, to: scope.to, staff: scope.staffId && report !== "my_sales" ? scope.staffId : null });
-    return `/admin/reports/export?${q}`;
-  };
+  const csv = (table: string) => (canExport ? `/admin/reports/export?${reportQuery(scope, { type: report, table, from: scope.from, to: scope.to })}` : null);
+  const view = viewOf(scope.loc);
+  const barberLabel = scope.barbers?.pickable && scope.barbers.selection.staffIds ? scope.barbers.label : null;
   const exportAll = data.tables.find((t) => t.exportOnly && t.id !== "heatmap");
   const heatmapCsv = data.heatmaps && data.tables.some((t) => t.id === "heatmap") ? csv("heatmap") : null;
 
@@ -190,8 +175,8 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
           <>
             {scope.label} · {formatDate(scope.from, "MMM d, yyyy")}
             {scope.to !== scope.from && ` – ${formatDate(scope.to, "MMM d, yyyy")}`}
-            {scope.staffId && report !== "my_sales" && ` · ${barbers?.find((b) => b.id === scope.staffId)?.label ?? "barber"}`}
-            {scope.loc.view === "shops" && " · by location"}
+            {barberLabel && ` · ${barberLabel}`}
+            {view !== "combined" && ` · ${REPORT_VIEWS[view].toLowerCase()}`}
             <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
           </>
         }
@@ -209,8 +194,7 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
         preset={scope.preset}
         from={scope.from}
         to={scope.to}
-        staff={report === "my_sales" ? null : (scope.staffId ?? null)}
-        barbers={barbers}
+        scope={scope}
         location={ctx.shops.length > 1 ? locationProps(ctx, scope) : null}
       />
       <LocationNotice locations={scope} />

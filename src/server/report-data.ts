@@ -3,31 +3,50 @@ import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm
 import { db } from "@/db";
 import { auditLog, shops } from "@/db/schema";
 import { ReportKey } from "@/domain/permissions";
-import { Cell, Column, ColumnKind, ListRow, Metric, ReportTable, ViewCtx, csvTable, listTable, metricTable, splitTable } from "@/domain/report-views";
+import {
+  Cell,
+  Column,
+  ColumnKind,
+  ListRow,
+  Metric,
+  ReportTable,
+  TOTAL,
+  ViewCtx,
+  csvTable,
+  listTable,
+  metricSplitTable,
+  metricTable,
+  segKey,
+  segments,
+  splitTable,
+  viewOf,
+} from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
 import {
+  Grain,
   ReportScope,
-  TenderTotals,
+  ZERO_SALES,
+  ZERO_TENDER,
   appointmentHeatmap,
-  byBarber,
+  availableMinutesAt,
   dailyTotals,
   discountBreakdown,
   drawerHistory,
+  emptyKpis,
   giftCardTotalsByShop,
   giftCardsIssued,
   inventoryStatus,
   itemMix,
-  kpis,
-  kpisByShop,
+  kpisAt,
   loyaltyActivity,
   loyaltyByShop,
   monthlyTotals,
   payrollTips,
+  ratingsGivenAt,
   refundLog,
   refundTotals,
-  salesSummaryByShop,
-  sumSalesTotals,
-  tenderByShop,
+  salesTotalsAt,
+  tenderAt,
   toCsv,
 } from "./reports";
 
@@ -35,8 +54,9 @@ import {
  * Every a la carte report is one loader returning stats and tables. The report page renders them
  * and the export route turns the same tables into CSV, so what you see is what you download.
  *
- * Loaders fetch rows per shop and the table builders add them up, so the combined view, the
- * per-location columns and their totals all come from the same numbers.
+ * Loaders fetch each grain a view shows (per shop, per barber, per barber per shop) and the total
+ * from the same SQL, and the table builders lay them out. Lists are fetched at the finest grain and
+ * added up by the builders. Tests check that every grain adds up to the next.
  */
 
 export type { Cell, ColumnKind, ReportTable } from "@/domain/report-views";
@@ -60,7 +80,7 @@ export interface ReportData {
 
 export interface ReportInput {
   scope: ReportScope;
-  /** Combined or by location, over the selected shops. */
+  /** Combined, by location, by barber or by location and barber, over the selected shops and barbers. */
   loc: ViewCtx;
   /** The viewer's access: brand-level rows (no shop) are only for people with every shop. */
   viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[] };
@@ -80,35 +100,51 @@ const byDayDesc = (a: Cell[], b: Cell[]) => String(b[0]).localeCompare(String(a[
 const sum = <T>(xs: Record<string, T>, f: (x: T) => number) => Object.values(xs).reduce((a, x) => a + f(x), 0);
 const each = <T>(xs: Record<string, T>, f: (x: T) => number | null) => Object.fromEntries(Object.entries(xs).map(([k, x]) => [k, f(x)]));
 
-/** One value per shop, for a metric that adds up across shops. */
-const m = <T>(label: string, kind: ColumnKind, xs: Record<string, T>, f: (x: T) => number): Metric => ({ label, kind, byShop: each(xs, f) });
+/** A metric from values keyed by segment. Rates and averages are computed per segment, never added up. */
+const m = <T>(label: string, kind: ColumnKind, xs: Record<string, T>, f: (x: T) => number | null, additive?: boolean): Metric => ({ label, kind, at: each(xs, f), additive });
 
-function tenderTotal(t: Record<string, TenderTotals>): TenderTotals {
-  return {
-    cardCents: sum(t, (x) => x.cardCents),
-    cardCreditCents: sum(t, (x) => x.cardCreditCents),
-    cardDebitCents: sum(t, (x) => x.cardDebitCents),
-    cashCents: sum(t, (x) => x.cashCents),
-    giftCardCents: sum(t, (x) => x.giftCardCents),
-    cardTipsCents: sum(t, (x) => x.cardTipsCents),
-    cashTipsCents: sum(t, (x) => x.cashTipsCents),
-  };
+/** Per-shop values (and the total) as metric keys. */
+const shopKeyed = <T>(perShop: Record<string, T>, total: T): Record<string, T> => ({
+  ...Object.fromEntries(Object.entries(perShop).map(([k, v]) => [segKey(k, null), v])),
+  [TOTAL]: total,
+});
+
+/** The grains a view shows: its segments, the per-shop subtotals of the location and barber view, and the total. */
+export function grainsFor(v: ViewCtx, o: { split?: boolean } = {}): Grain[] {
+  const out: Grain[] = [{}];
+  if (v.view === "shops") out.push({ byShop: true });
+  if (v.byBarber) out.push({ byShop: v.view === "shops", byStaff: true });
+  if (o.split && v.byBarber && v.shops.length > 1) out.push({ byShop: true, byStaff: true }, { byStaff: true });
+  return [...new Map(out.map((g) => [`${!!g.byShop}${!!g.byStaff}`, g])).values()];
+}
+/** Lists are fetched per shop, and per barber when the view breaks out by barber. */
+const listGrain = (v: ViewCtx): Grain => ({ byShop: true, byStaff: !!v.byBarber });
+
+/** Rows keyed by segment, with a number added up per key. */
+function keyedSum<T extends { shopId: string | null; staffId: string | null }>(rows: T[], f: (r: T) => number): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const r of rows) {
+    const k = segKey(r.shopId, r.staffId);
+    out[k] = (out[k] ?? 0) + f(r);
+  }
+  return out;
 }
 
+const SUFFIX = { combined: "", shops: " by location", barbers: " by barber", shops_barbers: " by location and barber" } as const;
+/** "Summary", "Summary by location", "Summary by barber", "Summary by location and barber". */
+const titled = (v: ViewCtx, title: string) => title + SUFFIX[viewOf(v)];
+/** Metric tables are stat tiles in the combined view, a table otherwise. */
+const tilesOnly = (v: ViewCtx) => v.view !== "shops" && !v.byBarber;
+
 async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
-  const [byShopTotals, tender, daily, monthly] = await Promise.all([
-    salesSummaryByShop(scope),
-    tenderByShop(scope),
-    dailyTotals(scope, { byShop: true }),
-    monthlyTotals(scope, { byShop: true }),
-  ]);
-  const s = sumSalesTotals(Object.values(byShopTotals));
-  const t = tenderTotal(tender);
-  const x = byShopTotals;
+  const g = grainsFor(loc);
+  const [x, tender, daily, monthly] = await Promise.all([salesTotalsAt(scope, g), tenderAt(scope, g), dailyTotals(scope, listGrain(loc)), monthlyTotals(scope, listGrain(loc))]);
+  const s = x[TOTAL] ?? ZERO_SALES();
+  const t = tender[TOTAL] ?? ZERO_TENDER();
   const summary = metricTable(loc, {
     id: "summary",
-    title: loc.view === "shops" ? "Summary by location" : "Summary",
-    exportOnly: loc.view !== "shops",
+    title: titled(loc, "Summary"),
+    exportOnly: tilesOnly(loc),
     metrics: [
       m("Tickets", "int", x, (v) => v.tickets),
       m("Gross sales", "money", x, (v) => v.grossSalesCents),
@@ -117,7 +153,7 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
       m("Net services", "money", x, (v) => v.netServicesCents),
       m("Net products", "money", x, (v) => v.netProductsCents),
       m("Net sales", "money", x, (v) => v.netSalesCents),
-      { label: "Avg ticket", kind: "money", byShop: each(x, (v) => v.avgTicketCents), total: s.avgTicketCents },
+      m("Avg ticket", "money", x, (v) => v.avgTicketCents, false),
       m("Tickets with retail", "int", x, (v) => v.productTickets),
       m("Tax", "money", x, (v) => v.taxCents),
       m("Tips", "money", x, (v) => v.tipsCents),
@@ -134,7 +170,7 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
     id: "daily",
     title: "Daily totals",
     columns: [text("Date"), int("Tickets"), money("Gross"), money("Refunds"), money("Net"), money("Tips"), money("Card"), money("Cash")],
-    rows: daily.map((d) => ({ shopId: d.shopId!, key: d.day, cells: [d.day, d.tickets, d.grossCents, d.refundCents, d.netCents, d.tipsCents, d.cardCents, d.cashCents] })),
+    rows: daily.map((d) => ({ shopId: d.shopId!, staffId: d.staffId, key: d.day, cells: [d.day, d.tickets, d.grossCents, d.refundCents, d.netCents, d.tipsCents, d.cardCents, d.cashCents] })),
     merge: true,
     sort: byDay,
   });
@@ -142,7 +178,12 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
     id: "monthly",
     title: "Monthly totals",
     columns: [text("Month"), int("Tickets"), money("Gross"), money("Refunds"), money("Net services"), money("Net products"), money("Tips")],
-    rows: monthly.map((d) => ({ shopId: d.shopId!, key: d.month, cells: [d.month, d.tickets, d.grossCents, d.refundCents, d.netServicesCents, d.netProductsCents, d.tipsCents] })),
+    rows: monthly.map((d) => ({
+      shopId: d.shopId!,
+      staffId: d.staffId,
+      key: d.month,
+      cells: [d.month, d.tickets, d.grossCents, d.refundCents, d.netServicesCents, d.netProductsCents, d.tipsCents],
+    })),
     merge: true,
     sort: byDay,
   });
@@ -161,15 +202,98 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
   };
 }
 
-/** Net services, net products, refunds and tips per barber; the average ticket is before refunds. */
-const BARBER_COLUMNS = [text("Barber"), int("Tickets"), int("Services"), money("Net services"), money("Net products"), money("Refunds"), money("Tips"), id("Avg ticket", "money")];
-const barberDerive = (c: Cell[]): Cell[] => {
-  const n = Number(c[1]) || 0;
-  const out = [...c];
-  out[7] = n ? Math.round((Number(c[3]) + Number(c[4]) + Number(c[5])) / n) : 0;
-  return out;
-};
-const byNetServices = (a: Cell[], b: Cell[]) => Number(b[3]) - Number(a[3]) || String(a[0]).localeCompare(String(b[0]));
+/**
+ * The barber scorecard: sales and tips, appointments and clients, time and ratings, for each
+ * barber (or barber at each shop) and the total. Counts and amounts add up to the shop and brand
+ * totals; rates, averages and client counts are worked out for each row on its own.
+ */
+async function barberPerformance(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+  const g = grainsFor(loc, { split: true });
+  const [x, tender, k, avail, rated] = await Promise.all([salesTotalsAt(scope, g), tenderAt(scope, g), kpisAt(scope, g), availableMinutesAt(scope, g), ratingsGivenAt(scope, g)]);
+  const keys = [...new Set([...Object.keys(x), ...Object.keys(tender), ...Object.keys(k), ...Object.keys(avail), ...Object.keys(rated)])];
+  const kOf = (key: string) => k[key] ?? emptyKpis(scope);
+  const time = Object.fromEntries(keys.map((key) => [key, { booked: kOf(key).bookedMinutes, available: avail[key] ?? 0 }]));
+  const r = Object.fromEntries(keys.map((key) => [key, rated[key] ?? { n: 0, stars: 0 }]));
+
+  const sales = [
+    m("Tickets", "int", x, (v) => v.tickets),
+    m("Service sales", "money", x, (v) => v.netServicesCents),
+    m("Product sales", "money", x, (v) => v.netProductsCents),
+    m("Card tips", "money", tender, (v) => v.cardTipsCents),
+    m("Cash tips", "money", tender, (v) => v.cashTipsCents),
+    m("Total tips", "money", x, (v) => v.tipsCents),
+    m("Discounts", "money", x, (v) => v.discountCents),
+    m("Refunds", "money", x, (v) => v.refundCents),
+    m("Avg ticket", "money", x, (v) => v.avgTicketCents, false),
+  ];
+  const visits = [
+    m("Appointments", "int", k, (v) => v.appointments),
+    m("Walk-ins", "int", k, (v) => v.walkIns),
+    m("No-shows", "int", k, (v) => v.noShows.n),
+    m("Cancellations", "int", k, (v) => v.cancellations.n),
+    m("Rebook rate", "pct", k, (v) => v.rebookRate),
+    m("Retention", "pct", k, (v) => v.retentionRate),
+    m("New clients", "int", k, (v) => v.newClients, false),
+    m("Returning clients", "int", k, (v) => v.returningClients, false),
+  ];
+  const timeAndRatings = [
+    m("Hours booked", "hours", time, (v) => v.booked),
+    m("Hours available", "hours", time, (v) => v.available),
+    m("Utilization", "pct", time, (v) => ratio(v.booked, v.available)),
+    m("Ratings given", "int", r, (v) => v.n),
+    m("Avg stars given", "decimal", r, (v) => (v.n ? v.stars / v.n : null)),
+  ];
+  const tot = x[TOTAL] ?? ZERO_SALES();
+  const tt = tender[TOTAL] ?? ZERO_TENDER();
+  const kt = kOf(TOTAL);
+  const split = metricSplitTable(loc, {
+    id: "split",
+    title: "Barbers at more than one shop",
+    subtitle: "Each ticket and appointment counts at the shop where it happened. Rates and client counts are worked out at each shop and across them.",
+    metrics: [...sales, ...visits],
+  });
+  return {
+    stats: [
+      { label: "Service sales", value: formatCents(tot.netServicesCents), hint: `${tot.tickets} tickets · avg ${formatCents(tot.avgTicketCents)}` },
+      { label: "Tips", value: formatCents(tot.tipsCents), hint: `card ${formatCents(tt.cardTipsCents)} · cash ${formatCents(tt.cashTipsCents)}` },
+      { label: "Appointments", value: String(kt.appointments), hint: `${kt.walkIns} walk-ins · ${kt.noShows.n} no-shows · ${kt.cancellations.n} cancellations` },
+      { label: "Utilization", value: pct(ratio(time[TOTAL]?.booked ?? 0, time[TOTAL]?.available ?? 0)), hint: `${hours(time[TOTAL]?.booked ?? 0)} of ${hours(time[TOTAL]?.available ?? 0)} hours booked` },
+    ],
+    tables: [
+      metricTable(loc, {
+        id: "sales",
+        title: titled(loc, "Sales and tips"),
+        subtitle: "Service credit and tips go to the barber on the ticket, at the shop where it was rung up. Refunds count when they were issued; the average ticket is before refunds.",
+        metrics: sales,
+      }),
+      metricTable(loc, {
+        id: "clients",
+        title: titled(loc, "Appointments and clients"),
+        subtitle: "New clients had their first visit with these barbers, at these shops, in the range. Retention: clients from the window before who came back to the same barber and shop.",
+        metrics: visits,
+      }),
+      metricTable(loc, {
+        id: "time",
+        title: titled(loc, "Time and ratings"),
+        subtitle: "Hours available come from weekly schedules, less shop closures and time off. Ratings are the client ratings the barber gave.",
+        metrics: timeAndRatings,
+      }),
+      ...(split ? [split] : []),
+    ],
+  };
+}
+
+const hours = (minutes: number) => (minutes / 60).toFixed(1);
+
+/** Ratings barbers gave clients, for the ratings report. */
+export async function ratingsGivenTable(scope: ReportScope, loc: ViewCtx): Promise<ReportTable> {
+  const r = await ratingsGivenAt(scope, grainsFor(loc));
+  return metricTable(loc, {
+    id: "given",
+    title: titled(loc, "Ratings given"),
+    metrics: [m("Ratings given", "int", r, (v) => v.n), m("Avg stars", "decimal", r, (v) => (v.n ? v.stars / v.n : null))],
+  });
+}
 
 export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<ReportData>> = {
   async my_sales({ scope, loc }) {
@@ -181,37 +305,18 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
   },
 
   async sales_by_barber({ scope, loc }) {
-    const r = await byBarber(scope, { byShop: true });
-    const rows: ListRow[] = r.map((x) => ({
-      shopId: x.shopId!,
-      key: x.staffId,
-      cells: [x.label, x.tickets, x.services, x.netServicesCents, x.netProductsCents, x.refundCents, x.tipsCents, x.avgTicketCents],
-    }));
-    const spec = { columns: BARBER_COLUMNS, rows, derive: barberDerive, sort: byNetServices };
-    const split = splitTable(loc, { id: "split", title: "Barbers at more than one shop", subtitle: "Each ticket counts at the shop where it was rung up.", ...spec });
-    return {
-      stats: [],
-      tables: [
-        listTable(loc, {
-          id: "barbers",
-          title: loc.view === "shops" ? "By barber, by location" : "By barber",
-          subtitle: "Service credit and tips go to the barber on the ticket, at the shop where the ticket was rung up.",
-          ...spec,
-          merge: true,
-          shopsColumnAt: loc.shops.length > 1 ? 1 : undefined,
-        }),
-        ...(split ? [split] : []),
-      ],
-    };
+    return barberPerformance(scope, loc);
   },
 
   async services_vs_products({ scope, loc }) {
-    const [x, mix] = await Promise.all([salesSummaryByShop(scope), itemMix(scope, { byShop: true })]);
-    const s = sumSalesTotals(Object.values(x));
+    const [x, mix] = await Promise.all([salesTotalsAt(scope, grainsFor(loc)), itemMix(scope, listGrain(loc))]);
+    const s = x[TOTAL] ?? ZERO_SALES();
     const total = s.netServicesCents + s.netProductsCents;
     const cols = [text("Item"), int("Qty"), int("Tickets"), money("Gross"), money("Discounts"), money("Net")];
     const items = (f: (k: string) => boolean): ListRow[] =>
-      mix.filter((i) => f(i.kind)).map((i) => ({ shopId: i.shopId!, key: `${i.kind}|${i.name}`, cells: [i.name, i.qty, i.tickets, i.grossCents, i.discountCents, i.netCents] }));
+      mix
+        .filter((i) => f(i.kind))
+        .map((i) => ({ shopId: i.shopId!, staffId: i.staffId, key: `${i.kind}|${i.name}`, cells: [i.name, i.qty, i.tickets, i.grossCents, i.discountCents, i.netCents] }));
     const byNet = (a: Cell[], b: Cell[]) => Number(b[5]) - Number(a[5]) || String(a[0]).localeCompare(String(b[0]));
     return {
       stats: [
@@ -223,21 +328,16 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       tables: [
         metricTable(loc, {
           id: "mix",
-          title: "Services and products by location",
-          exportOnly: loc.view !== "shops",
+          title: titled(loc, "Services and products"),
+          exportOnly: tilesOnly(loc),
           metrics: [
             m("Net services", "money", x, (v) => v.netServicesCents),
             m("Net products", "money", x, (v) => v.netProductsCents),
-            {
-              label: "Services share",
-              kind: "pct",
-              byShop: each(x, (v) => ratio(v.netServicesCents, v.netServicesCents + v.netProductsCents)),
-              total: ratio(s.netServicesCents, total),
-            },
+            m("Services share", "pct", x, (v) => ratio(v.netServicesCents, v.netServicesCents + v.netProductsCents)),
             m("Tickets", "int", x, (v) => v.tickets),
             m("Tickets with retail", "int", x, (v) => v.productTickets),
-            { label: "Retail attach rate", kind: "pct", byShop: each(x, (v) => ratio(v.productTickets, v.tickets)), total: ratio(s.productTickets, s.tickets) },
-            { label: "Avg ticket", kind: "money", byShop: each(x, (v) => v.avgTicketCents), total: s.avgTicketCents },
+            m("Retail attach rate", "pct", x, (v) => ratio(v.productTickets, v.tickets)),
+            m("Avg ticket", "money", x, (v) => v.avgTicketCents, false),
           ],
         }),
         listTable(loc, { id: "services", title: "Services and add-ons", columns: cols, rows: items((k) => k !== "product"), merge: true, sort: byNet }),
@@ -249,11 +349,13 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async tips_payroll({ scope, loc }) {
     const r = await payrollTips(scope);
+    // By barber, the barber is the row group, so the Barber column would repeat it.
+    const named = !loc.byBarber;
     const columns = [
       text("Period start"),
       text("Period end"),
       text("Staff ID"),
-      text("Barber"),
+      ...(named ? [text("Barber")] : []),
       int("Tickets"),
       money("Service sales"),
       money("Product sales"),
@@ -265,12 +367,13 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     ];
     const rows: ListRow[] = r.rows.map((x) => ({
       shopId: x.shopId,
+      staffId: x.staffId,
       key: `${x.periodStart}|${x.staffId}`,
       cells: [
         x.periodStart,
         x.periodEnd,
         x.staffCode,
-        x.label,
+        ...(named ? [x.label] : []),
         x.tickets,
         x.serviceSalesCents,
         x.productSalesCents,
@@ -281,7 +384,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         x.totalTipsCents,
       ],
     }));
-    const order = (a: Cell[], b: Cell[]) => String(a[0]).localeCompare(String(b[0])) || String(a[3]).localeCompare(String(b[3]));
+    const who = named ? 3 : 2;
+    const order = (a: Cell[], b: Cell[]) => String(a[0]).localeCompare(String(b[0])) || String(a[who]).localeCompare(String(b[who]));
+    const at = named ? 4 : 3;
     const split = splitTable(loc, {
       id: "split",
       title: "Barbers at more than one shop",
@@ -289,19 +394,19 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       columns,
       rows,
       sort: order,
-      shopAt: 4,
+      shopAt: at,
     });
     return {
       stats: [],
       tables: [
         listTable(loc, {
           id: "payroll",
-          title: loc.view === "shops" ? "Tips by pay period, by location" : "Tips by pay period",
+          title: titled(loc, "Tips by pay period"),
           columns,
           rows,
           merge: true,
-          shopsColumnAt: loc.shops.length > 1 ? 4 : undefined,
-          labelAt: 3,
+          shopsColumnAt: loc.shops.length > 1 ? at : undefined,
+          labelAt: named ? 3 : 0,
           sort: order,
         }),
         ...(split ? [split] : []),
@@ -310,8 +415,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
   },
 
   async card_vs_cash({ scope, loc }) {
-    const [tender, daily] = await Promise.all([tenderByShop(scope), dailyTotals(scope, { byShop: true })]);
-    const t = tenderTotal(tender);
+    const [tender, daily] = await Promise.all([tenderAt(scope, grainsFor(loc)), dailyTotals(scope, listGrain(loc))]);
+    const t = tender[TOTAL] ?? ZERO_TENDER();
     const all = t.cardCents + t.cashCents + t.giftCardCents;
     return {
       stats: [
@@ -323,7 +428,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       tables: [
         metricTable(loc, {
           id: "tender",
-          title: "Tender totals",
+          title: titled(loc, "Tender totals"),
           subtitle: "Takings by tender after refunds, including tips and surcharges.",
           label: "Tender",
           metrics: [
@@ -340,7 +445,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           id: "daily",
           title: "Card and cash by day",
           columns: [text("Date"), int("Tickets"), money("Card"), money("Cash")],
-          rows: daily.map((d) => ({ shopId: d.shopId!, key: d.day, cells: [d.day, d.tickets, d.cardCents, d.cashCents] })),
+          rows: daily.map((d) => ({ shopId: d.shopId!, staffId: d.staffId, key: d.day, cells: [d.day, d.tickets, d.cardCents, d.cashCents] })),
           merge: true,
           sort: byDay,
         }),
@@ -349,46 +454,45 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
   },
 
   async discounts_refunds({ scope, loc }) {
-    const [x, d, totals, log] = await Promise.all([salesSummaryByShop(scope), discountBreakdown(scope, { byShop: true }), refundTotals(scope, { byShop: true }), refundLog(scope)]);
-    const s = sumSalesTotals(Object.values(x));
-    const kind = (k: string) => totals.filter((t) => t.kind === k);
-    const per = (k: string, f: (t: (typeof totals)[number]) => number) =>
-      Object.fromEntries(
-        loc.shops.map((sh) => [
-          sh.id,
-          kind(k)
-            .filter((t) => t.shopId === sh.id)
-            .reduce((a, t) => a + f(t), 0),
-        ]),
-      );
-    const refunds = { n: kind("refund").reduce((a, t) => a + t.n, 0), cents: kind("refund").reduce((a, t) => a + t.amountCents, 0) };
-    const voids = { n: kind("void").reduce((a, t) => a + t.n, 0), cents: kind("void").reduce((a, t) => a + t.amountCents, 0) };
+    const g = grainsFor(loc);
+    const [x, d, totals, log] = await Promise.all([
+      salesTotalsAt(scope, g),
+      discountBreakdown(scope, listGrain(loc)),
+      Promise.all(g.map((gr) => refundTotals(scope, gr))).then((xs) => xs.flat()),
+      refundLog(scope),
+    ]);
+    const s = x[TOTAL] ?? ZERO_SALES();
+    const per = (k: string, f: (t: (typeof totals)[number]) => number) => keyedSum(totals.filter((t) => t.kind === k), f);
+    const refundN = per("refund", (t) => t.n);
+    const refunded = per("refund", (t) => t.amountCents);
+    const voidN = per("void", (t) => t.n);
+    const voided = per("void", (t) => t.amountCents);
     return {
       stats: [
         { label: "Discounts", value: formatCents(s.discountCents), hint: `${d.reduce((a, r) => a + r.tickets, 0)} discounted lines` },
-        { label: "Refunds", value: formatCents(refunds.cents), hint: `${refunds.n} refunds` },
-        { label: "Voids", value: formatCents(voids.cents), hint: `${voids.n} voided tickets` },
+        { label: "Refunds", value: formatCents(refunded[TOTAL] ?? 0), hint: `${refundN[TOTAL] ?? 0} refunds` },
+        { label: "Voids", value: formatCents(voided[TOTAL] ?? 0), hint: `${voidN[TOTAL] ?? 0} voided tickets` },
         { label: "Gross sales", value: formatCents(s.grossSalesCents) },
       ],
       tables: [
         metricTable(loc, {
           id: "totals",
-          title: "Discounts and refunds by location",
-          exportOnly: loc.view !== "shops",
+          title: titled(loc, "Discounts and refunds"),
+          exportOnly: tilesOnly(loc),
           metrics: [
             m("Gross sales", "money", x, (v) => v.grossSalesCents),
             m("Discounts", "money", x, (v) => v.discountCents),
-            { label: "Refunds", kind: "int", byShop: per("refund", (t) => t.n) },
-            { label: "Refunded", kind: "money", byShop: per("refund", (t) => t.amountCents) },
-            { label: "Voids", kind: "int", byShop: per("void", (t) => t.n) },
-            { label: "Voided", kind: "money", byShop: per("void", (t) => t.amountCents) },
+            { label: "Refunds", kind: "int", at: refundN },
+            { label: "Refunded", kind: "money", at: refunded },
+            { label: "Voids", kind: "int", at: voidN },
+            { label: "Voided", kind: "money", at: voided },
           ],
         }),
         listTable(loc, {
           id: "discounts",
           title: "Discounts by type",
           columns: [text("Type"), text("Label"), int("Tickets"), money("Amount")],
-          rows: d.map((r) => ({ shopId: r.shopId!, key: `${r.source}|${r.label}`, cells: [r.source, r.label, r.tickets, r.cents] })),
+          rows: d.map((r) => ({ shopId: r.shopId!, staffId: r.staffId, key: `${r.source}|${r.label}`, cells: [r.source, r.label, r.tickets, r.cents] })),
           merge: true,
           sort: (a, b) => Number(b[3]) - Number(a[3]),
         }),
@@ -399,6 +503,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           columns: [text("Date"), id("Ticket"), text("Barber"), text("Kind"), text("Tender"), money("Amount"), money("Tip"), text("Reason"), text("Issued by")],
           rows: log.map((r) => ({
             shopId: r.shopId,
+            staffId: r.staffId,
             cells: [r.day, r.number, r.barber, r.kind, r.method, r.amountCents, r.tipCents, r.reason, r.by ?? (r.source === "stripe_dashboard" ? "Stripe dashboard" : null)],
           })),
           keepShop: loc.shops.length > 1,
@@ -460,12 +565,20 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
   },
 
   async gift_cards({ scope, loc }) {
-    const [x, issued] = await Promise.all([giftCardTotalsByShop(scope), giftCardsIssued(scope)]);
+    const [perShop, issued] = await Promise.all([giftCardTotalsByShop(scope), giftCardsIssued(scope)]);
+    const total = {
+      issuedN: sum(perShop, (v) => v.issuedN),
+      issuedCents: sum(perShop, (v) => v.issuedCents),
+      redeemedCents: sum(perShop, (v) => v.redeemedCents),
+      outstandingN: sum(perShop, (v) => v.outstandingN),
+      outstandingCents: sum(perShop, (v) => v.outstandingCents),
+    };
+    const x = shopKeyed(perShop, total);
     return {
       stats: [
-        { label: "Issued", value: formatCents(sum(x, (v) => v.issuedCents)), hint: `${sum(x, (v) => v.issuedN)} cards` },
-        { label: "Redeemed here", value: formatCents(sum(x, (v) => v.redeemedCents)) },
-        { label: "Outstanding", value: formatCents(sum(x, (v) => v.outstandingCents)), hint: `${sum(x, (v) => v.outstandingN)} cards issued at these shops` },
+        { label: "Issued", value: formatCents(total.issuedCents), hint: `${total.issuedN} cards` },
+        { label: "Redeemed here", value: formatCents(total.redeemedCents) },
+        { label: "Outstanding", value: formatCents(total.outstandingCents), hint: `${total.outstandingN} cards issued at these shops` },
       ],
       tables: [
         metricTable(loc, {
@@ -497,9 +610,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     const [combined, split] = await Promise.all([loyaltyActivity(scope, includeBrand), loc.view === "shops" ? loyaltyByShop(scope, includeBrand) : null]);
     const t = combined;
     const BRAND = "brand";
-    const cols: Record<string, typeof t> = split ? { ...split.shops, ...(split.brand ? { [BRAND]: split.brand } : {}) } : Object.fromEntries(loc.shops.map((s) => [s.id, t]));
+    const perShop: Record<string, typeof t> = split ? { ...split.shops, ...(split.brand ? { [BRAND]: split.brand } : {}) } : {};
+    const x = shopKeyed(perShop, t);
     const v: ViewCtx = split?.brand ? { ...loc, shops: [...loc.shops, { id: BRAND, name: "Brand (no ticket)" }] } : loc;
-    const lm = (label: string, kind: ColumnKind, f: (x: typeof t) => number, total?: number): Metric => ({ label, kind, byShop: each(cols, f), total: total ?? f(t) });
     return {
       stats: [
         { label: "Progress earned", value: formatCents(t.earnedCents), hint: `${t.members} clients earned` },
@@ -513,14 +626,14 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           title: "Loyalty activity",
           subtitle: loc.view === "shops" ? "Clients who earned at more than one shop count once in the total." : undefined,
           metrics: [
-            lm("Clients who earned", "int", (x) => x.members),
-            lm("Progress earned", "money", (x) => x.earnedCents),
-            lm("Progress reversed by refunds", "money", (x) => x.reversedCents),
-            lm("Rewards issued", "int", (x) => x.rewardsIssued),
-            lm("Rewards issued ($)", "money", (x) => x.rewardsIssuedCents),
-            lm("Rewards redeemed", "int", (x) => x.rewardsRedeemed),
-            lm("Rewards redeemed ($)", "money", (x) => x.rewardsRedeemedCents),
-            ...(includeBrand ? [lm("Manual rewards", "int", (x) => x.manualRewards)] : []),
+            m("Clients who earned", "int", x, (y) => y.members, false),
+            m("Progress earned", "money", x, (y) => y.earnedCents),
+            m("Progress reversed by refunds", "money", x, (y) => y.reversedCents),
+            m("Rewards issued", "int", x, (y) => y.rewardsIssued),
+            m("Rewards issued ($)", "money", x, (y) => y.rewardsIssuedCents),
+            m("Rewards redeemed", "int", x, (y) => y.rewardsRedeemed),
+            m("Rewards redeemed ($)", "money", x, (y) => y.rewardsRedeemedCents),
+            ...(includeBrand ? [m("Manual rewards", "int", x, (y) => y.manualRewards)] : []),
           ],
         }),
       ],
@@ -528,19 +641,14 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     };
   },
 
-  async client_ratings() {
-    return { stats: [], tables: [] };
+  async client_ratings({ scope, loc }) {
+    return { stats: [], tables: [await ratingsGivenTable(scope, loc)] };
   },
 
   async kpis({ scope, loc }) {
-    const [k, per] = await Promise.all([kpis(scope), loc.view === "shops" ? kpisByShop(scope) : null]);
-    const src = per ?? Object.fromEntries(loc.shops.map((s) => [s.id, k]));
-    const km = (label: string, kind: ColumnKind, f: (x: typeof k) => number | null, additive: boolean): Metric => ({
-      label,
-      kind,
-      byShop: each(src, f),
-      total: additive && per ? undefined : f(k),
-    });
+    const at = await kpisAt(scope, grainsFor(loc));
+    const k = at[TOTAL] ?? emptyKpis(scope);
+    const km = (label: string, kind: ColumnKind, f: (x: typeof k) => number | null, additive?: boolean) => m(label, kind, at, f, additive);
     return {
       stats: [
         {
@@ -564,25 +672,26 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       tables: [
         metricTable(loc, {
           id: "kpis",
-          title: "Client KPIs",
+          title: titled(loc, "Client KPIs"),
           subtitle:
-            loc.view === "shops"
-              ? "Visit and appointment counts add up across shops. Client counts don't: a client seen at two shops counts at each, and once in the total."
+            loc.view === "shops" || loc.byBarber
+              ? "Visit and appointment counts add up. Client counts don't: a client seen at two shops or by two barbers counts in each row, and once in the total."
               : undefined,
           metrics: [
-            km("Rebook rate", "pct", (x) => x.rebookRate, false),
-            km("Visits rebooked within 24h", "int", (x) => x.rebooked, true),
-            km("Visits with booking times", "int", (x) => x.visits, true),
-            km("Retention", "pct", (x) => x.retentionRate, false),
+            km("Rebook rate", "pct", (x) => x.rebookRate),
+            km("Visits rebooked within 24h", "int", (x) => x.rebooked),
+            km("Visits with booking times", "int", (x) => x.visits),
+            km("Retention", "pct", (x) => x.retentionRate),
             km("Clients retained", "int", (x) => x.retainedClients, false),
             km("Clients in the prior window", "int", (x) => x.priorClients, false),
             km("New clients", "int", (x) => x.newClients, false),
             km("New to Ray'z", "int", (x) => x.newToBrand, false),
             km("Returning clients", "int", (x) => x.returningClients, false),
-            km("Appointments", "int", (x) => x.appointments, true),
-            km("No-shows", "int", (x) => x.noShows.n, true),
-            km("No-show value", "money", (x) => x.noShows.cents, true),
-            km("Cancellations", "int", (x) => x.cancellations.n, true),
+            km("Appointments", "int", (x) => x.appointments),
+            km("Walk-ins", "int", (x) => x.walkIns),
+            km("No-shows", "int", (x) => x.noShows.n),
+            km("No-show value", "money", (x) => x.noShows.cents),
+            km("Cancellations", "int", (x) => x.cancellations.n),
           ],
         }),
       ],
@@ -590,7 +699,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
   },
 
   async heatmap({ scope, loc }) {
-    const h = await appointmentHeatmap(scope, { byShop: true });
+    const h = await appointmentHeatmap(scope, listGrain(loc));
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const combine = (cells: typeof h) => {
       const out = new Map<string, { dow: number; hour: number; n: number }>();
@@ -602,10 +711,15 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       }
       return [...out.values()];
     };
+    const segs = segments(
+      loc,
+      h.map((c) => segKey(loc.view === "shops" ? c.shopId : null, loc.byBarber ? c.staffId : null)),
+    );
+    const inSeg = (c: (typeof h)[number], s: (typeof segs)[number]) => (s.shopId === null || c.shopId === s.shopId) && (s.staffId === null || c.staffId === s.staffId);
     const heatmaps: Heatmap[] =
-      loc.view === "shops" && loc.shops.length > 1
-        ? [...loc.shops.map((s) => ({ title: s.name, cells: h.filter((c) => c.shopId === s.id) })), { title: loc.totalLabel, cells: combine(h) }]
-        : [{ title: loc.shops.length === 1 ? loc.shops[0].name : loc.totalLabel, cells: combine(h) }];
+      segs.length > 1
+        ? [...segs.map((s) => ({ title: s.labels.join(" · "), cells: combine(h.filter((c) => inSeg(c, s))) })), { title: loc.totalLabel, cells: combine(h) }]
+        : [{ title: segs[0]?.labels.join(" · ") ?? (loc.shops.length === 1 ? loc.shops[0].name : loc.totalLabel), cells: combine(h) }];
     return {
       stats: [{ label: "Appointments", value: String(h.reduce((a, x) => a + x.n, 0)) }],
       heatmaps,
@@ -615,7 +729,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           title: "Appointments by day and hour",
           exportOnly: true,
           columns: [text("Weekday"), id("Hour"), int("Appointments")],
-          rows: [...h].sort((a, b) => a.dow - b.dow || a.hour - b.hour).map((x) => ({ shopId: x.shopId!, key: `${x.dow}|${x.hour}`, cells: [days[x.dow], x.hour, x.n] })),
+          rows: [...h]
+            .sort((a, b) => a.dow - b.dow || a.hour - b.hour)
+            .map((x) => ({ shopId: x.shopId!, staffId: x.staffId, key: `${x.dow}|${x.hour}`, cells: [days[x.dow], x.hour, x.n] })),
           merge: true,
         }),
       ],
