@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { sales } from "@/db/schema";
 import { safe } from "@/server/action";
 import { StaffContext, assertShopAccess, canManage, requireStaff, workingShopId } from "@/server/auth/staff";
-import { CheckoutLineInput, TenderInput, finalizeSale, lookupGiftCard, openBlankSale, validatePromo } from "@/server/checkout";
+import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale, validatePromo } from "@/server/checkout";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { inspectPaymentMethod, terminal } from "@/server/payments/processor";
 
@@ -72,7 +72,8 @@ export async function attachCustomerAction(saleId: string, customerId: string | 
 export async function setBarberAction(saleId: string, staffId: string | null) {
   return safe(async () => {
     const ctx = await requireStaff(["brand_admin", "shop_manager"]);
-    await loadSale(ctx, saleId);
+    const sale = await loadSale(ctx, saleId);
+    if (staffId) await assertStaffAtShop(staffId, sale.shopId);
     await db.update(sales).set({ staffId }).where(and(eq(sales.id, saleId), eq(sales.status, "open")));
     revalidatePath(`/admin/checkout/${saleId}`);
     return null;
@@ -98,7 +99,7 @@ export async function finalizeAction(input: {
     if (input.manualDiscount && input.manualDiscount.value > 0 && !input.manualDiscount.reason.trim()) {
       throw new AppError("bad_request", "Add a reason for the discount");
     }
-    const r = await finalizeSale({ ...input, actor: ctx.actor });
+    const r = await finalizeSale({ ...input, canOverridePrice: canManage(ctx), actor: ctx.actor });
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     const rebook = r.rebooked && "code" in r.rebooked ? { code: r.rebooked.code, startsAt: r.rebooked.startsAt } : r.rebooked && "error" in r.rebooked ? { error: r.rebooked.error } : null;

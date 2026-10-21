@@ -9,7 +9,7 @@ import { searchCustomersAction } from "../../calendar/actions";
 import { attachCustomerAction, finalizeAction, giftCardAction, inspectCardAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
 import { StripeCardEntry } from "./stripe-card";
 
-type Line = { key: string; kind: LineKind; refId: string | null; name: string; unitPriceCents: number; qty: number };
+type Line = { key: string; kind: LineKind; refId: string | null; name: string; unitPriceCents: number; qty: number; override?: { unitPriceCents: number; reason: string } | null };
 type Card4 = { paymentMethodId: string; funding: CardFunding; brand: string; last4: string };
 
 const $ = (c: number) => `${c < 0 ? "-" : ""}$${(Math.abs(c) / 100).toFixed(2)}`;
@@ -57,6 +57,8 @@ export function Pos(props: {
   const [pending, start] = useTransition();
   const [productQ, setProductQ] = useState("");
   const [giftSale, setGiftSale] = useState("");
+  const [editing, setEditing] = useState<{ key: string; price: string; reason: string } | null>(null);
+  const priceOf = (l: Line) => l.override?.unitPriceCents ?? l.unitPriceCents;
 
   const reward = props.loyalty?.rewards.find((r) => r.id === rewardId) ?? null;
   const discounts = useMemo(() => {
@@ -70,7 +72,7 @@ export function Pos(props: {
 
   const preview = (method: "cash" | "card" | "none", funding: CardFunding | null) =>
     computeCheckout({
-      lines: lines.map((l) => ({ ...l, refId: l.refId })),
+      lines: lines.map((l) => ({ ...l, unitPriceCents: priceOf(l) })),
       discounts,
       taxRates: props.config.taxRates,
       tipCents,
@@ -111,7 +113,7 @@ export function Pos(props: {
       () =>
         finalizeAction({
           saleId: props.sale.id,
-          lines: lines.map(({ kind, refId, name, unitPriceCents, qty }) => ({ kind, refId, name, unitPriceCents, qty })),
+          lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null })),
           promoCode: promo?.code ?? null,
           manualDiscount: manual.value ? { type: manual.type, value: manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value), reason: manual.reason } : null,
           loyaltyRewardId: rewardId,
@@ -188,7 +190,10 @@ export function Pos(props: {
                 <li key={l.key} className="flex items-center gap-3 px-4 py-2.5">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{l.name}</div>
-                    <div className="text-xs capitalize text-zinc-500">{l.kind.replace("_", " ")}</div>
+                    <div className="text-xs capitalize text-zinc-500">
+                      {l.kind.replace("_", " ")}
+                      {l.override && <span className="normal-case text-amber-700"> · price changed: {l.override.reason}</span>}
+                    </div>
                   </div>
                   {l.kind === "product" ? (
                     <div className="flex items-center rounded-lg ring-1 ring-zinc-300">
@@ -205,9 +210,51 @@ export function Pos(props: {
                       Remove
                     </button>
                   )}
-                  <div className="w-20 text-right text-sm tabular">{$(l.unitPriceCents * l.qty)}</div>
+                  {props.canDiscount && l.kind !== "gift_card" ? (
+                    <button
+                      className={cx("w-20 text-right text-sm tabular underline decoration-dotted underline-offset-2", l.override && "text-amber-700")}
+                      title="Change price (manager)"
+                      onClick={() => setEditing({ key: l.key, price: (priceOf(l) / 100).toFixed(2), reason: l.override?.reason ?? "" })}
+                    >
+                      {$(priceOf(l) * l.qty)}
+                    </button>
+                  ) : (
+                    <div className="w-20 text-right text-sm tabular">{$(priceOf(l) * l.qty)}</div>
+                  )}
                 </li>
               ))}
+              {editing && (
+                <li className="space-y-2 bg-amber-50 px-4 py-3">
+                  <div className="text-xs font-medium text-amber-900">
+                    Change price for {lines.find((l) => l.key === editing.key)?.name} (menu {$(lines.find((l) => l.key === editing.key)?.unitPriceCents ?? 0)}). Logged with your name.
+                  </div>
+                  <div className="grid grid-cols-[100px_1fr_auto_auto] gap-2">
+                    <Input inputMode="decimal" value={editing.price} onChange={(e) => setEditing({ ...editing, price: e.target.value })} aria-label="New unit price" />
+                    <Input placeholder="Reason (required)" value={editing.reason} onChange={(e) => setEditing({ ...editing, reason: e.target.value })} />
+                    <Button
+                      size="sm"
+                      disabled={!editing.reason.trim()}
+                      onClick={() => {
+                        const cents = toCents(editing.price);
+                        setLines((ls) => ls.map((l) => (l.key === editing.key ? { ...l, override: cents === l.unitPriceCents ? null : { unitPriceCents: cents, reason: editing.reason.trim() } } : l)));
+                        setEditing(null);
+                      }}
+                    >
+                      Save
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        setLines((ls) => ls.map((l) => (l.key === editing.key ? { ...l, override: null } : l)));
+                        setEditing(null);
+                      }}
+                    >
+                      Menu price
+                    </Button>
+                  </div>
+                </li>
+              )}
             </ul>
             <div className="grid gap-3 border-t border-zinc-100 p-4 sm:grid-cols-2">
               <div>
@@ -236,7 +283,8 @@ export function Pos(props: {
                     variant="secondary"
                     onClick={() => {
                       const c = toCents(giftSale);
-                      if (c > 0) setLines((ls) => [...ls, { key: key(), kind: "gift_card", refId: null, name: `Gift card ${$short(c)}`, unitPriceCents: c, qty: 1 }]);
+                      if (c < 500 || c > 50_000) return setError("Gift cards are sold from $5 to $500");
+                      setLines((ls) => [...ls, { key: key(), kind: "gift_card", refId: null, name: `Gift card ${$short(c)}`, unitPriceCents: c, qty: 1 }]);
                       setGiftSale("");
                     }}
                   >
@@ -490,7 +538,7 @@ export function Pos(props: {
               <Row k={`Tax (services ${(props.config.taxRates.serviceRate * 100).toFixed(2)}%)`} v={$(totals.serviceTaxCents)} />
               {totals.productNetCents > 0 && <Row k={`Tax (products ${(props.config.taxRates.productRate * 100).toFixed(2)}%)`} v={$(totals.productTaxCents)} />}
               <Row k="Tip" v={$(totals.tipCents)} />
-              {totals.cardFeeCents > 0 && <Row k={feeLabel({ mode: props.config.cardFee.mode, rate: totals.cardFeeRate })} v={$(totals.cardFeeCents)} className="text-amber-700" />}
+              {totals.cardFeeCents > 0 && <Row k={feeLabel({ rate: totals.cardFeeRate })} v={$(totals.cardFeeCents)} className="text-amber-700" />}
               {totals.giftCardAppliedCents > 0 && <Row k="Gift card" v={$(-totals.giftCardAppliedCents)} />}
               <div className="flex items-baseline justify-between border-t border-zinc-200 pt-2">
                 <dt className="font-semibold">{totals.giftCardAppliedCents > 0 ? "Due now" : "Total"}</dt>

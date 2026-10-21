@@ -26,11 +26,11 @@ export async function voidAction(saleId: string, reason: string) {
   });
 }
 
-export async function refundAction(saleId: string, amountCents: number, reason: string, restock: boolean) {
+export async function refundAction(input: { saleId: string; items: { saleItemId: string; qty: number }[]; tipCents: number; refundCardFee: boolean; reason: string; restock: boolean }) {
   return safe(async () => {
-    const ctx = await guard(saleId);
-    await refundSale(saleId, amountCents, reason, restock, ctx.actor);
-    revalidatePath(`/admin/sales/${saleId}`);
-    return null;
+    const ctx = await guard(input.saleId);
+    const r = await refundSale({ ...input, actor: ctx.actor });
+    revalidatePath(`/admin/sales/${input.saleId}`);
+    return { refundedCents: r.refundedCents, giftCardsVoided: r.giftCardsVoided };
   });
 }

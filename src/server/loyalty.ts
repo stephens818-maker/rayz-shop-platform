@@ -1,7 +1,7 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { brandSettings, loyaltyAccounts, loyaltyLedger, loyaltyRewards } from "@/db/schema";
-import { DEFAULT_LOYALTY, LoyaltyConfig, accrue, progressExpired, rewardExpiry, usableRewards } from "@/domain/loyalty";
+import { DEFAULT_LOYALTY, LoyaltyConfig, accrue, progressExpired, reverseAccrual, rewardExpiry, usableRewards } from "@/domain/loyalty";
 import { AppError } from "./errors";
 
 export async function getLoyaltyConfig(tx: DBorTx = db): Promise<LoyaltyConfig> {
@@ -46,31 +46,57 @@ export async function loyaltyBalance(customerId: string, now = new Date(), tx: D
 
 const dollars = (c: number) => `$${(c / 100).toFixed(c % 100 ? 2 : 0)}`;
 
+/** Creates the account if needed and takes a row lock on it for the rest of the transaction. */
+async function lockAccount(tx: DBorTx, customerId: string) {
+  await tx.insert(loyaltyAccounts).values({ customerId }).onConflictDoNothing();
+  const [acct] = await tx.select().from(loyaltyAccounts).where(eq(loyaltyAccounts.customerId, customerId)).for("update");
+  return acct;
+}
+
 /** Called inside the checkout transaction. Returns the number of rewards issued. */
 export async function accrueForSale(tx: DBorTx, customerId: string, saleId: string, earnCents: number, now = new Date()) {
   const cfg = await getLoyaltyConfig(tx);
-  if (!cfg.enabled || earnCents === 0) return 0;
-  const acct = await tx.query.loyaltyAccounts.findFirst({ where: eq(loyaltyAccounts.customerId, customerId) });
-  const startProgress = acct && !progressExpired(acct.lastEarnAt, now, cfg) ? acct.progressCents : 0;
+  if (!cfg.enabled || earnCents <= 0) return 0;
+  const acct = await lockAccount(tx, customerId);
+  const startProgress = !progressExpired(acct.lastEarnAt, now, cfg) ? acct.progressCents : 0;
   const r = accrue(startProgress, earnCents, cfg);
   await tx
-    .insert(loyaltyAccounts)
-    .values({ customerId, progressCents: r.progressCents, lifetimeEarnedCents: Math.max(0, r.appliedCents), lastEarnAt: now })
-    .onConflictDoUpdate({
-      target: loyaltyAccounts.customerId,
-      set: {
-        progressCents: r.progressCents,
-        lifetimeEarnedCents: (acct?.lifetimeEarnedCents ?? 0) + r.appliedCents,
-        lastEarnAt: earnCents > 0 ? now : (acct?.lastEarnAt ?? now),
-        updatedAt: now,
-      },
-    });
-  await tx.insert(loyaltyLedger).values({ customerId, saleId, kind: earnCents > 0 ? "earn" : "reverse", progressDeltaCents: r.appliedCents });
+    .update(loyaltyAccounts)
+    .set({ progressCents: r.progressCents, lifetimeEarnedCents: acct.lifetimeEarnedCents + r.appliedCents, lastEarnAt: now, updatedAt: now })
+    .where(eq(loyaltyAccounts.customerId, customerId));
+  await tx.insert(loyaltyLedger).values({ customerId, saleId, kind: "earn", progressDeltaCents: r.appliedCents });
   for (let i = 0; i < r.rewardsIssued; i++) {
     await tx.insert(loyaltyRewards).values({ customerId, amountCents: cfg.rewardCents, issuedAt: now, expiresAt: rewardExpiry(now, cfg), sourceSaleId: saleId });
     await tx.insert(loyaltyLedger).values({ customerId, saleId, kind: "reward_issued", rewardCents: cfg.rewardCents });
   }
   return r.rewardsIssued;
+}
+
+/**
+ * Take back `reverseCents` of earned service spend after a refund or void. Unused rewards the sale
+ * issued are revoked first (newest first), so a full refund returns progress to its pre-sale value.
+ */
+export async function reverseForSale(tx: DBorTx, customerId: string, saleId: string, reverseCents: number, now = new Date()) {
+  const cfg = await getLoyaltyConfig(tx);
+  if (reverseCents <= 0) return { rewardsRevoked: 0, unrecoveredCents: 0 };
+  const acct = await lockAccount(tx, customerId);
+  const revocable = await tx
+    .select()
+    .from(loyaltyRewards)
+    .where(and(eq(loyaltyRewards.sourceSaleId, saleId), isNull(loyaltyRewards.redeemedAt)))
+    .orderBy(desc(loyaltyRewards.issuedAt))
+    .for("update");
+  const r = reverseAccrual(acct.progressCents, reverseCents, revocable.length, cfg);
+  for (const rw of revocable.slice(0, r.rewardsRevoked)) {
+    await tx.delete(loyaltyRewards).where(eq(loyaltyRewards.id, rw.id));
+    await tx.insert(loyaltyLedger).values({ customerId, saleId, kind: "reward_revoked", rewardCents: -rw.amountCents });
+  }
+  await tx
+    .update(loyaltyAccounts)
+    .set({ progressCents: r.progressCents, lifetimeEarnedCents: Math.max(0, acct.lifetimeEarnedCents - reverseCents), updatedAt: now })
+    .where(eq(loyaltyAccounts.customerId, customerId));
+  await tx.insert(loyaltyLedger).values({ customerId, saleId, kind: "reverse", progressDeltaCents: -reverseCents });
+  return { rewardsRevoked: r.rewardsRevoked, unrecoveredCents: r.unrecoveredCents };
 }
 
 export async function loadRedeemableReward(tx: DBorTx, customerId: string, rewardId: string, now = new Date()) {
@@ -79,11 +105,30 @@ export async function loadRedeemableReward(tx: DBorTx, customerId: string, rewar
   return r;
 }
 
+/** Conditional on the reward still being unused, so two tickets can't both spend it. */
 export async function markRewardRedeemed(tx: DBorTx, rewardId: string, saleId: string, customerId: string, cents: number, now = new Date()) {
-  await tx.update(loyaltyRewards).set({ redeemedAt: now, redeemedSaleId: saleId }).where(eq(loyaltyRewards.id, rewardId));
+  const res = await tx
+    .update(loyaltyRewards)
+    .set({ redeemedAt: now, redeemedSaleId: saleId })
+    .where(
+      and(
+        eq(loyaltyRewards.id, rewardId),
+        eq(loyaltyRewards.customerId, customerId),
+        isNull(loyaltyRewards.redeemedAt),
+        or(isNull(loyaltyRewards.expiresAt), gt(loyaltyRewards.expiresAt, now)),
+      ),
+    )
+    .returning({ id: loyaltyRewards.id });
+  if (!res.length) throw new AppError("conflict", "That reward was just used on another ticket");
   await tx.insert(loyaltyLedger).values({ customerId, saleId, kind: "reward_redeemed", rewardCents: -cents });
 }
 
 export async function restoreRewardsForSale(tx: DBorTx, saleId: string) {
-  await tx.update(loyaltyRewards).set({ redeemedAt: null, redeemedSaleId: null }).where(eq(loyaltyRewards.redeemedSaleId, saleId));
+  const restored = await tx
+    .update(loyaltyRewards)
+    .set({ redeemedAt: null, redeemedSaleId: null })
+    .where(eq(loyaltyRewards.redeemedSaleId, saleId))
+    .returning({ customerId: loyaltyRewards.customerId, amountCents: loyaltyRewards.amountCents });
+  for (const r of restored) await tx.insert(loyaltyLedger).values({ customerId: r.customerId, saleId, kind: "reward_restored", rewardCents: r.amountCents });
+  return restored.length;
 }

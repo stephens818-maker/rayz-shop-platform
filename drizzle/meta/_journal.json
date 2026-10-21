@@ -15,6 +15,20 @@
       "when": 1792531125570,
       "tag": "0001_constraints",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792542656860,
+      "tag": "0002_review_checkout",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792542938919,
+      "tag": "0003_drop_cash_discount",
+      "breakpoints": true
     }
   ]
 }

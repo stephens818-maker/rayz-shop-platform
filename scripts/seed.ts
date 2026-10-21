@@ -311,7 +311,7 @@ async function main() {
             discounts: discount,
             taxRates: { serviceRate: Number(shop.serviceTaxRate), productRate: Number(shop.productTaxRate) },
             tipCents: tip,
-            cardFee: { enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate), appliesToTip: false, mode: "surcharge" },
+            cardFee: { enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate), appliesToTip: false },
             tender: { method: card ? "card" : "cash", cardFunding: funding },
           });
           const saleId = uuid();
@@ -363,7 +363,7 @@ async function main() {
             tipCents: totals.tipCents,
             cardFeeCents: totals.cardFeeCents,
             processor: card ? "simulator" : null,
-            stripePaymentIntentId: card ? `sim_pi_seed_${saleId.slice(0, 8)}` : null,
+            stripePaymentIntentId: card ? `sim_pi_seed_${saleId}` : null,
             cardBrand: card ? pick(["visa", "visa", "mastercard", "amex", "discover"]) : null,
             cardLast4: card ? String(1000 + Math.floor(rand() * 9000)) : null,
             cardFunding: funding,

@@ -2,45 +2,14 @@
  * Integration tests against a real Postgres (TEST_DATABASE_URL). Seeds a short history first.
  * Run with: pnpm test:db
  */
-import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Mods, actor, loadModules } from "./setup";
 
-const TEST_DB = process.env.TEST_DATABASE_URL ?? "postgres://rayz:rayz@localhost:5432/rayz_test";
-process.env.DATABASE_URL = TEST_DB;
-
-type Mods = {
-  db: typeof import("@/db");
-  schema: typeof import("@/db/schema");
-  booking: typeof import("@/server/booking");
-  checkout: typeof import("@/server/checkout");
-  reports: typeof import("@/server/reports");
-  loyalty: typeof import("@/server/loyalty");
-  importer: typeof import("@/server/importer");
-  queue: typeof import("@/server/notifications/queue");
-  public: typeof import("@/server/public");
-  drizzle: typeof import("drizzle-orm");
-  time: typeof import("@/lib/time");
-};
 let m: Mods;
-const actor = { staffId: null, label: "test" };
 
 beforeAll(async () => {
-  const env = { ...process.env, DATABASE_URL: TEST_DB, MIGRATE_DATABASE_URL: TEST_DB, SEED_HISTORY_DAYS: "3" };
-  execSync("npx tsx scripts/migrate.ts && npx tsx scripts/seed.ts", { env, stdio: "pipe" });
-  m = {
-    db: await import("@/db"),
-    schema: await import("@/db/schema"),
-    booking: await import("@/server/booking"),
-    checkout: await import("@/server/checkout"),
-    reports: await import("@/server/reports"),
-    loyalty: await import("@/server/loyalty"),
-    importer: await import("@/server/importer"),
-    queue: await import("@/server/notifications/queue"),
-    public: await import("@/server/public"),
-    drizzle: await import("drizzle-orm"),
-    time: await import("@/lib/time"),
-  };
+  m = await loadModules();
 }, 120_000);
 
 afterAll(async () => {
@@ -142,7 +111,7 @@ describe("checkout → reports → loyalty", () => {
 
     const sale = await m.checkout.openSaleForAppointment(appt.id, actor);
     const ctx = await m.checkout.loadCheckoutContext(sale.id);
-    const lines = ctx.items.map((i) => ({ kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: i.unitPriceCents, qty: i.qty }));
+    const lines = ctx.items.map((i) => ({ kind: i.kind, refId: i.refId, name: i.name, qty: i.qty }));
     const before = await m.reports.salesSummary({ shopIds: [ctx.shop.id], from: m.time.todayLocal(), to: m.time.todayLocal() });
 
     const r = await m.checkout.finalizeSale({ saleId: sale.id, lines, tipCents: 700, tender: { method: "card", paymentMethodId: "pm_card_visa", entryMode: "keyed" }, actor });
@@ -164,21 +133,24 @@ describe("checkout → reports → loyalty", () => {
     expect(done.status).toBe("completed");
   });
 
-  it("debit card pays no fee; partial refund reduces net services and loyalty", async () => {
+  it("debit card pays no fee; refunding the service line takes back net services and loyalty, not the tip", async () => {
     const { slot, svc } = await openSlot();
     const appt = await m.booking.createAppointment({ shopRef: "coralville", serviceId: svc.id, barberRef: "any", startsAt: slot.startsAt, customer: { firstName: "Refund", phone: "3195554444" }, source: "online", actor });
     const sale = await m.checkout.openSaleForAppointment(appt.id, actor);
     const ctx = await m.checkout.loadCheckoutContext(sale.id);
-    const lines = ctx.items.map((i) => ({ kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: i.unitPriceCents, qty: i.qty }));
+    const lines = ctx.items.map((i) => ({ kind: i.kind, refId: i.refId, name: i.name, qty: i.qty }));
     const r = await m.checkout.finalizeSale({ saleId: sale.id, lines, tipCents: 500, tender: { method: "card", paymentMethodId: "pm_card_visa_debit", entryMode: "terminal" }, actor });
     expect(r.totals.cardFeeCents).toBe(0);
     const before = await m.reports.salesSummary({ shopIds: [ctx.shop.id], from: m.time.todayLocal(), to: m.time.todayLocal() });
-    await m.checkout.refundSale(sale.id, 1000, "Customer unhappy", false, actor);
+    const progressBefore = (await m.loyalty.loyaltyBalance(appt.customer!.id)).progressCents;
+    const item = (await m.checkout.refundableState(sale.id)).items.find((i) => i.kind === "service")!;
+    const out = await m.checkout.refundSale({ saleId: sale.id, items: [{ saleItemId: item.id, qty: 1 }], tipCents: 0, refundCardFee: false, reason: "Customer unhappy", restock: false, actor });
+    expect(out.refundedCents).toBe(item.netCents + item.taxCents);
+    expect(out.components).toMatchObject({ serviceNetCents: item.netCents, taxCents: item.taxCents, tipCents: 0, giftCardSalesCents: 0 });
     const after = await m.reports.salesSummary({ shopIds: [ctx.shop.id], from: m.time.todayLocal(), to: m.time.todayLocal() });
-    expect(before.netServicesCents - after.netServicesCents).toBeGreaterThan(0);
-    expect(after.refundCents).toBeGreaterThan(before.refundCents);
-    const bal = await m.loyalty.loyaltyBalance(appt.customer!.id);
-    expect(bal.progressCents).toBeLessThan(3300);
+    expect(before.netServicesCents - after.netServicesCents).toBe(item.netCents);
+    expect(after.tipsCents).toBe(before.tipsCents);
+    expect((await m.loyalty.loyaltyBalance(appt.customer!.id)).progressCents).toBe(progressBefore - item.netCents);
   });
 
   it("gift card + cash, promo code, product sale decrements stock; void reverses it", async () => {

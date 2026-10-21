@@ -36,20 +36,38 @@ export interface AccrualResult {
   appliedCents: number;
 }
 
-/** Add (or, for refunds, subtract) eligible spend and issue a reward for every full threshold crossed. */
+/** Add eligible spend and issue a reward for every full threshold crossed. */
 export function accrue(currentProgressCents: number, earnCents: number, cfg: LoyaltyConfig): AccrualResult {
   if (!cfg.enabled || cfg.thresholdCents <= 0) {
     return { progressCents: currentProgressCents, rewardsIssued: 0, appliedCents: 0 };
   }
-  const earn = Math.round(earnCents);
-  if (earn < 0) {
-    // Refunds claw back progress but never below zero; issued rewards are not revoked.
-    const next = Math.max(0, currentProgressCents + earn);
-    return { progressCents: next, rewardsIssued: 0, appliedCents: next - currentProgressCents };
-  }
+  const earn = Math.max(0, Math.round(earnCents));
   const total = currentProgressCents + earn;
   const rewardsIssued = Math.floor(total / cfg.thresholdCents);
   return { progressCents: total - rewardsIssued * cfg.thresholdCents, rewardsIssued, appliedCents: earn };
+}
+
+export interface ReversalResult {
+  progressCents: number;
+  /** How many of the sale's still-unredeemed rewards to take back. */
+  rewardsRevoked: number;
+  /** Spend that couldn't be clawed back because the reward it earned was already used. */
+  unrecoveredCents: number;
+}
+
+/**
+ * Undo `reverseCents` of earned spend. Each reward the sale issued (and that's still unused) is
+ * worth one threshold of progress, so a full refund lands progress exactly where it was before
+ * the sale. If the reward was already spent, progress bottoms out at zero.
+ */
+export function reverseAccrual(currentProgressCents: number, reverseCents: number, revocableRewards: number, cfg: LoyaltyConfig): ReversalResult {
+  let x = currentProgressCents - Math.max(0, Math.round(reverseCents));
+  let revoked = 0;
+  while (x < 0 && revoked < revocableRewards && cfg.thresholdCents > 0) {
+    x += cfg.thresholdCents;
+    revoked++;
+  }
+  return { progressCents: Math.max(0, x), rewardsRevoked: revoked, unrecoveredCents: Math.max(0, -x) };
 }
 
 export function rewardExpiry(issuedAt: Date, cfg: LoyaltyConfig): Date | null {

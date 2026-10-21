@@ -54,7 +54,6 @@ export default async function SettingsPage() {
           taxRatesVerified: shop.taxRatesVerified,
           cardFeeEnabled: shop.cardFeeEnabled,
           cardFeeRate: Number(shop.cardFeeRate),
-          cardFeeMode: shop.cardFeeMode === "cash_discount" ? "cash_discount" : "surcharge",
           cardFeeAppliesToTip: shop.cardFeeAppliesToTip,
         }}
       />

@@ -38,8 +38,6 @@ export interface CardFeeConfig {
   rate: number;
   /** Whether the fee is charged on the tip portion paid by card. */
   appliesToTip: boolean;
-  /** "surcharge" = "Credit card surcharge"; "cash_discount" = posted card price with cash discount wording. */
-  mode: "surcharge" | "cash_discount";
 }
 
 export const MAX_CARD_FEE_RATE = 0.03;
@@ -106,18 +104,14 @@ function eligible(line: CartLine, target: DiscountTarget) {
   return line.kind === "product";
 }
 
-export function feeLabel(cfg: Pick<CardFeeConfig, "mode" | "rate">): string {
-  return cfg.mode === "cash_discount"
-    ? `Card price adjustment (${formatRate(cfg.rate)})`
-    : `Credit card surcharge (${formatRate(cfg.rate)})`;
+export function feeLabel(cfg: Pick<CardFeeConfig, "rate">): string {
+  return `Credit card surcharge (${formatRate(cfg.rate)})`;
 }
 
-export function feeDisclosure(cfg: Pick<CardFeeConfig, "mode" | "rate" | "enabled">): string | null {
+export function feeDisclosure(cfg: Pick<CardFeeConfig, "rate" | "enabled">): string | null {
   if (!cfg.enabled || cfg.rate <= 0) return null;
   const r = formatRate(Math.min(cfg.rate, MAX_CARD_FEE_RATE));
-  return cfg.mode === "cash_discount"
-    ? `Posted prices reflect a ${r} discount for cash. A ${r} adjustment applies to credit cards only; no fee on debit, prepaid, or cash.`
-    : `A ${r} surcharge applies to credit card payments only. It does not exceed our cost of acceptance. No surcharge on debit, prepaid, gift card, or cash.`;
+  return `A ${r} surcharge applies to credit card payments only. It does not exceed our cost of acceptance. No surcharge on debit, prepaid, gift card, or cash.`;
 }
 
 export function computeCheckout(input: CheckoutInput): CheckoutTotals {
@@ -225,30 +219,4 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
 /** Suggested tip amounts, based on the pre-discount service subtotal (what the barber did). */
 export function tipSuggestions(serviceGrossCents: number, percents: number[]): { percent: number; cents: number }[] {
   return percents.map((p) => ({ percent: p, cents: Math.round((serviceGrossCents * p) / 100) }));
-}
-
-export interface SaleBreakdown {
-  serviceNetCents: number;
-  productNetCents: number;
-  giftCardSalesCents: number;
-  taxCents: number;
-  tipCents: number;
-  cardFeeCents: number;
-}
-
-/** Splits a (partial) refund across the sale's components so reports stay consistent. */
-export function allocateRefund(sale: SaleBreakdown, alreadyRefunded: SaleBreakdown | null, amountCents: number): SaleBreakdown {
-  const keys: (keyof SaleBreakdown)[] = [
-    "serviceNetCents",
-    "productNetCents",
-    "giftCardSalesCents",
-    "taxCents",
-    "tipCents",
-    "cardFeeCents",
-  ];
-  const remaining = keys.map((k) => sale[k] - (alreadyRefunded?.[k] ?? 0));
-  const cap = remaining.reduce((a, b) => a + b, 0);
-  const amt = Math.min(Math.max(0, amountCents), cap);
-  const parts = allocateProportionally(amt, remaining.map((r) => Math.max(0, r)));
-  return Object.fromEntries(keys.map((k, i) => [k, parts[i]])) as unknown as SaleBreakdown;
 }

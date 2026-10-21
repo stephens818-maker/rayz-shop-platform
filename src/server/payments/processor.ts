@@ -64,6 +64,34 @@ export interface ChargeResult {
   card: CardDetails;
 }
 
+/**
+ * The simulator behaves like Stripe where it matters for correctness: a repeated idempotency key
+ * returns the original PaymentIntent, refunds can't exceed the charge, and calls take a moment so
+ * overlapping requests really overlap.
+ */
+interface SimIntent {
+  id: string;
+  amountCents: number;
+  amountRefundedCents: number;
+  card: CardDetails;
+  metadata: Record<string, string>;
+}
+interface SimState {
+  intents: Map<string, SimIntent>;
+  byKey: Map<string, string>;
+  refunds: { id: string; paymentIntentId: string; amountCents: number }[];
+  refundKeys: Map<string, string>;
+}
+const simGlobal = globalThis as unknown as { __rayzSim?: SimState };
+const sim: SimState = (simGlobal.__rayzSim ??= { intents: new Map(), byKey: new Map(), refunds: [], refundKeys: new Map() });
+const simLatency = () => new Promise((r) => setTimeout(r, Number(process.env.SIMULATOR_LATENCY_MS ?? 40)));
+const simId = (p: string) => `${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+/** Read-only view of simulated charges and refunds, for tests and the payments health page. */
+export function simulatorLedger() {
+  return { intents: [...sim.intents.values()].map((i) => ({ ...i })), refunds: [...sim.refunds] };
+}
+
 export async function chargeCard(opts: {
   paymentMethodId: string;
   amountCents: number;
@@ -75,12 +103,16 @@ export async function chargeCard(opts: {
   if (!s) {
     const card = TEST_CARDS[opts.paymentMethodId];
     if (!card) throw new AppError("payment_failed", "Unknown simulated card");
+    await simLatency();
     if (opts.paymentMethodId === "pm_card_chargeDeclined") throw new AppError("payment_failed", "Your card was declined.");
-    return {
-      processor: "simulator",
-      paymentIntentId: `sim_pi_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
-      card: { funding: card.funding, brand: card.brand, last4: card.last4 },
-    };
+    const existing = sim.byKey.get(opts.idempotencyKey);
+    const pi = existing ? sim.intents.get(existing)! : { id: simId("sim_pi"), amountCents: opts.amountCents, amountRefundedCents: 0, card: { funding: card.funding, brand: card.brand, last4: card.last4 }, metadata: opts.metadata };
+    if (!existing) {
+      sim.intents.set(pi.id, pi);
+      sim.byKey.set(opts.idempotencyKey, pi.id);
+    }
+    if (pi.amountRefundedCents > 0) throw new AppError("payment_failed", "That payment was already refunded. Start the charge again.");
+    return { processor: "simulator", paymentIntentId: pi.id, card: pi.card };
   }
   try {
     const pi = await s.paymentIntents.create(
@@ -102,6 +134,8 @@ export async function chargeCard(opts: {
     }
     if (pi.status !== "succeeded") throw new AppError("payment_failed", `Payment ${pi.status}`);
     const charge = pi.latest_charge as Stripe.Charge | null;
+    // An idempotent replay can hand back an intent that was since refunded; never book that as paid.
+    if (charge && charge.amount_refunded > 0) throw new AppError("payment_failed", "That payment was already refunded. Start the charge again.");
     const pmd = charge?.payment_method_details;
     const card = pmd?.card ?? pmd?.card_present;
     return {
@@ -118,9 +152,36 @@ export async function chargeCard(opts: {
 
 export async function refundCard(paymentIntentId: string, amountCents: number, idempotencyKey: string): Promise<string> {
   const s = stripe();
-  if (!s || paymentIntentId.startsWith("sim_")) return `sim_re_${Date.now().toString(36)}`;
-  const r = await s.refunds.create({ payment_intent: paymentIntentId, amount: amountCents }, { idempotencyKey });
-  return r.id;
+  if (!s || paymentIntentId.startsWith("sim_")) {
+    await simLatency();
+    const prior = sim.refundKeys.get(idempotencyKey);
+    if (prior) return prior;
+    const pi = sim.intents.get(paymentIntentId);
+    // Intents from an earlier process (e.g. seeded history) aren't in memory; accept those as-is.
+    if (pi) {
+      if (pi.amountRefundedCents + amountCents > pi.amountCents) throw new AppError("payment_failed", "Refund is more than the remaining charge");
+      pi.amountRefundedCents += amountCents;
+    }
+    const id = simId("sim_re");
+    sim.refunds.push({ id, paymentIntentId, amountCents });
+    sim.refundKeys.set(idempotencyKey, id);
+    return id;
+  }
+  try {
+    const r = await s.refunds.create({ payment_intent: paymentIntentId, amount: amountCents }, { idempotencyKey });
+    return r.id;
+  } catch (e) {
+    throw new AppError("payment_failed", (e as Stripe.errors.StripeError).message ?? "Card refund failed");
+  }
+}
+
+/** Simulates a refund made outside the POS (the Stripe dashboard) and returns the new refunded total. */
+export function simulateDashboardRefund(paymentIntentId: string, amountCents: number) {
+  const pi = sim.intents.get(paymentIntentId);
+  if (!pi) throw new Error("Unknown simulated PaymentIntent");
+  pi.amountRefundedCents += amountCents;
+  sim.refunds.push({ id: simId("sim_re"), paymentIntentId, amountCents });
+  return pi.amountRefundedCents;
 }
 
 /**

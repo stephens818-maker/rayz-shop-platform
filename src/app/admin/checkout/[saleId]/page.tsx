@@ -29,7 +29,10 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
       shop={{ id: c.shop.id, name: c.shop.name, taxVerified: c.shop.taxRatesVerified }}
       config={c.config}
       feeNotice={feeDisclosure(c.config.cardFee)}
-      initialLines={c.items.map((i) => ({ kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: i.unitPriceCents, qty: i.qty }))}
+      initialLines={c.items.map((i) => {
+        const menu = i.kind === "product" ? c.retail.find((p) => p.productId === i.refId)?.priceCents : catalog.find((s) => s.id === i.refId)?.priceCents;
+        return { kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: menu ?? i.unitPriceCents, qty: i.qty };
+      })}
       customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: c.customer.phone } : null}
       barber={c.barber ? { id: c.barber.id, label: c.barber.displayLabel } : null}
       barbers={barbers.map((b) => ({ id: b.id, label: b.displayName }))}

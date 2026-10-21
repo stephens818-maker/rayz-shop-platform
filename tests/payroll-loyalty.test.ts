@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { payPeriodFor, payPeriodsBetween } from "@/domain/payroll";
-import { DEFAULT_LOYALTY, accrue, progressExpired, rewardExpiry, usableRewards } from "@/domain/loyalty";
+import { DEFAULT_LOYALTY, accrue, progressExpired, reverseAccrual, rewardExpiry, usableRewards } from "@/domain/loyalty";
 import { weekdayOf } from "@/lib/time";
 
 describe("payroll periods (bi-weekly, ending Saturdays, anchored on Sat 2026-10-03)", () => {
@@ -59,9 +59,18 @@ describe("loyalty accrual ($15 per $300 net service spend)", () => {
     expect(accrue(10_000, 65_000, cfg)).toMatchObject({ progressCents: 15_000, rewardsIssued: 2 });
   });
 
-  it("refunds claw back progress, never below zero", () => {
-    expect(accrue(5_000, -3_300, cfg)).toMatchObject({ progressCents: 1_700, rewardsIssued: 0, appliedCents: -3_300 });
-    expect(accrue(1_000, -3_300, cfg)).toMatchObject({ progressCents: 0, appliedCents: -1_000 });
+  it("refunds claw back progress", () => {
+    expect(reverseAccrual(5_000, 3_300, 0, cfg)).toEqual({ progressCents: 1_700, rewardsRevoked: 0, unrecoveredCents: 0 });
+  });
+
+  it("review P1#5: a refund that crosses back over the threshold revokes the reward and restores pre-sale progress", () => {
+    const earned = accrue(29_000, 3_300, cfg);
+    expect(earned).toMatchObject({ progressCents: 2_300, rewardsIssued: 1 });
+    expect(reverseAccrual(earned.progressCents, 3_300, 1, cfg)).toEqual({ progressCents: 29_000, rewardsRevoked: 1, unrecoveredCents: 0 });
+  });
+
+  it("if the reward was already spent, progress bottoms out at zero and the shortfall is reported", () => {
+    expect(reverseAccrual(2_300, 3_300, 0, cfg)).toEqual({ progressCents: 0, rewardsRevoked: 0, unrecoveredCents: 1_000 });
   });
 
   it("does nothing when disabled", () => {

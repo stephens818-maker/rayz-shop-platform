@@ -10,6 +10,7 @@ import { formatPhone } from "@/lib/phone";
 import { feeLabel } from "@/domain/checkout";
 import { formatDateTime, localDateOf } from "@/lib/time";
 import { assertShopAccess, requireStaff } from "@/server/auth/staff";
+import { refundableState } from "@/server/checkout";
 import { loyaltyBalance } from "@/server/loyalty";
 import { PrintButton, SaleActions } from "./sale-actions";
 
@@ -34,9 +35,9 @@ export default async function SalePage({ params, searchParams }: { params: Promi
     sp.rebook ? db.query.appointments.findFirst({ where: eq(appointments.code, sp.rebook) }) : null,
   ]);
   const loyalty = customer ? await loyaltyBalance(customer.id) : null;
-  const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { mode: "surcharge" | "cash_discount"; rate: number } };
-  const refunded = refs.filter((r) => r.kind === "refund").reduce((a, r) => a + r.amountCents, 0);
+  const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { rate: number } };
   const manager = ctx.isAdmin || ctx.isManager;
+  const refundable = manager && ["paid", "partially_refunded"].includes(sale.status) ? await refundableState(id) : null;
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -89,6 +90,12 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                   <td className="py-1">
                     {i.name}
                     {i.qty > 1 && <span className="text-zinc-500"> × {i.qty}</span>}
+                    {i.overrideReason && i.catalogPriceCents != null && (
+                      <span className="block text-[11px] text-zinc-500">
+                        Price changed from {formatCents(i.catalogPriceCents)}: {i.overrideReason}
+                      </span>
+                    )}
+                    {i.refundedQty > 0 && <span className="block text-[11px] text-red-700">{i.refundedQty === i.qty ? "Refunded" : `${i.refundedQty} refunded`}</span>}
                   </td>
                   <td className="py-1 text-right">{formatCents(i.grossCents)}</td>
                 </tr>
@@ -140,7 +147,8 @@ export default async function SalePage({ params, searchParams }: { params: Promi
               {refs.map((r) => (
                 <tr key={r.id} className="text-red-700">
                   <td>
-                    {r.kind === "void" ? "Voided" : "Refund"} to {r.method.replace("_", " ")}: {r.reason}
+                    {r.kind === "void" ? "Voided" : "Refund"} to {r.method.replace("_", " ")}
+                    {r.source === "stripe_dashboard" ? " (Stripe dashboard)" : ""}: {r.reason}
                   </td>
                   <td className="text-right">-{formatCents(r.amountCents)}</td>
                 </tr>
@@ -164,7 +172,25 @@ export default async function SalePage({ params, searchParams }: { params: Promi
         </Card>
         <div className="no-print space-y-3">
           <PrintButton />
-          {manager && <SaleActions saleId={sale.id} status={sale.status} remainingCents={sale.totalCents - refunded} hasProducts={items.some((i) => i.kind === "product")} />}
+          {manager && refundable && (
+            <SaleActions
+              saleId={sale.id}
+              status={sale.status}
+              imported={sale.isImported}
+              tipRemainingCents={refundable.tipRemainingCents}
+              cardFeeRemainingCents={refundable.cardFeeRemainingCents}
+              items={refundable.items.map((i) => ({
+                id: i.id,
+                name: i.name,
+                kind: i.kind,
+                qty: i.qty,
+                refundedQty: i.refundedQty,
+                netCents: i.netCents,
+                taxCents: i.taxCents,
+                giftCardBalances: i.giftCards.filter((g) => g.status === "active").map((g) => g.balanceCents).sort((a, b) => b - a),
+              }))}
+            />
+          )}
         </div>
       </div>
     </div>

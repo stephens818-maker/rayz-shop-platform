@@ -137,7 +137,7 @@ export function ShopInfoEditor({ shopId, initial }: { shopId: string; initial: I
   );
 }
 
-type Money = { serviceTaxRate: number; productTaxRate: number; taxRatesVerified: boolean; cardFeeEnabled: boolean; cardFeeRate: number; cardFeeMode: "surcharge" | "cash_discount"; cardFeeAppliesToTip: boolean };
+type Money = { serviceTaxRate: number; productTaxRate: number; taxRatesVerified: boolean; cardFeeEnabled: boolean; cardFeeRate: number; cardFeeAppliesToTip: boolean };
 
 export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; initial: Money; canEdit: boolean }) {
   const { pending, msg, save } = useSave();
@@ -163,12 +163,6 @@ export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; init
         </label>
         <Field label="Fee % (max 3)">
           <Input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
-        </Field>
-        <Field label="Wording">
-          <Select value={v.cardFeeMode} onChange={(e) => setV({ ...v, cardFeeMode: e.target.value as Money["cardFeeMode"] })}>
-            <option value="surcharge">Credit card surcharge</option>
-            <option value="cash_discount">Card price / cash discount</option>
-          </Select>
         </Field>
         <label className="flex items-center gap-2 self-end pb-2 text-sm">
           <input type="checkbox" checked={v.cardFeeAppliesToTip} onChange={(e) => setV({ ...v, cardFeeAppliesToTip: e.target.checked })} /> Fee applies to tip

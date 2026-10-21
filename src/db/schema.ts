@@ -68,7 +68,6 @@ export const shops = pgTable("shops", {
   cardFeeEnabled: boolean("card_fee_enabled").notNull().default(true),
   cardFeeRate: numeric("card_fee_rate", { precision: 6, scale: 5 }).notNull().default("0.03"),
   cardFeeAppliesToTip: boolean("card_fee_applies_to_tip").notNull().default(false),
-  cardFeeMode: text("card_fee_mode").notNull().default("surcharge"),
   tipPresets: jsonb("tip_presets").$type<number[]>().notNull().default(sql`'[20,25,30]'::jsonb`),
   cancelCutoffMinutes: integer("cancel_cutoff_minutes").notNull().default(30),
   slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(15),
@@ -381,6 +380,8 @@ export const giftCards = pgTable("gift_cards", {
   customerId: uuid("customer_id").references(() => customers.id),
   status: text("status").notNull().default("active"), // pending | active | void
   source: text("source").notNull().default("sold"), // sold | import | promo
+  /** The ticket line that sold this card, so refunding that line voids it. */
+  saleItemId: uuid("sale_item_id"),
   expiresAt: ts("expires_at"),
   createdAt: createdAt(),
 });
@@ -453,6 +454,10 @@ export const saleItems = pgTable(
     discountCents: integer("discount_cents").notNull().default(0),
     netCents: integer("net_cents").notNull(),
     taxCents: integer("tax_cents").notNull().default(0),
+    /** Shop menu price at checkout; differs from unitPriceCents only on a manager override. */
+    catalogPriceCents: integer("catalog_price_cents"),
+    overrideReason: text("override_reason"),
+    refundedQty: integer("refunded_qty").notNull().default(0),
   },
   (t) => [index("sale_items_sale_idx").on(t.saleId)],
 );
@@ -482,7 +487,11 @@ export const payments = pgTable(
     refundedCents: integer("refunded_cents").notNull().default(0),
     createdAt: createdAt(),
   },
-  (t) => [index("payments_shop_date_idx").on(t.shopId, t.businessDate), index("payments_sale_idx").on(t.saleId)],
+  (t) => [
+    index("payments_shop_date_idx").on(t.shopId, t.businessDate),
+    index("payments_sale_idx").on(t.saleId),
+    uniqueIndex("payments_stripe_pi_uq").on(t.stripePaymentIntentId),
+  ],
 );
 
 export const refunds = pgTable(
@@ -503,6 +512,10 @@ export const refunds = pgTable(
     cardFeeCents: integer("card_fee_cents").notNull().default(0),
     reason: text("reason").notNull(),
     kind: text("kind").notNull().default("refund"), // refund | void
+    /** staff = issued from the POS; stripe_dashboard = picked up from a charge.refunded webhook. */
+    source: text("source").notNull().default("staff"),
+    /** Lines refunded, for receipts: [{ saleItemId, name, qty, cents }]. */
+    items: jsonb("items"),
     stripeRefundId: text("stripe_refund_id"),
     createdBy: uuid("created_by"),
     createdAt: createdAt(),

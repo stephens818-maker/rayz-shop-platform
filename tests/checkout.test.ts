@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CardFeeConfig, CartLine, allocateRefund, computeCheckout, tipSuggestions } from "@/domain/checkout";
+import { CardFeeConfig, CartLine, computeCheckout, tipSuggestions } from "@/domain/checkout";
+import { allocateAmount, allocateToTenders, componentsTotal, lineRefunds, unitsShare } from "@/domain/refunds";
 
-const fee: CardFeeConfig = { enabled: true, rate: 0.03, appliesToTip: false, mode: "surcharge" };
+const fee: CardFeeConfig = { enabled: true, rate: 0.03, appliesToTip: false };
 const iowa = { serviceRate: 0.07, productRate: 0.07 };
 const illinois = { serviceRate: 0, productRate: 0.085 };
 
@@ -103,10 +104,10 @@ describe("checkout: credit-only card fee", () => {
     expect(t.disclosures).toHaveLength(0);
   });
 
-  it("supports cash-discount wording", () => {
-    const t = computeCheckout({ ...base, cardFee: { ...fee, mode: "cash_discount" }, tender: { method: "card", cardFunding: "credit" } });
-    expect(t.disclosures.join(" ")).toMatch(/discount for cash/i);
-    expect(t.cardFeeCents).toBe(106);
+  it("only ever describes the fee as a credit card surcharge (review P1#11: no false cash-discount wording)", () => {
+    const t = computeCheckout({ ...base, cardFee: fee, tender: { method: "card", cardFunding: "credit" } });
+    expect(t.disclosures.join(" ")).toMatch(/surcharge applies to credit card payments only/i);
+    expect(t.disclosures.join(" ")).not.toMatch(/discount for cash/i);
   });
 });
 
@@ -162,11 +163,49 @@ describe("checkout: loyalty base, tips, refunds", () => {
     ]);
   });
 
-  it("partial refunds are allocated across components and never exceed what's left", () => {
-    const sale = { serviceNetCents: 3300, productNetCents: 2000, giftCardSalesCents: 0, taxCents: 371, tipCents: 700, cardFeeCents: 0 };
-    const r1 = allocateRefund(sale, null, 2000);
-    expect(Object.values(r1).reduce((a, b) => a + b, 0)).toBe(2000);
-    const r2 = allocateRefund(sale, r1, 1_000_000);
-    expect(Object.values(r2).reduce((a, b) => a + b, 0)).toBe(6371 - 2000);
+});
+
+describe("refunds (review P1#8): chosen lines, tip, and fee go back to the tender that took them", () => {
+  const ticket = computeCheckout({ lines: [cut, giftCard], taxRates: iowa, tipCents: 700, cardFee: fee, tender: { method: "card", cardFunding: "credit" } });
+  const lines = ticket.lines.map((l, i) => ({ id: `i${i}`, kind: l.kind, name: l.name, qty: l.qty, refundedQty: 0, netCents: l.netCents, taxCents: l.taxCents }));
+  const card = { id: "card", method: "card" as const, availableCents: ticket.primaryChargeCents, tipAvailableCents: 700, feeAvailableCents: ticket.cardFeeCents };
+
+  it("refunding the cut returns its price and tax only; the gift card, tip, and fee stay put", () => {
+    const [r] = lineRefunds(lines, [{ saleItemId: "i0", qty: 1 }]);
+    expect(r).toMatchObject({ netCents: 3300, taxCents: 231 });
+    const plan = allocateToTenders({ serviceNetCents: 3300, productNetCents: 0, giftCardSalesCents: 0, taxCents: 231, tipCents: 0, cardFeeCents: 0 }, [card]);
+    expect(plan).toEqual([{ tenderId: "card", method: "card", amountCents: 3531, components: { serviceNetCents: 3300, productNetCents: 0, giftCardSalesCents: 0, taxCents: 231, tipCents: 0, cardFeeCents: 0 } }]);
+  });
+
+  it("won't refund a line twice or more units than were sold", () => {
+    expect(() => lineRefunds([{ ...lines[0], refundedQty: 1 }], [{ saleItemId: "i0", qty: 1 }])).toThrow(/already refunded/);
+    expect(() => lineRefunds(lines, [{ saleItemId: "i0", qty: 2 }])).toThrow(/Only 1/);
+  });
+
+  it("splitting a multi-unit line in steps adds up to the line exactly", () => {
+    const parts = [unitsShare(1001, 3, 0, 1), unitsShare(1001, 3, 1, 1), unitsShare(1001, 3, 2, 1)];
+    expect(parts.reduce((a, b) => a + b, 0)).toBe(1001);
+  });
+
+  it("sends the tip to the tender that carried it and the fee to the card", () => {
+    const gc = { id: "gc", method: "gift_card" as const, availableCents: 2000, tipAvailableCents: 0, feeAvailableCents: 0 };
+    const cashT = { id: "cash", method: "cash" as const, availableCents: 3000, tipAvailableCents: 700, feeAvailableCents: 0 };
+    const plan = allocateToTenders({ serviceNetCents: 1000, productNetCents: 0, giftCardSalesCents: 0, taxCents: 0, tipCents: 700, cardFeeCents: 0 }, [gc, cashT]);
+    expect(plan.find((p) => p.tenderId === "cash")!.components.tipCents).toBe(700);
+    expect(() => allocateToTenders({ serviceNetCents: 0, productNetCents: 0, giftCardSalesCents: 0, taxCents: 0, tipCents: 0, cardFeeCents: 50 }, [cashT])).toThrow(/card fee/);
+  });
+
+  it("never refunds a gift card purchase onto a gift card", () => {
+    const gc = { id: "gc", method: "gift_card" as const, availableCents: 9999, tipAvailableCents: 0, feeAvailableCents: 0 };
+    expect(() => allocateToTenders({ serviceNetCents: 0, productNetCents: 0, giftCardSalesCents: 5000, taxCents: 0, tipCents: 0, cardFeeCents: 0 }, [gc])).toThrow(/cash or card/);
+  });
+
+  it("a bare-amount refund (Stripe dashboard) is split without touching sold gift cards until nothing else is left", () => {
+    const remaining = { serviceNetCents: 3300, productNetCents: 0, giftCardSalesCents: 5000, taxCents: 231, tipCents: 700, cardFeeCents: 106 };
+    const a = allocateAmount(remaining, 700);
+    expect(componentsTotal(a)).toBe(700);
+    expect(a.giftCardSalesCents).toBe(0);
+    const all = allocateAmount(remaining, 9337);
+    expect(all).toEqual(remaining);
   });
 });

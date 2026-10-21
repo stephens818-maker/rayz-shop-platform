@@ -52,7 +52,6 @@ const Money = z.object({
   taxRatesVerified: z.boolean(),
   cardFeeEnabled: z.boolean(),
   cardFeeRate: z.number().min(0).max(MAX_CARD_FEE_RATE, `The card fee can't exceed ${MAX_CARD_FEE_RATE * 100}%`),
-  cardFeeMode: z.enum(["surcharge", "cash_discount"]),
   cardFeeAppliesToTip: z.boolean(),
 });
 
