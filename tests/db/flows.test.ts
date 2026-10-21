@@ -58,7 +58,8 @@ describe("booking", () => {
       serviceId: svc.id,
       barberRef: slot.barberIds[0],
       startsAt: slot.startsAt,
-      customer: { firstName: "Test", lastName: "Person", phone: "3195559999" },
+      // The booking form always sends the reminder-text choice; consent no longer defaults to yes.
+      customer: { firstName: "Test", lastName: "Person", phone: "3195559999", smsOptIn: true },
       source: "online",
       actor,
     });
@@ -245,18 +246,22 @@ describe("Squire importer", () => {
   it("dry-runs without writing, then imports clients, history, loyalty, and gift cards", async () => {
     const read = (f: string) => readFileSync(`samples/squire/${f}`, "utf8");
     const dry = await m.importer.runImport("clients", read("clients.csv"), { dryRun: true, actor });
-    expect(dry).toMatchObject({ totalRows: 5, inserted: 4, skipped: 1 });
-    expect(await m.db.db.query.customers.findFirst({ where: m.drizzle.eq(m.schema.customers.squireId, "SQ-10001") })).toBeUndefined();
+    // Every client carries over; one with no first name keeps the last name and a note.
+    expect(dry).toMatchObject({ totalRows: 5, inserted: 5, skipped: 0 });
+    expect(await m.customers.customerBySquireId(m.db.db, "SQ-10001")).toBeNull();
 
     const clients = await m.importer.runImport("clients", read("clients.csv"), { dryRun: false, actor });
-    expect(clients.inserted).toBe(4);
-    const alex = await m.db.db.query.customers.findFirst({ where: m.drizzle.eq(m.schema.customers.squireId, "SQ-10001") });
+    expect(clients.inserted).toBe(5);
+    const alex = await m.customers.customerBySquireId(m.db.db, "SQ-10001");
     expect(alex!.phone).toBe("+13195557001");
+    expect(await m.customers.customerBySquireId(m.db.db, "SQ-10004")).toMatchObject({ firstName: "NoFirst", lastName: null });
 
     const appts = await m.importer.runImport("appointments", read("appointments.csv"), { dryRun: false, actor, now: new Date("2026-10-20T12:00:00Z") });
     expect(appts.inserted).toBe(4);
-    expect(appts.errors.map((e) => e.message).join(" | ")).toMatch(/Ambiguous barber "Taylor"/);
+    expect(appts.errors.map((e) => e.message).join(" | ")).toMatch(/More than one barber matches "Taylor"/);
     expect(appts.errors.map((e) => e.message).join(" | ")).toMatch(/Unknown shop "Clinton"/);
+    expect(appts.skippedByReason).toEqual({ "Ambiguous barber": 1, "Unknown shop": 1 });
+    expect(appts.stats).toMatchObject({ pastVisits: 1, noShows: 1, cancellations: 1, upcomingImported: 1 });
 
     const loyalty = await m.importer.runImport("loyalty", read("loyalty.csv"), { dryRun: false, actor });
     expect(loyalty.inserted).toBe(2);
