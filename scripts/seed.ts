@@ -37,7 +37,7 @@ async function main() {
   await db.execute(sql`TRUNCATE TABLE
     audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
-    waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customers,
+    waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
     inventory_adjustments, shop_products, products, shop_services, services, time_blocks,
     staff_schedules, staff_shops, staff, shop_closures, shop_hours, shops, brand_settings
     RESTART IDENTITY CASCADE`);
@@ -182,11 +182,14 @@ async function main() {
     const first = pick(FIRST_NAMES);
     const last = pick(LAST_NAMES);
     const shop = pick(shopRows.filter((s) => s.slug !== "dubuque"));
+    const email = chance(0.6) ? `${first}.${last}.${i}@example.test`.toLowerCase() : null;
     return {
       firstName: first,
       lastName: last,
       phone: `+1${pick(["319", "563", "309"])}555${String(1000 + i).slice(-4)}`,
-      email: chance(0.6) ? `${first}.${last}.${i}@example.test`.toLowerCase() : null,
+      email,
+      smsOptIn: chance(0.8),
+      emailOptIn: email !== null && chance(0.5),
       homeShopId: shop.id,
       createdAt: new Date(now.getTime() - (HISTORY_DAYS + 400 * rand()) * 86_400_000),
     };
@@ -196,7 +199,7 @@ async function main() {
   // A demo client whose next haircut crosses the $300 loyalty goal.
   const [demoCustomer] = await db
     .insert(t.customers)
-    .values({ firstName: "Jordan", lastName: "Demo", phone: "+13195550100", email: "jordan@example.test", homeShopId: shopBySlug.get("coralville")!.id })
+    .values({ firstName: "Jordan", lastName: "Demo", phone: "+13195550100", email: "jordan@example.test", smsOptIn: true, emailOptIn: true, homeShopId: shopBySlug.get("coralville")!.id })
     .returning();
   const customersByShop = new Map<string, typeof customerRows>();
   for (const c of customerRows) customersByShop.set(c.homeShopId!, [...(customersByShop.get(c.homeShopId!) ?? []), c]);

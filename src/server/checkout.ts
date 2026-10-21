@@ -564,7 +564,8 @@ export async function drawerSummary(shopId: string, date: string) {
     .select({ cents: sql<number>`coalesce(sum(${payments.amountCents}), 0)::int`, tips: sql<number>`coalesce(sum(${payments.tipCents}), 0)::int`, n: sql<number>`count(*)::int` })
     .from(payments)
     .innerJoin(sales, eq(sales.id, payments.saleId))
-    .where(and(eq(payments.shopId, shopId), eq(payments.businessDate, date), eq(payments.method, "cash"), sql`${sales.status} <> 'voided'`));
+    // Squire history is not cash in this drawer.
+    .where(and(eq(payments.shopId, shopId), eq(payments.businessDate, date), eq(payments.method, "cash"), sql`${sales.status} <> 'voided'`, eq(sales.isImported, false)));
   const [cashRefunds] = await db
     .select({ cents: sql<number>`coalesce(sum(${refunds.amountCents}), 0)::int` })
     .from(refunds)
@@ -572,7 +573,7 @@ export async function drawerSummary(shopId: string, date: string) {
   const [cardTotals] = await db
     .select({ cents: sql<number>`coalesce(sum(${payments.amountCents} - ${payments.refundedCents}), 0)::int`, n: sql<number>`count(*)::int` })
     .from(payments)
-    .where(and(eq(payments.shopId, shopId), eq(payments.businessDate, date), eq(payments.method, "card"), sql`${payments.status} <> 'voided'`));
+    .where(and(eq(payments.shopId, shopId), eq(payments.businessDate, date), eq(payments.method, "card"), sql`${payments.status} <> 'voided'`, sql`${payments.processor} is distinct from 'squire_import'`));
   const drawer = await db.query.cashDrawers.findFirst({ where: and(eq(cashDrawers.shopId, shopId), eq(cashDrawers.businessDate, date)) });
   const opening = drawer?.openingFloatCents ?? 15_000;
   const payouts = drawer?.payoutsCents ?? 0;
