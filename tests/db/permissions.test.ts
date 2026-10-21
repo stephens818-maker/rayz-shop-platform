@@ -138,9 +138,9 @@ describe("a la carte reports", () => {
     await as("regional");
     const byShop = await get(exportRoute, "/admin/reports/export?type=sales_summary&table=shops&shop=all&preset=30d");
     expect(byShop.status).toBe(200);
-    expect(new Set(csvRows(byShop.text).map((r) => r[0]))).toEqual(new Set(["Moline", "Rock Island"]));
-    const stock = await get(exportRoute, "/admin/reports/export?type=inventory&shop=all");
-    expect(new Set(csvRows(stock.text).map((r) => r[0]))).toEqual(new Set(["Moline", "Rock Island"]));
+    expect(csvRows(byShop.text).map((r) => r[0])).toEqual(["Moline", "Rock Island", "Total (2 shops)"]);
+    const stock = await get(exportRoute, "/admin/reports/export?type=inventory&shop=all&view=shops");
+    expect(new Set(csvRows(stock.text).map((r) => r[0]))).toEqual(new Set(["Moline", "Rock Island", "Total (2 shops)"]));
     await as("michelle");
     const audit = await get(exportRoute, "/admin/reports/export?type=audit_log");
     expect(audit.status).toBe(200);
