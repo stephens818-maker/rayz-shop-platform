@@ -10,7 +10,9 @@ export const headersMock = {
       const value = name === "rayz_session" ? jar.token : name === "rayz_shop" ? jar.shop : undefined;
       return value ? { name, value } : undefined;
     },
-    set() {},
+    set(name: string, value: string) {
+      if (name === "rayz_shop") jar.shop = value;
+    },
     delete() {},
   }),
   headers: async () => new Headers(),

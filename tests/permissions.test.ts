@@ -13,6 +13,7 @@ import {
   ROLE_TEMPLATES,
   RoleDef,
   UserAccessState,
+  accessByShop,
   assignableRoles,
   effectiveAccess,
   isPermission,
@@ -141,6 +142,42 @@ describe("effective permissions", () => {
 
   it("ignores unknown override keys", () => {
     expect(access("barber", { "do.anything": true } as never).permissions.size).toBe(access("barber").permissions.size);
+  });
+});
+
+describe("a different role at each assigned shop", () => {
+  const withId = (key: string) => ({ ...role(key), id: key });
+  const kat = (shops: { shopId: string; role: string | null }[], o = {}, scope: Grantor["scope"] = "selected") =>
+    accessByShop(withId("barber"), shops.map((s) => ({ shopId: s.shopId, role: s.role ? withId(s.role) : null })), o, null, scope);
+
+  it("each shop gets its own role, with the person's overrides on top everywhere", () => {
+    const a = kat([{ shopId: A, role: null }, { shopId: B, role: "shop_manager" }], { "clients.contact": true });
+    expect(a.uniform).toBe(false);
+    expect(a.byShop.get(A)!.permissions.has("sales.view")).toBe(false);
+    expect(a.byShop.get(B)!.permissions.has("sales.view")).toBe(true);
+    expect(a.byShop.get(B)!.role.id).toBe("shop_manager");
+    for (const shop of [A, B]) expect(a.byShop.get(shop)!.permissions.has("clients.contact")).toBe(true);
+    expect(a.union.permissions.has("sales.view")).toBe(true);
+    expect(a.union.maxDiscountPct).toBe(100);
+  });
+
+  it("the same role everywhere is uniform, so they can work across their shops at once", () => {
+    expect(kat([{ shopId: A, role: null }, { shopId: B, role: "barber" }]).uniform).toBe(true);
+    expect(kat([{ shopId: A, role: null }]).uniform).toBe(true);
+  });
+
+  it("never Brand Owner at one shop, and brand-only permissions stay off", () => {
+    const a = kat([{ shopId: A, role: "brand_owner" }, { shopId: B, role: "brand_admin" }]);
+    expect(a.byShop.get(A)!.isOwner).toBe(false);
+    expect(a.byShop.get(A)!.role.id).toBe("barber");
+    expect(a.byShop.get(B)!.permissions.has("catalog.manage")).toBe(false);
+    expect(a.union.permissions.has("settings.brand")).toBe(false);
+  });
+
+  it("per-shop roles don't apply to someone with every shop", () => {
+    const a = kat([{ shopId: A, role: "shop_manager" }, { shopId: B, role: null }], {}, "all");
+    expect(a.uniform).toBe(true);
+    expect(a.byShop.get(A)!.permissions.has("sales.view")).toBe(false);
   });
 });
 

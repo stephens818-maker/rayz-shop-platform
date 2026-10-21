@@ -2,11 +2,13 @@
  * Shop workspaces. Coralville gets "canary" records carrying unique strings: a client, a barber who
  * works only there, a visit, a sale, a rating, a purchase order, a count, a transfer, a drawer, a
  * text message, a promo, a gift card, a walk-in, a time block and an audit entry. Then the Moline
- * shop login, Moline's manager and the regional manager (Moline and Rock Island) open every admin
- * page, by direct URL and with Coralville in the query string, download every export, call the API,
- * and aim every server action at those records. No canary may appear anywhere, every action must be
- * refused as "not found" or "outside your access", and nothing may change. The brand owner sees
- * every canary, so their absence means something.
+ * shop login, Moline's manager, the regional manager (Moline and Rock Island) and Kat (a barber at
+ * Moline and Silvis who manages Rock Island) open every admin page, by direct URL and with
+ * Coralville in the query string, download every export, call the API, and aim every server action
+ * at those records. No canary may appear anywhere except the client's own visit history, which
+ * follows the client to every shop; every action must be refused as "not found" or "outside your
+ * access", and nothing may change. The brand owner sees every canary, so their absence means
+ * something.
  */
 import { isValidElement } from "react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -51,6 +53,11 @@ const CANARY = {
   address: "1701 2nd Street",
 };
 const CLIENT_NAME = `${CANARY.first} ${CANARY.last}`;
+/** Records at Moline and at Rock Island, for checking that Kat sees only the shop she's working in. */
+const MARK = {
+  moline: { appt: "MARKER-MOLINE-APPT", promo: "MARKERMOLINE77", drawer: "MARKER-MOLINE-DRAWER" },
+  ri: { appt: "MARKER-RI-APPT", promo: "MARKERRI77", drawer: "MARKER-RI-DRAWER" },
+};
 /** Never shown to anyone outside Coralville. */
 const SECRETS = [
   CANARY.last,
@@ -77,8 +84,10 @@ const SECRETS = [
   CANARY.audit,
   CANARY.address,
 ];
-/** What a shop user may see of a brand client they looked up: the shared record, not other shops' visits. */
-const OTHER_SHOP_DETAIL = SECRETS.filter((s) => ![CANARY.last, CANARY.email, "555-7731", "5557731"].includes(s));
+/** A client's visit history follows them: any shop sees the barber, services and amounts of their visits at every shop. */
+const VISIT_HISTORY = [CANARY.barber, CANARY.item];
+/** What a shop user may not see even on a brand client's profile: other shops' notes, ratings, tickets and operations. */
+const OTHER_SHOP_DETAIL = SECRETS.filter((s) => ![CANARY.last, CANARY.email, "555-7731", "5557731", ...VISIT_HISTORY].includes(s));
 
 const shop: Record<string, string> = {};
 const people: Record<string, string> = {};
@@ -107,13 +116,23 @@ const ids = {} as {
   vendor: string;
   service: string;
   molineBarber: string;
+  marks: Record<keyof typeof MARK, { appt: string; promo: string; sale: string }>;
 };
 let today: string;
 
 const MOLINE_SIDE = ["moline", "manager.moline", "regional"] as const;
-type Login = (typeof MOLINE_SIDE)[number] | "owner";
+type Login = (typeof MOLINE_SIDE)[number] | "owner" | "kat";
 const email = (l: Login) => (l === "moline" ? "moline@rayz.test" : `${l}@rayz.test`);
 const as = (l: Login | null, shopCookie?: string) => signInAs(l ? people[l] : null, shopCookie);
+/** Everyone outside Coralville under test, with the shop they're working in: Kat in the shop she manages and one where she's a barber. */
+const OUTSIDERS: { name: string; login: Login; at?: () => string }[] = [
+  ...MOLINE_SIDE.map((login) => ({ name: login, login })),
+  { name: "kat at Rock Island", login: "kat", at: () => shop["rock-island"] },
+  { name: "kat at Moline", login: "kat", at: () => shop.moline },
+];
+const asOutsider = (o: (typeof OUTSIDERS)[number]) => as(o.login, o.at?.());
+/** Markers of an assigned shop they aren't working in (or aren't assigned to). */
+const notTheirs = (o: (typeof OUTSIDERS)[number]): string[] => (o.name === "regional" ? [] : Object.values(o.name === "kat at Rock Island" ? MARK.moline : MARK.ri));
 
 // ───────────── Rendering pages to text ─────────────
 
@@ -329,6 +348,27 @@ async function seedCanaries() {
       .returning()
   )[0].id;
   await m.db.db.insert(m.schema.auditLog).values({ actorLabel: "test", shopId: cv, action: "test.canary", entity: "test", details: { note: CANARY.audit } });
+
+  ids.marks = {} as typeof ids.marks;
+  const [walkIn] = await m.db.db.insert(m.schema.customers).values({ firstName: "Marker", lastName: "Client", phone: "+13095557790", homeShopId: shop.moline }).returning();
+  for (const [key, slug, startMin] of [
+    ["moline", "moline", 21 * 60 + 30],
+    ["ri", "rock-island", 22 * 60 + 30],
+  ] as const) {
+    const sid = shop[slug];
+    const mark = MARK[key];
+    const appt = await appointment({ shopId: sid, staffId: people.kat, customerId: walkIn.id, at: at(0, startMin), notes: mark.appt, status: "booked" });
+    const promo = (await m.db.db.insert(m.schema.promoCodes).values({ code: mark.promo, description: mark.promo, type: "percent", value: 5, shopId: sid }).returning())[0].id;
+    const svc = (await m.catalog.shopCatalog(sid))[0].id;
+    const sale = await m.checkout.openBlankSale(sid, actor);
+    await m.checkout.finalizeSale({ saleId: sale.id, lines: [{ kind: "service", refId: svc, qty: 1 }], tipCents: 0, tender: cash, actor });
+    await m.checkout.closeDrawer({ ...drawer, shopId: sid, notes: mark.drawer }).catch(() => null);
+    await m.db.db
+      .update(m.schema.cashDrawers)
+      .set({ notes: mark.drawer })
+      .where(and(eq(m.schema.cashDrawers.shopId, sid), eq(m.schema.cashDrawers.businessDate, today)));
+    ids.marks[key] = { appt, promo, sale: sale.id };
+  }
 }
 
 /** Every Coralville row the actions below could touch. */
@@ -371,7 +411,7 @@ beforeAll(async () => {
   m = await loadModules();
   today = m.time.todayLocal();
   for (const s of await m.db.db.select().from(m.schema.shops)) shop[s.slug] = s.id;
-  for (const l of [...MOLINE_SIDE, "owner"] as const) people[l] = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, email(l)) }))!.id;
+  for (const l of [...MOLINE_SIDE, "owner", "kat"] as const) people[l] = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, email(l)) }))!.id;
   await seedCanaries();
 }, 180_000);
 
@@ -409,9 +449,9 @@ describe("the brand owner sees every canary (so their absence below means someth
 });
 
 describe("shop workspaces never show another shop's records", () => {
-  for (const login of MOLINE_SIDE) {
-    it(`${login}: no canary on any page, with or without Coralville in the URL`, async () => {
-      await as(login);
+  for (const o of OUTSIDERS) {
+    it(`${o.name}: no canary on any page, with or without Coralville in the URL`, async () => {
+      await asOutsider(o);
       const leaks: string[] = [];
       let opened = 0;
       for (const page of staticPages)
@@ -419,11 +459,11 @@ describe("shop workspaces never show another shop's records", () => {
           const r = await open(page, {}, sp);
           if (r.kind !== "ok") continue;
           opened++;
-          const hits = found(r.text, NAMES_LISTED.has(page) ? SECRETS : [...SECRETS, "Coralville"]);
+          const hits = found(r.text, [...(NAMES_LISTED.has(page) ? SECRETS : [...SECRETS, "Coralville"]), ...notTheirs(o)]);
           if (hits.length) leaks.push(`${page}?${new URLSearchParams(sp)}: ${hits.join(", ")}`);
         }
       expect(leaks).toEqual([]);
-      expect(opened).toBeGreaterThan(login === "moline" ? 10 : 30);
+      expect(opened).toBeGreaterThan(o.name === "moline" || o.name === "kat at Moline" ? 5 : 30);
     }, 300_000);
   }
 
@@ -474,16 +514,16 @@ describe("direct URLs to another shop's records", () => {
     expect(Object.keys(PAGE_ACCESS).filter((p) => p.includes("[") && !covered.has(p))).toEqual([]);
   });
 
-  for (const login of MOLINE_SIDE) {
-    it(`${login}: Coralville's records are not found; shared records show nothing of Coralville`, async () => {
-      await as(login);
+  for (const o of OUTSIDERS) {
+    it(`${o.name}: Coralville's records are not found; shared records show nothing of Coralville but the client's visit history`, async () => {
+      await asOutsider(o);
       const wrong: string[] = [];
       for (const [route, params] of dynamicPages()) {
         const r = await open(route, params, { shop: shop.coralville });
         const shared = route === "/admin/customers/[id]" || route === "/admin/inventory/[id]" || route === "/admin/vendors/[id]";
         if (r.kind === "ok" && !shared) wrong.push(`${route}: opened`);
         if (r.kind === "ok") {
-          const hits = found(r.text, route === "/admin/customers/[id]" ? [...OTHER_SHOP_DETAIL, "Coralville"] : [...SECRETS, "Coralville"]);
+          const hits = found(r.text, route === "/admin/customers/[id]" ? OTHER_SHOP_DETAIL : [...SECRETS, "Coralville"]);
           if (hits.length) wrong.push(`${route}: ${hits.join(", ")}`);
         }
       }
@@ -491,22 +531,26 @@ describe("direct URLs to another shop's records", () => {
     }, 60_000);
   }
 
-  it("a client of another shop: the shared record, but only this shop's visits", async () => {
-    await as("moline");
-    const profile = await open("/admin/customers/[id]", { id: ids.client });
-    expect(profile.kind).toBe("ok");
-    expect(profile.text).toContain(CLIENT_NAME);
-    expect(profile.text).toContain(CANARY.email);
-    expect(profile.text).toContain("Another Ray'z shop");
-    expect(profile.text).toContain("A barber at another shop");
-    expect(profile.text).toContain("1 visit at other Ray'z shops");
-    expect(found(profile.text!, [...OTHER_SHOP_DETAIL, "Coralville"])).toEqual([]);
+  // Barbers look up only clients they've served (their role, not the shop); Kat as a Moline barber is covered below.
+  for (const o of OUTSIDERS.filter((x) => x.name !== "kat at Moline")) {
+    it(`${o.name}: a client's visit history at every shop is visible, but not other shops' notes, ratings or tickets`, async () => {
+      await asOutsider(o);
+      const profile = await open("/admin/customers/[id]", { id: ids.client });
+      expect(profile.kind).toBe("ok");
+      const text = profile.text!;
+      expect(text).toContain(CLIENT_NAME);
+      for (const s of ["Coralville", CANARY.barber, CANARY.item, "$23.00", "at every Ray'z shop", "Loyalty progress", "★ 2.0"]) expect(text, s).toContain(s);
+      expect(found(text, OTHER_SHOP_DETAIL)).toEqual([]);
+      expect(text).not.toContain(`/admin/sales/${ids.sale}`);
+      expect(text).not.toContain("Another Ray'z shop");
 
-    const shared = await open("/admin/customers/[id]", { id: ids.shared });
-    expect(shared.text).toContain("Jilane");
-    expect(shared.text).toContain("1 visit at other Ray'z shops");
-    expect(found(shared.text!, [CANARY.barber, CANARY.item, CANARY.sharedRatingNote, "Coralville"])).toEqual([]);
+      const shared = await open("/admin/customers/[id]", { id: ids.shared });
+      for (const s of ["Jilane", "Moline", "Coralville", CANARY.barber, CANARY.item, "2 appointments"]) expect(shared.text, s).toContain(s);
+      expect(shared.text).not.toContain(CANARY.sharedRatingNote);
+    });
+  }
 
+  it("the brand sees the same history, plus every shop's ratings and notes", async () => {
     await as("owner");
     const brand = await open("/admin/customers/[id]", { id: ids.shared });
     expect(found(brand.text!, [CANARY.barber, CANARY.item, CANARY.sharedRatingNote, "Coralville", "Jilane"])).toHaveLength(5);
@@ -790,12 +834,12 @@ describe("server actions aimed at another shop's records", () => {
     const before = await coralvilleState();
     const errors: Record<string, string[]> = {};
     const wrong: string[] = [];
-    for (const login of MOLINE_SIDE) {
-      await as(login);
+    for (const o of OUTSIDERS) {
+      await asOutsider(o);
       for (const [name, call] of calls) {
         const r = await call();
-        if (r.ok) wrong.push(`${login} ${name}: succeeded`);
-        else (errors[name] ??= []).push(`${login}: ${r.error}`);
+        if (r.ok) wrong.push(`${o.name} ${name}: succeeded`);
+        else (errors[name] ??= []).push(`${o.name}: ${r.error}`);
       }
     }
     for (const [name, list] of Object.entries(errors)) if (!list.some((e) => TENANT.test(e))) wrong.push(`${name}: ${list.join(" | ")}`);
@@ -811,6 +855,161 @@ describe("server actions aimed at another shop's records", () => {
     expect(await promos.issueGiftCardAction(shop.moline, 1000, "test")).toMatchObject({ ok: true });
     expect(await settings.addClosureAction(shop.moline, m.time.addDays(today, 41), "Test closure", false)).toMatchObject({ ok: true });
     expect(await settings.removeClosureAction(shop.moline, m.time.addDays(today, 41))).toMatchObject({ ok: true });
+  });
+});
+
+// ───────────── Staff assigned to several shops ─────────────
+
+describe("staff assigned to several shops (Kat: barber at Moline and Silvis, Shop Manager at Rock Island)", () => {
+  const ctxAt = async (cookie?: string) => {
+    const { getStaffContext } = await import("@/server/auth/staff");
+    await as("kat", cookie);
+    return (await getStaffContext())!;
+  };
+  const assigned = () => [shop.moline, shop["rock-island"], shop.silvis].sort();
+
+  it("works in one assigned shop at a time, under that shop's role", async () => {
+    const first = await ctxAt();
+    expect(first.assignedShops.map((s) => s.id).sort()).toEqual(assigned());
+    expect(first.combinedView).toBe(false);
+    expect(first.brandWide).toBe(false);
+    expect(first.currentShopId).toBe(shop.moline);
+    expect(first.shopIds).toEqual([shop.moline]);
+    expect(first.staff.roleName).toBe("Barber");
+    for (const p of ["sales.view", "staff.manage", "drawer.manage", "promos.manage"] as const) expect(first.permissions.has(p), p).toBe(false);
+
+    const ri = await ctxAt(shop["rock-island"]);
+    expect(ri.shopIds).toEqual([shop["rock-island"]]);
+    expect(ri.shops.map((s) => s.id)).toEqual([shop["rock-island"]]);
+    expect(ri.staff.roleName).toBe("Shop Manager");
+    for (const p of ["sales.view", "staff.manage", "drawer.manage", "promos.manage", "report.sales_summary.view"] as const) expect(ri.permissions.has(p), p).toBe(true);
+    for (const p of ["catalog.manage", "permissions.manage", "logins.manage"] as const) expect(ri.permissions.has(p), p).toBe(false);
+
+    expect((await ctxAt(shop.silvis)).shopIds).toEqual([shop.silvis]);
+    for (const cookie of ["all", shop.coralville, shop.kimberly]) {
+      const c = await ctxAt(cookie);
+      expect(c.currentShopId, cookie).toBe(shop.moline);
+      expect(c.shopIds, cookie).toEqual([shop.moline]);
+    }
+  });
+
+  it("switches between only her assigned shops", async () => {
+    const { switchShop } = await import("@/app/admin/actions");
+    await as("kat", shop.moline);
+    for (const target of [shop.coralville, shop.kimberly, "all"]) {
+      await switchShop(target);
+      expect(jar.shop, target).toBe(shop.moline);
+    }
+    await switchShop(shop["rock-island"]);
+    expect(jar.shop).toBe(shop["rock-island"]);
+
+    const layout = (await import("@/app/admin/layout")).default as (p: { children: unknown }) => Promise<unknown>;
+    const text = await textOf(await layout({ children: null }), new Set());
+    for (const s of ["Moline", "Rock Island", "Silvis", "Your shops", "Shop Manager"]) expect(text, s).toContain(s);
+    for (const s of ["All my shops", "Coralville", "Kimberly", "Dubuque", "Utica"]) expect(text, s).not.toContain(s);
+
+    // Someone with the same role at each shop keeps the combined view.
+    const { getStaffContext } = await import("@/server/auth/staff");
+    await as("regional", "all");
+    const regional = (await getStaffContext())!;
+    expect(regional.combinedView).toBe(true);
+    expect(regional.currentShopId).toBeNull();
+    expect(regional.shopIds.sort()).toEqual([shop.moline, shop["rock-island"]].sort());
+  });
+
+  it("sees the shop she's working in, and none of her other shops' operations", async () => {
+    const day = { date: today };
+    await as("kat", shop["rock-island"]);
+    expect((await open("/admin/calendar", {}, day)).text).toContain(MARK.ri.appt);
+    expect((await open("/admin/promos")).text).toContain(MARK.ri.promo);
+    expect((await open("/admin/drawer")).text).toContain(MARK.ri.drawer);
+    expect(await open("/admin/sales/[id]", { id: ids.marks.ri.sale })).toMatchObject({ kind: "ok" });
+    expect((await open("/admin/sales/[id]", { id: ids.marks.moline.sale })).kind).not.toBe("ok");
+    expect((await open("/admin/customers/[id]", { id: ids.client })).text).toContain(CANARY.item);
+
+    await as("kat", shop.moline);
+    expect((await open("/admin/calendar", {}, day)).text).toContain(MARK.moline.appt);
+    for (const page of ["/admin/promos", "/admin/drawer", "/admin/sales"]) expect((await open(page)).kind, page).toBe("denied");
+    expect((await open("/admin/sales/[id]", { id: ids.marks.moline.sale })).kind).not.toBe("ok");
+    expect((await open("/admin/customers/[id]", { id: ids.client })).kind).toBe("redirect");
+
+    await as("manager.moline");
+    expect((await open("/admin/promos")).text).toContain(MARK.moline.promo);
+    expect((await open("/admin/drawer")).text).toContain(MARK.moline.drawer);
+  });
+
+  it("acts on a shop only with that shop's role, and never on her other shops from the one she's in", async () => {
+    const promos = await import("@/app/admin/promos/actions");
+    const settings = await import("@/app/admin/settings/actions");
+    const calendar = await import("@/app/admin/calendar/actions");
+    const active = async (id: string) => (await m.db.db.query.promoCodes.findFirst({ where: eq(m.schema.promoCodes.id, id) }))!.active;
+    const closure = m.time.addDays(today, 43);
+
+    await as("kat", shop["rock-island"]);
+    for (const [name, call] of [
+      ["promo toggle", () => promos.togglePromoAction(ids.marks.moline.promo, false)],
+      ["gift card", () => promos.issueGiftCardAction(shop.moline, 1000, "x")],
+      ["closure", () => settings.addClosureAction(shop.moline, closure, "x", false)],
+      ["appointment", () => calendar.setStatusAction(ids.marks.moline.appt, "cancelled")],
+    ] as const) {
+      const r = await call();
+      expect(r.ok, name).toBe(false);
+      expect(r.ok ? "" : r.error, name).toMatch(TENANT);
+    }
+    expect(await active(ids.marks.moline.promo)).toBe(true);
+    expect(await promos.togglePromoAction(ids.marks.ri.promo, false)).toMatchObject({ ok: true });
+    expect(await promos.togglePromoAction(ids.marks.ri.promo, true)).toMatchObject({ ok: true });
+    expect(await promos.issueGiftCardAction(shop["rock-island"], 1000, "test")).toMatchObject({ ok: true });
+
+    await as("kat", shop.moline);
+    for (const call of [
+      () => promos.togglePromoAction(ids.marks.moline.promo, false),
+      () => promos.issueGiftCardAction(shop.moline, 1000, "x"),
+      () => promos.togglePromoAction(ids.marks.ri.promo, false),
+    ])
+      expect((await call()).ok).toBe(false);
+    expect(await settings.addClosureAction(shop.moline, closure, "x", false)).toMatchObject({ ok: false });
+    expect(await active(ids.marks.moline.promo)).toBe(true);
+    expect(await active(ids.marks.ri.promo)).toBe(true);
+  });
+
+  it("assignments and per-shop roles change at once; nobody outside her shops can set them", async () => {
+    const permissions = await import("@/app/admin/permissions/actions");
+    const roleId = async (key: string) => (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, key) }))!.id;
+    const [barber, manager, owner] = [await roleId("barber"), await roleId("shop_manager"), await roleId("brand_owner")];
+    const save = (shopIds: string[], shopRoles: Record<string, string>) =>
+      permissions.saveUserAccessAction({ staffId: people.kat, roleId: barber, scope: "selected", shopIds, shopRoles, overrides: {}, maxDiscountPct: null });
+    const ri = shop["rock-island"];
+
+    await as("regional");
+    expect(await save([shop.moline, ri], {})).toMatchObject({ ok: false });
+    await as("manager.moline");
+    expect(await save([shop.moline], {})).toMatchObject({ ok: false });
+
+    await as("owner");
+    expect(await save([shop.moline, ri], { [shop.silvis]: manager })).toMatchObject({ ok: false });
+    expect(await save([shop.moline, ri], { [ri]: owner })).toMatchObject({ ok: false });
+    expect(await save([shop.moline, ri], { [ri]: manager })).toMatchObject({ ok: true });
+    const two = await ctxAt(shop.silvis);
+    expect(two.assignedShops.map((s) => s.id).sort()).toEqual([shop.moline, ri].sort());
+    expect(two.currentShopId).toBe(shop.moline);
+
+    await as("owner");
+    expect(await save([shop.moline, ri], {})).toMatchObject({ ok: true });
+    const same = await ctxAt("all");
+    expect(same.combinedView).toBe(true);
+    expect(same.currentShopId).toBeNull();
+    expect(same.shopIds.sort()).toEqual([shop.moline, ri].sort());
+    expect(same.permissions.has("sales.view")).toBe(false);
+
+    await as("owner");
+    expect(await save(assigned(), { [ri]: manager })).toMatchObject({ ok: true });
+    expect((await ctxAt(ri)).staff.roleName).toBe("Shop Manager");
+    const audit = await m.db.db
+      .select()
+      .from(m.schema.auditLog)
+      .where(and(eq(m.schema.auditLog.entityId, people.kat), eq(m.schema.auditLog.action, "permissions.user_update")));
+    expect(audit.some((a) => JSON.stringify(a.details).includes('"to":{"' + ri + '":"Shop Manager"}'))).toBe(true);
   });
 });
 
