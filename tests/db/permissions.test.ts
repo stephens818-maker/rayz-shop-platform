@@ -19,7 +19,7 @@ const shopId: Record<string, string> = {};
 const LOGINS = ["owner", "admin", "regional", "michelle", "frontdesk", "makenna"] as const;
 type Login = (typeof LOGINS)[number];
 
-const pages = import.meta.glob("/src/app/admin/**/page.tsx");
+const pages = (import.meta as unknown as { glob(p: string): Record<string, () => Promise<unknown>> }).glob("/src/app/admin/**/page.tsx");
 const routeOfFile = (f: string) => f.replace("/src/app", "").replace(/\/page\.tsx$/, "");
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 
@@ -94,7 +94,10 @@ describe("every admin page checks permissions on the server", () => {
     await as("frontdesk");
     expect(await render("/admin/sales/[id]", { id: theirs.id })).toBe("ok");
 
-    const molineBarber = (await m.db.db.select().from(m.schema.staffShops).where(eq(m.schema.staffShops.shopId, shopId.moline)))[0].staffId;
+    const links = await m.db.db.select().from(m.schema.staffShops);
+    const molineBarber = links.find(
+      (l) => l.shopId === shopId.moline && links.every((o) => o.staffId !== l.staffId || !people.michelle.shopIds.includes(o.shopId)),
+    )!.staffId;
     await as("michelle");
     expect(await render("/admin/staff/[id]", { id: molineBarber })).toBe("404");
   }, 60_000);

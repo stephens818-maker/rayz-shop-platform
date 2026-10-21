@@ -66,7 +66,7 @@ export type ClientPlan = Omit<UploadPlan, "rows"> & { rows: Omit<PlannedRow, "op
 
 const toClient = (plan: UploadPlan, runId: string | null, saved: boolean): ClientPlan => ({
   ...plan,
-  rows: plan.rows.map(({ op: _op, raw: _raw, ...r }) => r),
+  rows: plan.rows.map(({ line, sku, name, kind, action, changes, errors, warnings }) => ({ line, sku, name, kind, action, changes, errors, warnings })),
   runId,
   saved,
 });
