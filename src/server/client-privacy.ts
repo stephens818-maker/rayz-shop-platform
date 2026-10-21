@@ -232,9 +232,13 @@ const IMPORT_COLUMNS: Partial<Record<string, FieldKey>> = { phone: "phone", emai
  */
 export function redactImportErrors<E extends { data?: Record<string, string> }>(p: ClientPolicy, headerMap: Record<string, string>, errors: E[]): E[] {
   if (p.isOwner) return errors;
-  const columns = Object.entries(headerMap).flatMap(([field, col]) => (IMPORT_COLUMNS[field] && p.level(IMPORT_COLUMNS[field]) !== "full" ? [[col, IMPORT_COLUMNS[field]] as const] : []));
+  const columns = Object.entries(headerMap).flatMap(([field, col]) =>
+    IMPORT_COLUMNS[field] && p.level(IMPORT_COLUMNS[field]) !== "full" ? [[col, IMPORT_COLUMNS[field]] as const] : [],
+  );
   if (!columns.length) return errors;
-  return errors.map((e) => (e.data ? { ...e, data: { ...e.data, ...Object.fromEntries(columns.filter(([c]) => c in e.data!).map(([c, f]) => [c, p.show(f, e.data![c]) ?? ""])) } } : e));
+  return errors.map((e) =>
+    e.data ? { ...e, data: { ...e.data, ...Object.fromEntries(columns.filter(([c]) => c in e.data!).map(([c, f]) => [c, p.show(f, e.data![c]) ?? ""])) } } : e,
+  );
 }
 
 /** Whether the audit log search may look inside client entries (it would confirm a number the reader can't see). */

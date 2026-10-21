@@ -58,8 +58,8 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
             {alerts.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
                 <span>
-                  <Badge tone={a.kind === "paused" ? "red" : "amber"}>{a.kind === "paused" ? "Paused" : "Unusual"}</Badge> <span className="font-medium">{a.actorLabel}</span>: {a.profiles} profiles and{" "}
-                  {a.searches} searches in {a.windowMinutes} min · {formatDateTime(a.at)}
+                  <Badge tone={a.kind === "paused" ? "red" : "amber"}>{a.kind === "paused" ? "Paused" : "Unusual"}</Badge> <span className="font-medium">{a.actorLabel}</span>:{" "}
+                  {a.profiles} profiles and {a.searches} searches in {a.windowMinutes} min · {formatDateTime(a.at)}
                   {a.staffId && (
                     <Link className="ml-2 text-xs underline" href={`/admin/client-data/access?${qs({ who: a.staffId, days: "1", kind: null, client: null })}`}>
                       See their lookups
@@ -125,7 +125,15 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
             <tbody>
               {summary.map((s) => (
                 <tr key={s.staffId ?? s.who}>
-                  <Td>{s.staffId ? <Link className="underline" href={`/admin/client-data/access?${qs({ who: s.staffId })}`}>{s.who}</Link> : s.who}</Td>
+                  <Td>
+                    {s.staffId ? (
+                      <Link className="underline" href={`/admin/client-data/access?${qs({ who: s.staffId })}`}>
+                        {s.who}
+                      </Link>
+                    ) : (
+                      s.who
+                    )}
+                  </Td>
                   <Td right>{s.profiles}</Td>
                   <Td right>{s.reveals}</Td>
                   <Td right>{s.exports}</Td>
@@ -162,7 +170,11 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
                   <Td>{r.actorLabel}</Td>
                   <Td>
                     <Badge tone={KIND_TONE[r.kind]}>{r.what}</Badge>
-                    {r.kind === "export" && r.detail && <div className="mt-1 text-[11px] text-zinc-500">{String(r.detail.export ?? "")} · {String(r.detail.clients ?? r.detail.rows ?? "")} rows</div>}
+                    {r.kind === "export" && r.detail && (
+                      <div className="mt-1 text-[11px] text-zinc-500">
+                        {String(r.detail.export ?? "")} · {String(r.detail.clients ?? r.detail.rows ?? "")} rows
+                      </div>
+                    )}
                   </Td>
                   <Td>
                     {r.customerId ? (
@@ -193,7 +205,8 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
           <ul className="divide-y divide-zinc-100 text-xs text-zinc-600">
             {handled.map((a) => (
               <li key={a.id} className="px-4 py-2">
-                {a.kind === "paused" ? "Paused" : "Unusual"}: {a.actorLabel}, {a.profiles} profiles and {a.searches} searches · {formatDateTime(a.at)} · acknowledged {a.acknowledgedAt ? formatDateTime(a.acknowledgedAt) : ""}
+                {a.kind === "paused" ? "Paused" : "Unusual"}: {a.actorLabel}, {a.profiles} profiles and {a.searches} searches · {formatDateTime(a.at)} · acknowledged{" "}
+                {a.acknowledgedAt ? formatDateTime(a.acknowledgedAt) : ""}
               </li>
             ))}
           </ul>

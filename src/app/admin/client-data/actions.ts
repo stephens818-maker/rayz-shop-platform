@@ -88,11 +88,7 @@ export async function setFieldRuleAction(raw: z.input<typeof RuleSchema>) {
   });
 }
 
-const CustomFieldSchema = z.object({
-  id: z.string().uuid().nullable(),
-  label: z.string().trim().min(2, "Name the field").max(40),
-  active: z.boolean(),
-});
+const CustomFieldSchema = z.object({ id: z.string().uuid().nullable(), label: z.string().trim().min(2, "Name the field").max(40), active: z.boolean() });
 
 /** Brand-defined client fields (Instagram, allergies...). New ones start as locked down as the role defaults for custom fields. */
 export async function saveCustomFieldAction(raw: z.input<typeof CustomFieldSchema>) {
@@ -106,10 +102,22 @@ export async function saveCustomFieldAction(raw: z.input<typeof CustomFieldSchem
       const before = await db.query.clientFields.findFirst({ where: eq(clientFields.id, id) });
       if (!before) throw notFound("Field");
       await db.update(clientFields).set({ label: p.label, active: p.active }).where(eq(clientFields.id, id));
-      await audit(ctx.actor, "client_data.field_update", "client_field", id, { label: before.label === p.label ? p.label : { from: before.label, to: p.label }, active: p.active }, null);
+      await audit(
+        ctx.actor,
+        "client_data.field_update",
+        "client_field",
+        id,
+        { label: before.label === p.label ? p.label : { from: before.label, to: p.label }, active: p.active },
+        null,
+      );
     } else {
       const [{ n }] = await db.select({ n: sql<number>`coalesce(max(${clientFields.sortOrder}), 0)::int` }).from(clientFields);
-      id = (await db.insert(clientFields).values({ label: p.label, active: p.active, sortOrder: n + 10 }).returning({ id: clientFields.id }))[0].id;
+      id = (
+        await db
+          .insert(clientFields)
+          .values({ label: p.label, active: p.active, sortOrder: n + 10 })
+          .returning({ id: clientFields.id })
+      )[0].id;
       await audit(ctx.actor, "client_data.field_create", "client_field", id, { label: p.label }, null);
     }
     revalidate();
@@ -132,7 +140,10 @@ export async function saveLookupLimitsAction(raw: z.input<typeof LimitsSchema>) 
     if (p.blockProfiles < p.alertProfiles || p.blockSearches < p.alertSearches) throw new AppError("bad_request", "The pause level can't be below the alert level");
     const limits = cleanLimits(p);
     const [before] = await db.select({ l: brandSettings.clientLookupLimits }).from(brandSettings).where(eq(brandSettings.id, 1));
-    await db.update(brandSettings).set({ clientLookupLimits: { ...limits } as Record<string, number> }).where(eq(brandSettings.id, 1));
+    await db
+      .update(brandSettings)
+      .set({ clientLookupLimits: { ...limits } as Record<string, number> })
+      .where(eq(brandSettings.id, 1));
     await audit(ctx.actor, "client_data.limits", "brand_settings", "1", { from: cleanLimits(before?.l), to: limits }, null);
     revalidate();
     return null;

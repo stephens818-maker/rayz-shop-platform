@@ -53,7 +53,9 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
 
   const personRules = rules.filter((r) => r.staffId).map((r) => ({ ...r, who: people.find((p) => p.id === r.staffId)?.label ?? "Former staff" }));
   const who = people.find((p) => p.id === sp.who) ?? null;
-  const whoShops = who ? await db.select({ shopId: staffAccessShops.shopId, roleId: staffAccessShops.roleId }).from(staffAccessShops).where(eq(staffAccessShops.staffId, who.id)) : [];
+  const whoShops = who
+    ? await db.select({ shopId: staffAccessShops.shopId, roleId: staffAccessShops.roleId }).from(staffAccessShops).where(eq(staffAccessShops.staffId, who.id))
+    : [];
   const whoColumns = who
     ? who.scope === "all" || !whoShops.length
       ? [{ shopId: null as string | null, roleId: who.roleId, roleKey: who.roleKey }]
@@ -86,9 +88,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
         <CardHeader
           title="By role"
           subtitle={
-            shopId
-              ? `Overrides at ${shopName(shopId)}. "Inherit" uses the brand default for the role.`
-              : "Brand defaults for every shop. Pick a shop to override a role there."
+            shopId ? `Overrides at ${shopName(shopId)}. "Inherit" uses the brand default for the role.` : "Brand defaults for every shop. Pick a shop to override a role there."
           }
           action={
             <div className="flex flex-wrap gap-1 text-xs">
@@ -96,7 +96,11 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
                 Brand defaults
               </Link>
               {shopRows.map((s) => (
-                <Link key={s.id} className={`rounded-full px-2.5 py-1 ring-1 ${shopId === s.id ? "bg-ink-900 text-white ring-ink-900" : "ring-zinc-300"}`} href={here({ shop: s.id })}>
+                <Link
+                  key={s.id}
+                  className={`rounded-full px-2.5 py-1 ring-1 ${shopId === s.id ? "bg-ink-900 text-white ring-ink-900" : "ring-zinc-300"}`}
+                  href={here({ shop: s.id })}
+                >
                   {s.name}
                 </Link>
               ))}
@@ -141,8 +145,8 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
           </Table>
         </div>
         <p className="border-t border-zinc-100 px-4 py-3 text-xs text-zinc-500">
-          Masked phone: ***-***-4321. Masked email: j***@gmail.com. Managers with &quot;reveal a masked client detail&quot; can show one detail at a time with a reason, and each reveal is
-          logged. Search still finds a client by their full phone number or email without showing it, and calls and texts go through the shop line.
+          Masked phone: ***-***-4321. Masked email: j***@gmail.com. Managers with &quot;reveal a masked client detail&quot; can show one detail at a time with a reason, and each
+          reveal is logged. Search still finds a client by their full phone number or email without showing it, and calls and texts go through the shop line.
         </p>
       </Card>
 
@@ -230,7 +234,10 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader title="Custom client fields" subtitle="Extra details your shops keep on clients. Each gets its own column above; new fields start hidden from barbers and masked for the front desk." />
+          <CardHeader
+            title="Custom client fields"
+            subtitle="Extra details your shops keep on clients. Each gets its own column above; new fields start hidden from barbers and masked for the front desk."
+          />
           <CustomFields fields={fieldRows.map((f) => ({ id: f.id, label: f.label, active: f.active }))} />
         </Card>
         <Card>

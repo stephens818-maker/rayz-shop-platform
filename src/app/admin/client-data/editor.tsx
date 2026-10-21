@@ -24,7 +24,11 @@ function useRun() {
   return { pending, error, run };
 }
 
-const TONE: Record<Level, string> = { hidden: "bg-red-50 text-red-800 ring-red-200", masked: "bg-amber-50 text-amber-900 ring-amber-200", full: "bg-emerald-50 text-emerald-900 ring-emerald-200" };
+const TONE: Record<Level, string> = {
+  hidden: "bg-red-50 text-red-800 ring-red-200",
+  masked: "bg-amber-50 text-amber-900 ring-amber-200",
+  full: "bg-emerald-50 text-emerald-900 ring-emerald-200",
+};
 
 /** One role × field: a level set here, or inherit the brand default / built-in default. */
 export function RuleCell({ rule, level, inherited, from }: { rule: Rule; level: Level | null; inherited: Level; from: string }) {
@@ -65,7 +69,15 @@ export function RemoveRule({ rule }: { rule: Rule }) {
   );
 }
 
-export function PersonRuleForm({ people, fields, shops }: { people: { id: string; label: string }[]; fields: { key: string; label: string }[]; shops: { id: string; name: string }[] }) {
+export function PersonRuleForm({
+  people,
+  fields,
+  shops,
+}: {
+  people: { id: string; label: string }[];
+  fields: { key: string; label: string }[];
+  shops: { id: string; name: string }[];
+}) {
   const { pending, error, run } = useRun();
   const [staffId, setStaffId] = useState("");
   const [field, setField] = useState(fields[0]?.key ?? "phone");
@@ -129,7 +141,15 @@ export function CustomFields({ fields }: { fields: { id: string; label: string; 
       </ul>
       <div className="flex gap-2 border-t border-zinc-100 p-4">
         <Input placeholder="New field, e.g. Instagram" value={label} onChange={(e) => setLabel(e.target.value)} />
-        <Button disabled={pending || label.trim().length < 2} onClick={() => run(() => saveCustomFieldAction({ id: null, label, active: true }), () => setLabel(""))}>
+        <Button
+          disabled={pending || label.trim().length < 2}
+          onClick={() =>
+            run(
+              () => saveCustomFieldAction({ id: null, label, active: true }),
+              () => setLabel(""),
+            )
+          }
+        >
           Add
         </Button>
       </div>
@@ -142,9 +162,7 @@ export function LimitsForm({ initial }: { initial: LookupLimits }) {
   const { pending, error, run } = useRun();
   const [v, setV] = useState(initial);
   const [saved, setSaved] = useState(false);
-  const num = (k: keyof LookupLimits) => (
-    <Input type="number" min={1} value={v[k]} onChange={(e) => (setSaved(false), setV({ ...v, [k]: Number(e.target.value) }))} />
-  );
+  const num = (k: keyof LookupLimits) => <Input type="number" min={1} value={v[k]} onChange={(e) => (setSaved(false), setV({ ...v, [k]: Number(e.target.value) }))} />;
   return (
     <div className="grid grid-cols-2 gap-3 p-4">
       <Field label="Time window (minutes)" className="col-span-2">
@@ -155,7 +173,15 @@ export function LimitsForm({ initial }: { initial: LookupLimits }) {
       <Field label="Alert after searches">{num("alertSearches")}</Field>
       <Field label="Pause after searches">{num("blockSearches")}</Field>
       <div className="col-span-2 flex items-center gap-3">
-        <Button disabled={pending} onClick={() => run(() => saveLookupLimitsAction(v), () => setSaved(true))}>
+        <Button
+          disabled={pending}
+          onClick={() =>
+            run(
+              () => saveLookupLimitsAction(v),
+              () => setSaved(true),
+            )
+          }
+        >
           Save limits
         </Button>
         {saved && <span className="text-sm text-zinc-600">Saved</span>}

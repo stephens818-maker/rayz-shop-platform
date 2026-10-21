@@ -24,7 +24,9 @@ export async function GET() {
       shop: shops.name,
       preferred: staff.displayLabel,
       visits: sql<number>`(select count(*)::int from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
-      lastVisit: sql<string | null>`(select to_char(max(starts_at) at time zone 'America/Chicago', 'YYYY-MM-DD') from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
+      lastVisit: sql<
+        string | null
+      >`(select to_char(max(starts_at) at time zone 'America/Chicago', 'YYYY-MM-DD') from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
     })
     .from(customers)
     .leftJoin(shops, eq(shops.id, customers.homeShopId))
@@ -69,10 +71,16 @@ export async function GET() {
     ];
   });
 
-  const fields = [...builtins.map((f) => `${f.key}:${policy.level(f.key)}`), ...custom.map((f) => `${f.label}:${policy.level(customFieldKey(f.id))}`), ...(withRatings ? [`ratings:${policy.level("ratings")}`] : [])];
+  const fields = [
+    ...builtins.map((f) => `${f.key}:${policy.level(f.key)}`),
+    ...custom.map((f) => `${f.label}:${policy.level(customFieldKey(f.id))}`),
+    ...(withRatings ? [`ratings:${policy.level("ratings")}`] : []),
+  ];
   const customerIds = rows.map((r) => r.c.id);
   await recordClientAccess(ctx, { kind: "export", detail: { export: "client_list", clients: customerIds.length, fields } });
   await audit(ctx.actor, "client.export", "customer", null, { export: "client_list", clients: customerIds.length, fields, customerIds }, ctx.currentShopId);
   const name = `rayz-clients-${new Date().toISOString().slice(0, 10)}.csv`;
-  return new Response(toCsv(headers, data), { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${name}"`, "Cache-Control": "no-store" } });
+  return new Response(toCsv(headers, data), {
+    headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${name}"`, "Cache-Control": "no-store" },
+  });
 }

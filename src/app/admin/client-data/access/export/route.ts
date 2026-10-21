@@ -12,8 +12,19 @@ export async function GET(req: Request) {
     ["When", "Who", "What", "Field", "Client", "Client ID", "Reason", "Shop"],
     rows.map((r) => [r.at.toISOString(), r.actorLabel, r.what, r.fieldName, r.client, r.customerId, r.reason, r.shop ?? "All shops"]),
   );
-  await audit(ctx.actor, "client_data.access_export", "client_access_log", null, { days: f.days, who: f.staffId ?? null, kind: f.kind ?? null, client: f.customerId ?? null, rows: rows.length }, null);
+  await audit(
+    ctx.actor,
+    "client_data.access_export",
+    "client_access_log",
+    null,
+    { days: f.days, who: f.staffId ?? null, kind: f.kind ?? null, client: f.customerId ?? null, rows: rows.length },
+    null,
+  );
   return new Response(csv, {
-    headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="rayz-client-data-access-${new Date().toISOString().slice(0, 10)}.csv"`, "Cache-Control": "no-store" },
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="rayz-client-data-access-${new Date().toISOString().slice(0, 10)}.csv"`,
+      "Cache-Control": "no-store",
+    },
   });
 }
