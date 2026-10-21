@@ -63,8 +63,9 @@ Handy demo data:
 ### Other commands
 
 ```bash
-pnpm test          # unit tests: availability/DST, checkout totals, payroll, loyalty, permission rules, upload parsing
+pnpm test          # unit tests: availability/DST, checkout totals, payroll, loyalty, permission rules, upload parsing, report views
 pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + seeds it first), incl. every page/action/route per login
+                   # and per-location totals adding up to multi-location and brand totals (refunds, multi-shop barbers)
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -185,16 +186,57 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | Audit log | `audit_log` | Every audited change, filterable |
 
 - **Only permitted reports appear.** The **Reports** hub and its tabs list only the reports you can view, and the nav item is hidden if you can view none. The server checks the view permission on every report page and the export permission on every CSV download (`/admin/reports/export`, which also serves the payroll and audit log exports, and the client ratings export), so typing a URL gets a "no access" page or a 403.
-- **Shop-scoped.** A report only ever shows the shops in your access: one of them, or "All my shops". Asking for any other shop by URL is refused.
+- **Shop-scoped.** A report only ever shows the shops in your access. Asking for any other shop by URL is refused (see [Reports across locations](#reports-across-locations)).
 - Exporting needs viewing too: removing the view permission takes export away with it.
 - The on-screen report and its CSV come from the same loader (`src/server/report-data.ts`), so they always match.
+
+### Reports across locations
+
+Every report, plus payroll, client ratings, and the audit log, runs over **one shop, any set of shops, or all shops**, picked from the **Locations** menu on the report:
+
+- **All shops**: every shop you have access to.
+- **Saved groups**, such as Quad Cities, Iowa shops, or Illinois shops.
+- **Pick shops**: tick any combination.
+
+When more than one shop is selected, a **Combined / By location** switch picks the layout:
+
+- **Combined** shows one set of numbers for everything selected.
+- **By location** shows each shop side by side:
+  - Summary tables get a column per shop and a total column: "Brand total" when every shop is selected, otherwise "Total (N shops)".
+  - Lists get a Location column, a **subtotal per shop** (shops with no activity show zeros rather than disappearing), and the total row. The barber report lists each barber under their shop, with the shop's subtotal.
+  - Rates such as average ticket, rebook rate, and attach rate are recomputed for each subtotal and total, not added up.
+  - Counts of distinct clients (retention, new vs returning, loyalty members) aren't additive: a client seen at two shops counts once at each and once in the total. The table says so.
+
+**Barbers who work at several shops.** Sales, tips, refunds, and payroll go to the shop where each ticket was rung up, not the barber's home shop. Sales by barber and payroll add a **Barbers at more than one shop** table with the barber's row at each shop and their combined total underneath. Payroll lists a barber once per shop per period, which is how each shop pays them out. The combined payroll view merges those rows into one line per barber, with a Locations column.
+
+**CSV follows the view.**
+- Combined downloads have no Location column.
+- By-location downloads put the Location in the first column of every row and keep the subtotal and total rows. A summary table downloads as one row per shop plus the total row.
+- The file name ends in `-by-location`.
+
+**Saved location groups** (**Setup → Location groups**, `/admin/location-groups`) are created and edited by people with the `locations.manage` permission (Brand Owner and Brand Admin by default). It also needs access to every shop, since a group can include any shop in the brand.
+- A group needs a unique name and at least two shops.
+- Creating, editing, and deleting a group are audited.
+- Anyone with a report can use a group as a filter. They see only the shops in it that they have access to, and a note says how many shops were left out.
+
+**Access.** The menu lists only your shops. Asking for a shop you don't have access to, by URL or in a CSV link, is refused with a "no access" page or a 403. It isn't quietly dropped. Brand-level audit entries (with no shop) appear only to people with access to every shop.
+
+<img alt="Sales summary by location for the Quad Cities group" src="docs/screenshots/reports-summary-by-location.png" width="800" />
+
+<img alt="Location menu with saved groups and shop checkboxes" src="docs/screenshots/reports-location-picker.png" width="800" />
+
+<img alt="Sales by barber by location, with barbers at more than one shop" src="docs/screenshots/reports-barbers-by-location.png" width="800" />
+
+<img alt="Payroll tips by location" src="docs/screenshots/payroll-by-location.png" width="800" />
+
+<img alt="Location groups" src="docs/screenshots/location-groups.png" width="800" />
 
 ### Roles and permissions
 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 31 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 32 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
