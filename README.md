@@ -225,7 +225,8 @@ These were built in response to the owner's request: "mimic Squire, but make it 
 - The database guarantees no cross-shop double-booking.
 - Tax rates and card fees are per shop, admin-only, audited, and range-checked by the database. The card fee can never exceed 3%.
 - Every money-affecting action is in an append-only audit log.
-- The importer always dry-runs first, and re-running it is safe.
+- The importer always dry-runs first, and re-running it is safe. Every run ends with a reconciliation summary and a downloadable file of skipped rows.
+- One brand-wide client record with a duplicates screen and merge, and a profile with the whole Squire history, lifetime spend, and loyalty in one place.
 - Booking URLs never contain surnames. Squire's personal booking links do.
 - Duplicate first names get unique IDs and admin-set labels instead of guesswork.
 - An API-first booking backend is ready for a mobile app.
