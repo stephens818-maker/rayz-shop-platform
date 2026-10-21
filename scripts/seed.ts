@@ -36,6 +36,7 @@ async function main() {
   console.log(`Seeding (today = ${today} America/Chicago)…`);
 
   await db.execute(sql`TRUNCATE TABLE
+    client_access_alerts, client_access_log, client_field_rules, client_fields,
     audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
@@ -222,6 +223,9 @@ async function main() {
   await db.insert(t.giftCardLedger).values({ giftCardId: demoGift.id, deltaCents: 2500, kind: "issue" });
 
   // ── Customers ──
+  // Address, birthday and the Instagram custom field come from the row number, not rand(), so the rest of the sample data stays the same.
+  const [instagram] = await db.insert(t.clientFields).values({ label: "Instagram", sortOrder: 10 }).returning();
+  const STREETS = ["2nd Ave", "Main St", "River Dr", "Oak St", "College St", "5th Ave", "Kirkwood Ave", "Elm St"];
   const customerValues = Array.from({ length: 3000 }, (_, i) => {
     const first = pick(FIRST_NAMES);
     const last = pick(LAST_NAMES);
@@ -236,6 +240,9 @@ async function main() {
       emailOptIn: email !== null && chance(0.5),
       homeShopId: shop.id,
       createdAt: new Date(now.getTime() - (HISTORY_DAYS + 400 * rand()) * 86_400_000),
+      address: i % 3 === 0 ? `${100 + ((i * 37) % 900)} ${STREETS[i % STREETS.length]}, ${shop.city}, ${shop.state} ${shop.zip}` : null,
+      birthday: i % 2 === 0 ? `${1960 + ((i * 7) % 45)}-${String(((i * 5) % 12) + 1).padStart(2, "0")}-${String(((i * 11) % 28) + 1).padStart(2, "0")}` : null,
+      customFields: i % 4 === 0 ? { [instagram.id]: `@${first}${last}${i}`.toLowerCase() } : {},
     };
   });
   const customerRows: (typeof t.customers.$inferSelect)[] = [];
@@ -243,7 +250,19 @@ async function main() {
   // A demo client whose next haircut crosses the $300 loyalty goal.
   const [demoCustomer] = await db
     .insert(t.customers)
-    .values({ firstName: "Jordan", lastName: "Demo", phone: "+13195550100", email: "jordan@example.test", smsOptIn: true, emailOptIn: true, homeShopId: shopBySlug.get("coralville")!.id })
+    .values({
+      firstName: "Jordan",
+      lastName: "Demo",
+      phone: "+13195550100",
+      email: "jordan@example.test",
+      smsOptIn: true,
+      emailOptIn: true,
+      homeShopId: shopBySlug.get("coralville")!.id,
+      address: "1701 2nd St, Coralville, IA 52241",
+      birthday: "1994-07-14",
+      notes: "Skin fade, #2 on top. Likes the hot towel.",
+      customFields: { [instagram.id]: "@jordandemo" },
+    })
     .returning();
   const customersByShop = new Map<string, typeof customerRows>();
   for (const c of customerRows) customersByShop.set(c.homeShopId!, [...(customersByShop.get(c.homeShopId!) ?? []), c]);

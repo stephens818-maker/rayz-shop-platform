@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Card, CardHeader, Empty, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
+import { Card, CardHeader, Empty, Notice, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
+import { RATINGS_MASKED_HINT } from "@/domain/client-privacy";
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
+import { clientPolicy } from "@/server/client-privacy";
 import { RatedClientRow, ratingsByShop } from "@/server/ratings";
 import { ratingsGivenTable } from "@/server/report-data";
 import { ReportView } from "@/domain/report-views";
@@ -12,7 +14,7 @@ import { MIN_RATINGS, PERIODS, RatingsParams, resolveRatingsParams } from "./par
 
 export const metadata: Metadata = { title: "Client ratings" };
 
-function ClientTable({ title, rows }: { title: string; rows: RatedClientRow[] }) {
+function ClientTable({ title, rows, notes }: { title: string; rows: RatedClientRow[]; notes: boolean }) {
   return (
     <div>
       <div className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">{title}</div>
@@ -25,7 +27,7 @@ function ClientTable({ title, rows }: { title: string; rows: RatedClientRow[] })
               <Th>Client</Th>
               <Th>Rating</Th>
               <Th>Last rated</Th>
-              <Th>Latest note</Th>
+              {notes && <Th>Latest note</Th>}
             </tr>
           </thead>
           <tbody>
@@ -40,7 +42,7 @@ function ClientTable({ title, rows }: { title: string; rows: RatedClientRow[] })
                   <StarBadge rating={{ avg: r.avg, count: r.count }} />
                 </Td>
                 <Td className="whitespace-nowrap">{formatDate(r.lastRatedAt, "MMM d, yyyy")}</Td>
-                <Td className="max-w-xs truncate text-zinc-600">{r.lastNote ?? "—"}</Td>
+                {notes && <Td className="max-w-xs truncate text-zinc-600">{r.lastNote ?? "—"}</Td>}
               </tr>
             ))}
           </tbody>
@@ -53,8 +55,10 @@ function ClientTable({ title, rows }: { title: string; rows: RatedClientRow[] })
 export default async function RatingsReportPage({ searchParams }: { searchParams: Promise<RatingsParams> }) {
   const ctx = await guardPage("/admin/reports/ratings");
   const p = await resolveRatingsParams(ctx, await searchParams);
+  const policy = await clientPolicy(ctx);
+  const clients = policy.stars({ avg: 0, count: 0 }) !== null;
   const t0 = performance.now();
-  const [shops, given] = await Promise.all([ratingsByShop(p.query), ratingsGivenTable(p.scope, p.loc)]);
+  const [shops, given] = await Promise.all([clients ? ratingsByShop(p.query) : [], ratingsGivenTable(p.scope, p.loc)]);
   const ms = Math.round(performance.now() - t0);
   const canExport = can(ctx, "report.client_ratings.export");
   const csv = reportQuery(p, { min: String(p.min), period: p.period });
@@ -74,7 +78,7 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
           </>
         }
         actions={
-          canExport ? (
+          canExport && clients ? (
             <a className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/reports/ratings/export?${csv}`}>
               Export CSV
             </a>
@@ -108,16 +112,18 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
       <LocationNotice locations={p} />
       <ReportTableCard t={given} csv={canExport ? `/admin/reports/ratings/export?${reportQuery(p, { period: p.period, table: "given" })}` : null} />
       <div className="h-4" />
-      {shops.length === 0 ? (
+      {!clients ? (
+        <Notice>Client ratings aren&apos;t shown to you, so the rated-client lists are left out.</Notice>
+      ) : shops.length === 0 ? (
         <Empty title="No shops in scope" />
       ) : (
         <div className="space-y-4">
           {shops.map((s) => (
             <Card key={s.shopId}>
-              <CardHeader title={s.shop} subtitle={`${s.ratedClients} rated client${s.ratedClients === 1 ? "" : "s"}`} />
+              <CardHeader title={s.shop} subtitle={`${s.ratedClients} rated client${s.ratedClients === 1 ? "" : "s"}${policy.ratingDetail ? "" : ` · ${RATINGS_MASKED_HINT.toLowerCase()}`}`} />
               <div className="grid gap-2 pb-2 lg:grid-cols-2">
-                <ClientTable title="Lowest rated" rows={s.lowest} />
-                <ClientTable title="Highest rated" rows={s.highest} />
+                <ClientTable title="Lowest rated" rows={s.lowest} notes={policy.ratingDetail} />
+                <ClientTable title="Highest rated" rows={s.highest} notes={policy.ratingDetail} />
               </div>
             </Card>
           ))}

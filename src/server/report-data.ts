@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, shops } from "@/db/schema";
+import { ClientPolicy, LOCKED_POLICY, redactAuditDetails, searchesClientDetails } from "./client-privacy";
 import { ReportKey } from "@/domain/permissions";
 import {
   Cell,
@@ -88,6 +89,8 @@ export interface ReportInput {
   loc: ViewCtx;
   /** The viewer's access: brand-level rows (no shop) are only for people with every shop. */
   viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[] };
+  /** What the viewer may see of client records; without it, client details in the audit log are hidden. */
+  client?: ClientPolicy;
   params: Record<string, string | undefined>;
 }
 
@@ -1081,8 +1084,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     };
   },
 
-  async audit_log({ viewer, loc, params }) {
-    const r = await auditRows({ viewer, loc, q: params.q, entity: params.entity, limit: 10000, offset: 0 });
+  async audit_log({ viewer, loc, params, client }) {
+    const r = await auditRows({ viewer, client: client ?? LOCKED_POLICY, loc, q: params.q, entity: params.entity, limit: 10000, offset: 0 });
     const v = auditView(viewer, loc);
     return {
       stats: [],
@@ -1109,19 +1112,28 @@ export function auditView(viewer: ReportInput["viewer"], loc: ViewCtx): ViewCtx 
   return auditIncludesBrand(viewer) ? { ...loc, shops: [...loc.shops, { id: BRAND_ROW, name: "Brand" }] } : loc;
 }
 
-/** Audit entries at the selected shops, newest first, or grouped by shop for the by-location view. */
-export async function auditRows(o: { viewer: ReportInput["viewer"]; loc: ViewCtx; q?: string; entity?: string; limit: number; offset: number }) {
+/**
+ * Audit entries at the selected shops, newest first, or grouped by shop for the by-location view.
+ * Client details in an entry (a profile edit's before and after, a merged record) come back as the
+ * viewer may see them, and searching inside client entries is only for people who see them in full.
+ */
+export async function auditRows(o: { viewer: ReportInput["viewer"]; client: ClientPolicy; loc: ViewCtx; q?: string; entity?: string; limit: number; offset: number }) {
   const q = o.q?.trim();
+  const inDetails = q
+    ? searchesClientDetails(o.client)
+      ? sql`${auditLog.details}::text ilike ${`%${q}%`}`
+      : sql`(${auditLog.entity} not in ('customer', 'client_rating') and ${auditLog.details}::text ilike ${`%${q}%`})`
+    : undefined;
   const ids = o.loc.shops.map((s) => s.id);
   const where = and(
     or(ids.length ? inArray(auditLog.shopId, ids) : sql`false`, auditIncludesBrand(o.viewer) ? isNull(auditLog.shopId) : undefined),
     o.entity ? eq(auditLog.entity, o.entity) : undefined,
     q
-      ? or(ilike(auditLog.action, `%${q}%`), ilike(auditLog.actorLabel, `%${q}%`), ilike(auditLog.entityId, `%${q}%`), sql`${auditLog.details}::text ilike ${`%${q}%`}`)
+      ? or(ilike(auditLog.action, `%${q}%`), ilike(auditLog.actorLabel, `%${q}%`), ilike(auditLog.entityId, `%${q}%`), inDetails)
       : undefined,
   );
   const order = o.loc.view === "shops" ? [sql`${auditLog.shopId} is null`, asc(shops.name), desc(auditLog.at)] : [desc(auditLog.at)];
-  return db
+  const rows = await db
     .select({ a: auditLog, shop: shops.name })
     .from(auditLog)
     .leftJoin(shops, eq(shops.id, auditLog.shopId))
@@ -1129,6 +1141,7 @@ export async function auditRows(o: { viewer: ReportInput["viewer"]; loc: ViewCtx
     .orderBy(...order)
     .limit(o.limit)
     .offset(o.offset);
+  return rows.map((r) => ({ ...r, a: { ...r.a, details: redactAuditDetails(o.client, r.a.entity, r.a.details) } }));
 }
 
 export function tableCsv(t: ReportTable): string {

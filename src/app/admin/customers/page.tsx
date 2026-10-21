@@ -3,13 +3,14 @@ import Link from "next/link";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { clientRatings, customers, loyaltyAccounts, shops } from "@/db/schema";
-import { Card, Empty, LinkButton, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
+import { Card, Empty, LinkButton, Notice, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
 import { CLIENT_SORTS, RATING_FILTERS, parseClientSort, parseRatingFilter } from "@/domain/ratings";
 import { formatCents } from "@/lib/money";
-import { formatPhone } from "@/lib/phone";
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
-import { clientSearchScope, maskPhone, scopedSearchWhere, shopClientsScope, visitedScope } from "@/server/customers";
+import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, searchReach } from "@/server/client-privacy";
+import { clientSearchScope, scopedSearchWhere, shopClientsScope, visitedScope } from "@/server/customers";
+import { NoCopy } from "./privacy";
 
 export const metadata: Metadata = { title: "Clients" };
 
@@ -19,11 +20,21 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const ctx = await guardPage("/admin/customers");
   const full = can(ctx, "clients.view_all");
-  const contact = can(ctx, "clients.contact");
   const q = (sp.q ?? "").trim();
   const page = Math.max(1, Number(sp.page) || 1);
   const scoped = !ctx.brandWide;
-  const search = scopedSearchWhere(q, clientSearchScope(ctx, full));
+  const policy = await clientPolicy(ctx);
+  let paused = false;
+  try {
+    await recordClientAccess(ctx, { kind: q ? "search" : "list", detail: { page, ...(q ? { q: q.replace(/\d/g, "#").replace(/@.*/, "@…") } : {}) } });
+  } catch (e) {
+    if (!isPaused(e)) throw e;
+    paused = true;
+  }
+  const showEmail = policy.level("email") !== "hidden";
+  const showPhone = policy.level("phone") !== "hidden";
+  const showRating = policy.level("ratings") !== "hidden";
+  const search = scopedSearchWhere(q, clientSearchScope(ctx, full), searchReach(policy));
   const ratingFilter = parseRatingFilter(sp.rating);
   const sort = parseClientSort(sp.sort);
   const r = db
@@ -31,12 +42,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
     .from(clientRatings)
     .groupBy(clientRatings.customerId)
     .as("r");
-  const byRating = {
-    rated: isNotNull(r.count),
-    low: lt(r.avg, 3),
-    high: gte(r.avg, 4),
-    unrated: isNull(r.count),
-  };
+  const byRating = { rated: isNotNull(r.count), low: lt(r.avg, 3), high: gte(r.avg, 4), unrated: isNull(r.count) };
   const order = {
     recent: [desc(customers.createdAt)],
     rating_desc: [sql`${r.avg} desc nulls last`, desc(r.count), desc(customers.createdAt)],
@@ -44,25 +50,35 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   }[sort];
   // Barbers: clients they've cut. Otherwise a shop's own clients (home shop or any visit there),
   // and when searching, anyone the search reaches: see clientSearchScope.
-  const scope = !full ? visitedScope({ staffId: ctx.staff.id }) : search ? undefined : ctx.currentShopId ? shopClientsScope([ctx.currentShopId]) : scoped ? shopClientsScope(ctx.shopIds) : undefined;
-  const rows = await db
-    .select({
-      c: customers,
-      shop: shops.name,
-      progress: loyaltyAccounts.progressCents,
-      lastVisit: sql<string | null>`(select max(starts_at) from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
-      visits: sql<number>`(select count(*)::int from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
-      ratingAvg: r.avg,
-      ratingCount: r.count,
-    })
-    .from(customers)
-    .leftJoin(shops, eq(shops.id, customers.homeShopId))
-    .leftJoin(loyaltyAccounts, eq(loyaltyAccounts.customerId, customers.id))
-    .leftJoin(r, eq(r.customerId, customers.id))
-    .where(and(search, scope, ratingFilter ? byRating[ratingFilter] : undefined))
-    .orderBy(...order)
-    .limit(PAGE)
-    .offset((page - 1) * PAGE);
+  const scope = !full
+    ? visitedScope({ staffId: ctx.staff.id })
+    : search
+      ? undefined
+      : ctx.currentShopId
+        ? shopClientsScope([ctx.currentShopId])
+        : scoped
+          ? shopClientsScope(ctx.shopIds)
+          : undefined;
+  const rows = paused
+    ? []
+    : await db
+        .select({
+          c: customers,
+          shop: shops.name,
+          progress: loyaltyAccounts.progressCents,
+          lastVisit: sql<string | null>`(select max(starts_at) from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
+          visits: sql<number>`(select count(*)::int from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
+          ratingAvg: r.avg,
+          ratingCount: r.count,
+        })
+        .from(customers)
+        .leftJoin(shops, eq(shops.id, customers.homeShopId))
+        .leftJoin(loyaltyAccounts, eq(loyaltyAccounts.customerId, customers.id))
+        .leftJoin(r, eq(r.customerId, customers.id))
+        .where(and(search, scope, ratingFilter ? byRating[ratingFilter] : undefined))
+        .orderBy(...order)
+        .limit(PAGE)
+        .offset((page - 1) * PAGE);
   const pageHref = (n: number) => {
     const qs = new URLSearchParams({ page: String(n) });
     if (q) qs.set("q", q);
@@ -97,6 +113,11 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   Duplicates
                 </LinkButton>
               )}
+              {can(ctx, "clients.export") && (
+                <LinkButton variant="secondary" href="/admin/customers/export">
+                  Export
+                </LinkButton>
+              )}
               {can(ctx, "clients.edit") && <LinkButton href="/admin/customers/new">New client</LinkButton>}
             </div>
           )
@@ -121,47 +142,51 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         </select>
         <button className="h-10 rounded-lg bg-ink-900 px-4 text-sm font-medium text-white">Search</button>
       </form>
-      {rows.length === 0 ? (
+      {paused ? (
+        <Notice>{PAUSED_MESSAGE}</Notice>
+      ) : rows.length === 0 ? (
         <Empty title="No clients found" />
       ) : (
-        <Card>
-          <Table>
-            <thead>
-              <tr>
-                <Th>Name</Th>
-                <Th>Phone</Th>
-                {contact && <Th>Email</Th>}
-                <Th>Home shop</Th>
-                <Th right>Visits</Th>
-                <Th>Last visit</Th>
-                <Th right>Loyalty progress</Th>
-                <Th>Rating</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ c, shop, progress, lastVisit, visits, ratingAvg, ratingCount }) => (
-                <tr key={c.id} className="hover:bg-zinc-50">
-                  <Td>
-                    <Link className="font-medium hover:underline" href={`/admin/customers/${c.id}`}>
-                      {c.firstName} {c.lastName}
-                    </Link>
-                  </Td>
-                  <Td>{contact ? formatPhone(c.phone) || "—" : (maskPhone(c.phone) ?? "—")}</Td>
-                  {contact && <Td className="text-zinc-600">{c.email ?? "—"}</Td>}
-                  <Td>{shop ?? "—"}</Td>
-                  <Td right>{visits}</Td>
-                  <Td>{lastVisit ? formatDate(new Date(lastVisit), "MMM d, yyyy") : "—"}</Td>
-                  <Td right>{formatCents(progress ?? 0)}</Td>
-                  <Td>{ratingCount ? <StarBadge rating={{ avg: ratingAvg, count: ratingCount }} /> : <span className="text-xs text-zinc-400">—</span>}</Td>
+        <NoCopy what="the client list">
+          <Card>
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Name</Th>
+                  {showPhone && <Th>Phone</Th>}
+                  {showEmail && <Th>Email</Th>}
+                  <Th>Home shop</Th>
+                  <Th right>Visits</Th>
+                  <Th>Last visit</Th>
+                  <Th right>Loyalty progress</Th>
+                  {showRating && <Th>Rating</Th>}
                 </tr>
-              ))}
-            </tbody>
-          </Table>
-          <div className="flex justify-between px-4 py-3 text-sm">
-            {page > 1 ? <Link href={pageHref(page - 1)}>‹ Previous</Link> : <span />}
-            {rows.length === PAGE && <Link href={pageHref(page + 1)}>Next ›</Link>}
-          </div>
-        </Card>
+              </thead>
+              <tbody>
+                {rows.map(({ c, shop, progress, lastVisit, visits, ratingAvg, ratingCount }) => (
+                  <tr key={c.id} className="hover:bg-zinc-50">
+                    <Td>
+                      <Link className="font-medium hover:underline" href={`/admin/customers/${c.id}`}>
+                        {c.firstName} {c.lastName}
+                      </Link>
+                    </Td>
+                    {showPhone && <Td className="whitespace-nowrap">{policy.show("phone", c.phone) ?? "—"}</Td>}
+                    {showEmail && <Td className="text-zinc-600">{policy.show("email", c.email) ?? "—"}</Td>}
+                    <Td>{shop ?? "—"}</Td>
+                    <Td right>{visits}</Td>
+                    <Td>{lastVisit ? formatDate(new Date(lastVisit), "MMM d, yyyy") : "—"}</Td>
+                    <Td right>{formatCents(progress ?? 0)}</Td>
+                    {showRating && <Td>{ratingCount ? <StarBadge rating={{ avg: ratingAvg, count: ratingCount }} /> : <span className="text-xs text-zinc-400">—</span>}</Td>}
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+            <div className="flex justify-between px-4 py-3 text-sm">
+              {page > 1 ? <Link href={pageHref(page - 1)}>‹ Previous</Link> : <span />}
+              {rows.length === PAGE && <Link href={pageHref(page + 1)}>Next ›</Link>}
+            </div>
+          </Card>
+        </NoCopy>
       )}
     </div>
   );

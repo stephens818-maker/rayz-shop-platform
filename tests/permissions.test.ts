@@ -68,10 +68,18 @@ describe("permission catalog and templates", () => {
     }
   });
 
-  it("Brand Owner has everything; Brand Admin everything except brand settings", () => {
+  it("Brand Owner has everything; Brand Admin everything except brand settings and the client export", () => {
     expect(access("brand_owner").permissions.size).toBe(ALL_PERMISSIONS.length);
-    expect(access("brand_admin").permissions.size).toBe(ALL_PERMISSIONS.length - OWNER_ONLY.size);
+    expect(access("brand_admin").permissions.size).toBe(ALL_PERMISSIONS.length - OWNER_ONLY.size - 1);
     expect(access("brand_admin").permissions.has("settings.brand")).toBe(false);
+    expect(access("brand_admin").permissions.has("clients.privacy")).toBe(true);
+  });
+
+  it("only the Brand Owner can export the client list by default; managers can reveal, everyone who books can call and text", () => {
+    for (const t of ROLE_TEMPLATES) expect(effectiveAccess(t).permissions.has("clients.export"), t.key).toBe(t.key === "brand_owner");
+    for (const k of ["brand_admin", "regional_manager", "shop_manager"]) expect(access(k).permissions.has("clients.reveal"), k).toBe(true);
+    for (const k of ["front_desk", "barber"]) expect(access(k).permissions.has("clients.reveal"), k).toBe(false);
+    for (const k of ["front_desk", "barber", "shop_manager"]) expect(access(k).permissions.has("clients.message"), k).toBe(true);
   });
 
   it("Barber gets only their own sales report; Front Desk gets two reports, view only, and a 10% discount cap", () => {
@@ -122,8 +130,8 @@ describe("permission catalog and templates", () => {
 
 describe("effective permissions", () => {
   it("per-user overrides add and remove on top of the role", () => {
-    const a = access("barber", { "clients.contact": true, "clients.rate": false });
-    expect(a.permissions.has("clients.contact")).toBe(true);
+    const a = access("barber", { "clients.reveal": true, "clients.rate": false });
+    expect(a.permissions.has("clients.reveal")).toBe(true);
     expect(a.permissions.has("clients.rate")).toBe(false);
   });
 
@@ -151,12 +159,12 @@ describe("a different role at each assigned shop", () => {
     accessByShop(withId("barber"), shops.map((s) => ({ shopId: s.shopId, role: s.role ? withId(s.role) : null })), o, null, scope);
 
   it("each shop gets its own role, with the person's overrides on top everywhere", () => {
-    const a = kat([{ shopId: A, role: null }, { shopId: B, role: "shop_manager" }], { "clients.contact": true });
+    const a = kat([{ shopId: A, role: null }, { shopId: B, role: "shop_manager" }], { "clients.reveal": true });
     expect(a.uniform).toBe(false);
     expect(a.byShop.get(A)!.permissions.has("sales.view")).toBe(false);
     expect(a.byShop.get(B)!.permissions.has("sales.view")).toBe(true);
     expect(a.byShop.get(B)!.role.id).toBe("shop_manager");
-    for (const shop of [A, B]) expect(a.byShop.get(shop)!.permissions.has("clients.contact")).toBe(true);
+    for (const shop of [A, B]) expect(a.byShop.get(shop)!.permissions.has("clients.reveal")).toBe(true);
     expect(a.union.permissions.has("sales.view")).toBe(true);
     expect(a.union.maxDiscountPct).toBe(100);
   });

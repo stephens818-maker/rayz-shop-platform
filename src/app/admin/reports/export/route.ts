@@ -1,6 +1,8 @@
 import { REPORTS, ReportKey, reportExport, reportView } from "@/domain/permissions";
 import { viewOf } from "@/domain/report-views";
+import { audit } from "@/server/audit";
 import { can, routeStaff } from "@/server/auth/staff";
+import { clientPolicy } from "@/server/client-privacy";
 import { AppError } from "@/server/errors";
 import { REPORT_LOADERS, tableCsv } from "@/server/report-data";
 import { resolveScope } from "../scope";
@@ -37,11 +39,12 @@ export async function GET(req: Request) {
   } catch (e) {
     return new Response(e instanceof AppError ? e.message : "Bad request", { status: 403 });
   }
-  const data = await REPORT_LOADERS[key]({ scope, loc: scope.loc, viewer: ctx, params: p });
+  const data = await REPORT_LOADERS[key]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), params: p });
   const tableId = p.table ?? alias?.table;
   const table = tableId ? data.tables.find((t) => t.id === tableId) : data.tables[0];
   if (!table) return new Response("Unknown table", { status: 404 });
   const csv = tableCsv(table);
+  await audit(ctx.actor, "report.export", "report", key, { table: table.id, rows: table.rows.length, from: scope.from, to: scope.to, shops: scope.shopIds }, ctx.currentShopId);
   const view = { combined: "", shops: "-by-location", barbers: "-by-barber", shops_barbers: "-by-location-and-barber" }[viewOf(scope.loc)];
   const name =
     key === "audit_log"

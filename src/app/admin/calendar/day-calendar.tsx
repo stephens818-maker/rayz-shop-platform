@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Badge, Button, Field, Input, LinkButton, Notice, Select, StarBadge, StatusBadge, Textarea, buttonClass, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
-import { formatPhone } from "@/lib/phone";
 import type { CalAppt, CalColumn, DayCalendarData } from "@/server/calendar";
 import {
   createBlockAction,
@@ -15,6 +14,7 @@ import {
   setStatusAction,
   startCheckoutAction,
 } from "./actions";
+import { ContactClient } from "../customers/privacy";
 
 const PX = 1.6; // pixels per minute
 const SNAP = 15;
@@ -71,7 +71,7 @@ export function DayCalendar({
   today: string;
   nowMin: number | null;
   services: Svc[];
-  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean };
+  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean };
   meId: string;
   initialApptId: string | null;
 }) {
@@ -384,7 +384,7 @@ function useAction() {
   return { pending, error, run, router };
 }
 
-function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalColumn; canManage: { sales: boolean; clients: boolean }; onDone: () => void }) {
+function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalColumn; canManage: { sales: boolean; clients: boolean; message: boolean }; onDone: () => void }) {
   const { pending, error, run, router } = useAction();
   const s = appt.status;
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
@@ -423,11 +423,7 @@ function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalCo
         {appt.phone && (
           <>
             <dt className="text-zinc-500">Phone</dt>
-            <dd className="col-span-2">
-              <a className="underline" href={`tel:${appt.phone}`}>
-                {formatPhone(appt.phone)}
-              </a>
-            </dd>
+            <dd className="col-span-2 font-mono text-zinc-600">{appt.phone}</dd>
           </>
         )}
         <dt className="text-zinc-500">Source</dt>
@@ -441,6 +437,8 @@ function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalCo
           </>
         )}
       </dl>
+
+      {appt.customerId && appt.hasPhone && canManage.message && <ContactClient customerId={appt.customerId} canText={appt.smsOptIn} hasPhone compact />}
 
       {error && <Notice tone="red">{error}</Notice>}
 
@@ -530,7 +528,7 @@ function BlockPanel({ block, col, onDone }: { block: CalColumn["blocks"][number]
   );
 }
 
-type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; phoneHint: string | null; email: string | null; notes: string | null; rating: RatingSummary | null };
+type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; email: string | null; notes: string | null; rating: RatingSummary | null };
 
 function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColumn; data: DayCalendarData; startMin: number; services: Svc[]; own: boolean; onDone: () => void }) {
   const [tab, setTab] = useState<"appt" | "block">("appt");
@@ -627,7 +625,7 @@ function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColu
                     {picked.firstName} {picked.lastName}
                     <StarBadge rating={picked.rating} />
                   </div>
-                  <div className="text-xs text-zinc-500">{picked.phone ?? picked.phoneHint ?? picked.email}</div>
+                  <div className="text-xs text-zinc-500">{picked.phone ?? picked.email}</div>
                   {picked.notes && <div className="mt-1 text-xs text-amber-700">{picked.notes}</div>}
                 </div>
                 <button className="text-xs underline" onClick={() => setPicked(null)}>
@@ -645,7 +643,7 @@ function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColu
                           {f.firstName} {f.lastName}
                         </span>{" "}
                         <StarBadge rating={f.rating} />{" "}
-                        <span className="text-zinc-500">{f.phone ?? f.phoneHint ?? f.email}</span>
+                        <span className="text-zinc-500">{f.phone ?? f.email}</span>
                       </button>
                     ))}
                   </div>

@@ -443,7 +443,8 @@ describe("the brand owner sees every canary (so their absence below means someth
       const r = await open(route, params);
       if (r.kind === "ok") all += r.text;
     }
-    expect(SECRETS.filter((s) => !all.includes(s))).toEqual([]);
+    // The raw number only appeared in a tel: link; calls now go through the shop line, so the owner sees it formatted.
+    expect(SECRETS.filter((s) => !all.includes(s) && !(s === "5557731" && all.includes("555-7731")))).toEqual([]);
     expect(all).toContain("Coralville");
   }, 300_000);
 });

@@ -12,6 +12,7 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -49,6 +50,8 @@ export const brandSettings = pgTable("brand_settings", {
   loyalty: jsonb("loyalty").notNull(),
   /** Purchase orders above this total need someone with "Approve purchase orders" before they can be sent. Null: no approval step. */
   poApprovalThresholdCents: integer("po_approval_threshold_cents"),
+  /** Client lookup limits (LookupLimits in src/domain/client-privacy.ts); missing keys use the defaults. */
+  clientLookupLimits: jsonb("client_lookup_limits").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -598,7 +601,12 @@ export const customers = pgTable(
     /** E.164, e.g. +13195551234 */
     phone: text("phone"),
     email: text("email"),
+    /** One line: "street, city, state zip". */
+    address: text("address"),
+    birthday: date("birthday"),
     notes: text("notes"),
+    /** Values of the brand's custom client fields, by client_fields.id. */
+    customFields: jsonb("custom_fields").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
     /** Consent is opt-in: nothing is sent until the client (or their Squire record) says yes. */
     smsOptIn: boolean("sms_opt_in").notNull().default(false),
     emailOptIn: boolean("email_opt_in").notNull().default(false),
@@ -614,6 +622,79 @@ export const customers = pgTable(
     index("customers_home_shop_idx").on(t.homeShopId),
     // Trigram indexes for substring search live in drizzle/0006_client_search.sql.
   ],
+);
+
+/** Client fields the brand adds, e.g. "Instagram" or "Allergies". Their visibility is set like the built-in ones. */
+export const clientFields = pgTable("client_fields", {
+  id: id(),
+  label: text("label").notNull().unique(),
+  active: boolean("active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(100),
+  createdAt: createdAt(),
+});
+
+/**
+ * Who sees a client field, and how: hidden, masked or full. For a role or one person, brand-wide
+ * (shop_id null) or at one shop. Resolved by resolveLevel in src/domain/client-privacy.ts; with no
+ * rule the role's built-in default applies.
+ */
+export const clientFieldRules = pgTable(
+  "client_field_rules",
+  {
+    id: id(),
+    /** A built-in field key, or custom:<client_fields.id>. */
+    field: text("field").notNull(),
+    level: text("level").$type<"hidden" | "masked" | "full">().notNull(),
+    roleId: uuid("role_id").references(() => roles.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("client_field_rules_uq").on(t.field, t.roleId, t.staffId, t.shopId).nullsNotDistinct(), index("client_field_rules_staff_idx").on(t.staffId), index("client_field_rules_role_idx").on(t.roleId)],
+);
+
+/**
+ * Every look at client data that the data-access report shows: profiles opened, searches, reveals
+ * of masked details (with the reason), exports, calls and texts, and lookups paused by the limit.
+ * Values are never stored here, only which field.
+ */
+export const clientAccessLog = pgTable(
+  "client_access_log",
+  {
+    id: id(),
+    at: ts("at").notNull().defaultNow(),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    actorLabel: text("actor_label").notNull(),
+    /** The shop they were working in; null when working across shops. */
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "set null" }),
+    /** No foreign key: the entry outlives the client record (a merge repoints it). */
+    customerId: uuid("customer_id"),
+    kind: text("kind").$type<"view" | "search" | "list" | "reveal" | "export" | "contact" | "blocked">().notNull(),
+    field: text("field"),
+    reason: text("reason"),
+    detail: jsonb("detail").$type<Record<string, unknown>>(),
+  },
+  (t) => [index("client_access_staff_at_idx").on(t.staffId, t.at), index("client_access_customer_idx").on(t.customerId, t.at), index("client_access_at_idx").on(t.at)],
+);
+
+/** Unusual lookups, for brand admins: someone opened many profiles or ran many searches in a short time. */
+export const clientAccessAlerts = pgTable(
+  "client_access_alerts",
+  {
+    id: id(),
+    at: ts("at").notNull().defaultNow(),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "cascade" }),
+    actorLabel: text("actor_label").notNull(),
+    /** unusual: over the alert level; paused: over the limit, so their lookups stopped. */
+    kind: text("kind").$type<"unusual" | "paused">().notNull(),
+    profiles: integer("profiles").notNull().default(0),
+    searches: integer("searches").notNull().default(0),
+    windowMinutes: integer("window_minutes").notNull(),
+    acknowledgedBy: uuid("acknowledged_by").references(() => staff.id, { onDelete: "set null" }),
+    acknowledgedAt: ts("acknowledged_at"),
+  },
+  (t) => [index("client_access_alerts_at_idx").on(t.at), index("client_access_alerts_staff_idx").on(t.staffId, t.at)],
 );
 
 /** One client can carry several Squire client IDs (the same person was a separate record at two shops). */
@@ -972,8 +1053,8 @@ export const notificationJobs = pgTable(
     /** The shop the message is from. Only sign-in codes, which are brand-level, have none. */
     shopId: uuid("shop_id").references(() => shops.id),
     purchaseOrderId: uuid("purchase_order_id").references(() => purchaseOrders.id),
-    kind: text("kind").notNull(), // confirmation | reminder_24h | reminder_2h | cancellation | reschedule | otp | waitlist_ready | purchase_order | low_stock
-    channel: text("channel").notNull(), // sms | email
+    kind: text("kind").notNull(), // confirmation | reminder_24h | reminder_2h | cancellation | reschedule | otp | waitlist_ready | purchase_order | low_stock | staff_text | staff_call | privacy_alert
+    channel: text("channel").notNull(), // sms | email | voice
     to: text("to").notNull(),
     subject: text("subject"),
     body: text("body").notNull(),

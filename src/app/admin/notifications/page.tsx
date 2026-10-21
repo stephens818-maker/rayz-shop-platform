@@ -3,10 +3,9 @@ import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, notificationJobs, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
-import { formatPhone } from "@/lib/phone";
 import { formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
-import { maskPhone } from "@/server/customers";
+import { clientPolicy } from "@/server/client-privacy";
 import { emailProvider, smsProvider } from "@/server/notifications/providers";
 import { inShops } from "@/server/tenant";
 import { ProcessNowButton } from "./process-button";
@@ -25,12 +24,19 @@ const KIND_LABEL: Record<string, string> = {
   waitlist_ready: "Waitlist: ready",
   purchase_order: "Purchase order",
   low_stock: "Low stock",
+  staff_text: "Text from staff",
+  staff_call: "Call through shop line",
+  privacy_alert: "Client data alert",
 };
+/** Jobs sent to a client: their number or email shows as the viewer may see it. */
+const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call"]);
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/notifications");
-  const contact = can(ctx, "clients.contact");
+  const policy = await clientPolicy(ctx);
+  const recipient = (j: { kind: string; channel: string; to: string }) =>
+    TO_CLIENT.has(j.kind) ? (policy.show(j.channel === "email" ? "email" : "phone", j.to) ?? "hidden") : j.to;
   const status = STATUSES.find((s) => s === sp.status);
 
   // Managers only see jobs for their shops (a booking's shop, or the shop a purchase order or stock alert is for);
@@ -69,8 +75,8 @@ export default async function NotificationsPage({ searchParams }: { searchParams
       />
       {off && (
         <Notice>
-          Sending is off. Jobs are still queued and marked “suppressed” when due, so nothing reaches customers. Set NOTIFICATIONS_SMS_PROVIDER /
-          NOTIFICATIONS_EMAIL_PROVIDER to <code>console</code> to log messages, or wire Twilio / Resend before go-live.
+          Sending is off. Jobs are still queued and marked “suppressed” when due, so nothing reaches customers. Set NOTIFICATIONS_SMS_PROVIDER / NOTIFICATIONS_EMAIL_PROVIDER to{" "}
+          <code>console</code> to log messages, or wire Twilio / Resend before go-live.
         </Notice>
       )}
       <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-6">
@@ -106,7 +112,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                     {KIND_LABEL[j.kind] ?? j.kind}
                     <div className="text-xs uppercase text-zinc-400">{j.channel}</div>
                   </Td>
-                  <Td className="whitespace-nowrap">{j.shopId ? j.to : !contact ? (j.channel === "sms" ? (maskPhone(j.to) ?? "—") : "hidden") : j.channel === "sms" ? formatPhone(j.to) || j.to : j.to}</Td>
+                  <Td className="whitespace-nowrap">{recipient(j)}</Td>
                   <Td className="max-w-md text-xs text-zinc-600">
                     {j.subject && j.channel === "email" && <div className="font-medium text-zinc-800">{j.subject}</div>}
                     <div className="whitespace-pre-line">{j.body}</div>

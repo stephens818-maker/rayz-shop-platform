@@ -7,6 +7,7 @@ import { Card, Empty, Input, PageHeader, Select, Table, Td, Th, buttonClass } fr
 import { formatDateTime } from "@/lib/time";
 import { auditScope } from "@/server/audit";
 import { can, guardPage } from "@/server/auth/staff";
+import { clientPolicy } from "@/server/client-privacy";
 import { auditRows } from "@/server/report-data";
 import { LocationField, LocationNotice, ViewInput, ViewToggle, locationProps, reportQuery, withView } from "../reports/filters";
 import { ReportTabs } from "../reports/report-view";
@@ -24,7 +25,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
   const l = await resolveLocations(ctx, sp);
 
   const [rows, areas] = await Promise.all([
-    auditRows({ viewer: ctx, loc: l.loc, q, entity: sp.entity, limit: PAGE + 1, offset: page * PAGE }),
+    auditRows({ viewer: ctx, client: await clientPolicy(ctx), loc: l.loc, q, entity: sp.entity, limit: PAGE + 1, offset: page * PAGE }),
     db
       .selectDistinct({ entity: auditLog.entity })
       .from(auditLog)

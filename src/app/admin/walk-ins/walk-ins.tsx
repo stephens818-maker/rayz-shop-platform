@@ -8,7 +8,7 @@ import { startCheckoutAction } from "../calendar/actions";
 import { notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
 
 type Barber = { id: string; label: string; color: string; state: "free" | "busy" | "off"; note: string; until: string | null; untilKind: "busy" | "next" | null };
-type Entry = { id: string; name: string; phone: string | null; status: string; service: string; preferredStaffId: string | null; quotedWaitMin: number | null; joinedAt: string };
+type Entry = { id: string; name: string; hasPhone: boolean; status: string; service: string; preferredStaffId: string | null; quotedWaitMin: number | null; joinedAt: string };
 
 const t = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
 
@@ -204,7 +204,7 @@ function WaitRow({
         <Button size="sm" disabled={pending || !staffId} onClick={() => run(() => seatAction(w.id, staffId))}>
           Seat
         </Button>
-        {w.phone && w.status === "waiting" && (
+        {w.hasPhone && w.status === "waiting" && (
           <Button size="sm" variant="secondary" disabled={pending} onClick={() => run(() => notifyAction(w.id))}>
             Text
           </Button>

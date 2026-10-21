@@ -1,5 +1,7 @@
 import { LOCATION, viewOf } from "@/domain/report-views";
+import { audit } from "@/server/audit";
 import { can, routeStaff } from "@/server/auth/staff";
+import { clientPolicy, recordClientAccess } from "@/server/client-privacy";
 import { AppError } from "@/server/errors";
 import { ratingsByShop } from "@/server/ratings";
 import { ratingsGivenTable, tableCsv } from "@/server/report-data";
@@ -24,6 +26,9 @@ export async function GET(req: Request) {
   const view = { combined: "", shops: "-by-location", barbers: "-by-barber", shops_barbers: "-by-location-and-barber" }[viewOf(p.loc)];
   if (url.searchParams.get("table") === "given") return csvResponse(tableCsv(await ratingsGivenTable(p.scope, p.loc)), `rayz-ratings-given${view}-${p.period}`);
 
+  const policy = await clientPolicy(ctx);
+  if (!policy.stars({ avg: 0, count: 0 })) return new Response("Client ratings aren't shown to you", { status: 403 });
+  const notes = policy.ratingDetail;
   const shops = await ratingsByShop(p.query);
   const byLocation = p.loc.view === "shops";
   const rows = shops.flatMap((s) =>
@@ -33,9 +38,13 @@ export async function GET(req: Request) {
         ["Highest", s.highest],
       ] as const
     ).flatMap(([list, xs]) =>
-      xs.map((r) => [...(byLocation ? [s.shop] : []), list, r.name, r.avg.toFixed(2), r.count, r.lastRatedAt.toISOString().slice(0, 10), r.lastNote ?? ""]),
+      xs.map((r) => [...(byLocation ? [s.shop] : []), list, r.name, r.avg.toFixed(2), r.count, r.lastRatedAt.toISOString().slice(0, 10), ...(notes ? [r.lastNote ?? ""] : [])]),
     ),
   );
-  const csv = toCsv([...(byLocation ? [LOCATION] : []), "List", "Client", "Average", "Ratings", "Last rated", "Latest note"], rows);
+  const csv = toCsv([...(byLocation ? [LOCATION] : []), "List", "Client", "Average", "Ratings", "Last rated", ...(notes ? ["Latest note"] : [])], rows);
+  const customerIds = [...new Set(shops.flatMap((s) => [...s.lowest, ...s.highest].map((r) => r.customerId)))];
+  const fields = ["ratings", ...(notes ? ["rating notes"] : [])];
+  await recordClientAccess(ctx, { kind: "export", detail: { export: "client_ratings", clients: customerIds.length, fields } });
+  await audit(ctx.actor, "client.export", "customer", null, { export: "client_ratings", period: p.period, clients: customerIds.length, customerIds, fields }, ctx.currentShopId);
   return csvResponse(csv, `rayz-client-ratings${byLocation ? "-by-location" : ""}-${p.period}`);
 }

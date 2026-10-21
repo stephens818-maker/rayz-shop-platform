@@ -113,6 +113,13 @@
       "when": 1792570246013,
       "tag": "0015_shop_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792572097913,
+      "tag": "0016_client_privacy",
+      "breakpoints": true
     }
   ]
 }

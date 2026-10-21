@@ -45,6 +45,8 @@ export const PAGE_ACCESS = {
   "/admin/promos": ["promos.manage", "giftcards.issue", "giftcards.void"],
   "/admin/settings": ["settings.shop", "settings.taxes", "settings.brand"],
   "/admin/import": ["import.run"],
+  "/admin/client-data": ["clients.privacy"],
+  "/admin/client-data/access": ["clients.privacy"],
   "/admin/location-groups": ["locations.manage"],
   "/admin/barber-groups": ["barber_groups.manage"],
   "/admin/notifications": ["notifications.view", "notifications.send"],
@@ -96,6 +98,8 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     items: [
       { href: "/admin/staff", label: "Staff & schedules" },
       { href: "/admin/permissions", label: "Permissions" },
+      { href: "/admin/client-data", label: "Client data protection" },
+      { href: "/admin/client-data/access", label: "Client data access" },
       { href: "/admin/shop-logins", label: "Shop logins" },
       { href: "/admin/services", label: "Services" },
       { href: "/admin/catalog", label: "Bulk upload" },

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { feeDisclosure } from "@/domain/checkout";
 import { can, guardPage } from "@/server/auth/staff";
+import { clientPolicy } from "@/server/client-privacy";
 import { inTenant } from "@/server/tenant";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { loadCheckoutContext } from "@/server/checkout";
@@ -19,6 +20,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
   const c = await loadCheckoutContext(saleId);
   if (c.sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
+  const policy = await clientPolicy(ctx);
   const [catalog, barbers, loyalty, loyaltyCfg, ratings] = await Promise.all([
     shopCatalog(c.shop.id),
     shopBarbers(c.shop.id),
@@ -36,7 +38,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
         const menu = i.kind === "product" ? c.retail.find((p) => p.productId === i.refId)?.priceCents : catalog.find((s) => s.id === i.refId)?.priceCents;
         return { kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: menu ?? i.unitPriceCents, qty: i.qty };
       })}
-      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: can(ctx, "clients.contact") ? c.customer.phone : null, notes: c.customer.notes, rating: ratings.get(c.customer.id) ?? null } : null}
+      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: policy.show("phone", c.customer.phone), notes: policy.show("notes", c.customer.notes), rating: policy.stars(ratings.get(c.customer.id)) } : null}
       barber={c.barber ? { id: c.barber.id, label: c.barber.displayLabel } : null}
       barbers={barbers.map((b) => ({ id: b.id, label: b.displayName }))}
       services={catalog.map((s) => ({ id: s.id, name: s.name, kind: s.kind, priceCents: s.priceCents }))}

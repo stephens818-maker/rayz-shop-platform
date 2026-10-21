@@ -10,6 +10,7 @@ import { formatPhone } from "@/lib/phone";
 import { feeLabel } from "@/domain/checkout";
 import { formatDateTime, localDateOf } from "@/lib/time";
 import { can, guardPage, ratingViewer } from "@/server/auth/staff";
+import { clientPolicy } from "@/server/client-privacy";
 import { refundableState } from "@/server/checkout";
 import { inTenant } from "@/server/tenant";
 import { loyaltyBalance } from "@/server/loyalty";
@@ -37,9 +38,10 @@ export default async function SalePage({ params, searchParams }: { params: Promi
     sale.customerId ? db.query.customers.findFirst({ where: eq(customers.id, sale.customerId) }) : null,
     sp.rebook ? db.query.appointments.findFirst({ where: eq(appointments.code, sp.rebook) }) : null,
   ]);
+  const policy = await clientPolicy(ctx);
   const [loyalty, rateable, ratingMap] = await Promise.all([
     customer ? loyaltyBalance(customer.id) : null,
-    customer ? visitForSale(ratingViewer(ctx), id) : null,
+    customer && policy.ratingDetail ? visitForSale(ratingViewer(ctx), id) : null,
     ratingSummaries([customer?.id]),
   ]);
   const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { rate: number } };
@@ -185,7 +187,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
               <Link className="font-medium underline" href={`/admin/customers/${customer.id}`}>
                 {customer.firstName} {customer.lastName}
               </Link>
-              <StarBadge rating={ratingMap.get(customer.id)} />
+              <StarBadge rating={policy.stars(ratingMap.get(customer.id))} />
             </div>
           )}
           {customer && rateable && <QuickRate customerId={customer.id} firstName={customer.firstName} appointmentId={rateable.appointmentId} saleId={id} myRating={rateable.myRating} />}

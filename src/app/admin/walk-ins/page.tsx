@@ -73,7 +73,7 @@ export default async function WalkInsPage() {
           waitlist={waitlist.map((w) => ({
             id: w.id,
             name: w.name,
-            phone: w.phone,
+            hasPhone: !!w.phone,
             status: w.status,
             service: svcNames.find((s) => s.id === w.serviceId)?.name ?? "—",
             preferredStaffId: w.preferredStaffId,

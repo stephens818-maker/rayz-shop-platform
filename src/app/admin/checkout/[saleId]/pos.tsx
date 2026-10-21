@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
-import { formatPhone } from "@/lib/phone";
 import { searchCustomersAction } from "../../calendar/actions";
 import { attachCustomerAction, finalizeAction, giftCardAction, holdRetailAction, inspectCardAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
 import { StripeCardEntry } from "./stripe-card";
@@ -642,7 +641,7 @@ function TenderBtn({ on, onClick, title, sub }: { on: boolean; onClick: () => vo
 function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null } | null; onError: (e: string) => void }) {
   const router = useRouter();
   const [q, setQ] = useState("");
-  const [found, setFound] = useState<{ id: string; firstName: string; lastName: string | null; phone: string | null; phoneHint: string | null; rating: RatingSummary | null }[]>([]);
+  const [found, setFound] = useState<{ id: string; firstName: string; lastName: string | null; phone: string | null; rating: RatingSummary | null }[]>([]);
   useEffect(() => {
     if (q.trim().length < 2) return setFound([]);
     const t = setTimeout(async () => {
@@ -682,7 +681,7 @@ function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: 
             <div className="absolute inset-x-0 z-10 mt-1 divide-y divide-zinc-100 rounded-lg bg-white shadow-lg ring-1 ring-zinc-200">
               {found.map((f) => (
                 <button key={f.id} onClick={() => attach(f.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50">
-                  {f.firstName} {f.lastName} <StarBadge rating={f.rating} /> <span className="text-zinc-500">{formatPhone(f.phone) || f.phoneHint}</span>
+                  {f.firstName} {f.lastName} <StarBadge rating={f.rating} /> <span className="text-zinc-500">{f.phone}</span>
                 </button>
               ))}
             </div>

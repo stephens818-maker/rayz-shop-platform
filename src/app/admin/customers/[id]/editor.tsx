@@ -1,42 +1,87 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { Fragment, useEffect, useState, useTransition, type ReactNode } from "react";
 import { Button, Card, CardHeader, Field, Input, Select, Textarea } from "@/components/ui";
-import { formatPhone } from "@/lib/phone";
+import type { Level } from "@/domain/client-privacy";
 import { findClientsAction, grantRewardAction, mergeCustomersAction, updateCustomerAction, updateNotesAction } from "../actions";
+import { Masked } from "../privacy";
 
 type P = {
   firstName: string;
   lastName: string;
   phone: string;
   email: string;
+  address: string;
+  birthday: string;
   notes: string;
+  custom: Record<string, string>;
   smsOptIn: boolean;
   emailOptIn: boolean;
   homeShopId: string | null;
   preferredStaffId: string | null;
 };
 
+/** A client field as the viewer may see it: `value` is already masked unless the level is full. */
+export type ShownField = { key: string; label: string; level: Level; value: string | null };
+
+const INPUT: Record<string, { type?: string; placeholder?: string; wide?: boolean }> = {
+  phone: { type: "tel", placeholder: "(319) 555-0123" },
+  email: { type: "email" },
+  address: { placeholder: "Street, city, state zip", wide: true },
+  birthday: { type: "date" },
+};
+
+/** Masked fields show with Reveal; hidden ones aren't sent at all, so they're only named. */
+function FieldRows({ id, fields, canReveal, input }: { id: string; fields: ShownField[]; canReveal: boolean; input: (f: ShownField) => ReactNode }) {
+  const hidden = fields.filter((f) => f.level === "hidden");
+  return (
+    <>
+      {fields
+        .filter((f) => f.level !== "hidden")
+        .map((f) =>
+          f.level === "full" ? (
+            <Field key={f.key} label={f.label} className={INPUT[f.key]?.wide || f.key.startsWith("custom:") ? "col-span-2" : undefined}>
+              {input(f)}
+            </Field>
+          ) : (
+            <div key={f.key} className="col-span-2 text-sm">
+              <div className="mb-1 text-xs font-medium text-zinc-700">{f.label}</div>
+              <Masked customerId={id} field={f.key} value={f.value} level={f.level} canReveal={canReveal} />
+            </div>
+          ),
+        )}
+      {hidden.length > 0 && <p className="col-span-2 text-xs text-zinc-500">Not shown to you: {hidden.map((f) => f.label.toLowerCase()).join(", ")}.</p>}
+    </>
+  );
+}
+
 export function CustomerEditor({
   id,
   initial,
+  fields,
+  canReveal,
+  preferred,
   shops,
   barbers,
   usualBarber,
-  showContact,
 }: {
   id: string;
   initial: P;
+  fields: ShownField[];
+  canReveal: boolean;
+  preferred: ShownField;
   shops: { id: string; name: string }[];
   barbers: { id: string; label: string }[];
   usualBarber: string | null;
-  showContact: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [p, setP] = useState(initial);
   const [msg, setMsg] = useState<string | null>(null);
+  const value = (key: string) => (key.startsWith("custom:") ? (p.custom[key.slice(7)] ?? "") : String(p[key as keyof P] ?? ""));
+  const set = (key: string, v: string) => setP(key.startsWith("custom:") ? { ...p, custom: { ...p.custom, [key.slice(7)]: v } } : { ...p, [key]: v });
+  const notes = fields.find((f) => f.key === "notes");
   return (
     <Card>
       <CardHeader title="Contact & preferences" />
@@ -47,18 +92,12 @@ export function CustomerEditor({
         <Field label="Last name">
           <Input value={p.lastName} onChange={(e) => setP({ ...p, lastName: e.target.value })} />
         </Field>
-        {showContact ? (
-          <>
-            <Field label="Mobile" className="col-span-2">
-              <Input value={p.phone} onChange={(e) => setP({ ...p, phone: e.target.value })} />
-            </Field>
-            <Field label="Email" className="col-span-2">
-              <Input value={p.email} onChange={(e) => setP({ ...p, email: e.target.value })} />
-            </Field>
-          </>
-        ) : (
-          <p className="col-span-2 text-xs text-zinc-500">Phone and email are hidden: your role doesn&apos;t include client contact info.</p>
-        )}
+        <FieldRows
+          id={id}
+          canReveal={canReveal}
+          fields={fields.filter((f) => f.key !== "notes")}
+          input={(f) => <Input type={INPUT[f.key]?.type} placeholder={INPUT[f.key]?.placeholder} value={value(f.key)} onChange={(e) => set(f.key, e.target.value)} />}
+        />
         <Field label="Home shop">
           <Select value={p.homeShopId ?? ""} onChange={(e) => setP({ ...p, homeShopId: e.target.value || null })}>
             <option value="">—</option>
@@ -69,19 +108,31 @@ export function CustomerEditor({
             ))}
           </Select>
         </Field>
-        <Field label="Preferred barber" hint={usualBarber ? `Usually sees ${usualBarber}` : undefined}>
-          <Select value={p.preferredStaffId ?? ""} onChange={(e) => setP({ ...p, preferredStaffId: e.target.value || null })}>
-            <option value="">No preference</option>
-            {barbers.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.label}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Notes (staff only)" className="col-span-2">
-          <Textarea rows={3} value={p.notes} onChange={(e) => setP({ ...p, notes: e.target.value })} placeholder="#2 on sides, likes a skin fade…" />
-        </Field>
+        {preferred.level === "full" ? (
+          <Field label="Preferred barber" hint={usualBarber ? `Usually sees ${usualBarber}` : undefined}>
+            <Select value={p.preferredStaffId ?? ""} onChange={(e) => setP({ ...p, preferredStaffId: e.target.value || null })}>
+              <option value="">No preference</option>
+              {barbers.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : preferred.level === "masked" ? (
+          <div className="text-sm">
+            <div className="mb-1 text-xs font-medium text-zinc-700">Preferred barber</div>
+            <Masked customerId={id} field="preferred_barber" value={preferred.value} level="masked" canReveal={canReveal} empty="No preference" />
+          </div>
+        ) : null}
+        {notes && (
+          <FieldRows
+            id={id}
+            canReveal={canReveal}
+            fields={[{ ...notes, label: "Notes (staff only)" }]}
+            input={() => <Textarea rows={3} value={p.notes} onChange={(e) => setP({ ...p, notes: e.target.value })} placeholder="#2 on sides, likes a skin fade…" />}
+          />
+        )}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={p.smsOptIn} onChange={(e) => setP({ ...p, smsOptIn: e.target.checked })} /> Texts
         </label>
@@ -108,33 +159,70 @@ export function CustomerEditor({
   );
 }
 
-/** What a barber sees for their own client: cut notes they can edit, and who the client likes. */
-export function NotesEditor({ id, initial, preferred, usual }: { id: string; initial: string; preferred: string | null; usual: string | null }) {
+/** What someone without "edit clients" sees: the details their role shows, and cut notes they can edit when notes are shown in full. */
+export function NotesEditor({
+  id,
+  initial,
+  notes: notesField,
+  fields,
+  canReveal,
+  preferred,
+  usual,
+}: {
+  id: string;
+  initial: string;
+  notes: ShownField;
+  fields: ShownField[];
+  canReveal: boolean;
+  preferred: string | null;
+  usual: string | null;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [notes, setNotes] = useState(initial);
   const [msg, setMsg] = useState<string | null>(null);
+  const shown = fields.filter((f) => f.level !== "hidden" && f.value);
   return (
     <Card>
       <CardHeader title="Notes" subtitle={[preferred && `Prefers ${preferred}`, usual && `usually sees ${usual}`].filter(Boolean).join(" · ") || undefined} />
-      <div className="p-4">
-        <Textarea rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="#2 on sides, likes a skin fade…" />
-      </div>
-      <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
-        <Button
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const r = await updateNotesAction(id, notes);
-              setMsg(r.ok ? "Saved" : r.error);
-              router.refresh();
-            })
-          }
-        >
-          Save notes
-        </Button>
-        {msg && <span className="text-sm text-zinc-600">{msg}</span>}
-      </div>
+      {shown.length > 0 && (
+        <dl className="grid grid-cols-3 gap-x-3 gap-y-2 border-b border-zinc-100 px-4 py-3 text-sm">
+          {shown.map((f) => (
+            <Fragment key={f.key}>
+              <dt className="text-zinc-500">{f.label}</dt>
+              <dd className="col-span-2">
+                <Masked customerId={id} field={f.key} value={f.value} level={f.level} canReveal={canReveal} />
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+      {notesField.level !== "full" ? (
+        <div className="p-4 text-sm">
+          <Masked customerId={id} field="notes" value={notesField.value} level={notesField.level} canReveal={canReveal} empty="No notes" />
+        </div>
+      ) : (
+        <>
+          <div className="p-4">
+            <Textarea rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="#2 on sides, likes a skin fade…" />
+          </div>
+          <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
+            <Button
+              disabled={pending}
+              onClick={() =>
+                start(async () => {
+                  const r = await updateNotesAction(id, notes);
+                  setMsg(r.ok ? "Saved" : r.error);
+                  router.refresh();
+                })
+              }
+            >
+              Save notes
+            </Button>
+            {msg && <span className="text-sm text-zinc-600">{msg}</span>}
+          </div>
+        </>
+      )}
     </Card>
   );
 }
@@ -177,7 +265,7 @@ export function MergeInto({ keepId, keepName, suggestions }: { keepId: string; k
         const label = `${f.firstName} ${f.lastName ?? ""}`.trim();
         return (
           <button key={f.id} disabled={pending} onClick={() => merge(f.id, label)} className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-zinc-50">
-            {label} <span className="text-zinc-500">{formatPhone(f.phone) || f.email}</span>
+            {label} <span className="text-zinc-500">{f.phone || f.email}</span>
           </button>
         );
       })}

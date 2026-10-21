@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import type { RatingSummary } from "@/domain/ratings";
 import { LocalDate, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, weekdayOf } from "@/lib/time";
+import type { ClientPolicy } from "./client-privacy";
 import { Tenant, hasShop } from "./tenant";
 import { ratingSummaries } from "./ratings";
 
@@ -17,7 +18,10 @@ export interface CalAppt {
   source: string;
   customerId: string | null;
   customerName: string;
+  /** As the viewer may see it (usually masked); calls and texts go through the shop line. */
   phone: string | null;
+  hasPhone: boolean;
+  smsOptIn: boolean;
   services: string[];
   estimateCents: number;
   notes: string | null;
@@ -58,9 +62,18 @@ const clampDay = (d: Date, date: LocalDate) => {
   return m;
 };
 
-/** `viewer` is the workspace looking: barbers' time at shops outside it shows without the shop's name. */
-export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaffId?: string | null, viewer?: Pick<Tenant, "shopIds" | "brandWide">): Promise<DayCalendarData> {
-  const shopLabel = (id: string, name: string) => (!viewer || viewer.brandWide || hasShop(viewer, id) ? name : null);
+/**
+ * `viewer` is the workspace looking: barbers' time at shops outside it shows without the shop's name.
+ * `privacy` is what they may see of clients: phones and ratings come back already masked or dropped.
+ */
+export async function loadDayCalendar(
+  shopId: string,
+  date: LocalDate,
+  onlyStaffId: string | null,
+  viewer: Pick<Tenant, "shopIds" | "brandWide">,
+  privacy: Pick<ClientPolicy, "show" | "stars">,
+): Promise<DayCalendarData> {
+  const shopLabel = (id: string, name: string) => (viewer.brandWide || hasShop(viewer, id) ? name : null);
   const dayStart = startOfLocalDay(date);
   const dayEnd = endOfLocalDay(date);
   const wd = weekdayOf(date);
@@ -82,6 +95,7 @@ export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaff
         firstName: customers.firstName,
         lastName: customers.lastName,
         phone: customers.phone,
+        smsOptIn: customers.smsOptIn,
         saleId: sales.id,
         saleStatus: sales.status,
       })
@@ -160,11 +174,13 @@ export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaff
         source: r.a.source,
         customerId: r.a.customerId,
         customerName: r.firstName ? `${r.firstName}${r.lastName ? ` ${r.lastName}` : ""}` : (r.a.notes?.replace(/^Walk-in: /, "") ?? "Walk-in"),
-        phone: r.phone,
+        phone: privacy.show("phone", r.phone),
+        hasPhone: !!r.phone,
+        smsOptIn: !!r.smsOptIn,
         services: items.filter((i) => i.appointmentId === r.a.id).map((i) => i.name),
         estimateCents: r.a.estimateCents,
         notes: r.a.notes,
-        rating: r.a.customerId ? (ratings.get(r.a.customerId) ?? null) : null,
+        rating: r.a.customerId ? privacy.stars(ratings.get(r.a.customerId)) : null,
         anyBarber: r.a.anyBarber,
         saleId: r.saleId,
         saleStatus: r.saleStatus,

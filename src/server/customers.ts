@@ -2,6 +2,7 @@ import { and, eq, inArray, or, sql, SQL } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import {
   appointments,
+  clientAccessLog,
   clientRatings,
   customerSquireIds,
   customers,
@@ -181,10 +182,14 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
       }
     }
 
+    await repoint("accessLog", tx.update(clientAccessLog).set({ customerId: keepId }).where(eq(clientAccessLog.customerId, dropId)).returning({ id: clientAccessLog.id }));
     const patch = {
       lastName: keep.lastName ?? drop.lastName,
       phone: keep.phone ?? drop.phone,
       email: keep.email ?? drop.email,
+      address: keep.address ?? drop.address,
+      birthday: keep.birthday ?? drop.birthday,
+      customFields: { ...drop.customFields, ...keep.customFields },
       notes: mergeNotes(keep.notes, drop.notes),
       smsOptIn: keep.smsOptIn && drop.smsOptIn,
       emailOptIn: keep.emailOptIn && drop.emailOptIn,
@@ -271,17 +276,32 @@ export async function customerStats(customerId: string, tx: DBorTx = db, now = n
 const fullNameExpr = sql`lower(${customers.firstName} || ' ' || coalesce(${customers.lastName}, ''))`;
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
+/**
+ * What a searcher sees in full decides what they may search by part of: someone who sees phones
+ * masked still finds a client by their whole number, but a few digits match nothing, so the search
+ * box can't be used to read numbers one digit at a time. The same goes for email.
+ */
+export interface SearchReach {
+  phone: boolean;
+  email: boolean;
+}
+const FULL_REACH: SearchReach = { phone: true, email: true };
+
 /** Name, phone (any 4+ digits), or email. Backed by the trigram indexes in 0006_client_search.sql. */
-export function customerSearchWhere(term: string): SQL | undefined {
+export function customerSearchWhere(term: string, reach: SearchReach = FULL_REACH): SQL | undefined {
   const t = term.trim();
   if (!t) return undefined;
   const phone = normalizePhone(t);
   if (phone) return eq(customers.phone, phone);
   const digits = t.replace(/\D/g, "");
-  if (digits.length >= 4 && /^[\d\s().+-]+$/.test(t)) return sql`${customers.phone} like ${`%${digits}%`}`;
+  if (digits.length >= 4 && /^[\d\s().+-]+$/.test(t)) return reach.phone ? sql`${customers.phone} like ${`%${digits}%`}` : sql`false`;
   const lower = likeEscape(t.toLowerCase().replace(/\s+/g, " "));
-  if (t.includes("@")) return sql`lower(${customers.email}) like ${`%${lower}%`}`;
-  return or(sql`${fullNameExpr} like ${`%${lower}%`}`, sql`lower(${customers.email}) like ${`${lower}%`}`);
+  if (t.includes("@")) {
+    if (reach.email) return sql`lower(${customers.email}) like ${`%${lower}%`}`;
+    const email = normalizeEmail(t);
+    return email ? eq(customers.email, email) : sql`false`;
+  }
+  return reach.email ? or(sql`${fullNameExpr} like ${`%${lower}%`}`, sql`lower(${customers.email}) like ${`${lower}%`}`) : sql`${fullNameExpr} like ${`%${lower}%`}`;
 }
 
 /** Clients with any appointment at these shops (or with this barber). */
@@ -324,16 +344,17 @@ export function customerExactWhere(term: string): SQL | undefined {
 /** The whole book for brand-wide staff who may see every client; everyone else searches as their shops. */
 export const clientSearchScope = (ctx: { brandWide: boolean; shopIds: readonly string[] }, viewAll: boolean): SearchScope => (ctx.brandWide && viewAll ? {} : { shops: ctx.shopIds });
 
-/** The search condition for a scope: see `SearchScope`. */
-export function scopedSearchWhere(term: string, scope: SearchScope): SQL | undefined {
-  const partial = customerSearchWhere(term);
+/** The search condition for a scope: see `SearchScope` and `SearchReach`. */
+export function scopedSearchWhere(term: string, scope: SearchScope, reach: SearchReach = FULL_REACH): SQL | undefined {
+  const partial = customerSearchWhere(term, reach);
   if (!partial || !scope.shops) return partial;
   const exact = customerExactWhere(term);
   return exact ? or(and(partial, shopClientsScope(scope.shops)), exact) : and(partial, shopClientsScope(scope.shops));
 }
 
-export async function searchCustomers(term: string, scope: SearchScope = {}, limit = 8) {
-  const where = scopedSearchWhere(term, scope);
+/** Raw rows for the server only: pass them through showClient before they go anywhere. */
+export async function searchCustomers(term: string, scope: SearchScope = {}, limit = 8, reach: SearchReach = FULL_REACH) {
+  const where = scopedSearchWhere(term, scope, reach);
   if (!where) return [];
   const t = likeEscape(term.trim().toLowerCase());
   return db
@@ -374,8 +395,6 @@ export async function textingDeclined(customerId: string | null, phone: string) 
     .limit(1);
   return !!hit;
 }
-
-export const maskPhone = (e164: string | null) => (e164 ? `•••-${e164.slice(-4)}` : null);
 
 // ───────────────────────────── Duplicates ─────────────────────────────
 

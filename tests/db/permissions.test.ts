@@ -239,7 +239,7 @@ describe("permission changes", () => {
   it("a custom role applies at once and every change is audited", async () => {
     const perms = await import("@/app/admin/permissions/actions");
     await as("admin");
-    const made = await perms.saveRoleAction({ id: null, name: "Lead Barber", description: "Senior chair", permissions: ["clients.rate", "clients.contact", "report.my_sales.view", "report.sales_by_barber.view"], maxDiscountPct: 0, defaultScope: "selected" });
+    const made = await perms.saveRoleAction({ id: null, name: "Lead Barber", description: "Senior chair", permissions: ["clients.rate", "clients.reveal", "report.my_sales.view", "report.sales_by_barber.view"], maxDiscountPct: 0, defaultScope: "selected" });
     expect(made).toMatchObject({ ok: true });
     const roleId = (made as { data: { id: string } }).data.id;
     expect((await auditOf("permissions.role_create", roleId))[0].details).toMatchObject({ name: "Lead Barber", added: expect.arrayContaining(["report.sales_by_barber.view"]) });
@@ -257,7 +257,7 @@ describe("permission changes", () => {
 
     await as("admin");
     expect(await perms.saveRoleAction({ id: roleId, name: "Lead Barber", permissions: ["clients.rate", "report.my_sales.view"], maxDiscountPct: 0, defaultScope: "selected" })).toMatchObject({ ok: true });
-    expect((await auditOf("permissions.role_update", roleId))[0].details).toMatchObject({ removed: expect.arrayContaining(["report.sales_by_barber.view", "clients.contact"]) });
+    expect((await auditOf("permissions.role_update", roleId))[0].details).toMatchObject({ removed: expect.arrayContaining(["report.sales_by_barber.view", "clients.reveal"]) });
     await as("makenna");
     expect(await render("/admin/reports/barbers")).toBe("denied");
 

@@ -10,7 +10,8 @@ import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, assertShopAccess, can, caller, requireStaff } from "@/server/auth/staff";
 import { createAppointment, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
-import { clientSearchScope, maskPhone, searchCustomers } from "@/server/customers";
+import { clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
+import { clientSearchScope, searchCustomers } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { ratingSummaries } from "@/server/ratings";
 import { hasShop, requireInTenant } from "@/server/tenant";
@@ -55,7 +56,8 @@ export async function startCheckoutAction(appointmentId: string) {
 /**
  * Brand-wide staff with "every client" search the shared book. Everyone else finds their shops'
  * clients by any part of a name or number, and clients of other shops only by an exact phone,
- * email or full name. Without contact access you see the last four digits of the phone and no email.
+ * email or full name. A full phone number finds the client even for someone who sees it masked;
+ * results show each detail only as the brand portal allows.
  */
 export async function searchCustomersAction(q: string) {
   return safe(async () => {
@@ -63,19 +65,14 @@ export async function searchCustomersAction(q: string) {
     const term = q.trim();
     if (term.length < 2) return [];
     const full = can(ctx, "clients.view_all");
-    const contact = can(ctx, "clients.contact");
-    const rows = await searchCustomers(term, clientSearchScope(ctx, full), 8);
+    const policy = await clientPolicy(ctx);
+    const rows = await searchCustomers(term, clientSearchScope(ctx, full), 8, searchReach(policy));
+    await recordClientAccess(ctx, { kind: "search", detail: { results: rows.length, via: "booking" } });
     const ratings = await ratingSummaries(rows.map((r) => r.id));
-    return rows.map((r) => ({
-      id: r.id,
-      firstName: r.firstName,
-      lastName: r.lastName,
-      phone: contact ? r.phone : null,
-      phoneHint: contact ? null : maskPhone(r.phone),
-      email: contact ? r.email : null,
-      notes: r.notes,
-      rating: ratings.get(r.id) ?? null,
-    }));
+    return rows.map((r) => {
+      const s = showClient(policy, r);
+      return { id: r.id, firstName: r.firstName, lastName: r.lastName, phone: s.phone, email: s.email, notes: s.notes, rating: policy.stars(ratings.get(r.id)) };
+    });
   });
 }
 

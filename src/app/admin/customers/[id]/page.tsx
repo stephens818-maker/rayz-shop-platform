@@ -5,33 +5,55 @@ import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, customerSquireIds, customers, loyaltyLedger, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
+import { BUILTIN_FIELDS, RATINGS_MASKED_HINT, customFieldKey } from "@/domain/client-privacy";
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
+import { formatPhone } from "@/lib/phone";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage, ratingViewer } from "@/server/auth/staff";
+import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess } from "@/server/client-privacy";
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
 import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
 import { hasShop, inShops } from "@/server/tenant";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
-import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
+import { ContactClient } from "../privacy";
+import { CustomerEditor, GrantReward, MergeInto, NotesEditor, type ShownField } from "./editor";
 
 export const metadata: Metadata = { title: "Client" };
 
 const VISITS_PAGE = 25;
 const SALES_PAGE = 15;
 
-export default async function CustomerPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ v?: string; s?: string; merged?: string; existing?: string }> }) {
+export default async function CustomerPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ v?: string; s?: string; merged?: string; existing?: string }>;
+}) {
   const { id } = await params;
   const sp = await searchParams;
   const ctx = await guardPage("/admin/customers/[id]");
   const access = await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, id);
   if (!access) redirect("/admin/customers");
   const full = access === "full";
-  const showContact = can(ctx, "clients.contact");
   const canMerge = full && can(ctx, "clients.merge");
   const c = await db.query.customers.findFirst({ where: eq(customers.id, id) });
   if (!c) notFound();
+  try {
+    await recordClientAccess(ctx, { kind: "view", customerId: id });
+  } catch (e) {
+    if (!isPaused(e)) throw e;
+    return (
+      <div className="mx-auto max-w-xl">
+        <PageHeader title="Client lookups paused" />
+        <Card className="p-5 text-sm text-zinc-700">{PAUSED_MESSAGE}</Card>
+      </div>
+    );
+  }
+  const policy = await clientPolicy(ctx);
+  const preferredFull = policy.level("preferred_barber") === "full";
   // The client's history follows them: every shop sees their visits and purchases at every shop.
   // Staff ratings and notes stay with the shop they were written at; tickets open only at their own shop.
   const scoped = !ctx.brandWide;
@@ -56,7 +78,10 @@ export default async function CustomerPage({ params, searchParams }: { params: P
       .orderBy(desc(appointments.startsAt))
       .limit(VISITS_PAGE)
       .offset((vPage - 1) * VISITS_PAGE),
-    db.select({ visitCount: sql<number>`count(*)::int` }).from(appointments).where(eq(appointments.customerId, id)),
+    db
+      .select({ visitCount: sql<number>`count(*)::int` })
+      .from(appointments)
+      .where(eq(appointments.customerId, id)),
     full
       ? db
           .select({
@@ -71,27 +96,42 @@ export default async function CustomerPage({ params, searchParams }: { params: P
           .limit(SALES_PAGE)
           .offset((sPage - 1) * SALES_PAGE)
       : [],
-    full ? db.select({ saleCount: sql<number>`count(*)::int` }).from(sales).where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`)) : [{ saleCount: 0 }],
+    full
+      ? db
+          .select({ saleCount: sql<number>`count(*)::int` })
+          .from(sales)
+          .where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`))
+      : [{ saleCount: 0 }],
     loyaltyBalance(id),
     db.select().from(loyaltyLedger).where(eq(loyaltyLedger.customerId, id)).orderBy(desc(loyaltyLedger.createdAt)).limit(20),
     db.select().from(customerSquireIds).where(eq(customerSquireIds.customerId, id)).orderBy(asc(customerSquireIds.createdAt)),
     canMerge ? duplicatePairs({ forId: id, limit: 10 }) : [],
-    full
+    full && preferredFull
       ? db
           .select({ id: staff.id, label: staff.displayLabel, active: staff.active })
           .from(staff)
           .where(
             or(
-              and(eq(staff.active, true), eq(staff.isBookable, true), scoped ? sql`exists (select 1 from staff_shops ss where ss.staff_id = ${staff.id} and ${inShops(ctx, sql`ss.shop_id`)})` : undefined),
+              and(
+                eq(staff.active, true),
+                eq(staff.isBookable, true),
+                scoped ? sql`exists (select 1 from staff_shops ss where ss.staff_id = ${staff.id} and ${inShops(ctx, sql`ss.shop_id`)})` : undefined,
+              ),
               c.preferredStaffId ? eq(staff.id, c.preferredStaffId) : undefined,
             ),
           )
           .orderBy(asc(staff.displayLabel))
       : [],
   ]);
-  const staffLabel = async (sid: string | null) => (sid ? ((await db.query.staff.findFirst({ where: eq(staff.id, sid), columns: { displayLabel: true } }))?.displayLabel ?? null) : null);
+  const staffLabel = async (sid: string | null) =>
+    sid ? ((await db.query.staff.findFirst({ where: eq(staff.id, sid), columns: { displayLabel: true } }))?.displayLabel ?? null) : null;
   const viewer = ratingViewer(ctx);
-  const [rating, ratings, rateable] = await Promise.all([ratingSummary(id), ratingHistory(viewer, id, mine), rateableVisits(viewer, id)]);
+  const [ratingAll, ratings, rateable] = await Promise.all([
+    ratingSummary(id),
+    policy.ratingDetail ? ratingHistory(viewer, id, mine) : [],
+    policy.ratingDetail ? rateableVisits(viewer, id) : [],
+  ]);
+  const rating = policy.stars(ratingAll);
   const visitStars = new Map<string, number[]>();
   for (const r of ratings) if (r.appointmentId) visitStars.set(r.appointmentId, [...(visitStars.get(r.appointmentId) ?? []), r.stars]);
   const [preferred, usual, homeShop] = await Promise.all([
@@ -103,6 +143,24 @@ export default async function CustomerPage({ params, searchParams }: { params: P
   const homeShopName = homeShop?.name ?? null;
   const shopRows = await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name));
   const editorShops = scoped ? shopRows.filter((s) => hasShop(ctx, s.id) || s.id === c.homeShopId) : shopRows;
+  const stored: Record<string, string | null> = { phone: c.phone, email: c.email, address: c.address, birthday: c.birthday, notes: c.notes };
+  const fields: ShownField[] = [
+    ...BUILTIN_FIELDS.filter((f) => f.key in stored).map((f) => ({ key: f.key, label: f.label, level: policy.level(f.key), value: policy.show(f.key, stored[f.key]) })),
+    ...policy.custom.map((f) => ({
+      key: customFieldKey(f.id),
+      label: f.label,
+      level: policy.level(customFieldKey(f.id)),
+      value: policy.show(customFieldKey(f.id), c.customFields[f.id]),
+    })),
+  ];
+  const preferredShown: ShownField = {
+    key: "preferred_barber",
+    label: "Preferred barber",
+    level: policy.level("preferred_barber"),
+    value: policy.show("preferred_barber", preferred),
+  };
+  const isFull = (k: string) => fields.find((f) => f.key === k)?.level === "full";
+  const canMessage = can(ctx, "clients.message");
   const pager = (key: "v" | "s", pageNo: number, total: number, size: number) =>
     total > size && (
       <div className="flex items-center justify-between px-4 py-3 text-sm">
@@ -120,7 +178,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
         title={
           <span className="flex items-center gap-2">
             {`${c.firstName} ${c.lastName ?? ""}`}
-            <StarBadge rating={rating} />
+            {rating && <StarBadge rating={rating} />}
           </span>
         }
         subtitle={
@@ -137,10 +195,23 @@ export default async function CustomerPage({ params, searchParams }: { params: P
         }
       />
       {sp.existing && <div className="rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">This client was already on file, so no new record was made.</div>}
-      {sp.merged && <div className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">Merged. History, tickets, loyalty, and gift cards from the other record are now on this client.</div>}
+      {sp.merged && (
+        <div className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
+          Merged. History, tickets, loyalty, and gift cards from the other record are now on this client.
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Stat label="Visits" value={stats.visits} hint={[stats.noShows && `${stats.noShows} no-shows`, stats.cancellations && `${stats.cancellations} cancelled`].filter(Boolean).join(" · ") || undefined} tone={stats.noShows ? "down" : undefined} />
-        <Stat label="Last visit" value={stats.lastVisit ? formatDate(stats.lastVisit, "MMM d, yyyy") : "—"} hint={stats.upcoming ? `${stats.upcoming} upcoming` : stats.firstVisit ? `first ${formatDate(stats.firstVisit, "MMM yyyy")}` : undefined} />
+        <Stat
+          label="Visits"
+          value={stats.visits}
+          hint={[stats.noShows && `${stats.noShows} no-shows`, stats.cancellations && `${stats.cancellations} cancelled`].filter(Boolean).join(" · ") || undefined}
+          tone={stats.noShows ? "down" : undefined}
+        />
+        <Stat
+          label="Last visit"
+          value={stats.lastVisit ? formatDate(stats.lastVisit, "MMM d, yyyy") : "—"}
+          hint={stats.upcoming ? `${stats.upcoming} upcoming` : stats.firstVisit ? `first ${formatDate(stats.firstVisit, "MMM yyyy")}` : undefined}
+        />
         {full && (
           <Stat
             label="Lifetime spend"
@@ -148,35 +219,71 @@ export default async function CustomerPage({ params, searchParams }: { params: P
             hint={`tips ${formatCents(stats.tipsCents)}${stats.squireVisitSpendCents ? ` · ${formatCents(stats.squireVisitSpendCents)} from Squire visit prices` : ""}`}
           />
         )}
-        <Stat label="Loyalty progress" value={`${formatCents(loyalty.progressCents)} / ${formatCents(loyalty.thresholdCents)}`} hint={`${formatCents(loyalty.remainingCents)} to next ${formatCents(loyalty.rewardCents)}`} />
+        <Stat
+          label="Loyalty progress"
+          value={`${formatCents(loyalty.progressCents)} / ${formatCents(loyalty.thresholdCents)}`}
+          hint={`${formatCents(loyalty.remainingCents)} to next ${formatCents(loyalty.rewardCents)}`}
+        />
         <Stat label="Rewards ready" value={formatCents(loyalty.availableCents)} hint={`${loyalty.rewards.length} reward${loyalty.rewards.length === 1 ? "" : "s"}`} />
-        <Stat label="Staff rating" value={rating.count ? `★ ${formatAverage(rating.avg)}` : "—"} hint={rating.count ? `${rating.count} rating${rating.count === 1 ? "" : "s"} · staff only` : "not rated yet"} tone={rating.count && rating.avg < 3 ? "down" : undefined} />
+        {rating && (
+          <Stat
+            label="Staff rating"
+            value={rating.count ? `★ ${formatAverage(rating.avg)}` : "—"}
+            hint={rating.count ? `${rating.count} rating${rating.count === 1 ? "" : "s"} · staff only` : "not rated yet"}
+            tone={rating.count && rating.avg < 3 ? "down" : undefined}
+          />
+        )}
       </div>
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
           {full && can(ctx, "clients.edit") ? (
             <CustomerEditor
               id={c.id}
-              showContact={showContact}
+              fields={fields}
+              canReveal={policy.canReveal}
+              preferred={preferredShown}
               initial={{
                 firstName: c.firstName,
                 lastName: c.lastName ?? "",
-                phone: showContact ? (c.phone ?? "") : "",
-                email: showContact ? (c.email ?? "") : "",
-                notes: c.notes ?? "",
+                phone: isFull("phone") && c.phone ? formatPhone(c.phone) || c.phone : "",
+                email: isFull("email") ? (c.email ?? "") : "",
+                address: isFull("address") ? (c.address ?? "") : "",
+                birthday: isFull("birthday") ? (c.birthday ?? "") : "",
+                notes: isFull("notes") ? (c.notes ?? "") : "",
+                custom: Object.fromEntries(policy.custom.filter((f) => isFull(customFieldKey(f.id))).map((f) => [f.id, c.customFields[f.id] ?? ""])),
                 smsOptIn: c.smsOptIn,
                 emailOptIn: c.emailOptIn,
                 homeShopId: c.homeShopId,
-                preferredStaffId: c.preferredStaffId,
+                preferredStaffId: preferredFull ? c.preferredStaffId : null,
               }}
               shops={editorShops}
               barbers={await Promise.all(
-                barberOptions.map(async (b) => ({ id: b.id, label: b.id === c.preferredStaffId ? ((await staffLabel(b.id)) ?? b.label) : b.active ? b.label : `${b.label} (inactive)` })),
+                barberOptions.map(async (b) => ({
+                  id: b.id,
+                  label: b.id === c.preferredStaffId ? ((await staffLabel(b.id)) ?? b.label) : b.active ? b.label : `${b.label} (inactive)`,
+                })),
               )}
               usualBarber={usual}
             />
           ) : (
-            <NotesEditor id={c.id} initial={c.notes ?? ""} preferred={preferred} usual={usual} />
+            <NotesEditor
+              id={c.id}
+              initial={isFull("notes") ? (c.notes ?? "") : ""}
+              notes={fields.find((f) => f.key === "notes")!}
+              fields={fields.filter((f) => f.key !== "notes")}
+              canReveal={policy.canReveal}
+              preferred={preferredShown.value}
+              usual={usual}
+            />
+          )}
+          {canMessage && (
+            <Card>
+              <CardHeader title="Contact" subtitle="Calls and texts go through the shop line, so the client's number stays private." />
+              <div className="p-4">
+                <ContactClient customerId={c.id} canText={c.smsOptIn} hasPhone={!!c.phone} />
+                {!c.smsOptIn && c.phone && <p className="mt-2 text-xs text-zinc-500">This client hasn&apos;t opted in to texts.</p>}
+              </div>
+            </Card>
           )}
           <Card>
             <CardHeader title="Loyalty" subtitle={loyalty.rules.earn} />
@@ -216,65 +323,76 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                   })}
                 </ul>
               )}
-              <MergeInto keepId={c.id} keepName={`${c.firstName} ${c.lastName ?? ""}`.trim()} suggestions={dupes.map((d) => (d.a.id === c.id ? d.b : d.a)).map((o) => ({ id: o.id, label: `${o.firstName} ${o.lastName ?? ""}`.trim() }))} />
+              <MergeInto
+                keepId={c.id}
+                keepName={`${c.firstName} ${c.lastName ?? ""}`.trim()}
+                suggestions={dupes.map((d) => (d.a.id === c.id ? d.b : d.a)).map((o) => ({ id: o.id, label: `${o.firstName} ${o.lastName ?? ""}`.trim() }))}
+              />
             </Card>
           )}
         </div>
         <div className="space-y-4">
-          <Card>
-            <CardHeader
-              title="Staff ratings"
-              subtitle={
-                seesAllRatings(viewer)
-                  ? "Private to staff. Never shown to the client, on the booking site, or in the app."
-                  : `Average from every barber's ratings. You see the ratings you gave.`
-              }
-            />
-            {rating.count > 0 && (
-              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 pt-3 text-xs text-zinc-600">
-                <span className="text-sm">
-                  <span className="font-semibold">{formatAverage(rating.avg)}</span> average from {rating.count} rating{rating.count === 1 ? "" : "s"}
-                </span>
-                {([5, 4, 3, 2, 1] as const).map((n) => (
-                  <span key={n} className="tabular">
-                    {n}★ {rating.byStars[n]}
+          {rating && !policy.ratingDetail && (
+            <Card>
+              <CardHeader title="Staff ratings" subtitle={RATINGS_MASKED_HINT} />
+              <p className="px-4 py-3 text-sm">
+                {rating.count ? `${formatAverage(rating.avg)} average from ${rating.count} rating${rating.count === 1 ? "" : "s"}` : "Not rated yet"}
+              </p>
+            </Card>
+          )}
+          {rating && policy.ratingDetail && (
+            <Card>
+              <CardHeader
+                title="Staff ratings"
+                subtitle={
+                  seesAllRatings(viewer)
+                    ? "Private to staff. Never shown to the client, on the booking site, or in the app."
+                    : `Average from every barber's ratings. You see the ratings you gave.`
+                }
+              />
+              {rating.count > 0 && (
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 pt-3 text-xs text-zinc-600">
+                  <span className="text-sm">
+                    <span className="font-semibold">{formatAverage(rating.avg)}</span> average from {rating.count} rating{rating.count === 1 ? "" : "s"}
                   </span>
-                ))}
-              </div>
-            )}
-            {ratings.length > 0 && (
-              <RatingHistory
-                canRemoveAny={viewer.moderates}
-                rows={ratings.map((r) => ({
-                  id: r.id,
-                  stars: r.stars,
-                  note: r.note,
-                  ratedBy: r.ratedBy,
-                  when: formatDateTime(r.createdAt),
-                  edited: r.updatedAt.getTime() - r.createdAt.getTime() > 1000,
-                  shop: r.shop,
-                  visit: `${r.visitAt ? `visit ${formatDate(r.visitAt, "MMM d, yyyy")}` : "visit"}${r.saleNumber ? ` (ticket #${r.saleNumber})` : ""}`,
-                  visitHref: r.saleId && full && ctx.shopIds.includes(r.shopId) ? `/admin/sales/${r.saleId}` : null,
-                  mine: r.mine,
+                  {([5, 4, 3, 2, 1] as const).map((n) => (
+                    <span key={n} className="tabular">
+                      {n}★ {rating.byStars[n]}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {ratings.length > 0 && (
+                <RatingHistory
+                  canRemoveAny={viewer.moderates}
+                  rows={ratings.map((r) => ({
+                    id: r.id,
+                    stars: r.stars,
+                    note: r.note,
+                    ratedBy: r.ratedBy,
+                    when: formatDateTime(r.createdAt),
+                    edited: r.updatedAt.getTime() - r.createdAt.getTime() > 1000,
+                    shop: r.shop,
+                    visit: `${r.visitAt ? `visit ${formatDate(r.visitAt, "MMM d, yyyy")}` : "visit"}${r.saleNumber ? ` (ticket #${r.saleNumber})` : ""}`,
+                    visitHref: r.saleId && full && ctx.shopIds.includes(r.shopId) ? `/admin/sales/${r.saleId}` : null,
+                    mine: r.mine,
+                  }))}
+                />
+              )}
+              <RateVisitForm
+                customerId={c.id}
+                visits={rateable.map((v) => ({
+                  key: v.appointmentId ?? `sale:${v.saleId}`,
+                  appointmentId: v.appointmentId,
+                  saleId: v.saleId,
+                  label: `${formatDate(v.at, "MMM d, yyyy")} · ${v.shop}${v.barber ? ` · ${v.barber}` : ""} · ${v.label}`,
+                  myRating: v.myRating,
                 }))}
               />
-            )}
-            <RateVisitForm
-              customerId={c.id}
-              visits={rateable.map((v) => ({
-                key: v.appointmentId ?? `sale:${v.saleId}`,
-                appointmentId: v.appointmentId,
-                saleId: v.saleId,
-                label: `${formatDate(v.at, "MMM d, yyyy")} · ${v.shop}${v.barber ? ` · ${v.barber}` : ""} · ${v.label}`,
-                myRating: v.myRating,
-              }))}
-            />
-          </Card>
+            </Card>
+          )}
           <Card>
-            <CardHeader
-              title="Visit history"
-              subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history`}
-            />
+            <CardHeader title="Visit history" subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history`} />
             <Table>
               <thead>
                 <tr>
@@ -284,7 +402,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                   <Th>Services</Th>
                   <Th right>Price</Th>
                   <Th>Status</Th>
-                  <Th>Rating</Th>
+                  {policy.ratingDetail && <Th>Rating</Th>}
                 </tr>
               </thead>
               <tbody>
@@ -301,7 +419,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                     <Td>
                       <StatusBadge status={v.a.status} />
                     </Td>
-                    <Td className="whitespace-nowrap text-xs">{visitStars.get(v.a.id)?.map((n, k) => <Stars key={k} n={n} />) ?? null}</Td>
+                    {policy.ratingDetail && <Td className="whitespace-nowrap text-xs">{visitStars.get(v.a.id)?.map((n, k) => <Stars key={k} n={n} />) ?? null}</Td>}
                   </tr>
                 ))}
               </tbody>
@@ -327,7 +445,15 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                 <tbody>
                   {saleRows.map(({ s, shop, refunded }) => (
                     <tr key={s.id}>
-                      <Td>{canSeeSale(s.shopId) ? <Link className="underline" href={`/admin/sales/${s.id}`}>{s.number}</Link> : s.number}</Td>
+                      <Td>
+                        {canSeeSale(s.shopId) ? (
+                          <Link className="underline" href={`/admin/sales/${s.id}`}>
+                            {s.number}
+                          </Link>
+                        ) : (
+                          s.number
+                        )}
+                      </Td>
                       <Td>{s.businessDate}</Td>
                       <Td>{shop}</Td>
                       <Td right>{formatCents(s.serviceNetCents)}</Td>
