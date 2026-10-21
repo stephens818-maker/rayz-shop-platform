@@ -140,7 +140,11 @@ async function main() {
     const scope = templateFor(s.role ?? "barber")!.defaultScope;
     if (scope === "all") return [];
     const list = scope === "one" ? [s.managerShop ?? s.listedAt[0]] : s.listedAt;
-    return list.filter(Boolean).map((shop) => ({ staffId: staffByKey.get(s.key)!.id, shopId: shopBySlug.get(shop!)!.id }));
+    return list.filter(Boolean).map((shop) => ({
+      staffId: staffByKey.get(s.key)!.id,
+      shopId: shopBySlug.get(shop!)!.id,
+      roleId: s.shopRoles?.[shop!] ? roleId(s.shopRoles[shop!]) : null,
+    }));
   });
   if (accessRows.length) await db.insert(t.staffAccessShops).values(accessRows);
   await db.insert(t.staffShops).values(
@@ -566,6 +570,7 @@ async function main() {
   console.log("    frontdesk@rayz.test  Front Desk, Coralville");
   console.log("    makenna@rayz.test    Barber, Coralville");
   console.log("    manager.moline@rayz.test  Shop Manager, Moline");
+  console.log("    kat@rayz.test        Barber at Moline and Silvis, Shop Manager at Rock Island (one shop at a time)");
   console.log(`    <shop>@rayz.test     Shop login (front desk) for one shop: ${SHOPS.map((s) => s.slug).join(", ")}`);
 }
 

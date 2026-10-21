@@ -20,7 +20,7 @@ export default async function PermissionsPage() {
       .innerJoin(roles, eq(roles.id, staff.roleId))
       .where(eq(staff.active, true))
       .orderBy(asc(roles.sortOrder), asc(staff.displayLabel)),
-    db.select({ staffId: staffAccessShops.staffId, name: shops.name, shopId: shops.id }).from(staffAccessShops).innerJoin(shops, eq(shops.id, staffAccessShops.shopId)),
+    db.select({ staffId: staffAccessShops.staffId, name: shops.name, shopId: shops.id, roleId: staffAccessShops.roleId }).from(staffAccessShops).innerJoin(shops, eq(shops.id, staffAccessShops.shopId)),
   ]);
   const shopsOf = (id: string) => access.filter((a) => a.staffId === id);
   const visible = people.filter(({ s, role }) => ctx.brandWide || (s.shopScope !== "all" && role.key !== OWNER_ROLE_KEY && shopsOf(s.id).some((a) => ctx.shopIds.includes(a.shopId))));
@@ -106,7 +106,13 @@ export default async function PermissionsPage() {
                   <Td>
                     {role.name} {s.kind === "shop" && <Badge tone="violet">shop login</Badge>}
                   </Td>
-                  <Td>{scope === "all" ? "All shops" : [...new Set(shopsOf(s.id).map((x) => (ctx.brandWide || hasShop(ctx, x.shopId) ? x.name : OTHER_SHOP)))].join(", ") || <span className="text-red-600">No shops</span>}</Td>
+                  <Td>{scope === "all" ? "All shops" : [
+                        ...new Set(
+                          shopsOf(s.id).map((x) =>
+                            ctx.brandWide || hasShop(ctx, x.shopId) ? `${x.name}${x.roleId && x.roleId !== role.id ? ` (${roleRows.find((r) => r.id === x.roleId)?.name})` : ""}` : OTHER_SHOP,
+                          ),
+                        ),
+                      ].join(", ") || <span className="text-red-600">No shops</span>}</Td>
                   <Td right>{Object.keys(o).length || "—"}</Td>
                   <Td right>{a.permissions.has("pos.discount") ? `${a.maxDiscountPct}%${s.maxDiscountPct !== null ? " (own)" : ""}` : "None"}</Td>
                   <Td right>

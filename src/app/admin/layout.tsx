@@ -21,13 +21,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </Link>
           <div className="min-w-0 lg:mt-4" data-testid="workspace">
             <div className="hidden text-[11px] font-semibold uppercase tracking-wider text-zinc-500 lg:block">
-              {ctx.brandWide ? (here ? "Brand · viewing one shop" : "Brand · every shop") : ctx.shops.length > 1 ? "Your shops" : "Shop workspace"}
+              {ctx.brandWide ? (here ? "Brand · viewing one shop" : "Brand · every shop") : ctx.assignedShops.length > 1 ? "Your shops" : "Shop workspace"}
             </div>
             <div className="lg:mt-1">
-              <ShopSwitcher shops={ctx.shops} current={ctx.currentShopId} brandWide={ctx.brandWide} />
+              <ShopSwitcher shops={ctx.assignedShops} current={ctx.currentShopId} brandWide={ctx.brandWide} combined={ctx.combinedView} />
             </div>
             {here && address && <div className="mt-1 hidden truncate text-xs text-zinc-400 lg:block">{address}</div>}
-            {ctx.brandWide && here && ctx.shops.length > 1 && (
+            {ctx.brandWide && here && ctx.assignedShops.length > 1 && (
               <div className="mt-1 hidden lg:block">
                 <BackToBrand />
               </div>

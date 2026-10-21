@@ -12,7 +12,7 @@ import { RatingViewer } from "@/domain/ratings";
 import { Actor } from "@/server/audit";
 import { forbidden } from "@/server/errors";
 import { assertShop } from "@/server/tenant";
-import { StaffAccess, accessFor, grantor } from "./access";
+import { StaffAccess, accessFor, atShop, grantor } from "./access";
 import type { Caller } from "./policy";
 import { signToken, verifyToken } from "./tokens";
 
@@ -24,9 +24,13 @@ export interface StaffContext {
   staff: { id: string; firstName: string; displayLabel: string; roleId: string; roleKey: string | null; roleName: string; kind: "person" | "shop" };
   actor: Actor;
   access: StaffAccess;
-  /** Row-level scope: shops this user may read and write. */
+  /** Row-level scope: shops this user may read and write right now. */
   shopIds: string[];
   shops: StaffAccess["shops"];
+  /** Every shop they're assigned to: what the shop switcher offers. */
+  assignedShops: StaffAccess["shops"];
+  /** Whether they may work across all their shops at once; not when their role differs between them. */
+  combinedView: boolean;
   /** Selected shop, or null for "all my shops" (people with more than one shop). */
   currentShopId: string | null;
   scope: ShopScope;
@@ -77,20 +81,26 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   const me = row.s;
   // Token times are whole seconds, so a sign-in in the same second as a reset stays valid.
   if (me.sessionsValidAfter && (payload.iat ?? 0) < Math.floor(me.sessionsValidAfter.getTime() / 1000)) return null;
-  const access = await accessFor(me, row.r);
+  const assigned = await accessFor(me, row.r);
+  const combinedView = assigned.uniform && assigned.shopIds.length > 1;
   const pref = jar.get(SHOP_COOKIE)?.value;
   let currentShopId: string | null;
-  if (pref === "all" && access.shopIds.length > 1) currentShopId = null;
-  else if (pref && access.shopIds.includes(pref)) currentShopId = pref;
+  if (pref === "all" && combinedView) currentShopId = null;
+  else if (pref && assigned.shopIds.includes(pref)) currentShopId = pref;
   // The brand login starts over every shop; everyone else starts in their first shop.
-  else currentShopId = access.scope === "all" && access.shopIds.length > 1 ? null : (access.shopIds[0] ?? null);
+  else currentShopId = assigned.scope === "all" && combinedView ? null : (assigned.shopIds[0] ?? null);
+  // A different role at each shop: the tenant is the shop they're in, under that shop's role.
+  const access = assigned.uniform || !currentShopId ? assigned : atShop(assigned, currentShopId);
+  const role = (currentShopId && assigned.byShop.get(currentShopId)?.role) || row.r;
 
   return {
-    staff: { id: me.id, firstName: me.firstName, displayLabel: me.displayLabel, roleId: row.r.id, roleKey: row.r.key, roleName: row.r.name, kind: me.kind },
-    actor: { staffId: me.id, label: `${row.r.name}:${me.displayLabel}` },
+    staff: { id: me.id, firstName: me.firstName, displayLabel: me.displayLabel, roleId: role.id, roleKey: role.key, roleName: role.name, kind: me.kind },
+    actor: { staffId: me.id, label: `${role.name}:${me.displayLabel}` },
     access,
     shopIds: access.shopIds,
     shops: access.shops,
+    assignedShops: assigned.shops,
+    combinedView,
     currentShopId,
     scope: access.scope,
     brandWide: access.scope === "all",

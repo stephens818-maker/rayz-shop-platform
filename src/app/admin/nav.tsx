@@ -41,7 +41,7 @@ export function AdminNav({ sections }: { sections: { title: string; items: NavIt
   );
 }
 
-export function ShopSwitcher({ shops, current, brandWide }: { shops: { id: string; name: string }[]; current: string | null; brandWide: boolean }) {
+export function ShopSwitcher({ shops, current, brandWide, combined }: { shops: { id: string; name: string }[]; current: string | null; brandWide: boolean; combined: boolean }) {
   const [pending, start] = useTransition();
   if (shops.length <= 1) return <div className="text-sm font-medium text-white">{shops[0]?.name ?? "No shop"}</div>;
   return (
@@ -52,7 +52,7 @@ export function ShopSwitcher({ shops, current, brandWide }: { shops: { id: strin
       onChange={(e) => start(() => switchShop(e.target.value))}
       className="w-full rounded-md border-0 bg-white/10 py-1.5 pl-2 pr-7 text-sm font-medium text-white ring-1 ring-white/15 focus:ring-2 focus:ring-brand-600 [&>option]:text-zinc-900"
     >
-      <option value="all">{brandWide ? "All shops (brand)" : `All my shops (${shops.length})`}</option>
+      {combined && <option value="all">{brandWide ? "All shops (brand)" : `All my shops (${shops.length})`}</option>}
       {shops.map((s) => (
         <option key={s.id} value={s.id}>
           {s.name}

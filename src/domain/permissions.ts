@@ -309,6 +309,40 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
   return { isOwner: false, permissions: perms, maxDiscountPct };
 }
 
+// ───────────────────────────── Per-shop roles ─────────────────────────────
+
+export const sameAccess = (a: Access, b: Access) =>
+  a.isOwner === b.isOwner && a.maxDiscountPct === b.maxDiscountPct && a.permissions.size === b.permissions.size && [...a.permissions].every((p) => b.permissions.has(p));
+
+/** Everything granted at any of these shops, with the highest discount limit: what someone can do somewhere. */
+export function unionAccess(list: readonly Access[]): Access {
+  const permissions = new Set<Permission>();
+  for (const a of list) for (const p of a.permissions) permissions.add(p);
+  return { isOwner: list.some((a) => a.isOwner), permissions, maxDiscountPct: Math.max(0, ...list.map((a) => a.maxDiscountPct)) };
+}
+
+/**
+ * Someone assigned to several shops can hold a different role at each. Their access at a shop is
+ * that shop's role (or their main role) with their personal overrides on top. When it isn't the
+ * same at every shop, they work in one shop at a time.
+ */
+export function accessByShop<R extends RoleDef & { id: string }>(
+  main: R,
+  shops: readonly { shopId: string; role: R | null }[],
+  overrides: Overrides,
+  maxDiscountOverride: number | null,
+  scope: ShopScope,
+): { byShop: Map<string, Access & { role: R }>; union: Access; uniform: boolean } {
+  const byShop = new Map<string, Access & { role: R }>();
+  for (const s of shops) {
+    const role = scope !== "all" && s.role && s.role.key !== OWNER_ROLE_KEY ? s.role : main;
+    byShop.set(s.shopId, { ...effectiveAccess(role, overrides, maxDiscountOverride, scope), role });
+  }
+  const list = [...byShop.values()];
+  if (!list.length) return { byShop, union: effectiveAccess(main, overrides, maxDiscountOverride, scope), uniform: true };
+  return { byShop, union: unionAccess(list), uniform: list.every((a) => sameAccess(a, list[0])) };
+}
+
 // ───────────────────────────── Granting ─────────────────────────────
 
 export interface Grantor {

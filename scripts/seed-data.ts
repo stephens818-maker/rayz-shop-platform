@@ -280,6 +280,8 @@ export interface StaffSeed {
   role?: "brand_owner" | "shop_manager" | "barber";
   /** The one shop a shop manager has access to. */
   managerShop?: string;
+  /** A different role at some of their shops: shop -> role template key. */
+  shopRoles?: Record<string, "shop_manager" | "front_desk">;
   email?: string;
   note?: string;
 }
@@ -310,7 +312,15 @@ export const STAFF: StaffSeed[] = [
   // Moline
   { key: "jilane", firstName: "Jilane", displayLabel: "Jilane", listedAt: ["moline"], schedule: { moline: [1, 2, 3, 4, 5] } },
   { key: "mackenzie", firstName: "Mackenzie", displayLabel: "Mackenzie", listedAt: ["moline"], schedule: { moline: [2, 3, 4, 5, 6] } },
-  { key: "kat", firstName: "Kat", displayLabel: "Kat", listedAt: ["moline", "rock-island", "silvis"], schedule: { moline: [1, 2, 3, 6] } },
+  {
+    key: "kat",
+    firstName: "Kat",
+    displayLabel: "Kat",
+    listedAt: ["moline", "rock-island", "silvis"],
+    schedule: { moline: [1, 2, 3, 6] },
+    shopRoles: { "rock-island": "shop_manager" },
+    email: "kat@rayz.test",
+  },
   { key: "jen", firstName: "Jen", displayLabel: "Jen", listedAt: ["moline"], schedule: { moline: [1, 4, 5, 6] } },
   { key: "sara", firstName: "Sara", displayLabel: "Sara", listedAt: ["moline"], schedule: { moline: [2, 3, 4] } },
   // Rock Island

@@ -21,7 +21,12 @@ export default async function RolePage({ params }: { params: Promise<{ id: strin
   if (!isNew && !UUID.test(id)) notFound();
   const role = isNew ? null : await db.query.roles.findFirst({ where: eq(roles.id, id) });
   if (!isNew && !role) notFound();
-  const [{ n }] = role ? await db.select({ n: sql<number>`count(*)::int` }).from(staff).where(eq(staff.roleId, role.id)) : [{ n: 0 }];
+  const [{ n }] = role
+    ? await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(staff)
+        .where(sql`${staff.roleId} = ${role.id} or exists (select 1 from staff_access_shops a where a.staff_id = ${staff.id} and a.role_id = ${role.id})`)
+    : [{ n: 0 }];
   const template = templateFor(role?.key);
   const readOnly = role?.key === OWNER_ROLE_KEY ? "The Brand Owner role always has every permission, including ones added later." : roleChangeDenied(g, null, { key: null, name: "x", permissions: [], maxDiscountPct: 0 });
 

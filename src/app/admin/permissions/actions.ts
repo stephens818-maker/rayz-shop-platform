@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
@@ -10,6 +10,7 @@ import {
   Permission,
   RoleDef,
   SHOP_SCOPES,
+  accessByShop,
   cleanOverrides,
   diffPermissions,
   effectiveAccess,
@@ -116,7 +117,10 @@ export async function deleteRoleAction(id: string) {
     if (!before) throw notFound("Role");
     const denied = roleChangeDenied(staffGrantor(ctx), asDef(before), null);
     if (denied) throw forbidden(denied);
-    const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(staff).where(eq(staff.roleId, id));
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(distinct ${staff.id})::int` })
+      .from(staff)
+      .where(or(eq(staff.roleId, id), sql`exists (select 1 from staff_access_shops a where a.staff_id = ${staff.id} and a.role_id = ${id})`));
     if (n) throw new AppError("conflict", `${n} ${n === 1 ? "person has" : "people have"} this role. Give them another role first.`);
     await db.transaction(async (tx) => {
       await tx.delete(roles).where(eq(roles.id, id));
@@ -134,9 +138,11 @@ const UserSchema = z.object({
   maxDiscountPct: z.number().int().min(0).max(100).nullable(),
   scope: z.enum(SHOP_SCOPES),
   shopIds: z.array(z.string().uuid()).transform((xs) => [...new Set(xs)]),
+  /** A different role at some of their shops (shop ID → role ID). */
+  shopRoles: z.record(z.string().uuid(), z.string().uuid()).optional().default({}),
 });
 
-/** One person's role, per-user overrides, discount limit and shop access. */
+/** One person's role, per-user overrides, discount limit, assigned shops and their role at each. */
 export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
   return safe(async () => {
     const ctx = await authorize("permissions.manage");
@@ -155,7 +161,25 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
       const found = await db.select({ id: shops.id }).from(shops).where(inArray(shops.id, shopIds));
       if (found.length !== shopIds.length) throw notFound("Shop");
     }
-    const next = effectiveAccess(role, overrides, owner ? null : p.maxDiscountPct, scope);
+    const shopRoles: Record<string, string> = {};
+    if (scope === "selected") {
+      for (const [shopId, roleId] of Object.entries(p.shopRoles)) {
+        if (!shopIds.includes(shopId)) throw new AppError("bad_request", "A shop role needs the person assigned to that shop");
+        if (roleId !== role.id) shopRoles[shopId] = roleId;
+      }
+    }
+    const extraIds = [...new Set(Object.values(shopRoles))];
+    const extra = extraIds.length ? await db.select().from(roles).where(inArray(roles.id, extraIds)) : [];
+    if (extra.length !== extraIds.length) throw notFound("Role");
+    if (extra.some((r) => r.key === OWNER_ROLE_KEY)) throw new AppError("bad_request", "Brand Owner covers every shop, so it can't be a role at one shop");
+    const byId = new Map(extra.map((r) => [r.id, r]));
+    const { union: next } = accessByShop(
+      role,
+      shopIds.map((shopId) => ({ shopId, role: shopRoles[shopId] ? byId.get(shopRoles[shopId])! : null })),
+      overrides,
+      owner ? null : p.maxDiscountPct,
+      scope,
+    );
     const denied = userAccessChangeDenied(
       staffGrantor(ctx),
       accessState(current),
@@ -170,7 +194,8 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
         .set({ roleId: role.id, shopScope: scope, permissionOverrides: overrides as Record<string, boolean>, maxDiscountPct: owner ? null : p.maxDiscountPct })
         .where(eq(staff.id, p.staffId));
       await tx.delete(staffAccessShops).where(eq(staffAccessShops.staffId, p.staffId));
-      if (shopIds.length) await tx.insert(staffAccessShops).values(shopIds.map((shopId) => ({ staffId: p.staffId, shopId })));
+      if (shopIds.length) await tx.insert(staffAccessShops).values(shopIds.map((shopId) => ({ staffId: p.staffId, shopId, roleId: shopRoles[shopId] ?? null })));
+      const shopRoleNames = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).map(([s, r]) => [s, byId.get(r)?.name ?? r]));
       await audit(
         ctx.actor,
         "permissions.user_update",
@@ -180,6 +205,10 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
           role: current.role.id === role.id ? role.name : { from: current.role.name, to: role.name },
           scope: current.scope === scope ? scope : { from: current.scope, to: scope },
           shops: { from: current.scope === "all" ? "all" : current.shopIds, to: scope === "all" ? "all" : shopIds },
+          shopRoles:
+            JSON.stringify(current.shopRoles) === JSON.stringify(shopRoles)
+              ? undefined
+              : { from: Object.fromEntries(Object.entries(current.shopRoles).map(([s]) => [s, current.byShop.get(s)!.role.name])), to: shopRoleNames(shopRoles) },
           added: diff.added,
           removed: diff.removed,
           overrides,

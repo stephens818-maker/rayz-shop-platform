@@ -16,6 +16,7 @@ import {
   SCOPE_LABEL,
   SHOP_SCOPES,
   ShopScope,
+  accessByShop,
   diffPermissions,
   effectiveAccess,
   permissionLabel,
@@ -25,7 +26,15 @@ import {
 import { saveUserAccessAction } from "../../actions";
 
 type RoleOption = RoleDef & { id: string; defaultScope: ShopScope };
-type State = { roleId: string; overrides: Overrides; maxDiscountPct: number | null; scope: ShopScope; shopIds: string[] };
+type State = { roleId: string; overrides: Overrides; maxDiscountPct: number | null; scope: ShopScope; shopIds: string[]; shopRoles: Record<string, string> };
+
+/** Everything they could do at one of their shops, under each shop's role. */
+function accessOf(roles: RoleOption[], s: State) {
+  const main = roles.find((r) => r.id === s.roleId)!;
+  const owner = main.key === OWNER_ROLE_KEY;
+  const shops = s.scope === "selected" ? s.shopIds.map((shopId) => ({ shopId, role: roles.find((r) => r.id === s.shopRoles[shopId]) ?? null })) : [];
+  return accessByShop(main, shops, owner ? {} : s.overrides, owner ? null : s.maxDiscountPct, owner ? "all" : s.scope);
+}
 
 const GROUPS: { title: string; perms: Permission[] }[] = [
   ...PERMISSION_GROUPS.map((g) => ({ title: g, perms: FEATURE_PERMISSIONS.filter((p) => p.group === g && !OWNER_ONLY.has(p.key)).map((p) => p.key as Permission) })),
@@ -68,12 +77,10 @@ export function PersonAccessEditor({
   const has = useMemo(() => new Set(mine), [mine]);
   const role = roles.find((r) => r.id === s.roleId)!;
   const isOwnerRole = role.key === OWNER_ROLE_KEY;
-  const before = useMemo(() => {
-    const r = roles.find((x) => x.id === initial.roleId)!;
-    return effectiveAccess(r, initial.overrides, initial.maxDiscountPct, initial.scope);
-  }, [roles, initial]);
+  const before = useMemo(() => accessOf(roles, initial).union, [roles, initial]);
   const fromRole = effectiveAccess(role);
-  const after = effectiveAccess(role, isOwnerRole ? {} : s.overrides, isOwnerRole ? null : s.maxDiscountPct, isOwnerRole ? "all" : s.scope);
+  const { union: after, uniform } = accessOf(roles, s);
+  const shopRoleOptions = roles.filter((r) => r.key !== OWNER_ROLE_KEY);
   const diff = diffPermissions(before.permissions, after.permissions);
   const locked = !!readOnly;
 
@@ -85,7 +92,9 @@ export function PersonAccessEditor({
   };
   const toggleShop = (id: string) => {
     if (s.scope === "one") return set({ shopIds: [id] });
-    set({ shopIds: s.shopIds.includes(id) ? s.shopIds.filter((x) => x !== id) : [...s.shopIds, id] });
+    if (!s.shopIds.includes(id)) return set({ shopIds: [...s.shopIds, id] });
+    const { [id]: _, ...shopRoles } = s.shopRoles;
+    set({ shopIds: s.shopIds.filter((x) => x !== id), shopRoles });
   };
 
   const save = () =>
@@ -121,7 +130,10 @@ export function PersonAccessEditor({
           </div>
         </Card>
         <Card>
-          <CardHeader title="Shop access" subtitle={worksAt.length ? `Works at ${worksAt.join(", ")}` : "Not on any shop's team yet"} />
+          <CardHeader
+            title="Assigned shops"
+            subtitle={`The only shops they see. ${worksAt.length ? `Works at ${worksAt.join(", ")}` : "Not on any shop's team yet"}`}
+          />
           <fieldset disabled={locked || isOwnerRole} className="space-y-3 p-4">
             <div className="flex flex-wrap gap-1.5">
               {SHOP_SCOPES.map((sc) => (
@@ -142,18 +154,40 @@ export function PersonAccessEditor({
             {s.scope !== "all" && !isOwnerRole && (
               <div className="grid gap-1.5 sm:grid-cols-2">
                 {shops.map((shop) => (
-                  <label key={shop.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type={s.scope === "one" ? "radio" : "checkbox"}
-                      name="shop"
-                      className="h-4 w-4 accent-ink-900"
-                      checked={s.shopIds.includes(shop.id)}
-                      onChange={() => toggleShop(shop.id)}
-                    />
-                    {shop.name}
-                  </label>
+                  <div key={shop.id} className="flex flex-wrap items-center gap-2 text-sm">
+                    <label className="flex min-w-0 items-center gap-2">
+                      <input
+                        type={s.scope === "one" ? "radio" : "checkbox"}
+                        name="shop"
+                        className="h-4 w-4 accent-ink-900"
+                        checked={s.shopIds.includes(shop.id)}
+                        onChange={() => toggleShop(shop.id)}
+                      />
+                      {shop.name}
+                    </label>
+                    {s.scope === "selected" && s.shopIds.includes(shop.id) && s.shopIds.length > 1 && (
+                      <Select
+                        aria-label={`Role at ${shop.name}`}
+                        className="h-7 w-auto py-0 text-xs"
+                        value={s.shopRoles[shop.id] ?? s.roleId}
+                        onChange={(e) => {
+                          const { [shop.id]: _, ...rest } = s.shopRoles;
+                          set({ shopRoles: e.target.value === s.roleId ? rest : { ...rest, [shop.id]: e.target.value } });
+                        }}
+                      >
+                        {shopRoleOptions.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.id === s.roleId ? `${r.name} (main role)` : r.name}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                  </div>
                 ))}
               </div>
+            )}
+            {s.scope === "selected" && !isOwnerRole && !uniform && (
+              <p className="text-xs text-zinc-500">A different role at some shops: they work in one shop at a time, with that shop&apos;s role, and switch between only these shops.</p>
             )}
             {(s.scope === "all" || isOwnerRole) && <p className="text-xs text-zinc-500">Every shop, including shops added later, and brand-level records.</p>}
           </fieldset>

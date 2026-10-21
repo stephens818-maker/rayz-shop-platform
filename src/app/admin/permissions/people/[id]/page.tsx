@@ -53,6 +53,7 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
           maxDiscountPct: person.maxDiscountPct,
           scope: target.scope,
           shopIds: target.scope === "all" ? [] : target.shopIds,
+          shopRoles: target.shopRoles,
         }}
         roles={roleRows.map((r) => ({ id: r.id, key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope }))}
         shops={ctx.brandWide ? allShops : allShops.filter((s) => hasShop(ctx, s.id))}

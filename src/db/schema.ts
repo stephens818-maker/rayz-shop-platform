@@ -174,12 +174,17 @@ export const staffShops = pgTable(
   (t) => [primaryKey({ columns: [t.staffId, t.shopId] })],
 );
 
-/** Shops a person may see and act on, when their scope isn't "all". Separate from where they work. */
+/**
+ * The shops a person is assigned to, when their scope isn't "all": the only shops they may see and
+ * act on. Separate from where they're bookable (staff_shops).
+ */
 export const staffAccessShops = pgTable(
   "staff_access_shops",
   {
     staffId: uuid("staff_id").notNull().references(() => staff.id, { onDelete: "cascade" }),
     shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+    /** Their role at this shop; null = their main role. Per-person overrides apply on top at every shop. */
+    roleId: uuid("role_id").references(() => roles.id),
   },
   (t) => [primaryKey({ columns: [t.staffId, t.shopId] }), index("staff_access_shops_shop_idx").on(t.shopId)],
 );
