@@ -184,12 +184,12 @@ export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; init
   );
 }
 
-export function HoursEditor({ shopId, initial }: { shopId: string; initial: { weekday: number; openMin: number; closeMin: number }[] }) {
+export function HoursEditor({ shopId, initial, isAdmin }: { shopId: string; initial: { weekday: number; openMin: number; closeMin: number }[]; isAdmin: boolean }) {
   const { pending, msg, save } = useSave();
   const [rows, setRows] = useState(initial);
   return (
     <Card>
-      <CardHeader title="Opening hours" subtitle="Barbers can only be booked inside shop hours. All shops are closed Sundays by default." />
+      <CardHeader title="Opening hours" subtitle={`Barbers can only be booked inside shop hours. All shops are closed Sundays${isAdmin ? "; opening one is up to you." : "; only a brand admin can change that."}`} />
       <div className="divide-y divide-zinc-100">
         {[1, 2, 3, 4, 5, 6, 0].map((d) => {
           const r = rows.find((x) => x.weekday === d);
@@ -199,6 +199,7 @@ export function HoursEditor({ shopId, initial }: { shopId: string; initial: { we
                 <input
                   type="checkbox"
                   checked={!!r}
+                  disabled={d === 0 && !isAdmin && !r}
                   onChange={(e) => setRows(e.target.checked ? [...rows, { weekday: d, openMin: 9 * 60, closeMin: 18 * 60 }] : rows.filter((x) => x.weekday !== d))}
                 />
                 {DAYS[d]}
@@ -292,9 +293,6 @@ export function LoyaltyEditor({ initial }: { initial: LoyaltyConfig }) {
             <option value="services">Services only</option>
             <option value="all">Services and products</option>
           </Select>
-        </Field>
-        <Field label="Max rewards per ticket">
-          <Input inputMode="numeric" value={v.maxRewardsPerTicket} onChange={(e) => setV({ ...v, maxRewardsPerTicket: Number(e.target.value) || 1 })} />
         </Field>
         <label className="flex items-center gap-2 self-end pb-2 text-sm">
           <input type="checkbox" checked={v.stackWithPromos} onChange={(e) => setV({ ...v, stackWithPromos: e.target.checked })} /> Combine with promo codes

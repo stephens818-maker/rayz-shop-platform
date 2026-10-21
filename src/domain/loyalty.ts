@@ -12,8 +12,6 @@ export interface LoyaltyConfig {
   progressExpiryDays: number | null;
   /** What a reward can be spent on at checkout. */
   redeemableOn: "services" | "all";
-  /** Max rewards redeemable on one ticket. */
-  maxRewardsPerTicket: number;
   /** Whether a reward can be combined with a promo code on the same ticket. */
   stackWithPromos: boolean;
 }
@@ -25,7 +23,6 @@ export const DEFAULT_LOYALTY: LoyaltyConfig = {
   rewardExpiryDays: 365,
   progressExpiryDays: null,
   redeemableOn: "services",
-  maxRewardsPerTicket: 1,
   stackWithPromos: false,
 };
 

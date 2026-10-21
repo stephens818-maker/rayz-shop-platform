@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { hoursProblem } from "@/domain/hours";
 import { labelContainsSurname } from "@/lib/ids";
 import { staffAtShopDenied, staffProfileChangeDenied, timeBlockChangeDenied } from "@/server/auth/policy";
 
@@ -103,5 +104,30 @@ describe("review P1#19: cron and sign-in codes fail closed", () => {
       env.AUTH_DEV_CODES = prev.dev;
       env.VERCEL_ENV = prev.vercel;
     }
+  });
+});
+
+describe("review P2#21: Sunday hours are a brand-admin decision", () => {
+  const week = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, openMin: 540, closeMin: 1080 }));
+  const sunday = { weekday: 0, openMin: 600, closeMin: 900 };
+
+  it("refuses a manager opening Sunday, and lets a brand admin do it", () => {
+    expect(hoursProblem([...week, sunday], { isAdmin: false, currentSunday: null })).toMatchObject({ code: "forbidden" });
+    expect(hoursProblem([...week, sunday], { isAdmin: true, currentSunday: null })).toBeNull();
+  });
+
+  it("lets a manager keep or close the Sunday an admin set, but not change it", () => {
+    const current = { openMin: 600, closeMin: 900 };
+    expect(hoursProblem([...week, sunday], { isAdmin: false, currentSunday: current })).toBeNull();
+    expect(hoursProblem(week, { isAdmin: false, currentSunday: current })).toBeNull();
+    expect(hoursProblem([...week, { ...sunday, closeMin: 960 }], { isAdmin: false, currentSunday: current })).toMatchObject({ code: "forbidden" });
+  });
+
+  it("rejects malformed rows for everyone", () => {
+    const who = { isAdmin: true, currentSunday: null };
+    expect(hoursProblem([{ weekday: 7, openMin: 540, closeMin: 600 }], who)?.code).toBe("bad_request");
+    expect(hoursProblem([{ weekday: 1, openMin: 600, closeMin: 540 }], who)?.code).toBe("bad_request");
+    expect(hoursProblem([{ weekday: 1, openMin: 540, closeMin: 1500 }], who)?.code).toBe("bad_request");
+    expect(hoursProblem([week[0], week[0]], who)?.code).toBe("bad_request");
   });
 });

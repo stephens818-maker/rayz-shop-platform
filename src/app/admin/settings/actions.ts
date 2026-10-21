@@ -6,6 +6,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { services, shopClosures, shopHours, shopServices, shops } from "@/db/schema";
 import { MAX_CARD_FEE_RATE } from "@/domain/checkout";
+import { hoursProblem } from "@/domain/hours";
 import { slugify } from "@/lib/ids";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
@@ -82,7 +83,9 @@ export async function saveHoursAction(shopId: string, rows: { weekday: number; o
   return safe(async () => {
     const ctx = await requireStaff([...MGR]);
     assertShopAccess(ctx, shopId);
-    for (const r of rows) if (r.closeMin <= r.openMin) throw new AppError("bad_request", "Closing time must be after opening time");
+    const sunday = await db.query.shopHours.findFirst({ where: and(eq(shopHours.shopId, shopId), eq(shopHours.weekday, 0)) });
+    const problem = hoursProblem(rows, { isAdmin: ctx.isAdmin, currentSunday: sunday ?? null });
+    if (problem) throw new AppError(problem.code, problem.message);
     await db.transaction(async (tx) => {
       await tx.delete(shopHours).where(eq(shopHours.shopId, shopId));
       if (rows.length) await tx.insert(shopHours).values(rows.map((r) => ({ ...r, shopId })));
@@ -125,7 +128,6 @@ const Loyalty = z.object({
   rewardExpiryDays: z.number().int().min(1).nullable(),
   progressExpiryDays: z.number().int().min(1).nullable(),
   redeemableOn: z.enum(["services", "all"]),
-  maxRewardsPerTicket: z.number().int().min(1).max(10),
   stackWithPromos: z.boolean(),
 });
 

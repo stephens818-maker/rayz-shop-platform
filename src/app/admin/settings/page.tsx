@@ -57,7 +57,7 @@ export default async function SettingsPage() {
           cardFeeAppliesToTip: shop.cardFeeAppliesToTip,
         }}
       />
-      <HoursEditor shopId={shop.id} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />
+      <HoursEditor shopId={shop.id} isAdmin={ctx.isAdmin} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />
       <ClosuresEditor shopId={shop.id} isAdmin={ctx.isAdmin} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />
       {ctx.isAdmin && <LoyaltyEditor initial={loyalty} />}
       {ctx.isAdmin && <NewShopForm />}

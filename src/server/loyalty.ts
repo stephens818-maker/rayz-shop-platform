@@ -38,7 +38,7 @@ export async function loyaltyBalance(customerId: string, now = new Date(), tx: D
     availableCents: usable.reduce((a, r) => a + r.amountCents, 0),
     rules: {
       earn: `Every ${dollars(cfg.thresholdCents)} in net service spend (after discounts, before tax) earns a ${dollars(cfg.rewardCents)} reward. Products and tips don't count.`,
-      redeem: cfg.redeemableOn === "services" ? "Rewards can be used on services." : "Rewards can be used on anything except gift cards.",
+      redeem: `${cfg.redeemableOn === "services" ? "Rewards can be used on services." : "Rewards can be used on anything except gift cards."} One reward per visit.`,
       expiry: cfg.rewardExpiryDays ? `Rewards expire ${cfg.rewardExpiryDays} days after they're earned.` : "Rewards don't expire.",
     },
   };
