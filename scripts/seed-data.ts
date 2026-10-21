@@ -332,10 +332,11 @@ export const STAFF: StaffSeed[] = [
 ];
 
 /** Extra demo logins for trying the permission templates. Inserted after the sample history so it doesn't change. */
-export const DEMO_LOGINS: { firstName: string; displayLabel: string; email: string; role: "brand_admin" | "regional_manager" | "front_desk"; shops: string[] }[] = [
+export const DEMO_LOGINS: { firstName: string; displayLabel: string; email: string; role: "brand_admin" | "regional_manager" | "shop_manager" | "front_desk"; shops: string[] }[] = [
   { firstName: "Dana", displayLabel: "Dana (admin)", email: "admin@rayz.test", role: "brand_admin", shops: [] },
   { firstName: "Reggie", displayLabel: "Reggie (regional)", email: "regional@rayz.test", role: "regional_manager", shops: ["moline", "rock-island"] },
   { firstName: "Frankie", displayLabel: "Frankie (desk)", email: "frontdesk@rayz.test", role: "front_desk", shops: ["coralville"] },
+  { firstName: "Morgan", displayLabel: "Morgan (manager)", email: "manager.moline@rayz.test", role: "shop_manager", shops: ["moline"] },
 ];
 
 export const COLORS = ["#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e", "#14b8a6", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899"];

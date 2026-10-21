@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { roles, shops, staff, staffAccessShops, staffShops } from "@/db/schema";
-import { Access, Grantor, Permission, ShopScope, UserAccessState, OWNER_ROLE_KEY, cleanOverrides, effectiveAccess } from "@/domain/permissions";
+import { Access, BRAND_ONLY, Grantor, Permission, ShopScope, UserAccessState, OWNER_ROLE_KEY, cleanOverrides, effectiveAccess } from "@/domain/permissions";
 
 export interface StaffAccess extends Access {
   staffId: string;
@@ -10,6 +10,8 @@ export interface StaffAccess extends Access {
   /** Shops this person may see and act on. */
   shopIds: string[];
   shops: { id: string; name: string; slug: string; address: string | null; city: string | null }[];
+  /** Brand-only permissions the role or overrides give, which are off because the scope isn't all shops. */
+  needsAllShops: Permission[];
 }
 
 /** A person's effective permissions and shop scope, straight from the database. */
@@ -22,12 +24,13 @@ export async function loadStaffAccess(staffId: string, tx: DBorTx = db): Promise
 export async function accessFor(s: typeof staff.$inferSelect, role: typeof roles.$inferSelect, tx: DBorTx = db): Promise<StaffAccess> {
   const scope: ShopScope = role.key === OWNER_ROLE_KEY ? "all" : s.shopScope;
   const a = effectiveAccess(role, cleanOverrides(s.permissionOverrides), s.maxDiscountPct, scope);
+  const needsAllShops = scope === "all" ? [] : [...effectiveAccess(role, cleanOverrides(s.permissionOverrides), s.maxDiscountPct).permissions].filter((p) => BRAND_ONLY.has(p));
   const cols = { id: shops.id, name: shops.name, slug: shops.slug, address: shops.address, city: shops.city };
   const shopRows =
     scope === "all"
       ? await tx.select(cols).from(shops).orderBy(asc(shops.name))
       : await tx.select(cols).from(staffAccessShops).innerJoin(shops, eq(shops.id, staffAccessShops.shopId)).where(eq(staffAccessShops.staffId, s.id)).orderBy(asc(shops.name));
-  return { ...a, staffId: s.id, role, scope, shopIds: shopRows.map((x) => x.id), shops: shopRows };
+  return { ...a, staffId: s.id, role, scope, shopIds: shopRows.map((x) => x.id), shops: shopRows, needsAllShops };
 }
 
 export const grantor = (a: Pick<StaffAccess, "staffId" | "isOwner" | "permissions" | "maxDiscountPct" | "scope" | "shopIds">): Grantor => ({

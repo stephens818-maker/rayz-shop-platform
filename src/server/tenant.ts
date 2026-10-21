@@ -1,6 +1,20 @@
 import { AnyColumn, SQL, eq, inArray, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { appointments, cashDrawers, giftCards, notificationJobs, promoCodes, purchaseOrders, sales, staff, staffAccessShops, staffShops, stockCounts, stockTransfers, waitlistEntries } from "@/db/schema";
+import {
+  appointments,
+  cashDrawers,
+  giftCards,
+  notificationJobs,
+  promoCodes,
+  purchaseOrders,
+  sales,
+  staff,
+  staffAccessShops,
+  staffShops,
+  stockCounts,
+  stockTransfers,
+  waitlistEntries,
+} from "@/db/schema";
 import { AppError, forbidden } from "./errors";
 
 /**
@@ -42,7 +56,8 @@ export function narrowShops(t: Pick<Tenant, "shopIds">, requested?: readonly str
   return [...requested];
 }
 
-export type TenantRecord = "appointment" | "sale" | "purchase_order" | "transfer" | "stock_count" | "waitlist_entry" | "cash_drawer" | "notification_job" | "gift_card" | "promo" | "staff";
+export type TenantRecord =
+  "appointment" | "sale" | "purchase_order" | "transfer" | "stock_count" | "waitlist_entry" | "cash_drawer" | "notification_job" | "gift_card" | "promo" | "staff";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

@@ -158,6 +158,8 @@ export const staff = pgTable("staff", {
   /** "shop": a shared login for one shop (its front desk), not a person; never bookable. */
   kind: text("kind").$type<"person" | "shop">().notNull().default("person"),
   lastSignInAt: ts("last_sign_in_at"),
+  /** Sessions started before this are signed out (a password reset or a disabled login). */
+  sessionsValidAfter: ts("sessions_valid_after"),
   createdAt: createdAt(),
 });
 

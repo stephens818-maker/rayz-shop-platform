@@ -6,6 +6,7 @@ import { roles, shops, staff, staffAccessShops } from "@/db/schema";
 import { Badge, Card, CardHeader, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
 import { OWNER_ROLE_KEY, SCOPE_LABEL, cleanOverrides, effectiveAccess } from "@/domain/permissions";
 import { guardPage } from "@/server/auth/staff";
+import { OTHER_SHOP, hasShop } from "@/server/tenant";
 
 export const metadata: Metadata = { title: "Permissions" };
 
@@ -102,8 +103,10 @@ export default async function PermissionsPage() {
                     <div className="font-medium">{s.displayLabel}</div>
                     <div className="text-xs text-zinc-500">{s.email ?? "no login"}</div>
                   </Td>
-                  <Td>{role.name}</Td>
-                  <Td>{scope === "all" ? "All shops" : shopsOf(s.id).map((x) => x.name).join(", ") || <span className="text-red-600">No shops</span>}</Td>
+                  <Td>
+                    {role.name} {s.kind === "shop" && <Badge tone="violet">shop login</Badge>}
+                  </Td>
+                  <Td>{scope === "all" ? "All shops" : [...new Set(shopsOf(s.id).map((x) => (ctx.brandWide || hasShop(ctx, x.shopId) ? x.name : OTHER_SHOP)))].join(", ") || <span className="text-red-600">No shops</span>}</Td>
                   <Td right>{Object.keys(o).length || "—"}</Td>
                   <Td right>{a.permissions.has("pos.discount") ? `${a.maxDiscountPct}%${s.maxDiscountPct !== null ? " (own)" : ""}` : "None"}</Td>
                   <Td right>

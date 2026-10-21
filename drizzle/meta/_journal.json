@@ -99,6 +99,13 @@
       "when": 1792566726763,
       "tag": "0013_shop_workspaces",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792567762803,
+      "tag": "0014_staff_sessions",
+      "breakpoints": true
     }
   ]
 }

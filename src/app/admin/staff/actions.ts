@@ -64,6 +64,7 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
     let current: Awaited<ReturnType<typeof loadStaffAccess>> = null;
     if (p.id) {
       current = await assertCanEditProfile(ctx, p.id);
+      if ((await db.query.staff.findFirst({ where: eq(staff.id, p.id), columns: { kind: true } }))?.kind === "shop") throw new AppError("bad_request", "Shop logins are managed under Setup → Shop logins");
       const existing = await workShopIds(p.id);
       if (outside.some((s) => !existing.includes(s))) throw forbidden("You can only add people to your own shops");
       if (p.id === ctx.staff.id && !p.active) throw new AppError("bad_request", "You can't deactivate yourself");

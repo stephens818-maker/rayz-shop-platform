@@ -536,6 +536,26 @@ async function main() {
       .returning();
     if (d.shops.length) await db.insert(t.staffAccessShops).values(d.shops.map((s) => ({ staffId: row.id, shopId: shopBySlug.get(s)!.id })));
   }
+  // One shared front-desk login per shop (<slug>@rayz.test): sees only that shop.
+  for (const [i, s] of SHOPS.entries()) {
+    const shop = shopBySlug.get(s.slug)!;
+    const [row] = await db
+      .insert(t.staff)
+      .values({
+        kind: "shop",
+        staffCode: `S-${String(STAFF.length + DEMO_LOGINS.length + i + 1).padStart(4, "0")}`,
+        firstName: shop.name,
+        displayLabel: `${shop.name} desk`,
+        publicSlug: staffPublicSlug(`${s.slug}-desk`),
+        email: `${s.slug}@rayz.test`,
+        passwordHash: hash,
+        roleId: roleId("front_desk"),
+        shopScope: "one",
+        isBookable: false,
+      })
+      .returning();
+    await db.insert(t.staffAccessShops).values({ staffId: row.id, shopId: shop.id });
+  }
 
   console.log("Seed complete.");
   console.log(`  Logins (password: ${DEMO_PASSWORD}):`);
@@ -545,6 +565,8 @@ async function main() {
   console.log("    michelle@rayz.test   Shop Manager, Coralville");
   console.log("    frontdesk@rayz.test  Front Desk, Coralville");
   console.log("    makenna@rayz.test    Barber, Coralville");
+  console.log("    manager.moline@rayz.test  Shop Manager, Moline");
+  console.log(`    <shop>@rayz.test     Shop login (front desk) for one shop: ${SHOPS.map((s) => s.slug).join(", ")}`);
 }
 
 type Shop = typeof t.shops.$inferSelect;

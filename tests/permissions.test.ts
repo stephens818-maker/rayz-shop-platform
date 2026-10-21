@@ -85,13 +85,18 @@ describe("permission catalog and templates", () => {
 
   it("the migrations seed exactly the templates in code", () => {
     const sql = readFileSync(join(process.cwd(), "drizzle/0009_permissions_and_catalog.sql"), "utf8");
-    // Permissions added later are granted to templates by an UPDATE in the migration that adds them.
-    const grants = readdirSync(join(process.cwd(), "drizzle"))
+    // Later migrations grant permissions to templates (|| '[...]') or take them away (- 'key'), in file order.
+    const later = readdirSync(join(process.cwd(), "drizzle"))
       .filter((f) => f.endsWith(".sql") && f > "0009")
-      .flatMap((f) => [
-        ...readFileSync(join(process.cwd(), "drizzle", f), "utf8").matchAll(/UPDATE "roles" SET "permissions" = "permissions" \|\| '(\[.*?\])'::jsonb WHERE "key" IN \(([^)]*)\)/g),
-      ])
-      .map((m) => ({ perms: JSON.parse(m[1]) as string[], keys: [...m[2].matchAll(/'(\w+)'/g)].map((k) => k[1]) }));
+      .sort()
+      .map((f) => readFileSync(join(process.cwd(), "drizzle", f), "utf8"))
+      .join("\n");
+    const changes = [...later.matchAll(/UPDATE "roles" SET "permissions" = "permissions" (?:\|\| '(\[.*?\])'::jsonb|- '([\w.]+)') WHERE "key" (?:IN \(([^)]*)\)|= ('\w+'))/g)].map((m) => ({
+      add: m[1] ? (JSON.parse(m[1]) as string[]) : [],
+      remove: m[2] ? [m[2]] : [],
+      keys: [...(m[3] ?? m[4]).matchAll(/'(\w+)'/g)].map((k) => k[1]),
+    }));
+    const grants = changes.filter((c) => c.add.length);
     const rows = [...sql.matchAll(/^\s*\('(\w+)', '((?:[^']|'')*)', '((?:[^']|'')*)', '(\[.*?\])'::jsonb, (\d+), '(\w+)', (\d+)\)/gm)].map((m) => ({
       key: m[1],
       name: m[2],
@@ -102,8 +107,12 @@ describe("permission catalog and templates", () => {
       sortOrder: Number(m[7]),
     }));
     const seeded = rows.map((r) => {
-      const added = grants.filter((g) => g.keys.includes(r.key)).flatMap((g) => g.perms);
-      return { ...r, permissions: [...new Set([...r.permissions, ...added])].sort() };
+      const perms = new Set<string>(r.permissions);
+      for (const c of changes.filter((c) => c.keys.includes(r.key))) {
+        c.add.forEach((p) => perms.add(p));
+        c.remove.forEach((p) => perms.delete(p));
+      }
+      return { ...r, permissions: [...perms].sort() };
     });
     expect(grants.length).toBeGreaterThan(0);
     expect(seeded).toEqual(ROLE_TEMPLATES.map(templateRow).map((t) => ({ ...t, permissions: [...t.permissions].sort() })));

@@ -1,6 +1,9 @@
 "use server";
 
+import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
+import { db } from "@/db";
+import { staff } from "@/db/schema";
 import { audit } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
 import { endSession, startSession, verifyPassword } from "@/server/auth/staff";
@@ -13,6 +16,7 @@ export async function login(_prev: { error: string } | null, form: FormData): Pr
   const access = await loadStaffAccess(user.id);
   if (!access) return { error: "Email or password is incorrect" };
   await startSession(user.id);
+  await db.update(staff).set({ lastSignInAt: new Date() }).where(eq(staff.id, user.id));
   await audit({ staffId: user.id, label: `${access.role.name}:${user.displayLabel}` }, "staff.login", "staff", user.id, {}, access.scope === "all" ? null : (access.shopIds[0] ?? null));
   const next = String(form.get("next") ?? "");
   redirect(next.startsWith("/admin") ? next : access.permissions.has("sales.view") ? "/admin" : "/admin/calendar");

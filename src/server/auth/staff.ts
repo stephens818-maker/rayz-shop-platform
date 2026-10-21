@@ -21,12 +21,12 @@ export const SHOP_COOKIE = "rayz_shop";
 const SESSION_TTL = 60 * 60 * 12;
 
 export interface StaffContext {
-  staff: { id: string; firstName: string; displayLabel: string; roleId: string; roleKey: string | null; roleName: string };
+  staff: { id: string; firstName: string; displayLabel: string; roleId: string; roleKey: string | null; roleName: string; kind: "person" | "shop" };
   actor: Actor;
   access: StaffAccess;
   /** Row-level scope: shops this user may read and write. */
   shopIds: string[];
-  shops: { id: string; name: string; slug: string }[];
+  shops: StaffAccess["shops"];
   /** Selected shop, or null for "all my shops" (people with more than one shop). */
   currentShopId: string | null;
   scope: ShopScope;
@@ -66,7 +66,7 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  const payload = await verifyToken<{ sub: string }>(token, "staff_session");
+  const payload = await verifyToken<{ sub: string; iat?: number }>(token, "staff_session");
   if (!payload) return null;
   const [row] = await db
     .select({ s: staff, r: roles })
@@ -75,15 +75,17 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
     .where(and(eq(staff.id, payload.sub), eq(staff.active, true)));
   if (!row) return null;
   const me = row.s;
+  if (me.sessionsValidAfter && (payload.iat ?? 0) * 1000 < me.sessionsValidAfter.getTime()) return null;
   const access = await accessFor(me, row.r);
   const pref = jar.get(SHOP_COOKIE)?.value;
   let currentShopId: string | null;
   if (pref === "all" && access.shopIds.length > 1) currentShopId = null;
   else if (pref && access.shopIds.includes(pref)) currentShopId = pref;
-  else currentShopId = access.shopIds[0] ?? null;
+  // The brand login starts over every shop; everyone else starts in their first shop.
+  else currentShopId = access.scope === "all" && access.shopIds.length > 1 ? null : (access.shopIds[0] ?? null);
 
   return {
-    staff: { id: me.id, firstName: me.firstName, displayLabel: me.displayLabel, roleId: row.r.id, roleKey: row.r.key, roleName: row.r.name },
+    staff: { id: me.id, firstName: me.firstName, displayLabel: me.displayLabel, roleId: row.r.id, roleKey: row.r.key, roleName: row.r.name, kind: me.kind },
     actor: { staffId: me.id, label: `${row.r.name}:${me.displayLabel}` },
     access,
     shopIds: access.shopIds,
@@ -123,6 +125,8 @@ export async function guardPage(page: AdminPage): Promise<StaffContext> {
 /** For server actions: signed in and holding at least one of these permissions, or a forbidden error. */
 export async function authorize(perms: Permission | readonly Permission[], message?: string): Promise<StaffContext> {
   const ctx = await requireStaff();
+  const list = typeof perms === "string" ? [perms] : perms;
+  if (!canAny(ctx, list) && list.some((p) => ctx.access.needsAllShops.includes(p))) throw forbidden("That changes records every shop shares, so it needs access to all shops");
   assertCan(ctx, perms, message);
   return ctx;
 }

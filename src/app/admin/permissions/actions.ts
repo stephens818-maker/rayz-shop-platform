@@ -148,6 +148,8 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
     const owner = role.key === OWNER_ROLE_KEY;
     const overrides = owner ? {} : p.overrides;
     const scope = owner ? "all" : p.scope;
+    const kind = (await db.query.staff.findFirst({ where: eq(staff.id, p.staffId), columns: { kind: true } }))?.kind;
+    if (kind === "shop" && scope !== "one") throw new AppError("bad_request", "A shop login always has access to exactly one shop");
     const shopIds = scope === "all" ? [] : p.shopIds;
     if (shopIds.length) {
       const found = await db.select({ id: shops.id }).from(shops).where(inArray(shops.id, shopIds));

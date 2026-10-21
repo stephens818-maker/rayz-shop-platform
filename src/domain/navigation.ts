@@ -26,6 +26,7 @@ export const PAGE_ACCESS = {
   "/admin/permissions": ["permissions.manage"],
   "/admin/permissions/roles/[id]": ["permissions.manage"],
   "/admin/permissions/people/[id]": ["permissions.manage"],
+  "/admin/shop-logins": ["logins.manage"],
   "/admin/services": ["catalog.prices", "catalog.manage"],
   "/admin/inventory": STOCK_VIEW,
   "/admin/inventory/[id]": STOCK_VIEW,
@@ -95,6 +96,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     items: [
       { href: "/admin/staff", label: "Staff & schedules" },
       { href: "/admin/permissions", label: "Permissions" },
+      { href: "/admin/shop-logins", label: "Shop logins" },
       { href: "/admin/services", label: "Services" },
       { href: "/admin/catalog", label: "Bulk upload" },
       { href: "/admin/promos", label: "Promos & gift cards" },

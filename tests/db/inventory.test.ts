@@ -398,12 +398,13 @@ describe("permissions", () => {
     expect(await po.sendPoAction(myPo, { method: "manual" })).toMatchObject({ ok: false, error: expect.stringMatching(/needs approval/) });
 
     await as("regional");
-    expect(await po.approvePoAction(myPo)).toMatchObject({ ok: false, error: expect.stringMatching(/outside your access/) });
+    expect(await po.approvePoAction(myPo)).toMatchObject({ ok: false, error: "Purchase order not found" });
     const theirs = await po.createPosAction(pick(shopId.moline));
     expect(theirs).toMatchObject({ ok: true });
-    expect(await vend.saveVendorAction(null, vendor)).toMatchObject({ ok: true });
+    expect(await vend.saveVendorAction(null, vendor)).toMatchObject(denied);
 
     await as("admin");
+    expect(await vend.saveVendorAction(null, vendor)).toMatchObject({ ok: true });
     expect(await po.approvePoAction(myPo)).toMatchObject({ ok: true });
 
     await as("michelle");
