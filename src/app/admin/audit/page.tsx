@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, shops } from "@/db/schema";
 import { Card, Empty, Input, PageHeader, Select, Table, Td, Th, buttonClass } from "@/components/ui";
 import { formatDateTime } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
+import { auditScope } from "@/server/audit";
+import { can, guardPage } from "@/server/auth/staff";
+import { ReportTabs } from "../reports/report-view";
 
 export const metadata: Metadata = { title: "Audit log" };
 
@@ -13,13 +15,11 @@ const PAGE = 100;
 
 export default async function AuditPage({ searchParams }: { searchParams: Promise<{ q?: string; entity?: string; page?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/audit");
   const page = Math.max(0, Number(sp.page) || 0);
   const q = sp.q?.trim();
 
-  // Brand admins in brand view see everything, including brand-level entries with no shop.
-  const scope: SQL | undefined =
-    ctx.isAdmin && !ctx.currentShopId ? undefined : ctx.isAdmin ? or(eq(auditLog.shopId, ctx.currentShopId!), isNull(auditLog.shopId)) : inArray(auditLog.shopId, ctx.shopIds);
+  const scope = auditScope(ctx);
   const where = and(
     scope,
     sp.entity ? eq(auditLog.entity, sp.entity) : undefined,
@@ -41,7 +41,18 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
 
   return (
     <div className="mx-auto max-w-6xl">
-      <PageHeader title="Audit log" subtitle="Every sale, void, refund, price, tax, schedule, and settings change, with who did it. Entries can't be edited or deleted." />
+      <PageHeader
+        title="Audit log"
+        subtitle="Every sale, void, refund, price, tax, schedule, permission and settings change, with who did it. Entries can't be edited or deleted."
+        actions={
+          can(ctx, "report.audit_log.export") ? (
+            <a className={buttonClass("secondary")} href={`/admin/reports/export?type=audit_log${q ? `&q=${encodeURIComponent(q)}` : ""}${sp.entity ? `&entity=${encodeURIComponent(sp.entity)}` : ""}`}>
+              Export CSV
+            </a>
+          ) : undefined
+        }
+      />
+      <ReportTabs ctx={ctx} active="audit_log" />
       <form className="mb-3 flex flex-wrap gap-2" method="get">
         <Input name="q" defaultValue={q} placeholder="Search action, person, ID, details…" className="max-w-xs" />
         <Select name="entity" defaultValue={sp.entity ?? ""} className="max-w-48">

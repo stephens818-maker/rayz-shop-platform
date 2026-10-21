@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Card, CardHeader, Empty, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
 import { formatDate } from "@/lib/time";
-import { requireStaff } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
 import { RatedClientRow, ratingsByShop } from "@/server/ratings";
+import { ReportTabs } from "../report-view";
 import { MIN_RATINGS, PERIODS, RatingsParams, resolveRatingsParams } from "./params";
 
 export const metadata: Metadata = { title: "Client ratings" };
@@ -47,7 +48,7 @@ function ClientTable({ title, rows }: { title: string; rows: RatedClientRow[] })
 }
 
 export default async function RatingsReportPage({ searchParams }: { searchParams: Promise<RatingsParams> }) {
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/reports/ratings");
   const p = resolveRatingsParams(ctx, await searchParams);
   const t0 = performance.now();
   const shops = await ratingsByShop({ shopIds: p.shopIds, minRatings: p.min, since: p.since, limit: 10 });
@@ -66,16 +67,19 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
           </>
         }
         actions={
-          <a className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/reports/ratings/export?${csv}`}>
-            Export CSV
-          </a>
+          can(ctx, "report.client_ratings.export") ? (
+            <a className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/reports/ratings/export?${csv}`}>
+              Export CSV
+            </a>
+          ) : undefined
         }
       />
+      <ReportTabs ctx={ctx} active="client_ratings" />
       <form className="mb-4 flex flex-wrap items-end gap-2 text-sm" action="/admin/reports/ratings">
         {ctx.shops.length > 1 && (
           <select name="shop" defaultValue={p.shopParam ?? ""} aria-label="Shop" className="h-10 rounded-lg px-2 ring-1 ring-zinc-300">
-            <option value="">{ctx.isAdmin ? "Current shop" : "My shop"}</option>
-            {ctx.isAdmin && <option value="all">All shops</option>}
+            <option value="">Current selection</option>
+            <option value="all">All my shops</option>
             {ctx.shops.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -98,9 +102,6 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
           ))}
         </select>
         <button className="h-10 rounded-lg bg-ink-900 px-4 font-medium text-white">Show</button>
-        <Link className="ml-auto self-center text-xs underline" href="/admin/reports">
-          Back to reports
-        </Link>
       </form>
       {shops.length === 0 ? (
         <Empty title="No shops in scope" />

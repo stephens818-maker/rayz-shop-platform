@@ -4,14 +4,15 @@ import { Card, CardHeader, Empty, Notice, PageHeader, Table, Td, Th, cx } from "
 import { payPeriodByIndex, payPeriodFor } from "@/domain/payroll";
 import { formatCents } from "@/lib/money";
 import { formatDate, todayLocal } from "@/lib/time";
-import { requireStaff, reportShopIds } from "@/server/auth/staff";
+import { can, guardPage, reportShopIds } from "@/server/auth/staff";
+import { ReportTabs } from "../reports/report-view";
 import { payrollTips } from "@/server/reports";
 
 export const metadata: Metadata = { title: "Payroll tips" };
 
 export default async function PayrollPage({ searchParams }: { searchParams: Promise<{ p?: string; shop?: string }> }) {
   const sp = await searchParams;
-  const ctx = await requireStaff(["brand_admin", "shop_manager"]);
+  const ctx = await guardPage("/admin/payroll");
   const current = payPeriodFor(todayLocal());
   const index = sp.p !== undefined && /^-?\d+$/.test(sp.p) ? Number(sp.p) : current.index - 1;
   const period = payPeriodByIndex(index);
@@ -25,7 +26,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
     { tickets: 0, svc: 0, card: 0, cash: 0, gc: 0, ref: 0, tips: 0 },
   );
   const multiShop = new Set(rows.map((r) => r.staffId)).size < rows.length;
-  const q = new URLSearchParams({ type: "payroll", from: period.start, to: period.end });
+  const q = new URLSearchParams({ type: "tips_payroll", from: period.start, to: period.end });
   if (sp.shop) q.set("shop", sp.shop);
 
   return (
@@ -40,11 +41,14 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
           </>
         }
         actions={
-          <a className="rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700" href={`/admin/reports/export?${q}`}>
-            Export tips CSV
-          </a>
+          can(ctx, "report.tips_payroll.export") ? (
+            <a className="rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700" href={`/admin/reports/export?${q}`}>
+              Export tips CSV
+            </a>
+          ) : undefined
         }
       />
+      <ReportTabs ctx={ctx} active="tips_payroll" />
       <div className="mb-4 flex flex-wrap gap-1.5">
         {choices.map((c) => (
           <Link

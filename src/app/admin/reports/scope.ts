@@ -1,6 +1,7 @@
 import "server-only";
 import { payPeriodFor } from "@/domain/payroll";
 import { LocalDate, addDays, isValidLocalDate, todayLocal, weekdayOf } from "@/lib/time";
+import type { ReportKey } from "@/domain/permissions";
 import { StaffContext, reportShopIds } from "@/server/auth/staff";
 import type { ReportScope } from "@/server/reports";
 
@@ -54,12 +55,16 @@ export function presetRange(id: string, today: LocalDate = todayLocal()): { from
   }
 }
 
-export function resolveScope(ctx: StaffContext, p: ReportParams): ReportScope & { preset: string | null; shopParam: string | null } {
+/**
+ * Dates, shops and barber for a report. Shops are always limited to the viewer's access; "My sales"
+ * is always the viewer's own tickets, whatever the URL says.
+ */
+export function resolveScope(ctx: StaffContext, p: ReportParams, report?: ReportKey): ReportScope & { preset: string | null; shopParam: string | null } {
   const custom = p.from && p.to && isValidLocalDate(p.from) && isValidLocalDate(p.to);
   const preset = custom ? null : (p.preset ?? "7d");
   let { from, to } = custom ? { from: p.from!, to: p.to! } : presetRange(preset!);
   if (from > to) [from, to] = [to, from];
   const shopIds = reportShopIds(ctx, p.shop ?? null);
-  const staffId = ctx.isBarber ? ctx.staff.id : p.staff || null;
+  const staffId = report === "my_sales" ? ctx.staff.id : p.staff || null;
   return { shopIds, from, to, staffId, preset, shopParam: p.shop ?? null };
 }

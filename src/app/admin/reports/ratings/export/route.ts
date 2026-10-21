@@ -1,13 +1,13 @@
-import { getStaffContext } from "@/server/auth/staff";
+import { can, routeStaff } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import { ratingsByShop } from "@/server/ratings";
 import { toCsv } from "@/server/reports";
 import { resolveRatingsParams } from "../params";
 
 export async function GET(req: Request) {
-  const ctx = await getStaffContext();
-  if (!ctx) return new Response("Sign in required", { status: 401 });
-  if (ctx.isBarber) return new Response("Managers only", { status: 403 });
+  const ctx = await routeStaff("report.client_ratings.export");
+  if (ctx instanceof Response) return ctx;
+  if (!can(ctx, "report.client_ratings.view")) return new Response("You don't have permission to export this report", { status: 403 });
   let p;
   try {
     p = resolveRatingsParams(ctx, Object.fromEntries(new URL(req.url).searchParams));

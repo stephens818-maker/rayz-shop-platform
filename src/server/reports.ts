@@ -298,6 +298,19 @@ export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[
 
 // ───────────────────────────── KPIs (not available in Squire) ─────────────────────────────
 
+/** Appointments by shop-local weekday and hour. */
+export async function appointmentHeatmap(s: ReportScope) {
+  const start = startOfLocalDay(s.from).toISOString();
+  const end = endOfLocalDay(s.to).toISOString();
+  return rows<{ dow: number; hour: number; n: number }>(sql`
+    select extract(dow from a.starts_at at time zone 'America/Chicago')::int as dow,
+      extract(hour from a.starts_at at time zone 'America/Chicago')::int as hour, count(*)::int as n
+    from appointments a
+    where a.shop_id in ${ids(s)} and a.status in ('completed','booked','confirmed','checked_in','in_service')
+      and a.starts_at >= ${start} and a.starts_at < ${end} ${staffFilter(sql`a.staff_id`, s)}
+    group by 1, 2`);
+}
+
 export async function kpis(s: ReportScope) {
   // Raw SQL params must be strings; postgres-js won't serialize Date here.
   const start = startOfLocalDay(s.from).toISOString();
@@ -346,13 +359,7 @@ export async function kpis(s: ReportScope) {
       select a.status::text status, count(*)::int n, coalesce(sum(a.estimate_cents),0)::int cents from appointments a
       where a.shop_id in ${ids(s)} and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
       group by 1`),
-    rows<{ dow: number; hour: number; n: number }>(sql`
-      select extract(dow from a.starts_at at time zone 'America/Chicago')::int as dow,
-        extract(hour from a.starts_at at time zone 'America/Chicago')::int as hour, count(*)::int as n
-      from appointments a
-      where a.shop_id in ${ids(s)} and a.status in ('completed','booked','confirmed','checked_in','in_service')
-        and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
-      group by 1, 2`),
+    appointmentHeatmap(s),
   ]);
   const r = rebook[0];
   const v = visitors[0];
@@ -377,6 +384,121 @@ export async function kpis(s: ReportScope) {
     cancellations: status("cancelled"),
     heatmap: heat,
   };
+}
+
+// ───────────────────────────── A la carte reports ─────────────────────────────
+
+/** Ticket lines by item, from paid tickets in the range (refunds are reported separately). */
+export async function itemMix(s: ReportScope) {
+  return rows<{ kind: string; name: string; qty: number; tickets: number; grossCents: number; discountCents: number; netCents: number }>(sql`
+    select i.kind::text kind, i.name, sum(i.qty)::int qty, count(distinct i.sale_id)::int tickets,
+      sum(i.gross_cents)::int "grossCents", sum(i.discount_cents)::int "discountCents", sum(i.net_cents)::int "netCents"
+    from sale_items i join sales s on s.id = i.sale_id
+    where s.shop_id in ${ids(s)} and s.business_date between ${s.from} and ${s.to} and s.status in ${PAID}
+      and i.kind <> 'gift_card' ${staffFilter(sql`s.staff_id`, s)}
+    group by 1, 2 order by "netCents" desc`);
+}
+
+/** Discounts by type and label. Imported tickets carry a total without a breakdown. */
+export async function discountBreakdown(s: ReportScope) {
+  return rows<{ source: string; label: string; tickets: number; cents: number }>(sql`
+    with d as (
+      select s.id, s.discount_cents, e.value->>'source' source, e.value->>'label' label, (e.value->>'cents')::int cents
+      from sales s left join lateral jsonb_array_elements(case when jsonb_typeof(s.pricing->'discounts') = 'array' then s.pricing->'discounts' else '[]'::jsonb end) e on true
+      where s.shop_id in ${ids(s)} and s.business_date between ${s.from} and ${s.to} and s.status in ${PAID} and s.discount_cents > 0
+        ${staffFilter(sql`s.staff_id`, s)}
+    )
+    select coalesce(source, 'imported') source, coalesce(label, 'Discount (no breakdown)') label, count(distinct id)::int tickets,
+      sum(coalesce(cents, discount_cents))::int cents
+    from d group by 1, 2 order by cents desc`);
+}
+
+export async function refundLog(s: ReportScope) {
+  return rows<{ day: string; number: number; shop: string; barber: string | null; kind: string; method: string; amountCents: number; tipCents: number; reason: string; source: string; by: string | null }>(sql`
+    select to_char(r.business_date, 'YYYY-MM-DD') day, s.number, sh.name shop, st.display_label barber, r.kind, r.method::text method,
+      r.amount_cents "amountCents", r.tip_cents "tipCents", r.reason, r.source, b.display_label "by"
+    from refunds r join sales s on s.id = r.sale_id join shops sh on sh.id = r.shop_id
+      left join staff st on st.id = s.staff_id left join staff b on b.id = r.created_by
+    where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} ${staffFilter(sql`s.staff_id`, s)}
+    order by r.business_date desc, r.created_at desc limit 2000`);
+}
+
+/** Stock on hand now, with what happened to it in the range. */
+export async function inventoryStatus(s: ReportScope) {
+  const start = startOfLocalDay(s.from).toISOString();
+  const end = endOfLocalDay(s.to).toISOString();
+  return rows<{ shop: string; sku: string; product: string; stock: number; threshold: number; low: boolean; costCents: number; priceCents: number; valueCents: number; received: number; sold: number; damaged: number; counted: number }>(sql`
+    with adj as (
+      select a.shop_id, a.product_id,
+        sum(case when a.reason = 'receive' then a.delta else 0 end)::int received,
+        sum(case when a.reason in ('sale','refund') then -a.delta else 0 end)::int sold,
+        sum(case when a.reason = 'damage' then -a.delta else 0 end)::int damaged,
+        sum(case when a.reason in ('count', 'upload') then a.delta else 0 end)::int counted
+      from inventory_adjustments a
+      where a.shop_id in ${ids(s)} and a.created_at >= ${start} and a.created_at < ${end}
+      group by 1, 2
+    )
+    select sh.name shop, p.sku, (p.brand || ' ' || p.name) product, sp.stock, sp.low_stock_threshold threshold,
+      (sp.active and sp.stock <= sp.low_stock_threshold) low, sp.cost_cents "costCents", sp.price_cents "priceCents",
+      (greatest(sp.stock, 0) * sp.cost_cents)::int "valueCents",
+      coalesce(adj.received, 0) received, coalesce(adj.sold, 0) sold, coalesce(adj.damaged, 0) damaged, coalesce(adj.counted, 0) counted
+    from shop_products sp join products p on p.id = sp.product_id join shops sh on sh.id = sp.shop_id
+      left join adj on adj.shop_id = sp.shop_id and adj.product_id = sp.product_id
+    where sp.shop_id in ${ids(s)} and (sp.active or sp.stock <> 0)
+    order by low desc, sh.name, p.brand, p.name`);
+}
+
+/** Gift cards issued at these shops in the range, redemptions taken here, and what's still owed on cards issued here. */
+export async function giftCardActivity(s: ReportScope) {
+  const start = startOfLocalDay(s.from).toISOString();
+  const end = endOfLocalDay(s.to).toISOString();
+  const [totals] = await rows<{ issuedN: number; issuedCents: number; redeemedCents: number; outstandingN: number; outstandingCents: number }>(sql`
+    select
+      (select count(*) from gift_cards g where g.issued_shop_id in ${ids(s)} and g.created_at >= ${start} and g.created_at < ${end} and g.source <> 'import')::int "issuedN",
+      (select coalesce(sum(g.initial_cents),0) from gift_cards g where g.issued_shop_id in ${ids(s)} and g.created_at >= ${start} and g.created_at < ${end} and g.source <> 'import')::int "issuedCents",
+      (select coalesce(sum(p.amount_cents),0) from payments p where p.shop_id in ${ids(s)} and p.method = 'gift_card' and p.business_date between ${s.from} and ${s.to} and p.status <> 'voided')::int "redeemedCents",
+      (select count(*) from gift_cards g where g.issued_shop_id in ${ids(s)} and g.status = 'active' and g.balance_cents > 0)::int "outstandingN",
+      (select coalesce(sum(g.balance_cents),0) from gift_cards g where g.issued_shop_id in ${ids(s)} and g.status = 'active')::int "outstandingCents"`);
+  const issued = await rows<{ code: string; shop: string; source: string; initialCents: number; balanceCents: number; status: string; created: string }>(sql`
+    select g.code, sh.name shop, g.source, g.initial_cents "initialCents", g.balance_cents "balanceCents", g.status, to_char(g.created_at at time zone 'America/Chicago', 'YYYY-MM-DD') created
+    from gift_cards g join shops sh on sh.id = g.issued_shop_id
+    where g.issued_shop_id in ${ids(s)} and g.created_at >= ${start} and g.created_at < ${end}
+    order by g.created_at desc limit 2000`);
+  return { totals, issued };
+}
+
+/** Loyalty activity on tickets at these shops. Manual rewards have no ticket and are counted brand-wide only. */
+export async function loyaltyActivity(s: ReportScope, includeUnattached: boolean) {
+  const start = startOfLocalDay(s.from).toISOString();
+  const end = endOfLocalDay(s.to).toISOString();
+  const [t] = await rows<{ earnedCents: number; reversedCents: number; rewardsIssued: number; rewardsIssuedCents: number; rewardsRedeemed: number; rewardsRedeemedCents: number; manualRewards: number; members: number }>(sql`
+    select
+      (select coalesce(sum(l.progress_delta_cents) filter (where l.kind = 'earn'),0) from loyalty_ledger l join sales s on s.id = l.sale_id
+        where s.shop_id in ${ids(s)} and l.created_at >= ${start} and l.created_at < ${end})::int "earnedCents",
+      (select coalesce(-sum(l.progress_delta_cents) filter (where l.kind = 'reverse'),0) from loyalty_ledger l join sales s on s.id = l.sale_id
+        where s.shop_id in ${ids(s)} and l.created_at >= ${start} and l.created_at < ${end})::int "reversedCents",
+      (select count(*) from loyalty_rewards r left join sales s on s.id = r.source_sale_id
+        where r.issued_at >= ${start} and r.issued_at < ${end} and (s.shop_id in ${ids(s)} or (${includeUnattached} and r.source_sale_id is null)))::int "rewardsIssued",
+      (select coalesce(sum(r.amount_cents),0) from loyalty_rewards r left join sales s on s.id = r.source_sale_id
+        where r.issued_at >= ${start} and r.issued_at < ${end} and (s.shop_id in ${ids(s)} or (${includeUnattached} and r.source_sale_id is null)))::int "rewardsIssuedCents",
+      (select count(*) from loyalty_rewards r join sales s on s.id = r.redeemed_sale_id
+        where r.redeemed_at >= ${start} and r.redeemed_at < ${end} and s.shop_id in ${ids(s)})::int "rewardsRedeemed",
+      (select coalesce(sum(r.amount_cents),0) from loyalty_rewards r join sales s on s.id = r.redeemed_sale_id
+        where r.redeemed_at >= ${start} and r.redeemed_at < ${end} and s.shop_id in ${ids(s)})::int "rewardsRedeemedCents",
+      (select count(*) from loyalty_rewards r where ${includeUnattached} and r.source = 'manual' and r.issued_at >= ${start} and r.issued_at < ${end})::int "manualRewards",
+      (select count(distinct s.customer_id) from loyalty_ledger l join sales s on s.id = l.sale_id
+        where s.shop_id in ${ids(s)} and l.kind = 'earn' and l.created_at >= ${start} and l.created_at < ${end})::int members`);
+  return t;
+}
+
+export async function drawerHistory(s: ReportScope) {
+  return rows<{ day: string; shop: string; openingCents: number; cashSalesCents: number; cashRefundsCents: number; payoutsCents: number; expectedCents: number; countedCents: number | null; varianceCents: number | null; closedBy: string | null; notes: string | null }>(sql`
+    select to_char(d.business_date, 'YYYY-MM-DD') day, sh.name shop, d.opening_float_cents "openingCents", d.cash_sales_cents "cashSalesCents",
+      d.cash_refunds_cents "cashRefundsCents", d.payouts_cents "payoutsCents", d.expected_cents "expectedCents", d.counted_cents "countedCents",
+      d.variance_cents "varianceCents", st.display_label "closedBy", d.notes
+    from cash_drawers d join shops sh on sh.id = d.shop_id left join staff st on st.id = d.closed_by
+    where d.shop_id in ${ids(s)} and d.business_date between ${s.from} and ${s.to}
+    order by d.business_date desc, sh.name`);
 }
 
 export function toCsv(headers: string[], data: (string | number | null | undefined)[][]): string {

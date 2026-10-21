@@ -1,107 +1,46 @@
-import { getStaffContext } from "@/server/auth/staff";
+import { REPORTS, ReportKey, reportExport, reportView } from "@/domain/permissions";
+import { can, routeStaff } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
-import { byBarber, byShop, cents, dailyTotals, monthlyTotals, payrollTips, salesSummary, tenderBreakdown, toCsv } from "@/server/reports";
+import { REPORT_LOADERS, tableCsv } from "@/server/report-data";
 import { resolveScope } from "../scope";
 
+/** Older export links, kept working. */
+const ALIASES: Record<string, { report: ReportKey; table?: string }> = {
+  summary: { report: "sales_summary" },
+  shops: { report: "sales_summary", table: "shops" },
+  daily: { report: "sales_summary", table: "daily" },
+  monthly: { report: "sales_summary", table: "monthly" },
+  barbers: { report: "sales_by_barber" },
+  payroll: { report: "tips_payroll" },
+};
+
+/** CSV for one report table. Needs both "view" and "export" for that report, for shops in your access. */
 export async function GET(req: Request) {
-  const ctx = await getStaffContext();
-  if (!ctx) return new Response("Sign in required", { status: 401 });
+  const ctx = await routeStaff(null);
+  if (ctx instanceof Response) return ctx;
   const url = new URL(req.url);
   const p = Object.fromEntries(url.searchParams) as Record<string, string>;
-  const type = p.type ?? "summary";
+  const alias = ALIASES[p.type ?? "summary"];
+  const key = (alias?.report ?? p.type) as ReportKey;
+  if (!REPORTS.some((r) => r.key === key)) return new Response("Unknown report", { status: 404 });
+  if (!can(ctx, reportView(key)) || !can(ctx, reportExport(key))) return new Response("You don't have permission to export this report", { status: 403 });
+  if (key === "client_ratings") return Response.redirect(new URL(`/admin/reports/ratings/export?${url.searchParams}`, url), 307);
   let scope;
   try {
-    scope = resolveScope(ctx, p);
+    scope = resolveScope(ctx, p, key);
   } catch (e) {
     return new Response(e instanceof AppError ? e.message : "Bad request", { status: 403 });
   }
-  if (type === "payroll" && ctx.isBarber) return new Response("Managers only", { status: 403 });
-  let csv: string;
-  switch (type) {
-    case "barbers": {
-      const r = await byBarber(scope);
-      csv = toCsv(
-        ["Barber", "Tickets", "Services", "Net services", "Net products", "Tips", "Avg ticket"],
-        r.map((x) => [x.label, x.tickets, x.services, cents(x.netServicesCents), cents(x.netProductsCents), cents(x.tipsCents), cents(x.avgTicketCents)]),
-      );
-      break;
-    }
-    case "shops": {
-      const r = await byShop(scope);
-      csv = toCsv(
-        ["Shop", "Tickets", "Gross", "Refunds", "Net services", "Net products", "Tips"],
-        r.map((x) => [x.name, x.tickets, cents(x.grossCents), cents(x.refundCents), cents(x.netServicesCents), cents(x.netProductsCents), cents(x.tipsCents)]),
-      );
-      break;
-    }
-    case "daily": {
-      const r = await dailyTotals(scope);
-      csv = toCsv(
-        ["Date", "Tickets", "Gross", "Refunds", "Net", "Tips", "Card", "Cash"],
-        r.map((x) => [x.day, x.tickets, cents(x.grossCents), cents(x.refundCents), cents(x.netCents), cents(x.tipsCents), cents(x.cardCents), cents(x.cashCents)]),
-      );
-      break;
-    }
-    case "monthly": {
-      const r = await monthlyTotals(scope);
-      csv = toCsv(
-        ["Month", "Tickets", "Gross", "Refunds", "Net services", "Net products", "Tips"],
-        r.map((x) => [x.month, x.tickets, cents(x.grossCents), cents(x.refundCents), cents(x.netServicesCents), cents(x.netProductsCents), cents(x.tipsCents)]),
-      );
-      break;
-    }
-    case "payroll": {
-      const r = await payrollTips(scope);
-      csv = toCsv(
-        ["Period start", "Period end", "Staff ID", "Barber", "Shop", "Tickets", "Service sales", "Product sales", "Card tips", "Cash tips", "Gift card tips", "Tip refunds (already subtracted)", "Total tips"],
-        r.rows.map((x) => [
-          x.periodStart,
-          x.periodEnd,
-          x.staffCode,
-          x.label,
-          x.shop,
-          x.tickets,
-          cents(x.serviceSalesCents),
-          cents(x.productSalesCents),
-          cents(x.cardTipsCents),
-          cents(x.cashTipsCents),
-          cents(x.giftCardTipsCents),
-          cents(x.tipRefundsCents),
-          cents(x.totalTipsCents),
-        ]),
-      );
-      break;
-    }
-    default: {
-      const [s, t] = await Promise.all([salesSummary(scope), tenderBreakdown(scope)]);
-      csv = toCsv(
-        ["Metric", "Value"],
-        [
-          ["From", scope.from],
-          ["To", scope.to],
-          ["Tickets", s.tickets],
-          ["Gross sales", cents(s.grossSalesCents)],
-          ["Discounts", cents(s.discountCents)],
-          ["Refunds", cents(s.refundCents)],
-          ["Net services", cents(s.netServicesCents)],
-          ["Net products", cents(s.netProductsCents)],
-          ["Tax", cents(s.taxCents)],
-          ["Tips", cents(s.tipsCents)],
-          ["Card surcharges", cents(s.cardFeeCents)],
-          ["Gift cards sold", cents(s.giftCardsSoldCents)],
-          ["Card", cents(t.cardCents)],
-          ["Card (credit)", cents(t.cardCreditCents)],
-          ["Card (debit/prepaid)", cents(t.cardDebitCents)],
-          ["Cash", cents(t.cashCents)],
-          ["Gift card redemptions", cents(t.giftCardCents)],
-        ],
-      );
-    }
-  }
+  const data = await REPORT_LOADERS[key]({ scope, viewer: ctx, params: p });
+  const tableId = p.table ?? alias?.table;
+  const table = tableId ? data.tables.find((t) => t.id === tableId) : data.tables[0];
+  if (!table) return new Response("Unknown table", { status: 404 });
+  const csv = tableCsv(table);
+  const name = key === "audit_log" ? `rayz-audit-log-${new Date().toISOString().slice(0, 10)}` : `rayz-${key.replace(/_/g, "-")}${tableId ? `-${tableId}` : ""}-${scope.from}-to-${scope.to}`;
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="rayz-${type}-${scope.from}-to-${scope.to}.csv"`,
+      "Content-Disposition": `attachment; filename="${name}.csv"`,
       "Cache-Control": "no-store",
     },
   });
