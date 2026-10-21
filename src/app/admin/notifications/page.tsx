@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, notificationJobs, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
@@ -8,6 +8,7 @@ import { formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { maskPhone } from "@/server/customers";
 import { emailProvider, smsProvider } from "@/server/notifications/providers";
+import { inShops } from "@/server/tenant";
 import { ProcessNowButton } from "./process-button";
 
 export const metadata: Metadata = { title: "Notifications" };
@@ -35,7 +36,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   // Managers only see jobs for their shops (a booking's shop, or the shop a purchase order or stock alert is for);
   // brand admins also see OTP and waitlist texts.
   const jobShop = sql`coalesce(${notificationJobs.shopId}, ${appointments.shopId})`;
-  const scope: SQL | undefined = ctx.brandWide && !ctx.currentShopId ? undefined : inArray(jobShop, ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds);
+  const scope: SQL | undefined = ctx.brandWide && !ctx.currentShopId ? undefined : inShops({ shopIds: ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds }, jobShop);
   const where = and(scope, status ? eq(notificationJobs.status, status) : undefined);
 
   const [counts, jobs] = await Promise.all([

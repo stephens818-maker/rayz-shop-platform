@@ -9,6 +9,7 @@ import { assignableRoles, staffEditDenied } from "@/domain/permissions";
 import { formatDateTime } from "@/lib/time";
 import { accessState, loadStaffAccess } from "@/server/auth/access";
 import { can, guardPage, staffGrantor } from "@/server/auth/staff";
+import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
 import { ProfileForm, ScheduleEditor, TimeOff } from "./editors";
 
 export const metadata: Metadata = { title: "Staff member" };
@@ -18,23 +19,22 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
   const ctx = await guardPage("/admin/staff/[id]");
   const isNew = id === "new";
   if (isNew && !can(ctx, "staff.manage")) notFound();
+  if (!isNew && id !== ctx.staff.id && !(await inTenant(ctx, "staff", id))) notFound();
   const person = isNew ? null : await db.query.staff.findFirst({ where: eq(staff.id, id) });
   if (!isNew && !person) notFound();
-  const allShops = await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name));
-  const editableShops = ctx.brandWide ? allShops : allShops.filter((s) => ctx.shopIds.includes(s.id));
+  const shopRows = await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name));
+  const editableShops = ctx.brandWide ? shopRows : shopRows.filter((s) => hasShop(ctx, s.id));
+  const allShops = ctx.brandWide ? shopRows : shopRows.map((s) => (hasShop(ctx, s.id) ? s : { ...s, name: OTHER_SHOP }));
+  const mine = <T extends { shopId: string | null }>(rows: T[]) => (ctx.brandWide ? rows : rows.filter((r) => !r.shopId || hasShop(ctx, r.shopId)));
   const [links, scheds, hours, blocks] = person
     ? await Promise.all([
         db.select().from(staffShops).where(eq(staffShops.staffId, person.id)),
-        db.select().from(staffSchedules).where(eq(staffSchedules.staffId, person.id)),
-        db.select().from(shopHours),
-        db.select().from(timeBlocks).where(and(eq(timeBlocks.staffId, person.id), gt(timeBlocks.endsAt, new Date()))).orderBy(asc(timeBlocks.startsAt)).limit(50),
+        db.select().from(staffSchedules).where(eq(staffSchedules.staffId, person.id)).then(mine),
+        db.select().from(shopHours).then(mine),
+        db.select().from(timeBlocks).where(and(eq(timeBlocks.staffId, person.id), gt(timeBlocks.endsAt, new Date()))).orderBy(asc(timeBlocks.startsAt)).limit(50).then(mine),
       ])
-    : [[], [], await db.select().from(shopHours), []];
+    : [[], [], await db.select().from(shopHours).then(mine), []];
   const target = person ? await loadStaffAccess(person.id) : null;
-  if (person && target && !ctx.brandWide && person.id !== ctx.staff.id) {
-    const theirs = [...links.map((l) => l.shopId), ...(target.scope === "all" ? [] : target.shopIds)];
-    if (!theirs.some((s) => ctx.shopIds.includes(s))) notFound();
-  }
   const editDenied = !can(ctx, "staff.manage")
     ? "You can view this person but not edit their profile."
     : target
@@ -101,7 +101,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         <>
           <ScheduleEditor
             staffId={person.id}
-            shops={allShops.filter((s) => links.some((l) => l.shopId === s.id)).map((s) => ({ ...s, editable: editableShops.some((e) => e.id === s.id) }))}
+            shops={editableShops.filter((s) => links.some((l) => l.shopId === s.id)).map((s) => ({ ...s, editable: true }))}
             schedules={scheds.map((s) => ({ shopId: s.shopId, weekday: s.weekday, startMin: s.startMin, endMin: s.endMin }))}
             hours={hours.map((h) => ({ shopId: h.shopId, weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))}
           />

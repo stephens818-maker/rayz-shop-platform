@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { roles, shops } from "@/db/schema";
@@ -8,21 +8,18 @@ import { PageHeader } from "@/components/ui";
 import { cleanOverrides, staffEditDenied } from "@/domain/permissions";
 import { accessState, loadStaffAccess, workShopIds } from "@/server/auth/access";
 import { guardPage, staffGrantor } from "@/server/auth/staff";
+import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
 import { PersonAccessEditor } from "./person-editor";
 
 export const metadata: Metadata = { title: "Access" };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export default async function PersonAccessPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await guardPage("/admin/permissions/people/[id]");
-  if (!UUID.test(id)) notFound();
+  if (!(await inTenant(ctx, "staff", id))) notFound();
   const target = await loadStaffAccess(id);
   if (!target) notFound();
   const works = await workShopIds(id);
-  const visible = ctx.brandWide || (target.scope !== "all" && [...target.shopIds, ...works].some((s) => ctx.shopIds.includes(s)));
-  if (!visible) redirect("/admin/permissions");
   const person = (await db.query.staff.findFirst({ where: (s, { eq }) => eq(s.id, id) }))!;
   const [roleRows, allShops] = await Promise.all([db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)), db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name))]);
   const g = staffGrantor(ctx);
@@ -58,8 +55,8 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
           shopIds: target.scope === "all" ? [] : target.shopIds,
         }}
         roles={roleRows.map((r) => ({ id: r.id, key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope }))}
-        shops={ctx.brandWide ? allShops : allShops.filter((s) => ctx.shopIds.includes(s.id))}
-        worksAt={allShops.filter((s) => works.includes(s.id)).map((s) => s.name)}
+        shops={ctx.brandWide ? allShops : allShops.filter((s) => hasShop(ctx, s.id))}
+        worksAt={[...new Set(allShops.filter((s) => works.includes(s.id)).map((s) => (ctx.brandWide || hasShop(ctx, s.id) ? s.name : OTHER_SHOP)))]}
         mine={[...ctx.permissions]}
         myMaxDiscount={ctx.maxDiscountPct}
         iAmOwner={ctx.isOwner}

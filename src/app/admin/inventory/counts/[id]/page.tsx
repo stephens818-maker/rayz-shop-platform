@@ -7,6 +7,7 @@ import { formatCents } from "@/lib/money";
 import { formatDateTime } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
 import { loadCount } from "@/server/inventory/counts";
+import { inTenant } from "@/server/tenant";
 import { CountSheet } from "../forms";
 
 export const metadata: Metadata = { title: "Count" };
@@ -14,8 +15,9 @@ export const metadata: Metadata = { title: "Count" };
 export default async function CountPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await guardPage("/admin/inventory/counts/[id]");
   const { id } = await params;
+  if (!(await inTenant(ctx, "stock_count", id))) notFound();
   const d = await loadCount(id);
-  if (!d || !ctx.shopIds.includes(d.count.shopId)) notFound();
+  if (!d) notFound();
   const { count } = d;
   const kind = count.kind === "full" ? "Full stocktake" : "Cycle count";
   const posted = count.status === "posted";

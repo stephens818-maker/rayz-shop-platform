@@ -10,9 +10,10 @@ import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, assertShopAccess, can, caller, requireStaff } from "@/server/auth/staff";
 import { createAppointment, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
-import { maskPhone, searchCustomers } from "@/server/customers";
+import { clientSearchScope, maskPhone, searchCustomers } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { ratingSummaries } from "@/server/ratings";
+import { hasShop, requireInTenant } from "@/server/tenant";
 
 async function barberShops(staffId: string) {
   return (await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId))).map((l) => l.shopId);
@@ -22,9 +23,9 @@ async function barberShops(staffId: string) {
 const ownColumnOnly = (ctx: StaffContext) => !can(ctx, "calendar.manage");
 
 async function loadAppt(ctx: StaffContext, id: string, othersNeed: "calendar.manage" | "checkout.any" = "calendar.manage") {
+  await requireInTenant(ctx, "appointment", id);
   const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
   if (!a) throw notFound("Appointment");
-  assertShopAccess(ctx, a.shopId);
   if (a.staffId !== ctx.staff.id && !can(ctx, othersNeed)) throw forbidden("You can only change your own appointments");
   return a;
 }
@@ -52,8 +53,9 @@ export async function startCheckoutAction(appointmentId: string) {
 }
 
 /**
- * With "every client" you search the shared book; otherwise only clients who have been to your
- * shops. Without contact access you see the last four digits of the phone and no email.
+ * Brand-wide staff with "every client" search the shared book. Everyone else finds their shops'
+ * clients by any part of a name or number, and clients of other shops only by an exact phone,
+ * email or full name. Without contact access you see the last four digits of the phone and no email.
  */
 export async function searchCustomersAction(q: string) {
   return safe(async () => {
@@ -62,7 +64,7 @@ export async function searchCustomersAction(q: string) {
     if (term.length < 2) return [];
     const full = can(ctx, "clients.view_all");
     const contact = can(ctx, "clients.contact");
-    const rows = await searchCustomers(term, full ? {} : { restrictToShops: ctx.shopIds }, 8);
+    const rows = await searchCustomers(term, clientSearchScope(ctx, full), 8);
     const ratings = await ratingSummaries(rows.map((r) => r.id));
     return rows.map((r) => ({
       id: r.id,
@@ -156,7 +158,7 @@ export async function deleteBlockAction(id: string) {
   return safe(async () => {
     const ctx = await requireStaff();
     const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
-    if (!b) throw notFound("Block");
+    if (!b || (b.shopId && !hasShop(ctx, b.shopId))) throw notFound("Block");
     if (ownColumnOnly(ctx) && b.staffId !== ctx.staff.id) throw forbidden("You can only remove blocks in your own column");
     const denied = timeBlockChangeDenied(caller(ctx), b, await barberShops(b.staffId));
     if (denied) throw forbidden(denied);

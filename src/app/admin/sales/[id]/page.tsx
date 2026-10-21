@@ -11,6 +11,7 @@ import { feeLabel } from "@/domain/checkout";
 import { formatDateTime, localDateOf } from "@/lib/time";
 import { can, guardPage, ratingViewer } from "@/server/auth/staff";
 import { refundableState } from "@/server/checkout";
+import { inTenant } from "@/server/tenant";
 import { loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries, visitForSale } from "@/server/ratings";
 import { QuickRate } from "../../customers/ratings";
@@ -22,9 +23,9 @@ export default async function SalePage({ params, searchParams }: { params: Promi
   const { id } = await params;
   const sp = await searchParams;
   const ctx = await guardPage("/admin/sales/[id]");
+  if (!(await inTenant(ctx, "sale", id))) notFound();
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, id) });
   if (!sale) notFound();
-  if (!ctx.shopIds.includes(sale.shopId)) redirect("/admin?denied=1");
   if (sale.staffId !== ctx.staff.id && !can(ctx, "sales.view") && !can(ctx, "checkout.any")) redirect("/admin?denied=1");
   if (sale.status === "open") redirect(`/admin/checkout/${id}`);
   const [shop, items, pays, refs, barber, customer, rebooked] = await Promise.all([

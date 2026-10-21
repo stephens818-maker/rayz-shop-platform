@@ -8,6 +8,7 @@ import { formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { stockLevels } from "@/server/inventory/stock";
 import { loadTransfer } from "@/server/inventory/transfers";
+import { hasShop, inTenant } from "@/server/tenant";
 import { TransferEditor, TransferReceive } from "../forms";
 import { TRANSFER_TONE } from "../tone";
 
@@ -18,12 +19,12 @@ const ACTION_LABEL: Record<string, string> = { "transfer.create": "Created", "tr
 export default async function TransferPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await guardPage("/admin/inventory/transfers/[id]");
   const { id } = await params;
+  if (!(await inTenant(ctx, "transfer", id))) notFound();
   const d = await loadTransfer(id);
   if (!d) notFound();
   const { t } = d;
-  const atFrom = ctx.shopIds.includes(t.fromShopId);
-  const atTo = ctx.shopIds.includes(t.toShopId);
-  if (!atFrom && !atTo) notFound();
+  const atFrom = hasShop(ctx, t.fromShopId);
+  const atTo = hasShop(ctx, t.toShopId);
   const editable = t.status === "draft" && atFrom && can(ctx, "inventory.transfer");
   const canReceive = t.status === "sent" && atTo && (can(ctx, "inventory.transfer") || can(ctx, "po.receive"));
   const source = editable ? (await stockLevels([t.fromShopId])).filter((s) => s.active) : [];

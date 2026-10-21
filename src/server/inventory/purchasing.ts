@@ -25,7 +25,7 @@ import { formatDate, isValidLocalDate, localDateOf, todayLocal } from "@/lib/tim
 import { audit } from "../audit";
 import { AppError, notFound } from "../errors";
 import { enqueueShopEmail } from "../notifications/queue";
-import { Who, assertShop, lockStock, postMovements } from "./ledger";
+import { Who, assertOwnRecord, assertShop, lockStock, postMovements } from "./ledger";
 import { stockLevels } from "./stock";
 
 const uuids = (xs: string[]) => sql`(${sql.join(xs.length ? xs.map((i) => sql`${i}::uuid`) : [sql`null::uuid`], sql`, `)})`;
@@ -222,7 +222,7 @@ type Po = typeof purchaseOrders.$inferSelect;
 async function lockPo(tx: Tx, who: Who, id: string): Promise<Po> {
   const [po] = await tx.select().from(purchaseOrders).where(eq(purchaseOrders.id, id)).for("update");
   if (!po) throw notFound("Purchase order");
-  assertShop(who, po.shopId);
+  assertOwnRecord(who, [po.shopId], "Purchase order");
   return po;
 }
 

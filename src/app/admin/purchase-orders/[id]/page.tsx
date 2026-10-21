@@ -10,6 +10,7 @@ import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { loadPo } from "@/server/inventory/purchasing";
+import { inTenant } from "@/server/tenant";
 import { PoActions, PoEditor } from "../editor";
 import { PO_TONE } from "../tone";
 
@@ -28,8 +29,9 @@ const ACTION_LABEL: Record<string, string> = {
 export default async function PurchaseOrderPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await guardPage("/admin/purchase-orders/[id]");
   const { id } = await params;
+  if (!(await inTenant(ctx, "purchase_order", id))) notFound();
   const d = await loadPo(id);
-  if (!d || !ctx.shopIds.includes(d.po.shopId)) notFound();
+  if (!d) notFound();
   const { po, vendor, shop } = d;
   const catalog = await db.select({ id: products.id, sku: products.sku, brand: products.brand, name: products.name, costCents: products.costCents }).from(products).where(eq(products.active, true)).orderBy(asc(products.brand), asc(products.name));
   const offers = new Map(d.offers.map((o) => [o.productId, o]));

@@ -155,6 +155,9 @@ export const staff = pgTable("staff", {
   active: boolean("active").notNull().default(true),
   passwordHash: text("password_hash"),
   squireName: text("squire_name"),
+  /** "shop": a shared login for one shop (its front desk), not a person; never bookable. */
+  kind: text("kind").$type<"person" | "shop">().notNull().default("person"),
+  lastSignInAt: ts("last_sign_in_at"),
   createdAt: createdAt(),
 });
 
@@ -959,7 +962,7 @@ export const notificationJobs = pgTable(
     id: id(),
     appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "cascade" }),
     customerId: uuid("customer_id").references(() => customers.id),
-    /** Staff messages that belong to a shop (purchase orders, low-stock alerts). Client messages use the appointment's shop. */
+    /** The shop the message is from. Only sign-in codes, which are brand-level, have none. */
     shopId: uuid("shop_id").references(() => shops.id),
     purchaseOrderId: uuid("purchase_order_id").references(() => purchaseOrders.id),
     kind: text("kind").notNull(), // confirmation | reminder_24h | reminder_2h | cancellation | reschedule | otp | waitlist_ready | purchase_order | low_stock

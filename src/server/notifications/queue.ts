@@ -19,7 +19,10 @@ export interface AppointmentMessageContext {
   appointmentId: string;
   code: string;
   startsAt: Date;
+  shopId: string;
   shopName: string;
+  /** Street and city, for the confirmation. */
+  shopAddress: string;
   barberName: string;
   customerId: string | null;
   phone: string | null;
@@ -36,7 +39,7 @@ export function renderMessage(kind: NotificationKind, c: AppointmentMessageConte
   const shop = `Ray'z ${c.shopName}`;
   switch (kind) {
     case "confirmation":
-      return { subject: `${shop}: you're booked`, body: `${shop}: You're booked with ${c.barberName} on ${when}. Cancel or reschedule: ${link}` };
+      return { subject: `${shop}: you're booked`, body: `${shop}: You're booked with ${c.barberName} on ${when}${c.shopAddress ? ` at ${c.shopAddress}` : ""}. Cancel or reschedule: ${link}` };
     case "reschedule":
       return { subject: `${shop}: appointment moved`, body: `${shop}: Your appointment is now ${when} with ${c.barberName}. Details: ${link}` };
     case "reminder_24h":
@@ -88,6 +91,7 @@ export async function scheduleAppointmentNotifications(
       return {
         appointmentId: c.appointmentId,
         customerId: c.customerId,
+        shopId: c.shopId,
         kind: j.kind,
         channel: r.channel,
         to: r.to,
@@ -137,7 +141,7 @@ export async function sendNow(job: { kind: NotificationKind; channel: "sms" | "e
   return status;
 }
 
-export async function enqueueRaw(job: { kind: NotificationKind; channel: "sms" | "email"; to: string; subject?: string; body: string; customerId?: string | null }) {
+export async function enqueueRaw(job: { kind: NotificationKind; channel: "sms" | "email"; to: string; subject?: string; body: string; customerId?: string | null; shopId: string }) {
   await db.insert(notificationJobs).values({ ...job, subject: job.subject ?? null, customerId: job.customerId ?? null, runAt: new Date() });
 }
 
@@ -158,7 +162,7 @@ export async function enqueueShopEmail(
  * Drain due jobs. Safe to run concurrently (SKIP LOCKED). Triggered by Vercel Cron
  * (/api/cron/notifications) in production and `pnpm worker` locally.
  */
-export async function processDueJobs(opts: { limit?: number; now?: Date } = {}) {
+export async function processDueJobs(opts: { limit?: number; now?: Date; /** Only these shops' messages; the cron job sends everyone's. */ shopIds?: string[] } = {}) {
   const now = opts.now ?? new Date();
   const limit = opts.limit ?? 100;
   const sms = smsProvider();
@@ -169,7 +173,7 @@ export async function processDueJobs(opts: { limit?: number; now?: Date } = {}) 
     const due = await tx
       .select()
       .from(notificationJobs)
-      .where(and(eq(notificationJobs.status, "pending"), lte(notificationJobs.runAt, now)))
+      .where(and(eq(notificationJobs.status, "pending"), lte(notificationJobs.runAt, now), opts.shopIds ? (opts.shopIds.length ? inArray(notificationJobs.shopId, opts.shopIds) : sql`false`) : undefined))
       .orderBy(notificationJobs.runAt)
       .limit(limit)
       .for("update", { skipLocked: true });

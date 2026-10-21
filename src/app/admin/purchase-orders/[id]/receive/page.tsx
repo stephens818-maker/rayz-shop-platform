@@ -6,6 +6,7 @@ import { PO_STATUS_LABEL, poNumber } from "@/domain/inventory";
 import { formatDate } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
 import { loadPo } from "@/server/inventory/purchasing";
+import { inTenant } from "@/server/tenant";
 import { PO_TONE } from "../../tone";
 import { ReceiveForm } from "./receive-form";
 
@@ -14,8 +15,9 @@ export const metadata: Metadata = { title: "Receive delivery" };
 export default async function ReceivePoPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await guardPage("/admin/purchase-orders/[id]/receive");
   const { id } = await params;
+  if (!(await inTenant(ctx, "purchase_order", id))) notFound();
   const d = await loadPo(id);
-  if (!d || !ctx.shopIds.includes(d.po.shopId)) notFound();
+  if (!d) notFound();
   const { po, vendor, shop } = d;
   const open = po.status === "sent" || po.status === "partially_received";
 

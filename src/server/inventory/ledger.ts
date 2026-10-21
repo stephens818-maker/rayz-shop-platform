@@ -37,6 +37,11 @@ export function assertShop(who: Pick<Who, "shopIds">, shopId: string) {
   if (!who.shopIds.includes(shopId)) throw new AppError("forbidden", "That shop is outside your access");
 }
 
+/** A record at another shop is reported as missing, the same as one that doesn't exist. */
+export function assertOwnRecord(who: Pick<Who, "shopIds">, shopIds: string[], what: string) {
+  if (!shopIds.some((s) => who.shopIds.includes(s))) throw new AppError("not_found", `${what} not found`);
+}
+
 export interface Posted {
   shopId: string;
   productId: string;

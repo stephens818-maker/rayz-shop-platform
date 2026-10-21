@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { feeDisclosure } from "@/domain/checkout";
-import { assertShopAccess, can, guardPage } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
+import { inTenant } from "@/server/tenant";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { loadCheckoutContext } from "@/server/checkout";
 import { getLoyaltyConfig, loyaltyBalance } from "@/server/loyalty";
@@ -14,9 +15,8 @@ export const metadata: Metadata = { title: "Checkout" };
 export default async function CheckoutPage({ params }: { params: Promise<{ saleId: string }> }) {
   const { saleId } = await params;
   const ctx = await guardPage("/admin/checkout/[saleId]");
+  if (!(await inTenant(ctx, "sale", saleId))) notFound();
   const c = await loadCheckoutContext(saleId);
-  if (!ctx.shopIds.includes(c.shop.id)) redirect("/admin?denied=1");
-  assertShopAccess(ctx, c.shop.id);
   if (c.sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
   const [catalog, barbers, loyalty, loyaltyCfg, ratings] = await Promise.all([

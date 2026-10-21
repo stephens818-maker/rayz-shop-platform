@@ -5,7 +5,7 @@ import { auditLog, products, shopProducts, shops, staff, stockCountLines, stockC
 import { countAdjustments } from "@/domain/inventory";
 import { audit } from "../audit";
 import { AppError, notFound } from "../errors";
-import { Who, assertShop, lockStock, postMovements } from "./ledger";
+import { Who, assertOwnRecord, assertShop, lockStock, postMovements } from "./ledger";
 
 /**
  * Cycle counts (some products) and full stocktakes (everything the shop carries). Counting is
@@ -59,7 +59,7 @@ export async function saveCountLines(who: Who, id: string, raw: z.input<typeof C
   await db.transaction(async (tx) => {
     const [c] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
     if (!c) throw notFound("Count");
-    assertShop(who, c.shopId);
+    assertOwnRecord(who, [c.shopId], "Count");
     if (c.status !== "open") throw new AppError("conflict", `This count is already ${c.status}`);
     for (const l of lines) {
       const r = await tx
@@ -76,7 +76,7 @@ export async function postCount(who: Who, id: string, o: { zeroUncounted?: boole
   return db.transaction(async (tx) => {
     const [c] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
     if (!c) throw notFound("Count");
-    assertShop(who, c.shopId);
+    assertOwnRecord(who, [c.shopId], "Count");
     if (c.status !== "open") throw new AppError("conflict", `This count is already ${c.status}`);
     const lines = await tx.select().from(stockCountLines).where(eq(stockCountLines.countId, id));
     const uncounted = lines.filter((l) => l.counted === null).length;
@@ -120,7 +120,7 @@ export async function cancelCount(who: Who, id: string) {
   await db.transaction(async (tx) => {
     const [c] = await tx.select().from(stockCounts).where(eq(stockCounts.id, id)).for("update");
     if (!c) throw notFound("Count");
-    assertShop(who, c.shopId);
+    assertOwnRecord(who, [c.shopId], "Count");
     if (c.status !== "open") throw new AppError("conflict", `This count is already ${c.status}`);
     await tx.update(stockCounts).set({ status: "cancelled" }).where(eq(stockCounts.id, id));
     await audit(who.actor, "count.cancel", "count", id, { number: c.number }, c.shopId, tx);

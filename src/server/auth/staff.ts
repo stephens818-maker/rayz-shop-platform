@@ -11,6 +11,7 @@ import { Permission, ShopScope } from "@/domain/permissions";
 import { RatingViewer } from "@/domain/ratings";
 import { Actor } from "@/server/audit";
 import { forbidden } from "@/server/errors";
+import { assertShop } from "@/server/tenant";
 import { StaffAccess, accessFor, grantor } from "./access";
 import type { Caller } from "./policy";
 import { signToken, verifyToken } from "./tokens";
@@ -138,9 +139,7 @@ export async function routeStaff(perms: Permission | readonly Permission[] | nul
   return ctx;
 }
 
-export function assertShopAccess(ctx: Pick<StaffContext, "shopIds">, shopId: string) {
-  if (!ctx.shopIds.includes(shopId)) throw forbidden("That shop is outside your access");
-}
+export const assertShopAccess = (ctx: Pick<StaffContext, "shopIds">, shopId: string) => assertShop(ctx, shopId);
 
 /** The shop to operate on for single-shop pages; "all my shops" falls back to the first shop. */
 export function workingShopId(ctx: StaffContext, requested?: string | null): string | null {

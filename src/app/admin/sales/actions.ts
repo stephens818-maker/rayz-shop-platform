@@ -1,19 +1,14 @@
 "use server";
 
-import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { db } from "@/db";
-import { sales } from "@/db/schema";
 import { safe } from "@/server/action";
-import { assertShopAccess, authorize } from "@/server/auth/staff";
+import { authorize } from "@/server/auth/staff";
 import { refundSale, voidSale } from "@/server/checkout";
-import { notFound } from "@/server/errors";
+import { requireInTenant } from "@/server/tenant";
 
 async function guard(saleId: string) {
   const ctx = await authorize("sales.refund", "You don't have permission to refund or void sales");
-  const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
-  if (!sale) throw notFound("Sale");
-  assertShopAccess(ctx, sale.shopId);
+  await requireInTenant(ctx, "sale", saleId);
   return ctx;
 }
 

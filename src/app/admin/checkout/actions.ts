@@ -6,16 +6,17 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { sales } from "@/db/schema";
 import { safe } from "@/server/action";
-import { StaffContext, assertShopAccess, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
+import { StaffContext, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
 import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale, validatePromo } from "@/server/checkout";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { holdRetail } from "@/server/inventory/stock";
+import { requireInTenant } from "@/server/tenant";
 import { inspectPaymentMethod, terminal } from "@/server/payments/processor";
 
 async function loadSale(ctx: StaffContext, saleId: string) {
+  await requireInTenant(ctx, "sale", saleId);
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
   if (!sale) throw notFound("Sale");
-  assertShopAccess(ctx, sale.shopId);
   if (sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) throw forbidden("You can only check out your own clients");
   return sale;
 }

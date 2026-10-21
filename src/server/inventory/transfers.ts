@@ -4,7 +4,7 @@ import { db, Tx } from "@/db";
 import { auditLog, products, shopProducts, shops, staff, stockTransferLines, stockTransfers } from "@/db/schema";
 import { audit } from "../audit";
 import { AppError, notFound } from "../errors";
-import { Who, assertShop, lockStock, postMovements } from "./ledger";
+import { Who, assertOwnRecord, assertShop, lockStock, postMovements } from "./ledger";
 import { stockLevels } from "./stock";
 
 /**
@@ -29,6 +29,7 @@ type Transfer = typeof stockTransfers.$inferSelect;
 async function lockTransfer(tx: Tx, who: Who, id: string, side: "from" | "to" | "either"): Promise<Transfer> {
   const [t] = await tx.select().from(stockTransfers).where(eq(stockTransfers.id, id)).for("update");
   if (!t) throw notFound("Transfer");
+  assertOwnRecord(who, [t.fromShopId, t.toShopId], "Transfer");
   const ok = side === "from" ? who.shopIds.includes(t.fromShopId) : side === "to" ? who.shopIds.includes(t.toShopId) : who.shopIds.includes(t.fromShopId) || who.shopIds.includes(t.toShopId);
   if (!ok) throw new AppError("forbidden", side === "to" ? "Only the receiving shop can receive this transfer" : "That shop is outside your access");
   return t;
