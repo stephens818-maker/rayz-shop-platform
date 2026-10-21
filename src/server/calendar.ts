@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import type { RatingSummary } from "@/domain/ratings";
 import { LocalDate, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, weekdayOf } from "@/lib/time";
+import { Tenant, hasShop } from "./tenant";
 import { ratingSummaries } from "./ratings";
 
 export interface CalAppt {
@@ -33,7 +34,8 @@ export interface CalColumn {
   color: string;
   spans: { startMin: number; endMin: number }[];
   blocks: { id: string; startMin: number; endMin: number; reason: string; kind: string }[];
-  elsewhere: { startMin: number; endMin: number; shop: string }[];
+  /** `shop` is null for a shop outside the viewer's workspace. */
+  elsewhere: { startMin: number; endMin: number; shop: string | null }[];
   appts: CalAppt[];
 }
 
@@ -56,7 +58,9 @@ const clampDay = (d: Date, date: LocalDate) => {
   return m;
 };
 
-export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaffId?: string | null): Promise<DayCalendarData> {
+/** `viewer` is the workspace looking: barbers' time at shops outside it shows without the shop's name. */
+export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaffId?: string | null, viewer?: Pick<Tenant, "shopIds" | "brandWide">): Promise<DayCalendarData> {
+  const shopLabel = (id: string, name: string) => (!viewer || viewer.brandWide || hasShop(viewer, id) ? name : null);
   const dayStart = startOfLocalDay(date);
   const dayEnd = endOfLocalDay(date);
   const wd = weekdayOf(date);
@@ -104,7 +108,7 @@ export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaff
       : [],
     ids.length
       ? db
-          .select({ staffId: appointments.staffId, startsAt: appointments.startsAt, endsAt: appointments.endsAt, shop: shops.name })
+          .select({ staffId: appointments.staffId, startsAt: appointments.startsAt, endsAt: appointments.endsAt, shopId: shops.id, shop: shops.name })
           .from(appointments)
           .innerJoin(shops, eq(shops.id, appointments.shopId))
           .where(
@@ -126,7 +130,7 @@ export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaff
   // Barbers working elsewhere today also show their other-shop schedule as "elsewhere".
   const otherScheds = ids.length
     ? await db
-        .select({ staffId: staffSchedules.staffId, startMin: staffSchedules.startMin, endMin: staffSchedules.endMin, shop: shops.name })
+        .select({ staffId: staffSchedules.staffId, startMin: staffSchedules.startMin, endMin: staffSchedules.endMin, shopId: shops.id, shop: shops.name })
         .from(staffSchedules)
         .innerJoin(shops, eq(shops.id, staffSchedules.shopId))
         .where(and(inArray(staffSchedules.staffId, ids), eq(staffSchedules.weekday, wd), ne(staffSchedules.shopId, shopId)))
@@ -141,8 +145,8 @@ export async function loadDayCalendar(shopId: string, date: LocalDate, onlyStaff
       .filter((b) => b.staffId === c.id)
       .map((b) => ({ id: b.id, startMin: clampDay(b.startsAt, date), endMin: clampDay(b.endsAt, date), reason: b.reason, kind: b.kind })),
     elsewhere: [
-      ...otherScheds.filter((o) => o.staffId === c.id).map((o) => ({ startMin: o.startMin, endMin: o.endMin, shop: o.shop })),
-      ...elsewhere.filter((e) => e.staffId === c.id).map((e) => ({ startMin: clampDay(e.startsAt, date), endMin: clampDay(e.endsAt, date), shop: e.shop })),
+      ...otherScheds.filter((o) => o.staffId === c.id).map((o) => ({ startMin: o.startMin, endMin: o.endMin, shop: shopLabel(o.shopId, o.shop) })),
+      ...elsewhere.filter((e) => e.staffId === c.id).map((e) => ({ startMin: clampDay(e.startsAt, date), endMin: clampDay(e.endsAt, date), shop: shopLabel(e.shopId, e.shop) })),
     ],
     appts: apptRows
       .filter((r) => r.a.staffId === c.id)

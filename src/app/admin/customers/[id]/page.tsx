@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { and, asc, desc, eq, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, not, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, customerSquireIds, customers, loyaltyLedger, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
@@ -12,6 +12,7 @@ import { can, guardPage, ratingViewer } from "@/server/auth/staff";
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
 import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
+import { OTHER_BARBER, OTHER_SHOP, hasShop, inShops, inTenant } from "@/server/tenant";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
 
@@ -31,11 +32,16 @@ export default async function CustomerPage({ params, searchParams }: { params: P
   const canMerge = full && can(ctx, "clients.merge");
   const c = await db.query.customers.findFirst({ where: eq(customers.id, id) });
   if (!c) notFound();
+  // A shop workspace sees the shared record (name, contact, loyalty, average rating) but only what
+  // happened at its own shops.
+  const scoped = !ctx.brandWide;
+  const mine = scoped ? ctx.shopIds : undefined;
+  const here = (col: Parameters<typeof inShops>[1]) => (scoped ? inShops(ctx, col) : undefined);
   const vPage = Math.max(1, Number(sp.v) || 1);
   const sPage = Math.max(1, Number(sp.s) || 1);
 
   const [stats, visits, [{ visitCount }], saleRows, [{ saleCount }], loyalty, ledger, squireIds, dupes, barberOptions] = await Promise.all([
-    customerStats(id),
+    customerStats(id, db, new Date(), mine),
     db
       .select({
         a: appointments,
@@ -47,11 +53,11 @@ export default async function CustomerPage({ params, searchParams }: { params: P
       .from(appointments)
       .innerJoin(shops, eq(shops.id, appointments.shopId))
       .innerJoin(staff, eq(staff.id, appointments.staffId))
-      .where(eq(appointments.customerId, id))
+      .where(and(eq(appointments.customerId, id), here(appointments.shopId)))
       .orderBy(desc(appointments.startsAt))
       .limit(VISITS_PAGE)
       .offset((vPage - 1) * VISITS_PAGE),
-    db.select({ visitCount: sql<number>`count(*)::int` }).from(appointments).where(eq(appointments.customerId, id)),
+    db.select({ visitCount: sql<number>`count(*)::int` }).from(appointments).where(and(eq(appointments.customerId, id), here(appointments.shopId))),
     full
       ? db
           .select({
@@ -61,27 +67,51 @@ export default async function CustomerPage({ params, searchParams }: { params: P
           })
           .from(sales)
           .innerJoin(shops, eq(shops.id, sales.shopId))
-          .where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`))
+          .where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`, here(sales.shopId)))
           .orderBy(desc(sales.businessDate), desc(sales.createdAt))
           .limit(SALES_PAGE)
           .offset((sPage - 1) * SALES_PAGE)
       : [],
-    full ? db.select({ saleCount: sql<number>`count(*)::int` }).from(sales).where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`)) : [{ saleCount: 0 }],
+    full ? db.select({ saleCount: sql<number>`count(*)::int` }).from(sales).where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`, here(sales.shopId))) : [{ saleCount: 0 }],
     loyaltyBalance(id),
-    db.select().from(loyaltyLedger).where(eq(loyaltyLedger.customerId, id)).orderBy(desc(loyaltyLedger.createdAt)).limit(20),
+    db
+      .select({ l: loyaltyLedger })
+      .from(loyaltyLedger)
+      .leftJoin(sales, eq(sales.id, loyaltyLedger.saleId))
+      .where(and(eq(loyaltyLedger.customerId, id), scoped ? or(isNull(loyaltyLedger.saleId), inShops(ctx, sales.shopId)) : undefined))
+      .orderBy(desc(loyaltyLedger.createdAt))
+      .limit(20)
+      .then((rows) => rows.map((r) => r.l)),
     db.select().from(customerSquireIds).where(eq(customerSquireIds.customerId, id)).orderBy(asc(customerSquireIds.createdAt)),
     canMerge ? duplicatePairs({ forId: id, limit: 10 }) : [],
     full
       ? db
           .select({ id: staff.id, label: staff.displayLabel, active: staff.active })
           .from(staff)
-          .where(or(and(eq(staff.active, true), eq(staff.isBookable, true)), c.preferredStaffId ? eq(staff.id, c.preferredStaffId) : undefined))
+          .where(
+            or(
+              and(eq(staff.active, true), eq(staff.isBookable, true), scoped ? sql`exists (select 1 from staff_shops ss where ss.staff_id = ${staff.id} and ${inShops(ctx, sql`ss.shop_id`)})` : undefined),
+              c.preferredStaffId ? eq(staff.id, c.preferredStaffId) : undefined,
+            ),
+          )
           .orderBy(asc(staff.displayLabel))
       : [],
   ]);
-  const staffLabel = async (sid: string | null) => (sid ? ((await db.query.staff.findFirst({ where: eq(staff.id, sid) }))?.displayLabel ?? null) : null);
+  const [elsewhere] = scoped
+    ? await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(appointments)
+        .where(and(eq(appointments.customerId, id), eq(appointments.status, "completed"), not(inShops(ctx, appointments.shopId))))
+    : [{ n: 0 }];
+  // Barbers who don't work at one of the viewer's shops are named generically.
+  const staffLabel = async (sid: string | null) => {
+    if (!sid) return null;
+    const p = await db.query.staff.findFirst({ where: eq(staff.id, sid) });
+    if (!p) return null;
+    return !scoped || (await inTenant(ctx, "staff", sid)) ? p.displayLabel : OTHER_BARBER;
+  };
   const viewer = ratingViewer(ctx);
-  const [rating, ratings, rateable] = await Promise.all([ratingSummary(id), ratingHistory(viewer, id), rateableVisits(viewer, id)]);
+  const [rating, ratings, rateable] = await Promise.all([ratingSummary(id), ratingHistory(viewer, id, mine), rateableVisits(viewer, id)]);
   const visitStars = new Map<string, number[]>();
   for (const r of ratings) if (r.appointmentId) visitStars.set(r.appointmentId, [...(visitStars.get(r.appointmentId) ?? []), r.stars]);
   const [preferred, usual, homeShop] = await Promise.all([
@@ -89,7 +119,10 @@ export default async function CustomerPage({ params, searchParams }: { params: P
     staffLabel(stats.usualBarberId),
     c.homeShopId ? db.query.shops.findFirst({ where: eq(shops.id, c.homeShopId) }) : null,
   ]);
-  const canSeeSale = (shopId: string) => ctx.shopIds.includes(shopId);
+  const canSeeSale = (shopId: string) => hasShop(ctx, shopId);
+  const homeShopName = homeShop ? (scoped && !hasShop(ctx, homeShop.id) ? OTHER_SHOP : homeShop.name) : null;
+  const shopRows = await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name));
+  const editorShops = scoped ? shopRows.filter((s) => hasShop(ctx, s.id) || s.id === c.homeShopId).map((s) => (hasShop(ctx, s.id) ? s : { ...s, name: OTHER_SHOP })) : shopRows;
   const pager = (key: "v" | "s", pageNo: number, total: number, size: number) =>
     total > size && (
       <div className="flex items-center justify-between px-4 py-3 text-sm">
@@ -113,7 +146,7 @@ export default async function CustomerPage({ params, searchParams }: { params: P
         subtitle={
           <>
             Client since {formatDate(c.createdAt, "MMM d, yyyy")}
-            {homeShop && ` · Home shop ${homeShop.name}`}
+            {homeShopName && ` · Home shop ${homeShopName}`}
             {squireIds.length > 0 && ` · Squire ID${squireIds.length > 1 ? "s" : ""} ${squireIds.map((s) => s.squireId).join(", ")}`}
           </>
         }
@@ -156,8 +189,10 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                 homeShopId: c.homeShopId,
                 preferredStaffId: c.preferredStaffId,
               }}
-              shops={await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name))}
-              barbers={barberOptions.map((b) => ({ id: b.id, label: b.active ? b.label : `${b.label} (inactive)` }))}
+              shops={editorShops}
+              barbers={await Promise.all(
+                barberOptions.map(async (b) => ({ id: b.id, label: b.id === c.preferredStaffId ? ((await staffLabel(b.id)) ?? b.label) : b.active ? b.label : `${b.label} (inactive)` })),
+              )}
               usualBarber={usual}
             />
           ) : (
@@ -256,7 +291,14 @@ export default async function CustomerPage({ params, searchParams }: { params: P
             />
           </Card>
           <Card>
-            <CardHeader title="Visit history" subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every shop, including Squire history`} />
+            <CardHeader
+              title="Visit history"
+              subtitle={
+                scoped
+                  ? `${visitCount} appointment${visitCount === 1 ? "" : "s"} at ${ctx.shops.length === 1 ? ctx.shops[0].name : "your shops"}, including Squire history${elsewhere.n ? ` · ${elsewhere.n} visit${elsewhere.n === 1 ? "" : "s"} at other Ray'z shops` : ""}`
+                  : `${visitCount} appointment${visitCount === 1 ? "" : "s"} at every shop, including Squire history`
+              }
+            />
             <Table>
               <thead>
                 <tr>

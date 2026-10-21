@@ -492,8 +492,9 @@ describe("profiles, search, and access", () => {
     await visit({ customerId: c.id, shop: "coralville", barber: "Makenna", at: new Date(Date.now() - 10 * 86_400_000) });
     const coralville = await shopNamed("coralville");
     const kimberly = await shopNamed("kimberly");
-    expect((await m.customers.searchCustomers("ximena", { restrictToShops: [coralville.id] })).map((x) => x.id)).toContain(c.id);
-    expect((await m.customers.searchCustomers("ximena", { restrictToShops: [kimberly.id] })).map((x) => x.id)).not.toContain(c.id);
+    expect((await m.customers.searchCustomers("ximena", { shops: [coralville.id] })).map((x) => x.id)).toContain(c.id);
+    expect((await m.customers.searchCustomers("ximena", { shops: [kimberly.id] })).map((x) => x.id)).not.toContain(c.id);
+    expect((await m.customers.searchCustomers("ximena searchable", { shops: [kimberly.id] })).map((x) => x.id)).toContain(c.id);
     expect((await m.customers.searchCustomers(c.phone!.slice(-4), {})).map((x) => x.id)).toContain(c.id);
     expect((await m.customers.searchCustomers("searchab", {})).map((x) => x.id)).toContain(c.id);
 

@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
-import { asc, desc, eq, ilike, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, giftCardLedger, giftCards, promoCodes, shops } from "@/db/schema";
+import { customers, giftCardLedger, giftCards, promoCodes, sales, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { formatDateTime, todayLocal } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
+import { OTHER_SHOP, hasShop, inShops } from "@/server/tenant";
 import { GiftCardTools, PromoForm, PromoToggle, VoidGiftCard } from "./editors";
 
 export const metadata: Metadata = { title: "Promos & gift cards" };
@@ -16,24 +17,43 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
   const managesPromos = can(ctx, "promos.manage");
   const canVoid = can(ctx, "giftcards.void");
   const today = todayLocal();
+  // Cards work at every shop, so any card can be looked up by its exact code; a shop workspace
+  // lists only the cards issued at its shops.
+  const term = sp.gc?.trim().toUpperCase();
+  const issuedHere = ctx.brandWide ? undefined : inShops(ctx, giftCards.issuedShopId);
+  const cardWhere = term ? (ctx.brandWide ? ilike(giftCards.code, `%${term}%`) : or(and(ilike(giftCards.code, `%${term}%`), issuedHere), eq(giftCards.code, term))) : issuedHere;
   const [promos, shopRows, cards, [liability]] = await Promise.all([
-    db.select().from(promoCodes).orderBy(desc(promoCodes.active), desc(promoCodes.createdAt)),
+    db
+      .select()
+      .from(promoCodes)
+      .where(ctx.brandWide ? undefined : or(isNull(promoCodes.shopId), inShops(ctx, promoCodes.shopId)))
+      .orderBy(desc(promoCodes.active), desc(promoCodes.createdAt)),
     db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name)),
     db
       .select({ g: giftCards, shop: shops.name, first: customers.firstName, last: customers.lastName })
       .from(giftCards)
       .leftJoin(shops, eq(shops.id, giftCards.issuedShopId))
       .leftJoin(customers, eq(customers.id, giftCards.customerId))
-      .where(sp.gc ? ilike(giftCards.code, `%${sp.gc.trim().toUpperCase()}%`) : undefined)
+      .where(cardWhere)
       .orderBy(desc(giftCards.createdAt))
       .limit(40),
     db
       .select({ n: sql<number>`count(*) filter (where ${giftCards.status} = 'active' and ${giftCards.balanceCents} > 0)::int`, cents: sql<number>`coalesce(sum(${giftCards.balanceCents}) filter (where ${giftCards.status} = 'active'), 0)::int` })
-      .from(giftCards),
+      .from(giftCards)
+      .where(issuedHere),
   ]);
   const visible = promos.filter((p) => ctx.brandWide || !p.shopId || ctx.shopIds.includes(p.shopId));
   const single = cards.length === 1 ? cards[0] : null;
-  const ledger = single ? await db.select().from(giftCardLedger).where(eq(giftCardLedger.giftCardId, single.g.id)).orderBy(asc(giftCardLedger.createdAt)) : [];
+  const ledger = single
+    ? (
+        await db
+          .select({ l: giftCardLedger, saleShopId: sales.shopId })
+          .from(giftCardLedger)
+          .leftJoin(sales, eq(sales.id, giftCardLedger.saleId))
+          .where(eq(giftCardLedger.giftCardId, single.g.id))
+          .orderBy(asc(giftCardLedger.createdAt))
+      ).map(({ l, saleShopId }) => ({ ...l, away: !ctx.brandWide && !!saleShopId && !hasShop(ctx, saleShopId) }))
+    : [];
   const shopId = ctx.currentShopId ?? ctx.shopIds[0];
 
   return (
@@ -84,7 +104,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Active gift cards" value={liability.n} />
-        <Stat label="Outstanding balance" value={formatCents(liability.cents)} hint="Gift card liability, brand-wide" />
+        <Stat label="Outstanding balance" value={formatCents(liability.cents)} hint={ctx.brandWide ? "Gift card liability, brand-wide" : "Cards issued at your shops"} />
       </div>
 
       <Card>
@@ -113,7 +133,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
                   {formatCents(g.balanceCents)}
                 </Td>
                 <Td className="capitalize">{g.source}</Td>
-                <Td>{shop ?? "—"}</Td>
+                <Td>{g.issuedShopId && !ctx.brandWide && !hasShop(ctx, g.issuedShopId) ? OTHER_SHOP : (shop ?? "—")}</Td>
                 <Td>{first ? `${first} ${last ?? ""}` : "—"}</Td>
                 <Td>
                   <Badge tone={g.status === "active" ? "green" : "gray"}>{g.status}</Badge>
@@ -131,7 +151,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
               {ledger.map((l) => (
                 <li key={l.id} className="flex justify-between">
                   <span className="capitalize">
-                    {l.kind} <span className="text-xs text-zinc-500">{formatDateTime(l.createdAt)}</span>
+                    {l.kind} <span className="text-xs text-zinc-500">{l.away ? "at another Ray'z shop" : formatDateTime(l.createdAt)}</span>
                   </span>
                   <span className={l.deltaCents < 0 ? "text-red-600" : "text-emerald-700"}>{formatCents(l.deltaCents, { sign: true })}</span>
                 </li>

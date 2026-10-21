@@ -166,7 +166,8 @@ export interface RatingHistoryRow {
 }
 
 /** Managers and the brand admin get every rating; a barber gets only their own. */
-export async function ratingHistory(viewer: RatingViewer, customerId: string): Promise<RatingHistoryRow[]> {
+/** Every rating, or for a shop workspace only those given at `shopIds`. */
+export async function ratingHistory(viewer: RatingViewer, customerId: string, shopIds?: readonly string[]): Promise<RatingHistoryRow[]> {
   const rows = await db
     .select({
       r: clientRatings,
@@ -180,7 +181,13 @@ export async function ratingHistory(viewer: RatingViewer, customerId: string): P
     .innerJoin(shops, eq(shops.id, clientRatings.shopId))
     .leftJoin(appointments, eq(appointments.id, clientRatings.appointmentId))
     .leftJoin(sales, eq(sales.id, clientRatings.saleId))
-    .where(and(eq(clientRatings.customerId, customerId), seesAllRatings(viewer) ? undefined : eq(clientRatings.staffId, viewer.staffId)))
+    .where(
+      and(
+        eq(clientRatings.customerId, customerId),
+        seesAllRatings(viewer) ? undefined : eq(clientRatings.staffId, viewer.staffId),
+        shopIds ? (shopIds.length ? inArray(clientRatings.shopId, [...shopIds]) : sql`false`) : undefined,
+      ),
+    )
     .orderBy(desc(clientRatings.createdAt));
   return rows.map(({ r, ratedBy, shop, visitAt, saleNumber }) => ({
     id: r.id,

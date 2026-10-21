@@ -9,10 +9,11 @@ import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { authorize, can, requireStaff } from "@/server/auth/staff";
+import { StaffContext, authorize, can, requireStaff } from "@/server/auth/staff";
 import { customerAccess, findOrCreateCustomer, matchCustomer, mergeCustomers, searchCustomers } from "@/server/customers";
 import { AppError, forbidden } from "@/server/errors";
 import { getLoyaltyConfig } from "@/server/loyalty";
+import { hasShop, inTenant } from "@/server/tenant";
 
 const Profile = z.object({
   firstName: z.string().trim().min(1),
@@ -34,9 +35,13 @@ function contact(p: { phone: string; email: string }) {
   return { phone, email };
 }
 
-async function checkRefs(p: { homeShopId: string | null; preferredStaffId: string | null }) {
+/** A shop workspace can point a client only at its own shops and barbers; what's on file from elsewhere can stay. */
+async function checkRefs(ctx: StaffContext, p: { homeShopId: string | null; preferredStaffId: string | null }, before?: { homeShopId: string | null; preferredStaffId: string | null }) {
   if (p.homeShopId && !(await db.query.shops.findFirst({ where: eq(shops.id, p.homeShopId) }))) throw new AppError("bad_request", "Unknown shop");
   if (p.preferredStaffId && !(await db.query.staff.findFirst({ where: eq(staff.id, p.preferredStaffId) }))) throw new AppError("bad_request", "Unknown barber");
+  if (ctx.brandWide) return;
+  if (p.homeShopId && p.homeShopId !== before?.homeShopId && !hasShop(ctx, p.homeShopId)) throw new AppError("bad_request", "Unknown shop");
+  if (p.preferredStaffId && p.preferredStaffId !== before?.preferredStaffId && !(await inTenant(ctx, "staff", p.preferredStaffId))) throw new AppError("bad_request", "Unknown barber");
 }
 
 /**
@@ -47,9 +52,9 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
   return safe(async () => {
     const ctx = await authorize("clients.edit");
     const p = Profile.parse(raw);
-    await checkRefs(p);
     const before = await db.query.customers.findFirst({ where: eq(customers.id, id) });
     if (!before) throw new AppError("not_found", "Client not found");
+    await checkRefs(ctx, p, before);
     const reach = can(ctx, "clients.contact") ? contact(p) : { phone: before.phone, email: before.email };
     const values = { firstName: p.firstName, lastName: p.lastName || null, ...reach, notes: p.notes || null, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn, homeShopId: p.homeShopId, preferredStaffId: p.preferredStaffId };
     await db.update(customers).set(values).where(eq(customers.id, id));
@@ -81,7 +86,7 @@ export async function createCustomerAction(raw: z.input<typeof NewClient>) {
   return safe(async () => {
     const ctx = await authorize("clients.edit");
     const p = NewClient.parse(raw);
-    await checkRefs(p);
+    await checkRefs(ctx, p);
     const c = contact(p);
     const existing = c.phone || c.email ? await matchCustomer(db, { firstName: p.firstName, lastName: p.lastName, ...c }) : null;
     if (existing) return { id: existing.customer.id, existed: true };
@@ -125,7 +130,7 @@ export async function grantRewardAction(customerId: string, reason: string) {
     await db.transaction(async (tx) => {
       const [r] = await tx.insert(loyaltyRewards).values({ customerId, amountCents: cfg.rewardCents, issuedAt: now, expiresAt: rewardExpiry(now, cfg), source: "manual" }).returning();
       await tx.insert(loyaltyLedger).values({ customerId, kind: "reward_issued", rewardCents: cfg.rewardCents });
-      await audit(ctx.actor, "loyalty.manual_reward", "customer", customerId, { rewardId: r.id, reason }, null, tx);
+      await audit(ctx.actor, "loyalty.manual_reward", "customer", customerId, { rewardId: r.id, reason }, ctx.currentShopId, tx);
     });
     revalidatePath(`/admin/customers/${customerId}`);
     return null;

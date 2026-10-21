@@ -15,7 +15,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
   if (!shopId) return <Empty title="No shop assigned">Ask an admin to add you to a shop.</Empty>;
   const today = todayLocal();
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : today;
-  const [data, catalog] = await Promise.all([loadDayCalendar(shopId, date, can(ctx, "calendar.manage") ? null : ctx.staff.id), shopCatalog(shopId)]);
+  const [data, catalog] = await Promise.all([loadDayCalendar(shopId, date, can(ctx, "calendar.manage") ? null : ctx.staff.id, ctx), shopCatalog(shopId)]);
   return (
     <div>
       {ctx.currentShopId === null && (

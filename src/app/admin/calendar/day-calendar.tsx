@@ -296,7 +296,7 @@ function Column({
         ))}
         {col.elsewhere.map((o, i) => (
           <div key={`e${i}`} className="pointer-events-none absolute inset-x-0 flex items-start bg-zinc-200/90 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600" style={{ top: top(o.startMin), height: h(o.startMin, o.endMin) }}>
-            At {o.shop}
+            {o.shop ? `At ${o.shop}` : "At another shop"}
           </div>
         ))}
         {col.blocks.map((b) => (

@@ -220,30 +220,32 @@ export interface CustomerStats {
 
 const toDate = (v: unknown) => (v ? new Date(v as string) : null);
 
-export async function customerStats(customerId: string, tx: DBorTx = db, now = new Date()): Promise<CustomerStats> {
+/** Brand-wide, or only what happened at `shopIds` for a shop workspace. */
+export async function customerStats(customerId: string, tx: DBorTx = db, now = new Date(), shopIds?: readonly string[]): Promise<CustomerStats> {
   const nowIso = now.toISOString();
+  const at = (alias: string) => (shopIds ? sql`and ${sql.raw(alias)}shop_id in (${shopIds.length ? sql.join(shopIds.map((x) => sql`${x}::uuid`), sql`, `) : sql`null::uuid`})` : sql``);
   const [row] = (await tx.execute(sql`
     select
-      (select count(*) from appointments where customer_id = ${customerId} and status = 'completed')::int as visits,
-      (select count(*) from appointments where customer_id = ${customerId} and status = 'no_show')::int as "noShows",
-      (select count(*) from appointments where customer_id = ${customerId} and status = 'cancelled')::int as cancellations,
-      (select count(*) from appointments where customer_id = ${customerId} and status in ('booked','confirmed','checked_in','in_service') and starts_at >= ${nowIso})::int as upcoming,
-      (select min(starts_at) from appointments where customer_id = ${customerId} and status = 'completed') as "firstVisit",
-      (select max(starts_at) from appointments where customer_id = ${customerId} and status = 'completed') as "lastVisit",
+      (select count(*) from appointments where customer_id = ${customerId} ${at("")} and status = 'completed')::int as visits,
+      (select count(*) from appointments where customer_id = ${customerId} ${at("")} and status = 'no_show')::int as "noShows",
+      (select count(*) from appointments where customer_id = ${customerId} ${at("")} and status = 'cancelled')::int as cancellations,
+      (select count(*) from appointments where customer_id = ${customerId} ${at("")} and status in ('booked','confirmed','checked_in','in_service') and starts_at >= ${nowIso})::int as upcoming,
+      (select min(starts_at) from appointments where customer_id = ${customerId} ${at("")} and status = 'completed') as "firstVisit",
+      (select max(starts_at) from appointments where customer_id = ${customerId} ${at("")} and status = 'completed') as "lastVisit",
       (select coalesce(sum(service_net_cents + product_net_cents), 0) from sales
-        where customer_id = ${customerId} and status in ('paid','partially_refunded','refunded'))::int as gross,
+        where customer_id = ${customerId} ${at("")} and status in ('paid','partially_refunded','refunded'))::int as gross,
       (select coalesce(sum(tip_cents), 0) from sales
-        where customer_id = ${customerId} and status in ('paid','partially_refunded','refunded'))::int as tips,
-      (select count(*) from sales where customer_id = ${customerId} and status in ('paid','partially_refunded','refunded'))::int as tickets,
+        where customer_id = ${customerId} ${at("")} and status in ('paid','partially_refunded','refunded'))::int as tips,
+      (select count(*) from sales where customer_id = ${customerId} ${at("")} and status in ('paid','partially_refunded','refunded'))::int as tickets,
       (select coalesce(sum(r.service_net_cents + r.product_net_cents), 0) from refunds r join sales s on s.id = r.sale_id
-        where s.customer_id = ${customerId} and r.kind = 'refund' and s.status <> 'voided')::int as refunded,
+        where s.customer_id = ${customerId} ${at("s.")} and r.kind = 'refund' and s.status <> 'voided')::int as refunded,
       (select coalesce(sum(r.tip_cents), 0) from refunds r join sales s on s.id = r.sale_id
-        where s.customer_id = ${customerId} and r.kind = 'refund' and s.status <> 'voided')::int as "tipRefunds",
+        where s.customer_id = ${customerId} ${at("s.")} and r.kind = 'refund' and s.status <> 'voided')::int as "tipRefunds",
       (select coalesce(sum(a.estimate_cents), 0) from appointments a
-        where a.customer_id = ${customerId} and a.status = 'completed' and a.source = 'import'
+        where a.customer_id = ${customerId} ${at("a.")} and a.status = 'completed' and a.source = 'import'
           and not exists (select 1 from sales s where s.appointment_id = a.id
             or (s.customer_id = a.customer_id and s.business_date = (a.starts_at at time zone 'America/Chicago')::date)))::int as "squireVisitSpend",
-      (select staff_id from appointments where customer_id = ${customerId} and status = 'completed'
+      (select staff_id from appointments where customer_id = ${customerId} ${at("")} and status = 'completed'
         group by staff_id order by count(*) desc, max(starts_at) desc limit 1) as "usualBarberId"
   `)) as unknown as Record<string, number | string | null>[];
   const ticketSpendCents = Number(row.gross) - Number(row.refunded);
@@ -291,12 +293,47 @@ export function visitedScope(opts: { shopIds?: string[]; staffId?: string }): SQ
 }
 
 export interface SearchScope {
-  /** Barbers only see clients who have visited their shops; managers and admins see the shared book. */
-  restrictToShops?: string[];
+  /**
+   * A shop workspace: partial matches only among these shops' clients (home shop or a visit here);
+   * anyone else in the brand only on an exact phone, email or full name, to book them.
+   */
+  shops?: readonly string[];
+}
+
+/** Clients of these shops: their home shop is one of them or they've had an appointment at one. */
+export function shopClientsScope(shopIds: readonly string[]): SQL {
+  if (!shopIds.length) return sql`false`;
+  return or(inArray(customers.homeShopId, [...shopIds]), visitedScope({ shopIds: [...shopIds] }))!;
+}
+
+/** An exact phone number, email or full name. Partial terms (some digits, part of a name) match nothing. */
+export function customerExactWhere(term: string): SQL | undefined {
+  const t = term.trim();
+  if (!t) return undefined;
+  const phone = normalizePhone(t);
+  if (phone) return eq(customers.phone, phone);
+  if (t.includes("@")) {
+    const email = normalizeEmail(t);
+    return email ? eq(customers.email, email) : undefined;
+  }
+  if (/\d/.test(t)) return undefined;
+  const name = t.toLowerCase().replace(/\s+/g, " ");
+  return or(sql`${fullNameExpr} = ${name}`, sql`${fullNameExpr} = ${`${name} `}`);
+}
+
+/** The whole book for brand-wide staff who may see every client; everyone else searches as their shops. */
+export const clientSearchScope = (ctx: { brandWide: boolean; shopIds: readonly string[] }, viewAll: boolean): SearchScope => (ctx.brandWide && viewAll ? {} : { shops: ctx.shopIds });
+
+/** The search condition for a scope: see `SearchScope`. */
+export function scopedSearchWhere(term: string, scope: SearchScope): SQL | undefined {
+  const partial = customerSearchWhere(term);
+  if (!partial || !scope.shops) return partial;
+  const exact = customerExactWhere(term);
+  return exact ? or(and(partial, shopClientsScope(scope.shops)), exact) : and(partial, shopClientsScope(scope.shops));
 }
 
 export async function searchCustomers(term: string, scope: SearchScope = {}, limit = 8) {
-  const where = customerSearchWhere(term);
+  const where = scopedSearchWhere(term, scope);
   if (!where) return [];
   const t = likeEscape(term.trim().toLowerCase());
   return db
@@ -310,7 +347,7 @@ export async function searchCustomers(term: string, scope: SearchScope = {}, lim
       smsOptIn: customers.smsOptIn,
     })
     .from(customers)
-    .where(and(where, scope.restrictToShops ? visitedScope({ shopIds: scope.restrictToShops }) : undefined))
+    .where(where)
     .orderBy(sql`(${fullNameExpr} like ${`${t}%`}) desc`, sql`${customers.createdAt} desc`)
     .limit(limit);
 }
