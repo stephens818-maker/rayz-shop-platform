@@ -74,7 +74,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5">
+    <div className="mx-auto max-w-7xl space-y-5">
       <PageHeader
         title="Client data protection"
         subtitle="Choose which client details each role and person sees: hidden, masked or in full. Masking is applied on the server, so hidden details never reach their browser, exports or the app. Every change is in the audit log."
@@ -107,43 +107,41 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
             </div>
           }
         />
-        <div className="overflow-x-auto">
-          <Table>
-            <thead>
-              <tr>
-                <Th>Role</Th>
-                {fields.map((f) => (
-                  <Th key={f.key}>
-                    <span title={f.hint}>{f.label}</span>
-                  </Th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {owner && (
-                <tr>
-                  <Td className="whitespace-nowrap font-medium">{owner.name}</Td>
-                  <td className="border-b border-zinc-100 px-3 py-2 text-xs text-zinc-500" colSpan={fields.length}>
-                    Always sees every client detail in full.
-                  </td>
-                </tr>
-              )}
-              {editable.map((r) => (
-                <tr key={r.id}>
-                  <Td className="whitespace-nowrap font-medium">{r.name}</Td>
-                  {fields.map((f) => {
-                    const c = cell(r, f.key);
-                    return (
-                      <Td key={f.key}>
-                        <RuleCell rule={{ field: f.key, roleId: r.id, staffId: null, shopId }} level={c.level} inherited={c.inherited} from={c.from} />
-                      </Td>
-                    );
-                  })}
-                </tr>
+        <Table>
+          <thead>
+            <tr>
+              <Th>Role</Th>
+              {fields.map((f) => (
+                <Th key={f.key} className="whitespace-normal px-1.5">
+                  <span title={f.hint}>{f.label}</span>
+                </Th>
               ))}
-            </tbody>
-          </Table>
-        </div>
+            </tr>
+          </thead>
+          <tbody>
+            {owner && (
+              <tr>
+                <Td className="whitespace-nowrap font-medium">{owner.name}</Td>
+                <td className="border-b border-zinc-100 px-3 py-2 text-xs text-zinc-500" colSpan={fields.length}>
+                  Always sees every client detail in full.
+                </td>
+              </tr>
+            )}
+            {editable.map((r) => (
+              <tr key={r.id}>
+                <Td className="whitespace-nowrap font-medium">{r.name}</Td>
+                {fields.map((f) => {
+                  const c = cell(r, f.key);
+                  return (
+                    <Td key={f.key} className="px-1.5">
+                      <RuleCell rule={{ field: f.key, roleId: r.id, staffId: null, shopId }} level={c.level} inherited={c.inherited} from={c.from} />
+                    </Td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </Table>
         <p className="border-t border-zinc-100 px-4 py-3 text-xs text-zinc-500">
           Masked phone: ***-***-4321. Masked email: j***@gmail.com. Managers with &quot;reveal a masked client detail&quot; can show one detail at a time with a reason, and each
           reveal is logged. Search still finds a client by their full phone number or email without showing it, and calls and texts go through the shop line.

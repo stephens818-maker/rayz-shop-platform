@@ -7,7 +7,7 @@ import { Badge, Card, CardHeader, Empty, LinkButton, PageHeader, Table, Td, Th }
 import { ACCESS_KINDS } from "@/domain/client-privacy";
 import { formatDateTime } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
-import { ACCESS_PERIODS, accessEntries, accessSummary, openAlerts, parseAccessFilters, recentAlerts } from "@/server/client-access-report";
+import { ACCESS_PERIODS, accessEntries, accessSummary, lookupCounts, openAlerts, parseAccessFilters, recentAlerts, whoLabel } from "@/server/client-access-report";
 import { AcknowledgeAlert } from "../editor";
 
 export const metadata: Metadata = { title: "Client data access" };
@@ -58,8 +58,8 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
             {alerts.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
                 <span>
-                  <Badge tone={a.kind === "paused" ? "red" : "amber"}>{a.kind === "paused" ? "Paused" : "Unusual"}</Badge> <span className="font-medium">{a.actorLabel}</span>:{" "}
-                  {a.profiles} profiles and {a.searches} searches in {a.windowMinutes} min · {formatDateTime(a.at)}
+                  <Badge tone={a.kind === "paused" ? "red" : "amber"}>{a.kind === "paused" ? "Paused" : "Unusual"}</Badge>{" "}
+                  <span className="font-medium">{whoLabel(a.actorLabel)}</span>: {lookupCounts(a.profiles, a.searches)} in {a.windowMinutes} min · {formatDateTime(a.at)}
                   {a.staffId && (
                     <Link className="ml-2 text-xs underline" href={`/admin/client-data/access?${qs({ who: a.staffId, days: "1", kind: null, client: null })}`}>
                       See their lookups
@@ -128,10 +128,10 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
                   <Td>
                     {s.staffId ? (
                       <Link className="underline" href={`/admin/client-data/access?${qs({ who: s.staffId })}`}>
-                        {s.who}
+                        {whoLabel(s.who)}
                       </Link>
                     ) : (
-                      s.who
+                      whoLabel(s.who)
                     )}
                   </Td>
                   <Td right>{s.profiles}</Td>
@@ -167,7 +167,7 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
               {rows.slice(0, PAGE).map((r) => (
                 <tr key={r.id} className="align-top">
                   <Td>{formatDateTime(r.at)}</Td>
-                  <Td>{r.actorLabel}</Td>
+                  <Td>{whoLabel(r.actorLabel)}</Td>
                   <Td>
                     <Badge tone={KIND_TONE[r.kind]}>{r.what}</Badge>
                     {r.kind === "export" && r.detail && (
@@ -205,7 +205,7 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
           <ul className="divide-y divide-zinc-100 text-xs text-zinc-600">
             {handled.map((a) => (
               <li key={a.id} className="px-4 py-2">
-                {a.kind === "paused" ? "Paused" : "Unusual"}: {a.actorLabel}, {a.profiles} profiles and {a.searches} searches · {formatDateTime(a.at)} · acknowledged{" "}
+                {a.kind === "paused" ? "Paused" : "Unusual"}: {whoLabel(a.actorLabel)}, {lookupCounts(a.profiles, a.searches)} · {formatDateTime(a.at)} · acknowledged{" "}
                 {a.acknowledgedAt ? formatDateTime(a.acknowledgedAt) : ""}
               </li>
             ))}

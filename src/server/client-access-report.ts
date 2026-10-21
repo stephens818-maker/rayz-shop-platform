@@ -25,6 +25,15 @@ export function parseAccessFilters(sp: Record<string, string | undefined>): Acce
   };
 }
 
+/** "Frankie (desk) · Front Desk" from the stored "Front Desk:Frankie (desk)". */
+export function whoLabel(actorLabel: string | null): string {
+  if (!actorLabel) return "—";
+  const i = actorLabel.indexOf(":");
+  return i < 0 ? actorLabel : `${actorLabel.slice(i + 1)} · ${actorLabel.slice(0, i)}`;
+}
+
+export const lookupCounts = (profiles: number, searches: number) => `${profiles} profile${profiles === 1 ? "" : "s"} and ${searches} search${searches === 1 ? "" : "es"}`;
+
 function where(f: AccessFilters) {
   return and(
     gt(clientAccessLog.at, new Date(Date.now() - Number(f.days) * 86_400_000)),

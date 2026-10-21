@@ -1,6 +1,6 @@
 import { audit } from "@/server/audit";
 import { routeStaff } from "@/server/auth/staff";
-import { accessEntries, parseAccessFilters } from "@/server/client-access-report";
+import { accessEntries, parseAccessFilters, whoLabel } from "@/server/client-access-report";
 import { toCsv } from "@/server/reports";
 
 export async function GET(req: Request) {
@@ -10,7 +10,7 @@ export async function GET(req: Request) {
   const rows = await accessEntries(f, 50_000);
   const csv = toCsv(
     ["When", "Who", "What", "Field", "Client", "Client ID", "Reason", "Shop"],
-    rows.map((r) => [r.at.toISOString(), r.actorLabel, r.what, r.fieldName, r.client, r.customerId, r.reason, r.shop ?? "All shops"]),
+    rows.map((r) => [r.at.toISOString(), whoLabel(r.actorLabel), r.what, r.fieldName, r.client, r.customerId, r.reason, r.shop ?? "All shops"]),
   );
   await audit(
     ctx.actor,
