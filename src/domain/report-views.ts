@@ -137,7 +137,8 @@ function order(v: ViewCtx, id: string) {
 }
 
 /** The key a row lands in at the view's grain. */
-export const rowKey = (v: ViewCtx, r: { shopId: string | null; staffId?: string | null }) => segKey(v.view === "shops" ? r.shopId : null, v.byBarber ? (r.staffId ?? NO_BARBER) : null);
+export const rowKey = (v: ViewCtx, r: { shopId: string | null; staffId?: string | null }) =>
+  segKey(v.view === "shops" ? r.shopId : null, v.byBarber ? (r.staffId ?? NO_BARBER) : null);
 
 // ───────────────────────────── Metric tables: one row per metric ─────────────────────────────
 
@@ -208,12 +209,26 @@ export function segmentTable(v: ViewCtx, t: { id: string; title: string; subtitl
     for (const shop of v.shops) {
       const mine = segs.filter((x) => x.shopId === shop.id);
       mine.forEach(pushSeg);
-      rows.push([shop.name, "Subtotal", ...at(segKey(shop.id, null), mine.map((x) => x.key))]);
+      rows.push([
+        shop.name,
+        "Subtotal",
+        ...at(
+          segKey(shop.id, null),
+          mine.map((x) => x.key),
+        ),
+      ]);
       styles.push("subtotal");
     }
   else segs.forEach(pushSeg);
   const label = segs.length || v.view === "shops" ? v.totalLabel : v.shops.length === 1 ? v.shops[0].name : v.totalLabel;
-  rows.push([label, ...(v.view === "shops" && v.byBarber ? [null] : []), ...at(TOTAL, segs.map((s) => s.key))]);
+  rows.push([
+    label,
+    ...(segs.length && v.view === "shops" ? [null] : []),
+    ...at(
+      TOTAL,
+      segs.map((s) => s.key),
+    ),
+  ]);
   styles.push("total");
   return { id: t.id, title: t.title, subtitle: t.subtitle, exportOnly: t.exportOnly, columns, rows, rowStyles: styles };
 }
@@ -227,7 +242,7 @@ export function metricSplitTable(v: ViewCtx, t: { id: string; title: string; sub
   const pairs = [...new Set(t.metrics.flatMap((m) => Object.keys(m.at)))].map(parseSegKey).filter((p) => p.shopId && p.staffId);
   const byStaff = new Map<string, string[]>();
   for (const p of pairs) if (v.shops.some((s) => s.id === p.shopId)) byStaff.set(p.staffId!, [...new Set([...(byStaff.get(p.staffId!) ?? []), p.shopId!])]);
-  const multi = orderBarbers(v, [...byStaff.keys()]).filter((id) => byStaff.get(id)!.length > 1 && id !== NO_BARBER);
+  const multi = orderBarbers(v, [...byStaff.keys()]).filter((id) => (byStaff.get(id)?.length ?? 0) > 1 && id !== NO_BARBER);
   if (!multi.length) return null;
   const rows: Cell[][] = [];
   const styles: (RowStyle | undefined)[] = [];
@@ -386,7 +401,10 @@ export function listTable(v: ViewCtx, t: ListSpec): ReportTable {
 
   let columns = t.columns;
   if (t.merge) {
-    const merged = mergeByKey(t, t.rows, derive).map((m) => ({ cells: m.cells, names: m.shopIds.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)).map((id) => shopName.get(id) ?? "") }));
+    const merged = mergeByKey(t, t.rows, derive).map((m) => ({
+      cells: m.cells,
+      names: m.shopIds.sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)).map((id) => shopName.get(id) ?? ""),
+    }));
     const at = t.shopsColumnAt;
     if (at !== undefined) columns = insertAt(columns, at, { label: "Locations" });
     const bySort = t.sort ? [...merged].sort((a, b) => t.sort!(a.cells, b.cells)) : merged;
