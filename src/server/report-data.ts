@@ -35,7 +35,6 @@ import {
   emptyKpis,
   giftCardTotalsByShop,
   giftCardsIssued,
-  inventoryStatus,
   itemMix,
   kpisAt,
   loyaltyActivity,
@@ -49,6 +48,11 @@ import {
   tenderAt,
   toCsv,
 } from "./reports";
+import { ledgerEntries, movement, poHistory, sellThrough, valuation, vendorSpend, isCurrent } from "./inventory/reports";
+import { stockLevels } from "./inventory/stock";
+import { suggestionsFor } from "./inventory/purchasing";
+import { ADJUST_REASON_LABEL, LEDGER_KIND_LABEL, PO_STATUS_LABEL, poNumber } from "@/domain/inventory";
+import { diffDays, formatDate, formatDateTime } from "@/lib/time";
 
 /**
  * Every a la carte report is one loader returning stats and tables. The report page renders them
@@ -295,6 +299,335 @@ export async function ratingsGivenTable(scope: ReportScope, loc: ViewCtx): Promi
   });
 }
 
+// ───────────────────────────── Inventory and purchasing ─────────────────────────────
+
+const days = (scope: ReportScope) => diffDays(scope.to, scope.from) + 1;
+const multi = (loc: ViewCtx) => loc.shops.length > 1;
+/** Merged rows list the shops they came from, after the product name. */
+const shopsAt = (loc: ViewCtx, at: number) => (multi(loc) && loc.view === "combined" ? at : undefined);
+const byProduct = (at: number) => (a: Cell[], b: Cell[]) => String(a[at]).localeCompare(String(b[at]));
+
+async function inventoryValuation(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+  const r = await valuation(scope);
+  const units = r.reduce((a, x) => a + Math.max(0, x.onHand), 0);
+  const value = r.reduce((a, x) => a + x.valueCents, 0);
+  const retail = r.reduce((a, x) => a + x.retailCents, 0);
+  const onOrder = r.reduce((a, x) => a + x.onOrderCents, 0);
+  const negative = r.filter((x) => x.onHand < 0);
+  const margin = (c: Cell[], v: number, rt: number) => {
+    const out = [...c];
+    out[rt + 1] = typeof c[rt] === "number" && (c[rt] as number) > 0 ? ((c[rt] as number) - (c[v] as number)) / (c[rt] as number) : null;
+    return out;
+  };
+  return {
+    stats: [
+      { label: "Stock at cost", value: formatCents(value), hint: `${units} units on hand` },
+      { label: "Stock at retail", value: formatCents(retail), hint: retail ? `${pct((retail - value) / retail)} margin` : undefined },
+      { label: "On order at cost", value: formatCents(onOrder), hint: "approved and sent orders, not yet received" },
+      { label: "Products carried", value: String(new Set(r.map((x) => x.productId)).size), hint: multi(loc) ? `${r.length} shop listings` : undefined },
+    ],
+    tables: [
+      listTable(loc, {
+        id: "categories",
+        title: "By category",
+        columns: [text("Category"), int("Units"), money("Value at cost"), money("Value at retail"), { label: "Margin", kind: "pct" }],
+        rows: r.map((x) => ({ shopId: x.shopId, key: x.category, cells: [x.category, Math.max(0, x.onHand), x.valueCents, x.retailCents, null] })),
+        merge: true,
+        derive: (c) => margin(c, 2, 3),
+        sort: byProduct(0),
+      }),
+      listTable(loc, {
+        id: "stock",
+        title: "Stock value",
+        subtitle: isCurrent(scope)
+          ? "On hand now, at each shop's average shelf cost and its price."
+          : `On hand at the end of ${formatDate(scope.to, "MMM d, yyyy")} (today's stock less everything posted since), at today's shelf cost.`,
+        columns: [text("SKU"), text("Product"), text("Category"), int("On hand"), id("Cost", "money"), money("Value at cost"), id("Price", "money"), money("Value at retail"), int("On order"), money("On order at cost")],
+        rows: r.map((x) => ({ shopId: x.shopId, key: x.productId, cells: [x.sku, x.product, x.category, x.onHand, x.costCents, x.valueCents, x.priceCents, x.retailCents, x.onOrder, x.onOrderCents] })),
+        merge: true,
+        shopsColumnAt: shopsAt(loc, 2),
+        sort: byProduct(1),
+      }),
+    ],
+    notes: negative.length ? [`${negative.length} ${negative.length === 1 ? "listing is" : "listings are"} below zero on hand and counted as zero in the value. Count them to correct the shelf.`] : undefined,
+  };
+}
+
+async function inventoryMovement(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+  const [r, log] = await Promise.all([movement(scope), ledgerEntries(scope)]);
+  const t = (f: (x: (typeof r)[number]) => number) => r.reduce((a, x) => a + f(x), 0);
+  const shrinkUnits = (x: (typeof r)[number]) => x.damaged + x.theft + x.lostInTransit - x.countVariance - x.found;
+  return {
+    stats: [
+      { label: "Sold", value: String(t((x) => x.sold - x.returned)), hint: `${t((x) => x.sold)} sold · ${t((x) => x.returned)} returned` },
+      { label: "Received", value: String(t((x) => x.received)), hint: `${t((x) => x.transferIn)} transferred in · ${t((x) => x.transferOut)} out` },
+      { label: "Shrink", value: formatCents(t((x) => x.shrinkCents)), hint: `${t(shrinkUnits)} units: damage, theft, count losses, lost in transit`, tone: t((x) => x.shrinkCents) > 0 ? "down" : undefined },
+      { label: "Back bar", value: formatCents(t((x) => x.backBarCents)), hint: `${t((x) => x.backBar)} units used in services` },
+    ],
+    tables: [
+      listTable(loc, {
+        id: "movement",
+        title: "Stock movement",
+        subtitle: "Opening + received + returned + transfers in − sold − transfers out − damaged − theft − back bar + found + count variance + other = closing. Lost in transit already left with the transfer out.",
+        columns: [
+          text("SKU"),
+          text("Product"),
+          int("Opening"),
+          int("Received"),
+          int("Sold"),
+          int("Returned"),
+          int("Transfer in"),
+          int("Transfer out"),
+          int("Damaged"),
+          int("Theft"),
+          int("Back bar"),
+          int("Found"),
+          int("Count variance"),
+          int("Other"),
+          int("Closing"),
+          int("Lost in transit"),
+          int("Shrink units"),
+          money("Shrink at cost"),
+        ],
+        rows: r.map((x) => ({
+          shopId: x.shopId,
+          key: x.productId,
+          cells: [x.sku, x.product, x.opening, x.received, x.sold, x.returned, x.transferIn, x.transferOut, x.damaged, x.theft, x.backBar, x.found, x.countVariance, x.other, x.closing, x.lostInTransit, shrinkUnits(x), x.shrinkCents],
+        })),
+        merge: true,
+        shopsColumnAt: shopsAt(loc, 2),
+        sort: byProduct(1),
+      }),
+      listTable(loc, {
+        id: "ledger",
+        title: "Ledger entries",
+        subtitle: log.length >= 2000 ? "Showing the latest 2,000." : "Every stock change in the range, newest first.",
+        columns: [text("When"), text("SKU"), text("Product"), text("Kind"), text("Reason"), int("Change"), id("On hand after"), id("Unit cost", "money"), text("Reference"), text("Note"), text("By")],
+        rows: log.map((e) => ({
+          shopId: e.shopId,
+          cells: [
+            formatDateTime(e.at),
+            e.sku,
+            e.product,
+            LEDGER_KIND_LABEL[e.kind] ?? e.kind,
+            e.reason ? (ADJUST_REASON_LABEL[e.reason as keyof typeof ADJUST_REASON_LABEL] ?? e.reason) : null,
+            e.delta,
+            e.balanceAfter,
+            e.unitCostCents,
+            e.ref,
+            e.note,
+            e.by,
+          ],
+        })),
+        keepShop: multi(loc),
+        totals: false,
+      }),
+    ],
+  };
+}
+
+async function sellThroughData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+  const r = await sellThrough(scope);
+  const n = days(scope);
+  // SKU, Product, Opening, Received, Sold, Closing, Sell-through, Per day, Days of cover, Net sales, Cost of goods, Margin
+  const derive = (c: Cell[]) => {
+    const out = [...c];
+    const num = (i: number) => (typeof c[i] === "number" ? (c[i] as number) : 0);
+    const available = num(2) + num(3);
+    const perDay = num(4) / n;
+    out[6] = available > 0 ? num(4) / available : null;
+    out[7] = perDay;
+    out[8] = perDay > 0 ? Math.max(0, num(5)) / perDay : null;
+    out[11] = num(9) > 0 ? (num(9) - num(10)) / num(9) : null;
+    return out;
+  };
+  const sold = r.reduce((a, x) => a + x.soldNet, 0);
+  const available = r.reduce((a, x) => a + x.opening + x.receivedIn, 0);
+  const sales = r.reduce((a, x) => a + x.netSalesCents, 0);
+  const cogs = r.reduce((a, x) => a + x.cogsCents, 0);
+  const dead = r.filter((x) => x.soldNet <= 0 && x.closing > 0);
+  return {
+    stats: [
+      { label: "Sell-through", value: pct(ratio(sold, available)), hint: `${sold} sold of ${available} available` },
+      { label: "Net retail sales", value: formatCents(sales), hint: sales ? `${pct((sales - cogs) / sales)} margin at cost` : undefined },
+      { label: "Units per day", value: (sold / n).toFixed(1), hint: `over ${n} ${n === 1 ? "day" : "days"}` },
+      { label: "Not selling", value: String(dead.length), hint: "listings with stock and no sales in the range", tone: dead.length ? "down" : undefined },
+    ],
+    tables: [
+      listTable(loc, {
+        id: "sell_through",
+        title: "Sell-through by product",
+        subtitle: "Sold (less returns) out of opening stock plus what was received or transferred in. Days of cover: closing stock at the range's selling rate.",
+        columns: [
+          text("SKU"),
+          text("Product"),
+          int("Opening"),
+          int("Received"),
+          int("Sold"),
+          int("Closing"),
+          { label: "Sell-through", kind: "pct" },
+          { label: "Per day", kind: "decimal" },
+          { label: "Days of cover", kind: "decimal" },
+          money("Net sales"),
+          money("Cost of goods"),
+          { label: "Margin", kind: "pct" },
+        ],
+        rows: r.map((x) => ({ shopId: x.shopId, key: x.productId, cells: derive([x.sku, x.product, x.opening, x.receivedIn, x.soldNet, x.closing, null, null, null, x.netSalesCents, x.cogsCents, null]) })),
+        merge: true,
+        derive,
+        shopsColumnAt: shopsAt(loc, 2),
+        sort: (a, b) => Number(b[6] ?? -1) - Number(a[6] ?? -1) || String(a[1]).localeCompare(String(b[1])),
+      }),
+    ],
+  };
+}
+
+async function lowStockData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+  const [levels, suggestions] = await Promise.all([stockLevels(scope.shopIds), suggestionsFor(scope.shopIds)]);
+  const suggested = new Map<string, { qty: number; cents: number; vendor: string | null }>();
+  for (const s of suggestions) {
+    for (const o of s.orders) for (const l of o.lines) suggested.set(`${s.shopId}|${l.productId}`, { qty: l.qty, cents: l.qty * l.unitCostCents, vendor: o.vendorName });
+    for (const l of s.noVendor) suggested.set(`${s.shopId}|${l.productId}`, { qty: l.qty, cents: 0, vendor: null });
+  }
+  const low = levels.filter((x) => x.low);
+  const cents = low.reduce((a, x) => a + (suggested.get(`${x.shopId}|${x.productId}`)?.cents ?? 0), 0);
+  const out = low.filter((x) => x.available <= 0);
+  return {
+    stats: [
+      { label: "Low stock", value: String(low.length), hint: multi(loc) ? "shop listings at or below the reorder point" : "products at or below the reorder point", tone: low.length ? "down" : undefined },
+      { label: "Out of stock", value: String(out.length), hint: "nothing available to sell", tone: out.length ? "down" : undefined },
+      { label: "Suggested orders", value: formatCents(cents), hint: "to bring them to par, at vendor cost" },
+      { label: "Already coming", value: String(low.reduce((a, x) => a + x.onOrder + x.inTransit, 0)), hint: "units on order or in transit" },
+    ],
+    tables: [
+      listTable(loc, {
+        id: "low_stock",
+        title: "At or below the reorder point",
+        subtitle: "Now, whatever the dates. Available is on hand less what's on open tickets and transfers being picked. Suggested fills to par after what's coming, in whole cases.",
+        columns: [
+          text("SKU"),
+          text("Product"),
+          int("Available"),
+          int("On hand"),
+          int("Committed"),
+          int("On order"),
+          int("In transit"),
+          id("Reorder at"),
+          id("Par"),
+          int("Suggested"),
+          text("Vendor"),
+          money("Suggested at cost"),
+        ],
+        rows: low.map((x) => {
+          const sg = suggested.get(`${x.shopId}|${x.productId}`);
+          return {
+            shopId: x.shopId,
+            cells: [x.sku, `${x.brand} ${x.name}`, x.available, x.onHand, x.committed, x.onOrder, x.inTransit, x.levels.reorderPoint, x.levels.par, sg?.qty ?? 0, sg?.vendor ?? x.preferredVendor?.name ?? null, sg?.cents ?? 0],
+          };
+        }),
+        keepShop: multi(loc),
+        sort: (a, b) => Number(a[2]) - Number(b[2]) || String(a[1]).localeCompare(String(b[1])),
+      }),
+    ],
+  };
+}
+
+async function purchasingData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+  const [spend, pos] = await Promise.all([vendorSpend(scope), poHistory(scope)]);
+  const t = (f: (x: (typeof spend)[number]) => number, xs = spend) => xs.reduce((a, x) => a + f(x), 0);
+  // Lead time and fill rate don't add up; they're worked out per vendor over the selected shops, and overall.
+  const perVendor = new Map<string, { lead: number | null; fill: number | null }>();
+  const rate = (xs: typeof spend) => ({ lead: t((x) => x.leadOrders, xs) ? t((x) => x.leadDaysTotal, xs) / t((x) => x.leadOrders, xs) : null, fill: ratio(t((x) => x.unitsReceivedClosed, xs), t((x) => x.unitsOrderedClosed, xs)) });
+  for (const v of new Set(spend.map((x) => x.vendor))) perVendor.set(v, rate(spend.filter((x) => x.vendor === v)));
+  const overall = rate(spend);
+  const derive = (c: Cell[]) => {
+    const out = [...c];
+    const r = typeof c[0] === "string" && perVendor.has(c[0]) ? perVendor.get(c[0])! : c[0] === loc.totalLabel ? overall : null;
+    out[8] = r?.lead ?? null;
+    out[9] = r?.fill ?? null;
+    return out;
+  };
+  const shopRate = (x: (typeof spend)[number]) => [x.leadOrders ? x.leadDaysTotal / x.leadOrders : null, ratio(x.unitsReceivedClosed, x.unitsOrderedClosed)];
+  return {
+    stats: [
+      { label: "Ordered", value: formatCents(t((x) => x.orderedCents)), hint: `${t((x) => x.ordersSent)} orders sent` },
+      { label: "Received at cost", value: formatCents(t((x) => x.receivedCents)), hint: `${t((x) => x.unitsReceived)} units in ${t((x) => x.receipts)} deliveries` },
+      { label: "On order now", value: formatCents(t((x) => x.onOrderCents)) },
+      {
+        label: "Cost changes",
+        value: formatCents(t((x) => x.costVarianceCents), { sign: true }),
+        hint: "received at a different price than ordered",
+        tone: t((x) => x.costVarianceCents) > 0 ? "down" : undefined,
+      },
+    ],
+    tables: [
+      listTable(loc, {
+        id: "vendors",
+        title: "Vendor spend",
+        subtitle: "Ordered: orders sent in the range, at the order price. Received: deliveries in the range, at what the vendor charged. Fill rate: units received on orders completed in the range.",
+        columns: [
+          text("Vendor"),
+          int("Orders sent"),
+          money("Ordered"),
+          int("Deliveries"),
+          int("Units received"),
+          money("Received at cost"),
+          money("Cost changes"),
+          money("On order now"),
+          { label: "Days to deliver", kind: "decimal" },
+          { label: "Fill rate", kind: "pct" },
+        ],
+        rows: spend.map((x) => ({
+          shopId: x.shopId,
+          key: x.vendorId,
+          cells: [x.vendor, x.ordersSent, x.orderedCents, x.receipts, x.unitsReceived, x.receivedCents, x.costVarianceCents, x.onOrderCents, ...shopRate(x)],
+        })),
+        merge: true,
+        derive,
+        shopsColumnAt: shopsAt(loc, 1),
+        sort: byProduct(0),
+      }),
+      listTable(loc, {
+        id: "orders",
+        title: "Purchase orders",
+        subtitle: pos.length >= 2000 ? "Showing the latest 2,000." : "Created, sent or received in the range.",
+        columns: [
+          text("PO"),
+          text("Vendor"),
+          text("Status"),
+          text("Created"),
+          text("Sent"),
+          text("Expected"),
+          text("Received"),
+          id("Lines"),
+          int("Units"),
+          int("Units received"),
+          money("Ordered"),
+          money("Received at cost"),
+        ],
+        rows: pos.map((p) => ({
+          shopId: p.shopId,
+          cells: [
+            poNumber(p.number),
+            p.vendor,
+            `${PO_STATUS_LABEL[p.status as keyof typeof PO_STATUS_LABEL] ?? p.status}${p.closedShort ? " (closed short)" : ""}`,
+            p.createdOn,
+            p.sentOn,
+            p.expectedOn,
+            p.receivedOn,
+            p.lines,
+            p.units,
+            p.unitsReceived,
+            p.orderedCents,
+            p.receivedCents,
+          ],
+        })),
+        keepShop: multi(loc),
+      }),
+    ],
+  };
+}
+
 export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<ReportData>> = {
   async my_sales({ scope, loc }) {
     return salesData(scope, loc);
@@ -514,54 +847,23 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
   },
 
   async inventory({ scope, loc }) {
-    const r = await inventoryStatus(scope);
-    const low = r.filter((x) => x.low);
-    return {
-      stats: [
-        { label: "Products carried", value: String(new Set(r.map((x) => x.productId)).size), hint: loc.shops.length > 1 ? `${r.length} shop listings` : undefined },
-        {
-          label: "Low stock",
-          value: String(low.length),
-          tone: low.length ? "down" : undefined,
-          hint: loc.shops.length > 1 ? "shop listings at or under reorder level" : undefined,
-        },
-        { label: "Stock at cost", value: formatCents(r.reduce((a, x) => a + x.valueCents, 0)) },
-        { label: "Sold in range", value: String(r.reduce((a, x) => a + x.sold, 0)), hint: `${r.reduce((a, x) => a + x.received, 0)} received` },
-      ],
-      tables: [
-        listTable(loc, {
-          id: "stock",
-          title: loc.view === "shops" || loc.shops.length === 1 ? "Stock by location" : "Stock across locations",
-          subtitle: "On hand now. Received, sold, damaged and count changes are for the selected dates.",
-          columns: [
-            text("SKU"),
-            text("Product"),
-            int("On hand"),
-            id("Reorder at"),
-            { label: "Low", kind: "bool" },
-            id("Cost", "money"),
-            id("Price", "money"),
-            money("Value at cost"),
-            int("Received"),
-            int("Sold"),
-            int("Damaged"),
-            int("Count changes"),
-          ],
-          rows: r.map((x) => ({
-            shopId: x.shopId,
-            key: x.productId,
-            cells: [x.sku, x.product, x.stock, x.threshold, x.low, x.costCents, x.priceCents, x.valueCents, x.received, x.sold, x.damaged, x.counted],
-          })),
-          merge: true,
-          shopsColumnAt: loc.shops.length > 1 ? 2 : undefined,
-          sort: (a, b) => Number(b[4] === true) - Number(a[4] === true) || String(a[1]).localeCompare(String(b[1])),
-        }),
-      ],
-      notes:
-        loc.view === "combined" && loc.shops.length > 1
-          ? ["Combined rows add up stock across shops. Low is shown only when every shop agrees; switch to By location for each shop's level."]
-          : undefined,
-    };
+    return inventoryValuation(scope, loc);
+  },
+
+  async inventory_movement({ scope, loc }) {
+    return inventoryMovement(scope, loc);
+  },
+
+  async sell_through({ scope, loc }) {
+    return sellThroughData(scope, loc);
+  },
+
+  async low_stock({ scope, loc }) {
+    return lowStockData(scope, loc);
+  },
+
+  async purchasing({ scope, loc }) {
+    return purchasingData(scope, loc);
   },
 
   async gift_cards({ scope, loc }) {

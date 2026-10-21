@@ -39,7 +39,8 @@ async function main() {
     audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
-    inventory_adjustments, shop_products, products, shop_services, services, time_blocks,
+    inventory_ledger, po_receipt_lines, po_receipts, purchase_order_lines, purchase_orders, vendor_products, vendors,
+    stock_transfer_lines, stock_transfers, stock_count_lines, stock_counts, shop_products, products, shop_services, services, time_blocks,
     location_group_shops, location_groups, staff_group_members, staff_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours, shops, brand_settings
     RESTART IDENTITY CASCADE`);
 
@@ -178,9 +179,13 @@ async function main() {
         category,
         priceCents: price * 100,
         costCents: Math.round(price * 100 * 0.5),
+        lowStockThreshold: category === "Merch" ? 2 : 3,
+        parLevel: category === "Merch" ? 6 : 8,
       })),
     )
     .returning();
+  // Stock on hand today; posted to the ledger at the end as an opening balance plus the sample sales.
+  const targetStock = new Map<string, number>();
   const shopProductRows = shopRows
     .filter((s) => s.slug !== "dubuque")
     .flatMap((s) =>
@@ -188,11 +193,16 @@ async function main() {
         .filter((_, i) => s.slug === "coralville" || i % 3 !== 1)
         .map((p) => {
           const price = PRODUCTS.find(([b, n]) => b === p.brand && n === p.name)![2] * 100;
-          const stock = chance(0.3) ? Math.floor(rand() * 3) : 3 + Math.floor(rand() * 10);
-          return { shopId: s.id, productId: p.id, priceCents: price, costCents: Math.round(price * (0.48 + rand() * 0.06)), stock, lowStockThreshold: 3 };
+          targetStock.set(`${s.id}|${p.id}`, chance(0.3) ? Math.floor(rand() * 3) : 3 + Math.floor(rand() * 10));
+          return { shopId: s.id, productId: p.id, priceCents: price, costCents: Math.round(price * (0.48 + rand() * 0.06)) };
         }),
     );
   await db.insert(t.shopProducts).values(shopProductRows);
+  // Coralville is the busiest shop, so it keeps more of the best sellers.
+  for (const name of ["Blue Pomade 4oz", "Fiber 4oz"]) {
+    const p = productRows.find((x) => x.brand === "Reuzel" && x.name === name);
+    if (p) await db.update(t.shopProducts).set({ lowStockThreshold: 5, parLevel: 14 }).where(sql`shop_id = ${shopBySlug.get("coralville")!.id} and product_id = ${p.id}`);
+  }
 
   // ── Promos & gift cards ──
   await db.insert(t.promoCodes).values([
@@ -504,6 +514,8 @@ async function main() {
   await chunked(ratingRows, 2000, (c) => db.insert(t.clientRatings).values(c));
   console.log(`  ${ratingRows.length} sample staff ratings`);
 
+  await seedInventory({ now, shopBySlug, productRows, shopProductRows, targetStock, saleRows, saleItemRows, owner: staffByKey.get("michelle")! });
+
   // ── Demo logins for the other role templates (not bookable, no history) ──
   for (const [i, d] of DEMO_LOGINS.entries()) {
     const tpl = templateFor(d.role)!;
@@ -533,6 +545,177 @@ async function main() {
   console.log("    michelle@rayz.test   Shop Manager, Coralville");
   console.log("    frontdesk@rayz.test  Front Desk, Coralville");
   console.log("    makenna@rayz.test    Barber, Coralville");
+}
+
+type Shop = typeof t.shops.$inferSelect;
+type Product = typeof t.products.$inferSelect;
+
+/**
+ * Vendors, a few purchase orders and a transfer in flight, then the stock ledger: an opening balance
+ * per product, every sample sale, and the receipts and transfer, in date order, ending at today's
+ * stock. Deterministic (no random numbers), so the sample history above is unchanged.
+ */
+async function seedInventory(o: {
+  now: Date;
+  shopBySlug: Map<string, Shop>;
+  productRows: Product[];
+  shopProductRows: { shopId: string; productId: string; costCents: number }[];
+  targetStock: Map<string, number>;
+  saleRows: (typeof t.sales.$inferInsert & { id: string })[];
+  saleItemRows: (typeof t.saleItems.$inferInsert)[];
+  owner: typeof t.staff.$inferSelect;
+}) {
+  const { now, shopBySlug, productRows } = o;
+  const ago = (days: number) => new Date(now.getTime() - days * 86_400_000);
+  const key = (shopId: string, productId: string) => `${shopId}|${productId}`;
+  const cost = new Map(o.shopProductRows.map((r) => [key(r.shopId, r.productId), r.costCents]));
+  const carried = (shop: string, p: Product) => cost.has(key(shopBySlug.get(shop)!.id, p.id));
+  const product = (brand: string, name: string) => productRows.find((p) => p.brand === brand && p.name === name)!;
+
+  await db.update(t.brandSettings).set({ poApprovalThresholdCents: 50_000 });
+  await db.update(t.shops).set({ negativeStock: "warn" }).where(sql`slug = 'moline'`);
+
+  const vendorRows = await db
+    .insert(t.vendors)
+    .values([
+      {
+        name: "Barber Supply Co.",
+        contactName: "Dana Kowalski",
+        email: "orders@barbersupply.example",
+        phone: "(319) 555-0182",
+        address: "2200 Industrial Park Rd\nCedar Rapids, IA 52404",
+        accountNumber: "RAYZ-4471",
+        paymentTerms: "Net 30",
+        leadTimeDays: 5,
+        minimumOrderCents: 15_000,
+        sendCsv: true,
+        notes: "Orders in before noon ship the same day.",
+      },
+      {
+        name: "SalonCentric",
+        contactName: "Marcus Lee",
+        email: "midwest.orders@saloncentric.example",
+        phone: "(800) 555-0144",
+        address: "1450 Commerce Dr\nDes Moines, IA 50309",
+        accountNumber: "SC-88120",
+        paymentTerms: "Net 30",
+        leadTimeDays: 7,
+        minimumOrderCents: 10_000,
+      },
+      {
+        name: "Midwest Beauty Distributors",
+        contactName: "Angie Ruiz",
+        email: "sales@midwestbeauty.example",
+        phone: "(563) 555-0170",
+        address: "318 W 3rd St\nDavenport, IA 52801",
+        paymentTerms: "Due on receipt",
+        leadTimeDays: 3,
+        notes: "Backup source for Reuzel when Barber Supply is out. Costs a little more, ships in singles.",
+      },
+      {
+        name: "Hawkeye Print & Embroidery",
+        contactName: "Tom Becker",
+        email: "tom@hawkeyeprint.example",
+        phone: "(319) 555-0127",
+        address: "88 Gilbert St\nIowa City, IA 52240",
+        paymentTerms: "50% deposit, balance Net 15",
+        leadTimeDays: 14,
+        minimumOrderCents: 20_000,
+      },
+    ])
+    .returning();
+  const [supply, salon, midwest, print] = vendorRows;
+  const preferredFor = (brand: string) => (brand === "Ray'z" ? print : brand === "Redken" || brand === "Paul Mitchell" ? salon : supply);
+  const casePackOf = (p: Product) => (p.name === "Pocket Comb" ? 24 : p.category === "Merch" ? 12 : 6);
+  const vendorSku = (v: typeof supply, p: Product) => `${v.name.replace(/[^A-Z]/g, "")}-${p.sku.slice(-3)}${p.sku.slice(0, 3)}`;
+  await db.insert(t.vendorProducts).values([
+    ...productRows.map((p) => {
+      const v = preferredFor(p.brand);
+      return { vendorId: v.id, productId: p.id, vendorSku: vendorSku(v, p), casePack: casePackOf(p), costCents: p.costCents, preferred: true };
+    }),
+    ...productRows
+      .filter((p) => p.brand === "Reuzel")
+      .map((p) => ({ vendorId: midwest.id, productId: p.id, vendorSku: vendorSku(midwest, p), casePack: 1, costCents: Math.round(p.costCents * 1.08), preferred: false })),
+  ]);
+
+  type Line = { p: Product; qty: number; received?: number };
+  const moves: (typeof t.inventoryLedger.$inferInsert)[] = [];
+  const shopCost = (shopId: string, p: Product) => cost.get(key(shopId, p.id)) ?? p.costCents;
+  async function po(shop: string, vendor: typeof supply, status: (typeof t.purchaseOrders.$inferInsert)["status"], lines: Line[], at: { created: number; sent?: number; received?: number }, notes?: string) {
+    const shopId = shopBySlug.get(shop)!.id;
+    const list = lines.filter((l) => carried(shop, l.p));
+    const [row] = await db
+      .insert(t.purchaseOrders)
+      .values({
+        shopId,
+        vendorId: vendor.id,
+        status,
+        notes: notes ?? null,
+        createdBy: o.owner.id,
+        createdAt: ago(at.created),
+        updatedAt: ago(at.sent ?? at.created),
+        approvedAt: at.sent !== undefined ? ago(at.sent) : null,
+        sentAt: at.sent !== undefined ? ago(at.sent) : null,
+        sentBy: at.sent !== undefined ? o.owner.id : null,
+        sentTo: at.sent !== undefined ? vendor.email : null,
+        expectedOn: localDateOf(ago((at.sent ?? at.created) - vendor.leadTimeDays)),
+        receivedAt: status === "received" && at.received !== undefined ? ago(at.received) : null,
+      })
+      .returning();
+    const lineRows = await db
+      .insert(t.purchaseOrderLines)
+      .values(list.map((l) => ({ purchaseOrderId: row.id, productId: l.p.id, vendorSku: vendorSku(vendor, l.p), casePack: casePackOf(l.p), qtyOrdered: l.qty, unitCostCents: l.p.costCents, qtyReceived: l.received ?? 0 })))
+      .returning();
+    const got = list.filter((l) => l.received);
+    if (got.length && at.received !== undefined) {
+      const [receipt] = await db.insert(t.poReceipts).values({ purchaseOrderId: row.id, shopId, receivedBy: o.owner.id, receivedAt: ago(at.received) }).returning();
+      await db.insert(t.poReceiptLines).values(got.map((l) => ({ receiptId: receipt.id, lineId: lineRows.find((x) => x.productId === l.p.id)!.id, productId: l.p.id, qty: l.received!, unitCostCents: l.p.costCents })));
+      for (const l of got) moves.push({ shopId, productId: l.p.id, delta: l.received!, kind: "receive", unitCostCents: l.p.costCents, purchaseOrderId: row.id, receiptId: receipt.id, staffId: o.owner.id, createdAt: ago(at.received) });
+    }
+  }
+
+  const reuzel = (n: string) => product("Reuzel", n);
+  await po("coralville", supply, "received", [{ p: reuzel("Blue Pomade 4oz"), qty: 12, received: 12 }, { p: reuzel("Fiber 4oz"), qty: 12, received: 12 }, { p: reuzel("Matte Clay 4oz"), qty: 6, received: 6 }], { created: 7, sent: 6.9, received: 2 });
+  await po("coralville", print, "partially_received", [{ p: product("Ray'z", "Snapback Hat"), qty: 24, received: 12 }, { p: product("Ray'z", "Beanie"), qty: 12, received: 12 }], { created: 20, sent: 19.8, received: 1 }, "Black hats with the white logo, same as last run.");
+  await po("moline", salon, "sent", [{ p: product("Redken", "Brews Clean Hold Pomade"), qty: 6 }, { p: product("Redken", "Brews Daily Shampoo"), qty: 6 }, { p: product("Paul Mitchell", "Tea Tree Special Shampoo"), qty: 6 }], { created: 1.2, sent: 1 });
+  await po("rock-island", supply, "draft", [{ p: product("Johnny B", "Hold Up Pomade"), qty: 6 }, { p: product("Level 3", "Styling Powder"), qty: 6 }], { created: 0.2 });
+  await po("coralville", salon, "draft", [{ p: product("Redken", "Brews Maneuver Cream"), qty: 24 }, { p: product("Redken", "Brews Daily Shampoo"), qty: 18 }, { p: product("Paul Mitchell", "Tea Tree Shaping Cream"), qty: 12 }], { created: 0.1 }, "Stocking up for the holidays.");
+
+  // Moline sent spare pomade to Rock Island yesterday; it's in transit.
+  const from = shopBySlug.get("moline")!.id;
+  const to = shopBySlug.get("rock-island")!.id;
+  const moving = [reuzel("Blue Pomade 4oz"), reuzel("Pink Pomade 4oz")].filter((p) => carried("moline", p) && carried("rock-island", p));
+  if (moving.length) {
+    const [tr] = await db.insert(t.stockTransfers).values({ fromShopId: from, toShopId: to, status: "sent", note: "Rock Island ran out before the weekend", createdBy: o.owner.id, sentBy: o.owner.id, sentAt: ago(1), createdAt: ago(1.1) }).returning();
+    await db.insert(t.stockTransferLines).values(moving.map((p) => ({ transferId: tr.id, productId: p.id, qty: 2, unitCostCents: shopCost(from, p) })));
+    for (const p of moving) moves.push({ shopId: from, productId: p.id, delta: -2, kind: "transfer_out", unitCostCents: shopCost(from, p), transferId: tr.id, staffId: o.owner.id, createdAt: ago(1) });
+  }
+
+  const saleById = new Map(o.saleRows.map((s) => [s.id, s]));
+  for (const i of o.saleItemRows) {
+    if (i.kind !== "product" || !i.refId) continue;
+    const s = saleById.get(i.saleId)!;
+    moves.push({ shopId: s.shopId, productId: i.refId, delta: -i.qty!, kind: "sale", unitCostCents: cost.get(key(s.shopId, i.refId)), saleId: s.id, createdAt: s.paidAt! });
+  }
+  // Opening balance: whatever makes the history end at today's stock, without dipping below zero on the way.
+  moves.sort((a, b) => a.createdAt!.getTime() - b.createdAt!.getTime());
+  const net = new Map<string, number>();
+  const low = new Map<string, number>();
+  for (const m of moves) {
+    const k = key(m.shopId, m.productId);
+    net.set(k, (net.get(k) ?? 0) + m.delta);
+    low.set(k, Math.min(low.get(k) ?? 0, net.get(k)!));
+  }
+  const firstAt = moves.reduce((a, m) => Math.min(a, m.createdAt!.getTime()), now.getTime());
+  const openingAt = new Date(firstAt - 86_400_000);
+  for (const r of o.shopProductRows) {
+    const k = key(r.shopId, r.productId);
+    const opening = Math.max(0, (o.targetStock.get(k) ?? 0) - (net.get(k) ?? 0), -(low.get(k) ?? 0));
+    if (opening) moves.push({ shopId: r.shopId, productId: r.productId, delta: opening, kind: "opening", note: "Imported from Squire", unitCostCents: r.costCents, createdAt: openingAt });
+  }
+  moves.sort((a, b) => a.createdAt!.getTime() - b.createdAt!.getTime() || Number(b.kind === "opening") - Number(a.kind === "opening"));
+  await chunked(moves, 1000, (c) => db.insert(t.inventoryLedger).values(c));
+  console.log(`  ${vendorRows.length} vendors, ${moves.length} inventory ledger entries`);
 }
 
 main()

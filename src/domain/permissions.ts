@@ -38,7 +38,20 @@ export const FEATURE_PERMISSIONS = [
   { key: "loyalty.grant", group: "Clients", label: "Grant courtesy loyalty rewards" },
   { key: "catalog.prices", group: "Catalog and inventory", label: "Edit services and prices at their shops" },
   { key: "catalog.manage", group: "Catalog and inventory", label: "Manage the brand catalog, bulk upload items, and push them to shops" },
-  { key: "inventory.manage", group: "Catalog and inventory", label: "Manage inventory: stock, cost, price and low-stock levels at their shops" },
+  {
+    key: "inventory.manage",
+    group: "Catalog and inventory",
+    label: "Set par levels and reorder points, and send low-stock alerts at their shops",
+    hint: "With access to all shops, also the brand defaults and the purchase order approval limit.",
+  },
+  { key: "inventory.adjust", group: "Catalog and inventory", label: "Adjust stock by hand: damage, theft, back bar, count corrections" },
+  { key: "inventory.transfer", group: "Catalog and inventory", label: "Transfer stock between their shops" },
+  { key: "inventory.stocktake", group: "Catalog and inventory", label: "Run cycle counts and full stocktakes" },
+  { key: "vendors.manage", group: "Catalog and inventory", label: "Add and edit vendors and what they sell" },
+  { key: "po.create", group: "Catalog and inventory", label: "Create and edit purchase orders" },
+  { key: "po.approve", group: "Catalog and inventory", label: "Approve purchase orders over the approval limit" },
+  { key: "po.send", group: "Catalog and inventory", label: "Send purchase orders to vendors" },
+  { key: "po.receive", group: "Catalog and inventory", label: "Receive deliveries against purchase orders" },
   { key: "staff.manage", group: "Staff", label: "Add and edit staff profiles" },
   { key: "permissions.manage", group: "Staff", label: "Manage roles, permissions and shop access" },
   {
@@ -68,7 +81,11 @@ export const REPORTS = [
   { key: "tips_payroll", label: "Tips and payroll export", href: "/admin/payroll" },
   { key: "card_vs_cash", label: "Card vs cash", href: "/admin/reports/tender" },
   { key: "discounts_refunds", label: "Discounts and refunds", href: "/admin/reports/discounts-refunds" },
-  { key: "inventory", label: "Inventory and low stock", href: "/admin/reports/inventory" },
+  { key: "inventory", label: "Inventory valuation", href: "/admin/reports/inventory" },
+  { key: "inventory_movement", label: "Stock movement and shrink", href: "/admin/reports/inventory-movement" },
+  { key: "sell_through", label: "Sell-through", href: "/admin/reports/sell-through" },
+  { key: "low_stock", label: "Low stock", href: "/admin/reports/low-stock" },
+  { key: "purchasing", label: "Purchase orders and vendor spend", href: "/admin/reports/purchasing" },
   { key: "gift_cards", label: "Gift cards", href: "/admin/reports/gift-cards" },
   { key: "loyalty", label: "Loyalty", href: "/admin/reports/loyalty" },
   { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },
@@ -151,11 +168,19 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "clients.ratings_all",
   "catalog.prices",
   "inventory.manage",
+  "inventory.adjust",
+  "inventory.transfer",
+  "inventory.stocktake",
+  "po.create",
+  "po.send",
+  "po.receive",
   "staff.manage",
   "settings.shop",
   "notifications.view",
   "reports.all_staff",
 ];
+/** Regional managers also run vendors and approve big orders for their shops. */
+const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "vendors.manage", "po.approve"];
 
 export interface RoleTemplate extends RoleDef {
   key: RoleTemplateKey;
@@ -186,7 +211,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     name: "Regional Manager",
     description: "Manages several shops: front desk, POS, clients, staff and shop settings, with every report for those shops.",
     defaultScope: "selected",
-    permissions: [...MANAGER_FEATURES, "giftcards.void", ...reports(ALL_REPORTS)],
+    permissions: [...REGIONAL_FEATURES, "giftcards.void", ...reports(ALL_REPORTS)],
     maxDiscountPct: 100,
   },
   {
@@ -213,6 +238,8 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       "clients.contact",
       "clients.edit",
       "reports.all_staff",
+      "po.receive",
+      "inventory.stocktake",
       ...reports(["card_vs_cash", "cash_drawer"], false),
     ],
     maxDiscountPct: 10,

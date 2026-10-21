@@ -37,6 +37,9 @@ export const paymentMethod = pgEnum("payment_method", ["card", "cash", "gift_car
 export const paymentStatus = pgEnum("payment_status", ["pending", "succeeded", "failed", "voided", "refunded", "partially_refunded"]);
 export const waitlistStatus = pgEnum("waitlist_status", ["waiting", "notified", "serving", "done", "left"]);
 export const notificationStatus = pgEnum("notification_status", ["pending", "sent", "failed", "suppressed", "cancelled"]);
+export const poStatus = pgEnum("po_status", ["draft", "approved", "sent", "partially_received", "received", "cancelled"]);
+export const transferStatus = pgEnum("transfer_status", ["draft", "sent", "received", "cancelled"]);
+export const countStatus = pgEnum("count_status", ["open", "posted", "cancelled"]);
 
 // ───────────────────────────── Brand & shops ─────────────────────────────
 
@@ -44,6 +47,8 @@ export const brandSettings = pgTable("brand_settings", {
   id: smallint("id").primaryKey().default(1),
   name: text("name").notNull().default("Ray'z Barber Shop"),
   loyalty: jsonb("loyalty").notNull(),
+  /** Purchase orders above this total need someone with "Approve purchase orders" before they can be sent. Null: no approval step. */
+  poApprovalThresholdCents: integer("po_approval_threshold_cents"),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -74,8 +79,13 @@ export const shops = pgTable("shops", {
   bookingWindowDays: integer("booking_window_days").notNull().default(60),
   bufferMinutes: integer("buffer_minutes").notNull().default(0),
   description: text("description"),
+  /** block: a sale or adjustment that would take on-hand below zero is refused. warn: it goes through with a warning. */
+  negativeStock: text("negative_stock").$type<NegativeStockPolicy>().notNull().default("block"),
+  /** Where low-stock alerts go. Falls back to the shop email. */
+  inventoryAlertEmail: text("inventory_alert_email"),
   createdAt: createdAt(),
 });
+export type NegativeStockPolicy = "block" | "warn";
 
 export const shopHours = pgTable(
   "shop_hours",
@@ -291,7 +301,10 @@ export const products = pgTable("products", {
   /** Brand-level cost and price; each shop starts from these and can override its price. */
   costCents: integer("cost_cents").notNull().default(0),
   priceCents: integer("price_cents").notNull().default(0),
+  /** Brand default reorder point: low stock at or below this. Shops can override it. */
   lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
+  /** Brand default par: suggested orders fill up to this. Shops can override it. */
+  parLevel: integer("par_level").notNull().default(6),
   active: boolean("active").notNull().default(true),
   createdAt: createdAt(),
 });
@@ -301,25 +314,268 @@ export const shopProducts = pgTable(
   {
     shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
     productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+    /** Average cost of what's on the shelf; receiving at a new cost moves it. */
     costCents: integer("cost_cents").notNull(),
     priceCents: integer("price_cents").notNull(),
+    /** On hand. Maintained by a trigger from inventory_ledger and can't be written directly (drizzle/0012_inventory.sql). */
     stock: integer("stock").notNull().default(0),
-    lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
+    /** Shop override of the brand reorder point; null follows the brand. */
+    lowStockThreshold: integer("low_stock_threshold"),
+    /** Shop override of the brand par level; null follows the brand. */
+    parLevel: integer("par_level"),
     active: boolean("active").notNull().default(true),
+    /** When a low-stock alert last went out; cleared once stock is back above the reorder point. */
+    lowAlertedAt: ts("low_alerted_at"),
   },
   (t) => [primaryKey({ columns: [t.shopId, t.productId] })],
 );
 
-export const inventoryAdjustments = pgTable("inventory_adjustments", {
-  id: id(),
-  shopId: uuid("shop_id").notNull().references(() => shops.id),
-  productId: uuid("product_id").notNull().references(() => products.id),
-  delta: integer("delta").notNull(),
-  reason: text("reason").notNull(), // sale | refund | receive | count | damage | upload
-  saleId: uuid("sale_id"),
-  staffId: uuid("staff_id"),
-  createdAt: createdAt(),
-});
+export type LedgerKind = "opening" | "sale" | "refund" | "void" | "receive" | "transfer_out" | "transfer_in" | "adjust" | "stocktake" | "upload";
+export type AdjustReason = "damage" | "theft" | "count_correction" | "back_bar" | "found" | "other";
+
+/**
+ * Every change to stock, append-only. Inserting a row moves shop_products.stock and records the
+ * balance after it; rows can't be updated or deleted, so on-hand is always the sum of the ledger.
+ */
+export const inventoryLedger = pgTable(
+  "inventory_ledger",
+  {
+    id: id(),
+    /** Posting order. balance_after follows it. */
+    seq: integer("seq").generatedAlwaysAsIdentity(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    productId: uuid("product_id").notNull().references(() => products.id),
+    delta: integer("delta").notNull(),
+    kind: text("kind").$type<LedgerKind>().notNull(),
+    /** Manual adjustments only. */
+    reason: text("reason").$type<AdjustReason>(),
+    note: text("note"),
+    /** Cost of each unit moved, for valuing receipts, transfers and shrink. */
+    unitCostCents: integer("unit_cost_cents"),
+    /** Set by the trigger: on-hand at this shop right after this entry. */
+    balanceAfter: integer("balance_after").notNull().default(0),
+    saleId: uuid("sale_id"),
+    purchaseOrderId: uuid("purchase_order_id").references(() => purchaseOrders.id),
+    receiptId: uuid("receipt_id").references(() => poReceipts.id),
+    transferId: uuid("transfer_id").references(() => stockTransfers.id),
+    countId: uuid("count_id").references(() => stockCounts.id),
+    staffId: uuid("staff_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("inventory_ledger_shop_product_idx").on(t.shopId, t.productId, t.seq), index("inventory_ledger_shop_at_idx").on(t.shopId, t.createdAt)],
+);
+
+// ───────────────────────────── Purchasing ─────────────────────────────
+
+export const vendors = pgTable(
+  "vendors",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    contactName: text("contact_name"),
+    email: text("email"),
+    phone: text("phone"),
+    address: text("address"),
+    accountNumber: text("account_number"),
+    paymentTerms: text("payment_terms"),
+    leadTimeDays: integer("lead_time_days").notNull().default(7),
+    minimumOrderCents: integer("minimum_order_cents").notNull().default(0),
+    /** Attach a CSV of the lines as well as the PDF when emailing a purchase order. */
+    sendCsv: boolean("send_csv").notNull().default(false),
+    notes: text("notes"),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("vendors_name_unique").on(sql`lower(${t.name})`)],
+);
+
+/** Who sells a product, at what cost and case pack. At most one preferred vendor per product. */
+export const vendorProducts = pgTable(
+  "vendor_products",
+  {
+    vendorId: uuid("vendor_id").notNull().references(() => vendors.id, { onDelete: "cascade" }),
+    productId: uuid("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+    vendorSku: text("vendor_sku"),
+    casePack: integer("case_pack").notNull().default(1),
+    /** Per unit. */
+    costCents: integer("cost_cents").notNull(),
+    preferred: boolean("preferred").notNull().default(false),
+  },
+  (t) => [primaryKey({ columns: [t.vendorId, t.productId] }), uniqueIndex("vendor_products_preferred_uq").on(t.productId).where(sql`preferred`)],
+);
+
+export const purchaseOrders = pgTable(
+  "purchase_orders",
+  {
+    id: id(),
+    number: integer("number").generatedAlwaysAsIdentity({ startWith: 1001 }),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    vendorId: uuid("vendor_id").notNull().references(() => vendors.id),
+    status: poStatus("status").notNull().default("draft"),
+    /** POs created together for several shops share a batch. */
+    batchId: uuid("batch_id"),
+    expectedOn: date("expected_on"),
+    /** Printed on the PO for the vendor. */
+    notes: text("notes"),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    approvedBy: uuid("approved_by").references(() => staff.id, { onDelete: "set null" }),
+    approvedAt: ts("approved_at"),
+    sentBy: uuid("sent_by").references(() => staff.id, { onDelete: "set null" }),
+    sentAt: ts("sent_at"),
+    sentTo: text("sent_to"),
+    cancelledBy: uuid("cancelled_by").references(() => staff.id, { onDelete: "set null" }),
+    cancelledAt: ts("cancelled_at"),
+    cancelReason: text("cancel_reason"),
+    /** Closed before everything arrived; the rest is no longer on order. */
+    closedShort: boolean("closed_short").notNull().default(false),
+    receivedAt: ts("received_at"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("purchase_orders_shop_status_idx").on(t.shopId, t.status), index("purchase_orders_vendor_idx").on(t.vendorId, t.createdAt)],
+);
+
+export const purchaseOrderLines = pgTable(
+  "purchase_order_lines",
+  {
+    id: id(),
+    purchaseOrderId: uuid("purchase_order_id")
+      .notNull()
+      .references(() => purchaseOrders.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    vendorSku: text("vendor_sku"),
+    casePack: integer("case_pack").notNull().default(1),
+    /** Units, not cases. */
+    qtyOrdered: integer("qty_ordered").notNull(),
+    unitCostCents: integer("unit_cost_cents").notNull(),
+    qtyReceived: integer("qty_received").notNull().default(0),
+  },
+  (t) => [uniqueIndex("purchase_order_lines_uq").on(t.purchaseOrderId, t.productId)],
+);
+
+export const poReceipts = pgTable(
+  "po_receipts",
+  {
+    id: id(),
+    purchaseOrderId: uuid("purchase_order_id")
+      .notNull()
+      .references(() => purchaseOrders.id),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    note: text("note"),
+    receivedBy: uuid("received_by").references(() => staff.id, { onDelete: "set null" }),
+    receivedAt: ts("received_at").notNull().defaultNow(),
+  },
+  (t) => [index("po_receipts_po_idx").on(t.purchaseOrderId)],
+);
+
+export const poReceiptLines = pgTable(
+  "po_receipt_lines",
+  {
+    id: id(),
+    receiptId: uuid("receipt_id")
+      .notNull()
+      .references(() => poReceipts.id, { onDelete: "cascade" }),
+    lineId: uuid("line_id")
+      .notNull()
+      .references(() => purchaseOrderLines.id),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    qty: integer("qty").notNull(),
+    /** What the vendor actually charged per unit; may differ from the PO. */
+    unitCostCents: integer("unit_cost_cents").notNull(),
+  },
+  (t) => [index("po_receipt_lines_receipt_idx").on(t.receiptId)],
+);
+
+export const stockTransfers = pgTable(
+  "stock_transfers",
+  {
+    id: id(),
+    number: integer("number").generatedAlwaysAsIdentity({ startWith: 501 }),
+    fromShopId: uuid("from_shop_id")
+      .notNull()
+      .references(() => shops.id),
+    toShopId: uuid("to_shop_id")
+      .notNull()
+      .references(() => shops.id),
+    status: transferStatus("status").notNull().default("draft"),
+    note: text("note"),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    sentBy: uuid("sent_by").references(() => staff.id, { onDelete: "set null" }),
+    sentAt: ts("sent_at"),
+    receivedBy: uuid("received_by").references(() => staff.id, { onDelete: "set null" }),
+    receivedAt: ts("received_at"),
+    cancelledAt: ts("cancelled_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("stock_transfers_from_idx").on(t.fromShopId, t.status), index("stock_transfers_to_idx").on(t.toShopId, t.status)],
+);
+
+export const stockTransferLines = pgTable(
+  "stock_transfer_lines",
+  {
+    id: id(),
+    transferId: uuid("transfer_id")
+      .notNull()
+      .references(() => stockTransfers.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    qty: integer("qty").notNull(),
+    /** Set on receipt; short of qty is lost in transit. */
+    qtyReceived: integer("qty_received"),
+    /** Source shop's cost when it was sent. */
+    unitCostCents: integer("unit_cost_cents"),
+  },
+  (t) => [uniqueIndex("stock_transfer_lines_uq").on(t.transferId, t.productId)],
+);
+
+/** A cycle count (some products) or full stocktake (everything the shop carries). */
+export const stockCounts = pgTable(
+  "stock_counts",
+  {
+    id: id(),
+    number: integer("number").generatedAlwaysAsIdentity({ startWith: 101 }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    kind: text("kind").$type<"cycle" | "full">().notNull(),
+    status: countStatus("status").notNull().default("open"),
+    note: text("note"),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    postedBy: uuid("posted_by").references(() => staff.id, { onDelete: "set null" }),
+    postedAt: ts("posted_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("stock_counts_shop_idx").on(t.shopId, t.createdAt)],
+);
+
+export const stockCountLines = pgTable(
+  "stock_count_lines",
+  {
+    id: id(),
+    countId: uuid("count_id")
+      .notNull()
+      .references(() => stockCounts.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    /** On hand when the count started, for reference. */
+    expectedAtStart: integer("expected_at_start").notNull(),
+    counted: integer("counted"),
+    /** Set when posted: on hand at that moment, and counted minus it. */
+    onHandAtPost: integer("on_hand_at_post"),
+    variance: integer("variance"),
+    unitCostCents: integer("unit_cost_cents"),
+  },
+  (t) => [uniqueIndex("stock_count_lines_uq").on(t.countId, t.productId)],
+);
 
 // ───────────────────────────── Customers & auth ─────────────────────────────
 
@@ -703,11 +959,15 @@ export const notificationJobs = pgTable(
     id: id(),
     appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "cascade" }),
     customerId: uuid("customer_id").references(() => customers.id),
-    kind: text("kind").notNull(), // confirmation | reminder_24h | reminder_2h | cancellation | reschedule | otp | waitlist_ready
+    /** Staff messages that belong to a shop (purchase orders, low-stock alerts). Client messages use the appointment's shop. */
+    shopId: uuid("shop_id").references(() => shops.id),
+    purchaseOrderId: uuid("purchase_order_id").references(() => purchaseOrders.id),
+    kind: text("kind").notNull(), // confirmation | reminder_24h | reminder_2h | cancellation | reschedule | otp | waitlist_ready | purchase_order | low_stock
     channel: text("channel").notNull(), // sms | email
     to: text("to").notNull(),
     subject: text("subject"),
     body: text("body").notNull(),
+    attachments: jsonb("attachments").$type<EmailAttachment[]>(),
     runAt: ts("run_at").notNull(),
     status: notificationStatus("status").notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
@@ -718,6 +978,13 @@ export const notificationJobs = pgTable(
   },
   (t) => [index("notification_jobs_due_idx").on(t.status, t.runAt), index("notification_jobs_appt_idx").on(t.appointmentId)],
 );
+
+export interface EmailAttachment {
+  filename: string;
+  contentType: string;
+  /** Base64. */
+  content: string;
+}
 
 // ───────────────────────────── Audit & imports ─────────────────────────────
 

@@ -1,3 +1,5 @@
+import type { EmailAttachment } from "@/db/schema";
+
 /**
  * Pluggable SMS / email providers. v1 ships with `disabled` (default) and `console`.
  * `twilio` and `resend` are interface-complete stubs — wire the HTTP calls when going live.
@@ -15,7 +17,7 @@ export interface SmsProvider {
 export interface EmailProvider {
   name: string;
   enabled: boolean;
-  sendEmail(to: string, subject: string, body: string): Promise<SendResult>;
+  sendEmail(to: string, subject: string, body: string, attachments?: EmailAttachment[]): Promise<SendResult>;
 }
 
 class DisabledProvider implements SmsProvider, EmailProvider {
@@ -36,8 +38,9 @@ class ConsoleProvider implements SmsProvider, EmailProvider {
     console.log(`[sms → ${to}] ${body}`);
     return { providerMessageId: `console-${Date.now()}` };
   }
-  async sendEmail(to: string, subject: string, body: string) {
-    console.log(`[email → ${to}] ${subject}\n${body}`);
+  async sendEmail(to: string, subject: string, body: string, attachments: EmailAttachment[] = []) {
+    const files = attachments.map((a) => `${a.filename} (${a.contentType}, ${Math.round((a.content.length * 3) / 4 / 1024)} KB)`).join(", ");
+    console.log(`[email → ${to}] ${subject}\n${body}${files ? `\n[attachments: ${files}]` : ""}`);
     return { providerMessageId: `console-${Date.now()}` };
   }
 }
@@ -57,6 +60,7 @@ class ResendEmailStub implements EmailProvider {
   enabled = true;
   async sendEmail(): Promise<SendResult> {
     // TODO(go-live): POST https://api.resend.com/emails with RESEND_API_KEY and a verified domain.
+    // Attachments map to Resend's `attachments: [{ filename, content }]` (content is already base64).
     throw new Error("Resend provider is a stub in v1");
   }
 }

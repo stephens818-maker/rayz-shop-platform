@@ -8,7 +8,6 @@ import {
   customers,
   giftCardLedger,
   giftCards,
-  inventoryAdjustments,
   payments,
   products,
   promoCodes,
@@ -39,6 +38,8 @@ import { staffAtShopDenied } from "./auth/policy";
 import { createAppointment, getAvailability } from "./booking";
 import { getShop, shopCatalog } from "./catalog";
 import { AppError, forbidden, notFound } from "./errors";
+import { postMovements } from "./inventory/ledger";
+import { stockLevels } from "./inventory/stock";
 import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, markRewardRedeemed } from "./loyalty";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
 
@@ -115,7 +116,15 @@ export async function loadCheckoutContext(saleId: string) {
     .where(and(eq(shopProducts.shopId, shop.id), eq(shopProducts.active, true)))
     .orderBy(asc(products.brand), asc(products.name));
   const barber = sale.staffId ? await db.query.staff.findFirst({ where: eq(staff.id, sale.staffId) }) : null;
-  return { sale, shop, items, customer, appointment: appt, retail, barber, config: pricingConfig(shop) };
+  // What other open tickets hold doesn't count as available here; this ticket's own hold does.
+  const levels = await stockLevels([shop.id]);
+  const own = new Map<string, number>();
+  for (const i of items) if (i.kind === "product" && i.refId && sale.status === "open") own.set(i.refId, (own.get(i.refId) ?? 0) + i.qty);
+  const withAvailable = retail.map((r) => {
+    const l = levels.find((x) => x.productId === r.productId);
+    return { ...r, available: r.stock - Math.max(0, (l?.committed ?? 0) - (own.get(r.productId) ?? 0)) };
+  });
+  return { sale, shop, items, customer, appointment: appt, retail: withAvailable, barber, config: pricingConfig(shop), negativeStock: shop.negativeStock };
 }
 
 export async function validatePromo(code: string, shopId: string, today = todayLocal()): Promise<Discount & { refId: string }> {
@@ -305,7 +314,7 @@ export async function finalizeSale(input: FinalizeInput) {
 
   let card: Awaited<ReturnType<typeof inspectPaymentMethod>> | null = null;
   if (input.tender.method === "card") card = await inspectPaymentMethod(input.tender.paymentMethodId);
-  const { ctx, totals, promoId, rewardId, gift, inv, meta } = await priceCart(input, card?.funding ?? null);
+  const { ctx, totals, promoId, rewardId, gift, meta } = await priceCart(input, card?.funding ?? null);
 
   if (input.expectedTotalCents != null && input.expectedTotalCents !== totals.totalCents) {
     throw new AppError("conflict", "Totals changed — please review the ticket again", { totalCents: totals.totalCents });
@@ -321,6 +330,7 @@ export async function finalizeSale(input: FinalizeInput) {
 
   const businessDate = localDateOf(now);
   const issuedGiftCards: { code: string; amountCents: number }[] = [];
+  const stockWarnings: string[] = [];
   let rewardsIssued = 0;
   // Only this call's own charge is ever compensated. Each attempt gets its own idempotency key, so a
   // concurrent submit can never be handed (and then refund) the charge that won.
@@ -388,16 +398,14 @@ export async function finalizeSale(input: FinalizeInput) {
         await tx.insert(giftCardLedger).values({ giftCardId: gift.id, saleId: ctx.sale.id, deltaCents: -totals.giftCardAppliedCents, kind: "redeem", staffId: input.actor.staffId ?? null });
       }
 
-      for (const l of totals.lines.filter((x) => x.kind === "product")) {
-        const p = inv.find((x) => x.productId === l.refId)!;
-        const res = await tx
-          .update(shopProducts)
-          .set({ stock: sql`${shopProducts.stock} - ${l.qty}` })
-          .where(and(eq(shopProducts.shopId, ctx.shop.id), eq(shopProducts.productId, p.productId), sql`${shopProducts.stock} >= ${l.qty}`))
-          .returning({ stock: shopProducts.stock });
-        if (!res.length) throw new AppError("conflict", `Not enough ${l.name} in stock. Recount it in Inventory if the shelf disagrees.`);
-        await tx.insert(inventoryAdjustments).values({ shopId: ctx.shop.id, productId: p.productId, delta: -l.qty, reason: "sale", saleId: ctx.sale.id, staffId: input.actor.staffId ?? null });
-      }
+      const sold = new Map<string, number>();
+      for (const l of totals.lines.filter((x) => x.kind === "product")) sold.set(l.refId!, (sold.get(l.refId!) ?? 0) + l.qty);
+      const stock = await postMovements(
+        tx,
+        [...sold].map(([productId, qty]) => ({ shopId: ctx.shop.id, productId, delta: -qty, kind: "sale" as const, saleId: ctx.sale.id })),
+        { actor: input.actor, at: input.now, audit: { action: "inventory.sale", entity: "sale", entityId: ctx.sale.id } },
+      );
+      stockWarnings.push(...stock.warnings);
 
       if (promoId) {
         const [p] = await tx.select().from(promoCodes).where(eq(promoCodes.id, promoId)).for("update");
@@ -504,7 +512,7 @@ export async function finalizeSale(input: FinalizeInput) {
     rebooked = await oneTapRebook(ctx.appointment.id, input.rebookInWeeks, input.actor).catch((e: Error) => ({ error: e.message }));
   }
   const c = charge as Awaited<ReturnType<typeof chargeCard>> | null;
-  return { saleId: ctx.sale.id, totals, issuedGiftCards, rewardsIssued, rebooked, card: c?.card ?? null };
+  return { saleId: ctx.sale.id, totals, issuedGiftCards, rewardsIssued, rebooked, card: c?.card ?? null, stockWarnings };
 }
 
 /**

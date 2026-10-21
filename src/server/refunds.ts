@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, Tx } from "@/db";
-import { appointments, cashDrawers, giftCardLedger, giftCards, inventoryAdjustments, payments, promoCodes, refunds, saleItems, sales, shopProducts } from "@/db/schema";
+import { appointments, cashDrawers, giftCardLedger, giftCards, payments, promoCodes, refunds, saleItems, sales } from "@/db/schema";
 import {
   LineRefund,
   RefundComponents,
@@ -19,6 +19,7 @@ import { formatCents } from "@/lib/money";
 import { localDateOf } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "./audit";
 import { AppError, notFound } from "./errors";
+import { Movement, postMovements } from "./inventory/ledger";
 import { restoreRewardsForSale, reverseForSale } from "./loyalty";
 import { refundCard } from "./payments/processor";
 
@@ -203,14 +204,15 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   const itemsJson = lines.map((l) => ({ saleItemId: l.itemId, name: l.name, qty: l.qty, cents: l.netCents + l.taxCents }));
   await recordSteps(tx, sale, pays, plan, { kind: o.kind, source: o.source, reason: o.reason, actor: o.actor, now: o.now, items: itemsJson, stripeIds });
 
+  const restock: Movement[] = [];
   for (const l of lines) {
     await tx.update(saleItems).set({ refundedQty: sql`${saleItems.refundedQty} + ${l.qty}` }).where(eq(saleItems.id, l.itemId));
     const item = st.items.find((i) => i.id === l.itemId)!;
     if (l.kind === "product" && o.restock && item.refId) {
-      await tx.update(shopProducts).set({ stock: sql`${shopProducts.stock} + ${l.qty}` }).where(and(eq(shopProducts.shopId, sale.shopId), eq(shopProducts.productId, item.refId)));
-      await tx.insert(inventoryAdjustments).values({ shopId: sale.shopId, productId: item.refId, delta: l.qty, reason: o.kind, saleId: sale.id, staffId: o.actor.staffId ?? null });
+      restock.push({ shopId: sale.shopId, productId: item.refId, delta: l.qty, kind: o.kind, saleId: sale.id });
     }
   }
+  await postMovements(tx, restock, { actor: o.actor, at: o.now, audit: { action: `inventory.${o.kind}`, entity: "sale", entityId: sale.id, details: { reason: o.reason } } });
 
   const result = await settle(tx, sale, components, o.kind, o.reason, o.now);
   await audit(

@@ -3,11 +3,12 @@ import ExcelJS from "exceljs";
 import Papa from "papaparse";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { ImportRowError, importRuns, inventoryAdjustments, products, services, shopProducts, shopServices, shops } from "@/db/schema";
+import { ImportRowError, importRuns, products, services, shopProducts, shopServices, shops } from "@/db/schema";
 import { Catalog, PlannedRow, ShopRef, UploadMode, UploadPlan, exportRows, parseUpload, planUpload } from "@/domain/catalog-import";
 import { slugify } from "@/lib/ids";
 import { Actor, audit } from "./audit";
 import { AppError } from "./errors";
+import { setOnHand } from "./inventory/ledger";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
@@ -47,7 +48,10 @@ export async function loadCatalog(tx: DBorTx = db): Promise<Catalog> {
     tx.select().from(shopProducts),
     tx.select({ shopId: shopServices.shopId, serviceId: shopServices.serviceId, priceCents: shopServices.priceCents, enabled: shopServices.enabled }).from(shopServices),
   ]);
-  return { products: p, services: s, shopProducts: sp, shopServices: ss };
+  const brandLevel = new Map(p.map((x) => [x.id, x.lowStockThreshold]));
+  // Shops without their own reorder point follow the brand's.
+  const shopProductsAt = sp.map((x) => ({ ...x, lowStockThreshold: x.lowStockThreshold ?? brandLevel.get(x.productId) ?? 3 }));
+  return { products: p, services: s, shopProducts: shopProductsAt, shopServices: ss };
 }
 
 export const allShops = (tx: DBorTx = db): Promise<ShopRef[]> => tx.select({ id: shops.id, slug: shops.slug, name: shops.name }).from(shops).orderBy(asc(shops.name));
@@ -107,12 +111,13 @@ export async function uploadCatalog(input: UploadInput): Promise<ClientPlan> {
         if (op.create || op.patch) await audit(input.actor, op.create ? "catalog.product_create" : "catalog.product_update", "product", id, { sku: r.sku, line: r.line, runId: run.id, ...(op.create ? { values: op.create } : { changes: brandChanges }) }, null, tx);
         for (const s of op.shops) {
           const where = and(eq(shopProducts.shopId, s.shopId), eq(shopProducts.productId, id));
-          if (s.create) await tx.insert(shopProducts).values({ shopId: s.shopId, productId: id, ...s.create });
-          else {
-            const set = { ...(s.patch ?? {}), ...(s.stock ? { stock: s.stock.to } : {}) };
-            if (Object.keys(set).length) await tx.update(shopProducts).set(set).where(where);
-          }
-          if (s.stock && s.stock.to !== s.stock.from) await tx.insert(inventoryAdjustments).values({ shopId: s.shopId, productId: id, delta: s.stock.to - s.stock.from, reason: "upload", staffId: input.actor.staffId ?? null });
+          if (s.create) {
+            const { stock: _opening, lowStockThreshold, ...rest } = s.create;
+            const brandLevel = op.create?.lowStockThreshold ?? (await tx.select({ v: products.lowStockThreshold }).from(products).where(eq(products.id, id)))[0].v;
+            await tx.insert(shopProducts).values({ shopId: s.shopId, productId: id, ...rest, lowStockThreshold: lowStockThreshold === brandLevel ? null : lowStockThreshold });
+          } else if (s.patch && Object.keys(s.patch).length) await tx.update(shopProducts).set(s.patch).where(where);
+          // Sales may have happened since the sheet was made: the upload sets the number, the ledger records the difference.
+          if (s.stock && s.stock.to !== s.stock.from) await setOnHand(tx, { shopId: s.shopId, productId: id, to: s.stock.to, kind: "upload", note: input.filename }, { actor: input.actor, audit: false });
           const changes = r.changes.filter((c) => c.shop === shopName(s.shopId));
           await audit(input.actor, s.create ? "inventory.upload_add" : "inventory.upload", "product", id, { sku: r.sku, line: r.line, runId: run.id, ...(s.create ? { values: s.create } : { changes }) }, s.shopId, tx);
         }

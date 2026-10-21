@@ -1,6 +1,6 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { notificationJobs } from "@/db/schema";
+import { EmailAttachment, notificationJobs } from "@/db/schema";
 import { formatDateTime } from "@/lib/time";
 import { emailProvider, smsProvider } from "./providers";
 
@@ -11,7 +11,9 @@ export type NotificationKind =
   | "cancellation"
   | "reschedule"
   | "waitlist_ready"
-  | "otp";
+  | "otp"
+  | "purchase_order"
+  | "low_stock";
 
 export interface AppointmentMessageContext {
   appointmentId: string;
@@ -139,6 +141,19 @@ export async function enqueueRaw(job: { kind: NotificationKind; channel: "sms" |
   await db.insert(notificationJobs).values({ ...job, subject: job.subject ?? null, customerId: job.customerId ?? null, runAt: new Date() });
 }
 
+/** A staff email that belongs to a shop (a purchase order to a vendor, a low-stock alert), sent by the next queue run. */
+export async function enqueueShopEmail(
+  job: { kind: NotificationKind; to: string; subject: string; body: string; shopId: string; purchaseOrderId?: string | null; attachments?: EmailAttachment[] },
+  tx: DBorTx = db,
+  now = new Date(),
+) {
+  const [row] = await tx
+    .insert(notificationJobs)
+    .values({ kind: job.kind, channel: "email", to: job.to, subject: job.subject, body: job.body, shopId: job.shopId, purchaseOrderId: job.purchaseOrderId ?? null, attachments: job.attachments ?? null, runAt: now })
+    .returning({ id: notificationJobs.id });
+  return row.id;
+}
+
 /**
  * Drain due jobs. Safe to run concurrently (SKIP LOCKED). Triggered by Vercel Cron
  * (/api/cron/notifications) in production and `pnpm worker` locally.
@@ -171,7 +186,7 @@ export async function processDueJobs(opts: { limit?: number; now?: Date } = {}) 
       }
       try {
         if (job.channel === "sms") await sms.sendSms(job.to, job.body);
-        else await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body);
+        else await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body, job.attachments ?? []);
         await tx
           .update(notificationJobs)
           .set({ status: "sent", sentAt: new Date(), provider: provider.name, attempts: job.attempts + 1 })
