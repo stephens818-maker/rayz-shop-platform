@@ -120,6 +120,13 @@
       "when": 1792572097913,
       "tag": "0016_client_privacy",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792573763304,
+      "tag": "0017_privacy_alert_jobs",
+      "breakpoints": true
     }
   ]
 }
