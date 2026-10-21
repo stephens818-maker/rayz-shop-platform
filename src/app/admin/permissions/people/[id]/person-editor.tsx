@@ -81,6 +81,7 @@ export function PersonAccessEditor({
   const fromRole = effectiveAccess(role);
   const { union: after, uniform } = accessOf(roles, s);
   const shopRoleOptions = roles.filter((r) => r.key !== OWNER_ROLE_KEY);
+  const perShop = s.scope === "selected" && !isOwnerRole && s.shopIds.length > 1;
   const diff = diffPermissions(before.permissions, after.permissions);
   const locked = !!readOnly;
 
@@ -152,9 +153,9 @@ export function PersonAccessEditor({
               ))}
             </div>
             {s.scope !== "all" && !isOwnerRole && (
-              <div className="grid gap-1.5 sm:grid-cols-2">
+              <div className={cx("grid gap-1.5", !perShop && "sm:grid-cols-2")}>
                 {shops.map((shop) => (
-                  <div key={shop.id} className="flex flex-wrap items-center gap-2 text-sm">
+                  <div key={shop.id} className="flex min-h-8 items-center justify-between gap-2 text-sm">
                     <label className="flex min-w-0 items-center gap-2">
                       <input
                         type={s.scope === "one" ? "radio" : "checkbox"}
@@ -165,10 +166,10 @@ export function PersonAccessEditor({
                       />
                       {shop.name}
                     </label>
-                    {s.scope === "selected" && s.shopIds.includes(shop.id) && s.shopIds.length > 1 && (
+                    {perShop && s.shopIds.includes(shop.id) && (
                       <Select
                         aria-label={`Role at ${shop.name}`}
-                        className="h-7 w-auto py-0 text-xs"
+                        className="h-8 w-48 py-1 text-xs"
                         value={s.shopRoles[shop.id] ?? s.roleId}
                         onChange={(e) => {
                           const { [shop.id]: _, ...rest } = s.shopRoles;
@@ -198,7 +199,11 @@ export function PersonAccessEditor({
         <Card>
           <CardHeader
             title="Permissions for this person"
-            subtitle="Leave a permission on the role default, or allow or deny it for this person only."
+            subtitle={
+              uniform
+                ? "Leave a permission on the role default, or allow or deny it for this person only."
+                : "Overrides apply at every shop. With a different role at some shops, “on” means on at one or more of them; each shop's role decides there."
+            }
             action={
               <label className="flex items-center gap-1.5 text-xs text-zinc-600">
                 <input type="checkbox" checked={onlyOverrides} onChange={(e) => setOnlyOverrides(e.target.checked)} />

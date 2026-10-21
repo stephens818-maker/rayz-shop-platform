@@ -437,6 +437,16 @@ No canary may appear anywhere except the canary client's visit history, and Kat 
 
 <img alt="Shop logins" src="docs/screenshots/shop-logins.png" width="800" />
 
+A client's visit history at every shop, seen from the Moline desk (the Rock Island visit with Kat is listed with its barber, service, and price):
+
+<img alt="Client history across shops" src="docs/screenshots/client-history-across-shops.png" width="800" />
+
+Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role at each:
+
+<img alt="Multi-shop staff member in one shop" src="docs/screenshots/multi-shop-staff.png" width="800" />
+
+<img alt="A role per assigned shop" src="docs/screenshots/per-shop-roles.png" width="800" />
+
 ### Roles and permissions
 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
