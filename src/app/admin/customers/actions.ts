@@ -40,8 +40,8 @@ async function checkRefs(ctx: StaffContext, p: { homeShopId: string | null; pref
   if (p.homeShopId && !(await db.query.shops.findFirst({ where: eq(shops.id, p.homeShopId) }))) throw new AppError("bad_request", "Unknown shop");
   if (p.preferredStaffId && !(await db.query.staff.findFirst({ where: eq(staff.id, p.preferredStaffId) }))) throw new AppError("bad_request", "Unknown barber");
   if (ctx.brandWide) return;
-  if (p.homeShopId && p.homeShopId !== before?.homeShopId && !hasShop(ctx, p.homeShopId)) throw new AppError("bad_request", "Unknown shop");
-  if (p.preferredStaffId && p.preferredStaffId !== before?.preferredStaffId && !(await inTenant(ctx, "staff", p.preferredStaffId))) throw new AppError("bad_request", "Unknown barber");
+  if (p.homeShopId && p.homeShopId !== before?.homeShopId && !hasShop(ctx, p.homeShopId)) throw forbidden("That shop is outside your access");
+  if (p.preferredStaffId && p.preferredStaffId !== before?.preferredStaffId && !(await inTenant(ctx, "staff", p.preferredStaffId))) throw new AppError("not_found", "Barber not found");
 }
 
 /**

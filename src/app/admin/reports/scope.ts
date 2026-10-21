@@ -151,7 +151,7 @@ export async function resolveBarberView(
   if (!BARBER_REPORTS.has(report)) return { ...l, loc: { ...l.loc, view }, barbers: null, viewParam, defaultView: def, staffParam: null, staffIds: null };
 
   const self = selfOnly(ctx, report);
-  const [r, names] = await Promise.all([reportBarbers(ctx, report === "my_sales" ? null : p.staff, { selfOnly: self }), staffLabels()]);
+  const [r, names] = await Promise.all([reportBarbers(ctx, report === "my_sales" ? null : p.staff, { selfOnly: self }), staffLabels(ctx.brandWide ? undefined : ctx.shopIds)]);
   const sel = r.selection;
   const atShops = r.visible.filter((b) => b.active !== false && b.shopIds.some((id) => l.selection.shopIds.includes(id)));
   const barbers = sel.staffIds ? sel.staffIds.map((id) => ({ id, name: names[id] ?? "Unknown" })) : atShops.map((b) => ({ id: b.id, name: b.name }));

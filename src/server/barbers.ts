@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { SQL, and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { staff, staffGroupMembers, staffGroups, staffShops } from "@/db/schema";
@@ -7,6 +7,7 @@ import { BarberError, BarberGroup, BarberRef, BarberSelection, resolveBarbers } 
 import { audit } from "./audit";
 import type { StaffContext } from "./auth/staff";
 import { AppError, forbidden, notFound } from "./errors";
+import { inShops } from "./tenant";
 
 export async function listBarberGroups(): Promise<BarberGroup[]> {
   const [groups, members] = await Promise.all([
@@ -38,9 +39,18 @@ export async function barbersAt(shopIds: readonly string[]): Promise<BarberRef[]
   return [...out.values()];
 }
 
-/** Display labels for everyone, to name whoever turns up on a ticket. Labels only, never surnames. */
-export async function staffLabels(): Promise<Record<string, string>> {
-  const rows = await db.select({ id: staff.id, label: staff.displayLabel }).from(staff);
+/**
+ * Display labels to name whoever turns up on a ticket, a visit or a rating. Labels only, never
+ * surnames. With shops given, only people who work there or turn up in those shops' records, so a
+ * shop's reports can't list another shop's team.
+ */
+export async function staffLabels(shopIds?: readonly string[]): Promise<Record<string, string>> {
+  let scoped: SQL | undefined;
+  if (shopIds) {
+    const there = (table: string) => sql`exists (select 1 from ${sql.identifier(table)} x where x.staff_id = ${staff.id} and ${inShops({ shopIds }, sql`x.shop_id`)})`;
+    scoped = sql`(${sql.join(["staff_shops", "sales", "appointments", "client_ratings"].map(there), sql` or `)})`;
+  }
+  const rows = await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(scoped);
   return Object.fromEntries(rows.map((r) => [r.id, r.label]));
 }
 

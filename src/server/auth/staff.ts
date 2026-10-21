@@ -75,7 +75,8 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
     .where(and(eq(staff.id, payload.sub), eq(staff.active, true)));
   if (!row) return null;
   const me = row.s;
-  if (me.sessionsValidAfter && (payload.iat ?? 0) * 1000 < me.sessionsValidAfter.getTime()) return null;
+  // Token times are whole seconds, so a sign-in in the same second as a reset stays valid.
+  if (me.sessionsValidAfter && (payload.iat ?? 0) < Math.floor(me.sessionsValidAfter.getTime() / 1000)) return null;
   const access = await accessFor(me, row.r);
   const pref = jar.get(SHOP_COOKIE)?.value;
   let currentShopId: string | null;
