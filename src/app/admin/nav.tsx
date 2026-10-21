@@ -26,6 +26,7 @@ const SECTIONS: { title: string; items: { href: string; label: string; roles: Ro
     title: "Insights",
     items: [
       { href: "/admin/reports", label: "Reports", roles: ALL },
+      { href: "/admin/reports/ratings", label: "Client ratings", roles: MGR },
       { href: "/admin/payroll", label: "Payroll tips", roles: MGR },
     ],
   },
@@ -46,7 +47,11 @@ const SECTIONS: { title: string; items: { href: string; label: string; roles: Ro
 
 export function AdminNav({ role }: { role: Role }) {
   const path = usePathname();
-  const active = (href: string) => (href === "/admin" ? path === "/admin" : path.startsWith(href));
+  const matches = (href: string) => (href === "/admin" ? path === "/admin" : path === href || path.startsWith(`${href}/`));
+  const best = SECTIONS.flatMap((s) => s.items.map((i) => i.href))
+    .filter(matches)
+    .sort((a, b) => b.length - a.length)[0];
+  const active = (href: string) => href === best;
   return (
     <nav className="flex gap-1 overflow-x-auto px-3 pb-3 text-sm lg:block lg:flex-1 lg:overflow-y-auto lg:pb-4">
       {SECTIONS.map((s) => {
