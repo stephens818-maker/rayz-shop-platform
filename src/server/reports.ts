@@ -415,7 +415,7 @@ export async function discountBreakdown(s: ReportScope) {
 
 export async function refundLog(s: ReportScope) {
   return rows<{ day: string; number: number; shop: string; barber: string | null; kind: string; method: string; amountCents: number; tipCents: number; reason: string; source: string; by: string | null }>(sql`
-    select to_char(r.business_date, 'YYYY-MM-DD') day, s.number, sh.name shop, st.display_label barber, r.kind, r.method::text method,
+    select to_char(r.business_date, 'YYYY-MM-DD') as day, s.number, sh.name shop, st.display_label barber, r.kind, r.method::text method,
       r.amount_cents "amountCents", r.tip_cents "tipCents", r.reason, r.source, b.display_label "by"
     from refunds r join sales s on s.id = r.sale_id join shops sh on sh.id = r.shop_id
       left join staff st on st.id = s.staff_id left join staff b on b.id = r.created_by
@@ -493,7 +493,7 @@ export async function loyaltyActivity(s: ReportScope, includeUnattached: boolean
 
 export async function drawerHistory(s: ReportScope) {
   return rows<{ day: string; shop: string; openingCents: number; cashSalesCents: number; cashRefundsCents: number; payoutsCents: number; expectedCents: number; countedCents: number | null; varianceCents: number | null; closedBy: string | null; notes: string | null }>(sql`
-    select to_char(d.business_date, 'YYYY-MM-DD') day, sh.name shop, d.opening_float_cents "openingCents", d.cash_sales_cents "cashSalesCents",
+    select to_char(d.business_date, 'YYYY-MM-DD') as day, sh.name shop, d.opening_float_cents "openingCents", d.cash_sales_cents "cashSalesCents",
       d.cash_refunds_cents "cashRefundsCents", d.payouts_cents "payoutsCents", d.expected_cents "expectedCents", d.counted_cents "countedCents",
       d.variance_cents "varianceCents", st.display_label "closedBy", d.notes
     from cash_drawers d join shops sh on sh.id = d.shop_id left join staff st on st.id = d.closed_by

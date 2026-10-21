@@ -96,6 +96,7 @@ export function permissionLabel(p: Permission): string {
 
 export const SHOP_SCOPES = ["all", "selected", "one"] as const;
 export type ShopScope = (typeof SHOP_SCOPES)[number];
+export const SCOPE_LABEL: Record<ShopScope, string> = { all: "All shops", selected: "Selected shops", one: "One shop" };
 
 export function scopeProblem(scope: ShopScope, shopIds: string[]): string | null {
   if (scope === "all") return null;
@@ -320,6 +321,7 @@ export function userAccessChangeDenied(
   if (current.isOwner && !caller.isOwner) return "Only the Brand Owner can change a Brand Owner's access";
   if (next.isOwner && !current.isOwner && !caller.isOwner) return "Only the Brand Owner can grant Brand Owner";
   if (current.isOwner && !next.isOwner && opts.activeOwners <= 1) return "This is the only Brand Owner. Make someone else Brand Owner first.";
+  if (!caller.isOwner && missing(caller, current.permissions).length) return "This person has access you don't, so ask someone above them";
   const ownerOverride = Object.keys(next.overrides).find((k) => OWNER_ONLY.has(k as Permission) && next.overrides[k as Permission]);
   if (ownerOverride) return "Brand-level settings come only with the Brand Owner role";
   const problem = scopeProblem(next.scope, [...next.shopIds]);
