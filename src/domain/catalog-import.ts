@@ -395,10 +395,7 @@ export function planUpload(parsed: ParsedUpload, catalog: Catalog, opts: PlanOpt
 
     // ── Stock only: existing products at shops that already carry them.
     if (opts.mode === "stock") {
-      if (kind !== "product" || !exP) {
-        errors.push(exP || exS ? "Only retail products have stock" : "Unknown SKU. Adding items needs catalog access.");
-        return out(null, false);
-      }
+      if (kind !== "product" || !exP) return out(null, false);
       if (Object.keys(r.shopPrice).length || [r.name, r.category, r.maker, r.costCents, r.priceCents, r.durationMin, r.taxCategory, r.barcode, r.active].some((v) => v !== undefined))
         rowWarnings.push("Only stock and low-stock levels are saved; other columns are ignored");
       const shops: Extract<ItemOp, { type: "product" }>["shops"] = [];

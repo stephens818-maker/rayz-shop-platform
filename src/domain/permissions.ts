@@ -28,7 +28,7 @@ export const FEATURE_PERMISSIONS = [
   { key: "promos.manage", group: "Point of sale", label: "Create and turn off promo codes" },
   { key: "giftcards.issue", group: "Point of sale", label: "Issue comp gift cards" },
   { key: "giftcards.void", group: "Point of sale", label: "Void gift cards" },
-  { key: "clients.view_all", group: "Clients", label: "Look up any client at their shops", hint: "Without it, only clients they've served." },
+  { key: "clients.view_all", group: "Clients", label: "Look up any client in the brand", hint: "Without it, only clients of their shops, and full profiles only for clients they've served." },
   { key: "clients.contact", group: "Clients", label: "See client phone numbers and emails" },
   { key: "clients.edit", group: "Clients", label: "Add clients and edit client details" },
   { key: "clients.merge", group: "Clients", label: "Merge duplicate clients" },

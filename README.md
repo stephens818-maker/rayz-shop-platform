@@ -33,11 +33,16 @@ pnpm dev                      # http://localhost:3000
 
 ### Logins (seeded; password `rayz2026!`)
 
-| Who | Email | Sees |
-| --- | --- | --- |
-| Owner (brand admin) | `owner@rayz.test` | Every shop, plus "All shops" brand view, taxes, card fee, loyalty, import |
-| Michelle (Coralville manager) | `michelle@rayz.test` | Coralville only (row-level scoped) |
-| Makenna (Coralville barber) | `makenna@rayz.test` | Her own calendar column, her own appointments, and her own sales |
+| Who | Email | Role and shops | Sees |
+| --- | --- | --- | --- |
+| Owner | `owner@rayz.test` | Brand Owner, every shop | Everything, including brand-level settings (loyalty, Sunday hours) and granting Brand Owner |
+| Admin | `admin@rayz.test` | Brand Admin, every shop | Everything except brand-level settings; manages roles and permissions |
+| Regional | `regional@rayz.test` | Regional Manager, Moline and Rock Island | Manager tools and every report, for those two shops only |
+| Michelle | `michelle@rayz.test` | Shop Manager, Coralville | Manager tools and Coralville's reports |
+| Front desk | `frontdesk@rayz.test` | Front Desk, Coralville | Calendar, walk-ins, checkout for every barber, the drawer, discounts up to 10%, and two reports (view only) |
+| Makenna | `makenna@rayz.test` | Barber, Coralville | Her own calendar column, appointments, clients, and sales |
+
+What each role can do is editable under **Permissions** (see [Roles and permissions](#roles-and-permissions)).
 
 Staff sign in at `/login`. Customers don't need an account to book. They can optionally sign in at `/account` with a one-time code. In development, the code is shown on screen because `AUTH_DEV_CODES=true`.
 
@@ -52,13 +57,14 @@ Handy demo data:
 1. Go to `/` and pick **Coralville**. Choose a service, add-ons, "Any barber", and a time, then enter a name and phone. The confirmation page lives at `/a/{code}`, and the customer can cancel or reschedule there until 30 minutes before the appointment.
 2. Sign in as `michelle@rayz.test`. Open **Calendar** and go to the booked day, then click the appointment and choose **Check out**.
 3. On the POS, tap a tip (20/25/30%, $5/$10/$15/$20, or custom). Choose **Card**, use the card reader, and pick "Visa (credit)". The 3% credit surcharge is added and disclosed; debit cards pay no fee. Optionally tap **4 wk** to rebook the client, then click **Charge**.
-4. The receipt shows taxes with their rates, the tip, the fee, the payment, and loyalty progress. Sign in as `owner@rayz.test` and check **Reports** (Today), **Payroll tips**, and the client's page under **Clients**.
+4. The receipt shows taxes with their rates, the tip, the fee, the payment, and loyalty progress. Sign in as `owner@rayz.test` and check **Reports** (Sales summary), **Tips and payroll export**, and the client's page under **Clients**.
+5. As `admin@rayz.test`, open **Permissions**, edit the Front Desk role, or open a person to give them a one-off permission or change their shops. Under **Bulk upload**, download the template, fill in a few rows, and preview the upload before saving it.
 
 ### Other commands
 
 ```bash
-pnpm test          # unit tests: availability/DST, checkout totals, payroll periods, loyalty
-pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + seeds it first)
+pnpm test          # unit tests: availability/DST, checkout totals, payroll, loyalty, permission rules, upload parsing
+pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + seeds it first), incl. every page/action/route per login
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -99,11 +105,11 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 
 ### Schedules and staff
 
-- Each barber has a weekly schedule *per shop*, can work at several shops, and has days off and time off with a reason. A manager can block time only for barbers who work at their shop; an all-shops day off is allowed for a barber whose shops are all theirs, and a brand admin can do it for anyone.
-- Shops are closed Sundays. Only a brand admin can open a shop on a Sunday or change its Sunday hours.
+- Each barber has a weekly schedule *per shop*, can work at several shops, and has days off and time off with a reason. Someone with the schedules permission can block time only for barbers who work at their shops; an all-shops day off is allowed for a barber whose shops are all theirs, and anyone with access to every shop can do it for anyone.
+- Shops are closed Sundays. Only the Brand Owner can open a shop on a Sunday or change its Sunday hours.
 - Saving a schedule that overlaps the barber's hours at another shop is refused with a clear message.
 - Duplicate first names are handled with unique staff IDs plus admin-set display labels. Saving a duplicate active label is refused, and the error suggests an alternative.
-- Roles are brand admin, shop manager (scoped to their shop), and barber. Only a brand admin can change someone's role or managed shop, including their own.
+- Who can do what is set by roles, per-person overrides, and shop access, all under **Permissions**. See [Roles and permissions](#roles-and-permissions).
 
 ### Catalog, POS, and money
 
@@ -111,26 +117,27 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 - **POS** (`/admin/checkout/{id}`):
   - Services, add-ons, and retail items.
   - Tip presets per shop, flat tip buttons, or a custom amount.
-  - Promo codes, loyalty rewards, and manual discounts (managers only, reason required).
+  - Promo codes, loyalty rewards, and manual discounts (needs the discount permission and a reason, and is capped at the person's discount limit, e.g. 10% for Front Desk).
   - Gift cards: sell them, check the balance, redeem them as partial payment.
   - Cash with quick-tender buttons and change due, or card through the reader (simulated Stripe Terminal) or keyed in (Stripe Elements).
   - One-tap rebook after payment.
-- **Totals are computed by one pure function** (`src/domain/checkout.ts`) that both the POS screen and the server use. The server prices every service, add-on, and product from the shop's menu and ignores prices sent by the browser. A manager can override a line's price with a reason; the override is stored next to the menu price and audited. It refuses the charge if the totals don't match what the cashier saw.
+- **Totals are computed by one pure function** (`src/domain/checkout.ts`) that both the POS screen and the server use. The server prices every service, add-on, and product from the shop's menu and ignores prices sent by the browser. Someone with the price override permission (managers by default) can override a line's price with a reason; the override is stored next to the menu price and audited. It refuses the charge if the totals don't match what the cashier saw.
 - **Double-submits are safe.** The ticket is locked before the card is charged, a second submit waits and then sees the ticket already paid, and the app only ever refunds a charge that the same request created.
-- **Taxes:** each shop has separate service and product rates stored in the database, so nothing is hard-coded. Only the brand admin can edit them, and every change is audited. The seeded rates are placeholders marked "unverified" (see [Data caveats](#data-caveats)).
+- **Taxes:** each shop has separate service and product rates stored in the database, so nothing is hard-coded. Only people with the tax permission can edit them (Brand Owner and Brand Admin by default), and every change is audited. Every service and product has a tax category (service, product, or exempt) that picks which rate applies; exempt items are never taxed. The seeded rates are placeholders marked "unverified" (see [Data caveats](#data-caveats)).
 - **Credit card fee:** optional, set per shop, and the default is 3%. A database check caps it at 3%. It's applied only when Stripe reports the card's funding as `credit`; debit, prepaid, gift card, and cash pay no fee. The fee is disclosed before charging, on the POS, and on the receipt.
-- **Refunds and voids:** managers only, and a reason is required. A refund picks the lines (with quantity), the tip, and optionally the card fee; tax follows the lines. It can restock items and goes back to the original tender. Refunding a gift card sale voids the card. If part of it has been spent, a full-ticket refund gives back only what's left on it, and a fully spent card can't be refunded. Refunds reverse loyalty progress and revoke a reward the ticket earned. Voids are same-day only and are blocked once the drawer is closed.
+- **Refunds and voids:** need the refund permission, and a reason is required. A refund picks the lines (with quantity), the tip, and optionally the card fee; tax follows the lines. It can restock items and goes back to the original tender. Refunding a gift card sale voids the card. If part of it has been spent, a full-ticket refund gives back only what's left on it, and a fully spent card can't be refunded. Refunds reverse loyalty progress and revoke a reward the ticket earned. Voids are same-day only and are blocked once the drawer is closed.
 - **Refunds issued in the Stripe dashboard** reach the books through the webhook (`charge.refunded`) and run the same reversal as a refund from the POS.
 - **Split tender:** a gift card plus one cash or card payment. Paying the remainder half in cash and half on a card isn't supported yet.
 - **End-of-day drawer:** a denomination counter, expected against counted cash with the variance, and history.
-- **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, and settings changes, including before and after values where it matters. Entries are append-only.
+- **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, settings changes, permission changes, and every item a bulk upload creates or changes, including before and after values where it matters. Entries are append-only.
 - **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope.
 
 ### Inventory
 
 - Per shop: cost, price, stock, and low-stock threshold, with margin shown. Stock adjustments are recorded with a reason (receive, count, or damage).
 - Selling an item decrements stock, and a void or a refund with restock puts it back.
-- Brand admins also get a matrix view of stock across every shop.
+- People with access to every shop also get a matrix view of stock across all of them.
+- Products have a SKU (unique, case-insensitive), an optional barcode (8 to 14 digits, unique), a brand-level cost and price, and per-shop price overrides. Prices, stock, and new items can be loaded in bulk; see [Bulk catalog upload](#bulk-catalog-upload).
 
 ### Notifications
 
@@ -155,11 +162,82 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
   - A day-by-hour heatmap of when the shop is busiest.
 - Reports are fast. They're indexed SQL aggregates run in parallel, and the page shows its own load time. On the seeded data (about 8 weeks across 8 shops), a brand-wide year-to-date report loads in about 90 ms and 30 days in about 40 ms.
 
+### Reports à la carte
+
+Each report is its own page with **two permissions of its own**: `report.<key>.view` and `report.<key>.export`. Both can be set per role and per person, so someone can see the Sales summary without being able to download it, or get just one report and nothing else.
+
+| Report | Key | What's in it |
+| --- | --- | --- |
+| My sales and tips | `my_sales` | The signed-in person's own tickets, services, products, and tips |
+| Sales summary | `sales_summary` | Gross to net, tax, tips, fees, by shop, by day and by month |
+| Sales by barber | `sales_by_barber` | Services, products, tips, tickets, and average ticket per barber |
+| Services vs products | `services_vs_products` | Each category and item, with quantity, net, and share |
+| Tips and payroll export | `tips_payroll` | Bi-weekly tips per barber, card/cash/gift card |
+| Card vs cash | `card_vs_cash` | Tender mix: credit, debit, cash, gift card, card fees |
+| Discounts and refunds | `discounts_refunds` | Who discounted what and why, and every refund and void with its reason |
+| Inventory and low stock | `inventory` | Stock by shop and SKU, value at cost, received, sold, damaged, low stock |
+| Gift cards | `gift_cards` | Issued, redeemed, outstanding balances |
+| Loyalty | `loyalty` | Rewards issued, redeemed, and reversed by refunds |
+| Client ratings | `client_ratings` | Lowest- and highest-rated clients per shop |
+| Retention and rebook KPIs | `kpis` | Rebook rate, retention, new vs returning, no-shows |
+| Busiest times heatmap | `heatmap` | Visits by weekday and hour |
+| Cash drawer | `cash_drawer` | Drawer closes with expected, counted, and variance |
+| Audit log | `audit_log` | Every audited change, filterable |
+
+- **Only permitted reports appear.** The **Reports** hub and its tabs list only the reports you can view, and the nav item is hidden if you can view none. The server checks the view permission on every report page and the export permission on every CSV download (`/admin/reports/export`, which also serves the payroll and audit log exports, and the client ratings export), so typing a URL gets a "no access" page or a 403.
+- **Shop-scoped.** A report only ever shows the shops in your access: one of them, or "All my shops". Asking for any other shop by URL is refused.
+- Exporting needs viewing too: removing the view permission takes export away with it.
+- The on-screen report and its CSV come from the same loader (`src/server/report-data.ts`), so they always match.
+
+### Roles and permissions
+
+**Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
+
+- **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
+  - The role editor groups the 31 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
+  - Brand Owner always has every permission, including ones added later, and can't be edited.
+- **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
+- **Shop access.** Each person has a scope: **all shops**, **selected shops**, or **one shop**. Everything they see and do is limited to those shops: the shop picker, calendar, sales, clients' visits, staff, inventory, and reports. Access is separate from where a barber works, so a regional manager can oversee shops without being on their schedule.
+
+**Rules**, all enforced on the server and covered by tests:
+
+- Only the **Brand Owner** can grant Brand Owner, change a Brand Owner's access, or hold **brand-level settings** (the loyalty program, Sunday hours, new shops). Those can't be given by override. The last Brand Owner can't be demoted.
+- Nobody can grant a permission they don't have, set a discount limit above their own, or change their own access.
+- Roles apply at every shop, so only people with access to all shops can edit roles. Someone with limited shops can only manage people wholly inside their shops, and can only give access to those shops.
+- You can't edit, reset the password of, or deactivate someone who has access you don't.
+
+**Enforcement.** Every admin page calls `guardPage()`, which checks the page's required permissions from one table (`PAGE_ACCESS` in `src/domain/navigation.ts`) and renders a "no access" page otherwise. Every server action calls `authorize()` with the permission it needs, and every route handler (CSV exports, templates, error files) goes through `routeStaff()`, which returns 401 or 403. Nav items you can't use are hidden, but hiding is cosmetic: the server checks again. A unit test fails the build if a page, action file, or route under `/admin` has no guard, and a DB test signs in as each of the six demo logins and loads **every admin page**, checking the outcome against that login's permissions.
+
+**Audited.** Creating, editing, resetting, and deleting a role, and every change to a person's role, overrides, discount limit, or shops, is in the audit log, with the permissions granted and removed listed by name.
+
+Existing staff were migrated automatically: brand admins became Brand Owner, shop managers became Shop Manager with access to the shop they managed, and barbers became Barber with access to their shops.
+
+<img alt="Roles and people" src="docs/screenshots/permissions-overview.png" width="800" />
+
+<img alt="Role editor" src="docs/screenshots/permissions-role-editor.png" width="800" />
+
+<img alt="Person access editor" src="docs/screenshots/permissions-person.png" width="800" />
+
+### Bulk catalog upload
+
+**Bulk upload** (`/admin/catalog`) loads retail products, services, and add-ons from a CSV or Excel file.
+
+- **Templates:** download a CSV or an XLSX template. The XLSX adds an Instructions sheet that explains every column, including the per-shop columns for your shops. Columns are `type`, `sku`, `name`, `category`, `maker`, `brand_cost`, `price`, `duration_min`, `tax_category`, `barcode`, `active`, `low_stock_threshold`, plus `price_<shop>` and `stock_<shop>` for each shop (for example `price_coralville`, `stock_rock_island`). Common header variants like "Item", "UPC", or "Cost" are recognised.
+- **Preview first.** Every upload is a dry run until you confirm. The preview shows counts (new, updated, unchanged, errors, stock changes), and for each row what will change, from what to what, at which shop, with errors and warnings in plain words: a bad price, a duplicate SKU or barcode in the file, a barcode that already belongs to another item, a missing name for a new item, stock on a service. Saving applies only the rows without errors; the rest are listed in a downloadable error file with the original columns, ready to fix and re-upload.
+- **Update by SKU.** SKUs are matched case-insensitively. Re-uploading a file updates the existing items and never creates duplicates, and blank cells mean "leave as is". Shops on the brand price follow a brand price change; a shop with its own price keeps it unless the file sets `price_<shop>`.
+- **Push to shops.** Pick all shops or just some. New items are added to those shops, plus any shop that has a column in the file. Stock changes are recorded as inventory adjustments with the reason "upload".
+- **Stock-only mode.** People with inventory permission but not catalog permission can upload stock counts and low-stock levels for products their shops already carry. Prices and other columns are ignored with a warning, and unknown SKUs are refused.
+- **Safe:** shop columns outside your access block the upload. Uploads are serialised with a database lock and re-checked inside the transaction, files are capped at 5 MB and 5,000 rows, and every item created or changed gets its own audit entry, plus one for the upload as a whole.
+- **Export:** download the whole catalog as CSV in the same format, with columns for your shops. Edit it and upload it back.
+
+<img alt="Bulk upload preview" src="docs/screenshots/bulk-upload-preview.png" width="800" />
+
 ### Loyalty (brand-wide)
 
 - Every $300 of **net service spend** (after discounts, before tax) earns a $15 reward. Products, tips, tax, and gift card sales don't count. Refunds and voids put progress back and revoke an unspent reward the ticket earned.
 - Balance updates lock the account row, and a reward can only be redeemed once, even from two shops at the same moment. A reward that would discount nothing (say, a products-only ticket) isn't used up.
-- The redemption rules and expiry are configuration, not code (**Settings**, brand admin only). Settings include the threshold, reward amount, reward expiry (default 365 days), optional progress expiry, what rewards can be spent on, and whether rewards stack with promos. One reward per visit.
+- The redemption rules and expiry are configuration, not code (**Settings**, Brand Owner only). Settings include the threshold, reward amount, reward expiry (default 365 days), optional progress expiry, what rewards can be spent on, and whether rewards stack with promos. One reward per visit.
 - Imported Squire tickets never earn loyalty here; the imported loyalty balance already includes them.
 - Rewards show up as one-tap chips at checkout. Balances appear on the client page, on the receipt, and in the customer API (`GET /api/v1/me/loyalty`).
 
@@ -172,9 +250,9 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 
   A compatible first name is the same name, a common nickname (Mike/Michael), or a prefix of at least three letters; last names must not contradict. A contact with no name to compare only matches when exactly one client has it. A database lock serializes find-or-create, so two bookings at the same moment can't create two records.
 - Families sharing a phone stay separate people. Signing in by code on a shared phone asks which profile you are instead of picking one.
-- **Duplicates and merge** (**Clients → Duplicates**, managers): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, staff ratings, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
+- **Duplicates and merge** (**Clients → Duplicates**, needs the merge permission): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, staff ratings, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
 - **Profile:** visit count, no-shows, cancellations, last visit, and lifetime spend come from SQL over the client's whole history, net of refunds. Lifetime spend includes Squire visits that have no imported ticket. The profile also shows the full visit history with shop, barber, services, and prices, plus home shop, preferred barber, loyalty, gift cards, notes, and consent.
-- **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. Managers search the whole brand. A barber's search covers clients who've visited their shops, with the phone masked to its last 4 digits. A barber can open the profile of a client they've served and see notes, loyalty, and visits, but not the phone or email.
+- **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. People who can look up any client (managers and front desk by default) search the whole brand. Everyone else's search covers clients who've visited their shops, and they can open the full profile only of a client they've served. Phone numbers and emails need the contact permission; without it the phone is masked to its last 4 digits and the email is hidden.
 - Client notes show on the calendar panel and the POS ticket.
 - **Consent:** SMS and email opt-in default to no. Each booking sends an explicit choice, an explicit no always sticks, and a missing answer keeps what's on file. Reminder texts and the waitlist "you're up" text are only sent to clients who opted in.
 - Every walk-in becomes a client, even without a phone.
@@ -183,13 +261,13 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 
 - **Rate a visit, 1 to 5 stars,** with an optional private note (up to 500 characters: "late", "great tipper", "difficult"). Rate from the receipt right after checkout, or from **Staff ratings** on the client profile, which lists the client's recent visits. Each rating belongs to one visit (an appointment, or a walk-in ticket with no appointment). Each staff member gets one rating per visit, and rating the same visit again changes it.
 - **Who can do what:**
-  - The brand admin can rate any visit, and a manager any visit at their shops. A barber can rate only visits they served: they had the appointment or rang up the ticket. Only completed, in-progress, and no-show visits and paid tickets can be rated.
-  - Managers and the brand admin see every rating and note. Barbers see the average and count, plus only the ratings they gave themselves.
-  - Only the person who gave a rating can edit it. The author or the brand admin can remove it, so the admin can moderate without rewriting someone else's words.
+  - Rating needs the rate permission. People who can see every rating (managers by default) can rate any visit at their shops. Everyone else can rate only visits they served: they had the appointment or rang up the ticket. Only completed, in-progress, and no-show visits and paid tickets can be rated.
+  - People who can see every rating see every rating and note at their shops. Everyone else sees the average and count, plus only the ratings they gave themselves.
+  - Only the person who gave a rating can edit it. The author or someone with the moderate permission (Brand Owner and Brand Admin by default) can remove it, so an admin can moderate without rewriting someone else's words.
 - **The profile** shows the average, the number of ratings, a 1-to-5 star breakdown, and the history: stars, note, who rated, when, the shop, and the visit, with a link to the ticket. The visit history has a Rating column.
 - **Star badge** (for example "★ 4.3 (7)", red below 3, amber below 4, green otherwise) next to the client's name on the day calendar block and side panel, at checkout (POS and receipt), and in client search on the calendar, the POS, and the client list. Unrated clients show no badge.
 - **Clients list:** filter by rated, low (below 3), high (4 and up), or unrated, and sort by highest or lowest rating.
-- **Report** (**Reports → Client ratings**, managers and the admin): for each shop, the lowest- and highest-rated clients by their average from ratings given at that shop, with the count, the last rated date, and the latest note. Filters cover the period (all time, 12 months, 90 days) and a minimum number of ratings. A shop with few rated clients splits them between the two lists, so nobody appears in both. Managers see their own shops. The report exports to CSV.
+- **Report** (**Reports → Client ratings**, needs that report's view permission): for each shop, the lowest- and highest-rated clients by their average from ratings given at that shop, with the count, the last rated date, and the latest note. Filters cover the period (all time, 12 months, 90 days) and a minimum number of ratings. A shop with few rated clients splits them between the two lists, so nobody appears in both. Everyone sees only their own shops. Exporting to CSV needs the report's export permission.
 - **Audited:** every create, edit, and removal is in the audit log with the shop, the client, and the before and after stars and note.
 - **Never shown to customers.** Ratings live in their own table, `client_ratings`, and no customer-facing code reads it. Tests check this two ways. A static check walks the import graph of `/api/v1`, the public pages, and the API client and fails if any of them can reach the ratings code or table. A DB test signs in as a rated client and calls every `GET` under `/api/v1`, plus booking, profile update, sign-in, and the OpenAPI document. It asserts that no star count, the word "rating", or the private note appears anywhere.
 - Merging duplicate clients carries their ratings over. The database rejects stars outside 1 to 5, a note over 500 characters, and a rating with no visit.
@@ -302,7 +380,8 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 - **Auth:**
   - Staff use an httpOnly JWT session cookie (12 hours) plus a shop-selection cookie. Middleware gates `/admin`.
   - Customers use OTP, then a Bearer access token plus a rotating refresh token.
-  - Shop scoping is enforced in the server layer on every query; managers and barbers only ever query their own shop IDs.
+  - Permissions are loaded fresh from the database on every request (role plus overrides, in `src/server/auth/access.ts`), so a change takes effect on the person's next click without signing out. Pages use `guardPage()`, server actions `authorize()`, and route handlers `routeStaff()`; see [Roles and permissions](#roles-and-permissions).
+  - Shop scoping is enforced in the server layer on every query; anyone without access to every shop only ever queries the shop IDs in their access.
 - **Time:** everything is stored as `timestamptz` and computed in `America/Chicago` with Luxon. Business dates for sales and payroll are shop-local.
 - **Job queue:** the Postgres `notification_jobs` table, drained with `FOR UPDATE SKIP LOCKED` by Vercel Cron or `pnpm worker`. No extra infrastructure is needed; it can move to a dedicated queue (Inngest, QStash) later if volume calls for it.
 
