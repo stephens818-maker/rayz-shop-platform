@@ -71,6 +71,13 @@
       "when": 1792551554139,
       "tag": "0009_permissions_and_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792555959395,
+      "tag": "0010_location_groups",
+      "breakpoints": true
     }
   ]
 }

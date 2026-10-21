@@ -47,6 +47,7 @@ export const FEATURE_PERMISSIONS = [
   { key: "import.run", group: "Settings and data", label: "Run the Squire import" },
   { key: "notifications.view", group: "Settings and data", label: "See the notification outbox" },
   { key: "notifications.send", group: "Settings and data", label: "Send due notifications now" },
+  { key: "locations.manage", group: "Settings and data", label: "Create and edit saved location groups for reports", hint: "Groups cover shops across the brand, so this also needs access to all shops." },
 ] as const satisfies readonly PermissionDef[];
 
 export type FeaturePermission = (typeof FEATURE_PERMISSIONS)[number]["key"];

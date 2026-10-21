@@ -83,8 +83,15 @@ describe("permission catalog and templates", () => {
     expect(access("barber").maxDiscountPct).toBe(0);
   });
 
-  it("the migration seeds exactly the templates in code", () => {
+  it("the migrations seed exactly the templates in code", () => {
     const sql = readFileSync(join(process.cwd(), "drizzle/0009_permissions_and_catalog.sql"), "utf8");
+    // Permissions added later are granted to templates by an UPDATE in the migration that adds them.
+    const grants = readdirSync(join(process.cwd(), "drizzle"))
+      .filter((f) => f.endsWith(".sql") && f > "0009")
+      .flatMap((f) => [
+        ...readFileSync(join(process.cwd(), "drizzle", f), "utf8").matchAll(/UPDATE "roles" SET "permissions" = "permissions" \|\| '(\[.*?\])'::jsonb WHERE "key" IN \(([^)]*)\)/g),
+      ])
+      .map((m) => ({ perms: JSON.parse(m[1]) as string[], keys: [...m[2].matchAll(/'(\w+)'/g)].map((k) => k[1]) }));
     const rows = [...sql.matchAll(/^\s*\('(\w+)', '((?:[^']|'')*)', '((?:[^']|'')*)', '(\[.*?\])'::jsonb, (\d+), '(\w+)', (\d+)\)/gm)].map((m) => ({
       key: m[1],
       name: m[2],
@@ -94,7 +101,12 @@ describe("permission catalog and templates", () => {
       defaultScope: m[6],
       sortOrder: Number(m[7]),
     }));
-    expect(rows).toEqual(ROLE_TEMPLATES.map(templateRow));
+    const seeded = rows.map((r) => {
+      const added = grants.filter((g) => g.keys.includes(r.key)).flatMap((g) => g.perms);
+      return { ...r, permissions: [...new Set([...r.permissions, ...added])].sort() };
+    });
+    expect(grants.length).toBeGreaterThan(0);
+    expect(seeded).toEqual(ROLE_TEMPLATES.map(templateRow).map((t) => ({ ...t, permissions: [...t.permissions].sort() })));
   });
 });
 

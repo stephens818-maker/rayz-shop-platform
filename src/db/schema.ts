@@ -169,6 +169,28 @@ export const staffAccessShops = pgTable(
   (t) => [primaryKey({ columns: [t.staffId, t.shopId] }), index("staff_access_shops_shop_idx").on(t.shopId)],
 );
 
+/** Saved sets of shops for report filters, e.g. "Quad Cities". Brand-wide; each viewer sees only their shops in them. */
+export const locationGroups = pgTable(
+  "location_groups",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("location_groups_name_unique").on(sql`lower(${t.name})`)],
+);
+
+export const locationGroupShops = pgTable(
+  "location_group_shops",
+  {
+    groupId: uuid("group_id").notNull().references(() => locationGroups.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.groupId, t.shopId] })],
+);
+
 export const staffSchedules = pgTable(
   "staff_schedules",
   {
