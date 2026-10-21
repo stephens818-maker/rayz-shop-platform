@@ -9,6 +9,7 @@ Booking, front desk, POS, and reporting for Ray'z Barber Shop's 8 locations (Cor
 | 1a | Online booking, schedules, day calendar, notifications (stubbed), Squire importer, versioned booking API | Done |
 | 1b | POS (services, retail, tips, discounts, promos, gift cards, refunds/voids), drawer close, inventory, audit log | Done |
 | 1c | Sales reports, CSV exports, bi-weekly payroll tips, KPIs, loyalty | Done |
+| Inventory | Stock ledger per shop, par levels and low-stock alerts, vendors, purchase orders (suggest, approve, email, receive), transfers, counts, inventory reports | Done |
 
 Screenshots of the key screens are in the PR description.
 
@@ -59,13 +60,17 @@ Handy demo data:
 3. On the POS, tap a tip (20/25/30%, $5/$10/$15/$20, or custom). Choose **Card**, use the card reader, and pick "Visa (credit)". The 3% credit surcharge is added and disclosed; debit cards pay no fee. Optionally tap **4 wk** to rebook the client, then click **Charge**.
 4. The receipt shows taxes with their rates, the tip, the fee, the payment, and loyalty progress. Sign in as `owner@rayz.test` and check **Reports** (Sales summary), **Tips and payroll export**, and the client's page under **Clients**.
 5. As `admin@rayz.test`, open **Permissions**, edit the Front Desk role, or open a person to give them a one-off permission or change their shops. Under **Bulk upload**, download the template, fill in a few rows, and preview the upload before saving it.
+6. As `owner@rayz.test` with **All shops** selected, open **Inventory → Low stock**, tick a few suggested orders, and click **Create purchase orders**. Open one over $500 (the seeded PO-1005 at Coralville is one), approve it, and **Send** it by email; the PDF and CSV show up under **Notifications**. Then **Receive** part of it at a different price, and check the product's ledger and **Reports → Stock movement and shrink**.
 
 ### Other commands
 
 ```bash
-pnpm test          # unit tests: availability/DST, checkout totals, payroll, loyalty, permission rules, upload parsing, report views
+pnpm test          # unit tests: availability/DST, checkout totals, payroll, loyalty, permission rules, upload parsing, report views,
+                   # suggested orders (par, reorder point, case packs), receiving plans, PO PDF and CSV
 pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + seeds it first), incl. every page/action/route per login
-                   # and per-location totals adding up to multi-location and brand totals (refunds, multi-shop barbers)
+                   # and per-location totals adding up to multi-location and brand totals (refunds, multi-shop barbers);
+                   # stock ledger math across sales, refunds, voids, receiving, transfers and concurrent sales, partial receiving,
+                   # and inventory and purchasing permissions
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -130,15 +135,108 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 - **Refunds issued in the Stripe dashboard** reach the books through the webhook (`charge.refunded`) and run the same reversal as a refund from the POS.
 - **Split tender:** a gift card plus one cash or card payment. Paying the remainder half in cash and half on a card isn't supported yet.
 - **End-of-day drawer:** a denomination counter, expected against counted cash with the variance, and history.
-- **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, settings changes, permission changes, and every item a bulk upload creates or changes, including before and after values where it matters. Entries are append-only.
+- **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, settings changes, permission changes, every stock movement, purchase order step, transfer, and count, and every item a bulk upload creates or changes, including before and after values where it matters. Entries are append-only.
 - **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope.
 
-### Inventory
+### Inventory, vendors, and purchase orders
 
-- Per shop: cost, price, stock, and low-stock threshold, with margin shown. Stock adjustments are recorded with a reason (receive, count, or damage).
-- Selling an item decrements stock, and a void or a refund with restock puts it back.
-- People with access to every shop also get a matrix view of stock across all of them.
-- Products have a SKU (unique, case-insensitive), an optional barcode (8 to 14 digits, unique), a brand-level cost and price, and per-shop price overrides. Prices, stock, and new items can be loaded in bulk; see [Bulk catalog upload](#bulk-catalog-upload).
+Stock is kept per shop in a ledger, and buying is done with purchase orders sent straight to vendors. Everything lives under **Inventory** in the nav: **Stock**, **Low stock**, **Purchase orders**, **Vendors**, **Transfers**, **Counts**, and **Inventory settings**.
+
+**The stock ledger** (`inventory_ledger`, `src/server/inventory/ledger.ts`)
+
+- Every stock change is an append-only ledger row with a kind, the change, the balance after it, the unit cost, who made it, and a link to what caused it: the ticket, purchase order receipt, transfer, or count.
+
+| Kind | Change | Comes from |
+| --- | --- | --- |
+| `sale` | Subtracts | Checking out a retail item |
+| `refund` | Adds back | A refund with "restock" ticked |
+| `void` | Adds back | Voiding a same-day ticket |
+| `receive` | Adds | Receiving a delivery against a purchase order |
+| `transfer_out` / `transfer_in` | Subtracts at one shop, adds at the other | Sending and receiving a transfer |
+| `adjust` | Either way | A manual adjustment, which needs a reason: damage, theft, count correction, used in service or back bar, found, or other |
+| `stocktake` | Either way | Posting a cycle count or full stocktake |
+| `upload` | Either way | A stock column in a [bulk upload](#bulk-catalog-upload) |
+| `opening` | Sets the start | The opening balance when the ledger was introduced |
+
+- **On-hand can't drift.** A database trigger moves `shop_products.stock` by exactly each ledger row's amount, and the database refuses any other write to stock, as well as any edit or delete of a ledger row. Mistakes are fixed with a new entry. The migration turned the old adjustment rows into ledger entries and added an opening entry wherever the shelf didn't match them. The `inventory_drift` view lists any shop product whose stock differs from its ledger total; it's always empty, and the tests check it after every scenario.
+- **Concurrent sales are safe.** Posting locks the stock rows first, so two registers selling the last bottle at the same moment can't both take it.
+- **Negative stock** is set per shop in **Inventory settings**: **Block** refuses a sale, transfer, or adjustment that would take on-hand below zero, and **Warn** allows it and shows a warning. Shops default to Block; the seed sets Moline to Warn as an example. Corrections to a counted number are always allowed.
+- **Quantities shown per product per shop:**
+  - On hand.
+  - Committed: on open tickets, plus transfers being picked.
+  - Available: on hand minus committed.
+  - On order: approved, sent, or partly received purchase orders.
+  - In transit from another shop.
+  - Projected: available plus on order and in transit.
+  - Stock value at cost.
+- The **Stock** page shows these for one shop, with stock at cost, the low count, and what's coming in. People who can adjust stock can take out, add, or set a product to a count from there, with a reason. In the all-shops view the page is a matrix across every shop. A product's page shows its ledger at each shop.
+- **Audited.** Every ledger post, setting change, purchase order step, transfer, and count is in the audit log with the user.
+
+**Par levels and low stock**
+
+- Each product has a **reorder point** and a **par** (target) level. The brand sets the defaults (**Inventory settings → Brand levels**, which needs access to every shop) and each shop can override either one. A product is low when its available stock is at or below the reorder point.
+- **Low stock** (`/admin/inventory/low-stock`) lists everything at or below its reorder point with its available, on-order, and in-transit quantities and the vendor. Next to that list are **suggested orders** per shop and vendor, and **Create purchase orders** turns the ticked ones into drafts. The dashboard has a low-stock card that links here.
+- **Alerts:** the cron job emails each shop's alert address (or the shop email) when products newly go low, once per product until it's restocked above the reorder point. Managers can send alerts now from the Low stock page. Alerts go through the notification queue, so they show in the outbox.
+
+<img alt="Low stock dashboard with suggested purchase orders for every shop" src="docs/screenshots/low-stock-dashboard.png" width="800" />
+
+**Vendors** (`/admin/vendors`)
+
+- A vendor has a name, contact person, email, phone, address, account number, payment terms, lead time, minimum order, notes, and whether to attach a CSV to emailed orders. Vendors can be turned off without losing their history.
+- Products link to one or more vendors, each with the vendor's SKU, case pack, and cost. One vendor is marked **preferred** per product, and suggestions use it. Without a preferred vendor, suggestions use the cheapest one.
+- The vendor page shows open orders, spend in the last 90 days, and the vendor's full purchase order history.
+
+**Purchase orders** (`/admin/purchase-orders`)
+
+- **Suggested orders.** For each shop and vendor, every product whose projected stock is at or below its reorder point is ordered up to par, at least one over the reorder point, and rounded **up to whole case packs**. Projected stock counts what's already on order or in transit, and products already on a draft are left out, so nothing is ordered twice. An order under the vendor's minimum is flagged.
+- **Multi-shop.** In the all-shops view, someone with access to several shops can create the drafts for every shop in one step. That gives one purchase order per shop and vendor, linked as a batch.
+- **The editor** changes quantities (with the case count shown), unit costs, the vendor's SKU, the expected date, and notes, and can add any product the vendor sells. It also shows each line's on hand, on order, and par. Editing an approved order puts it back to draft.
+- **Statuses:** draft, approved, sent, partially received, received, and cancelled. A partly received order can also be **closed short** when the rest won't come; it's marked received and stops counting as on order.
+- **Approval.** Orders above the brand's **approval limit** (**Inventory settings**, set by the Brand Owner; the seed uses $500) must be approved by someone with `po.approve` before they can be sent. Orders under the limit are approved as they're sent. With no limit, approval is never required.
+- **Sending** needs `po.send`. **Email** sends the vendor a message with the order as a **PDF**, plus a **CSV** if the vendor wants one or the sender ticks it. Email goes through the pluggable email provider, which is stubbed and **off until it's configured**, so the outbox at **Notifications** shows exactly what the vendor would get, attachments included. **Placed another way** (phone, the vendor's portal) records a reference instead. The PDF and CSV can be downloaded from the order at any time.
+- **Receiving** needs `po.receive`. Staff enter what actually arrived, which can be all, some, or none of each line, and the price actually charged. Each delivery is its own receipt. Stock comes in through the ledger as `receive` entries, the shop's cost moves to the weighted average of old and new stock, and a changed price can be saved as the vendor's new cost. The order becomes partially received or received.
+- **History.** Each order shows when it was created, approved, sent (and to whom), received, and closed, and by whom. Every receipt is listed with its lines.
+
+<img alt="Purchase order editor, over the approval limit" src="docs/screenshots/po-editor.png" width="800" />
+
+<img alt="Receiving a partial delivery with a price change" src="docs/screenshots/po-receiving.png" width="800" />
+
+**Transfers** (`/admin/inventory/transfers`)
+
+- A transfer is created at the shop sending the stock, which needs access to that shop only. The receiving shop can be any shop in the brand. While it's being picked, its quantities count as committed at the sending shop.
+- **Send** subtracts the stock at the sending shop (`transfer_out`), and the receiving shop sees it as in transit. **Receive**, done at the receiving shop, adds what actually arrived (`transfer_in`). Anything short is recorded as lost in transit.
+
+**Counts** (`/admin/inventory/counts`)
+
+- A **cycle count** covers a category or chosen products. A **full stocktake** covers everything the shop carries, and uncounted items can be zeroed when it's posted.
+- The count sheet is **blind** by default: expected quantities are hidden until "Show expected" is clicked. Progress can be saved and finished later.
+- Posting writes one `stocktake` entry per difference, measured against on-hand at the moment of posting, so sales made during the count are accounted for. The **variance report** shows on hand at the start and at posting, counted, the variance, and its value at cost.
+
+**Permissions.** Each action has its own permission, and each can be granted per role or per person (see [Roles and permissions](#roles-and-permissions)).
+
+| Permission | What it allows | Default roles |
+| --- | --- | --- |
+| `inventory.manage` | Par levels, reorder points, shop inventory settings, low-stock alerts | Managers and up |
+| `inventory.adjust` | Manual adjustments with a reason | Managers and up |
+| `inventory.transfer` | Create and send transfers | Managers and up |
+| `inventory.stocktake` | Cycle counts and full stocktakes | Managers and up, Front Desk |
+| `vendors.manage` | Add and edit vendors and their products | Regional Manager and up |
+| `po.create` | Create and edit purchase orders | Managers and up |
+| `po.approve` | Approve orders above the approval limit | Regional Manager and up |
+| `po.send` | Send orders to vendors | Managers and up |
+| `po.receive` | Receive deliveries, and receive transfers | Managers and up, Front Desk |
+
+Every permission is checked on the server, within the person's shops. Changing the approval limit or the brand default levels also needs access to every shop.
+
+**Inventory reports** (each is its own report permission, with CSV export, and runs per shop, for selected shops, or for all shops):
+
+- **Inventory valuation:** units, value at cost and at retail, and margin by category; then each product's on hand, cost, value, and what's on order. For a past end date, it shows the stock as of that day.
+- **Stock movement and shrink:** opening plus every kind of movement (received, sold, returned, transfers, damaged, theft, back bar, found, count variance) equals closing, per product. Shrink is shown in units and at cost, including anything lost in transit. A ledger-entries table lists every change in the range with who made it.
+- **Sell-through:** opening, received, sold, and closing per product, with the sell-through rate, units sold per day, days of cover, net sales, cost of goods, and margin.
+- **Low stock:** everything at or below its reorder point now, with available, coming in, and the suggested order in whole cases.
+- **Purchase orders and vendor spend:** per vendor, the orders sent, amount ordered, receipts, amount received at what the vendor charged, the cost variance against the order price, what's still on order, the fill rate, and the days to deliver. Then every purchase order in the range.
+
+Products have a SKU (unique, case-insensitive), an optional barcode (8 to 14 digits, unique), a brand-level cost and price, and per-shop price overrides. Prices, stock, and new items can be loaded in bulk; see [Bulk catalog upload](#bulk-catalog-upload).
 
 ### Notifications
 
@@ -146,6 +244,7 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 - The queue is drained by `/api/cron/notifications` (Vercel Cron, every 5 minutes, see `vercel.json`) or by `pnpm worker` locally. Draining uses `SKIP LOCKED`, retries with backoff, and gives up after 5 attempts.
 - Providers are pluggable (`src/server/notifications/providers.ts`) and **off by default**. When sending is off, due jobs are marked "suppressed" so you can see exactly what would have been sent at **Notifications**.
 - Appointment statuses include `no_show` and `cancelled`.
+- The same queue carries **purchase orders emailed to vendors** (with the PDF and CSV attached) and **low-stock alerts** to each shop, which the cron job checks on every run. The outbox shows them with their attachments and links to the purchase order.
 
 ### Reports, payroll, KPIs
 
@@ -176,7 +275,11 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | Tips and payroll export | `tips_payroll` | Bi-weekly tips per barber, card/cash/gift card |
 | Card vs cash | `card_vs_cash` | Tender mix: credit, debit, cash, gift card, card fees |
 | Discounts and refunds | `discounts_refunds` | Who discounted what and why, and every refund and void with its reason |
-| Inventory and low stock | `inventory` | Stock by shop and SKU, value at cost, received, sold, damaged, low stock |
+| Inventory valuation | `inventory` | On hand by shop and SKU, value at cost and retail, margin by category, on order; as of any past date |
+| Stock movement and shrink | `inventory_movement` | Opening to closing by movement kind, shrink at cost, and every ledger entry |
+| Sell-through | `sell_through` | Received against sold, sell-through rate, days of cover, cost of goods and margin |
+| Low stock | `low_stock` | Everything at or below its reorder point, with the suggested order |
+| Purchase orders and vendor spend | `purchasing` | Spend by vendor, cost variance, fill rate, days to deliver, every purchase order |
 | Gift cards | `gift_cards` | Issued, redeemed, outstanding balances |
 | Loyalty | `loyalty` | Rewards issued, redeemed, and reversed by refunds |
 | Client ratings | `client_ratings` | Lowest- and highest-rated clients per shop |
@@ -210,11 +313,13 @@ When more than one shop is selected, a **Combined / By location** switch picks t
 **Barbers who work at several shops.** Sales, tips, refunds, and payroll go to the shop where each ticket was rung up, not the barber's home shop. Barber performance and payroll add a **Barbers at more than one shop** table with the barber's row at each shop and their combined total underneath. Payroll lists a barber once per shop per period, which is how each shop pays them out. The combined payroll view merges those rows into one line per barber, with a Locations column.
 
 **CSV follows the view.**
+
 - Combined downloads have no Location column.
 - By-location downloads put the Location in the first column of every row and keep the subtotal and total rows. A summary table downloads as one row per shop plus the total row.
 - The file name ends in `-by-location`.
 
 **Saved location groups** (**Setup → Location groups**, `/admin/location-groups`) are created and edited by people with the `locations.manage` permission (Brand Owner and Brand Admin by default). It also needs access to every shop, since a group can include any shop in the brand.
+
 - A group needs a unique name and at least two shops.
 - Creating, editing, and deleting a group are audited.
 - Anyone with a report can use a group as a filter. They see only the shops in it that they have access to, and a note says how many shops were left out.
@@ -252,6 +357,7 @@ The layout switch has four choices, and works with the location filter:
 - The barber performance report has three tables (sales and tips; appointments and clients; time and ratings), plus **Barbers at more than one shop** when anyone selected worked at two or more of the selected shops.
 
 **How each number is counted.**
+
 - Service credit, tips, discounts, and refunds go to the barber on the ticket, at the shop where it was rung up. A refund counts on the day it was issued, so a barber can show a negative day.
 - Card and cash tips come from how each ticket was paid, net of refunded tips. Total tips also include tips paid by gift card.
 - Appointments count everything that started in the range. Walk-ins are appointments with the walk-in source.
@@ -262,12 +368,14 @@ The layout switch has four choices, and works with the location filter:
 **Names.** Barbers appear only by their display label (first name, or a label like "Olivia A." set by an admin), on screen and in CSVs. Surnames never appear in reports.
 
 **Who sees what.** Report access follows the à la carte permissions above, and one more: `reports.all_staff` lets someone see other barbers' numbers. Brand Admin, Regional Manager, Shop Manager, and Front Desk have it by default; Barber doesn't.
+
 - Without it, every report shows only your own numbers, the Barbers menu is replaced by a note, and asking for anyone else by URL or CSV link gets a 403 ("You can only see your own numbers").
 - **My sales** is always your own tickets, whatever the URL says.
 - A barber sees barber reports only if their role or a per-person override grants that report. Makenna, for example, sees only My sales until someone grants her Barber performance, and then she sees only her own row.
 - With `reports.all_staff`, you can pick barbers who work at any of your shops. Others are refused with a 403, not dropped.
 
 **Saved barber groups** (**Setup → Barber groups**, `/admin/barber-groups`) need the `barber_groups.manage` permission (Brand Owner and Brand Admin by default) and access to every shop, since a group can include barbers from any shop.
+
 - A group needs a unique name and at least two barbers. The editor has "Add everyone at 2+ shops" and "Add everyone at…" shortcuts, plus search.
 - Creating, editing, and deleting a group are audited.
 - Each group has a **Barber performance** link that opens the report for that group across all shops, by location and barber.
@@ -290,7 +398,7 @@ The layout switch has four choices, and works with the location filter:
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 34 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 42 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -322,7 +430,7 @@ Existing staff were migrated automatically: brand admins became Brand Owner, sho
 - **Templates:** download a CSV or an XLSX template. The XLSX adds an Instructions sheet that explains every column, including the per-shop columns for your shops. Columns are `type`, `sku`, `name`, `category`, `maker`, `brand_cost`, `price`, `duration_min`, `tax_category`, `barcode`, `active`, `low_stock_threshold`, plus `price_<shop>` and `stock_<shop>` for each shop (for example `price_coralville`, `stock_rock_island`). Common header variants like "Item", "UPC", or "Cost" are recognised.
 - **Preview first.** Every upload is a dry run until you confirm. The preview shows counts (new, updated, unchanged, errors, stock changes), and for each row what will change, from what to what, at which shop, with errors and warnings in plain words: a bad price, a duplicate SKU or barcode in the file, a barcode that already belongs to another item, a missing name for a new item, stock on a service. Saving applies only the rows without errors; the rest are listed in a downloadable error file with the original columns, ready to fix and re-upload.
 - **Update by SKU.** SKUs are matched case-insensitively. Re-uploading a file updates the existing items and never creates duplicates, and blank cells mean "leave as is". Shops on the brand price follow a brand price change; a shop with its own price keeps it unless the file sets `price_<shop>`.
-- **Push to shops.** Pick all shops or just some. New items are added to those shops, plus any shop that has a column in the file. Stock changes are recorded as inventory adjustments with the reason "upload".
+- **Push to shops.** Pick all shops or just some. New items are added to those shops, plus any shop that has a column in the file. Stock changes are posted to the stock ledger as `upload` entries, so on-hand stays the ledger's total.
 - **Stock-only mode.** People with inventory permission but not catalog permission can upload stock counts and low-stock levels for products their shops already carry. Prices and other columns are ignored with a warning, and unknown SKUs are refused.
 - **Safe:** shop columns outside your access block the upload. Uploads are serialised with a database lock and re-checked inside the transaction, files are capped at 5 MB and 5,000 rows, and every item created or changed gets its own audit entry, plus one for the upload as a whole.
 - **Export:** download the whole catalog as CSV in the same format, with columns for your shops. Edit it and upload it back.
@@ -345,6 +453,7 @@ Existing staff were migrated automatically: brand admins became Brand Owner, sho
   3. phone with a compatible name.
 
   A compatible first name is the same name, a common nickname (Mike/Michael), or a prefix of at least three letters; last names must not contradict. A contact with no name to compare only matches when exactly one client has it. A database lock serializes find-or-create, so two bookings at the same moment can't create two records.
+
 - Families sharing a phone stay separate people. Signing in by code on a shared phone asks which profile you are instead of picking one.
 - **Duplicates and merge** (**Clients → Duplicates**, needs the merge permission): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, staff ratings, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
 - **Profile:** visit count, no-shows, cancellations, last visit, and lifetime spend come from SQL over the client's whole history, net of refunds. Lifetime spend includes Squire visits that have no imported ticket. The profile also shows the full visit history with shop, barber, services, and prices, plus home shop, preferred barber, loyalty, gift cards, notes, and consent.
@@ -400,6 +509,7 @@ These were built in response to the owner's request: "mimic Squire, but make it 
 
 - The day calendar shows when a barber is *at another shop*, not just "unavailable". Blocks show their reason, there's a live now line, and status counts sit at the top.
 - The dashboard compares today with the same weekday last week and flags low stock, unverified tax rates, and notifications being off.
+- Low stock turns into ready-to-send purchase orders per vendor and shop, rounded to case packs, in one click.
 - Receipts list every tax rate, the card fee with its disclosure, the tender with card funding, and loyalty progress.
 
 **Faster, deeper reports**
@@ -414,6 +524,7 @@ These were built in response to the owner's request: "mimic Squire, but make it 
 - The database guarantees no cross-shop double-booking.
 - Tax rates and card fees are per shop, admin-only, audited, and range-checked by the database. The card fee can never exceed 3%.
 - Every money-affecting action is in an append-only audit log.
+- Stock comes from an append-only ledger the database enforces, so on-hand can't drift and every unit is explained.
 - The importer always dry-runs first, and re-running it is safe. Every run ends with a reconciliation summary and a downloadable file of skipped rows.
 - One brand-wide client record with a duplicates screen and merge, and a profile with the whole Squire history, lifetime spend, and loyalty in one place.
 - Private staff ratings per visit, with a star badge wherever the client's name appears at the front desk and a lowest- and highest-rated report by shop. Each rating is tied to a visit and an author, and every change is audited. Tests prove ratings never reach the customer API.
@@ -446,7 +557,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 
 ## What's stubbed or simulated
 
-- **SMS and email providers.** Twilio and Resend are interface stubs (`src/server/notifications/providers.ts`) and sending is **off by default**. Setting `NOTIFICATIONS_*_PROVIDER=console` logs messages instead. Going live needs Twilio A2P 10DLC registration and a verified sending domain.
+- **SMS and email providers.** Twilio and Resend are interface stubs (`src/server/notifications/providers.ts`) and sending is **off by default**. That includes purchase orders emailed to vendors and low-stock alerts: they're queued and shown in the outbox with their attachments, but nothing leaves until a provider is configured. Setting `NOTIFICATIONS_*_PROVIDER=console` logs messages instead. Going live needs Twilio A2P 10DLC registration and a verified sending domain.
 - **Stripe without keys.** With no `STRIPE_SECRET_KEY`, a built-in simulator with the same interface runs, using Stripe's published test card IDs (`pm_card_visa`, `pm_card_visa_debit`, and so on), so the POS works end to end offline. Adding test keys (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`) switches to real Stripe test mode: PaymentIntents, Elements for keyed cards, and the webhook for dashboard refunds and disputes. For Cloud Agents, add them under Cursor Dashboard → Cloud Agents → Secrets.
 - **Stripe Terminal.** The card reader flow is simulated. You pick a test card where a reader would read one. Real hardware needs a Terminal location, a connection token endpoint, and a reader pairing screen.
 - **3-D Secure.** The keyed-card flow doesn't handle `requires_action` yet. That's fine for in-person keyed entry, but it's needed before taking any card-not-present payment.
@@ -486,9 +597,10 @@ src/
   app/(public)/      customer booking site (shop picker, /book/[shop], /a/[code], /account, /docs/api)
   app/admin/         staff app (calendar, walk-ins, checkout, sales, drawer, reports, payroll, setup pages)
   app/api/v1/        versioned booking API (+ openapi.json)
-  app/api/cron/      notification queue drain (Vercel Cron)
-  domain/            pure logic: availability, checkout, payroll, loyalty
+  app/api/cron/      notification queue drain and low-stock alerts (Vercel Cron)
+  domain/            pure logic: availability, checkout, payroll, loyalty, inventory (levels, suggested orders, receiving), PO documents
   server/            data services: booking, calendar, checkout, reports, loyalty, importer, notifications, auth, payments
+  server/inventory/  stock ledger, stock levels, adjustments and alerts, vendors and purchase orders, transfers, counts, inventory reports
   db/                Drizzle schema + client
 scripts/             migrate, seed (real shops/services/prices + sample history), worker, import CLI
 tests/               unit tests; tests/db = integration tests against real Postgres
@@ -549,7 +661,8 @@ samples/squire/      example Squire CSV exports for the importer
 - Customer card-on-file and deposits or no-show fees, if the shop wants them (Squire had none). This requires 3DS.
 - OTP rate limiting and bot protection on public booking.
 - Barber photos and bios on booking pages, using first-name image files.
-- Purchase orders and vendor reorder suggestions from the low-stock list.
+- Barcode scanning for counts and receiving, and vendor price lists by upload.
+- A real email provider for vendor purchase orders, and reading the vendor's confirmation back.
 - Memberships (Squire's unlimited plans were disabled, so they're not built).
 - Payroll: send the tip export straight to iSolved if it has an import format.
 - The mobile app against `/api/v1`, plus push notifications (add an `/me/devices` endpoint).
