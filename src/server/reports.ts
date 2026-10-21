@@ -1,6 +1,8 @@
 import { sql, SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { payPeriodsBetween, PayPeriod } from "@/domain/payroll";
+import { NO_BARBER } from "@/domain/barbers";
+import { TOTAL, segKey } from "@/domain/report-views";
 import { LocalDate, addDays, diffDays, endOfLocalDay, startOfLocalDay } from "@/lib/time";
 
 /**
@@ -12,32 +14,51 @@ export interface ReportScope {
   shopIds: string[];
   from: LocalDate;
   to: LocalDate;
+  /** One barber; shorthand for `staffIds: [id]`. */
   staffId?: string | null;
+  /** The selected barbers. Absent or null is everyone, tickets with no barber included. */
+  staffIds?: string[] | null;
 }
 
 const PAID = sql`('paid','refunded','partially_refunded')`;
-const ids = (s: ReportScope) => sql`(${sql.join(s.shopIds.length ? s.shopIds.map((i) => sql`${i}::uuid`) : [sql`null::uuid`], sql`, `)})`;
-const staffFilter = (col: SQL, s: ReportScope) => (s.staffId ? sql` and ${col} = ${s.staffId}::uuid` : sql``);
+const uuids = (xs: string[]) => sql`(${sql.join(xs.length ? xs.map((i) => sql`${i}::uuid`) : [sql`null::uuid`], sql`, `)})`;
+const ids = (s: ReportScope) => uuids(s.shopIds);
+export const staffSelection = (s: ReportScope): string[] | null => s.staffIds ?? (s.staffId ? [s.staffId] : null);
+const staffFilter = (col: SQL, s: ReportScope) => {
+  const sel = staffSelection(s);
+  return sel ? sql` and ${col} in ${uuids(sel)}` : sql``;
+};
 
 /**
- * Every query can break out by shop or return one combined row, from the same SQL: the grouping
- * column is the shop, or a constant null that folds every selected shop together. Tests check that
- * the per-shop rows add up to the combined ones.
+ * Every query can break out by shop, by barber, by both, or return one combined row, from the same
+ * SQL: each grouping column is the shop (or barber), or a constant null that folds them together.
+ * Tests check that every grain adds up to the coarser ones.
  */
-export interface ByShop {
+export interface Grain {
   byShop?: boolean;
+  byStaff?: boolean;
 }
-const grp = (o: ByShop | undefined, col: SQL) => (o?.byShop ? col : sql`null::uuid`);
-/** Joins rows on the grouping column, which is null in the combined form. */
+export type ByShop = Grain;
+const grp = (o: Grain | undefined, col: SQL) => (o?.byShop ? col : sql`null::uuid`);
+/** Barber grouping column; tickets with no barber group as "none". */
+const sgrp = (o: Grain | undefined, col: SQL) => (o?.byStaff ? sql`coalesce(${col}::text, ${NO_BARBER})` : sql`null::text`);
+/** Joins rows on a grouping column, which is null when folded. */
 const same = (a: SQL, b: SQL) => sql`${a} is not distinct from ${b}`;
+const keyOf = (r: { shop_id: string | null; staff_id: string | null }) => segKey(r.shop_id, r.staff_id);
 
 async function rows<T>(q: SQL): Promise<T[]> {
   return (await db.execute(q)) as unknown as T[];
 }
 
 /** One value per selected shop, with zeros for shops that had nothing. */
-function perShop<T>(s: ReportScope, found: Map<string | null, T>, zero: () => T): Record<string, T> {
-  return Object.fromEntries(s.shopIds.map((id) => [id, found.get(id) ?? zero()]));
+function perShop<T>(s: ReportScope, found: Map<string, T>, zero: () => T): Record<string, T> {
+  return Object.fromEntries(s.shopIds.map((id) => [id, found.get(segKey(id, null)) ?? zero()]));
+}
+
+/** Runs a keyed query at several grains and merges the results; keys never collide across grains. */
+async function atGrains<T>(grains: Grain[], f: (g: Grain) => Promise<Map<string, T>>): Promise<Record<string, T>> {
+  const maps = await Promise.all(grains.map(f));
+  return Object.fromEntries(maps.flatMap((x) => [...x]));
 }
 
 export interface SalesTotals {
@@ -61,6 +82,7 @@ export interface SalesTotals {
 
 type SaleAgg = {
   shop_id: string | null;
+  staff_id: string | null;
   tickets: number;
   sg: number;
   pg: number;
@@ -73,11 +95,12 @@ type SaleAgg = {
   gc: number;
   ptk: number;
 };
-type RefundAgg = { shop_id: string | null; sn: number; pn: number; tax: number; tips: number; fee: number; gc: number };
-const ZERO_SALE: Omit<SaleAgg, "shop_id"> = { tickets: 0, sg: 0, pg: 0, disc: 0, sn: 0, pn: 0, tax: 0, tips: 0, fee: 0, gc: 0, ptk: 0 };
-const ZERO_REFUND: Omit<RefundAgg, "shop_id"> = { sn: 0, pn: 0, tax: 0, tips: 0, fee: 0, gc: 0 };
+type RefundAgg = { shop_id: string | null; staff_id: string | null; sn: number; pn: number; tax: number; tips: number; fee: number; gc: number };
+type Keyless<T> = Omit<T, "shop_id" | "staff_id">;
+const ZERO_SALE: Keyless<SaleAgg> = { tickets: 0, sg: 0, pg: 0, disc: 0, sn: 0, pn: 0, tax: 0, tips: 0, fee: 0, gc: 0, ptk: 0 };
+const ZERO_REFUND: Keyless<RefundAgg> = { sn: 0, pn: 0, tax: 0, tips: 0, fee: 0, gc: 0 };
 
-function salesTotals(a: Omit<SaleAgg, "shop_id">, r: Omit<RefundAgg, "shop_id">): SalesTotals {
+function salesTotals(a: Keyless<SaleAgg>, r: Keyless<RefundAgg>): SalesTotals {
   const netServices = a.sn - r.sn;
   const netProducts = a.pn - r.pn;
   return {
@@ -107,10 +130,10 @@ export function sumSalesTotals(xs: SalesTotals[]): SalesTotals {
   return t;
 }
 
-async function salesTotalsBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, SalesTotals>> {
+async function salesTotalsBy(s: ReportScope, o?: Grain): Promise<Map<string, SalesTotals>> {
   const [a, r] = await Promise.all([
     rows<SaleAgg>(sql`
-      select ${grp(o, sql`shop_id`)} shop_id, count(*)::int tickets,
+      select ${grp(o, sql`shop_id`)} shop_id, ${sgrp(o, sql`staff_id`)} staff_id, count(*)::int tickets,
         coalesce(sum(service_gross_cents),0)::int sg, coalesce(sum(product_gross_cents),0)::int pg,
         coalesce(sum(discount_cents),0)::int disc, coalesce(sum(service_net_cents),0)::int sn,
         coalesce(sum(product_net_cents),0)::int pn, coalesce(sum(service_tax_cents+product_tax_cents),0)::int tax,
@@ -119,27 +142,32 @@ async function salesTotalsBy(s: ReportScope, o?: ByShop): Promise<Map<string | n
         count(*) filter (where product_gross_cents > 0)::int ptk
       from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
       ${staffFilter(sql`staff_id`, s)}
-      group by 1`),
+      group by 1, 2`),
     rows<RefundAgg>(sql`
-      select ${grp(o, sql`r.shop_id`)} shop_id, coalesce(sum(r.service_net_cents),0)::int sn, coalesce(sum(r.product_net_cents),0)::int pn,
+      select ${grp(o, sql`r.shop_id`)} shop_id, ${sgrp(o, sql`s.staff_id`)} staff_id, coalesce(sum(r.service_net_cents),0)::int sn, coalesce(sum(r.product_net_cents),0)::int pn,
         coalesce(sum(r.tax_cents),0)::int tax, coalesce(sum(r.tip_cents),0)::int tips, coalesce(sum(r.card_fee_cents),0)::int fee,
         coalesce(sum(r.gift_card_sales_cents),0)::int gc
       from refunds r join sales s on s.id = r.sale_id
       where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund'
       ${staffFilter(sql`s.staff_id`, s)}
-      group by 1`),
+      group by 1, 2`),
   ]);
-  const keys = new Set([...a.map((x) => x.shop_id), ...r.map((x) => x.shop_id)]);
-  return new Map([...keys].map((k) => [k, salesTotals(a.find((x) => x.shop_id === k) ?? ZERO_SALE, r.find((x) => x.shop_id === k) ?? ZERO_REFUND)]));
+  const keys = new Set([...a.map(keyOf), ...r.map(keyOf)]);
+  return new Map([...keys].map((k) => [k, salesTotals(a.find((x) => keyOf(x) === k) ?? ZERO_SALE, r.find((x) => keyOf(x) === k) ?? ZERO_REFUND)]));
 }
 
+export const ZERO_SALES = (): SalesTotals => salesTotals(ZERO_SALE, ZERO_REFUND);
+
 export async function salesSummary(s: ReportScope): Promise<SalesTotals> {
-  return (await salesTotalsBy(s)).get(null) ?? salesTotals(ZERO_SALE, ZERO_REFUND);
+  return (await salesTotalsBy(s)).get(TOTAL) ?? ZERO_SALES();
 }
 
 export async function salesSummaryByShop(s: ReportScope): Promise<Record<string, SalesTotals>> {
-  return perShop(s, await salesTotalsBy(s, { byShop: true }), () => salesTotals(ZERO_SALE, ZERO_REFUND));
+  return perShop(s, await salesTotalsBy(s, { byShop: true }), ZERO_SALES);
 }
+
+/** Sales totals keyed by `segKey(shop, barber)` at each grain; keys with nothing are absent. */
+export const salesTotalsAt = (s: ReportScope, grains: Grain[]) => atGrains(grains, (g) => salesTotalsBy(s, g));
 
 export interface TenderTotals {
   cardCents: number;
@@ -151,29 +179,29 @@ export interface TenderTotals {
   cashTipsCents: number;
 }
 
-async function tenderBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, TenderTotals>> {
-  type Row = { shop_id: string | null; method: string; funding: string | null; cents: number; tips: number };
+async function tenderBy(s: ReportScope, o?: Grain): Promise<Map<string, TenderTotals>> {
+  type Row = { shop_id: string | null; staff_id: string | null; method: string; funding: string | null; cents: number; tips: number };
   const [pay, ref] = await Promise.all([
     rows<Row>(sql`
-      select ${grp(o, sql`p.shop_id`)} shop_id, p.method::text method, p.card_funding funding, coalesce(sum(p.amount_cents),0)::int cents,
+      select ${grp(o, sql`p.shop_id`)} shop_id, ${sgrp(o, sql`s.staff_id`)} staff_id, p.method::text method, p.card_funding funding, coalesce(sum(p.amount_cents),0)::int cents,
         coalesce(sum(p.tip_cents),0)::int tips
       from payments p join sales s on s.id = p.sale_id
       where p.shop_id in ${ids(s)} and p.business_date between ${s.from} and ${s.to} and s.status <> 'voided' and p.status <> 'voided'
       ${staffFilter(sql`s.staff_id`, s)}
-      group by 1, 2, 3`),
+      group by 1, 2, 3, 4`),
     // Refunds go back onto the tender (and card funding) that took the money.
     rows<Row>(sql`
-      select ${grp(o, sql`r.shop_id`)} shop_id, r.method::text method, p.card_funding funding, coalesce(sum(r.amount_cents),0)::int cents, coalesce(sum(r.tip_cents),0)::int tips
+      select ${grp(o, sql`r.shop_id`)} shop_id, ${sgrp(o, sql`s.staff_id`)} staff_id, r.method::text method, p.card_funding funding, coalesce(sum(r.amount_cents),0)::int cents, coalesce(sum(r.tip_cents),0)::int tips
       from refunds r join sales s on s.id = r.sale_id left join payments p on p.id = r.payment_id
       where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund'
       ${staffFilter(sql`s.staff_id`, s)}
-      group by 1, 2, 3`),
+      group by 1, 2, 3, 4`),
   ]);
-  const keys = new Set([...pay.map((x) => x.shop_id), ...ref.map((x) => x.shop_id)]);
+  const keys = new Set([...pay.map(keyOf), ...ref.map(keyOf)]);
   const debitLike = (p: Row) => p.funding === "debit" || p.funding === "prepaid";
   return new Map(
     [...keys].map((k) => {
-      const mine = (xs: Row[], m: string, f?: (x: Row) => boolean) => xs.filter((p) => p.shop_id === k && p.method === m && (!f || f(p)));
+      const mine = (xs: Row[], m: string, f?: (x: Row) => boolean) => xs.filter((p) => keyOf(p) === k && p.method === m && (!f || f(p)));
       const net = (m: string, f?: (x: Row) => boolean) => mine(pay, m, f).reduce((a, p) => a + p.cents, 0) - mine(ref, m, f).reduce((a, p) => a + p.cents, 0);
       const netTips = (m: string) => mine(pay, m).reduce((a, p) => a + p.tips, 0) - mine(ref, m).reduce((a, p) => a + p.tips, 0);
       return [
@@ -192,15 +220,17 @@ async function tenderBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, 
   );
 }
 
-const ZERO_TENDER = (): TenderTotals => ({ cardCents: 0, cardCreditCents: 0, cardDebitCents: 0, cashCents: 0, giftCardCents: 0, cardTipsCents: 0, cashTipsCents: 0 });
+export const ZERO_TENDER = (): TenderTotals => ({ cardCents: 0, cardCreditCents: 0, cardDebitCents: 0, cashCents: 0, giftCardCents: 0, cardTipsCents: 0, cashTipsCents: 0 });
 
 export async function tenderBreakdown(s: ReportScope): Promise<TenderTotals> {
-  return (await tenderBy(s)).get(null) ?? ZERO_TENDER();
+  return (await tenderBy(s)).get(TOTAL) ?? ZERO_TENDER();
 }
 
 export async function tenderByShop(s: ReportScope): Promise<Record<string, TenderTotals>> {
   return perShop(s, await tenderBy(s, { byShop: true }), ZERO_TENDER);
 }
+
+export const tenderAt = (s: ReportScope, grains: Grain[]) => atGrains(grains, (g) => tenderBy(s, g));
 
 /**
  * Per barber, or per barber per shop: a barber who works at several shops is credited at the shop
@@ -280,9 +310,10 @@ export async function byShop(s: ReportScope) {
 }
 
 /** Sales count on the day they were paid; refunds on the day they were issued, so a day can be refund-only. */
-export async function dailyTotals(s: ReportScope, o?: ByShop) {
+export async function dailyTotals(s: ReportScope, o?: Grain) {
   return rows<{
     shopId: string | null;
+    staffId: string | null;
     day: string;
     tickets: number;
     grossCents: number;
@@ -293,40 +324,41 @@ export async function dailyTotals(s: ReportScope, o?: ByShop) {
     cashCents: number;
   }>(sql`
     with d as (
-      select ${grp(o, sql`shop_id`)} shop_id, business_date as day, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
+      select ${grp(o, sql`shop_id`)} shop_id, ${sgrp(o, sql`staff_id`)} staff_id, business_date as day, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
         sum(service_net_cents+product_net_cents)::int net, sum(tip_cents)::int tips
       from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
       ${staffFilter(sql`staff_id`, s)}
-      group by 1, 2
+      group by 1, 2, 3
     ), p as (
-      select ${grp(o, sql`p.shop_id`)} shop_id, p.business_date as day, sum(case when p.method='card' then p.amount_cents else 0 end)::int card,
+      select ${grp(o, sql`p.shop_id`)} shop_id, ${sgrp(o, sql`s.staff_id`)} staff_id, p.business_date as day, sum(case when p.method='card' then p.amount_cents else 0 end)::int card,
         sum(case when p.method='cash' then p.amount_cents else 0 end)::int cash
       from payments p join sales s on s.id = p.sale_id
       where p.shop_id in ${ids(s)} and p.business_date between ${s.from} and ${s.to} and s.status <> 'voided' and p.status <> 'voided'
       ${staffFilter(sql`s.staff_id`, s)}
-      group by 1, 2
+      group by 1, 2, 3
     ), rf as (
-      select ${grp(o, sql`r.shop_id`)} shop_id, r.business_date as day, sum(r.service_net_cents + r.product_net_cents)::int net, sum(r.tip_cents)::int tips,
+      select ${grp(o, sql`r.shop_id`)} shop_id, ${sgrp(o, sql`s.staff_id`)} staff_id, r.business_date as day, sum(r.service_net_cents + r.product_net_cents)::int net, sum(r.tip_cents)::int tips,
         sum(case when r.method='card' then r.amount_cents else 0 end)::int card,
         sum(case when r.method='cash' then r.amount_cents else 0 end)::int cash
       from refunds r join sales s on s.id = r.sale_id
       where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund'
       ${staffFilter(sql`s.staff_id`, s)}
-      group by 1, 2
-    ), days as (select shop_id, day from d union select shop_id, day from p union select shop_id, day from rf)
-    select days.shop_id "shopId", to_char(days.day, 'YYYY-MM-DD') as day, coalesce(d.tickets,0) tickets, coalesce(d.gross,0) "grossCents",
+      group by 1, 2, 3
+    ), days as (select shop_id, staff_id, day from d union select shop_id, staff_id, day from p union select shop_id, staff_id, day from rf)
+    select days.shop_id "shopId", days.staff_id "staffId", to_char(days.day, 'YYYY-MM-DD') as day, coalesce(d.tickets,0) tickets, coalesce(d.gross,0) "grossCents",
       coalesce(rf.net,0) "refundCents", (coalesce(d.net,0) - coalesce(rf.net,0)) "netCents", (coalesce(d.tips,0) - coalesce(rf.tips,0)) "tipsCents",
       (coalesce(p.card,0) - coalesce(rf.card,0)) "cardCents", (coalesce(p.cash,0) - coalesce(rf.cash,0)) "cashCents"
     from days
-      left join d on d.day = days.day and ${same(sql`d.shop_id`, sql`days.shop_id`)}
-      left join p on p.day = days.day and ${same(sql`p.shop_id`, sql`days.shop_id`)}
-      left join rf on rf.day = days.day and ${same(sql`rf.shop_id`, sql`days.shop_id`)}
+      left join d on d.day = days.day and ${same(sql`d.shop_id`, sql`days.shop_id`)} and ${same(sql`d.staff_id`, sql`days.staff_id`)}
+      left join p on p.day = days.day and ${same(sql`p.shop_id`, sql`days.shop_id`)} and ${same(sql`p.staff_id`, sql`days.staff_id`)}
+      left join rf on rf.day = days.day and ${same(sql`rf.shop_id`, sql`days.shop_id`)} and ${same(sql`rf.staff_id`, sql`days.staff_id`)}
     order by days.day`);
 }
 
-export async function monthlyTotals(s: ReportScope, o?: ByShop) {
+export async function monthlyTotals(s: ReportScope, o?: Grain) {
   return rows<{
     shopId: string | null;
+    staffId: string | null;
     month: string;
     tickets: number;
     grossCents: number;
@@ -336,25 +368,25 @@ export async function monthlyTotals(s: ReportScope, o?: ByShop) {
     tipsCents: number;
   }>(sql`
     with v as (
-      select ${grp(o, sql`shop_id`)} shop_id, date_trunc('month', business_date) as m, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
+      select ${grp(o, sql`shop_id`)} shop_id, ${sgrp(o, sql`staff_id`)} staff_id, date_trunc('month', business_date) as m, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
         sum(service_net_cents)::int sn, sum(product_net_cents)::int pn, sum(tip_cents)::int tips
       from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
       ${staffFilter(sql`staff_id`, s)}
-      group by 1, 2
+      group by 1, 2, 3
     ), rf as (
-      select ${grp(o, sql`r.shop_id`)} shop_id, date_trunc('month', r.business_date) as m, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn, sum(r.tip_cents)::int tips
+      select ${grp(o, sql`r.shop_id`)} shop_id, ${sgrp(o, sql`s.staff_id`)} staff_id, date_trunc('month', r.business_date) as m, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn, sum(r.tip_cents)::int tips
       from refunds r join sales s on s.id = r.sale_id
       where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund'
       ${staffFilter(sql`s.staff_id`, s)}
-      group by 1, 2
-    ), months as (select shop_id, m from v union select shop_id, m from rf)
-    select months.shop_id "shopId", to_char(months.m, 'YYYY-MM') as month, coalesce(v.tickets,0) tickets, coalesce(v.gross,0) "grossCents",
+      group by 1, 2, 3
+    ), months as (select shop_id, staff_id, m from v union select shop_id, staff_id, m from rf)
+    select months.shop_id "shopId", months.staff_id "staffId", to_char(months.m, 'YYYY-MM') as month, coalesce(v.tickets,0) tickets, coalesce(v.gross,0) "grossCents",
       (coalesce(rf.sn,0) + coalesce(rf.pn,0)) "refundCents",
       (coalesce(v.sn,0) - coalesce(rf.sn,0)) "netServicesCents", (coalesce(v.pn,0) - coalesce(rf.pn,0)) "netProductsCents",
       (coalesce(v.tips,0) - coalesce(rf.tips,0)) "tipsCents"
     from months
-      left join v on v.m = months.m and ${same(sql`v.shop_id`, sql`months.shop_id`)}
-      left join rf on rf.m = months.m and ${same(sql`rf.shop_id`, sql`months.shop_id`)}
+      left join v on v.m = months.m and ${same(sql`v.shop_id`, sql`months.shop_id`)} and ${same(sql`v.staff_id`, sql`months.staff_id`)}
+      left join rf on rf.m = months.m and ${same(sql`rf.shop_id`, sql`months.shop_id`)} and ${same(sql`rf.staff_id`, sql`months.staff_id`)}
     order by months.m`);
 }
 
@@ -436,42 +468,96 @@ export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[
 // ───────────────────────────── KPIs (not available in Squire) ─────────────────────────────
 
 /** Appointments by shop-local weekday and hour. */
-export async function appointmentHeatmap(s: ReportScope, o?: ByShop) {
+export async function appointmentHeatmap(s: ReportScope, o?: Grain) {
   const start = startOfLocalDay(s.from).toISOString();
   const end = endOfLocalDay(s.to).toISOString();
-  return rows<{ shopId: string | null; dow: number; hour: number; n: number }>(sql`
-    select ${grp(o, sql`a.shop_id`)} "shopId", extract(dow from a.starts_at at time zone 'America/Chicago')::int as dow,
+  return rows<{ shopId: string | null; staffId: string | null; dow: number; hour: number; n: number }>(sql`
+    select ${grp(o, sql`a.shop_id`)} "shopId", ${sgrp(o, sql`a.staff_id`)} "staffId", extract(dow from a.starts_at at time zone 'America/Chicago')::int as dow,
       extract(hour from a.starts_at at time zone 'America/Chicago')::int as hour, count(*)::int as n
     from appointments a
     where a.shop_id in ${ids(s)} and a.status in ('completed','booked','confirmed','checked_in','in_service')
       and a.starts_at >= ${start} and a.starts_at < ${end} ${staffFilter(sql`a.staff_id`, s)}
-    group by 1, 2, 3`);
+    group by 1, 2, 3, 4`);
 }
+
+/**
+ * Scheduled minutes per barber per shop: their weekly schedule on each date in the range, less
+ * shop closures and their time off (blocks at that shop or at every shop). Comes from today's
+ * schedules, so a past range uses the current ones.
+ */
+async function availableMinutesBy(s: ReportScope, o?: Grain): Promise<Map<string, number>> {
+  const r = await rows<{ shop_id: string | null; staff_id: string | null; minutes: number }>(sql`
+    with days as (
+      select d::date as day from generate_series(${s.from}::date, ${s.to}::date, interval '1 day') d
+    ), sched as (
+      select ss.shop_id, ss.staff_id,
+        tstzrange((days.day + make_interval(mins => ss.start_min)) at time zone 'America/Chicago', (days.day + make_interval(mins => ss.end_min)) at time zone 'America/Chicago') r
+      from staff_schedules ss join days on extract(dow from days.day)::int = ss.weekday
+      where ss.shop_id in ${ids(s)} and ss.end_min > ss.start_min ${staffFilter(sql`ss.staff_id`, s)}
+        and not exists (select 1 from shop_closures c where c.shop_id = ss.shop_id and c.date = days.day)
+    ), open as (
+      select sc.shop_id, sc.staff_id, tstzmultirange(sc.r) - coalesce((
+        select range_agg(tstzrange(b.starts_at, b.ends_at)) from time_blocks b
+        where b.staff_id = sc.staff_id and (b.shop_id is null or b.shop_id = sc.shop_id) and tstzrange(b.starts_at, b.ends_at) && sc.r
+      ), '{}'::tstzmultirange) m
+      from sched sc
+    )
+    select ${grp(o, sql`open.shop_id`)} shop_id, ${sgrp(o, sql`open.staff_id`)} staff_id,
+      coalesce(sum(round(extract(epoch from upper(x) - lower(x)) / 60)), 0)::int minutes
+    from open cross join lateral unnest(open.m) x
+    group by 1, 2`);
+  return new Map(r.map((x) => [keyOf(x), x.minutes]));
+}
+
+export const availableMinutesAt = (s: ReportScope, grains: Grain[]) => atGrains(grains, (g) => availableMinutesBy(s, g));
+
+/** Client ratings barbers gave in the range, at the shop of the visit. */
+async function ratingsGivenBy(s: ReportScope, o?: Grain): Promise<Map<string, { n: number; stars: number }>> {
+  const start = startOfLocalDay(s.from).toISOString();
+  const end = endOfLocalDay(s.to).toISOString();
+  const r = await rows<{ shop_id: string | null; staff_id: string | null; n: number; stars: number }>(sql`
+    select ${grp(o, sql`r.shop_id`)} shop_id, ${sgrp(o, sql`r.staff_id`)} staff_id, count(*)::int n, coalesce(sum(r.stars),0)::int stars
+    from client_ratings r
+    where r.shop_id in ${ids(s)} and r.created_at >= ${start} and r.created_at < ${end} ${staffFilter(sql`r.staff_id`, s)}
+    group by 1, 2`);
+  return new Map(r.map((x) => [keyOf(x), { n: x.n, stars: x.stars }]));
+}
+
+export const ratingsGivenAt = (s: ReportScope, grains: Grain[]) => atGrains(grains, (g) => ratingsGivenBy(s, g));
 
 export interface Kpis {
   rebookRate: number | null;
   rebooked: number;
   visits: number;
   visitsWithoutBookingTime: number;
-  /** First visit at these shops (or this shop) falls in the range; newToBrand: first visit at any Ray'z shop. */
+  /**
+   * First visit within the segment falls in the range: at these shops (or this shop), with the
+   * selected barbers (or this barber). newToBrand: first visit at any Ray'z shop.
+   */
   newClients: number;
   newToBrand: number;
   returningClients: number;
+  /** Clients from the prior window who came back to the same segment (shop, barber) in the range. */
   retentionRate: number | null;
   retainedClients: number;
   priorClients: number;
   priorWindow: { from: LocalDate; to: LocalDate };
+  /** Every appointment starting in the range, whatever happened to it. */
   appointments: number;
+  walkIns: number;
   noShows: { n: number; cents: number };
   cancellations: { n: number; cents: number };
-  heatmap: { shopId: string | null; dow: number; hour: number; n: number }[];
+  /** Scheduled length of appointments that weren't cancelled or no-shows. */
+  bookedMinutes: number;
+  heatmap: { shopId: string | null; staffId: string | null; dow: number; hour: number; n: number }[];
 }
 
 /**
- * Client KPIs, combined or per shop. Visit and appointment counts add up across shops; client
- * counts don't (a client who visits two shops is one client), so totals come from the combined form.
+ * Client KPIs, combined, per shop, per barber or per barber per shop. Visit and appointment counts
+ * add up; client counts don't (a client who sees two barbers is one client), so every grain is its
+ * own query.
  */
-async function kpisBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, Kpis>> {
+async function kpisBy(s: ReportScope, o?: Grain): Promise<Map<string, Kpis>> {
   // Raw SQL params must be strings; postgres-js won't serialize Date here.
   const start = startOfLocalDay(s.from).toISOString();
   const end = endOfLocalDay(s.to).toISOString();
@@ -479,12 +565,17 @@ async function kpisBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, Kp
   const prevStart = startOfLocalDay(addDays(s.from, -len)).toISOString();
   const sf = staffFilter(sql`a.staff_id`, s);
   const g = grp(o, sql`a.shop_id`);
+  const gs = sgrp(o, sql`a.staff_id`);
+  /** Appointment `b` is in the same segment as row `v` of a grouped query. */
+  const inSegment = (v: string, b: string) =>
+    sql`${sql.raw(b)}.shop_id in ${ids(s)} and (${sql.raw(v)}.shop_id is null or ${sql.raw(b)}.shop_id = ${sql.raw(v)}.shop_id)
+      and (${sql.raw(v)}.staff_id is null or ${sql.raw(b)}.staff_id::text = ${sql.raw(v)}.staff_id) ${staffFilter(sql.raw(`${b}.staff_id`), s)}`;
 
   const [rebook, visitors, retention, outcomes, heat] = await Promise.all([
     // Squire rows exported without a booked-at time can't say when the next visit was booked, so
     // those visits are left out rather than counted as not rebooked.
-    rows<{ shop_id: string | null; visits: number; rebooked: number; unknown: number }>(sql`
-      select ${g} shop_id, count(*) filter (where a.booked_at_known)::int visits, count(*) filter (where a.booked_at_known and exists (
+    rows<{ shop_id: string | null; staff_id: string | null; visits: number; rebooked: number; unknown: number }>(sql`
+      select ${g} shop_id, ${gs} staff_id, count(*) filter (where a.booked_at_known)::int visits, count(*) filter (where a.booked_at_known and exists (
         select 1 from appointments b where b.customer_id = a.customer_id and b.id <> a.id and b.booked_at_known
           and b.starts_at > a.starts_at
           and b.created_at between a.starts_at and coalesce(a.completed_at, a.ends_at) + interval '24 hours'
@@ -492,45 +583,46 @@ async function kpisBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, Kp
       from appointments a
       where a.shop_id in ${ids(s)} and a.status = 'completed' and a.customer_id is not null
         and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
-      group by 1`),
-    rows<{ shop_id: string | null; newClients: number; returning: number; newToBrand: number }>(sql`
+      group by 1, 2`),
+    rows<{ shop_id: string | null; staff_id: string | null; newClients: number; returning: number; newToBrand: number }>(sql`
       with v as (
-        select distinct ${g} shop_id, a.customer_id from appointments a
+        select distinct ${g} shop_id, ${gs} staff_id, a.customer_id from appointments a
         where a.shop_id in ${ids(s)} and a.status = 'completed' and a.customer_id is not null
           and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
       ), first as (
-        select v.shop_id, v.customer_id,
-          min(b.starts_at) filter (where b.shop_id in ${ids(s)} and (v.shop_id is null or b.shop_id = v.shop_id)) first_here,
-          min(b.starts_at) first_any
+        select v.shop_id, v.staff_id, v.customer_id, min(b.starts_at) filter (where ${inSegment("v", "b")}) first_here, min(b.starts_at) first_any
         from v join appointments b on b.customer_id = v.customer_id and b.status = 'completed'
-        group by 1, 2
+        group by 1, 2, 3
       )
-      select shop_id, count(*) filter (where first_here >= ${start})::int "newClients", count(*) filter (where first_here < ${start})::int "returning",
-        count(*) filter (where first_any >= ${start})::int "newToBrand" from first group by 1`),
-    rows<{ shop_id: string | null; prior: number; retained: number }>(sql`
+      select shop_id, staff_id, count(*) filter (where first_here >= ${start})::int "newClients", count(*) filter (where first_here < ${start})::int "returning",
+        count(*) filter (where first_any >= ${start})::int "newToBrand" from first group by 1, 2`),
+    rows<{ shop_id: string | null; staff_id: string | null; prior: number; retained: number }>(sql`
       with prior as (
-        select distinct ${g} shop_id, a.customer_id from appointments a
+        select distinct ${g} shop_id, ${gs} staff_id, a.customer_id from appointments a
         where a.shop_id in ${ids(s)} and a.status = 'completed' and a.customer_id is not null
           and a.starts_at >= ${prevStart} and a.starts_at < ${start} ${sf}
       )
-      select shop_id, count(*)::int prior, count(*) filter (where exists (
-        select 1 from appointments a where a.customer_id = prior.customer_id and a.status = 'completed'
-          and a.shop_id in ${ids(s)} and (prior.shop_id is null or a.shop_id = prior.shop_id) and a.starts_at >= ${start} and a.starts_at < ${end}
-      ))::int retained from prior group by 1`),
-    rows<{ shop_id: string | null; status: string; n: number; cents: number }>(sql`
-      select ${g} shop_id, a.status::text status, count(*)::int n, coalesce(sum(a.estimate_cents),0)::int cents from appointments a
+      select shop_id, staff_id, count(*)::int prior, count(*) filter (where exists (
+        select 1 from appointments b where b.customer_id = prior.customer_id and b.status = 'completed'
+          and ${inSegment("prior", "b")} and b.starts_at >= ${start} and b.starts_at < ${end}
+      ))::int retained from prior group by 1, 2`),
+    rows<{ shop_id: string | null; staff_id: string | null; status: string; n: number; cents: number; walk_ins: number; minutes: number }>(sql`
+      select ${g} shop_id, ${gs} staff_id, a.status::text status, count(*)::int n, coalesce(sum(a.estimate_cents),0)::int cents,
+        count(*) filter (where a.source = 'walk_in')::int walk_ins,
+        coalesce(sum(round(extract(epoch from a.ends_at - a.starts_at) / 60)) filter (where a.status not in ('cancelled','no_show')), 0)::int minutes
+      from appointments a
       where a.shop_id in ${ids(s)} and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
-      group by 1, 2`),
+      group by 1, 2, 3`),
     appointmentHeatmap(s, o),
   ]);
-  const keys = new Set([...rebook, ...visitors, ...retention, ...outcomes].map((x) => x.shop_id));
-  if (!o?.byShop) keys.add(null);
+  const keys = new Set([...rebook, ...visitors, ...retention, ...outcomes].map(keyOf));
+  if (!o?.byShop && !o?.byStaff) keys.add(TOTAL);
   return new Map(
     [...keys].map((k) => {
-      const r = rebook.find((x) => x.shop_id === k) ?? { visits: 0, rebooked: 0, unknown: 0 };
-      const v = visitors.find((x) => x.shop_id === k) ?? { newClients: 0, returning: 0, newToBrand: 0 };
-      const ret = retention.find((x) => x.shop_id === k) ?? { prior: 0, retained: 0 };
-      const mine = outcomes.filter((x) => x.shop_id === k);
+      const r = rebook.find((x) => keyOf(x) === k) ?? { visits: 0, rebooked: 0, unknown: 0 };
+      const v = visitors.find((x) => keyOf(x) === k) ?? { newClients: 0, returning: 0, newToBrand: 0 };
+      const ret = retention.find((x) => keyOf(x) === k) ?? { prior: 0, retained: 0 };
+      const mine = outcomes.filter((x) => keyOf(x) === k);
       const status = (st: string) => {
         const x = mine.find((m) => m.status === st);
         return { n: x?.n ?? 0, cents: x?.cents ?? 0 };
@@ -550,9 +642,11 @@ async function kpisBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, Kp
           priorClients: ret.prior,
           priorWindow: { from: addDays(s.from, -len), to: addDays(s.from, -1) },
           appointments: mine.reduce((a, x) => a + x.n, 0),
+          walkIns: mine.reduce((a, x) => a + x.walk_ins, 0),
           noShows: status("no_show"),
           cancellations: status("cancelled"),
-          heatmap: heat.filter((h) => h.shopId === k),
+          bookedMinutes: mine.reduce((a, x) => a + x.minutes, 0),
+          heatmap: heat.filter((h) => segKey(h.shopId, h.staffId) === k),
         },
       ];
     }),
@@ -560,12 +654,18 @@ async function kpisBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, Kp
 }
 
 export async function kpis(s: ReportScope): Promise<Kpis> {
-  return (await kpisBy(s)).get(null)!;
+  return (await kpisBy(s)).get(TOTAL)!;
 }
 
 export async function kpisByShop(s: ReportScope): Promise<Record<string, Kpis>> {
+  return perShop(s, await kpisBy(s, { byShop: true }), () => emptyKpis(s));
+}
+
+export const kpisAt = (s: ReportScope, grains: Grain[]) => atGrains(grains, (g) => kpisBy(s, g));
+
+export function emptyKpis(s: ReportScope): Kpis {
   const len = diffDays(s.to, s.from) + 1;
-  const empty = (): Kpis => ({
+  return {
     rebookRate: null,
     rebooked: 0,
     visits: 0,
@@ -578,43 +678,45 @@ export async function kpisByShop(s: ReportScope): Promise<Record<string, Kpis>> 
     priorClients: 0,
     priorWindow: { from: addDays(s.from, -len), to: addDays(s.from, -1) },
     appointments: 0,
+    walkIns: 0,
     noShows: { n: 0, cents: 0 },
     cancellations: { n: 0, cents: 0 },
+    bookedMinutes: 0,
     heatmap: [],
-  });
-  return perShop(s, await kpisBy(s, { byShop: true }), empty);
+  };
 }
 
 // ───────────────────────────── A la carte reports ─────────────────────────────
 
 /** Ticket lines by item, from paid tickets in the range (refunds are reported separately). */
-export async function itemMix(s: ReportScope, o?: ByShop) {
-  return rows<{ shopId: string | null; kind: string; name: string; qty: number; tickets: number; grossCents: number; discountCents: number; netCents: number }>(sql`
-    select ${grp(o, sql`s.shop_id`)} "shopId", i.kind::text kind, i.name, sum(i.qty)::int qty, count(distinct i.sale_id)::int tickets,
+export async function itemMix(s: ReportScope, o?: Grain) {
+  return rows<{ shopId: string | null; staffId: string | null; kind: string; name: string; qty: number; tickets: number; grossCents: number; discountCents: number; netCents: number }>(sql`
+    select ${grp(o, sql`s.shop_id`)} "shopId", ${sgrp(o, sql`s.staff_id`)} "staffId", i.kind::text kind, i.name, sum(i.qty)::int qty, count(distinct i.sale_id)::int tickets,
       sum(i.gross_cents)::int "grossCents", sum(i.discount_cents)::int "discountCents", sum(i.net_cents)::int "netCents"
     from sale_items i join sales s on s.id = i.sale_id
     where s.shop_id in ${ids(s)} and s.business_date between ${s.from} and ${s.to} and s.status in ${PAID}
       and i.kind <> 'gift_card' ${staffFilter(sql`s.staff_id`, s)}
-    group by 1, 2, 3 order by "netCents" desc, i.name`);
+    group by 1, 2, 3, 4 order by "netCents" desc, i.name`);
 }
 
 /** Discounts by type and label. Imported tickets carry a total without a breakdown. */
-export async function discountBreakdown(s: ReportScope, o?: ByShop) {
-  return rows<{ shopId: string | null; source: string; label: string; tickets: number; cents: number }>(sql`
+export async function discountBreakdown(s: ReportScope, o?: Grain) {
+  return rows<{ shopId: string | null; staffId: string | null; source: string; label: string; tickets: number; cents: number }>(sql`
     with d as (
-      select s.id, s.shop_id, s.discount_cents, e.value->>'source' source, e.value->>'label' label, (e.value->>'cents')::int cents
+      select s.id, s.shop_id, s.staff_id, s.discount_cents, e.value->>'source' source, e.value->>'label' label, (e.value->>'cents')::int cents
       from sales s left join lateral jsonb_array_elements(case when jsonb_typeof(s.pricing->'discounts') = 'array' then s.pricing->'discounts' else '[]'::jsonb end) e on true
       where s.shop_id in ${ids(s)} and s.business_date between ${s.from} and ${s.to} and s.status in ${PAID} and s.discount_cents > 0
         ${staffFilter(sql`s.staff_id`, s)}
     )
-    select ${grp(o, sql`shop_id`)} "shopId", coalesce(source, 'imported') source, coalesce(label, 'Discount (no breakdown)') label, count(distinct id)::int tickets,
+    select ${grp(o, sql`shop_id`)} "shopId", ${sgrp(o, sql`staff_id`)} "staffId", coalesce(source, 'imported') source, coalesce(label, 'Discount (no breakdown)') label, count(distinct id)::int tickets,
       sum(coalesce(cents, discount_cents))::int cents
-    from d group by 1, 2, 3 order by cents desc, label`);
+    from d group by 1, 2, 3, 4 order by cents desc, label`);
 }
 
 export async function refundLog(s: ReportScope) {
   return rows<{
     shopId: string;
+    staffId: string | null;
     day: string;
     number: number;
     shop: string;
@@ -627,7 +729,7 @@ export async function refundLog(s: ReportScope) {
     source: string;
     by: string | null;
   }>(sql`
-    select r.shop_id "shopId", to_char(r.business_date, 'YYYY-MM-DD') as day, s.number, sh.name shop, st.display_label barber, r.kind, r.method::text method,
+    select r.shop_id "shopId", s.staff_id "staffId", to_char(r.business_date, 'YYYY-MM-DD') as day, s.number, sh.name shop, st.display_label barber, r.kind, r.method::text method,
       r.amount_cents "amountCents", r.tip_cents "tipCents", r.reason, r.source, b.display_label "by"
     from refunds r join sales s on s.id = r.sale_id join shops sh on sh.id = r.shop_id
       left join staff st on st.id = s.staff_id left join staff b on b.id = r.created_by
@@ -636,12 +738,12 @@ export async function refundLog(s: ReportScope) {
 }
 
 /** Refund and void totals, for the stat tiles (the log above is capped). */
-export async function refundTotals(s: ReportScope, o?: ByShop) {
-  return rows<{ shopId: string | null; kind: string; n: number; amountCents: number }>(sql`
-    select ${grp(o, sql`r.shop_id`)} "shopId", r.kind, count(*)::int n, coalesce(sum(r.amount_cents),0)::int "amountCents"
+export async function refundTotals(s: ReportScope, o?: Grain) {
+  return rows<{ shopId: string | null; staffId: string | null; kind: string; n: number; amountCents: number }>(sql`
+    select ${grp(o, sql`r.shop_id`)} "shopId", ${sgrp(o, sql`s.staff_id`)} "staffId", r.kind, count(*)::int n, coalesce(sum(r.amount_cents),0)::int "amountCents"
     from refunds r join sales s on s.id = r.sale_id
     where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} ${staffFilter(sql`s.staff_id`, s)}
-    group by 1, 2`);
+    group by 1, 2, 3`);
 }
 
 /** Stock on hand now, with what happened to it in the range. */
@@ -694,7 +796,7 @@ export interface GiftCardTotals {
 }
 
 /** Issued and outstanding count at the issuing shop; redemptions at the shop that took them. */
-async function giftCardTotalsBy(s: ReportScope, o?: ByShop): Promise<Map<string | null, GiftCardTotals>> {
+async function giftCardTotalsBy(s: ReportScope, o?: ByShop): Promise<Map<string, GiftCardTotals>> {
   const start = startOfLocalDay(s.from).toISOString();
   const end = endOfLocalDay(s.to).toISOString();
   const r = await rows<GiftCardTotals & { shopId: string | null }>(sql`
@@ -712,7 +814,7 @@ async function giftCardTotalsBy(s: ReportScope, o?: ByShop): Promise<Map<string 
       coalesce(owed.n,0) "outstandingN", coalesce(owed.cents,0) "outstandingCents"
     from k left join iss on ${same(sql`iss.shop_id`, sql`k.shop_id`)} left join red on ${same(sql`red.shop_id`, sql`k.shop_id`)}
       left join owed on ${same(sql`owed.shop_id`, sql`k.shop_id`)}`);
-  return new Map(r.map(({ shopId, ...t }) => [shopId, t]));
+  return new Map(r.map(({ shopId, ...t }) => [segKey(shopId, null), t]));
 }
 
 const ZERO_GIFT = (): GiftCardTotals => ({ issuedN: 0, issuedCents: 0, redeemedCents: 0, outstandingN: 0, outstandingCents: 0 });
@@ -730,7 +832,7 @@ export async function giftCardsIssued(s: ReportScope) {
 /** Gift cards issued at these shops in the range, redemptions taken here, and what's still owed on cards issued here. */
 export async function giftCardActivity(s: ReportScope) {
   const [totals, issued] = await Promise.all([giftCardTotalsBy(s), giftCardsIssued(s)]);
-  return { totals: totals.get(null) ?? ZERO_GIFT(), issued };
+  return { totals: totals.get(TOTAL) ?? ZERO_GIFT(), issued };
 }
 
 export async function giftCardTotalsByShop(s: ReportScope): Promise<Record<string, GiftCardTotals>> {
@@ -753,7 +855,7 @@ export interface LoyaltyTotals {
  * Loyalty activity on tickets at these shops, at the ticket's shop. Manual rewards have no ticket:
  * they're counted only when every shop is in view, and per shop they sit in a brand-level row (null).
  */
-async function loyaltyBy(s: ReportScope, includeUnattached: boolean, o?: ByShop): Promise<Map<string | null, LoyaltyTotals>> {
+async function loyaltyBy(s: ReportScope, includeUnattached: boolean, o?: ByShop): Promise<Map<string, LoyaltyTotals>> {
   const start = startOfLocalDay(s.from).toISOString();
   const end = endOfLocalDay(s.to).toISOString();
   const g = grp(o, sql`s.shop_id`);
@@ -778,7 +880,7 @@ async function loyaltyBy(s: ReportScope, includeUnattached: boolean, o?: ByShop)
       coalesce(iss.manual,0) "manualRewards", coalesce(earn.members,0) members
     from k left join earn on ${same(sql`earn.shop_id`, sql`k.shop_id`)} left join iss on ${same(sql`iss.shop_id`, sql`k.shop_id`)}
       left join red on ${same(sql`red.shop_id`, sql`k.shop_id`)}`);
-  return new Map(r.map(({ shopId, ...t }) => [shopId, t]));
+  return new Map(r.map(({ shopId, ...t }) => [segKey(shopId, null), t]));
 }
 
 const ZERO_LOYALTY = (): LoyaltyTotals => ({
@@ -793,13 +895,13 @@ const ZERO_LOYALTY = (): LoyaltyTotals => ({
 });
 
 export async function loyaltyActivity(s: ReportScope, includeUnattached: boolean): Promise<LoyaltyTotals> {
-  return (await loyaltyBy(s, includeUnattached)).get(null) ?? ZERO_LOYALTY();
+  return (await loyaltyBy(s, includeUnattached)).get(TOTAL) ?? ZERO_LOYALTY();
 }
 
 /** `brand` holds rewards with no ticket (manual or imported), when they're included. */
 export async function loyaltyByShop(s: ReportScope, includeUnattached: boolean): Promise<{ shops: Record<string, LoyaltyTotals>; brand: LoyaltyTotals | null }> {
   const m = await loyaltyBy(s, includeUnattached, { byShop: true });
-  return { shops: perShop(s, m, ZERO_LOYALTY), brand: includeUnattached ? (m.get(null) ?? ZERO_LOYALTY()) : null };
+  return { shops: perShop(s, m, ZERO_LOYALTY), brand: includeUnattached ? (m.get(TOTAL) ?? ZERO_LOYALTY()) : null };
 }
 
 export async function drawerHistory(s: ReportScope) {
