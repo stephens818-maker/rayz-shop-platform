@@ -11,6 +11,7 @@ Booking, front desk, POS, and reporting for Ray'z Barber Shop's 8 locations (Cor
 | 1c | Sales reports, CSV exports, bi-weekly payroll tips, KPIs, loyalty | Done |
 | Inventory | Stock ledger per shop, par levels and low-stock alerts, vendors, purchase orders (suggest, approve, email, receive), transfers, counts, inventory reports | Done |
 | Shop workspaces | A login per shop, each shop its own workspace on one database; brand logins over all of them; client history visible at every shop; a role per assigned shop for multi-shop staff; isolation enforced by a central tenant guard and tested | Done |
+| Client data protection | Hidden, masked, or full for every client field by role and person, brand-wide or per shop, enforced on the server everywhere; calls and texts through the shop line; reveal with a reason; client export as its own permission; lookup limits with alerts; a data-access report | Done |
 
 Screenshots of the key screens are in the PR description.
 
@@ -47,7 +48,7 @@ pnpm dev                      # http://localhost:3000
 | Kat | `kat@rayz.test` | Barber at Moline and Silvis, Shop Manager at Rock Island | Works one shop at a time under that shop's role; the switcher offers only her three shops |
 | Shop logins | `coralville@rayz.test`, `kimberly@rayz.test`, `le-claire@rayz.test`, `moline@rayz.test`, `rock-island@rayz.test`, `dubuque@rayz.test`, `silvis@rayz.test`, `utica@rayz.test` | Front Desk, that one shop | The shared front-desk sign-in for that shop's workspace (see [Shop workspaces](#shop-workspaces)) |
 
-What each role can do is editable under **Permissions** (see [Roles and permissions](#roles-and-permissions)).
+What each role can do is editable under **Permissions** (see [Roles and permissions](#roles-and-permissions)). How much of each client's details they see is set separately under **Client data protection**: by default barbers, the front desk, and managers see contact details masked or hidden (see [Client data protection](#client-data-protection)).
 
 Staff sign in at `/login`. Customers don't need an account to book. They can optionally sign in at `/account` with a one-time code. In development, the code is shown on screen because `AUTH_DEV_CODES=true`.
 
@@ -66,17 +67,20 @@ Handy demo data:
 5. As `admin@rayz.test`, open **Permissions**, edit the Front Desk role, or open a person to give them a one-off permission or change their shops. Under **Bulk upload**, download the template, fill in a few rows, and preview the upload before saving it.
 6. As `owner@rayz.test` with **All shops** selected, open **Inventory → Low stock**, tick a few suggested orders, and click **Create purchase orders**. Open one over $500 (the seeded PO-1005 at Coralville is one), approve it, and **Send** it by email; the PDF and CSV show up under **Notifications**. Then **Receive** part of it at a different price, and check the product's ledger and **Reports → Stock movement and shrink**.
 7. Sign in as `moline@rayz.test`. The sidebar says **Shop workspace** with Moline's name and address, and every page (calendar, sales, drawer, stock, reports) covers Moline only. Search **Clients** for a Coralville client's full phone number to book them; a partial search won't find them. Then sign in as `regional@rayz.test` and open **Setup → Shop logins** to create a login for Moline or reset the Moline desk's password.
+8. Sign in as `makenna@rayz.test` and open one of her clients: the phone and birthday are masked, email and address aren't there, and **Call through shop line** places the call without showing the number. As `michelle@rayz.test`, click **Reveal** next to a phone and give a reason. As `owner@rayz.test`, open **Setup → Client data protection** to change what a role or person sees (try **What someone sees**), and **Setup → Client data access** to see both lookups and the reveal with its reason.
 
 ### Other commands
 
 ```bash
-pnpm test          # unit tests: availability/DST, checkout totals, payroll, loyalty, permission rules, upload parsing, report views,
+pnpm test          # unit tests: availability/DST, checkout totals, payroll, loyalty, permission rules, client data masking and rules, upload parsing, report views,
                    # suggested orders (par, reorder point, case packs), receiving plans, PO PDF and CSV
 pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + seeds it first), incl. every page/action/route per login
                    # and per-location totals adding up to multi-location and brand totals (refunds, multi-shop barbers);
                    # stock ledger math across sales, refunds, voids, receiving, transfers and concurrent sales, partial receiving,
                    # and inventory and purchasing permissions; shop isolation (tests/db/tenant.test.ts): canary records at
-                   # Coralville never reach Moline's logins through any page, URL, export, API route, action, job or login flow
+                   # Coralville never reach Moline's logins through any page, URL, export, API route, action, job or login flow;
+                   # client data protection (tests/db/client-privacy.test.ts): hidden and masked details never reach restricted
+                   # roles' pages, action results or CSVs, and every reveal, export, call and text is audited
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -452,7 +456,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 43 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 46 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -464,7 +468,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 - Nobody can grant a permission they don't have, set a discount limit above their own, or change their own access.
 - Roles apply at every shop, so only people with access to all shops can edit roles. Someone with limited shops can only manage people wholly inside their shops, and can only give access to those shops.
 - You can't edit, reset the password of, or deactivate someone who has access you don't.
-- **Brand-only permissions** change records every shop shares: the catalog (`catalog.manage`), vendors, client merges, bulk imports, locations, and barber groups. They take effect only with access to all shops. A role or override can include them, but for someone scoped to some shops they're off, and the editors mark them **All shops only**.
+- **Brand-only permissions** change records every shop shares: the catalog (`catalog.manage`), vendors, client merges, the client export, client data protection settings, bulk imports, locations, and barber groups. They take effect only with access to all shops. A role or override can include them, but for someone scoped to some shops they're off, and the editors mark them **All shops only**.
 
 **Enforcement.** Shop scope is part of every check (see [Shop workspaces](#shop-workspaces)). Every admin page calls `guardPage()`, which checks the page's required permissions from one table (`PAGE_ACCESS` in `src/domain/navigation.ts`) and renders a "no access" page otherwise. Every server action calls `authorize()` with the permission it needs, and every route handler (CSV exports, templates, error files) goes through `routeStaff()`, which returns 401 or 403. Nav items you can't use are hidden, but hiding is cosmetic: the server checks again. A unit test fails the build if a page, action file, or route under `/admin` has no guard, and a DB test signs in as each of the six demo logins and loads **every admin page**, checking the outcome against that login's permissions.
 
@@ -512,7 +516,7 @@ Existing staff were migrated automatically: brand admins became Brand Owner, sho
 - Families sharing a phone stay separate people. Signing in by code on a shared phone asks which profile you are instead of picking one.
 - **Duplicates and merge** (**Clients → Duplicates**, needs the merge permission): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, staff ratings, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
 - **Profile:** visit count, no-shows, cancellations, last visit, and lifetime spend come from SQL over the client's whole history, net of refunds. They cover every Ray'z shop, in a shop workspace too. Lifetime spend includes Squire visits that have no imported ticket. The profile also shows the full visit history at every shop with shop, barber, services, and prices, plus purchases, home shop, preferred barber, loyalty, notes, and consent. Staff ratings and their notes show for the viewer's own shops; the average covers every shop.
-- **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. Brand-wide staff who can look up any client search the whole brand. In a shop workspace, search covers that shop's clients (home shop or a visit there), plus any brand client by an **exact** phone, email, or full name, so the desk can book them; partial searches and the client list never show other shops' clients. Without "look up any client", people can open the full profile only of a client they've served. Phone numbers and emails need the contact permission; without it the phone is masked to its last 4 digits and the email is hidden.
+- **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. Brand-wide staff who can look up any client search the whole brand. In a shop workspace, search covers that shop's clients (home shop or a visit there), plus any brand client by an **exact** phone, email, or full name, so the desk can book them; partial searches and the client list never show other shops' clients. Without "look up any client", people can open the full profile only of a client they've served. How much of each detail they see (phone, email, address, and so on) is set under [Client data protection](#client-data-protection).
 - Client notes show on the calendar panel and the POS ticket.
 - **Consent:** SMS and email opt-in default to no. Each booking sends an explicit choice, an explicit no always sticks, and a missing answer keeps what's on file. Reminder texts and the waitlist "you're up" text are only sent to clients who opted in.
 - Every walk-in becomes a client, even without a phone.
@@ -531,6 +535,87 @@ Existing staff were migrated automatically: brand admins became Brand Owner, sho
 - **Audited:** every create, edit, and removal is in the audit log with the shop, the client, and the before and after stars and note.
 - **Never shown to customers.** Ratings live in their own table, `client_ratings`, and no customer-facing code reads it. Tests check this two ways. A static check walks the import graph of `/api/v1`, the public pages, and the API client and fails if any of them can reach the ratings code or table. A DB test signs in as a rated client and calls every `GET` under `/api/v1`, plus booking, profile update, sign-in, and the OpenAPI document. It asserts that no star count, the word "rating", or the private note appears anywhere.
 - Merging duplicate clients carries their ratings over. The database rejects stars outside 1 to 5, a note over 500 characters, and a rating with no visit.
+
+### Client data protection
+
+The goal is to keep staff from taking client details with them to start their own business, without getting in the way of their work. The brand decides how much of each client detail every role and person sees, and the server enforces it.
+
+**Levels.** Each client field is **Hidden**, **Masked**, or **Full** for each viewer. This covers phone, email, address, birthday, client notes, preferred barber, ratings, and any custom field the brand adds (the seed adds Instagram).
+
+- A masked phone shows as `***-***-4321` and a masked email as `j***@gmail.com`. A masked address keeps only the city, state, and ZIP (`***, Moline, IL 61265`), and a masked birthday only the month (`Jul **`). Masked notes show "On file", and other masked text shows only its first letter. Masked ratings show the average stars, with no individual ratings or notes.
+- A hidden field isn't sent at all: no label, no placeholder, no value.
+
+**Defaults**, used wherever the brand hasn't set a rule:
+
+| Role | Phone | Email | Address | Birthday | Notes, preferred barber, ratings | Custom fields |
+| --- | --- | --- | --- | --- | --- | --- |
+| Brand Owner, Brand Admin | Full | Full | Full | Full | Full | Full |
+| Regional Manager, Shop Manager | Masked | Masked | Masked | Full | Full | Full |
+| Front Desk | Masked | Masked | Hidden | Masked | Full | Masked |
+| Barber | Masked | Hidden | Hidden | Masked | Full | Hidden |
+| Custom roles | Masked | Masked | Hidden | Masked | Full | Hidden |
+
+The Brand Owner always sees everything and can't be restricted.
+
+**Setting it.** The rules live under **Setup → Client data protection** (`/admin/client-data`). It needs the `clients.privacy` permission, which Brand Owner and Brand Admin hold by default and which works only with access to all shops.
+
+- **By role:** a role-by-field grid. **Brand defaults** sets a role's level at every shop; pick a shop to override a role there only. A cell without a rule shows the level it inherits, faded.
+- **For one person:** a rule for one person, at every shop or at one shop.
+- **Which rule wins:** the person's rule at that shop, then their brand-wide rule, then the role's rule at that shop, then the role's brand default, then the built-in default. Someone in the combined "All my shops" view gets the strictest level among those shops.
+- **What someone sees:** pick a person to see the resulting level of every field at each of their shops.
+- **Custom client fields:** add a field (it starts hidden from barbers and masked for the front desk), or turn one off and back on. Each field gets its own column in the grid and its own input on the client profile.
+- **Guards:** only the Brand Owner can change rules that apply to themselves or their own role, and nobody can give anyone a level above what they see themselves. Every rule change is in the audit log with the field, who it's for, where, and the old and new level.
+
+**Enforced on the server, everywhere.** Masking happens in the query results before a page renders or an action returns, so a hidden or masked value never reaches that person's browser. The same policy (`src/server/client-privacy.ts`) covers:
+
+- the client list, search, duplicates, and profile;
+- the calendar (blocks, side panel, and client search), walk-ins, the POS, sales, and receipts;
+- the notification outbox, where the recipient of a client message is masked;
+- the audit log, where details are redacted and can't be searched for a value the reader doesn't see;
+- the client ratings report and its CSV;
+- the client export, the import preview, and the import's skipped-rows file;
+- the customer API, which only ever returns the signed-in customer's own details.
+
+Editing a client changes only the fields the editor sees in full, and saving keeps the fields they can't see.
+
+**Staff can still do their job.**
+
+- **Search** by a client's full phone number or email finds them for booking without showing the number. Partial digits or a partial email only match when that person sees the field in full. Name search works as before.
+- **Calls and texts go through the shop line.** **Call through shop line** and **Text** on the profile and the calendar panel go through the system (`clients.message`, held by every built-in role). The server looks up the number and hands it to the voice or SMS provider, so the number is never shown. Texts need the client's SMS opt-in. Each call and text is in the audit log.
+- **Reminders still send.** Reminder and waitlist texts are addressed on the server to the real number.
+- **Reveal with a reason.** People with `clients.reveal` (Brand Admin, Regional Manager, and Shop Manager by default) can show one masked detail by giving a reason of at least four characters. It's shown once, and every reveal records who, when, which client, which field, and the reason. Hidden fields and ratings can't be revealed.
+
+**Against taking the list.**
+
+- **Exporting clients** is its own permission, `clients.export`. Only the Brand Owner has it by default (not Brand Admin), and it works only with access to all shops. **Clients → Export CSV** includes only the columns the exporter may see, with masked values masked. Every export is audited with the client IDs and columns. The ratings CSV, the import skipped-rows file, and report CSVs are audited too.
+- **Copy, drag, and print are blocked** on the client list and the duplicates page. Screenshots still work, so this only slows down bulk copying.
+- **Lookup limits.** Opening many client profiles, or running many searches, within a short window raises an alert. The defaults are 25 profiles or 150 searches in 10 minutes. Brand admins are emailed and the alert shows in the data-access report. Past a second limit (50 profiles or 300 searches), that person's lookups pause until the window passes. The Brand Owner is never paused. All four numbers and the window are editable on the protection page.
+
+**Client data access report** (**Setup → Client data access**, `/admin/client-data/access`). It shows open alerts with an Acknowledge button, then each person's totals over the period: profiles opened, reveals, exports, searches, calls and texts, and times paused. Below that is every lookup, with the time, person, what they did, which field, the client, the reason, and the shop. You can filter by period, person, kind, or client, and download a CSV, which is itself audited.
+
+**Tested.** `tests/client-privacy.test.ts` covers masking, the defaults, which rule wins, and the change guards. `tests/db/client-privacy.test.ts` seeds a client whose every detail is a unique marker string. Then it signs in as a barber, the front desk, a shop manager, and a brand admin limited by personal rules, and checks the following:
+
+- None of their pages show a hidden or masked marker: client list and search, profile, duplicates, calendar, walk-ins, POS, receipt, notifications, the audit log, and the ratings report. Their action results (calendar search, reveal, saving a client) and CSVs (client export, ratings, the audit report, the import preview and its errors file) don't show one either, while the masked forms do appear.
+- The owner sees every marker.
+- Search by the full number or email matches, and a partial one doesn't.
+- Calls and texts go through, and are refused without opt-in or outside the person's shops. Reminders go to the real number.
+- Every reveal and export is audited with the person, the client, and the field. Reveals are refused without the permission, for a hidden field, or without a reason.
+- A per-shop rule applies only at that shop.
+- Lookup limits raise alerts, email the brand admins, then pause. The owner is exempt.
+
+<img alt="Client data protection settings" src="docs/screenshots/client-data-protection.png" width="800" />
+
+<img alt="What a barber sees, checked from the portal" src="docs/screenshots/client-data-who-sees.png" width="800" />
+
+A barber's view of a client: masked phone and birthday, no email, address, or Instagram, and a call placed through the shop line:
+
+<img alt="Client profile as a barber" src="docs/screenshots/client-profile-barber.png" width="800" />
+
+A shop manager revealing the phone with a reason (email and address stay masked until revealed):
+
+<img alt="Reveal with a reason" src="docs/screenshots/client-reveal-manager.png" width="800" />
+
+<img alt="Client data access report" src="docs/screenshots/client-data-access.png" width="800" />
 
 ### Squire importer
 
@@ -613,6 +698,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 ## What's stubbed or simulated
 
 - **SMS and email providers.** Twilio and Resend are interface stubs (`src/server/notifications/providers.ts`) and sending is **off by default**. That includes purchase orders emailed to vendors and low-stock alerts: they're queued and shown in the outbox with their attachments, but nothing leaves until a provider is configured. Setting `NOTIFICATIONS_*_PROVIDER=console` logs messages instead. Going live needs Twilio A2P 10DLC registration and a verified sending domain.
+- **Calls through the shop line.** **Call through shop line** queues a call on a voice provider interface (`VoiceProvider` in the same file). The Twilio version is a stub: going live means ringing the shop line first and then dialing the client with the shop's number as caller ID, so neither side sees the other's number.
 - **Stripe without keys.** With no `STRIPE_SECRET_KEY`, a built-in simulator with the same interface runs, using Stripe's published test card IDs (`pm_card_visa`, `pm_card_visa_debit`, and so on), so the POS works end to end offline. Adding test keys (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`) switches to real Stripe test mode: PaymentIntents, Elements for keyed cards, and the webhook for dashboard refunds and disputes. For Cloud Agents, add them under Cursor Dashboard → Cloud Agents → Secrets.
 - **Stripe Terminal.** The card reader flow is simulated. You pick a test card where a reader would read one. Real hardware needs a Terminal location, a connection token endpoint, and a reader pairing screen.
 - **3-D Secure.** The keyed-card flow doesn't handle `requires_action` yet. That's fine for in-person keyed entry, but it's needed before taking any card-not-present payment.
