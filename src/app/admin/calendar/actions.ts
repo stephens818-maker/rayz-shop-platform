@@ -3,15 +3,20 @@
 import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { appointments, customers, timeBlocks } from "@/db/schema";
+import { appointments, customers, staffShops, timeBlocks } from "@/db/schema";
 import { normalizePhone } from "@/lib/phone";
 import { zonedWallTime } from "@/lib/time";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { StaffContext, assertShopAccess, canManage, requireStaff } from "@/server/auth/staff";
+import { timeBlockChangeDenied } from "@/server/auth/policy";
+import { StaffContext, assertShopAccess, caller, canManage, requireStaff } from "@/server/auth/staff";
 import { createAppointment, rescheduleAppointment, setAppointmentStatus } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
 import { AppError, forbidden, notFound } from "@/server/errors";
+
+async function barberShops(staffId: string) {
+  return (await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId))).map((l) => l.shopId);
+}
 
 async function loadAppt(ctx: StaffContext, id: string) {
   const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
@@ -108,6 +113,7 @@ export async function moveAppointmentAction(id: string, staffId: string, date: s
   return safe(async () => {
     const ctx = await requireStaff();
     const a = await loadAppt(ctx, id);
+    if (ctx.isBarber && staffId !== ctx.staff.id) throw forbidden("You can only move your own appointments within your own column");
     await rescheduleAppointment(a.code, { startsAt: zonedWallTime(date, startMin).toJSDate(), barberRef: staffId, actor: ctx.actor, byCustomer: false });
     revalidatePath("/admin/calendar");
     return null;
@@ -121,11 +127,15 @@ export async function createBlockAction(input: { shopId: string; staffId: string
     if (ctx.isBarber && input.staffId !== ctx.staff.id) throw forbidden();
     if (!input.reason.trim()) throw new AppError("bad_request", "Add a reason for the block");
     if (input.endMin <= input.startMin) throw new AppError("bad_request", "End must be after start");
+    const shopId = input.allShops ? null : input.shopId;
+    const denied = timeBlockChangeDenied(caller(ctx), { staffId: input.staffId, shopId }, await barberShops(input.staffId));
+    if (denied) throw forbidden(denied);
+    if (input.allShops && !(await barberShops(input.staffId)).includes(input.shopId)) throw forbidden("That barber doesn't work at this shop");
     const [b] = await db
       .insert(timeBlocks)
       .values({
         staffId: input.staffId,
-        shopId: input.allShops ? null : input.shopId,
+        shopId,
         startsAt: zonedWallTime(input.date, input.startMin).toJSDate(),
         endsAt: zonedWallTime(input.date, input.endMin).toJSDate(),
         reason: input.reason.trim(),
@@ -144,8 +154,9 @@ export async function deleteBlockAction(id: string) {
     const ctx = await requireStaff();
     const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
     if (!b) throw notFound("Block");
-    if (b.shopId) assertShopAccess(ctx, b.shopId);
     if (ctx.isBarber && b.staffId !== ctx.staff.id) throw forbidden();
+    const denied = timeBlockChangeDenied(caller(ctx), b, await barberShops(b.staffId));
+    if (denied) throw forbidden(denied);
     await db.delete(timeBlocks).where(eq(timeBlocks.id, id));
     await audit(ctx.actor, "block.delete", "time_block", id, { reason: b.reason }, b.shopId);
     revalidatePath("/admin/calendar");

@@ -31,11 +31,23 @@ export function staffProfileChangeDenied(
   return null;
 }
 
-/** Time blocks: managers work inside their shops; blocks that span every shop are brand-admin only. */
-export function timeBlockChangeDenied(caller: Caller, blockShopId: string | null): string | null {
+/**
+ * Time blocks. A shop block needs access to that shop and a barber who works there. A block at every
+ * shop (shopId null) is fine for your own time, or for a barber who only works at shops you run;
+ * otherwise it would close someone else's book, so it's brand-admin only.
+ */
+export function timeBlockChangeDenied(
+  caller: Caller,
+  block: { staffId: string; shopId: string | null },
+  barberShopIds: string[],
+): string | null {
   if (caller.isAdmin) return null;
-  if (!blockShopId) return "Only the brand admin can block time at every shop";
-  return caller.shopIds.includes(blockShopId) ? null : "That shop is outside your access";
+  if (block.shopId) {
+    if (!caller.shopIds.includes(block.shopId)) return "That shop is outside your access";
+    return barberShopIds.includes(block.shopId) ? null : "That barber doesn't work at this shop";
+  }
+  if (block.staffId === caller.staffId) return null;
+  return barberShopIds.every((s) => caller.shopIds.includes(s)) ? null : "This barber also works at shops you don't manage. Block this shop only, or ask the brand admin.";
 }
 
 /** The barber credited on a sale, or the barber an appointment moves to, must work at that shop. */

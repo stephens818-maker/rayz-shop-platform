@@ -45,13 +45,20 @@ describe("review P0#4: managers can't escalate roles", () => {
 });
 
 describe("review P1#12: time blocks and sale barbers stay in scope", () => {
-  it("brand-wide blocks are admin only", () => {
-    expect(timeBlockChangeDenied(manager, null)).not.toBeNull();
-    expect(timeBlockChangeDenied(admin, null)).toBeNull();
+  const shared = "barber-2-shops";
+  const local = "barber-coralville-only";
+  it("an all-shops block on a barber who also works elsewhere is brand-admin only", () => {
+    expect(timeBlockChangeDenied(manager, { staffId: shared, shopId: null }, [CORALVILLE, IOWA_CITY])).not.toBeNull();
+    expect(timeBlockChangeDenied(admin, { staffId: shared, shopId: null }, [CORALVILLE, IOWA_CITY])).toBeNull();
   });
-  it("managers block time only at their shops", () => {
-    expect(timeBlockChangeDenied(manager, IOWA_CITY)).not.toBeNull();
-    expect(timeBlockChangeDenied(manager, CORALVILLE)).toBeNull();
+  it("an all-shops block is fine for your own time or a barber who only works at your shops (review P2#23)", () => {
+    expect(timeBlockChangeDenied({ ...manager, staffId: shared }, { staffId: shared, shopId: null }, [CORALVILLE, IOWA_CITY])).toBeNull();
+    expect(timeBlockChangeDenied(manager, { staffId: local, shopId: null }, [CORALVILLE])).toBeNull();
+  });
+  it("managers block time only at their shops, for barbers who work there", () => {
+    expect(timeBlockChangeDenied(manager, { staffId: shared, shopId: IOWA_CITY }, [CORALVILLE, IOWA_CITY])).not.toBeNull();
+    expect(timeBlockChangeDenied(manager, { staffId: "elsewhere", shopId: CORALVILLE }, [IOWA_CITY])).not.toBeNull();
+    expect(timeBlockChangeDenied(manager, { staffId: shared, shopId: CORALVILLE }, [CORALVILLE, IOWA_CITY])).toBeNull();
   });
   it("a barber must work at the shop", () => {
     expect(staffAtShopDenied([CORALVILLE], IOWA_CITY)).not.toBeNull();

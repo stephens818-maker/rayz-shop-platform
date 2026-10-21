@@ -27,6 +27,10 @@ async function assertCanEdit(ctx: StaffContext, staffId: string) {
   if (!links.length && s.id !== ctx.staff.id) throw forbidden("That person isn't on your shop's team");
 }
 
+async function barberShops(staffId: string) {
+  return (await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId))).map((l) => l.shopId);
+}
+
 const ProfileSchema = z.object({
   id: z.string().uuid().nullable(),
   firstName: z.string().trim().min(1, "First name is required"),
@@ -160,7 +164,7 @@ export async function addTimeOffAction(input: { staffId: string; shopId: string 
     const ctx = await requireStaff([...MGR]);
     await assertCanEdit(ctx, input.staffId);
     if (!input.reason.trim()) throw new AppError("bad_request", "A reason is required");
-    const denied = timeBlockChangeDenied(caller(ctx), input.shopId);
+    const denied = timeBlockChangeDenied(caller(ctx), { staffId: input.staffId, shopId: input.shopId }, await barberShops(input.staffId));
     if (denied) throw forbidden(denied);
     if (input.to < input.from) throw new AppError("bad_request", "End date is before start date");
     const startsAt = input.allDay ? startOfLocalDay(input.from) : zonedWallTime(input.from, input.startMin).toJSDate();
@@ -182,7 +186,7 @@ export async function deleteTimeOffAction(id: string) {
     const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
     if (!b) throw notFound("Time off");
     await assertCanEdit(ctx, b.staffId);
-    const denied = timeBlockChangeDenied(caller(ctx), b.shopId);
+    const denied = timeBlockChangeDenied(caller(ctx), b, await barberShops(b.staffId));
     if (denied) throw forbidden(denied);
     await db.delete(timeBlocks).where(eq(timeBlocks.id, id));
     await audit(ctx.actor, "block.delete", "time_block", id, { reason: b.reason }, b.shopId);

@@ -27,6 +27,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
         nowMin={date === today ? localMinutesOf(new Date()) : null}
         services={catalog.map((s) => ({ id: s.id, name: s.name, kind: s.kind, priceCents: s.priceCents, durationMin: s.durationMin }))}
         canManage={ctx.isAdmin || ctx.isManager}
+        meId={ctx.staff.id}
         initialApptId={sp.appt ?? null}
       />
     </div>

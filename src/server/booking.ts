@@ -407,6 +407,7 @@ export async function rescheduleAppointment(
   if (barberRef && barberRef !== "any") {
     const b = await resolveStaffRef(barberRef);
     if (!b) throw notFound("Barber");
+    if (b.id !== a.staffId && !(await shopBarbers(shop.id, { onlineOnly: !staffOverride })).some((x) => x.id === b.id)) throw notFound("Barber at this shop");
     staffIds = [b.id];
   } else {
     staffIds = (await shopBarbers(shop.id, { onlineOnly: !staffOverride })).map((b) => b.id);

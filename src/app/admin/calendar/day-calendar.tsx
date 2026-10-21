@@ -63,6 +63,7 @@ export function DayCalendar({
   nowMin,
   services,
   canManage,
+  meId,
   initialApptId,
 }: {
   data: DayCalendarData;
@@ -70,6 +71,7 @@ export function DayCalendar({
   nowMin: number | null;
   services: Svc[];
   canManage: boolean;
+  meId: string;
   initialApptId: string | null;
 }) {
   const router = useRouter();
@@ -225,7 +227,7 @@ export function DayCalendar({
         <SidePanel onClose={() => setPanel(null)}>
           {panel.kind === "appt" && <ApptPanel appt={panel.appt} col={panel.col} canManage={canManage} onDone={() => setPanel(null)} />}
           {panel.kind === "block" && <BlockPanel block={panel.block} col={panel.col} onDone={() => setPanel(null)} />}
-          {panel.kind === "new" && <NewPanel col={panel.col} data={data} startMin={panel.startMin} services={services} onDone={() => setPanel(null)} />}
+          {panel.kind === "new" && <NewPanel col={panel.col} data={data} startMin={panel.startMin} services={services} own={panel.col.id === meId} onDone={() => setPanel(null)} />}
         </SidePanel>
       )}
     </div>
@@ -519,7 +521,7 @@ function BlockPanel({ block, col, onDone }: { block: CalColumn["blocks"][number]
 
 type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; email: string | null };
 
-function NewPanel({ col, data, startMin, services, onDone }: { col: CalColumn; data: DayCalendarData; startMin: number; services: Svc[]; onDone: () => void }) {
+function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColumn; data: DayCalendarData; startMin: number; services: Svc[]; own: boolean; onDone: () => void }) {
   const [tab, setTab] = useState<"appt" | "block">("appt");
   const { pending, error, run } = useAction();
   const mains = services.filter((s) => s.kind === "service");
@@ -536,7 +538,8 @@ function NewPanel({ col, data, startMin, services, onDone }: { col: CalColumn; d
   const [notes, setNotes] = useState("");
   const [endTime, setEndTime] = useState(hhmm(startMin + 60));
   const [reason, setReason] = useState("");
-  const [allShops, setAllShops] = useState(false);
+  // Your own time off (doctor, errands) should close your book everywhere, not just here.
+  const [allShops, setAllShops] = useState(own);
 
   useEffect(() => {
     if (q.trim().length < 2) return setFound([]);
