@@ -289,9 +289,34 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
   - [ ] How long a break with no planned length should block (30 minutes by default), whether any shop wants "Not in yet" blocks, the not-clocked-in alert lead time (10 minutes), and whether any shop wants early clock-ins to open slots.
 - [ ] The mobile app has no clock-in yet. The interface for adding one is in NOTES-SYNC.
 
+## 15. Tip payouts to employees
+
+- [x] A tip ledger per employee, shop and ticket: card, cash and gift card tips. Refunds and voids reverse the tip (with its share of the card fee), and manager adjustments are their own entries with a reason. The ledger is append-only.
+- [x] Card tips show Pending settlement, Available, In a payout and Paid out. They become available once the shop's delay has passed since the sale; cash tips at once.
+- [x] Optional card fee netting on card tips, per shop, off by default, with a warning that it needs the accountant or a lawyer.
+- [x] Payout schedule per shop, within the brand's allowed methods: end of night at drawer close, daily on a delay of N days, weekly, with payroll only, or manual.
+- [x] Methods:
+  - [x] Cash from the drawer at close: a cash payout record, deducted from the drawer's expected cash, acknowledged by the employee with their clock PIN or name on the device. The drawer can't close while one is waiting.
+  - [x] Stripe Connect Express accounts for staff, through Stripe-hosted onboarding (no bank details in the app). Transfers come from the shop's Stripe balance (or the brand's), with instant payout where eligible and its fee shown.
+  - [x] Payroll export only.
+  - [x] Each employee chooses, if the brand allows it.
+- [x] Managers review and approve every batch, with each employee's breakdown by ticket. Hold, adjust, take out and cancel need a reason and go in the audit log; nobody adjusts their own.
+- [x] The same tip can't be paid twice: claims under row locks, a database trigger, unique indexes and Stripe idempotency keys. History before tip payouts is recorded as already paid.
+- [x] Reconciled against Stripe (`payout.paid`, `payout.failed`, `payout.canceled`, `transfer.reversed`, `account.updated`) and against the cash drawer. A failed payout reverses the money and puts its tips in the next batch.
+- [x] Permissions: `tips.own`, `tips.approve` and `tips.settings`.
+- [x] **My tips**: today, pending, ready, in a payout, paid out and history. The employee is emailed (or texted) when a payout is sent or fails.
+- [x] Every tip still flows into the pay period's payroll and iSolved file. Tips paid in cash or by Stripe go out as tips received (`E_Cash Tips Recd_Dollars`), so they're reported but not paid again; tips paid through payroll get their own column and are locked as paid at approve-and-lock.
+- [x] **Reports → Tip payouts** by shop and employee.
+- [x] Tests: `tests/tips.test.ts`, `tests/db/tips.test.ts` and `tests/payroll-engine.test.ts` cover ledger math with refunds, delayed availability, double-payout prevention, the cash drawer deduction, the Stripe webhooks and the payroll export with tips already paid.
+- [ ] To confirm with the accountant or a lawyer: whether the card fee may be taken out of card tips in Iowa and Illinois, and how it's reported. It's off at every shop.
+- [ ] To confirm with Charles: the iSolved earning code for tips paid through payroll. It's `E_Tips Paid In Payroll_Dollars` for now, a setting under **Payroll → Setup**, and the column only appears when someone is paid that way.
+- [ ] Each shop's schedule, delay and method. The demo sets Coralville to end of night in cash and Moline to daily, two days after the tip; every other shop is manual in cash.
+- [ ] Try staff onboarding and payouts in real Stripe test mode. The keys aren't set, so the simulator runs. The Connect webhook needs the payout and account events for staff accounts, and the platform webhook needs `transfer.reversed` (see DEPLOY.md).
+- [ ] Instant payout fee: Stripe's rate is set with `TIP_INSTANT_FEE` (default 1.5%, at least $0.50). Confirm it against the platform's Stripe pricing.
+
 ## Deferred by decision
 
-- I10 stays on destination charges; separate charges, `payment_transfers` and tip transfers aren't built.
+- I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.
 - The Q11/C2 training flag stays off.
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.

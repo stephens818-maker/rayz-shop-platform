@@ -17,12 +17,13 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | I10 Stripe Connect: platform account, connected account per shop, destination charges, onboarding, per-shop P&L, per-location banking (payments mode, descriptor, Terminal Locations and readers, payouts) | core, except the platform Customer and saved-card side, which is mobile's |
 | Payroll (`src/domain/payroll/**`, `src/server/payroll/**`, `src/app/admin/payroll/**`) and service times (`src/domain/service-times.ts`, `src/server/service-times*.ts`) | core |
 | Time clock and timesheets (`src/domain/time-clock.ts`, `src/server/time-clock*.ts`, `src/server/labor-report.ts`, `src/app/admin/clock/**`, `src/app/admin/timesheets/**`, `src/app/admin/time-clock/**`) | core |
+| Tip payouts (`src/domain/tips.ts`, `src/server/tips/**`, `src/app/admin/tips/**`, `src/app/admin/my-tips/**`), including employees' Stripe Express accounts | core |
 
 Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live` and `core_0032_clock_blocks`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks` and `core_0033_tip_payouts`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -197,6 +198,23 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
   - Clients never see clock status. The slots are simply absent, and the reason stays "No openings on this day". Please keep clock status out of `/api/v1` customer responses too.
   - New notification kinds `clock_late_in` and `clock_affected`: emails to the shop's managers with `calendar.manage`. The cron's `timeClock` result gains `clockAlerts`.
 
+### Tip payouts (core)
+
+- **Code:** `src/domain/tips.ts` (pure: policy and shop settings, availability, statuses, batch drafting, fee share, instant fee), `src/server/tips/ledger.ts` (ledger sync, settings, reading), `src/server/tips/payouts.ts` (batches, holds, adjustments, cash, Stripe, webhooks, payroll, cron), `src/server/tips/accounts.ts` (employees' Express accounts) and `src/server/tips/report.ts`.
+- **Schema** (`drizzle/core_0033_tip_payouts.sql`):
+  - `tip_ledger`: one row per tip (`payment_id`, unique), per refund or void that gave tip back (`refund_id`, unique, negative), or per manager adjustment (with `reason`). Each has its shop, staff, sale, method, amount, fee share, business date and `payout_id`. A trigger refuses changes to amounts, people, dates and kind, moving an entry to another payout, and taking it off a payout that's approved, processing or paid.
+  - `tip_payout_batches` (kinds `end_of_night`, `daily_delay`, `weekly`, `manual`, `payroll`, `opening`; one draft per shop) and `tip_payouts` (one per batch and employee; method `cash`, `stripe`, `payroll` or `prior`; Stripe debit, transfer and payout ids, each unique; cash `drawer_date` and acknowledgment; hold reason).
+  - `staff_payout_accounts`: the employee's chosen method, instant flag and Express account id with its status. No bank details are ever stored.
+  - `brand_settings.tip_payouts` and `shops.tip_payouts` (jsonb), and `cash_drawers.tip_payouts_cents`.
+  - The migration fills the ledger from existing payments and refunds and records it all as paid before tip payouts (`prior` payouts in an `opening` batch per shop).
+- **If the app checks out or refunds**, nothing extra is needed: `syncTipLedger` runs inside checkout and refunds, and before every batch, from `payments.tip_cents` and `refunds.tip_cents`. Please don't insert into `tip_ledger` or `tip_payouts` directly.
+- **If the app shows an employee's tips** later, read `myTips(staffId, shopIds)` from `src/server/tips/ledger.ts` and gate it on `tips.own`. Please never return other people's tips, or Stripe account ids, from `/api/v1`.
+- **Stripe:** employees' Express accounts send their events to the Connect webhook (`/api/stripe/connect`): `account.updated`, `capability.updated`, `account.external_account.*` and `payout.paid`/`failed`/`canceled`. The platform webhook handles `transfer.reversed`. Transfers come from the shop's connected account (an account debit, then a transfer with `source_transaction`) or the brand's balance.
+- **Payroll:** `payrollTipSplit` gives each line `tipsInPayroll`, `tipsOutside` (still `E_Cash Tips Recd_Dollars`) and `tipsPaidOut`. The iSolved file gets an extra column (`tipsInPayrollHeader`, default `E_Tips Paid In Payroll_Dollars`) only when someone has tips paid in payroll. `lockPayrollTips` runs inside approve-and-lock.
+- **Permissions:** `tips.own`, `tips.approve` and `tips.settings` (brand-only), and the report `tip_payouts`. There are 77 feature permissions now.
+- **Notification kind:** `tip_payout`, to the employee (email, or a text if they have no email) when a payout is sent or fails, and to the shop's email when one fails.
+- **Cron:** `/api/cron/notifications` runs `tipPayoutCron`, which builds each live shop's daily or weekly draft once it's due. The response gains `tipPayouts`.
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
@@ -245,6 +263,17 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (tip payouts)
+
+- **Tip payouts to employees**: a tip ledger per employee, shop and ticket (card, cash and gift card tips, refunds and voids reversing them, manager adjustments), with card tips pending settlement until the shop's delay has passed.
+- Per-shop schedules (end of night, daily on a delay, weekly, payroll only, manual) and methods the brand allows (cash from the drawer, Stripe Express to the employee's own card or bank with optional instant payout, through payroll). Employees choose where the brand lets them.
+- Managers review and approve every batch per employee and ticket; holds, adjustments, removals and cancellations need a reason and are audited. Double payment is refused by claims under row locks, a trigger, unique indexes and Stripe idempotency keys.
+- Cash payouts are acknowledged with the clock PIN or name and come off the drawer's expected cash. Stripe payouts reconcile from `payout.*` and `transfer.reversed`.
+- Payroll: tips paid outside payroll still go to iSolved as received; tips paid through payroll get their own column and are locked as paid at approve-and-lock.
+- **My tips**, **Tip payouts**, **Tip payout settings** and **Reports → Tip payouts**. Permissions `tips.own`, `tips.approve`, `tips.settings`.
+- Migration `core_0033_tip_payouts`. Tests: `tests/tips.test.ts`, `tests/db/tips.test.ts`, and additions to `tests/payroll-engine.test.ts`, `tests/permissions.test.ts` and `tests/db/tenant.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
 
 ### 2026-10-23: core (clock block-outs)
 
