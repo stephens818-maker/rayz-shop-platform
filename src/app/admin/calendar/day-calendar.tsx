@@ -712,55 +712,37 @@ function ClockLine({ clock }: { clock: CalClock }) {
 /** Worked time as a strip down the column's left edge, next to the scheduled shift; late, early and missed punches marked in red. */
 function ClockMarks({ clock, col, nowMin, top, h }: { clock: CalClock; col: CalColumn; nowMin: number | null; top: (m: number) => number; h: (s: number, e: number) => number }) {
   const schedStart = col.spans.length ? Math.min(...col.spans.map((s) => s.startMin)) : null;
-  const tag = "pointer-events-none absolute right-1 z-[6] -translate-y-1/2 rounded px-1 text-[10px] font-semibold leading-4 shadow-xs";
   const strip = "pointer-events-none absolute left-0 z-[6] w-1 rounded-r";
+  const late = clock.lateMin !== null && schedStart !== null && clock.firstInMin !== null;
+  const overdue = clock.overdueMin !== null && schedStart !== null && nowMin !== null;
+  const leftEarly = clock.earlyOutMin !== null && clock.lastOutMin !== null;
+  const tags: { min: number; tone: string; text: string }[] = [
+    ...clock.breaks.map((b) => ({ min: b.startMin, tone: "bg-amber-200 text-amber-950", text: `Break${b.open ? ` since ${label(b.startMin)}` : ` ${dur(b.endMin - b.startMin)}`}` })),
+    ...clock.holds.map((x) => ({ min: x.startMin, tone: "bg-white text-red-800 ring-1 ring-red-200", text: x.why === "break" ? `Online booking held to ${label(x.endMin)}` : "Clocked out · online booking closed" })),
+    ...(clock.early ? [{ min: clock.early.startMin, tone: "bg-emerald-600 text-white", text: "Opened early" }] : []),
+    ...(late ? [{ min: clock.firstInMin!, tone: "bg-red-600 text-white", text: `Late ${dur(clock.lateMin!)}` }] : []),
+    ...(overdue ? [{ min: schedStart!, tone: "bg-red-600 text-white", text: "Not clocked in" }] : []),
+    ...(leftEarly ? [{ min: clock.lastOutMin!, tone: "bg-red-600 text-white", text: `Left early ${dur(clock.earlyOutMin!)}` }] : []),
+    ...clock.missed.map((m) => ({ min: m.atMin, tone: "bg-red-100 text-red-800 ring-1 ring-red-300", text: `Missed punch: ${m.label.toLowerCase()}` })),
+  ].sort((a, b) => a.min - b.min);
+  // Punches minutes apart would print their tags over each other: each one goes at least a line below the last.
+  let floor = -Infinity;
+  const placed = tags.map((x) => {
+    const y = Math.max(top(x.min) + 2, floor);
+    floor = y + 18;
+    return { ...x, y };
+  });
   return (
     <>
       {clock.worked.map((w, i) => (
         <div key={`w${i}`} className={cx(strip, "bg-emerald-500", w.open && "animate-pulse")} style={{ top: top(w.startMin), height: Math.max(h(w.startMin, w.endMin), 2) }} />
       ))}
-      {clock.breaks.map((b, i) => (
-        <div key={`bt${i}`} className={cx(tag, "bg-amber-200 text-amber-950")} style={{ top: top(b.startMin) + 8 }}>
-          Break{b.open ? ` since ${label(b.startMin)}` : ` ${dur(b.endMin - b.startMin)}`}
-        </div>
-      ))}
-      {clock.holds.map((x, i) => (
-        <div key={`ht${i}`} className={cx(tag, "bg-white text-red-800 ring-1 ring-red-200")} style={{ top: top(x.startMin) + (x.why === "break" ? 26 : 8) }}>
-          {x.why === "break" ? `Online booking held to ${label(x.endMin)}` : "Clocked out · online booking closed"}
-        </div>
-      ))}
-      {clock.early && (
-        <div className={cx(tag, "bg-emerald-600 text-white")} style={{ top: top(clock.early.startMin) + 8 }}>
-          Opened early
-        </div>
-      )}
-      {clock.lateMin !== null && schedStart !== null && clock.firstInMin !== null && (
-        <>
-          <div className={cx(strip, "bg-red-500")} style={{ top: top(schedStart), height: h(schedStart, clock.firstInMin) }} />
-          <div className={cx(tag, "bg-red-600 text-white")} style={{ top: top(clock.firstInMin) }}>
-            Late {dur(clock.lateMin)}
-          </div>
-        </>
-      )}
-      {clock.overdueMin !== null && schedStart !== null && nowMin !== null && (
-        <>
-          <div className={cx(strip, "bg-red-500/70")} style={{ top: top(schedStart), height: h(schedStart, nowMin) }} />
-          <div className={cx(tag, "bg-red-600 text-white")} style={{ top: top(schedStart) + 8 }}>
-            Not clocked in
-          </div>
-        </>
-      )}
-      {clock.earlyOutMin !== null && clock.lastOutMin !== null && (
-        <>
-          <div className={cx(strip, "bg-red-500")} style={{ top: top(clock.lastOutMin), height: h(clock.lastOutMin, clock.lastOutMin + clock.earlyOutMin) }} />
-          <div className={cx(tag, "bg-red-600 text-white")} style={{ top: top(clock.lastOutMin) }}>
-            Left early {dur(clock.earlyOutMin)}
-          </div>
-        </>
-      )}
-      {clock.missed.map((m, i) => (
-        <div key={`m${i}`} className={cx(tag, "bg-red-100 text-red-800 ring-1 ring-red-300")} style={{ top: top(m.atMin) + 16 }}>
-          Missed punch: {m.label.toLowerCase()}
+      {late && <div className={cx(strip, "bg-red-500")} style={{ top: top(schedStart!), height: h(schedStart!, clock.firstInMin!) }} />}
+      {overdue && <div className={cx(strip, "bg-red-500/70")} style={{ top: top(schedStart!), height: h(schedStart!, nowMin!) }} />}
+      {leftEarly && <div className={cx(strip, "bg-red-500")} style={{ top: top(clock.lastOutMin!), height: h(clock.lastOutMin!, clock.lastOutMin! + clock.earlyOutMin!) }} />}
+      {placed.map((x, i) => (
+        <div key={i} className={cx("pointer-events-none absolute right-1 z-[6] rounded px-1 text-[10px] font-semibold leading-4 shadow-xs", x.tone)} style={{ top: x.y }}>
+          {x.text}
         </div>
       ))}
     </>
