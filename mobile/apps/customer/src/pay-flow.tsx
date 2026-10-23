@@ -13,6 +13,13 @@ export function PayConfirm({
   onPress: () => void;
   setup?: { clientSecret: string; ephemeralKey: string; customerId: string } | null;
   onNothingCharged?: (message: string) => void;
+  onReprice?: () => void;
+  pricedPaymentMethodId?: string | null;
+  selectedPaymentMethodId?: string | null;
+  previewTotalCents?: number | null;
+  displayedTotalCents?: number | null;
+  cardLabel?: string | null;
+  sheetOptionLabel?: string | null;
 }) {
   return <Button label={preview ? flowButtonLabel(preview) : "Pay"} disabled={disabled} onPress={onPress} />;
 }

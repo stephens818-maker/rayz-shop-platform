@@ -17,9 +17,57 @@ export function labelContainsCardNumber(label: string): boolean {
 
 export const NOTHING_CHARGED = "Nothing was charged.";
 
-/** A live PaymentIntent opens the sheet. Setup secrets and sandbox PaymentIntents do not. */
+/** Sandbox SetupIntents never collect a card number. A Stripe SetupIntent secret still opens the sheet. */
 export function skipNativeSheet(clientSecret: string): boolean {
-  return !clientSecret.startsWith("pi_") || clientSecret.startsWith("pi_test_") || clientSecret.startsWith("seti_");
+  return clientSecret.startsWith("seti_") && !clientSecret.includes("_secret_");
+}
+
+/** Real Stripe PaymentIntent secrets, test or live, contain `_secret_`. */
+export function opensStripeSheet(clientSecret: string): boolean {
+  return /^pi_(test|live)_.+_secret_/.test(clientSecret);
+}
+
+/** Mock sandbox secrets are `pi_test_` plus a hex nonce and do not contain `_secret_`. */
+export function sandboxTestPayment(clientSecret: string): boolean {
+  return clientSecret.startsWith("pi_test_") && !clientSecret.includes("_secret_");
+}
+
+export function nativeChargePlan(clientSecret: string): "sheet" | "sandbox" | "refuse" {
+  if (opensStripeSheet(clientSecret)) return "sheet";
+  if (sandboxTestPayment(clientSecret)) return "sandbox";
+  return "refuse";
+}
+
+/**
+ * Confirm only when the server preview is for the selected card and the
+ * total on screen is that preview. A different card has to be repriced first.
+ */
+export function confirmAllowed(input: {
+  selectedPaymentMethodId: string | null;
+  previewPaymentMethodId: string | null;
+  previewTotalCents: number | null;
+  displayedTotalCents: number | null;
+}): { confirm: boolean; reprice: boolean } {
+  if (!input.selectedPaymentMethodId || input.previewPaymentMethodId !== input.selectedPaymentMethodId) {
+    return { confirm: false, reprice: true };
+  }
+  if (input.previewTotalCents == null || input.displayedTotalCents == null || input.displayedTotalCents !== input.previewTotalCents) {
+    return { confirm: false, reprice: false };
+  }
+  return { confirm: true, reprice: false };
+}
+
+export function sheetCardSwitched(pricedLabel: string | null | undefined, optionLabel: string | null | undefined): boolean {
+  if (!pricedLabel || !optionLabel) return false;
+  const norm = (value: string) => value.replace(/\s/g, "").toLowerCase();
+  return norm(pricedLabel) !== norm(optionLabel);
+}
+
+/** Refuse junk secrets. Reprice before confirm when the card or the total changed. */
+export function nextChargeStep(input: { plan: "sheet" | "sandbox" | "refuse"; confirm: boolean; sheetSwitched: boolean }): "nothing" | "reprice" | "charge" {
+  if (input.plan === "refuse") return "nothing";
+  if (!input.confirm || input.sheetSwitched) return "reprice";
+  return "charge";
 }
 
 export function flowSheetParams(

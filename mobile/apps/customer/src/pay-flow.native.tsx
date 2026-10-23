@@ -1,7 +1,7 @@
 import type { PaymentPreview } from "@rayz/api";
 import { useStripe } from "@stripe/stripe-react-native";
 import { Button } from "@rayz/ui";
-import { afterSheet, flowButtonLabel, flowSheetParams, NOTHING_CHARGED, skipNativeSheet } from "./flow-controller";
+import { afterSheet, confirmAllowed, flowButtonLabel, flowSheetParams, nativeChargePlan, nextChargeStep, NOTHING_CHARGED, sheetCardSwitched } from "./flow-controller";
 
 /** The selected card is charged only when PaymentSheet confirms the PaymentIntent. */
 export function PayConfirm({
@@ -10,26 +10,69 @@ export function PayConfirm({
   onPress,
   setup,
   onNothingCharged,
+  onReprice,
+  pricedPaymentMethodId,
+  selectedPaymentMethodId,
+  previewTotalCents,
+  displayedTotalCents,
+  cardLabel,
+  sheetOptionLabel,
 }: {
   preview: Pick<PaymentPreview, "feeCents" | "totalCents" | "funding"> | null;
   disabled: boolean;
   onPress: () => void;
   setup?: { clientSecret: string; ephemeralKey: string; customerId: string } | null;
   onNothingCharged?: (message: string) => void;
+  onReprice?: () => void;
+  pricedPaymentMethodId?: string | null;
+  selectedPaymentMethodId?: string | null;
+  previewTotalCents?: number | null;
+  displayedTotalCents?: number | null;
+  cardLabel?: string | null;
+  sheetOptionLabel?: string | null;
 }) {
   const { initPaymentSheet, presentPaymentSheet, confirmPaymentSheetPayment } = useStripe();
   const press = async () => {
-    if (!preview || !setup || skipNativeSheet(setup.clientSecret)) {
+    if (!preview || !setup) {
       onNothingCharged?.(NOTHING_CHARGED);
+      return;
+    }
+    const plan = nativeChargePlan(setup.clientSecret);
+    const allowed = confirmAllowed({
+      selectedPaymentMethodId: selectedPaymentMethodId ?? null,
+      previewPaymentMethodId: pricedPaymentMethodId ?? null,
+      previewTotalCents: previewTotalCents ?? null,
+      displayedTotalCents: displayedTotalCents ?? null,
+    });
+    const before = nextChargeStep({ plan, confirm: allowed.confirm, sheetSwitched: false });
+    if (before === "nothing") {
+      onNothingCharged?.(NOTHING_CHARGED);
+      return;
+    }
+    if (before === "reprice") {
+      onReprice?.();
+      return;
+    }
+    if (plan === "sandbox") {
+      onPress();
       return;
     }
     const init = await initPaymentSheet(flowSheetParams(preview, setup));
     const presented = init.error ? undefined : await presentPaymentSheet();
-    const confirmed = init.error || presented?.error ? undefined : await confirmPaymentSheetPayment();
+    if (init.error || presented?.error) {
+      onNothingCharged?.(NOTHING_CHARGED);
+      return;
+    }
+    const afterPick = nextChargeStep({ plan, confirm: allowed.confirm, sheetSwitched: sheetCardSwitched(cardLabel, sheetOptionLabel) });
+    if (afterPick !== "charge") {
+      onReprice?.();
+      return;
+    }
+    const confirmed = await confirmPaymentSheetPayment();
     const decision = afterSheet({
-      init: init.error ? { error: init.error } : {},
-      present: presented ? (presented.error ? { error: presented.error } : {}) : undefined,
-      confirm: confirmed ? (confirmed.error ? { error: confirmed.error } : {}) : undefined,
+      init: {},
+      present: {},
+      confirm: confirmed.error ? { error: confirmed.error } : {},
     });
     if (!decision.charge) {
       onNothingCharged?.(decision.message ?? NOTHING_CHARGED);

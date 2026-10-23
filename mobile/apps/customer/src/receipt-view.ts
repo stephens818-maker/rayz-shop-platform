@@ -57,6 +57,7 @@ export function settlementLines(_ticketTipCents: number, settlement: ReceiptSett
   const first = barberFirstName?.trim().split(/\s+/)[0] || "your barber";
   if (settlement.tipStatus === "planned") lines.push("Tip pending");
   else if (settlement.tipStatus === "executed" || settlement.tipStatus === "paid") lines.push(`Tip paid to ${first}`);
+  // Reversed stays "Returned by bank". A paid tip is never clawed back.
   else if (settlement.tipStatus === "reversed") lines.push("Returned by bank");
   else if (settlement.tipStatus === "with_shop") lines.push("Tips paid through payroll.");
   lines.push(`Shop ${formatCents(settlement.shopCents)}`);

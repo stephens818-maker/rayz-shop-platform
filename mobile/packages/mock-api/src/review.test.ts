@@ -3,6 +3,20 @@ import { createApp } from "./http";
 import { SHOP_CORALVILLE, STAFF_KAT, STAFF_MAKENNA } from "./fixtures";
 import { createWorld, type World } from "./world";
 
+process.env.KIOSK_CODE_SECRET ??= "test-kiosk-hmac";
+
+async function managerHeaders(app: ReturnType<typeof createApp>) {
+  const verified = await bodyOf(await app.request("/api/staff/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+15635550333", code: "123456" }) }));
+  return { authorization: `Bearer ${verified.body.accessToken}`, "content-type": "application/json" };
+}
+
+async function pairDevice(app: ReturnType<typeof createApp>, shopId = SHOP_CORALVILLE) {
+  const headers = await managerHeaders(app);
+  const pending = await bodyOf(await app.request("/api/staff/v1/kiosk/pair", { method: "POST", headers, body: JSON.stringify({ shopId }) }));
+  const approved = await bodyOf(await app.request(`/api/staff/v1/kiosk/pair/${pending.body.requestId}/approve`, { method: "POST", headers }));
+  return { headers, approved, device: { authorization: `Bearer ${approved.body.credential}` } };
+}
+
 async function bodyOf(res: Response) {
   const text = await res.text();
   return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null };
@@ -227,8 +241,7 @@ describe("review fixes and the customer contract", () => {
     const barber = await bodyOf(await app.request("/api/staff/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+13195550111", code: "123456" }) }));
     const denied = await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: { authorization: `Bearer ${barber.body.accessToken}` } });
     expect(denied.status).toBe(403);
-    const paired = await bodyOf(await app.request("/api/staff/v1/kiosk/pair", { method: "POST", headers: { authorization: `Bearer ${barber.body.accessToken}`, "content-type": "application/json" }, body: JSON.stringify({ shopId: SHOP_CORALVILLE }) }));
-    const device = { authorization: `Bearer ${paired.body.credential}` };
+    const { device } = await pairDevice(app);
     const first = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
     expect(first.status).toBe(200);
     clock += 15_000;
@@ -244,21 +257,26 @@ describe("review fixes and the customer contract", () => {
     const staff = { authorization: `Bearer ${barber.body.accessToken}`, "content-type": "application/json" };
     expect((await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: { authorization: "Bearer kiosk.coralville" } })).status).toBe(401);
     expect((await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: { authorization: "Bearer forged-device-credential" } })).status).toBe(401);
-    const paired = await bodyOf(await app.request("/api/staff/v1/kiosk/pair", { method: "POST", headers: staff, body: JSON.stringify({ shopId: SHOP_CORALVILLE }) }));
-    expect(paired.status).toBe(201);
-    expect(paired.body.credential.includes("coralville")).toBe(false);
-    expect(paired.body.secretHash).toBeUndefined();
-    const device = { authorization: `Bearer ${paired.body.credential}` };
+    const { approved, device, headers: manager } = await pairDevice(app);
+    expect(approved.status).toBe(201);
+    expect(approved.body.credential.includes("coralville")).toBe(false);
+    expect(approved.body.secretHash).toBeUndefined();
     const issued = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
     const forgedToken = `${issued.body.token.slice(0, -1)}${issued.body.token.endsWith("a") ? "b" : "a"}`;
     expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: forgedToken }) })).status).toBe(400);
     expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: issued.body.token }) })).status).toBe(200);
     expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: issued.body.token }) })).status).toBe(400);
     const fresh = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
-    clock += 15_000;
+    const issuedWindow = Number(String(fresh.body.token).split(".")[2]);
+    clock = (issuedWindow + 1) * 15_000 + 1000;
+    expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: fresh.body.token }) })).status).toBe(200);
     expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: fresh.body.token }) })).status).toBe(400);
+    const grace = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
+    const graceWindow = Number(String(grace.body.token).split(".")[2]);
+    clock = (graceWindow + 1) * 15_000 + 2001;
+    expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: grace.body.token }) })).status).toBe(400);
     const current = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
-    const revoked = await bodyOf(await app.request(`/api/staff/v1/kiosk/${paired.body.kioskId}/revoke`, { method: "POST", headers: staff }));
+    const revoked = await bodyOf(await app.request(`/api/staff/v1/kiosk/${approved.body.kioskId}/revoke`, { method: "POST", headers: manager }));
     expect(revoked.body.revoked).toBe(true);
     expect((await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device })).status).toBe(401);
     expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: current.body.token }) })).status).toBe(400);

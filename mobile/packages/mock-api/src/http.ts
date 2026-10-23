@@ -13,9 +13,12 @@ const CLOSED_COPY = "Book with us at this shop the usual way.";
 const NOT_READY = "This shop isn't taking cards in the app yet.";
 const STEP_MS = 5 * 60 * 1000;
 const STRIPE_TEST = {
-  credit: { id: "pm_card_visa", brand: "visa", last4: "4242", funding: "credit" as const },
-  debit: { id: "pm_card_visa_debit", brand: "visa", last4: "5556", funding: "debit" as const },
-  prepaid: { id: "pm_card_mastercard_prepaid", brand: "mastercard", last4: "5100", funding: "prepaid" as const },
+  credit: { id: "pm_card_visa", brand: "visa", last4: "4242", funding: "credit" as const, wallet: false },
+  debit: { id: "pm_card_visa_debit", brand: "visa", last4: "5556", funding: "debit" as const, wallet: false },
+  prepaid: { id: "pm_card_mastercard_prepaid", brand: "mastercard", last4: "5100", funding: "prepaid" as const, wallet: false },
+  unknown: { id: "pm_card_unknown", brand: "unknown", last4: "0000", funding: "unknown" as const, wallet: false },
+  walletCredit: { id: "pm_card_applepay_visa", brand: "visa", last4: "4242", funding: "credit" as const, wallet: true },
+  walletDebit: { id: "pm_card_applepay_debit", brand: "visa", last4: "5556", funding: "debit" as const, wallet: true },
 };
 
 interface Customer {
@@ -55,7 +58,7 @@ interface Card {
   customerId: string;
   brand: string;
   last4: string;
-  funding: "credit" | "debit" | "prepaid";
+  funding: "credit" | "debit" | "prepaid" | "unknown";
   wallet: boolean;
   expMonth: number;
   expYear: number;
@@ -107,12 +110,26 @@ interface Punch {
   attestation: boolean;
 }
 
-const STAFF_LOGIN: Record<string, { id: string; pin: string; firstName: string; shops: string[] }> = {
-  "+13195550111": { id: STAFF_MAKENNA, pin: "135790", firstName: "Makenna", shops: [SHOP_CORALVILLE] },
-  "+13095550222": { id: STAFF_KAT, pin: "246810", firstName: "Kat", shops: [SHOP_MOLINE] },
-  "+15635550333": { id: STAFF_CASEY, pin: "111222", firstName: "Casey", shops: [SHOP_CORALVILLE, SHOP_MOLINE] },
-  "+13195550444": { id: STAFF_RILEY, pin: "101010", firstName: "Riley", shops: [SHOP_CORALVILLE] },
+type StaffRole = "barber" | "manager" | "owner";
+
+export interface LoginStaff {
+  id: string;
+  pin: string;
+  firstName: string;
+  shops: string[];
+  role: StaffRole;
+}
+
+export const STAFF_LOGIN: Record<string, LoginStaff> = {
+  "+13195550111": { id: STAFF_MAKENNA, pin: "135790", firstName: "Makenna", shops: [SHOP_CORALVILLE], role: "barber" },
+  "+13095550222": { id: STAFF_KAT, pin: "246810", firstName: "Kat", shops: [SHOP_MOLINE], role: "barber" },
+  "+15635550333": { id: STAFF_CASEY, pin: "111222", firstName: "Casey", shops: [SHOP_CORALVILLE, SHOP_MOLINE], role: "manager" },
+  "+13195550444": { id: STAFF_RILEY, pin: "101010", firstName: "Riley", shops: [SHOP_CORALVILLE], role: "owner" },
 };
+
+function managesKiosk(staff: { role: StaffRole }): boolean {
+  return staff.role === "manager" || staff.role === "owner";
+}
 
 function phone(input: string): string {
   const digits = input.replace(/\D/g, "");
@@ -131,9 +148,29 @@ function sign(value: string): string {
   return (h >>> 0).toString(16);
 }
 
-/** Server secret for kiosk QR codes. Not derived from the device credential. */
-const KIOSK_CODE_SECRET = "rayz-sandbox-kiosk-hmac-v1";
 const QR_WINDOW_MS = 15_000;
+const QR_GRACE_MS = 2_000;
+const PIN_LOCK_AFTER = 5;
+
+/** HMAC key from the environment. Missing or blank means codes are refused. */
+function kioskCodeSecret(): string | null {
+  const secret = process.env.KIOSK_CODE_SECRET?.trim();
+  return secret ? secret : null;
+}
+
+function walletFeeEnabled(): boolean {
+  const raw = process.env.FEATURE_WALLET_FEE?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "on";
+}
+
+function publishedStripeCard(body: Record<string, unknown>) {
+  if (typeof body.paymentMethodId === "string") {
+    const known = Object.values(STRIPE_TEST).find((row) => row.id === body.paymentMethodId);
+    if (known) return known;
+  }
+  if (body.funding === "debit" || body.funding === "prepaid" || body.funding === "unknown") return STRIPE_TEST[body.funding];
+  return STRIPE_TEST.credit;
+}
 
 interface KioskDevice {
   id: string;
@@ -157,8 +194,8 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function hmacHex(value: string): string {
-  return createHmac("sha256", KIOSK_CODE_SECRET).update(value).digest("hex");
+function hmacHex(secret: string, value: string): string {
+  return createHmac("sha256", secret).update(value).digest("hex");
 }
 
 function sameHex(a: string, b: string): boolean {
@@ -174,11 +211,13 @@ function deviceForCredential(devices: KioskDevice[], raw: string): KioskDevice |
 }
 
 function issueQr(device: KioskDevice, nowMs: number) {
+  const secret = kioskCodeSecret();
+  if (!secret) return null;
   const window = Math.floor(nowMs / QR_WINDOW_MS);
   const nonce = randomBytes(16).toString("hex");
   const payload = `${device.shopId}.${device.id}.${window}.${nonce}`;
   return {
-    token: `${payload}.${hmacHex(payload)}`,
+    token: `${payload}.${hmacHex(secret, payload)}`,
     expiresAt: new Date((window + 1) * QR_WINDOW_MS).toISOString(),
     shopId: device.shopId,
     kioskId: device.id,
@@ -186,19 +225,65 @@ function issueQr(device: KioskDevice, nowMs: number) {
   };
 }
 
-/** Current window only. A burned nonce or a revoked device does not redeem. */
+/** Previous window is valid only in the first 2 seconds after rollover. */
+function windowAccepted(window: number, nowMs: number): boolean {
+  const current = Math.floor(nowMs / QR_WINDOW_MS);
+  if (window === current) return true;
+  if (window !== current - 1) return false;
+  return nowMs % QR_WINDOW_MS <= QR_GRACE_MS;
+}
+
 function readQr(devices: KioskDevice[], burned: Set<string>, token: string, nowMs: number): { shopId: string; kioskId: string; nonce: string } | null {
+  const secret = kioskCodeSecret();
+  if (!secret) return null;
   const parts = token.split(".");
   if (parts.length !== 5) return null;
   const [shopId, kioskId, windowRaw, nonce, mac] = parts;
   if (!shopId || !kioskId || !/^\d+$/.test(windowRaw) || !nonce || !mac) return null;
   const payload = `${shopId}.${kioskId}.${windowRaw}.${nonce}`;
-  if (!sameHex(mac, hmacHex(payload))) return null;
-  if (Number(windowRaw) !== Math.floor(nowMs / QR_WINDOW_MS)) return null;
+  if (!sameHex(mac, hmacHex(secret, payload))) return null;
+  if (!windowAccepted(Number(windowRaw), nowMs)) return null;
   if (burned.has(nonce)) return null;
   const device = devices.find((row) => row.id === kioskId && row.shopId === shopId);
   if (!device || device.revokedAt) return null;
   return { shopId, kioskId, nonce };
+}
+
+interface PinGate {
+  failures: number;
+  locked: boolean;
+  nextAt: number;
+}
+
+function pinGate(map: Map<string, PinGate>, key: string): PinGate {
+  const existing = map.get(key);
+  if (existing) return existing;
+  const created: PinGate = { failures: 0, locked: false, nextAt: 0 };
+  map.set(key, created);
+  return created;
+}
+
+/** Locked, or still inside the backoff window. Callers must not count another failure. */
+function pinHold(gate: PinGate, nowMs: number): { status: 423 | 429; body: ReturnType<typeof err>["body"] } | null {
+  if (gate.locked) return { status: 423, body: err("locked", "Too many tries. A manager has to unlock this PIN.", 423).body };
+  if (nowMs < gate.nextAt) return { status: 429, body: err("rate_limited", "Too many tries. Wait and try again.", 429, { retryAfterMs: gate.nextAt - nowMs }).body };
+  return null;
+}
+
+function notePinFailure(gate: PinGate, nowMs: number) {
+  gate.failures += 1;
+  if (gate.failures >= PIN_LOCK_AFTER) {
+    gate.locked = true;
+    gate.nextAt = Number.POSITIVE_INFINITY;
+    return;
+  }
+  gate.nextAt = nowMs + 1000 * 2 ** (gate.failures - 1);
+}
+
+function clearPinGate(gate: PinGate) {
+  gate.failures = 0;
+  gate.locked = false;
+  gate.nextAt = 0;
 }
 
 function publicShop(world: World, id: string) {
@@ -337,7 +422,11 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   const punches: Punch[] = [];
   const kiosks: KioskDevice[] = [];
   const burnedNonces = new Set<string>();
+  const pairRequests = new Map<string, { id: string; shopId: string; status: "pending" | "approved" }>();
+  const kioskPinGates = new Map<string, PinGate>();
+  const staffPinGates = new Map<string, PinGate>();
   const chargeIntents: ChargeIntent[] = [];
+  const paidCodes = new Set<string>();
   const idem = new Map<string, unknown>();
   const deleteCodes = new Map<string, string>();
   const payouts = new Map<string, PayoutFlags>([
@@ -774,14 +863,13 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     for (const key of ["number", "cvc", "cvv", "pan", "cardNumber", "exp", "expiry", "expMonth", "expYear"]) {
       if (key in body) return c.json(err("bad_request", "Card numbers stay in Stripe. Use the hosted card form.", 400).body, 400);
     }
-    const funding = body.funding === "debit" || body.funding === "prepaid" ? body.funding : "credit";
-    const published = STRIPE_TEST[funding];
+    const published = publishedStripeCard(body);
     const existing = cards.find((card) => card.id === published.id && card.customerId === customer.id);
-    const card: Card = existing ?? { id: published.id, customerId: customer.id, brand: published.brand, last4: published.last4, funding: published.funding, wallet: Boolean(body.wallet), expMonth: 12, expYear: 2030 };
+    const card: Card = existing ?? { id: published.id, customerId: customer.id, brand: published.brand, last4: published.last4, funding: published.funding, wallet: published.wallet, expMonth: 12, expYear: 2030 };
     if (!existing) cards.push(card);
     return c.json({
       paymentMethod: { id: card.id, brand: card.brand, last4: card.last4, funding: card.funding, wallet: card.wallet, expMonth: card.expMonth, expYear: card.expYear },
-      clientSecret: `seti_test_${sign(`${customer.id}.${funding}`)}`,
+      clientSecret: `seti_test_${sign(`${customer.id}.${published.funding}`)}`,
       ephemeralKey: `ek_test_${sign(`${customer.id}.ek`)}`,
       customerId: `cus_sim_${customer.id.replace(/-/g, "").slice(0, 16)}`,
     });
@@ -801,7 +889,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     return c.body(null, 204);
   });
 
-  const previewFor = (caller: Customer, code: string, body: { paymentMethodId?: string; tipCents?: number; wallet?: boolean }): { status: number; body: PaymentPreview | ReturnType<typeof err>["body"] } => {
+  const previewFor = (caller: Customer, code: string, body: { paymentMethodId?: string; tipCents?: number }): { status: number; body: PaymentPreview | ReturnType<typeof err>["body"] } => {
     const row = appointments.find((a) => a.code === code);
     if (!row || !ownsCustomer(caller, row.customerId)) return { status: 404, body: err("not_found", "Appointment not found", 404).body };
     const shop = world.shops.find((s) => s.id === row.shopId)!;
@@ -832,10 +920,11 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       };
     }
     const card = cards.find((item) => item.id === body.paymentMethodId && item.customerId === caller.id);
-    const funding = body.wallet ? "credit" : card?.funding ?? null;
+    const funding = card?.funding ?? null;
+    const wallet = card?.wallet ?? false;
     const taxCents = Math.round(row.serviceCents * shop.serviceTaxRate + 1e-9);
     const chargeCents = row.serviceCents + taxCents + tipCents;
-    const fee = cardFeeFor({ enabled: shop.cardFeeEnabled, rate: shop.cardFeeRate, appliesToTip: shop.cardFeeAppliesToTip }, funding, { chargeCents, tipCents }, { wallet: Boolean(body.wallet), walletFeeOn: false });
+    const fee = cardFeeFor({ enabled: shop.cardFeeEnabled, rate: shop.cardFeeRate, appliesToTip: shop.cardFeeAppliesToTip }, funding, { chargeCents, tipCents }, { wallet, walletFeeOn: walletFeeEnabled() });
     const preview: PaymentPreview = {
       shopId: shop.id,
       paymentsEnabled: true,
@@ -844,7 +933,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       taxCents,
       tipCents,
       funding,
-      wallet: Boolean(body.wallet),
+      wallet,
       feeCents: fee.feeCents,
       feeRate: fee.rate,
       feeReason: fee.reason,
@@ -864,7 +953,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     for (const key of ["number", "cvc", "pan", "cardNumber"]) {
       if (key in raw) return c.json(err("bad_request", "Card numbers stay in Stripe. Use the hosted card form.", 400).body, 400);
     }
-    const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number; wallet?: boolean });
+    const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number });
     return c.json(result.body, result.status as 200);
   });
   app.post("/api/v1/appointments/:code/payment-intents", async (c) => {
@@ -874,8 +963,9 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     for (const key of ["number", "cvc", "pan", "cardNumber"]) {
       if (key in raw) return c.json(err("bad_request", "Card numbers stay in Stripe. Use the hosted card form.", 400).body, 400);
     }
-    const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number; wallet?: boolean });
+    const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number });
     if (result.status !== 200 || !("paymentsEnabled" in result.body)) return c.json(result.body, result.status as 404);
+    if (paidCodes.has(c.req.param("code"))) return c.json(err("conflict", "This visit is already paid.", 409).body, 409);
     const preview = result.body;
     if (!preview.paymentsEnabled) {
       const shop = world.shops.find((item) => item.id === preview.shopId);
@@ -891,7 +981,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       customerId: caller.id,
       code: c.req.param("code"),
       paymentMethodId: card.id,
-      wallet: Boolean(raw.wallet),
+      wallet: card.wallet,
       tipCents: preview.tipCents,
       consumed: false,
     };
@@ -913,8 +1003,9 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const key = c.req.header("idempotency-key");
     if (key && idem.has(`pay:${key}`)) return c.json(idem.get(`pay:${key}`));
     const raw = await c.req.json<Record<string, unknown>>();
-    const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number; wallet?: boolean });
+    const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number });
     if (result.status !== 200 || !("paymentsEnabled" in result.body)) return c.json(result.body, result.status as 404);
+    if (paidCodes.has(c.req.param("code"))) return c.json(err("conflict", "This visit is already paid.", 409).body, 409);
     const gated = result.body;
     if (!gated.paymentsEnabled) {
       const shop = world.shops.find((item) => item.id === gated.shopId);
@@ -925,7 +1016,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const intent = chargeIntents.find((row) => row.id === intentId && row.customerId === caller.id && row.code === c.req.param("code"));
     if (!intent) return c.json(err("bad_request", "Confirm the payment sheet before charging.", 400).body, 400);
     if (intent.consumed) return c.json(err("conflict", "This payment was already confirmed.", 409).body, 409);
-    const charged = previewFor(caller, c.req.param("code"), { paymentMethodId: intent.paymentMethodId, tipCents: intent.tipCents, wallet: intent.wallet });
+    const charged = previewFor(caller, c.req.param("code"), { paymentMethodId: intent.paymentMethodId, tipCents: intent.tipCents });
     if (charged.status !== 200 || !("paymentsEnabled" in charged.body) || !charged.body.paymentsEnabled) return c.json(charged.body, (charged.status === 200 ? 400 : charged.status) as 400);
     const preview = charged.body;
     const card = cards.find((item) => item.id === intent.paymentMethodId && item.customerId === caller.id);
@@ -947,6 +1038,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       refunds: [],
     };
     receipts.push(receipt);
+    paidCodes.add(c.req.param("code"));
     const paid = { id: receipt.id, ...preview, paidAt: receipt.paidAt, tender, paymentMethodId: intent.paymentMethodId };
     if (key) idem.set(`pay:${key}`, paid);
     return c.json(paid);
@@ -1205,33 +1297,68 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     return { punch };
   };
   const acceptCode = (token: string | undefined) => {
+    if (!kioskCodeSecret()) return "unconfigured" as const;
     if (!token) return null;
     const parsed = readQr(kiosks, burnedNonces, token, now().getTime());
     if (!parsed) return null;
+    // Burn on redemption. The real server must insert this nonce with a unique
+    // constraint in the same transaction as the punch so two scanners cannot redeem one code.
     burnedNonces.add(parsed.nonce);
     return parsed;
+  };
+  const kioskDevice = (header: string | undefined) => {
+    const token = header?.replace(/^Bearer /, "") ?? "";
+    if (!token) return { error: err("unauthorized", "Sign in required", 401) };
+    if (token.startsWith("staff.") || token.startsWith("cust.")) return { error: err("forbidden", "Enter your PIN on the shop kiosk.", 403) };
+    const device = deviceForCredential(kiosks, token);
+    if (!device || device.revokedAt) return { error: err("unauthorized", "This device isn't paired.", 401) };
+    return { device };
   };
 
   app.post("/api/staff/v1/kiosk/pair", async (c) => {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    if (!managesKiosk(gate.staff!)) return c.json(err("forbidden", "A manager has to approve this kiosk.", 403).body, 403);
     const body = await c.req.json<{ shopId?: string }>();
     const shop = shopBy(body.shopId);
     if (!shop) return c.json(err("not_found", "Shop not found", 404).body, 404);
     if (!shop.clockIn) return c.json(err("conflict", "Clock-in isn't live at this shop yet.", 409).body, 409);
     if (!gate.staff!.shops.includes(shop.id)) return c.json(err("forbidden", "You aren't scheduled at this shop.", 403).body, 403);
+    const requestId = crypto.randomUUID();
+    pairRequests.set(requestId, { id: requestId, shopId: shop.id, status: "pending" });
+    return c.json({ requestId, shopId: shop.id, status: "pending" }, 201);
+  });
+  app.post("/api/staff/v1/kiosk/pair/:requestId/approve", (c) => {
+    const gate = requireStaff(c);
+    if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    if (!managesKiosk(gate.staff!)) return c.json(err("forbidden", "A manager has to approve this kiosk.", 403).body, 403);
+    const request = pairRequests.get(c.req.param("requestId"));
+    if (!request || !gate.staff!.shops.includes(request.shopId)) return c.json(err("not_found", "Kiosk request not found", 404).body, 404);
+    if (request.status === "approved") return c.json(err("conflict", "This kiosk was already approved.", 409).body, 409);
+    const shop = shopBy(request.shopId);
+    if (!shop?.clockIn) return c.json(err("conflict", "Clock-in isn't live at this shop yet.", 409).body, 409);
     const credential = randomBytes(32).toString("base64url");
-    const row: KioskDevice = { id: crypto.randomUUID(), shopId: shop.id, secretHash: sha256(credential), revokedAt: null };
+    const row: KioskDevice = { id: crypto.randomUUID(), shopId: request.shopId, secretHash: sha256(credential), revokedAt: null };
     kiosks.push(row);
-    return c.json({ kioskId: row.id, credential, shopId: shop.id }, 201);
+    request.status = "approved";
+    return c.json({ kioskId: row.id, credential, shopId: request.shopId }, 201);
   });
   app.post("/api/staff/v1/kiosk/:id/revoke", (c) => {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    if (!managesKiosk(gate.staff!)) return c.json(err("forbidden", "A manager has to approve this kiosk.", 403).body, 403);
     const device = kiosks.find((row) => row.id === c.req.param("id"));
     if (!device || !gate.staff!.shops.includes(device.shopId)) return c.json(err("not_found", "Kiosk not found", 404).body, 404);
     device.revokedAt = now().toISOString();
     return c.json({ kioskId: device.id, revoked: true });
+  });
+  app.get("/api/staff/v1/kiosk/roster", (c) => {
+    const found = kioskDevice(c.req.header("authorization"));
+    if ("error" in found && found.error) return c.json(found.error.body, found.error.status as 401 | 403);
+    const roster = Object.values(STAFF_LOGIN)
+      .filter((row) => row.shops.includes(found.device!.shopId))
+      .map((row) => ({ id: row.id, firstName: row.firstName, photoUrl: `/staff/${row.firstName.toLowerCase()}.jpg` }));
+    return c.json({ staff: roster });
   });
   app.get("/api/staff/v1/kiosk/qr", (c) => {
     const header = c.req.header("authorization")?.replace(/^Bearer /, "") ?? "";
@@ -1243,19 +1370,46 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const shop = requested ? shopBy(requested) : shopBy(device.shopId);
     if (!shop || shop.id !== device.shopId) return c.json(err("not_found", "Shop not found", 404).body, 404);
     if (!shop.clockIn) return c.json(err("conflict", "Clock-in isn't live at this shop yet.", 409).body, 409);
-    return c.json(issueQr(device, now().getTime()));
+    const issued = issueQr(device, now().getTime());
+    if (!issued) return c.json(err("service_unavailable", "Kiosk codes are not configured.", 503).body, 503);
+    return c.json(issued);
+  });
+  app.post("/api/staff/v1/kiosk/pin/unlock", async (c) => {
+    const gate = requireStaff(c);
+    if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    if (!managesKiosk(gate.staff!)) return c.json(err("forbidden", "A manager has to unlock this PIN.", 403).body, 403);
+    const body = await c.req.json<{ staffId?: string; kioskId?: string }>();
+    const device = kiosks.find((row) => row.id === body.kioskId);
+    const person = Object.values(STAFF_LOGIN).find((row) => row.id === body.staffId);
+    if (!device || !person || !gate.staff!.shops.includes(device.shopId) || !person.shops.includes(device.shopId)) {
+      return c.json(err("not_found", "Kiosk not found", 404).body, 404);
+    }
+    clearPinGate(pinGate(kioskPinGates, device.id));
+    clearPinGate(pinGate(staffPinGates, person.id));
+    return c.json({ unlocked: true, staffId: person.id, kioskId: device.id });
   });
   app.post("/api/staff/v1/kiosk/pin", async (c) => {
-    const header = c.req.header("authorization")?.replace(/^Bearer /, "") ?? "";
-    if (!header) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
-    if (header.startsWith("staff.") || header.startsWith("cust.")) return c.json(err("forbidden", "Enter your PIN on the shop kiosk.", 403).body, 403);
-    const device = deviceForCredential(kiosks, header);
-    if (!device || device.revokedAt) return c.json(err("unauthorized", "This device isn't paired.", 401).body, 401);
+    const found = kioskDevice(c.req.header("authorization"));
+    if ("error" in found && found.error) return c.json(found.error.body, found.error.status as 401 | 403);
+    const device = found.device!;
     const shop = shopBy(device.shopId);
     if (!shop?.clockIn) return c.json(err("conflict", "Clock-in isn't live at this shop yet.", 409).body, 409);
-    const body = await c.req.json<{ pin?: string; direction?: "in" | "out"; cashTipCents?: number; attestation?: boolean }>();
-    const person = Object.values(STAFF_LOGIN).find((row) => row.pin === body.pin && row.shops.includes(device.shopId));
-    if (!person) return c.json(err("unauthorized", "That PIN isn't on the schedule at this shop.", 401).body, 401);
+    const body = await c.req.json<{ staffId?: string; pin?: string; direction?: "in" | "out"; cashTipCents?: number; attestation?: boolean }>();
+    if (!body.staffId) return c.json(err("bad_request", "Pick your name on the kiosk.", 400).body, 400);
+    const person = Object.values(STAFF_LOGIN).find((row) => row.id === body.staffId && row.shops.includes(device.shopId));
+    if (!person) return c.json(err("not_found", "That person isn't on the schedule at this shop.", 404).body, 404);
+    const nowMs = now().getTime();
+    const kioskHold = pinHold(pinGate(kioskPinGates, device.id), nowMs);
+    const staffHold = pinHold(pinGate(staffPinGates, person.id), nowMs);
+    const held = kioskHold ?? staffHold;
+    if (held) return c.json(held.body, held.status);
+    if (body.pin !== person.pin) {
+      notePinFailure(pinGate(kioskPinGates, device.id), nowMs);
+      notePinFailure(pinGate(staffPinGates, person.id), nowMs);
+      return c.json(err("unauthorized", "That PIN doesn't match this person.", 401).body, 401);
+    }
+    clearPinGate(pinGate(kioskPinGates, device.id));
+    clearPinGate(pinGate(staffPinGates, person.id));
     if (body.direction === "out") {
       const closed = clockOutStaff(person.id, device.shopId, body.cashTipCents ?? 0, body.attestation === true);
       if ("error" in closed && closed.error) return c.json(closed.error.body, closed.error.status as 400 | 409 | 422);
@@ -1270,6 +1424,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const body = await c.req.json<{ token?: string; biometric?: unknown }>();
     if ("biometric" in body) return c.json(err("bad_request", "Clock-in does not use biometrics.", 400).body, 400);
     const code = acceptCode(body.token);
+    if (code === "unconfigured") return c.json(err("service_unavailable", "Kiosk codes are not configured.", 503).body, 503);
     if (!code) return c.json(err("bad_request", "That shop code expired. Scan the code at the shop again.", 400).body, 400);
     if (!gate.staff!.shops.includes(code.shopId)) return c.json(err("forbidden", "You aren't scheduled at this shop.", 403).body, 403);
     return c.json({ punch: clockInStaff(gate.staff!.id, code.shopId) });
@@ -1280,6 +1435,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const body = await c.req.json<{ token?: string; cashTipCents?: number; attestation?: boolean; biometric?: unknown }>();
     if ("biometric" in body) return c.json(err("bad_request", "Clock-out does not use biometrics.", 400).body, 400);
     const code = acceptCode(body.token);
+    if (code === "unconfigured") return c.json(err("service_unavailable", "Kiosk codes are not configured.", 503).body, 503);
     if (!code) return c.json(err("bad_request", "That shop code expired. Scan the code at the shop again.", 400).body, 400);
     const closed = clockOutStaff(gate.staff!.id, code.shopId, body.cashTipCents ?? 0, body.attestation === true);
     if ("error" in closed && closed.error) return c.json(closed.error.body, closed.error.status as 400 | 409 | 422);
