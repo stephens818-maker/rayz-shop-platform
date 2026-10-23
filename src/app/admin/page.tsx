@@ -76,7 +76,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     db.select({ name: shops.name }).from(shops).where(and(inArray(shops.id, shopIds), eq(shops.taxRatesVerified, false))),
   ]);
   const times = await timesFor(upcoming.map((a) => a.id), now);
-  const runsTimer = (staffId: string) => staffId === ctx.staff.id || can(ctx, "calendar.manage");
+  const soon = new Date(now.getTime() + 30 * 60_000);
+  const runsTimer = (a: { staffId: string; status: string; startsAt: Date }) =>
+    (a.staffId === ctx.staff.id || can(ctx, "calendar.manage")) && (a.status === "checked_in" || a.status === "in_service" || a.startsAt <= soon);
   const count = (s: string[]) => statusCounts.filter((c) => s.includes(c.status)).reduce((a, c) => a + c.n, 0);
   const delta = (a: number, b: number) => (b ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs last ${formatDate(today, "EEEE")}` : undefined);
   const notificationsOff = (process.env.NOTIFICATIONS_SMS_PROVIDER ?? "disabled") === "disabled" && (process.env.NOTIFICATIONS_EMAIL_PROVIDER ?? "disabled") === "disabled";
@@ -150,7 +152,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                       <StatusBadge status={a.status} />
                     </Td>
                     <Td right className="w-36">
-                      {runsTimer(a.staffId) && <ServiceTimer appointmentId={a.id} status={a.status} times={times.get(a.id) ?? null} />}
+                      {runsTimer(a) && <ServiceTimer appointmentId={a.id} status={a.status} times={times.get(a.id) ?? null} />}
                     </Td>
                   </tr>
                 ))}
