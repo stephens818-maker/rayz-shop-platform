@@ -61,6 +61,7 @@ import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
 import { reviewReportData } from "./review-report";
+import { marketingReportData } from "./marketing/report";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
 
@@ -681,6 +682,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async google_reviews({ scope, loc }) {
     return reviewReportData(scope, loc);
+  },
+
+  async marketing({ scope, loc }) {
+    return marketingReportData(scope, loc);
   },
 
   async services_vs_products({ scope, loc }) {
