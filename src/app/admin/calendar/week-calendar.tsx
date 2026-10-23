@@ -112,6 +112,7 @@ export function WeekCalendar({ data, today, canPickBarber }: { data: WeekCalenda
                     {dayName(picked.day.date)} {dayNum(picked.day.date)} · {label(picked.block.startMin)}–{label(Math.min(picked.block.endMin, 24 * 60 - 1))}
                     {picked.block.recurring && " · repeats"}
                   </div>
+                  {picked.block.clock && <Badge tone="blue">⏱ Auto from the time clock{picked.block.clock.open ? " · still going" : ""}</Badge>}
                   {picked.block.note && <p className="whitespace-pre-wrap text-sm text-zinc-700">{picked.block.note}</p>}
                   {picked.block.hidden && <p className="text-xs text-zinc-500">The reason is private.</p>}
                 </>
@@ -201,9 +202,17 @@ function DayColumn({
             title={blockTitle(b)}
             aria-label={blockTitle(b)}
             onClick={() => onPick({ day, block: b })}
-            className="shade-reason absolute inset-x-1 overflow-hidden rounded-md py-0.5 pl-2 pr-1 text-left text-[11px] font-semibold leading-tight text-zinc-900"
-            style={{ top: top(b.startMin), height: h(b.startMin, b.endMin), ["--reason" as string]: b.color }}
+            className={cx(
+              b.clock?.kind === "not_in" ? "shade-reason-soft text-zinc-600" : "shade-reason text-zinc-900",
+              "absolute inset-x-1 overflow-hidden rounded-md py-0.5 pl-2 pr-1 text-left text-[11px] font-semibold leading-tight",
+            )}
+            style={{ top: top(b.startMin), height: Math.max(h(b.startMin, b.endMin), 4), ["--reason" as string]: b.color }}
           >
+            {b.clock && (
+              <span className="mr-1" aria-hidden>
+                ⏱
+              </span>
+            )}
             {blockLabel(b)}
             {b.recurring && <span className="ml-1 opacity-60">↻</span>}
           </button>

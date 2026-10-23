@@ -27,7 +27,8 @@ import { closedOn } from "@/domain/location-lifecycle";
 import { type Permission, reportView } from "@/domain/permissions";
 import { payPeriodFor } from "@/domain/payroll";
 import { FT_LABEL } from "@/domain/time-clock";
-import { callInHref, type LiveStatus } from "@/domain/clock-live";
+import { effectiveEnd } from "@/domain/clock-blocks";
+import { callInHref, clockBlockTitle, type LiveStatus } from "@/domain/clock-live";
 import {
   Alert,
   DRAWER_VARIANCE_CENTS,
@@ -44,10 +45,11 @@ import {
   sortAlerts,
 } from "@/domain/today";
 import { formatCents } from "@/lib/money";
-import { LocalDate, addDays, endOfLocalDay, formatDate, formatTime, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, formatDate, formatTime, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { type StaffContext, reasonViewer, reportShopIds } from "./auth/staff";
 import { ACTIVE_STATUSES } from "./booking";
 import { flaggedCount } from "./call-ins";
+import { refreshClockBlocks } from "./clock-blocks";
 import { clockFallout, liveClock } from "./clock-live";
 import { suggestionsFor } from "./inventory/purchasing";
 import { locationSetup } from "./location-setup";
@@ -86,6 +88,7 @@ export async function todayAlerts(v: TodayViewer, now: Date = new Date()): Promi
   const name = (id: string | null) => shopRows.find((s) => s.id === id)?.name ?? null;
   const open = shopRows.filter((s) => (s.status === "live" || s.status === "setup") && !closedOn(s, today));
   const ctx: Ctx = { v, has, now, today, shops: shopRows, open, name };
+  if (has("calendar.manage") || has("timesheet.edit")) await refreshClockBlocks(now, open.map((s) => s.id));
 
   const parts = await Promise.all([
     has("calendar.manage") ? chairAlerts(ctx) : [],
@@ -152,7 +155,7 @@ export async function openChairTime(shopIds: readonly string[], now: Date, minFr
       .from(appointments)
       .where(and(inArray(appointments.staffId, staffIds), inArray(appointments.status, [...ACTIVE_STATUSES, "completed"]), lt(appointments.startsAt, de), gt(appointments.endsAt, ds))),
     db
-      .select({ staffId: timeBlocks.staffId, shopId: timeBlocks.shopId, startsAt: timeBlocks.startsAt, endsAt: timeBlocks.endsAt })
+      .select({ staffId: timeBlocks.staffId, shopId: timeBlocks.shopId, startsAt: timeBlocks.startsAt, endsAt: timeBlocks.endsAt, clockOpen: timeBlocks.clockOpen, overriddenAt: timeBlocks.overriddenAt })
       .from(timeBlocks)
       .where(and(inArray(timeBlocks.staffId, staffIds), lt(timeBlocks.startsAt, de), gt(timeBlocks.endsAt, ds))),
   ]);
@@ -160,7 +163,7 @@ export async function openChairTime(shopIds: readonly string[], now: Date, minFr
   const out: ChairFacts[] = [];
   const pairs = new Map<string, typeof scheds>();
   for (const s of scheds) pairs.set(`${s.shopId}|${s.staffId}`, [...(pairs.get(`${s.shopId}|${s.staffId}`) ?? []), s]);
-  // A break or an early clock-out isn't open chair time; an early clock-in is.
+  // Breaks and early clock-outs are blocks like any other; an early clock-in adds open time.
   const shopRows = await db.select({ id: shops.id, timeClock: shops.timeClock }).from(shops).where(inArray(shops.id, [...new Set(scheds.map((s) => s.shopId))]));
   const clocks = new Map(
     await Promise.all(shopRows.map(async (s) => [s.id, (await liveClock(s, today, [...new Set(scheds.filter((x) => x.shopId === s.id).map((x) => x.staffId))], now)).days] as const)),
@@ -172,8 +175,7 @@ export async function openChairTime(shopIds: readonly string[], now: Date, minFr
     if (clock?.early) windows.push({ start: clock.early.start.getTime(), end: clock.early.end.getTime() });
     const busy = [
       ...appts.filter((a) => a.staffId === staffId).map((a) => ({ start: a.startsAt.getTime(), end: a.endsAt.getTime() })),
-      ...blocks.filter((b) => b.staffId === staffId && (!b.shopId || b.shopId === shopId)).map((b) => ({ start: b.startsAt.getTime(), end: b.endsAt.getTime() })),
-      ...(clock?.holds ?? []).map((h) => ({ start: h.start.getTime(), end: h.end.getTime() })),
+      ...blocks.filter((b) => b.staffId === staffId && (!b.shopId || b.shopId === shopId)).map((b) => ({ start: b.startsAt.getTime(), end: effectiveEnd(b, now).getTime() })),
     ];
     const free = freeIntervals(windows, busy, from);
     if (minutesIn(free) >= minFree) out.push({ shopId, staffId, label, free, clock: clock?.status ?? null });
@@ -564,22 +566,17 @@ async function liveClockAlerts(c: Ctx): Promise<Alert[]> {
         linkLabel: "Calendar",
       });
     for (const a of f.affected) {
-      const what = a.why === "break" ? `${a.label} is on a break` : `${a.label} clocked out early`;
+      const them = a.appts.length === 1 ? "this client" : "these clients";
       out.push({
-        key: `clock_affected:${f.shopId}:${a.staffId}:${c.today}:${a.start.getTime()}`,
+        key: `clock_affected:${a.key}:${a.appts.map((x) => x.id).join(",")}`,
         type: "clock_affected",
         severity: "high",
         shopId: f.shopId,
         shop: f.shop,
-        title: `${what}: ${plural(a.appts.length, "client")} booked in that time`,
-        detail:
-          a.why === "break"
-            ? `Online booking is held until ${formatTime(a.end)}. Move ${a.appts.length === 1 ? "this client" : "these clients"} or ask them to pick a new time.`
-            : "Online booking is closed for the rest of the day. Move these clients to another barber or ask them to pick a new time.",
+        title: `${clockBlockTitle(a.label, a.why)}: ${plural(a.appts.length, "client")} booked in that time`,
+        detail: `Blocked ${formatTime(a.start)}–${a.open ? `${formatTime(a.end)} and on until ${a.why === "break" ? "the break ends" : "they clock in"}` : formatTime(a.end)}, so online booking is closed then. Move ${them} to another barber or ask them to pick a new time.`,
         items: a.appts.map((x) => ({ label: `${formatTime(x.startsAt)} ${x.first ?? "Walk-in"}`, sub: x.code, href: `/admin/calendar?shop=${f.shopId}&appt=${x.id}` })),
-        ...(c.has("callins.mark")
-          ? { href: callInHref(a.staffId, f.shopId, { why: a.why, startMin: localMinutesOf(a.start), endMin: localDateOf(a.end) > c.today ? 24 * 60 : localMinutesOf(a.end) }), linkLabel: "Reassign or rebook" }
-          : { href: `/admin/calendar?shop=${f.shopId}`, linkLabel: "Calendar" }),
+        ...(c.has("callins.mark") ? { href: callInHref(a.blockId), linkLabel: "Reassign or rebook" } : { href: `/admin/calendar?shop=${f.shopId}`, linkLabel: "Calendar" }),
       });
     }
   }

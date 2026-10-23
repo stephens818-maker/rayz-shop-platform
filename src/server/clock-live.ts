@@ -1,7 +1,8 @@
-import { and, asc, eq, gt, gte, inArray, isNull, lt, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
-import { appointments, brandSettings, customers, shops, staff, staffSchedules, timePunches } from "@/db/schema";
-import { type HoldWhy, type LiveDay, affectedBy, lateClockIn, liveDay } from "@/domain/clock-live";
+import { appointments, brandSettings, customers, shops, staff, staffSchedules, timeBlocks, timePunches } from "@/db/schema";
+import { type ClockBlockKind, clockKindOf, effectiveEnd } from "@/domain/clock-blocks";
+import { type LiveDay, affectedBy, lateClockIn, liveDay } from "@/domain/clock-live";
 import { clockRules, scheduledOn, shopClockSettings, type ScheduleRow, type ShopClockSettings } from "@/domain/time-clock";
 import { endOfLocalDay, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 
@@ -73,13 +74,13 @@ export interface ShopFallout {
   shop: string;
   /** Not clocked in with their first appointment close (or begun). Only people who use the clock (a punch in the last 30 days). */
   late: { staffId: string; label: string; appt: FalloutAppt; minutesToGo: number }[];
-  /** Clients booked over a break, or after an early clock-out. */
-  affected: { staffId: string; label: string; why: HoldWhy; start: Date; end: Date; appts: FalloutAppt[] }[];
+  /** Clients booked inside a clock block: a break, an early clock-out or "Not in yet". */
+  affected: { blockId: string; key: string; staffId: string; label: string; why: ClockBlockKind; start: Date; end: Date; open: boolean; appts: FalloutAppt[] }[];
 }
 
 const NONE = ["00000000-0000-0000-0000-000000000000"];
 
-/** For Today and the cron's emails: at each of these shops today, who isn't clocked in for their first client, and who has clients the clock now holds time over. */
+/** For Today and the cron's emails: at each of these shops today, who isn't clocked in for their first client, and which clock blocks have clients booked in them. */
 export async function clockFallout(shopIds: readonly string[], now = new Date()): Promise<ShopFallout[]> {
   if (!shopIds.length) return [];
   const today = todayLocal(now);
@@ -103,21 +104,32 @@ export async function clockFallout(shopIds: readonly string[], now = new Date())
   ]);
   const label = new Map(labels.filter((l) => l.kind === "person").map((l) => [l.id, l.label]));
   const usesClock = new Set(users.map((u) => u.id));
+  const blocks = await db
+    .select({ id: timeBlocks.id, key: timeBlocks.clockKey, staffId: timeBlocks.staffId, shopId: timeBlocks.shopId, startsAt: timeBlocks.startsAt, endsAt: timeBlocks.endsAt, clockOpen: timeBlocks.clockOpen, overriddenAt: timeBlocks.overriddenAt })
+    .from(timeBlocks)
+    .where(and(eq(timeBlocks.source, "clock"), inArray(timeBlocks.shopId, [...shopIds]), inArray(timeBlocks.staffId, staffIds), lt(timeBlocks.startsAt, de), or(gt(timeBlocks.endsAt, now), eq(timeBlocks.clockOpen, true))))
+    .orderBy(asc(timeBlocks.startsAt));
+  const clockBlocks = blocks.map((b) => ({ ...b, endsAt: effectiveEnd(b, now), open: b.clockOpen && !b.overriddenAt, kind: clockKindOf(b.key) ?? ("break" as const) }));
   const out: ShopFallout[] = [];
   for (const s of shopRows.sort((a, b) => a.name.localeCompare(b.name))) {
     const here = appts.filter((a) => a.shopId === s.id && label.has(a.staffId));
     if (!here.length) continue;
     const { settings, days } = await liveClock(s, today, [...new Set(here.map((a) => a.staffId))], now);
     const f: ShopFallout = { shopId: s.id, shop: s.name, late: [], affected: [] };
+    const hit = affectedBy(
+      clockBlocks.filter((b) => b.shopId === s.id),
+      here,
+    );
+    for (const b of clockBlocks) {
+      const inIt = hit.filter((a) => a.blockId === b.id);
+      if (inIt.length) f.affected.push({ blockId: b.id, key: b.key!, staffId: b.staffId, label: label.get(b.staffId)!, why: b.kind, start: b.startsAt, end: b.endsAt, open: b.open, appts: inIt });
+    }
+    const notInYet = new Set(f.affected.filter((a) => a.why === "not_in").map((a) => a.staffId));
     for (const d of days.values()) {
+      if (notInYet.has(d.staffId)) continue;
       const mine = here.filter((a) => a.staffId === d.staffId);
       const lateIn = usesClock.has(d.staffId) ? lateClockIn(d, mine[0] ?? null, now, settings.lateAlertMinutes) : null;
       if (lateIn) f.late.push({ staffId: d.staffId, label: label.get(d.staffId)!, appt: mine[0], minutesToGo: lateIn.minutesToGo });
-      const hit = affectedBy(d, s.id, mine);
-      for (const h of d.holds) {
-        const inIt = hit.filter((a) => a.why === h.why);
-        if (inIt.length) f.affected.push({ staffId: d.staffId, label: label.get(d.staffId)!, why: h.why, start: h.start, end: h.end, appts: inIt });
-      }
     }
     f.late.sort((a, b) => a.appt.startsAt.getTime() - b.appt.startsAt.getTime());
     if (f.late.length || f.affected.length) out.push(f);
@@ -137,5 +149,9 @@ export async function clockPulse(shopId: string, date: LocalDate): Promise<strin
     .select({ h: sql<string>`coalesce(md5(string_agg(${appointments.id}::text || ${appointments.status} || ${appointments.staffId}::text || ${appointments.startsAt}::text, ',' order by ${appointments.id})), '')` })
     .from(appointments)
     .where(and(eq(appointments.shopId, shopId), lt(appointments.startsAt, to), gt(appointments.endsAt, from)));
-  return `${p?.h ?? ""}.${a?.h ?? ""}`;
+  const [b] = await db
+    .select({ h: sql<string>`coalesce(md5(string_agg(${timeBlocks.id}::text || ${timeBlocks.startsAt}::text || ${timeBlocks.endsAt}::text, ',' order by ${timeBlocks.id})), '')` })
+    .from(timeBlocks)
+    .where(and(or(isNull(timeBlocks.shopId), eq(timeBlocks.shopId, shopId)), lt(timeBlocks.startsAt, to), gt(timeBlocks.endsAt, from)));
+  return `${p?.h ?? ""}.${a?.h ?? ""}.${b?.h ?? ""}`;
 }

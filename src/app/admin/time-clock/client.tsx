@@ -84,6 +84,7 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
   const [blockOnBreak, setBlockOnBreak] = useState(initial.blockOnBreak);
   const [hold, setHold] = useState(String(initial.breakHoldMinutes));
   const [blockAfterClockOut, setBlockAfterClockOut] = useState(initial.blockAfterClockOut);
+  const [notInBlock, setNotInBlock] = useState(initial.notInBlock);
   const [openEarly, setOpenEarly] = useState(initial.openEarly);
   const [lateAlert, setLateAlert] = useState(initial.lateAlertMinutes === null ? "" : String(initial.lateAlertMinutes));
   const [ok, setOk] = useState(false);
@@ -109,6 +110,7 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
                 blockOnBreak,
                 breakHoldMinutes: num(hold),
                 blockAfterClockOut,
+                notInBlock,
                 openEarly,
                 lateAlertMinutes: lateAlert.trim() === "" ? null : num(lateAlert),
               },
@@ -158,16 +160,19 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
         </Select>
       </Field>
       <fieldset className="space-y-2 rounded-lg bg-zinc-50 p-3 text-sm ring-1 ring-zinc-200">
-        <legend className="px-1 text-xs font-medium text-zinc-600">Online booking follows the clock (today only; clients see only the open times)</legend>
+        <legend className="px-1 text-xs font-medium text-zinc-600">The clock blocks out the calendar (real block-outs: online booking, who&apos;s off and reports all see them)</legend>
         <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex items-center gap-1.5">
-            <input type="checkbox" checked={blockOnBreak} onChange={(e) => setBlockOnBreak(e.target.checked)} /> A break closes online booking for
+            <input type="checkbox" checked={blockOnBreak} onChange={(e) => setBlockOnBreak(e.target.checked)} /> A break blocks out
           </label>
-          <Input type="number" min={5} max={120} value={hold} onChange={(e) => setHold(e.target.value)} className="w-20" aria-label="Minutes a break holds" />
-          <span>min from its start (longer while it lasts)</span>
+          <Input type="number" min={5} max={120} value={hold} onChange={(e) => setHold(e.target.value)} className="w-20" aria-label="Minutes a break blocks when no length is picked" />
+          <span>min from its start when no length is picked (on past that while it lasts; trimmed when it ends)</span>
         </div>
         <label className="flex items-center gap-1.5">
-          <input type="checkbox" checked={blockAfterClockOut} onChange={(e) => setBlockAfterClockOut(e.target.checked)} /> Clocking out before the scheduled end closes online booking for the rest of the day
+          <input type="checkbox" checked={blockAfterClockOut} onChange={(e) => setBlockAfterClockOut(e.target.checked)} /> Clocking out before the scheduled end blocks out the rest of that shift (&quot;Clocked out&quot;, trimmed if they clock back in)
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={notInBlock} onChange={(e) => setNotInBlock(e.target.checked)} /> Show a soft &quot;Not in yet&quot; block from the scheduled start until a barber clocks in (barbers who use the clock only)
         </label>
         <label className="flex items-center gap-1.5">
           <input type="checkbox" checked={openEarly} onChange={(e) => setOpenEarly(e.target.checked)} /> Clocking in early opens the time before the scheduled start, for barbers who allow it on their Time clock page
@@ -177,7 +182,10 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
           <Input type="number" min={0} max={120} value={lateAlert} onChange={(e) => setLateAlert(e.target.value)} className="w-20" aria-label="Minutes before the first appointment" />
           <span>min before their first appointment (blank: off)</span>
         </div>
-        <p className="text-xs text-zinc-500">Clients booked over a break or after an early clock-out are flagged on Today and the calendar, with the call-in flow to move or rebook them.</p>
+        <p className="text-xs text-zinc-500">
+          Clients booked inside a clock block are flagged on Today and the calendar, and managers are emailed once per client, with the call-in flow to move or rebook them. Managers can change or remove a clock block on the
+          calendar; every change is in the audit log.
+        </p>
       </fieldset>
       <div className="flex items-center gap-3">
         <Button size="sm" disabled={pending}>

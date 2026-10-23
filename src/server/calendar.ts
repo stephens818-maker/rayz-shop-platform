@@ -1,13 +1,16 @@
 import "server-only";
 import { and, asc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { db } from "@/db";
-import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks, timeOffRequests } from "@/db/schema";
+import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks, timeOffRequests, timePunches } from "@/db/schema";
 import type { ReasonViewer, ShownReason } from "@/domain/block-reasons";
-import { type HoldWhy, type LiveDay, type LiveStatus, MISSED_LABEL, affectedBy } from "@/domain/clock-live";
+import { type ClockBlockKind, clockKindOf, effectiveEnd } from "@/domain/clock-blocks";
+import { type LiveDay, type LiveStatus, MISSED_LABEL, affectedBy } from "@/domain/clock-live";
+import { payPeriodFor } from "@/domain/payroll";
 import type { RatingSummary } from "@/domain/ratings";
 import type { TimesView } from "@/domain/service-times";
 import type { IntervalSource } from "@/domain/timing";
 import { LocalDate, addDays, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
+import { refreshClockBlocks } from "./clock-blocks";
 import { liveClock } from "./clock-live";
 import type { ClientPolicy } from "./client-privacy";
 import { Tenant, hasShop } from "./tenant";
@@ -46,8 +49,8 @@ export interface CalAppt {
   squeezed: boolean;
   /** Arrival, Start, Finish and checkout as recorded, with who recorded each. */
   times: TimesView | null;
-  /** The barber's break or early clock-out now holds this time: the manager should move or rebook it. */
-  clockHold: HoldWhy | null;
+  /** A clock block (break, early clock-out, not in yet) sits over it: the manager should move or rebook it. */
+  clockHold: { kind: ClockBlockKind; blockId: string } | null;
 }
 
 /** One barber's time clock on the calendar day, in minutes after midnight. Staff only: clients never see it. */
@@ -65,8 +68,21 @@ export interface CalClock {
   overdueMin: number | null;
   earlyOutMin: number | null;
   missed: { label: string; atMin: number }[];
-  holds: { startMin: number; endMin: number; why: HoldWhy }[];
   early: { startMin: number; endMin: number } | null;
+}
+
+/** A block the time clock wrote, and the punches it's tied to. */
+export interface CalClockBlock {
+  kind: ClockBlockKind;
+  /** Still going: its end moves on until the punch that ends it. */
+  open: boolean;
+  /** A manager set its times by hand. */
+  overridden: boolean;
+  /** The punch it came from and the one that ended it, as times after midnight. */
+  punchMin: number | null;
+  endPunchMin: number | null;
+  /** Their timesheet for the period, where the punches are. */
+  timesheetHref: string;
 }
 
 export interface CalBlock extends ShownReason {
@@ -77,6 +93,7 @@ export interface CalBlock extends ShownReason {
   category: string;
   recurring: boolean;
   fromRequest: boolean;
+  clock: CalClockBlock | null;
 }
 
 export interface CalColumn {
@@ -172,8 +189,10 @@ export async function loadDayCalendar(
   if (onlyStaffId) cols = cols.filter((c) => c.id === onlyStaffId);
   cols.sort((a, b) => a.label.localeCompare(b.label));
   const ids = cols.map((c) => c.id);
+  const now = new Date();
+  if (date === todayLocal(now)) await refreshClockBlocks(now, [shopId]);
 
-  const [blocks, elsewhere, items, ratings] = await Promise.all([
+  const [blocks, elsewhere, items, ratings, punchTimes] = await Promise.all([
     ids.length
       ? db
           .select()
@@ -199,12 +218,18 @@ export async function loadDayCalendar(
       ? db.select().from(appointmentItems).where(inArray(appointmentItems.appointmentId, apptRows.map((r) => r.a.id))).orderBy(asc(appointmentItems.kind))
       : [],
     ratingSummaries(apptRows.map((r) => r.a.customerId)),
+    ids.length
+      ? db
+          .select({ id: timePunches.id, at: timePunches.at })
+          .from(timePunches)
+          .where(and(inArray(timePunches.staffId, ids), gt(timePunches.at, new Date(dayStart.getTime() - 86_400_000)), lt(timePunches.at, dayEnd)))
+      : [],
   ]);
+  const punchAt = new Map(punchTimes.map((p) => [p.id, p.at]));
   const times = await timesFor(apptRows.map((r) => r.a.id));
   const show = await reasonShower(reasons);
 
   const intervals = await staffIntervals(shop, ids);
-  const now = new Date();
   const live = date <= todayLocal(now) ? await liveClock(shop, date, ids, now) : null;
   const otherIds = [...new Set([...(live?.days.values() ?? [])].map((d) => d.elsewhereShopId).filter((x): x is string => !!x))];
   const otherNames = new Map(
@@ -225,12 +250,19 @@ export async function loadDayCalendar(
       overdueMin: d.overdueMin,
       earlyOutMin: d.earlyOutMin,
       missed: d.missed.map((m) => ({ label: MISSED_LABEL[m.kind], atMin: at(m.at) })),
-      holds: d.holds.map((h) => ({ startMin: at(h.start), endMin: at(h.end), why: h.why })),
       early: d.early ? { startMin: at(d.early.start), endMin: at(d.early.end) } : null,
     };
   };
-  const held = new Map<string, HoldWhy>();
-  for (const d of live?.days.values() ?? []) for (const a of affectedBy(d, shopId, apptRows.map((r) => r.a))) held.set(a.id, a.why);
+  const clockRows = blocks
+    .filter((b) => b.source === "clock")
+    .map((b) => ({ ...b, endsAt: effectiveEnd(b, now), kind: clockKindOf(b.clockKey) ?? ("break" as const) }))
+    .filter((b) => b.endsAt > now);
+  const held = new Map(affectedBy(clockRows, apptRows.map((r) => r.a)).map((a) => [a.id, { kind: a.why, blockId: a.blockId }]));
+  const sheet = `?period=${payPeriodFor(date).start}`;
+  const minOf = (id: string | null) => {
+    const p = id ? punchAt.get(id) : undefined;
+    return p ? clampDay(p, date) : null;
+  };
   const stretchStarts = (spans: { startMin: number; endMin: number }[]) =>
     [...new Set(spans.flatMap((sp) => hours.filter((h) => h.openMin < sp.endMin && sp.startMin < h.closeMin).map((h) => Math.max(h.openMin, sp.startMin))))].sort((a, b) => a - b);
 
@@ -259,12 +291,23 @@ export async function loadDayCalendar(
         .map((b) => ({
           id: b.id,
           startMin: clampDay(b.startsAt, date),
-          endMin: clampDay(b.endsAt, date),
+          endMin: clampDay(effectiveEnd(b, now), date),
           ...show(b, b.category === "time_off" || b.kind === "day_off"),
           kind: b.kind,
           category: b.category,
           recurring: b.seriesId !== null,
           fromRequest: b.requestId !== null,
+          clock:
+            b.source === "clock"
+              ? {
+                  kind: clockKindOf(b.clockKey) ?? "break",
+                  open: b.clockOpen && !b.overriddenAt,
+                  overridden: !!b.overriddenAt,
+                  punchMin: minOf(b.punchId),
+                  endPunchMin: minOf(b.endPunchId),
+                  timesheetHref: `/admin/timesheets/${b.staffId}${sheet}`,
+                }
+              : null,
         })),
       elsewhere: [
         ...otherScheds.filter((o) => o.staffId === c.id).map((o) => ({ startMin: o.startMin, endMin: o.endMin, shop: shopLabel(o.shopId, o.shop) })),
@@ -440,6 +483,10 @@ export async function loadWeekCalendar(shopId: string, weekStart: LocalDate, sta
         category: b.category,
         recurring: b.seriesId !== null,
         fromRequest: b.requestId !== null,
+        clock:
+          b.source === "clock"
+            ? { kind: clockKindOf(b.clockKey) ?? "break", open: b.clockOpen && !b.overriddenAt, overridden: !!b.overriddenAt, punchMin: null, endPunchMin: null, timesheetHref: `/admin/timesheets/${b.staffId}?period=${payPeriodFor(date).start}` }
+            : null,
       })),
       pending: pending.filter(inDay).map((p) => ({ id: p.id, startMin: clampDay(p.startsAt, date), endMin: clampDay(p.endsAt, date), ...show(p, true) })),
       appts: apptRows

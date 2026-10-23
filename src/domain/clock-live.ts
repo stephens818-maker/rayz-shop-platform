@@ -1,11 +1,12 @@
 /**
  * A barber's day as the time clock shows it, kept pure: where they stand right now (clocked in, on a
  * break, clocked out, not in yet), the time they actually worked next to the schedule, late and
- * early punches and missed ones, and what that does to online booking: a break or an early
- * clock-out holds the time, an early clock-in can open the time before the scheduled start. The
- * server (src/server/clock-live.ts) loads the punches and applies these to availability, the
- * calendar and Today. Customers only ever see the slots that result.
+ * early punches and missed ones, and the time an early clock-in can open before the scheduled
+ * start. Breaks and early clock-outs aren't worked out here: they're real block-outs
+ * (src/domain/clock-blocks.ts). The server (src/server/clock-live.ts) loads the punches for
+ * availability, the calendar and Today. Customers only ever see the slots that result.
  */
+import type { ClockBlockKind } from "./clock-blocks";
 import { type ClockRules, type Interval, type PairProblemKind, type PunchLike, type ShopClockSettings, forgottenAfter, offSchedule, pairPunches } from "./time-clock";
 
 export type LiveStatus = "in" | "break" | "out" | "not_in";
@@ -24,12 +25,9 @@ export const MISSED_LABEL: Record<MissedKind, string> = {
   double_break: "Break started twice",
 };
 
-export type HoldWhy = "break" | "clocked_out";
+/** What a clock block over a client means for them, on the calendar and in alerts. */
+export const CLOCK_HOLD_LABEL: Record<ClockBlockKind, string> = { break: "on break", clocked_out: "clocked out", not_in: "not in yet" };
 
-export const HOLD_LABEL: Record<HoldWhy, string> = { break: "On break", clocked_out: "Clocked out" };
-
-/** An open break holds at least this far ahead once it runs past the shop's hold. */
-const BREAK_ROLL_MS = 15 * 60_000;
 /** An open shift older than this is a forgotten one, not someone at work (as on the time clock). */
 const STALE_OPEN_MS = 24 * 3600_000;
 
@@ -50,7 +48,7 @@ export interface LiveDayInput {
   /** Their scheduled stretches at this shop that day. */
   scheduled: readonly Interval[];
   now: Date;
-  shop: Pick<ShopClockSettings, "blockOnBreak" | "breakHoldMinutes" | "blockAfterClockOut" | "openEarly" | "graceMinutes">;
+  shop: Pick<ShopClockSettings, "openEarly" | "graceMinutes">;
   rules: Pick<ClockRules, "graceMinutes" | "forgotOutAfterMinutes" | "maxShiftHours">;
   /** The barber lets an early clock-in open earlier slots. */
   permitsEarly: boolean;
@@ -73,15 +71,13 @@ export interface LiveDay {
   /** The last clock-out here was this many minutes before the scheduled end (beyond the grace). */
   earlyOutMin: number | null;
   missed: { kind: MissedKind; at: Date }[];
-  /** Online booking held by the clock, at this shop. */
-  holds: { start: Date; end: Date; why: HoldWhy }[];
   /** Time before the scheduled start opened by an early clock-in; `end` is the scheduled start. */
   early: { start: Date; end: Date } | null;
 }
 
 const t = (d: Date) => d.getTime();
 
-/** One barber's day at one shop from their punches. Holds and early time only come out for today (`now` inside the day). */
+/** One barber's day at one shop from their punches. Early time only comes out for today (`now` inside the day). */
 export function liveDay(i: LiveDayInput): LiveDay {
   const mine = i.punches.filter((p) => p.staffId === i.staffId && t(p.at) <= t(i.now));
   const { shifts, problems } = pairPunches(mine);
@@ -136,19 +132,11 @@ export function liveDay(i: LiveDayInput): LiveDay {
   }
   missed.sort((a, b) => t(a.at) - t(b.at));
 
-  const holds: LiveDay["holds"] = [];
   let early: LiveDay["early"] = null;
-  if (isToday) {
-    if (status === "break" && !elsewhereShopId && i.shop.blockOnBreak && openBreak) {
-      const end = Math.max(t(openBreak.start) + i.shop.breakHoldMinutes * 60_000, t(i.now) + BREAK_ROLL_MS);
-      holds.push({ start: openBreak.start, end: new Date(Math.min(end, t(i.dayEnd))), why: "break" });
-    }
-    if (status === "out" && earlyOutMin !== null && i.shop.blockAfterClockOut) holds.push({ start: closedLast!.end!, end: i.dayEnd, why: "clocked_out" });
-    if (open && open.shopId === i.shopId && i.shop.openEarly && i.permitsEarly && t(open.start) >= t(i.dayStart)) {
-      const next = i.scheduled.find((s) => t(s.start) > t(open.start));
-      const inside = i.scheduled.some((s) => t(s.start) <= t(open.start) && t(s.end) > t(open.start));
-      if (next && !inside) early = { start: open.start, end: next.start };
-    }
+  if (isToday && open && open.shopId === i.shopId && i.shop.openEarly && i.permitsEarly && t(open.start) >= t(i.dayStart)) {
+    const next = i.scheduled.find((s) => t(s.start) > t(open.start));
+    const inside = i.scheduled.some((s) => t(s.start) <= t(open.start) && t(s.end) > t(open.start));
+    if (next && !inside) early = { start: open.start, end: next.start };
   }
 
   return {
@@ -161,7 +149,6 @@ export function liveDay(i: LiveDayInput): LiveDay {
     overdueMin,
     earlyOutMin,
     missed,
-    holds,
     early,
   };
 }
@@ -178,24 +165,33 @@ export interface BookedLike {
 /** Statuses a break or a clock-out can still disrupt: the client hasn't sat down yet. */
 export const DISRUPTABLE = ["booked", "confirmed", "checked_in"] as const;
 
-/** Appointments the clock now holds time over: booked with this barber, here, overlapping a break or the time after an early clock-out. */
-export function affectedBy<T extends BookedLike>(day: Pick<LiveDay, "staffId" | "holds">, shopId: string, appts: readonly T[]): (T & { why: HoldWhy })[] {
-  const out: (T & { why: HoldWhy })[] = [];
+export interface ClockBlockLike {
+  id: string;
+  staffId: string;
+  shopId: string | null;
+  startsAt: Date;
+  endsAt: Date;
+  kind: ClockBlockKind;
+}
+
+/** Clients a clock block now sits over: booked with that barber, at its shop, not yet in the chair. Each with the first block it hits. */
+export function affectedBy<T extends BookedLike>(blocks: readonly ClockBlockLike[], appts: readonly T[]): (T & { blockId: string; why: ClockBlockKind })[] {
+  const out: (T & { blockId: string; why: ClockBlockKind })[] = [];
   for (const a of appts) {
-    if (a.staffId !== day.staffId || a.shopId !== shopId || !(DISRUPTABLE as readonly string[]).includes(a.status)) continue;
-    const h = day.holds.find((x) => t(a.startsAt) < t(x.end) && t(a.endsAt) > t(x.start));
-    if (h) out.push({ ...a, why: h.why });
+    if (!(DISRUPTABLE as readonly string[]).includes(a.status)) continue;
+    const b = blocks.find((x) => x.staffId === a.staffId && (x.shopId === null || x.shopId === a.shopId) && t(a.startsAt) < t(x.endsAt) && t(a.endsAt) > t(x.startsAt));
+    if (b) out.push({ ...a, blockId: b.id, why: b.kind });
   }
   return out.sort((a, b) => t(a.startsAt) - t(b.startsAt));
 }
 
-/** The call-in form (src/app/admin/call-ins) filled in for the time a break or early clock-out holds, in minutes after midnight. */
-export function callInHref(staffId: string, shopId: string, hold: { why: HoldWhy; startMin: number; endMin: number }): string {
-  const hm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-  const q = new URLSearchParams({ staff: staffId, shop: shopId, from: hm(Math.floor(hold.startMin / 15) * 15) });
-  if (hold.why === "break") q.set("to", hm(Math.min(24 * 60 - 15, Math.ceil(hold.endMin / 15) * 15)));
-  return `/admin/call-ins?${q}`;
+/** "Makenna is on a break", for an alert about a clock block. */
+export function clockBlockTitle(name: string, kind: ClockBlockKind): string {
+  return kind === "break" ? `${name} is on a break` : kind === "clocked_out" ? `${name} clocked out early` : `${name} isn't clocked in yet`;
 }
+
+/** The call-in flow for the clients booked in one clock block (src/app/admin/call-ins). */
+export const callInHref = (blockId: string) => `/admin/call-ins?block=${encodeURIComponent(blockId)}`;
 
 /**
  * Due a "not clocked in" alert: today, not clocked in here, with a first appointment (that hasn't
