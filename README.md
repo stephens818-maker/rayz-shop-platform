@@ -65,7 +65,7 @@ Handy demo data:
 
 1. Go to `/` and pick **Coralville**. Choose a service, add-ons, "Any barber", and a time, then enter a name and phone. The confirmation page lives at `/a/{code}`, and the customer can cancel or reschedule there until 30 minutes before the appointment.
 2. Sign in as `michelle@rayz.test`. Open **Calendar** and go to the booked day, then click the appointment and choose **Check out**.
-3. On the POS, tap a tip (20/25/30%, $5/$10/$15/$20, or custom). Choose **Card**, use the card reader, and pick "Visa (credit)". The 3% credit surcharge is added and disclosed; debit cards pay no fee. Optionally tap **4 wk** to rebook the client, then click **Charge**.
+3. On the POS, tap a tip (20/25/30%, $5/$10/$15/$20, or custom). Choose **Card**, use the card reader, and pick "Visa (credit)". The 3% credit surcharge is added and disclosed; debit cards pay no fee. Optionally tap **4 wk** to rebook the client, then click **Charge**. Or tap **Hand to customer** to let the client tip, sign, pick a receipt and pay on the screen; any staff time clock PIN (`2468` in the demo) takes it back (see [Customer screen at checkout](#customer-screen-at-checkout)).
 4. The receipt shows taxes with their rates, the tip, the fee, the payment, and loyalty progress. Sign in as `owner@rayz.test` and check **Reports** (Sales summary), **Tips and payroll export**, and the client's page under **Clients**.
 5. As `admin@rayz.test`, open **Permissions**, edit the Front Desk role, or open a person to give them a one-off permission or change their shops. Under **Bulk upload**, download the template, fill in a few rows, and preview the upload before saving it.
 6. As `owner@rayz.test` with **All shops** selected, open **Inventory → Low stock**, tick a few suggested orders, and click **Create purchase orders**. Open one over $500 (the seeded PO-1005 at Coralville is one), approve it, and **Send** it by email; the PDF and CSV show up under **Notifications**. Then **Receive** part of it at a different price, and check the product's ledger and **Reports → Stock movement and shrink**.
@@ -119,7 +119,7 @@ Everything below happens in the portal. Nothing in the code names a shop, a barb
 1. **Name and address:** name, public booking link (never a surname), address, phone, email, time zone (Central by default), owner and location groups.
 2. **Hours and holidays:** weekly hours (Sunday closed by default; only the Brand Owner opens Sundays), closed days and holidays.
 3. **Sales tax:** service and product tax rates, which stay flagged on Today until someone ticks them verified.
-4. **Payments and banking:** where the shop's card money goes, its statement descriptor, card fee, tip buttons, Stripe Terminal readers and receipt. See [Banking per location](#banking-per-location) below.
+4. **Payments and banking:** where the shop's card money goes, its statement descriptor, card fee, Stripe Terminal readers, the customer screen at checkout (the brand's tip buttons or the shop's own, signature, PIN rules) and receipt. See [Banking per location](#banking-per-location) below.
 5. **Online booking:** slot interval, earliest booking, how far ahead clients can book, and the online cancel cutoff.
 6. **Services:** copied from the brand menu or another shop, with per-shop prices, durations and on/off.
 7. **Products and par levels:** copied from another shop, or pasted as a list.
@@ -137,7 +137,7 @@ Everything below happens in the portal. Nothing in the code names a shop, a barb
 - **The brand's Stripe account and bank.** Card sales settle in the brand's main account and are paid out to the brand's bank with the other brand-account shops. There's nothing to onboard, so it doesn't hold up go-live.
 - **No cards.** The shop takes cash and gift cards only and can go live without Stripe. A shop on its own account can also open cash-only while Stripe reviews it, and cards start once Stripe enables charges.
 
-The same step sets the **statement descriptor** (what clients see on their card statement; on the brand's account it's the part after `STRIPE_STATEMENT_PREFIX`, `RAYZ` by default) and shows the **payout schedule** Stripe reports. **Card readers** are registered with the code the reader shows (in test mode, `simulated-wpe`), each to the shop's own Stripe Terminal Location. The **card fee**, **tip buttons** and **receipt** (headline, footer, logo, address, phone) are in Shop settings. Switching a shop between accounts affects new charges only: earlier charges, and their refunds, stay with the account they settled in. Every change is audited.
+The same step sets the **statement descriptor** (what clients see on their card statement; on the brand's account it's the part after `STRIPE_STATEMENT_PREFIX`, `RAYZ` by default) and shows the **payout schedule** Stripe reports. **Card readers** are registered with the code the reader shows (in test mode, `simulated-wpe`), each to the shop's own Stripe Terminal Location. The **card fee**, the **customer screen at checkout** (tip buttons, tips on the reader, signature, who takes the device back) and **receipt** (headline, footer, logo, address, phone) are in Shop settings. Switching a shop between accounts affects new charges only: earlier charges, and their refunds, stay with the account they settled in. Every change is audited.
 
 **Payouts:** **Insights → Payouts** lists every deposit to each shop's bank, and the brand's, with gross, fees, refunds and net. Choose one shop or all of them. Only people who see every shop see the brand account's deposits, because they pool several shops. Today flags a failed payout.
 
@@ -173,6 +173,8 @@ The same step sets the **statement descriptor** (what clients see on their card 
 - **Tip payout settings** (`tips.settings`, brand-only): which methods the brand allows (cash from the drawer, Stripe to the employee's own card or bank, through payroll), whether employees choose their own, and whether instant payouts are offered. Per shop: the schedule, the card settlement delay, the weekly day, the default method, and taking the card fee off card tips (off; ask the accountant first).
 - **Tip payouts** (`tips.approve`): review each batch per employee and ticket, hold, adjust or take out a payout with a reason, then approve. Cash payouts are handed over from **Cash drawer** before closing, and each employee confirms with their clock PIN or name.
 - Everyone sees their own tips under **My tips**, and picks how they're paid and sets up their Stripe payout account under **My banking**. Managers see only each person's payout status and last 4 digits.
+
+**Customer screen at checkout:** the brand's tip buttons are under **Setup → Shop settings → Tip buttons on the customer screen** (`handoff.settings`, brand-only). Each shop's **Customer screen at checkout** card (`settings.shop`) uses the brand's buttons or its own (percent or dollar amounts, up to 4, with custom and no tip on or off), and sets whether the tip is asked on the screen or on the Stripe Terminal reader, whether the client signs, whether any staff PIN or only a manager's takes the device back, and what happens after payment. Percent buttons are also the counter's quick tips. See [Customer screen at checkout](#customer-screen-at-checkout).
 
 **Morning digest:** **Setup → Morning digest** sets the send time, who gets it (by role, plus always or never per person), and which sections go in. The page shows a preview of your own copy, and **Email me a test** sends it to you now.
 
@@ -312,6 +314,8 @@ These came with the Today work, beyond what was asked for:
 - **POS** (`/admin/checkout/{id}`):
   - Services, add-ons, and retail items.
   - Tip presets per shop, flat tip buttons, or a custom amount.
+  - A barber per line (with the reassign permission), and the tip split between a ticket's barbers by their services or evenly.
+  - **Hand to customer**: the client tips, signs, picks a receipt and pays on the same device (see [Customer screen at checkout](#customer-screen-at-checkout)).
   - Promo codes, loyalty rewards, and manual discounts (needs the discount permission and a reason, and is capped at the person's discount limit, e.g. 10% for Front Desk).
   - Gift cards: sell them, check the balance, redeem them as partial payment.
   - Cash with quick-tender buttons and change due, or card through the reader (simulated Stripe Terminal) or keyed in (Stripe Elements).
@@ -326,6 +330,44 @@ These came with the Today work, beyond what was asked for:
 - **End-of-day drawer:** a denomination counter, expected against counted cash with the variance, and history.
 - **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, settings changes, permission changes, every stock movement, purchase order step, transfer, and count, and every item a bulk upload creates or changes, including before and after values where it matters. Entries are append-only.
 - **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope. See [What we store and what Stripe stores](#what-we-store) and [Processor-hosted data](#processor-hosted-data).
+
+<a id="customer-screen-at-checkout"></a>
+### Customer screen at checkout (hand to customer)
+
+At checkout, **Hand to customer** turns the iPad or phone round to the client, like Squire's and Square's tip screens. The client tips, signs, chooses a receipt and pays, and staff take the device back with a PIN.
+
+- **What the client sees** (`/handoff/{id}`): the shop's logo (or its name), the ticket's items, discounts, tax and tip, and the total. A credit card surcharge is shown before they pay and added only for a credit card. The steps, in order:
+  1. **Tip:** the shop's buttons (percent with their dollar amounts, or dollar amounts), **Custom** on a keypad, and **No tip**, each set on or off. A tip over half the services asks "Are you sure?". With several barbers on the ticket, it says who shares it.
+  2. **Signature** (optional per shop): a finger signature, with **Clear and sign again**. Changing the tip afterwards asks for it again.
+  3. **Receipt:** text, email or none. The number or email on file is offered masked (`***-***-0142`); typing another goes on a keypad or the email field. It's used once for this receipt and isn't saved.
+  4. **Pay:** on the shop's Stripe Terminal reader, by card in Stripe Elements, or **Pay with cash instead**, which sends the device back to the counter with the tip. A ticket a gift card covers just completes.
+  5. **Thank you, please hand the device back to {barber}.** It then goes back to staff by itself after 3 to 60 seconds (8 by default), or stays until a staff PIN, set per shop.
+- **Locked to the ticket.** A signed `rayz_handoff` cookie marks the device. While it's handed over, the middleware sends every other page (the calendar, client records, the POS, sign-in) back to the customer screen, and refuses every other server action. The staff session can't be used: `getStaffContext` returns nothing, so admin pages, actions and CSV downloads are refused too. The screen has no staff navigation, Back stays on it, and a page restored from the back-forward cache reloads. The customer screen's own actions only work on the device that holds that ticket's cookie, and only for that ticket. The cookie lasts 12 hours at most.
+- **Taking it back:** the **Staff** button in the corner opens a PIN pad. Each shop picks **any staff time clock PIN** (anyone with access to the shop) or **a manager's PIN only** (roles with `handoff.unlock`: Brand Admin, Regional Manager and Shop Manager by default; the Brand Owner always). Wrong PINs count toward that person's time clock lockout. Before payment, staff land back on checkout with the ticket as it was, the client's tip and whether they asked for cash. After payment, they land on the receipt. If the client walks off with the device, **End hand-off here** on the ticket at another device ends it. Every unlock is audited with who and which rule.
+- **Tips on the reader** (per shop): the Stripe Terminal reader asks for the tip instead of the screen. Saving the setting pushes the shop's first three buttons to a Terminal configuration on the shop's Stripe Terminal Location. A brand change reaches every shop on the reader that uses the brand's buttons. Until the shop has a registered reader, or when a gift card leaves nothing for the reader to charge, the screen asks for the tip.
+- **Checks on payment.** The server prices the ticket again and refuses the payment if the total isn't what the client saw. A paid ticket can't be changed, and the ticket can't be charged at the counter while it's with the client.
+- **Split tips.** Each service line has its barber (the ticket's barber by default; changing it needs `checkout.any`). With more than one barber, the tip is split **by services** (their share of the ticket's services after discounts) or **evenly**, chosen at checkout. The split is saved with the sale (`sale_tip_shares`). Every tip and tip refund on the ticket is divided in whole cents by largest remainder, so the shares always add up; a tie for the last cent goes to the barber whose ID sorts first. The tip ledger and tip payouts, every report that breaks tips down by barber (Barber performance, the sales and tender totals per barber, daily and monthly), and the payroll report credit each barber's share. Shop and brand totals don't change. Tickets with one barber work as before.
+- **On the receipt:** each line's barber when it isn't the ticket's, the tip "on the customer screen" or "on the reader", each barber's share, the signature with when it was signed, and where the receipt went.
+- **Phones and tablets, upright or sideways.** In portrait, the total sits at the top with **See items**; in landscape, the items are a column on the left. The client's buttons are at least 56 px tall (tip buttons 96 px), and the screen keeps clear of the notch and home bar.
+- **Settings and permissions:** see the owner's guide above. `handoff.settings` (brand tip buttons) is brand-only and on for Brand Admin; `handoff.unlock` is for the manager PIN. The location wizard has the same choices.
+- **Simulator:** without Stripe keys, the reader is simulated: the client picks the tip and a test card where the reader would show them. With keys, tips on the reader are pushed to Stripe, but taking the card on a real reader is still the simulated flow (see [What's stubbed or simulated](#whats-stubbed-or-simulated)).
+- **Tests:** `tests/handoff.test.ts` (unit): tip buttons and their amounts, settings checks, the steps, the split by services and evenly with the extra cent, the credit total, the permissions, and that the middleware, PIN pad and locked context are wired. `tests/db/handoff.test.ts`: the whole hand-off with tip, signature, receipt and card (the total checked, the counter refused while it's with the client); the lock (every page redirected, actions refused, the staff session unusable, another ticket's screen refused); PINs (wrong PIN, a barber refused under the manager rule, the lockout); going back by itself after the thank-you or staying until a PIN; returning before payment with the tip; tips on the reader; split tips through the ledger, refunds, Barber performance and the payroll report; and the settings.
+
+<img alt="Checkout with two barbers, the tip split and Hand to customer" src="docs/screenshots/handoff-pos-split-and-hand-to-customer.png" width="800" />
+
+<img alt="Tip screen on an iPad in landscape" src="docs/screenshots/handoff-tip-ipad-landscape.png" width="800" />
+
+<img alt="Tip screen on a phone" src="docs/screenshots/handoff-tip-phone-portrait.png" width="300" /> <img alt="Signature on an iPad" src="docs/screenshots/handoff-signature-ipad-portrait.png" width="420" />
+
+<img alt="Paying by credit card, with the surcharge" src="docs/screenshots/handoff-pay-credit-surcharge-ipad-landscape.png" width="800" />
+
+<img alt="Thank you, please hand the device back" src="docs/screenshots/handoff-thank-you-ipad-landscape.png" width="800" />
+
+<img alt="Staff PIN to take the device back" src="docs/screenshots/handoff-staff-pin-ipad-landscape.png" width="800" />
+
+<img alt="Customer screen settings for a location" src="docs/screenshots/handoff-settings-location.png" width="800" />
+
+<img alt="Receipt with the tip split and signature" src="docs/screenshots/handoff-sale-receipt-split-signature.png" width="800" />
 
 ### Card payments: per-location banking (Stripe Connect)
 
@@ -638,7 +680,7 @@ Everyone is paid hourly. This reverses the earlier "no clock-in" decision.
 
 Tips are paid to employees nightly, a few days later, weekly, with payroll, or on demand, in cash from the drawer or by Stripe to their own debit card or bank. A manager approves every batch, and every tip still reaches payroll and iSolved for tax reporting.
 
-- **The tip ledger** (`tip_ledger`) has one entry per tip on a payment, per employee, shop and ticket: card, cash and gift card tips.
+- **The tip ledger** (`tip_ledger`) has one entry per tip on a payment, per employee, shop and ticket: card, cash and gift card tips. A tip split between barbers (see [Customer screen at checkout](#customer-screen-at-checkout)) is one entry per barber for their share, and a tip refund on it is split the same way.
   - A refund or void that gives tip back adds a negative entry against the same ticket, with its share of the card fee.
   - A manager's adjustment is its own entry with a reason. Entries are never edited: the database refuses changes to amounts, people or dates.
   - The ledger is filled from payments and refunds inside checkout and refunds, and again before every batch and from the cron, so dashboard refunds and anything else are picked up. Imported Squire history is left out, as payroll leaves it out.
@@ -876,7 +918,7 @@ The layout switch has four choices, and works with the location filter:
 
 **How each number is counted.**
 
-- Service credit, tips, discounts, and refunds go to the barber on the ticket, at the shop where it was rung up. A refund counts on the day it was issued, so a barber can show a negative day.
+- Service credit, tips, discounts, and refunds go to the barber on the ticket, at the shop where it was rung up. A tip split between barbers at checkout goes to each barber for their share. A refund counts on the day it was issued, so a barber can show a negative day.
 - Card and cash tips come from how each ticket was paid, net of refunded tips. Total tips also include tips paid by gift card.
 - Appointments count everything that started in the range. Walk-ins are appointments with the walk-in source.
 - **Hours booked** is the scheduled length of appointments that weren't cancelled or no-shows. **Hours available** is the barber's weekly schedule at each shop on each date, less shop closures and their time off (blocks at that shop or at every shop). **Utilization** is booked over available. Availability uses current schedules, so a past range uses today's.
@@ -964,7 +1006,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 80 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 82 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -1191,6 +1233,7 @@ These were built in response to the owner's request: "mimic Squire, but make it 
 - **Quick walk-in:** a name, a service chip, and **Seat now** books the first free barber in about three taps. Squire needs a full appointment form.
 - **One-tap rebook at checkout:** tap "2/3/4/6 wk" before charging. It books the same barber at the same time and shows it on the receipt. Squire's Smart Rebooking is a separate follow-up flow.
 - **Fast tips:** percent presets show their dollar amounts, and $5/$10/$15/$20 and "No tip" are one tap each.
+- **Hand to customer:** the client tips, signs, picks a receipt and pays on the same iPad or phone, locked to their ticket, and tips shared by two barbers are split for them in the ledger, reports and payroll.
 - **Cash and card totals side by side.** The tender buttons show the debit and credit totals before the card is chosen, so the client knows the fee up front.
 - **Quick tender:** suggested cash amounts and live change due.
 - **Checkout from the calendar:** one click opens a ticket pre-filled with the booked services, client, and barber.
@@ -1251,7 +1294,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 - **Calls through the shop line.** **Call through shop line** rings the shop's phone from its Twilio number, then bridges the client (`/api/twilio/voice/bridge`), so neither side sees the other's number. Without Twilio, the call goes to the outbox and is logged under **Calls and texts** on the client's profile.
 - **Stripe without keys.** With no `STRIPE_SECRET_KEY`, a built-in simulator with the same interface runs, using Stripe's published test card IDs (`pm_card_visa`, `pm_card_visa_debit`, and so on), so the POS works end to end offline. Adding test keys (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`) switches to real Stripe test mode: destination charges to each connected account, plain charges for shops on the brand's account, Stripe-hosted onboarding, Terminal Locations and reader registration, Elements for keyed cards, the webhook for dashboard refunds, disputes and the brand's payouts, and the Connect webhook for account status, payout schedules and shops' payouts. `STRIPE_STATEMENT_PREFIX` (optional, default `RAYZ`) is the brand's descriptor prefix. Connect must be turned on for the platform account first ([dashboard.stripe.com/test/connect](https://dashboard.stripe.com/test/connect)). For Cloud Agents, add them under Cursor Dashboard → Cloud Agents → Secrets.
 - **Employees' Stripe accounts for tip payouts.** Without Stripe keys, **Set up Stripe payouts** on **My banking** finishes at once with a simulated account and a test debit card (and **Change my card or bank** switches to a test bank account), and approved payouts are marked paid straight away. With keys, it's a real Express account and Stripe's hosted onboarding; payout and account events need the Connect webhook (see [DEPLOY.md](DEPLOY.md)).
-- **Stripe Terminal.** The card reader flow is simulated. You pick a test card where a reader would read one. Real hardware needs a Terminal location, a connection token endpoint, and a reader pairing screen.
+- **Stripe Terminal.** The card reader flow is simulated. You pick a test card where a reader would read one, and on the customer screen with tips on the reader, the tip where the reader would ask for it. Real hardware needs a Terminal location, a connection token endpoint, and a reader pairing screen. The reader's tip buttons are already pushed to the shop's Terminal configuration when Stripe keys are set.
 - **3-D Secure.** The keyed-card flow doesn't handle `requires_action` yet. That's fine for in-person keyed entry, but it's needed before taking any card-not-present payment.
 - **Tax rates.** The seeded rates are placeholders (IA 7%; IL 0% on services and 8.75% on products) and every shop is marked "unverified". The accountant must confirm each shop's rates before go-live.
 - **OTP abuse protection.** One-time codes expire after 10 minutes and are single-use, but per-number rate limiting isn't built yet.
@@ -1277,7 +1320,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 - **Postgres + Drizzle ORM.** The schema is in `src/db/schema.ts` and migrations are in `drizzle/`. Money is integer cents everywhere. Tax and fee rates are `numeric`.
 - **Pure domain modules** in `src/domain/` (availability, checkout totals, payroll periods, loyalty) have no I/O and are unit-tested heavily. Server services are in `src/server/` and the API is in `src/app/api/v1/`.
 - **Auth:**
-  - Staff use an httpOnly JWT session cookie (12 hours) plus a shop-selection cookie. Middleware gates `/admin`.
+  - Staff use an httpOnly JWT session cookie (12 hours) plus a shop-selection cookie. Middleware gates `/admin`, and on a device handed to a client it holds every page to that ticket's customer screen (`rayz_handoff` cookie; see [Customer screen at checkout](#customer-screen-at-checkout)).
   - Customers use OTP, then a Bearer access token plus a rotating refresh token.
   - Permissions are loaded fresh from the database on every request (role plus overrides, in `src/server/auth/access.ts`), so a change takes effect on the person's next click without signing out. Pages use `guardPage()`, server actions `authorize()`, and route handlers `routeStaff()`; see [Roles and permissions](#roles-and-permissions).
   - Shop scoping is enforced in the server layer on every query; anyone without access to every shop only ever queries the shop IDs in their access.
@@ -1341,7 +1384,7 @@ samples/squire/      example Squire CSV exports for the importer
 
 ## Next steps
 
-- Real Stripe Terminal readers: a location, connection tokens, reader pairing, and on-reader tipping.
+- Real Stripe Terminal readers: a location, connection tokens, reader pairing, and reading the tip back from the reader's PaymentIntent (the tip buttons are already synced to the reader's configuration).
 - Marketing consent: the open-chair and rebook texts on Today are built, but wait on the `sms_marketing_opt_in` column from PR #8.
 - Shops outside Central time: today a shop in another zone can be saved but not opened.
 - Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training flag stays off; merging PR #8; `DEMO_MODE` in production (it would break the Vercel demo).

@@ -355,6 +355,21 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [ ] Who besides Brand Admin gets **Can access remotely**, for example managers who do schedules from home.
 - [ ] The mobile app has no staff sign-in, so there's nothing to restrict there yet. NOTES-SYNC says how to apply it if staff endpoints are added.
 
+## 18. Customer screen at checkout (hand to customer)
+
+- [x] **Hand to customer** on the POS switches the device to a full-screen customer view: the shop's logo, the itemized total (items, discounts, tax, tip, gift card), the tip buttons, custom and no tip, and the credit card surcharge disclosure.
+- [x] Tip buttons in percent or dollars, up to 4, with custom and no tip each on or off: set for the brand (`handoff.settings`, brand-only) and overridden per location in Shop settings and the Add Location wizard. Percent buttons are also the counter's quick tips.
+- [x] Then the signature (optional per location), the receipt (text, email or none, on file masked or typed once), and payment on the Stripe Terminal reader, by card in Elements, or the test cards in the simulator. Cash sends the device back to the counter with the tip.
+- [x] While handed over, staff navigation, the back button, client data and every other page are unreachable: the middleware redirects every page to the ticket's screen and refuses every other action, and the staff session can't be used. The screen's own actions only work for that ticket on that device.
+- [x] Staff take it back with a staff PIN or, where the location asks for it, a manager's PIN (`handoff.unlock`). Wrong PINs count toward the time clock lockout. After payment, "Thank you, please hand the device back" returns it by itself after 3 to 60 seconds, or waits for a PIN, set per location. **End hand-off here** on another device ends it if the device walks off.
+- [x] Tips on the Stripe Terminal reader as an alternative per location: the screen skips its tip step and the reader asks. The location's first three buttons are pushed to the reader's Terminal configuration.
+- [x] Tips flow into the tip ledger, tip payouts and reports for the assigned barbers. With several barbers on a ticket, a barber per line, and the tip split by services or evenly in whole cents, including tip refunds, in the ledger, Barber performance and the payroll report.
+- [x] iPad and phone, portrait and landscape: the summary moves from the top to a left column; buttons at least 56 px; safe areas respected; locked to that ticket.
+- [x] Tests: `tests/handoff.test.ts` and `tests/db/handoff.test.ts`. README: [Customer screen at checkout](README.md#customer-screen-at-checkout).
+- [ ] Taking the card on a real Stripe Terminal reader is still simulated (as at the counter), so the reader's tip is read from the simulated reader. With real readers, the tip comes back on the PaymentIntent's `amount_details.tip`, which isn't wired yet.
+- [ ] Guided Access (iPad) or screen pinning (Android) still helps: the lock covers the app, not the home button or other apps. Worth a line in staff training.
+- [ ] Whether the brand wants signatures on by default (off until a location turns it on), and its tip buttons (20/25/30% today).
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.

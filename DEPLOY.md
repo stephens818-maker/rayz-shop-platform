@@ -52,6 +52,7 @@ Things to try:
 
 - **Book online:** open `/`, pick a shop, and book. To sign in as a customer at `/account`, use a seeded phone such as `319-555-0100` (Jordan) or `319-555-0201` (the Hayes family: three people on one phone). The one-time code is shown on screen in demo mode.
 - **Check out:** open the calendar as `coralville@rayz.test`, click an appointment, choose **Check out**, add a tip, and pay with a test card such as "Visa (credit)".
+- **Customer screen:** on the same ticket, tap **Hand to customer** instead. Pick a tip, a receipt and a test card on the client's side, then hand it back: the device returns to staff by itself after the thank-you, or tap **Staff** and use a time clock PIN (every demo barber's is `2468`).
 - **Gift card and promo:** `DEMO-GIFT-2500` holds $25, and `WELCOME5` takes $5 off.
 - **Messages:** every confirmation, reminder, and purchase order email that would have gone out is listed under **Notifications** as "suppressed".
 
@@ -138,8 +139,15 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - The client's address comes from `x-real-ip`, which Vercel's edge sets and clients can't override. Nothing needs setting on Vercel. Self-hosted, set `TRUSTED_PROXY_HOPS` to the number of proxies in front of the app (1 for a single nginx or load balancer that appends to `x-forwarded-for`). Without it the address is unknown and restricted shops refuse every request.
    - The middleware runs on the Node runtime (`runtime: "nodejs"` in `src/middleware.ts`) because it reads the database. Next.js 15.5 supports this on Vercel with no setting. It only looks up rules for signed-in `/admin` requests, and stops after one indexed query while no shop has a rule on.
    - Blocked-sign-in alerts go out by email through the notifications cron, so email must be configured.
-10. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-11. Add the custom domain under **Settings → Domains**.
+10. Set up the customer screen at checkout (migration `core_0037_handoff`; see [Customer screen at checkout](README.md#customer-screen-at-checkout)):
+   - The migration gives every shop the brand's tip buttons (20/25/30%, custom, no tip), except shops whose own tip presets weren't the default, which keep theirs. It also gives Brand Admin `handoff.unlock` and `handoff.settings`, and Regional and Shop Managers `handoff.unlock`. Nothing changes at the counter until someone taps **Hand to customer**.
+   - Under **Setup → Shop settings**, set the brand's tip buttons, then each shop's **Customer screen at checkout**: its own buttons or the brand's, signature, any staff PIN or a manager's only, and the thank-you time.
+   - **Any staff PIN** means anyone with access to the shop and a time clock PIN can take the device back, so make sure each person has set their PIN on **Time clock**. Without one, they can't unlock it.
+   - **Tips on the reader:** with live Stripe keys and a registered reader, saving the setting pushes the shop's first three buttons to a Terminal configuration on its Stripe Terminal Location. If Stripe refuses, the settings page says so; save again once it's fixed. Reading the tip back from a real reader isn't wired yet (see the README's Next steps), so keep shops on **On the customer screen** until it is.
+   - The middleware now runs on every page, not just `/admin` (matcher `/((?!_next/|api/|.*\..*).*)`), so a handed-over browser can't leave the customer screen. Without the `rayz_handoff` cookie, non-admin pages pass straight through with no database query. With it, there's one indexed lookup per request.
+   - On shop iPads, turn on **Guided Access** (Settings → Accessibility) so the client can't leave the browser either. The app locks itself, not the device.
+11. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+12. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

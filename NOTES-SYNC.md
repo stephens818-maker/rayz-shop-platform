@@ -19,6 +19,7 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Time clock and timesheets (`src/domain/time-clock.ts`, `src/server/time-clock*.ts`, `src/server/labor-report.ts`, `src/app/admin/clock/**`, `src/app/admin/timesheets/**`, `src/app/admin/time-clock/**`) | core |
 | Tip payouts (`src/domain/tips.ts`, `src/server/tips/**`, `src/app/admin/tips/**`, `src/app/admin/my-tips/**`), including employees' Stripe Express accounts | core |
 | Staff sign-in restrictions (`src/domain/network-access.ts`, `src/server/auth/network.ts`, `src/server/sign-in-security.ts`, `src/middleware.ts`, `src/lib/client-ip.ts`, `src/app/admin/sign-in-security/**`) | core |
+| Customer screen at checkout and split tips (`src/domain/handoff.ts`, `src/server/handoff.ts`, `src/server/auth/handoff-lock.ts`, `src/app/handoff/**`) | core |
 
 Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
 
@@ -227,6 +228,21 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
 - **Audit actions:** `network.blocked` and `network.limited` (entity `staff`, one per shop, details `ip`, `via`, `shop`, `missing`, `require`, `path`, `device`, `userAgent`), `network.rule` (entity `shop`), `network.settings` (entity `brand_settings`, the alert), and `device.request`, `device.approve`, `device.decline`, `device.revoke`, `device.trust`. Notification kind `access_alert` (email).
 - **If the app ever adds staff endpoints** to `/api/v1`, please call `evaluateNetwork(access, { ip: clientIp(req.headers), deviceShopIds })` and refuse or narrow the same way, with `BLOCK_MESSAGE`. Customer endpoints aren't affected and nothing in `/api/v1` changed.
 
+### Customer screen at checkout (core)
+
+- **Code:** `src/domain/handoff.ts` (pure: tip buttons and their amounts, settings schemas, steps, the credit total `amountsFor`, `splitCents`, `tipWeights`, `splitBarbers`), `src/server/handoff.ts` (settings, start, the view, tip, signature, receipt, reader, pay, cash, unlock, end, resume, the receipt record), `src/server/auth/handoff-lock.ts` (the `rayz_handoff` JWT, `typ: "handoff"`, 12 hours; `lockedHandoff` checks the row on every request) and `src/app/handoff/[id]/**` (the customer screen and its actions).
+- **Schema** (`drizzle/core_0037_handoff.sql`):
+  - `brand_settings.handoff` (`{tips}`) and `shops.handoff` (`{tips | null, tipEntry: screen|reader, signature, unlock: staff|manager, afterPayment: auto|pin, thankYouSeconds}`), jsonb defaulting to `{}`. Shops whose `tip_presets` weren't the default got them as their own buttons. `shops.tip_presets` is still written (the shop's percent buttons) and is what the counter uses.
+  - `checkout_handoffs`: one row per hand-off, with the ticket as handed over (`draft`), the tip and where it came from, the signature (SVG path), the receipt choice (the typed number or email is cleared once paid; `receipt_masked` stays), and `status` `active|paid|returned`. One active per sale.
+  - `sale_tip_shares` (`sale_id`, `staff_id`, `weight`): only on tickets whose tip is split. The views `tip_split_shares` (each barber's whole cents of every tip and tip refund on those tickets) and `tip_split_moves` (the shares, less the whole tip from the ticket's barber; zero per tip).
+  - `tip_ledger_payment_uq` and `tip_ledger_refund_uq` are now `(payment_id, staff_id)` and `(refund_id, staff_id)`, since a split tip is one entry per barber.
+- **Checkout:** `finalizeSale` takes an optional `tipSplit` (`services` or `evenly`) and each line's optional `staffId`. It refuses while the ticket is with the client (`conflict`, "with the client").
+- **Lock:** `src/middleware.ts` now matches every page except `_next`, `api` and files (`/((?!_next/|api/|.*\..*).*)`), not just `/admin`. With a live `rayz_handoff` cookie, pages redirect to `/handoff/{id}` and actions get 403. `getStaffContext` returns null while it's live, so `/api/*` staff routes using `routeStaff()` refuse too. `/api/v1` is untouched.
+- **Permissions:** `handoff.unlock` (Point of sale group; Brand Admin, Regional and Shop Manager) and `handoff.settings` (brand-only; Brand Admin). There are 82 feature permissions now.
+- **Audit actions:** `handoff.start`, `handoff.paid`, `handoff.unlock` (the PIN's person, with the rule), `handoff.end` (from the counter), `handoff.settings` (shop) and `handoff.brand_settings`.
+- **Reports:** every query that credits tips to the ticket's barber adds `tip_split_moves`, so per-barber tips are split and shop totals are unchanged. `payrollSalesBetween` does the same. If the app ever shows a barber's tips, please read through these functions rather than `sales.tip_cents`.
+- **If the app checks out a ticket with several barbers** later, please pass `staffId` per line and `tipSplit`, and leave the split to `finalizeSale`. Please don't write `sale_tip_shares` directly.
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
@@ -277,6 +293,16 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (customer screen at checkout)
+
+- **Hand to customer** on the POS turns the device to the client: tip (the brand's or the shop's buttons, custom, no tip, with the credit surcharge shown), signature (optional per shop), receipt (text, email or none) and payment (reader, Elements or test cards; cash goes back to the counter). The device is locked to that ticket until a staff or manager PIN, per shop; after payment it goes back by itself after the thank-you screen, or waits for a PIN.
+- Tips on the Stripe Terminal reader per shop: the first three buttons are pushed to a Terminal configuration on the shop's Location. The reader itself is still simulated.
+- Split tips: a barber per line and the tip split by services or evenly, through the ledger, tip payouts, reports and payroll.
+- Settings: Shop settings, the brand's tip buttons and the Add Location wizard (the old tip presets field moved into **Customer screen at checkout**).
+- Migration `core_0037_handoff`; permissions `handoff.unlock`, `handoff.settings`; the middleware matcher change above.
+- Tests: `tests/handoff.test.ts`, `tests/db/handoff.test.ts`. `tests/db/session.ts` keeps the `rayz_handoff` cookie; `tests/network-access.test.ts` checks the new matcher.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`.
 
 ### 2026-10-23: core (sign-in restrictions)
 
