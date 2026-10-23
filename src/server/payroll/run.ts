@@ -26,9 +26,8 @@ import { audit, type Actor } from "@/server/audit";
 import { payrollSalesBetween } from "@/server/reports";
 import { TEMPLATE_TABS, isolvedTimecardExporter, type PayrollExporter } from "./export";
 
-/** The main shops' calendar (period 23 = 10/18–10/31/2026) and Dubuque's own (period 01 = 10/4–10/17/2026). */
-const DEFAULT_CALENDAR: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
-const DUBUQUE_CALENDAR: PayCalendar = { anchorStart: "2026-10-04", anchorNumber: 1, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
+/** The brand's calendar (period 23 = 10/18–10/31/2026). A shop on its own calendar gets a pay group when it's set up, or one is edited in Payroll setup. */
+export const DEFAULT_CALENDAR: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
 
 export interface PayGroup {
   id: string;
@@ -42,16 +41,16 @@ export interface PayGroup {
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
 
-/** Every active shop gets a pay group the first time payroll looks: labelled after the shop, on the main calendar (Dubuque on its own). */
+/** Every open shop gets a pay group the first time payroll looks: labelled after the shop, on the brand's calendar. */
 export async function ensurePayGroups(): Promise<PayGroup[]> {
-  const list = await db.select({ id: shops.id, name: shops.name, slug: shops.slug, pg: payGroups.id }).from(shops).leftJoin(payGroups, eq(payGroups.shopId, shops.id)).where(eq(shops.active, true));
+  const list = await db.select({ id: shops.id, name: shops.name, pg: payGroups.id }).from(shops).leftJoin(payGroups, eq(payGroups.shopId, shops.id)).where(eq(shops.active, true));
   const missing = list.filter((s) => !s.pg);
   if (missing.length) {
     await db
       .insert(payGroups)
       .values(
         missing.map((s) => {
-          const cal = s.slug === "dubuque" ? DUBUQUE_CALENDAR : DEFAULT_CALENDAR;
+          const cal = DEFAULT_CALENDAR;
           return {
             shopId: s.id,
             label: s.name,

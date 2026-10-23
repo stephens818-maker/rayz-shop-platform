@@ -98,6 +98,12 @@ export const FEATURE_PERMISSIONS = [
   { key: "clients.ratings_all", group: "Clients", label: "See every rating and note, and rate any visit at their shops", hint: "Without it, people see their own ratings and rate only visits they served." },
   { key: "clients.ratings_moderate", group: "Clients", label: "Remove anyone's rating" },
   { key: "loyalty.grant", group: "Clients", label: "Grant courtesy loyalty rewards" },
+  {
+    key: "clients.campaigns",
+    group: "Clients",
+    label: "Text clients about open chairs and overdue rebooks",
+    hint: "From Today. Only clients who agreed to marketing texts or emails, outside quiet hours, and never the same client twice in a week.",
+  },
   { key: "catalog.prices", group: "Catalog and inventory", label: "Edit services and prices at their shops" },
   { key: "catalog.manage", group: "Catalog and inventory", label: "Manage the brand catalog, bulk upload items, and push them to shops", brandOnly: true },
   {
@@ -158,6 +164,14 @@ export const FEATURE_PERMISSIONS = [
   { key: "notifications.view", group: "Settings and data", label: "See the notification outbox" },
   { key: "notifications.send", group: "Settings and data", label: "Send due notifications now" },
   { key: "locations.manage", group: "Settings and data", label: "Create and edit saved location groups for reports", brandOnly: true },
+  {
+    key: "locations.setup",
+    group: "Settings and data",
+    label: "Add, open, temporarily close and archive locations",
+    hint: "The Add Location wizard, go-live and archiving. Archived shops keep their history in reports.",
+    brandOnly: true,
+  },
+  { key: "settings.lists", group: "Settings and data", label: "Edit client message wording, pick lists and the morning digest", brandOnly: true },
 ] as const satisfies readonly PermissionDef[];
 
 export type FeaturePermission = (typeof FEATURE_PERMISSIONS)[number]["key"];
@@ -291,6 +305,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "inbox.view",
   "notifications.view",
   "reports.all_staff",
+  "clients.campaigns",
 ];
 /** Regional managers also approve big orders and run the shop logins for their shops. */
 const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "logins.manage", "po.approve"];

@@ -89,6 +89,13 @@ async function main() {
       Object.entries(s.hours).map(([wd, [o, c]]) => ({ shopId: shopBySlug.get(s.slug)!.id, weekday: Number(wd), openMin: o * 60, closeMin: c * 60 })),
     ),
   );
+  // Dubuque runs payroll on its own calendar (period 01 = 10/4–10/17/2026); the other shops get the brand's when payroll first opens.
+  const dubuque = shopBySlug.get("dubuque");
+  if (dubuque) {
+    await db
+      .insert(t.payGroups)
+      .values({ shopId: dubuque.id, label: dubuque.name, exportTab: dubuque.name, anchorStart: "2026-10-04", anchorNumber: 1, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true });
+  }
   for (const g of LOCATION_GROUPS) {
     const [row] = await db.insert(t.locationGroups).values({ name: g.name }).returning();
     await db.insert(t.locationGroupShops).values(g.shops.map((slug) => ({ groupId: row.id, shopId: shopBySlug.get(slug)!.id })));

@@ -63,6 +63,12 @@ export const brandSettings = pgTable("brand_settings", {
   staffTime: jsonb("staff_time").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Call-in outreach rules (OutreachRules in src/domain/outreach.ts); missing keys use the defaults. */
   outreach: jsonb("outreach").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** The brand's edits to client message wording, by message kind (src/domain/message-templates.ts); missing kinds use the built-in text. */
+  messageTemplates: jsonb("message_templates").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Pick lists staff choose from (src/domain/lookups.ts); missing lists use the defaults. */
+  lookups: jsonb("lookups").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** The morning digest email (DigestSettings in src/domain/today.ts); missing keys use the defaults. */
+  digest: jsonb("digest").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -95,8 +101,21 @@ export const shops = pgTable("shops", {
   twilioNumber: text("twilio_number").unique(),
   email: text("email"),
   timezone: text("timezone").notNull().default("America/Chicago"),
+  /** False only once archived. Kept in step with status for code that only asks "is it still open for business". */
   active: boolean("active").notNull().default(true),
+  /** setup: hidden from clients while it's configured; live: open; closed: temporarily closed; archived: retired, history kept. */
+  status: text("status").$type<ShopStatus>().notNull().default("live"),
+  /** Temporarily closed until (and including) this date; null = until reopened by hand. */
+  closedUntil: date("closed_until"),
+  /** What clients are told while it's temporarily closed. */
+  closedNote: text("closed_note"),
+  wentLiveAt: ts("went_live_at"),
+  archivedAt: ts("archived_at"),
+  /** Online booking switch for a live shop. Clients can book only when the shop is live and this is on. */
   bookingEnabled: boolean("booking_enabled").notNull().default(true),
+  /** #rrggbb for this location's booking page; null uses the brand's. */
+  accentColor: text("accent_color"),
+  logoUrl: text("logo_url"),
   /** Fractions (0.07 = 7%). Configured per shop; never hard-coded. */
   serviceTaxRate: numeric("service_tax_rate", { precision: 7, scale: 5 }).notNull().default("0"),
   productTaxRate: numeric("product_tax_rate", { precision: 7, scale: 5 }).notNull().default("0"),
@@ -119,8 +138,26 @@ export const shops = pgTable("shops", {
   /** This shop's changes to the brand's staff time rules; missing keys follow the brand. */
   staffTime: jsonb("staff_time").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: createdAt(),
-});
+}, (t) => [check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`)]);
 export type NegativeStockPolicy = "block" | "warn";
+export type ShopStatus = "setup" | "live" | "closed" | "archived";
+
+/** Stripe Terminal card readers at a shop. Without a Stripe reader ID it's a placeholder until the reader is registered. */
+export const terminalReaders = pgTable(
+  "terminal_readers",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    label: text("label").notNull(),
+    serialNumber: text("serial_number"),
+    stripeReaderId: text("stripe_reader_id").unique(),
+    active: boolean("active").notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [index("terminal_readers_shop_idx").on(t.shopId)],
+);
 
 /**
  * Each shop's Stripe Connect connected account (Express dashboard, Stripe-hosted onboarding). Card
@@ -613,6 +650,17 @@ export const vendors = pgTable(
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (t) => [uniqueIndex("vendors_name_unique").on(sql`lower(${t.name})`)],
+);
+
+/** The vendors a shop orders from, with the shop's own account number there. No rows: every active vendor. */
+export const shopVendors = pgTable(
+  "shop_vendors",
+  {
+    shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+    vendorId: uuid("vendor_id").notNull().references(() => vendors.id, { onDelete: "cascade" }),
+    accountNumber: text("account_number"),
+  },
+  (t) => [primaryKey({ columns: [t.shopId, t.vendorId] })],
 );
 
 /** Who sells a product, at what cost and case pack. At most one preferred vendor per product. */
@@ -1779,4 +1827,53 @@ export const callLogs = pgTable(
     endedAt: ts("ended_at"),
   },
   (t) => [index("call_logs_phone_idx").on(t.phone, t.createdAt), index("call_logs_shop_idx").on(t.shopId, t.createdAt)],
+);
+
+/** A Today alert someone handled or snoozed, so it stays hidden for everyone until `until`. */
+export const alertDismissals = pgTable(
+  "alert_dismissals",
+  {
+    id: id(),
+    /** The alert's key, e.g. "low_stock:<shop>:<date>". */
+    alertKey: text("alert_key").notNull().unique(),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    until: ts("until").notNull(),
+    staffId: uuid("staff_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("alert_dismissals_until_idx").on(t.until)],
+);
+
+export type NudgeKind = "fill" | "rebook" | "no_show_reminder" | "running_late";
+
+/** Texts and emails sent from a Today action, so one client isn't nudged twice. */
+export const clientNudges = pgTable(
+  "client_nudges",
+  {
+    id: id(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "set null" }),
+    kind: text("kind").$type<NudgeKind>().notNull(),
+    channel: text("channel").notNull(),
+    staffId: uuid("staff_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("client_nudges_customer_idx").on(t.customerId, t.kind, t.createdAt), index("client_nudges_appt_idx").on(t.appointmentId, t.kind)],
+);
+
+/** One row per person per day the morning digest went to, so the cron sends it once. */
+export const digestSends = pgTable(
+  "digest_sends",
+  {
+    date: date("date").notNull(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    jobId: uuid("job_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.date, t.staffId] })],
 );
