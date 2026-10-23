@@ -1,7 +1,7 @@
 /**
  * Where staff may sign in from. Each location can limit sign-in to its own network (allowed public
- * IPs and CIDR ranges), to devices a manager approved, or to either or both. People with "Sign in
- * from anywhere" are exempt. Pure: the server loads the rules, the request's IP and device, and
+ * IPs and CIDR ranges), to devices a manager approved, or to either or both. People with "Can access
+ * remotely" are exempt. Pure: the server loads the rules, the request's IP and device, and
  * calls these on every request.
  */
 import { z } from "zod";

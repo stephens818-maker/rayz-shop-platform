@@ -15,7 +15,9 @@ function Saved({ ok, error }: { ok: boolean; error: string | null }) {
 export function ShopRuleEditor({ shopId, shopName, initial, myIp, exempt }: { shopId: string; shopName: string; initial: ShopNetworkRule; myIp: string | null; exempt: boolean }) {
   const { pending, error, run } = useAction();
   const [v, setV] = useState(ruleDraft(initial));
+  const [saved, setSaved] = useState(v);
   const [ok, setOk] = useState(false);
+  const dirty = JSON.stringify(v) !== JSON.stringify(saved);
   return (
     <form
       className="space-y-3 p-4"
@@ -24,8 +26,9 @@ export function ShopRuleEditor({ shopId, shopName, initial, myIp, exempt }: { sh
         e.preventDefault();
         run(
           () => saveShopRuleAction(shopId, ruleFromDraft(v)),
-          (saved) => {
-            setV(ruleDraft(saved));
+          (rule) => {
+            setV(ruleDraft(rule));
+            setSaved(ruleDraft(rule));
             setOk(true);
           },
         );
@@ -41,10 +44,12 @@ export function ShopRuleEditor({ shopId, shopName, initial, myIp, exempt }: { sh
         exempt={exempt}
         shopName={shopName}
       />
-      <div className="flex items-center gap-3">
-        <Button disabled={pending}>Save {shopName}</Button>
-        <Saved ok={ok} error={error} />
-      </div>
+      {(v.enabled || dirty || ok || error) && (
+        <div className="flex items-center gap-3">
+          <Button disabled={pending}>Save {shopName}</Button>
+          <Saved ok={ok} error={error} />
+        </div>
+      )}
     </form>
   );
 }
