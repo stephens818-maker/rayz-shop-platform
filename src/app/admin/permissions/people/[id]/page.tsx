@@ -21,7 +21,12 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
   if (!target) notFound();
   const works = await workShopIds(id);
   const person = (await db.query.staff.findFirst({ where: (s, { eq }) => eq(s.id, id) }))!;
-  const [roleRows, allShops] = await Promise.all([db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)), db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name))]);
+  const [roleRows, allShops] = await Promise.all([db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)), db
+      .select({ id: shops.id, name: shops.name, status: shops.status })
+      .from(shops)
+      .orderBy(asc(shops.name))
+      .then((rows) => rows.map((r) => ({ id: r.id, name: r.status === "archived" ? `${r.name} (archived)` : r.name }))),
+  ]);
   const g = staffGrantor(ctx);
   const readOnly =
     id === ctx.staff.id
