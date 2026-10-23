@@ -466,6 +466,71 @@ async function main() {
     if (collides && a.status === "booked") a.status = "cancelled";
   }
 
+  // ── Families: a parent and kids on one phone, booked back to back with one barber ──
+  const FAMILIES = [
+    { shop: "coralville", last: "Hayes", phone: "+13195550201", email: "chris.hayes@example.test", members: ["Chris", "Mason", "Lily"], note: "Mason: #3 on the sides, scissors on top. Lily: trim only." },
+    { shop: "moline", last: "Nguyen", phone: "+13095550202", email: "linh.nguyen@example.test", members: ["Linh", "Bao", "Minh"], note: "Bao and Minh come in together after school." },
+    { shop: "kimberly", last: "Carter", phone: "+15635550203", email: null, members: ["Jess", "Eli", "Owen"], note: "Twins. Eli has a cowlick on the left." },
+  ];
+  for (const f of FAMILIES) {
+    const shop = shopBySlug.get(f.shop)!;
+    const members = await db
+      .insert(t.customers)
+      .values(
+        f.members.map((first, i) => ({
+          firstName: first,
+          lastName: f.last,
+          phone: f.phone,
+          email: i === 0 ? f.email : null,
+          smsOptIn: i === 0,
+          emailOptIn: i === 0 && f.email !== null,
+          homeShopId: shop.id,
+          notes: i === 0 ? f.note : null,
+          createdAt: new Date(now.getTime() - 200 * 86_400_000),
+        })),
+      )
+      .returning();
+    const menu = menus.get(shop.id)!.filter((m) => m.svc.kind === "service" && m.price > 0);
+    const kids = menu.find((m) => m.svc.slug === "kidz-cut") ?? menu[0];
+    const adult = menu.find((m) => m.svc.slug !== "kidz-cut") ?? menu[0];
+    const visits = members.map((c, i) => ({ c, m: i === 0 ? adult : kids }));
+    const total = visits.reduce((a, v) => a + v.m.duration, 0);
+    const busy = (staffId: string, s: Date, e: Date) =>
+      appts.some((a) => a.staffId === staffId && a.startsAt < e && a.endsAt! > s) || blocks.some((b) => b.staffId === staffId && b.startsAt < e && b.endsAt > s);
+    let placed = false;
+    for (let d = 2; d <= FUTURE_DAYS && !placed; d++) {
+      const date = addDays(today, d);
+      for (const sch of scheduleRows.filter((r) => r.shopId === shop.id && r.weekday === weekdayOf(date))) {
+        for (let at = sch.startMin; at + total <= sch.endMin && !placed; at += 15) {
+          const start = zonedWallTime(date, at).toJSDate();
+          if (busy(sch.staffId, start, new Date(start.getTime() + total * 60_000))) continue;
+          let cursor = start;
+          for (const v of visits) {
+            const id = uuid();
+            const end = new Date(cursor.getTime() + v.m.duration * 60_000);
+            appts.push({
+              id,
+              code: appointmentCode(),
+              shopId: shop.id,
+              staffId: sch.staffId,
+              customerId: v.c.id,
+              startsAt: cursor,
+              endsAt: end,
+              status: "booked",
+              source: "online",
+              estimateCents: v.m.price,
+              createdAt: new Date(now.getTime() - 2 * 86_400_000),
+            });
+            items.push({ appointmentId: id, serviceId: v.m.svc.id, kind: "service", name: v.m.name, priceCents: v.m.price, durationMin: v.m.duration });
+            cursor = end;
+          }
+          placed = true;
+        }
+        if (placed) break;
+      }
+    }
+  }
+
   console.log(`  ${appts.length} appointments, ${saleRows.length} sales`);
   await chunked(appts, 1000, (c) => db.insert(t.appointments).values(c));
   await chunked(items, 2000, (c) => db.insert(t.appointmentItems).values(c));
