@@ -3,12 +3,12 @@ import { db } from "@/db";
 import { appointmentOutreach, callIns, staff, staffShops } from "@/db/schema";
 import type { ReasonViewer } from "@/domain/block-reasons";
 import { CALL_IN_KIND_LABEL, OPTION_LABEL, OutreachOption, OutreachStatus } from "@/domain/outreach";
+import { rangeLabel } from "@/domain/staff-time";
 import { Cell, Column, ListRow, ViewCtx, listTable } from "@/domain/report-views";
 import { endOfLocalDay, startOfLocalDay } from "@/lib/time";
 import { reasonShower } from "./block-reasons";
 import type { ReportData } from "./report-data";
 import { ReportScope, staffSelection } from "./reports";
-import { rangeLabel } from "./staff-time";
 
 const text = (label: string): Column => ({ label });
 const int = (label: string): Column => ({ label, kind: "int" });

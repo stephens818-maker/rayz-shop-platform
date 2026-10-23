@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointments, customerSquireIds, customers, loyaltyLedger, sales, shops, staff } from "@/db/schema";
+import { appointments, customerSquireIds, customers, loyaltyLedger, messageThreads, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
@@ -15,6 +15,7 @@ import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, shownField 
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
 import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
+import { CALL_KIND_LABEL, CALL_STATUS_LABEL, callsWith, optOutKeys } from "@/server/messaging";
 import { hasShop, inShops } from "@/server/tenant";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
@@ -245,6 +246,7 @@ export default async function CustomerPage({
                 lastName: c.lastName ?? "",
                 smsOptIn: c.smsOptIn,
                 emailOptIn: c.emailOptIn,
+                allowOtherShop: c.allowOtherShop,
                 homeShopId: c.homeShopId,
                 preferredStaffId: preferredFull ? c.preferredStaffId : null,
               }}
@@ -277,6 +279,7 @@ export default async function CustomerPage({
               </div>
             </Card>
           )}
+          {c.phone && <CallsAndTexts phone={c.phone} shopIds={ctx.brandWide ? null : ctx.shopIds} canInbox={can(ctx, "inbox.view")} />}
           <Card>
             <CardHeader title="Loyalty" subtitle={loyalty.rules.earn} />
             <ul className="divide-y divide-zinc-100 text-sm">
@@ -469,5 +472,69 @@ export default async function CustomerPage({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Calls with the client's number and the shop inbox threads, without the number itself. */
+async function CallsAndTexts({ phone, shopIds, canInbox }: { phone: string; shopIds: string[] | null; canInbox: boolean }) {
+  const [calls, keys, threads] = await Promise.all([
+    callsWith(phone, shopIds, 10),
+    optOutKeys([phone]),
+    canInbox
+      ? db
+          .select({ id: messageThreads.id, shop: shops.name, at: messageThreads.lastMessageAt, unread: messageThreads.unread })
+          .from(messageThreads)
+          .innerJoin(shops, eq(shops.id, messageThreads.shopId))
+          .where(and(eq(messageThreads.phone, phone), shopIds ? inShops({ shopIds }, messageThreads.shopId) : undefined))
+          .orderBy(desc(messageThreads.lastMessageAt))
+      : Promise.resolve([]),
+  ]);
+  const stopped = keys.has(`sms:${phone}`);
+  const noCalls = keys.has(`voice:${phone}`);
+  if (!calls.length && !threads.length && !stopped && !noCalls) return null;
+  return (
+    <Card>
+      <CardHeader title="Calls and texts" subtitle="With the shop numbers. The number itself stays private." />
+      {(stopped || noCalls) && (
+        <div className="space-y-1 border-b border-zinc-100 px-4 py-2 text-xs text-amber-800">
+          {stopped && <p>Replied STOP: no texts until they reply START.</p>}
+          {noCalls && <p>Asked for no automated calls (pressed 9).</p>}
+        </div>
+      )}
+      {threads.length > 0 && (
+        <ul className="divide-y divide-zinc-100 border-b border-zinc-100 text-sm">
+          {threads.map((t) => (
+            <li key={t.id} className="flex items-center justify-between px-4 py-2">
+              <Link className="underline underline-offset-2" href={`/admin/inbox/${t.id}`}>
+                Texts with {t.shop}
+              </Link>
+              <span className="text-xs text-zinc-500">
+                {t.unread > 0 && <Badge tone="blue">{t.unread} new</Badge>} {formatDateTime(t.at)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {calls.length > 0 && (
+        <ul className="divide-y divide-zinc-100 text-sm">
+          {calls.map(({ c, shopName, staffLabel }) => (
+            <li key={c.id} className="px-4 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span>{CALL_KIND_LABEL[c.kind]}</span>
+                <Badge tone={c.status === "missed" || c.status === "no_answer" || c.status === "failed" ? "amber" : "gray"}>{CALL_STATUS_LABEL[c.status]}</Badge>
+              </div>
+              <div className="text-xs text-zinc-500">
+                {formatDateTime(c.createdAt)}
+                {shopName && ` · ${shopName}`}
+                {staffLabel && ` · ${staffLabel}`}
+                {c.durationSec ? ` · ${Math.round(c.durationSec / 60) || "<1"} min` : ""}
+                {c.digits && ` · pressed ${c.digits}`}
+                {c.autoTextSent && " · texted a link"}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

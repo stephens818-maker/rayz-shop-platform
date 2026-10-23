@@ -40,6 +40,7 @@ export default async function SettingsPage() {
           state: shop.state,
           zip: shop.zip,
           phone: shop.phone ?? "",
+          twilioNumber: shop.twilioNumber ?? "",
           email: shop.email ?? "",
           description: shop.description ?? "",
           bookingEnabled: shop.bookingEnabled,

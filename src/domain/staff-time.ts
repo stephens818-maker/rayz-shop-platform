@@ -4,7 +4,7 @@
  * and their limits, recurring occurrences, time off spans and who is working, off or blocked on a
  * day. Server code (src/server/staff-time.ts) loads rows and calls these.
  */
-import { LocalDate, addDays, diffDays, endOfLocalDay, localMinutesOf, startOfLocalDay, weekdayOf, zonedWallTime } from "@/lib/time";
+import { LocalDate, addDays, diffDays, endOfLocalDay, formatDate, localMinutesOf, minutesToLabel, startOfLocalDay, weekdayOf, zonedWallTime } from "@/lib/time";
 
 /** What a block is written as: lunch is held to the lunch limit; time off comes from a request or a manager. */
 export type BlockKind = "lunch" | "other" | "time_off";
@@ -145,6 +145,12 @@ export interface TimeOffRange {
   /** Part of one day; both null for whole days. */
   startMin: number | null;
   endMin: number | null;
+}
+
+/** "Mon, Mar 2", "Mon, Mar 2 – Fri, Mar 6" or "Mon, Mar 2, 1:00 PM–5:00 PM". */
+export function rangeLabel(r: Pick<TimeOffRange, "fromDate" | "toDate" | "startMin" | "endMin">) {
+  if (r.startMin !== null && r.endMin !== null) return `${formatDate(r.fromDate)}, ${minutesToLabel(r.startMin)}–${minutesToLabel(r.endMin % (24 * 60))}`;
+  return r.fromDate === r.toDate ? formatDate(r.fromDate) : `${formatDate(r.fromDate)} – ${formatDate(r.toDate)}`;
 }
 
 /** When the time off starts and ends, or what's wrong with it. Whole days run midnight to midnight. */

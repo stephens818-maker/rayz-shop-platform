@@ -41,6 +41,7 @@ const Profile = z.object({
   custom: z.record(z.string().uuid(), z.string().trim().max(500)).default({}),
   smsOptIn: z.boolean(),
   emailOptIn: z.boolean(),
+  allowOtherShop: z.boolean().optional(),
   homeShopId: z.string().uuid().nullable(),
   preferredStaffId: z.string().uuid().nullable().optional(),
 });
@@ -112,6 +113,7 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
       customFields,
       smsOptIn: p.smsOptIn,
       emailOptIn: p.emailOptIn,
+      ...(p.allowOtherShop === undefined ? {} : { allowOtherShop: p.allowOtherShop }),
       homeShopId: p.homeShopId,
       preferredStaffId,
     };

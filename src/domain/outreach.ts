@@ -262,6 +262,9 @@ export const LINK_STATE_MESSAGE: Record<Exclude<LinkState, "ok">, string> = {
   closed: "This appointment can't be changed online any more. Call or text the shop.",
 };
 
+/** A rebook link works for whoever holds it, so staff screens show messages with the token cut out. */
+export const redactLinks = (body: string) => body.replace(/\/r\/[A-Za-z0-9_-]{43}/g, "/r/•••");
+
 // ───────────────────────────── Text replies ─────────────────────────────
 
 export type Reply = "accept" | "decline" | "stop" | "start" | "help" | "message";

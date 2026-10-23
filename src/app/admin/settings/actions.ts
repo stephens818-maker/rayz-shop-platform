@@ -1,6 +1,6 @@
 "use server";
 
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
@@ -8,6 +8,7 @@ import { ownerEntities, services, shopClosures, shopHours, shopServices, shops }
 import { MAX_CARD_FEE_RATE } from "@/domain/checkout";
 import { hoursProblem } from "@/domain/hours";
 import { slugify } from "@/lib/ids";
+import { normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { assertShopAccess, authorize, can } from "@/server/auth/staff";
@@ -21,6 +22,7 @@ const Info = z.object({
   state: z.string().trim().length(2).toUpperCase(),
   zip: z.string().trim(),
   phone: z.string().trim(),
+  twilioNumber: z.string().trim().optional(),
   email: z.string().trim(),
   description: z.string().trim(),
   bookingEnabled: z.boolean(),
@@ -35,8 +37,14 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
   return safe(async () => {
     const ctx = await authorize("settings.shop");
     assertShopAccess(ctx, shopId);
-    const v = Info.parse(raw);
-    const values = { ...v, phone: v.phone || null, email: v.email || null, description: v.description || null };
+    const { twilioNumber, ...v } = Info.parse(raw);
+    const line = twilioNumber === undefined ? undefined : twilioNumber ? normalizePhone(twilioNumber) : null;
+    if (twilioNumber && !line) throw new AppError("bad_request", "The Twilio number doesn't look like a US number");
+    if (line) {
+      const other = await db.query.shops.findFirst({ where: and(eq(shops.twilioNumber, line), ne(shops.id, shopId)), columns: { name: true } });
+      if (other) throw new AppError("conflict", `${other.name} already uses that Twilio number`);
+    }
+    const values = { ...v, phone: v.phone || null, email: v.email || null, description: v.description || null, ...(line === undefined ? {} : { twilioNumber: line }) };
     await db.update(shops).set(values).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.update", "shop", shopId, values, shopId);
     revalidatePath("/admin/settings");

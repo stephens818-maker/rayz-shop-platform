@@ -16,7 +16,7 @@ import {
   timeBlocks,
 } from "@/db/schema";
 import type { CallInKind, OutreachOption, OutreachStatus } from "@/db/schema";
-import { NO_PRIVATE, ReasonViewer } from "@/domain/block-reasons";
+import { MAX_NOTE, NO_PRIVATE, ReasonViewer } from "@/domain/block-reasons";
 import {
   AFFECTED_STATUSES,
   CALL_IN_REASON_KEY,
@@ -41,18 +41,15 @@ import {
   tooLateToSend,
   voiceScript,
 } from "@/domain/outreach";
-import { TimeOffRange, timeOffSpan } from "@/domain/staff-time";
+import { TimeOffRange, rangeLabel, timeOffSpan } from "@/domain/staff-time";
 import { LocalDate, addDays, existingWallTime, formatDate, formatTime, localDateOf, minutesToLabel, todayLocal } from "@/lib/time";
 import { Actor, SYSTEM, audit, customerActor } from "./audit";
-import { workShopIds } from "./auth/access";
-import { Caller, callInDenied } from "./auth/policy";
 import { reasonShower, usableReason } from "./block-reasons";
 import { cancelAppointment, createAppointment, getAvailability, messageContext, rescheduleAppointment } from "./booking";
 import { AppError, forbidden, notFound } from "./errors";
-import { cleanNote, rangeLabel } from "./staff-time";
 import { logMessage, optOutKeys, queueShopText, sendDue, threadFor } from "./messaging";
 import { cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
-import { closeLinks, issueLink } from "./rebook-links";
+import { closeLinks, finishOutreach as finish, issueLink } from "./rebook-links";
 
 // ───────────────────────────── Rules ─────────────────────────────
 
@@ -96,6 +93,12 @@ async function reasonFor(kind: CallInKind, reasonId: string | null | undefined, 
   throw new AppError("conflict", `The ${kind === "sick" ? "Sick" : "Emergency"} reason is archived. Pick another reason.`);
 }
 
+function cleanNote(note: string | null | undefined): string | null {
+  const n = note?.trim() || null;
+  if (n && n.length > MAX_NOTE) throw new AppError("bad_request", `Keep the note to ${MAX_NOTE} characters`);
+  return n;
+}
+
 function spanOf(range: TimeOffRange) {
   const span = timeOffSpan(range);
   if ("problem" in span) throw new AppError("bad_request", span.problem);
@@ -103,12 +106,6 @@ function spanOf(range: TimeOffRange) {
     if (m !== null && m < 24 * 60 && !existingWallTime(range.fromDate, m)) throw new AppError("bad_request", `${minutesToLabel(m)} doesn't exist on ${range.fromDate}: clocks spring forward that night`);
   }
   return span;
-}
-
-/** Whether `who` may mark this call-in, against the barber's shops. */
-export async function assertCanMark(who: Caller & { markOthers: boolean; markOwn: boolean }, c: { staffId: string; shopId: string | null }) {
-  const denied = callInDenied(who, c, await workShopIds(c.staffId));
-  if (denied) throw forbidden(denied);
 }
 
 /** The barber's booked appointments in the time, as the call-in sees them. */
@@ -571,12 +568,6 @@ export async function closeByStaff(outreachId: string, status: Extract<OutreachS
 
 // ───────────────────────────── The client answers ─────────────────────────────
 
-async function finish(row: OutreachRow, status: "rebooked" | "declined", resolution: string, now: Date, tx: DBorTx = db) {
-  await tx.update(appointmentOutreach).set({ status, resolution, respondedAt: now, nextActionAt: null, flaggedAt: null, flagReason: null, updatedAt: now }).where(eq(appointmentOutreach.id, row.id));
-  await closeLinks(row.id, tx, now);
-  await tx.update(notificationJobs).set({ status: "cancelled" }).where(and(eq(notificationJobs.outreachId, row.id), eq(notificationJobs.status, "pending")));
-}
-
 /** The open outreach a text from this number is answering: the latest one sent from this shop. */
 export async function openOutreachFor(phone: string, shopId: string) {
   const [row] = await db
@@ -640,13 +631,6 @@ export async function answerByText(row: OutreachRow, reply: "accept" | "decline"
   await finish(row, "rebooked", `Took ${whenText(row.suggestedStartsAt)} by text`, now);
   await audit(actor, "callin.accepted", "appointment", appt.id, { outreachId: row.id, via: "sms", startsAt: row.suggestedStartsAt.toISOString() }, row.shopId);
   return { reply: null, note: `Replied 1: moved to ${whenText(row.suggestedStartsAt)}` };
-}
-
-/** The client acted on the rebook page. */
-export async function markAnswered(outreachId: string, status: "rebooked" | "declined", resolution: string, now = new Date()) {
-  const row = await db.query.appointmentOutreach.findFirst({ where: eq(appointmentOutreach.id, outreachId) });
-  if (!row || !isOpen(row.status)) return;
-  await finish(row, status, resolution, now);
 }
 
 // ───────────────────────────── Follow-ups ─────────────────────────────

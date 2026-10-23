@@ -27,6 +27,7 @@ import {
   isTimeOff,
   noticeProblem,
   overlaps,
+  rangeLabel,
   rulesProblem,
   seriesOccurrences,
   seriesProblem,
@@ -35,8 +36,10 @@ import {
   strictestRules,
   timeOffSpan,
 } from "@/domain/staff-time";
+
+export { rangeLabel };
 import { appBaseUrl } from "@/lib/deployment";
-import { LocalDate, addDays, endOfLocalDay, existingWallTime, formatDate, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, existingWallTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { extendSeries, insertOccurrences } from "./block-series";
 import { reasonShower, usableReason } from "./block-reasons";
@@ -335,10 +338,6 @@ export async function endSeries(id: string, actor: Actor, now: Date = new Date()
 
 type RequestRow = typeof timeOffRequests.$inferSelect;
 
-export function rangeLabel(r: Pick<RequestRow, "fromDate" | "toDate" | "startMin" | "endMin">) {
-  if (r.startMin !== null && r.endMin !== null) return `${formatDate(r.fromDate)}, ${minutesToLabel(r.startMin)}–${minutesToLabel(r.endMin % (24 * 60))}`;
-  return r.fromDate === r.toDate ? formatDate(r.fromDate) : `${formatDate(r.fromDate)} – ${formatDate(r.toDate)}`;
-}
 
 export interface TimeOffInput {
   staffId: string;

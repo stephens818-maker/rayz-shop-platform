@@ -3,6 +3,7 @@ import { Permission, REPORTS, ReportKey, reportExport, reportView } from "./perm
 /** Anyone who works with stock can see it. */
 const STOCK_VIEW: Permission[] = ["inventory.manage", "inventory.adjust", "inventory.transfer", "inventory.stocktake", "po.create", "po.receive", "catalog.manage", "catalog.prices"];
 const PURCHASING: Permission[] = ["po.create", "po.approve", "po.send", "po.receive"];
+const CALL_INS: Permission[] = ["callins.mark", "callins.mark_own", "callins.outreach", "callins.voice"];
 
 /**
  * What each admin page needs: any one of the listed permissions, or null for any signed-in staff
@@ -19,6 +20,10 @@ export const PAGE_ACCESS = {
   "/admin/customers/duplicates": ["clients.merge"],
   "/admin/my-time": ["blocks.own", "timeoff.request"],
   "/admin/time-off": ["timeoff.approve", "blocks.others", "schedules.edit"],
+  "/admin/call-ins": CALL_INS,
+  "/admin/call-ins/[id]": CALL_INS,
+  "/admin/inbox": ["inbox.view"],
+  "/admin/inbox/[id]": ["inbox.view"],
   "/admin/walk-ins": ["walkins.manage"],
   "/admin/sales": ["sales.view"],
   "/admin/sales/[id]": null,
@@ -56,6 +61,7 @@ export const PAGE_ACCESS = {
   "/admin/location-groups": ["locations.manage"],
   "/admin/barber-groups": ["barber_groups.manage"],
   "/admin/notifications": ["notifications.view", "notifications.send"],
+  "/admin/notifications/simulator": ["notifications.send"],
   "/admin/payroll/report": ["payroll.run", "payroll.approve"],
   "/admin/payroll/hours": ["payroll.run"],
   "/admin/payroll/setup": ["payroll.run"],
@@ -85,10 +91,12 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/calendar", label: "Calendar" },
       { href: "/admin/my-time", label: "My time" },
       { href: "/admin/time-off", label: "Time off" },
+      { href: "/admin/call-ins", label: "Call-ins" },
       { href: "/admin/walk-ins", label: "Walk-ins & waitlist" },
       { href: "/admin/sales", label: "Sales & checkout" },
       { href: "/admin/drawer", label: "Cash drawer" },
       { href: "/admin/customers", label: "Clients" },
+      { href: "/admin/inbox", label: "Inbox" },
     ],
   },
   {

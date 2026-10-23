@@ -153,6 +153,7 @@ INSERT INTO "block_reasons" ("key", "label", "color", "used_for", "counts_as_lun
 SELECT 'emergency', 'Emergency', '#ec4899', 'time_off', false, true, true, 75
 WHERE NOT EXISTS (SELECT 1 FROM "block_reasons" WHERE "key" = 'emergency' OR (lower("label") = 'emergency' AND "archived_at" IS NULL));--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["callins.mark","callins.outreach","callins.voice","inbox.view","report.call_ins.view","report.call_ins.export"]'::jsonb WHERE "key" IN ('brand_admin', 'regional_manager', 'shop_manager') AND NOT ("permissions" ? 'callins.mark');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["callins.mark_own"]'::jsonb WHERE "key" = 'brand_admin' AND NOT ("permissions" ? 'callins.mark_own');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["callins.outreach","inbox.view"]'::jsonb WHERE "key" = 'front_desk' AND NOT ("permissions" ? 'callins.outreach');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["callins.mark","callins.outreach","callins.voice","report.call_ins.view"]'::jsonb WHERE "key" IS NULL AND "permissions" ? 'timeoff.approve' AND NOT ("permissions" ? 'callins.mark');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["inbox.view"]'::jsonb WHERE "key" IS NULL AND "permissions" ? 'calendar.manage' AND NOT ("permissions" ? 'inbox.view');

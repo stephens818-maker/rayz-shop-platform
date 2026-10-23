@@ -2,11 +2,12 @@ import type { Metadata } from "next";
 import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, notificationJobs, shops } from "@/db/schema";
-import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { Badge, Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { redactLinks } from "@/domain/outreach";
 import { formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
-import { emailProvider, smsProvider } from "@/server/notifications/providers";
+import { emailProvider, liveTwilio, smsProvider, voiceProvider } from "@/server/notifications/providers";
 import { inShops } from "@/server/tenant";
 import { ProcessNowButton } from "./process-button";
 
@@ -29,9 +30,15 @@ const KIND_LABEL: Record<string, string> = {
   privacy_alert: "Client data alert",
   time_off_reschedule: "Time off: please reschedule",
   time_off_decision: "Time off decision",
+  callin_reassign: "Call-in: moved to another barber",
+  callin_rebook: "Call-in: rebook link",
+  callin_voice: "Call-in: automated call",
+  callin_link: "Call-in: link after a call",
+  missed_call: "Missed call text",
+  shop_reply: "Shop text",
 };
 /** Jobs sent to a client: their number or email shows as the viewer may see it. */
-const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule"]);
+const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply"]);
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;
@@ -73,7 +80,18 @@ export default async function NotificationsPage({ searchParams }: { searchParams
       <PageHeader
         title="Notifications"
         subtitle="Confirmations and 24h / 2h reminders queued for each booking, plus purchase orders emailed to vendors and low-stock alerts. Cancelling or rescheduling a booking cancels its pending reminders."
-        actions={can(ctx, "notifications.send") ? <ProcessNowButton /> : undefined}
+        actions={
+          can(ctx, "notifications.send") ? (
+            <div className="flex items-center gap-2">
+              {!liveTwilio() && (
+                <LinkButton variant="secondary" href="/admin/notifications/simulator">
+                  Call and text simulator
+                </LinkButton>
+              )}
+              <ProcessNowButton />
+            </div>
+          ) : undefined
+        }
       />
       {off && (
         <Notice>
@@ -81,9 +99,10 @@ export default async function NotificationsPage({ searchParams }: { searchParams
           <code>console</code> to log messages, or wire Twilio / Resend before go-live.
         </Notice>
       )}
-      <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-6">
+      <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-7">
         <Stat label="SMS provider" value={sms.name} hint={sms.enabled ? "sending" : "off"} />
         <Stat label="Email provider" value={email.name} hint={email.enabled ? "sending" : "off"} />
+        <Stat label="Voice provider" value={voiceProvider().name} hint={voiceProvider().enabled ? "calling" : "off"} />
         {(["pending", "sent", "suppressed", "failed"] as const).map((s) => (
           <a key={s} href={status === s ? "/admin/notifications" : `/admin/notifications?status=${s}`} className="block">
             <Stat label={s[0].toUpperCase() + s.slice(1)} value={count(s)} hint={status === s ? "filtered · clear" : "filter"} />
@@ -117,7 +136,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                   <Td className="whitespace-nowrap">{recipient(j)}</Td>
                   <Td className="max-w-md text-xs text-zinc-600">
                     {j.subject && j.channel === "email" && <div className="font-medium text-zinc-800">{j.subject}</div>}
-                    <div className="whitespace-pre-line">{j.body}</div>
+                    <div className="whitespace-pre-line">{redactLinks(j.body)}</div>
                     {(j.attachments ?? []).length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-2">
                         {(j.attachments ?? []).map((a, i) => (

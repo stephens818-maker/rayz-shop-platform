@@ -10,6 +10,8 @@ import { reportsFor } from "@/domain/navigation";
 import { STATUS_LABEL } from "@/domain/staff-time";
 import { listRequests, pendingCount, staffingFor } from "@/server/staff-time";
 import { can, canAny, guardPage, reasonViewer, reportShopIds } from "@/server/auth/staff";
+import { flaggedCount } from "@/server/call-ins";
+import { unreadCount } from "@/server/messaging";
 import { stockLevels } from "@/server/inventory/stock";
 import { timesFor } from "@/server/service-times";
 import { ServiceTimer } from "./calendar/service-times-panel";
@@ -78,7 +80,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     db.select({ name: shops.name }).from(shops).where(and(inArray(shops.id, shopIds), eq(shops.taxRatesVerified, false))),
   ]);
   const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
-  const [times, staffing, waitingRequests, myDecisions] = await Promise.all([
+  const [times, staffing, waitingRequests, myDecisions, callInFlags, unreadTexts] = await Promise.all([
     timesFor(upcoming.map((a) => a.id), now),
     staffingFor(shopIds, today, today, reasonViewer(ctx), seesTeam ? null : [ctx.staff.id]),
     can(ctx, "timeoff.approve") ? pendingCount(shopIds, false) : Promise.resolve(0),
@@ -87,6 +89,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           rs.filter((r) => r.decidedAt && new Date(r.decidedAt).getTime() > now.getTime() - 7 * 86_400_000 && r.decidedVia !== "auto"),
         )
       : Promise.resolve([]),
+    can(ctx, "callins.outreach") ? flaggedCount(shopIds) : Promise.resolve(0),
+    can(ctx, "inbox.view") ? unreadCount(shopIds) : Promise.resolve(0),
   ]);
   const whosIn = shopIds
     .map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "", rows: staffing.filter((r) => r.shopId === id) }))
@@ -130,6 +134,22 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           {waitingRequests} time off request{waitingRequests === 1 ? " is" : "s are"} waiting for a decision.{" "}
           <Link className="underline" href="/admin/time-off">
             Review time off
+          </Link>
+        </Notice>
+      )}
+      {callInFlags > 0 && (
+        <Notice tone="red">
+          {callInFlags === 1 ? "One client" : `${callInFlags} clients`} from a call-in still need{callInFlags === 1 ? "s" : ""} a call from the shop: outreach couldn&apos;t reach them or got no answer.{" "}
+          <Link className="underline" href="/admin/call-ins">
+            Call-ins
+          </Link>
+        </Notice>
+      )}
+      {unreadTexts > 0 && (
+        <Notice tone="blue">
+          {unreadTexts} unread text{unreadTexts === 1 ? "" : "s"} from clients.{" "}
+          <Link className="underline" href="/admin/inbox">
+            Inbox
           </Link>
         </Notice>
       )}

@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { appointmentOutreach, appointments, rebookLinks } from "@/db/schema";
-import { LinkState, OutreachRules, linkExpiry, linkState } from "@/domain/outreach";
+import { appointmentOutreach, appointments, notificationJobs, rebookLinks } from "@/db/schema";
+import { LinkState, OutreachRules, isOpen, linkExpiry, linkState } from "@/domain/outreach";
 import { TOKEN_SHAPE, hashToken, newRebookToken } from "@/domain/rebook-token";
 import { appBaseUrl } from "@/lib/deployment";
 
@@ -50,4 +50,18 @@ export async function closeLinks(outreachId: string, tx: DBorTx = db, now = new 
     .update(rebookLinks)
     .set({ usedAt: now })
     .where(and(eq(rebookLinks.outreachId, outreachId), isNull(rebookLinks.usedAt), isNull(rebookLinks.revokedAt)));
+}
+
+/** The client answered: the row is closed, its links stop working and nothing more goes out for it. */
+export async function finishOutreach(row: Pick<typeof appointmentOutreach.$inferSelect, "id">, status: "rebooked" | "declined", resolution: string, now: Date, tx: DBorTx = db) {
+  await tx.update(appointmentOutreach).set({ status, resolution, respondedAt: now, nextActionAt: null, flaggedAt: null, flagReason: null, updatedAt: now }).where(eq(appointmentOutreach.id, row.id));
+  await closeLinks(row.id, tx, now);
+  await tx.update(notificationJobs).set({ status: "cancelled" }).where(and(eq(notificationJobs.outreachId, row.id), eq(notificationJobs.status, "pending")));
+}
+
+/** The client acted on the rebook page. */
+export async function markAnswered(outreachId: string, status: "rebooked" | "declined", resolution: string, now = new Date()) {
+  const row = await db.query.appointmentOutreach.findFirst({ where: eq(appointmentOutreach.id, outreachId) });
+  if (!row || !isOpen(row.status)) return;
+  await finishOutreach(row, status, resolution, now);
 }

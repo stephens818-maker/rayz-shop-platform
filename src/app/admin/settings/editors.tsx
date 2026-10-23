@@ -44,6 +44,7 @@ type Info = {
   state: string;
   zip: string;
   phone: string;
+  twilioNumber: string;
   email: string;
   description: string;
   bookingEnabled: boolean;
@@ -68,6 +69,9 @@ export function ShopInfoEditor({ shopId, initial }: { shopId: string; initial: I
         </Field>
         <Field label="Phone">
           <Input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />
+        </Field>
+        <Field label="Twilio number" hint="Clients text and call this; calls forward to the phone above">
+          <Input value={v.twilioNumber} placeholder="Not set up" onChange={(e) => setV({ ...v, twilioNumber: e.target.value })} />
         </Field>
         <Field label="Email">
           <Input value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />

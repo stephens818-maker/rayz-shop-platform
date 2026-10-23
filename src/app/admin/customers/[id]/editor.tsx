@@ -7,7 +7,7 @@ import type { ShownField } from "@/domain/client-privacy";
 import { findClientsAction, grantRewardAction, mergeCustomersAction, updateCustomerAction, updateNotesAction } from "../actions";
 import { Masked } from "../privacy";
 
-type P = { firstName: string; lastName: string; smsOptIn: boolean; emailOptIn: boolean; homeShopId: string | null; preferredStaffId: string | null };
+type P = { firstName: string; lastName: string; smsOptIn: boolean; emailOptIn: boolean; allowOtherShop: boolean; homeShopId: string | null; preferredStaffId: string | null };
 
 const INPUT: Record<string, { type?: string; placeholder?: string; wide?: boolean }> = {
   phone: { type: "tel", placeholder: "(319) 555-0123" },
@@ -236,6 +236,9 @@ export function CustomerEditor({
         </label>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={p.emailOptIn} onChange={(e) => setP({ ...p, emailOptIn: e.target.checked })} /> Emails
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={p.allowOtherShop} onChange={(e) => setP({ ...p, allowOtherShop: e.target.checked })} /> OK to move to another shop when their barber calls in
         </label>
       </div>
       <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
