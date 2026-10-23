@@ -6,9 +6,10 @@ import { z } from "zod";
 import { db } from "@/db";
 import { appointments, staffShops, timeBlocks } from "@/db/schema";
 import { safe } from "@/server/action";
-import { audit } from "@/server/audit";
-import { timeBlockChangeDenied } from "@/server/auth/policy";
-import { StaffContext, assertShopAccess, authorize, can, caller, requireStaff } from "@/server/auth/staff";
+import { CATEGORY_LABEL, isSelfBlockCategory, selfBlockProblem } from "@/domain/staff-time";
+import { blockChangeDenied } from "@/server/auth/policy";
+import { StaffContext, assertShopAccess, authorize, blockCaller, can, requireStaff } from "@/server/auth/staff";
+import { addBlock, removeBlock, rulesFor } from "@/server/staff-time";
 import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
 import { assertCanEnter, clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
@@ -208,32 +209,47 @@ export async function moveAppointmentAction(id: string, staffId: string, date: s
   });
 }
 
-export async function createBlockAction(input: { shopId: string; staffId: string; date: string; startMin: number; endMin: number; reason: string; allShops: boolean }) {
+/**
+ * Your own time needs "Block out their own time" and stays within the shop's limits; anyone else's
+ * needs "Block out time for anyone". With booked appointments in it, nothing is saved until the
+ * caller confirms, and the appointments stay booked.
+ */
+export async function createBlockAction(input: {
+  shopId: string;
+  staffId: string;
+  date: string;
+  startMin: number;
+  endMin: number;
+  reason: string;
+  allShops: boolean;
+  category?: string;
+  confirm?: boolean;
+}) {
   return safe(async () => {
     const ctx = await requireStaff();
     assertShopAccess(ctx, input.shopId);
-    if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only block time in your own column");
-    if (!input.reason.trim()) throw new AppError("bad_request", "Add a reason for the block");
+    const category = input.category ?? "other";
+    if (!isSelfBlockCategory(category)) throw new AppError("bad_request", "Pick lunch, break, personal or other");
+    const reason = input.reason.trim() || CATEGORY_LABEL[category];
     if (input.endMin <= input.startMin) throw new AppError("bad_request", "End must be after start");
     const shopId = input.allShops ? null : input.shopId;
-    const denied = timeBlockChangeDenied(caller(ctx), { staffId: input.staffId, shopId }, await barberShops(input.staffId));
+    const shopsOfBarber = await barberShops(input.staffId);
+    const denied = blockChangeDenied(blockCaller(ctx), { staffId: input.staffId, shopId }, shopsOfBarber);
     if (denied) throw forbidden(denied);
-    if (input.allShops && !(await barberShops(input.staffId)).includes(input.shopId)) throw forbidden("That barber doesn't work at this shop");
-    const [b] = await db
-      .insert(timeBlocks)
-      .values({
-        staffId: input.staffId,
-        shopId,
-        startsAt: staffWallTime(input.date, input.startMin),
-        endsAt: staffWallTime(input.date, input.endMin),
-        reason: input.reason.trim(),
-        kind: "block",
-        createdBy: ctx.staff.id,
-      })
-      .returning();
-    await audit(ctx.actor, "block.create", "time_block", b.id, { staffId: input.staffId, reason: b.reason }, input.shopId);
-    revalidatePath("/admin/calendar");
-    return null;
+    if (input.allShops && !shopsOfBarber.includes(input.shopId)) throw forbidden("That barber doesn't work at this shop");
+    if (input.staffId === ctx.staff.id && !can(ctx, "blocks.others")) {
+      const problem = selfBlockProblem(await rulesFor(input.staffId, shopId), category, input.endMin - input.startMin);
+      if (problem) throw new AppError("bad_request", problem);
+    }
+    const r = await addBlock(
+      { staffId: input.staffId, shopId, startsAt: staffWallTime(input.date, input.startMin), endsAt: staffWallTime(input.date, input.endMin), category, reason },
+      { actor: ctx.actor, confirm: input.confirm, via: "calendar", auditShopId: input.shopId },
+    );
+    if (r.done) {
+      revalidatePath("/admin/calendar");
+      revalidatePath("/admin/my-time");
+    }
+    return { saved: r.done, conflicts: r.conflicts };
   });
 }
 
@@ -242,12 +258,11 @@ export async function deleteBlockAction(id: string) {
     const ctx = await requireStaff();
     const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
     if (!b || (b.shopId && !hasShop(ctx, b.shopId))) throw notFound("Block");
-    if (ownColumnOnly(ctx) && b.staffId !== ctx.staff.id) throw forbidden("You can only remove blocks in your own column");
-    const denied = timeBlockChangeDenied(caller(ctx), b, await barberShops(b.staffId));
+    const denied = blockChangeDenied(blockCaller(ctx), b, await barberShops(b.staffId));
     if (denied) throw forbidden(denied);
-    await db.delete(timeBlocks).where(eq(timeBlocks.id, id));
-    await audit(ctx.actor, "block.delete", "time_block", id, { reason: b.reason }, b.shopId);
+    await removeBlock(id, ctx.actor, "calendar", b.shopId);
     revalidatePath("/admin/calendar");
+    revalidatePath("/admin/my-time");
     return null;
   });
 }

@@ -17,6 +17,8 @@ export const PAGE_ACCESS = {
   "/admin/checkout/[saleId]": null,
   "/admin/customers/new": ["clients.edit"],
   "/admin/customers/duplicates": ["clients.merge"],
+  "/admin/my-time": ["blocks.own", "timeoff.request"],
+  "/admin/time-off": ["timeoff.approve", "blocks.others", "schedules.edit"],
   "/admin/walk-ins": ["walkins.manage"],
   "/admin/sales": ["sales.view"],
   "/admin/sales/[id]": null,
@@ -80,6 +82,8 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     items: [
       { href: "/admin", label: "Today" },
       { href: "/admin/calendar", label: "Calendar" },
+      { href: "/admin/my-time", label: "My time" },
+      { href: "/admin/time-off", label: "Time off" },
       { href: "/admin/walk-ins", label: "Walk-ins & waitlist" },
       { href: "/admin/sales", label: "Sales & checkout" },
       { href: "/admin/drawer", label: "Cash drawer" },

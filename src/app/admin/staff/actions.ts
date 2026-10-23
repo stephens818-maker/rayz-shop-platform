@@ -17,6 +17,7 @@ import { accessState, loadStaffAccess, workShopIds } from "@/server/auth/access"
 import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, authorize, caller, staffGrantor } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
+import { addBlock, removeBlock } from "@/server/staff-time";
 
 /** Profile edits: nobody edits a person who holds access they don't have. */
 async function assertCanEditProfile(ctx: StaffContext, staffId: string) {
@@ -190,7 +191,18 @@ export async function saveScheduleAction(staffId: string, rows: { shopId: string
   });
 }
 
-export async function addTimeOffAction(input: { staffId: string; shopId: string | null; from: string; to: string; allDay: boolean; startMin: number; endMin: number; reason: string }) {
+/** Time off a manager enters directly (no request). Booked appointments in it need `confirm`, and stay booked. */
+export async function addTimeOffAction(input: {
+  staffId: string;
+  shopId: string | null;
+  from: string;
+  to: string;
+  allDay: boolean;
+  startMin: number;
+  endMin: number;
+  reason: string;
+  confirm?: boolean;
+}) {
   return safe(async () => {
     const ctx = await authorize("schedules.edit");
     await assertCanSchedule(ctx, input.staffId);
@@ -201,13 +213,15 @@ export async function addTimeOffAction(input: { staffId: string; shopId: string 
     const startsAt = input.allDay ? startOfLocalDay(input.from) : staffWallTime(input.from, input.startMin);
     const endsAt = input.allDay ? startOfLocalDay(addDays(input.to, 1)) : staffWallTime(input.to, input.endMin);
     if (endsAt <= startsAt) throw new AppError("bad_request", "End must be after start");
-    const [b] = await db
-      .insert(timeBlocks)
-      .values({ staffId: input.staffId, shopId: input.shopId, startsAt, endsAt, reason: input.reason.trim(), kind: input.allDay ? "day_off" : "block", createdBy: ctx.staff.id })
-      .returning();
-    await audit(ctx.actor, "block.create", "time_block", b.id, { staffId: input.staffId, reason: b.reason, kind: b.kind }, input.shopId);
-    revalidatePath(`/admin/staff/${input.staffId}`);
-    return null;
+    const r = await addBlock(
+      { staffId: input.staffId, shopId: input.shopId, startsAt, endsAt, reason: input.reason, category: "time_off", kind: input.allDay ? "day_off" : "block" },
+      { actor: ctx.actor, confirm: input.confirm, via: "staff_page", auditShopId: input.shopId },
+    );
+    if (r.done) {
+      revalidatePath(`/admin/staff/${input.staffId}`);
+      revalidatePath("/admin/time-off");
+    }
+    return { saved: r.done, conflicts: r.conflicts };
   });
 }
 
@@ -219,9 +233,9 @@ export async function deleteTimeOffAction(id: string) {
     await assertCanSchedule(ctx, b.staffId);
     const denied = timeBlockChangeDenied(caller(ctx), b, await workShopIds(b.staffId));
     if (denied) throw forbidden(denied);
-    await db.delete(timeBlocks).where(eq(timeBlocks.id, id));
-    await audit(ctx.actor, "block.delete", "time_block", id, { reason: b.reason }, b.shopId);
+    await removeBlock(id, ctx.actor, "staff_page", b.shopId);
     revalidatePath(`/admin/staff/${b.staffId}`);
+    revalidatePath("/admin/time-off");
     return null;
   });
 }

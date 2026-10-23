@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { ConflictConfirm } from "@/components/conflict-confirm";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, cx } from "@/components/ui";
+import type { BookedConflict } from "@/server/staff-time";
 import { addTimeOffAction, deleteTimeOffAction, saveProfileAction, saveScheduleAction } from "../actions";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -21,13 +23,13 @@ function useRun() {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
-  const run = <T,>(fn: () => Promise<{ ok: true; data: T } | { ok: false; error: string }>, msg: string, after?: (d: T) => void) =>
+  const run = <T,>(fn: () => Promise<{ ok: true; data: T } | { ok: false; error: string }>, msg: string | ((d: T) => string | null), after?: (d: T) => void) =>
     start(async () => {
       setError(null);
       setOk(null);
       const r = await fn();
       if (!r.ok) return setError(r.error);
-      setOk(msg);
+      setOk(typeof msg === "function" ? msg(r.data) : msg);
       after?.(r.data);
       router.refresh();
     });
@@ -296,9 +298,21 @@ export function TimeOff({ staffId, shops, blocks }: { staffId: string; shops: { 
   const [end, setEnd] = useState("13:00");
   const [reason, setReason] = useState("");
   const [shopId, setShopId] = useState<string>("");
+  const [conflicts, setConflicts] = useState<BookedConflict[] | null>(null);
+  const add = (confirm: boolean) =>
+    run(
+      () => addTimeOffAction({ staffId, shopId: shopId || null, from, to, allDay, startMin: mins(start), endMin: mins(end), reason, confirm }),
+      (d) => (d.saved ? "Added" : null),
+      (d) => {
+        if (d.saved) {
+          setReason("");
+          setConflicts(null);
+        } else setConflicts(d.conflicts);
+      },
+    );
   return (
     <Card>
-      <CardHeader title="Days off & blocked time" subtitle="Blocks remove availability online and shade the calendar. A reason is required." />
+      <CardHeader title="Days off & blocked time" subtitle="Blocks remove availability online and shade the calendar. A reason is required. Requests barbers send come in on Time off." />
       <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="From">
           <Input type="date" value={from} onChange={(e) => (setFrom(e.target.value), e.target.value > to && setTo(e.target.value))} />
@@ -333,17 +347,7 @@ export function TimeOff({ staffId, shops, blocks }: { staffId: string; shops: { 
           <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Vacation, training, appointment…" />
         </Field>
         <div className="flex items-end">
-          <Button
-            className="w-full"
-            disabled={pending}
-            onClick={() =>
-              run(
-                () => addTimeOffAction({ staffId, shopId: shopId || null, from, to, allDay, startMin: mins(start), endMin: mins(end), reason }),
-                "Added",
-                () => setReason(""),
-              )
-            }
-          >
+          <Button className="w-full" disabled={pending || !!conflicts} onClick={() => add(false)}>
             Add
           </Button>
         </div>
@@ -351,6 +355,18 @@ export function TimeOff({ staffId, shops, blocks }: { staffId: string; shops: { 
       {error && (
         <div className="px-4 pb-3">
           <Notice tone="red">{error}</Notice>
+        </div>
+      )}
+      {conflicts && (
+        <div className="px-4 pb-3">
+          <ConflictConfirm
+            conflicts={conflicts}
+            pending={pending}
+            confirmLabel="Add time off anyway"
+            note="They stay booked. Move them to another barber or ask the clients to reschedule from Time off."
+            onConfirm={() => add(true)}
+            onCancel={() => setConflicts(null)}
+          />
         </div>
       )}
       <ul className="divide-y divide-zinc-100 border-t border-zinc-100">

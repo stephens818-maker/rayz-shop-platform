@@ -27,9 +27,11 @@ const KIND_LABEL: Record<string, string> = {
   staff_text: "Text from staff",
   staff_call: "Call through shop line",
   privacy_alert: "Client data alert",
+  time_off_reschedule: "Time off: please reschedule",
+  time_off_decision: "Time off decision",
 };
 /** Jobs sent to a client: their number or email shows as the viewer may see it. */
-const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call"]);
+const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule"]);
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;

@@ -11,6 +11,7 @@ import { Tenant, hasShop } from "./tenant";
 import { staffIntervals } from "./timing";
 import { ratingSummaries } from "./ratings";
 import { timesFor } from "./service-times";
+import { staffingFor } from "./staff-time";
 
 export interface CalAppt {
   id: string;
@@ -52,7 +53,7 @@ export interface CalColumn {
   intervalMin: number;
   intervalSource: IntervalSource;
   gridStarts: number[];
-  blocks: { id: string; startMin: number; endMin: number; reason: string; kind: string }[];
+  blocks: { id: string; startMin: number; endMin: number; reason: string; kind: string; category: string; recurring: boolean; fromRequest: boolean }[];
   /** `shop` is null for a shop outside the viewer's workspace. */
   elsewhere: { startMin: number; endMin: number; shop: string | null }[];
   appts: CalAppt[];
@@ -67,6 +68,8 @@ export interface DayCalendarData {
   rangeStart: number;
   rangeEnd: number;
   columns: CalColumn[];
+  /** Barbers here who are off for some or all of the day, or have time off waiting for a manager. */
+  off: { staffId: string; label: string; allDay: boolean; spans: { startMin: number; endMin: number; reason: string }[]; pending: boolean }[];
 }
 
 const clampDay = (d: Date, date: LocalDate) => {
@@ -183,7 +186,16 @@ export async function loadDayCalendar(
       gridStarts: stretchStarts(spans),
       blocks: blocks
         .filter((b) => b.staffId === c.id)
-        .map((b) => ({ id: b.id, startMin: clampDay(b.startsAt, date), endMin: clampDay(b.endsAt, date), reason: b.reason, kind: b.kind })),
+        .map((b) => ({
+          id: b.id,
+          startMin: clampDay(b.startsAt, date),
+          endMin: clampDay(b.endsAt, date),
+          reason: b.reason,
+          kind: b.kind,
+          category: b.category,
+          recurring: b.seriesId !== null,
+          fromRequest: b.requestId !== null,
+        })),
       elsewhere: [
         ...otherScheds.filter((o) => o.staffId === c.id).map((o) => ({ startMin: o.startMin, endMin: o.endMin, shop: shopLabel(o.shopId, o.shop) })),
         ...elsewhere.filter((e) => e.staffId === c.id).map((e) => ({ startMin: clampDay(e.startsAt, date), endMin: clampDay(e.endsAt, date), shop: shopLabel(e.shopId, e.shop) })),
@@ -218,6 +230,17 @@ export async function loadDayCalendar(
     };
   });
 
+  const staffing = await staffingFor([shopId], date, date, onlyStaffId ? [onlyStaffId] : null);
+  const off = staffing
+    .filter((r) => r.status === "off" || r.status === "partly_off" || r.pending || (r.hasTimeOff && r.status === "not_scheduled"))
+    .map((r) => ({
+      staffId: r.staffId,
+      label: r.label,
+      allDay: r.status === "off",
+      spans: r.blocks.filter((b) => b.category === "time_off").map((b) => ({ startMin: b.startMin, endMin: b.endMin, reason: b.reason })),
+      pending: r.pending,
+    }));
+
   const openMin = hours.length ? Math.min(...hours.map((h) => h.openMin)) : null;
   const closeMin = hours.length ? Math.max(...hours.map((h) => h.closeMin)) : null;
   const starts = [openMin ?? 9 * 60, ...columns.flatMap((c) => [...c.spans.map((s) => s.startMin), ...c.appts.map((a) => a.startMin)])];
@@ -231,5 +254,6 @@ export async function loadDayCalendar(
     rangeStart: Math.floor(Math.min(...starts) / 60) * 60,
     rangeEnd: Math.ceil(Math.max(...ends) / 60) * 60,
     columns,
+    off,
   };
 }

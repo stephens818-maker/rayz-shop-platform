@@ -187,3 +187,9 @@ export function caller(ctx: StaffContext): Caller {
 }
 
 export const staffGrantor = (ctx: StaffContext) => grantor(ctx.access);
+
+/** For blockChangeDenied: who may block whose time. */
+export const blockCaller = (ctx: StaffContext) => ({ ...caller(ctx), blocksOwn: can(ctx, "blocks.own"), blocksOthers: can(ctx, "blocks.others") });
+
+/** For time off decisions and cancellations. */
+export const approverOf = (ctx: StaffContext) => ({ ...caller(ctx), canApprove: can(ctx, "timeoff.approve"), isOwner: ctx.isOwner, actor: ctx.actor });

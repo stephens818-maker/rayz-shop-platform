@@ -58,6 +58,8 @@ export const brandSettings = pgTable("brand_settings", {
   slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(15),
   /** Payroll settings (PayrollSettings in src/domain/payroll/calc.ts); missing keys use the defaults. */
   payroll: jsonb("payroll").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Lunch, block and time off rules (StaffTimeRules in src/domain/staff-time.ts); missing keys use the defaults. */
+  staffTime: jsonb("staff_time").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -109,6 +111,8 @@ export const shops = pgTable("shops", {
   negativeStock: text("negative_stock").$type<NegativeStockPolicy>().notNull().default("block"),
   /** Where low-stock alerts go. Falls back to the shop email. */
   inventoryAlertEmail: text("inventory_alert_email"),
+  /** This shop's changes to the brand's staff time rules; missing keys follow the brand. */
+  staffTime: jsonb("staff_time").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: createdAt(),
 });
 export type NegativeStockPolicy = "block" | "warn";
@@ -329,11 +333,93 @@ export const timeBlocks = pgTable(
     startsAt: ts("starts_at").notNull(),
     endsAt: ts("ends_at").notNull(),
     kind: text("kind").notNull().default("block"), // block | day_off
+    /** lunch | break | personal | other | time_off (from an approved request or a manager's time off). */
+    category: text("category").$type<BlockCategory>().notNull().default("other"),
     reason: text("reason").notNull(),
+    /** One occurrence of a recurring block. */
+    seriesId: uuid("series_id").references(() => timeBlockSeries.id, { onDelete: "set null" }),
+    /** The approved time off request this block is. */
+    requestId: uuid("request_id").references(() => timeOffRequests.id, { onDelete: "set null" }),
     createdBy: uuid("created_by"),
     createdAt: createdAt(),
   },
-  (t) => [index("time_blocks_staff_time_idx").on(t.staffId, t.startsAt)],
+  (t) => [
+    index("time_blocks_staff_time_idx").on(t.staffId, t.startsAt),
+    uniqueIndex("time_blocks_series_start_unique").on(t.seriesId, t.startsAt),
+    index("time_blocks_request_idx").on(t.requestId),
+  ],
+);
+export type BlockCategory = "lunch" | "break" | "personal" | "other" | "time_off";
+
+/**
+ * A recurring block, e.g. lunch every weekday 12:00–12:30. Its occurrences are written to
+ * time_blocks ahead of time (through materialized_through), so availability and the calendar
+ * read one table. Ending the series removes the occurrences that haven't started.
+ */
+export const timeBlockSeries = pgTable(
+  "time_block_series",
+  {
+    id: id(),
+    staffId: uuid("staff_id").notNull().references(() => staff.id, { onDelete: "cascade" }),
+    /** null = all of the barber's shops. */
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    category: text("category").$type<BlockCategory>().notNull(),
+    reason: text("reason").notNull(),
+    /** 0 = Sunday … 6 = Saturday. */
+    weekdays: smallint("weekdays").array().notNull(),
+    startMin: integer("start_min").notNull(),
+    endMin: integer("end_min").notNull(),
+    startsOn: date("starts_on").notNull(),
+    /** Last day it applies; null = until it's ended. */
+    endsOn: date("ends_on"),
+    materializedThrough: date("materialized_through").notNull(),
+    endedAt: ts("ended_at"),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("time_block_series_staff_idx").on(t.staffId), check("time_block_series_order", sql`${t.startMin} < ${t.endMin}`)],
+);
+
+export type TimeOffReason = "vacation" | "sick" | "personal" | "other";
+export type TimeOffStatus = "pending" | "approved" | "denied" | "cancelled";
+
+/**
+ * A barber's request for time off: whole days (from_date..to_date) or part of one day
+ * (start_min..end_min on from_date). Pending requests hold the time off online booking;
+ * approval writes the time_blocks row that blocks it everywhere.
+ */
+export const timeOffRequests = pgTable(
+  "time_off_requests",
+  {
+    id: id(),
+    staffId: uuid("staff_id").notNull().references(() => staff.id, { onDelete: "cascade" }),
+    /** null = all of the barber's shops. */
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    fromDate: date("from_date").notNull(),
+    toDate: date("to_date").notNull(),
+    /** Both null for whole days; both set for part of one day. */
+    startMin: integer("start_min"),
+    endMin: integer("end_min"),
+    startsAt: ts("starts_at").notNull(),
+    endsAt: ts("ends_at").notNull(),
+    reason: text("reason").$type<TimeOffReason>().notNull(),
+    note: text("note"),
+    status: text("status").$type<TimeOffStatus>().notNull().default("pending"),
+    /** "auto" when the shop's rules approved it on submission. */
+    decidedVia: text("decided_via").$type<"auto" | "manager">(),
+    requestedBy: uuid("requested_by"),
+    decidedBy: uuid("decided_by"),
+    decidedAt: ts("decided_at"),
+    decisionNote: text("decision_note"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("time_off_requests_staff_idx").on(t.staffId, t.startsAt),
+    index("time_off_requests_status_idx").on(t.status, t.startsAt),
+    check("time_off_requests_order", sql`${t.startsAt} < ${t.endsAt} AND ${t.fromDate} <= ${t.toDate}`),
+    check("time_off_requests_partial", sql`(${t.startMin} IS NULL) = (${t.endMin} IS NULL) AND (${t.startMin} IS NULL OR ${t.fromDate} = ${t.toDate})`),
+  ],
 );
 
 // ───────────────────────────── Catalog ─────────────────────────────

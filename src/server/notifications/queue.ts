@@ -17,7 +17,9 @@ export type NotificationKind =
   | "low_stock"
   | "staff_text"
   | "staff_call"
-  | "privacy_alert";
+  | "privacy_alert"
+  | "time_off_reschedule"
+  | "time_off_decision";
 
 export interface AppointmentMessageContext {
   appointmentId: string;
@@ -52,6 +54,11 @@ export function renderMessage(kind: NotificationKind, c: AppointmentMessageConte
       return { subject: `${shop}: see you soon`, body: `${shop}: See you at ${when} with ${c.barberName}. Changes allowed up to 30 min before: ${link}` };
     case "cancellation":
       return { subject: `${shop}: appointment cancelled`, body: `${shop}: Your ${when} appointment was cancelled. Book again anytime: ${baseUrl()}/book` };
+    case "time_off_reschedule":
+      return {
+        subject: `${shop}: please pick a new time`,
+        body: `${shop}: ${c.barberName} is out for your ${when} appointment. Please pick another time or barber: ${link}. Your booking stays until you change it.`,
+      };
     default:
       return { subject: shop, body: shop };
   }
@@ -105,6 +112,24 @@ export async function scheduleAppointmentNotifications(
       };
     }),
   );
+  if (rows.length) await tx.insert(notificationJobs).values(rows);
+  return rows.length;
+}
+
+/** One message about an appointment, now, on each channel the client opted in to. Returns how many were queued. */
+export async function enqueueAppointmentMessage(kind: NotificationKind, c: AppointmentMessageContext, tx: DBorTx = db, now: Date = new Date()) {
+  const m = renderMessage(kind, c);
+  const rows = recipients(c).map((r) => ({
+    appointmentId: c.appointmentId,
+    customerId: c.customerId,
+    shopId: c.shopId,
+    kind,
+    channel: r.channel,
+    to: r.to,
+    subject: r.channel === "email" ? m.subject : null,
+    body: m.body,
+    runAt: now,
+  }));
   if (rows.length) await tx.insert(notificationJobs).values(rows);
   return rows.length;
 }

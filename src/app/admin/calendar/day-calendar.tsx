@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Badge, Button, Field, Input, LinkButton, Notice, Select, StarBadge, StatusBadge, Textarea, buttonClass, cx } from "@/components/ui";
+import { ConflictConfirm } from "@/components/conflict-confirm";
 import type { RatingSummary } from "@/domain/ratings";
+import { BLOCK_CATEGORIES, CATEGORY_LABEL, type SelfBlockCategory } from "@/domain/staff-time";
+import type { BookedConflict } from "@/server/staff-time";
 import { INTERVAL_SOURCE_LABEL } from "@/domain/timing";
 import type { CalAppt, CalColumn, DayCalendarData } from "@/server/calendar";
 import {
@@ -79,6 +82,12 @@ function shiftDate(d: string, n: number) {
 }
 function prettyDate(d: string) {
   return new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
+}
+function blockLabel(b: CalColumn["blocks"][number]) {
+  if (b.kind === "day_off") return `Day off · ${b.reason}`;
+  if (b.category === "time_off") return `Off · ${b.reason}`;
+  const kind = CATEGORY_LABEL[b.category];
+  return b.category === "other" || !kind || b.reason === kind ? b.reason : `${kind} · ${b.reason}`;
 }
 
 const APPT_STYLE: Record<string, string> = {
@@ -248,6 +257,24 @@ export function DayCalendar({
       </div>
 
       {data.closed && <Notice tone="amber">{data.closed}. Booking is off for this day.</Notice>}
+      {data.off.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-violet-50 px-3 py-2 text-sm text-violet-950 ring-1 ring-violet-200" aria-label="Off today">
+          <span className="font-semibold">Off {data.date === today ? "today" : "this day"}:</span>
+          {data.off.map((o) => (
+            <span key={o.staffId}>
+              <span className="font-medium">{o.label}</span>{" "}
+              <span className="text-violet-800">
+                {o.allDay
+                  ? `(${o.spans[0]?.reason ?? "time off"}, all day)`
+                  : o.spans.length
+                    ? `(${o.spans.map((s) => `${label(s.startMin)}–${label(Math.min(s.endMin, 24 * 60 - 1))}`).join(", ")})`
+                    : ""}
+                {o.pending && " · time off requested, waiting for a manager"}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
       {move.error && (
         <div role="alert">
           <Notice tone="red">Couldn&apos;t move it: {move.error}</Notice>
@@ -462,7 +489,8 @@ function Column({
             className="shade-block absolute inset-x-1 overflow-hidden rounded-md px-1.5 py-0.5 text-left text-[11px] font-medium text-orange-900 ring-1 ring-orange-200"
             style={{ top: top(b.startMin), height: h(b.startMin, b.endMin) }}
           >
-            {b.kind === "day_off" ? "Day off" : b.reason}
+            {blockLabel(b)}
+            {b.recurring && <span className="ml-1 opacity-60" title="Repeats">↻</span>}
           </button>
         ))}
         {appts.map((a) => {
@@ -689,15 +717,26 @@ function BlockPanel({ block, col, onDone }: { block: CalColumn["blocks"][number]
   const { pending, error, run } = useAction();
   return (
     <div className="space-y-4">
-      <Badge tone="amber">{block.kind === "day_off" ? "Day off" : "Blocked time"}</Badge>
+      <Badge tone="amber">{block.kind === "day_off" ? "Day off" : (CATEGORY_LABEL[block.category] ?? "Blocked time")}</Badge>
       <h2 className="text-lg font-semibold">{block.reason}</h2>
       <div className="text-sm text-zinc-500">
         {col.label} · {label(block.startMin)}–{label(Math.min(block.endMin, 24 * 60 - 1))}
+        {block.recurring && " · repeats"}
       </div>
       {error && <Notice tone="red">{error}</Notice>}
-      <Button variant="danger" disabled={pending} onClick={() => run(() => deleteBlockAction(block.id), onDone)}>
-        Remove block
-      </Button>
+      {block.fromRequest ? (
+        <p className="text-sm text-zinc-600">
+          Approved time off. To change it, cancel the request on{" "}
+          <a className="underline" href="/admin/time-off">
+            Time off
+          </a>{" "}
+          so the barber is told.
+        </p>
+      ) : (
+        <Button variant="danger" disabled={pending} onClick={() => run(() => deleteBlockAction(block.id), onDone)}>
+          {block.recurring ? "Remove this one" : "Remove block"}
+        </Button>
+      )}
     </div>
   );
 }
@@ -736,9 +775,20 @@ function NewPanel({
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [endTime, setEndTime] = useState(hhmm(startMin + 60));
+  const [category, setCategory] = useState<SelfBlockCategory>("lunch");
   const [reason, setReason] = useState("");
+  const [conflicts, setConflicts] = useState<BookedConflict[] | null>(null);
   // Your own time off (doctor, errands) should close your book everywhere, not just here.
   const [allShops, setAllShops] = useState(own);
+  const block = (confirm: boolean) =>
+    run(
+      () => createBlockAction({ shopId: data.shop.id, staffId: col.id, date: data.date, startMin: fromHHMM(time), endMin: fromHHMM(endTime), reason, category, allShops, confirm }),
+      (d) => {
+        const r = d as { saved: boolean; conflicts: BookedConflict[] };
+        if (r.saved) onDone();
+        else setConflicts(r.conflicts);
+      },
+    );
 
   useEffect(() => {
     if (q.trim().length < 2) return setFound([]);
@@ -946,32 +996,27 @@ function NewPanel({
               <Input type="time" step={900} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
             </Field>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {["Lunch", "Break", "Training", "Personal", "Meeting"].map((r) => (
-              <button key={r} onClick={() => setReason(r)} className={cx(buttonClass(reason === r ? "dark" : "secondary", "sm"), "rounded-full")}>
-                {r}
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Kind of block">
+            {BLOCK_CATEGORIES.map((c) => (
+              <button key={c.key} aria-pressed={category === c.key} onClick={() => setCategory(c.key)} className={cx(buttonClass(category === c.key ? "dark" : "secondary", "sm"), "rounded-full")}>
+                {c.label}
               </button>
             ))}
           </div>
-          <Field label="Reason (required)">
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Dentist" />
+          <Field label={category === "other" ? "Reason (required)" : "Note (optional)"}>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={category === "other" ? "e.g. Training" : "e.g. Dentist"} />
           </Field>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={allShops} onChange={(e) => setAllShops(e.target.checked)} /> Block at all shops
           </label>
           {error && <Notice tone="red">{error}</Notice>}
-          <Button
-            className="w-full"
-            disabled={pending}
-            onClick={() =>
-              run(
-                () => createBlockAction({ shopId: data.shop.id, staffId: col.id, date: data.date, startMin: fromHHMM(time), endMin: fromHHMM(endTime), reason, allShops }),
-                onDone,
-              )
-            }
-          >
-            Block time
-          </Button>
+          {conflicts ? (
+            <ConflictConfirm conflicts={conflicts} pending={pending} onConfirm={() => block(true)} onCancel={() => setConflicts(null)} />
+          ) : (
+            <Button className="w-full" disabled={pending || (category === "other" && !reason.trim())} onClick={() => block(false)}>
+              Block time
+            </Button>
+          )}
         </div>
       )}
     </div>

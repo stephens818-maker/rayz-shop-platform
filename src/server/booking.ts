@@ -11,6 +11,7 @@ import {
   staff,
   staffSchedules,
   timeBlocks,
+  timeOffRequests,
   waitlistEntries,
   Shop,
 } from "@/db/schema";
@@ -55,7 +56,7 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
   const dayStart = startOfLocalDay(date);
   const dayEnd = endOfLocalDay(date);
   const ids = opts.staffIds.length ? opts.staffIds : ["00000000-0000-0000-0000-000000000000"];
-  const [hours, closures, schedules, blocks, appts] = await Promise.all([
+  const [hours, closures, schedules, blocks, appts, pending] = await Promise.all([
     tx.select().from(shopHours).where(eq(shopHours.shopId, shop.id)),
     tx.select().from(shopClosures).where(and(eq(shopClosures.shopId, shop.id), eq(shopClosures.date, date))),
     tx.select().from(staffSchedules).where(inArray(staffSchedules.staffId, ids)),
@@ -77,6 +78,13 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
       })
       .from(appointments)
       .where(and(inArray(appointments.staffId, ids), lt(appointments.startsAt, dayEnd), gt(appointments.endsAt, dayStart))),
+    // Time off waiting for a manager is held from online booking, so clients don't book into it; the shop still can.
+    opts.staffOverride
+      ? []
+      : tx
+          .select({ staffId: timeOffRequests.staffId, shopId: timeOffRequests.shopId, startsAt: timeOffRequests.startsAt, endsAt: timeOffRequests.endsAt })
+          .from(timeOffRequests)
+          .where(and(inArray(timeOffRequests.staffId, ids), eq(timeOffRequests.status, "pending"), lt(timeOffRequests.startsAt, dayEnd), gt(timeOffRequests.endsAt, dayStart))),
   ]);
   const interval = await shopInterval(shop, tx);
   return {
@@ -86,7 +94,7 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
     closedDates: closures.map((c) => c.date),
     staffIds: opts.staffIds,
     schedules: schedules.map((s) => ({ staffId: s.staffId, shopId: s.shopId, weekday: s.weekday, startMin: s.startMin, endMin: s.endMin })),
-    blocks: blocks.map((b) => ({ staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt: b.endsAt })),
+    blocks: [...blocks, ...pending].map((b) => ({ staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt: b.endsAt })),
     appointments: appts as BusyAppointment[],
     durationMin: opts.durationMin,
     slotIntervalMin: interval.minutes,

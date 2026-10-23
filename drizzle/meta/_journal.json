@@ -162,6 +162,13 @@
       "when": 1792728477542,
       "tag": "core_0022_payroll",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792734297221,
+      "tag": "core_0023_staff_time",
+      "breakpoints": true
     }
   ]
 }

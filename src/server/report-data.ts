@@ -57,6 +57,7 @@ import { diffDays, formatDate, formatDateTime } from "@/lib/time";
 import { ACCOUNT_STATE_LABEL } from "@/domain/connect";
 import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-report";
 import { serviceTimesData } from "./service-times-report";
+import { staffingData } from "./staffing-report";
 
 /**
  * Every a la carte report is one loader returning stats and tables. The report page renders them
@@ -649,6 +650,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async service_times({ scope, loc }) {
     return serviceTimesData(scope, loc);
+  },
+
+  async staffing({ scope, loc }) {
+    return staffingData(scope, loc);
   },
 
   async services_vs_products({ scope, loc }) {
