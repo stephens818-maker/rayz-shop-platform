@@ -156,6 +156,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - For each location, open Google Business Profile → **Ask for reviews**, copy the `g.page/r/…` link, and paste it under **Shop settings → Receipts → Google review link** (a write-review link or the Place ID also works). The field shows where clients will go.
    - The follow-up is off everywhere until a location turns it on. It runs on the notifications cron, so SMS and email must be configured; on the Hobby plan's daily cron it goes out once a day (tickets from the last day, outside quiet hours), not a few hours after each visit.
    - Review texts go out under the shop's A2P 10DLC campaign: make sure its use case and sample messages cover them. Don't add a "were you happy?" step in front of the link; Google treats that as review gating.
+   - Migration `core_0040_review_visits` adds the brand's review rules. From then on the button and follow-up start at a client's 3rd visit and pause 90 days after a tap at that location; set them under **Shop settings → Google reviews** (owner or brand admin), or per location under Receipts. Clients with imported Squire history already count it, so most regulars qualify on day one.
 13. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
 14. Add the custom domain under **Settings → Domains**.
 

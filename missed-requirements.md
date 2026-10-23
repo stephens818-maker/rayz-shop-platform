@@ -389,12 +389,16 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 
 - [x] **Leave a review** on the digital receipt links to the location's Google review page. The link is set per location in **Shop settings → Receipts** and in the new location wizard: a `g.page/r/…` link, a `search.google.com/local/writereview?placeid=…` link, or a Place ID (turned into the write-review link). Other sites are refused; blank hides the button.
 - [x] Optional follow-up text or email a set number of hours after the visit (default 3, 1 to 48), per location, off by default. Only to clients who agreed to texts or emails; STOP and **Stop receipt and review emails** win; not in quiet hours; once per ticket and at most every 90 days per client per location (configurable).
-- [x] No review gating: every client gets the same link and message; ratings, tips, refunds and complaints aren't looked at. Only voided tickets (rung up by mistake) and imported tickets are skipped.
+- [x] No review gating: ratings, tips, refunds and complaints aren't looked at, and everyone who gets the link gets the same link and message. Only voided tickets (rung up by mistake) and imported tickets are skipped.
+- [x] The button and the follow-up only from the client's 3rd completed visit (checked out; cancelled, no-shows and voided tickets don't count), counted across all locations. A brand setting (**Shop settings → Google reviews**, default 3) that each location can override under Receipts.
+- [x] After a client taps a location's link, that location doesn't show or send it to them again for 90 days (brand setting, per-location override). A tap is the signal because Google doesn't say who posted a review.
 - [x] Clicks counted per location and per barber (the ticket's barber), from the receipt and from the follow-up, in **Reports → Google review links** with CSV. Link previews and email scanners aren't counted.
 - [x] Tests: `tests/reviews.test.ts`, `tests/db/google-reviews.test.ts`. README: [Google reviews](README.md#google-reviews).
 - [ ] Each location's real link: in Google Business Profile, **Ask for reviews** gives the `g.page/r/…` link (or look up the Place ID).
 - [ ] Review texts go out under the shop's A2P 10DLC campaign; confirm the campaign covers them (they're customer care, not marketing, but carriers may ask).
 - [ ] Whether to turn the follow-up on, and the delay and repeat days per location.
+- [ ] Asking only from the 3rd visit is based on loyalty, not satisfaction, so it isn't review gating as Google defines it, but Google's policy also discourages selectively soliciting reviews. Confirm the brand is comfortable with this, or set the visit to 1 to ask everyone.
+- [ ] Whether the pause after a tap should cover every location (it's per location now, since each has its own Google listing), and whether walk-ins with no client on file should ever see the button (they count as a 1st visit).
 - [ ] Google doesn't report which reviews came from the link, so the report counts clicks, not reviews.
 
 ## Deferred by decision

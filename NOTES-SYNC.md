@@ -26,7 +26,7 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts` and `core_0039_google_reviews`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts`, `core_0039_google_reviews` and `core_0040_review_visits`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -259,16 +259,17 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
 
 ### Google reviews (core)
 
-- **Code:** `src/domain/reviews.ts` (pure: `googleReviewLink` parses a `g.page/r/…` link, a `search.google.com/local/writereview?placeid=…` link or a bare Place ID into the saved `https` link; `reviewFollowUp` settings; the text and email wording; `isAutomatedOpen`), `src/server/reviews.ts` (`openReviewLink`, `askForReview`, `queueReviewFollowUps`), `src/server/review-report.ts`, `src/app/receipt/[token]/review/route.ts` and `src/app/admin/settings/review-fields.tsx` (settings and wizard).
+- **Code:** `src/domain/reviews.ts` (pure: `googleReviewLink` parses a `g.page/r/…` link, a `search.google.com/local/writereview?placeid=…` link or a bare Place ID into the saved `https` link; `reviewFollowUp` settings; the text and email wording; `isAutomatedOpen`), `src/server/reviews.ts` (`openReviewLink`, `askForReview`, `queueReviewFollowUps`), `src/server/review-rules.ts` (`loadReviewRules`, `saveReviewRules`, `visitNumber`, `reviewTiming`), `src/server/review-report.ts`, `src/app/receipt/[token]/review/route.ts` and `src/app/admin/settings/review-fields.tsx` (settings and wizard).
 - **Schema** (`drizzle/core_0039_google_reviews.sql`):
   - `receipt_deliveries.purpose` gains `review` (the follow-up; `notification_jobs.kind` `review_request`), and `skipped` gains `recent` (asked at this location within the repeat days). New index on `(customer_id, shop_id, purpose, created_at)`.
   - `review_clicks`: `shop_id`, `staff_id` (the ticket's barber), `sale_id`, `delivery_id` (the link used), `source` (`receipt|follow_up`), `created_at`. No free-text columns.
   - `ReceiptBranding.reviewUrl` is now Google only (anything else reads as null), and `reviewFollowUp: { enabled, delayHours (1–48), repeatDays (0–365) }`, off by default.
   - Report permissions `report.google_reviews.view`/`.export` for Brand Admin, Regional Manager and Shop Manager.
+- **When it's shown** (`drizzle/core_0040_review_visits.sql`): `brand_settings.reviews` `{ minVisits (1–50, default 3), snoozeDays (0–365, default 90) }`; per location `ReceiptBranding.reviewMinVisits` / `reviewSnoozeDays` (null: the brand's). The receipt's `reviewUrl` is null before the client's Nth visit (distinct shop and local day across all locations: `completed` appointments and `paid|partially_refunded|refunded` sales, imported included, up to the ticket's day) and for `snoozeDays` after a `review_clicks` row from another of their tickets at that location. Follow-ups held for those reasons are skipped `few_visits` or `snoozed` (added to the check). Brand changes are audited as `brand.review_rules`.
 - **Consent:** the follow-up goes only to `sms_opt_in` (text, first) or `email_opt_in` (email) clients, never to a number in `contact_opt_outs` or an email in `receipt_opt_outs`, and not in quiet hours (`brand_settings.outreach`). A receipt choice isn't consent for it. Core reads these and doesn't write them.
-- **No gating:** who's asked never depends on ratings, tips, refunds or complaints, and the receipt page's button is the same for everyone. Please keep it that way if the app asks for reviews (Google policy).
+- **No gating:** who's asked depends only on the visit count, a recent tap and consent, never on ratings, tips, refunds or complaints, and the button looks the same for everyone who gets it. Please keep it that way if the app asks for reviews (Google policy).
 - **Cron:** `/api/cron/notifications` runs `queueReviewFollowUps()` before sending due jobs.
-- **If the app shows a Leave a review link**, please link to `/receipt/{token}/review` (or read the shop's link with `receiptBranding(shop.receipt).reviewUrl`) so clicks are counted, and don't add a rating step in front of it.
+- **If the app shows a Leave a review link**, please link to `/receipt/{token}/review` (or use `receiptData(saleId).reviewUrl`, which applies the visit and pause rules; `reviewTiming(saleId)` says why it's held) so clicks are counted, and don't add a rating step in front of it.
 
 ### Brand-to-shop settings ("brand-sync registry")
 
@@ -320,6 +321,12 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (when the Google review link is shown)
+
+- **Leave a review** and the follow-up only from the client's 3rd completed visit, counted across all locations (brand setting, overridable per location), and not again at a location for 90 days (configurable) after the client taps its link. Visit count and taps only, no rating gating.
+- Migration `core_0040_review_visits`: `brand_settings.reviews`, and skip reasons `few_visits` and `snoozed`. Tests in `tests/reviews.test.ts` and `tests/db/google-reviews.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written.
 
 ### 2026-10-23: core (Google reviews)
 
