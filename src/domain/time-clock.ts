@@ -426,11 +426,13 @@ export interface ShopClockSettings {
   photo: "off" | "optional" | "required";
   /** Null follows the brand's grace minutes. */
   graceMinutes: number | null;
-  /** A break closes online booking over it: from the break's start for breakHoldMinutes, or longer while it lasts. */
+  /** A break writes a block-out from its start: for its planned length (or breakHoldMinutes when none was given), longer while it runs on, trimmed when it ends. */
   blockOnBreak: boolean;
   breakHoldMinutes: number;
-  /** Clocking out before the scheduled end closes online booking for the rest of the day here, until they clock back in. */
+  /** Clocking out before the scheduled end writes a "Clocked out" block-out to the end of that stretch of the schedule, trimmed if they clock back in. */
   blockAfterClockOut: boolean;
+  /** A soft "Not in yet" block-out from the scheduled start until the barber clocks in. Only for barbers who use the clock. */
+  notInBlock: boolean;
   /** Clocking in before the scheduled start opens the time in between for booking, for barbers who allow it. */
   openEarly: boolean;
   /** Managers are told when a barber isn't clocked in this many minutes before their first appointment. Null: off. */
@@ -446,6 +448,7 @@ export const DEFAULT_SHOP_CLOCK: ShopClockSettings = {
   blockOnBreak: true,
   breakHoldMinutes: 30,
   blockAfterClockOut: true,
+  notInBlock: false,
   openEarly: false,
   lateAlertMinutes: 10,
 };
@@ -459,6 +462,7 @@ export const ShopClockSettingsSchema = z.object({
   blockOnBreak: z.boolean(),
   breakHoldMinutes: z.number().int().min(5).max(120),
   blockAfterClockOut: z.boolean(),
+  notInBlock: z.boolean(),
   openEarly: z.boolean(),
   lateAlertMinutes: z.number().int().min(0).max(120).nullable(),
 });
@@ -477,6 +481,7 @@ export function shopClockSettings(raw: unknown): ShopClockSettings {
     blockOnBreak: v.blockOnBreak ?? d.blockOnBreak,
     breakHoldMinutes: v.breakHoldMinutes ?? d.breakHoldMinutes,
     blockAfterClockOut: v.blockAfterClockOut ?? d.blockAfterClockOut,
+    notInBlock: v.notInBlock ?? d.notInBlock,
     openEarly: v.openEarly ?? d.openEarly,
     lateAlertMinutes: v.lateAlertMinutes === undefined ? d.lateAlertMinutes : v.lateAlertMinutes,
   };

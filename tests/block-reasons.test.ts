@@ -26,9 +26,10 @@ const doctor = { staffId: barber, reasonId: "id-doctor", reason: "Doctor", note:
 const bank = { staffId: barber, reasonId: "id-bank", reason: "Bank", note: "Deposit run" };
 
 describe("the default list", () => {
-  it("has the owner's nine reasons and Emergency for call-ins, each with its own color", () => {
-    expect(DEFAULT_BLOCK_REASONS.map((r) => r.label)).toEqual(["Lunch", "Break", "Bank", "Doctor", "Personal", "Vacation", "Sick", "Emergency", "Training", "Meeting"]);
-    expect(new Set(DEFAULT_BLOCK_REASONS.map((r) => r.color)).size).toBe(10);
+  it("has the owner's nine reasons, Emergency for call-ins and the time clock's two, each with its own color", () => {
+    expect(DEFAULT_BLOCK_REASONS.map((r) => r.label)).toEqual(["Lunch", "Break", "Bank", "Doctor", "Personal", "Vacation", "Sick", "Emergency", "Training", "Meeting", "Clocked out", "Not in yet"]);
+    expect(new Set(DEFAULT_BLOCK_REASONS.map((r) => r.color)).size).toBe(12);
+    expect(DEFAULT_BLOCK_REASONS.filter((r) => r.usedFor === "clock").map((r) => r.key)).toEqual(["clocked_out", "not_in"]);
   });
 
   it("keeps Doctor, Sick and Emergency private, Lunch on the lunch limit and Sick and Emergency free of notice", () => {
@@ -41,6 +42,12 @@ describe("the default list", () => {
     expect(list.filter(forBlocks).map((r) => r.key)).not.toContain("vacation");
     expect(list.filter(forTimeOff).map((r) => r.key)).toEqual(["doctor", "personal", "vacation", "sick", "emergency", "training"]);
     expect(forBlocks({ usedFor: "both", archived: true })).toBe(false);
+  });
+
+  it("keeps the time clock's own reasons out of both pickers", () => {
+    expect(list.filter(forBlocks).map((r) => r.key)).not.toContain("clocked_out");
+    expect(list.filter(forTimeOff).map((r) => r.key)).not.toContain("not_in");
+    expect(forBlocks({ usedFor: "clock", archived: false })).toBe(false);
   });
 });
 

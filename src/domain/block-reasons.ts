@@ -5,7 +5,8 @@
  * src/server/block-reasons.ts loads it.
  */
 
-export type ReasonUse = "blocks" | "time_off" | "both";
+/** "clock": the reasons the time clock writes (Clocked out, Not in yet). They can be renamed, recolored or made private, but no picker offers them. */
+export type ReasonUse = "blocks" | "time_off" | "both" | "clock";
 
 export interface BlockReason {
   id: string;
@@ -37,6 +38,8 @@ export const DEFAULT_BLOCK_REASONS: readonly ReasonSeed[] = [
   { key: "emergency", label: "Emergency", color: "#ec4899", usedFor: "time_off", countsAsLunch: false, noticeExempt: true, private: true, sortOrder: 75 },
   { key: "training", label: "Training", color: "#22c55e", usedFor: "both", countsAsLunch: false, noticeExempt: false, private: false, sortOrder: 80 },
   { key: "meeting", label: "Meeting", color: "#64748b", usedFor: "blocks", countsAsLunch: false, noticeExempt: false, private: false, sortOrder: 90 },
+  { key: "clocked_out", label: "Clocked out", color: "#334155", usedFor: "clock", countsAsLunch: false, noticeExempt: false, private: false, sortOrder: 200 },
+  { key: "not_in", label: "Not in yet", color: "#eab308", usedFor: "clock", countsAsLunch: false, noticeExempt: false, private: false, sortOrder: 210 },
 ];
 
 /** Colors offered as swatches; any #rrggbb is accepted. */
@@ -47,7 +50,9 @@ export const PRIVATE_BLOCK_LABEL = "Blocked";
 export const PRIVATE_TIME_OFF_LABEL = "Time off";
 export const MAX_NOTE = 200;
 
-export const USE_LABEL: Record<ReasonUse, string> = { blocks: "Blocks", time_off: "Time off", both: "Blocks and time off" };
+export const USE_LABEL: Record<ReasonUse, string> = { blocks: "Blocks", time_off: "Time off", both: "Blocks and time off", clock: "Time clock" };
+/** What a person can pick when adding or editing a reason. */
+export const PICKABLE_USES: readonly ReasonUse[] = ["blocks", "time_off", "both"];
 
 export const isHexColor = (s: unknown): s is string => typeof s === "string" && /^#[0-9a-f]{6}$/i.test(s);
 
@@ -75,8 +80,8 @@ export function reasonProblem(r: ReasonInput): string | null {
   return null;
 }
 
-export const forBlocks = (r: Pick<BlockReason, "usedFor" | "archived">) => !r.archived && r.usedFor !== "time_off";
-export const forTimeOff = (r: Pick<BlockReason, "usedFor" | "archived">) => !r.archived && r.usedFor !== "blocks";
+export const forBlocks = (r: Pick<BlockReason, "usedFor" | "archived">) => !r.archived && (r.usedFor === "blocks" || r.usedFor === "both");
+export const forTimeOff = (r: Pick<BlockReason, "usedFor" | "archived">) => !r.archived && (r.usedFor === "time_off" || r.usedFor === "both");
 
 /** Light fill for a block in the reason's color, with the solid color on its edge. */
 export const tint = (color: string) => `${isHexColor(color) ? color : NEUTRAL_COLOR}33`;

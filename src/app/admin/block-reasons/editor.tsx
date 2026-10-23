@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { type BlockReason, PRIVATE_BLOCK_LABEL, REASON_COLORS, type ReasonUse, USE_LABEL, isHexColor } from "@/domain/block-reasons";
+import { type BlockReason, PICKABLE_USES, PRIVATE_BLOCK_LABEL, REASON_COLORS, type ReasonUse, USE_LABEL, isHexColor } from "@/domain/block-reasons";
 import { archiveReasonAction, moveReasonAction, saveReasonAction } from "./actions";
 
 type Draft = Pick<BlockReason, "label" | "color" | "usedFor" | "countsAsLunch" | "noticeExempt" | "private">;
@@ -86,20 +86,30 @@ function Fields({ d, set, name }: { d: Draft; set: (p: Partial<Draft>) => void; 
     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
       <ColorPicker value={d.color} onChange={(color) => set({ color })} label={name} />
       <Input aria-label="Name" className="w-40" value={d.label} maxLength={30} onChange={(e) => set({ label: e.target.value })} placeholder="e.g. Kid pickup" />
-      <Select aria-label="Used for" className="w-auto" value={d.usedFor} onChange={(e) => set({ usedFor: e.target.value as ReasonUse })}>
-        {(Object.keys(USE_LABEL) as ReasonUse[]).map((u) => (
-          <option key={u} value={u}>
-            {USE_LABEL[u]}
-          </option>
-        ))}
-      </Select>
+      {d.usedFor === "clock" ? (
+        <span className="text-sm text-zinc-500" title="Written by the time clock; no picker offers it">
+          {USE_LABEL.clock}
+        </span>
+      ) : (
+        <Select aria-label="Used for" className="w-auto" value={d.usedFor} onChange={(e) => set({ usedFor: e.target.value as ReasonUse })}>
+          {PICKABLE_USES.map((u) => (
+            <option key={u} value={u}>
+              {USE_LABEL[u]}
+            </option>
+          ))}
+        </Select>
+      )}
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm">
-        <label className="flex items-center gap-1.5" title="Held to the shop's longest lunch instead of the longest block; Lunch now uses the first one">
-          <input type="checkbox" checked={d.countsAsLunch} onChange={(e) => set({ countsAsLunch: e.target.checked })} /> Counts as lunch
-        </label>
-        <label className="flex items-center gap-1.5" title="Time off for it can be asked for without the shop's minimum notice">
-          <input type="checkbox" checked={d.noticeExempt} onChange={(e) => set({ noticeExempt: e.target.checked })} /> No notice needed
-        </label>
+        {d.usedFor !== "clock" && (
+          <>
+            <label className="flex items-center gap-1.5" title="Held to the shop's longest lunch instead of the longest block; Lunch now uses the first one">
+              <input type="checkbox" checked={d.countsAsLunch} onChange={(e) => set({ countsAsLunch: e.target.checked })} /> Counts as lunch
+            </label>
+            <label className="flex items-center gap-1.5" title="Time off for it can be asked for without the shop's minimum notice">
+              <input type="checkbox" checked={d.noticeExempt} onChange={(e) => set({ noticeExempt: e.target.checked })} /> No notice needed
+            </label>
+          </>
+        )}
         <label className="flex items-center gap-1.5" title={`Staff without "See private reasons" see "${PRIVATE_BLOCK_LABEL}", with no note`}>
           <input type="checkbox" checked={d.private} onChange={(e) => set({ private: e.target.checked })} /> Private
         </label>

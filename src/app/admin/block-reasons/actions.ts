@@ -16,7 +16,7 @@ const Reason = z.object({
   id: z.string().uuid().nullable(),
   label: z.string(),
   color: z.string(),
-  usedFor: z.enum(["blocks", "time_off", "both"]),
+  usedFor: z.enum(["blocks", "time_off", "both", "clock"]),
   countsAsLunch: z.boolean(),
   noticeExempt: z.boolean(),
   private: z.boolean(),

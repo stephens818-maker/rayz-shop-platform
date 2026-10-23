@@ -422,7 +422,8 @@ export const blockReasons = pgTable(
     key: text("key").notNull().unique(),
     label: text("label").notNull(),
     color: text("color").notNull(),
-    usedFor: text("used_for").$type<"blocks" | "time_off" | "both">().notNull().default("both"),
+    /** "clock": written by the time clock only (Clocked out, Not in yet), never offered in a picker. */
+    usedFor: text("used_for").$type<"blocks" | "time_off" | "both" | "clock">().notNull().default("both"),
     countsAsLunch: boolean("counts_as_lunch").notNull().default(false),
     noticeExempt: boolean("notice_exempt").notNull().default(false),
     private: boolean("private").notNull().default(false),
@@ -454,6 +455,19 @@ export const timeBlocks = pgTable(
     seriesId: uuid("series_id").references(() => timeBlockSeries.id, { onDelete: "set null" }),
     /** The approved time off request this block is. */
     requestId: uuid("request_id").references(() => timeOffRequests.id, { onDelete: "set null" }),
+    /** "clock": written by the time clock from punches (src/server/clock-blocks.ts), not by a person. */
+    source: text("source").$type<BlockSource>().notNull().default("manual"),
+    /** Which clock event it is ("break:<punch>", "out:<punch>", "not_in:<staff>:<shop>:<start>"), so each punch has one block. */
+    clockKey: text("clock_key"),
+    /** The punch that started it (the break start or the clock-out). */
+    punchId: uuid("punch_id").references((): AnyPgColumn => timePunches.id, { onDelete: "set null" }),
+    /** The punch that ended it (the break end, or the clock-in after). */
+    endPunchId: uuid("end_punch_id").references((): AnyPgColumn => timePunches.id, { onDelete: "set null" }),
+    /** Still going: the end follows the clock until the punch that ends it. */
+    clockOpen: boolean("clock_open").notNull().default(false),
+    /** A manager set its times by hand: the clock stops moving it. */
+    overriddenAt: ts("overridden_at"),
+    overriddenBy: uuid("overridden_by"),
     createdBy: uuid("created_by"),
     createdAt: createdAt(),
   },
@@ -461,9 +475,26 @@ export const timeBlocks = pgTable(
     index("time_blocks_staff_time_idx").on(t.staffId, t.startsAt),
     uniqueIndex("time_blocks_series_start_unique").on(t.seriesId, t.startsAt),
     index("time_blocks_request_idx").on(t.requestId),
+    uniqueIndex("time_blocks_clock_key_unique").on(t.clockKey),
+    index("time_blocks_punch_idx").on(t.punchId),
+    index("time_blocks_clock_open_idx").on(t.endsAt).where(sql`${t.clockOpen}`),
+    check("time_blocks_source", sql`${t.source} in ('manual', 'clock')`),
   ],
 );
 export type BlockCategory = "lunch" | "other" | "time_off";
+export type BlockSource = "manual" | "clock";
+
+/** Clock blocks a manager took off the calendar: the time clock won't write that one again. */
+export const clockBlockReleases = pgTable("clock_block_releases", {
+  clockKey: text("clock_key").primaryKey(),
+  staffId: uuid("staff_id")
+    .notNull()
+    .references(() => staff.id, { onDelete: "cascade" }),
+  shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+  releasedBy: uuid("released_by"),
+  releasedAt: ts("released_at").notNull().defaultNow(),
+  note: text("note"),
+});
 
 /**
  * A recurring block, e.g. lunch every weekday 12:00–12:30. Its occurrences are written to
@@ -1747,6 +1778,10 @@ export const timePunches = pgTable(
     offScheduleMin: integer("off_schedule_min"),
     /** When an open shift was flagged as a forgotten clock-out and the managers told. */
     forgotFlaggedAt: ts("forgot_flagged_at"),
+    /** A break start's reason (block_reasons; null is Break), for the block it writes. */
+    reasonId: uuid("reason_id").references(() => blockReasons.id),
+    /** A break start's planned length in minutes: the block runs that long unless the break ends first or runs on. */
+    plannedMin: integer("planned_min"),
     /** The time as first punched, before any edit. */
     originalAt: ts("original_at").notNull(),
     editedAt: ts("edited_at"),
@@ -1775,8 +1810,8 @@ export const timePunchPhotos = pgTable("time_punch_photos", {
 
 /**
  * Clock alerts already emailed to managers, so each goes out once: "late_in:<staff>:<shop>:<date>"
- * for not clocked in before the first appointment, "affected:<punch>" for clients booked over a break
- * or after an early clock-out.
+ * for not clocked in before the first appointment, "affected:<block key>:<appointment>" for each
+ * client booked in a clock block.
  */
 export const clockAlertLog = pgTable("clock_alert_log", {
   key: text("key").primaryKey(),

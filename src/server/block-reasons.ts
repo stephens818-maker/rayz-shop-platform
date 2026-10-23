@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { blockReasons, timeBlockSeries, timeBlocks, timeOffRequests } from "@/db/schema";
-import { BlockReason, ReasonUse, ReasonViewer, ReasonedEntry, ShownReason, USE_LABEL, forBlocks, forTimeOff, reasonProblem, showReason, slugKey } from "@/domain/block-reasons";
+import { BlockReason, PICKABLE_USES, ReasonUse, ReasonViewer, ReasonedEntry, ShownReason, USE_LABEL, forBlocks, forTimeOff, reasonProblem, showReason, slugKey } from "@/domain/block-reasons";
 import { Actor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
 
@@ -82,10 +82,14 @@ export async function saveReason(input: ReasonEdit, actor: Actor): Promise<Block
       where: and(sql`lower(${blockReasons.label}) = lower(${label})`, isNull(blockReasons.archivedAt), input.id ? ne(blockReasons.id, input.id) : undefined),
     });
     if (dup) throw new AppError("conflict", `There's already a reason called "${dup.label}"`);
-    const values = { label, color, usedFor: input.usedFor, countsAsLunch: input.countsAsLunch, noticeExempt: input.noticeExempt, private: input.private };
-    if (input.id) {
-      const before = await tx.query.blockReasons.findFirst({ where: eq(blockReasons.id, input.id) });
-      if (!before) throw notFound("Reason");
+    const before = input.id ? await tx.query.blockReasons.findFirst({ where: eq(blockReasons.id, input.id) }) : undefined;
+    if (input.id && !before) throw notFound("Reason");
+    const clock = before?.usedFor === "clock";
+    if (!clock && !PICKABLE_USES.includes(input.usedFor)) throw new AppError("bad_request", "Pick blocks, time off or both");
+    const values = clock
+      ? { label, color, usedFor: "clock" as const, countsAsLunch: false, noticeExempt: false, private: input.private }
+      : { label, color, usedFor: input.usedFor, countsAsLunch: input.countsAsLunch, noticeExempt: input.noticeExempt, private: input.private };
+    if (input.id && before) {
       const [row] = await tx.update(blockReasons).set({ ...values, updatedAt: new Date() }).where(eq(blockReasons.id, input.id)).returning();
       if (before.label !== row.label) {
         await tx.update(timeBlocks).set({ reason: row.label }).where(eq(timeBlocks.reasonId, row.id));
@@ -139,6 +143,12 @@ export async function moveReason(id: string, dir: -1 | 1, actor: Actor) {
     }
     await audit(actor, "block_reason.move", "block_reason", id, { label: list[j].label, to: j + 1 }, null, tx);
   });
+}
+
+/** What a break can be for at break start: the block reasons, Break first. */
+export async function breakReasons(tx: DBorTx = db) {
+  const list = (await listReasons(tx)).filter(forBlocks);
+  return [...list.filter((r) => r.key === "break"), ...list.filter((r) => r.key !== "break")].map((r) => ({ id: r.id, label: r.label }));
 }
 
 /** The reasons a picker offers for blocks or for time off. */
