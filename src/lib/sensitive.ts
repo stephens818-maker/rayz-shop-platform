@@ -14,8 +14,9 @@ export const FORBIDDEN_KEY =
 export const normalizeKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]+/g, "_");
 export const isForbiddenKey = (k: string) => FORBIDDEN_KEY.test(normalizeKey(k));
 
-const EDGE = "(?<![0-9A-Za-z_+-])";
-const END = "(?![0-9A-Za-z_-])";
+/** Not part of a longer token, or of a decimal (GPS coordinates have 13+ digit fractions). */
+const EDGE = "(?<![0-9A-Za-z_+-])(?<![0-9]\\.)";
+const END = "(?![0-9A-Za-z_-])(?!\\.[0-9])";
 /** 13 to 19 digits in a row, or in groups of 4 (or Amex's 4-6-5), starting 2 to 6 as card numbers do. */
 const PAN = new RegExp(`${EDGE}(?:[2-6][0-9]{12,18}|[2-6][0-9]{3}(?:[ -][0-9]{4}){2,3}(?:[ -][0-9]{1,3})?|3[47][0-9]{2}[ -][0-9]{6}[ -][0-9]{5})${END}`, "g");
 const SSN = new RegExp(`${EDGE}[0-9]{3}([ -])[0-9]{2}\\1[0-9]{4}${END}`, "g");

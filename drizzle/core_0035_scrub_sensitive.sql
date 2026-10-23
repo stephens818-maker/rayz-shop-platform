@@ -22,12 +22,13 @@ DECLARE
 	d text;
 BEGIN
 	IF t IS NULL OR t !~ '[0-9]' THEN RETURN t; END IF;
-	FOR m IN SELECT DISTINCT (regexp_matches(t, '(?<![0-9A-Za-z_+-])(?:[2-6][0-9]{12,18}|[2-6][0-9]{3}(?:[ -][0-9]{4}){2,3}(?:[ -][0-9]{1,3})?|3[47][0-9]{2}[ -][0-9]{6}[ -][0-9]{5})(?![0-9A-Za-z_-])', 'g'))[1] LOOP
+	FOR m IN SELECT DISTINCT (regexp_matches(t, '(?<![0-9A-Za-z_+-])(?<![0-9]\.)(?:[2-6][0-9]{12,18}|[2-6][0-9]{3}(?:[ -][0-9]{4}){2,3}(?:[ -][0-9]{1,3})?|3[47][0-9]{2}[ -][0-9]{6}[ -][0-9]{5})(?![0-9A-Za-z_-])(?!\.[0-9])', 'g'))[1] LOOP
 		d := regexp_replace(m, '[^0-9]', '', 'g');
-		IF length(d) BETWEEN 13 AND 19 AND "luhn_ok"(d) THEN t := replace(t, m, '[card number removed]'); END IF;
+		-- m is only digits, spaces and dashes, so it can sit in a pattern as is.
+		IF length(d) BETWEEN 13 AND 19 AND "luhn_ok"(d) THEN t := regexp_replace(t, '(?<![0-9A-Za-z_+-])(?<![0-9]\.)' || m || '(?![0-9A-Za-z_-])(?!\.[0-9])', '[card number removed]', 'g'); END IF;
 	END LOOP;
-	t := regexp_replace(t, '(?<![0-9A-Za-z_+-])[0-9]{3}([ -])[0-9]{2}\1[0-9]{4}(?![0-9A-Za-z_-])', '[SSN removed]', 'g');
-	RETURN regexp_replace(t, '(?<![0-9A-Za-z_+-])[0-9]{2}-[0-9]{7}(?![0-9A-Za-z_-])', '[EIN removed]', 'g');
+	t := regexp_replace(t, '(?<![0-9A-Za-z_+-])(?<![0-9]\.)[0-9]{3}([ -])[0-9]{2}\1[0-9]{4}(?![0-9A-Za-z_-])(?!\.[0-9])', '[SSN removed]', 'g');
+	RETURN regexp_replace(t, '(?<![0-9A-Za-z_+-])(?<![0-9]\.)[0-9]{2}-[0-9]{7}(?![0-9A-Za-z_-])(?!\.[0-9])', '[EIN removed]', 'g');
 END
 $$;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "is_forbidden_key"(k text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
