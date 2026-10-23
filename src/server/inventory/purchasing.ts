@@ -13,6 +13,7 @@ import {
   purchaseOrderLines,
   purchaseOrders,
   shopProducts,
+  shopVendors,
   shops,
   staff,
   vendorProducts,
@@ -357,10 +358,11 @@ export async function approvePo(who: Who, id: string) {
 
 export async function poDocument(id: string, tx: DBorTx = db): Promise<PoDocument> {
   const [row] = await tx
-    .select({ po: purchaseOrders, shop: shops, vendor: vendors })
+    .select({ po: purchaseOrders, shop: shops, vendor: vendors, shopAccount: shopVendors.accountNumber })
     .from(purchaseOrders)
     .innerJoin(shops, eq(shops.id, purchaseOrders.shopId))
     .innerJoin(vendors, eq(vendors.id, purchaseOrders.vendorId))
+    .leftJoin(shopVendors, and(eq(shopVendors.shopId, purchaseOrders.shopId), eq(shopVendors.vendorId, purchaseOrders.vendorId)))
     .where(eq(purchaseOrders.id, id));
   if (!row) throw notFound("Purchase order");
   const [brand] = await tx.select({ name: brandSettings.name }).from(brandSettings).limit(1);
@@ -370,7 +372,7 @@ export async function poDocument(id: string, tx: DBorTx = db): Promise<PoDocumen
     .innerJoin(products, eq(products.id, purchaseOrderLines.productId))
     .where(eq(purchaseOrderLines.purchaseOrderId, id))
     .orderBy(asc(products.brand), asc(products.name));
-  const { po, shop, vendor } = row;
+  const { po, shop, vendor, shopAccount } = row;
   return {
     number: po.number,
     date: localDateOf(po.sentAt ?? new Date()),
@@ -384,7 +386,7 @@ export async function poDocument(id: string, tx: DBorTx = db): Promise<PoDocumen
       email: vendor.email,
       phone: vendor.phone,
       address: vendor.address,
-      accountNumber: vendor.accountNumber,
+      accountNumber: shopAccount ?? vendor.accountNumber,
       paymentTerms: vendor.paymentTerms,
       minimumOrderCents: vendor.minimumOrderCents,
     },
