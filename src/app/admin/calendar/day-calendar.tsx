@@ -10,8 +10,10 @@ import { type PickReason, ReasonDot, ReasonPicker } from "@/components/reason-pi
 import { reasonText } from "@/domain/block-reasons";
 import type { BookedConflict } from "@/server/staff-time";
 import { INTERVAL_SOURCE_LABEL } from "@/domain/timing";
-import type { CalAppt, CalColumn, DayCalendarData } from "@/server/calendar";
+import type { CalAppt, CalClock, CalColumn, DayCalendarData } from "@/server/calendar";
+import { HOLD_LABEL, LIVE_STATUS_LABEL, callInHref } from "@/domain/clock-live";
 import {
+  calendarPulseAction,
   createBlockAction,
   createStaffAppointmentAction,
   deleteBlockAction,
@@ -26,6 +28,7 @@ import { ServiceTimesBox } from "./service-times-panel";
 
 const PX = 1.6; // pixels per minute
 const SNAP = 15;
+const PULSE_MS = 15_000;
 
 /** Row lines: each barber on their own interval, or one granularity for the whole shop. Booking always follows the barber's grid. */
 type Grid = "barber" | 15 | 30 | 60;
@@ -138,7 +141,7 @@ export function DayCalendar({
   today: string;
   nowMin: number | null;
   services: Svc[];
-  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean; addPhone: boolean; correctTimes: boolean };
+  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean; addPhone: boolean; correctTimes: boolean; callIns: boolean };
   meId: string;
   initialApptId: string | null;
   /** What the block picker offers. */
@@ -190,6 +193,28 @@ export function DayCalendar({
     return () => clearInterval(t);
   }, [router]);
 
+  // Punches and bookings show up within seconds: poll a fingerprint of the day, refresh when it moves.
+  const pulse = useRef<string | null>(null);
+  const isToday = data.date === today;
+  useEffect(() => {
+    if (!isToday) return;
+    let live = true;
+    pulse.current = null;
+    const tick = async () => {
+      if (document.hidden) return;
+      const r = await calendarPulseAction({ shopId: data.shop.id, date: data.date });
+      if (!live || !r.ok) return;
+      if (pulse.current !== null && pulse.current !== r.data) router.refresh();
+      pulse.current = r.data;
+    };
+    void tick();
+    const t = setInterval(tick, PULSE_MS);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [isToday, data.shop.id, data.date, router]);
+
   // Keep the open panel in sync after refreshes.
   useEffect(() => {
     if (panel?.kind !== "appt") return;
@@ -219,6 +244,8 @@ export function DayCalendar({
     done: all.filter((a) => a.status === "completed").length,
     est: active.reduce((s, a) => s + a.estimateCents, 0),
   };
+  const heldCount = all.filter((a) => a.clockHold).length;
+  const clocked = data.columns.some((c) => c.clock && (c.clock.worked.length > 0 || c.clock.status !== null));
   const go = (d: string) => router.push(`/admin/calendar?date=${d}`);
   const legend = [...new Map(data.columns.flatMap((c) => c.blocks).map((b) => [b.label, { label: b.label, color: b.color }])).values()];
 
@@ -257,6 +284,20 @@ export function DayCalendar({
         <Badge tone="violet">{counts.inChair} in chair</Badge>
         <Badge tone="green">{counts.done} done</Badge>
         {canManage.sales && <Badge>{money(counts.est)} est.</Badge>}
+        {heldCount > 0 && (
+          <Badge tone="red">
+            {heldCount} held by the clock
+          </Badge>
+        )}
+        {isToday && (
+          <span className="flex items-center gap-1 text-zinc-500" title="The time clock and bookings update by themselves every few seconds">
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+            </span>
+            Live
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2 text-zinc-600">
           <span id="grid-label">Rows</span>
           <div role="radiogroup" aria-labelledby="grid-label" className="inline-flex divide-x divide-zinc-200 rounded-md ring-1 ring-zinc-300">
@@ -323,7 +364,7 @@ export function DayCalendar({
             <div className="flex w-max min-w-full">
               {/* time gutter */}
               <div className="sticky left-0 z-20 w-14 shrink-0 border-r border-zinc-200 bg-white">
-                <div className="sticky top-0 z-10 h-11 border-b border-zinc-200 bg-white" />
+                <div className={cx("sticky top-0 z-10 border-b border-zinc-200 bg-white", clocked ? "h-16" : "h-11")} />
                 <div className="relative" style={{ height }}>
                   {hours.map((m) => (
                     <div key={m} className="absolute right-1.5 -translate-y-1/2 text-[11px] text-zinc-500" style={{ top: (m - data.rangeStart) * PX }}>
@@ -342,6 +383,7 @@ export function DayCalendar({
                   grid={grid}
                   nowMin={nowMin}
                   hideCancelled={hideCancelled}
+                  clocked={clocked}
                   selectedId={panel?.kind === "appt" ? panel.appt.id : null}
                   onAppt={(appt) => setPanel({ kind: "appt", col, appt })}
                   onBlock={(block) => setPanel({ kind: "block", col, block })}
@@ -380,6 +422,22 @@ export function DayCalendar({
         <span className="flex items-center gap-1">
           <span className="inline-block h-3 w-3 rounded-sm shade-buffer ring-1 ring-zinc-200" /> Prep or cleanup
         </span>
+        {clocked && (
+          <>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-3 w-1 rounded-sm bg-emerald-500" /> Clocked in
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="shade-break inline-block h-3 w-3 rounded-sm" /> Break
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block h-3 w-1 rounded-sm bg-red-500" /> Late or left early
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="shade-clock-hold inline-block h-3 w-3 rounded-sm ring-1 ring-red-200" /> Online booking held by the clock
+            </span>
+          </>
+        )}
         <span>
           Click an empty spot to book or block time.{mixed && grid === "barber" ? " Each column's rows follow that barber's slot interval." : ""}
         </span>
@@ -387,7 +445,7 @@ export function DayCalendar({
 
       {panel && (
         <SidePanel onClose={() => setPanel(null)}>
-          {panel.kind === "appt" && <ApptPanel appt={panel.appt} col={panel.col} canManage={canManage} onDone={() => setPanel(null)} />}
+          {panel.kind === "appt" && <ApptPanel appt={panel.appt} col={panel.col} shopId={data.shop.id} canManage={canManage} onDone={() => setPanel(null)} />}
           {panel.kind === "block" && <BlockPanel block={panel.block} col={panel.col} onDone={() => setPanel(null)} />}
           {panel.kind === "new" && (
             <NewPanel
@@ -416,6 +474,7 @@ function Column({
   grid,
   nowMin,
   hideCancelled,
+  clocked,
   selectedId,
   onAppt,
   onBlock,
@@ -429,6 +488,8 @@ function Column({
   grid: Grid;
   nowMin: number | null;
   hideCancelled: boolean;
+  /** Some column has clock data, so headers make room for the status line. */
+  clocked: boolean;
   selectedId: string | null;
   onAppt: (a: CalAppt) => void;
   onBlock: (b: CalColumn["blocks"][number]) => void;
@@ -445,8 +506,8 @@ function Column({
 }) {
   const top = (m: number) => (Math.max(m, data.rangeStart) - data.rangeStart) * PX;
   const h = (s: number, e: number) => Math.max(0, (Math.min(e, data.rangeEnd) - Math.max(s, data.rangeStart)) * PX);
-  // Off-hours = complement of working spans within the visible range.
-  const spans = [...col.spans].sort((a, b) => a.startMin - b.startMin);
+  // Off-hours = complement of working spans (and time an early clock-in opened) within the visible range.
+  const spans = [...col.spans, ...(col.clock?.early ? [col.clock.early] : [])].sort((a, b) => a.startMin - b.startMin);
   const off: { s: number; e: number }[] = [];
   let cur = data.rangeStart;
   for (const sp of spans) {
@@ -466,15 +527,18 @@ function Column({
 
   return (
     <div className="min-w-40 max-w-sm flex-1 border-r border-zinc-100 last:border-r-0 sm:min-w-48">
-      <div className="sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-zinc-200 bg-white px-2">
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: col.color }} />
-        <span className="truncate text-sm font-semibold">{col.label}</span>
-        <span className="ml-auto rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium tabular text-zinc-600" title={`${col.intervalMin}-minute slots (${INTERVAL_SOURCE_LABEL[col.intervalSource]})`}>
-          {col.intervalMin}m
-        </span>
-        <span className="text-xs text-zinc-400" title={`${booked} booked`}>
-          {booked}
-        </span>
+      <div className={cx("sticky top-0 z-10 flex flex-col justify-center gap-0.5 border-b border-zinc-200 bg-white px-2", clocked ? "h-16" : "h-11")}>
+        <div className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: col.color }} />
+          <span className="truncate text-sm font-semibold">{col.label}</span>
+          <span className="ml-auto rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium tabular text-zinc-600" title={`${col.intervalMin}-minute slots (${INTERVAL_SOURCE_LABEL[col.intervalSource]})`}>
+            {col.intervalMin}m
+          </span>
+          <span className="text-xs text-zinc-400" title={`${booked} booked`}>
+            {booked}
+          </span>
+        </div>
+        {col.clock && <ClockLine clock={col.clock} />}
       </div>
       <div
         className="relative cursor-crosshair"
@@ -517,6 +581,9 @@ function Column({
             {o.shop ? `At ${o.shop}` : "At another shop"}
           </div>
         ))}
+        {col.clock?.early && <div className="pointer-events-none absolute inset-x-0 bg-emerald-50/80" style={{ top: top(col.clock.early.startMin), height: h(col.clock.early.startMin, col.clock.early.endMin) }} />}
+        {col.clock?.holds.map((x, i) => <div key={`h${i}`} className="shade-clock-hold pointer-events-none absolute inset-x-0" style={{ top: top(x.startMin), height: h(x.startMin, x.endMin) }} />)}
+        {col.clock?.breaks.map((b, i) => <div key={`br${i}`} className="shade-break pointer-events-none absolute inset-x-0" style={{ top: top(b.startMin), height: Math.max(h(b.startMin, b.endMin), 3) }} />)}
         {col.blocks.map((b) => (
           <button
             key={b.id}
@@ -557,6 +624,7 @@ function Column({
               className={cx(
                 "absolute inset-x-1 overflow-hidden rounded-md border-l-4 px-1.5 py-0.5 text-left text-xs shadow-xs ring-1 transition hover:z-10 hover:shadow-md",
                 APPT_STYLE[a.status],
+                a.clockHold && "ring-2 ring-red-500",
                 selectedId === a.id && "z-10 ring-2 ring-zinc-900",
               )}
               style={{ top: top(shownStart), height: Math.max(hh, 18), borderLeftColor: col.color }}
@@ -568,6 +636,11 @@ function Column({
                 {a.squeezed && (
                   <span className="shrink-0 rounded bg-white/70 px-1 text-[10px] font-semibold uppercase tracking-wide opacity-80" title="Squeezed in off the grid or into buffer time">
                     squeeze
+                  </span>
+                )}
+                {a.clockHold && (
+                  <span className="ml-auto shrink-0 rounded bg-red-600 px-1 text-[10px] font-semibold uppercase tracking-wide text-white" title={`${col.label} is ${HOLD_LABEL[a.clockHold].toLowerCase()}: move or rebook this client`}>
+                    {a.clockHold === "break" ? "on break" : "clocked out"}
                   </span>
                 )}
               </div>
@@ -588,11 +661,109 @@ function Column({
             {label(drag.ghost)}
           </div>
         )}
+        {col.clock && <ClockMarks clock={col.clock} col={col} nowMin={nowMin} top={top} h={h} />}
         {nowMin !== null && nowMin >= data.rangeStart && nowMin <= data.rangeEnd && (
           <div className="pointer-events-none absolute inset-x-0 z-[5] border-t-2 border-brand-600" style={{ top: (nowMin - data.rangeStart) * PX }} />
         )}
       </div>
     </div>
+  );
+}
+
+const dur = (min: number) => (min < 60 ? `${min}m` : min % 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min / 60}h`);
+
+/** The status line under a barber's name: where they stand on the time clock, and anything off about today's punches. */
+function ClockLine({ clock }: { clock: CalClock }) {
+  const s = clock.status;
+  const worked = clock.worked.reduce((a, w) => a + w.endMin - w.startMin, 0) - clock.breaks.reduce((a, b) => a + b.endMin - b.startMin, 0);
+  const text =
+    s === null
+      ? clock.worked.length
+        ? `Worked ${dur(Math.max(0, worked))}`
+        : "No punches"
+      : s === "in" && clock.elsewhere
+        ? `Clocked in at ${clock.elsewhere.shop ?? "another shop"}`
+        : `${LIVE_STATUS_LABEL[s]}${clock.sinceMin !== null && s !== "not_in" ? ` ${s === "break" ? "since " : ""}${label(clock.sinceMin)}` : ""}`;
+  const tone =
+    s === "in"
+      ? "bg-emerald-100 text-emerald-800 ring-emerald-300"
+      : s === "break"
+        ? "bg-amber-100 text-amber-900 ring-amber-300"
+        : s === "not_in" && clock.overdueMin !== null
+          ? "bg-red-100 text-red-800 ring-red-300"
+          : "bg-zinc-100 text-zinc-600 ring-zinc-300";
+  const flags = [
+    clock.overdueMin !== null && `${dur(clock.overdueMin)} past start`,
+    clock.lateMin !== null && `Late ${dur(clock.lateMin)}`,
+    clock.earlyOutMin !== null && `Left ${dur(clock.earlyOutMin)} early`,
+    clock.missed.length > 0 && (clock.missed.length === 1 ? `Missed punch: ${clock.missed[0].label.toLowerCase()}` : `${clock.missed.length} missed punches`),
+  ].filter((f): f is string => !!f);
+  return (
+    <div className="flex min-w-0 items-center gap-1 text-[11px]" aria-label={`Time clock: ${[text, ...flags].join(", ")}`}>
+      <span className={cx("inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px font-semibold ring-1", tone)}>
+        {(s === "in" || s === "break") && <span className={cx("size-1.5 rounded-full", s === "in" ? "bg-emerald-500" : "bg-amber-500")} />}
+        {text}
+      </span>
+      {flags.length > 0 && <span className="truncate font-medium text-red-700">{flags.join(" · ")}</span>}
+    </div>
+  );
+}
+
+/** Worked time as a strip down the column's left edge, next to the scheduled shift; late, early and missed punches marked in red. */
+function ClockMarks({ clock, col, nowMin, top, h }: { clock: CalClock; col: CalColumn; nowMin: number | null; top: (m: number) => number; h: (s: number, e: number) => number }) {
+  const schedStart = col.spans.length ? Math.min(...col.spans.map((s) => s.startMin)) : null;
+  const tag = "pointer-events-none absolute right-1 z-[6] -translate-y-1/2 rounded px-1 text-[10px] font-semibold leading-4 shadow-xs";
+  const strip = "pointer-events-none absolute left-0 z-[6] w-1 rounded-r";
+  return (
+    <>
+      {clock.worked.map((w, i) => (
+        <div key={`w${i}`} className={cx(strip, "bg-emerald-500", w.open && "animate-pulse")} style={{ top: top(w.startMin), height: Math.max(h(w.startMin, w.endMin), 2) }} />
+      ))}
+      {clock.breaks.map((b, i) => (
+        <div key={`bt${i}`} className={cx(tag, "bg-amber-200 text-amber-950")} style={{ top: top(b.startMin) + 8 }}>
+          Break{b.open ? ` since ${label(b.startMin)}` : ` ${dur(b.endMin - b.startMin)}`}
+        </div>
+      ))}
+      {clock.holds.map((x, i) => (
+        <div key={`ht${i}`} className={cx(tag, "bg-white text-red-800 ring-1 ring-red-200")} style={{ top: top(x.startMin) + (x.why === "break" ? 26 : 8) }}>
+          {x.why === "break" ? `Online booking held to ${label(x.endMin)}` : "Clocked out · online booking closed"}
+        </div>
+      ))}
+      {clock.early && (
+        <div className={cx(tag, "bg-emerald-600 text-white")} style={{ top: top(clock.early.startMin) + 8 }}>
+          Opened early
+        </div>
+      )}
+      {clock.lateMin !== null && schedStart !== null && clock.firstInMin !== null && (
+        <>
+          <div className={cx(strip, "bg-red-500")} style={{ top: top(schedStart), height: h(schedStart, clock.firstInMin) }} />
+          <div className={cx(tag, "bg-red-600 text-white")} style={{ top: top(clock.firstInMin) }}>
+            Late {dur(clock.lateMin)}
+          </div>
+        </>
+      )}
+      {clock.overdueMin !== null && schedStart !== null && nowMin !== null && (
+        <>
+          <div className={cx(strip, "bg-red-500/70")} style={{ top: top(schedStart), height: h(schedStart, nowMin) }} />
+          <div className={cx(tag, "bg-red-600 text-white")} style={{ top: top(schedStart) + 8 }}>
+            Not clocked in
+          </div>
+        </>
+      )}
+      {clock.earlyOutMin !== null && clock.lastOutMin !== null && (
+        <>
+          <div className={cx(strip, "bg-red-500")} style={{ top: top(clock.lastOutMin), height: h(clock.lastOutMin, clock.lastOutMin + clock.earlyOutMin) }} />
+          <div className={cx(tag, "bg-red-600 text-white")} style={{ top: top(clock.lastOutMin) }}>
+            Left early {dur(clock.earlyOutMin)}
+          </div>
+        </>
+      )}
+      {clock.missed.map((m, i) => (
+        <div key={`m${i}`} className={cx(tag, "bg-red-100 text-red-800 ring-1 ring-red-300")} style={{ top: top(m.atMin) + 16 }}>
+          Missed punch: {m.label.toLowerCase()}
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -630,8 +801,21 @@ function useAction() {
   return { pending, error, run, router };
 }
 
-function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalColumn; canManage: { sales: boolean; clients: boolean; message: boolean; correctTimes: boolean }; onDone: () => void }) {
+function ApptPanel({
+  appt,
+  col,
+  shopId,
+  canManage,
+  onDone,
+}: {
+  appt: CalAppt;
+  col: CalColumn;
+  shopId: string;
+  canManage: { sales: boolean; clients: boolean; message: boolean; correctTimes: boolean; callIns: boolean };
+  onDone: () => void;
+}) {
   const { pending, error, run, router } = useAction();
+  const hold = appt.clockHold ? col.clock?.holds.find((x) => x.why === appt.clockHold) : undefined;
   const s = appt.status;
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
   const checkout = () =>
@@ -685,6 +869,20 @@ function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalCo
       </dl>
 
       {appt.customerId && appt.hasPhone && canManage.message && <ContactClient customerId={appt.customerId} canText={appt.smsOptIn} hasPhone compact />}
+
+      {appt.clockHold && (
+        <Notice tone="red">
+          {col.label} {appt.clockHold === "break" ? "is on a break over this appointment" : "clocked out before this appointment"}. Move this client to another barber or ask them to pick a new time.
+          {hold && canManage.callIns && (
+            <>
+              {" "}
+              <Link className="font-medium underline" href={callInHref(col.id, shopId, hold)}>
+                Reassign or rebook
+              </Link>
+            </>
+          )}
+        </Notice>
+      )}
 
       {error && <Notice tone="red">{error}</Notice>}
 

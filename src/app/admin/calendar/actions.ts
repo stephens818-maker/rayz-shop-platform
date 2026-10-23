@@ -12,6 +12,7 @@ import { StaffContext, assertShopAccess, authorize, blockCaller, can, requireSta
 import { addBlock, removeBlock, rulesFor } from "@/server/staff-time";
 import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
+import { clockPulse } from "@/server/clock-live";
 import { assertCanEnter, clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
 import { clientSearchScope, searchCustomers } from "@/server/customers";
 import { usableReason } from "@/server/block-reasons";
@@ -49,6 +50,16 @@ export async function staffOpeningsAction(input: { shopId: string; staffId: stri
       reason: a.reason,
       canSqueeze: can(ctx, "calendar.squeeze_in"),
     };
+  });
+}
+
+/** A fingerprint of the day's punches and appointments here; the calendar polls it and refreshes when it changes. */
+export async function calendarPulseAction(input: { shopId: string; date: string }) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    assertShopAccess(ctx, input.shopId);
+    if (!isValidLocalDate(input.date)) throw new AppError("bad_request", "Pick a date");
+    return clockPulse(input.shopId, input.date);
   });
 }
 

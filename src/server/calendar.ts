@@ -3,10 +3,12 @@ import { and, asc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks, timeOffRequests } from "@/db/schema";
 import type { ReasonViewer, ShownReason } from "@/domain/block-reasons";
+import { type HoldWhy, type LiveDay, type LiveStatus, MISSED_LABEL, affectedBy } from "@/domain/clock-live";
 import type { RatingSummary } from "@/domain/ratings";
 import type { TimesView } from "@/domain/service-times";
 import type { IntervalSource } from "@/domain/timing";
-import { LocalDate, addDays, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, weekdayOf } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
+import { liveClock } from "./clock-live";
 import type { ClientPolicy } from "./client-privacy";
 import { Tenant, hasShop } from "./tenant";
 import { staffIntervals } from "./timing";
@@ -44,6 +46,27 @@ export interface CalAppt {
   squeezed: boolean;
   /** Arrival, Start, Finish and checkout as recorded, with who recorded each. */
   times: TimesView | null;
+  /** The barber's break or early clock-out now holds this time: the manager should move or rebook it. */
+  clockHold: HoldWhy | null;
+}
+
+/** One barber's time clock on the calendar day, in minutes after midnight. Staff only: clients never see it. */
+export interface CalClock {
+  /** Null for a day that isn't today. */
+  status: LiveStatus | null;
+  sinceMin: number | null;
+  /** Clocked in at another shop right now: its name, or null outside the viewer's workspace. */
+  elsewhere: { shop: string | null } | null;
+  worked: { startMin: number; endMin: number; open: boolean }[];
+  breaks: { startMin: number; endMin: number; open: boolean }[];
+  firstInMin: number | null;
+  lastOutMin: number | null;
+  lateMin: number | null;
+  overdueMin: number | null;
+  earlyOutMin: number | null;
+  missed: { label: string; atMin: number }[];
+  holds: { startMin: number; endMin: number; why: HoldWhy }[];
+  early: { startMin: number; endMin: number } | null;
 }
 
 export interface CalBlock extends ShownReason {
@@ -70,6 +93,8 @@ export interface CalColumn {
   /** `shop` is null for a shop outside the viewer's workspace. */
   elsewhere: { startMin: number; endMin: number; shop: string | null }[];
   appts: CalAppt[];
+  /** Null for days still to come. */
+  clock: CalClock | null;
 }
 
 export interface DayCalendarData {
@@ -179,6 +204,33 @@ export async function loadDayCalendar(
   const show = await reasonShower(reasons);
 
   const intervals = await staffIntervals(shop, ids);
+  const now = new Date();
+  const live = date <= todayLocal(now) ? await liveClock(shop, date, ids, now) : null;
+  const otherIds = [...new Set([...(live?.days.values() ?? [])].map((d) => d.elsewhereShopId).filter((x): x is string => !!x))];
+  const otherNames = new Map(
+    otherIds.length ? (await db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, otherIds))).map((s) => [s.id, shopLabel(s.id, s.name)] as const) : [],
+  );
+  const at = (d: Date | null) => (d ? clampDay(d, date) : clampDay(now, date));
+  const calClock = (d: LiveDay): CalClock => {
+    const lastClosed = [...d.shifts].reverse().find((s) => s.end !== null && d.status !== "in" && d.status !== "break");
+    return {
+      status: d.status,
+      sinceMin: d.since ? at(d.since) : null,
+      elsewhere: d.elsewhereShopId ? { shop: otherNames.get(d.elsewhereShopId) ?? null } : null,
+      worked: d.shifts.map((s) => ({ startMin: at(s.start), endMin: at(s.end), open: s.end === null })),
+      breaks: d.shifts.flatMap((s) => s.breaks.map((b) => ({ startMin: at(b.start), endMin: at(b.end ?? s.end), open: b.end === null && s.end === null }))),
+      firstInMin: d.shifts[0] ? at(d.shifts[0].start) : null,
+      lastOutMin: lastClosed ? at(lastClosed.end) : null,
+      lateMin: d.lateMin,
+      overdueMin: d.overdueMin,
+      earlyOutMin: d.earlyOutMin,
+      missed: d.missed.map((m) => ({ label: MISSED_LABEL[m.kind], atMin: at(m.at) })),
+      holds: d.holds.map((h) => ({ startMin: at(h.start), endMin: at(h.end), why: h.why })),
+      early: d.early ? { startMin: at(d.early.start), endMin: at(d.early.end) } : null,
+    };
+  };
+  const held = new Map<string, HoldWhy>();
+  for (const d of live?.days.values() ?? []) for (const a of affectedBy(d, shopId, apptRows.map((r) => r.a))) held.set(a.id, a.why);
   const stretchStarts = (spans: { startMin: number; endMin: number }[]) =>
     [...new Set(spans.flatMap((sp) => hours.filter((h) => h.openMin < sp.endMin && sp.startMin < h.closeMin).map((h) => Math.max(h.openMin, sp.startMin))))].sort((a, b) => a - b);
 
@@ -244,7 +296,9 @@ export async function loadDayCalendar(
           bufferAfterMin: r.a.bufferMinutes,
           squeezed: r.a.squeezed,
           times: times.get(r.a.id) ?? null,
+          clockHold: held.get(r.a.id) ?? null,
         })),
+      clock: live?.days.get(c.id) ? calClock(live.days.get(c.id)!) : null,
     };
   });
 
@@ -261,8 +315,9 @@ export async function loadDayCalendar(
 
   const openMin = hours.length ? Math.min(...hours.map((h) => h.openMin)) : null;
   const closeMin = hours.length ? Math.max(...hours.map((h) => h.closeMin)) : null;
-  const starts = [openMin ?? 9 * 60, ...columns.flatMap((c) => [...c.spans.map((s) => s.startMin), ...c.appts.map((a) => a.startMin)])];
-  const ends = [closeMin ?? 18 * 60, ...columns.flatMap((c) => [...c.spans.map((s) => s.endMin), ...c.appts.map((a) => a.endMin)])];
+  const worked = columns.flatMap((c) => c.clock?.worked ?? []);
+  const starts = [openMin ?? 9 * 60, ...columns.flatMap((c) => [...c.spans.map((s) => s.startMin), ...c.appts.map((a) => a.startMin)]), ...worked.map((w) => w.startMin)];
+  const ends = [closeMin ?? 18 * 60, ...columns.flatMap((c) => [...c.spans.map((s) => s.endMin), ...c.appts.map((a) => a.endMin)]), ...worked.map((w) => w.endMin)];
   return {
     date,
     shop: { id: shop.id, name: shop.name, slug: shop.slug },

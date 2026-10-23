@@ -66,19 +66,22 @@ export function MarkCallIn({
   shops,
   reasons,
   me,
+  prefill = null,
 }: {
   today: string;
   barbers: { id: string; name: string; shopIds: string[] }[];
   shops: { id: string; name: string }[];
   reasons: PickReason[];
   me: string;
+  /** From a break or early clock-out flagged on the calendar or Today: the barber, the shop and the time it holds. */
+  prefill?: { staffId: string; shopId: string; from: string | null; to: string | null } | null;
 }) {
   const { pending, error, run, router } = useRun();
-  const [staffId, setStaffId] = useState(barbers.find((b) => b.id === me)?.id ?? barbers[0]?.id ?? "");
-  const [kind, setKind] = useState<CallInKind>("sick");
+  const [staffId, setStaffId] = useState(prefill?.staffId ?? barbers.find((b) => b.id === me)?.id ?? barbers[0]?.id ?? "");
+  const [kind, setKind] = useState<CallInKind>(prefill ? "other" : "sick");
   const [reasonId, setReasonId] = useState<string | null>(null);
   const [note, setNote] = useState("");
-  const [span, setSpan] = useState<Span>("rest");
+  const [span, setSpan] = useState<Span>(prefill?.to ? "part" : "rest");
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
   const nowMin = useMemo(() => {
@@ -86,9 +89,9 @@ export function MarkCallIn({
     const v = (t: string) => Number(p.find((x) => x.type === t)?.value ?? 0);
     return v("hour") * 60 + v("minute");
   }, []);
-  const [start, setStart] = useState(hhmm(Math.min(Math.floor(nowMin / 15) * 15, 23 * 60)));
-  const [end, setEnd] = useState("21:00");
-  const [shopId, setShopId] = useState("");
+  const [start, setStart] = useState(prefill?.from ?? hhmm(Math.min(Math.floor(nowMin / 15) * 15, 23 * 60)));
+  const [end, setEnd] = useState(prefill?.to ?? "21:00");
+  const [shopId, setShopId] = useState(prefill?.shopId ?? "");
   const barber = barbers.find((b) => b.id === staffId);
   const theirShops = shops.filter((s) => barber?.shopIds.includes(s.id));
   const otherReasons = reasons.filter((r) => !["Sick", "Emergency"].includes(r.label));

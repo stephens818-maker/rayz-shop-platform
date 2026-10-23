@@ -15,7 +15,11 @@ import { MarkCallIn, OutreachRulesEditor } from "./client";
 
 export const metadata: Metadata = { title: "Call-ins" };
 
-export default async function CallInsPage() {
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** `?staff=&shop=&from=HH:MM[&to=HH:MM]` fills the form in, from a break or clock-out flagged on the calendar or Today. */
+export default async function CallInsPage({ searchParams }: { searchParams: Promise<{ staff?: string; shop?: string; from?: string; to?: string }> }) {
+  const sp = await searchParams;
   const ctx = await guardPage("/admin/call-ins");
   const now = new Date();
   const markOthers = can(ctx, "callins.mark");
@@ -28,6 +32,15 @@ export default async function CallInsPage() {
     loadOutreachRules(),
   ]);
   const markable = barbers.filter((b) => b.active && (markOthers || (markOwn && b.id === ctx.staff.id)));
+  const preBarber = markable.find((b) => b.id === sp.staff);
+  const prefill = preBarber
+    ? {
+        staffId: preBarber.id,
+        shopId: sp.shop && preBarber.shopIds.includes(sp.shop) && shopRows.some((s) => s.id === sp.shop) ? sp.shop : "",
+        from: sp.from && HHMM.test(sp.from) ? sp.from : null,
+        to: sp.to && HHMM.test(sp.to) ? sp.to : null,
+      }
+    : null;
   const open = list.filter((c) => !c.cancelledAt && c.endsAt > now);
   const past = list.filter((c) => !open.includes(c));
   return (
@@ -38,7 +51,7 @@ export default async function CallInsPage() {
       />
 
       {(markOthers || markOwn) && markable.length > 0 && (
-        <MarkCallIn today={todayLocal(now)} barbers={markable.map((b) => ({ id: b.id, name: b.name, shopIds: b.shopIds }))} shops={shopRows} reasons={reasons} me={ctx.staff.id} />
+        <MarkCallIn today={todayLocal(now)} barbers={markable.map((b) => ({ id: b.id, name: b.name, shopIds: b.shopIds }))} shops={shopRows} reasons={reasons} me={ctx.staff.id} prefill={prefill} />
       )}
 
       <Card>
