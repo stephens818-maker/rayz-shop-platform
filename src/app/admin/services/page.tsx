@@ -5,6 +5,7 @@ import { services, shopServices, shops } from "@/db/schema";
 import { Card, CardHeader, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { can, guardPage } from "@/server/auth/staff";
+import { lookups } from "@/server/lookups";
 import { MasterEditor, ShopOverrides } from "./editors";
 
 export const metadata: Metadata = { title: "Services" };
@@ -91,6 +92,7 @@ export default async function ServicesPage() {
       )}
       {can(ctx, "catalog.manage") && (
         <MasterEditor
+          categories={(await lookups()).serviceCategories}
           rows={master.map((m) => ({
             id: m.id,
             name: m.name,

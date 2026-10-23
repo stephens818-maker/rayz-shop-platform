@@ -13,6 +13,7 @@ import { can, guardPage, ratingViewer } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { refundableState } from "@/server/checkout";
 import { inTenant } from "@/server/tenant";
+import { lookups } from "@/server/lookups";
 import { loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries, visitForSale } from "@/server/ratings";
 import { QuickRate } from "../../customers/ratings";
@@ -193,6 +194,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           {customer && rateable && <QuickRate customerId={customer.id} firstName={customer.firstName} appointmentId={rateable.appointmentId} saleId={id} myRating={rateable.myRating} />}
           {manager && refundable && (
             <SaleActions
+              reasons={(await lookups()).refundReasons}
               saleId={sale.id}
               status={sale.status}
               imported={sale.isImported}

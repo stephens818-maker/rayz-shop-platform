@@ -7,6 +7,7 @@ import { Card, CardHeader, LinkButton, PageHeader, Stat, Table, Td, Th, cx } fro
 import { formatCents } from "@/lib/money";
 import { can, canAny, guardPage } from "@/server/auth/staff";
 import { stockLevels } from "@/server/inventory/stock";
+import { lookups } from "@/server/lookups";
 import { InventoryTable, NewProductForm, StockRowView } from "./editors";
 
 export const metadata: Metadata = { title: "Stock" };
@@ -83,7 +84,7 @@ export default async function InventoryPage() {
           rows={rows}
           perms={{ price: canAny(ctx, ["catalog.prices", "catalog.manage"]), adjust: can(ctx, "inventory.adjust"), levels: can(ctx, "inventory.manage") }}
         />
-        {canCreate && <NewProductForm />}
+        {canCreate && <NewProductForm categories={(await lookups()).productCategories} />}
       </div>
     );
   }
@@ -157,7 +158,7 @@ export default async function InventoryPage() {
           </tbody>
         </Table>
       </Card>
-      {canCreate && <NewProductForm />}
+      {canCreate && <NewProductForm categories={(await lookups()).productCategories} />}
     </div>
   );
 }

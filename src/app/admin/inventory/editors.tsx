@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useState } from "react";
-import { Badge, Button, Card, CardHeader, Field, Input, Select, cx } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, Field, Input, Select, Suggestions, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { ADJUST_DIRECTION, ADJUST_REASONS, ADJUST_REASON_LABEL, AdjustReasonKey } from "@/domain/inventory";
 import { adjustStockAction, createProductAction, saveShopLevelsAction, saveShopProductAction } from "./actions";
@@ -270,9 +270,9 @@ function PricePanel({ shopId, r }: { shopId: string; r: StockRowView }) {
   );
 }
 
-export function NewProductForm() {
+export function NewProductForm({ categories }: { categories: string[] }) {
   const { pending, error, run } = useAction();
-  const [v, setV] = useState({ sku: "", name: "", brand: "", category: "Styling" });
+  const [v, setV] = useState({ sku: "", name: "", brand: "", category: categories[0] ?? "Styling" });
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <Card>
@@ -288,7 +288,8 @@ export function NewProductForm() {
           <Input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
         </Field>
         <Field label="Category">
-          <Input value={v.category} onChange={(e) => setV({ ...v, category: e.target.value })} />
+          <Input list="product-categories" value={v.category} onChange={(e) => setV({ ...v, category: e.target.value })} />
+          <Suggestions id="product-categories" items={categories} />
         </Field>
       </div>
       <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">

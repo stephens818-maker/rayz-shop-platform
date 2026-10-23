@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Badge, Button, Card, CardHeader, Input, Select, cx } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, Input, Select, Suggestions, cx } from "@/components/ui";
 import { saveMasterServiceAction, saveShopServiceAction } from "./actions";
 
 const dollars = (c: number | null) => (c == null ? "" : (c / 100).toFixed(2));
@@ -125,8 +125,8 @@ function OverrideRow({ shopId, r }: { shopId: string; r: OvRow }) {
 
 type MRow = { id: string; name: string; kind: "service" | "addon"; category: string; description: string | null; defaultPriceCents: number; defaultDurationMin: number; active: boolean; sortOrder: number };
 
-export function MasterEditor({ rows }: { rows: MRow[] }) {
-  const blank: MRow = { id: "", name: "", kind: "service", category: "Haircuts", description: null, defaultPriceCents: 3000, defaultDurationMin: 30, active: true, sortOrder: 100 };
+export function MasterEditor({ rows, categories }: { rows: MRow[]; categories: string[] }) {
+  const blank: MRow = { id: "", name: "", kind: "service", category: categories[0] ?? "Haircuts", description: null, defaultPriceCents: 3000, defaultDurationMin: 30, active: true, sortOrder: 100 };
   return (
     <Card>
       <CardHeader title="Brand master catalog" subtitle="Brand admins only. New services start turned off at every shop; enable them per shop above." />
@@ -151,6 +151,7 @@ export function MasterEditor({ rows }: { rows: MRow[] }) {
           </tbody>
         </table>
       </div>
+      <Suggestions id="service-categories" items={categories} />
     </Card>
   );
 }
@@ -173,7 +174,7 @@ function MasterRow({ r }: { r: MRow }) {
         </Select>
       </td>
       <td className="px-3 py-1.5">
-        <Input className="w-32 py-1" value={s.category} onChange={(e) => setS({ ...s, category: e.target.value })} />
+        <Input className="w-32 py-1" list="service-categories" value={s.category} onChange={(e) => setS({ ...s, category: e.target.value })} />
       </td>
       <td className="px-3 py-1.5">
         <Input className="w-24 py-1" inputMode="decimal" value={s.price} onChange={(e) => setS({ ...s, price: e.target.value })} />

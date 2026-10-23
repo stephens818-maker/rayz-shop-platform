@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState, useTransition } from "react";
-import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, cx } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, Suggestions, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
 import { formatMinutes, type TimesView } from "@/domain/service-times";
@@ -41,6 +41,7 @@ export function Pos(props: {
   taxCategories: Record<string, TaxCategory>;
   perms: { discount: boolean; maxDiscountPct: number; priceOverride: boolean; reassign: boolean };
   canAdd: { phone: boolean; email: boolean };
+  reasons?: { discount: string[]; priceChange: string[] };
 }) {
   const router = useRouter();
   const [lines, setLines] = useState<Line[]>(() => props.initialLines.map((l) => ({ ...l, key: key() })));
@@ -170,6 +171,8 @@ export function Pos(props: {
 
   return (
     <div className="mx-auto max-w-6xl">
+      <Suggestions id="discount-reasons" items={props.reasons?.discount ?? []} />
+      <Suggestions id="price-reasons" items={props.reasons?.priceChange ?? []} />
       <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
         <div>
           <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
@@ -257,7 +260,7 @@ export function Pos(props: {
                   </div>
                   <div className="grid grid-cols-[100px_1fr_auto_auto] gap-2">
                     <Input inputMode="decimal" value={editing.price} onChange={(e) => setEditing({ ...editing, price: e.target.value })} aria-label="New unit price" />
-                    <Input placeholder="Reason (required)" value={editing.reason} onChange={(e) => setEditing({ ...editing, reason: e.target.value })} />
+                    <Input list="price-reasons" placeholder="Reason (required)" value={editing.reason} onChange={(e) => setEditing({ ...editing, reason: e.target.value })} />
                     <Button
                       size="sm"
                       disabled={!editing.reason.trim()}
@@ -393,7 +396,7 @@ export function Pos(props: {
                     <option value="amount">$</option>
                   </Select>
                   <Input placeholder={manual.type === "percent" ? "10" : "5.00"} inputMode="decimal" value={manual.value} onChange={(e) => setManual({ ...manual, value: e.target.value })} />
-                  <Input className="col-span-2 sm:col-span-1" placeholder="Reason (required)" value={manual.reason} onChange={(e) => setManual({ ...manual, reason: e.target.value })} />
+                  <Input className="col-span-2 sm:col-span-1" list="discount-reasons" placeholder="Reason (required)" value={manual.reason} onChange={(e) => setManual({ ...manual, reason: e.target.value })} />
                   <div className={cx("col-span-2 text-xs sm:col-span-3", discountProblem ? "text-red-600" : "text-zinc-500")}>
                     {discountProblem ?? (props.perms.maxDiscountPct < 100 ? `Your discount limit: ${props.perms.maxDiscountPct}%` : null)}
                   </div>

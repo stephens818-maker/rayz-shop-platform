@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Button, Card, CardHeader, Field, Input, Notice } from "@/components/ui";
+import { Button, Card, CardHeader, Field, Input, Notice, Suggestions } from "@/components/ui";
 import { unitsShare } from "@/domain/refunds";
 import { formatCents } from "@/lib/money";
 import { refundAction, voidAction } from "../actions";
@@ -34,7 +34,9 @@ export function SaleActions({
   tipRemainingCents,
   cardFeeRemainingCents,
   imported,
+  reasons = [],
 }: {
+  reasons?: string[];
   saleId: string;
   status: string;
   items: RefundableItem[];
@@ -133,7 +135,8 @@ export function SaleActions({
           </label>
         )}
         <Field label="Reason (required)">
-          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Rang up wrong service" />
+          <Input list="refund-reasons" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Rang up wrong service" />
+          <Suggestions id="refund-reasons" items={reasons} />
         </Field>
         {error && <Notice tone="red">{error}</Notice>}
         <div className="grid grid-cols-2 gap-2">

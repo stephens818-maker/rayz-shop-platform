@@ -192,3 +192,14 @@ export function Logo({ dark }: { dark?: boolean }) {
     </span>
   );
 }
+
+/** Suggestions for an <Input list={id}>; staff can still type anything. */
+export function Suggestions({ id, items }: { id: string; items: readonly string[] }) {
+  return (
+    <datalist id={id}>
+      {items.map((x) => (
+        <option key={x} value={x} />
+      ))}
+    </datalist>
+  );
+}
