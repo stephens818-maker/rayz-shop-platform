@@ -327,6 +327,10 @@ async function coralvilleState() {
       .from(s.staff)
       .where(m.drizzle.inArray(s.staff.id, [ids.barber, ids.floater])),
     schedules: await q.select().from(s.staffSchedules).where(eq(s.staffSchedules.shopId, cv)),
+    staffShops: await q.select().from(s.staffShops).where(eq(s.staffShops.shopId, cv)),
+    durations: await q.select().from(s.staffServiceDurations).where(m.drizzle.inArray(s.staffServiceDurations.staffId, [ids.barber, ids.floater])),
+    brand: await q.select().from(s.brandSettings),
+    service: await q.select().from(s.services).where(eq(s.services.id, ids.service)),
     blocks: await q.select().from(s.timeBlocks).where(eq(s.timeBlocks.staffId, ids.barber)),
     client: await q.select().from(s.customers).where(eq(s.customers.id, ids.client)),
     logins: await q.select().from(s.staff).where(eq(s.staff.email, "coralville@rayz.test")),
@@ -610,6 +614,7 @@ describe("server actions aimed at another shop's records", () => {
     const customers = await import("@/app/admin/customers/actions");
     const permissions = await import("@/app/admin/permissions/actions");
     const logins = await import("@/app/admin/shop-logins/actions");
+    const timing = await import("@/app/admin/booking-times/actions");
     const cv = shop.coralville;
     const coralvilleLogin = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, "coralville@rayz.test") }))!.id;
     const deskRole = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "front_desk") }))!.id;
@@ -748,6 +753,19 @@ describe("server actions aimed at another shop's records", () => {
       ["shop login create", () => logins.createShopLoginAction({ shopId: cv, label: "Sneaky", email: "sneaky@rayz.test", roleId: deskRole })],
       ["shop login reset", () => logins.resetShopLoginPasswordAction(coralvilleLogin)],
       ["shop login disable", () => logins.setShopLoginActiveAction(coralvilleLogin, false)],
+      ["timing shop interval", () => timing.saveShopIntervalAction(cv, 30)],
+      ["timing barber interval", () => timing.saveBarberIntervalAction(ids.barber, cv, 30)],
+      ["timing barber everywhere", () => timing.saveBarberIntervalAction(ids.barber, null, 30)],
+      ["timing floater at coralville", () => timing.saveBarberIntervalAction(ids.floater, cv, 30)],
+      ["timing floater everywhere", () => timing.saveBarberIntervalAction(ids.floater, null, 30)],
+      ["timing barber duration", () => timing.saveBarberDurationAction(ids.barber, ids.service, cv, 40)],
+      ["timing floater duration everywhere", () => timing.saveBarberDurationAction(ids.floater, ids.service, null, 40)],
+      ["timing shop duration", () => timing.saveShopDurationAction(cv, ids.service, 40)],
+      ["timing brand interval", () => timing.saveBrandIntervalAction(30)],
+      [
+        "timing service",
+        () => timing.saveServiceTimingAction(ids.service, { defaultDurationMin: 60, durationStepMin: 15, bookingIncrementMin: 30, bufferBeforeMin: 5, bufferAfterMin: 5 }),
+      ],
     ];
 
     // Each call must be refused for every Moline-side login, and by the tenant check (not just a
@@ -782,6 +800,10 @@ describe("server actions aimed at another shop's records", () => {
     expect(await promos.issueGiftCardAction(shop.moline, 1000, "test")).toMatchObject({ ok: true });
     expect(await settings.addClosureAction(shop.moline, m.time.addDays(today, 41), "Test closure", false)).toMatchObject({ ok: true });
     expect(await settings.removeClosureAction(shop.moline, m.time.addDays(today, 41))).toMatchObject({ ok: true });
+    const timing = await import("@/app/admin/booking-times/actions");
+    const before = (await m.db.db.query.shops.findFirst({ where: eq(m.schema.shops.id, shop.moline) }))!.slotIntervalMinutes;
+    expect(await timing.saveShopIntervalAction(shop.moline, 30)).toMatchObject({ ok: true });
+    expect(await timing.saveShopIntervalAction(shop.moline, before)).toMatchObject({ ok: true });
   });
 });
 

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { services, shopServices } from "@/db/schema";
+import { durationProblem } from "@/domain/timing";
 import { slugify } from "@/lib/ids";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
@@ -24,6 +25,11 @@ export async function saveShopServiceAction(shopId: string, serviceId: string, r
     const ctx = await authorize(["catalog.prices", "catalog.manage"]);
     assertShopAccess(ctx, shopId);
     const o = Override.parse(raw);
+    if (o.durationMin !== null) {
+      const svc = await db.query.services.findFirst({ where: eq(services.id, serviceId), columns: { durationStepMin: true } });
+      const problem = durationProblem(o.durationMin, svc?.durationStepMin ?? 5);
+      if (problem) throw new AppError("bad_request", problem);
+    }
     const values = { ...o, nameOverride: o.nameOverride || null };
     await db
       .insert(shopServices)
@@ -52,6 +58,9 @@ export async function saveMasterServiceAction(raw: z.input<typeof Master>) {
     const ctx = await authorize("catalog.manage");
     const m = Master.parse(raw);
     const { id, ...values } = m;
+    const step = id ? (await db.query.services.findFirst({ where: eq(services.id, id), columns: { durationStepMin: true } }))?.durationStepMin : 5;
+    const problem = durationProblem(m.defaultDurationMin, step ?? 5);
+    if (problem) throw new AppError("bad_request", problem);
     let serviceId = id;
     if (id) {
       await db.update(services).set(values).where(eq(services.id, id));

@@ -10,6 +10,8 @@ import { formatDateTime } from "@/lib/time";
 import { accessState, loadStaffAccess } from "@/server/auth/access";
 import { can, guardPage, staffGrantor } from "@/server/auth/staff";
 import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
+import { barberIntervalRows } from "@/server/timing";
+import { StaffTimingCard } from "../../booking-times/editors";
 import { ProfileForm, ScheduleEditor, TimeOff } from "./editors";
 
 export const metadata: Metadata = { title: "Staff member" };
@@ -44,6 +46,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
     ? assignableRoles(staffGrantor(ctx), await db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name))).filter((r) => r.defaultScope !== "all" || ctx.brandWide)
     : [];
   const canSchedule = can(ctx, "schedules.edit");
+  const timing = person && person.kind === "person" && can(ctx, "scheduling.timing") ? (await barberIntervalRows(ctx, person.id))[0] : undefined;
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -118,6 +121,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
           />
         </>
       )}
+      {timing && <StaffTimingCard barber={timing} />}
     </div>
   );
 }

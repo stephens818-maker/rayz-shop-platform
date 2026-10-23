@@ -6,6 +6,8 @@ import { Empty, Notice, PageHeader } from "@/components/ui";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { getLoyaltyConfig } from "@/server/loyalty";
+import { brandInterval } from "@/server/timing";
+import { ShopTimingCard } from "../booking-times/editors";
 import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, NewShopForm, ShopInfoEditor } from "./editors";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -16,11 +18,12 @@ export default async function SettingsPage() {
   const brand = can(ctx, "settings.brand");
   const shopId = workingShopId(ctx);
   if (!shopId) return <Empty title="No shop selected" />;
-  const [shop, hours, closures, loyalty] = await Promise.all([
+  const [shop, hours, closures, loyalty, brandMinutes] = await Promise.all([
     db.query.shops.findFirst({ where: eq(shops.id, shopId) }),
     db.select().from(shopHours).where(eq(shopHours.shopId, shopId)),
     db.select().from(shopClosures).where(and(eq(shopClosures.shopId, shopId), gte(shopClosures.date, todayLocal()))).orderBy(asc(shopClosures.date)),
     getLoyaltyConfig(),
+    brandInterval(),
   ]);
   if (!shop) return <Empty title="Shop not found" />;
   return (
@@ -48,6 +51,7 @@ export default async function SettingsPage() {
         }}
       />
       )}
+      {can(ctx, "scheduling.timing") && <ShopTimingCard shopId={shop.id} shopName={shop.name} minutes={shop.slotIntervalMinutes} brand={brandMinutes} />}
       <MoneyEditor
         shopId={shop.id}
         canEdit={can(ctx, "settings.taxes")}

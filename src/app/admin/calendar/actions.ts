@@ -8,13 +8,14 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, assertShopAccess, can, caller, requireStaff } from "@/server/auth/staff";
-import { createAppointment, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
+import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
 import { assertCanEnter, clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
 import { clientSearchScope, searchCustomers } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { ratingSummaries } from "@/server/ratings";
 import { hasShop, requireInTenant } from "@/server/tenant";
+import { isValidLocalDate, localMinutesOf } from "@/lib/time";
 
 async function barberShops(staffId: string) {
   return (await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId))).map((l) => l.shopId);
@@ -22,6 +23,30 @@ async function barberShops(staffId: string) {
 
 /** Without "manage the calendar", people work only in their own column. */
 const ownColumnOnly = (ctx: StaffContext) => !can(ctx, "calendar.manage");
+
+function assertSqueeze(ctx: StaffContext, squeezeIn: boolean | undefined) {
+  if (squeezeIn && !can(ctx, "calendar.squeeze_in")) throw forbidden("You can't squeeze in bookings off the grid. Pick one of the open times.");
+}
+
+/**
+ * Open starts on this barber's grid for this service and these add-ons, as the front desk books
+ * them (no lead time or booking window), with how long it takes them.
+ */
+export async function staffOpeningsAction(input: { shopId: string; staffId: string; date: string; serviceId: string; addonIds: string[] }) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    assertShopAccess(ctx, input.shopId);
+    if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only book into your own column");
+    if (!isValidLocalDate(input.date)) throw new AppError("bad_request", "Pick a date");
+    const a = await getAvailability({ shopRef: input.shopId, date: input.date, serviceId: input.serviceId, addonIds: input.addonIds, barberRef: input.staffId, staffOverride: true });
+    return {
+      durationMin: a.durationMin,
+      starts: a.slots.map((s) => localMinutesOf(s.startsAt)),
+      reason: a.reason,
+      canSqueeze: can(ctx, "calendar.squeeze_in"),
+    };
+  });
+}
 
 async function loadAppt(ctx: StaffContext, id: string, othersNeed: "calendar.manage" | "checkout.any" = "calendar.manage") {
   await requireInTenant(ctx, "appointment", id);
@@ -86,10 +111,13 @@ export async function createStaffAppointmentAction(input: {
   customerId?: string | null;
   customer?: { firstName: string; lastName?: string; phone?: string; email?: string } | null;
   notes?: string;
+  /** Off the barber's grid, into buffer time or outside hours. Needs "calendar.squeeze_in"; logged. */
+  squeezeIn?: boolean;
 }) {
   return safe(async () => {
     const ctx = await requireStaff();
     assertShopAccess(ctx, input.shopId);
+    assertSqueeze(ctx, input.squeezeIn);
     if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only book into your own column");
     if (!input.customerId && !input.customer?.firstName) throw new AppError("bad_request", "Pick a client or enter a name");
     if (!input.customerId && input.customer) assertCanEnter(await clientPolicy(ctx), input.customer);
@@ -105,6 +133,7 @@ export async function createStaffAppointmentAction(input: {
       allowNoContact: true,
       notes: input.notes || null,
       source: "staff",
+      squeezeIn: input.squeezeIn,
       actor: ctx.actor,
     });
     revalidatePath("/admin/calendar");
@@ -112,12 +141,14 @@ export async function createStaffAppointmentAction(input: {
   });
 }
 
-export async function moveAppointmentAction(id: string, staffId: string, date: string, startMin: number) {
+/** Moves land on the target barber's grid; with "calendar.squeeze_in" they can be squeezed in instead. */
+export async function moveAppointmentAction(id: string, staffId: string, date: string, startMin: number, opts: { squeezeIn?: boolean } = {}) {
   return safe(async () => {
     const ctx = await requireStaff();
     const a = await loadAppt(ctx, id);
     if (ownColumnOnly(ctx) && staffId !== ctx.staff.id) throw forbidden("You can only move your own appointments within your own column");
-    await rescheduleAppointment(a.code, { startsAt: staffWallTime(date, startMin), barberRef: staffId, actor: ctx.actor, byCustomer: false });
+    assertSqueeze(ctx, opts.squeezeIn);
+    await rescheduleAppointment(a.code, { startsAt: staffWallTime(date, startMin), barberRef: staffId, actor: ctx.actor, byCustomer: false, squeezeIn: opts.squeezeIn });
     revalidatePath("/admin/calendar");
     return null;
   });

@@ -1,6 +1,6 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, closeDb } from "@/db";
 import * as t from "@/db/schema";
 import { computeCheckout, CartLine } from "@/domain/checkout";
@@ -603,6 +603,22 @@ async function main() {
   console.log(`  ${ratingRows.length} sample staff ratings`);
 
   await seedInventory({ now, shopBySlug, productRows, shopProductRows, targetStock, saleRows, saleItemRows, owner: staffByKey.get("michelle")! });
+
+  // ── Booking times (set after the history, as if changed today: booked appointments keep their times) ──
+  await db.update(t.shops).set({ slotIntervalMinutes: 20 }).where(eq(t.shops.slug, "le-claire"));
+  await db.update(t.staff).set({ slotIntervalMinutes: 20 }).where(eq(t.staff.id, staffByKey.get("delaney")!.id));
+  await db
+    .update(t.staffShops)
+    .set({ slotIntervalMinutes: 30 })
+    .where(and(eq(t.staffShops.staffId, staffByKey.get("casey")!.id), eq(t.staffShops.shopId, shopBySlug.get("le-claire")!.id)));
+  await db.update(t.services).set({ bufferBeforeMin: 5, bufferAfterMin: 10 }).where(eq(t.services.slug, "hot-towel-shave"));
+  await db.update(t.services).set({ durationStepMin: 15, bookingIncrementMin: 30, bufferAfterMin: 10 }).where(eq(t.services.slug, "gray-blending"));
+  await db.update(t.services).set({ durationStepMin: 15, bufferAfterMin: 5 }).where(eq(t.services.slug, "camo-color"));
+  await db.insert(t.staffServiceDurations).values([
+    { staffId: staffByKey.get("casey")!.id, serviceId: svcBySlug.get("specialty-fade")!.id, shopId: null, durationMin: 40 },
+    { staffId: staffByKey.get("skylar")!.id, serviceId: svcBySlug.get("rayz-cut-shampoo")!.id, shopId: shopBySlug.get("le-claire")!.id, durationMin: 30 },
+  ]);
+  console.log("  booking times: Le Claire on 20 minutes, Delaney 20, Casey 30 at Le Claire, Casey's specialty fade 40, Skylar's cut w/ shampoo 30 at Le Claire");
 
   // ── Demo logins for the other role templates (not bookable, no history) ──
   for (const [i, d] of DEMO_LOGINS.entries()) {

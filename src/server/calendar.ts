@@ -3,9 +3,11 @@ import { and, asc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import type { RatingSummary } from "@/domain/ratings";
+import type { IntervalSource } from "@/domain/timing";
 import { LocalDate, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, weekdayOf } from "@/lib/time";
 import type { ClientPolicy } from "./client-privacy";
 import { Tenant, hasShop } from "./tenant";
+import { staffIntervals } from "./timing";
 import { ratingSummaries } from "./ratings";
 
 export interface CalAppt {
@@ -30,6 +32,11 @@ export interface CalAppt {
   anyBarber: boolean;
   saleId: string | null;
   saleStatus: string | null;
+  /** Prep and cleanup held around it, as booked. */
+  bufferBeforeMin: number;
+  bufferAfterMin: number;
+  /** Booked off the grid, into buffer time or outside hours. */
+  squeezed: boolean;
 }
 
 export interface CalColumn {
@@ -37,6 +44,10 @@ export interface CalColumn {
   label: string;
   color: string;
   spans: { startMin: number; endMin: number }[];
+  /** This barber's slot interval at this shop and where it comes from; their rows step by it from the start of each stretch they work. */
+  intervalMin: number;
+  intervalSource: IntervalSource;
+  gridStarts: number[];
   blocks: { id: string; startMin: number; endMin: number; reason: string; kind: string }[];
   /** `shop` is null for a shop outside the viewer's workspace. */
   elsewhere: { startMin: number; endMin: number; shop: string | null }[];
@@ -141,6 +152,10 @@ export async function loadDayCalendar(
     ratingSummaries(apptRows.map((r) => r.a.customerId)),
   ]);
 
+  const intervals = await staffIntervals(shop, ids);
+  const stretchStarts = (spans: { startMin: number; endMin: number }[]) =>
+    [...new Set(spans.flatMap((sp) => hours.filter((h) => h.openMin < sp.endMin && sp.startMin < h.closeMin).map((h) => Math.max(h.openMin, sp.startMin))))].sort((a, b) => a - b);
+
   // Barbers working elsewhere today also show their other-shop schedule as "elsewhere".
   const otherScheds = ids.length
     ? await db
@@ -150,42 +165,52 @@ export async function loadDayCalendar(
         .where(and(inArray(staffSchedules.staffId, ids), eq(staffSchedules.weekday, wd), ne(staffSchedules.shopId, shopId)))
     : [];
 
-  const columns: CalColumn[] = cols.map((c) => ({
-    id: c.id,
-    label: c.label,
-    color: c.color,
-    spans: schedRows.filter((s) => s.staffId === c.id).map((s) => ({ startMin: s.startMin, endMin: s.endMin })),
-    blocks: blocks
-      .filter((b) => b.staffId === c.id)
-      .map((b) => ({ id: b.id, startMin: clampDay(b.startsAt, date), endMin: clampDay(b.endsAt, date), reason: b.reason, kind: b.kind })),
-    elsewhere: [
-      ...otherScheds.filter((o) => o.staffId === c.id).map((o) => ({ startMin: o.startMin, endMin: o.endMin, shop: shopLabel(o.shopId, o.shop) })),
-      ...elsewhere.filter((e) => e.staffId === c.id).map((e) => ({ startMin: clampDay(e.startsAt, date), endMin: clampDay(e.endsAt, date), shop: shopLabel(e.shopId, e.shop) })),
-    ],
-    appts: apptRows
-      .filter((r) => r.a.staffId === c.id)
-      .map((r) => ({
-        id: r.a.id,
-        code: r.a.code,
-        startMin: clampDay(r.a.startsAt, date),
-        endMin: clampDay(r.a.endsAt, date),
-        startsAt: r.a.startsAt.toISOString(),
-        status: r.a.status,
-        source: r.a.source,
-        customerId: r.a.customerId,
-        customerName: r.firstName ? `${r.firstName}${r.lastName ? ` ${r.lastName}` : ""}` : (r.a.notes?.replace(/^Walk-in: /, "") ?? "Walk-in"),
-        phone: privacy.show("phone", r.phone),
-        hasPhone: !!r.phone,
-        smsOptIn: !!r.smsOptIn,
-        services: items.filter((i) => i.appointmentId === r.a.id).map((i) => i.name),
-        estimateCents: r.a.estimateCents,
-        notes: r.a.notes,
-        rating: r.a.customerId ? privacy.stars(ratings.get(r.a.customerId)) : null,
-        anyBarber: r.a.anyBarber,
-        saleId: r.saleId,
-        saleStatus: r.saleStatus,
-      })),
-  }));
+  const columns: CalColumn[] = cols.map((c) => {
+    const spans = schedRows.filter((s) => s.staffId === c.id).map((s) => ({ startMin: s.startMin, endMin: s.endMin }));
+    const interval = intervals.get(c.id)!;
+    return {
+      id: c.id,
+      label: c.label,
+      color: c.color,
+      spans,
+      intervalMin: interval.minutes,
+      intervalSource: interval.source,
+      gridStarts: stretchStarts(spans),
+      blocks: blocks
+        .filter((b) => b.staffId === c.id)
+        .map((b) => ({ id: b.id, startMin: clampDay(b.startsAt, date), endMin: clampDay(b.endsAt, date), reason: b.reason, kind: b.kind })),
+      elsewhere: [
+        ...otherScheds.filter((o) => o.staffId === c.id).map((o) => ({ startMin: o.startMin, endMin: o.endMin, shop: shopLabel(o.shopId, o.shop) })),
+        ...elsewhere.filter((e) => e.staffId === c.id).map((e) => ({ startMin: clampDay(e.startsAt, date), endMin: clampDay(e.endsAt, date), shop: shopLabel(e.shopId, e.shop) })),
+      ],
+      appts: apptRows
+        .filter((r) => r.a.staffId === c.id)
+        .map((r) => ({
+          id: r.a.id,
+          code: r.a.code,
+          startMin: clampDay(r.a.startsAt, date),
+          endMin: clampDay(r.a.endsAt, date),
+          startsAt: r.a.startsAt.toISOString(),
+          status: r.a.status,
+          source: r.a.source,
+          customerId: r.a.customerId,
+          customerName: r.firstName ? `${r.firstName}${r.lastName ? ` ${r.lastName}` : ""}` : (r.a.notes?.replace(/^Walk-in: /, "") ?? "Walk-in"),
+          phone: privacy.show("phone", r.phone),
+          hasPhone: !!r.phone,
+          smsOptIn: !!r.smsOptIn,
+          services: items.filter((i) => i.appointmentId === r.a.id).map((i) => i.name),
+          estimateCents: r.a.estimateCents,
+          notes: r.a.notes,
+          rating: r.a.customerId ? privacy.stars(ratings.get(r.a.customerId)) : null,
+          anyBarber: r.a.anyBarber,
+          saleId: r.saleId,
+          saleStatus: r.saleStatus,
+          bufferBeforeMin: r.a.bufferBeforeMinutes,
+          bufferAfterMin: r.a.bufferMinutes,
+          squeezed: r.a.squeezed,
+        })),
+    };
+  });
 
   const openMin = hours.length ? Math.min(...hours.map((h) => h.openMin)) : null;
   const closeMin = hours.length ? Math.max(...hours.map((h) => h.closeMin)) : null;

@@ -1,6 +1,6 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, staff, staffServiceDurations, staffShops, Shop } from "@/db/schema";
+import { brandSettings, shops, staff, staffServiceDurations, staffShops, Shop } from "@/db/schema";
 import type { StaffPlan } from "@/domain/availability";
 import { BookingPlan, IntervalSource, bookingPlan, resolveDuration, resolveInterval } from "@/domain/timing";
 import type { EffectiveService } from "./catalog";
@@ -90,3 +90,55 @@ export async function bookingPlans(shop: Shop, staffIds: string[], items: Effect
 }
 
 export const toStaffPlans = (plans: Map<string, StaffBooking>): Record<string, StaffPlan> => Object.fromEntries([...plans].map(([id, b]) => [id, b.plan]));
+
+export interface BarberRow {
+  id: string;
+  label: string;
+  color: string;
+  minutes: number | null;
+  /** Their all-shops setting can only be changed by someone with access to every shop they work at. */
+  canSetEverywhere: boolean;
+  shops: { shopId: string; shopName: string; minutes: number | null; shopMinutes: number; shopSource: IntervalSource; effective: ResolvedInterval }[];
+}
+
+/** Barbers working at these shops (or one barber), with their interval at each of these shops and where it comes from. */
+export async function barberIntervalRows(viewer: { shopIds: string[]; brandWide: boolean }, onlyStaffId?: string): Promise<BarberRow[]> {
+  const brand = await brandInterval();
+  const shopRows = await db.select({ id: shops.id, name: shops.name, minutes: shops.slotIntervalMinutes }).from(shops).where(inArray(shops.id, viewer.shopIds));
+  const shopById = new Map(shopRows.map((s) => [s.id, s]));
+  const links = await db
+    .select({ staffId: staffShops.staffId, shopId: staffShops.shopId, minutes: staffShops.slotIntervalMinutes, label: staff.displayLabel, color: staff.color, barberMinutes: staff.slotIntervalMinutes })
+    .from(staffShops)
+    .innerJoin(staff, eq(staff.id, staffShops.staffId))
+    .where(and(eq(staff.active, true), eq(staff.kind, "person"), onlyStaffId ? eq(staff.id, onlyStaffId) : eq(staff.isBookable, true)))
+    .orderBy(asc(staff.displayLabel));
+  const byBarber = new Map<string, typeof links>();
+  for (const l of links) byBarber.set(l.staffId, [...(byBarber.get(l.staffId) ?? []), l]);
+  return [...byBarber.values()]
+    .filter((ls) => ls.some((l) => shopById.has(l.shopId)))
+    .map((ls) => {
+      const b = ls[0];
+      return {
+        id: b.staffId,
+        label: b.label,
+        color: b.color,
+        minutes: b.barberMinutes,
+        canSetEverywhere: viewer.brandWide || ls.every((l) => shopById.has(l.shopId)),
+        shops: ls
+          .filter((l) => shopById.has(l.shopId))
+          .map((l) => {
+            const shop = shopById.get(l.shopId)!;
+            const shopLevel = resolveInterval({ brand, shop: shop.minutes });
+            return {
+              shopId: l.shopId,
+              shopName: shop.name,
+              minutes: l.minutes,
+              shopMinutes: shopLevel.minutes,
+              shopSource: shopLevel.source,
+              effective: resolveInterval({ brand, shop: shop.minutes, barber: b.barberMinutes, barberAtShop: l.minutes }),
+            };
+          })
+          .sort((x, y) => x.shopName.localeCompare(y.shopName)),
+      };
+    });
+}

@@ -32,6 +32,10 @@ body {
 .shade-block {
   background-image: repeating-linear-gradient(135deg, rgb(254 215 170 / 0.85) 0 6px, rgb(255 237 213 / 0.85) 6px 12px);
 }
+/* Prep and cleanup time held around an appointment */
+.shade-buffer {
+  background-image: repeating-linear-gradient(45deg, rgb(212 212 216 / 0.55) 0 3px, transparent 3px 7px);
+}
 
 @media print {
   .no-print {

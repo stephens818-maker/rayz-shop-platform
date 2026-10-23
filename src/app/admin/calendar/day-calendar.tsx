@@ -5,19 +5,56 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Badge, Button, Field, Input, LinkButton, Notice, Select, StarBadge, StatusBadge, Textarea, buttonClass, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
+import { INTERVAL_SOURCE_LABEL } from "@/domain/timing";
 import type { CalAppt, CalColumn, DayCalendarData } from "@/server/calendar";
 import {
   createBlockAction,
   createStaffAppointmentAction,
   deleteBlockAction,
+  moveAppointmentAction,
   searchCustomersAction,
   setStatusAction,
+  staffOpeningsAction,
   startCheckoutAction,
 } from "./actions";
 import { ContactClient } from "../customers/privacy";
 
 const PX = 1.6; // pixels per minute
 const SNAP = 15;
+
+/** Row lines: each barber on their own interval, or one granularity for the whole shop. Booking always follows the barber's grid. */
+type Grid = "barber" | 15 | 30 | 60;
+const GRIDS: { value: Grid; label: string }[] = [
+  { value: "barber", label: "Each barber" },
+  { value: 15, label: "15" },
+  { value: 30, label: "30" },
+  { value: 60, label: "60" },
+];
+const GRID_KEY = "rayz.calendar.grid";
+
+/** Where each stretch this barber works starts and ends (inside shop hours), in minutes after midnight. */
+function stretches(col: CalColumn, data: DayCalendarData) {
+  const close = data.closeMin ?? 24 * 60;
+  return col.gridStarts.map((g) => ({ start: g, end: Math.min(close, ...col.spans.filter((sp) => sp.startMin <= g && sp.endMin > g).map((sp) => sp.endMin)) }));
+}
+
+/** Row lines for one column: their grid inside the stretches they work, or the shop-wide granularity. */
+function gridLines(col: CalColumn, data: DayCalendarData, grid: Grid): number[] {
+  const out: number[] = [];
+  if (grid === "barber") {
+    for (const st of stretches(col, data)) for (let m = st.start; m < st.end; m += col.intervalMin) out.push(m);
+  } else {
+    for (let m = data.rangeStart; m < data.rangeEnd; m += grid) out.push(m);
+  }
+  return out.filter((m) => m % 60 !== 0);
+}
+
+/** A click lands on this barber's grid when it's inside a stretch they work; elsewhere on the quarter hour. */
+function snapToGrid(col: CalColumn, data: DayCalendarData, m: number) {
+  const st = stretches(col, data).find((x) => m >= x.start && m < x.end);
+  if (!st) return Math.floor(m / SNAP) * SNAP;
+  return st.start + Math.floor((m - st.start) / col.intervalMin) * col.intervalMin;
+}
 
 type Svc = { id: string; name: string; kind: "service" | "addon"; priceCents: number; durationMin: number };
 
@@ -85,6 +122,35 @@ export function DayCalendar({
     return null;
   });
   const [hideCancelled, setHideCancelled] = useState(true);
+  const [grid, setGrid] = useState<Grid>("barber");
+  useEffect(() => {
+    const saved = window.localStorage.getItem(GRID_KEY);
+    if (saved) setGrid(saved === "barber" ? "barber" : (Number(saved) as Grid));
+  }, []);
+  const pickGrid = (g: Grid) => {
+    setGrid(g);
+    window.localStorage.setItem(GRID_KEY, String(g));
+  };
+  const mixed = new Set(data.columns.map((c) => c.intervalMin)).size > 1;
+  const move = useAction();
+  const [dragging, setDragging] = useState<{ appt: CalAppt; grabMin: number } | null>(null);
+  const [ghost, setGhost] = useState<{ colId: string; startMin: number } | null>(null);
+  const [moved, setMoved] = useState<{ id: string; colId: string; startMin: number; appt: CalAppt } | null>(null);
+  const dropOn = (col: CalColumn, startMin: number) => {
+    if (!dragging) return;
+    const a = dragging.appt;
+    setDragging(null);
+    setGhost(null);
+    if (startMin === a.startMin && data.columns.find((c) => c.appts.includes(a))?.id === col.id) return;
+    setMoved({ id: a.id, colId: col.id, startMin, appt: a });
+    move.run(
+      () => moveAppointmentAction(a.id, col.id, data.date, startMin),
+      () => setMoved(null),
+    );
+  };
+  useEffect(() => {
+    if (move.error) setMoved(null);
+  }, [move.error]);
   const scroller = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -157,12 +223,35 @@ export function DayCalendar({
         <Badge tone="violet">{counts.inChair} in chair</Badge>
         <Badge tone="green">{counts.done} done</Badge>
         {canManage.sales && <Badge>{money(counts.est)} est.</Badge>}
-        <label className="ml-auto flex items-center gap-1.5 text-zinc-600">
+        <div className="ml-auto flex items-center gap-2 text-zinc-600">
+          <span id="grid-label">Rows</span>
+          <div role="radiogroup" aria-labelledby="grid-label" className="inline-flex divide-x divide-zinc-200 rounded-md ring-1 ring-zinc-300">
+            {GRIDS.map((g) => (
+              <button
+                key={g.value}
+                type="button"
+                role="radio"
+                aria-checked={grid === g.value}
+                title={g.value === "barber" ? "Each barber's own slot interval" : `Every ${g.value} minutes for the whole shop`}
+                onClick={() => pickGrid(g.value)}
+                className={cx("h-7 px-2 font-medium first:rounded-l-md last:rounded-r-md", grid === g.value ? "bg-ink-900 text-white" : "bg-white hover:bg-zinc-50")}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="flex items-center gap-1.5 text-zinc-600">
           <input type="checkbox" checked={hideCancelled} onChange={(e) => setHideCancelled(e.target.checked)} /> Hide cancelled
         </label>
       </div>
 
       {data.closed && <Notice tone="amber">{data.closed}. Booking is off for this day.</Notice>}
+      {move.error && (
+        <div role="alert">
+          <Notice tone="red">Couldn&apos;t move it: {move.error}</Notice>
+        </div>
+      )}
       {data.columns.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-12 text-center">
           <div className="text-sm font-medium">No barbers scheduled at {data.shop.name} on this day</div>
@@ -198,12 +287,25 @@ export function DayCalendar({
                   data={data}
                   height={height}
                   hours={hours}
+                  grid={grid}
                   nowMin={nowMin}
                   hideCancelled={hideCancelled}
                   selectedId={panel?.kind === "appt" ? panel.appt.id : null}
                   onAppt={(appt) => setPanel({ kind: "appt", col, appt })}
                   onBlock={(block) => setPanel({ kind: "block", col, block })}
                   onEmpty={(startMin) => setPanel({ kind: "new", col, startMin })}
+                  drag={{
+                    active: dragging,
+                    ghost: ghost?.colId === col.id ? ghost.startMin : null,
+                    moved,
+                    start: (appt, grabMin) => setDragging({ appt, grabMin }),
+                    over: (startMin) => setGhost({ colId: col.id, startMin }),
+                    drop: (startMin) => dropOn(col, startMin),
+                    end: () => {
+                      setDragging(null);
+                      setGhost(null);
+                    },
+                  }}
                 />
               ))}
             </div>
@@ -221,14 +323,19 @@ export function DayCalendar({
         <span className="flex items-center gap-1">
           <span className="inline-block h-3 w-3 rounded-sm bg-zinc-200" /> At another shop
         </span>
-        <span>Click an empty spot to book or block time.</span>
+        <span className="flex items-center gap-1">
+          <span className="inline-block h-3 w-3 rounded-sm shade-buffer ring-1 ring-zinc-200" /> Prep or cleanup
+        </span>
+        <span>
+          Click an empty spot to book or block time.{mixed && grid === "barber" ? " Each column's rows follow that barber's slot interval." : ""}
+        </span>
       </div>
 
       {panel && (
         <SidePanel onClose={() => setPanel(null)}>
           {panel.kind === "appt" && <ApptPanel appt={panel.appt} col={panel.col} canManage={canManage} onDone={() => setPanel(null)} />}
           {panel.kind === "block" && <BlockPanel block={panel.block} col={panel.col} onDone={() => setPanel(null)} />}
-          {panel.kind === "new" && <NewPanel col={panel.col} data={data} startMin={panel.startMin} services={services} own={panel.col.id === meId} canAddPhone={canManage.addPhone} onDone={() => setPanel(null)} />}
+          {panel.kind === "new" && <NewPanel key={`${panel.col.id}:${panel.startMin}`} col={panel.col} data={data} startMin={panel.startMin} services={services} own={panel.col.id === meId} canAddPhone={canManage.addPhone} onDone={() => setPanel(null)} />}
         </SidePanel>
       )}
     </div>
@@ -240,23 +347,35 @@ function Column({
   data,
   height,
   hours,
+  grid,
   nowMin,
   hideCancelled,
   selectedId,
   onAppt,
   onBlock,
   onEmpty,
+  drag,
 }: {
   col: CalColumn;
   data: DayCalendarData;
   height: number;
   hours: number[];
+  grid: Grid;
   nowMin: number | null;
   hideCancelled: boolean;
   selectedId: string | null;
   onAppt: (a: CalAppt) => void;
   onBlock: (b: CalColumn["blocks"][number]) => void;
   onEmpty: (startMin: number) => void;
+  drag: {
+    active: { appt: CalAppt; grabMin: number } | null;
+    ghost: number | null;
+    moved: { id: string; colId: string; startMin: number; appt: CalAppt } | null;
+    start: (a: CalAppt, grabMin: number) => void;
+    over: (startMin: number) => void;
+    drop: (startMin: number) => void;
+    end: () => void;
+  };
 }) {
   const top = (m: number) => (Math.max(m, data.rangeStart) - data.rangeStart) * PX;
   const h = (s: number, e: number) => Math.max(0, (Math.min(e, data.rangeEnd) - Math.max(s, data.rangeStart)) * PX);
@@ -269,28 +388,61 @@ function Column({
     cur = Math.max(cur, sp.endMin);
   }
   if (cur < data.rangeEnd) off.push({ s: cur, e: data.rangeEnd });
-  const appts = col.appts.filter((a) => !hideCancelled || a.status !== "cancelled");
+  const own = col.appts.filter((a) => !hideCancelled || a.status !== "cancelled");
+  const incoming = drag.moved && drag.moved.colId === col.id && !own.some((a) => a.id === drag.moved!.id) ? [drag.moved.appt] : [];
+  const appts = [...own, ...incoming];
   const booked = col.appts.filter((a) => !["cancelled", "no_show"].includes(a.status)).length;
+  const lines = useMemo(() => gridLines(col, data, grid), [col, data, grid]);
+  const holding = appts.filter((a) => !["cancelled", "no_show", "completed"].includes(a.status));
+  const minuteAt = (e: React.DragEvent<HTMLElement>) => data.rangeStart + (e.clientY - e.currentTarget.getBoundingClientRect().top) / PX;
+  const dropStart = (e: React.DragEvent<HTMLElement>) => snapToGrid(col, data, Math.round(minuteAt(e) - (drag.active?.grabMin ?? 0)));
+  const dragLen = drag.active ? drag.active.appt.endMin - drag.active.appt.startMin : 0;
 
   return (
     <div className="min-w-40 max-w-sm flex-1 border-r border-zinc-100 last:border-r-0 sm:min-w-48">
       <div className="sticky top-0 z-10 flex h-11 items-center gap-2 border-b border-zinc-200 bg-white px-2">
         <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: col.color }} />
         <span className="truncate text-sm font-semibold">{col.label}</span>
-        <span className="ml-auto text-xs text-zinc-400">{booked}</span>
+        <span className="ml-auto rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium tabular text-zinc-600" title={`${col.intervalMin}-minute slots (${INTERVAL_SOURCE_LABEL[col.intervalSource]})`}>
+          {col.intervalMin}m
+        </span>
+        <span className="text-xs text-zinc-400" title={`${booked} booked`}>
+          {booked}
+        </span>
       </div>
       <div
         className="relative cursor-crosshair"
         style={{ height }}
         onClick={(e) => {
           const y = e.clientY - e.currentTarget.getBoundingClientRect().top;
-          const m = data.rangeStart + Math.floor(y / PX / SNAP) * SNAP;
-          onEmpty(m);
+          onEmpty(snapToGrid(col, data, data.rangeStart + y / PX));
+        }}
+        onDragOver={(e) => {
+          if (!drag.active) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          const m = dropStart(e);
+          if (m !== drag.ghost) drag.over(m);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          drag.drop(dropStart(e));
         }}
       >
         {hours.map((m) => (
-          <div key={m} className="pointer-events-none absolute inset-x-0 border-t border-zinc-100" style={{ top: (m - data.rangeStart) * PX }} />
+          <div key={m} className="pointer-events-none absolute inset-x-0 border-t border-zinc-200" style={{ top: (m - data.rangeStart) * PX }} />
         ))}
+        {lines.map((m) => (
+          <div key={`g${m}`} className="pointer-events-none absolute inset-x-0 border-t border-dashed border-zinc-100" style={{ top: (m - data.rangeStart) * PX }} />
+        ))}
+        {holding.flatMap((a) => [
+          a.bufferBeforeMin > 0 && (
+            <div key={`p${a.id}`} className="shade-buffer pointer-events-none absolute inset-x-1 rounded-t-md" style={{ top: top(a.startMin - a.bufferBeforeMin), height: h(a.startMin - a.bufferBeforeMin, a.startMin) }} />
+          ),
+          a.bufferAfterMin > 0 && (
+            <div key={`c${a.id}`} className="shade-buffer pointer-events-none absolute inset-x-1 rounded-b-md" style={{ top: top(a.endMin), height: h(a.endMin, a.endMin + a.bufferAfterMin) }} />
+          ),
+        ])}
         {off.map((o, i) => (
           <div key={i} className="shade-off pointer-events-none absolute inset-x-0" style={{ top: top(o.s), height: h(o.s, o.e) }} />
         ))}
@@ -313,10 +465,21 @@ function Column({
           </button>
         ))}
         {appts.map((a) => {
+          if (drag.moved?.id === a.id && drag.moved.colId !== col.id) return null;
+          const shownStart = drag.moved?.id === a.id ? drag.moved.startMin : a.startMin;
+          const movable = a.status === "booked" || a.status === "confirmed";
           const hh = h(a.startMin, a.endMin);
           return (
             <button
               key={a.id}
+              draggable={movable}
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("text/plain", a.code);
+                drag.start(a, (e.clientY - e.currentTarget.getBoundingClientRect().top) / PX);
+              }}
+              onDragEnd={drag.end}
+              aria-label={`${a.customerName}, ${label(a.startMin)} to ${label(a.endMin)}${movable ? ". Drag to move" : ""}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onAppt(a);
@@ -326,12 +489,17 @@ function Column({
                 APPT_STYLE[a.status],
                 selectedId === a.id && "z-10 ring-2 ring-zinc-900",
               )}
-              style={{ top: top(a.startMin), height: Math.max(hh, 18), borderLeftColor: col.color }}
+              style={{ top: top(shownStart), height: Math.max(hh, 18), borderLeftColor: col.color }}
             >
               <div className="flex items-center gap-1 font-semibold">
                 <span className="truncate">{a.customerName}</span>
                 <StarBadge rating={a.rating} showCount={false} />
                 {a.source === "walk_in" && <span className="shrink-0 font-normal opacity-70">(walk-in)</span>}
+                {a.squeezed && (
+                  <span className="shrink-0 rounded bg-white/70 px-1 text-[10px] font-semibold uppercase tracking-wide opacity-80" title="Squeezed in off the grid or into buffer time">
+                    squeeze
+                  </span>
+                )}
               </div>
               {hh > 30 && <div className="truncate opacity-80">{a.services.join(" + ")}</div>}
               {hh > 48 && (
@@ -342,6 +510,14 @@ function Column({
             </button>
           );
         })}
+        {drag.ghost !== null && drag.active && (
+          <div
+            className="pointer-events-none absolute inset-x-1 z-20 rounded-md border-2 border-dashed border-ink-900 bg-white/60 px-1.5 py-0.5 text-[11px] font-semibold text-ink-900"
+            style={{ top: top(drag.ghost), height: Math.max(h(drag.ghost, drag.ghost + dragLen), 18) }}
+          >
+            {label(drag.ghost)}
+          </div>
+        )}
         {nowMin !== null && nowMin >= data.rangeStart && nowMin <= data.rangeEnd && (
           <div className="pointer-events-none absolute inset-x-0 z-[5] border-t-2 border-brand-600" style={{ top: (nowMin - data.rangeStart) * PX }} />
         )}
@@ -575,8 +751,25 @@ function NewPanel({
     return () => clearTimeout(t);
   }, [q]);
 
-  const dur = [serviceId, ...addonIds].reduce((a, id) => a + (services.find((s) => s.id === id)?.durationMin ?? 0), 0);
+  const menuDur = [serviceId, ...addonIds].reduce((a, id) => a + (services.find((s) => s.id === id)?.durationMin ?? 0), 0);
   const price = [serviceId, ...addonIds].reduce((a, id) => a + (services.find((s) => s.id === id)?.priceCents ?? 0), 0);
+  const [openings, setOpenings] = useState<{ key: string; durationMin: number; starts: number[]; reason: string | null; canSqueeze: boolean } | null>(null);
+  const [squeeze, setSqueeze] = useState(false);
+  const openingsKey = `${serviceId}|${addonIds.join(",")}`;
+  useEffect(() => {
+    if (!serviceId) return;
+    let live = true;
+    staffOpeningsAction({ shopId: data.shop.id, staffId: col.id, date: data.date, serviceId, addonIds: openingsKey.split("|")[1].split(",").filter(Boolean) }).then((r) => {
+      if (live && r.ok) setOpenings({ key: openingsKey, ...r.data });
+    });
+    return () => {
+      live = false;
+    };
+  }, [data.shop.id, data.date, col.id, serviceId, openingsKey]);
+  const loaded = openings?.key === openingsKey ? openings : null;
+  const dur = loaded?.durationMin ?? menuDur;
+  const startMinPicked = fromHHMM(time);
+  const isOpen = loaded?.starts.includes(startMinPicked) ?? true;
 
   return (
     <div className="space-y-4">
@@ -595,13 +788,55 @@ function NewPanel({
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Start">
-              <Input type="time" step={900} value={time} onChange={(e) => setTime(e.target.value)} />
+              <Input type="time" step={(squeeze ? 5 : col.intervalMin) * 60} value={time} onChange={(e) => setTime(e.target.value)} />
             </Field>
-            <Field label="Length">
+            <Field label={`Length with ${col.label}`}>
               <div className="flex h-[38px] items-center text-sm text-zinc-600">
                 {dur} min · {money(price)}
               </div>
             </Field>
+          </div>
+          <div>
+            <div className="mb-1 flex items-baseline justify-between text-xs font-medium text-zinc-700">
+              <span>Open times</span>
+              <span className="font-normal text-zinc-500">{col.intervalMin}-minute grid</span>
+            </div>
+            {!loaded ? (
+              <div className="flex flex-wrap gap-1.5" aria-busy="true" aria-label="Loading open times">
+                {Array.from({ length: 8 }, (_, i) => (
+                  <span key={i} className="h-7 w-16 animate-pulse rounded-full bg-zinc-100" />
+                ))}
+              </div>
+            ) : loaded.starts.length === 0 ? (
+              <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600">{loaded.reason ?? "No openings"} for this service with {col.label}.</div>
+            ) : (
+              <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
+                {loaded.starts.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    aria-pressed={m === startMinPicked}
+                    onClick={() => {
+                      setTime(hhmm(m));
+                      setSqueeze(false);
+                    }}
+                    className={cx("rounded-full px-2.5 py-1 text-xs tabular ring-1 transition", m === startMinPicked ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
+                  >
+                    {label(m)}
+                  </button>
+                ))}
+              </div>
+            )}
+            {loaded && !isOpen && (
+              <div className="mt-2 space-y-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200">
+                <div>{label(startMinPicked)} isn&apos;t an open time on {col.label}&apos;s grid for this service.</div>
+                {loaded.canSqueeze && (
+                  <label className="flex items-center gap-2 font-medium">
+                    <input type="checkbox" checked={squeeze} onChange={(e) => setSqueeze(e.target.checked)} /> Squeeze in anyway (logged)
+                  </label>
+                )}
+              </div>
+            )}
           </div>
           <Field label="Service">
             <Select value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
@@ -680,7 +915,7 @@ function NewPanel({
           <Button
             className="w-full"
             size="lg"
-            disabled={pending || !serviceId}
+            disabled={pending || !serviceId || (!!loaded && !isOpen && !squeeze)}
             onClick={() =>
               run(
                 () =>
@@ -694,12 +929,13 @@ function NewPanel({
                     customerId: picked?.id ?? null,
                     customer: picked ? null : { firstName: first || q.split(" ")[0] || "", lastName: last, phone },
                     notes,
+                    squeezeIn: squeeze && !isOpen,
                   }),
                 onDone,
               )
             }
           >
-            Book {label(fromHHMM(time))}
+            {squeeze && !isOpen ? "Squeeze in" : "Book"} {label(fromHHMM(time))}
           </Button>
         </div>
       ) : (
