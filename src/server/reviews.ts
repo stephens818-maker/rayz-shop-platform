@@ -5,11 +5,12 @@ import { receiptBranding } from "@/domain/connect";
 import { inQuietHours } from "@/domain/outreach";
 import type { ReceiptSendChannel, ReceiptSkip } from "@/domain/receipts";
 import { TOKEN_SHAPE, hashToken } from "@/domain/rebook-token";
-import { FOLLOW_UP_LOOKBACK_HOURS, isAutomatedOpen } from "@/domain/reviews";
+import { FOLLOW_UP_LOOKBACK_HOURS, ReviewRules, isAutomatedOpen } from "@/domain/reviews";
 import { localMinutesOf } from "@/lib/time";
 import { SYSTEM, audit } from "./audit";
 import { loadOutreachRules } from "./call-ins";
 import { deliverReceipt, isOptedOut } from "./receipts";
+import { loadReviewRules, reviewTiming } from "./review-rules";
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -40,10 +41,11 @@ export type ReviewAsk = "queued" | ReceiptSkip | "done";
 
 /**
  * Asks for a review for one paid ticket, once. Who's asked never depends on how the visit went:
- * the only checks are consent (agreed to texts or emails, and not opted out) and the location's
- * "ask again after" days. Texts first if the client agreed to texts, otherwise email.
+ * the only checks are the visit count (from the Nth visit, across all locations), a tap on this
+ * location's link lately, the location's "ask again after" days, and consent (agreed to texts or
+ * emails, and not opted out). Texts first if the client agreed to texts, otherwise email.
  */
-export async function askForReview(saleId: string, repeatDays: number, now: Date, tx: DBorTx): Promise<ReviewAsk> {
+export async function askForReview(saleId: string, repeatDays: number, now: Date, tx: DBorTx, brand?: ReviewRules): Promise<ReviewAsk> {
   const sale = await tx.query.sales.findFirst({ where: eq(sales.id, saleId), columns: { id: true, shopId: true, customerId: true } });
   if (!sale?.customerId) return "done";
   const asked = await tx.query.receiptDeliveries.findFirst({ where: and(eq(receiptDeliveries.saleId, saleId), eq(receiptDeliveries.purpose, "review")), columns: { id: true } });
@@ -52,6 +54,8 @@ export async function askForReview(saleId: string, repeatDays: number, now: Date
     await tx.insert(receiptDeliveries).values({ saleId, shopId: sale.shopId, customerId: sale.customerId, channel: "none", purpose: "review", skipped: why, createdAt: now });
     return why;
   };
+  const { hold } = await reviewTiming(saleId, now, tx, brand);
+  if (hold) return skip(hold);
   if (repeatDays > 0) {
     const recent = await tx.query.receiptDeliveries.findFirst({
       where: and(
@@ -90,12 +94,14 @@ export async function askForReview(saleId: string, repeatDays: number, now: Date
  * The notifications cron: for each location with the follow-up on and a Google review link, asks
  * about tickets paid the set number of hours ago. Nothing goes out in the brand's quiet hours; those
  * tickets are picked up when they end (up to FOLLOW_UP_LOOKBACK_HOURS late). Voided tickets (rung up
- * by mistake) are skipped; refunds, ratings, tips and complaints don't change who's asked.
+ * by mistake) are skipped; before the client's Nth visit, or soon after they tapped the link, the
+ * skip is recorded. Refunds, ratings, tips and complaints don't change who's asked.
  */
 export async function queueReviewFollowUps(now = new Date()) {
   const out = { queued: 0, skipped: 0, quiet: false };
   if (inQuietHours(localMinutesOf(now), await loadOutreachRules())) return { ...out, quiet: true };
   const list = await db.select({ id: shops.id, receipt: shops.receipt }).from(shops).where(eq(shops.active, true));
+  const brand = await loadReviewRules();
   for (const shop of list) {
     const b = receiptBranding(shop.receipt);
     if (!b.reviewUrl || !b.reviewFollowUp.enabled) continue;
@@ -122,7 +128,7 @@ export async function queueReviewFollowUps(now = new Date()) {
         const r = await db.transaction(async (tx) => {
           // Two cron runs at once ask each client once.
           await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`review:${s.customerId}`}))`);
-          return askForReview(s.id, b.reviewFollowUp.repeatDays, now, tx);
+          return askForReview(s.id, b.reviewFollowUp.repeatDays, now, tx, brand);
         });
         if (r === "queued") out.queued++;
         else if (r !== "done") out.skipped++;

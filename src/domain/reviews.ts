@@ -1,8 +1,9 @@
 /**
- * Google reviews: each location's review link, the optional follow-up after a visit, and its wording.
- * Every client is sent the same link the same way. Nothing here (or in the server code that uses it)
- * looks at ratings, tips, refunds or complaints: asking only happy clients ("review gating") is
- * against Google's review policy.
+ * Google reviews: each location's review link, when it's shown (from the client's Nth visit, and not
+ * again for a while after a tap), the optional follow-up after a visit, and its wording. Everyone who
+ * qualifies gets the same link the same way. Nothing here (or in the server code that uses it) looks
+ * at ratings, tips, refunds or complaints: asking only happy clients ("review gating") is against
+ * Google's review policy.
  */
 import { z } from "zod";
 
@@ -57,8 +58,9 @@ export const storedReviewLink = (raw: unknown): string | null => {
 export const REVIEW_FOLLOW_UP_DEFAULT = { enabled: false, delayHours: 3, repeatDays: 90 };
 
 /**
- * Per location. The same request goes to every client who has agreed to texts or emails, a set time
- * after their ticket is paid, by text if they agreed to texts and otherwise by email.
+ * Per location. The same request, a set time after the ticket is paid, to every client who has agreed
+ * to texts or emails and is at the location's visit threshold; by text if they agreed to texts,
+ * otherwise by email.
  */
 export const ReviewFollowUpSchema = z.object({
   enabled: z.boolean().default(false),
@@ -76,6 +78,56 @@ export function reviewFollowUp(raw: unknown): ReviewFollowUp {
 
 /** Tickets paid longer ago than the delay plus this aren't asked any more (a cron that was down for a day). */
 export const FOLLOW_UP_LOOKBACK_HOURS = 24;
+
+// ───────────────────────────── When to ask: visit count and a pause after a tap ─────────────────────────────
+
+const minVisits = z.number().int().min(1, "Start at visit 1 to 50").max(50, "Start at visit 1 to 50");
+const snoozeDays = z.number().int().min(0, "Pause 0 to 365 days").max(365, "Pause 0 to 365 days");
+
+/**
+ * The brand's rules for showing the review link (on the receipt and in the follow-up): from the
+ * client's Nth completed visit, counted across every location, and not again at a location for some
+ * days after they tapped its link. Visit count and taps only: never ratings, tips or refunds.
+ */
+export const ReviewRulesSchema = z.object({ minVisits: minVisits.default(3), snoozeDays: snoozeDays.default(90) });
+export type ReviewRules = z.output<typeof ReviewRulesSchema>;
+export const REVIEW_RULES_DEFAULT: ReviewRules = { minVisits: 3, snoozeDays: 90 };
+
+export function reviewRules(raw: unknown): ReviewRules {
+  const r = ReviewRulesSchema.safeParse(raw && typeof raw === "object" ? raw : {});
+  return r.success ? r.data : { ...REVIEW_RULES_DEFAULT };
+}
+
+/** A location's overrides, saved with its receipt settings; null uses the brand's. */
+export const ReviewMinVisitsSchema = minVisits.nullable().default(null);
+export const ReviewSnoozeDaysSchema = snoozeDays.nullable().default(null);
+export const storedOverride = (raw: unknown, schema: typeof ReviewMinVisitsSchema | typeof ReviewSnoozeDaysSchema): number | null => {
+  const r = schema.safeParse(raw ?? null);
+  return r.success ? r.data : null;
+};
+
+export function locationReviewRules(brand: ReviewRules, shop: { reviewMinVisits: number | null; reviewSnoozeDays: number | null }): ReviewRules {
+  return { minVisits: shop.reviewMinVisits ?? brand.minVisits, snoozeDays: shop.reviewSnoozeDays ?? brand.snoozeDays };
+}
+
+export type ReviewHold = "few_visits" | "snoozed";
+
+/**
+ * Whether this visit gets the review link. `visit` is which completed visit this ticket is for the
+ * client (1 for their first, counted across all locations); `tappedRecently` is a tap on this
+ * location's link from another of their tickets within the pause.
+ */
+export function reviewHold(o: { visit: number; rules: ReviewRules; tappedRecently: boolean }): ReviewHold | null {
+  if (o.visit < o.rules.minVisits) return "few_visits";
+  if (o.tappedRecently) return "snoozed";
+  return null;
+}
+
+export const ordinal = (n: number) => {
+  const t = n % 100;
+  const s = t >= 11 && t <= 13 ? "th" : (["th", "st", "nd", "rd"][n % 10] ?? "th");
+  return `${n}${s}`;
+};
 
 /** The text: the same for everyone, with the tracked link. */
 export function reviewRequestSms(o: { title: string; firstName: string | null; url: string }): string {

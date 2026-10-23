@@ -10,7 +10,7 @@
  * Pure: the states, the fee schedule, statement descriptors, payout schedules and their labels.
  */
 import { z } from "zod";
-import { REVIEW_FOLLOW_UP_DEFAULT, ReviewFollowUpSchema, googleReviewLink, reviewFollowUp, storedReviewLink } from "./reviews";
+import { REVIEW_FOLLOW_UP_DEFAULT, ReviewFollowUpSchema, ReviewMinVisitsSchema, ReviewSnoozeDaysSchema, googleReviewLink, reviewFollowUp, storedOverride, storedReviewLink } from "./reviews";
 import type { PaymentsMode, PayoutSchedule } from "@/db/schema";
 
 export type { PaymentsMode, PayoutSchedule };
@@ -155,6 +155,10 @@ export const ReceiptBrandingSchema = z.object({
       return z.NEVER;
     }),
   reviewFollowUp: ReviewFollowUpSchema.default({ ...REVIEW_FOLLOW_UP_DEFAULT }),
+  /** Show the review link from this completed visit (counted across all locations); null: the brand's. */
+  reviewMinVisits: ReviewMinVisitsSchema,
+  /** Days before this location asks again after the client taps its link; null: the brand's. */
+  reviewSnoozeDays: ReviewSnoozeDaysSchema,
   /** Receipts are digital. A Print button on the staff receipt only where the shop turns it on. */
   allowPrint: z.boolean().default(false),
 });
@@ -163,7 +167,7 @@ export type ReceiptBranding = z.output<typeof ReceiptBrandingSchema>;
 /** Stored settings, read defensively: a link that isn't Google's or follow-up settings out of range fall back to none and off. */
 export function receiptBranding(raw: unknown): ReceiptBranding {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const r = ReceiptBrandingSchema.safeParse({ ...o, reviewUrl: storedReviewLink(o.reviewUrl), reviewFollowUp: reviewFollowUp(o.reviewFollowUp) });
+  const r = ReceiptBrandingSchema.safeParse({ ...o, reviewUrl: storedReviewLink(o.reviewUrl), reviewFollowUp: reviewFollowUp(o.reviewFollowUp), reviewMinVisits: storedOverride(o.reviewMinVisits, ReviewMinVisitsSchema), reviewSnoozeDays: storedOverride(o.reviewSnoozeDays, ReviewSnoozeDaysSchema) });
   return r.success ? { ...r.data, headline: r.data.headline || null, footer: r.data.footer || null } : ReceiptBrandingSchema.parse({});
 }
 

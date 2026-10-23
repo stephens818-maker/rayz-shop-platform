@@ -2,7 +2,8 @@
  * Google review links against a real database: the per-location link in settings (a Place ID saved
  * as the write-review link), clicks on Leave a review counted per location and barber, the optional
  * follow-up a few hours after the visit (opt-in only, STOP and email opt-outs, quiet hours, the
- * "ask again after" limit, once per ticket), no review gating, and the report.
+ * "ask again after" limit, once per ticket), no review gating, the report, and when the link is
+ * shown: from the client's Nth visit across all locations, and not again for a while after a tap.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Mods, actor, loadModules } from "./setup";
@@ -14,12 +15,13 @@ vi.mock("next/cache", () => ({ revalidatePath() {}, revalidateTag() {} }));
 
 let m: Mods;
 let RV: typeof import("@/server/reviews");
+let RR: typeof import("@/server/review-rules");
 let R: typeof import("@/server/receipts");
 let settings: typeof import("@/app/admin/settings/actions");
 let L: typeof import("@/server/report-data");
 let S: typeof import("@/app/admin/reports/scope");
 let route: typeof import("@/app/receipt/[token]/review/route").GET;
-const fx = { cv: "", other: "", otherBarber: "", michelle: "", second: "", owner: "", cutId: {} as Record<string, string>, outreach: {} as Record<string, unknown> };
+const fx = { cv: "", other: "", otherBarber: "", michelle: "", second: "", owner: "", cutId: {} as Record<string, string>, outreach: {} as Record<string, unknown>, reviews: {} as Record<string, unknown> };
 let seq = 0;
 
 const PLACE = "ChIJrayzCoralvilleTest01";
@@ -33,6 +35,7 @@ const HOUR = 3600_000;
 beforeAll(async () => {
   m = await loadModules();
   RV = await import("@/server/reviews");
+  RR = await import("@/server/review-rules");
   R = await import("@/server/receipts");
   settings = await import("@/app/admin/settings/actions");
   L = await import("@/server/report-data");
@@ -54,15 +57,16 @@ beforeAll(async () => {
     }
   }
   fx.cutId[cv.id] = await cut(cv.id);
-  const [b] = await m.db.db.select({ outreach: s().brandSettings.outreach }).from(s().brandSettings).limit(1);
+  const [b] = await m.db.db.select({ outreach: s().brandSettings.outreach, reviews: s().brandSettings.reviews }).from(s().brandSettings).limit(1);
   fx.outreach = (b?.outreach as Record<string, unknown>) ?? {};
-  // Default quiet hours: 9 PM to 8 AM Chicago.
-  await m.db.db.update(s().brandSettings).set({ outreach: {} });
+  fx.reviews = (b?.reviews as Record<string, unknown>) ?? {};
+  // Default quiet hours (9 PM to 8 AM Chicago) and review rules (from the 3rd visit, 90 days after a tap).
+  await m.db.db.update(s().brandSettings).set({ outreach: {}, reviews: {} });
 }, 180_000);
 
 afterAll(async () => {
   if (m) {
-    await m.db.db.update(s().brandSettings).set({ outreach: fx.outreach });
+    await m.db.db.update(s().brandSettings).set({ outreach: fx.outreach, reviews: fx.reviews });
     await m.db.db.update(s().shops).set({ receipt: {} }).where(m.drizzle.inArray(s().shops.id, [fx.cv, fx.other]));
     await m.db.closeDb();
   }
@@ -126,10 +130,18 @@ const reviewRows = (saleId: string) =>
 const job = async (id: string | null) => (await m.db.db.select().from(s().notificationJobs).where(eq(s().notificationJobs.id, id!)))[0];
 const tokenIn = (body: string) => body.match(/\/receipt\/([A-Za-z0-9_-]{43})\/review/)![1];
 const shopReceipt = async (id: string) => (await m.db.db.query.shops.findFirst({ where: eq(s().shops.id, id), columns: { receipt: true } }))!.receipt as Record<string, unknown>;
-const followUpOn = (shopId: string, reviewUrl: string, f: { delayHours?: number; repeatDays?: number } = {}) =>
+/** The follow-up on at a location. These fixtures' clients are new, so the link shows from visit 1 unless `minVisits` says otherwise (null: the brand's). */
+const followUpOn = (shopId: string, reviewUrl: string, f: { delayHours?: number; repeatDays?: number; minVisits?: number | null; snoozeDays?: number | null } = {}) =>
   m.db.db
     .update(s().shops)
-    .set({ receipt: { reviewUrl, reviewFollowUp: { enabled: true, delayHours: f.delayHours ?? 3, repeatDays: f.repeatDays ?? 90 } } })
+    .set({
+      receipt: {
+        reviewUrl,
+        reviewFollowUp: { enabled: true, delayHours: f.delayHours ?? 3, repeatDays: f.repeatDays ?? 90 },
+        reviewMinVisits: f.minVisits === undefined ? 1 : f.minVisits,
+        reviewSnoozeDays: f.snoozeDays ?? null,
+      },
+    })
     .where(eq(s().shops.id, shopId));
 const open = (token: string, ua: string | null = IPHONE) => route(new Request(`http://localhost/receipt/${token}/review`, { headers: ua ? { "user-agent": ua } : {} }), { params: Promise.resolve({ token }) });
 const clicks = (saleId: string) => m.db.db.select().from(s().reviewClicks).where(eq(s().reviewClicks.saleId, saleId));
@@ -325,13 +337,13 @@ describe("the follow-up after a visit", () => {
 
   it("is off unless the location turns it on and has a link", async () => {
     const paidAt = at("2028-02-17", "10:00");
-    await m.db.db.update(s().shops).set({ receipt: { reviewUrl: WRITE } }).where(eq(s().shops.id, fx.cv));
+    await m.db.db.update(s().shops).set({ receipt: { reviewUrl: WRITE, reviewMinVisits: 1 } }).where(eq(s().shops.id, fx.cv));
     const off = await paid(paidAt, { smsOptIn: true });
     await RV.queueReviewFollowUps(new Date(paidAt.getTime() + 3 * HOUR));
     expect(await reviewRows(off.saleId)).toHaveLength(0);
     await m.db.db
       .update(s().shops)
-      .set({ receipt: { reviewUrl: null, reviewFollowUp: { enabled: true, delayHours: 3, repeatDays: 90 } } })
+      .set({ receipt: { reviewUrl: null, reviewFollowUp: { enabled: true, delayHours: 3, repeatDays: 90 }, reviewMinVisits: 1 } })
       .where(eq(s().shops.id, fx.cv));
     await RV.queueReviewFollowUps(new Date(paidAt.getTime() + 3 * HOUR));
     expect(await reviewRows(off.saleId)).toHaveLength(0);
@@ -339,6 +351,158 @@ describe("the follow-up after a visit", () => {
     await followUpOn(fx.cv, WRITE, { delayHours: 3 });
     await RV.queueReviewFollowUps(new Date(paidAt.getTime() + 28 * HOUR));
     expect(await reviewRows(off.saleId)).toHaveLength(0);
+  });
+});
+
+describe("when the review link is shown", () => {
+  let codes = 0;
+  /** An appointment on `day` (Chicago), checked out or not. */
+  async function booking(customerId: string, day: string, status: "completed" | "cancelled" | "no_show", shopId = fx.cv) {
+    const startsAt = at(day, "09:00");
+    await m.db.db.insert(s().appointments).values({
+      code: `RVW${Date.now().toString(36).toUpperCase()}${++codes}`,
+      shopId,
+      staffId: shopId === fx.cv ? fx.michelle : fx.otherBarber,
+      customerId,
+      startsAt,
+      endsAt: new Date(startsAt.getTime() + HOUR / 2),
+      status,
+      source: "staff",
+      completedAt: status === "completed" ? startsAt : null,
+    });
+  }
+  /** A ticket from the Squire import. */
+  const imported = (customerId: string, day: string, shopId = fx.cv) =>
+    m.db.db.insert(s().sales).values({ shopId, customerId, businessDate: day, status: "paid", isImported: true, paidAt: at(day, "10:00"), totalCents: 3500 });
+  const shown = async (saleId: string, now: Date) => (await R.receiptData(saleId, m.db.db, now)).reviewUrl;
+  const askAt = (paidAt: Date) => RV.queueReviewFollowUps(new Date(paidAt.getTime() + 3 * HOUR));
+
+  it("starts at the client's 3rd visit, counted across locations; the 1st and 2nd get no button and no follow-up", async () => {
+    await followUpOn(fx.cv, WRITE, { minVisits: null, repeatDays: 0 });
+    await followUpOn(fx.other, OTHER_LINK, { minVisits: null, repeatDays: 0 });
+    const v1 = await paid(at("2028-05-01", "10:00"), { shopId: fx.other, smsOptIn: true });
+    const c = v1.customerId!;
+    await askAt(at("2028-05-01", "10:00"));
+    const v2 = await paid(at("2028-05-08", "10:00"), { customerId: c });
+    // A second ticket the same day at the same location is the same visit.
+    const v2b = await paid(at("2028-05-08", "11:00"), { customerId: c });
+    await askAt(at("2028-05-08", "11:00"));
+    // The 3rd visit: rated 1 star, no tip, part refunded. Still asked, the same way as anyone.
+    const v3 = await paid(at("2028-05-15", "10:00"), { customerId: c, tipCents: 0 });
+    await m.db.db.insert(s().clientRatings).values({ customerId: c, shopId: fx.cv, saleId: v3.saleId, staffId: fx.michelle, stars: 1 });
+    const item = (await m.checkout.refundableState(v3.saleId)).items[0];
+    await m.checkout.refundSale({ saleId: v3.saleId, items: [{ saleItemId: item.id, qty: 1 }], tipCents: 0, refundCardFee: false, reason: "Unhappy with the fade", restock: false, actor, now: at("2028-05-15", "10:30") });
+    await askAt(at("2028-05-15", "10:00"));
+
+    const now = at("2028-05-15", "14:00");
+    expect(await shown(v1.saleId, now)).toBeNull();
+    expect(await shown(v2.saleId, now)).toBeNull();
+    expect(await shown(v2b.saleId, now)).toBeNull();
+    expect(await shown(v3.saleId, now)).toBe(WRITE);
+    for (const t of [v1, v2]) expect(await reviewRows(t.saleId)).toEqual([expect.objectContaining({ channel: "none", skipped: "few_visits", jobId: null })]);
+    expect(await reviewRows(v2b.saleId)).toEqual([expect.objectContaining({ skipped: "few_visits" })]);
+    expect(await reviewRows(v3.saleId)).toEqual([expect.objectContaining({ channel: "sms", skipped: null })]);
+    expect((await job((await reviewRows(v3.saleId))[0].jobId)).body).toMatch(/We'd appreciate an honest review on Google/);
+    expect(await RR.reviewTiming(v3.saleId, now)).toMatchObject({ hold: null, visit: 3, rules: { minVisits: 3 } });
+    expect(await RR.reviewTiming(v2b.saleId, now)).toMatchObject({ hold: "few_visits", visit: 2 });
+
+    // A walk-in without a client on file is a first visit.
+    const walkIn = await paid(at("2028-05-15", "10:00"), { customerId: null });
+    expect(await shown(walkIn.saleId, now)).toBeNull();
+  });
+
+  it("counts checked-out appointments and imported history; not cancelled, no-shows, open or voided tickets", async () => {
+    await followUpOn(fx.cv, WRITE, { minVisits: null, repeatDays: 0 });
+    const c = (await client({ smsOptIn: true })).id;
+    await booking(c, "2027-03-02", "cancelled");
+    await booking(c, "2027-03-09", "no_show", fx.other);
+    const open = await m.checkout.openBlankSale(fx.cv, actor, fx.michelle);
+    await m.db.db.update(s().sales).set({ customerId: c }).where(eq(s().sales.id, open.id));
+    const voided = await paid(at("2028-05-22", "09:00"), { customerId: c });
+    await m.checkout.voidSale(voided.saleId, "Rang up the wrong client", actor, at("2028-05-22", "09:10"));
+    const t = await paid(at("2028-05-22", "10:00"), { customerId: c });
+    expect(await RR.visitNumber(c, "2028-05-22")).toBe(1);
+    expect(await shown(t.saleId, at("2028-05-22", "12:00"))).toBeNull();
+
+    // A checked-out appointment and its imported ticket the same day are one visit.
+    await booking(c, "2027-04-06", "completed", fx.other);
+    await imported(c, "2027-04-06", fx.other);
+    expect(await RR.visitNumber(c, "2028-05-22")).toBe(2);
+    await imported(c, "2027-05-11");
+    expect(await RR.visitNumber(c, "2028-05-22")).toBe(3);
+    // Visits after the ticket don't count toward it.
+    expect(await RR.visitNumber(c, "2027-04-30")).toBe(1);
+    expect(await shown(t.saleId, at("2028-05-22", "12:00"))).toBe(WRITE);
+    await askAt(at("2028-05-22", "10:00"));
+    expect(await reviewRows(t.saleId)).toEqual([expect.objectContaining({ channel: "sms", skipped: null })]);
+  });
+
+  it("the brand sets the visit and each location can set its own", async () => {
+    await signInAs(fx.michelle);
+    expect(await settings.saveReviewRulesAction({ minVisits: 2, snoozeDays: 30 })).toMatchObject({ ok: false });
+    await signInAs(fx.owner);
+    expect(await settings.saveReviewRulesAction({ minVisits: 0, snoozeDays: 30 })).toMatchObject({ ok: false, error: "Start at visit 1 to 50" });
+    expect(await settings.saveReviewRulesAction({ minVisits: 2, snoozeDays: 30 })).toMatchObject({ ok: true });
+    expect(await RR.loadReviewRules()).toEqual({ minVisits: 2, snoozeDays: 30 });
+    const [a] = await m.db.db.select().from(s().auditLog).where(eq(s().auditLog.action, "brand.review_rules")).orderBy(m.drizzle.desc(s().auditLog.at)).limit(1);
+    expect(a.details).toMatchObject({ before: { minVisits: 3, snoozeDays: 90 }, after: { minVisits: 2, snoozeDays: 30 } });
+
+    expect(await settings.saveReceiptAction(fx.cv, { reviewUrl: WRITE, reviewFollowUp: { enabled: true, delayHours: 3, repeatDays: 0 } })).toMatchObject({ ok: true });
+    expect(await shopReceipt(fx.cv)).toMatchObject({ reviewMinVisits: null, reviewSnoozeDays: null });
+    const first = await paid(at("2028-05-29", "09:00"), { smsOptIn: true });
+    const second = await paid(at("2028-06-02", "10:00"), { customerId: first.customerId });
+    expect(await shown(second.saleId, at("2028-06-02", "12:00"))).toBe(WRITE);
+
+    expect(await settings.saveReceiptAction(fx.cv, { reviewUrl: WRITE, reviewMinVisits: 0 })).toMatchObject({ ok: false, error: "Start at visit 1 to 50" });
+    expect(await settings.saveReceiptAction(fx.cv, { reviewUrl: WRITE, reviewFollowUp: { enabled: true, delayHours: 3, repeatDays: 0 }, reviewMinVisits: 4 })).toMatchObject({ ok: true });
+    expect(await shopReceipt(fx.cv)).toMatchObject({ reviewMinVisits: 4 });
+    expect(await shown(second.saleId, at("2028-06-02", "12:00"))).toBeNull();
+    await askAt(at("2028-06-02", "10:00"));
+    expect(await reviewRows(second.saleId)).toEqual([expect.objectContaining({ skipped: "few_visits" })]);
+    // 1 shows it to everyone.
+    await settings.saveReceiptAction(fx.cv, { reviewUrl: WRITE, reviewMinVisits: 1 });
+    expect(await shown(first.saleId, at("2028-06-02", "12:00"))).toBe(WRITE);
+
+    await settings.saveReviewRulesAction({ minVisits: 3, snoozeDays: 90 });
+    await signInAs(null);
+  });
+
+  it("after a tap, not again at that location for the set days; the receipt they tapped keeps its button", async () => {
+    await followUpOn(fx.cv, WRITE, { repeatDays: 0 });
+    await followUpOn(fx.other, OTHER_LINK, { repeatDays: 0 });
+    const a = await paid(at("2028-06-05", "10:00"), { smsOptIn: true });
+    const c = a.customerId!;
+    await askAt(at("2028-06-05", "10:00"));
+    await RV.openReviewLink(tokenIn((await job((await reviewRows(a.saleId))[0].jobId)).body), IPHONE, at("2028-06-05", "15:00"));
+
+    const b = await paid(at("2028-06-19", "10:00"), { customerId: c });
+    await askAt(at("2028-06-19", "10:00"));
+    const then = at("2028-06-19", "14:00");
+    expect(await shown(b.saleId, then)).toBeNull();
+    expect(await reviewRows(b.saleId)).toEqual([expect.objectContaining({ channel: "none", skipped: "snoozed" })]);
+    expect(await shown(a.saleId, then)).toBe(WRITE);
+    // Another location's link isn't paused.
+    const there = await paid(at("2028-06-19", "10:00"), { shopId: fx.other, customerId: c });
+    expect(await shown(there.saleId, then)).toBe(OTHER_LINK);
+
+    // 90 days on, asked again.
+    const later = await paid(at("2028-09-05", "10:00"), { customerId: c });
+    expect(await shown(later.saleId, at("2028-09-05", "12:00"))).toBe(WRITE);
+    await askAt(at("2028-09-05", "10:00"));
+    expect(await reviewRows(later.saleId)).toEqual([expect.objectContaining({ channel: "sms", skipped: null })]);
+
+    // A link preview opening it isn't a tap.
+    const p = await paid(at("2028-06-05", "10:00"), { smsOptIn: true });
+    await askAt(at("2028-06-05", "10:00"));
+    await RV.openReviewLink(tokenIn((await job((await reviewRows(p.saleId))[0].jobId)).body), "facebookexternalhit/1.1", at("2028-06-05", "15:00"));
+    const p2 = await paid(at("2028-06-19", "10:00"), { customerId: p.customerId });
+    expect(await shown(p2.saleId, then)).toBe(WRITE);
+
+    // A location's own pause.
+    await followUpOn(fx.cv, WRITE, { repeatDays: 0, snoozeDays: 7 });
+    expect(await shown(b.saleId, then)).toBe(WRITE);
+    await followUpOn(fx.cv, WRITE, { repeatDays: 0, snoozeDays: 0 });
+    expect(await shown(b.saleId, at("2028-06-05", "16:00"))).toBe(WRITE);
   });
 });
 

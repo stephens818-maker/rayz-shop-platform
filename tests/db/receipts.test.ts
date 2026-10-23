@@ -68,7 +68,7 @@ describe("digital receipts", () => {
     const { saleId, customer } = await paidTicket();
     await m.db.db
       .update(s().shops)
-      .set({ receipt: { reviewUrl: "https://g.page/r/rayz-coralville/review" } })
+      .set({ receipt: { reviewUrl: "https://g.page/r/rayz-coralville/review", reviewMinVisits: 1 } })
       .where(eq(s().shops.id, fx.shopId));
 
     const st = await R.saleReceiptState(saleId, policy({ phone: "hidden", email: "masked" }));

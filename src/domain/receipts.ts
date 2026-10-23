@@ -26,8 +26,11 @@ export const RECEIPT_PURPOSE_LABEL: Record<ReceiptPurpose, string> = {
   review: "Google review request",
 };
 
-/** Why a message wasn't sent. `recent`: the client was already asked for a review at this location lately. */
-export type ReceiptSkip = "opted_out" | "no_consent" | "recent";
+/**
+ * Why a message wasn't sent. Review follow-ups only: `recent`, already asked at this location lately;
+ * `few_visits`, before the visit the review link starts at; `snoozed`, tapped this location's link lately.
+ */
+export type ReceiptSkip = "opted_out" | "no_consent" | "recent" | "few_visits" | "snoozed";
 
 /** Purposes where the client is choosing it right then: their choice is the consent for this one message. */
 const CLIENT_ASKED: readonly ReceiptPurpose[] = ["counter", "handoff", "request"];

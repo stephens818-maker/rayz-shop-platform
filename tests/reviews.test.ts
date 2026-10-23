@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { ReceiptBrandingSchema, receiptBranding } from "@/domain/connect";
 import { receiptConsent } from "@/domain/receipts";
-import { ReviewFollowUpSchema, googleReviewLink, isAutomatedOpen, reviewFollowUp, reviewRequestEmail, reviewRequestSms, storedReviewLink, writeReviewUrl } from "@/domain/reviews";
+import {
+  REVIEW_RULES_DEFAULT,
+  ReviewFollowUpSchema,
+  ReviewRulesSchema,
+  googleReviewLink,
+  isAutomatedOpen,
+  locationReviewRules,
+  ordinal,
+  reviewFollowUp,
+  reviewHold,
+  reviewRequestEmail,
+  reviewRequestSms,
+  reviewRules,
+  storedReviewLink,
+  writeReviewUrl,
+} from "@/domain/reviews";
 
 const PLACE = "ChIJN1t_tDeuEmsRUsoyG83frY4";
 const url = (raw: string) => {
@@ -124,5 +139,51 @@ describe("automated link opens", () => {
   it("counts a phone or desktop browser", () => {
     expect(isAutomatedOpen("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")).toBe(false);
     expect(isAutomatedOpen("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36")).toBe(false);
+  });
+});
+
+describe("when the review link is shown", () => {
+  const rules = { minVisits: 3, snoozeDays: 90 };
+
+  it("defaults to the 3rd visit and a 90-day pause after a tap", () => {
+    expect(REVIEW_RULES_DEFAULT).toEqual({ minVisits: 3, snoozeDays: 90 });
+    expect(reviewRules({})).toEqual(REVIEW_RULES_DEFAULT);
+    expect(reviewRules(null)).toEqual(REVIEW_RULES_DEFAULT);
+    expect(reviewRules({ minVisits: 5, snoozeDays: 0 })).toEqual({ minVisits: 5, snoozeDays: 0 });
+  });
+
+  it("reads bad stored rules as the defaults, and refuses them on save", () => {
+    expect(reviewRules({ minVisits: 0 })).toEqual(REVIEW_RULES_DEFAULT);
+    expect(reviewRules({ minVisits: 2.5 })).toEqual(REVIEW_RULES_DEFAULT);
+    expect(reviewRules({ snoozeDays: 400 })).toEqual(REVIEW_RULES_DEFAULT);
+    expect(ReviewRulesSchema.safeParse({ minVisits: 51, snoozeDays: 90 }).error?.issues[0]?.message).toBe("Start at visit 1 to 50");
+    expect(ReviewRulesSchema.safeParse({ minVisits: 3, snoozeDays: -1 }).error?.issues[0]?.message).toBe("Pause 0 to 365 days");
+  });
+
+  it("a location's own values win; blank uses the brand's", () => {
+    expect(locationReviewRules(rules, { reviewMinVisits: null, reviewSnoozeDays: null })).toEqual(rules);
+    expect(locationReviewRules(rules, { reviewMinVisits: 1, reviewSnoozeDays: null })).toEqual({ minVisits: 1, snoozeDays: 90 });
+    expect(locationReviewRules(rules, { reviewMinVisits: null, reviewSnoozeDays: 0 })).toEqual({ minVisits: 3, snoozeDays: 0 });
+  });
+
+  it("the overrides are part of a location's receipt settings, null by default", () => {
+    expect(receiptBranding({})).toMatchObject({ reviewMinVisits: null, reviewSnoozeDays: null });
+    expect(receiptBranding({ reviewMinVisits: 2, reviewSnoozeDays: 30 })).toMatchObject({ reviewMinVisits: 2, reviewSnoozeDays: 30 });
+    expect(receiptBranding({ reviewMinVisits: 0, reviewSnoozeDays: "x", headline: "Hi" })).toMatchObject({ reviewMinVisits: null, reviewSnoozeDays: null, headline: "Hi" });
+    expect(ReceiptBrandingSchema.safeParse({ reviewMinVisits: 0 }).success).toBe(false);
+    expect(ReceiptBrandingSchema.parse({ reviewMinVisits: 4 }).reviewMinVisits).toBe(4);
+  });
+
+  it("only the visit count and a recent tap decide", () => {
+    expect(reviewHold({ visit: 1, rules, tappedRecently: false })).toBe("few_visits");
+    expect(reviewHold({ visit: 2, rules, tappedRecently: false })).toBe("few_visits");
+    expect(reviewHold({ visit: 3, rules, tappedRecently: false })).toBeNull();
+    expect(reviewHold({ visit: 12, rules, tappedRecently: false })).toBeNull();
+    expect(reviewHold({ visit: 3, rules, tappedRecently: true })).toBe("snoozed");
+    expect(reviewHold({ visit: 1, rules: { minVisits: 1, snoozeDays: 90 }, tappedRecently: false })).toBeNull();
+  });
+
+  it("ordinals", () => {
+    expect([1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101, 111].map(ordinal)).toEqual(["1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "101st", "111th"]);
   });
 });

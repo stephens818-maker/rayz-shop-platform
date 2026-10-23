@@ -77,6 +77,8 @@ export const brandSettings = pgTable("brand_settings", {
   networkAccess: jsonb("network_access").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** The brand's tip presets for the customer screen (BrandHandoff in src/domain/handoff.ts); missing keys use the defaults. */
   handoff: jsonb("handoff").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** When the Google review link is shown (ReviewRules in src/domain/reviews.ts): from visit N, and the pause after a tap. */
+  reviews: jsonb("reviews").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -1458,15 +1460,18 @@ export const receiptDeliveries = pgTable(
     purpose: text("purpose").$type<"counter" | "handoff" | "refund" | "void" | "resend" | "request" | "review">().notNull(),
     tokenHash: text("token_hash").unique(),
     jobId: uuid("job_id").references(() => notificationJobs.id, { onDelete: "set null" }),
-    /** Not sent: opted_out (STOP, or receipt emails off), no_consent, or recent (a review request: asked lately). */
-    skipped: text("skipped").$type<"opted_out" | "no_consent" | "recent">(),
+    /**
+     * Not sent: opted_out (STOP, or receipt emails off) or no_consent; for a review request also recent
+     * (asked lately), few_visits (before the client's Nth visit) or snoozed (tapped the link lately).
+     */
+    skipped: text("skipped").$type<"opted_out" | "no_consent" | "recent" | "few_visits" | "snoozed">(),
     sentBy: uuid("sent_by").references(() => staff.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [
     check("receipt_deliveries_channel", sql`${t.channel} in ('sms', 'email', 'none')`),
     check("receipt_deliveries_purpose", sql`${t.purpose} in ('counter', 'handoff', 'refund', 'void', 'resend', 'request', 'review')`),
-    check("receipt_deliveries_skipped", sql`${t.skipped} is null or ${t.skipped} in ('opted_out', 'no_consent', 'recent')`),
+    check("receipt_deliveries_skipped", sql`${t.skipped} is null or ${t.skipped} in ('opted_out', 'no_consent', 'recent', 'few_visits', 'snoozed')`),
     check("receipt_deliveries_destination", sql`(${t.channel} = 'none') = (${t.destination} is null)`),
     index("receipt_deliveries_sale_idx").on(t.saleId, t.createdAt),
     index("receipt_deliveries_destination_idx").on(t.destination, t.createdAt),

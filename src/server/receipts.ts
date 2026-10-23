@@ -29,6 +29,7 @@ import { Actor, audit, customerActor } from "./audit";
 import type { ClientPolicy } from "./client-privacy";
 import { AppError, notFound } from "./errors";
 import { loyaltyBalance } from "./loyalty";
+import { reviewTiming } from "./review-rules";
 
 export const receiptUrl = (token: string) => `${appBaseUrl()}/receipt/${token}`;
 
@@ -80,6 +81,7 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
         return `/book/${shop.slug}${s ? `?${s}` : ""}`;
       })()
     : null;
+  const review = brand.reviewUrl ? await reviewTiming(saleId, now, tx) : null;
   const refundedCents = refs.reduce((a, r) => a + r.amountCents, 0);
   const shopLine = [brand.showAddress && shop.address && `${shop.address}, ${shop.city}, ${shop.state} ${shop.zip}`].filter(Boolean)[0] || null;
   return {
@@ -121,7 +123,8 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
           }
         : null,
     rebookUrl: rebook,
-    reviewUrl: brand.reviewUrl,
+    /** Only from the client's Nth visit, and not for a while after they tapped this location's link on another ticket. */
+    reviewUrl: review && !review.hold ? brand.reviewUrl : null,
   };
 }
 export type ReceiptData = Awaited<ReturnType<typeof receiptData>>;
