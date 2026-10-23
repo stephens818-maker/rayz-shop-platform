@@ -81,6 +81,7 @@ describe("permission catalog and templates", () => {
     for (const k of ["brand_admin", "regional_manager", "shop_manager", "front_desk", "barber"]) {
       expect(access(k).permissions.has("tips.own"), k).toBe(true);
       expect(pageAllowed(access(k).permissions, "/admin/my-tips"), k).toBe(true);
+      expect(pageAllowed(access(k).permissions, "/admin/my-banking"), k).toBe(true);
     }
     for (const k of ["brand_admin", "regional_manager", "shop_manager"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(true);
     for (const k of ["front_desk", "barber"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(false);
@@ -307,7 +308,7 @@ describe("navigation follows permissions", () => {
     expect(hrefs).not.toContain("/admin/catalog");
     for (const h of hrefs) expect(pageAllowed(fd, h as keyof typeof PAGE_ACCESS)).toBe(true);
     const barber = navFor(access("barber").permissions).flatMap((s) => s.items.map((i) => i.href));
-    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/my-tips", "/admin/customers", "/admin/reports", "/admin/timesheets"]);
+    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/my-tips", "/admin/my-banking", "/admin/customers", "/admin/reports", "/admin/timesheets"]);
     expect(hrefs).toContain("/admin/my-time");
     expect(hrefs).toContain("/admin/time-off");
     expect(barber).not.toContain("/admin/time-off");

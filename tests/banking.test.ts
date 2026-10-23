@@ -176,10 +176,10 @@ describe("banking permission", () => {
 describe("no bank or identity numbers in our database", () => {
   it("the schema has no column for account, routing, SSN or EIN numbers", () => {
     const schema = readFileSync("src/db/schema.ts", "utf8");
-    const migrations = readFileSync("drizzle/core_0029_location_banking.sql", "utf8");
-    for (const src of [schema, migrations]) {
+    const migrations = ["core_0029_location_banking", "core_0033_tip_payouts", "core_0034_staff_banking"].map((f) => readFileSync(`drizzle/${f}.sql`, "utf8"));
+    for (const src of [schema, ...migrations]) {
       expect(src).not.toMatch(/routing_number|account_number_full|bank_account_number|\bssn\b|ssn_last|tax_id_number|\bein\b/i);
     }
-    expect(schema).not.toMatch(/"(routing|ssn|ein|bank_account)"/i);
+    expect(schema).not.toMatch(/\w+\("(routing|ssn|ein|bank_account)\w*"/i);
   });
 });

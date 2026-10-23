@@ -273,13 +273,14 @@ describe("Stripe payouts and webhooks", () => {
     return { batchId: r.batchId, payoutId: p.id };
   }
 
-  it("employees onboard on Stripe's hosted page; the app keeps only the account id and its status", async () => {
+  it("employees onboard on Stripe's hosted page; the app keeps only the account id, its status and the last 4 Stripe returns", async () => {
     const { barbers: [, c] } = await barbers("silvis", ["Abigail", "Liv"]);
     expect(await accounts.staffOnboardingUrl(c.id, actor, "http://localhost")).toBeNull();
     await accounts.simulateStaffOnboarding(c.id, actor);
     const a = (await accounts.staffAccount(c.id))!;
     expect(accounts.staffAccountState(a)).toBe("ready");
-    expect(Object.keys(a).filter((k) => /bank|routing|card_number|last4/i.test(k))).toEqual([]);
+    expect(a).toMatchObject({ destinationType: "card", destinationLast4: "5556", destinationName: "Visa" });
+    expect(Object.keys(a).filter((k) => /routing|account_?number|card_?number|ssn|tax|fingerprint|dob|birth/i.test(k))).toEqual([]);
   });
 
   it("an approved Stripe payout goes out (simulator) and the employee is told", async () => {
@@ -335,12 +336,111 @@ describe("Stripe payouts and webhooks", () => {
     expect(audits.map((a) => a.entityId).sort()).toEqual([two.payoutId, three.payoutId].sort());
   });
 
-  it("account.updated on an employee's account updates their payout status", async () => {
+  it("banking status flow: not set up, pending verification, action needed (told once per request), ready; a new destination is audited with a security notice", async () => {
     const { barbers: [b] } = await barbers("silvis", ["Abigail", "Liv"]);
-    await connectEvent("account.updated", { id: acct, object: "account", payouts_enabled: false, details_submitted: true, requirements: { currently_due: ["external_account"], past_due: [], disabled_reason: null } }, acct);
-    const a = (await accounts.staffAccount(b.id))!;
-    expect(accounts.staffAccountState(a)).toBe("restricted");
-    expect(a.requirementsDue).toEqual(["external_account"]);
+    const email = "abigail.bank@rayz.test";
+    const phone = "+13195550188";
+    await m.db.db.update(s().staff).set({ email, phone }).where(eq(s().staff.id, b.id));
+    await m.db.db
+      .update(s().staffPayoutAccounts)
+      .set({ payoutsEnabled: false, detailsSubmitted: false, requirementsDue: [], requirementsPending: [], destinationType: null, destinationLast4: null, destinationName: null })
+      .where(eq(s().staffPayoutAccounts.staffId, b.id));
+    const state = async () => accounts.staffAccountState(await accounts.staffAccount(b.id));
+    const notices = () => m.db.db.select().from(s().notificationJobs).where(and(eq(s().notificationJobs.kind, "tip_banking"), m.drizzle.inArray(s().notificationJobs.to, [email, phone]))).orderBy(s().notificationJobs.createdAt);
+    const audits = (action: string) =>
+      m.db.db.select().from(s().auditLog).where(and(eq(s().auditLog.action, action), eq(s().auditLog.entityId, b.id))).orderBy(s().auditLog.at);
+    const accountUpdated = (o: { payouts: boolean; due?: string[]; pending?: string[]; deadline?: number; external?: object[] }) =>
+      connectEvent(
+        "account.updated",
+        {
+          id: acct,
+          object: "account",
+          payouts_enabled: o.payouts,
+          details_submitted: true,
+          requirements: { currently_due: o.due ?? [], past_due: [], pending_verification: o.pending ?? [], disabled_reason: null, current_deadline: o.deadline ?? null },
+          ...(o.external ? { external_accounts: { object: "list", data: o.external } } : {}),
+        },
+        acct,
+      );
+    expect(await state()).toBe("not_set_up");
+    const auditsBefore = (await audits("tips.account_state")).length;
+
+    expect((await accountUpdated({ payouts: false, pending: ["individual.id_number"] })).status).toBe(200);
+    expect(await state()).toBe("pending_verification");
+    expect((await accounts.staffAccount(b.id))!.requirementsPending).toEqual(["individual.id_number"]);
+    expect(await notices()).toEqual([]);
+
+    const deadline = Math.floor(Date.now() / 1000) + 7 * 86400;
+    await accountUpdated({ payouts: false, due: ["individual.verification.document"], deadline });
+    expect(await state()).toBe("action_needed");
+    expect((await accounts.staffAccount(b.id))!.requirementsDeadline?.getTime()).toBe(deadline * 1000);
+    let sent = await notices();
+    expect(sent).toEqual([expect.objectContaining({ channel: "email", to: email, subject: "Stripe needs more information for your tip payouts", body: expect.stringMatching(/A photo of your ID/) })]);
+    expect(sent[0].body).toMatch(/\/admin\/my-banking/);
+    await accountUpdated({ payouts: false, due: ["individual.verification.document"], deadline });
+    expect(await notices()).toHaveLength(1);
+    await accountUpdated({ payouts: false, due: ["individual.verification.document", "external_account"], deadline });
+    sent = await notices();
+    expect(sent).toHaveLength(2);
+    expect(sent[1].body).toMatch(/A bank account or debit card for payouts/);
+
+    await accountUpdated({
+      payouts: true,
+      external: [{ id: "ba_test_tip", object: "bank_account", bank_name: "STRIPE TEST BANK", last4: "6789", routing_number: "110000000", account_holder_name: "Abigail Test", fingerprint: "fp_secret", default_for_currency: true }],
+    });
+    expect(await state()).toBe("ready");
+    const ready = (await accounts.staffAccount(b.id))!;
+    expect(ready).toMatchObject({ destinationType: "bank_account", destinationLast4: "6789", destinationName: "STRIPE TEST BANK", requirementsDue: [] });
+    expect(JSON.stringify(ready)).not.toMatch(/110000000|fp_secret|Abigail Test/);
+    expect((await audits("tips.account_state")).slice(auditsBefore).map((a) => [(a.details as { from: string }).from, (a.details as { to: string }).to])).toEqual([
+      ["not_set_up", "pending_verification"],
+      ["pending_verification", "action_needed"],
+      ["action_needed", "ready"],
+    ]);
+    sent = await notices();
+    expect(sent.slice(2).map((n) => n.channel).sort()).toEqual(["email", "sms"]);
+    expect(sent.find((n) => n.channel === "email" && n.subject?.startsWith("Security notice"))!.body).toMatch(/was set to STRIPE TEST BANK ••6789/);
+
+    await connectEvent(
+      "account.external_account.created",
+      { id: "card_test_tip", object: "card", account: acct, brand: "Visa", last4: "5556", funding: "debit", default_for_currency: true, available_payout_methods: ["standard", "instant"], fingerprint: "fp_card" },
+      acct,
+    );
+    const changed = (await accounts.staffAccount(b.id))!;
+    expect(changed).toMatchObject({ destinationType: "card", destinationLast4: "5556", destinationName: "Visa", instantEligible: true });
+    let moved = await audits("tips.destination_changed");
+    expect(moved.at(-1)!.details).toEqual({ stripeAccountId: acct, from: { type: "bank_account", name: "STRIPE TEST BANK", last4: "6789" }, to: { type: "card", name: "Visa", last4: "5556" } });
+    expect(moved.at(-1)!.actorLabel).toBe("stripe");
+    sent = await notices();
+    const security = sent.filter((n) => n.subject === "Security notice: your tip payout account changed" || n.body.startsWith("Ray'z security notice: your tip payout account"));
+    expect(security).toHaveLength(4);
+    expect(security.at(-1)!.body).toMatch(/changed to Visa card ••5556 \(it was STRIPE TEST BANK ••6789\)/);
+
+    await connectEvent("account.external_account.updated", { id: "ba_test_tip", object: "bank_account", account: acct, bank_name: "STRIPE TEST BANK", last4: "6789", default_for_currency: false }, acct);
+    expect((await accounts.staffAccount(b.id))!.destinationLast4).toBe("5556");
+    await connectEvent("account.external_account.deleted", { id: "card_test_tip", object: "card", account: acct, brand: "Visa", last4: "5556", default_for_currency: true }, acct);
+    expect(accounts.accountDestination(await accounts.staffAccount(b.id))).toBeNull();
+    moved = await audits("tips.destination_changed");
+    expect(moved.at(-1)!.details).toMatchObject({ from: { last4: "5556" }, to: null });
+    expect((await notices()).at(-1)!.body).toMatch(/was removed \(it was Visa card ••5556\)/);
+
+    const beforeMethod = (await notices()).length;
+    await accounts.setPayoutChoice(b.id, { method: "cash", instant: false }, actor);
+    const methodNotes = (await notices()).slice(beforeMethod);
+    expect(methodNotes.map((n) => n.channel).sort()).toEqual(["email", "sms"]);
+    expect(methodNotes.find((n) => n.channel === "email")).toMatchObject({ subject: "Security notice: how your tips are paid changed", body: expect.stringMatching(/paid by cash/i) });
+    expect((await audits("tips.method")).at(-1)!.details).toMatchObject({ method: "cash", from: { method: "stripe" } });
+    await accounts.setPayoutChoice(b.id, { method: "cash", instant: false }, actor);
+    expect(await notices()).toHaveLength(beforeMethod + 2);
+
+    const summary = (await accounts.payoutAccountSummaries([b.id])).get(b.id)!;
+    expect(summary).toEqual({ staffId: b.id, method: "cash", status: "ready", last4: null });
+    const sh = await shop("silvis");
+    const team = await accounts.shopPayoutAccounts(sh.id);
+    expect(Object.keys(team.find((t) => t.staffId === b.id)!).sort()).toEqual(["last4", "method", "name", "staffId", "status"]);
+    const activity = await accounts.bankingActivity(b.id, 50);
+    expect(activity.map((a) => a.action)).toEqual(expect.arrayContaining(["tips.account_state", "tips.destination_changed", "tips.method"]));
+    await accounts.setPayoutChoice(b.id, { method: "stripe", instant: false }, actor);
   });
 });
 
