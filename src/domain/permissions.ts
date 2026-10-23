@@ -137,6 +137,12 @@ export const FEATURE_PERMISSIONS = [
     hint: "Export a campaign audience's contact list. Off for everyone but the Brand Owner unless granted. Details are exported as Client data lets them see them, and every export is logged.",
     brandOnly: true,
   },
+  {
+    key: "campaign_center.own_clients",
+    group: "Campaign Center",
+    label: "Campaign Center: own lapsed clients",
+    hint: "See their own lapsed clients (first name, last visit, weeks since) and send them the brand's \"From your barber\" message, signed with their name. Never shows a phone number or email; only clients who agreed to marketing get it, within quiet hours and the frequency limits. Off for barbers unless granted.",
+  },
   { key: "catalog.prices", group: "Catalog and inventory", label: "Edit services and prices at their shops" },
   { key: "catalog.manage", group: "Catalog and inventory", label: "Manage the brand catalog, bulk upload items, and push them to shops", brandOnly: true },
   {
@@ -319,6 +325,12 @@ export const REPORTS = [
     hint: "Per campaign, location and barber: messages sent and delivered, clicks, bookings, coupon redemptions, attributed revenue, ROI and unsubscribes.",
   },
   {
+    key: "lapsed_clients",
+    label: "Lapsed clients by barber",
+    href: "/admin/reports/lapsed-clients",
+    hint: "Per barber and location: lapsed clients by weeks since their last visit, lapsed messages sent, and how many of those clients rebooked.",
+  },
+  {
     key: "labor",
     label: "Labor hours and cost",
     href: "/admin/reports/labor",
@@ -438,6 +450,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "campaign_center.view",
   "campaign_center.create",
   "campaign_center.send",
+  "campaign_center.own_clients",
   "timeclock.punch",
   "timeclock.kiosk",
   "timesheet.own",

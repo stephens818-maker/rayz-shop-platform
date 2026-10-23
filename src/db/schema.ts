@@ -2592,13 +2592,15 @@ export const digestSends = pgTable(
 
 // ───────────────────────────── Campaign Center ─────────────────────────────
 
-export type CampaignKind = "trigger" | "blast";
+export type CampaignKind = "trigger" | "blast" | "sequence";
 export type BlastStatus = "draft" | "scheduled" | "sending" | "sent" | "cancelled";
 
 /**
  * A marketing campaign: one brand-level row per automated trigger (switched on per location in
- * marketing_location_settings), or a one-off blast to a segment. Wording, settings and segment are
- * jsonb (Templates, trigger settings and Segment in src/domain/marketing.ts).
+ * marketing_location_settings), a one-off blast to a segment, or a lapsed sequence (its steps in
+ * marketing_steps, its barbers in segment, its locations in shop_ids). Wording, settings and
+ * segment are jsonb (Templates, trigger and sequence settings, Segment and SequenceAudience in
+ * src/domain/marketing.ts).
  */
 export const marketingCampaigns = pgTable(
   "marketing_campaigns",
@@ -2618,6 +2620,8 @@ export const marketingCampaigns = pgTable(
     shopIds: jsonb("shop_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     /** Blasts only. Trigger campaigns run wherever a location has them on. */
     status: text("status").$type<BlastStatus>().notNull().default("draft"),
+    /** Sequences: running or not. */
+    enabled: boolean("enabled").notNull().default(false),
     scheduledAt: ts("scheduled_at"),
     sentAt: ts("sent_at"),
     createdBy: uuid("created_by"),
@@ -2625,6 +2629,24 @@ export const marketingCampaigns = pgTable(
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (t) => [uniqueIndex("marketing_campaigns_trigger_uq").on(t.trigger).where(sql`${t.kind} = 'trigger'`), index("marketing_campaigns_due_idx").on(t.status, t.scheduledAt)],
+);
+
+/** One message of a lapsed sequence: when it goes (days since the client's last visit), its wording and its coupon. */
+export const marketingSteps = pgTable(
+  "marketing_steps",
+  {
+    id: id(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => marketingCampaigns.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    afterDays: integer("after_days").notNull(),
+    templates: jsonb("templates").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+    promoId: uuid("promo_id").references(() => promoCodes.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("marketing_steps_position_uq").on(t.campaignId, t.position)],
 );
 
 /** A trigger campaign at one location: on or off, with optional wording and settings of its own. */
@@ -2678,6 +2700,8 @@ export const marketingSends = pgTable(
     clicks: integer("clicks").notNull().default(0),
     firstClickAt: ts("first_click_at"),
     costCents: doublePrecision("cost_cents").notNull().default(0),
+    /** Lapsed sequences: which step it was. */
+    stepId: uuid("step_id").references(() => marketingSteps.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [index("marketing_sends_campaign_idx").on(t.campaignId, t.createdAt), index("marketing_sends_customer_idx").on(t.customerId, t.createdAt)],

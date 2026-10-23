@@ -1,18 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { formatCents } from "@/lib/money";
 import {
+  DEFAULT_LAPSED_STEPS,
   EMPTY_SEGMENT,
+  LAPSED_BUCKETS,
   MARKETING_DEFAULTS,
+  SegmentSchema,
   SAMPLE_VALUES,
   STOP_LINE,
   TRIGGERS,
   TRIGGER_KEYS,
+  bucketOf,
   capProblem,
   daysToBirthday,
   dedupeKey,
   defaultTemplates,
   fill,
   inQuiet,
+  lapsedBetween,
+  lapsedOver,
+  lastVisitLabel,
   marketingSettings,
   milesBetween,
   nextSendAt,
@@ -21,6 +28,9 @@ import {
   render,
   roi,
   segmentProblem,
+  stepDue,
+  stepLabel,
+  stepsProblem,
   templatesProblem,
   triggerSettings,
 } from "@/domain/marketing";
@@ -147,5 +157,77 @@ describe("segments", () => {
     expect(segmentProblem({ ...EMPTY_SEGMENT, minVisits: 5, maxVisits: 2 }, all)).toMatch(/fewest visits/);
     expect(segmentProblem({ ...EMPTY_SEGMENT, minSpendCents: 500, maxSpendCents: 100 }, all)).toMatch(/lowest spend/);
     expect(segmentProblem({ ...EMPTY_SEGMENT, birthdayMonths: [2], minRating: 4 }, all)).toBeNull();
+  });
+
+  it("a primary-barber filter needs preferred barbers to be visible; recent and any don't", () => {
+    const seg = (barberMatch: "primary" | "recent" | "any") => SegmentSchema.parse({ staffIds: [crypto.randomUUID()], barberMatch });
+    const hidden = { birthday: true, ratings: true, preferredBarber: false };
+    expect(segmentProblem(seg("primary"), hidden)).toMatch(/primary barber/);
+    expect(segmentProblem(seg("recent"), hidden)).toBeNull();
+    expect(segmentProblem(seg("any"), hidden)).toBeNull();
+    expect(segmentProblem(seg("primary"), { ...hidden, preferredBarber: true })).toBeNull();
+    expect(SegmentSchema.parse({}).barberMatch).toBe("any");
+  });
+
+  it("weeks quick filters and between ranges, with nothing booked since", () => {
+    expect(lapsedOver(3)).toEqual({ lastVisitOverDays: 21, lastVisitWithinDays: null, notBooked: true });
+    expect(lapsedBetween(21, 28)).toEqual({ lastVisitOverDays: 21, lastVisitWithinDays: 28, notBooked: true });
+    expect(lastVisitLabel(lapsedOver(1))).toBe("Last visit more than 1 week ago");
+    expect(lastVisitLabel(lapsedOver(12))).toBe("Last visit more than 12 weeks ago");
+    expect(lastVisitLabel(lapsedBetween(21, 28))).toBe("Last visit 3 to 4 weeks ago");
+    expect(lastVisitLabel(lapsedBetween(20, 30))).toBe("Last visit 20 to 30 days ago");
+    expect(lastVisitLabel({ lastVisitOverDays: 45, lastVisitWithinDays: null })).toBe("Last visit more than 45 days ago");
+    expect(lastVisitLabel({ lastVisitOverDays: null, lastVisitWithinDays: null })).toBeNull();
+    const all = { birthday: true, ratings: true };
+    expect(segmentProblem({ ...EMPTY_SEGMENT, ...lapsedBetween(28, 21) }, all)).toMatch(/range is empty/);
+    expect(segmentProblem({ ...EMPTY_SEGMENT, ...lapsedBetween(28, 28) }, all)).toMatch(/range is empty/);
+    expect(segmentProblem({ ...EMPTY_SEGMENT, ...lapsedBetween(21, 28) }, all)).toBeNull();
+  });
+});
+
+describe("lapsed sequences", () => {
+  const steps = [{ afterDays: 14, k: "a" }, { afterDays: 21, k: "b" }, { afterDays: 28, k: "c" }, { afterDays: 42, k: "d" }];
+
+  it("the step due is the latest one reached, until the sequence stops", () => {
+    expect(stepDue(steps, 13, 120)).toBeNull();
+    expect(stepDue(steps, 14, 120)?.k).toBe("a");
+    expect(stepDue(steps, 20, 120)?.k).toBe("a");
+    expect(stepDue(steps, 21, 120)?.k).toBe("b");
+    expect(stepDue(steps, 35, 120)?.k).toBe("c");
+    expect(stepDue(steps, 100, 120)?.k).toBe("d");
+    expect(stepDue(steps, 120, 120)).toBeNull();
+    expect(stepDue([...steps].reverse(), 30, 120)?.k).toBe("c");
+  });
+
+  it("steps are a week apart, at most six, and end before the sequence stops", () => {
+    expect(stepsProblem([], 120)).toMatch(/at least one/);
+    expect(stepsProblem(steps, 120)).toBeNull();
+    expect(stepsProblem([{ afterDays: 14 }, { afterDays: 18 }], 120)).toMatch(/at least a week after/);
+    expect(stepsProblem(Array.from({ length: 7 }, (_, i) => ({ afterDays: 7 + i * 7 })), 120)).toMatch(/At most 6/);
+    expect(stepsProblem(steps, 42)).toMatch(/more than 42 days/);
+    expect(stepLabel(14, false)).toBe("2 weeks");
+    expect(stepLabel(42, true)).toBe("6 weeks+");
+    expect(stepLabel(10, false)).toBe("10 days");
+  });
+
+  it("the default steps: reminder, reminder with a link, coupon, bigger coupon, all signed by the barber", () => {
+    expect(DEFAULT_LAPSED_STEPS.map((s) => s.afterDays)).toEqual([14, 21, 28, 42]);
+    expect(stepsProblem(DEFAULT_LAPSED_STEPS, 120)).toBeNull();
+    DEFAULT_LAPSED_STEPS.forEach((s, i) => {
+      const coupon = i >= 2;
+      expect(templatesProblem(s.templates, ["sms", "email", "push"], { hasCoupon: coupon }), `step ${i + 1}`).toBeNull();
+      expect(s.templates.sms.includes("{coupon_code}"), `step ${i + 1}`).toBe(coupon);
+      expect(s.templates.sms).toMatch(/\{barber\}/);
+    });
+    expect(DEFAULT_LAPSED_STEPS[0].templates.sms).not.toMatch(/\{book_link\}/);
+    expect(DEFAULT_LAPSED_STEPS[1].templates.sms).toMatch(/\{book_link\}/);
+  });
+
+  it("report buckets by weeks since the last visit", () => {
+    expect(bucketOf(13)).toBe(-1);
+    expect(LAPSED_BUCKETS[bucketOf(14)].label).toBe("2–3 wks");
+    expect(LAPSED_BUCKETS[bucketOf(27)].label).toBe("3–4 wks");
+    expect(LAPSED_BUCKETS[bucketOf(55)].label).toBe("6–8 wks");
+    expect(LAPSED_BUCKETS[bucketOf(400)].label).toBe("12+ wks");
   });
 });

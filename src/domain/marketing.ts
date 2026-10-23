@@ -1,7 +1,7 @@
 /**
  * Campaign Center rules, kept pure: the automated campaigns and their settings, the message
  * templates and merge fields, quiet hours in the shop's time zone, frequency caps, which channel a
- * client hears on, the segment builder's filters and the report's ROI. The engine in
+ * client hears on, the segment builder's filters, lapsed sequences and the report's ROI. The engine in
  * src/server/marketing gathers the facts and these decide.
  */
 import { DateTime } from "luxon";
@@ -127,7 +127,7 @@ export interface TriggerDef {
 
 const tpl = (sms: string, emailSubject: string, emailBody: string, pushTitle: string, pushBody: string): Templates => ({ sms, emailSubject, emailBody, pushTitle, pushBody });
 
-export const TRIGGER_KEYS = ["birthday", "lapsed", "win_back", "first_visit", "milestone", "no_show", "rebook", "announcement", "fill_slow_day", "abandoned_booking"] as const;
+export const TRIGGER_KEYS = ["birthday", "lapsed", "win_back", "first_visit", "milestone", "no_show", "rebook", "announcement", "fill_slow_day", "abandoned_booking", "barber_outreach"] as const;
 export type TriggerKey = (typeof TRIGGER_KEYS)[number];
 export const isTriggerKey = (k: unknown): k is TriggerKey => typeof k === "string" && (TRIGGER_KEYS as readonly string[]).includes(k);
 
@@ -268,7 +268,26 @@ export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
       "Your time at {shop} isn't booked yet.",
     ),
   },
+  barber_outreach: {
+    key: "barber_outreach",
+    label: "From your barber",
+    when: (s) => `When a barber sends it to their own clients with no visit in ${s.minDays} days or more`,
+    settings: [
+      { key: "minDays", label: "Only clients with no visit in at least (days)", min: 7, max: 365, default: 14, unit: "days" },
+      { key: "maxPerDay", label: "Most clients a barber can message a day", min: 1, max: 200, default: 25, unit: "clients" },
+    ],
+    templates: tpl(
+      `{shop}: Hi {first_name}, it's {barber}. It's been a minute! I'd love to get you back in the chair: {book_link} ${STOP_LINE}`,
+      "{barber} at {shop} misses you",
+      "Hi {first_name},\n\nIt's {barber} at {shop}. It's been a little while since your last cut. Grab a time with me here: {book_link}\n\n{barber}",
+      "{barber} at {shop}",
+      "It's been a minute, {first_name}. Book your next cut with {barber}.",
+    ),
+  },
 };
+
+/** Campaigns that only go out when someone sends them, never from the scheduled run. */
+export const MANUAL_TRIGGERS: ReadonlySet<TriggerKey> = new Set(["barber_outreach"]);
 
 /** The coupon-dependent default only makes sense with a coupon; without one the line is dropped. */
 export function defaultTemplates(key: TriggerKey, hasCoupon: boolean): Templates {
@@ -418,13 +437,31 @@ export const SKIP_LABEL: Record<string, string> = {
 const ids = z.array(z.uuid()).max(200).default([]);
 const optInt = (max: number) => z.number().int().min(0).max(max).nullable().default(null);
 
+export const BARBER_MATCHES = ["primary", "recent", "any"] as const;
+export type BarberMatch = (typeof BARBER_MATCHES)[number];
+export const BARBER_MATCH_LABEL: Record<BarberMatch, string> = {
+  primary: "Their primary barber",
+  recent: "Their most recent barber",
+  any: "Any visit with",
+};
+export const BARBER_MATCH_HINT: Record<BarberMatch, string> = {
+  primary: "The preferred barber on the client's profile, or the barber of their last visit when none is set.",
+  recent: "Who cut them last.",
+  any: "Any completed visit with one of these barbers, ever.",
+};
+
 export const SegmentSchema = z.object({
   /** Clients whose last visit was at one of these locations (empty: the campaign's locations). */
   shopIds: ids,
-  /** Clients who've had a visit with one of these barbers in the last year. */
+  /** Clients of these barbers, matched as `barberMatch` says. */
   staffIds: ids,
+  barberMatch: z.enum(BARBER_MATCHES).default("any"),
+  /** Last visit no longer ago than this. With lastVisitOverDays it's a range, e.g. 21 to 28 days. */
   lastVisitWithinDays: optInt(3650),
+  /** Last visit more than this many days ago. Clients who never visited don't match. */
   lastVisitOverDays: optInt(3650),
+  /** Nothing booked since their last visit (a booking they cancelled doesn't count). */
+  notBooked: z.boolean().default(false),
   minVisits: optInt(10000),
   maxVisits: optInt(10000),
   /** Net spend over all visits, in cents. */
@@ -446,10 +483,40 @@ export const SegmentSchema = z.object({
 export type Segment = z.infer<typeof SegmentSchema>;
 export const EMPTY_SEGMENT: Segment = SegmentSchema.parse({});
 
+/** The segment builder's quick filters: last visit more than this many weeks ago. */
+export const LAPSED_WEEKS = [2, 3, 4, 5, 6, 8, 12] as const;
+
+/** "Last visit more than 3 weeks ago" as a segment: nothing booked since, so it's clients who really lapsed. */
+export const lapsedOver = (weeks: number): Pick<Segment, "lastVisitOverDays" | "lastVisitWithinDays" | "notBooked"> => ({ lastVisitOverDays: weeks * 7, lastVisitWithinDays: null, notBooked: true });
+/** "Last visit 3 to 4 weeks ago". */
+export const lapsedBetween = (fromDays: number, toDays: number): Pick<Segment, "lastVisitOverDays" | "lastVisitWithinDays" | "notBooked"> => ({
+  lastVisitOverDays: fromDays,
+  lastVisitWithinDays: toDays,
+  notBooked: true,
+});
+
+const weeksOrDays = (d: number) => (d % 7 === 0 ? `${d / 7} week${d === 7 ? "" : "s"}` : `${d} days`);
+/** The last-visit filter in words, or null with none. */
+export function lastVisitLabel(s: Pick<Segment, "lastVisitOverDays" | "lastVisitWithinDays">): string | null {
+  const over = s.lastVisitOverDays;
+  const within = s.lastVisitWithinDays;
+  if (over !== null && within !== null) {
+    const same = over % 7 === 0 && within % 7 === 0;
+    return same ? `Last visit ${over / 7} to ${within / 7} weeks ago` : `Last visit ${over} to ${within} days ago`;
+  }
+  if (over !== null) return `Last visit more than ${weeksOrDays(over)} ago`;
+  if (within !== null) return `Last visit within ${weeksOrDays(within)}`;
+  return null;
+}
+
 /** A filter on a client detail the person can't see would reveal it, so it's refused. */
-export function segmentProblem(s: Segment, sees: { birthday: boolean; ratings: boolean }): string | null {
+export function segmentProblem(s: Segment, sees: { birthday: boolean; ratings: boolean; preferredBarber?: boolean }): string | null {
   if (s.birthdayMonths.length && !sees.birthday) return "You can't filter by birthday because client birthdays are hidden from you";
   if ((s.minRating !== null || s.maxRating !== null) && !sees.ratings) return "You can't filter by rating because client ratings are hidden from you";
+  if (s.staffIds.length && s.barberMatch === "primary" && sees.preferredBarber === false)
+    return "You can't filter by primary barber because clients' preferred barbers are hidden from you. Use their most recent barber instead.";
+  if (s.lastVisitOverDays !== null && s.lastVisitWithinDays !== null && s.lastVisitWithinDays <= s.lastVisitOverDays)
+    return "The last-visit range is empty: the far end has to be further back than the near end (e.g. 3 to 4 weeks)";
   if (s.minVisits !== null && s.maxVisits !== null && s.minVisits > s.maxVisits) return "The fewest visits is more than the most";
   if (s.minSpendCents !== null && s.maxSpendCents !== null && s.minSpendCents > s.maxSpendCents) return "The lowest spend is more than the highest";
   if (s.minRating !== null && s.maxRating !== null && s.minRating > s.maxRating) return "The lowest rating is more than the highest";
@@ -458,3 +525,114 @@ export function segmentProblem(s: Segment, sees: { birthday: boolean; ratings: b
 
 /** Idempotency: one send per campaign, client and occasion. The database refuses a second row with the same key. */
 export const dedupeKey = (campaignId: string, customerId: string, occasion: string) => `${campaignId}:${customerId}:${occasion}`;
+
+// ───────────────────────────── Lapsed sequences ─────────────────────────────
+
+/**
+ * A lapsed sequence is several messages to the same lapsed client, each at its own point after
+ * their last visit (2 weeks, 3, 4, 6+), each with its own wording and optional coupon. A client
+ * gets the step for how long it's been, once per lapse, and leaves the sequence when they book.
+ */
+export const SEQUENCE_MAX_STEPS = 6;
+/** Steps at least this far apart, so a client hears from a sequence at most once a week. */
+export const STEP_GAP_DAYS = 7;
+
+export const SequenceStepSchema = z.object({
+  id: z.uuid().nullable().default(null),
+  afterDays: z.number().int().min(7).max(365),
+  templates: TemplatesSchema,
+  promoId: z.uuid().nullable().default(null),
+});
+export type SequenceStep = z.infer<typeof SequenceStepSchema>;
+
+/** Whose clients a sequence is for, beyond its locations. Empty barbers: every client of the locations. */
+export const SequenceAudienceSchema = z.object({
+  staffIds: ids,
+  barberMatch: z.enum(["primary", "recent"]).default("primary"),
+});
+export type SequenceAudience = z.infer<typeof SequenceAudienceSchema>;
+
+export const SequenceSettingsSchema = z.object({
+  /** No message once the last visit is this long ago: turning a sequence on doesn't text every client who left years ago. */
+  stopAfterDays: z.number().int().min(14).max(730).default(120),
+});
+export type SequenceSettings = z.infer<typeof SequenceSettingsSchema>;
+
+export function stepsProblem(steps: readonly Pick<SequenceStep, "afterDays">[], stopAfterDays: number): string | null {
+  if (!steps.length) return "Add at least one step";
+  if (steps.length > SEQUENCE_MAX_STEPS) return `At most ${SEQUENCE_MAX_STEPS} steps`;
+  for (let i = 1; i < steps.length; i++) {
+    if (steps[i].afterDays - steps[i - 1].afterDays < STEP_GAP_DAYS) return `Put each step at least a week after the one before (step ${i + 1} is ${steps[i].afterDays - steps[i - 1].afterDays} days after step ${i})`;
+  }
+  const last = steps[steps.length - 1].afterDays;
+  if (stopAfterDays <= last) return `Stop after more than ${last} days, the last step`;
+  return null;
+}
+
+/** The step a client is due by days since their last visit: the latest one they've reached, until the sequence stops. */
+export function stepDue<T extends { afterDays: number }>(steps: readonly T[], sinceDays: number, stopAfterDays: number): T | null {
+  if (sinceDays >= stopAfterDays) return null;
+  let due: T | null = null;
+  for (const s of [...steps].sort((a, b) => a.afterDays - b.afterDays)) if (sinceDays >= s.afterDays) due = s;
+  return due;
+}
+
+/** "2 weeks", "6 weeks+" for the last step, which lasts until the sequence stops. */
+export const stepLabel = (afterDays: number, last: boolean) => `${weeksOrDays(afterDays)}${last ? "+" : ""}`;
+
+export const DEFAULT_LAPSED_STEPS: { afterDays: number; templates: Templates }[] = [
+  {
+    afterDays: 14,
+    templates: tpl(
+      `{shop}: Hi {first_name}, it's {barber}. It's been a couple of weeks. Want me to save you a spot this week? ${STOP_LINE}`,
+      "Time for a fresh cut?",
+      "Hi {first_name},\n\nIt's been a couple of weeks since your last cut. Whenever you're ready, I'd be glad to see you.\n\n{barber}, {shop}",
+      "Time for a fresh cut?",
+      "It's been a couple of weeks, {first_name}. {barber} has time for you.",
+    ),
+  },
+  {
+    afterDays: 21,
+    templates: tpl(
+      `{shop}: {first_name}, {barber} here. Ready for your next cut? Book with me: {book_link} ${STOP_LINE}`,
+      "Book your next cut with {barber}",
+      "Hi {first_name},\n\nReady for your next cut? Pick a time with me here: {book_link}\n\n{barber}, {shop}",
+      "Ready for your next cut?",
+      "Book with {barber} at {shop}.",
+    ),
+  },
+  {
+    afterDays: 28,
+    templates: tpl(
+      `{shop}: {first_name}, it's been a month! Here's {coupon_code} for your next cut with {barber}, good till {expiry}: {book_link} ${STOP_LINE}`,
+      "A little something for your next cut",
+      "Hi {first_name},\n\nIt's been a month. Use {coupon_code} on your next cut with me, good till {expiry}. Book here: {book_link}\n\n{barber}, {shop}",
+      "A little something from {barber}",
+      "Use {coupon_code} on your next cut, till {expiry}.",
+    ),
+  },
+  {
+    afterDays: 42,
+    templates: tpl(
+      `{shop}: {first_name}, we miss you! {barber} saved you a bigger deal: {coupon_code} till {expiry}. Book: {book_link} ${STOP_LINE}`,
+      "We miss you, {first_name}",
+      "Hi {first_name},\n\nWe haven't seen you in a while. Here's our best offer: {coupon_code}, good till {expiry}. Book with me: {book_link}\n\n{barber}, {shop}",
+      "We miss you, {first_name}",
+      "{barber} saved you a deal: {coupon_code}.",
+    ),
+  },
+];
+
+/** The lapsed report's buckets, by weeks since the last visit: [from, to) with null for no end. */
+export const LAPSED_BUCKETS: { label: string; from: number; to: number | null }[] = [
+  { label: "2–3 wks", from: 14, to: 21 },
+  { label: "3–4 wks", from: 21, to: 28 },
+  { label: "4–5 wks", from: 28, to: 35 },
+  { label: "5–6 wks", from: 35, to: 42 },
+  { label: "6–8 wks", from: 42, to: 56 },
+  { label: "8–12 wks", from: 56, to: 84 },
+  { label: "12+ wks", from: 84, to: null },
+];
+/** Past this a client counts as gone, not lapsed. */
+export const LAPSED_MAX_DAYS = 365;
+export const bucketOf = (sinceDays: number): number => LAPSED_BUCKETS.findIndex((b) => sinceDays >= b.from && (b.to === null || sinceDays < b.to));
