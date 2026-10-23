@@ -75,6 +75,7 @@ Handy demo data:
 10. Sign in as `makenna@rayz.test` on a phone (or a narrow window) and open **My time**. Tap **Take lunch now**, block a break, or add a recurring lunch, then request a day off. Sign in as `michelle@rayz.test` and open **Time off** to approve or deny it. If it covers booked appointments, move one to another barber or ask the client to reschedule. As `manager.moline@rayz.test`, Mackenzie's pending day lists her bookings. **Calendar** shows who's off today, and **Reports → Who's working, off and blocked** has the totals.
 11. Set `NOTIFICATIONS_SMS_PROVIDER=simulator` and `NOTIFICATIONS_VOICE_PROVIDER=simulator` in `.env` and restart. As `michelle@rayz.test`, open **Call-ins** and mark Makenna sick for a day she has bookings. On the next screen, keep the suggested options (or **Apply to all**) and send. As `owner@rayz.test`, open **Notifications → Call and text simulator**: reply "1" as one of the clients, open a rebook link and pick a new time, answer an automated call and press 1, or call the shop and let it ring out. Back on the call-in, each appointment shows how it ended; questions are in **Inbox**, and **Reports → Call-ins and client outreach** has the totals.
 12. Sign in as `michelle@rayz.test`, open **Front-desk clock** and click **Register this device** (Coralville). Tap **Makenna**, type the demo PIN `2468` and **Clock in**. Sign in as `makenna@rayz.test` on a phone, open **Time clock** and allow location: Coralville takes its registered device or GPS within 150 m of the shop. Take a break, then open **My timesheet**. Back as Michelle, open **Timesheets → Makenna**, edit a punch with a reason and see it in the edit history. As `owner@rayz.test`, open **Time clock setup**, **Reports → Labor hours and cost** and **Reports → Attendance**. Today lists the seeded forgotten clock-out at Utica.
+13. With Makenna on that break, open **Calendar** as Michelle on today's date. Makenna's column says **On break since…**, her worked time runs down the left edge next to her shift, the break is a shaded band labeled Break, and any client booked in it has a red ring and a **Reassign or rebook** link. Book online as a client: Makenna's times in the break are gone, and nothing mentions the clock. **Today** lists the client booked over her break, and the who's-in list shows each barber's clock status. End the break and the calendar updates within 15 seconds, without a reload.
 
 ### Other commands
 
@@ -96,6 +97,8 @@ pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + see
                    # link security and expiry, "1"/"2" replies, STOP/START/9, the retry then flag, missed-call texts, the inbox, the report
                    # time clock (tests/db/time-clock.test.ts): punches and breaks, shop checks, the PIN lockout, edits and the audit log,
                    # approvals and the period lock, export totals, forgotten clock-outs, FT crossings, page access, rate gating
+                   # clock on the calendar (tests/db/clock-live.test.ts): the late clock-in alert (sent once), online time held by a
+                   # break and an early clock-out (not the shop's), clients in that time flagged with the call-in link, nothing for clients
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -155,6 +158,13 @@ The same step sets the **statement descriptor** (what clients see on their card 
 - **Payroll → Time clock setup**, brand rules (`payroll.run`): which breaks are unpaid (30 minutes or more by default), an optional automatic meal deduction, grace minutes for late and early, when a missing clock-out is flagged, and the iSolved column layout. Overtime (over 40 h a week, optional daily) is set in **Payroll → Setup**.
 - The same page, per shop (`settings.shop`): how a phone punch proves it's at the shop. Choose any of a registered device, GPS within a radius of the shop's latitude and longitude, or the shop's network (its public IP addresses or ranges). You can also make a photo optional or required, and revoke front-desk devices. A shop with none ticked takes any punch from its team, and every punch records how it was made either way.
 - **Front-desk clock:** register the shop's iPad once from **Front-desk clock** while signed in as a manager. Staff then tap their name and type their own PIN, which they set on **Time clock**.
+- **The calendar and online booking follow the clock**, set per shop on the same page under **Online booking follows the clock**:
+  - A break closes online booking from its start for 30 minutes by default, or for as long as it lasts.
+  - Clocking out before the scheduled end closes online booking for the rest of the day.
+  - Clocking in early opens the time before the scheduled start, off by default. Each barber also has to allow it on their own **Time clock** page.
+  - Managers are told when a barber isn't clocked in 10 minutes before their first client. Set the minutes, or leave it blank to turn it off.
+
+  The front desk can still book anyone at any time. Clients booked over a break or after an early clock-out are flagged on the calendar and Today, and the shop's managers get one email with a link to the call-in form, filled in to move or rebook them.
 - **Timesheets** (`timesheet.edit`, `timesheet.approve`): fix punches with a reason, then each person signs off and a manager approves. **Lock the period** once it has ended and everyone is approved. The **Payroll export** card downloads the CSVs (`payroll.export`), and nothing is sent to iSolved.
 
 **Morning digest:** **Setup → Morning digest** sets the send time, who gets it (by role, plus always or never per person), and which sections go in. The page shows a preview of your own copy, and **Email me a test** sends it to you now.
@@ -194,6 +204,8 @@ The same step sets the **statement descriptor** (what clients see on their card 
 | Sales against the same day last week, by shop | Link |
 | Failed messages in the last 2 days | Retry |
 | Forgotten clock-outs (urgent; needs `timesheet.edit`) | Link to the timesheet |
+| A barber not clocked in close to their first client (needs `calendar.manage` or `timesheet.edit`) | Link to the appointment |
+| Clients booked over a break or after an early clock-out (urgent) | The call-in form, filled in to reassign or rebook (`callins.mark`) |
 | Someone crossed the 32-hour full-time line (needs `timesheet.approve` or `payroll.run`) | Link to Timesheets |
 
 - Marketing texts (open chair, rebook) follow these rules:
@@ -497,6 +509,25 @@ Everyone is paid hourly. This reverses the earlier "no clock-in" decision.
   - Breaks of 30 minutes or more are unpaid and shorter ones are paid rest breaks. The threshold can be changed, and so can an optional automatic meal deduction on long shifts. Paid hours become time entries, so overtime, payroll, tips and the Payroll Report all use the clock.
   - Overtime is the existing payroll rule: over 40 hours in a Sun–Sat week across shops of the same FEIN (federal FLSA), with optional daily OT. Iowa and Illinois rules are to be confirmed, so both are settings.
   - Overnight shifts split their hours at local midnight into the right day, week and period. DST nights count real elapsed time, and the punch editor asks which 1:30 on the fall-back night.
+- **On the calendar, live:**
+  - Each barber's column in the day calendar shows a status badge: **Clocked in**, **On break**, **Clocked out** or **Not in yet**, or the other shop when they're clocked in there.
+  - Worked time (clock-in to clock-out) runs as a green strip down the column's left edge next to the scheduled shift. Breaks are shaded bands labeled Break.
+  - Red flags mark a late clock-in against the scheduled start, a start that has passed with no clock-in, an early clock-out and a missed punch.
+  - Online time a break or clock-out holds is shaded and labeled. A client booked in it gets a red ring, and their panel offers **Reassign or rebook**, which opens the call-in form filled in for that time.
+  - Today's calendar checks for new punches and booking changes every 15 seconds while the tab is open, and redraws without a reload. Today refreshes every 30 seconds.
+- **Online booking follows the clock (today only, per shop):**
+  - A break holds the barber's online time from its start for the shop's hold length, or until 15 minutes from now while it lasts.
+  - A clock-out before the scheduled end (beyond the grace minutes) holds the rest of the day online. Clocking back in lifts it.
+  - An early clock-in opens the time from the clock-in to the scheduled start. This needs both the shop's setting and the barber's own permission, and the slots step back from the scheduled start on the barber's grid.
+  - The holds apply to online booking and the API only. The front desk and staff picker can still book the time.
+  - Clients never see clock status: the slots just aren't there, and the reason stays "No openings on this day".
+- **Alerts:**
+  - **Not clocked in:** a barber who hasn't clocked in at the shop by the shop's minutes before their first client (10 by default). It only applies to people who used the clock in the last 30 days, so shops that don't use the clock aren't flagged.
+  - **Clients in held time:** clients booked over a break or after an early clock-out.
+  - Both show on Today, and the shop's managers with `calendar.manage` get each one by email once (`clock_late_in`, `clock_affected`).
+  - The email goes from the 5-minute cron, and right after a break or clock-out punch for clients in held time.
+  - Today's open-chair time leaves out held time and counts time opened early. Who's in today shows clock status, past start, late, left early and missed punches.
+  - The waitlist alert skips barbers who are on a break or clocked out, and marks those not clocked in yet.
 - **Timesheets** (`/admin/timesheets`):
   - Per person and shop for each bi-weekly period ending Saturdays (anchored 2026-10-03), shown day by day and week by week.
   - Scheduled against actual hours. Mid-period, it compares against the schedule through today.
@@ -541,6 +572,12 @@ Everyone is paid hourly. This reverses the earlier "no clock-in" decision.
     - Export: totals, routes and permissions.
     - Alerts: forgotten clock-outs and FT crossings.
     - Page access and rate gating.
+  - `tests/clock-live.test.ts` (unit): each status, the late, past-start, early-out and missed flags, break and clock-out holds, early time and its slot grid, which clients are affected, the not-clocked-in timing, the call-in link and the settings' defaults.
+  - `tests/db/clock-live.test.ts`: one day at Coralville in time order.
+    - The not-clocked-in alert stays quiet until 10 minutes before the first client, then shows on Today and emails managers once. It clears when she clocks in.
+    - A break holds the overlapping online slots but not the front desk's. The calendar and Today flag the client booked in it with the call-in link, the managers are emailed, and ending the break lets the time go.
+    - An early clock-out empties the rest of the day online. The client after it is flagged with the call-in link from the clock-out, and clocking back in reopens the day.
+    - Online availability never mentions the clock.
 
 ### Service times
 

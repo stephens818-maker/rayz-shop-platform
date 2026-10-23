@@ -181,8 +181,17 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
   - Gate it on `timeclock.punch`. `punch` itself checks that the shop is one of theirs: a shop they're scheduled at, or one their access covers.
 - **Permissions:** `timeclock.punch`, `timeclock.kiosk`, `timesheet.own`, `timesheet.edit`, `timesheet.approve`, `payroll.rates` and `payroll.export`, plus the reports `labor` and `attendance`. There are 74 feature permissions now.
 - **Notification kinds:** `clock_forgot_out` and `ft_status_change`, both emails to the shop's managers.
-- **Cron:** `/api/cron/notifications` now runs `timeClockCron`. It flags forgotten clock-outs on every run, and runs the FT/PT check once a night around 3 AM local. The response gains `timeClock`.
+- **Cron:** `/api/cron/notifications` now runs `timeClockCron`. It flags forgotten clock-outs and sends the live clock alerts on every run, and runs the FT/PT check once a night around 3 AM local. The response gains `timeClock`.
 - **Employee Numbers** go into the CSV only, from `payroll_profiles`. The download's audit row holds the period, shops and row count, never the numbers. Nothing calls iSolved.
+- **Availability reads the clock today** (`drizzle/core_0031_clock_live.sql`):
+  - `getAvailability` and `loadDayInput` in `src/server/booking.ts` now hold online time when a barber is on a break or has clocked out early, and can open time before the scheduled start after an early clock-in. This applies only when the date is today. `/api/v1` availability and booking pick this up with no change on your side.
+  - Holds skip `staffOverride` (front desk). The early time applies to both.
+  - The pure logic is in `src/domain/clock-live.ts`, and the loader is `liveClock` in `src/server/clock-live.ts`.
+  - The shop rules are new keys in `shops.time_clock`: `blockOnBreak`, `breakHoldMinutes`, `blockAfterClockOut`, `openEarly` and `lateAlertMinutes`. Their defaults are in `shopClockSettings`.
+  - `staff` gains `clock_opens_early` (boolean, default false): the barber's own permission for early time.
+  - New table `clock_alert_log` (key, shop, sent at) sends each email once.
+  - Clients never see clock status. The slots are simply absent, and the reason stays "No openings on this day". Please keep clock status out of `/api/v1` customer responses too.
+  - New notification kinds `clock_late_in` and `clock_affected`: emails to the shop's managers with `calendar.manage`. The cron's `timeClock` result gains `clockAlerts`.
 
 ### Brand-to-shop settings ("brand-sync registry")
 
@@ -232,6 +241,18 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (the clock on the calendar)
+
+- **Day calendar:**
+  - Each barber's column shows a clock status badge (Clocked in, On break, Clocked out or Not in yet), worked time beside the shift, and shaded breaks.
+  - Late, past-start, early-out and missed-punch flags are marked in red.
+  - Clients booked in held time are ringed, with a reassign-or-rebook link to the call-in form, which now takes `staff`, `shop`, `from` and `to` in the URL.
+  - Today's calendar checks for changes every 15 seconds (`calendarPulseAction`) and redraws without a reload.
+- **Availability:** a break or early clock-out holds online time, and an early clock-in can open slots. These are per-shop rules, plus the barber's own permission for early time. See "Time clock" above for what changes under `/api/v1`.
+- **Alerts:** not clocked in before the first client, and clients booked in held time. They show on Today and go to managers by email once (from the cron, and right after the punch). Today's who's-in, open chair time and waitlist alerts follow the actual clock.
+- Migration `core_0031_clock_live`. Tests: `tests/clock-live.test.ts` and `tests/db/clock-live.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
 
 ### 2026-10-23: core (time clock and hours)
 

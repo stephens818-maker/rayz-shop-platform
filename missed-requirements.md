@@ -258,12 +258,29 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
   Both work for one, several or all shops and barbers.
 - [x] Permissions, à la carte: `timeclock.punch`, `timeclock.kiosk`, `timesheet.own`, `timesheet.edit`, `timesheet.approve`, `payroll.rates` and `payroll.export`.
 - [x] Tests: `tests/time-clock.test.ts` and `tests/db/time-clock.test.ts`. They cover pairing, breaks, overnight and DST, overtime math, the rolling 32-hour calculation, edits and the audit log, the period lock and the export totals.
+- [x] The calendar follows the clock in real time. In each barber's day column:
+  - a status badge: Clocked in, On break, Clocked out or Not in yet;
+  - worked time beside the scheduled shift, with breaks shaded and labeled Break;
+  - flags for a late clock-in, a start passed with no clock-in, an early clock-out and a missed punch.
+
+  The calendar checks every 15 seconds and redraws without a reload.
+- [x] Availability rules, per shop:
+  - a break holds the overlapping online time;
+  - an early clock-out holds the rest of the day;
+  - an early clock-in opens earlier slots, if the shop and the barber both allow it.
+
+  The front desk can still book that time, and clients see only the open times.
+- [x] Clients booked in held time are flagged on the calendar and Today, and managers are emailed once. Each comes with the reassign or rebook call-in flow, filled in for that time.
+- [x] A barber not clocked in X minutes before their first appointment (10 by default) alerts the managers on Today and by email.
+- [x] Today's who's-in list, open chair time and waitlist alert use the actual clock status.
+- [x] Tests: `tests/clock-live.test.ts` and `tests/db/clock-live.test.ts`. They cover availability on a break and an early clock-out, the late clock-in alert and flagging affected clients.
 - [ ] To confirm with the owner or accountant:
   - [ ] Iowa and Illinois overtime rules. It's federal weekly-over-40 for now, and daily OT is available as a setting.
   - [ ] The exact iSolved import template: column headers and earning codes. Edit them under **Time clock setup**.
   - [ ] Meal and rest break rules: 30 minutes or more is unpaid by default, and the automatic meal deduction is off.
   - [ ] Each shop's exact coordinates, geofence radius and public IP. The seeded coordinates are approximate.
   - [ ] Which shops require a photo, and which check each shop uses. Only Coralville is set up in the demo.
+  - [ ] How long a break should hold online booking (30 minutes by default), the not-clocked-in alert lead time (10 minutes), and whether any shop wants early clock-ins to open slots.
 - [ ] The mobile app has no clock-in yet. The interface for adding one is in NOTES-SYNC.
 
 ## Deferred by decision

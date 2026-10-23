@@ -115,7 +115,8 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - The network check reads the first entry of `x-forwarded-for`, which Vercel sets to the client's address. Behind any other proxy, make sure it sets that header and that clients can't spoof it, or use the device or GPS check instead.
    - Register each front-desk iPad from **Front-desk clock** on the iPad itself. The seeded devices can't be used.
    - Have each person set their PIN on **Time clock**. The seed's demo PIN only exists in seeded data.
-   - The notifications cron (every 5 minutes) also flags forgotten clock-outs, and once a night around 3 AM shop time it checks full-time and part-time crossings. Nothing else needs scheduling. On the Hobby plan's daily cron, forgotten clock-outs are flagged once a day and the FT check only runs if that daily run lands between 3:00 and 3:15 AM.
+   - The notifications cron (every 5 minutes) also flags forgotten clock-outs and emails managers about barbers not clocked in for their first client. Once a night around 3 AM shop time it checks full-time and part-time crossings. Nothing else needs scheduling. On the Hobby plan's daily cron, forgotten clock-outs are flagged once a day, the not-clocked-in email mostly won't arrive in time (Today still shows it), and the FT check only runs if that daily run lands between 3:00 and 3:15 AM. Emails about clients booked over a break or clock-out go right after the punch either way.
+   - Review **Online booking follows the clock** for each shop. A break holds online booking for 30 minutes, and an early clock-out closes the rest of the day online. Opening time for an early clock-in is off until a shop turns it on and each barber allows it on their **Time clock** page.
 7. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
 8. Add the custom domain under **Settings → Domains**.
 
