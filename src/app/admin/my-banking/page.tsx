@@ -163,7 +163,7 @@ export default async function MyBankingPage({ searchParams }: { searchParams: Pr
                 <tr key={i}>
                   <Td className="whitespace-nowrap">{formatDateTime(a.at)}</Td>
                   <Td>{activityText(a)}</Td>
-                  <Td>{a.actor === "stripe" ? "Stripe" : a.actor}</Td>
+                  <Td>{a.actorStaffId === me ? "You" : a.actor === "stripe" ? "Stripe" : (a.actor ?? "").slice((a.actor ?? "").indexOf(":") + 1)}</Td>
                 </tr>
               ))}
             </tbody>

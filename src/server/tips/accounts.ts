@@ -339,7 +339,7 @@ const BANKING_ACTIONS = ["tips.account_created", "tips.onboarding_started", "tip
 /** The employee's own banking history from the audit log: setup, status changes, destination and method changes. */
 export async function bankingActivity(staffId: string, limit = 12) {
   return db
-    .select({ at: auditLog.at, action: auditLog.action, details: auditLog.details, actor: auditLog.actorLabel })
+    .select({ at: auditLog.at, action: auditLog.action, details: auditLog.details, actor: auditLog.actorLabel, actorStaffId: auditLog.actorStaffId })
     .from(auditLog)
     .where(and(eq(auditLog.entity, "staff"), eq(auditLog.entityId, staffId), inArray(auditLog.action, BANKING_ACTIONS)))
     .orderBy(desc(auditLog.at))
