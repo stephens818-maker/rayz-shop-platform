@@ -96,6 +96,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       .filter((b) => b.category !== "time_off")
       .map((b) => `${(CATEGORY_LABEL[b.category] ?? b.reason).toLowerCase()} ${minutesToLabel(b.startMin)}`)
       .join(", ");
+  const offText = (r: (typeof staffing)[number]) =>
+    r.blocks
+      .filter((b) => b.category === "time_off")
+      .map((b) => `off ${minutesToLabel(b.startMin)}–${minutesToLabel(b.endMin % (24 * 60))}`)
+      .join(", ");
   const soon = new Date(now.getTime() + 30 * 60_000);
   const runsTimer = (a: { staffId: string; status: string; startsAt: Date }) =>
     (a.staffId === ctx.staff.id || can(ctx, "calendar.manage")) && (a.status === "checked_in" || a.status === "in_service" || a.startsAt <= soon);
@@ -244,6 +249,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                             <span className={r.status === "off" ? "font-semibold text-violet-700" : r.status === "partly_off" ? "text-violet-700" : r.status === "working" ? "text-emerald-700" : "text-zinc-500"}>
                               {STATUS_LABEL[r.status]}
                             </span>
+                            {r.status === "partly_off" && <span className="text-violet-700"> · {offText(r)}</span>}
                             {r.pending && <span className="text-amber-700"> · off requested</span>}
                             {r.blockedMin > 0 && <span className="text-zinc-500"> · {blockText(r)}</span>}
                           </span>
