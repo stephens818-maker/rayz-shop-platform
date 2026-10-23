@@ -176,6 +176,8 @@ The same step sets the **statement descriptor** (what clients see on their card 
 
 **Customer screen at checkout:** the brand's tip buttons are under **Setup → Shop settings → Tip buttons on the customer screen** (`handoff.settings`, brand-only). Each shop's **Customer screen at checkout** card (`settings.shop`) uses the brand's buttons or its own (percent or dollar amounts, up to 4, with custom and no tip on or off), and sets whether the tip is asked on the screen or on the Stripe Terminal reader, whether the client signs, whether any staff PIN or only a manager's takes the device back, and what happens after payment. Percent buttons are also the counter's quick tips. See [Customer screen at checkout](#customer-screen-at-checkout).
 
+**Marketing:** before anything goes out, set the brand's postal address, quiet hours and weekly and monthly limits under **Marketing → Marketing rules**. Then, under **Marketing → Campaigns**, give each campaign its wording and coupon and switch it on at the locations that want it. Managers can switch campaigns at their own shops and send blasts to their clients. Coupons are under **Promos & gift cards**. See [Marketing / Engage](#marketing--engage).
+
 **Morning digest:** **Setup → Morning digest** sets the send time, who gets it (by role, plus always or never per person), and which sections go in. The page shows a preview of your own copy, and **Email me a test** sends it to you now.
 
 <a id="what-we-store"></a>
@@ -240,7 +242,7 @@ Card payments stay at PCI SAQ A: card details only ever pass through Stripe's fr
 
 - Marketing texts (open chair, rebook) follow these rules:
   - They go only to clients who agreed to marketing texts and haven't replied STOP.
-  - They're sent between 9 AM and 8 PM (open-chair texts until 7 PM), at most one per client per week and 40 per send.
+  - They're sent between 9 AM and 8 PM (open-chair texts until 7 PM), at most one per client per week and 40 per send. They also count toward the brand's marketing limits (see [Marketing / Engage](#marketing--engage)).
   - Until the consent columns from PR #8 exist, nobody qualifies, and the alert says to call clients through the shop line instead.
 - **Morning digest:** one email per person, sent within five minutes of the set time (7 AM by default) and never after noon. It covers:
   - yesterday's sales by shop against the same day the week before;
@@ -1263,6 +1265,134 @@ Who can edit details already on file, and the front desk's view of a client whos
 
 <img alt="Saved, hidden by policy" src="docs/screenshots/client-profile-hidden-by-policy.png" width="800" />
 
+### Marketing / Engage
+
+Brand-level campaigns and coupons, switched on and worded per location. Nav: **Marketing → Campaigns, Blasts, Marketing rules**; coupons are under **Promos & gift cards**; the report is **Reports → Marketing**.
+
+**Who can do what.** These are new permissions; roles get them through migration `core_0041_marketing`.
+
+| Permission | What it allows | Who has it |
+|---|---|---|
+| `marketing.view` | See campaigns and blasts, with counts | Brand Admin, Regional Manager, Shop Manager |
+| `marketing.location` | Turn campaigns on or off at their shops, give their shops their own wording and settings, and send blasts to their shops' clients | Brand Admin, Regional Manager, Shop Manager |
+| `marketing.manage` (brand-only) | Brand wording, coupons on campaigns, and the marketing rules | Brand Admin |
+| `marketing.export` (brand-only) | Download contact lists | Brand Owner only, unless granted |
+
+- A manager's blast can only target their own shops, and a blast that includes other shops is read-only for them ("This blast goes to shops outside yours").
+- Staff see counts, never contact lists.
+- The export (`/admin/marketing/export`, all clients who agreed to marketing, or one campaign's recipients) shows phone and email the way **Client data** settings let the exporter see them. Every export is audited with the clients it contained.
+
+**Coupons** (Promos & gift cards → Coupons; `promos.manage`):
+- **Types:** percent off, dollars off, or a free add-on, service or product. The free item is taken off at its price when it's on the ticket, and online booking adds it for the client.
+- **Rules:**
+  - which services or products it applies to (blank means the whole ticket, or services only);
+  - which locations (blank means all; a manager can only pick their own);
+  - minimum spend before discounts, and start and end dates (checked against the ticket's day);
+  - how many uses in total and per client;
+  - first visit only (earlier walk-in tickets count as visits);
+  - whether it stacks with other coupons and manual discounts;
+  - whether it applies automatically.
+- **Codes:** one shared code, or single-use codes (one per client, issued by a campaign, with an optional "valid for N days").
+- **Locked after use:** once a coupon has been redeemed or has issued codes, its code and code type stay as they are.
+- **At checkout:**
+  - The POS takes a code, and the ticket starts with any coupon held from the online booking ("From online booking") and any shared coupon that applies automatically for this client ("Applied automatically").
+  - Each redemption is recorded inside checkout's transaction, with the limits checked again under a lock, so two tills can't both take the last use.
+  - Refunds and voids give the use back.
+- **Loyalty:** coupons lower net service spend, so loyalty is earned on what the client actually paid for services.
+- **Online booking:** `/book/{shop}` has a coupon box, filled in from a campaign link (`?coupon=`). The coupon is checked and shown as "Free Beard Trim", "$5 off" and so on, held on the appointment, and applied when the ticket is opened. A coupon that no longer works by then is shown on the ticket with the reason. Checks are limited to 20 per 10 minutes per client IP (the trusted-proxy IP, see `TRUSTED_PROXY_HOPS`).
+
+**Automated campaigns** (Marketing → Campaigns): ten campaigns, each switched on per location, off by default.
+
+| Campaign | Who gets it | Default |
+|---|---|---|
+| Birthday | Clients with a birthday coming up | 7 days before |
+| We miss you | No visit since | 42 days |
+| Win-back | No visit since | 90 days |
+| Thanks for your first visit | After the client's first visit | 24 hours after |
+| Visit milestone | After the client's Nth visit | 10th visit |
+| Missed appointment follow-up | After a no-show | 3 hours after |
+| Rebook reminder | Before a regular is due, from their usual time between cuts | 3 days before |
+| New barber or location | When a barber starts or a location opens: clients of that location and of locations within the radius (by the shops' coordinates; client addresses aren't used) | 15 miles, within 14 days of starting |
+| Fill slow days | The barber's regulars (2+ visits with them in a year, nothing booked), when the barber's next day from noon is under the set utilization | 50% utilization, at most 20 clients per barber |
+| Finish your booking | Clients who started an online booking and didn't finish (matched by sign-in, phone or email) | 60 minutes after |
+
+- **Wording and channels:** each campaign has a text, an email (subject and body) and an app push (title and body), and a channel order.
+- **Merge fields:** `{first_name}`, `{shop}`, `{barber}` (first name), `{book_link}`, `{coupon_code}` and `{expiry}`.
+- **Coupon:** a campaign can carry one. A single-use coupon issues each client their own code.
+- **Per location:** **Own wording** and **Own settings** override only the fields that differ from the brand's.
+- **Test send:** sends the campaign to yourself, by text or email.
+- **Missed runs:** a campaign that missed a day catches up for 14 days, and each client gets each occasion once (one birthday a year, one lapse per last visit, and so on).
+
+**Blasts** (Marketing → Blasts): one-off text, email or push.
+- **Segment builder:**
+  - locations and barbers;
+  - last visit (from and to days ago), visit count and spend (min and max);
+  - services or products bought;
+  - birthday months and rating, each only for those whose client-data settings show them;
+  - loyalty balance and tags (set on the client page, `clients.edit`);
+  - the channel they agreed to.
+- **Preview and send:**
+  - **Count clients** shows how many match, how many can be reached on each channel, and a few first names.
+  - **Test send**, **Save draft**, **Schedule** for a date and time, or **Send now** after a confirmation.
+  - A scheduled blast can be cancelled until it goes out.
+- **Results:** a sent blast shows queued and skipped counts with the reasons ("No marketing consent", "Weekly limit reached", …).
+
+**Consent and compliance** (Marketing → Marketing rules; `marketing.manage`):
+- **Marketing consent is separate from appointment texts and emails.** It's read from the customer app's columns (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing` and `customer_devices`, PR #8). Core never writes them. Until they exist nobody qualifies, so nothing goes out.
+- **Always wins:** a STOP (`contact_opt_outs`), an unsubscribe, or a deleted client.
+- **Texts (Twilio, A2P 10DLC):**
+  - A campaign's text has to say how to opt out ("Reply STOP to opt out." in every default) and stay under 320 characters with sample values filled in.
+  - STOP turns marketing texts off and cancels any that are waiting. START undoes it.
+  - HELP is answered with the brand's HELP text (from the rules page), unless `TWILIO_ADVANCED_OPT_OUT=1`, where Twilio answers.
+- **Emails (CAN-SPAM):**
+  - Every email has the brand's postal address and a one-click unsubscribe link (`/m/{token}/unsubscribe`).
+  - No marketing email is sent until the address is set.
+  - Unsubscribes are per channel and match by client, email or phone.
+- **Quiet hours:** default 9 PM to 9 AM in each location's time zone. A message due then waits in the queue until quiet hours end.
+- **Frequency caps per client:**
+  - Defaults are 2 a week and 6 a month, across every campaign and blast.
+  - Today's open-chair and rebook texts count toward them.
+- **Links:**
+  - Each message's link is `/m/{token}`. It counts the click (not link previews or mail scanners), then opens the location's booking page with the barber, service and coupon filled in.
+  - The token says nothing about the client.
+
+**Reporting** (Reports → Marketing; `report.marketing.view`, CSV with `.export`):
+- **Measures:** sends, delivered, clicks, bookings, redemptions, attributed revenue, cost, ROI, unsubscribes and unsubscribe rate.
+- **Grouping:** by campaign, location and barber.
+- **Attribution:** a booking, paid ticket or redemption within the attribution window (default 7 days) counts toward the latest message the client got before it (last touch).
+- **Cost:** message costs per channel are set on the rules page.
+
+**Engine:**
+- `/api/cron/marketing` (Vercel Cron, every 15 minutes, `CRON_SECRET`) and `pnpm worker` queue what's due, then drain the queue.
+- Every message is one `marketing_sends` row with a unique key (campaign, client, occasion), written under a per-client lock, so a second run, or two at once, never sends twice.
+- In dev, providers are stubs: texts `console` or `simulator`, email `console`, and push `console`, `simulator` or the `expo` stub (`NOTIFICATIONS_PUSH_PROVIDER`). The demo shows everything as suppressed in **Notifications**.
+
+**Tests:**
+- `tests/coupons.test.ts`: discounts, free items, stacking and rules.
+- `tests/marketing.test.ts`: templates, merge fields, every trigger's timing, quiet hours, caps, channels and segments.
+- `tests/db/marketing.test.ts`:
+  - coupons at checkout and booking, limits under concurrency, refunds, loyalty;
+  - consent, idempotency, quiet hours, caps;
+  - STOP, START and HELP, unsubscribe and clicks;
+  - every campaign's audience, blasts and scope, the coupon editor and booking drafts;
+  - the report and the export.
+
+<img alt="Campaigns with per-location switches" src="docs/screenshots/marketing-campaigns.png" width="800" />
+
+<img alt="Campaign editor: brand wording, coupon, per-location overrides, test send" src="docs/screenshots/marketing-campaign-editor.png" width="800" />
+
+<img alt="Blast with the segment builder and preview" src="docs/screenshots/marketing-blast.png" width="800" />
+
+<img alt="A sent blast: queued and skipped with reasons" src="docs/screenshots/marketing-blast-sent.png" width="800" /> <img alt="Blasts list" src="docs/screenshots/marketing-blasts.png" width="800" />
+
+<img alt="Marketing rules: quiet hours, caps, postal address, HELP text, costs, export" src="docs/screenshots/marketing-rules.png" width="800" />
+
+<img alt="Marketing report by campaign, location and barber" src="docs/screenshots/marketing-report.png" width="800" />
+
+<img alt="A Coralville manager sees only Coralville" src="docs/screenshots/marketing-manager.png" width="800" />
+
+<img alt="Coupons with their rules" src="docs/screenshots/coupons.png" width="800" /> <img alt="A campaign's free add-on applied in online booking" src="docs/screenshots/booking-coupon.png" width="400" />
+
 ### Squire importer
 
 - **Admin → Import**, or the `pnpm import:squire` CLI. Import the five Squire exports in this order: clients, appointments, transactions, loyalty, gift cards.
@@ -1344,7 +1474,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 
 ## What's stubbed or simulated
 
-- **SMS and email providers.** Sending is **off by default** (`src/server/notifications/providers.ts`). That includes purchase orders emailed to vendors and low-stock alerts: they're queued and shown in the outbox with their attachments, but nothing leaves until a provider is configured. Setting `NOTIFICATIONS_*_PROVIDER=console` logs messages instead, and `simulator` (texts and calls) feeds the call and text simulator. Twilio texts and calls are built (see [Call-ins and the shop line](#call-ins-and-the-shop-line-twilio)) but haven't been tried against a real Twilio account: that needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, a number per shop and A2P 10DLC registration. Resend email is still a stub and needs a verified sending domain.
+- **SMS and email providers.** Sending is **off by default** (`src/server/notifications/providers.ts`). That includes purchase orders emailed to vendors and low-stock alerts: they're queued and shown in the outbox with their attachments, but nothing leaves until a provider is configured. Setting `NOTIFICATIONS_*_PROVIDER=console` logs messages instead, and `simulator` (texts and calls) feeds the call and text simulator. Twilio texts and calls are built (see [Call-ins and the shop line](#call-ins-and-the-shop-line-twilio)) but haven't been tried against a real Twilio account: that needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, a number per shop and A2P 10DLC registration. Resend and Postmark email are still stubs and need a verified sending domain (marketing should use Postmark's broadcast stream). App push for marketing (`NOTIFICATIONS_PUSH_PROVIDER`) is `disabled` by default, with `console`, `simulator` and an `expo` stub.
 - **Calls through the shop line.** **Call through shop line** rings the shop's phone from its Twilio number, then bridges the client (`/api/twilio/voice/bridge`), so neither side sees the other's number. Without Twilio, the call goes to the outbox and is logged under **Calls and texts** on the client's profile.
 - **Stripe without keys.** With no `STRIPE_SECRET_KEY`, a built-in simulator with the same interface runs, using Stripe's published test card IDs (`pm_card_visa`, `pm_card_visa_debit`, and so on), so the POS works end to end offline. Adding test keys (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`) switches to real Stripe test mode: destination charges to each connected account, plain charges for shops on the brand's account, Stripe-hosted onboarding, Terminal Locations and reader registration, Elements for keyed cards, the webhook for dashboard refunds, disputes and the brand's payouts, and the Connect webhook for account status, payout schedules and shops' payouts. `STRIPE_STATEMENT_PREFIX` (optional, default `RAYZ`) is the brand's descriptor prefix. Connect must be turned on for the platform account first ([dashboard.stripe.com/test/connect](https://dashboard.stripe.com/test/connect)). For Cloud Agents, add them under Cursor Dashboard → Cloud Agents → Secrets.
 - **Employees' Stripe accounts for tip payouts.** Without Stripe keys, **Set up Stripe payouts** on **My banking** finishes at once with a simulated account and a test debit card (and **Change my card or bank** switches to a test bank account), and approved payouts are marked paid straight away. With keys, it's a real Express account and Stripe's hosted onboarding; payout and account events need the Connect webhook (see [DEPLOY.md](DEPLOY.md)).
@@ -1386,9 +1516,10 @@ src/
   app/(public)/      customer booking site (shop picker, /book/[shop], /a/[code], /account, /docs/api)
   app/admin/         staff app (calendar, walk-ins, checkout, sales, drawer, reports, payroll, setup pages)
   app/api/v1/        versioned booking API (+ openapi.json)
-  app/api/cron/      notification queue drain and low-stock alerts (Vercel Cron)
+  app/api/cron/      notification queue drain, low-stock alerts and marketing campaigns (Vercel Cron)
   domain/            pure logic: availability, checkout, payroll, loyalty, inventory (levels, suggested orders, receiving), PO documents
   server/            data services: booking, calendar, checkout, reports, loyalty, importer, notifications, auth, payments
+  server/marketing/  campaigns, audiences, consent, the send engine, tracked links and the marketing report
   server/inventory/  stock ledger, stock levels, adjustments and alerts, vendors and purchase orders, transfers, counts, inventory reports
   db/                Drizzle schema + client
 scripts/             migrate, seed (real shops/services/prices + sample history), worker, import CLI
@@ -1402,7 +1533,7 @@ samples/squire/      example Squire CSV exports for the importer
 
 - `pnpm vercel-build` (which Vercel runs) applies migrations, then builds. With `DEMO_MODE=true` it also loads the sample data into an empty database; without it, it never seeds.
 - `DEMO_MODE=true` keeps a hosted demo safe: the payment simulator or Stripe test keys only, no texts, emails, or calls (they show in the outbox), customer sign-in codes on screen, one-click demo logins, and a banner on every page.
-- `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
+- `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes and `/api/cron/marketing` every 15. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
 - Keep separate demo, staging, and production databases, and turn on Neon point-in-time restore or Supabase daily backups.
 
 ## Cutover plan
@@ -1439,7 +1570,8 @@ samples/squire/      example Squire CSV exports for the importer
 ## Next steps
 
 - Real Stripe Terminal readers: a location, connection tokens, reader pairing, and reading the tip back from the reader's PaymentIntent (the tip buttons are already synced to the reader's configuration).
-- Marketing consent: the open-chair and rebook texts on Today are built, but wait on the `sms_marketing_opt_in` column from PR #8.
+- Marketing consent: the open-chair and rebook texts on Today and every marketing campaign and blast are built, but wait on the marketing consent columns from PR #8 (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing`, `customer_devices`).
+- Real email and push providers for marketing (Postmark broadcast stream or Resend, Expo push).
 - Shops outside Central time: today a shop in another zone can be saved but not opened.
 - Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training flag stays off; merging PR #8; `DEMO_MODE` in production (it would break the Vercel demo).
 - Customer card-on-file and deposits or no-show fees, if the shop wants them (Squire had none). This requires 3DS.

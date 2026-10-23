@@ -203,7 +203,7 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Extras: booked with a barber who's off, waitlist while chairs are open, drafts waiting to send, late deliveries, tickets left open, drawers never closed, a shop that can't take cards, and unread client texts.
 - [x] Morning digest by email to the owner and managers, configurable at **Setup → Morning digest** (time, roles, people, sections), with a preview and a test send. It covers yesterday's sales by shop, today's team (working, off, blocked) and the alerts, each copy scoped to that person's shops and permissions. It's sent once per person per day.
 - [x] Tests: `tests/today.test.ts` and `tests/db/today.test.ts`.
-- [ ] Marketing texts (open chair, rebook) wait on the marketing consent columns from PR #8. Until then the alerts say to call through the shop line.
+- [ ] Marketing texts (open chair, rebook) wait on the marketing consent columns from PR #8. Until then the alerts say to call through the shop line. They now count toward the brand's marketing limits (section 21).
 
 ## 13. Per-location banking (Stripe Connect)
 
@@ -400,6 +400,91 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [ ] Asking only from the 3rd visit is based on loyalty, not satisfaction, so it isn't review gating as Google defines it, but Google's policy also discourages selectively soliciting reviews. Confirm the brand is comfortable with this, or set the visit to 1 to ask everyone.
 - [ ] Whether the pause after a tap should cover every location (it's per location now, since each has its own Google listing), and whether walk-ins with no client on file should ever see the button (they count as a 1st visit).
 - [ ] Google doesn't report which reviews came from the link, so the report counts clicks, not reviews.
+
+## 21. Marketing / Engage
+
+**Coupons:**
+- [x] Percent off, dollars off, or a free add-on, service or product (taken off at its price; online booking adds it for the client).
+- [x] Rules:
+  - services or products it applies to;
+  - locations;
+  - minimum spend before discounts;
+  - start and end dates (by the ticket's day);
+  - maximum uses in total and per client;
+  - first visit only (walk-in tickets count as visits);
+  - stackable or not, with other coupons and manual discounts.
+- [x] One shared code, or single-use codes issued one per client by a campaign, with an optional validity in days.
+- [x] Code and code type are locked once used.
+- [x] Managers can only make or edit coupons for their own shops.
+- [x] Redeemed in POS checkout. The ticket starts with the coupon held from online booking and any shared coupon set to apply automatically for the client.
+- [x] Limits are re-checked under a lock inside checkout's transaction.
+- [x] Refunds and voids give the use back.
+- [x] Online booking has a coupon box, prefilled from the campaign link, and holds the coupon for checkout. Checks are rate-limited per client IP.
+- [x] Loyalty: coupons lower net service spend, so loyalty is earned on what was actually paid for services.
+
+**Automated campaigns:**
+- [x] Ten campaigns, each switched on per location (off by default), with brand wording and per-location wording and settings:
+  - birthday (7 days before);
+  - we miss you (42 days);
+  - win-back (90 days);
+  - thanks for your first visit;
+  - Nth visit milestone (10th);
+  - no-show follow-up;
+  - rebook reminder from the client's usual interval;
+  - new barber or location to clients of nearby locations;
+  - fill slow days (barber's next day under 50% booked, a coupon to their regulars);
+  - finish your booking (unfinished online bookings).
+- [x] Text, email and push templates with merge fields `{first_name}`, `{shop}`, `{barber}`, `{book_link}`, `{coupon_code}`, `{expiry}`, checked on save. Test send to yourself.
+
+**Blasts:**
+- [x] One-off text, email or push, sent now or scheduled, with a preview (counts per channel and sample first names) and a test send.
+- [x] Segment builder filters:
+  - location, barber;
+  - last visit, visit count, spend;
+  - services and products bought;
+  - birthday month and rating (when client-data settings show them);
+  - loyalty balance, tags;
+  - opted-in channel.
+- [x] Client tags on the client page (audited).
+
+**Compliance and consent:**
+- [x] Marketing consent is separate from appointment messages. It's read from PR #8's columns; nothing goes out until they exist.
+- [x] Texts:
+  - STOP, START and HELP on the shop line (HELP text in Marketing rules, or Twilio Advanced Opt-Out);
+  - texts must say how to opt out.
+- [x] Email:
+  - one-click unsubscribe and the brand's postal address in every message;
+  - no marketing email without the address.
+- [x] Quiet hours, 9 PM to 9 AM in each location's time zone. Messages due then wait.
+- [x] Frequency caps per client: 2 a week and 6 a month by default, including Today's texts.
+- [x] Contact lists:
+  - Staff see counts only.
+  - Exports need `marketing.export` (Brand Owner unless granted), follow client-data settings, and are audited.
+
+**Reporting:**
+- [x] Per campaign, location and barber:
+  - sends, delivered, clicks;
+  - bookings, redemptions, attributed revenue;
+  - cost, ROI;
+  - unsubscribes and the unsubscribe rate.
+- [x] Attribution is last touch within 7 days (configurable). CSV export.
+
+**Engine and tests:**
+- [x] `/api/cron/marketing` every 15 minutes (Vercel Cron) and `pnpm worker`.
+- [x] Idempotent sends: one row per client per occasion, under a per-client lock.
+- [x] Providers are stubs in dev.
+- [x] Tests: `tests/coupons.test.ts`, `tests/marketing.test.ts`, `tests/db/marketing.test.ts`. README: [Marketing / Engage](README.md#marketing--engage).
+
+**Still open:**
+- [ ] Marketing consent columns from PR #8 (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing`, `customer_devices`). The names are assumed until the mobile side confirms them, and the consent capture and TCPA wording are on the app side.
+- [ ] Before any location turns a campaign on:
+  - an A2P 10DLC campaign registered with a marketing use case;
+  - the brand's postal address, under Marketing rules;
+  - a real email provider (Postmark broadcast stream or Resend; both are stubs) and real push (Expo stub).
+- [ ] Message costs for ROI are estimates set under Marketing rules (1¢ a text, 0.1¢ an email by default); replace them with the real rates.
+- [ ] "Nearby" for announcements uses the shops' coordinates (clients of locations within the radius), since client addresses aren't used. The seeded coordinates are approximate.
+- [ ] "Finish your booking" only knows about the website's booking flow. App bookings would need to call `saveBookingDraft` (NOTES-SYNC).
+- [ ] Which campaigns to switch on, their wording and coupons per location.
 
 ## Deferred by decision
 

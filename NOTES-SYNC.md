@@ -26,7 +26,7 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts`, `core_0039_google_reviews` and `core_0040_review_visits`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts`, `core_0039_google_reviews`, `core_0040_review_visits` and `core_0041_marketing`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -271,6 +271,50 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
 - **Cron:** `/api/cron/notifications` runs `queueReviewFollowUps()` before sending due jobs.
 - **If the app shows a Leave a review link**, please link to `/receipt/{token}/review` (or use `receiptData(saleId).reviewUrl`, which applies the visit and pause rules; `reviewTiming(saleId)` says why it's held) so clicks are counted, and don't add a rating step in front of it.
 
+### Marketing / Engage (core)
+
+- **Code:**
+  - Pure: `src/domain/coupons.ts` (`couponDiscount`, `couponProblem`, `stackProblem`, `couponSummary`, `uniqueCode`, `issuedExpiry`) and `src/domain/marketing.ts` (`TRIGGERS`, `render`/`fill`, `templatesProblem`, `inQuiet`, `nextSendAt`, `capProblem`, `pickChannel`, `SegmentSchema`, `dedupeKey`, `roi`).
+  - Server: `src/server/coupons.ts`, `src/server/booking-drafts.ts`, and `src/server/marketing/` (`consent`, `audiences`, `engine`, `campaigns`, `links`, `report`, `settings`).
+  - Routes: `/api/cron/marketing`, `/m/{token}` and `/m/{token}/unsubscribe`, and `/admin/marketing/export`.
+  - Shared report helpers moved out of `reports.ts` into `report-sql.ts` and `available-minutes.ts`; `reports.ts` re-exports them.
+- **Schema** (`drizzle/core_0041_marketing.sql`):
+  - `promo_codes` gains `free_item_kind`/`free_item_id` (type `free_item`), `service_ids`, `product_ids`, `shop_ids` (jsonb, empty means all), `min_spend_cents`, `max_per_customer`, `code_mode` (`shared|unique`), `valid_days`, `first_visit_only`, `stackable` (default true) and `auto_apply`. Existing codes are unchanged shared codes.
+  - `coupon_codes`: single-use codes issued to one client by a campaign (`expires_on`, `redeemed_at`, `sale_id`).
+  - `coupon_redemptions`: one per sale and coupon, `via` `code|booking|auto`, with `campaign_id` and `reversed_at` (refund or void).
+  - `appointment_coupons`: the code held from online booking.
+  - `marketing_campaigns`: `kind` `trigger|blast`, one row per trigger key. Blasts have `segment`, `shop_ids`, and `status` `draft|scheduled|sending|sent|cancelled`.
+  - `marketing_location_settings`: per campaign and shop, `enabled`, and `templates`/`settings` overrides.
+  - `marketing_sends`: one per client per campaign occasion. `dedupe_key` is unique; `status` is `queued|skipped|test`; also `job_id` (`notification_jobs` kind `marketing`), a 22-character `token`, `book_path`, `clicks` and `cost_cents`.
+  - `marketing_unsubscribes`: by channel and client, email or phone; `source` is `link|stop|staff`.
+  - `booking_drafts`: unfinished online bookings by a browser token.
+  - `customer_tags`.
+  - `brand_settings.marketing`: quiet hours, caps, postal address, HELP text, attribution days and costs.
+  - Permissions `marketing.view`/`.location`/`.manage`/`.export` and `report.marketing.view`/`.export`.
+- **Consent (read-only for core):**
+  - Marketing reach per channel reads the columns below. `consentColumns()` checks which exist once a minute; until they do, nobody qualifies.
+    - `customers.sms_marketing_opt_in`
+    - `customers.email_marketing_opt_in`
+    - `customers.push_marketing`
+    - `customer_devices` (`push_enabled`, `revoked_at`, newest `last_seen_at`)
+    - `customers.deleted_at`, if present
+  - `contact_opt_outs` (sms) and `marketing_unsubscribes` always win. `sms_opt_in`/`email_opt_in` (appointment messages) are never read as marketing consent.
+  - Core writes only `marketing_unsubscribes`, from its own links, STOP and START.
+- **STOP, START and HELP** on the shop line:
+  - STOP also adds an `sms` unsubscribe and cancels pending marketing jobs. START removes the STOP unsubscribes.
+  - HELP gets the brand's HELP text unless `TWILIO_ADVANCED_OPT_OUT=1`.
+- **Audit actions:**
+  - Campaigns: `marketing.automation_saved`, `marketing.automation_on`/`_off`, `marketing.test_sent`.
+  - Blasts: `marketing.blast_created`, `_saved`, `_scheduled`, `_sent`, `_cancelled`.
+  - Other: `marketing.export`, `brand.marketing_rules`, `promo.create`/`.update`, `customer.tags`.
+- **If the app takes coupons or bookings:**
+  - **Bookings:** check and hold a code with `checkBookingCoupon(shopSlug, code)` and `holdBookingCoupon(appointmentCode, code)` right after booking, so the POS picks it up.
+  - **Checkout:** redeem only through checkout's `redeemCoupons` (it re-checks limits under a lock), and never increment `promo_codes.redemptions` yourself.
+  - **Unfinished bookings:** `saveBookingDraft` and `finishBookingDraft` feed the "Finish your booking" campaign.
+- **Push:**
+  - Marketing push jobs have `channel = 'push'` and `to` set to the `customer_devices.id`.
+  - The provider (`NOTIFICATIONS_PUSH_PROVIDER`) is `disabled`, `console`, `simulator` or an `expo` stub.
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
@@ -303,6 +347,14 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 - (core → mobile) Locations now have a lifecycle in `shops.status`: `setup` (hidden from clients), `live`, `closed` (temporary, with `closed_until` and `closed_note`) and `archived` (`active = false`, which a database check enforces). The pure rules are in `src/domain/location-lifecycle.ts`: `listedPublicly`, `takesOnlineBookings`, `closedOn` and `operational`. PR #8 adds `shops.launch_at` and `booking_mode` as a cutover gate from Squire. That's a separate question (which system takes the bookings), so they should be combined rather than replace each other. Please have `/api/v1` list and book only shops where both the cutover gate and `takesOnlineBookings` allow it. Archived shops should never appear. Temporarily closed shops can be listed with `closed_note`.
 - (core → mobile) Today's open-chair and rebook texts read `customers.sms_marketing_opt_in` from PR #8. They check for the column at runtime and send nothing until it exists. Core doesn't add the column; the consent UI and its capture are yours.
+- (core → mobile) Marketing (see "Marketing / Engage") reads these PR #8 names:
+  - `customers.sms_marketing_opt_in`, `email_marketing_opt_in` and `push_marketing` (booleans);
+  - `customer_devices.push_enabled`, `revoked_at` and `last_seen_at`.
+
+  Please confirm the names, or tell us yours, and we'll change `src/server/marketing/consent.ts`. Please also:
+  - capture marketing consent separately from appointment messages, with the TCPA disclosure;
+  - treat a `marketing_unsubscribes` row as "off" for that channel in the app's settings, and record an in-app opt-out there (`source` `staff` or a new `app` source we'd add);
+  - tell us when real push delivery replaces the `expo` stub. Jobs carry the device id in `to`.
 
 - (core → mobile) Processor-hosted data: the server now scrubs card, bank, SSN and EIN values from every log line (`src/instrumentation.ts` wraps `console`, which covers `errorResponse` in `api.ts`), from audit details, and in the database from every free-text column, including what `importer.ts` writes. Please never add a request or response field for those values to `/api/v1`, `api-schemas.ts` or `openapi.ts`; `tests/db/sensitive-data.test.ts` checks every `/api/v1` GET and the OpenAPI document with `findSensitive`. When the app adds saved cards, collect them with Stripe's mobile Payment Sheet or SetupIntents and keep only the PaymentMethod id, brand and last 4.
 
@@ -321,6 +373,18 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (Marketing / Engage)
+
+- **Coupons:**
+  - Percent, dollars or a free item, with targets, locations, minimum spend, dates, total and per-client limits, shared or single-use codes, first visit only, stacking and auto-apply.
+  - Redeemed in POS checkout (held from online booking, or applied automatically) and reversed on refund or void.
+  - They lower loyalty's net service spend.
+- **Campaigns:** ten automated campaigns, switched on and worded per location, and blasts with a segment builder, preview, test send, schedule or send now.
+- **Engine:** consent from PR #8's columns only, STOP, HELP and unsubscribe, quiet hours (9 PM to 9 AM local), weekly and monthly caps, and idempotent sends on a 15-minute cron.
+- **Reporting:** a report by campaign, location and barber, and a contact export behind `marketing.export`.
+- Migration `core_0041_marketing`. Tests: `tests/coupons.test.ts`, `tests/marketing.test.ts`, `tests/db/marketing.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts` (only imported, to read a signed-in customer for booking drafts), `importer.ts`, and no consent columns were written or migrated.
 
 ### 2026-10-23: core (when the Google review link is shown)
 
