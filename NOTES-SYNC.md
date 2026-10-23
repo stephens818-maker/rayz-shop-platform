@@ -21,7 +21,7 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times` and `core_0022_payroll`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time` and `core_0024_block_reasons`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -107,8 +107,14 @@ Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook pro
   - `time_off_requests`: pending, approved, denied or cancelled, with who decided and how.
   - `brand_settings.staff_time` and `shops.staff_time` (jsonb rules).
   - New permissions `blocks.own`, `blocks.others`, `timeoff.request`, `timeoff.approve`, and the report `staffing`.
+- **Reasons** (`drizzle/core_0024_block_reasons.sql`, `src/domain/block-reasons.ts`, `src/server/block-reasons.ts`):
+  - `block_reasons`: the brand's list (`key`, `label`, `color`, `used_for` blocks/time_off/both, `counts_as_lunch`, `notice_exempt`, `private`, `sort_order`, `archived_at`).
+  - `time_blocks`, `time_block_series` and `time_off_requests` gain `reason_id` and `note`. `reason` is now the label at the time (kept in step on a rename). `category` is just `lunch`, `other` or `time_off`; `break` and `personal` became reasons.
+  - New permissions `blocks.private` (see private reasons and notes) and `blocks.reasons` (edit the list).
+  - **Every read takes a viewer.** `staffingFor(shopIds, from, to, viewer, staffIds?)`, `timeOffEntries(shopIds, from, to, viewer, staffIds?)`, `listRequests(scope, { viewer, ... })` and `loadDayCalendar(..., reasons)` take a `ReasonViewer` (`reasonViewer(ctx)` in `src/server/auth/staff.ts`, or `NO_PRIVATE`). They return a `ShownReason` (`{ reasonId, label, color, note, hidden }`); a private one comes back as "Blocked" or "Time off" with no note. `RequestView.reason` is now a `ShownReason` and its separate `note` is gone.
+  - **Customers never get a reason.** `/api/v1` availability only uses block times, as before. If the app ever shows staff blocks, please read them through these functions so the masking applies.
 - **Availability:** `getAvailability` (and so `/api/v1` availability) now also leaves out **pending** time off for online and API bookings; staff bookings ignore it. Approved time off and every block were already left out. There's nothing to change on the mobile side.
-- **Writes:** to add a block or time off, please go through `addBlock`, `requestTimeOff` and `decideTimeOff`. They check booked appointments, write the audit rows and send the barber's email. Avoid inserting into `time_blocks` directly.
+- **Writes:** to add a block or time off, please go through `addBlock`, `requestTimeOff` and `decideTimeOff`, which now take a `reasonId` (and an optional `note`) instead of a category or reason key. They check booked appointments, write the audit rows and send the barber's email. Avoid inserting into `time_blocks` directly.
 - **Notification kinds:** `time_off_reschedule` (to the client, with the manage link) and `time_off_decision` (an email to the barber).
 
 ### Brand-to-shop settings ("brand-sync registry")
@@ -145,6 +151,16 @@ If the mobile side means a specific registry from the plan, say which items it s
 - Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
 
 ## Log
+
+### 2026-10-23: core (block reasons)
+
+- Every block and time off entry has a reason from a brand list (Lunch, Break, Bank, Doctor, Personal, Vacation, Sick, Training, Meeting), plus an optional note. Managers edit the list at `/admin/block-reasons`, each with a color, what it's for, and whether it counts as lunch, skips the notice and is private.
+- The day calendar writes the reason on the block in its color, with the note on hover or tap. New **week view** for one barber (`/admin/calendar?view=week`).
+- Private reasons (Doctor and Sick to start) are masked on the server for people without `blocks.private`, except for the barber's own entries. Calendar, dashboard, time off page, staffing report and CSV, and the audit log (entries and search) all apply it. Online booking never sees reasons.
+- The staffing report has a **Time off for** column, notes beside each reason, and a **By reason** hours table.
+- Migration `core_0024_block_reasons` seeds the list, maps existing entries by category and reason, and grants `blocks.private` and `blocks.reasons` to Brand Admin, Regional Manager and Shop Manager. Custom roles get `blocks.private` with `timeoff.approve`, and `blocks.reasons` with `settings.shop`.
+- Tests: `tests/block-reasons.test.ts` and `tests/db/block-reasons.test.ts`. `tests/db/staff-time.test.ts`, `tenant.test.ts` and `slot-timing.test.ts` moved to reason ids.
+- **Not touched:** anything under `/api/v1`.
 
 ### 2026-10-23: core (staff time)
 

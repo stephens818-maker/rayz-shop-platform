@@ -88,6 +88,8 @@ pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + see
                    # roles' pages, action results or CSVs, and every reveal, export, call and text is audited;
                    # entering details (tests/db/client-entry.test.ts): a restricted user's saved phone comes back only masked or hidden;
                    # staff time (tests/db/staff-time.test.ts): recurring blocks, part-day time off, pending holds, conflicts, approval rights
+                   # block reasons (tests/db/block-reasons.test.ts): private reasons and notes never reach the desk's pages, CSVs or
+                   # audit search, or online booking; the manager and the barber see them; renames carry; archived can't be picked
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -362,11 +364,17 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
 
 - **My time** (`/admin/my-time`, built for a phone): barbers block their own time.
   - **Take lunch now** blocks 30 minutes from this minute.
-  - **Block time** adds Lunch, Break, Personal or Other (with a reason) from a start and a length.
+  - **Block time** adds a block from a start and a length, with a reason from the list (Lunch, Break, Bank, Doctor...) and an optional note.
   - **Recurring** repeats a block on chosen days (e.g. lunch every weekday 12:00–12:30), with **Skip** for one day and **Stop repeating**.
-  - **Request time off** covers one day, a range or part of one day, at one shop or all of their shops. The reason is vacation, sick, personal or other, with an optional note.
+  - **Request time off** covers one day, a range or part of one day, at one shop or all of their shops, with a reason (Vacation, Sick, Doctor...) and an optional note.
   - The page also lists upcoming blocks and the barber's requests with their status.
-  - Blocks and time off are shaded on the day calendar (↻ marks a recurring one) and come off online availability at once.
+  - Blocks and time off are shaded on the calendar (↻ marks a recurring one) and come off online availability at once.
+- **Reasons** (`/admin/block-reasons`, needs `blocks.reasons`): every block and time off entry has one, plus an optional note (up to 200 characters).
+  - The brand's list starts as Lunch, Break, Bank, Doctor, Personal, Vacation, Sick, Training and Meeting. Managers add, rename, recolor, reorder and archive reasons. A rename carries to existing entries; an archived reason stays on old entries but can't be picked.
+  - Each reason has a color and is for blocks, time off or both. **Counts as lunch** applies the lunch limit (Lunch). **No notice needed** skips the minimum notice (Sick).
+  - **Private** (Doctor and Sick to start): people without `blocks.private` see just "Blocked", or "Time off", in neutral gray with no note. The barber always sees their own. The masking is done on the server, so the label and note never reach their browser.
+  - The day and week calendars write the reason on the shaded block in its color, with the note on longer blocks; hovering or tapping shows the full note. The week view (**Week** on the calendar) shows one barber's seven days.
+  - Customers booking online never see a reason: the time just isn't offered.
 - **Recurring blocks** are written ahead about a year (380 days). The notifications cron, or `pnpm worker`, keeps extending them. Removing one occurrence skips that day only.
 - **Approval:**
   - The brand sets **automatic** or **manager** approval, and a shop can override it. Moline is seeded as automatic.
@@ -389,11 +397,13 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   - `blocks.others`: block anyone's time at your shops.
   - `timeoff.request`: request time off.
   - `timeoff.approve`: approve requests at your shops, never your own, though the Brand Owner may. All-shop time off for a barber who also works elsewhere needs access to every shop.
-  - The audit log records every block, series, request, decision, move, reschedule ask and rules change.
+  - The audit log records every block, series, request, decision, move, reschedule ask, rules change and reason list edit, with the entry's reason and note. Private ones show as "Blocked" or "Time off" and aren't searchable for people without `blocks.private`.
+  - `blocks.private`: see private reasons and notes. `blocks.reasons`: edit the reasons list. Both start with shop and regional managers and brand admins.
 - **Who's in:**
-  - The day calendar shows **Off today** with the hours.
-  - The dashboard has a **Who's in today** card: working, partly off, off, and lunch and blocks. Barbers see **My day** instead.
-  - **Reports → Who's working, off and blocked** shows, per day, shop and barber: status, scheduled hours, time off, blocked time and bookings, with CSV.
+  - The day calendar shows **Off today** with the hours and reason.
+  - The dashboard has a **Who's in today** card: working, partly off, off, and lunch and blocks, each with its reason. Barbers see **My day** instead.
+  - The **Time off** page's month calendar and who's off list show each entry's reason in its color, with the note.
+  - **Reports → Who's working, off and blocked** shows, per day, shop and barber: status, scheduled hours, time off and blocks with their reasons and notes, and bookings, plus hours **by reason**, with CSV.
 - **Seeded:**
   - Makenna has a recurring lunch from Tuesday to Saturday, 12:30–1:00.
   - Jessica has a pending week of vacation.
@@ -401,6 +411,7 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   - Jen has an approved vacation day next week, with bookings still on it.
   - A Coralville barber has an approved afternoon off today.
   - Makenna has a denied request, and Sara has an automatically approved sick day.
+  - Every sample entry has a reason, e.g. Makenna's product training block, and the afternoon off today is a Doctor visit (private), so the front desk sees just "Time off".
 
 ### Reports à la carte
 
@@ -425,7 +436,7 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | Client ratings | `client_ratings` | Lowest- and highest-rated clients per shop |
 | Retention and rebook KPIs | `kpis` | Rebook rate, retention, new vs returning, no-shows |
 | Busiest times heatmap | `heatmap` | Visits by weekday and hour |
-| Who's working, off and blocked | `staffing` | Per day, shop and barber: working, partly off or off, scheduled hours, time off, blocked time and bookings |
+| Who's working, off and blocked | `staffing` | Per day, shop and barber: working, partly off or off, scheduled hours, time off and blocks with their reasons, and bookings; hours by reason |
 | Cash drawer | `cash_drawer` | Drawer closes with expected, counted, and variance |
 | Audit log | `audit_log` | Every audited change, filterable |
 
@@ -587,7 +598,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 46 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 58 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
