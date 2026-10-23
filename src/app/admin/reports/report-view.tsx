@@ -6,7 +6,7 @@ import { ReportKey, reportExport } from "@/domain/permissions";
 import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
 import { WEEKDAYS, formatDate } from "@/lib/time";
-import { StaffContext, can, guardPage } from "@/server/auth/staff";
+import { StaffContext, can, guardPage, reasonViewer } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { Cell, ColumnKind, REPORT_LOADERS, ReportData, ReportTable } from "@/server/report-data";
 import { LocationNotice, ReportFilters, locationProps, reportQuery } from "./filters";
@@ -174,7 +174,7 @@ export async function ReportPage({
   const canExport = can(ctx, reportExport(report));
   const t0 = performance.now();
   const params = Object.fromEntries(Object.entries(searchParams).map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
-  const data = await REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), params });
+  const data = await REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params });
   const ms = Math.round(performance.now() - t0);
   const csv = (table: string) => (canExport ? `/admin/reports/export?${reportQuery(scope, { type: report, table, from: scope.from, to: scope.to })}` : null);
   const view = viewOf(scope.loc);

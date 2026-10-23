@@ -25,15 +25,16 @@ export async function staffingData(scope: ReportScope, loc: ViewCtx, reasons: Re
   const multi = loc.shops.length > 1;
   type Row = (typeof rows)[number];
   const span = (b: Row["blocks"][number]) => `${minutesToLabel(b.startMin)}–${minutesToLabel(b.endMin % (24 * 60))}`;
+  const named = (b: Row["blocks"][number]) => (b.note ? `${b.label} (${b.note})` : b.label);
   const blocksText = (r: Row) =>
     r.blocks
       .filter((b) => b.category !== "time_off")
-      .map((b) => `${b.label} ${span(b)}`)
+      .map((b) => `${named(b)} ${span(b)}`)
       .join(", ");
   const offText = (r: Row) =>
     r.blocks
       .filter((b) => b.category === "time_off")
-      .map((b) => (b.startMin === 0 && b.endMin >= 24 * 60 ? b.label : `${b.label} ${span(b)}`))
+      .map((b) => (b.startMin === 0 && b.endMin >= 24 * 60 ? named(b) : `${named(b)} ${span(b)}`))
       .join(", ");
   const byReason = rows.flatMap((r) =>
     r.blocks.map((b) => {
