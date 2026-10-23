@@ -64,7 +64,7 @@ export function openApiDocument(baseUrl: string) {
         "**Auth:** customers sign in with a one-time code (SMS or email) → `accessToken` (JWT, 1 hour) + rotating `refreshToken` (60 days).",
         "Send `Authorization: Bearer <accessToken>`. Refresh with `POST /auth/refresh`; reusing an old refresh token revokes all sessions.",
         "",
-        "**Time:** every shop runs on America/Chicago. Dates are local `YYYY-MM-DD`; instants are ISO-8601 UTC.",
+        "**Time:** timestamps are stored and returned as ISO-8601 UTC. Human text (receipts, reminders, SMS) uses America/Chicago. GET /app/config returns timeFormat (default 12h) so apps can match.",
         "**Money:** integer cents. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
         "**Retries:** `POST /appointments` honors an `Idempotency-Key` header so a flaky mobile network can't double-book.",
       ].join("\n"),
@@ -169,8 +169,14 @@ export function openApiDocument(baseUrl: string) {
       "/me/devices/{id}": {
         delete: { tags: ["Me"], summary: "Revoke one push device", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { 200: { description: "Revoked" } } },
       },
+      "/app/config": {
+        get: { tags: ["Shops"], summary: "App config, including timeFormat (12h by default) and America/Chicago", responses: { 200: { description: "Config" } } },
+      },
       "/me/purchases": {
-        get: { tags: ["Me"], summary: "Purchase history and the last product bought", security: bearer, responses: { 200: { description: "Purchases" } } },
+        get: { tags: ["Me"], summary: "Purchase history with service, product, tax, and tip kept separate, plus refund records", security: bearer, responses: { 200: { description: "Purchases" } } },
+      },
+      "/me/purchases/receipt": {
+        get: { tags: ["Me"], summary: "Receipt text for one sale. format=pdf returns a PDF. Refunds stay separate.", security: bearer, responses: { 200: { description: "Receipt" } } },
       },
       "/internal/connect/onboard": {
         post: {

@@ -74,20 +74,22 @@ export async function inspectPaymentMethod(paymentMethodId: string): Promise<Car
   return { funding: normalizeFunding(card.funding), brand: card.brand ?? "card", last4: card.last4 ?? "" };
 }
 
-export interface ChargeRouting {
-  /** Connected account the charge is on behalf of. This is not a transfer by itself. */
-  onBehalfOf?: string;
-  /** Set only by the destination ChargePlan. Separate charges leave this empty. */
-  destinationAccount?: string;
-  transferGroup?: string;
-}
-
 export interface ChargeResult {
   processor: "stripe" | "simulator";
   paymentIntentId: string;
-  chargeId: string | null;
   card: CardDetails;
-  routing?: ChargeRouting;
+  /** The shop's connected account the charge settled to, and the platform's application fee. */
+  destination: Destination | null;
+  chargeId: string | null;
+  transferId: string | null;
+  /** What Stripe charged the platform for this charge, when the balance transaction says. */
+  processorFeeCents: number | null;
+}
+
+/** Where a card charge settles: a shop's connected account, with the processing fee kept by the platform. */
+export interface Destination {
+  accountId: string;
+  applicationFeeCents: number;
 }
 
 /**
@@ -97,17 +99,17 @@ export interface ChargeResult {
  */
 interface SimIntent {
   id: string;
-  chargeId: string;
   amountCents: number;
   amountRefundedCents: number;
   card: CardDetails;
   metadata: Record<string, string>;
-  routing?: ChargeRouting;
+  destination: Destination | null;
+  customerId: string | null;
 }
 interface SimState {
   intents: Map<string, SimIntent>;
   byKey: Map<string, string>;
-  refunds: { id: string; paymentIntentId: string; amountCents: number }[];
+  refunds: { id: string; paymentIntentId: string; amountCents: number; reverseTransfer: boolean }[];
   refundKeys: Map<string, string>;
 }
 const simGlobal = globalThis as unknown as { __rayzSim?: SimState };
@@ -120,57 +122,64 @@ export function simulatorLedger() {
   return { intents: [...sim.intents.values()].map((i) => ({ ...i })), refunds: [...sim.refunds] };
 }
 
+/**
+ * The one place a PaymentIntent is created. With a destination, it's a destination charge on the
+ * platform settled on behalf of the shop's connected account: the shop is the merchant on the
+ * statement, gets the charge less the application fee, and refunds come back out of its account.
+ * `customerId` is a platform-level Stripe Customer, so a saved card can pay at any shop.
+ */
 export async function chargeCard(opts: {
   paymentMethodId: string;
   amountCents: number;
   description: string;
   metadata: Record<string, string>;
   idempotencyKey: string;
-  /**
-   * Connect routing from executeChargePlan. POS checkout omits this and stays a platform charge.
-   * A destination account is applied only when the selected plan is `destination`.
-   */
-  routing?: ChargeRouting;
+  destination?: Destination | null;
+  customerId?: string | null;
 }): Promise<ChargeResult> {
   assertStripeTestMode();
-  const metadata = { ...opts.metadata };
-  const routing = opts.routing;
-  if (routing?.onBehalfOf) metadata.onBehalfOf = routing.onBehalfOf;
-  if (routing?.destinationAccount) metadata.destinationAccount = routing.destinationAccount;
-  const connect = {
-    ...(routing?.onBehalfOf ? { on_behalf_of: routing.onBehalfOf } : {}),
-    ...(routing?.destinationAccount ? { transfer_data: { destination: routing.destinationAccount } } : {}),
-    ...(routing?.transferGroup ? { transfer_group: routing.transferGroup } : {}),
-  };
   const s = stripe();
+  const dest = opts.destination ?? null;
+  if (dest && (dest.applicationFeeCents < 0 || dest.applicationFeeCents > opts.amountCents)) throw new AppError("bad_request", "The processing fee can't be more than the charge");
   if (!s) {
     const card = TEST_CARDS[opts.paymentMethodId];
     if (!card) throw new AppError("payment_failed", "Unknown simulated card");
     await simLatency();
     if (opts.paymentMethodId === "pm_card_chargeDeclined") throw new AppError("payment_failed", "Your card was declined.");
     const existing = sim.byKey.get(opts.idempotencyKey);
-    const pi = existing
+    const pi: SimIntent = existing
       ? sim.intents.get(existing)!
-      : { id: simId("sim_pi"), chargeId: simId("sim_ch"), amountCents: opts.amountCents, amountRefundedCents: 0, card: { funding: card.funding, brand: card.brand, last4: card.last4 }, metadata, routing };
+      : { id: simId("sim_pi"), amountCents: opts.amountCents, amountRefundedCents: 0, card: { funding: card.funding, brand: card.brand, last4: card.last4 }, metadata: opts.metadata, destination: dest, customerId: opts.customerId ?? null };
     if (!existing) {
       sim.intents.set(pi.id, pi);
       sim.byKey.set(opts.idempotencyKey, pi.id);
     }
     if (pi.amountRefundedCents > 0) throw new AppError("payment_failed", "That payment was already refunded. Start the charge again.");
-    return { processor: "simulator", paymentIntentId: pi.id, chargeId: pi.chargeId, card: pi.card, routing: pi.routing };
+    const suffix = pi.id.slice("sim_pi_".length);
+    return {
+      processor: "simulator",
+      paymentIntentId: pi.id,
+      card: pi.card,
+      destination: pi.destination,
+      chargeId: `sim_ch_${suffix}`,
+      transferId: pi.destination ? `sim_tr_${suffix}` : null,
+      processorFeeCents: pi.destination?.applicationFeeCents ?? null,
+    };
   }
+  if (dest?.accountId.startsWith("sim_")) throw new AppError("payment_failed", "This shop's account is from the simulator. Set it up with Stripe before taking cards.", { reason: "payments_not_ready" });
   try {
     const pi = await s.paymentIntents.create(
       {
         amount: opts.amountCents,
         currency: "usd",
         payment_method: opts.paymentMethodId,
+        ...(opts.customerId ? { customer: opts.customerId } : {}),
         automatic_payment_methods: { enabled: true, allow_redirects: "never" },
         confirm: true,
         description: opts.description,
-        metadata,
-        expand: ["latest_charge"],
-        ...connect,
+        metadata: opts.metadata,
+        ...(dest ? { on_behalf_of: dest.accountId, transfer_data: { destination: dest.accountId }, application_fee_amount: dest.applicationFeeCents } : {}),
+        expand: ["latest_charge.balance_transaction"],
       },
       { idempotencyKey: opts.idempotencyKey },
     );
@@ -179,18 +188,20 @@ export async function chargeCard(opts: {
       throw new AppError("payment_failed", "This card needs 3-D Secure authentication. Use the card reader or another card.");
     }
     if (pi.status !== "succeeded") throw new AppError("payment_failed", `Payment ${pi.status}`);
-    const charge = pi.latest_charge as Stripe.Charge | string | null;
-    const chargeObj = charge && typeof charge !== "string" ? charge : null;
+    const charge = pi.latest_charge as Stripe.Charge | null;
     // An idempotent replay can hand back an intent that was since refunded; never book that as paid.
-    if (chargeObj && chargeObj.amount_refunded > 0) throw new AppError("payment_failed", "That payment was already refunded. Start the charge again.");
-    const pmd = chargeObj?.payment_method_details;
+    if (charge && charge.amount_refunded > 0) throw new AppError("payment_failed", "That payment was already refunded. Start the charge again.");
+    const pmd = charge?.payment_method_details;
     const card = pmd?.card ?? pmd?.card_present;
+    const bt = charge?.balance_transaction;
     return {
       processor: "stripe",
       paymentIntentId: pi.id,
-      chargeId: typeof charge === "string" ? charge : chargeObj?.id ?? null,
       card: { funding: normalizeFunding(card?.funding), brand: card?.brand ?? "card", last4: card?.last4 ?? "" },
-      routing,
+      destination: dest,
+      chargeId: charge?.id ?? null,
+      transferId: typeof charge?.transfer === "string" ? charge.transfer : (charge?.transfer?.id ?? null),
+      processorFeeCents: bt && typeof bt !== "string" ? bt.fee : null,
     };
   } catch (e) {
     if (e instanceof AppError) throw e;
@@ -199,7 +210,11 @@ export async function chargeCard(opts: {
   }
 }
 
-export async function refundCard(paymentIntentId: string, amountCents: number, idempotencyKey: string, opts?: { reverseTransfer?: boolean }): Promise<string> {
+/**
+ * `reverseTransfer`: the charge went to a shop's connected account, so the refund is pulled back
+ * from that account. The application fee isn't returned, the same as Stripe's fee on a refund.
+ */
+export async function refundCard(paymentIntentId: string, amountCents: number, idempotencyKey: string, opts: { reverseTransfer?: boolean } = {}): Promise<string> {
   const s = stripe();
   if (!s || paymentIntentId.startsWith("sim_")) {
     await simLatency();
@@ -212,13 +227,13 @@ export async function refundCard(paymentIntentId: string, amountCents: number, i
       pi.amountRefundedCents += amountCents;
     }
     const id = simId("sim_re");
-    sim.refunds.push({ id, paymentIntentId, amountCents });
+    sim.refunds.push({ id, paymentIntentId, amountCents, reverseTransfer: !!opts.reverseTransfer });
     sim.refundKeys.set(idempotencyKey, id);
     return id;
   }
   try {
     const r = await s.refunds.create(
-      { payment_intent: paymentIntentId, amount: amountCents, ...(opts?.reverseTransfer ? { reverse_transfer: true } : {}) },
+      { payment_intent: paymentIntentId, amount: amountCents, ...(opts.reverseTransfer ? { reverse_transfer: true, refund_application_fee: false } : {}) },
       { idempotencyKey },
     );
     return r.id;
@@ -232,7 +247,7 @@ export function simulateDashboardRefund(paymentIntentId: string, amountCents: nu
   const pi = sim.intents.get(paymentIntentId);
   if (!pi) throw new Error("Unknown simulated PaymentIntent");
   pi.amountRefundedCents += amountCents;
-  sim.refunds.push({ id: simId("sim_re"), paymentIntentId, amountCents });
+  sim.refunds.push({ id: simId("sim_re"), paymentIntentId, amountCents, reverseTransfer: !!pi.destination });
   return pi.amountRefundedCents;
 }
 

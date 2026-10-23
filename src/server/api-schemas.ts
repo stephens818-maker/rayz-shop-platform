@@ -14,7 +14,13 @@ export const ErrorBody = z.object({
   }),
 });
 
-export const ShopHours = z.object({ weekday: z.number().int().min(0).max(6).describe("0 = Sunday"), open: z.string(), close: z.string() });
+export const ShopHours = z.object({
+  weekday: z.number().int().min(0).max(6).describe("0 = Sunday"),
+  open: z.string(),
+  close: z.string(),
+  openLabel: z.string().describe("12-hour America/Chicago label"),
+  closeLabel: z.string().describe("12-hour America/Chicago label"),
+});
 export const Shop = z.object({
   id: z.string().uuid(),
   slug: z.string(),

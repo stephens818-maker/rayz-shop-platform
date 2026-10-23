@@ -189,7 +189,41 @@ describe("customer app endpoints", () => {
     const history = await purchases.GET(new Request("http://localhost/api/v1/me/purchases", { headers: auth }), { params: Promise.resolve({}) });
     const body = await history.json();
     expect(body.lastProduct.name).toBe("Clay");
+    expect(body.purchases[0]).toMatchObject({ productCents: 1200, serviceCents: 0, taxCents: 0, tipCents: 0, paidAt: expect.any(String) });
+    expect(body.purchases[0].paidAt).toMatch(/Z$/);
     expect(JSON.stringify(body)).not.toMatch(/STAFF-ONLY-NOTE/);
+
+    const refundAt = new Date("2026-06-20T18:30:00Z");
+    await m.db.db.insert(m.schema.refunds).values({
+      saleId: sale.id,
+      shopId: shop.id,
+      businessDate: m.time.todayLocal(),
+      method: "card",
+      amountCents: 400,
+      productNetCents: 400,
+      taxCents: 0,
+      tipCents: 0,
+      reason: "Changed mind",
+      createdAt: refundAt,
+    });
+    const again = await purchases.GET(new Request("http://localhost/api/v1/me/purchases", { headers: auth }), { params: Promise.resolve({}) });
+    const afterRefund = await again.json();
+    expect(afterRefund.purchases[0].productCents).toBe(1200);
+    expect(afterRefund.purchases[0].refunds).toEqual([
+      expect.objectContaining({ amountCents: 400, productCents: 400, serviceCents: 0, taxCents: 0, tipCents: 0, createdAt: refundAt.toISOString() }),
+    ]);
+    const receiptRoute = await import("@/app/api/v1/me/purchases/receipt/route");
+    const receiptRes = await receiptRoute.GET(new Request(`http://localhost/api/v1/me/purchases/receipt?id=${sale.id}`, { headers: auth }), { params: Promise.resolve({}) });
+    const receipt = await receiptRes.json();
+    expect(receipt.receipt.text).toMatch(/Products \$12\.00/);
+    expect(receipt.receipt.text).toMatch(/Refund /);
+    expect(receipt.receipt.text).not.toMatch(/\b(?:[01]\d|2[0-3]):[0-5]\d\b(?!\s*[AP]M)/);
+    expect(receipt.receipt.productCents).toBe(1200);
+
+    const config = await import("@/app/api/v1/app/config/route");
+    const cfg = await (await config.GET(new Request("http://localhost/api/v1/app/config"), { params: Promise.resolve({}) })).json();
+    expect(cfg.timeFormat).toBe("12h");
+    expect(cfg.timezone).toBe("America/Chicago");
 
     const me = await import("@/app/api/v1/me/route");
     const patched = await me.PATCH(
@@ -259,48 +293,32 @@ describe("customer app endpoints", () => {
     expect(pay.processor).toBe("squire_import");
   });
 
-  it("keeps tip-to-barber off and uses separate charges instead of a destination hard-wire", async () => {
-    const { createBarberConnectOnboardingLink, createConnectOnboardingLink } = await import("@/server/payments/connect");
+  it("keeps tip-to-barber off and settles the whole ticket, tip included, to the shop", async () => {
+    const { createBarberConnectOnboardingLink } = await import("@/server/payments/barber-connect");
     const { TIP_TO_BARBER_LABEL, executeChargePlan, reverseChargePlan, tipToBarberEnabled } = await import("@/server/payments/charge-plan");
     expect(tipToBarberEnabled()).toBe(false);
-    const link = await createConnectOnboardingLink("coralville");
-    expect(link.mode).toBe("simulator");
-    expect(link.stripeAccountId).toMatch(/^acct_sim_/);
-    expect(link.ownerEntityId).toBeNull();
     const shop = await m.catalog.getShop("coralville");
     const plan = await executeChargePlan({
       shopId: shop.id,
       paymentMethodId: "pm_card_visa",
       amountCents: 2500,
       tipCents: 500,
-      description: "Test separate charges",
+      description: "Test shop settlement",
       idempotencyKey: `mobile-${crypto.randomUUID()}`,
     });
-    expect(plan.kind).toBe("separate_charges_transfers");
+    expect(plan.kind).toBe("destination");
     expect(plan.processor).toBe("simulator");
     expect(plan.tipToBarber).toBe(false);
-    expect(plan.onBehalfOf).toBe(link.stripeAccountId);
-    expect(plan.destinationAccount).toBeNull();
+    expect(plan.destinationAccount).toMatch(/^sim_acct_/);
     const tip = plan.transfers.find((r) => r.role === "tip");
     const shopNet = plan.transfers.find((r) => r.role === "shop_net");
     expect(tip).toMatchObject({ status: "skipped", amountCents: 500 });
     expect(tip?.note).toContain(TIP_TO_BARBER_LABEL);
     expect(tip?.note).toMatch(/iSolved/);
-    expect(shopNet).toMatchObject({ status: "executed", amountCents: 2500, destinationAccount: link.stripeAccountId });
-    expect(shopNet?.stripeTransferId).toMatch(/^sim_tr_/);
-
-    const dest = await executeChargePlan({
-      shopId: shop.id,
-      paymentMethodId: "pm_card_visa",
-      amountCents: 2000,
-      tipCents: 400,
-      description: "Explicit destination plan",
-      idempotencyKey: `mobile-dest-${crypto.randomUUID()}`,
-      kind: "destination",
-    });
-    expect(dest.destinationAccount).toBe(link.stripeAccountId);
-    expect(dest.tipToBarber).toBe(false);
-    expect(dest.transfers.find((r) => r.role === "tip")?.status).toBe("skipped");
+    expect(shopNet?.status).toBe("executed");
+    expect(shopNet?.note).toMatch(/Includes the tip/);
+    expect(shopNet!.amountCents).toBeGreaterThan(2000);
+    expect(shopNet!.amountCents).toBeLessThan(2500);
 
     const [makenna] = await m.db.db.select().from(m.schema.staff).where(eq(m.schema.staff.firstName, "Makenna"));
     const barber = await createBarberConnectOnboardingLink(makenna.id);
@@ -315,8 +333,10 @@ describe("customer app endpoints", () => {
         tipCents: 500,
         description: "Tip split while the flag is on",
         idempotencyKey: `mobile-tip-${crypto.randomUUID()}`,
+        kind: "separate_charges_transfers",
       });
       expect(split.tipToBarber).toBe(true);
+      expect(split.destinationAccount).toBeNull();
       expect(split.transfers.find((r) => r.role === "tip")).toMatchObject({ status: "executed", amountCents: 500, destinationAccount: barber.stripeAccountId });
       expect(split.transfers.find((r) => r.role === "shop_net")).toMatchObject({ status: "executed", amountCents: 2000 });
       const claw = await reverseChargePlan({ paymentIntentId: split.paymentIntentId, refundCents: 500, idempotencyKey: `rev-${split.paymentIntentId}` });
@@ -325,8 +345,8 @@ describe("customer app endpoints", () => {
       delete process.env.FEATURE_TIP_TO_BARBER;
     }
 
-    const back = await reverseChargePlan({ paymentIntentId: plan.paymentIntentId, refundCents: 2500, idempotencyKey: `rev-${plan.paymentIntentId}` });
-    expect(back.reversals).toEqual([expect.objectContaining({ role: "shop_net", amountCents: 2500 })]);
+    const back = await reverseChargePlan({ paymentIntentId: plan.paymentIntentId, refundCents: shopNet!.amountCents, idempotencyKey: `rev-${plan.paymentIntentId}` });
+    expect(back.reversals).toEqual([expect.objectContaining({ role: "shop_net", amountCents: shopNet!.amountCents })]);
     const [skippedTip] = await m.db.db.select().from(m.schema.connectTransfers).where(eq(m.schema.connectTransfers.id, tip!.id));
     expect(skippedTip.status).toBe("skipped");
 

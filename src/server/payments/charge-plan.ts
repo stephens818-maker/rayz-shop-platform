@@ -3,17 +3,15 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { connectTransfers, shops, staff } from "@/db/schema";
 import { AppError } from "@/server/errors";
-import { chargeCard, refundCard, stripe, type ChargeRouting } from "./processor";
+import { chargeDestination, shopAccount } from "./connect";
+import { chargeCard, refundCard, stripe } from "./processor";
 
 /**
- * Shared charge path for the app and POS.
- *
- * `separate_charges_transfers` (the default) charges the platform with `on_behalf_of` set to the
- * shop, then transfers. `destination` is selectable and sends the whole charge to the shop; it
- * cannot pay a barber account.
+ * Shared charge path for the app and POS. PaymentIntents are created only by `chargeCard`.
  *
  * Tip-to-barber stays off unless FEATURE_TIP_TO_BARBER is exactly "true".
  * That path is not for W-2 employees, pending CPA. Employee tips go through iSolved payroll.
+ * While it is off, the whole charge (tip included) uses core's destination charge to the shop.
  */
 export type ChargePlanKind = "destination" | "separate_charges_transfers";
 
@@ -27,8 +25,10 @@ export function tipToBarberEnabled() {
   return process.env.FEATURE_TIP_TO_BARBER === "true";
 }
 
+/** Off by default. Separate charges run only when the tip flag is on and this env asks for them. */
 export function chargePlanKind(): ChargePlanKind {
-  return process.env.CHARGE_PLAN_KIND === "destination" ? "destination" : "separate_charges_transfers";
+  if (tipToBarberEnabled() && process.env.CHARGE_PLAN_KIND !== "destination") return "separate_charges_transfers";
+  return "destination";
 }
 
 export interface ChargePlanInput {
@@ -40,6 +40,7 @@ export interface ChargePlanInput {
   description: string;
   metadata?: Record<string, string>;
   idempotencyKey: string;
+  customerId?: string | null;
   kind?: ChargePlanKind;
 }
 
@@ -51,12 +52,11 @@ export interface ChargePlanResult {
   onBehalfOf: string | null;
   destinationAccount: string | null;
   transferGroup: string;
-  /** True only when a tip transfer was actually sent to a barber account. */
   tipToBarber: boolean;
   transfers: (typeof connectTransfers.$inferSelect)[];
 }
 
-const simTransferId = () => `sim_tr_${randomBytes(6).toString("hex")}`;
+const simTransferId = () => `sim_tr_split_${randomBytes(6).toString("hex")}`;
 
 async function createTransfer(args: { amountCents: number; destination: string; sourceTransaction: string | null; transferGroup: string; idempotencyKey: string }) {
   const s = stripe();
@@ -82,6 +82,20 @@ async function reverseTransfer(transferId: string, amountCents: number, idempote
   return rev.id;
 }
 
+function resultFrom(kind: ChargePlanKind, charge: Awaited<ReturnType<typeof chargeCard>>, transferGroup: string, rows: (typeof connectTransfers.$inferSelect)[]): ChargePlanResult {
+  return {
+    kind,
+    processor: charge.processor,
+    paymentIntentId: charge.paymentIntentId,
+    chargeId: charge.chargeId,
+    onBehalfOf: charge.destination?.accountId ?? null,
+    destinationAccount: charge.destination?.accountId ?? null,
+    transferGroup,
+    tipToBarber: rows.some((r) => r.role === "tip" && r.status === "executed"),
+    transfers: rows,
+  };
+}
+
 export async function executeChargePlan(input: ChargePlanInput): Promise<ChargePlanResult> {
   if (input.amountCents <= 0) throw new AppError("bad_request", "Charge amount must be positive");
   const tipCents = input.tipCents ?? 0;
@@ -90,49 +104,40 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, input.shopId) });
   if (!shop) throw new AppError("not_found", "Shop not found");
   const barber = input.staffId ? await db.query.staff.findFirst({ where: eq(staff.id, input.staffId) }) : undefined;
-
   const kind = input.kind ?? chargePlanKind();
   const transferGroup = `tg_${input.idempotencyKey}`.slice(0, 80);
-  const shopAccount = shop.stripeAccountId;
   const barberAccount = barber?.stripeAccountId ?? null;
   const sendTip = tipToBarberEnabled() && kind === "separate_charges_transfers" && !!barberAccount && tipCents > 0;
-  const shopAmount = sendTip ? input.amountCents - tipCents : input.amountCents;
 
-  const routing: ChargeRouting = { transferGroup };
-  if (shopAccount && kind === "destination") {
-    routing.onBehalfOf = shopAccount;
-    routing.destinationAccount = shopAccount;
-  } else if (shopAccount && kind === "separate_charges_transfers") {
-    routing.onBehalfOf = shopAccount;
-  }
-
-  const charge = await chargeCard({
-    paymentMethodId: input.paymentMethodId,
-    amountCents: input.amountCents,
-    description: input.description,
-    metadata: { ...input.metadata, shopId: shop.id, chargePlan: kind },
-    idempotencyKey: input.idempotencyKey,
-    routing,
-  });
+  const charge = sendTip
+    ? await chargeCard({
+        paymentMethodId: input.paymentMethodId,
+        amountCents: input.amountCents,
+        description: input.description,
+        metadata: { ...input.metadata, shopId: shop.id, chargePlan: kind },
+        idempotencyKey: input.idempotencyKey,
+        customerId: input.customerId,
+      })
+    : await chargeCard({
+        paymentMethodId: input.paymentMethodId,
+        amountCents: input.amountCents,
+        description: input.description,
+        metadata: { ...input.metadata, shopId: shop.id, chargePlan: "destination" },
+        idempotencyKey: input.idempotencyKey,
+        customerId: input.customerId,
+        destination: await chargeDestination(shop, input.amountCents, "keyed"),
+      });
 
   const prior = await db.select().from(connectTransfers).where(eq(connectTransfers.paymentIntentId, charge.paymentIntentId));
-  if (prior.length) {
-    return {
-      kind,
-      processor: charge.processor,
-      paymentIntentId: charge.paymentIntentId,
-      chargeId: charge.chargeId,
-      onBehalfOf: routing.onBehalfOf ?? null,
-      destinationAccount: routing.destinationAccount ?? null,
-      transferGroup,
-      tipToBarber: prior.some((r) => r.role === "tip" && r.status === "executed"),
-      transfers: prior,
-    };
-  }
+  if (prior.length) return resultFrom(sendTip ? kind : "destination", charge, transferGroup, prior);
 
+  const account = await shopAccount(shop.id);
+  const shopAccountId = charge.destination?.accountId ?? account?.stripeAccountId ?? null;
+  const fee = charge.destination?.applicationFeeCents ?? 0;
+  const shopAmount = sendTip ? input.amountCents - tipCents : input.amountCents - fee;
   const tipNote = !tipToBarberEnabled()
     ? TIP_TO_BARBER_NOTE
-    : kind === "destination"
+    : !sendTip && kind === "destination"
       ? `Destination charges cannot pay a barber account. ${TIP_TO_BARBER_LABEL}`
       : !barberAccount
         ? "no_barber_account"
@@ -153,81 +158,61 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
       note: sendTip ? null : tipNote,
     });
   }
-  if (shopAmount > 0) {
-    const canMove = !!shopAccount;
+  if (shopAmount > 0 && shopAccountId) {
     rows.push({
       paymentIntentId: charge.paymentIntentId,
       chargeId: charge.chargeId,
       transferGroup,
-      destinationAccount: canMove ? shopAccount : null,
+      destinationAccount: shopAccountId,
       staffId: null,
       shopId: shop.id,
       role: "shop_net",
       amountCents: shopAmount,
-      status: canMove ? "planned" : "skipped",
-      note: !canMove ? "no_shop_account" : !sendTip && tipCents > 0 ? `Includes the tip. ${TIP_TO_BARBER_NOTE}` : null,
+      status: "planned",
+      note: sendTip ? null : `destination charge. Includes the tip. ${TIP_TO_BARBER_NOTE}`,
+      stripeTransferId: sendTip ? null : charge.transferId,
     });
   }
 
   const inserted = rows.length ? await db.insert(connectTransfers).values(rows).returning() : [];
   const settled: (typeof connectTransfers.$inferSelect)[] = [];
   for (const row of inserted) {
-    if (row.status !== "planned") {
-      settled.push(row);
+    if (row.status !== "planned" || row.stripeTransferId) {
+      if (row.status === "planned" && row.stripeTransferId) {
+        const [updated] = await db.update(connectTransfers).set({ status: "executed", updatedAt: new Date() }).where(eq(connectTransfers.id, row.id)).returning();
+        settled.push(updated);
+      } else settled.push(row);
       continue;
     }
-    try {
-      const stripeTransferId =
-        kind === "destination"
-          ? `destination:${charge.paymentIntentId}`
-          : await createTransfer({
-              amountCents: row.amountCents,
-              destination: row.destinationAccount!,
-              sourceTransaction: charge.chargeId,
-              transferGroup,
-              idempotencyKey: `${input.idempotencyKey}:${row.role}`,
-            });
-      const [updated] = await db
-        .update(connectTransfers)
-        .set({ status: "executed", stripeTransferId, updatedAt: new Date() })
-        .where(eq(connectTransfers.id, row.id))
-        .returning();
-      settled.push(updated);
-    } catch (e) {
-      const message = (e as Error).message.slice(0, 500);
-      const [failed] = await db
-        .update(connectTransfers)
-        .set({ status: "failed", note: message, updatedAt: new Date() })
-        .where(eq(connectTransfers.id, row.id))
-        .returning();
-      settled.push(failed);
-      throw e;
-    }
+    const stripeTransferId = await createTransfer({
+      amountCents: row.amountCents,
+      destination: row.destinationAccount!,
+      sourceTransaction: charge.chargeId,
+      transferGroup,
+      idempotencyKey: `${input.idempotencyKey}:${row.role}`,
+    });
+    const [updated] = await db
+      .update(connectTransfers)
+      .set({ status: "executed", stripeTransferId, updatedAt: new Date() })
+      .where(eq(connectTransfers.id, row.id))
+      .returning();
+    settled.push(updated);
   }
 
-  return {
-    kind,
-    processor: charge.processor,
-    paymentIntentId: charge.paymentIntentId,
-    chargeId: charge.chargeId,
-    onBehalfOf: routing.onBehalfOf ?? null,
-    destinationAccount: routing.destinationAccount ?? null,
-    transferGroup,
-    tipToBarber: settled.some((r) => r.role === "tip" && r.status === "executed"),
-    transfers: settled,
-  };
+  return resultFrom(sendTip ? "separate_charges_transfers" : "destination", charge, transferGroup, settled);
 }
 
 /**
  * Refund the charge and claw transfers back. A tip transfer is reversed first, up to the tip
  * portion, then the shop transfer. A skipped tip (the W-2 / iSolved default) has nothing to claw.
+ * Destination charges use Stripe `reverse_transfer` on the refund.
  */
 export async function reverseChargePlan(opts: { paymentIntentId: string; refundCents: number; idempotencyKey: string }) {
   if (opts.refundCents <= 0) throw new AppError("bad_request", "Refund amount must be positive");
   const rows = await db.select().from(connectTransfers).where(eq(connectTransfers.paymentIntentId, opts.paymentIntentId));
   const order = [...rows.filter((r) => r.role === "tip"), ...rows.filter((r) => r.role === "shop_net")];
+  const destination = order.some((r) => r.note?.startsWith("destination charge"));
   let left = opts.refundCents;
-  let reverseDestination = false;
   const reversals: { role: "shop_net" | "tip"; amountCents: number; reversalId: string }[] = [];
 
   for (const row of order) {
@@ -235,31 +220,17 @@ export async function reverseChargePlan(opts: { paymentIntentId: string; refundC
     if (row.status !== "executed" && row.status !== "reversed") continue;
     const remaining = row.amountCents - row.reversedCents;
     const take = Math.min(left, remaining);
-    if (take <= 0) continue;
-    const transferId = row.stripeTransferId;
-    let reversalId: string;
-    if (transferId?.startsWith("destination:")) {
-      reverseDestination = true;
-      reversalId = `reverse_transfer:${opts.idempotencyKey}:${row.role}`;
-    } else if (transferId) {
-      reversalId = await reverseTransfer(transferId, take, `${opts.idempotencyKey}:${row.id}`);
-    } else {
-      continue;
-    }
+    if (take <= 0 || !row.stripeTransferId) continue;
+    const reversalId = destination ? `reverse_transfer:${opts.idempotencyKey}:${row.role}` : await reverseTransfer(row.stripeTransferId, take, `${opts.idempotencyKey}:${row.id}`);
     const reversedCents = row.reversedCents + take;
     await db
       .update(connectTransfers)
-      .set({
-        reversedCents,
-        status: reversedCents >= row.amountCents ? "reversed" : "executed",
-        reversalId,
-        updatedAt: new Date(),
-      })
+      .set({ reversedCents, status: reversedCents >= row.amountCents ? "reversed" : "executed", reversalId, updatedAt: new Date() })
       .where(eq(connectTransfers.id, row.id));
     reversals.push({ role: row.role, amountCents: take, reversalId });
     left -= take;
   }
 
-  const refundId = await refundCard(opts.paymentIntentId, opts.refundCents, opts.idempotencyKey, { reverseTransfer: reverseDestination });
+  const refundId = await refundCard(opts.paymentIntentId, opts.refundCents, opts.idempotencyKey, { reverseTransfer: destination });
   return { refundId, reversals };
 }

@@ -23,9 +23,9 @@ ALTER TABLE "shops" ADD COLUMN "photo_url" text;--> statement-breakpoint
 ALTER TABLE "shops" ADD COLUMN "google_review_url" text;--> statement-breakpoint
 ALTER TABLE "shops" ADD COLUMN "booking_mode" text DEFAULT 'native' NOT NULL;--> statement-breakpoint
 ALTER TABLE "shops" ADD COLUMN "external_booking_url" text;--> statement-breakpoint
-ALTER TABLE "shops" ADD COLUMN "stripe_account_id" text;--> statement-breakpoint
 ALTER TABLE "staff" ADD COLUMN "stripe_account_id" text;--> statement-breakpoint
-ALTER TABLE "shops" ADD COLUMN "owner_entity_id" uuid;--> statement-breakpoint
+ALTER TABLE "brand_settings" ADD COLUMN "time_format" text DEFAULT '12h' NOT NULL;--> statement-breakpoint
+ALTER TABLE "brand_settings" ADD CONSTRAINT "brand_settings_time_format_chk" CHECK ("time_format" IN ('12h', '24h'));--> statement-breakpoint
 ALTER TABLE "shops" ADD COLUMN "cancellation_policy" text;--> statement-breakpoint
 ALTER TABLE "shops" ADD COLUMN "squire_frozen_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "shops" ADD CONSTRAINT "shops_booking_mode_chk" CHECK ("booking_mode" IN ('native', 'external', 'closed'));--> statement-breakpoint

@@ -587,7 +587,10 @@ describe("who sees which barbers", () => {
 
   it("barbers outside your shops can't be picked, and saved groups are cut down to the ones you can see", async () => {
     await signInAs(ids.regional);
-    const coralOnly = await barberAt("coralville", [fx.a, fx.b, fx.c]);
+    const everyLink = await m.db.db.select().from(m.schema.staffShops);
+    const coralOnly = (await m.db.db.select({ id: m.schema.staff.id }).from(m.schema.staff).where(eq(m.schema.staff.isBookable, true))).find(
+      (s) => ![fx.a, fx.b, fx.c].includes(s.id) && everyLink.filter((l) => l.staffId === s.id).every((l) => l.shopId === shop.coralville.id) && everyLink.some((l) => l.staffId === s.id),
+    )!.id;
     const links = await m.db.db.select().from(m.schema.staffShops).where(eq(m.schema.staffShops.staffId, coralOnly));
     expect(links.map((l) => l.shopId)).toEqual([shop.coralville.id]);
     const r = await get(`type=sales_by_barber&staff=${coralOnly}`);

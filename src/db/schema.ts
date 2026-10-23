@@ -54,11 +54,29 @@ export const brandSettings = pgTable("brand_settings", {
   clientLookupLimits: jsonb("client_lookup_limits").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
   /** Brand default booking slot interval. Shops, barbers and a barber at one shop can override it (src/domain/timing.ts). */
   slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(15),
+  /** How humans see a clock. 12h is the default. Customer copy reads this through formatDateTime. */
+  timeFormat: text("time_format").$type<"12h" | "24h">().notNull().default("12h"),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
+/**
+ * Who owns a shop's business: the brand today, a franchisee later. One owner entity can own several
+ * shops; each shop still has its own Stripe connected account, so its revenue, fees and payouts stay its own.
+ */
+export const ownerEntities = pgTable("owner_entities", {
+  id: id(),
+  name: text("name").notNull(),
+  legalName: text("legal_name"),
+  kind: text("kind").$type<OwnerEntityKind>().notNull().default("brand"),
+  contactEmail: text("contact_email"),
+  createdAt: createdAt(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+export type OwnerEntityKind = "brand" | "franchisee";
+
 export const shops = pgTable("shops", {
   id: id(),
+  ownerEntityId: uuid("owner_entity_id").references(() => ownerEntities.id),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   address: text("address").notNull().default(""),
@@ -92,10 +110,6 @@ export const shops = pgTable("shops", {
   /** native: book here. external: send the app to Squire (or another URL). closed: no online booking. */
   bookingMode: text("booking_mode").$type<"native" | "external" | "closed">().notNull().default("native"),
   externalBookingUrl: text("external_booking_url"),
-  /** Stripe Connect account for this shop. Routing is executeChargePlan, not a destination hard-wire. */
-  stripeAccountId: text("stripe_account_id"),
-  /** Reserved for a future franchise entity. Null while every shop is owned by the brand. */
-  ownerEntityId: uuid("owner_entity_id"),
   cancellationPolicy: text("cancellation_policy"),
   /** When Squire online booking was frozen for this shop, before the delta import. */
   squireFrozenAt: ts("squire_frozen_at"),
@@ -106,6 +120,49 @@ export const shops = pgTable("shops", {
   createdAt: createdAt(),
 });
 export type NegativeStockPolicy = "block" | "warn";
+
+/**
+ * Each shop's Stripe Connect connected account (Express dashboard, Stripe-hosted onboarding). Card
+ * charges are destination charges on the Ray'z platform account, settled on behalf of this account.
+ */
+export const shopPaymentAccounts = pgTable("shop_payment_accounts", {
+  shopId: uuid("shop_id")
+    .primaryKey()
+    .references(() => shops.id),
+  stripeAccountId: text("stripe_account_id").notNull().unique(),
+  /** sim_acct_… accounts belong to the no-keys simulator and never reach Stripe. */
+  simulated: boolean("simulated").notNull().default(false),
+  chargesEnabled: boolean("charges_enabled").notNull().default(false),
+  payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
+  detailsSubmitted: boolean("details_submitted").notNull().default(false),
+  /** Stripe's requirements.currently_due, plus past_due ones, as field names. */
+  requirementsDue: jsonb("requirements_due").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  disabledReason: text("disabled_reason"),
+  /** Set when the account owner disconnects it from the platform. */
+  deauthorizedAt: ts("deauthorized_at"),
+  createdAt: createdAt(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Payouts from a shop's connected account to its bank, as Stripe reports them. */
+export const shopPayouts = pgTable(
+  "shop_payouts",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    stripeAccountId: text("stripe_account_id").notNull(),
+    stripePayoutId: text("stripe_payout_id").notNull().unique(),
+    amountCents: integer("amount_cents").notNull(),
+    status: text("status").notNull(), // pending | in_transit | paid | failed | canceled
+    arrivalDate: date("arrival_date").notNull(),
+    failureMessage: text("failure_message"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("shop_payouts_shop_arrival_idx").on(t.shopId, t.arrivalDate)],
+);
 
 export const shopHours = pgTable(
   "shop_hours",
@@ -1032,10 +1089,19 @@ export const payments = pgTable(
     entryMode: text("entry_mode"), // keyed | terminal
     giftCardId: uuid("gift_card_id").references(() => giftCards.id),
     refundedCents: integer("refunded_cents").notNull().default(0),
+    /** The shop's connected account this card charge settled to (on_behalf_of + transfer_data.destination). */
+    stripeAccountId: text("stripe_account_id"),
+    /** What the platform kept to cover processing: the shop's processing fee for this charge. */
+    applicationFeeCents: integer("application_fee_cents").notNull().default(0),
+    /** What Stripe actually charged the platform, from the balance transaction, when known. */
+    processorFeeCents: integer("processor_fee_cents"),
+    stripeChargeId: text("stripe_charge_id"),
+    stripeTransferId: text("stripe_transfer_id"),
     createdAt: createdAt(),
   },
   (t) => [
     index("payments_shop_date_idx").on(t.shopId, t.businessDate),
+    index("payments_account_idx").on(t.stripeAccountId),
     index("payments_sale_idx").on(t.saleId),
     uniqueIndex("payments_stripe_pi_uq").on(t.stripePaymentIntentId),
   ],

@@ -2,7 +2,8 @@ import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { EmailAttachment, notificationJobs } from "@/db/schema";
 import { appBaseUrl } from "@/lib/deployment";
-import { formatDateTime } from "@/lib/time";
+import { formatDateTime, type TimeFormat } from "@/lib/time";
+import { brandTimeFormat } from "@/server/brand-time";
 import { emailProvider, smsProvider, voiceProvider } from "./providers";
 
 export type NotificationKind =
@@ -37,8 +38,8 @@ export interface AppointmentMessageContext {
 
 const baseUrl = appBaseUrl;
 
-export function renderMessage(kind: NotificationKind, c: AppointmentMessageContext): { subject: string; body: string } {
-  const when = formatDateTime(c.startsAt);
+export function renderMessage(kind: NotificationKind, c: AppointmentMessageContext, timeFormat: TimeFormat = "12h"): { subject: string; body: string } {
+  const when = formatDateTime(c.startsAt, timeFormat);
   const link = `${baseUrl()}/a/${c.code}`;
   const shop = `Ray'z ${c.shopName}`;
   switch (kind) {
@@ -80,6 +81,7 @@ export async function scheduleAppointmentNotifications(
   now: Date = new Date(),
 ) {
   await cancelPendingReminders(c.appointmentId, tx);
+  const timeFormat = await brandTimeFormat();
   const jobs: { kind: NotificationKind; runAt: Date }[] = [];
   if (event === "cancelled") jobs.push({ kind: "cancellation", runAt: now });
   else {
@@ -91,7 +93,7 @@ export async function scheduleAppointmentNotifications(
   }
   const rows = jobs.flatMap((j) =>
     recipients(c).map((r) => {
-      const m = renderMessage(j.kind, c);
+      const m = renderMessage(j.kind, c, timeFormat);
       return {
         appointmentId: c.appointmentId,
         customerId: c.customerId,

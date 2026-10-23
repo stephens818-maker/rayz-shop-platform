@@ -71,6 +71,7 @@ Handy demo data:
 6. As `owner@rayz.test` with **All shops** selected, open **Inventory → Low stock**, tick a few suggested orders, and click **Create purchase orders**. Open one over $500 (the seeded PO-1005 at Coralville is one), approve it, and **Send** it by email; the PDF and CSV show up under **Notifications**. Then **Receive** part of it at a different price, and check the product's ledger and **Reports → Stock movement and shrink**.
 7. Sign in as `moline@rayz.test`. The sidebar says **Shop workspace** with Moline's name and address, and every page (calendar, sales, drawer, stock, reports) covers Moline only. Search **Clients** for a Coralville client's full phone number to book them; a partial search won't find them. Then sign in as `regional@rayz.test` and open **Setup → Shop logins** to create a login for Moline or reset the Moline desk's password.
 8. Sign in as `makenna@rayz.test` and open one of her clients: the phone and birthday are masked, email and address aren't there, and **Call through shop line** places the call without showing the number. As `michelle@rayz.test`, click **Reveal** next to a phone and give a reason. As `owner@rayz.test`, open **Setup → Client data protection** to change what a role or person sees (try **What someone sees**), and **Setup → Client data access** to see both lookups and the reveal with its reason.
+9. As `owner@rayz.test`, open **Setup → Shop settings** and use **Open a new location**. Location setup opens for the new shop. Under **Card payments and payouts**, click **Set up card payments with Stripe**. Without keys, a stand-in for Stripe's onboarding opens. Submit it without the bank account to see "Needs attention", then add the bank account. Under **Owners**, add a franchisee and move two shops to it. Then open **Reports → Shop P&L by Stripe account**.
 
 ### Other commands
 
@@ -131,6 +132,24 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 - Duplicate first names are handled with unique staff IDs plus admin-set display labels. Saving a duplicate active label is refused, and the error suggests an alternative.
 - Who can do what is set by roles, per-person overrides, and shop access, all under **Permissions**. See [Roles and permissions](#roles-and-permissions).
 
+### Booking times
+
+**Setup → Booking times** controls which start times are offered and how long each booking holds the chair.
+
+- **Slot intervals,** where the most specific setting wins: a barber at one shop, then the barber, then the shop, then the brand. The choices are 15, 20 or 30 minutes, or a custom value. A barber's starts are on their own grid, and the whole booking has to fit inside their working hours.
+- **Service timing:**
+  - a duration step (lengths come in multiples of it)
+  - a booking increment (a gray blending that starts only on the half hour, say)
+  - prep and cleanup buffers
+- **Durations per barber,** for every shop or for one. For example, Casey's specialty fade takes 40 minutes everywhere.
+- **The day calendar** draws each barber's own grid. A row toggle switches between each barber's grid and a shop-wide 15, 30 or 60. Prep and cleanup are shaded. Drag an appointment to move it.
+- **Staff bookings** follow the grid, unless the person has the squeeze-in permission. A squeeze-in is logged.
+- **The database** never lets service times overlap. Buffers can't overlap either, unless the booking was squeezed in.
+- **Changing an interval** only changes new availability. Existing bookings keep their times.
+- Covered by `tests/db/slot-timing.test.ts`: mixed grids, multi-shop barbers, interval changes under existing bookings, buffers, add-ons, squeeze-in, and the DST Sundays.
+
+<img alt="Booking times: brand default, shop intervals and per-barber intervals" src="docs/screenshots/booking-times.png" width="800" />
+
 ### Catalog, POS, and money
 
 - A **brand master catalog** of services and add-ons, with per-shop price and duration overrides and per-shop enable/disable. The real Squire prices for each shop are seeded, and Squire's disabled items (design add-ons, memberships) are seeded as disabled.
@@ -151,6 +170,36 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 - **End-of-day drawer:** a denomination counter, expected against counted cash with the variance, and history.
 - **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, settings changes, permission changes, every stock movement, purchase order step, transfer, and count, and every item a bulk upload creates or changes, including before and after values where it matters. Entries are append-only.
 - **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope.
+
+### Card payments: one Stripe account per shop (Stripe Connect)
+
+Ray'z is the merchant of record on one platform Stripe account. Each shop gets its own **connected account**, so each shop has its own P&L.
+
+- **Every card charge is a destination charge to the shop where the service happened.** It uses `on_behalf_of` plus `transfer_data.destination`. That shop's revenue, tips, surcharge and refunds land in its own account, and its payouts go to its own bank. `chargeCard` in `src/server/payments/processor.ts` is the only place a PaymentIntent is created.
+- **Clients and saved cards live on the platform** as Stripe Customers, so one saved card pays at any shop. That side is built by the mobile workstream. The POS passes the Customer through when it has one.
+- **Processing fees.** The platform keeps an application fee equal to the shop's processing cost: 2.9% + 30¢ keyed or online, and 2.7% + 5¢ on the reader. Set `CONNECT_FEE_KEYED` or `CONNECT_FEE_TERMINAL` (for example `2.9%+30`) to change them. Refunds pull the money back from the shop's account (`reverse_transfer`) and don't return the fee.
+- **A shop that isn't onboarded can't take cards.** Checkout says so, offers cash or a gift card, and points to Location setup. A disconnected account is refused the same way.
+- **Location setup** (`/admin/setup`) is a step-by-step checklist for opening a shop: address, owner, hours, sales tax, menu, barbers, card payments, and online booking. Creating a shop opens it.
+  - The payments step creates the shop's Express account and sends the person to **Stripe-hosted onboarding**: business details, the representative's identity, and the bank account. When they come back, the step shows what Stripe still needs. Each later click makes a fresh link, because links are single-use.
+  - Account status comes from a separate Connect webhook (`/api/stripe/connect`, events `account.updated`, `account.application.deauthorized` and `payout.*`). The status is one of: Not set up, Onboarding not finished, Stripe is reviewing, Needs attention, Taking card payments, or Disconnected.
+  - Setting up accounts needs the `payments.accounts` permission. The Brand Owner and Brand Admin have it.
+- **Owners.** Every shop belongs to an owner entity, either the brand or a franchisee. A franchisee can own several shops, and each shop still has its own Stripe account. Owners are managed under Location setup.
+- **Shop P&L by Stripe account** (`/admin/reports/shop-accounts`) shows each shop's connected account, grouped and subtotalled by owner, with:
+  - card charges, card takings after refunds, tips, surcharge and refunds
+  - processing fees, and what the account received
+  - payouts paid and in transit, with every payout listed
+  - cash and gift cards taken outside Stripe
+- **Without Stripe keys,** each shop gets a simulated account (`sim_acct_…`) and a stand-in for the hosted onboarding page. The seed gives every shop an onboarded simulated account, routes its card history there, and makes daily payouts. Simulated accounts are refused once real keys are set, so every shop goes through Stripe's onboarding then.
+
+<img alt="Location setup: every shop's setup progress, card payment status and Stripe account, and the owners" src="docs/screenshots/connect-setup-overview.png" width="800" />
+
+<img alt="Setting up Dubuque: the steps, with card payments not set up yet" src="docs/screenshots/connect-setup-not-started.png" width="800" />
+
+<img alt="The simulator's stand-in for Stripe-hosted onboarding" src="docs/screenshots/connect-simulated-onboarding.png" width="800" />
+
+<img alt="Back from onboarding without a bank account: taking cards, payouts waiting" src="docs/screenshots/connect-setup-needs-bank.png" width="800" />
+
+<img alt="Shop P&L by Stripe account, with payouts" src="docs/screenshots/connect-shop-pl.png" width="800" />
 
 ### Inventory, vendors, and purchase orders
 
@@ -718,7 +767,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 
 - **SMS and email providers.** Twilio and Resend are interface stubs (`src/server/notifications/providers.ts`) and sending is **off by default**. That includes purchase orders emailed to vendors and low-stock alerts: they're queued and shown in the outbox with their attachments, but nothing leaves until a provider is configured. Setting `NOTIFICATIONS_*_PROVIDER=console` logs messages instead. Going live needs Twilio A2P 10DLC registration and a verified sending domain.
 - **Calls through the shop line.** **Call through shop line** queues a call on a voice provider interface (`VoiceProvider` in the same file). The Twilio version is a stub: going live means ringing the shop line first and then dialing the client with the shop's number as caller ID, so neither side sees the other's number.
-- **Stripe without keys.** With no `STRIPE_SECRET_KEY`, a built-in simulator with the same interface runs, using Stripe's published test card IDs (`pm_card_visa`, `pm_card_visa_debit`, and so on), so the POS works end to end offline. Adding test keys (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`) switches to real Stripe test mode: PaymentIntents, Elements for keyed cards, and the webhook for dashboard refunds and disputes. For Cloud Agents, add them under Cursor Dashboard → Cloud Agents → Secrets.
+- **Stripe without keys.** With no `STRIPE_SECRET_KEY`, a built-in simulator with the same interface runs, using Stripe's published test card IDs (`pm_card_visa`, `pm_card_visa_debit`, and so on), so the POS works end to end offline. Adding test keys (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`) switches to real Stripe test mode: PaymentIntents as destination charges to each shop's connected account, Stripe-hosted onboarding, Elements for keyed cards, the webhook for dashboard refunds and disputes, and the Connect webhook for account status and payouts. Connect must be turned on for the platform account first ([dashboard.stripe.com/test/connect](https://dashboard.stripe.com/test/connect)). For Cloud Agents, add them under Cursor Dashboard → Cloud Agents → Secrets.
 - **Stripe Terminal.** The card reader flow is simulated. You pick a test card where a reader would read one. Real hardware needs a Terminal location, a connection token endpoint, and a reader pairing screen.
 - **3-D Secure.** The keyed-card flow doesn't handle `requires_action` yet. That's fine for in-person keyed entry, but it's needed before taking any card-not-present payment.
 - **Tax rates.** The seeded rates are placeholders (IA 7%; IL 0% on services and 8.75% on products) and every shop is marked "unverified". The accountant must confirm each shop's rates before go-live.

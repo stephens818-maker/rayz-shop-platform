@@ -7,6 +7,7 @@ import { computeCheckout, CartLine } from "@/domain/checkout";
 import { DEFAULT_LOYALTY, accrue, rewardExpiry } from "@/domain/loyalty";
 import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
+import { simulateConnectHistory } from "@/server/payments/connect";
 import { addDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
@@ -42,7 +43,8 @@ async function main() {
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
     inventory_ledger, po_receipt_lines, po_receipts, purchase_order_lines, purchase_orders, vendor_products, vendors,
     stock_transfer_lines, stock_transfers, stock_count_lines, stock_counts, shop_products, products, shop_services, services, time_blocks,
-    location_group_shops, location_groups, staff_group_members, staff_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours, shops, brand_settings
+    location_group_shops, location_groups, staff_group_members, staff_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours,
+    shop_payouts, shop_payment_accounts, shops, owner_entities, brand_settings
     RESTART IDENTITY CASCADE`);
 
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
@@ -50,7 +52,8 @@ async function main() {
 
   await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY });
 
-  // ── Shops ──
+  // ── Shops, all owned by the brand for now (a franchisee would be a second owner entity) ──
+  const [brandOwner] = await db.insert(t.ownerEntities).values({ name: "Ray'z Barber Shop", legalName: "Ray'z Barber Shop LLC", kind: "brand", contactEmail: "owner@rayz.test" }).returning();
   const shopRows = await db
     .insert(t.shops)
     .values(
@@ -66,6 +69,7 @@ async function main() {
         serviceTaxRate: s.serviceTaxRate,
         productTaxRate: s.productTaxRate,
         description: SHOP_DESCRIPTION,
+        ownerEntityId: brandOwner.id,
       })),
     )
     .returning();
@@ -603,6 +607,10 @@ async function main() {
   console.log(`  ${ratingRows.length} sample staff ratings`);
 
   await seedInventory({ now, shopBySlug, productRows, shopProductRows, targetStock, saleRows, saleItemRows, owner: staffByKey.get("michelle")! });
+
+  // ── Stripe Connect: each shop has its own (simulated) connected account, onboarded, with its card history routed there ──
+  await simulateConnectHistory({ shopIds: shopRows.map((s) => s.id) });
+  console.log("  Stripe Connect: one simulated connected account per shop, card history routed there, daily payouts");
 
   // ── Booking times (set after the history, as if changed today: booked appointments keep their times) ──
   await db.update(t.shops).set({ slotIntervalMinutes: 20 }).where(eq(t.shops.slug, "le-claire"));

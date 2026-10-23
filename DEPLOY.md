@@ -33,7 +33,7 @@ Both run on **Vercel** (the app) and **Neon** (Postgres). Supabase works in plac
    | `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | optional: Stripe **test** keys. In demo mode a live key is ignored and the simulator runs. |
 
    Leave `NOTIFICATIONS_*` and `APP_BASE_URL` unset. Links default to the project's production URL.
-4. **Deploy.** Click **Deploy**, or push to the production branch. The build applies the migrations and, because the database is empty, loads the demo data. That adds about a minute to the first build. Later builds only apply new migrations and keep the data.
+4. **Deploy.** Click **Deploy**, or push to the production branch. The build applies the migrations and, because the database is empty, loads the demo data. That adds about a minute to the first build. Later builds only apply new migrations and keep the data. If the demo data was loaded before Stripe Connect, the next build gives each shop with card history a simulated Stripe account (`scripts/demo-connect.ts`), so checkout keeps working.
 5. **Keep it private.** Anyone with the URL can use the demo logins. Under **Settings → Deployment Protection**, turn on **Vercel Authentication** for all deployments, so only people on your Vercel team can open it, or **Password Protection** (a Pro add-on) to share one password.
 6. **Open it.** Go to the production URL and use the **Staff** link at the bottom, or open `/login` directly. Pick a demo login.
 
@@ -91,11 +91,17 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    | `APP_BASE_URL` | the public URL, e.g. `https://book.rayzbarbershop.com` |
    | `AUTH_DEV_CODES` | `false` |
    | `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` | live keys at cutover |
+   | `STRIPE_CONNECT_WEBHOOK_SECRET` | the signing secret of the Connect webhook (step 4) |
+   | `CONNECT_FEE_KEYED`, `CONNECT_FEE_TERMINAL` | optional: the processing fee passed on to each shop, e.g. `2.9%+30` and `2.7%+5` (the defaults) |
    | `NOTIFICATIONS_*` | leave `disabled` until the shop goes live (see the README's cutover plan) |
 
    Don't set `DEMO_MODE`. Without it the build only ever applies migrations. It never seeds.
 3. Deploy. The build applies migrations. To run them yourself instead, set `SKIP_DB_MIGRATE=true` and run `DATABASE_URL_UNPOOLED=… pnpm db:migrate`.
-4. Point a Stripe webhook at `https://<your domain>/api/stripe/webhook` for `charge.refunded` and `charge.dispute.created`, and copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
+4. Set up Stripe:
+   - Turn on **Connect** for the platform account (Express accounts; the platform pays the fees and covers losses).
+   - Point a Stripe webhook at `https://<your domain>/api/stripe/webhook` for `charge.refunded` and `charge.dispute.created`, and copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
+   - Add a second webhook, set to **listen to events on connected accounts**, at `https://<your domain>/api/stripe/connect` for `account.updated`, `account.application.deauthorized`, and `payout.created`, `payout.updated`, `payout.paid`, `payout.failed` and `payout.canceled`. Copy its signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET`.
+   - Then open **Location setup** for each shop and finish **Card payments and payouts**. A shop takes cards only once Stripe approves its account.
 5. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
 6. Add the custom domain under **Settings → Domains**.
 

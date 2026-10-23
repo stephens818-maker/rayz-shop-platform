@@ -1,4 +1,3 @@
-import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { shops } from "@/db/schema";

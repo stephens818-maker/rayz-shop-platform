@@ -1,10 +1,10 @@
 "use server";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { services, shopClosures, shopHours, shopServices, shops } from "@/db/schema";
+import { ownerEntities, services, shopClosures, shopHours, shopServices, shops } from "@/db/schema";
 import { MAX_CARD_FEE_RATE } from "@/domain/checkout";
 import { hoursProblem } from "@/domain/hours";
 import { slugify } from "@/lib/ids";
@@ -150,9 +150,10 @@ export async function createShopAction(raw: z.input<typeof NewShop>) {
     const slug = slugify(v.name);
     if (await db.query.shops.findFirst({ where: eq(shops.slug, slug) })) throw new AppError("conflict", "A shop with that name already exists");
     const id = await db.transaction(async (tx) => {
+      const brandOwner = await tx.query.ownerEntities.findFirst({ where: eq(ownerEntities.kind, "brand"), orderBy: asc(ownerEntities.createdAt) });
       const [s] = await tx
         .insert(shops)
-        .values({ ...v, slug, phone: v.phone || null, bookingEnabled: false, taxRatesVerified: false, serviceTaxRate: "0", productTaxRate: "0" })
+        .values({ ...v, slug, phone: v.phone || null, bookingEnabled: false, taxRatesVerified: false, serviceTaxRate: "0", productTaxRate: "0", ownerEntityId: brandOwner?.id ?? null })
         .returning({ id: shops.id });
       await tx.insert(shopHours).values([1, 2, 3, 4, 5, 6].map((weekday) => ({ shopId: s.id, weekday, openMin: 9 * 60, closeMin: weekday === 6 ? 15 * 60 : 19 * 60 })));
       const all = await tx.select({ id: services.id }).from(services).where(eq(services.active, true));

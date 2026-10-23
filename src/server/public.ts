@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, customers, serviceLocales, shopClosures, shopHours, shops, staff, staffSchedules } from "@/db/schema";
 import { feeDisclosure } from "@/domain/checkout";
-import { addDays, minutesToHHMM, todayLocal, toZoned } from "@/lib/time";
+import { addDays, minutesToHHMM, minutesToLabel, todayLocal, toZoned } from "@/lib/time";
 import { redemptionLocked } from "@/server/mobile/identity";
 import { badgeFor, localeFromHeader, message } from "@/server/mobile/rules";
 import { getAppointmentByCode, getAvailability } from "./booking";
@@ -60,7 +60,13 @@ export function serializeShop(
     cancelCutoffMinutes: s.cancelCutoffMinutes,
     cancellationPolicy: policy,
     barberCount,
-    hours: hours.map((h) => ({ weekday: h.weekday, open: minutesToHHMM(h.openMin), close: minutesToHHMM(h.closeMin) })),
+    hours: hours.map((h) => ({
+      weekday: h.weekday,
+      open: minutesToHHMM(h.openMin),
+      close: minutesToHHMM(h.closeMin),
+      openLabel: minutesToLabel(h.openMin),
+      closeLabel: minutesToLabel(h.closeMin),
+    })),
     description: s.description,
     lat,
     lng,

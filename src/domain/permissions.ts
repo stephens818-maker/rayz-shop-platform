@@ -85,6 +85,13 @@ export const FEATURE_PERMISSIONS = [
     label: "Set booking slot intervals and service timing at their shops",
     hint: "Each shop's and barber's interval, service durations, buffers and per-barber times. With access to all shops, also the brand default interval and the brand service timing.",
   },
+  {
+    key: "payments.accounts",
+    group: "Settings and data",
+    label: "Set up each shop's Stripe account for card payments and payouts, and choose who owns each shop",
+    hint: "Starts Stripe-hosted onboarding for a shop and manages owner entities. Card payments at a shop start once its account is approved.",
+    brandOnly: true,
+  },
   { key: "settings.brand", group: "Settings and data", label: "Change brand-level settings: loyalty program, new shops, Sunday hours", ownerOnly: true },
   { key: "import.run", group: "Settings and data", label: "Run the Squire import", brandOnly: true },
   {
@@ -108,6 +115,7 @@ export const REPORTS = [
   { key: "services_vs_products", label: "Services vs products", href: "/admin/reports/services-products" },
   { key: "tips_payroll", label: "Tips and payroll export", href: "/admin/payroll" },
   { key: "card_vs_cash", label: "Card vs cash", href: "/admin/reports/tender" },
+  { key: "shop_accounts", label: "Shop P&L by Stripe account", href: "/admin/reports/shop-accounts", hint: "Each shop's card sales, fees, refunds, tips and payouts through its own connected account, grouped by owner." },
   { key: "discounts_refunds", label: "Discounts and refunds", href: "/admin/reports/discounts-refunds" },
   { key: "inventory", label: "Inventory valuation", href: "/admin/reports/inventory" },
   { key: "inventory_movement", label: "Stock movement and shrink", href: "/admin/reports/inventory-movement" },
