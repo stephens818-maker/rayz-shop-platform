@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { z, ZodError, ZodType } from "zod";
+import { assertAppSignature, assertSupportedClient, readClient } from "./mobile/client";
+import { limitApi } from "./mobile/rate-limit";
 import { AppError } from "./errors";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
-  "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Client, X-App-Version, X-Device-Key, X-Android-App-Hash, X-App-Signature, X-App-Timestamp, Accept-Language",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
 };
 
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}) {
@@ -27,6 +29,10 @@ type Handler<P> = (req: Request, params: P) => Promise<Response>;
 export function route<P = Record<string, string>>(fn: Handler<P>) {
   return async (req: Request, ctx: { params: Promise<P> }) => {
     try {
+      const info = readClient(req);
+      await assertSupportedClient(info);
+      await assertAppSignature(req, info);
+      await limitApi(req.method, new URL(req.url).pathname, info.ip);
       return await fn(req, (await ctx.params) ?? ({} as P));
     } catch (e) {
       return errorResponse(e);

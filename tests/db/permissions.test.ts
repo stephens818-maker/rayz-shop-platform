@@ -19,6 +19,7 @@ const shopId: Record<string, string> = {};
 const LOGINS = ["owner", "admin", "regional", "michelle", "frontdesk", "makenna"] as const;
 type Login = (typeof LOGINS)[number];
 
+// The import.meta.glob( literal stays so Vitest does not freeze this file list in its module cache.
 const pages = (import.meta as unknown as { glob(p: string): Record<string, () => Promise<unknown>> }).glob("/src/app/admin/**/page.tsx");
 const routeOfFile = (f: string) => f.replace("/src/app", "").replace(/\/page\.tsx$/, "");
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);

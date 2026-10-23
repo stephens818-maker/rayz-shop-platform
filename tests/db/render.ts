@@ -7,6 +7,7 @@ import { vi } from "vitest";
 import { AppError } from "@/server/errors";
 import { redirectTarget } from "./session";
 
+// The import.meta.glob( literal stays so Vitest does not freeze this file list in its module cache.
 const pages = (import.meta as unknown as { glob(p: string): Record<string, () => Promise<unknown>> }).glob("/src/app/admin/**/page.tsx");
 
 const isControl = (e: unknown) =>

@@ -258,15 +258,29 @@ export function makeSquireFixture(opts: { exportDate?: string; seed?: number } =
     // 1: same email, second record has a newer phone
     // 2: nickname on one record, full name on the other, same phone
     // 3: same phone; the second record opted out of texts
+    const secondPhone = variant === 1 ? newPhone(b.area) : phone;
     const r1 = record({ first: variant === 2 ? nick : full, last }, a, fmt(phone), email, { sms: "Yes", mail: "Yes" });
     const r2 = record(
       { first: variant === 2 ? full : i % 2 ? nick : full, last: variant === 0 ? null : last },
       b,
-      variant === 1 ? fmt(newPhone(b.area)) : fmt(phone),
+      fmt(secondPhone),
       variant === 0 ? "" : email.toUpperCase(),
       { sms: variant === 3 ? "No" : "", mail: variant === 3 ? "No" : "" },
     );
-    people.push({ key: `two-shops-${i}`, kind: "two_shops", first: r1.first, last, phone: phone.e164, email, records: [r1, r2], expect: consentOf([r1, r2]), visits: blankStats(), loyalty: null });
+    // A later non-empty field replaces the earlier one. Consent can only be taken away.
+    const foldedFirst = (r2.first || r1.first).trim();
+    people.push({
+      key: `two-shops-${i}`,
+      kind: "two_shops",
+      first: foldedFirst,
+      last,
+      phone: secondPhone.e164,
+      email,
+      records: [r1, r2],
+      expect: consentOf([r1, r2]),
+      visits: blankStats(),
+      loyalty: null,
+    });
   });
 
   // Families: a parent and a kid on one phone. Different people, so two clients.

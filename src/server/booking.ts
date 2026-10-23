@@ -34,6 +34,7 @@ import { Actor, audit } from "./audit";
 import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers } from "./catalog";
 import { CustomerInput, findOrCreateCustomer } from "./customers";
 import { AppError, isDoubleBookingError, notFound } from "./errors";
+import { assertLaunched } from "./launch";
 import { AppointmentMessageContext, cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
 import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
 import { bookingPlans, shopInterval, staffIntervals, toStaffPlans } from "./timing";
@@ -223,11 +224,16 @@ export async function createAppointment(input: CreateAppointmentInput) {
     if (prior) return getAppointmentByCode(prior.code);
   }
   const staffOverride = input.source === "staff" || input.source === "walk_in" || input.source === "rebook";
+  // Staff calendar, walk-ins, and checkout rebooks stay open so shops can be sandbox-tested before launch day.
+  if (!staffOverride) await assertLaunched("booking", input.now ?? new Date());
   if (input.squeezeIn && (input.source === "online" || input.source === "api")) throw new AppError("forbidden", "Only staff can squeeze in a booking");
   if (input.squeezeIn && (!input.barberRef || input.barberRef === "any")) throw new AppError("bad_request", "Pick the barber to squeeze the booking in with");
   // Walk-ins are seated now, wherever that falls; every other booking starts on the barber's grid.
   const gridExempt = input.source === "walk_in";
   const r = await resolveBooking({ ...input, staffOverride });
+  if (!staffOverride && r.shop.bookingMode !== "native") {
+    throw new AppError("forbidden", r.shop.bookingMode === "closed" ? "Online booking is turned off for this shop" : "This shop books on another site.");
+  }
   const start = new Date(input.startsAt);
   if (Number.isNaN(start.getTime())) throw new AppError("bad_request", "startsAt must be an ISO timestamp");
   const now = input.now ?? new Date();
@@ -347,7 +353,7 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
       shopName: shops.name,
       shopAddress: shops.address,
       shopCity: shops.city,
-      barberName: staff.displayLabel,
+      barberName: staff.firstName,
       customerId: customers.id,
       phone: customers.phone,
       email: customers.email,
@@ -387,7 +393,7 @@ export const pastCutoff = (now: Date, startsAt: Date, cutoffMinutes: number) => 
 
 export async function getAppointmentByCode(code: string, now: Date = new Date()) {
   const [row] = await db
-    .select({ a: appointments, shop: shops, barberName: staff.displayLabel, barberSlug: staff.publicSlug, customer: customers })
+    .select({ a: appointments, shop: shops, barberName: staff.firstName, barberSlug: staff.publicSlug, customer: customers })
     .from(appointments)
     .innerJoin(shops, eq(shops.id, appointments.shopId))
     .innerJoin(staff, eq(staff.id, appointments.staffId))
@@ -454,6 +460,7 @@ export async function rescheduleAppointment(
   const now = opts.now ?? new Date();
   const { a, shop } = await loadForChange(code);
   if (opts.customerId && a.customerId !== opts.customerId) throw notFound("Appointment");
+  if (opts.byCustomer) await assertLaunched("booking", now);
   if (!["booked", "confirmed"].includes(a.status)) throw new AppError("conflict", `Can't reschedule an appointment that is ${a.status}`);
   if (opts.byCustomer && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
     throw new AppError("cutoff_passed", `Online changes close ${shop.cancelCutoffMinutes} minutes before the appointment. Please call the shop.`);

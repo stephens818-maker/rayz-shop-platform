@@ -2,6 +2,8 @@ import { execSync } from "node:child_process";
 
 export const TEST_DB = process.env.TEST_DATABASE_URL ?? "postgres://rayz:rayz@localhost:5432/rayz_test";
 process.env.DATABASE_URL = TEST_DB;
+// Existing suites book online. A missing launch time means "not launched", so tests pin a past instant.
+process.env.LAUNCH_AT ??= "2000-01-01T00:00:00.000Z";
 
 export async function loadModules() {
   const env = { ...process.env, DATABASE_URL: TEST_DB, MIGRATE_DATABASE_URL: TEST_DB, SEED_HISTORY_DAYS: "3" };

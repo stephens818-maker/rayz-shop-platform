@@ -18,7 +18,8 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:reset": "tsx scripts/migrate.ts && tsx scripts/seed.ts",
     "worker": "tsx scripts/worker.ts",
-    "import:squire": "tsx scripts/import-squire.ts"
+    "import:squire": "tsx scripts/import-squire.ts",
+    "smoke:v1": "tsx scripts/smoke-v1.ts"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^7.0.0",

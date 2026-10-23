@@ -8,13 +8,19 @@ const Cents = z.number().int().describe("Amount in US cents");
 
 export const ErrorBody = z.object({
   error: z.object({
-    code: z.enum(["bad_request", "unauthorized", "forbidden", "not_found", "conflict", "slot_unavailable", "cutoff_passed", "rate_limited", "payment_failed", "internal"]),
+    code: z.enum(["bad_request", "unauthorized", "forbidden", "not_found", "conflict", "slot_unavailable", "cutoff_passed", "rate_limited", "payment_failed", "upgrade_required", "internal"]),
     message: z.string(),
     details: z.unknown().nullable(),
   }),
 });
 
-export const ShopHours = z.object({ weekday: z.number().int().min(0).max(6).describe("0 = Sunday"), open: z.string(), close: z.string() });
+export const ShopHours = z.object({
+  weekday: z.number().int().min(0).max(6).describe("0 = Sunday"),
+  open: z.string(),
+  close: z.string(),
+  openLabel: z.string().describe("12-hour America/Chicago label"),
+  closeLabel: z.string().describe("12-hour America/Chicago label"),
+});
 export const Shop = z.object({
   id: z.string().uuid(),
   slug: z.string(),
@@ -26,9 +32,24 @@ export const Shop = z.object({
   phone: z.string().nullable(),
   timezone: z.literal("America/Chicago"),
   bookingEnabled: z.boolean(),
+  bookingMode: z.enum(["native", "external", "closed"]),
+  externalBookingUrl: z.string().nullable(),
   cancelCutoffMinutes: z.number().int(),
+  cancellationPolicy: z.string(),
   barberCount: z.number().int(),
   hours: z.array(ShopHours),
+  description: z.string().nullable(),
+  lat: z.number().nullable(),
+  lng: z.number().nullable(),
+  photoUrl: z.string().nullable(),
+  mapsUrl: z.string(),
+  googleReviewUrl: z.string().nullable(),
+  openNow: z.boolean(),
+  closures: z.array(z.object({ date: z.string(), reason: z.string().nullable() })),
+  tipPresets: z.array(z.number()),
+  cardFeeMayApply: z.boolean(),
+  cardFeeDisclosure: z.string().nullable(),
+  nextSlot: z.object({ startsAt: z.string(), serviceId: z.string() }).nullable(),
 });
 export const ShopList = z.object({ shops: z.array(Shop) });
 
@@ -140,8 +161,31 @@ export const Me = z.object({
   lastName: z.string().nullable(),
   phone: z.string().nullable(),
   email: z.string().nullable(),
+  emailVerifiedAt: z.string().nullable(),
   smsOptIn: z.boolean(),
   emailOptIn: z.boolean(),
+  smsMarketingOptIn: z.boolean(),
+  emailMarketingOptIn: z.boolean(),
+  pushTransactional: z.boolean(),
+  pushMarketing: z.boolean(),
+  homeShopId: z.string().uuid().nullable(),
+  preferredBarberId: z.string().uuid().nullable(),
+  preferredBarber: z.object({ id: z.string().uuid(), firstName: z.string() }).nullable(),
+  birthday: z.string().nullable(),
+  birthYear: z.number().int().nullable(),
+  /** Written by the customer for the barber. Staff notes are never returned. */
+  preferences: z.string().nullable(),
+  notes: z.string().nullable().describe("Same as preferences: the customer's own note. Staff notes are never returned."),
+  secureProfile: z.boolean(),
+  identityConfirmed: z.boolean(),
+  redemptionLocked: z.boolean(),
+  badge: z.object({
+    tier: z.enum(["gold", "silver", "bronze", "new"]),
+    label: z.string(),
+    color: z.string(),
+    reason: z.string(),
+    since: z.string().nullable(),
+  }),
 });
 export const TokenResponse = z.object({
   needsProfile: z.literal(false),
@@ -168,15 +212,28 @@ export const OtpComplete = z.object({
   firstName: z.string().min(1).max(60).optional().describe("Or a name: matches a profile on this phone, else creates one"),
   lastName: z.string().max(60).optional(),
   deviceName: z.string().max(80).optional(),
+  birthYear: z.number().int().min(1900).max(2100).optional().describe("Required for a new ios/android account. Must be 13 or older."),
 });
 export const RefreshBody = z.object({ refreshToken: z.string() });
 export const RefreshResponse = z.object({ accessToken: z.string(), refreshToken: z.string(), tokenType: z.literal("Bearer"), expiresIn: z.number().int() });
 export const UpdateMe = z.object({
   firstName: z.string().min(1).max(60).optional(),
   lastName: z.string().max(60).nullable().optional(),
-  email: z.string().email().nullable().optional(),
   smsOptIn: z.boolean().optional(),
   emailOptIn: z.boolean().optional(),
+  smsMarketingOptIn: z.boolean().optional(),
+  emailMarketingOptIn: z.boolean().optional(),
+  pushTransactional: z.boolean().optional(),
+  pushMarketing: z.boolean().optional(),
+  homeShopId: z.string().uuid().nullable().optional(),
+  preferredBarberId: z.string().uuid().nullable().optional(),
+  birthday: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  preferences: z.string().max(500).nullable().optional(),
+  notes: z.string().max(500).nullable().optional().describe("Customer note for the shop. Staff notes cannot be set here."),
+  secureProfile: z.boolean().optional(),
+  consentTextVersion: z.string().max(40).optional(),
+  /** Rejected. Email changes go through POST /me/email/start. */
+  email: z.never().optional(),
 });
 
 export const Loyalty = z.object({

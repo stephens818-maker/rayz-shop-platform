@@ -55,6 +55,13 @@ export const brandSettings = pgTable("brand_settings", {
   clientLookupLimits: jsonb("client_lookup_limits").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
   /** Brand default booking slot interval. Shops, barbers and a barber at one shop can override it (src/domain/timing.ts). */
   slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(15),
+  /** How humans see a clock. 12h is the default. Customer copy reads this through formatDateTime. */
+  timeFormat: text("time_format").$type<"12h" | "24h">().notNull().default("12h"),
+  /**
+   * When the website, customer apps, and customer-facing payments and push go live together.
+   * Null means not launched. LAUNCH_AT in the environment overrides this.
+   */
+  launchAt: ts("launch_at"),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -102,6 +109,16 @@ export const shops = pgTable("shops", {
   bookingWindowDays: integer("booking_window_days").notNull().default(60),
   bufferMinutes: integer("buffer_minutes").notNull().default(0),
   description: text("description"),
+  lat: numeric("lat", { precision: 9, scale: 6 }),
+  lng: numeric("lng", { precision: 9, scale: 6 }),
+  photoUrl: text("photo_url"),
+  googleReviewUrl: text("google_review_url"),
+  /** native: book here. external: send the app to Squire (or another URL). closed: no online booking. */
+  bookingMode: text("booking_mode").$type<"native" | "external" | "closed">().notNull().default("native"),
+  externalBookingUrl: text("external_booking_url"),
+  cancellationPolicy: text("cancellation_policy"),
+  /** When Squire online booking was frozen for this shop, before the delta import. */
+  squireFrozenAt: ts("squire_frozen_at"),
   /** block: a sale or adjustment that would take on-hand below zero is refused. warn: it goes through with a warning. */
   negativeStock: text("negative_stock").$type<NegativeStockPolicy>().notNull().default("block"),
   /** Where low-stock alerts go. Falls back to the shop email. */
@@ -223,6 +240,8 @@ export const staff = pgTable("staff", {
   active: boolean("active").notNull().default(true),
   passwordHash: text("password_hash"),
   squireName: text("squire_name"),
+  /** Optional Express account. Tip transfers stay off: not for W-2 employees, pending CPA. */
+  stripeAccountId: text("stripe_account_id"),
   /** "shop": a shared login for one shop (its front desk), not a person; never bookable. */
   kind: text("kind").$type<"person" | "shop">().notNull().default("person"),
   lastSignInAt: ts("last_sign_in_at"),
@@ -700,6 +719,28 @@ export const customers = pgTable(
     emailOptIn: boolean("email_opt_in").notNull().default(false),
     homeShopId: uuid("home_shop_id").references(() => shops.id),
     preferredStaffId: uuid("preferred_staff_id").references(() => staff.id, { onDelete: "set null" }),
+    /** Set only after an email OTP to this address. Imported emails stay null. */
+    emailVerifiedAt: ts("email_verified_at"),
+    /** Platform Stripe Customer. One saved card works at every shop. */
+    stripeCustomerId: text("stripe_customer_id"),
+    /** 'squire' for rows created by the importer. Null for people who signed up here. */
+    importedFrom: text("imported_from"),
+    /** Recycled-number check (last name or last shop) passed. */
+    identityConfirmedAt: ts("identity_confirmed_at"),
+    pushTransactional: boolean("push_transactional").notNull().default(false),
+    pushMarketing: boolean("push_marketing").notNull().default(false),
+    smsMarketingOptIn: boolean("sms_marketing_opt_in").notNull().default(false),
+    emailMarketingOptIn: boolean("email_marketing_opt_in").notNull().default(false),
+    /** Shared-phone adult: email second factor required at sign-in. */
+    secureProfile: boolean("secure_profile").notNull().default(false),
+    /** Notes the customer wrote for the barber. Never the staff-only customers.notes field. */
+    preferences: text("preferences"),
+    deletedAt: ts("deleted_at"),
+    deletionRequestedAt: ts("deletion_requested_at"),
+    /** Web guest booking held apart until the phone is verified. */
+    unverifiedGuest: boolean("unverified_guest").notNull().default(false),
+    birthYear: integer("birth_year"),
+    ageConfirmedAt: ts("age_confirmed_at"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -807,6 +848,13 @@ export const otpCodes = pgTable(
     id: id(),
     identifier: text("identifier").notNull(), // normalized phone or email
     codeHash: text("code_hash").notNull(),
+    /** signin | email_change | delete | step_up */
+    purpose: text("purpose").notNull().default("signin"),
+    channel: text("channel"),
+    ip: text("ip"),
+    deviceKey: text("device_key"),
+    /** Twilio Verify verification SID, when the code is checked by Verify rather than this table. */
+    verifySid: text("verify_sid"),
     expiresAt: ts("expires_at").notNull(),
     attempts: integer("attempts").notNull().default(0),
     consumedAt: ts("consumed_at"),
@@ -820,6 +868,10 @@ export const refreshTokens = pgTable("refresh_tokens", {
   customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
   tokenHash: text("token_hash").notNull().unique(),
   deviceName: text("device_name"),
+  client: text("client"),
+  appVersion: text("app_version"),
+  ip: text("ip"),
+  deviceId: uuid("device_id"),
   expiresAt: ts("expires_at").notNull(),
   revokedAt: ts("revoked_at"),
   replacedBy: uuid("replaced_by"),
@@ -858,6 +910,7 @@ export const appointments = pgTable(
     notes: text("notes"),
     idempotencyKey: text("idempotency_key").unique(),
     rebookedFromId: uuid("rebooked_from_id"),
+    groupId: uuid("group_id"),
     squireId: text("squire_id").unique(),
     /** False for Squire rows whose export had no booked-at time; created_at is then a stand-in and rebook KPIs skip them. */
     bookedAtKnown: boolean("booked_at_known").notNull().default(true),
@@ -1292,6 +1345,199 @@ export const clientRatings = pgTable(
     uniqueIndex("client_ratings_staff_sale_uq").on(t.staffId, t.saleId).where(sql`appointment_id is null and sale_id is not null`),
   ],
 );
+
+export const appointmentGroups = pgTable("appointment_groups", {
+  id: id(),
+  code: text("code").notNull().unique(),
+  customerId: uuid("customer_id").references(() => customers.id),
+  shopId: uuid("shop_id").notNull().references(() => shops.id),
+  mode: text("mode").$type<"sameTime" | "backToBack">().notNull(),
+  createdAt: createdAt(),
+});
+
+export const customerDevices = pgTable(
+  "customer_devices",
+  {
+    id: id(),
+    customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+    platform: text("platform").$type<"ios" | "android">().notNull(),
+    provider: text("provider").$type<"apns" | "fcm" | "expo">().notNull(),
+    token: text("token").notNull().unique(),
+    appVersion: text("app_version"),
+    osVersion: text("os_version"),
+    locale: text("locale"),
+    pushEnabled: boolean("push_enabled").notNull().default(true),
+    lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
+    revokedAt: ts("revoked_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("customer_devices_customer_idx").on(t.customerId)],
+);
+
+export const consentEvents = pgTable(
+  "consent_events",
+  {
+    id: id(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    phone: text("phone"),
+    email: text("email"),
+    channel: text("channel").$type<"sms_transactional" | "sms_marketing" | "email" | "email_marketing" | "push_transactional" | "push_marketing">().notNull(),
+    action: text("action").$type<"granted" | "revoked">().notNull(),
+    textVersion: text("text_version").notNull(),
+    source: text("source").$type<"ios" | "android" | "web" | "pos" | "import" | "sms">().notNull(),
+    appVersion: text("app_version"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("consent_events_customer_idx").on(t.customerId, t.createdAt), index("consent_events_phone_idx").on(t.phone)],
+);
+
+export const customerDependents = pgTable(
+  "customer_dependents",
+  {
+    id: id(),
+    guardianId: uuid("guardian_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+    dependentId: uuid("dependent_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+    relationship: text("relationship").notNull().default("child"),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("customer_dependents_uq").on(t.guardianId, t.dependentId), index("customer_dependents_dependent_idx").on(t.dependentId)],
+);
+
+export const customerPaymentMethods = pgTable(
+  "customer_payment_methods",
+  {
+    id: id(),
+    customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+    stripePaymentMethodId: text("stripe_payment_method_id").notNull().unique(),
+    brand: text("brand").notNull(),
+    last4: text("last4").notNull(),
+    funding: text("funding").notNull(),
+    expMonth: integer("exp_month"),
+    expYear: integer("exp_year"),
+    wallet: text("wallet"),
+    isDefault: boolean("is_default").notNull().default(false),
+    detachedAt: ts("detached_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("customer_payment_methods_customer_idx").on(t.customerId)],
+);
+
+export const mobileCheckouts = pgTable(
+  "mobile_checkouts",
+  {
+    id: id(),
+    appointmentId: uuid("appointment_id").notNull().references(() => appointments.id),
+    customerId: uuid("customer_id").notNull().references(() => customers.id),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    idempotencyKey: text("idempotency_key").unique(),
+    tipCents: integer("tip_cents").notNull().default(0),
+    subtotalCents: integer("subtotal_cents").notNull(),
+    taxCents: integer("tax_cents").notNull().default(0),
+    feeCents: integer("fee_cents").notNull().default(0),
+    totalCents: integer("total_cents").notNull(),
+    funding: text("funding"),
+    wallet: text("wallet"),
+    stripePaymentIntentId: text("stripe_payment_intent_id").unique(),
+    status: text("status").notNull().default("quoted"),
+    saleId: uuid("sale_id").references(() => sales.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("mobile_checkouts_appt_idx").on(t.appointmentId)],
+);
+
+export const mobileStripeEvents = pgTable("mobile_stripe_events", {
+  id: text("id").primaryKey(),
+  type: text("type").notNull(),
+  receivedAt: ts("received_at").notNull().defaultNow(),
+});
+
+export const mobileRateBuckets = pgTable("mobile_rate_buckets", {
+  key: text("key").primaryKey(),
+  windowStart: ts("window_start").notNull().defaultNow(),
+  count: integer("count").notNull().default(0),
+});
+
+export const identityTasks = pgTable(
+  "identity_tasks",
+  {
+    id: id(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    phone: text("phone"),
+    email: text("email"),
+    kind: text("kind").notNull().default("cant_sign_in"),
+    detail: text("detail"),
+    status: text("status").notNull().default("open"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("identity_tasks_status_idx").on(t.status, t.createdAt)],
+);
+
+export const customerFavorites = pgTable(
+  "customer_favorites",
+  {
+    customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id").notNull().references(() => staff.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.customerId, t.staffId] })],
+);
+
+export const serviceLocales = pgTable(
+  "service_locales",
+  {
+    serviceId: uuid("service_id").notNull().references(() => services.id, { onDelete: "cascade" }),
+    locale: text("locale").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+  },
+  (t) => [primaryKey({ columns: [t.serviceId, t.locale] })],
+);
+
+export const appConfig = pgTable("app_config", {
+  id: smallint("id").primaryKey().default(1),
+  minIos: text("min_ios").notNull().default("3.0.0"),
+  minAndroid: text("min_android").notNull().default("3.0.0"),
+  latestIos: text("latest_ios").notNull().default("3.0.0"),
+  latestAndroid: text("latest_android").notNull().default("3.0.0"),
+  iosStoreUrl: text("ios_store_url").notNull().default("https://apps.apple.com/app/id1570336126"),
+  androidStoreUrl: text("android_store_url").notNull().default("https://play.google.com/store/apps/details?id=com.getsquire.SquireRayz"),
+  flags: jsonb("flags").$type<Record<string, boolean>>().notNull().default(sql`'{}'::jsonb`),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Planned versus executed Connect transfers. Tip rows stay skipped while tip-to-barber is off. */
+export const connectTransfers = pgTable(
+  "connect_transfers",
+  {
+    id: id(),
+    paymentIntentId: text("payment_intent_id").notNull(),
+    chargeId: text("charge_id"),
+    transferGroup: text("transfer_group").notNull(),
+    destinationAccount: text("destination_account"),
+    staffId: uuid("staff_id").references(() => staff.id),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    role: text("role").$type<"shop_net" | "tip">().notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    reversedCents: integer("reversed_cents").notNull().default(0),
+    status: text("status").$type<"planned" | "executed" | "reversed" | "failed" | "skipped">().notNull(),
+    stripeTransferId: text("stripe_transfer_id"),
+    reversalId: text("reversal_id"),
+    note: text("note"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("connect_transfers_pi_idx").on(t.paymentIntentId)],
+);
+
+export const importReconciliations = pgTable("import_reconciliations", {
+  id: id(),
+  shopId: uuid("shop_id").references(() => shops.id),
+  kind: text("kind").notNull(),
+  dryRun: boolean("dry_run").notNull().default(true),
+  frozenAt: ts("frozen_at"),
+  report: jsonb("report").notNull(),
+  createdAt: createdAt(),
+});
 
 export type Shop = typeof shops.$inferSelect;
 export type Staff = typeof staff.$inferSelect;

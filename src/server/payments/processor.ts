@@ -10,9 +10,22 @@ import { AppError } from "@/server/errors";
  */
 
 let stripeClient: Stripe | null | undefined;
+/** Live keys are never used. A demo also ignores anything that is not an sk_test_ key. */
+export function assertStripeTestMode() {
+  const secret = process.env.STRIPE_SECRET_KEY ?? "";
+  const publishable = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? process.env.STRIPE_PUBLISHABLE_KEY ?? "";
+  if (secret.startsWith("sk_live_") || secret.startsWith("rk_live_") || publishable.startsWith("pk_live_")) {
+    throw new AppError("forbidden", "Live Stripe keys are refused. Use a test-mode key.");
+  }
+}
+
 export function stripe(): Stripe | null {
   if (stripeClient !== undefined) return stripeClient;
   const key = process.env.STRIPE_SECRET_KEY;
+  if (key && (key.startsWith("sk_live_") || key.startsWith("rk_live_"))) {
+    stripeClient = null;
+    return stripeClient;
+  }
   // A demo never charges a real card, whatever key it was given.
   const usable = key && (!demoMode() || key.startsWith("sk_test_"));
   stripeClient = usable ? new Stripe(key) : null;
@@ -124,6 +137,7 @@ export async function chargeCard(opts: {
   destination?: Destination | null;
   customerId?: string | null;
 }): Promise<ChargeResult> {
+  assertStripeTestMode();
   const s = stripe();
   const dest = opts.destination ?? null;
   if (dest && (dest.applicationFeeCents < 0 || dest.applicationFeeCents > opts.amountCents)) throw new AppError("bad_request", "The processing fee can't be more than the charge");

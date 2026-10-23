@@ -67,8 +67,11 @@ export function isValidLocalDate(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) && DateTime.fromISO(s).isValid;
 }
 
-export function formatTime(instant: Date | number | string): string {
-  return toZoned(instant).toFormat("h:mm a");
+export type TimeFormat = "12h" | "24h";
+
+/** Customer-facing clock. Default is 12-hour. Pass the brand `time_format` when you have it. */
+export function formatTime(instant: Date | number | string, format: TimeFormat = "12h"): string {
+  return toZoned(instant).toFormat(format === "24h" ? "HH:mm" : "h:mm a");
 }
 
 /** A local date ("2026-10-21") as that day; an instant (Date, or a timestamp string) as its day in the shop's zone. */
@@ -77,8 +80,10 @@ export function formatDate(date: LocalDate | Date | string, fmt = "EEE, MMM d"):
   return dt.toFormat(fmt);
 }
 
-export function formatDateTime(instant: Date | number | string): string {
-  return toZoned(instant).toFormat("EEE, MMM d · h:mm a");
+/** Shop-local date and clock. Default is 12-hour America/Chicago. This is the one formatter; don't add another. */
+export function formatDateTime(instant: Date | number | string, format: TimeFormat = "12h"): string {
+  const clock = format === "24h" ? "HH:mm" : "h:mm a";
+  return toZoned(instant).toFormat(`EEE, MMM d · ${clock}`);
 }
 
 export function minutesToLabel(min: number): string {
