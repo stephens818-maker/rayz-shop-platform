@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { afterSheet, confirmAllowed, flowButtonLabel, flowSheetParams, labelContainsCardNumber, nativeChargePlan, nextChargeStep, NOTHING_CHARGED, sheetCardSwitched, skipNativeSheet } from "./flow-controller";
+import { afterSheet, cardQuoteLabel, chargeMatchesShown, confirmAllowed, flowButtonLabel, labelContainsCardNumber, lockedSheetParams, nativeChargePlan, nextChargeStep, NOTHING_CHARGED, productionBuildProfile, sheetCardSwitched, skipNativeSheet } from "./flow-controller";
 
 describe("PaymentSheet flow button", () => {
   it("shows the fee and total before pay and never a card number", () => {
@@ -14,30 +14,49 @@ describe("PaymentSheet flow button", () => {
     expect(flowButtonLabel({ feeCents: 0, totalCents: 3603, funding: "debit" })).toBe("Pay $36.03 · No surcharge on debit cards");
   });
 
-  it("opens FlowController on a PaymentIntent and skips sandbox setup secrets", () => {
-    const params = flowSheetParams(
+  it("opens PaymentSheet for the one priced card and skips sandbox setup secrets", () => {
+    const params = lockedSheetParams(
       { feeCents: 93, totalCents: 3696, funding: "credit" },
-      { clientSecret: "pi_live_3Mq_secret_abc", ephemeralKey: "ek_test_123", customerId: "cus_123" },
+      { clientSecret: "pi_3MqXXXX_secret_YYY", paymentMethodId: "pm_card_visa" },
     );
     expect(params.customFlow).toBe(true);
-    expect(params.paymentIntentClientSecret).toBe("pi_live_3Mq_secret_abc");
+    expect(params.paymentIntentClientSecret).toBe("pi_3MqXXXX_secret_YYY");
+    expect(params.paymentMethodId).toBe("pm_card_visa");
     expect("setupIntentClientSecret" in params).toBe(false);
+    expect("customerId" in params).toBe(false);
+    expect("customerEphemeralKeySecret" in params).toBe(false);
     expect(params.primaryButtonLabel).toBe("Pay $36.96 (includes $0.93 credit card surcharge)");
-    expect(params.customerEphemeralKeySecret).toBe("ek_test_123");
     expect(skipNativeSheet("seti_test_abc")).toBe(true);
     expect(skipNativeSheet("seti_test_abc_secret_xyz")).toBe(false);
   });
 
-  it("finishes a Stripe test-card payment through PaymentSheet and a mock sandbox payment without it", () => {
-    expect(nativeChargePlan("pi_test_3Mq_secret_abc")).toBe("sheet");
-    expect(nativeChargePlan("pi_live_3Mq_secret_abc")).toBe("sheet");
-    expect(nativeChargePlan("pi_test_abc")).toBe("sandbox");
-    expect(nativeChargePlan("pi_live_123")).toBe("refuse");
-    expect(nativeChargePlan("seti_test_abc")).toBe("refuse");
+  it("uses the publishable key for test or live and refuses pk_live outside production", () => {
+    const real = "pi_3MqXXXX_secret_YYY";
+    const testKey = "pk_test_sandbox_rayz";
+    const liveKey = "pk_live_sandbox_rayz";
+    expect(productionBuildProfile("production")).toBe(true);
+    expect(productionBuildProfile("preview")).toBe(false);
+    expect(productionBuildProfile(undefined)).toBe(false);
+    expect(nativeChargePlan({ clientSecret: real, publishableKey: testKey, productionBuild: false })).toBe("sheet");
+    expect(nativeChargePlan({ clientSecret: "pi_test_3Mq_secret_abc", publishableKey: testKey, productionBuild: false })).toBe("sheet");
+    expect(nativeChargePlan({ clientSecret: "pi_live_3Mq_secret_abc", publishableKey: testKey, productionBuild: false })).toBe("sheet");
+    expect(nativeChargePlan({ clientSecret: real, publishableKey: liveKey, productionBuild: false })).toBe("refuse");
+    expect(nativeChargePlan({ clientSecret: real, publishableKey: liveKey, productionBuild: true })).toBe("sheet");
+    expect(nativeChargePlan({ clientSecret: "pi_test_abc", publishableKey: testKey, productionBuild: false })).toBe("sandbox");
+    expect(nativeChargePlan({ clientSecret: "pi_live_123", publishableKey: testKey, productionBuild: false })).toBe("refuse");
+    expect(nativeChargePlan({ clientSecret: "seti_test_abc", publishableKey: testKey, productionBuild: false })).toBe("refuse");
     expect(nextChargeStep({ plan: "sandbox", confirm: true, sheetSwitched: false })).toBe("charge");
     expect(nextChargeStep({ plan: "sheet", confirm: true, sheetSwitched: false })).toBe("charge");
     expect(nextChargeStep({ plan: "refuse", confirm: true, sheetSwitched: false })).toBe("nothing");
-    expect(nextChargeStep({ plan: "sheet", confirm: true, sheetSwitched: true })).toBe("reprice");
+  });
+
+  it("charges the card and the amount the picker showed", () => {
+    expect(cardQuoteLabel({ brand: "visa", last4: "4242" }, 3696)).toBe("visa ••4242 · $36.96");
+    expect(cardQuoteLabel({ brand: "visa", last4: "5556" }, 3603)).toBe("visa ••5556 · $36.03");
+    const shown = { paymentMethodId: "pm_card_visa_debit", totalCents: 3603 };
+    expect(chargeMatchesShown(shown, { paymentMethodId: "pm_card_visa_debit", totalCents: 3603 })).toBe(true);
+    expect(chargeMatchesShown(shown, { paymentMethodId: "pm_card_visa", totalCents: 3696 })).toBe(false);
+    expect(chargeMatchesShown(shown, { paymentMethodId: "pm_card_visa_debit", totalCents: 3696 })).toBe(false);
   });
 
   it("blocks confirm until the repriced total for the selected card is shown", () => {

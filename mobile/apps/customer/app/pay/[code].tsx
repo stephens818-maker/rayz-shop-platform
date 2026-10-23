@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import { Banner, Body, Button, Card, Chip, Display, Loading, Money, ScrollScreen, useI18n } from "@rayz/ui";
-import { confirmAllowed } from "../../src/flow-controller";
+import { cardQuoteLabel, chargeMatchesShown, confirmAllowed } from "../../src/flow-controller";
 import { payModel, payRows } from "../../src/pay-model";
 import { PayConfirm } from "../../src/pay-flow";
 import { api } from "../../src/net";
@@ -21,7 +21,7 @@ export default function Pay() {
   const router = useRouter();
   const { session } = useSession();
   const [method, setMethod] = useState<Method | null>(null);
-  const [intent, setIntent] = useState<{ id: string; clientSecret: string; ephemeralKey: string; customerId: string; paymentMethodId: string; funding: PaymentPreview["funding"]; feeCents: number; totalCents: number } | null>(null);
+  const [intent, setIntent] = useState<{ id: string; clientSecret: string; paymentMethodId: string; funding: PaymentPreview["funding"]; feeCents: number; totalCents: number; amountCents: number; status: string } | null>(null);
   const [tip, setTip] = useState(500);
   const [paid, setPaid] = useState<{ totalCents: number; feeCents: number; tender: string } | null>(null);
   const [error, setError] = useState("");
@@ -33,12 +33,29 @@ export default function Pay() {
     enabled: Boolean(session),
     queryFn: () => api<{ paymentMethods: Method[] }>("/api/v1/me/payment-methods", session?.token),
   });
+  const cardIds = cards.data?.paymentMethods.map((card) => card.id).join(",") ?? "";
+  const quotes = useQuery({
+    queryKey: ["quotes", code, tip, cardIds, session?.token],
+    enabled: Boolean(session && code && cardIds),
+    queryFn: async () => {
+      const methods = cards.data?.paymentMethods ?? [];
+      return Promise.all(
+        methods.map(async (card) => {
+          const preview = await api<PaymentPreview>(`/api/v1/appointments/${code}/payment-preview`, session?.token, {
+            method: "POST",
+            body: JSON.stringify({ paymentMethodId: card.id, tipCents: tip }),
+          });
+          return { id: card.id, preview };
+        }),
+      );
+    },
+  });
   const chosen = method;
   useEffect(() => {
     if (!session || !chosen || !code) return;
     let live = true;
     setIntent(null);
-    void api<{ id: string; clientSecret: string; ephemeralKey: string; customerId: string; paymentMethodId: string; funding: PaymentPreview["funding"]; feeCents: number; totalCents: number }>(
+    void api<{ id: string; clientSecret: string; paymentMethodId: string; funding: PaymentPreview["funding"]; feeCents: number; totalCents: number; amountCents: number; status: string }>(
       `/api/v1/appointments/${code}/payment-intents`,
       session.token,
       { method: "POST", body: JSON.stringify({ paymentMethodId: chosen.id, tipCents: tip }) },
@@ -53,37 +70,40 @@ export default function Pay() {
       live = false;
     };
   }, [session, chosen, tip, code]);
-  const preview = useQuery({
-    queryKey: ["preview", code, chosen?.id, tip],
-    enabled: Boolean(session && chosen),
-    queryFn: () =>
-      api<PaymentPreview>(`/api/v1/appointments/${code}/payment-preview`, session?.token, {
-        method: "POST",
-        body: JSON.stringify({ paymentMethodId: chosen?.id, tipCents: tip }),
-      }),
-  });
-  const model = preview.data ? payModel(preview.data) : null;
-  const lines = preview.data ? payRows(preview.data) : [];
-  const previewReady = Boolean(preview.data) && !preview.isFetching && !preview.isLoading;
-  const displayedTotalCents = previewReady && intent && intent.paymentMethodId === chosen?.id ? intent.totalCents : null;
+  const quotesReady = Boolean(quotes.data) && !quotes.isFetching && !quotes.isLoading;
+  const selectedQuote = quotesReady ? quotes.data?.find((row) => row.id === chosen?.id)?.preview ?? null : null;
+  const model = selectedQuote ? payModel(selectedQuote) : null;
+  const lines = selectedQuote ? payRows(selectedQuote) : [];
+  const displayedTotalCents = selectedQuote && intent && intent.paymentMethodId === chosen?.id ? intent.totalCents : null;
   const gate = confirmAllowed({
     selectedPaymentMethodId: chosen?.id ?? null,
-    previewPaymentMethodId: previewReady ? chosen?.id ?? null : null,
-    previewTotalCents: previewReady ? preview.data?.totalCents ?? null : null,
+    previewPaymentMethodId: selectedQuote ? chosen?.id ?? null : null,
+    previewTotalCents: selectedQuote?.totalCents ?? null,
     displayedTotalCents,
   });
-  const pricedPreview = gate.confirm && preview.data ? { feeCents: preview.data.feeCents, totalCents: preview.data.totalCents, funding: preview.data.funding } : null;
+  const pricedPreview = gate.confirm && selectedQuote ? { feeCents: selectedQuote.feeCents, totalCents: selectedQuote.totalCents, funding: selectedQuote.funding } : null;
 
   const pay = () => {
-    if (!session || !intent) return;
+    if (!session || !intent || !chosen) return;
+    if (!selectedQuote || !chargeMatchesShown({ paymentMethodId: chosen.id, totalCents: selectedQuote.totalCents }, { paymentMethodId: intent.paymentMethodId, totalCents: intent.totalCents })) return;
     setBusy(true);
     setError("");
-    void api<{ totalCents: number; feeCents: number; tender: string }>(`/api/v1/appointments/${code}/payments`, session.token, {
-      method: "POST",
-      headers: { "Idempotency-Key": idem },
-      body: JSON.stringify({ paymentIntentId: intent.id }),
-    })
-      .then((body) => setPaid(body))
+    void api(`/api/v1/appointments/${code}/payment-intents/${intent.id}/confirm`, session.token, { method: "POST" })
+      .then(() =>
+        api<{ totalCents: number; feeCents: number; tender: string; paymentMethodId: string }>(`/api/v1/appointments/${code}/payments`, session.token, {
+          method: "POST",
+          headers: { "Idempotency-Key": idem },
+          body: JSON.stringify({ paymentIntentId: intent.id }),
+        }),
+      )
+      .then((body) => {
+        const shown = { paymentMethodId: chosen.id, totalCents: intent.totalCents };
+        if (!chargeMatchesShown(shown, { paymentMethodId: body.paymentMethodId, totalCents: body.totalCents })) {
+          setError(t("nothingCharged"));
+          return;
+        }
+        setPaid(body);
+      })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : t("retry")))
       .finally(() => setBusy(false));
   };
@@ -111,9 +131,11 @@ export default function Pay() {
         <>
           <AddCard token={session.token} onAdded={(card) => { setMethod(card); void cards.refetch(); }} />
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {cards.data?.paymentMethods.map((card) => (
-              <Chip key={card.id} label={`${card.brand} ••${card.last4}`} selected={chosen?.id === card.id} onPress={() => setMethod(card)} />
-            ))}
+            {cards.data?.paymentMethods.map((card) => {
+              const quote = quotes.data?.find((row) => row.id === card.id);
+              const label = quotesReady && quote ? cardQuoteLabel(card, quote.preview.totalCents) : `${card.brand} ••${card.last4}`;
+              return <Chip key={card.id} label={label} selected={chosen?.id === card.id} onPress={() => setMethod(card)} />;
+            })}
           </View>
           <Body>{t("tip")}</Body>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
@@ -122,9 +144,9 @@ export default function Pay() {
             ))}
           </View>
           {!chosen ? <Body>{t("cardSurchargeNote")}</Body> : null}
-          {preview.isLoading ? <Loading label={t("loading")} /> : null}
-          {preview.data && !preview.data.paymentsEnabled ? <Banner>{preview.data.unavailableCopy ?? t("notLive")}</Banner> : null}
-          {model && preview.data?.paymentsEnabled ? (
+          {quotes.isLoading || quotes.isFetching ? <Loading label={t("loading")} /> : null}
+          {selectedQuote && !selectedQuote.paymentsEnabled ? <Banner>{selectedQuote.unavailableCopy ?? t("notLive")}</Banner> : null}
+          {model && selectedQuote?.paymentsEnabled ? (
             <Card>
               {lines.map((line) => (
                 <View key={line.label} style={{ flexDirection: "row", justifyContent: "space-between", minHeight: 32 }}>
@@ -140,18 +162,18 @@ export default function Pay() {
           {chosen ? (
             <PayConfirm
               preview={pricedPreview}
-              setup={intent ? { clientSecret: intent.clientSecret, ephemeralKey: intent.ephemeralKey, customerId: intent.customerId } : null}
-              disabled={busy || !gate.confirm || !pricedPreview || !preview.data?.paymentsEnabled}
+              setup={intent ? { clientSecret: intent.clientSecret } : null}
+              disabled={busy || !gate.confirm || !pricedPreview || !selectedQuote?.paymentsEnabled}
               onPress={pay}
               onNothingCharged={() => setError(t("nothingCharged"))}
               onReprice={() => {
-                void preview.refetch();
+                void quotes.refetch();
               }}
               selectedPaymentMethodId={chosen.id}
-              pricedPaymentMethodId={previewReady ? chosen.id : null}
-              previewTotalCents={previewReady ? preview.data?.totalCents ?? null : null}
+              pricedPaymentMethodId={selectedQuote ? chosen.id : null}
+              previewTotalCents={selectedQuote?.totalCents ?? null}
               displayedTotalCents={displayedTotalCents}
-              cardLabel={`${chosen.brand} ••${chosen.last4}`}
+              cardLabel={selectedQuote ? cardQuoteLabel(chosen, selectedQuote.totalCents) : `${chosen.brand} ••${chosen.last4}`}
             />
           ) : null}
         </>

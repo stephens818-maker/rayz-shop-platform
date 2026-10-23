@@ -11,7 +11,7 @@ export function PayConfirm({
   preview: Pick<PaymentPreview, "feeCents" | "totalCents" | "funding"> | null;
   disabled: boolean;
   onPress: () => void;
-  setup?: { clientSecret: string; ephemeralKey: string; customerId: string } | null;
+  setup?: { clientSecret: string; ephemeralKey?: string; customerId?: string } | null;
   onNothingCharged?: (message: string) => void;
   onReprice?: () => void;
   pricedPaymentMethodId?: string | null;

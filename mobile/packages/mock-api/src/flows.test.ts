@@ -72,8 +72,15 @@ describe("customer flows", () => {
     expect(walletOff.body.feeReason).toBe("wallet_fee_off");
     expect(walletOff.body.feeCents).toBe(0);
     expect(walletOff.body.wallet).toBe(true);
-    process.env.FEATURE_WALLET_FEE = "on";
+    const previousFlag = process.env.FEATURE_WALLET_FEE;
     try {
+      for (const flag of ["on", "1", "TRUE"]) {
+        process.env.FEATURE_WALLET_FEE = flag;
+        const stayedOff = await json(await preview(walletCredit.body.paymentMethod.id, { wallet: false }));
+        expect(stayedOff.body.feeCents).toBe(0);
+        expect(stayedOff.body.feeReason).toBe("wallet_fee_off");
+      }
+      process.env.FEATURE_WALLET_FEE = "true";
       const walletOn = await json(await preview(walletCredit.body.paymentMethod.id, { wallet: false }));
       expect(walletOn.body.feeCents).toBe(93);
       expect(walletOn.body.feeReason).toBe("applies");
@@ -83,24 +90,66 @@ describe("customer flows", () => {
       expect(appleDebit.body.feeCents).toBe(0);
       expect(appleDebit.body.feeReason).toBe("not_credit");
     } finally {
-      delete process.env.FEATURE_WALLET_FEE;
+      if (previousFlag === undefined) delete process.env.FEATURE_WALLET_FEE;
+      else process.env.FEATURE_WALLET_FEE = previousFlag;
     }
     const booked = await json(await app.request("/api/v1/appointments", { method: "POST", headers: auth, body: JSON.stringify({ shopId: "coralville", serviceId: "svc-cut", startsAt: "2026-10-26T17:00:00.000Z" }) }));
-    const debitIntent = await json(await app.request(`/api/v1/appointments/${booked.body.appointment.code}/payment-intents`, { method: "POST", headers: auth, body: JSON.stringify({ paymentMethodId: debit.body.paymentMethod.id, tipCents: 500, wallet: true }) }));
+    const code = booked.body.appointment.code as string;
+    const payPath = (suffix: string, body?: Record<string, unknown>) =>
+      app.request(`/api/v1/appointments/${code}${suffix}`, { method: "POST", headers: auth, body: body ? JSON.stringify(body) : undefined });
+    const debitIntent = await json(await payPath("/payment-intents", { paymentMethodId: debit.body.paymentMethod.id, tipCents: 500, wallet: true }));
     expect(debitIntent.body.clientSecret).toMatch(/^pi_test_/);
     expect(debitIntent.body.clientSecret.includes("_secret_")).toBe(false);
     expect(debitIntent.body.feeCents).toBe(0);
     expect(debitIntent.body.funding).toBe("debit");
     expect(debitIntent.body.paymentMethodId).toBe(debit.body.paymentMethod.id);
-    const chargedDebit = await json(await app.request(`/api/v1/appointments/${booked.body.appointment.code}/payments`, { method: "POST", headers: auth, body: JSON.stringify({ paymentIntentId: debitIntent.body.id, paymentMethodId: credit.body.paymentMethod.id, tipCents: 0, wallet: true }) }));
+    expect(debitIntent.body.status).toBe("requires_confirmation");
+    expect(debitIntent.body.amountCents).toBe(3603);
+    expect(debitIntent.body.currency).toBe("usd");
+    expect(debitIntent.body.amountRefundedCents).toBe(0);
+    const bare = await json(await payPath("/payments", { paymentMethodId: debit.body.paymentMethod.id, tipCents: 500 }));
+    expect(bare.status).toBe(400);
+    expect(bare.body.error.message).toBe("paymentIntentId is required.");
+    const early = await json(await payPath("/payments", { paymentIntentId: debitIntent.body.id }));
+    expect(early.status).toBe(400);
+    expect(early.body.error.message).toBe("That payment is not complete.");
+    const confirmed = await json(await payPath(`/payment-intents/${debitIntent.body.id}/confirm`));
+    expect(confirmed.body.status).toBe("succeeded");
+    expect(confirmed.body.amountCents).toBe(3603);
+    const mismatch = await json(await payPath("/payments", { paymentIntentId: debitIntent.body.id, paymentMethodId: credit.body.paymentMethod.id, tipCents: 0, wallet: true }));
+    expect(mismatch.status).toBe(400);
+    expect(mismatch.body.error.message).toBe("The confirmed charge doesn't match the price.");
+    const fresh = await json(await payPath("/payment-intents", { paymentMethodId: debit.body.paymentMethod.id, tipCents: 500 }));
+    expect(fresh.status).toBe(200);
+    expect(fresh.body.amountCents).toBe(3603);
+    const refunded = await json(await payPath(`/payment-intents/${debitIntent.body.id}/refund`, { amountCents: 100 }));
+    expect(refunded.body.amountRefundedCents).toBe(100);
+    expect(refunded.body.amountCents).toBe(3603);
+    const afterRefund = await json(await payPath("/payments", { paymentIntentId: debitIntent.body.id }));
+    expect(afterRefund.status).toBe(400);
+    expect(afterRefund.body.error.message).toBe("That payment is not complete.");
+    const tooMuch = await json(await payPath(`/payment-intents/${debitIntent.body.id}/refund`, { amountCents: 3603 }));
+    expect(tooMuch.status).toBe(400);
+    expect(tooMuch.body.error.message).toBe("Refund is more than the remaining charge.");
+    const confirmedFresh = await json(await payPath(`/payment-intents/${fresh.body.id}/confirm`));
+    expect(confirmedFresh.body.status).toBe("succeeded");
+    const chargedDebit = await json(await payPath("/payments", { paymentIntentId: fresh.body.id, paymentMethodId: credit.body.paymentMethod.id, wallet: true }));
     expect(chargedDebit.body.feeCents).toBe(0);
     expect(chargedDebit.body.paymentMethodId).toBe(debit.body.paymentMethod.id);
+    expect(chargedDebit.body.totalCents).toBe(3603);
     expect(chargedDebit.body.tender).toContain("5556");
     expect(chargedDebit.body.tender).not.toContain("4242");
     const creditIntent = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payment-intents", { method: "POST", headers: auth, body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500, wallet: true }) }));
     expect(creditIntent.body.feeCents).toBe(93);
     expect(creditIntent.body.funding).toBe("credit");
-    const paid = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payments", { method: "POST", headers: auth, body: JSON.stringify({ paymentIntentId: creditIntent.body.id, wallet: true }) }));
+    expect(creditIntent.body.status).toBe("requires_confirmation");
+    expect(creditIntent.body.amountCents).toBe(creditPreview.body.totalCents);
+    const unconfirmed = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payments", { method: "POST", headers: auth, body: JSON.stringify({ paymentIntentId: creditIntent.body.id, wallet: true }) }));
+    expect(unconfirmed.status).toBe(400);
+    expect(unconfirmed.body.error.message).toBe("That payment is not complete.");
+    const confirmedCredit = await json(await app.request(`/api/v1/appointments/NEXT4ALEX01/payment-intents/${creditIntent.body.id}/confirm`, { method: "POST", headers: auth }));
+    expect(confirmedCredit.body.status).toBe("succeeded");
+    const paid = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payments", { method: "POST", headers: auth, body: JSON.stringify({ paymentIntentId: creditIntent.body.id }) }));
     expect(paid.body.feeCents).toBe(93);
     expect(paid.body.paymentMethodId).toBe(credit.body.paymentMethod.id);
     expect(paid.body.totalCents).toBe(creditPreview.body.totalCents);
@@ -281,7 +330,7 @@ describe("kiosk PIN and manager pairing", () => {
     }
   });
 
-  it("throttles kiosk PIN guesses and locks out after five failures", async () => {
+  it("locks a staff PIN after five failures until a manager unlocks it", async () => {
     let clock = Date.parse("2026-10-23T15:00:00.000Z");
     const app = createApp(createWorld(), { now: () => new Date(clock) });
     const first = await approved(app);
@@ -289,24 +338,89 @@ describe("kiosk PIN and manager pairing", () => {
     const guess = (device: { authorization: string; "content-type": string }, staffId: string) =>
       app.request("/api/staff/v1/kiosk/pin", { method: "POST", headers: device, body: JSON.stringify({ staffId, pin: "000000", direction: "in" }) });
     expect((await guess(first.device, STAFF_MAKENNA)).status).toBe(401);
-    expect((await guess(first.device, STAFF_MAKENNA)).status).toBe(429);
-    expect((await guess(first.device, STAFF_CASEY)).status).toBe(429);
     expect((await guess(second.device, STAFF_MAKENNA)).status).toBe(429);
+    const otherPerson = await json(await guess(second.device, STAFF_CASEY));
+    expect(otherPerson.status).toBe(401);
+    expect(otherPerson.body.error.message).toBe("That PIN doesn't match this person.");
     for (const wait of [1000, 2000, 4000, 8000]) {
       clock += wait;
       expect((await guess(first.device, STAFF_MAKENNA)).status).toBe(401);
     }
     clock += 60 * 60 * 1000;
-    const locked = await json(await guess(first.device, STAFF_MAKENNA));
-    expect(locked.status).toBe(423);
-    expect(locked.body.error.code).toBe("locked");
+    const lockedHere = await json(await guess(first.device, STAFF_MAKENNA));
+    const lockedThere = await json(await guess(second.device, STAFF_MAKENNA));
+    expect(lockedHere.status).toBe(423);
+    expect(lockedThere.status).toBe(423);
+    expect(lockedHere.body.error.message).toBe("Too many tries. A manager has to unlock this PIN.");
+    const stillOpen = await json(await guess(first.device, STAFF_CASEY));
+    expect(stillOpen.status).toBe(401);
     const barber = await staffSession(app);
     const unlockDenied = await app.request("/api/staff/v1/kiosk/pin/unlock", { method: "POST", headers: { authorization: `Bearer ${barber.token}`, "content-type": "application/json" }, body: JSON.stringify({ staffId: STAFF_MAKENNA, kioskId: first.row.body.kioskId }) });
     expect(unlockDenied.status).toBe(403);
     expect((await guess(first.device, STAFF_MAKENNA)).status).toBe(423);
     const unlocked = await json(await app.request("/api/staff/v1/kiosk/pin/unlock", { method: "POST", headers: first.headers, body: JSON.stringify({ staffId: STAFF_MAKENNA, kioskId: first.row.body.kioskId }) }));
     expect(unlocked.body.unlocked).toBe(true);
-    expect((await guess(first.device, STAFF_MAKENNA)).status).toBe(401);
+    expect((await guess(second.device, STAFF_MAKENNA)).status).toBe(401);
+  });
+
+  it("cools off the kiosk after a burst without locking everyone out", async () => {
+    let clock = Date.parse("2026-10-23T15:00:00.000Z");
+    const app = createApp(createWorld(), { now: () => new Date(clock) });
+    const { device } = await approved(app);
+    const guess = (staffId: string) =>
+      app.request("/api/staff/v1/kiosk/pin", { method: "POST", headers: device, body: JSON.stringify({ staffId, pin: "000000", direction: "in" }) });
+    expect((await guess(STAFF_MAKENNA)).status).toBe(401);
+    for (const wait of [1000, 2000, 4000, 8000]) {
+      clock += wait;
+      expect((await guess(STAFF_MAKENNA)).status).toBe(401);
+    }
+    const cooled = await json(await guess(STAFF_CASEY));
+    expect(cooled.status).toBe(429);
+    expect(cooled.body.error.message).toBe("Too many tries on this kiosk. Wait and try again.");
+    expect(cooled.body.error.details.retryAfterMs).toBe(45_000);
+    clock += 44_999;
+    const still = await json(await guess(STAFF_CASEY));
+    expect(still.status).toBe(429);
+    expect(still.body.error.details.retryAfterMs).toBe(1);
+    clock += 1;
+    const open = await json(await guess(STAFF_CASEY));
+    expect(open.status).toBe(401);
+    expect(open.body.error.message).toBe("That PIN doesn't match this person.");
+    const lockedPerson = await json(await guess(STAFF_MAKENNA));
+    expect(lockedPerson.status).toBe(423);
+    expect(lockedPerson.body.error.message).toBe("Too many tries. A manager has to unlock this PIN.");
+  });
+
+  it("writes an audit entry when a manager approves or revokes a kiosk, including self-approval", async () => {
+    const app = createApp();
+    const casey = await staffSession(app, "+15635550333", "111222");
+    const headers = { authorization: `Bearer ${casey.token}`, "content-type": "application/json" };
+    const pending = await json(await app.request("/api/staff/v1/kiosk/pair", { method: "POST", headers, body: JSON.stringify({ shopId: SHOP_CORALVILLE }) }));
+    const approvedRow = await json(await app.request(`/api/staff/v1/kiosk/pair/${pending.body.requestId}/approve`, { method: "POST", headers }));
+    const log = await json(await app.request("/api/staff/v1/audit", { headers }));
+    expect(log.status).toBe(200);
+    const entry = log.body.entries.find((row: { entityId: string; action: string }) => row.action === "kiosk.approve" && row.entityId === approvedRow.body.kioskId);
+    expect(entry).toMatchObject({
+      action: "kiosk.approve",
+      entity: "kiosk",
+      actorStaffId: STAFF_CASEY,
+      actorLabel: "Casey",
+      shopId: SHOP_CORALVILLE,
+      details: { selfApproval: true, requestId: pending.body.requestId },
+    });
+    const barber = await staffSession(app);
+    const denied = await app.request("/api/staff/v1/audit", { headers: { authorization: `Bearer ${barber.token}` } });
+    expect(denied.status).toBe(403);
+    const revoked = await json(await app.request(`/api/staff/v1/kiosk/${approvedRow.body.kioskId}/revoke`, { method: "POST", headers }));
+    expect(revoked.body.revoked).toBe(true);
+    const after = await json(await app.request("/api/staff/v1/audit", { headers }));
+    const revokeEntry = after.body.entries.find((row: { entityId: string; action: string }) => row.action === "kiosk.revoke" && row.entityId === approvedRow.body.kioskId);
+    expect(revokeEntry).toMatchObject({
+      action: "kiosk.revoke",
+      entity: "kiosk",
+      actorStaffId: STAFF_CASEY,
+      details: { selfApproval: true },
+    });
   });
 
   it("a wrong PIN for the selected person does not clock anyone else in", async () => {

@@ -22,19 +22,41 @@ export function skipNativeSheet(clientSecret: string): boolean {
   return clientSecret.startsWith("seti_") && !clientSecret.includes("_secret_");
 }
 
-/** Real Stripe PaymentIntent secrets, test or live, contain `_secret_`. */
-export function opensStripeSheet(clientSecret: string): boolean {
-  return /^pi_(test|live)_.+_secret_/.test(clientSecret);
+/**
+ * A real PaymentIntent client secret is `pi_XXX_secret_YYY`.
+ * The id is not parsed for test or live mode.
+ */
+export function realPaymentSecret(clientSecret: string): boolean {
+  return /^pi_.+_secret_.+$/.test(clientSecret);
 }
 
 /** Mock sandbox secrets are `pi_test_` plus a hex nonce and do not contain `_secret_`. */
-export function sandboxTestPayment(clientSecret: string): boolean {
+export function sandboxPaymentSecret(clientSecret: string): boolean {
   return clientSecret.startsWith("pi_test_") && !clientSecret.includes("_secret_");
 }
 
-export function nativeChargePlan(clientSecret: string): "sheet" | "sandbox" | "refuse" {
-  if (opensStripeSheet(clientSecret)) return "sheet";
-  if (sandboxTestPayment(clientSecret)) return "sandbox";
+export function publishableKeyMode(publishableKey: string): "test" | "live" | "unknown" {
+  if (publishableKey.startsWith("pk_test_")) return "test";
+  if (publishableKey.startsWith("pk_live_")) return "live";
+  return "unknown";
+}
+
+export function productionBuildProfile(profile: string | null | undefined): boolean {
+  return profile === "production";
+}
+
+/**
+ * Test or live comes from the publishable key. A live key is refused unless this
+ * is the production build profile. Real secrets open the sheet; mock secrets finish in the sandbox.
+ */
+export function nativeChargePlan(input: { clientSecret: string; publishableKey: string; productionBuild: boolean }): "sheet" | "sandbox" | "refuse" {
+  const mode = publishableKeyMode(input.publishableKey);
+  if (mode === "live" && !input.productionBuild) return "refuse";
+  if (realPaymentSecret(input.clientSecret)) {
+    if (mode === "test" || (mode === "live" && input.productionBuild)) return "sheet";
+    return "refuse";
+  }
+  if (sandboxPaymentSecret(input.clientSecret) && mode === "test") return "sandbox";
   return "refuse";
 }
 
@@ -70,18 +92,31 @@ export function nextChargeStep(input: { plan: "sheet" | "sandbox" | "refuse"; co
   return "charge";
 }
 
-export function flowSheetParams(
+/** The sheet confirms the one priced card. It does not receive the customer key that lists every saved card. */
+export function lockedSheetParams(
   preview: Pick<PaymentPreview, "feeCents" | "totalCents" | "funding">,
-  intent: { clientSecret: string; ephemeralKey: string; customerId: string },
+  intent: { clientSecret: string; paymentMethodId: string },
 ) {
   return {
     paymentIntentClientSecret: intent.clientSecret,
-    customerEphemeralKeySecret: intent.ephemeralKey,
-    customerId: intent.customerId,
     merchantDisplayName: "Ray'z",
     customFlow: true as const,
+    allowsDelayedPaymentMethods: false as const,
     primaryButtonLabel: flowButtonLabel(preview),
+    paymentMethodId: intent.paymentMethodId,
   };
+}
+
+export function cardQuoteLabel(card: { brand: string; last4: string }, totalCents: number): string {
+  return `${card.brand} ••${card.last4} · ${formatCents(totalCents)}`;
+}
+
+/** The charge is the card and the total the picker showed. */
+export function chargeMatchesShown(
+  shown: { paymentMethodId: string; totalCents: number },
+  charged: { paymentMethodId: string; totalCents: number },
+): boolean {
+  return shown.paymentMethodId === charged.paymentMethodId && shown.totalCents === charged.totalCents;
 }
 
 export interface SheetStep {
