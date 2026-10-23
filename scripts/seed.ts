@@ -12,6 +12,7 @@ import { simulateConnectHistory } from "@/server/payments/connect";
 import { DEFAULT_BLOCK_REASONS } from "@/domain/block-reasons";
 import { offSchedule } from "@/domain/time-clock";
 import { rederive } from "@/server/time-clock";
+import { recordOpeningTips, syncTipLedger } from "@/server/tips/ledger";
 import { DEFAULT_STAFF_TIME_RULES, SERIES_HORIZON_DAYS, seriesOccurrences, timeOffSpan } from "@/domain/staff-time";
 import { LocalDate, addDays, diffDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
@@ -46,7 +47,7 @@ async function main() {
     client_access_alerts, client_access_log, client_field_rules, client_fields,
     call_logs, messages, message_threads, contact_opt_outs, rebook_links, appointment_outreach, call_ins,
     audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
-    cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
+    tip_ledger, tip_payouts, tip_payout_batches, staff_payout_accounts, cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
     inventory_ledger, po_receipt_lines, po_receipts, purchase_order_lines, purchase_orders, vendor_products, vendors,
     stock_transfer_lines, stock_transfers, stock_count_lines, stock_counts, shop_products, products, shop_services, services, time_blocks, time_block_series, time_off_requests, block_reasons,
@@ -693,6 +694,7 @@ async function main() {
   await seedPayroll({ now, staffByKey, shopBySlug, scheduleRows });
   await seedServiceTimes({ now, appts, items, staffByKey });
   await seedStaffTime({ now, staffByKey, shopBySlug, scheduleRows, appts });
+  await seedTips({ today, staffByKey, shopBySlug });
 
   console.log("Seed complete.");
   console.log(`  Logins (password: ${DEMO_PASSWORD}):`);
@@ -770,6 +772,30 @@ async function seedServiceTimes(o: {
   });
   await chunked(rows, 2000, (c) => db.insert(t.appointmentTimes).values(c));
   console.log(`  ${rows.length} service timings (Makenna runs long, Delaney short)`);
+}
+
+/**
+ * Tip payouts: the ledger synced from the history, everything before the last two days recorded as
+ * paid before tip payouts. Coralville pays cash at drawer close; Moline pays daily two days after the
+ * tip. Makenna chose Stripe and finished the simulator's payout setup.
+ */
+async function seedTips(o: { today: LocalDate; staffByKey: Map<string, typeof t.staff.$inferSelect>; shopBySlug: Map<string, Shop> }) {
+  await syncTipLedger();
+  const opening = await recordOpeningTips(addDays(o.today, -2));
+  await db.update(t.shops).set({ tipPayouts: { schedule: "end_of_night", defaultMethod: "cash" } }).where(eq(t.shops.id, o.shopBySlug.get("coralville")!.id));
+  await db.update(t.shops).set({ tipPayouts: { schedule: "daily_delay", cardDelayDays: 2, defaultMethod: "cash" } }).where(eq(t.shops.id, o.shopBySlug.get("moline")!.id));
+  const makenna = o.staffByKey.get("makenna");
+  if (makenna)
+    await db.insert(t.staffPayoutAccounts).values({
+      staffId: makenna.id,
+      method: "stripe",
+      stripeAccountId: `sim_acct_staff_${makenna.id.slice(0, 8)}`,
+      simulated: true,
+      payoutsEnabled: true,
+      detailsSubmitted: true,
+      instantEligible: true,
+    });
+  console.log(`  tips: ledger synced, ${opening} opening payouts before ${addDays(o.today, -2)}; Coralville end of night, Moline daily after 2 days; Makenna on Stripe (simulated)`);
 }
 
 /**

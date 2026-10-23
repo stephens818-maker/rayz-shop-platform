@@ -76,7 +76,15 @@ export function SettingsForm({ initial }: { initial: PayrollSettings }) {
           <span className="block text-xs text-zinc-500">Report OT multiplier</span>
           <Input type="number" step="0.1" value={v.otMultiplier} onChange={num("otMultiplier")} className="h-9 w-24" />
         </label>
+        <label>
+          <span className="block text-xs text-zinc-500">iSolved column for tips paid in payroll</span>
+          <Input value={v.tipsInPayrollHeader} onChange={(e) => setV({ ...v, tipsInPayrollHeader: e.target.value })} className="h-9 w-72" />
+        </label>
       </div>
+      <p className="text-xs text-zinc-500">
+        Tips paid out in cash or by Stripe go to iSolved as E_Cash Tips Recd_Dollars (tips the employee already has). Tips paid through payroll go in this column instead, which a shop&apos;s
+        file gets only when someone there has such tips. The earning code is to confirm with Charles.
+      </p>
       <p className="text-xs text-zinc-500">Full time / part time: exactly {v.ftHoursPerWeek} is part time. Defaults (clocked worked hours over a rolling 4 weeks) are pending Charles. Overtime is weekly over 40 (federal FLSA); Iowa and
         Illinois appear to add no daily rule, which is to confirm before a daily threshold is set.</p>
       <Button size="sm" disabled={pending} onClick={() => run(() => saveSettingsAction(v))}>

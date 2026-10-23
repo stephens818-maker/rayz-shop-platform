@@ -46,6 +46,8 @@ import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, markRewardRedeem
 import { assertReaderAt, chargeRoute } from "./payments/connect";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
 import { recordCheckout } from "./service-times";
+import { syncTipLedger } from "./tips/ledger";
+import { cashAwaiting, cashTipPayoutsCents } from "./tips/payouts";
 
 export { refundEverything, refundSale, refundableState, voidSale } from "./refunds";
 
@@ -527,6 +529,7 @@ export async function finalizeSale(input: FinalizeInput) {
       if (input.manualDiscount && input.manualDiscount.value > 0) {
         await audit(input.actor, "sale.discount", "sale", ctx.sale.id, input.manualDiscount, ctx.shop.id, tx);
       }
+      await syncTipLedger(tx, { saleId: ctx.sale.id });
     });
   } catch (e) {
     const own = charge as Awaited<ReturnType<typeof chargeCard>> | null;
@@ -621,6 +624,7 @@ export async function drawerSummary(shopId: string, date: string) {
   const drawer = await db.query.cashDrawers.findFirst({ where: and(eq(cashDrawers.shopId, shopId), eq(cashDrawers.businessDate, date)) });
   const opening = drawer?.openingFloatCents ?? 15_000;
   const payouts = drawer?.payoutsCents ?? 0;
+  const tipPayouts = drawer?.closedAt ? drawer.tipPayoutsCents : await cashTipPayoutsCents(shopId, date);
   return {
     date,
     drawer,
@@ -630,7 +634,9 @@ export async function drawerSummary(shopId: string, date: string) {
     cashTickets: cash.n,
     cashRefundsCents: cashRefunds.cents,
     payoutsCents: payouts,
-    expectedCents: opening + cash.cents - cashRefunds.cents - payouts,
+    /** Cash tip payouts employees acknowledged out of this drawer. */
+    tipPayoutsCents: tipPayouts,
+    expectedCents: opening + cash.cents - cashRefunds.cents - payouts - tipPayouts,
     cardCents: cardTotals.cents,
     cardTickets: cardTotals.n,
   };
@@ -647,8 +653,11 @@ export async function closeDrawer(input: {
 }) {
   const existing = await db.query.cashDrawers.findFirst({ where: and(eq(cashDrawers.shopId, input.shopId), eq(cashDrawers.businessDate, input.date)) });
   if (existing?.closedAt) throw new AppError("conflict", "Drawer already closed for this day");
+  const waiting = await cashAwaiting(input.shopId);
+  if (waiting.length)
+    throw new AppError("conflict", `${waiting.length === 1 ? "A cash tip payout is" : `${waiting.length} cash tip payouts are`} still waiting to be paid: pay, hold or remove ${waiting.length === 1 ? "it" : "them"} first.`);
   const s = await drawerSummary(input.shopId, input.date);
-  const expected = input.openingFloatCents + s.cashSalesCents - s.cashRefundsCents - input.payoutsCents;
+  const expected = input.openingFloatCents + s.cashSalesCents - s.cashRefundsCents - input.payoutsCents - s.tipPayoutsCents;
   const values = {
     shopId: input.shopId,
     businessDate: input.date,
@@ -656,6 +665,7 @@ export async function closeDrawer(input: {
     cashSalesCents: s.cashSalesCents,
     cashRefundsCents: s.cashRefundsCents,
     payoutsCents: input.payoutsCents,
+    tipPayoutsCents: s.tipPayoutsCents,
     expectedCents: expected,
     countedCents: input.countedCents,
     varianceCents: input.countedCents - expected,
@@ -664,6 +674,6 @@ export async function closeDrawer(input: {
     closedAt: new Date(),
   };
   await db.insert(cashDrawers).values(values).onConflictDoUpdate({ target: [cashDrawers.shopId, cashDrawers.businessDate], set: values });
-  await audit(input.actor, "drawer.close", "cash_drawer", `${input.shopId}:${input.date}`, { expected, counted: input.countedCents, variance: input.countedCents - expected }, input.shopId);
+  await audit(input.actor, "drawer.close", "cash_drawer", `${input.shopId}:${input.date}`, { expected, counted: input.countedCents, variance: input.countedCents - expected, tipPayoutsCents: s.tipPayoutsCents }, input.shopId);
   return { expectedCents: expected, varianceCents: input.countedCents - expected };
 }

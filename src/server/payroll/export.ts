@@ -24,6 +24,8 @@ export interface ExportFile {
   periodStart: string;
   periodEnd: string;
   rows: ExportRow[];
+  /** The columns after Key and name. The template's six unless tips paid in payroll add one; absent means the six. */
+  headers?: string[];
 }
 
 type Style = Partial<Pick<ExcelJS.Cell, "numFmt" | "font" | "fill" | "alignment" | "border">>;
@@ -78,6 +80,12 @@ export function addIsolvedSheet(wb: ExcelJS.Workbook, f: ExportFile): ExcelJS.Wo
     apply(c, t.headerStyles[i]);
   });
   if (t.header[2] !== EXPORT_COLUMNS[0].header) throw new Error("Template headers changed");
+  const first = 2 + EXPORT_COLUMNS.length;
+  (f.headers ?? []).slice(EXPORT_COLUMNS.length).forEach((h, i) => {
+    const c = header.getCell(first + i + 1);
+    c.value = h;
+    apply(c, t.headerStyles[first - 1]);
+  });
   f.rows.forEach((r, n) => {
     const styles = dataRowStyles(t, n);
     const row = ws.getRow(n + 2);
@@ -85,7 +93,7 @@ export function addIsolvedSheet(wb: ExcelJS.Workbook, f: ExportFile): ExcelJS.Wo
     cells.forEach((v, i) => {
       const c = row.getCell(i + 1);
       if (v !== null) c.value = v;
-      apply(c, styles[i]);
+      apply(c, styles[Math.min(i, first - 1)]);
     });
   });
   t.trailingStyles.forEach((styles, n) => {

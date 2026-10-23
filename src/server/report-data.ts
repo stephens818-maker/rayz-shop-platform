@@ -61,6 +61,7 @@ import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
 import { attendanceData, laborData } from "./labor-report";
+import { tipPayoutsData } from "./tips/report";
 
 /**
  * Every a la carte report is one loader returning stats and tables. The report page renders them
@@ -663,6 +664,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async attendance({ scope, loc }) {
     return attendanceData(scope, loc);
+  },
+
+  async tip_payouts({ scope, loc }) {
+    return tipPayoutsData(scope, loc);
   },
 
   async staffing({ scope, loc, reasons }) {

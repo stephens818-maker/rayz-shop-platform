@@ -38,6 +38,8 @@ export type NotificationKind =
   /** Time clock: a forgotten clock-out, and someone crossing the full-time line, both to their managers. */
   | "clock_forgot_out"
   | "ft_status_change"
+  /** A tip payout sent to an employee, or one that failed (to them and the shop). */
+  | "tip_payout"
   /** Time clock, live: not clocked in for the first client, and clients booked over a break or after an early clock-out. */
   | "clock_late_in"
   | "clock_affected";

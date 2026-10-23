@@ -70,6 +70,7 @@ export async function saveSettingsAction(input: {
   otThresholdHours: number;
   dailyOtHours: number | null;
   otMultiplier: number;
+  tipsInPayrollHeader: string;
 }) {
   return safe(async () => {
     const ctx = await authorize("payroll.run");
@@ -84,6 +85,7 @@ export async function saveSettingsAction(input: {
         otThresholdHours: z.number().min(1).max(80),
         dailyOtHours: z.number().min(1).max(24).nullable(),
         otMultiplier: z.number().min(1).max(3),
+        tipsInPayrollHeader: z.string().trim().min(1, "Name the iSolved earning for tips paid in payroll").max(60),
       })
       .parse(input);
     await savePayrollSettings(v, ctx.actor);

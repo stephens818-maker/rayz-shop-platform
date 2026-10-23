@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { payments } from "@/db/schema";
 import { SYSTEM, audit } from "@/server/audit";
 import { recordProcessorRefund } from "@/server/refunds";
+import { applyTransferReversed } from "@/server/tips/payouts";
 import { PLATFORM_ACCOUNT, recordPayout } from "./connect";
 
 /**
@@ -11,8 +12,9 @@ import { PLATFORM_ACCOUNT, recordPayout } from "./connect";
  * books refunds made outside the POS (the Stripe dashboard) through the same reversal as a POS
  * refund, at the shop the payment belongs to, whichever account it settled in, and logs disputes
  * against that shop. Refunds the POS made itself arrive here too; they're already recorded, so
- * they're a no-op. Payouts here are the brand account's, for shops on the brand account. Events
- * from shops' own accounts come to the Connect webhook.
+ * they're a no-op. Payouts here are the brand account's, for shops on the brand account. A reversed
+ * transfer of a tip payout puts its tips back into the next batch. Events from shops' and
+ * employees' own accounts come to the Connect webhook.
  */
 export async function handleStripeWebhook(rawBody: string, signature: string, secret: string | undefined) {
   if (!secret) return { status: 400, body: "Stripe webhook secret not configured" };
@@ -35,6 +37,8 @@ export async function handleStripeWebhook(rawBody: string, signature: string, se
     const pi = typeof d.payment_intent === "string" ? d.payment_intent : (d.payment_intent?.id ?? null);
     const p = pi ? await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, pi) }) : null;
     await audit(SYSTEM, "stripe.charge.dispute.created", "payment", p?.id ?? pi ?? d.id, { eventId: event.id, amountCents: d.amount, reason: d.reason, stripeAccountId: p?.stripeAccountId ?? null }, p?.shopId ?? null);
+  } else if (event.type === "transfer.reversed") {
+    await applyTransferReversed(event.data.object as Stripe.Transfer);
   } else if (event.type.startsWith("payout.") && !event.account) {
     await recordPayout(PLATFORM_ACCOUNT, event.data.object as Stripe.Payout);
   }

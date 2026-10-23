@@ -22,6 +22,7 @@ import { AppError, notFound } from "./errors";
 import { Movement, postMovements } from "./inventory/ledger";
 import { restoreRewardsForSale, reverseForSale } from "./loyalty";
 import { refundCard } from "./payments/processor";
+import { syncTipLedger } from "./tips/ledger";
 
 type Sale = typeof sales.$inferSelect;
 type Payment = typeof payments.$inferSelect;
@@ -203,6 +204,7 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
 
   const itemsJson = lines.map((l) => ({ saleItemId: l.itemId, name: l.name, qty: l.qty, cents: l.netCents + l.taxCents }));
   await recordSteps(tx, sale, pays, plan, { kind: o.kind, source: o.source, reason: o.reason, actor: o.actor, now: o.now, items: itemsJson, stripeIds });
+  await syncTipLedger(tx, { saleId: sale.id });
 
   const restock: Movement[] = [];
   for (const l of lines) {
@@ -348,6 +350,7 @@ export async function recordProcessorRefund(paymentIntentId: string, amountRefun
       items: null,
       stripeIds: new Map(ref.stripeRefundId ? [[p.id, ref.stripeRefundId]] : []),
     });
+    await syncTipLedger(tx, { saleId: sale.id });
     const result = await settle(tx, sale, components, "refund", "Refunded in the Stripe dashboard", now);
     await audit(SYSTEM, "sale.refund", "sale", sale.id, { source: "stripe_dashboard", eventId: ref.eventId, amountCents: recorded, components, giftCardsCut: cut, loyalty: result.loyalty }, sale.shopId, tx);
     return { recorded, reason: "recorded" as const, components, status: result.status };

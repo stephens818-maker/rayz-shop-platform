@@ -24,6 +24,7 @@ import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type Slice, type Tim
 import { addDays, endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { payrollSalesBetween } from "@/server/reports";
+import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
 import { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
 
@@ -96,6 +97,17 @@ interface Snapshot {
   block: ShopBlock;
 }
 
+/** Periods locked before tips were split by how they're paid had every tip paid separately. */
+function upgradeBlock(b: ShopBlock): ShopBlock {
+  const tipCols = <T extends { tips: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number }>(x: T): T => ({
+    ...x,
+    tipsInPayroll: x.tipsInPayroll ?? 0,
+    tipsOutside: x.tipsOutside ?? x.tips,
+    tipsPaidOut: x.tipsPaidOut ?? 0,
+  });
+  return { ...b, lines: b.lines.map(tipCols), totals: tipCols(b.totals) };
+}
+
 const centi = (x: number) => x / 100;
 
 /**
@@ -153,7 +165,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   const sales = await payrollSalesBetween({ shopIds: [...runShops] }, start, end);
   const salesOf = new Map(sales.map((r) => [`${r.staffId}|${r.shopId}`, r]));
   const overrides = await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
-  const keys = new Set([...hours.keys(), ...salesOf.keys(), ...overrides.map((o) => `${o.staffId}|${o.shopId}`)]);
+  const tipSplit = await payrollTipSplit([...runShops], start, end);
+  const keys = new Set([...hours.keys(), ...salesOf.keys(), ...overrides.map((o) => `${o.staffId}|${o.shopId}`), ...[...tipSplit.entries()].filter(([, v]) => v.adjustCents || v.inPayrollCents).map(([k]) => k)]);
   const staffIds = [...new Set([...keys].map((k) => k.split("|")[0]))];
 
   const [people, profiles, rates] = staffIds.length
@@ -196,7 +209,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       trainingHours: centi(h.training),
       serviceSales: (s?.serviceSalesCents ?? 0) / 100,
       productSales: (s?.productSalesCents ?? 0) / 100,
-      tips: ((s?.cardTipsCents ?? 0) + (s?.cashTipsCents ?? 0) + (s?.giftCardTipsCents ?? 0)) / 100,
+      tips: ((s?.cardTipsCents ?? 0) + (s?.cashTipsCents ?? 0) + (s?.giftCardTipsCents ?? 0) + (tipSplit.get(k)?.adjustCents ?? 0)) / 100,
+      tipsInPayroll: (tipSplit.get(k)?.inPayrollCents ?? 0) / 100,
+      tipsPaidOut: (tipSplit.get(k)?.paidOutCents ?? 0) / 100,
       overrides: Object.keys(ov).length ? ov : undefined,
     };
     inputsByShop.set(shopId, [...(inputsByShop.get(shopId) ?? []), input]);
@@ -211,7 +226,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   const lockedBy = new Map((runs.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, runs.map((r) => r.lockedBy).filter((x): x is string => !!x))) : []).map((s) => [s.id, s.label]));
   const blocks: BlockView[] = inRun.map(({ g, p }, i) => {
     const run = runOf.get(g.id);
-    const block = run ? (run.snapshot as Snapshot).block : live.blocks[i];
+    const block = run ? upgradeBlock((run.snapshot as Snapshot).block) : live.blocks[i];
     return {
       ...block,
       shop: g.shop,
@@ -309,7 +324,7 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
   return db.transaction(async (tx) => {
     let n = 0;
     for (const b of view.blocks) {
-      const snapshot: Snapshot = { block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows } };
+      const snapshot: Snapshot = { block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders } };
       const [run] = await tx
         .insert(payrollRuns)
         .values({ payGroupId: b.payGroupId, periodStart: start, periodEnd: end, periodNumber: b.period.number, checkDate: b.period.checkDate, settings, snapshot, lockedBy: actor.staffId ?? null })
@@ -334,6 +349,7 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
       );
       n++;
     }
+    await lockPayrollTips(tx, view.blocks, start, end, actor);
     return { locked: n };
   });
 }
@@ -346,7 +362,8 @@ export async function lockedExport(payGroupId: string, start: LocalDate, end: Lo
     .innerJoin(payGroups, eq(payGroups.id, payrollRuns.payGroupId))
     .where(and(eq(payrollRuns.payGroupId, payGroupId), eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)));
   if (!row) return null;
-  const f = { tab: row.tab, payGroup: row.label, periodNumber: row.run.periodNumber, periodStart: start, periodEnd: end, rows: (row.run.snapshot as Snapshot).block.exportRows };
+  const block = (row.run.snapshot as Snapshot).block;
+  const f = { tab: row.tab, payGroup: row.label, periodNumber: row.run.periodNumber, periodStart: start, periodEnd: end, rows: block.exportRows, headers: block.exportHeaders };
   return { fileName: exporter.fileName(f), contentType: exporter.contentType, body: await exporter.render(f), runId: row.run.id, shopId: row.run.payGroupId };
 }
 

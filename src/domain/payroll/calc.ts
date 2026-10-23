@@ -24,6 +24,11 @@ export interface PayrollSettings {
   ftHoursPerWeek: number;
   ftBasis: FtBasis;
   ftWindowWeeks: number;
+  /**
+   * The iSolved earning for tips paid through payroll rather than separately. Its column is added to
+   * a shop's file only when someone there has such tips; the code is Charles's to confirm.
+   */
+  tipsInPayrollHeader: string;
 }
 
 export type FtBasis = "worked" | "worked_training" | "paid";
@@ -44,6 +49,7 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   ftHoursPerWeek: 32,
   ftBasis: "worked",
   ftWindowWeeks: 4,
+  tipsInPayrollHeader: "E_Tips Paid In Payroll_Dollars",
 };
 
 export function payrollSettings(raw: unknown): PayrollSettings {
@@ -61,6 +67,7 @@ export function payrollSettings(raw: unknown): PayrollSettings {
     ftHoursPerWeek: num(r.ftHoursPerWeek, 1, 60, d.ftHoursPerWeek),
     ftBasis: r.ftBasis && r.ftBasis in FT_BASIS_LABEL ? r.ftBasis : d.ftBasis,
     ftWindowWeeks: Math.round(num(r.ftWindowWeeks, 1, 26, d.ftWindowWeeks)),
+    tipsInPayrollHeader: typeof r.tipsInPayrollHeader === "string" && r.tipsInPayrollHeader.trim() ? r.tipsInPayrollHeader.trim().slice(0, 60) : d.tipsInPayrollHeader,
   };
 }
 
@@ -102,6 +109,10 @@ export interface LineInput {
   serviceSales: number;
   productSales: number;
   tips: number;
+  /** Of the tips, those paid through payroll (the employee or shop is paid that way); the rest are paid out separately. */
+  tipsInPayroll?: number;
+  /** Of the tips, those already paid out in cash or by Stripe when the report was built. */
+  tipsPaidOut?: number;
   overrides?: Overrides;
 }
 
@@ -146,6 +157,12 @@ export interface Line {
   otHours: number;
   /** R */
   tips: number;
+  /** R, paid through payroll: its own iSolved column. */
+  tipsInPayroll: number;
+  /** R, paid separately (cash or Stripe, already or by a later batch): E_Cash Tips Recd, tips the employee already received. */
+  tipsOutside: number;
+  /** Of tipsOutside, what was already paid out when the report was built. Information only. */
+  tipsPaidOut: number;
   /** S */
   trainingHours: number;
   /** T = OT multiplier × C × Q. Base rate only; iSolved may compute blended OT higher. */
@@ -175,6 +192,8 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const totalWages = (serviceTotal > 0 ? hourlyTotal + serviceTotal : hourlyTotal) + productTotal;
   const trainingHours = ov(i, "trainingHours", i.trainingHours);
   const otPay = s.otMultiplier * wage * otHours;
+  const tips = ov(i, "tips", i.tips);
+  const tipsInPayroll = i.tipsInPayroll ?? 0;
   const trainingPay = s.trainingPayInCost ? (i.trainingRate ?? wage) * trainingHours : 0;
   return {
     input: i,
@@ -198,7 +217,10 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     pctOfGross: service ? totalWages / service : null,
     ptoHours: ov(i, "ptoHours", i.ptoHours),
     otHours,
-    tips: ov(i, "tips", i.tips),
+    tips,
+    tipsInPayroll,
+    tipsOutside: tips - tipsInPayroll,
+    tipsPaidOut: i.tipsPaidOut ?? 0,
     trainingHours,
     otPay,
     trainingPay,
@@ -208,7 +230,27 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
 }
 
 /** The columns that add up. Rates and percentages (C, G, K) don't; F and O are ratios of totals. */
-export const SUMMED = ["hours", "hourlyTotal", "service", "commission", "serviceTotal", "product", "productTotal", "netComm", "totalWages", "ptoHours", "otHours", "tips", "trainingHours", "otPay", "trainingPay", "laborCost"] as const;
+export const SUMMED = [
+  "hours",
+  "hourlyTotal",
+  "service",
+  "commission",
+  "serviceTotal",
+  "product",
+  "productTotal",
+  "netComm",
+  "totalWages",
+  "ptoHours",
+  "otHours",
+  "tips",
+  "tipsInPayroll",
+  "tipsOutside",
+  "tipsPaidOut",
+  "trainingHours",
+  "otPay",
+  "trainingPay",
+  "laborCost",
+] as const;
 export type Summed = (typeof SUMMED)[number];
 export type Totals = Record<Summed, number> & { grossPerHour: number | null; pctOfGross: number | null; grossProfit: number };
 
@@ -230,6 +272,9 @@ export const COLUMN_LABEL: Record<Summed | "wage" | "grossPerHour" | "servicePct
   ptoHours: "PTO HRs.",
   otHours: "O.T. HRS",
   tips: "TIPS",
+  tipsInPayroll: "Tips in payroll",
+  tipsOutside: "Tips paid separately",
+  tipsPaidOut: "Tips paid out",
   trainingHours: "Training Hours",
   otPay: "O.T. Pay",
   trainingPay: "Training Pay",
@@ -260,7 +305,7 @@ export function roundHalfUp2(x: number): number {
 export const EXPORT_COLUMNS = [
   { header: "E_Regular_Hours", from: "hours" },
   { header: "E_Overtime 1.5_Hours", from: "otHours" },
-  { header: "E_Cash Tips Recd_Dollars", from: "tips" },
+  { header: "E_Cash Tips Recd_Dollars", from: "tipsOutside" },
   { header: "E_Comm Sales_Dollars", from: "netComm" },
   { header: "E_Ray'z Paid Time_Hours", from: "ptoHours" },
   { header: "E_Training_Hours", from: "trainingHours" },
@@ -273,12 +318,21 @@ export interface ExportRow {
   values: number[];
 }
 
+/** A shop's file gets the tips-in-payroll column only when someone there has tips paid through payroll, so the usual file is unchanged. */
+export const hasPayrollTips = (lines: readonly Pick<Line, "tipsInPayroll">[]) => lines.some((l) => l.tipsInPayroll !== 0);
+
+export function exportHeaders(lines: readonly Line[], s: PayrollSettings): string[] {
+  return [...EXPORT_COLUMNS.map((c) => c.header), ...(hasPayrollTips(lines) ? [s.tipsInPayrollHeader] : [])];
+}
+
 export function exportRows(lines: readonly Line[], s: PayrollSettings): ExportRow[] {
+  const extra = hasPayrollTips(lines);
+  const out = (x: number) => (s.roundExport2dp ? roundHalfUp2(x) : x);
   return lines.map((l) => ({
     staffId: l.staffId,
     key: l.input.employeeNumber === null ? null : l.input.keyIsText || !/^\d+$/.test(l.input.employeeNumber) ? l.input.employeeNumber : Number(l.input.employeeNumber),
     isolvedName: l.input.isolvedName,
-    values: EXPORT_COLUMNS.map((c) => (s.roundExport2dp ? roundHalfUp2(l[c.from]) : l[c.from])),
+    values: [...EXPORT_COLUMNS.map((c) => out(l[c.from])), ...(extra ? [out(l.tipsInPayroll)] : [])],
   }));
 }
 
@@ -301,6 +355,8 @@ export interface ShopBlock {
   lines: Line[];
   totals: Totals;
   exportRows: ExportRow[];
+  /** The file's columns after Key and name; absent in periods locked before tips in payroll existed (the six standard ones). */
+  exportHeaders?: string[];
 }
 
 /**
@@ -319,6 +375,11 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       const sum = b.exportRows.reduce((a, r) => a + r.values[i], 0);
       if (!sameToTheCent(b.totals[c.from], sum)) out.push({ shopId: b.shopId, column: c.header, check: "export", report: b.totals[c.from], other: sum, detail: `${b.shop}: export ${c.header} adds up to a different total than the report's ${COLUMN_LABEL[c.from]}` });
     });
+    const payrollTips = b.exportRows.reduce((a, r) => a + (r.values[EXPORT_COLUMNS.length] ?? 0), 0);
+    if (!sameToTheCent(b.totals.tipsInPayroll, payrollTips))
+      out.push({ shopId: b.shopId, column: COLUMN_LABEL.tipsInPayroll, check: "export", report: b.totals.tipsInPayroll, other: payrollTips, detail: `${b.shop}: the export's tips paid in payroll add up to a different total than the report's` });
+    if (!sameToTheCent(b.totals.tipsInPayroll + b.totals.tipsOutside, b.totals.tips))
+      out.push({ shopId: b.shopId, column: COLUMN_LABEL.tips, check: "rows", report: b.totals.tips, other: b.totals.tipsInPayroll + b.totals.tipsOutside, detail: `${b.shop}: tips paid separately and in payroll don't add up to TIPS` });
     if (b.exportRows.length !== b.lines.length) out.push({ shopId: b.shopId, column: "Rows", check: "export", report: b.lines.length, other: b.exportRows.length, detail: `${b.shop}: the export has a different number of rows` });
   }
   for (const k of ["service", "laborCost", "otPay", "trainingPay", "totalWages", "hours", "otHours", "tips", "netComm"] as const) {
@@ -331,7 +392,7 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
 export function assemble(shops: readonly { shopId: string; shop: string; inputs: readonly LineInput[] }[], s: PayrollSettings) {
   const blocks: ShopBlock[] = shops.map((sh) => {
     const lines = sh.inputs.map((i) => computeLine(i, s));
-    return { shopId: sh.shopId, shop: sh.shop, lines, totals: totalsOf(lines), exportRows: exportRows(lines, s) };
+    return { shopId: sh.shopId, shop: sh.shop, lines, totals: totalsOf(lines), exportRows: exportRows(lines, s), exportHeaders: exportHeaders(lines, s) };
   });
   const grand = totalsOf(blocks.map((b) => b.totals));
   return { blocks, grand, mismatches: reconcile(blocks, grand) };
