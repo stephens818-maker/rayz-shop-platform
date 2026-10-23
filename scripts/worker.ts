@@ -2,13 +2,16 @@ import "dotenv/config";
 import { closeDb } from "@/db";
 import { processDueJobs } from "@/server/notifications/queue";
 import { extendSeries } from "@/server/block-series";
+import { runFollowUps } from "@/server/call-ins";
 
-/** Local stand-in for Vercel Cron: writes recurring blocks ahead and drains the notification queue every 30 seconds. `--once` for a single pass. */
+/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, and drains the notification queue every 30 seconds. `--once` for a single pass. */
 async function main() {
   const once = process.argv.includes("--once");
   do {
     const written = await extendSeries();
     if (written) console.log(new Date().toISOString(), { recurringBlocks: written });
+    const followUps = await runFollowUps();
+    if (followUps.retried || followUps.flagged || followUps.closed) console.log(new Date().toISOString(), { followUps });
     const stats = await processDueJobs();
     if (stats.sent || stats.suppressed || stats.failed) console.log(new Date().toISOString(), stats);
     if (once) break;

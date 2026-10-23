@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   check,
   date,
@@ -60,6 +61,8 @@ export const brandSettings = pgTable("brand_settings", {
   payroll: jsonb("payroll").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Lunch, block and time off rules (StaffTimeRules in src/domain/staff-time.ts); missing keys use the defaults. */
   staffTime: jsonb("staff_time").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Call-in outreach rules (OutreachRules in src/domain/outreach.ts); missing keys use the defaults. */
+  outreach: jsonb("outreach").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -88,6 +91,8 @@ export const shops = pgTable("shops", {
   state: text("state").notNull().default(""),
   zip: text("zip").notNull().default(""),
   phone: text("phone"),
+  /** The shop's Twilio number (E.164): calls to it ring the shop phone, texts from clients land in the shop inbox, and the shop's texts and calls go out from it. */
+  twilioNumber: text("twilio_number").unique(),
   email: text("email"),
   timezone: text("timezone").notNull().default("America/Chicago"),
   active: boolean("active").notNull().default(true),
@@ -819,6 +824,8 @@ export const customers = pgTable(
     emailOptIn: boolean("email_opt_in").notNull().default(false),
     homeShopId: uuid("home_shop_id").references(() => shops.id),
     preferredStaffId: uuid("preferred_staff_id").references(() => staff.id, { onDelete: "set null" }),
+    /** When their barber calls in, the appointment may be moved to a barber at another shop. */
+    allowOtherShop: boolean("allow_other_shop").notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [
@@ -1324,11 +1331,21 @@ export const notificationJobs = pgTable(
     status: notificationStatus("status").notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
     provider: text("provider"),
+    providerMessageId: text("provider_message_id"),
     lastError: text("last_error"),
     sentAt: ts("sent_at"),
+    /** The provider reported it delivered (texts) or answered (calls). */
+    deliveredAt: ts("delivered_at"),
+    /** The call-in outreach this message is part of. */
+    outreachId: uuid("outreach_id").references((): AnyPgColumn => appointmentOutreach.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
-  (t) => [index("notification_jobs_due_idx").on(t.status, t.runAt), index("notification_jobs_appt_idx").on(t.appointmentId)],
+  (t) => [
+    index("notification_jobs_due_idx").on(t.status, t.runAt),
+    index("notification_jobs_appt_idx").on(t.appointmentId),
+    index("notification_jobs_provider_msg_idx").on(t.providerMessageId),
+    index("notification_jobs_outreach_idx").on(t.outreachId),
+  ],
 );
 
 export interface EmailAttachment {
@@ -1574,4 +1591,192 @@ export const payrollLockedOt = pgTable(
     otCenti: integer("ot_centi").notNull(),
   },
   (t) => [primaryKey({ columns: [t.staffId, t.shopId, t.periodStart, t.weekStart] })],
+);
+
+// ───────────────────────────── Call-ins, client outreach and the shop line ─────────────────────────────
+
+export type CallInKind = "sick" | "emergency" | "other";
+
+/**
+ * A barber called in sick, with an emergency or for another reason: whole days, part of one day or a
+ * range. Marking it writes the time off block; the booked appointments in it get outreach rows.
+ */
+export const callIns = pgTable(
+  "call_ins",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    /** null = all of the barber's shops. */
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<CallInKind>().notNull(),
+    reasonId: uuid("reason_id").references(() => blockReasons.id),
+    reason: text("reason").notNull(),
+    note: text("note"),
+    fromDate: date("from_date").notNull(),
+    toDate: date("to_date").notNull(),
+    startMin: integer("start_min"),
+    endMin: integer("end_min"),
+    startsAt: ts("starts_at").notNull(),
+    endsAt: ts("ends_at").notNull(),
+    blockId: uuid("block_id").references(() => timeBlocks.id, { onDelete: "set null" }),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+    cancelledAt: ts("cancelled_at"),
+    cancelledBy: uuid("cancelled_by"),
+  },
+  (t) => [index("call_ins_staff_idx").on(t.staffId, t.startsAt), index("call_ins_starts_idx").on(t.startsAt)],
+);
+
+export type OutreachOption = "reassign" | "rebook" | "voice";
+export type OutreachStatus = "pending" | "notified" | "delivered" | "rebooked" | "declined" | "no_response" | "unreachable" | "cancelled";
+
+/** One booked appointment in a call-in, and what the shop did about it and how the client answered. */
+export const appointmentOutreach = pgTable(
+  "appointment_outreach",
+  {
+    id: id(),
+    callInId: uuid("call_in_id")
+      .notNull()
+      .references(() => callIns.id, { onDelete: "cascade" }),
+    appointmentId: uuid("appointment_id")
+      .notNull()
+      .references(() => appointments.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    originalStartsAt: ts("original_starts_at").notNull(),
+    originalStaffId: uuid("original_staff_id").notNull(),
+    /** null until the shop picks one. */
+    option: text("option").$type<OutreachOption>(),
+    status: text("status").$type<OutreachStatus>().notNull().default("pending"),
+    /** How it ended, in words: "Kept Delaney", "Moved to Fri 11:30 AM", "Cancelled by text". */
+    resolution: text("resolution"),
+    attempts: integer("attempts").notNull().default(0),
+    lastAttemptAt: ts("last_attempt_at"),
+    /** When the follow-up runs: the retry after the first try, then the flag for staff. */
+    nextActionAt: ts("next_action_at"),
+    /** The time offered with "reply 1". */
+    suggestedStartsAt: ts("suggested_starts_at"),
+    suggestedStaffId: uuid("suggested_staff_id"),
+    reassignedStaffId: uuid("reassigned_staff_id"),
+    reassignedShopId: uuid("reassigned_shop_id"),
+    /** A move to another shop books a new appointment there. */
+    newAppointmentId: uuid("new_appointment_id"),
+    flaggedAt: ts("flagged_at"),
+    flagReason: text("flag_reason"),
+    respondedAt: ts("responded_at"),
+    sentBy: uuid("sent_by"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("appointment_outreach_uq").on(t.callInId, t.appointmentId),
+    index("appointment_outreach_due_idx").on(t.status, t.nextActionAt),
+    index("appointment_outreach_appt_idx").on(t.appointmentId),
+    index("appointment_outreach_customer_idx").on(t.customerId),
+  ],
+);
+
+/** A one-tap rebook link. Only the SHA-256 of the token is kept; it expires, and a newer link or a finished rebook ends it. */
+export const rebookLinks = pgTable(
+  "rebook_links",
+  {
+    id: id(),
+    tokenHash: text("token_hash").notNull().unique(),
+    appointmentId: uuid("appointment_id")
+      .notNull()
+      .references(() => appointments.id, { onDelete: "cascade" }),
+    outreachId: uuid("outreach_id")
+      .notNull()
+      .references(() => appointmentOutreach.id, { onDelete: "cascade" }),
+    expiresAt: ts("expires_at").notNull(),
+    usedAt: ts("used_at"),
+    revokedAt: ts("revoked_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("rebook_links_outreach_idx").on(t.outreachId)],
+);
+
+/** Numbers that replied STOP (texts) or pressed 9 on an automated call (calls). Checked before anything is sent. */
+export const contactOptOuts = pgTable(
+  "contact_opt_outs",
+  {
+    id: id(),
+    phone: text("phone").notNull(),
+    channel: text("channel").$type<"sms" | "voice">().notNull(),
+    source: text("source").$type<"reply" | "keypad" | "staff">().notNull(),
+    /** Clients whose "OK to text" this turned off, so START can turn it back on for them only. */
+    customerIds: jsonb("customer_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("contact_opt_outs_uq").on(t.phone, t.channel)],
+);
+
+/** A shop's text conversation with one phone number: the shop inbox. */
+export const messageThreads = pgTable(
+  "message_threads",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    phone: text("phone").notNull(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    lastMessageAt: ts("last_message_at").notNull().defaultNow(),
+    lastInboundAt: ts("last_inbound_at"),
+    unread: integer("unread").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("message_threads_uq").on(t.shopId, t.phone), index("message_threads_recent_idx").on(t.shopId, t.lastMessageAt)],
+);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: id(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => messageThreads.id, { onDelete: "cascade" }),
+    /** note: something the system did (texts turned off by STOP), shown in the thread but never sent. */
+    direction: text("direction").$type<"in" | "out" | "note">().notNull(),
+    body: text("body").notNull(),
+    /** Who wrote it; null for the client or an automatic message. */
+    staffId: uuid("staff_id"),
+    auto: boolean("auto").notNull().default(false),
+    jobId: uuid("job_id").references(() => notificationJobs.id, { onDelete: "set null" }),
+    providerMessageId: text("provider_message_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("messages_thread_idx").on(t.threadId, t.createdAt)],
+);
+
+export type CallDirection = "in" | "out";
+export type CallKind = "inbound" | "outreach" | "click_to_call";
+export type CallStatus = "ringing" | "answered" | "missed" | "after_hours" | "voicemail" | "no_answer" | "busy" | "failed" | "initiated" | "completed";
+
+/** Calls on the shop line: incoming calls, automated call-in calls and click-to-call from a profile. */
+export const callLogs = pgTable(
+  "call_logs",
+  {
+    id: id(),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    phone: text("phone").notNull(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    direction: text("direction").$type<CallDirection>().notNull(),
+    kind: text("kind").$type<CallKind>().notNull(),
+    status: text("status").$type<CallStatus>().notNull(),
+    durationSec: integer("duration_sec"),
+    providerCallId: text("provider_call_id").unique(),
+    staffId: uuid("staff_id"),
+    outreachId: uuid("outreach_id").references(() => appointmentOutreach.id, { onDelete: "set null" }),
+    /** The key pressed on an automated call. */
+    digits: text("digits"),
+    autoTextSent: boolean("auto_text_sent").notNull().default(false),
+    createdAt: createdAt(),
+    endedAt: ts("ended_at"),
+  },
+  (t) => [index("call_logs_phone_idx").on(t.phone, t.createdAt), index("call_logs_shop_idx").on(t.shopId, t.createdAt)],
 );

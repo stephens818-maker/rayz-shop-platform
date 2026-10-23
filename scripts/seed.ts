@@ -41,6 +41,7 @@ async function main() {
 
   await db.execute(sql`TRUNCATE TABLE
     client_access_alerts, client_access_log, client_field_rules, client_fields,
+    call_logs, messages, message_threads, contact_opt_outs, rebook_links, appointment_outreach, call_ins,
     audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
@@ -65,7 +66,7 @@ async function main() {
   const shopRows = await db
     .insert(t.shops)
     .values(
-      SHOPS.map((s) => ({
+      SHOPS.map((s, i) => ({
         slug: s.slug,
         name: s.name,
         address: s.address,
@@ -73,6 +74,7 @@ async function main() {
         state: s.state,
         zip: s.zip,
         phone: s.phone,
+        twilioNumber: `+13195550${900 + i}`,
         email: s.email,
         serviceTaxRate: s.serviceTaxRate,
         productTaxRate: s.productTaxRate,

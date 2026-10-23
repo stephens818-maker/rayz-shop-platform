@@ -2,8 +2,10 @@ import { AnyColumn, SQL, eq, inArray, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import {
   appointments,
+  callIns,
   cashDrawers,
   giftCards,
+  messageThreads,
   notificationJobs,
   promoCodes,
   purchaseOrders,
@@ -56,7 +58,19 @@ export function narrowShops(t: Pick<Tenant, "shopIds">, requested?: readonly str
 }
 
 export type TenantRecord =
-  "appointment" | "sale" | "purchase_order" | "transfer" | "stock_count" | "waitlist_entry" | "cash_drawer" | "notification_job" | "gift_card" | "promo" | "staff";
+  | "appointment"
+  | "sale"
+  | "purchase_order"
+  | "transfer"
+  | "stock_count"
+  | "waitlist_entry"
+  | "cash_drawer"
+  | "notification_job"
+  | "gift_card"
+  | "promo"
+  | "staff"
+  | "call_in"
+  | "message_thread";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -87,6 +101,16 @@ export async function recordShops(kind: TenantRecord, id: string, tx: DBorTx = d
       return one(tx.select({ s: giftCards.issuedShopId }).from(giftCards).where(eq(giftCards.id, id)));
     case "promo":
       return one(tx.select({ s: promoCodes.shopId }).from(promoCodes).where(eq(promoCodes.id, id)));
+    case "message_thread":
+      return one(tx.select({ s: messageThreads.shopId }).from(messageThreads).where(eq(messageThreads.id, id)));
+    case "call_in": {
+      // One shop, or every shop the barber works at for a call-in at all of them.
+      const [c] = await tx.select({ shopId: callIns.shopId, staffId: callIns.staffId }).from(callIns).where(eq(callIns.id, id));
+      if (!c) return null;
+      if (c.shopId) return [c.shopId];
+      const works = await tx.select({ s: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, c.staffId));
+      return works.map((w) => w.s);
+    }
     case "notification_job":
       return one(
         tx

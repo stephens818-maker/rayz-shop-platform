@@ -69,3 +69,15 @@ export function timeOffDecisionDenied(
 export function staffAtShopDenied(linkedShopIds: string[], shopId: string): string | null {
   return linkedShopIds.includes(shopId) ? null : "That barber doesn't work at this shop";
 }
+
+/**
+ * Marking a call-in: someone else needs "Mark a barber as called in"; yourself, that or "Mark
+ * themselves as called in". Where it applies follows the block rules above, since it writes the time off.
+ */
+export function callInDenied(caller: Caller & { markOthers: boolean; markOwn: boolean }, callIn: { staffId: string; shopId: string | null }, barberShopIds: string[]): string | null {
+  if (callIn.staffId === caller.staffId) {
+    if (!caller.markOwn && !caller.markOthers) return "You can't mark yourself as called in. Call the shop manager.";
+  } else if (!caller.markOthers) return "You can only mark yourself as called in";
+  if (!barberShopIds.length) return "That barber doesn't work at any shop";
+  return timeBlockChangeDenied(caller, callIn, barberShopIds);
+}

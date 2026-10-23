@@ -26,20 +26,20 @@ const doctor = { staffId: barber, reasonId: "id-doctor", reason: "Doctor", note:
 const bank = { staffId: barber, reasonId: "id-bank", reason: "Bank", note: "Deposit run" };
 
 describe("the default list", () => {
-  it("has the owner's nine reasons, each with its own color", () => {
-    expect(DEFAULT_BLOCK_REASONS.map((r) => r.label)).toEqual(["Lunch", "Break", "Bank", "Doctor", "Personal", "Vacation", "Sick", "Training", "Meeting"]);
-    expect(new Set(DEFAULT_BLOCK_REASONS.map((r) => r.color)).size).toBe(9);
+  it("has the owner's nine reasons and Emergency for call-ins, each with its own color", () => {
+    expect(DEFAULT_BLOCK_REASONS.map((r) => r.label)).toEqual(["Lunch", "Break", "Bank", "Doctor", "Personal", "Vacation", "Sick", "Emergency", "Training", "Meeting"]);
+    expect(new Set(DEFAULT_BLOCK_REASONS.map((r) => r.color)).size).toBe(10);
   });
 
-  it("keeps Doctor and Sick private, Lunch on the lunch limit and Sick free of notice", () => {
-    expect(DEFAULT_BLOCK_REASONS.filter((r) => r.private).map((r) => r.key)).toEqual(["doctor", "sick"]);
+  it("keeps Doctor, Sick and Emergency private, Lunch on the lunch limit and Sick and Emergency free of notice", () => {
+    expect(DEFAULT_BLOCK_REASONS.filter((r) => r.private).map((r) => r.key)).toEqual(["doctor", "sick", "emergency"]);
     expect(DEFAULT_BLOCK_REASONS.filter((r) => r.countsAsLunch).map((r) => r.key)).toEqual(["lunch"]);
-    expect(DEFAULT_BLOCK_REASONS.filter((r) => r.noticeExempt).map((r) => r.key)).toEqual(["sick"]);
+    expect(DEFAULT_BLOCK_REASONS.filter((r) => r.noticeExempt).map((r) => r.key)).toEqual(["sick", "emergency"]);
   });
 
   it("offers blocks and time off their own reasons; archived ones neither", () => {
     expect(list.filter(forBlocks).map((r) => r.key)).not.toContain("vacation");
-    expect(list.filter(forTimeOff).map((r) => r.key)).toEqual(["doctor", "personal", "vacation", "sick", "training"]);
+    expect(list.filter(forTimeOff).map((r) => r.key)).toEqual(["doctor", "personal", "vacation", "sick", "emergency", "training"]);
     expect(forBlocks({ usedFor: "both", archived: true })).toBe(false);
   });
 });

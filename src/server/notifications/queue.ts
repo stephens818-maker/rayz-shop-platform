@@ -1,6 +1,6 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { EmailAttachment, notificationJobs } from "@/db/schema";
+import { EmailAttachment, contactOptOuts, notificationJobs, shops } from "@/db/schema";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
 import { emailProvider, smsProvider, voiceProvider } from "./providers";
@@ -19,7 +19,18 @@ export type NotificationKind =
   | "staff_call"
   | "privacy_alert"
   | "time_off_reschedule"
-  | "time_off_decision";
+  | "time_off_decision"
+  /** Call-in outreach: moved to another barber, a rebook link, an automated call, and the link texted after pressing 1. */
+  | "callin_reassign"
+  | "callin_rebook"
+  | "callin_voice"
+  | "callin_link"
+  /** The shop line: texts after a missed or after-hours call, and replies to a client's text. */
+  | "missed_call"
+  | "shop_reply";
+
+/** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
+const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);
 
 export interface AppointmentMessageContext {
   appointmentId: string;
@@ -80,8 +91,8 @@ export async function cancelPendingReminders(appointmentId: string, tx: DBorTx =
 }
 
 export async function scheduleAppointmentNotifications(
-  /** "imported": an upcoming Squire booking; reminders only, the client already has a confirmation. */
-  event: "created" | "rescheduled" | "cancelled" | "imported",
+  /** "imported": an upcoming Squire booking; "reminders": the caller sent its own message. Reminders only, either way. */
+  event: "created" | "rescheduled" | "cancelled" | "imported" | "reminders",
   c: AppointmentMessageContext,
   tx: DBorTx = db,
   now: Date = new Date(),
@@ -90,7 +101,7 @@ export async function scheduleAppointmentNotifications(
   const jobs: { kind: NotificationKind; runAt: Date }[] = [];
   if (event === "cancelled") jobs.push({ kind: "cancellation", runAt: now });
   else {
-    if (event !== "imported") jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
+    if (event !== "imported" && event !== "reminders") jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
     const r24 = new Date(c.startsAt.getTime() - 24 * 3_600_000);
     const r2 = new Date(c.startsAt.getTime() - 2 * 3_600_000);
     if (r24 > now) jobs.push({ kind: "reminder_24h", runAt: r24 });
@@ -217,8 +228,26 @@ export async function processDueJobs(
       .limit(limit)
       .for("update", { skipLocked: true });
 
+    const shopIds = [...new Set(due.map((j) => j.shopId).filter((x): x is string => !!x))];
+    const lines = new Map(
+      shopIds.length ? (await tx.select({ id: shops.id, n: shops.twilioNumber }).from(shops).where(inArray(shops.id, shopIds))).map((r) => [r.id, r.n]) : [],
+    );
+    const phones = [...new Set(due.filter((j) => j.channel !== "email").map((j) => j.to))];
+    const optedOut = new Set(
+      phones.length ? (await tx.select({ phone: contactOptOuts.phone, channel: contactOptOuts.channel }).from(contactOptOuts).where(inArray(contactOptOuts.phone, phones))).map((o) => `${o.channel}:${o.phone}`) : [],
+    );
+
     for (const job of due) {
       const provider = job.channel === "sms" ? sms : job.channel === "voice" ? voice : email;
+      const stopped = (job.channel === "sms" && optedOut.has(`sms:${job.to}`)) || (job.channel === "voice" && AUTOMATED_CALLS.has(job.kind) && optedOut.has(`voice:${job.to}`));
+      if (stopped) {
+        await tx
+          .update(notificationJobs)
+          .set({ status: "suppressed", provider: provider.name, attempts: job.attempts + 1, lastError: job.channel === "sms" ? "The number replied STOP" : "The client asked for no automated calls" })
+          .where(eq(notificationJobs.id, job.id));
+        stats.suppressed++;
+        continue;
+      }
       if (!provider.enabled) {
         await tx
           .update(notificationJobs)
@@ -228,12 +257,18 @@ export async function processDueJobs(
         continue;
       }
       try {
-        if (job.channel === "sms") await sms.sendSms(job.to, job.body);
-        else if (job.channel === "voice") await voice.bridgeCall(job.to, job.subject);
-        else await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body, job.attachments ?? []);
+        const line = job.shopId ? (lines.get(job.shopId) ?? null) : null;
+        const r =
+          job.channel === "sms"
+            ? await sms.sendSms(job.to, job.body, { from: line })
+            : job.channel === "voice"
+              ? AUTOMATED_CALLS.has(job.kind) && job.outreachId
+                ? await voice.outreachCall(job.to, { outreachId: job.outreachId, jobId: job.id, callerId: line })
+                : await voice.bridgeCall(job.to, job.subject, { jobId: job.id, callerId: line })
+              : await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body, job.attachments ?? []);
         await tx
           .update(notificationJobs)
-          .set({ status: "sent", sentAt: new Date(), provider: provider.name, attempts: job.attempts + 1 })
+          .set({ status: "sent", sentAt: new Date(), provider: provider.name, providerMessageId: r.providerMessageId ?? null, attempts: job.attempts + 1 })
           .where(eq(notificationJobs.id, job.id));
         stats.sent++;
       } catch (e) {

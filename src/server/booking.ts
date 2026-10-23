@@ -435,13 +435,21 @@ async function loadForChange(code: string) {
 
 export async function cancelAppointment(
   code: string,
-  opts: { actor: Actor; byCustomer: boolean; customerId?: string | null; reason?: string; now?: Date },
+  opts: {
+    actor: Actor;
+    byCustomer: boolean;
+    customerId?: string | null;
+    reason?: string;
+    now?: Date;
+    /** A client answering a call-in: their barber can't come, so the online cutoff doesn't apply. */
+    ignoreCutoff?: boolean;
+  },
 ) {
   const now = opts.now ?? new Date();
   const { a, shop } = await loadForChange(code);
   if (opts.customerId && a.customerId !== opts.customerId) throw notFound("Appointment");
   if (!(ACTIVE_STATUSES as readonly string[]).includes(a.status)) throw new AppError("conflict", `Appointment is already ${a.status}`);
-  if (opts.byCustomer && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
+  if (opts.byCustomer && !opts.ignoreCutoff && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
     throw new AppError("cutoff_passed", `Online changes close ${shop.cancelCutoffMinutes} minutes before the appointment. Please call the shop.`);
   }
   await db.transaction(async (tx) => {
@@ -457,13 +465,25 @@ export async function cancelAppointment(
 
 export async function rescheduleAppointment(
   code: string,
-  opts: { startsAt: string | Date; barberRef?: string | null; actor: Actor; byCustomer: boolean; customerId?: string | null; now?: Date; squeezeIn?: boolean },
+  opts: {
+    startsAt: string | Date;
+    barberRef?: string | null;
+    actor: Actor;
+    byCustomer: boolean;
+    customerId?: string | null;
+    now?: Date;
+    squeezeIn?: boolean;
+    /** A client answering a call-in: their barber can't come, so the online cutoff doesn't apply. */
+    ignoreCutoff?: boolean;
+    /** The caller tells the client itself (call-in outreach): only the reminders are redone. */
+    quiet?: boolean;
+  },
 ) {
   const now = opts.now ?? new Date();
   const { a, shop } = await loadForChange(code);
   if (opts.customerId && a.customerId !== opts.customerId) throw notFound("Appointment");
   if (!["booked", "confirmed"].includes(a.status)) throw new AppError("conflict", `Can't reschedule an appointment that is ${a.status}`);
-  if (opts.byCustomer && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
+  if (opts.byCustomer && !opts.ignoreCutoff && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
     throw new AppError("cutoff_passed", `Online changes close ${shop.cancelCutoffMinutes} minutes before the appointment. Please call the shop.`);
   }
   if (opts.squeezeIn && opts.byCustomer) throw new AppError("forbidden", "Only staff can squeeze in a booking");
@@ -528,7 +548,7 @@ export async function rescheduleAppointment(
       const bent = squeeze.map((b) => SQUEEZE_BYPASS_LABEL[b as keyof typeof SQUEEZE_BYPASS_LABEL]);
       await audit(opts.actor, "appointment.squeeze_in", "appointment", a.id, { staffId, startsAt: start.toISOString(), endsAt: end.toISOString(), bypasses: squeeze, bent, moved: true }, a.shopId, tx);
     }
-    if (a.customerId) await scheduleAppointmentNotifications("rescheduled", await messageContext(a.id, tx), tx, now);
+    if (a.customerId) await scheduleAppointmentNotifications(opts.quiet ? "reminders" : "rescheduled", await messageContext(a.id, tx), tx, now);
   });
   return getAppointmentByCode(code, now);
 }

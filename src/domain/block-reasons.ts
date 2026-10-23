@@ -34,6 +34,7 @@ export const DEFAULT_BLOCK_REASONS: readonly ReasonSeed[] = [
   { key: "personal", label: "Personal", color: "#8b5cf6", usedFor: "both", countsAsLunch: false, noticeExempt: false, private: false, sortOrder: 50 },
   { key: "vacation", label: "Vacation", color: "#0ea5e9", usedFor: "time_off", countsAsLunch: false, noticeExempt: false, private: false, sortOrder: 60 },
   { key: "sick", label: "Sick", color: "#f43f5e", usedFor: "both", countsAsLunch: false, noticeExempt: true, private: true, sortOrder: 70 },
+  { key: "emergency", label: "Emergency", color: "#ec4899", usedFor: "time_off", countsAsLunch: false, noticeExempt: true, private: true, sortOrder: 75 },
   { key: "training", label: "Training", color: "#22c55e", usedFor: "both", countsAsLunch: false, noticeExempt: false, private: false, sortOrder: 80 },
   { key: "meeting", label: "Meeting", color: "#64748b", usedFor: "blocks", countsAsLunch: false, noticeExempt: false, private: false, sortOrder: 90 },
 ];
