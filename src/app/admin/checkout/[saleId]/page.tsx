@@ -8,6 +8,7 @@ import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { loadCheckoutContext } from "@/server/checkout";
 import { getLoyaltyConfig, loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries } from "@/server/ratings";
+import { timesFor } from "@/server/service-times";
 import { TEST_CARDS, paymentsMode, terminal } from "@/server/payments/processor";
 import { Pos } from "./pos";
 
@@ -21,16 +22,18 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
   if (c.sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
   const policy = await clientPolicy(ctx);
-  const [catalog, barbers, loyalty, loyaltyCfg, ratings] = await Promise.all([
+  const [catalog, barbers, loyalty, loyaltyCfg, ratings, times] = await Promise.all([
     shopCatalog(c.shop.id),
     shopBarbers(c.shop.id),
     c.customer ? loyaltyBalance(c.customer.id) : null,
     getLoyaltyConfig(),
     ratingSummaries([c.customer?.id]),
+    timesFor(c.appointment ? [c.appointment.id] : []),
   ]);
   return (
     <Pos
       sale={{ id: c.sale.id, number: c.sale.number, staffId: c.sale.staffId, hasAppointment: !!c.appointment }}
+      timer={c.appointment ? { appointmentId: c.appointment.id, status: c.appointment.status, times: times.get(c.appointment.id) ?? null } : null}
       shop={{ id: c.shop.id, name: c.shop.name, taxVerified: c.shop.taxRatesVerified }}
       config={c.config}
       feeNotice={feeDisclosure(c.config.cardFee)}

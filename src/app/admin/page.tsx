@@ -9,6 +9,8 @@ import { addDays, endOfLocalDay, formatDate, formatTime, startOfLocalDay, todayL
 import { reportsFor } from "@/domain/navigation";
 import { can, canAny, guardPage, reportShopIds } from "@/server/auth/staff";
 import { stockLevels } from "@/server/inventory/stock";
+import { timesFor } from "@/server/service-times";
+import { ServiceTimer } from "./calendar/service-times-panel";
 import { byShop, salesSummary } from "@/server/reports";
 
 export const metadata: Metadata = { title: "Today" };
@@ -44,6 +46,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         id: appointments.id,
         startsAt: appointments.startsAt,
         status: appointments.status,
+        staffId: appointments.staffId,
         barber: staff.displayLabel,
         first: customers.firstName,
         last: customers.lastName,
@@ -72,6 +75,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     ctx.currentShopId === null && !ownSales ? byShop(scope) : Promise.resolve([]),
     db.select({ name: shops.name }).from(shops).where(and(inArray(shops.id, shopIds), eq(shops.taxRatesVerified, false))),
   ]);
+  const times = await timesFor(upcoming.map((a) => a.id), now);
+  const runsTimer = (staffId: string) => staffId === ctx.staff.id || can(ctx, "calendar.manage");
   const count = (s: string[]) => statusCounts.filter((c) => s.includes(c.status)).reduce((a, c) => a + c.n, 0);
   const delta = (a: number, b: number) => (b ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs last ${formatDate(today, "EEEE")}` : undefined);
   const notificationsOff = (process.env.NOTIFICATIONS_SMS_PROVIDER ?? "disabled") === "disabled" && (process.env.NOTIFICATIONS_EMAIL_PROVIDER ?? "disabled") === "disabled";
@@ -143,6 +148,9 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                     </Td>
                     <Td>
                       <StatusBadge status={a.status} />
+                    </Td>
+                    <Td right className="w-36">
+                      {runsTimer(a.staffId) && <ServiceTimer appointmentId={a.id} status={a.status} times={times.get(a.id) ?? null} />}
                     </Td>
                   </tr>
                 ))}

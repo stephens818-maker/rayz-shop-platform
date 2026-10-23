@@ -5,7 +5,9 @@ import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState, useTran
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
+import { formatMinutes, type TimesView } from "@/domain/service-times";
 import { searchCustomersAction } from "../../calendar/actions";
+import { ServiceTimer } from "../../calendar/service-times-panel";
 import { attachCustomerAction, finalizeAction, giftCardAction, holdRetailAction, inspectCardAction, newClientAtCheckoutAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
 import { StripeCardEntry } from "./stripe-card";
 
@@ -23,6 +25,7 @@ const key = () => `l${++seq}`;
 
 export function Pos(props: {
   sale: { id: string; number: number; staffId: string | null; hasAppointment: boolean };
+  timer: { appointmentId: string; status: string; times: TimesView | null } | null;
   shop: { id: string; name: string; taxVerified: boolean };
   config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[] };
   feeNotice: string | null;
@@ -542,6 +545,24 @@ export function Pos(props: {
               )}
             </div>
           </Card>
+
+          {props.timer && (
+            <Card className="p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-medium text-zinc-700">Service time</div>
+                  <div className="text-xs text-zinc-500">
+                    {props.timer.times?.started && props.timer.times.finished
+                      ? `${formatMinutes(props.timer.times.actualMin ?? 0)} (booked ${props.timer.times.bookedMin})`
+                      : props.timer.times?.started
+                        ? "Taking payment finishes the timer if you haven't."
+                        : "Not started, so this cut won't be timed."}
+                  </div>
+                </div>
+                <ServiceTimer appointmentId={props.timer.appointmentId} status={props.timer.status} times={props.timer.times} />
+              </div>
+            </Card>
+          )}
 
           {props.sale.hasAppointment && (
             <Card className="p-4">

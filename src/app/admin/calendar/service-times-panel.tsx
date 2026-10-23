@@ -151,6 +151,32 @@ export function ServiceTimesBox({ appointmentId, status, times, canCorrect }: { 
   );
 }
 
+/** One-tap Start / Finish for a row in a list (the barber's "Up next"). */
+export function ServiceTimer({ appointmentId, status, times }: { appointmentId: string; status: string; times: TimesView | null }) {
+  const { pending, error, run } = useRun();
+  const running = !!times?.started && !times.finished;
+  if (!["booked", "confirmed", "checked_in", "in_service"].includes(status)) return null;
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {running && (
+        <span className="text-xs text-violet-700">
+          <Running since={times!.started!.at} />
+        </span>
+      )}
+      {!times?.started ? (
+        <Button size="sm" variant="secondary" disabled={pending} onClick={() => run(() => setStatusAction(appointmentId, "in_service"))}>
+          Start
+        </Button>
+      ) : running ? (
+        <Button size="sm" disabled={pending} onClick={() => run(() => finishServiceAction(appointmentId))}>
+          Finish
+        </Button>
+      ) : null}
+      {error && <span className="text-xs text-red-600">{error}</span>}
+    </div>
+  );
+}
+
 function CorrectForm({ appointmentId, times, onDone }: { appointmentId: string; times: TimesView | null; onDone: () => void }) {
   const { pending, error, run } = useRun();
   const initial = { arrivedAt: wall(times?.arrived ?? null), startedAt: wall(times?.started ?? null), finishedAt: wall(times?.finished ?? null) };
