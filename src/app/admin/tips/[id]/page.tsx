@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Badge, Card, CardHeader, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { BANKING_STATUS_LABEL } from "@/domain/banking";
 import { METHOD_LABEL, STATUS_LABEL } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
 import { shopTipConfig } from "@/server/tips/ledger";
 import { inTenant } from "@/server/tenant";
+import { payoutAccountSummaries } from "@/server/tips/accounts";
 import { batchDetail } from "@/server/tips/payouts";
 import { BatchActions, PayoutActions } from "../client";
 import { BATCH_KIND_LABEL, BATCH_STATUS_LABEL, BATCH_STATUS_TONE, PAYOUT_STATUS_TONE } from "../labels";
@@ -25,7 +27,7 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
   if (!d) notFound();
   const { batch, payouts } = d;
   const shop = ctx.shops.find((s) => s.id === batch.shopId);
-  const settings = await shopTipConfig(batch.shopId);
+  const [settings, accounts] = await Promise.all([shopTipConfig(batch.shopId), payoutAccountSummaries(payouts.filter((p) => p.method === "stripe").map((p) => p.staffId))]);
   const live = payouts.filter((p) => p.status !== "cancelled");
   const sum = (f: (p: (typeof payouts)[number]) => number) => live.reduce((a, p) => a + f(p), 0);
   const toApprove = live.filter((p) => p.status === "pending" && p.netCents > 0);
@@ -86,7 +88,11 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
                 <span className="text-xs font-normal text-zinc-500">
                   {METHOD_LABEL[p.method]}
                   {p.instant ? " · instant" : ""}
+                  {p.method === "stripe" && accounts.get(p.staffId)?.last4 ? ` to ••${accounts.get(p.staffId)!.last4}` : ""}
                 </span>
+                {p.method === "stripe" && ["pending", "held", "approved"].includes(p.status) && (accounts.get(p.staffId)?.status ?? "not_set_up") !== "ready" && (
+                  <Badge tone="amber">Stripe account: {BANKING_STATUS_LABEL[accounts.get(p.staffId)?.status ?? "not_set_up"]}</Badge>
+                )}
               </span>
             }
             subtitle={

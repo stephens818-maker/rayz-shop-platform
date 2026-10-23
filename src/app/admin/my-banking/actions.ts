@@ -7,8 +7,9 @@ import { TIP_METHODS } from "@/domain/tips";
 import { appBaseUrl } from "@/lib/deployment";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
-import { forbidden } from "@/server/errors";
-import { setPayoutChoice, simulateStaffOnboarding, staffDashboardUrl, staffOnboardingUrl } from "@/server/tips/accounts";
+import { AppError, forbidden } from "@/server/errors";
+import { connectMode } from "@/server/payments/connect";
+import { refreshStaffAccount, setPayoutChoice, simulateDestinationChange, simulateStaffOnboarding, staffAccount, staffDashboardUrl, staffOnboardingUrl } from "@/server/tips/accounts";
 
 async function origin() {
   const h = await headers();
@@ -24,6 +25,11 @@ async function me() {
   return ctx;
 }
 
+function revalidate() {
+  revalidatePath("/admin/my-banking");
+  revalidatePath("/admin/my-tips");
+}
+
 const choiceSchema = z.object({ method: z.enum(TIP_METHODS).nullable(), instant: z.boolean() });
 
 export async function setMyPayoutMethodAction(input: z.input<typeof choiceSchema>) {
@@ -31,25 +37,43 @@ export async function setMyPayoutMethodAction(input: z.input<typeof choiceSchema
     const ctx = await me();
     const v = choiceSchema.parse(input);
     await setPayoutChoice(ctx.staff.id, v, ctx.actor);
-    revalidatePath("/admin/my-tips");
+    revalidate();
     return null;
   });
 }
 
-/** Stripe-hosted setup of the employee's own debit card or bank account. In the simulator it finishes at once. */
+/** Stripe-hosted setup of the employee's own debit card or bank account, also used to add what Stripe asks for later. In the simulator it finishes at once. */
 export async function startStripeSetupAction() {
   return safe(async () => {
     const ctx = await me();
     const url = await staffOnboardingUrl(ctx.staff.id, ctx.actor, await origin());
     if (!url) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
-    revalidatePath("/admin/my-tips");
+    revalidate();
     return { url };
   });
 }
 
-export async function stripeDashboardAction() {
+/** Stripe's Express dashboard, where the employee changes their card or bank. In the simulator it switches between a test card and a test bank. */
+export async function changeDestinationAction() {
   return safe(async () => {
     const ctx = await me();
-    return { url: await staffDashboardUrl(ctx.staff.id) };
+    const a = await staffAccount(ctx.staff.id);
+    if (a?.simulated && connectMode() === "simulator") {
+      await simulateDestinationChange(ctx.staff.id, ctx.actor);
+      revalidate();
+      return { url: null };
+    }
+    const url = await staffDashboardUrl(ctx.staff.id);
+    if (!url) throw new AppError("conflict", "Stripe didn't open your payout dashboard. Finish setup first, or try again.");
+    return { url };
+  });
+}
+
+export async function refreshBankingAction() {
+  return safe(async () => {
+    const ctx = await me();
+    await refreshStaffAccount(ctx.staff.id);
+    revalidate();
+    return { url: null };
   });
 }

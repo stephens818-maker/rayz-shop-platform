@@ -4,11 +4,13 @@ import { inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, LinkButton, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
-import { ENTRY_STATUS_LABEL, SCHEDULE_LABEL, entryStatus } from "@/domain/tips";
+import { BANKING_STATUS_LABEL, BANKING_STATUS_TONE } from "@/domain/banking";
+import { ENTRY_STATUS_LABEL, METHOD_LABEL, SCHEDULE_LABEL, effectiveMethod, entryStatus } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
-import { ledgerRows, shopTipConfig, syncTipLedger } from "@/server/tips/ledger";
+import { shopPayoutAccounts } from "@/server/tips/accounts";
+import { ledgerRows, shopTipConfig, syncTipLedger, tipPolicy } from "@/server/tips/ledger";
 import { batchesFor } from "@/server/tips/payouts";
 import { BuildBatch } from "./client";
 import { BATCH_KIND_LABEL, BATCH_STATUS_LABEL, BATCH_STATUS_TONE } from "./labels";
@@ -22,7 +24,7 @@ export default async function TipsPage() {
   const shop = ctx.shops.find((s) => s.id === shopId)!;
   const today = todayLocal();
   await syncTipLedger(db, { shopIds: [shopId] });
-  const [settings, unpaid, batches] = await Promise.all([shopTipConfig(shopId), ledgerRows({ shopIds: [shopId], unpaidOnly: true }), batchesFor([shopId])]);
+  const [settings, policy, unpaid, batches, accounts] = await Promise.all([shopTipConfig(shopId), tipPolicy(), ledgerRows({ shopIds: [shopId], unpaidOnly: true }), batchesFor([shopId]), shopPayoutAccounts(shopId)]);
   const ids = [...new Set(unpaid.map((e) => e.staffId))];
   const names = new Map((ids.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, ids)) : []).map((s) => [s.id, s.label]));
   const byStaff = new Map<string, { available: number; pending: number; entries: number }>();
@@ -138,6 +140,44 @@ export default async function TipsPage() {
           </Table>
         ) : (
           <p className="px-4 py-6 text-sm text-zinc-500">No batches yet.</p>
+        )}
+      </Card>
+      <Card>
+        <CardHeader
+          title="Payout accounts"
+          subtitle="How each person is paid and whether Stripe can pay them. Bank and card details stay with Stripe: you see only the status and the last 4 digits."
+        />
+        {accounts.length ? (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Employee</Th>
+                <Th>Paid by</Th>
+                <Th>Stripe account</Th>
+                <Th>Paid to</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {accounts.map((a) => {
+                const method = effectiveMethod(settings, policy, a.method);
+                return (
+                  <tr key={a.staffId}>
+                    <Td>{a.name}</Td>
+                    <Td>
+                      {METHOD_LABEL[method]}
+                      {a.method && policy.employeeChooses ? <span className="ml-1 text-xs text-zinc-500">(their choice)</span> : null}
+                    </Td>
+                    <Td>
+                      <Badge tone={method === "stripe" && a.status !== "ready" ? "amber" : BANKING_STATUS_TONE[a.status]}>{BANKING_STATUS_LABEL[a.status]}</Badge>
+                    </Td>
+                    <Td className="tabular">{a.last4 ? `••${a.last4}` : "—"}</Td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </Table>
+        ) : (
+          <p className="px-4 py-6 text-sm text-zinc-500">No one on this shop&rsquo;s team yet.</p>
         )}
       </Card>
     </div>

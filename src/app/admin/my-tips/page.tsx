@@ -3,17 +3,16 @@ import Link from "next/link";
 import { and, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops } from "@/db/schema";
-import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
-import { DEFAULT_INSTANT_FEE, ENTRY_STATUS_LABEL, METHOD_LABEL, STATUS_LABEL, effectiveMethod, entryStatus, parseInstantFee } from "@/domain/tips";
+import { Badge, Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { BANKING_STATUS_LABEL, BANKING_STATUS_TONE, destinationLabel } from "@/domain/banking";
+import { ENTRY_STATUS_LABEL, METHOD_LABEL, STATUS_LABEL, effectiveMethod, entryStatus } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { guardPage } from "@/server/auth/staff";
-import { connectMode } from "@/server/payments/connect";
-import { STAFF_ACCOUNT_STATE_LABEL, refreshStaffAccount, staffAccount, staffAccountState } from "@/server/tips/accounts";
-import { myTips } from "@/server/tips/ledger";
+import { accountDestination, staffAccount, staffAccountState } from "@/server/tips/accounts";
+import { myTips, shopTipConfigs } from "@/server/tips/ledger";
 import { PAYOUT_STATUS_TONE } from "../tips/labels";
-import { PayoutChoice, StripeSetup } from "./client";
 
 export const metadata: Metadata = { title: "My tips" };
 
@@ -21,7 +20,7 @@ const KIND_LABEL: Record<string, string> = { tip: "Tip", refund: "Refunded", adj
 const METHOD: Record<string, string> = { card: "Card", cash: "Cash", gift_card: "Gift card", adjust: "Manager" };
 const STATUS_TONE = { pending_settlement: "gray", available: "blue", in_batch: "amber", paid_out: "green" } as const;
 
-export default async function MyTipsPage({ searchParams }: { searchParams: Promise<{ stripe?: string; history?: string }> }) {
+export default async function MyTipsPage({ searchParams }: { searchParams: Promise<{ history?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/my-tips");
   if (ctx.staff.kind !== "person") return <Empty title="Shop logins don't earn tips">Sign in as yourself to see your tips.</Empty>;
@@ -29,14 +28,14 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
   const assigned = await workShopIds(me);
   const shopRows = assigned.length ? await db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, assigned), ne(shops.status, "archived"))) : [];
   if (!shopRows.length) return <Empty title="You aren't on a shop's team yet">Ask a manager to add you to a shop.</Empty>;
-  if (sp.stripe === "return") await refreshStaffAccount(me).catch(() => null);
   const today = todayLocal();
   const [t, acct] = await Promise.all([myTips(me, shopRows.map((s) => s.id), today), staffAccount(me)]);
   const shopName = new Map(shopRows.map((s) => [s.id, s.name]));
   const settingsOf = new Map(t.perShop.map((s) => [s.shopId, s.settings]));
   const state = staffAccountState(acct);
-  const rate = parseInstantFee(process.env.TIP_INSTANT_FEE) ?? DEFAULT_INSTANT_FEE;
-  const methods = t.perShop.map((s) => ({ shop: shopName.get(s.shopId) ?? "", method: effectiveMethod(s.settings, t.policy, acct?.method ?? null), schedule: s.settings.schedule }));
+  const { byShop } = await shopTipConfigs(shopRows.map((s) => s.id));
+  const methods = shopRows.map((s) => ({ shop: s.name, method: effectiveMethod(byShop.get(s.id)!, t.policy, acct?.method ?? null) }));
+  const dest = accountDestination(acct);
   const longHistory = sp.history === "60";
   const history = longHistory ? t.recent : t.recent.filter((e) => e.businessDate >= addDays(today, -13));
   const wantsStripe = t.policy.methods.includes("stripe") && (acct?.method === "stripe" || methods.some((m) => m.method === "stripe"));
@@ -50,46 +49,43 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
         <Stat label="In a payout" value={formatCents(t.total.inPayoutCents)} hint="being approved or sent" />
         <Stat label="Paid out" value={formatCents(t.total.paidOutCents)} />
       </div>
-      {sp.stripe === "return" && state !== "ready" && <Notice>Stripe still needs a few details before it can pay you. Finish setup below.</Notice>}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader title="How you're paid" subtitle={t.policy.employeeChooses ? "Pick how you'd like your tips paid. The brand sets which methods are allowed." : "The brand sets how tips are paid at each shop."} />
-          <div className="space-y-3 p-4 text-sm">
-            <ul className="space-y-1">
-              {(methods.length ? methods : shopRows.map((s) => ({ shop: s.name, method: null, schedule: null }))).map((m) => (
-                <li key={m.shop} className="flex justify-between gap-2">
-                  <span className="text-zinc-600">{m.shop}</span>
-                  <span className="text-right">{m.method ? METHOD_LABEL[m.method] : "No tips yet"}</span>
-                </li>
-              ))}
-            </ul>
-            {t.policy.employeeChooses && (
-              <PayoutChoice
-                methods={t.policy.methods}
-                method={acct?.method ?? null}
-                instant={!!acct?.instant}
-                instantAllowed={t.policy.instantAllowed}
-                instantEligible={!!acct?.instantEligible}
-                feeText={`${rate.pct}%${rate.minCents ? `, at least ${formatCents(rate.minCents)}` : ""}`}
-              />
-            )}
-          </div>
-        </Card>
-        {t.policy.methods.includes("stripe") && (
-          <Card>
-            <CardHeader title="Stripe payouts" subtitle="Your own debit card or bank account, set up on Stripe's page. This app never sees or stores your bank details." />
-            <div className="space-y-3 p-4 text-sm">
+      <Card>
+        <CardHeader
+          title="How you're paid"
+          action={
+            <Link className="text-sm text-brand-700 hover:underline" href="/admin/my-banking">
+              {t.policy.employeeChooses ? "Change in My banking" : "My banking"}
+            </Link>
+          }
+        />
+        <div className="grid gap-4 p-4 text-sm md:grid-cols-2">
+          <ul className="space-y-1">
+            {methods.map((m) => (
+              <li key={m.shop} className="flex justify-between gap-2">
+                <span className="text-zinc-600">{m.shop}</span>
+                <span className="text-right">
+                  {METHOD_LABEL[m.method]}
+                  {m.method === "stripe" && acct?.instant && acct.instantEligible && t.policy.instantAllowed ? " (instant)" : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {t.policy.methods.includes("stripe") && (
+            <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <Badge tone={state === "ready" ? "green" : state === "none" ? "gray" : "amber"}>{STAFF_ACCOUNT_STATE_LABEL[state]}</Badge>
-                {acct?.simulated && <Badge tone="violet">Simulator</Badge>}
+                <span className="text-zinc-600">Stripe payout account</span>
+                <Badge tone={BANKING_STATUS_TONE[state]}>{BANKING_STATUS_LABEL[state]}</Badge>
               </div>
-              {acct?.requirementsDue?.length ? <p className="text-amber-700">Stripe needs: {acct.requirementsDue.join(", ").replace(/_/g, " ")}</p> : null}
-              {!wantsStripe && state === "none" && <p className="text-zinc-600">Only needed if you&rsquo;re paid by Stripe.</p>}
-              <StripeSetup state={state} simulator={connectMode() === "simulator"} />
+              {dest && <div className="text-zinc-700">Paid to {destinationLabel(dest)}</div>}
+              {wantsStripe && state !== "ready" && (
+                <Link className="text-brand-700 hover:underline" href="/admin/my-banking">
+                  {state === "not_set_up" ? "Set it up so Stripe can pay you" : state === "action_needed" ? "Stripe needs more information" : "See its status"}
+                </Link>
+              )}
             </div>
-          </Card>
-        )}
-      </div>
+          )}
+        </div>
+      </Card>
       <Card>
         <CardHeader title="Payouts" />
         {t.payouts.filter((p) => p.method !== "prior").length ? (

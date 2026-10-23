@@ -3,8 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Field, Notice, Select } from "@/components/ui";
+import type { BankingStatus } from "@/domain/banking";
 import { METHOD_LABEL, TipMethod } from "@/domain/tips";
-import { setMyPayoutMethodAction, startStripeSetupAction, stripeDashboardAction } from "./actions";
+import { changeDestinationAction, refreshBankingAction, setMyPayoutMethodAction, startStripeSetupAction } from "./actions";
 
 export function PayoutChoice(p: { methods: TipMethod[]; method: TipMethod | null; instant: boolean; instantAllowed: boolean; instantEligible: boolean; feeText: string }) {
   const router = useRouter();
@@ -51,7 +52,7 @@ export function PayoutChoice(p: { methods: TipMethod[]; method: TipMethod | null
   );
 }
 
-export function StripeSetup({ state, simulator }: { state: "none" | "onboarding" | "restricted" | "ready"; simulator: boolean }) {
+export function StripeSetup({ status, simulator, hasDestination }: { status: BankingStatus; simulator: boolean; hasDestination: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -63,21 +64,31 @@ export function StripeSetup({ state, simulator }: { state: "none" | "onboarding"
       else if (r.data.url) window.location.assign(r.data.url);
       else router.refresh();
     });
+  const setupLabel = status === "not_set_up" ? "Set up Stripe payouts" : status === "action_needed" ? "Add what Stripe needs" : "Update my details on Stripe";
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
-        {state !== "ready" && (
+        {status !== "ready" && (
           <Button size="sm" disabled={pending} onClick={() => go(startStripeSetupAction)}>
-            {state === "none" ? "Set up Stripe payouts" : "Finish setup on Stripe"}
+            {setupLabel}
           </Button>
         )}
-        {state === "ready" && !simulator && (
-          <Button size="sm" variant="secondary" disabled={pending} onClick={() => go(stripeDashboardAction)}>
-            Change my card or bank
+        {status !== "not_set_up" && (
+          <Button size="sm" variant="secondary" disabled={pending} onClick={() => go(changeDestinationAction)}>
+            {hasDestination ? "Change my card or bank" : "Add a card or bank"}
+          </Button>
+        )}
+        {status !== "not_set_up" && !simulator && (
+          <Button size="sm" variant="ghost" disabled={pending} onClick={() => go(refreshBankingAction)}>
+            Check status with Stripe
           </Button>
         )}
       </div>
-      {simulator && <p className="text-xs text-zinc-500">Simulator: setup finishes at once with a test debit card. With Stripe keys this opens Stripe&rsquo;s own page.</p>}
+      {simulator && (
+        <p className="text-xs text-zinc-500">
+          Simulator: setup finishes at once with Stripe&rsquo;s test Visa debit card, and changing switches between it and a test bank account. With Stripe keys these open Stripe&rsquo;s own pages.
+        </p>
+      )}
       {error && <Notice tone="red">{error}</Notice>}
     </div>
   );
