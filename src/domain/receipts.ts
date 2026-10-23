@@ -130,6 +130,7 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
     row("Total", o.totalCents),
     ...o.tenders.map((t) => row(`Paid with ${t.label}`, t.cents)),
     ...o.refunds.map((r) => row(r.label, r.cents, true)),
+    ...(o.refunds.length ? [row("You paid, after refunds", o.totalCents - o.refunds.reduce((a, r) => a + r.cents, 0))] : []),
     ...(o.loyalty ? ["", o.loyalty] : []),
     "",
     `See your receipt, rebook or leave a review: ${o.url}`,

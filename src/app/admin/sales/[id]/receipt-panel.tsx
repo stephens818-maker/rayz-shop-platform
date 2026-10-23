@@ -74,7 +74,7 @@ function Chooser({ saleId, onFile, atCheckout, onDone }: { saleId: string; onFil
           </Button>
         ))}
         {atCheckout && (
-          <Button size="sm" variant="secondary" disabled={pending} onClick={() => send({ channel: "none", onFile: false })} data-testid="receipt-none">
+          <Button size="sm" variant="secondary" className="whitespace-nowrap px-2" disabled={pending} onClick={() => send({ channel: "none", onFile: false })} data-testid="receipt-none">
             No receipt
           </Button>
         )}
@@ -91,7 +91,7 @@ function Chooser({ saleId, onFile, atCheckout, onDone }: { saleId: string; onFil
               <Button size="sm" className="w-full" disabled={pending} onClick={() => send({ channel: mode, onFile: true })} data-testid="receipt-onfile">
                 Send to {file}
               </Button>
-              <button type="button" className="text-xs text-zinc-600 underline" onClick={() => setTyping(true)}>
+              <button type="button" className="block text-xs text-zinc-600 underline" onClick={() => setTyping(true)}>
                 Use a different {mode === "sms" ? "number" : "email"}
               </button>
             </>
@@ -130,9 +130,9 @@ export function ReceiptPanel({ saleId, onFile, atCheckout, history, highlight }:
   const router = useRouter();
   const [msg, setMsg] = useState<string | null>(null);
   return (
-    <Card className={cx("p-4", highlight && atCheckout && "ring-2 ring-brand-600")} data-testid="receipt-panel">
+    <Card className={cx(highlight && atCheckout && "outline-2 outline-brand-600")} data-testid="receipt-panel">
       <CardHeader title={atCheckout ? "How would they like the receipt?" : "Receipt"} subtitle={atCheckout ? "A text with a link, or an email. No paper." : "Digital: a text with a link, or an email."} />
-      <div className="mt-3 space-y-3">
+      <div className="space-y-3 p-4">
         <Chooser
           saleId={saleId}
           onFile={onFile}
@@ -179,7 +179,7 @@ export function ResendReceipt({ saleId, onFile, last }: { saleId: string; onFile
         </div>
       )}
       {open && (
-        <div className="w-64 space-y-1">
+        <div className="w-56 space-y-1">
           <Chooser
             saleId={saleId}
             onFile={onFile}

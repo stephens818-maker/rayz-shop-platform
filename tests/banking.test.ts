@@ -63,7 +63,7 @@ describe("payments mode", () => {
     const d = LocationDraft.parse(draftDefaults({ name: "Ray'z Iowa City", slug: "iowa-city", address: "1 Main", city: "Iowa City", state: "IA", zip: "52240" }));
     expect(d.paymentsMode).toBe("connected");
     expect(d.statementDescriptor).toBeNull();
-    expect(d.receipt).toEqual({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true });
+    expect(d.receipt).toEqual({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true, reviewUrl: null, allowPrint: false });
     expect(PAYMENTS_MODES).toEqual(["connected", "brand", "cash_only"]);
   });
 });
@@ -125,7 +125,7 @@ describe("payout schedule and breakdown", () => {
 
 describe("receipt branding", () => {
   it("falls back to the brand's receipt", () => {
-    expect(receiptBranding(null)).toEqual({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true });
+    expect(receiptBranding(null)).toEqual({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true, reviewUrl: null, allowPrint: false });
     expect(receiptBranding({ headline: "Ray'z Iowa City", showPhone: false })).toMatchObject({ headline: "Ray'z Iowa City", showPhone: false, showAddress: true });
     expect(receiptBranding({ headline: "x".repeat(200) })).toEqual(receiptBranding({}));
   });

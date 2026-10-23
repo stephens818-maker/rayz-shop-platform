@@ -104,7 +104,8 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
     tenders: pays.map((p) => ({ label: tenderLabel(p), cents: p.amountCents })),
     refunds: refs.map((r) => {
       const p = pays.find((x) => x.id === r.paymentId);
-      return { label: `${r.kind === "void" ? "Voided" : "Refunded"} to ${p ? tenderLabel(p) : r.method.replace("_", " ")}`, cents: r.amountCents, at: r.createdAt };
+      const to = p ? tenderLabel(p) : r.method.replace("_", " ");
+      return { label: r.kind === "void" ? `Voided, back to ${to}` : `Refunded to ${to}`, cents: r.amountCents, at: r.createdAt };
     }),
     refundedCents,
     disclosures: pricing.disclosures ?? [],

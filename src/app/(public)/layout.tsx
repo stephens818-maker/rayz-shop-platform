@@ -22,6 +22,10 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
       <main className="mx-auto max-w-5xl px-4 pb-24 pt-6">{children}</main>
       <footer className="border-t border-zinc-200 py-6 text-center text-xs text-zinc-500">
         Ray&apos;z Barber Shop · modern meets retro ·{" "}
+        <Link href="/receipt" className="underline">
+          Receipts
+        </Link>{" "}
+        ·{" "}
         <Link href="/login" className="underline">
           Staff
         </Link>{" "}

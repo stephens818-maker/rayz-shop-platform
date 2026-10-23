@@ -122,6 +122,12 @@ export default async function ReceiptPage({ params }: { params: Promise<{ token:
                   <td className="text-right">-{formatCents(x.cents)}</td>
                 </tr>
               ))}
+              {d.refundedCents > 0 && (
+                <tr className="font-semibold" data-testid="receipt-net">
+                  <td className="pt-2">You paid, after refunds</td>
+                  <td className="pt-2 text-right">{formatCents(d.totalCents - d.refundedCents)}</td>
+                </tr>
+              )}
             </tbody>
           </table>
 
