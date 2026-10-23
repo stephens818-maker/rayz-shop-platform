@@ -29,7 +29,9 @@ export type AlertType =
   | "waitlist_match"
   | "unread_texts"
   | "forgot_clock_out"
-  | "ft_change";
+  | "ft_change"
+  | "late_clock_in"
+  | "clock_affected";
 
 export type Severity = "high" | "medium" | "low";
 
@@ -83,6 +85,8 @@ export const ALERT_LABEL: Record<AlertType, string> = {
   unread_texts: "Unread client texts",
   forgot_clock_out: "Forgotten clock-outs",
   ft_change: "Full time / part time changes",
+  late_clock_in: "Not clocked in for their first client",
+  clock_affected: "Clients booked over a break or clock-out",
 };
 
 export const SEVERITY_ORDER: Record<Severity, number> = { high: 0, medium: 1, low: 2 };

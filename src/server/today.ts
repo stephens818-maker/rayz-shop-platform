@@ -27,6 +27,7 @@ import { closedOn } from "@/domain/location-lifecycle";
 import { type Permission, reportView } from "@/domain/permissions";
 import { payPeriodFor } from "@/domain/payroll";
 import { FT_LABEL } from "@/domain/time-clock";
+import { callInHref } from "@/domain/clock-live";
 import {
   Alert,
   DRAWER_VARIANCE_CENTS,
@@ -43,10 +44,11 @@ import {
   sortAlerts,
 } from "@/domain/today";
 import { formatCents } from "@/lib/money";
-import { LocalDate, addDays, endOfLocalDay, formatDate, formatTime, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, formatDate, formatTime, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { type StaffContext, reasonViewer, reportShopIds } from "./auth/staff";
 import { ACTIVE_STATUSES } from "./booking";
 import { flaggedCount } from "./call-ins";
+import { clockFallout, liveClock } from "./clock-live";
 import { suggestionsFor } from "./inventory/purchasing";
 import { locationSetup } from "./location-setup";
 import { unreadCount } from "./messaging";
@@ -100,6 +102,7 @@ export async function todayAlerts(v: TodayViewer, now: Date = new Date()): Promi
     has("checkout.any") ? openTicketAlerts(ctx) : [],
     has("inbox.view") ? inboxAlerts(ctx) : [],
     has("timesheet.edit") || has("timesheet.approve") || has("payroll.run") ? clockAlerts(ctx) : [],
+    has("calendar.manage") || has("timesheet.edit") ? liveClockAlerts(ctx) : [],
   ]);
   const all = parts.flat();
   const keys = all.map((a) => a.key);
@@ -155,12 +158,20 @@ export async function openChairTime(shopIds: readonly string[], now: Date, minFr
   const out: ChairFacts[] = [];
   const pairs = new Map<string, typeof scheds>();
   for (const s of scheds) pairs.set(`${s.shopId}|${s.staffId}`, [...(pairs.get(`${s.shopId}|${s.staffId}`) ?? []), s]);
+  // A break or an early clock-out isn't open chair time; an early clock-in is.
+  const shopRows = await db.select({ id: shops.id, timeClock: shops.timeClock }).from(shops).where(inArray(shops.id, [...new Set(scheds.map((s) => s.shopId))]));
+  const clocks = new Map(
+    await Promise.all(shopRows.map(async (s) => [s.id, (await liveClock(s, today, [...new Set(scheds.filter((x) => x.shopId === s.id).map((x) => x.staffId))], now)).days] as const)),
+  );
   for (const rows of pairs.values()) {
     const { shopId, staffId, label } = rows[0];
+    const clock = clocks.get(shopId)?.get(staffId);
     const windows = rows.map((r) => ({ start: zonedWallTime(today, r.startMin).toMillis(), end: zonedWallTime(today, r.endMin).toMillis() }));
+    if (clock?.early) windows.push({ start: clock.early.start.getTime(), end: clock.early.end.getTime() });
     const busy = [
       ...appts.filter((a) => a.staffId === staffId).map((a) => ({ start: a.startsAt.getTime(), end: a.endsAt.getTime() })),
       ...blocks.filter((b) => b.staffId === staffId && (!b.shopId || b.shopId === shopId)).map((b) => ({ start: b.startsAt.getTime(), end: b.endsAt.getTime() })),
+      ...(clock?.holds ?? []).map((h) => ({ start: h.start.getTime(), end: h.end.getTime() })),
     ];
     const free = freeIntervals(windows, busy, from);
     if (minutesIn(free) >= minFree) out.push({ shopId, staffId, label, free });
@@ -522,6 +533,51 @@ async function clockAlerts(c: Ctx): Promise<Alert[]> {
       href: "/admin/timesheets",
       linkLabel: "See hours",
     });
+  }
+  return out;
+}
+
+/** From the time clock, live: barbers not clocked in for their first client, and clients booked over a break or after an early clock-out. */
+async function liveClockAlerts(c: Ctx): Promise<Alert[]> {
+  const live = c.open.filter((s) => s.status === "live").map((s) => s.id);
+  const out: Alert[] = [];
+  for (const f of await clockFallout(live, c.now)) {
+    if (f.late.length)
+      out.push({
+        key: `late_clock_in:${f.shopId}:${c.today}:${f.late.map((l) => l.staffId).join(",")}`,
+        type: "late_clock_in",
+        severity: f.late.some((l) => l.minutesToGo <= 0) ? "high" : "medium",
+        shopId: f.shopId,
+        shop: f.shop,
+        title: f.late.length === 1 ? `${f.late[0].label} isn't clocked in for their first client` : `${plural(f.late.length, "barber")} not clocked in for their first client`,
+        detail: "Check they're on the way, or move their first clients.",
+        items: f.late.map((l) => ({
+          label: `${l.label}: ${l.appt.first ?? "Walk-in"} at ${formatTime(l.appt.startsAt)}`,
+          sub: l.minutesToGo > 0 ? `in ${durationLabel(l.minutesToGo)}` : l.minutesToGo === 0 ? "now" : `${durationLabel(-l.minutesToGo)} ago`,
+          href: `/admin/calendar?shop=${f.shopId}&appt=${l.appt.id}`,
+        })),
+        href: `/admin/calendar?shop=${f.shopId}`,
+        linkLabel: "Calendar",
+      });
+    for (const a of f.affected) {
+      const what = a.why === "break" ? `${a.label} is on a break` : `${a.label} clocked out early`;
+      out.push({
+        key: `clock_affected:${f.shopId}:${a.staffId}:${c.today}:${a.start.getTime()}`,
+        type: "clock_affected",
+        severity: "high",
+        shopId: f.shopId,
+        shop: f.shop,
+        title: `${what}: ${plural(a.appts.length, "client")} booked in that time`,
+        detail:
+          a.why === "break"
+            ? `Online booking is held until ${formatTime(a.end)}. Move ${a.appts.length === 1 ? "this client" : "these clients"} or ask them to pick a new time.`
+            : "Online booking is closed for the rest of the day. Move these clients to another barber or ask them to pick a new time.",
+        items: a.appts.map((x) => ({ label: `${formatTime(x.startsAt)} ${x.first ?? "Walk-in"}`, sub: x.code, href: `/admin/calendar?shop=${f.shopId}&appt=${x.id}` })),
+        ...(c.has("callins.mark")
+          ? { href: callInHref(a.staffId, f.shopId, { why: a.why, startMin: localMinutesOf(a.start), endMin: localDateOf(a.end) > c.today ? 24 * 60 : localMinutesOf(a.end) }), linkLabel: "Reassign or rebook" }
+          : { href: `/admin/calendar?shop=${f.shopId}`, linkLabel: "Calendar" }),
+      });
+    }
   }
   return out;
 }

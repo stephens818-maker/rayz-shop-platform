@@ -11,6 +11,8 @@ import { STATUS_LABEL } from "@/domain/staff-time";
 import { listRequests, staffingFor } from "@/server/staff-time";
 import { can, canAny, guardPage, reasonViewer, reportShopIds } from "@/server/auth/staff";
 import { todayAlerts, viewerOf } from "@/server/today";
+import { liveClock } from "@/server/clock-live";
+import { LiveRefresh } from "@/components/live-refresh";
 import { timesFor } from "@/server/service-times";
 import { ServiceTimer } from "./calendar/service-times-panel";
 import { TodayAlerts } from "./today/alerts";
@@ -81,6 +83,20 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const whosIn = shopIds
     .map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "", rows: staffing.filter((r) => r.shopId === id) }))
     .filter((s) => s.rows.length > 0);
+  const clockShops = whosIn.length ? await db.select({ id: shops.id, timeClock: shops.timeClock }).from(shops).where(inArray(shops.id, whosIn.map((s) => s.id))) : [];
+  const clocks = new Map(
+    await Promise.all(clockShops.map(async (s) => [s.id, (await liveClock(s, today, staffing.filter((r) => r.shopId === s.id).map((r) => r.staffId), now)).days] as const)),
+  );
+  const clockOf = (r: (typeof staffing)[number]) => {
+    const d = clocks.get(r.shopId)?.get(r.staffId);
+    if (!d?.status || r.status === "off") return null;
+    if (d.status === "not_in" && r.status === "not_scheduled") return null;
+    const at = d.since ? formatTime(d.since) : "";
+    const text = d.elsewhereShopId ? "Clocked in at another shop" : d.status === "in" ? `Clocked in ${at}` : d.status === "break" ? `On break since ${at}` : d.status === "out" ? `Clocked out ${at}` : "Not in yet";
+    const flag = d.overdueMin !== null ? `${d.overdueMin}m past start` : d.lateMin !== null ? `late ${d.lateMin}m` : d.earlyOutMin !== null ? `left ${d.earlyOutMin}m early` : d.missed.length ? "missed punch" : null;
+    const tone = d.status === "in" ? "text-emerald-700" : d.status === "break" ? "text-amber-700" : d.overdueMin !== null ? "font-semibold text-red-700" : "text-zinc-500";
+    return { text, flag, tone };
+  };
   const blockText = (r: (typeof staffing)[number]) =>
     r.blocks
       .filter((b) => b.category !== "time_off")
@@ -114,6 +130,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           </>
         }
       />
+      <LiveRefresh everyMs={30_000} />
       {sp.denied && <Notice tone="red">You don&apos;t have access to that page.</Notice>}
       <TodayAlerts alerts={alerts} multiShop={shopIds.length > 1} />
       {myDecisions.map((r) => (
@@ -194,20 +211,30 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                   <div key={s.id} className="px-4 py-2">
                     {whosIn.length > 1 && <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">{s.name}</div>}
                     <ul className="space-y-1">
-                      {s.rows.map((r) => (
+                      {s.rows.map((r) => {
+                        const clock = clockOf(r);
+                        return (
                         <li key={r.staffId} className="flex items-baseline justify-between gap-2">
                           <span className="font-medium">{r.label}</span>
                           <span className="text-right text-xs">
-                            <span className={r.status === "off" ? "font-semibold text-violet-700" : r.status === "partly_off" ? "text-violet-700" : r.status === "working" ? "text-emerald-700" : "text-zinc-500"}>
-                              {STATUS_LABEL[r.status]}
-                            </span>
+                            {clock ? (
+                              <span className={clock.tone}>
+                                {clock.text}
+                                {clock.flag && <span className="text-red-700"> · {clock.flag}</span>}
+                              </span>
+                            ) : (
+                              <span className={r.status === "off" ? "font-semibold text-violet-700" : r.status === "partly_off" ? "text-violet-700" : r.status === "working" ? "text-emerald-700" : "text-zinc-500"}>
+                                {STATUS_LABEL[r.status]}
+                              </span>
+                            )}
                             {r.status === "partly_off" && <span className="text-violet-700"> · {offText(r)}</span>}
                             {r.status === "off" && offReason(r) && <span className="text-violet-700"> · {offReason(r)}</span>}
                             {r.pending && <span className="text-amber-700"> · off requested</span>}
                             {r.blockedMin > 0 && <span className="text-zinc-500"> · {blockText(r)}</span>}
                           </span>
                         </li>
-                      ))}
+                        );
+                      })}
                     </ul>
                   </div>
                 ))}
