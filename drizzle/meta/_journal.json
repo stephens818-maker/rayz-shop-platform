@@ -232,6 +232,13 @@
       "when": 1792766400000,
       "tag": "core_0032_clock_blocks",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792770000000,
+      "tag": "core_0033_tip_payouts",
+      "breakpoints": true
     }
   ]
 }

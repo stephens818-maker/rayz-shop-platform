@@ -162,6 +162,20 @@ export const FEATURE_PERMISSIONS = [
   },
   { key: "payroll.rates", group: "Staff", label: "See pay rates and labor cost", hint: "Hourly rates, labor cost and labor % of sales in reports. Without it, reports show hours only." },
   { key: "payroll.export", group: "Staff", label: "Download the payroll export (CSV and the iSolved layout)", hint: "Per pay period, per employee and shop. Every download is logged." },
+  { key: "tips.own", group: "Staff", label: "See their own tips and payouts, and choose how they're paid", hint: "Tips today, pending, paid out and history; Stripe payout setup where the brand allows it." },
+  {
+    key: "tips.approve",
+    group: "Staff",
+    label: "Review and approve tip payouts at their shops",
+    hint: "Build and approve batches, hold or adjust a payout with a reason, and pay cash tips from the drawer at close. Every change is logged.",
+  },
+  {
+    key: "tips.settings",
+    group: "Staff",
+    label: "Change tip payout settings",
+    hint: "Each shop's payout schedule, card settlement delay, default method and card fee netting, and the brand's allowed methods.",
+    brandOnly: true,
+  },
   { key: "settings.shop", group: "Settings and data", label: "Edit shop info, weekday hours, closures and booking rules" },
   { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
   {
@@ -243,6 +257,12 @@ export const REPORTS = [
   },
   { key: "attendance", label: "Attendance", href: "/admin/reports/attendance", hint: "Late clock-ins, early clock-outs, missed punches and forgotten clock-outs against the schedule." },
   { key: "cash_drawer", label: "Cash drawer", href: "/admin/reports/cash-drawer" },
+  {
+    key: "tip_payouts",
+    label: "Tip payouts",
+    href: "/admin/reports/tip-payouts",
+    hint: "Tips earned, refunded and adjusted per shop and employee, and how they were paid: cash, Stripe or payroll, with what's still pending.",
+  },
   { key: "audit_log", label: "Audit log", href: "/admin/audit" },
 ] as const;
 
@@ -350,6 +370,8 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "timesheet.own",
   "timesheet.edit",
   "timesheet.approve",
+  "tips.own",
+  "tips.approve",
 ];
 /** Regional managers also approve big orders and run the shop logins for their shops. */
 const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "logins.manage", "po.approve"];
@@ -420,6 +442,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       "timeclock.punch",
       "timeclock.kiosk",
       "timesheet.own",
+      "tips.own",
       ...reports(["card_vs_cash", "cash_drawer", "staffing"], false),
     ],
     maxDiscountPct: 10,
@@ -429,7 +452,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     name: "Barber",
     description: "Their own column, their own clients and their own sales.",
     defaultScope: "selected",
-    permissions: ["clients.rate", "clients.message", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", ...reports(["my_sales", "service_times"])],
+    permissions: ["clients.rate", "clients.message", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", ...reports(["my_sales", "service_times"])],
     maxDiscountPct: 0,
   },
 ];

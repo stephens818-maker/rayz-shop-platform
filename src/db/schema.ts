@@ -71,6 +71,8 @@ export const brandSettings = pgTable("brand_settings", {
   digest: jsonb("digest").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Time clock rules for the brand (ClockRules in src/domain/time-clock.ts): breaks, forgotten clock-outs, the export layout. */
   timeClock: jsonb("time_clock").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Tip payout policy for the brand (BrandTipPolicy in src/domain/tips.ts): allowed methods, employee choice, instant payouts. */
+  tipPayouts: jsonb("tip_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -152,6 +154,8 @@ export const shops = pgTable("shops", {
   longitude: doublePrecision("longitude"),
   /** How staff may punch here (ShopClockSettings in src/domain/time-clock.ts); missing keys use the defaults. */
   timeClock: jsonb("time_clock").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** When and how this shop pays out tips (ShopTipSettings in src/domain/tips.ts); missing keys use the defaults. */
+  tipPayouts: jsonb("tip_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
@@ -1389,6 +1393,8 @@ export const cashDrawers = pgTable(
     cashSalesCents: integer("cash_sales_cents").notNull().default(0),
     cashRefundsCents: integer("cash_refunds_cents").notNull().default(0),
     payoutsCents: integer("payouts_cents").notNull().default(0),
+    /** Cash tip payouts acknowledged by the employee out of this drawer. */
+    tipPayoutsCents: integer("tip_payouts_cents").notNull().default(0),
     expectedCents: integer("expected_cents").notNull().default(0),
     countedCents: integer("counted_cents"),
     varianceCents: integer("variance_cents"),
@@ -1397,6 +1403,166 @@ export const cashDrawers = pgTable(
     closedAt: ts("closed_at"),
   },
   (t) => [uniqueIndex("cash_drawers_uq").on(t.shopId, t.businessDate)],
+);
+
+// ───────────────────────────── Tip payouts ─────────────────────────────
+
+export type TipBatchKind = "end_of_night" | "daily_delay" | "weekly" | "manual" | "payroll" | "opening";
+export type TipBatchStatus = "draft" | "approved" | "completed" | "cancelled";
+export type TipPayoutMethod = "cash" | "stripe" | "payroll" | "prior";
+export type TipPayoutStatus = "pending" | "held" | "approved" | "processing" | "paid" | "failed" | "cancelled";
+export type TipLedgerKind = "tip" | "refund" | "adjust";
+
+/** A manager reviews and approves each batch: one shop, everything available up to the cutoff date. One draft per shop at a time. */
+export const tipPayoutBatches = pgTable(
+  "tip_payout_batches",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    kind: text("kind").$type<TipBatchKind>().notNull(),
+    cutoffDate: date("cutoff_date").notNull(),
+    status: text("status").$type<TipBatchStatus>().notNull().default("draft"),
+    notes: text("notes"),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+    approvedBy: uuid("approved_by"),
+    approvedAt: ts("approved_at"),
+    completedAt: ts("completed_at"),
+  },
+  (t) => [
+    check("tip_payout_batches_kind", sql`${t.kind} in ('end_of_night', 'daily_delay', 'weekly', 'manual', 'payroll', 'opening')`),
+    check("tip_payout_batches_status", sql`${t.status} in ('draft', 'approved', 'completed', 'cancelled')`),
+    uniqueIndex("tip_payout_batches_one_draft").on(t.shopId).where(sql`${t.status} = 'draft'`),
+    index("tip_payout_batches_shop_idx").on(t.shopId, t.cutoffDate),
+  ],
+);
+
+/**
+ * One employee's payout from one batch. Its tips are the ledger entries pointing at it; a trigger
+ * keeps an entry from moving to another payout, or leaving one that's approved, sent or paid.
+ */
+export const tipPayouts = pgTable(
+  "tip_payouts",
+  {
+    id: id(),
+    batchId: uuid("batch_id").notNull().references(() => tipPayoutBatches.id),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    staffId: uuid("staff_id").notNull().references(() => staff.id),
+    /** prior = tips rung up before tip payouts, already paid outside the platform. */
+    method: text("method").$type<TipPayoutMethod>().notNull(),
+    status: text("status").$type<TipPayoutStatus>().notNull().default("pending"),
+    /** Tips less tip refunds in the payout. */
+    grossCents: integer("gross_cents").notNull().default(0),
+    /** Card processing fee netted from card tips, where the shop nets it. */
+    feeCents: integer("fee_cents").notNull().default(0),
+    /** Manager adjustments, each a ledger entry with a reason. */
+    adjustCents: integer("adjust_cents").notNull().default(0),
+    /** gross − fee + adjust: what leaves the drawer or the Stripe balance. */
+    netCents: integer("net_cents").notNull().default(0),
+    instant: boolean("instant").notNull().default(false),
+    /** Stripe's instant payout fee, estimated and shown before sending; the employee receives net − this. */
+    instantFeeCents: integer("instant_fee_cents").notNull().default(0),
+    stripeAccountId: text("stripe_account_id"),
+    /** The account debit that moved the money from the shop's own connected account to the platform first. */
+    stripeDebitId: text("stripe_debit_id"),
+    stripeTransferId: text("stripe_transfer_id"),
+    stripePayoutId: text("stripe_payout_id"),
+    failureMessage: text("failure_message"),
+    /** Cash: the business date of the drawer it came out of. */
+    drawerDate: date("drawer_date"),
+    acknowledgedAt: ts("acknowledged_at"),
+    ackMethod: text("ack_method").$type<"pin" | "name">(),
+    ackName: text("ack_name"),
+    holdReason: text("hold_reason"),
+    heldBy: uuid("held_by"),
+    heldAt: ts("held_at"),
+    /** Payroll: the pay period it was paid in. */
+    payrollPeriodStart: date("payroll_period_start"),
+    sentAt: ts("sent_at"),
+    paidAt: ts("paid_at"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("tip_payouts_method", sql`${t.method} in ('cash', 'stripe', 'payroll', 'prior')`),
+    check("tip_payouts_status", sql`${t.status} in ('pending', 'held', 'approved', 'processing', 'paid', 'failed', 'cancelled')`),
+    check("tip_payouts_ack", sql`${t.ackMethod} is null or ${t.ackMethod} in ('pin', 'name')`),
+    check("tip_payouts_held", sql`${t.status} <> 'held' or ${t.holdReason} is not null`),
+    uniqueIndex("tip_payouts_batch_staff_uq").on(t.batchId, t.staffId),
+    uniqueIndex("tip_payouts_transfer_uq").on(t.stripeTransferId),
+    uniqueIndex("tip_payouts_payout_uq").on(t.stripePayoutId),
+    index("tip_payouts_staff_idx").on(t.staffId, t.createdAt),
+    index("tip_payouts_drawer_idx").on(t.shopId, t.drawerDate).where(sql`${t.method} = 'cash'`),
+  ],
+);
+
+/**
+ * Every tip per employee, shop and ticket, append-only: a tip per payment, a reversal per refund or
+ * void that gave tip back, and manager adjustments. Synced from payments and refunds (syncTipLedger).
+ * Amounts and fees are signed; business_date is the sale's for tips and the refund's for reversals, as payroll counts them.
+ */
+export const tipLedger = pgTable(
+  "tip_ledger",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    staffId: uuid("staff_id").notNull().references(() => staff.id),
+    saleId: uuid("sale_id").references(() => sales.id),
+    paymentId: uuid("payment_id").references(() => payments.id),
+    refundId: uuid("refund_id").references(() => refunds.id),
+    kind: text("kind").$type<TipLedgerKind>().notNull(),
+    method: text("method").$type<"card" | "cash" | "gift_card" | "adjust">().notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    /** This tip's share of the card processing fee, pro rata to the charge; applied only where the shop nets it. */
+    feeCents: integer("fee_cents").notNull().default(0),
+    businessDate: date("business_date").notNull(),
+    payoutId: uuid("payout_id").references(() => tipPayouts.id),
+    reason: text("reason"),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("tip_ledger_kind", sql`${t.kind} in ('tip', 'refund', 'adjust')`),
+    check("tip_ledger_method", sql`${t.method} in ('card', 'cash', 'gift_card', 'adjust')`),
+    check(
+      "tip_ledger_source",
+      sql`(${t.kind} = 'tip' and ${t.paymentId} is not null) or (${t.kind} = 'refund' and ${t.refundId} is not null) or (${t.kind} = 'adjust' and ${t.reason} is not null)`,
+    ),
+    uniqueIndex("tip_ledger_payment_uq").on(t.paymentId).where(sql`${t.kind} = 'tip'`),
+    uniqueIndex("tip_ledger_refund_uq").on(t.refundId).where(sql`${t.kind} = 'refund'`),
+    index("tip_ledger_staff_date_idx").on(t.staffId, t.businessDate),
+    index("tip_ledger_shop_date_idx").on(t.shopId, t.businessDate),
+    index("tip_ledger_payout_idx").on(t.payoutId),
+    index("tip_ledger_unpaid_idx").on(t.shopId, t.staffId).where(sql`${t.payoutId} is null`),
+  ],
+);
+
+/**
+ * How each employee is paid tips, and their own Stripe Connect Express account for card or bank
+ * payouts. Onboarding is Stripe-hosted: no bank or card details are ever stored here.
+ */
+export const staffPayoutAccounts = pgTable(
+  "staff_payout_accounts",
+  {
+    staffId: uuid("staff_id")
+      .primaryKey()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    /** Their choice where the brand lets employees choose; null follows the shop's default. */
+    method: text("method").$type<"cash" | "stripe" | "payroll">(),
+    /** Ask for instant payouts to a debit card where eligible (Stripe's fee is shown first). */
+    instant: boolean("instant").notNull().default(false),
+    stripeAccountId: text("stripe_account_id").unique(),
+    simulated: boolean("simulated").notNull().default(false),
+    payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
+    detailsSubmitted: boolean("details_submitted").notNull().default(false),
+    /** Has a debit card that takes instant payouts. */
+    instantEligible: boolean("instant_eligible").notNull().default(false),
+    requirementsDue: jsonb("requirements_due").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    disabledReason: text("disabled_reason"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [check("staff_payout_accounts_method", sql`${t.method} is null or ${t.method} in ('cash', 'stripe', 'payroll')`)],
 );
 
 // ───────────────────────────── Loyalty ─────────────────────────────
