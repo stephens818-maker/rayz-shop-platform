@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Slot, SlotPicker } from "@/components/slot-picker";
 import { Button, Field, Input, cx } from "@/components/ui";
 import { ApiError, api, dollars, fmtDay, fmtTime, getTokens } from "@/lib/api-client";
+import { EMAIL_CONSENT_TEXT, SMS_CONSENT_TEXT, consentFields, initialBookingForm } from "@/domain/booking-consent";
 
 interface Service {
   id: string;
@@ -46,7 +47,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
   const [barber, setBarber] = useState<string>(params.get("barber") ?? "any");
   const [slot, setSlot] = useState<Slot | null>(null);
   const [step, setStep] = useState<Step>("service");
-  const [form, setForm] = useState({ firstName: "", lastName: "", phone: "", email: "", smsOptIn: true, emailOptIn: false });
+  const [form, setForm] = useState(initialBookingForm);
   const [signedIn, setSignedIn] = useState<{ firstName: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -107,7 +108,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
           addonIds,
           barberId: barber === "any" ? null : barber,
           startsAt: slot.startsAt,
-          customer: signedIn ? undefined : { firstName: form.firstName, lastName: form.lastName || null, phone: form.phone, email: form.email || null, smsOptIn: form.smsOptIn, ...(form.emailOptIn ? { emailOptIn: true } : {}) },
+          customer: signedIn ? undefined : { firstName: form.firstName, lastName: form.lastName || null, phone: form.phone, email: form.email || null, ...consentFields(form) },
         }),
       });
       router.push(`/a/${r.appointment.code}?new=1`);
@@ -257,14 +258,14 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
               <Field label="Email (optional)">
                 <Input type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
               </Field>
-              <label className="flex items-center gap-2 text-sm text-zinc-600 sm:col-span-2">
-                <input type="checkbox" checked={form.smsOptIn} onChange={(e) => setForm({ ...form, smsOptIn: e.target.checked })} />
-                Text me a confirmation and reminders (24 hours and 2 hours before)
+              <label className="flex items-start gap-2 text-sm text-zinc-600 sm:col-span-2">
+                <input type="checkbox" className="mt-1" checked={form.smsOptIn} onChange={(e) => setForm({ ...form, smsOptIn: e.target.checked })} />
+                <span>{SMS_CONSENT_TEXT}</span>
               </label>
               {form.email.trim() && (
                 <label className="flex items-center gap-2 text-sm text-zinc-600 sm:col-span-2">
                   <input type="checkbox" checked={form.emailOptIn} onChange={(e) => setForm({ ...form, emailOptIn: e.target.checked })} />
-                  Email me confirmations and reminders too
+                  {EMAIL_CONSENT_TEXT}
                 </label>
               )}
             </div>
