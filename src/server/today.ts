@@ -27,7 +27,7 @@ import { closedOn } from "@/domain/location-lifecycle";
 import { type Permission, reportView } from "@/domain/permissions";
 import { payPeriodFor } from "@/domain/payroll";
 import { FT_LABEL } from "@/domain/time-clock";
-import { callInHref } from "@/domain/clock-live";
+import { callInHref, type LiveStatus } from "@/domain/clock-live";
 import {
   Alert,
   DRAWER_VARIANCE_CENTS,
@@ -129,6 +129,8 @@ export interface ChairFacts {
   staffId: string;
   label: string;
   free: Interval[];
+  /** Where they stand on the time clock right now. */
+  clock: LiveStatus | null;
 }
 
 /** Each barber working today at these shops, with their open stretches left after `now`. */
@@ -174,7 +176,7 @@ export async function openChairTime(shopIds: readonly string[], now: Date, minFr
       ...(clock?.holds ?? []).map((h) => ({ start: h.start.getTime(), end: h.end.getTime() })),
     ];
     const free = freeIntervals(windows, busy, from);
-    if (minutesIn(free) >= minFree) out.push({ shopId, staffId, label, free });
+    if (minutesIn(free) >= minFree) out.push({ shopId, staffId, label, free, clock: clock?.status ?? null });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
 }
@@ -254,7 +256,9 @@ async function chairAlerts(c: Ctx): Promise<Alert[]> {
           : undefined,
     });
     const w = waiting.find((x) => x.shopId === s.id)?.n ?? 0;
-    if (w)
+    // Someone on a break or clocked out can't take a walk-in now.
+    const takers = here.filter((x) => x.clock !== "break" && x.clock !== "out");
+    if (w && takers.length)
       out.push({
         key: `waitlist_match:${s.id}:${c.today}`,
         type: "waitlist_match",
@@ -262,7 +266,7 @@ async function chairAlerts(c: Ctx): Promise<Alert[]> {
         shopId: s.id,
         shop: s.name,
         title: `${plural(w, "client")} on the waitlist while chairs are open`,
-        detail: `${here.map((x) => x.label).join(", ")} ${here.length === 1 ? "has" : "have"} open time now.`,
+        detail: `${takers.map((x) => (x.clock === "not_in" ? `${x.label} (not clocked in yet)` : x.label)).join(", ")} ${takers.length === 1 ? "has" : "have"} open time today.`,
         href: "/admin/walk-ins",
         linkLabel: "Walk-ins",
       });
