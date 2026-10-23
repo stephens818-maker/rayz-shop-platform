@@ -670,6 +670,7 @@ async function main() {
   }
 
   await seedPayroll({ now, staffByKey, shopBySlug, scheduleRows });
+  await seedServiceTimes({ now, appts, items, staffByKey });
 
   console.log("Seed complete.");
   console.log(`  Logins (password: ${DEMO_PASSWORD}):`);
@@ -682,6 +683,71 @@ async function main() {
   console.log("    manager.moline@rayz.test  Shop Manager, Moline");
   console.log("    kat@rayz.test        Barber at Moline and Silvis, Shop Manager at Rock Island (one shop at a time)");
   console.log(`    <shop>@rayz.test     Shop login (front desk) for one shop: ${SHOPS.map((s) => s.slug).join(", ")}`);
+}
+
+/**
+ * Service timings on the sample history: arrival, Start, Finish (or checkout standing in for it) and
+ * checkout. Makenna runs long and Delaney runs short, so the report has suggestions to accept, and a
+ * few timers were left running. Uses its own hash rather than the shared random stream, so nothing
+ * seeded above changes.
+ */
+async function seedServiceTimes(o: {
+  now: Date;
+  appts: (typeof t.appointments.$inferInsert)[];
+  items: { appointmentId: string; kind: string }[];
+  staffByKey: Map<string, typeof t.staff.$inferSelect>;
+}) {
+  const { now, appts, items, staffByKey } = o;
+  const u = (i: number, salt: number) => {
+    let x = (Math.imul(i + 1, 2654435761) ^ Math.imul(salt + 1, 40503)) >>> 0;
+    x = Math.imul(x ^ (x >>> 16), 2246822507) >>> 0;
+    x = Math.imul(x ^ (x >>> 13), 3266489909) >>> 0;
+    return ((x ^ (x >>> 16)) >>> 0) / 4294967296;
+  };
+  const pace = new Map([
+    [staffByKey.get("makenna")!.id, 1.32],
+    [staffByKey.get("delaney")!.id, 0.7],
+  ]);
+  const withAddon = new Set(items.filter((x) => x.kind === "addon").map((x) => x.appointmentId));
+  const minute = 60_000;
+  const rows: (typeof t.appointmentTimes.$inferInsert)[] = [];
+  appts.forEach((a, i) => {
+    if (a.status !== "completed" && !(a.status === "in_service" && a.startsAt < now)) return;
+    if (a.status === "completed" && u(i, 1) < 0.12) {
+      rows.push({ appointmentId: a.id!, checkedOutAt: new Date(a.endsAt.getTime() + 3 * minute), checkedOutBy: a.staffId });
+      return;
+    }
+    const walkIn = a.source === "walk_in";
+    const arrived = walkIn || u(i, 2) < 0.6 ? new Date(a.startsAt.getTime() - Math.round((walkIn ? 5 + u(i, 3) * 20 : 2 + u(i, 3) * 10) * minute)) : null;
+    const started = new Date(a.startsAt.getTime() + Math.round((u(i, 4) * 10 - 2) * minute));
+    const begin = arrived && started < arrived ? arrived : started;
+    if (a.status === "in_service") {
+      rows.push({ appointmentId: a.id!, arrivedAt: arrived, arrivedBy: arrived ? a.staffId : null, startedAt: begin, startedBy: a.staffId });
+      return;
+    }
+    const booked = (a.endsAt.getTime() - a.startsAt.getTime()) / minute;
+    const base = withAddon.has(a.id!) ? 1 : (pace.get(a.staffId) ?? 1);
+    const r = u(i, 5);
+    const factor = r < 0.006 ? 4 : r < 0.01 ? 0.15 : base * (0.85 + u(i, 6) * 0.3);
+    const actual = Math.max(3, Math.round(booked * factor));
+    const viaCheckout = u(i, 7) < 0.3;
+    const checkedOut = new Date(begin.getTime() + (actual + 1 + Math.round(u(i, 8) * 4)) * minute);
+    const finished = viaCheckout ? checkedOut : new Date(begin.getTime() + actual * minute);
+    rows.push({
+      appointmentId: a.id!,
+      arrivedAt: arrived,
+      arrivedBy: arrived ? a.staffId : null,
+      startedAt: begin,
+      startedBy: a.staffId,
+      finishedAt: finished,
+      finishedBy: a.staffId,
+      finishedVia: viaCheckout ? "checkout" : "finish",
+      checkedOutAt: checkedOut,
+      checkedOutBy: a.staffId,
+    });
+  });
+  await chunked(rows, 2000, (c) => db.insert(t.appointmentTimes).values(c));
+  console.log(`  ${rows.length} service timings (Makenna runs long, Delaney short)`);
 }
 
 /**
