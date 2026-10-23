@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { shopClosures, shopHours, shops, terminalReaders } from "@/db/schema";
+import { ReceiptBrandingSchema, receiptBranding } from "@/domain/connect";
 import { US_TIMEZONES } from "@/domain/location-lifecycle";
 import { checkSlug } from "@/server/location-admin";
 import { MAX_CARD_FEE_RATE } from "@/domain/checkout";
@@ -212,6 +213,21 @@ export async function setReaderActiveAction(id: string, active: boolean) {
     assertShopAccess(ctx, r.shopId);
     await db.update(terminalReaders).set({ active }).where(eq(terminalReaders.id, id));
     await audit(ctx.actor, active ? "reader.restore" : "reader.retire", "terminal_reader", id, { label: r.label }, r.shopId);
+    revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+/** What this shop's printed and emailed receipts show. */
+export async function saveReceiptAction(shopId: string, raw: z.input<typeof ReceiptBrandingSchema>) {
+  return safe(async () => {
+    const ctx = await authorize("settings.shop");
+    assertShopAccess(ctx, shopId);
+    const v = ReceiptBrandingSchema.parse(raw);
+    const values = { ...v, headline: v.headline?.trim() || null, footer: v.footer?.trim() || null };
+    const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { receipt: true } });
+    await db.update(shops).set({ receipt: values }).where(eq(shops.id, shopId));
+    await audit(ctx.actor, "shop.receipt", "shop", shopId, { before: before ? receiptBranding(before.receipt) : null, after: values }, shopId);
     revalidatePath("/admin/settings");
     return null;
   });

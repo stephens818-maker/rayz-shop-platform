@@ -1,10 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Select, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { ACCOUNT_STATE_LABEL, AccountState, OWNER_KIND_LABEL, PAYMENTS_STEP_TITLE, requirementLabel } from "@/domain/connect";
+import {
+  ACCOUNT_STATE_LABEL,
+  AccountState,
+  OWNER_KIND_LABEL,
+  PAYMENTS_MODES,
+  PAYMENTS_MODE_HINT,
+  PAYMENTS_MODE_LABEL,
+  PAYMENTS_STEP_TITLE,
+  descriptorSuffix,
+  requirementLabel,
+  statementDescriptorProblem,
+  type PaymentsMode,
+} from "@/domain/connect";
 import {
   archiveLocationAction,
   closeLocationAction,
@@ -14,6 +27,8 @@ import {
   expressDashboardAction,
   refreshPaymentsAccountAction,
   saveOwnerEntityAction,
+  saveStatementDescriptorAction,
+  setPaymentsModeAction,
   setShopOwnerAction,
   startPaymentsOnboardingAction,
 } from "./actions";
@@ -80,19 +95,35 @@ export function PaymentsPanel({
   shopName,
   state,
   mode,
+  paymentsMode,
+  canBank,
   account,
   fees,
   expired,
+  descriptor,
+  descriptorPrefix,
+  payoutSchedule,
+  terminalLocationId,
+  readers,
 }: {
   shopId: string;
   shopName: string;
   state: AccountState;
   mode: "stripe" | "simulator";
+  paymentsMode: PaymentsMode;
+  canBank: boolean;
   account: { stripeAccountId: string; simulated: boolean; requirementsDue: string[]; disabledReason: string | null; chargesEnabled: boolean; payoutsEnabled: boolean } | null;
   fees: { keyed: string; terminal: string };
   expired: boolean;
+  descriptor: string | null;
+  descriptorPrefix: string;
+  payoutSchedule: string;
+  terminalLocationId: string | null;
+  readers: number;
 }) {
   const { pending, error, run } = useAction();
+  const [choice, setChoice] = useState<PaymentsMode>(paymentsMode);
+  const [desc, setDesc] = useState(descriptor ?? "");
   const go = (fn: () => ReturnType<typeof startPaymentsOnboardingAction>) =>
     run(fn, (d) => {
       if (/^https?:\/\//.test(d.url)) window.location.assign(d.url);
@@ -101,58 +132,158 @@ export function PaymentsPanel({
   const due = [...new Set((account?.requirementsDue ?? []).map(requirementLabel))];
   const startLabel =
     state === "not_started" || state === "disconnected" ? "Set up card payments with Stripe" : account?.chargesEnabled ? "Add the missing details" : "Continue Stripe onboarding";
+  const descIssue = desc.trim() ? statementDescriptorProblem(desc.trim().toUpperCase()) : null;
+  const suffix = paymentsMode === "brand" && descriptor ? descriptorSuffix(descriptor, descriptorPrefix) : null;
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <AccountStateBadge state={state} />
-        {account && <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">{account.stripeAccountId}</code>}
-        {mode === "simulator" && <Badge tone="violet">Simulator: no Stripe keys yet</Badge>}
-      </div>
-      {expired && <p className="text-sm text-amber-800">That onboarding link expired or was already used. Continue to get a fresh one.</p>}
-      <p className="text-sm text-zinc-600">
-        {shopName} gets its own Stripe account. Card charges are made by Ray&apos;z on {shopName}&apos;s behalf and settle there, with tips and surcharges; refunds come back out of
-        it, and payouts go to {shopName}&apos;s bank. Clients&apos; saved cards work at every shop. Processing is passed on at {fees.keyed} keyed or online and {fees.terminal} on
-        the card reader, and isn&apos;t returned on refunds.
-      </p>
-      {due.length > 0 && state !== "enabled" && (
-        <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
-          <div className="font-medium">Stripe still needs:</div>
-          <ul className="mt-1 list-disc pl-5">
-            {due.map((d) => (
-              <li key={d}>{d}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {account?.chargesEnabled && !account.payoutsEnabled && <p className="text-sm text-amber-800">Cards work, but payouts wait until Stripe has everything above.</p>}
-      <div className="flex flex-wrap gap-2">
-        {state !== "enabled" && (
-          <Button disabled={pending} onClick={() => go(() => startPaymentsOnboardingAction(shopId))}>
-            {pending ? "Opening Stripe…" : startLabel}
-          </Button>
-        )}
-        {account && mode === "stripe" && !account.simulated && (
-          <>
-            <Button variant="secondary" disabled={pending} onClick={() => run(() => refreshPaymentsAccountAction(shopId))}>
-              Refresh status
+    <div className="space-y-4">
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium text-zinc-800">Where {shopName}&apos;s card money goes</legend>
+        {PAYMENTS_MODES.map((m) => (
+          <label key={m} className={cx("flex items-start gap-2 rounded-lg border p-2.5 text-sm", choice === m ? "border-brand-500 bg-brand-50" : "border-zinc-200", !canBank && "opacity-75")}>
+            <input type="radio" name={`mode-${shopId}`} className="mt-1" disabled={!canBank || pending} checked={choice === m} onChange={() => setChoice(m)} />
+            <span>
+              <span className="font-medium text-zinc-900">{PAYMENTS_MODE_LABEL[m]}</span>
+              {m === paymentsMode && <Badge className="ml-2">Current</Badge>}
+              <span className="block text-zinc-500">{PAYMENTS_MODE_HINT[m]}</span>
+            </span>
+          </label>
+        ))}
+        {canBank && choice !== paymentsMode && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" disabled={pending} onClick={() => run(() => setPaymentsModeAction(shopId, choice))}>
+              Switch to {PAYMENTS_MODE_LABEL[choice].toLowerCase()}
             </Button>
-            {state !== "not_started" && state !== "onboarding" && (
-              <Button
-                variant="ghost"
-                disabled={pending}
-                onClick={() =>
-                  run(
-                    () => expressDashboardAction(shopId),
-                    (d) => window.open(d.url, "_blank", "noopener"),
-                  )
-                }
-              >
-                Open the shop&apos;s Stripe dashboard
+            <Button size="sm" variant="ghost" onClick={() => setChoice(paymentsMode)}>
+              Cancel
+            </Button>
+            <span className="text-xs text-zinc-500">
+              New charges follow the switch. Earlier charges stay where they settled, and their refunds come out of that account.
+              {choice === "connected" && state !== "enabled" && " Cards stop until Stripe approves the shop's own account."}
+            </span>
+          </div>
+        )}
+        {!canBank && <p className="text-xs text-zinc-500">Only the Brand Owner, or someone they&apos;ve given the banking permission, can connect or change this.</p>}
+      </fieldset>
+
+      {paymentsMode === "connected" && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <AccountStateBadge state={state} />
+            {account && <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">{account.stripeAccountId}</code>}
+            {mode === "simulator" && <Badge tone="violet">Simulator: no Stripe keys yet</Badge>}
+          </div>
+          {expired && <p className="text-sm text-amber-800">That onboarding link expired or was already used. Continue to get a fresh one.</p>}
+          <p className="text-sm text-zinc-600">
+            {shopName} gets its own Stripe account. Stripe&apos;s own pages collect its legal entity, EIN, owner identity and bank account; Ray&apos;z keeps only the account ID
+            and the status Stripe reports. Card charges are made by Ray&apos;z on {shopName}&apos;s behalf and settle there, with tips and surcharges; refunds come back out of it,
+            and payouts go to {shopName}&apos;s bank. Clients&apos; saved cards work at every shop. Processing is passed on at {fees.keyed} keyed or online and {fees.terminal} on
+            the card reader, and isn&apos;t returned on refunds.
+          </p>
+          {due.length > 0 && state !== "enabled" && (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+              <div className="font-medium">Stripe still needs:</div>
+              <ul className="mt-1 list-disc pl-5">
+                {due.map((d) => (
+                  <li key={d}>{d}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {account?.chargesEnabled && !account.payoutsEnabled && <p className="text-sm text-amber-800">Cards work, but payouts wait until Stripe has everything above.</p>}
+          <div className="flex flex-wrap gap-2">
+            {state !== "enabled" && canBank && (
+              <Button disabled={pending} onClick={() => go(() => startPaymentsOnboardingAction(shopId))}>
+                {pending ? "Opening Stripe…" : startLabel}
               </Button>
             )}
-          </>
-        )}
-      </div>
+            {account && mode === "stripe" && !account.simulated && (
+              <>
+                <Button variant="secondary" disabled={pending} onClick={() => run(() => refreshPaymentsAccountAction(shopId))}>
+                  Refresh status
+                </Button>
+                {canBank && state !== "not_started" && state !== "onboarding" && (
+                  <Button
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() =>
+                      run(
+                        () => expressDashboardAction(shopId),
+                        (d) => window.open(d.url, "_blank", "noopener"),
+                      )
+                    }
+                  >
+                    Open the shop&apos;s Stripe dashboard (bank, payouts)
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {paymentsMode === "brand" && (
+        <p className="text-sm text-zinc-600">
+          {shopName}&apos;s card sales, tips and surcharges settle in the brand&apos;s main Stripe account and are paid out to the brand&apos;s bank with the other brand-account
+          shops. Each charge is still tagged with {shopName}, so its sales, refunds and fees report on their own. Processing is {fees.keyed} keyed or online and {fees.terminal} on
+          the card reader.
+        </p>
+      )}
+      {paymentsMode === "cash_only" && (
+        <p className="text-sm text-zinc-600">
+          {shopName} takes cash and gift cards only. Checkout won&apos;t offer cards until you switch it to the brand&apos;s account or its own.
+        </p>
+      )}
+
+      {paymentsMode !== "cash_only" && (
+        <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500">Payout schedule (from Stripe)</dt>
+            <dd className="text-zinc-800">{payoutSchedule}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500">Stripe Terminal location</dt>
+            <dd className="text-zinc-800">
+              {terminalLocationId ? <code className="text-xs">{terminalLocationId}</code> : "Created when the first reader is registered"} · {readers} reader{readers === 1 ? "" : "s"}
+            </dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500">Statement descriptor</dt>
+            <dd className="text-zinc-800">
+              {canBank ? (
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <Input
+                    aria-label="Statement descriptor"
+                    maxLength={22}
+                    className="w-64 uppercase"
+                    placeholder={paymentsMode === "brand" ? descriptorPrefix : "Stripe uses the business name"}
+                    value={desc}
+                    onChange={(e) => setDesc(e.target.value)}
+                  />
+                  <Button size="sm" variant="secondary" disabled={pending || !!descIssue || desc.trim().toUpperCase() === (descriptor ?? "")} onClick={() => run(() => saveStatementDescriptorAction(shopId, desc || null))}>
+                    Save
+                  </Button>
+                  {descIssue && <span className="text-sm text-red-700">{descIssue}</span>}
+                </div>
+              ) : (
+                descriptor ?? <span className="text-zinc-400">Not set</span>
+              )}
+              {paymentsMode === "brand" && (
+                <span className="mt-1 block text-xs text-zinc-500">
+                  Clients see {descriptorPrefix}* {suffix ?? "and nothing after it"} on their statement.
+                </span>
+              )}
+            </dd>
+          </div>
+        </dl>
+      )}
+      <p className="text-sm">
+        <Link className="font-medium text-brand-700 hover:underline" href={`/admin/settings?shop=${shopId}`}>
+          Card fee, tip buttons, card readers and receipts
+        </Link>
+        <span className="text-zinc-400"> · </span>
+        <Link className="font-medium text-brand-700 hover:underline" href={`/admin/payouts?shop=${shopId}`}>
+          Payouts and fees
+        </Link>
+      </p>
       <Problem error={error} />
     </div>
   );
@@ -308,7 +439,7 @@ export function LifecyclePanel({
             {waiting.length > 0 && <p className="text-sm text-amber-700">Still to do before go-live: {waiting.join(", ")}.</p>}
             {!paymentsReady && (
               <label className="flex items-center gap-2 text-sm text-zinc-700">
-                <input type="checkbox" checked={cashOnly} onChange={(e) => setCashOnly(e.target.checked)} /> Open cash-only for now (cards start once Stripe approves the shop)
+                <input type="checkbox" checked={cashOnly} onChange={(e) => setCashOnly(e.target.checked)} /> Open cash-only for now (cards start on their own once Stripe enables charges)
               </label>
             )}
             <Button disabled={pending || waiting.length > 0} onClick={() => run(() => goLiveAction(shop.id, cashOnly))}>

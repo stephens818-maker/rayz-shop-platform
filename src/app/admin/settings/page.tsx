@@ -8,15 +8,16 @@ import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { getLoyaltyConfig } from "@/server/loyalty";
 import { brandInterval } from "@/server/timing";
 import { ShopTimingCard } from "../booking-times/editors";
-import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor, ReadersEditor, ShopInfoEditor } from "./editors";
+import { receiptBranding } from "@/domain/connect";
+import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor, ReadersEditor, ReceiptEditor, ShopInfoEditor } from "./editors";
 
 export const metadata: Metadata = { title: "Settings" };
 
-export default async function SettingsPage() {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ shop?: string }> }) {
   const ctx = await guardPage("/admin/settings");
   const shopSettings = can(ctx, "settings.shop");
   const brand = can(ctx, "settings.brand");
-  const shopId = workingShopId(ctx);
+  const shopId = workingShopId(ctx, (await searchParams).shop);
   if (!shopId) return <Empty title="No shop selected" />;
   const [shop, hours, closures, loyalty, brandMinutes, readers] = await Promise.all([
     db.query.shops.findFirst({ where: eq(shops.id, shopId) }),
@@ -29,7 +30,7 @@ export default async function SettingsPage() {
   if (!shop) return <Empty title="Shop not found" />;
   return (
     <div className="mx-auto max-w-5xl space-y-5">
-      <PageHeader title={`${shop.name} settings`} subtitle={ctx.currentShopId === null ? "All-shops view: editing the first shop. Use the switcher to pick another." : undefined} />
+      <PageHeader title={`${shop.name} settings`} subtitle={ctx.currentShopId === null && shop.id === ctx.shopIds[0] ? "All-shops view: editing the first shop. Use the switcher to pick another." : undefined} />
       {!shop.taxRatesVerified && <Notice>Tax rates for {shop.name} are placeholders. Confirm the local rates with your accountant, enter them below and tick &ldquo;verified&rdquo;.</Notice>}
       {shopSettings && (
       <ShopInfoEditor
@@ -75,7 +76,15 @@ export default async function SettingsPage() {
       />
       {shopSettings && <HoursEditor shopId={shop.id} canSetSunday={brand} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />}
       {shopSettings && <ClosuresEditor shopId={shop.id} multiShop={ctx.shopIds.length > 1} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />}
-      {shopSettings && <ReadersEditor shopId={shop.id} readers={readers.map((r) => ({ id: r.id, label: r.label, serialNumber: r.serialNumber, stripeReaderId: r.stripeReaderId, active: r.active }))} />}
+      {shopSettings && (
+        <ReadersEditor
+          shopId={shop.id}
+          shopName={shop.name}
+          terminalLocationId={shop.stripeTerminalLocationId}
+          readers={readers.map((r) => ({ id: r.id, label: r.label, serialNumber: r.serialNumber, stripeReaderId: r.stripeReaderId, deviceType: r.deviceType, stripeLocationId: r.stripeLocationId, active: r.active }))}
+        />
+      )}
+      {shopSettings && <ReceiptEditor shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} />}
       {brand && <LoyaltyEditor initial={loyalty} />}
       {can(ctx, "locations.setup") && (
         <Card>

@@ -5,7 +5,19 @@ import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { LoyaltyConfig } from "@/domain/loyalty";
 import { SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
-import { addClosureAction, addReaderAction, removeClosureAction, saveHoursAction, saveLoyaltyAction, saveShopInfoAction, saveShopMoneyAction, saveShopProfileAction, setReaderActiveAction } from "./actions";
+import { registerReaderAction } from "../setup/actions";
+import {
+  addClosureAction,
+  addReaderAction,
+  removeClosureAction,
+  saveHoursAction,
+  saveLoyaltyAction,
+  saveReceiptAction,
+  saveShopInfoAction,
+  saveShopMoneyAction,
+  saveShopProfileAction,
+  setReaderActiveAction,
+} from "./actions";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -337,18 +349,29 @@ export function ProfileEditor({
   );
 }
 
-export function ReadersEditor({ shopId, readers }: { shopId: string; readers: { id: string; label: string; serialNumber: string | null; stripeReaderId: string | null; active: boolean }[] }) {
+type ReaderRow = { id: string; label: string; serialNumber: string | null; stripeReaderId: string | null; deviceType: string | null; stripeLocationId: string | null; active: boolean };
+
+export function ReadersEditor({ shopId, shopName, terminalLocationId, readers }: { shopId: string; shopName: string; terminalLocationId: string | null; readers: ReaderRow[] }) {
   const { pending, msg, save } = useSave();
-  const [v, setV] = useState({ label: "", serialNumber: "", stripeReaderId: "" });
+  const [v, setV] = useState({ label: "", serialNumber: "", registrationCode: "" });
+  const [manual, setManual] = useState(false);
+  const [m, setM] = useState({ label: "", serialNumber: "", stripeReaderId: "" });
   return (
     <Card>
-      <CardHeader title="Card readers" subtitle="Stripe Terminal readers at this shop. Register each in Stripe and paste its reader ID (tmr_…) here." />
+      <CardHeader
+        title="Card readers"
+        subtitle={`Stripe Terminal readers at ${shopName}, registered to its own Terminal location${terminalLocationId ? ` (${terminalLocationId})` : ""} so their payments land in its books.`}
+      />
       <ul className="divide-y divide-zinc-100">
         {readers.map((r) => (
           <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm">
             <span className={r.active ? "text-zinc-900" : "text-zinc-400 line-through"}>
               {r.label}
-              <span className="ml-2 text-xs text-zinc-500">{[r.serialNumber, r.stripeReaderId ?? "not registered yet"].filter(Boolean).join(" · ")}</span>
+              <span className="ml-2 text-xs text-zinc-500">
+                {[r.serialNumber, r.stripeReaderId ?? "not registered yet", r.deviceType?.replace(/_/g, " "), r.stripeLocationId && r.stripeLocationId !== terminalLocationId ? `location ${r.stripeLocationId}` : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
             </span>
             <Button size="sm" variant="ghost" disabled={pending} onClick={() => save(() => setReaderActiveAction(r.id, !r.active))}>
               {r.active ? "Retire" : "Bring back"}
@@ -357,19 +380,86 @@ export function ReadersEditor({ shopId, readers }: { shopId: string; readers: { 
         ))}
         {readers.length === 0 && <li className="px-4 py-3 text-sm text-zinc-500">No readers yet. Cards can still be keyed in at checkout.</li>}
       </ul>
-      <div className="flex flex-wrap gap-2 border-t border-zinc-100 p-4">
-        <Input className="w-48" placeholder="Front counter" aria-label="Reader name" value={v.label} onChange={(e) => setV({ ...v, label: e.target.value })} />
-        <Input className="w-44" placeholder="Serial number" aria-label="Serial number" value={v.serialNumber} onChange={(e) => setV({ ...v, serialNumber: e.target.value })} />
-        <Input className="w-52" placeholder="Stripe reader ID" aria-label="Stripe reader ID" value={v.stripeReaderId} onChange={(e) => setV({ ...v, stripeReaderId: e.target.value })} />
-        <Button variant="secondary" disabled={pending || !v.label.trim()} onClick={() => save(async () => {
-          const r = await addReaderAction(shopId, v);
-          if (r.ok) setV({ label: "", serialNumber: "", stripeReaderId: "" });
-          return r;
-        }, "Reader added")}>
-          Add reader
-        </Button>
-        {msg && <span className={msg.ok ? "self-center text-sm text-emerald-700" : "self-center text-sm text-red-600"}>{msg.text}</span>}
+      <div className="space-y-2 border-t border-zinc-100 p-4">
+        <p className="text-sm text-zinc-500">
+          On the reader, open Settings and choose Generate pairing code, then enter the code here. In Stripe test mode, the code simulated-wpe registers a simulated WisePOS E.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Input className="w-48" placeholder="Front counter" aria-label="Reader name" value={v.label} onChange={(e) => setV({ ...v, label: e.target.value })} />
+          <Input className="w-44" placeholder="Serial number (optional)" aria-label="Serial number" value={v.serialNumber} onChange={(e) => setV({ ...v, serialNumber: e.target.value })} />
+          <Input className="w-52" placeholder="Registration code" aria-label="Registration code" value={v.registrationCode} onChange={(e) => setV({ ...v, registrationCode: e.target.value })} />
+          <Button
+            variant="secondary"
+            disabled={pending || !v.label.trim() || !v.registrationCode.trim()}
+            onClick={() =>
+              save(async () => {
+                const r = await registerReaderAction(shopId, { ...v, serialNumber: v.serialNumber.trim() || null });
+                if (r.ok) setV({ label: "", serialNumber: "", registrationCode: "" });
+                return r;
+              }, "Reader registered")
+            }
+          >
+            Register reader
+          </Button>
+          {msg && <span className={msg.ok ? "self-center text-sm text-emerald-700" : "self-center text-sm text-red-600"}>{msg.text}</span>}
+        </div>
+        {manual ? (
+          <div className="flex flex-wrap gap-2">
+            <Input className="w-48" placeholder="Front counter" aria-label="Reader name (already registered)" value={m.label} onChange={(e) => setM({ ...m, label: e.target.value })} />
+            <Input className="w-44" placeholder="Serial number" aria-label="Serial number (already registered)" value={m.serialNumber} onChange={(e) => setM({ ...m, serialNumber: e.target.value })} />
+            <Input className="w-52" placeholder="Stripe reader ID (tmr_…)" aria-label="Stripe reader ID" value={m.stripeReaderId} onChange={(e) => setM({ ...m, stripeReaderId: e.target.value })} />
+            <Button
+              variant="ghost"
+              disabled={pending || !m.label.trim()}
+              onClick={() =>
+                save(async () => {
+                  const r = await addReaderAction(shopId, m);
+                  if (r.ok) setM({ label: "", serialNumber: "", stripeReaderId: "" });
+                  return r;
+                }, "Reader added")
+              }
+            >
+              Add
+            </Button>
+          </div>
+        ) : (
+          <button type="button" className="text-sm text-brand-700 hover:underline" onClick={() => setManual(true)}>
+            Already registered in Stripe? Add it by reader ID
+          </button>
+        )}
       </div>
+    </Card>
+  );
+}
+
+export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; shopName: string; initial: { headline: string | null; footer: string | null; showLogo: boolean; showAddress: boolean; showPhone: boolean } }) {
+  const { pending, msg, save } = useSave();
+  const [v, setV] = useState({ ...initial, headline: initial.headline ?? "", footer: initial.footer ?? "" });
+  return (
+    <Card>
+      <CardHeader title="Receipts" subtitle={`What ${shopName}'s printed and emailed receipts show.`} />
+      <div className="grid gap-3 p-4 sm:grid-cols-2">
+        <Field label="Headline" hint={`Blank prints "Ray'z Barber Shop · ${shopName}".`}>
+          <Input maxLength={60} value={v.headline} onChange={(e) => setV({ ...v, headline: e.target.value })} />
+        </Field>
+        <Field label="Footer" hint="Blank prints the brand's thank-you line.">
+          <Input maxLength={200} value={v.footer} onChange={(e) => setV({ ...v, footer: e.target.value })} />
+        </Field>
+        <div className="flex flex-wrap gap-4 text-sm text-zinc-700 sm:col-span-2">
+          {(
+            [
+              ["showLogo", "Logo"],
+              ["showAddress", "Address"],
+              ["showPhone", "Phone"],
+            ] as const
+          ).map(([k, label]) => (
+            <label key={k} className="flex items-center gap-2">
+              <input type="checkbox" checked={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.checked })} /> {label}
+            </label>
+          ))}
+        </div>
+      </div>
+      <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveReceiptAction(shopId, { ...v, headline: v.headline.trim() || null, footer: v.footer.trim() || null }))} />
     </Card>
   );
 }

@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge, Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Table, Td, Th, cx } from "@/components/ui";
-import { OWNER_KIND_LABEL, formatFeeRate } from "@/domain/connect";
+import { OWNER_KIND_LABEL, PAYMENTS_MODE_LABEL, formatFeeRate, payoutScheduleLabel } from "@/domain/connect";
 import { SHOP_STATUS_LABEL } from "@/domain/location-lifecycle";
 import { can, guardPage } from "@/server/auth/staff";
 import { SETUP_ORDER, locationSetup, ownerEntityList, setupOverview } from "@/server/location-setup";
-import { refreshAccount } from "@/server/payments/connect";
+import { brandDescriptorPrefix, brandPayoutSchedule, refreshAccount } from "@/server/payments/connect";
 import { AccountStateBadge, LifecyclePanel, OwnerEditor, OwnerPicker, PaymentsPanel } from "./panels";
 
 const STATUS_TONE = { setup: "amber", live: "green", closed: "blue", archived: "gray" } as const;
@@ -24,6 +24,8 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
   const [setup, owners] = await Promise.all([locationSetup(shopId), ownerEntityList()]);
   if (!setup) return <Empty title="That shop wasn't found" />;
   const { shop, owner, account, state, steps, blockers, mode, fees } = setup;
+  const payments = steps.find((s) => s.key === "payments")!;
+  const schedule = shop.paymentsMode === "brand" ? await brandPayoutSchedule() : (account?.payoutSchedule ?? null);
   const required = steps.filter((s) => s.required);
   const done = required.filter((s) => s.done).length;
 
@@ -56,13 +58,13 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
       <LifecyclePanel
         shop={{ id: shop.id, name: shop.name, status: shop.status, closedUntil: shop.closedUntil, closedNote: shop.closedNote }}
         blockers={blockers.map((k) => steps.find((x) => x.key === k)?.title ?? k)}
-        paymentsReady={state === "enabled"}
+        paymentsReady={payments.done}
         canManage={can(ctx, "locations.setup")}
       />
-      {stripe === "return" && state === "enabled" && (
+      {stripe === "return" && shop.paymentsMode === "connected" && state === "enabled" && (
         <Notice tone="green">{shop.name} can take cards. Its sales, tips, refunds and payouts now settle in its own Stripe account.</Notice>
       )}
-      {stripe === "return" && state !== "enabled" && <Notice tone="blue">Stripe has what you entered. Anything it still needs is listed under Card payments.</Notice>}
+      {stripe === "return" && shop.paymentsMode === "connected" && state !== "enabled" && <Notice tone="blue">Stripe has what you entered. Anything it still needs is listed under Payments and banking.</Notice>}
       <ol className="space-y-3">
         {SETUP_ORDER.map((key, i) => {
           const s = steps.find((x) => x.key === key)!;
@@ -105,6 +107,13 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
                         shopName={shop.name}
                         state={state}
                         mode={mode}
+                        paymentsMode={shop.paymentsMode}
+                        canBank={can(ctx, "payments.banking")}
+                        descriptor={shop.statementDescriptor}
+                        descriptorPrefix={brandDescriptorPrefix()}
+                        payoutSchedule={payoutScheduleLabel(schedule)}
+                        terminalLocationId={shop.stripeTerminalLocationId}
+                        readers={setup.readers}
                         account={
                           account && {
                             stripeAccountId: account.stripeAccountId,
@@ -136,7 +145,7 @@ async function Overview({ shopIds, canEditOwners, canAdd }: { shopIds: string[];
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
         title="Location setup"
-        subtitle="Every location and its go-live checklist: details, owner, hours, taxes, menu, team, its own Stripe account for card payments and payouts, and online booking."
+        subtitle="Every location and its go-live checklist: details, owner, hours, taxes, menu, team, where its card money goes (the brand's Stripe account or its own), and online booking."
         actions={canAdd && <LinkButton href="/admin/setup/new">Add a location</LinkButton>}
       />
       {rows.length === 0 ? (
@@ -149,6 +158,7 @@ async function Overview({ shopIds, canEditOwners, canAdd }: { shopIds: string[];
                 <Th>Location</Th>
                 <Th>Status</Th>
                 <Th>Owner</Th>
+                <Th>Card money</Th>
                 <Th>Card payments</Th>
                 <Th>Stripe account</Th>
                 <Th right>Setup</Th>
@@ -165,10 +175,9 @@ async function Overview({ shopIds, canEditOwners, canAdd }: { shopIds: string[];
                     <Badge tone={STATUS_TONE[r.status]}>{SHOP_STATUS_LABEL[r.status]}</Badge>
                   </Td>
                   <Td>{r.ownerName ? `${r.ownerName}${r.ownerKind === "franchisee" ? " (franchisee)" : ""}` : <span className="text-zinc-400">Not set</span>}</Td>
-                  <Td>
-                    <AccountStateBadge state={r.state} />
-                  </Td>
-                  <Td>{r.stripeAccountId ? <code className="text-xs text-zinc-600">{r.stripeAccountId}</code> : <span className="text-zinc-400">None yet</span>}</Td>
+                  <Td className="text-zinc-600">{PAYMENTS_MODE_LABEL[r.paymentsMode]}</Td>
+                  <Td>{r.paymentsMode === "connected" ? <AccountStateBadge state={r.state} /> : <span className="text-zinc-400">—</span>}</Td>
+                  <Td>{r.paymentsMode === "brand" ? <span className="text-zinc-500">Brand account</span> : r.stripeAccountId ? <code className="text-xs text-zinc-600">{r.stripeAccountId}</code> : <span className="text-zinc-400">None yet</span>}</Td>
                   <Td right>
                     {r.done}/{r.total}
                   </Td>

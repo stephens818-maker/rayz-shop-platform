@@ -143,7 +143,7 @@ export async function locationSetup(shopId: string) {
       href: `/admin/inventory/settings?shop=${shopId}`,
     },
   ] as Omit<SetupStep, "required">[]).map((x) => ({ ...x, required: (REQUIRED_FOR_LIVE as readonly string[]).includes(x.key) }));
-  return { shop, owner: owner ?? null, account: account ?? null, state, steps, blockers: goLiveBlockers(steps), mode: connectMode(), fees: feeSchedule() };
+  return { shop, owner: owner ?? null, account: account ?? null, state, steps, blockers: goLiveBlockers(steps), mode: connectMode(), fees: feeSchedule(), readers: readers.n };
 }
 
 /** One line per shop for the setup overview. */
