@@ -69,6 +69,8 @@ export const brandSettings = pgTable("brand_settings", {
   lookups: jsonb("lookups").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** The morning digest email (DigestSettings in src/domain/digest.ts); missing keys use the defaults. */
   digest: jsonb("digest").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Time clock rules for the brand (ClockRules in src/domain/time-clock.ts): breaks, forgotten clock-outs, the export layout. */
+  timeClock: jsonb("time_clock").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -145,6 +147,11 @@ export const shops = pgTable("shops", {
   receipt: jsonb("receipt").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** The shop's Stripe Terminal Location (tml_…, or sim_tml_… in the simulator). Its card readers are registered to it. */
   stripeTerminalLocationId: text("stripe_terminal_location_id").unique(),
+  /** Where the shop is, for the time clock's GPS geofence. */
+  latitude: doublePrecision("latitude"),
+  longitude: doublePrecision("longitude"),
+  /** How staff may punch here (ShopClockSettings in src/domain/time-clock.ts); missing keys use the defaults. */
+  timeClock: jsonb("time_clock").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
@@ -309,6 +316,10 @@ export const staff = pgTable("staff", {
   lastSignInAt: ts("last_sign_in_at"),
   /** Sessions started before this are signed out (a password reset or a disabled login). */
   sessionsValidAfter: ts("sessions_valid_after"),
+  /** bcrypt of their time clock PIN, for punching on a shop's shared device. */
+  clockPinHash: text("clock_pin_hash"),
+  clockPinFailures: smallint("clock_pin_failures").notNull().default(0),
+  clockPinLockedUntil: ts("clock_pin_locked_until"),
   createdAt: createdAt(),
 });
 
@@ -1604,12 +1615,15 @@ export const timeEntries = pgTable(
     endsAt: ts("ends_at").notNull(),
     source: text("source").$type<"clock" | "import" | "manual">().notNull().default("manual"),
     note: text("note"),
+    /** The clock-in punch this was worked out from. Rewritten whenever that shift's punches change. */
+    punchInId: uuid("punch_in_id").references((): AnyPgColumn => timePunches.id, { onDelete: "cascade" }),
     createdBy: uuid("created_by").references(() => staff.id),
     createdAt: createdAt(),
   },
   (t) => [
     index("time_entries_starts_idx").on(t.startsAt),
     index("time_entries_staff_idx").on(t.staffId),
+    index("time_entries_punch_idx").on(t.punchInId),
     check("time_entries_order", sql`${t.endsAt} > ${t.startsAt}`),
   ],
 );
@@ -1676,6 +1690,160 @@ export const payrollLockedOt = pgTable(
     otCenti: integer("ot_centi").notNull(),
   },
   (t) => [primaryKey({ columns: [t.staffId, t.shopId, t.periodStart, t.weekStart] })],
+);
+
+// ───────────────────────────── Time clock ─────────────────────────────
+
+export type PunchType = "in" | "out" | "break_start" | "break_end";
+export type PunchSource = "self" | "kiosk" | "manager";
+export type PunchMethod = "device" | "gps" | "network" | "none" | "manager";
+
+/** A shop's registered front-desk device. The browser keeps the token in a cookie; only its hash is stored. */
+export const clockDevices = pgTable("clock_devices", {
+  id: id(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .references(() => shops.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  registeredBy: uuid("registered_by").references(() => staff.id),
+  lastSeenAt: ts("last_seen_at"),
+  revokedAt: ts("revoked_at"),
+  createdAt: createdAt(),
+});
+
+/**
+ * One clock punch: in, out, or a break starting or ending, at the shop where it happened, with how it
+ * was verified and where. Never deleted: a manager's correction edits it (logged in time_punch_edits)
+ * or voids it.
+ */
+export const timePunches = pgTable(
+  "time_punches",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    type: text("type").$type<PunchType>().notNull(),
+    at: ts("at").notNull(),
+    source: text("source").$type<PunchSource>().notNull(),
+    method: text("method").$type<PunchMethod>().notNull(),
+    deviceId: uuid("device_id").references(() => clockDevices.id),
+    latitude: doublePrecision("latitude"),
+    longitude: doublePrecision("longitude"),
+    accuracyM: doublePrecision("accuracy_m"),
+    /** How far from the shop the phone said it was. */
+    distanceM: doublePrecision("distance_m"),
+    ip: text("ip"),
+    hasPhoto: boolean("has_photo").notNull().default(false),
+    /** late, early_in, early_out, late_out, during_time_off, forgot_out… (PunchFlag in src/domain/time-clock.ts). */
+    flags: jsonb("flags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** Minutes off the schedule (+ late, − early) when this was an in or out. */
+    offScheduleMin: integer("off_schedule_min"),
+    /** When an open shift was flagged as a forgotten clock-out and the managers told. */
+    forgotFlaggedAt: ts("forgot_flagged_at"),
+    /** The time as first punched, before any edit. */
+    originalAt: ts("original_at").notNull(),
+    editedAt: ts("edited_at"),
+    voidedAt: ts("voided_at"),
+    note: text("note"),
+    createdBy: uuid("created_by").references(() => staff.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("time_punches_staff_at_idx").on(t.staffId, t.at),
+    index("time_punches_shop_at_idx").on(t.shopId, t.at),
+    check("time_punches_type", sql`${t.type} in ('in', 'out', 'break_start', 'break_end')`),
+    check("time_punches_source", sql`${t.source} in ('self', 'kiosk', 'manager')`),
+    check("time_punches_method", sql`${t.method} in ('device', 'gps', 'network', 'none', 'manager')`),
+  ],
+);
+
+/** The photo taken with a punch: a small JPEG data URL. Only people who edit or approve timesheets see it. */
+export const timePunchPhotos = pgTable("time_punch_photos", {
+  punchId: uuid("punch_id")
+    .primaryKey()
+    .references(() => timePunches.id, { onDelete: "cascade" }),
+  dataUrl: text("data_url").notNull(),
+  createdAt: createdAt(),
+});
+
+/** Every manager change to a punch, with the reason and the values before and after. Append-only. */
+export const timePunchEdits = pgTable(
+  "time_punch_edits",
+  {
+    id: id(),
+    punchId: uuid("punch_id")
+      .notNull()
+      .references(() => timePunches.id),
+    action: text("action").$type<"edit" | "add" | "void">().notNull(),
+    before: jsonb("before"),
+    after: jsonb("after"),
+    reason: text("reason").notNull(),
+    editedBy: uuid("edited_by").references(() => staff.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("time_punch_edits_punch_idx").on(t.punchId), check("time_punch_edits_reason", sql`length(trim(${t.reason})) > 0`)],
+);
+
+/** One employee's hours at one shop for one pay period: their sign-off, then a manager's. */
+export const timesheets = pgTable(
+  "timesheets",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    employeeApprovedAt: ts("employee_approved_at"),
+    managerApprovedAt: ts("manager_approved_at"),
+    managerApprovedBy: uuid("manager_approved_by").references(() => staff.id),
+    /** Set when a manager approved without the employee's sign-off, and why. */
+    managerNote: text("manager_note"),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("timesheets_uq").on(t.staffId, t.shopId, t.periodStart)],
+);
+
+/** A shop's pay period, closed to punches and edits once every timesheet in it is approved. */
+export const timesheetLocks = pgTable(
+  "timesheet_locks",
+  {
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    lockedAt: ts("locked_at").notNull().defaultNow(),
+    lockedBy: uuid("locked_by").references(() => staff.id),
+  },
+  (t) => [primaryKey({ columns: [t.shopId, t.periodStart] })],
+);
+
+/** Someone's full-time or part-time status changed as of a workweek, by their rolling average. */
+export const ftStatusChanges = pgTable(
+  "ft_status_changes",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    /** The last full workweek in the average (a Sunday). */
+    weekStart: date("week_start", { mode: "string" }).notNull(),
+    fromStatus: text("from_status").$type<"full_time" | "part_time">().notNull(),
+    toStatus: text("to_status").$type<"full_time" | "part_time">().notNull(),
+    averageHours: doublePrecision("average_hours").notNull(),
+    windowWeeks: integer("window_weeks").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("ft_status_changes_uq").on(t.staffId, t.weekStart)],
 );
 
 // ───────────────────────────── Call-ins, client outreach and the shop line ─────────────────────────────

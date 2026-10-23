@@ -82,6 +82,12 @@ export interface OtOptions {
   periodOf: (shopId: string, date: string) => string;
   /** OT already locked into a slice: `${staffId}|${shopId}|${periodStart}|${weekStart}` → centi-hours. */
   locked?: ReadonlyMap<string, number>;
+  /**
+   * Optional daily overtime: hours over this in one local day (across the entity's shops) are OT on
+   * that day, and the weekly threshold then applies to the rest, so no hour is counted twice. Null or
+   * unset: weekly only, the federal FLSA rule.
+   */
+  dailyThresholdCenti?: number | null;
 }
 
 export interface Slice {
@@ -136,8 +142,13 @@ export function overtimeSlices(days: readonly DayHours[], o: OtOptions): Slice[]
     const k = `${s.staffId}|${s.entity}|${s.weekStart}`;
     weeks.set(k, [...(weeks.get(k) ?? []), s]);
   }
+  const daily = o.dailyThresholdCenti ? dailyOvertime(days, o, o.dailyThresholdCenti) : null;
   for (const list of weeks.values()) {
     list.sort((a, b) => a.periodStart.localeCompare(b.periodStart) || a.shopId.localeCompare(b.shopId));
+    if (daily) {
+      shareWeekWithDaily(list, daily, o);
+      continue;
+    }
     const basis = list.reduce((a, s) => a + s.basis, 0);
     const ot = Math.max(0, basis - o.thresholdCenti);
     let open = list;
@@ -155,4 +166,51 @@ export function overtimeSlices(days: readonly DayHours[], o: OtOptions): Slice[]
     largestRemainder(Math.max(0, left), open.map((s) => s.basis)).forEach((x, i) => (open[i].ot = Math.min(x, open[i].basis)));
   }
   return [...slices.values()];
+}
+
+/** Each slice's daily OT: per person, entity and local day, the hours over the threshold, shared out to that day's shops. */
+function dailyOvertime(days: readonly DayHours[], o: OtOptions, threshold: number): Map<string, number> {
+  const byDay = new Map<string, DayHours[]>();
+  for (const d of days) {
+    const k = `${d.staffId}|${o.entityOf(d.shopId)}|${d.date}`;
+    byDay.set(k, [...(byDay.get(k) ?? []), d]);
+  }
+  const out = new Map<string, number>();
+  const basisOf = (d: DayHours) => d.worked + (o.trainingCountsTowardOt ? d.training : 0);
+  for (const list of byDay.values()) {
+    list.sort((a, b) => a.shopId.localeCompare(b.shopId));
+    const excess = list.reduce((a, d) => a + basisOf(d), 0) - threshold;
+    if (excess <= 0) continue;
+    largestRemainder(excess, list.map(basisOf)).forEach((x, i) => {
+      const d = list[i];
+      const k = sliceKey({ staffId: d.staffId, shopId: d.shopId, periodStart: o.periodOf(d.shopId, d.date), weekStart: weekStartOf(d.date) });
+      out.set(k, (out.get(k) ?? 0) + x);
+    });
+  }
+  return out;
+}
+
+/** A week's OT with daily OT on: each slice keeps its own days' OT, and the weekly excess of the remaining hours is shared by those hours. */
+function shareWeekWithDaily(list: Slice[], daily: ReadonlyMap<string, number>, o: OtOptions) {
+  const dayOt = (s: Slice) => Math.min(daily.get(sliceKey(s)) ?? 0, s.basis);
+  const basis = list.reduce((a, s) => a + s.basis, 0);
+  const dailyTotal = list.reduce((a, s) => a + dayOt(s), 0);
+  let left = dailyTotal + Math.max(0, basis - dailyTotal - o.thresholdCenti);
+  let open = list;
+  if (o.locked) {
+    for (const s of list) {
+      const l = o.locked.get(sliceKey(s));
+      if (l === undefined) continue;
+      s.ot = l;
+      s.locked = true;
+      left -= l;
+    }
+    open = list.filter((s) => !s.locked);
+  }
+  left = Math.max(0, left);
+  for (const s of open) {
+    s.ot = Math.min(dayOt(s), left);
+    left -= s.ot;
+  }
+  largestRemainder(left, open.map((s) => s.basis - s.ot)).forEach((x, i) => (open[i].ot = Math.min(open[i].ot + x, open[i].basis)));
 }

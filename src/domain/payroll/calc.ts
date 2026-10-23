@@ -8,7 +8,10 @@
  */
 
 export interface PayrollSettings {
+  /** Weekly overtime threshold: 40 under the federal FLSA. Iowa and Illinois appear to follow it with no daily rule; to confirm. */
   otThresholdHours: number;
+  /** Optional daily overtime threshold (hours in one day). Null: weekly only. */
+  dailyOtHours: number | null;
   /** For the report's OT Pay. iSolved computes the real (blended) OT itself. */
   otMultiplier: number;
   /** C2: training hours count toward the weekly 40. Off until Charles answers Q11. */
@@ -33,6 +36,7 @@ export const FT_BASIS_LABEL: Record<FtBasis, string> = {
 
 export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   otThresholdHours: 40,
+  dailyOtHours: null,
   otMultiplier: 1.5,
   trainingCountsTowardOt: false,
   trainingPayInCost: true,
@@ -49,6 +53,7 @@ export function payrollSettings(raw: unknown): PayrollSettings {
   const bool = (v: unknown, dflt: boolean) => (typeof v === "boolean" ? v : dflt);
   return {
     otThresholdHours: num(r.otThresholdHours, 1, 80, d.otThresholdHours),
+    dailyOtHours: r.dailyOtHours === null || r.dailyOtHours === undefined ? null : num(r.dailyOtHours, 1, 24, d.dailyOtHours ?? 0) || null,
     otMultiplier: num(r.otMultiplier, 1, 3, d.otMultiplier),
     trainingCountsTowardOt: bool(r.trainingCountsTowardOt, d.trainingCountsTowardOt),
     trainingPayInCost: bool(r.trainingPayInCost, d.trainingPayInCost),

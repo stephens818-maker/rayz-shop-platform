@@ -140,6 +140,28 @@ export const FEATURE_PERMISSIONS = [
     brandOnly: true,
   },
   { key: "payroll.approve", group: "Staff", label: "Approve and lock a pay period", hint: "Blocked while any total doesn't reconcile.", brandOnly: true },
+  {
+    key: "timeclock.punch",
+    group: "Staff",
+    label: "Clock in and out and take breaks",
+    hint: "From their own phone, held to the shop's device, GPS or network rule, or with their PIN on the shop's front-desk clock.",
+  },
+  { key: "timeclock.kiosk", group: "Staff", label: "Open the shop's front-desk time clock", hint: "On a registered device, where staff punch with their own PIN." },
+  { key: "timesheet.own", group: "Staff", label: "See and sign off their own timesheet", hint: "Their punches, breaks, scheduled against actual hours and overtime." },
+  {
+    key: "timesheet.edit",
+    group: "Staff",
+    label: "Fix punches at their shops: edit, add or void, with a reason",
+    hint: "Never their own. Every change is logged with the before and after, and clears that timesheet's approvals.",
+  },
+  {
+    key: "timesheet.approve",
+    group: "Staff",
+    label: "Approve timesheets and lock pay periods at their shops",
+    hint: "Never their own. A period locks once every timesheet in it is approved; then nobody can punch into it or edit it.",
+  },
+  { key: "payroll.rates", group: "Staff", label: "See pay rates and labor cost", hint: "Hourly rates, labor cost and labor % of sales in reports. Without it, reports show hours only." },
+  { key: "payroll.export", group: "Staff", label: "Download the payroll export (CSV and the iSolved layout)", hint: "Per pay period, per employee and shop. Every download is logged." },
   { key: "settings.shop", group: "Settings and data", label: "Edit shop info, weekday hours, closures and booking rules" },
   { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
   {
@@ -213,6 +235,13 @@ export const REPORTS = [
   },
   { key: "staffing", label: "Who's working, off and blocked", href: "/admin/reports/staffing", hint: "Per day, shop and barber: scheduled hours, time off, blocked time and bookings." },
   { key: "call_ins", label: "Call-ins and client outreach", href: "/admin/reports/call-ins", hint: "Call-ins by shop and barber, the appointments they hit, and how many clients were moved, rebooked, declined or never answered." },
+  {
+    key: "labor",
+    label: "Labor hours and cost",
+    href: "/admin/reports/labor",
+    hint: "Clocked hours per shop and barber, sales per labor hour, and (with pay rates) labor cost and labor % of sales.",
+  },
+  { key: "attendance", label: "Attendance", href: "/admin/reports/attendance", hint: "Late clock-ins, early clock-outs, missed punches and forgotten clock-outs against the schedule." },
   { key: "cash_drawer", label: "Cash drawer", href: "/admin/reports/cash-drawer" },
   { key: "audit_log", label: "Audit log", href: "/admin/audit" },
 ] as const;
@@ -316,6 +345,11 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "notifications.view",
   "reports.all_staff",
   "clients.campaigns",
+  "timeclock.punch",
+  "timeclock.kiosk",
+  "timesheet.own",
+  "timesheet.edit",
+  "timesheet.approve",
 ];
 /** Regional managers also approve big orders and run the shop logins for their shops. */
 const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "logins.manage", "po.approve"];
@@ -383,6 +417,9 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       "timeoff.request",
       "callins.outreach",
       "inbox.view",
+      "timeclock.punch",
+      "timeclock.kiosk",
+      "timesheet.own",
       ...reports(["card_vs_cash", "cash_drawer", "staffing"], false),
     ],
     maxDiscountPct: 10,
@@ -392,7 +429,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     name: "Barber",
     description: "Their own column, their own clients and their own sales.",
     defaultScope: "selected",
-    permissions: ["clients.rate", "clients.message", "blocks.own", "timeoff.request", ...reports(["my_sales", "service_times"])],
+    permissions: ["clients.rate", "clients.message", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", ...reports(["my_sales", "service_times"])],
     maxDiscountPct: 0,
   },
 ];

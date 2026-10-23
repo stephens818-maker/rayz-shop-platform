@@ -68,6 +68,7 @@ export async function saveSettingsAction(input: {
   ftBasis: string;
   ftWindowWeeks: number;
   otThresholdHours: number;
+  dailyOtHours: number | null;
   otMultiplier: number;
 }) {
   return safe(async () => {
@@ -81,6 +82,7 @@ export async function saveSettingsAction(input: {
         ftBasis: z.enum(Object.keys(FT_BASIS_LABEL) as [FtBasis, ...FtBasis[]]),
         ftWindowWeeks: z.number().int().min(1).max(26),
         otThresholdHours: z.number().min(1).max(80),
+        dailyOtHours: z.number().min(1).max(24).nullable(),
         otMultiplier: z.number().min(1).max(3),
       })
       .parse(input);

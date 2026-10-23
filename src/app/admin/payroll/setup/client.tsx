@@ -64,11 +64,21 @@ export function SettingsForm({ initial }: { initial: PayrollSettings }) {
           <Input type="number" value={v.otThresholdHours} onChange={num("otThresholdHours")} className="h-9 w-24" />
         </label>
         <label>
+          <span className="block text-xs text-zinc-500">Daily OT over (h, blank = none)</span>
+          <Input
+            type="number"
+            value={v.dailyOtHours ?? ""}
+            onChange={(e) => setV({ ...v, dailyOtHours: e.target.value === "" ? null : Number(e.target.value) })}
+            className="h-9 w-24"
+          />
+        </label>
+        <label>
           <span className="block text-xs text-zinc-500">Report OT multiplier</span>
           <Input type="number" step="0.1" value={v.otMultiplier} onChange={num("otMultiplier")} className="h-9 w-24" />
         </label>
       </div>
-      <p className="text-xs text-zinc-500">Full time / part time: exactly {v.ftHoursPerWeek} is part time. Defaults (clocked worked hours over a rolling 4 weeks) are pending Charles.</p>
+      <p className="text-xs text-zinc-500">Full time / part time: exactly {v.ftHoursPerWeek} is part time. Defaults (clocked worked hours over a rolling 4 weeks) are pending Charles. Overtime is weekly over 40 (federal FLSA); Iowa and
+        Illinois appear to add no daily rule, which is to confirm before a daily threshold is set.</p>
       <Button size="sm" disabled={pending} onClick={() => run(() => saveSettingsAction(v))}>
         Save settings
       </Button>
