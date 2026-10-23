@@ -777,7 +777,7 @@ async function seedServiceTimes(o: {
 /**
  * Tip payouts: the ledger synced from the history, everything before the last two days recorded as
  * paid before tip payouts. Coralville pays cash at drawer close; Moline pays daily two days after the
- * tip. Makenna chose Stripe and finished the simulator's payout setup.
+ * tip. Makenna chose Stripe and finished the simulator's payout setup, paid to Stripe's test Visa debit card.
  */
 async function seedTips(o: { today: LocalDate; staffByKey: Map<string, typeof t.staff.$inferSelect>; shopBySlug: Map<string, Shop> }) {
   await syncTipLedger();
@@ -794,6 +794,9 @@ async function seedTips(o: { today: LocalDate; staffByKey: Map<string, typeof t.
       payoutsEnabled: true,
       detailsSubmitted: true,
       instantEligible: true,
+      destinationType: "card",
+      destinationLast4: "5556",
+      destinationName: "Visa",
     });
   console.log(`  tips: ledger synced, ${opening} opening payouts before ${addDays(o.today, -2)}; Coralville end of night, Moline daily after 2 days; Makenna on Stripe (simulated)`);
 }

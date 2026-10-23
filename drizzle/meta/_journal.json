@@ -239,6 +239,13 @@
       "when": 1792770000000,
       "tag": "core_0033_tip_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792773600000,
+      "tag": "core_0034_staff_banking",
+      "breakpoints": true
     }
   ]
 }

@@ -40,6 +40,8 @@ export type NotificationKind =
   | "ft_status_change"
   /** A tip payout sent to an employee, or one that failed (to them and the shop). */
   | "tip_payout"
+  /** An employee's payout account: Stripe needs more information, or a security notice that the destination or method changed. */
+  | "tip_banking"
   /** Time clock, live: not clocked in for the first client, and clients booked over a break or after an early clock-out. */
   | "clock_late_in"
   | "clock_affected";

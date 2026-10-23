@@ -1558,11 +1558,23 @@ export const staffPayoutAccounts = pgTable(
     /** Has a debit card that takes instant payouts. */
     instantEligible: boolean("instant_eligible").notNull().default(false),
     requirementsDue: jsonb("requirements_due").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** Submitted, and Stripe is still checking them. */
+    requirementsPending: jsonb("requirements_pending").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    requirementsDeadline: ts("requirements_deadline"),
     disabledReason: text("disabled_reason"),
+    /** What Stripe returns about where payouts go: never the full account or card number. */
+    destinationType: text("destination_type").$type<"bank_account" | "card">(),
+    destinationLast4: text("destination_last4"),
+    /** The bank's name, or the card's brand. */
+    destinationName: text("destination_name"),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [check("staff_payout_accounts_method", sql`${t.method} is null or ${t.method} in ('cash', 'stripe', 'payroll')`)],
+  (t) => [
+    check("staff_payout_accounts_method", sql`${t.method} is null or ${t.method} in ('cash', 'stripe', 'payroll')`),
+    check("staff_payout_accounts_destination_type", sql`${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')`),
+    check("staff_payout_accounts_last4", sql`${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$'`),
+  ],
 );
 
 // ───────────────────────────── Loyalty ─────────────────────────────

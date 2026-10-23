@@ -2,7 +2,7 @@ import Stripe from "stripe";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { shopPaymentAccounts } from "@/db/schema";
-import { applyStaffAccountUpdate, refreshStaffAccount, staffAccountByStripeId } from "@/server/tips/accounts";
+import { applyStaffAccountUpdate, applyStaffExternalAccount, refreshStaffAccount, staffAccountByStripeId } from "@/server/tips/accounts";
 import { applyStaffPayoutEvent } from "@/server/tips/payouts";
 import { applyAccountUpdate, markDeauthorized, recordPayout, refreshAccount } from "./connect";
 
@@ -56,14 +56,16 @@ async function staffEvent(event: Stripe.Event, account: string) {
     case "account.updated":
       await applyStaffAccountUpdate(event.data.object as Stripe.Account);
       break;
-    case "capability.updated":
-    case "account.external_account.created":
-    case "account.external_account.updated":
-    case "account.external_account.deleted": {
+    case "capability.updated": {
       const a = await staffAccountByStripeId(account);
       if (a) await refreshStaffAccount(a.staffId).catch(() => null);
       break;
     }
+    case "account.external_account.created":
+    case "account.external_account.updated":
+    case "account.external_account.deleted":
+      await applyStaffExternalAccount(account, event.type, event.data.object as Stripe.BankAccount | Stripe.Card);
+      break;
     case "payout.paid":
     case "payout.failed":
     case "payout.canceled":

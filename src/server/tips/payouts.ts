@@ -505,7 +505,7 @@ async function notifyPayout(p: TipPayout, what: "sent" | "failed") {
       body:
         what === "sent"
           ? `Hi ${person.first}, your tips from Ray'z ${shop?.name ?? ""} were paid out: ${amount} ${how}.${p.instantFeeCents ? ` Stripe's instant payout fee was ${formatCents(p.instantFeeCents)}.` : ""} See your tips: ${appBaseUrl()}/admin/my-tips`
-          : `Hi ${person.first}, your tip payout of ${amount} from Ray'z ${shop?.name ?? ""} didn't go through (${p.failureMessage ?? "Stripe failed it"}). The tips go into the next payout. Check your payout setup: ${appBaseUrl()}/admin/my-tips`,
+          : `Hi ${person.first}, your tip payout of ${amount} from Ray'z ${shop?.name ?? ""} didn't go through (${p.failureMessage ?? "Stripe failed it"}). The tips go into the next payout. Check your payout setup: ${appBaseUrl()}/admin/my-banking`,
     });
   } else if (person?.phone) {
     await enqueueRaw({
