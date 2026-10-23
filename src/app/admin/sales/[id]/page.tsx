@@ -19,7 +19,9 @@ import { inTenant } from "@/server/tenant";
 import { lookups } from "@/server/lookups";
 import { loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries, visitForSale } from "@/server/ratings";
+import { saleReceiptState } from "@/server/receipts";
 import { QuickRate } from "../../customers/ratings";
+import { ReceiptPanel } from "./receipt-panel";
 import { PrintButton, SaleActions } from "./sale-actions";
 
 export const metadata: Metadata = { title: "Receipt" };
@@ -44,11 +46,12 @@ export default async function SalePage({ params, searchParams }: { params: Promi
   ]);
   const policy = await clientPolicy(ctx);
   const receipt = receiptBranding(shop?.receipt);
-  const [loyalty, rateable, ratingMap, screen] = await Promise.all([
+  const [loyalty, rateable, ratingMap, screen, receiptState] = await Promise.all([
     customer ? loyaltyBalance(customer.id) : null,
     customer && policy.ratingDetail ? visitForSale(ratingViewer(ctx), id) : null,
     ratingSummaries([customer?.id]),
     handoffOnSale(id),
+    saleReceiptState(id, policy),
   ]);
   const tipShares = screen.shares.length ? splitCents(sale.tipCents, screen.shares.map((x) => ({ id: x.staffId, weight: x.weight }))) : null;
   const splitName = new Map(screen.shares.map((x) => [x.staffId, x.label]));
@@ -214,17 +217,9 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           <div className="mt-4 text-center text-xs text-zinc-400">{receipt.footer ?? "Thank you! Book again at rayzbarbershop.com"}</div>
         </Card>
         <div className="no-print space-y-3">
-          <PrintButton />
-          {screen.screen && (
-            <div className="rounded-xl bg-white px-4 py-3 text-sm text-zinc-600 ring-1 ring-zinc-200">
-              Paid on the customer screen.{" "}
-              {screen.screen.receiptChannel === "sms"
-                ? `Receipt texted to ${screen.screen.receiptMasked}.`
-                : screen.screen.receiptChannel === "email"
-                  ? `Receipt emailed to ${screen.screen.receiptMasked}.`
-                  : "No receipt wanted."}
-            </div>
-          )}
+          {receiptState.available && <ReceiptPanel saleId={sale.id} onFile={receiptState.onFile} atCheckout={receiptState.atCheckout} history={receiptState.history} highlight={!!sp.done} />}
+          {receipt.allowPrint && <PrintButton />}
+          {screen.screen && <div className="rounded-xl bg-white px-4 py-3 text-sm text-zinc-600 ring-1 ring-zinc-200">Paid on the customer screen.</div>}
           {customer && (
             <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm ring-1 ring-zinc-200">
               <Link className="font-medium underline" href={`/admin/customers/${customer.id}`}>

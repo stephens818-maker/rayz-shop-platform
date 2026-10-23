@@ -419,12 +419,12 @@ export function ReadersEditor({ shopId, shopName, terminalLocationId, readers }:
   );
 }
 
-export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; shopName: string; initial: { headline: string | null; footer: string | null; showLogo: boolean; showAddress: boolean; showPhone: boolean } }) {
+export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; shopName: string; initial: { headline: string | null; footer: string | null; showLogo: boolean; showAddress: boolean; showPhone: boolean; reviewUrl: string | null; allowPrint: boolean } }) {
   const { pending, msg, save } = useSave();
-  const [v, setV] = useState({ ...initial, headline: initial.headline ?? "", footer: initial.footer ?? "" });
+  const [v, setV] = useState({ ...initial, headline: initial.headline ?? "", footer: initial.footer ?? "", reviewUrl: initial.reviewUrl ?? "" });
   return (
     <Card>
-      <CardHeader title="Receipts" subtitle={`What ${shopName}'s receipts show, on screen and printed.`} />
+      <CardHeader title="Receipts" subtitle={`What ${shopName}'s digital receipts show. Clients get a text with a link or an email, or no receipt.`} />
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label="Headline" hint={`Blank prints "Ray'z Barber Shop · ${shopName}".`}>
           <Input maxLength={60} value={v.headline} onChange={(e) => setV({ ...v, headline: e.target.value })} />
@@ -445,8 +445,18 @@ export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; s
             </label>
           ))}
         </div>
+        <Field label="Review link" hint="The receipt's “Leave a review” button opens this, e.g. the shop's Google review page. Blank hides the button." className="sm:col-span-2">
+          <Input type="url" inputMode="url" maxLength={500} placeholder="https://g.page/r/…/review" value={v.reviewUrl} onChange={(e) => setV({ ...v, reviewUrl: e.target.value })} />
+        </Field>
+        <label className="flex items-center gap-2 text-sm text-zinc-700 sm:col-span-2">
+          <input type="checkbox" checked={v.allowPrint} onChange={(e) => setV({ ...v, allowPrint: e.target.checked })} /> Show a Print button on the staff receipt (paper is off by default)
+        </label>
       </div>
-      <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveReceiptAction(shopId, { ...v, headline: v.headline.trim() || null, footer: v.footer.trim() || null }))} />
+      <SaveBar
+        pending={pending}
+        msg={msg}
+        onClick={() => save(() => saveReceiptAction(shopId, { ...v, headline: v.headline.trim() || null, footer: v.footer.trim() || null, reviewUrl: v.reviewUrl.trim() || null }))}
+      />
     </Card>
   );
 }

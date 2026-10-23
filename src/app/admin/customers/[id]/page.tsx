@@ -15,10 +15,12 @@ import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, shownField 
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
 import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
+import { latestReceipts, receiptOnFile } from "@/server/receipts";
 import { CALL_KIND_LABEL, CALL_STATUS_LABEL, callsWith, optOutKeys } from "@/server/messaging";
 import { hasShop, inShops } from "@/server/tenant";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
+import { ResendReceipt } from "../../sales/[id]/receipt-panel";
 import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
 
 export const metadata: Metadata = { title: "Client" };
@@ -159,6 +161,8 @@ export default async function CustomerPage({
     ].flatMap(([k, v]) => (isFull(k) ? [[k, v ?? ""]] : [])),
   );
   const canMessage = can(ctx, "clients.message");
+  const [receiptFile, receipts] = await Promise.all([receiptOnFile(policy, { phone: c.phone, email: c.email }), latestReceipts(saleRows.map((r) => r.s.id))]);
+  const receiptLabel = (r: { channel: string; masked: string | null } | undefined) => (!r ? null : r.channel === "none" ? "No receipt" : `${r.channel === "sms" ? "Texted" : "Emailed"} ${r.masked}`);
   const pager = (key: "v" | "s", pageNo: number, total: number, size: number) =>
     total > size && (
       <div className="flex items-center justify-between px-4 py-3 text-sm">
@@ -435,6 +439,7 @@ export default async function CustomerPage({
                     <Th right>Tip</Th>
                     <Th right>Total</Th>
                     <Th>Status</Th>
+                    <Th>Receipt</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -461,6 +466,11 @@ export default async function CustomerPage({
                       <Td className="capitalize">
                         {s.status.replace("_", " ")}
                         {s.isImported && <span className="ml-1 text-xs text-zinc-400">Squire</span>}
+                      </Td>
+                      <Td>
+                        {canSeeSale(s.shopId) && !s.isImported && (
+                          <ResendReceipt saleId={s.id} onFile={receiptFile} last={receiptLabel(receipts.get(s.id))} />
+                        )}
                       </Td>
                     </tr>
                   ))}

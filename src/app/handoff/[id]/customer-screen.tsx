@@ -361,7 +361,10 @@ function ReceiptStep({ v, pending, onChoose }: { v: HandoffView; pending: boolea
     const enter = typing || !onFile;
     return (
       <div className="flex flex-1 flex-col">
-        <Heading title={mode === "sms" ? "Text my receipt" : "Email my receipt"} detail={enter ? null : "We'll send it to the one on file."} />
+        <Heading
+          title={mode === "sms" ? "Text my receipt" : "Email my receipt"}
+          detail={mode === "sms" ? (enter ? "We'll text you a link to your receipt." : "We'll text a link to the number on file.") : enter ? "We'll email you your receipt." : "We'll email it to the address on file."}
+        />
         {!enter ? (
           <div className="grid gap-3">
             <button type="button" className={primary} disabled={pending} onClick={() => onChoose({ channel: mode, onFile: true })}>
@@ -425,7 +428,7 @@ function ReceiptStep({ v, pending, onChoose }: { v: HandoffView; pending: boolea
 
   return (
     <div className="flex flex-1 flex-col">
-      <Heading title="How would you like your receipt?" />
+      <Heading title="How would you like your receipt?" detail="A text with a link, or an email. No paper." />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
         <button type="button" disabled={pending} className={bigBtn(v.receipt.channel === "sms")} onClick={() => setMode("sms")}>
           <span className="text-2xl font-semibold">Text</span>
