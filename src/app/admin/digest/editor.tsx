@@ -37,6 +37,8 @@ export function DigestEditor({ initial, roles, people }: { initial: DigestSettin
     setS((x) => ({ ...x, include: m === "always" ? [...new Set([...x.include, id])] : x.include.filter((i) => i !== id), exclude: m === "never" ? [...new Set([...x.exclude, id])] : x.exclude.filter((i) => i !== id) }));
   const toggleRole = (key: string) => setS((x) => ({ ...x, roles: x.roles.includes(key) ? x.roles.filter((r) => r !== key) : [...x.roles, key] }));
   const count = people.filter(gets).length;
+  const [everyone, setEveryone] = useState(false);
+  const shown = everyone ? people : people.filter((p) => gets(p) || modeOf(p) !== "role");
 
   return (
     <div className="space-y-4">
@@ -82,7 +84,7 @@ export function DigestEditor({ initial, roles, people }: { initial: DigestSettin
           ))}
         </div>
         <ul className="divide-y divide-zinc-100">
-          {people.map((p) => (
+          {shown.map((p) => (
             <li key={p.id} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
               <span className="min-w-40 font-medium text-zinc-900">{p.label}</span>
               <span className="text-zinc-500">{p.role}</span>
@@ -95,6 +97,13 @@ export function DigestEditor({ initial, roles, people }: { initial: DigestSettin
             </li>
           ))}
         </ul>
+        {people.length > shown.length || everyone ? (
+          <div className="border-t border-zinc-100 px-4 py-2">
+            <button type="button" className="text-xs text-zinc-600 underline" onClick={() => setEveryone(!everyone)}>
+              {everyone ? "Show only who gets it" : `Add someone else (${people.length - shown.length} more people)`}
+            </button>
+          </div>
+        ) : null}
       </Card>
 
       {error && <Notice tone="red">{error}</Notice>}

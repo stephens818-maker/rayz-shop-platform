@@ -103,8 +103,44 @@ function AlertRow({ alert: a, multiShop }: { alert: Alert; multiShop: boolean })
   );
 }
 
+/** Brand-wide, the same alert at three or more shops folds into one line that opens to the shops. */
+const GROUP_AT = 3;
+
+function AlertGroup({ alerts, multiShop }: { alerts: Alert[]; multiShop: boolean }) {
+  const top = alerts[0];
+  const [open, setOpen] = useState(top.severity === "high");
+  const shops = alerts.map((a) => a.shop).filter(Boolean);
+  const actions = alerts.filter((a) => a.action).length;
+  return (
+    <li className={cx("border-l-4 text-sm", BAR[top.severity])}>
+      <button type="button" className="flex w-full flex-wrap items-center gap-2 px-4 py-3 text-left hover:bg-zinc-50" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <Badge tone={TONE[top.severity]}>{ALERT_LABEL[top.type]}</Badge>
+        <span className="font-medium text-zinc-900">
+          {alerts.length} shops: {shops.slice(0, 4).join(", ")}
+          {shops.length > 4 ? ` and ${shops.length - 4} more` : ""}
+        </span>
+        {actions > 0 && <span className="text-xs text-zinc-500">{actions} with a one-click fix</span>}
+        <span className="ml-auto text-xs text-zinc-500 underline">{open ? "Hide" : "Show"}</span>
+      </button>
+      {open && (
+        <ul className="divide-y divide-zinc-100 border-t border-zinc-100">
+          {alerts.map((a) => (
+            <AlertRow key={a.key} alert={a} multiShop={multiShop} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
 export function TodayAlerts({ alerts, multiShop }: { alerts: Alert[]; multiShop: boolean }) {
   const high = alerts.filter((a) => a.severity === "high").length;
+  const groups: Alert[][] = [];
+  for (const a of alerts) {
+    const g = multiShop ? groups.find((x) => x[0].type === a.type) : undefined;
+    if (g) g.push(a);
+    else groups.push([a]);
+  }
   return (
     <Card>
       <CardHeader
@@ -115,9 +151,9 @@ export function TodayAlerts({ alerts, multiShop }: { alerts: Alert[]; multiShop:
         <p className="px-4 py-3 text-sm text-zinc-500">Nothing needs you right now.</p>
       ) : (
         <ul className="divide-y divide-zinc-100">
-          {alerts.map((a) => (
-            <AlertRow key={a.key} alert={a} multiShop={multiShop} />
-          ))}
+          {groups.map((g) =>
+            g.length >= GROUP_AT ? <AlertGroup key={g[0].type} alerts={g} multiShop={multiShop} /> : g.map((a) => <AlertRow key={a.key} alert={a} multiShop={multiShop} />),
+          )}
         </ul>
       )}
     </Card>

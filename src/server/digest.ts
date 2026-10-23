@@ -87,9 +87,10 @@ export async function buildDigest(staffId: string, now: Date = new Date(), s?: D
                 const when = r.status === "partly_off" ? timeOff(r).map((b) => ` ${minutesToLabel(b.startMin)}–${minutesToLabel(b.endMin % 1440)}`).join(",") : "";
                 return `${r.label}${why ? ` (${why}${when})` : when ? ` (${when.trim()})` : ""}`;
               }),
-            blocked: rows
-              .filter((r) => r.blockedMin > 0)
-              .map((r) => `${r.label} (${r.blocks.filter((b) => b.category !== "time_off").map((b) => `${b.label.toLowerCase()} ${minutesToLabel(b.startMin)}`).join(", ")})`),
+            blocked: rows.flatMap((r) => {
+              const held = r.blocks.filter((b) => b.category !== "time_off" && b.category !== "lunch");
+              return held.length ? [`${r.label} (${held.map((b) => `${b.label.toLowerCase()} ${minutesToLabel(b.startMin)}`).join(", ")})`] : [];
+            }),
           };
         })
         .filter((x) => x.working.length || x.off.length || x.blocked.length)
