@@ -12,6 +12,7 @@ export function PayConfirm({
   disabled: boolean;
   onPress: () => void;
   setup?: { clientSecret: string; ephemeralKey: string; customerId: string } | null;
+  onNothingCharged?: (message: string) => void;
 }) {
   return <Button label={preview ? flowButtonLabel(preview) : "Pay"} disabled={disabled} onPress={onPress} />;
 }

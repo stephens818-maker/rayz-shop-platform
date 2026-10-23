@@ -1,4 +1,4 @@
-import { chicagoDate, formatCents, formatClock } from "@rayz/api";
+import { chicagoDate, formatCents, formatClock, localeFor } from "@rayz/api";
 import { displayDate } from "../../src/civil-date";
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -22,7 +22,8 @@ interface Appointment {
 
 export default function Visit() {
   const { code } = useLocalSearchParams<{ code: string }>();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   const router = useRouter();
   const { session } = useSession();
   const [error, setError] = useState("");
@@ -52,7 +53,7 @@ export default function Visit() {
           <Display>{row.shop.name}</Display>
           <Body>{row.items[0]?.name ?? ""}</Body>
           <Body muted>{`${row.barber.displayName} · ${row.customer.firstName}`}</Body>
-          <Body>{`${displayDate(row.startsAt)} · ${formatClock(row.startsAt, "en-US")}`}</Body>
+          <Body>{`${displayDate(row.startsAt, locale)} · ${formatClock(row.startsAt, locale)}`}</Body>
           <Body>{formatCents(row.estimateCents)}</Body>
           <Body muted>{row.status}</Body>
           {error ? <Banner tone="bad">{error}</Banner> : null}
@@ -62,7 +63,7 @@ export default function Visit() {
             <>
               <Body>{t("reschedule")}</Body>
               {slots.data?.slots.map((slot) => (
-                <Button key={slot.startsAt} kind={when === slot.startsAt ? "primary" : "ghost"} label={formatClock(slot.startsAt, "en-US")} onPress={() => setWhen(slot.startsAt)} />
+                <Button key={slot.startsAt} kind={when === slot.startsAt ? "primary" : "ghost"} label={formatClock(slot.startsAt, locale)} onPress={() => setWhen(slot.startsAt)} />
               ))}
               <Button label={t("reschedule")} disabled={!when} onPress={() => mutate("reschedule", { startsAt: when })} />
             </>

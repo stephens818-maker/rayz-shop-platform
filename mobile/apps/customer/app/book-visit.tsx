@@ -1,4 +1,4 @@
-import { formatCents, formatClock, formatLongDate } from "@rayz/api";
+import { formatCents, formatClock, formatLongDate, localeFor } from "@rayz/api";
 import { displayDate } from "../src/civil-date";
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -17,7 +17,8 @@ interface Member { id: string; firstName: string }
 
 export default function BookVisit() {
   const { slug, resume } = useLocalSearchParams<{ slug: string; resume?: string }>();
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   const router = useRouter();
   const { session } = useSession();
   const saved = resume ? peekDraft() : null;
@@ -115,12 +116,12 @@ export default function BookVisit() {
           <Body>{t("selectTime")}</Body>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {days.data?.days.filter((item) => item.slots > 0).slice(0, 7).map((item) => (
-              <Chip key={item.date} label={formatLongDate(item.date, "en-US")} selected={item.date === day} onPress={() => { setDay(item.date); setSlot(""); }} />
+              <Chip key={item.date} label={formatLongDate(item.date, locale)} selected={item.date === day} onPress={() => { setDay(item.date); setSlot(""); }} />
             ))}
           </View>
           {slots.isLoading ? <Loading label={t("loading")} /> : null}
           {slots.data?.slots.map((item) => (
-            <Button key={item.startsAt} kind={item.startsAt === slot ? "primary" : "secondary"} label={formatClock(item.startsAt, "en-US")} onPress={() => { setSlot(item.startsAt); setStep("confirm"); }} />
+            <Button key={item.startsAt} kind={item.startsAt === slot ? "primary" : "secondary"} label={formatClock(item.startsAt, locale)} onPress={() => { setSlot(item.startsAt); setStep("confirm"); }} />
           ))}
         </>
       ) : null}
@@ -128,7 +129,7 @@ export default function BookVisit() {
         <>
           <Body>{service.name}</Body>
           <Body muted>{barber.name || t("anyBarber")}</Body>
-          {slot ? <Body>{`${displayDate(slot)} · ${formatClock(slot, "en-US")}`}</Body> : null}
+          {slot ? <Body>{`${displayDate(slot, locale)} · ${formatClock(slot, locale)}`}</Body> : null}
           <Body>{formatCents(service.priceCents)}</Body>
           <Body>{t("forWhom")}</Body>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>

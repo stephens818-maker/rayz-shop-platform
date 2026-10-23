@@ -1,4 +1,4 @@
-import { formatClock } from "@rayz/api";
+import { formatClock, localeFor } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
@@ -12,7 +12,8 @@ interface Card {
 }
 
 export default function Visits() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   const router = useRouter();
   const { session } = useSession();
   const list = useQuery({
@@ -36,7 +37,7 @@ export default function Visits() {
     return (
       <Pressable key={a.code} accessibilityRole="button" onPress={() => router.push(`/visit/${a.code}`)} style={{ minHeight: 72, borderRadius: 18, backgroundColor: "#FFFBF6", borderWidth: 1, borderColor: "#E4D7C6", justifyContent: "center", paddingHorizontal: 16 }}>
         <Text style={{ fontSize: 17, fontWeight: "700" }}>{a.shop.name}</Text>
-        <Body muted>{`${displayDate(a.startsAt)} · ${formatClock(a.startsAt, "en-US")} · ${a.barber.displayName}`}</Body>
+        <Body muted>{`${displayDate(a.startsAt, locale)} · ${formatClock(a.startsAt, locale)} · ${a.barber.displayName}`}</Body>
       </Pressable>
     );
   };

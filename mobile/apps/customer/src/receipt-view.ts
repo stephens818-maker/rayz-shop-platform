@@ -11,7 +11,7 @@ export interface ReceiptRefund {
 export interface ReceiptSettlement {
   shopCents: number;
   tipCents: number;
-  tipStatus: "executed" | "reversed" | "planned" | "with_shop";
+  tipStatus: "executed" | "paid" | "reversed" | "planned" | "with_shop";
 }
 
 export interface ReceiptView {
@@ -51,15 +51,20 @@ export function refundPortionPhrase(refund: Pick<ReceiptRefund, "from" | "shopPo
   return "";
 }
 
-export function settlementLines(ticketTipCents: number, settlement: ReceiptSettlement | null | undefined, barberFirstName?: string | null): string[] {
+export function settlementLines(_ticketTipCents: number, settlement: ReceiptSettlement | null | undefined, barberFirstName?: string | null): string[] {
   if (!settlement) return [];
   const lines: string[] = [];
   const first = barberFirstName?.trim().split(/\s+/)[0] || "your barber";
-  if (settlement.tipCents > 0 && (settlement.tipStatus === "executed" || settlement.tipStatus === "reversed" || settlement.tipStatus === "planned")) {
-    lines.push(`Tip ${formatCents(settlement.tipCents)} paid to ${first}.`);
-  } else if (settlement.tipStatus === "with_shop" && ticketTipCents > 0) {
-    lines.push(`Tip ${formatCents(ticketTipCents)} stayed with the shop.`);
-  }
+  if (settlement.tipStatus === "planned") lines.push("Tip pending");
+  else if (settlement.tipStatus === "executed" || settlement.tipStatus === "paid") lines.push(`Tip paid to ${first}`);
+  else if (settlement.tipStatus === "reversed") lines.push("Returned by bank");
+  else if (settlement.tipStatus === "with_shop") lines.push("Tips paid through payroll.");
   lines.push(`Shop ${formatCents(settlement.shopCents)}`);
   return lines;
+}
+
+/** Shown only when the credit-card surcharge is actually on the ticket. */
+export function cardSurchargeLine(feeCents: number, label = "Credit card surcharge (3%)"): string | null {
+  if (feeCents <= 0) return null;
+  return `${label} ${formatCents(feeCents)}`;
 }

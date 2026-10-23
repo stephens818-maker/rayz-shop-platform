@@ -1,4 +1,5 @@
-import { addDays, cardFeeFor, chicagoDate, clipsWorkweek, needsUpdate, rangeFromSearch, weekday, type PaymentPreview } from "@rayz/api";
+import { addDays, cardFeeFor, chicagoDate, clipsWorkweek, isDate, needsUpdate, rangeFromSearch, weekday, type PaymentPreview } from "@rayz/api";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { earningsDays, liveWait, payrollCsv, payrollPdf, toTicket, transfersVisible, type ShopRecord } from "./engine";
@@ -130,16 +131,74 @@ function sign(value: string): string {
   return (h >>> 0).toString(16);
 }
 
-function qr(shopId: string, now = Date.now()) {
-  const bucket = Math.floor(now / 15_000);
-  return { token: `${shopId}.${bucket}.${sign(`${shopId}.${bucket}`)}`, expiresAt: new Date((bucket + 1) * 15_000).toISOString(), shopId, rotatesSeconds: 15 };
+/** Server secret for kiosk QR codes. Not derived from the device credential. */
+const KIOSK_CODE_SECRET = "rayz-sandbox-kiosk-hmac-v1";
+const QR_WINDOW_MS = 15_000;
+
+interface KioskDevice {
+  id: string;
+  shopId: string;
+  secretHash: string;
+  revokedAt: string | null;
 }
 
-function readQr(token: string, now = Date.now()): string | null {
-  const [shopId, bucket, sig] = token.split(".");
-  if (!shopId || !bucket || sign(`${shopId}.${bucket}`) !== sig) return null;
-  if (Math.abs(Math.floor(now / 15_000) - Number(bucket)) > 1) return null;
-  return shopId;
+interface ChargeIntent {
+  id: string;
+  secret: string;
+  customerId: string;
+  code: string;
+  paymentMethodId: string;
+  wallet: boolean;
+  tipCents: number;
+  consumed: boolean;
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function hmacHex(value: string): string {
+  return createHmac("sha256", KIOSK_CODE_SECRET).update(value).digest("hex");
+}
+
+function sameHex(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+function deviceForCredential(devices: KioskDevice[], raw: string): KioskDevice | undefined {
+  if (!raw) return undefined;
+  const hash = sha256(raw);
+  return devices.find((row) => sameHex(row.secretHash, hash));
+}
+
+function issueQr(device: KioskDevice, nowMs: number) {
+  const window = Math.floor(nowMs / QR_WINDOW_MS);
+  const nonce = randomBytes(16).toString("hex");
+  const payload = `${device.shopId}.${device.id}.${window}.${nonce}`;
+  return {
+    token: `${payload}.${hmacHex(payload)}`,
+    expiresAt: new Date((window + 1) * QR_WINDOW_MS).toISOString(),
+    shopId: device.shopId,
+    kioskId: device.id,
+    rotatesSeconds: 15,
+  };
+}
+
+/** Current window only. A burned nonce or a revoked device does not redeem. */
+function readQr(devices: KioskDevice[], burned: Set<string>, token: string, nowMs: number): { shopId: string; kioskId: string; nonce: string } | null {
+  const parts = token.split(".");
+  if (parts.length !== 5) return null;
+  const [shopId, kioskId, windowRaw, nonce, mac] = parts;
+  if (!shopId || !kioskId || !/^\d+$/.test(windowRaw) || !nonce || !mac) return null;
+  const payload = `${shopId}.${kioskId}.${windowRaw}.${nonce}`;
+  if (!sameHex(mac, hmacHex(payload))) return null;
+  if (Number(windowRaw) !== Math.floor(nowMs / QR_WINDOW_MS)) return null;
+  if (burned.has(nonce)) return null;
+  const device = devices.find((row) => row.id === kioskId && row.shopId === shopId);
+  if (!device || device.revokedAt) return null;
+  return { shopId, kioskId, nonce };
 }
 
 function publicShop(world: World, id: string) {
@@ -276,6 +335,9 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   ];
   (world as World & { receipts: Receipt[] }).receipts = receipts;
   const punches: Punch[] = [];
+  const kiosks: KioskDevice[] = [];
+  const burnedNonces = new Set<string>();
+  const chargeIntents: ChargeIntent[] = [];
   const idem = new Map<string, unknown>();
   const deleteCodes = new Map<string, string>();
   const payouts = new Map<string, PayoutFlags>([
@@ -546,6 +608,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   });
   app.get("/api/v1/me/loyalty", (c) => {
     if (!customerOf(c.req.header("authorization"))) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    noStore(c);
     return c.json({ enabled: true, thresholdCents: 30000, rewardCents: 1500, progressCents: 18000, remainingCents: 12000, lifetimeEarnedCents: 4500, availableCents: 1500, rewards: [{ id: "rew1", amountCents: 1500, issuedAt: "2026-09-01T15:00:00.000Z", expiresAt: null }], rules: { earn: "$15 for every $300 of services", redeem: "Ask at checkout", expiry: "Rewards don't expire" } });
   });
   app.get("/api/v1/me/loyalty/ledger", (c) => {
@@ -555,12 +618,14 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   app.get("/api/v1/me/appointments", (c) => {
     const customer = customerOf(c.req.header("authorization"));
     if (!customer) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    noStore(c);
     const mine = appointments.filter((a) => a.customerId === customer.id);
     return c.json({ upcoming: mine.filter((a) => a.status === "booked" || a.status === "confirmed").map(presentAppointment), past: mine.filter((a) => a.status === "completed" || a.status === "cancelled").map(presentAppointment) });
   });
   app.get("/api/v1/me/family", (c) => {
     const customer = customerOf(c.req.header("authorization"));
     if (!customer) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    noStore(c);
     return c.json({ members: family().filter((row) => row.guardianId === customer.id).map((row) => ({ id: row.id, guardianId: row.guardianId, firstName: row.firstName, birthYear: row.birthYear })) });
   });
   app.post("/api/v1/me/family", async (c) => {
@@ -802,12 +867,13 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number; wallet?: boolean });
     return c.json(result.body, result.status as 200);
   });
-  app.post("/api/v1/appointments/:code/payments", async (c) => {
+  app.post("/api/v1/appointments/:code/payment-intents", async (c) => {
     const caller = customerOf(c.req.header("authorization"));
     if (!caller) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
-    const key = c.req.header("idempotency-key");
-    if (key && idem.has(`pay:${key}`)) return c.json(idem.get(`pay:${key}`));
     const raw = await c.req.json<Record<string, unknown>>();
+    for (const key of ["number", "cvc", "pan", "cardNumber"]) {
+      if (key in raw) return c.json(err("bad_request", "Card numbers stay in Stripe. Use the hosted card form.", 400).body, 400);
+    }
     const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number; wallet?: boolean });
     if (result.status !== 200 || !("paymentsEnabled" in result.body)) return c.json(result.body, result.status as 404);
     const preview = result.body;
@@ -816,8 +882,55 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       if (!shop?.launched) return c.json(err("forbidden", CLOSED_COPY, 403, { reason: "not_launched" }).body, 403);
       return c.json(err("payment_failed", NOT_READY, 403, { reason: "payments_not_ready" }).body, 403);
     }
-    const card = cards.find((item) => item.id === raw.paymentMethodId && item.customerId === caller.id);
+    const methodId = typeof raw.paymentMethodId === "string" ? raw.paymentMethodId : "";
+    const card = cards.find((item) => item.id === methodId && item.customerId === caller.id);
+    if (!card) return c.json(err("bad_request", "Choose a saved card.", 400).body, 400);
+    const intent: ChargeIntent = {
+      id: `pi_${crypto.randomUUID()}`,
+      secret: `pi_test_${randomBytes(16).toString("hex")}`,
+      customerId: caller.id,
+      code: c.req.param("code"),
+      paymentMethodId: card.id,
+      wallet: Boolean(raw.wallet),
+      tipCents: preview.tipCents,
+      consumed: false,
+    };
+    chargeIntents.push(intent);
+    return c.json({
+      id: intent.id,
+      clientSecret: intent.secret,
+      ephemeralKey: `ek_test_${sign(`${caller.id}.ek`)}`,
+      customerId: `cus_sim_${caller.id.replace(/-/g, "").slice(0, 16)}`,
+      paymentMethodId: card.id,
+      funding: preview.funding,
+      feeCents: preview.feeCents,
+      totalCents: preview.totalCents,
+    });
+  });
+  app.post("/api/v1/appointments/:code/payments", async (c) => {
+    const caller = customerOf(c.req.header("authorization"));
+    if (!caller) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    const key = c.req.header("idempotency-key");
+    if (key && idem.has(`pay:${key}`)) return c.json(idem.get(`pay:${key}`));
+    const raw = await c.req.json<Record<string, unknown>>();
+    const result = previewFor(caller, c.req.param("code"), raw as { paymentMethodId?: string; tipCents?: number; wallet?: boolean });
+    if (result.status !== 200 || !("paymentsEnabled" in result.body)) return c.json(result.body, result.status as 404);
+    const gated = result.body;
+    if (!gated.paymentsEnabled) {
+      const shop = world.shops.find((item) => item.id === gated.shopId);
+      if (!shop?.launched) return c.json(err("forbidden", CLOSED_COPY, 403, { reason: "not_launched" }).body, 403);
+      return c.json(err("payment_failed", NOT_READY, 403, { reason: "payments_not_ready" }).body, 403);
+    }
+    const intentId = typeof raw.paymentIntentId === "string" ? raw.paymentIntentId : "";
+    const intent = chargeIntents.find((row) => row.id === intentId && row.customerId === caller.id && row.code === c.req.param("code"));
+    if (!intent) return c.json(err("bad_request", "Confirm the payment sheet before charging.", 400).body, 400);
+    if (intent.consumed) return c.json(err("conflict", "This payment was already confirmed.", 409).body, 409);
+    const charged = previewFor(caller, c.req.param("code"), { paymentMethodId: intent.paymentMethodId, tipCents: intent.tipCents, wallet: intent.wallet });
+    if (charged.status !== 200 || !("paymentsEnabled" in charged.body) || !charged.body.paymentsEnabled) return c.json(charged.body, (charged.status === 200 ? 400 : charged.status) as 400);
+    const preview = charged.body;
+    const card = cards.find((item) => item.id === intent.paymentMethodId && item.customerId === caller.id);
     const tender = card ? `${card.brand.charAt(0).toUpperCase()}${card.brand.slice(1)} ••${card.last4}` : "card";
+    intent.consumed = true;
     const receipt: Receipt = {
       id: crypto.randomUUID(),
       customerId: caller.id,
@@ -834,7 +947,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       refunds: [],
     };
     receipts.push(receipt);
-    const paid = { id: receipt.id, ...preview, paidAt: receipt.paidAt, tender: "card" as const };
+    const paid = { id: receipt.id, ...preview, paidAt: receipt.paidAt, tender, paymentMethodId: intent.paymentMethodId };
     if (key) idem.set(`pay:${key}`, paid);
     return c.json(paid);
   });
@@ -970,6 +1083,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     if (step) return c.json(step.body, 403);
     const span = range as { from: string; to: string };
     const date = c.req.query("date");
+    if (date && !isDate(date)) return c.json(err("bad_request", "date must be YYYY-MM-DD.", 400).body, 400);
     const sales = world.sales.filter((s) => s.staffId === gate.staff!.id && s.date >= span.from && s.date <= span.to && (!date || chicagoDate(s.startedAt) === date));
     const refunds = world.adjustments.filter((a) => a.staffId === gate.staff!.id && a.kind === "card_tip_refund" && a.postedDate >= span.from && a.postedDate <= span.to);
     noStore(c);
@@ -1076,45 +1190,101 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     return c.json({ firstName: customer.firstName });
   });
 
+  const clockInStaff = (staffId: string, shopId: string) => {
+    const punch: Punch = { id: crypto.randomUUID(), staffId, shopId, inAt: now().toISOString(), outAt: null, cashTipCents: null, attestation: false };
+    punches.push(punch);
+    return punch;
+  };
+  const clockOutStaff = (staffId: string, shopId: string, cashTipCents: number, attestation: boolean) => {
+    const punch = [...punches].reverse().find((row) => row.staffId === staffId && row.shopId === shopId && !row.outAt);
+    if (!punch) return { error: err("conflict", "You aren't clocked in at this shop.", 409) };
+    if (cashTipCents > 0 && !attestation) return { error: err("bad_request", "Confirm these are all the cash tips you received today.", 422) };
+    punch.outAt = now().toISOString();
+    punch.cashTipCents = cashTipCents;
+    punch.attestation = attestation;
+    return { punch };
+  };
+  const acceptCode = (token: string | undefined) => {
+    if (!token) return null;
+    const parsed = readQr(kiosks, burnedNonces, token, now().getTime());
+    if (!parsed) return null;
+    burnedNonces.add(parsed.nonce);
+    return parsed;
+  };
+
+  app.post("/api/staff/v1/kiosk/pair", async (c) => {
+    const gate = requireStaff(c);
+    if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    const body = await c.req.json<{ shopId?: string }>();
+    const shop = shopBy(body.shopId);
+    if (!shop) return c.json(err("not_found", "Shop not found", 404).body, 404);
+    if (!shop.clockIn) return c.json(err("conflict", "Clock-in isn't live at this shop yet.", 409).body, 409);
+    if (!gate.staff!.shops.includes(shop.id)) return c.json(err("forbidden", "You aren't scheduled at this shop.", 403).body, 403);
+    const credential = randomBytes(32).toString("base64url");
+    const row: KioskDevice = { id: crypto.randomUUID(), shopId: shop.id, secretHash: sha256(credential), revokedAt: null };
+    kiosks.push(row);
+    return c.json({ kioskId: row.id, credential, shopId: shop.id }, 201);
+  });
+  app.post("/api/staff/v1/kiosk/:id/revoke", (c) => {
+    const gate = requireStaff(c);
+    if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    const device = kiosks.find((row) => row.id === c.req.param("id"));
+    if (!device || !gate.staff!.shops.includes(device.shopId)) return c.json(err("not_found", "Kiosk not found", 404).body, 404);
+    device.revokedAt = now().toISOString();
+    return c.json({ kioskId: device.id, revoked: true });
+  });
   app.get("/api/staff/v1/kiosk/qr", (c) => {
     const header = c.req.header("authorization")?.replace(/^Bearer /, "") ?? "";
     if (!header) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
     if (header.startsWith("staff.")) return c.json(err("forbidden", "Scan the code on the shop screen.", 403).body, 403);
-    if (!header.startsWith("kiosk.")) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
-    const device = shopBy(header.slice("kiosk.".length));
-    if (!device) return c.json(err("unauthorized", "This device isn't paired.", 401).body, 401);
+    const device = deviceForCredential(kiosks, header);
+    if (!device || device.revokedAt) return c.json(err("unauthorized", "This device isn't paired.", 401).body, 401);
     const requested = c.req.query("shopId");
-    const shop = requested ? shopBy(requested) : device;
-    if (!shop || shop.id !== device.id) return c.json(err("not_found", "Shop not found", 404).body, 404);
+    const shop = requested ? shopBy(requested) : shopBy(device.shopId);
+    if (!shop || shop.id !== device.shopId) return c.json(err("not_found", "Shop not found", 404).body, 404);
     if (!shop.clockIn) return c.json(err("conflict", "Clock-in isn't live at this shop yet.", 409).body, 409);
-    return c.json(qr(shop.id, now().getTime()));
+    return c.json(issueQr(device, now().getTime()));
+  });
+  app.post("/api/staff/v1/kiosk/pin", async (c) => {
+    const header = c.req.header("authorization")?.replace(/^Bearer /, "") ?? "";
+    if (!header) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    if (header.startsWith("staff.") || header.startsWith("cust.")) return c.json(err("forbidden", "Enter your PIN on the shop kiosk.", 403).body, 403);
+    const device = deviceForCredential(kiosks, header);
+    if (!device || device.revokedAt) return c.json(err("unauthorized", "This device isn't paired.", 401).body, 401);
+    const shop = shopBy(device.shopId);
+    if (!shop?.clockIn) return c.json(err("conflict", "Clock-in isn't live at this shop yet.", 409).body, 409);
+    const body = await c.req.json<{ pin?: string; direction?: "in" | "out"; cashTipCents?: number; attestation?: boolean }>();
+    const person = Object.values(STAFF_LOGIN).find((row) => row.pin === body.pin && row.shops.includes(device.shopId));
+    if (!person) return c.json(err("unauthorized", "That PIN isn't on the schedule at this shop.", 401).body, 401);
+    if (body.direction === "out") {
+      const closed = clockOutStaff(person.id, device.shopId, body.cashTipCents ?? 0, body.attestation === true);
+      if ("error" in closed && closed.error) return c.json(closed.error.body, closed.error.status as 400 | 409 | 422);
+      if (!("punch" in closed)) return c.json(err("conflict", "You aren't clocked in at this shop.", 409).body, 409);
+      return c.json({ punch: closed.punch });
+    }
+    return c.json({ punch: clockInStaff(person.id, device.shopId) });
   });
   app.post("/api/staff/v1/clock/in", async (c) => {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
     const body = await c.req.json<{ token?: string; biometric?: unknown }>();
     if ("biometric" in body) return c.json(err("bad_request", "Clock-in does not use biometrics.", 400).body, 400);
-    const shopId = body.token ? readQr(body.token, now().getTime()) : null;
-    if (!shopId) return c.json(err("bad_request", "That shop code expired. Scan the code at the shop again.", 400).body, 400);
-    if (!gate.staff!.shops.includes(shopId)) return c.json(err("forbidden", "You aren't scheduled at this shop.", 403).body, 403);
-    const punch: Punch = { id: crypto.randomUUID(), staffId: gate.staff!.id, shopId, inAt: new Date().toISOString(), outAt: null, cashTipCents: null, attestation: false };
-    punches.push(punch);
-    return c.json({ punch });
+    const code = acceptCode(body.token);
+    if (!code) return c.json(err("bad_request", "That shop code expired. Scan the code at the shop again.", 400).body, 400);
+    if (!gate.staff!.shops.includes(code.shopId)) return c.json(err("forbidden", "You aren't scheduled at this shop.", 403).body, 403);
+    return c.json({ punch: clockInStaff(gate.staff!.id, code.shopId) });
   });
   app.post("/api/staff/v1/clock/out", async (c) => {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
     const body = await c.req.json<{ token?: string; cashTipCents?: number; attestation?: boolean; biometric?: unknown }>();
     if ("biometric" in body) return c.json(err("bad_request", "Clock-out does not use biometrics.", 400).body, 400);
-    const shopId = body.token ? readQr(body.token, now().getTime()) : null;
-    if (!shopId) return c.json(err("bad_request", "That shop code expired. Scan the code at the shop again.", 400).body, 400);
-    const punch = [...punches].reverse().find((row) => row.staffId === gate.staff!.id && row.shopId === shopId && !row.outAt);
-    if (!punch) return c.json(err("conflict", "You aren't clocked in at this shop.", 409).body, 409);
-    if ((body.cashTipCents ?? 0) > 0 && body.attestation !== true) return c.json(err("bad_request", "Confirm these are all the cash tips you received today.", 422).body, 422);
-    punch.outAt = new Date().toISOString();
-    punch.cashTipCents = body.cashTipCents ?? 0;
-    punch.attestation = Boolean(body.attestation);
-    return c.json({ punch });
+    const code = acceptCode(body.token);
+    if (!code) return c.json(err("bad_request", "That shop code expired. Scan the code at the shop again.", 400).body, 400);
+    const closed = clockOutStaff(gate.staff!.id, code.shopId, body.cashTipCents ?? 0, body.attestation === true);
+    if ("error" in closed && closed.error) return c.json(closed.error.body, closed.error.status as 400 | 409 | 422);
+    if (!("punch" in closed) || !closed.punch) return c.json(err("conflict", "You aren't clocked in at this shop.", 409).body, 409);
+    return c.json({ punch: closed.punch });
   });
 
   app.get("/api/staff/v1/me/payout-account", (c) => {

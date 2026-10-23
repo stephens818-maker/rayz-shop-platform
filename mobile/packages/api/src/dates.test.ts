@@ -4,6 +4,7 @@ import {
   clipsWorkweek,
   configuredWeekStart,
   formatClock,
+  localeFor,
   payPeriodFor,
   rangeForPreset,
   resolveSavedRange,
@@ -15,6 +16,12 @@ import {
 const TODAY = "2026-10-23";
 
 describe("Chicago preset date math", () => {
+  it("maps the app language onto the shared locale helper", () => {
+    expect(localeFor("en")).toBe("en-US");
+    expect(localeFor("es")).toBe("es");
+    expect(localeFor("es-MX")).toBe("es");
+  });
+
   it("resolves every preset for Friday 23 Oct 2026", () => {
     expect(rangeForPreset("current_period", TODAY)).toEqual({ from: "2026-10-18", to: "2026-10-31" });
     expect(rangeForPreset("last_period", TODAY)).toEqual({ from: "2026-10-04", to: "2026-10-17" });

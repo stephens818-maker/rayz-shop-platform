@@ -16,7 +16,7 @@ export default function Clock() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
-  const [code, setCode] = useState("");
+  const [direction, setDirection] = useState<"in" | "out">("in");
   const me = useQuery({
     queryKey: ["staff-me", session?.token],
     enabled: Boolean(session),
@@ -38,11 +38,11 @@ export default function Clock() {
   const shopId = shopForClock(shops, picked);
   const labelFor = (id: string) => config.data?.shops.find((shop) => shop.shopId === id)?.slug ?? id;
 
-  const punch = async (direction: "in" | "out", token: string) => {
+  const punch = async (way: "in" | "out", token: string) => {
     setError("");
     const cents = Math.max(0, Math.round(Number(cash || "0") * 100));
-    const payload = direction === "in" ? { token } : { token, cashTipCents: cents, attestation: attest };
-    const res = await fetch(`${API_URL}/api/staff/v1/clock/${direction}`, {
+    const payload = way === "in" ? { token } : { token, cashTipCents: cents, attestation: attest };
+    const res = await fetch(`${API_URL}/api/staff/v1/clock/${way}`, {
       method: "POST",
       headers: { authorization: `Bearer ${session?.token}`, "content-type": "application/json" },
       body: JSON.stringify(payload),
@@ -52,13 +52,15 @@ export default function Clock() {
       setError(body.error?.message ?? t("retry"));
       return;
     }
-    setMessage(direction === "in" ? t("clockedIn") : t("clockedOut"));
+    setMessage(way === "in" ? t("clockedIn") : t("clockedOut"));
+    setDirection("in");
   };
 
   return (
     <ScrollScreen>
       <Display>{t("clockIn")}</Display>
-      <Body muted>{t("unlockBody")}</Body>
+      <Body muted>{direction === "out" ? t("scanToClockOut") : t("scanToClock")}</Body>
+      <Body muted>{t("kioskPinHint")}</Body>
       {shops.length > 1 ? (
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
           {shops.map((id) => (
@@ -69,34 +71,12 @@ export default function Clock() {
       {shops.length > 1 && !shopId ? <Body>{t("pickShop")}</Body> : null}
       <NativeCamera
         onToken={(token) => {
-          void punch("in", token);
-        }}
-      />
-      <Field label={t("shopCode")} value={code} onChangeText={setCode} autoCapitalize="none" />
-      <Body muted>{t("shopCodeHint")}</Body>
-      <Button
-        label={t("clockIn")}
-        onPress={() => {
-          if (!code.trim()) {
-            setError(t("shopCodeHint"));
-            return;
-          }
-          void punch("in", code.trim());
+          void punch(direction, token);
         }}
       />
       <Field label={t("cashToday")} value={cash} onChangeText={setCash} keyboardType="decimal-pad" />
       <Button label={attest ? `${t("attestCash")} ✓` : t("attestCash")} kind={attest ? "primary" : "ghost"} onPress={() => setAttest((value) => !value)} />
-      <Button
-        label={t("clockOut")}
-        kind="secondary"
-        onPress={() => {
-          if (!code.trim()) {
-            setError(t("shopCodeHint"));
-            return;
-          }
-          void punch("out", code.trim());
-        }}
-      />
+      <Button label={t("clockOut")} kind="secondary" onPress={() => setDirection("out")} />
       {message ? <Banner tone="good">{message}</Banner> : null}
       {error ? <Banner tone="bad">{error}</Banner> : null}
     </ScrollScreen>

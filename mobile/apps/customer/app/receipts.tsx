@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Body, Button, Card, Display, Money, ScrollScreen, useI18n } from "@rayz/ui";
 import { api } from "../src/net";
 import { displayDate } from "../src/civil-date";
-import { receiptTotal, receiptView, refundPortionPhrase, settlementLines, type ReceiptView } from "../src/receipt-view";
+import { cardSurchargeLine, receiptTotal, receiptView, refundPortionPhrase, settlementLines, type ReceiptView } from "../src/receipt-view";
 import { useSession } from "../src/session";
 
 interface Row { id: string; shopName: string; paidAt: string; totalCents: number; serviceName: string }
@@ -29,6 +29,7 @@ export default function Receipts() {
     queryFn: () => api<{ receipt: ReceiptView | null }>(`/api/v1/me/receipts/${open}`, session?.token),
   });
   const receipt = receiptView(detail.data ?? null);
+  const surcharge = receipt ? cardSurchargeLine(receipt.feeCents, t("feeTitle")) : null;
   const rows = [...(list.data?.receipts ?? []), ...more];
   const next = cursor === null ? list.data?.nextCursor ?? null : cursor;
 
@@ -62,7 +63,7 @@ export default function Receipts() {
           {settlementLines(receipt.tipCents, receipt.settlement, receipt.barberFirstName).map((line) => (
             <Body key={line}>{line}</Body>
           ))}
-          <Body>{`${t("feeTitle")} ${formatCents(receipt.feeCents)}`}</Body>
+          {surcharge ? <Body>{surcharge}</Body> : null}
           {receipt.refunds.map((refund) => (
             <Body key={refund.id}>{`${t("refund")} ${formatCents(refund.amountCents)}${refundPortionPhrase(refund)}`}</Body>
           ))}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { receiptTotal, receiptView, refundPortionPhrase, settlementLines } from "./receipt-view";
+import { cardSurchargeLine, receiptTotal, receiptView, refundPortionPhrase, settlementLines } from "./receipt-view";
 
 describe("receipt display", () => {
   it("keeps the original total when a refund is listed and accepts a null receipt", () => {
@@ -32,9 +32,15 @@ describe("receipt display", () => {
     expect(refundPortionPhrase({ from: "shop" })).toBe(" from the shop");
     expect(refundPortionPhrase({ from: "tip" })).toBe(" from the tip");
     expect(refundPortionPhrase({ from: "shop_and_tip", shopPortionCents: 150, tipPortionCents: 100 })).toBe(" from the shop $1.50 and the tip $1.00");
+    expect(settlementLines(500, { shopCents: 3103, tipCents: 500, tipStatus: "planned" }, "Makenna")).toContain("Tip pending");
+    expect(settlementLines(500, { shopCents: 3103, tipCents: 500, tipStatus: "executed" }, "Makenna")).toContain("Tip paid to Makenna");
+    expect(settlementLines(500, { shopCents: 3103, tipCents: 500, tipStatus: "paid" }, "Makenna Stone")).toContain("Tip paid to Makenna");
+    expect(settlementLines(500, { shopCents: 3103, tipCents: 500, tipStatus: "reversed" }, "Makenna")).toContain("Returned by bank");
     const lines = settlementLines(500, { shopCents: 3103, tipCents: 500, tipStatus: "with_shop" }, "Makenna");
     expect(lines).toContain("Shop $31.03");
-    expect(lines.some((line) => line.includes("stayed with the shop"))).toBe(true);
+    expect(lines).toContain("Tips paid through payroll.");
+    expect(cardSurchargeLine(93)).toBe("Credit card surcharge (3%) $0.93");
+    expect(cardSurchargeLine(0)).toBeNull();
     expect(receiptTotal({ serviceCents: 2900, taxCents: 203, tipCents: 500, feeCents: 0, totalCents: 3603, tender: "card", refunds: [{ id: "r", amountCents: 250, from: "shop_and_tip", shopPortionCents: 150, tipPortionCents: 100 }] })).toBe(3603);
   });
 });

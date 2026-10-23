@@ -36,7 +36,7 @@ describe("customer flows", () => {
 
   it("shows the card fee before a credit charge and waives debit and wallet", async () => {
     const app = createApp();
-    const auth = { authorization: "Bearer cust.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", "content-type": "application/json", "idempotency-key": "pay-1" };
+    const auth = { authorization: "Bearer cust.bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", "content-type": "application/json" };
     const credit = await json(await app.request("/api/v1/me/payment-methods/setup", { method: "POST", headers: auth, body: JSON.stringify({ funding: "credit" }) }));
     const debit = await json(await app.request("/api/v1/me/payment-methods/setup", { method: "POST", headers: auth, body: JSON.stringify({ funding: "debit" }) }));
     const creditPreview = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payment-preview", { method: "POST", headers: auth, body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500 }) }));
@@ -51,9 +51,22 @@ describe("customer flows", () => {
     expect(debitPreview.body.feeReason).toBe("not_credit");
     const wallet = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payment-preview", { method: "POST", headers: auth, body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500, wallet: true }) }));
     expect(wallet.body.feeReason).toBe("wallet_fee_off");
-    const paid = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payments", { method: "POST", headers: auth, body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500 }) }));
+    const debitIntent = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payment-intents", { method: "POST", headers: auth, body: JSON.stringify({ paymentMethodId: debit.body.paymentMethod.id, tipCents: 500 }) }));
+    expect(debitIntent.body.clientSecret).toMatch(/^pi_/);
+    expect(debitIntent.body.feeCents).toBe(0);
+    expect(debitIntent.body.paymentMethodId).toBe(debit.body.paymentMethod.id);
+    const chargedDebit = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payments", { method: "POST", headers: auth, body: JSON.stringify({ paymentIntentId: debitIntent.body.id, paymentMethodId: credit.body.paymentMethod.id, tipCents: 0 }) }));
+    expect(chargedDebit.body.feeCents).toBe(0);
+    expect(chargedDebit.body.paymentMethodId).toBe(debit.body.paymentMethod.id);
+    expect(chargedDebit.body.tender).toContain("5556");
+    expect(chargedDebit.body.tender).not.toContain("4242");
+    const creditIntent = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payment-intents", { method: "POST", headers: auth, body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500 }) }));
+    expect(creditIntent.body.feeCents).toBe(93);
+    const paid = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payments", { method: "POST", headers: auth, body: JSON.stringify({ paymentIntentId: creditIntent.body.id }) }));
     expect(paid.body.feeCents).toBe(93);
+    expect(paid.body.paymentMethodId).toBe(credit.body.paymentMethod.id);
     expect(paid.body.totalCents).toBe(creditPreview.body.totalCents);
+    expect(paid.body.tender).toContain("4242");
   });
 });
 
@@ -80,27 +93,41 @@ describe("staff pay, clock, and earnings", () => {
     const app = createApp();
     const { token } = await staffSession(app);
     const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
-    const device = { authorization: `Bearer kiosk.${SHOP_CORALVILLE}` };
     const barber = await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: auth });
     expect(barber.status).toBe(403);
     const missing = await app.request("/api/staff/v1/kiosk/qr?shopId=coralville");
     expect(missing.status).toBe(401);
+    const unsigned = await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: { authorization: `Bearer kiosk.${SHOP_CORALVILLE}` } });
+    expect(unsigned.status).toBe(401);
+    const paired = await json(await app.request("/api/staff/v1/kiosk/pair", { method: "POST", headers: auth, body: JSON.stringify({ shopId: SHOP_CORALVILLE }) }));
+    expect(paired.status).toBe(201);
+    const device = { authorization: `Bearer ${paired.body.credential}` };
     const code = await json(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
     expect(code.status).toBe(200);
     expect(code.body.rotatesSeconds).toBe(15);
+    expect(String(code.body.token).split(".")).toHaveLength(5);
     const otherShop = await app.request("/api/staff/v1/kiosk/qr?shopId=moline", { headers: device });
     expect(otherShop.status).toBe(404);
-    const blocked = await app.request("/api/staff/v1/kiosk/qr?shopId=kimberly", { headers: { authorization: `Bearer kiosk.${SHOP_KIMBERLY}` } });
+    const blocked = await app.request("/api/staff/v1/kiosk/pair", { method: "POST", headers: auth, body: JSON.stringify({ shopId: SHOP_KIMBERLY }) });
     expect(blocked.status).toBe(409);
     const bio = await json(await app.request("/api/staff/v1/clock/in", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token, biometric: true }) }));
     expect(bio.status).toBe(400);
     const inn = await json(await app.request("/api/staff/v1/clock/in", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token }) }));
     expect(inn.status).toBe(200);
-    const noAttest = await json(await app.request("/api/staff/v1/clock/out", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token, cashTipCents: 1200 }) }));
+    const reuse = await json(await app.request("/api/staff/v1/clock/out", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token, cashTipCents: 0 }) }));
+    expect(reuse.status).toBe(400);
+    const outCode = await json(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
+    const noAttest = await json(await app.request("/api/staff/v1/clock/out", { method: "POST", headers: auth, body: JSON.stringify({ token: outCode.body.token, cashTipCents: 1200 }) }));
     expect(noAttest.status).toBe(422);
-    const out = await json(await app.request("/api/staff/v1/clock/out", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token, cashTipCents: 1200, attestation: true }) }));
+    const fresh = await json(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
+    const out = await json(await app.request("/api/staff/v1/clock/out", { method: "POST", headers: auth, body: JSON.stringify({ token: fresh.body.token, cashTipCents: 1200, attestation: true }) }));
     expect(out.body.punch.cashTipCents).toBe(1200);
     expect(out.body.punch.attestation).toBe(true);
+    const remotePin = await app.request("/api/staff/v1/kiosk/pin", { method: "POST", headers: auth, body: JSON.stringify({ pin: "135790", direction: "in" }) });
+    expect(remotePin.status).toBe(403);
+    const onKiosk = await json(await app.request("/api/staff/v1/kiosk/pin", { method: "POST", headers: { authorization: `Bearer ${paired.body.credential}`, "content-type": "application/json" }, body: JSON.stringify({ pin: "135790", direction: "in" }) }));
+    expect(onKiosk.status).toBe(200);
+    expect(onKiosk.body.punch.shopId).toBe(SHOP_CORALVILLE);
   });
 
   it("serves gross earnings only to the signed-in barber", async () => {

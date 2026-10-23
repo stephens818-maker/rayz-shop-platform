@@ -1,4 +1,4 @@
-import { createStaffClient, formatCents, formatLongDate, rangeForPreset, type PayoutAccount, type PayoutAccountState } from "@rayz/api";
+import { createStaffClient, formatCents, formatLongDate, localeFor, rangeForPreset, type PayoutAccount, type PayoutAccountState } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { View } from "react-native";
@@ -10,7 +10,8 @@ import { useStaff } from "../../src/session";
 import { chicagoToday } from "../../src/today";
 
 export default function Payouts() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   const { session, stepUp } = useStaff();
   const today = useMemo(() => chicagoToday(), []);
   const range = rangeForPreset("current_period", today);
@@ -119,7 +120,7 @@ export default function Payouts() {
         <Card key={row.id}>
           <Body>{transferStatusLabel(row.status)}</Body>
           <Money cents={Math.max(0, row.amountCents)} />
-          {row.arrivalDate ? <Body muted>{formatLongDate(row.arrivalDate.slice(0, 10), "en-US")}</Body> : null}
+          {row.arrivalDate ? <Body muted>{formatLongDate(row.arrivalDate.slice(0, 10), locale)}</Body> : null}
         </Card>
       ))}
       {history.data?.payouts.map((row) => (
@@ -128,7 +129,7 @@ export default function Payouts() {
           <Money cents={Math.max(0, row.amountCents)} />
           {row.bankLast4 ? <Body muted>{`••${row.bankLast4}`}</Body> : null}
           {row.failureMessage ? <Banner tone="bad">{row.failureMessage}</Banner> : null}
-          {row.arrivalDate ? <Body muted>{formatLongDate(row.arrivalDate.slice(0, 10), "en-US")}</Body> : null}
+          {row.arrivalDate ? <Body muted>{formatLongDate(row.arrivalDate.slice(0, 10), locale)}</Body> : null}
         </Card>
       ))}
       {message ? <Banner tone="good">{message}</Banner> : null}

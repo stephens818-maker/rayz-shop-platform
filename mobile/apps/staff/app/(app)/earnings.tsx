@@ -3,6 +3,7 @@ import {
   formatCents,
   formatHours,
   formatLongDate,
+  localeFor,
   LATE_ADJUSTMENT_COPY,
   configuredWeekStart,
   rangeForPreset,
@@ -50,7 +51,8 @@ function periodKey(status: PeriodStatus): CopyKey | null {
 }
 
 export default function Earnings() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   const { session, stepUp, elevate } = useStaff();
   const today = useMemo(() => chicagoToday(), []);
   const config = useQuery({
@@ -167,7 +169,7 @@ export default function Earnings() {
         ))}
         <Chip label={t("custom")} selected={range.preset === "custom"} onPress={() => setCustom(true)} />
       </View>
-      <Body muted>{`${formatLongDate(range.from, "en-US")} – ${formatLongDate(range.to, "en-US")}`}</Body>
+      <Body muted>{`${formatLongDate(range.from, locale)} – ${formatLongDate(range.to, locale)}`}</Body>
       {custom ? (
         <Card>
           <Body>{t("customDates")}</Body>
@@ -206,6 +208,7 @@ function Report({
   onDay: (day: string) => void;
 }) {
   const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   return (
     <View style={{ gap: 12 }}>
       {view.isEstimate ? <Chip label={t("estimate")} selected /> : null}
@@ -237,7 +240,7 @@ function Report({
       {view.workweeks.map((week) => (
         <Card key={week.id}>
           <Body>{t("workweek")}</Body>
-          <Body muted>{`${formatLongDate(week.weekStart, "en-US")} – ${formatLongDate(week.weekEnd, "en-US")}`}</Body>
+          <Body muted>{`${formatLongDate(week.weekStart, locale)} – ${formatLongDate(week.weekEnd, locale)}`}</Body>
           <Body>{`${t("production")} ${formatHours(week.productionHours)}`}</Body>
           <Body>{`${t("training")} ${formatHours(week.trainingHours)}`}</Body>
           <Body>{`${t("regular")} ${formatHours(week.regularHours)}`}</Body>
@@ -264,7 +267,7 @@ function Report({
       <Body>{t("tickets")}</Body>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         {days.filter((row) => row.tickets > 0 || row.cardTipsCents > 0 || row.cashTipsCents > 0 || row.productionHours > 0).map((row) => (
-          <Chip key={row.date} label={formatLongDate(row.date, "en-US")} selected={day === row.date} onPress={() => onDay(row.date)} />
+          <Chip key={row.date} label={formatLongDate(row.date, locale)} selected={day === row.date} onPress={() => onDay(row.date)} />
         ))}
       </View>
       {tickets.map((ticket) => (

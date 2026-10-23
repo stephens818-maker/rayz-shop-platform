@@ -35,7 +35,7 @@ const en = {
   shops: "Shops",
   notLive: "This shop isn't booking in the app yet.",
   bookOnWeb: "Book on the web",
-  feeTitle: "Card fee",
+  feeTitle: "Credit card surcharge (3%)",
   payButton: "Pay",
   gross: "Gross earnings, before taxes and deductions",
   currentPeriod: "Current period",
@@ -179,8 +179,10 @@ const en = {
   cardSurchargeNote: "We add a 3% surcharge to credit card payments. It is not more than what we pay to accept credit cards. Debit cards, prepaid cards, gift cards, and cash have no surcharge.",
   offlineTitle: "Can't reach Ray'z",
   offlineBody: "Check your connection and try again.",
-  shopCode: "Shop code",
-  shopCodeHint: "Scan the code at the shop, or type the code on the shop screen.",
+  scanToClock: "Scan the code on the shop screen to clock in.",
+  scanToClockOut: "Scan the shop screen again to clock out.",
+  kioskPinHint: "If this camera won't open, enter your PIN on the shop kiosk.",
+  nothingCharged: "Nothing was charged.",
 };
 
 const es: Record<keyof typeof en, string> = {
@@ -218,7 +220,7 @@ const es: Record<keyof typeof en, string> = {
   shops: "Barberías",
   notLive: "Esta barbería todavía no reserva en la app.",
   bookOnWeb: "Reservar en la web",
-  feeTitle: "Cargo de tarjeta",
+  feeTitle: "Recargo de tarjeta de crédito (3%)",
   payButton: "Pagar",
   gross: "Ingresos brutos, antes de impuestos y deducciones",
   currentPeriod: "Periodo actual",
@@ -362,8 +364,10 @@ const es: Record<keyof typeof en, string> = {
   cardSurchargeNote: "Agregamos un recargo del 3% a los pagos con tarjeta de crédito. No es más de lo que pagamos por aceptar tarjetas de crédito. Las tarjetas de débito, prepago, de regalo y el efectivo no tienen recargo.",
   offlineTitle: "Sin conexión con Ray'z",
   offlineBody: "Revisa tu conexión e inténtalo de nuevo.",
-  shopCode: "Código de la tienda",
-  shopCodeHint: "Escanea el código en la barbería o escríbelo de la pantalla.",
+  scanToClock: "Escanea el código en la pantalla de la barbería para marcar entrada.",
+  scanToClockOut: "Vuelve a escanear la pantalla de la barbería para marcar salida.",
+  kioskPinHint: "Si la cámara no abre, ingresa tu PIN en el quiosco de la barbería.",
+  nothingCharged: "No se realizó ningún cargo.",
 };
 
 export type Lang = "en" | "es";

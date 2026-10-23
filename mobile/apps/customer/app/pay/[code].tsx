@@ -20,7 +20,7 @@ export default function Pay() {
   const router = useRouter();
   const { session } = useSession();
   const [method, setMethod] = useState<Method | null>(null);
-  const [setup, setSetup] = useState<{ clientSecret: string; ephemeralKey: string; customerId: string } | null>(null);
+  const [intent, setIntent] = useState<{ id: string; clientSecret: string; ephemeralKey: string; customerId: string; paymentMethodId: string; funding: PaymentPreview["funding"]; feeCents: number; totalCents: number } | null>(null);
   const [tip, setTip] = useState(500);
   const [paid, setPaid] = useState<{ totalCents: number; feeCents: number; tender: string } | null>(null);
   const [error, setError] = useState("");
@@ -34,13 +34,24 @@ export default function Pay() {
   });
   const chosen = method;
   useEffect(() => {
-    if (!session || !chosen) return;
-    const funding = chosen.funding === "debit" || chosen.funding === "prepaid" ? chosen.funding : "credit";
-    void api<{ clientSecret: string; ephemeralKey: string; customerId: string }>("/api/v1/me/payment-methods/setup", session.token, {
-      method: "POST",
-      body: JSON.stringify({ funding }),
-    }).then((body) => setSetup({ clientSecret: body.clientSecret, ephemeralKey: body.ephemeralKey, customerId: body.customerId }));
-  }, [session, chosen]);
+    if (!session || !chosen || !code) return;
+    let live = true;
+    setIntent(null);
+    void api<{ id: string; clientSecret: string; ephemeralKey: string; customerId: string; paymentMethodId: string; funding: PaymentPreview["funding"]; feeCents: number; totalCents: number }>(
+      `/api/v1/appointments/${code}/payment-intents`,
+      session.token,
+      { method: "POST", body: JSON.stringify({ paymentMethodId: chosen.id, tipCents: tip, wallet: chosen.wallet }) },
+    )
+      .then((body) => {
+        if (live) setIntent(body);
+      })
+      .catch(() => {
+        if (live) setIntent(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [session, chosen, tip, code]);
   const preview = useQuery({
     queryKey: ["preview", code, chosen?.id, tip, chosen?.wallet],
     enabled: Boolean(session && chosen),
@@ -54,13 +65,13 @@ export default function Pay() {
   const lines = preview.data ? payRows(preview.data) : [];
 
   const pay = () => {
-    if (!session || !chosen) return;
+    if (!session || !intent) return;
     setBusy(true);
     setError("");
     void api<{ totalCents: number; feeCents: number; tender: string }>(`/api/v1/appointments/${code}/payments`, session.token, {
       method: "POST",
       headers: { "Idempotency-Key": idem },
-      body: JSON.stringify({ paymentMethodId: chosen.id, tipCents: tip, wallet: chosen.wallet }),
+      body: JSON.stringify({ paymentIntentId: intent.id }),
     })
       .then((body) => setPaid(body))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : t("retry")))
@@ -88,7 +99,7 @@ export default function Pay() {
         </Card>
       ) : (
         <>
-          <AddCard token={session.token} onAdded={(card, sheet) => { setMethod(card); setSetup(sheet); void cards.refetch(); }} />
+          <AddCard token={session.token} onAdded={(card) => { setMethod(card); void cards.refetch(); }} />
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {cards.data?.paymentMethods.map((card) => (
               <Chip key={card.id} label={`${card.brand} ••${card.last4}`} selected={chosen?.id === card.id} onPress={() => setMethod(card)} />
@@ -116,7 +127,15 @@ export default function Pay() {
             </Card>
           ) : null}
           {error ? <Banner tone="bad">{error}</Banner> : null}
-          {chosen ? <PayConfirm preview={preview.data ?? null} setup={setup} disabled={busy || !model || !preview.data?.paymentsEnabled} onPress={pay} /> : null}
+          {chosen ? (
+            <PayConfirm
+              preview={intent ? { feeCents: intent.feeCents, totalCents: intent.totalCents, funding: intent.funding } : preview.data ?? null}
+              setup={intent ? { clientSecret: intent.clientSecret, ephemeralKey: intent.ephemeralKey, customerId: intent.customerId } : null}
+              disabled={busy || !intent || !model || !preview.data?.paymentsEnabled}
+              onPress={pay}
+              onNothingCharged={() => setError(t("nothingCharged"))}
+            />
+          ) : null}
         </>
       )}
     </ScrollScreen>

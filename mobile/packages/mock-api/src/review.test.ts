@@ -227,13 +227,41 @@ describe("review fixes and the customer contract", () => {
     const barber = await bodyOf(await app.request("/api/staff/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+13195550111", code: "123456" }) }));
     const denied = await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: { authorization: `Bearer ${barber.body.accessToken}` } });
     expect(denied.status).toBe(403);
-    const device = { authorization: `Bearer kiosk.${SHOP_CORALVILLE}` };
+    const paired = await bodyOf(await app.request("/api/staff/v1/kiosk/pair", { method: "POST", headers: { authorization: `Bearer ${barber.body.accessToken}`, "content-type": "application/json" }, body: JSON.stringify({ shopId: SHOP_CORALVILLE }) }));
+    const device = { authorization: `Bearer ${paired.body.credential}` };
     const first = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
     expect(first.status).toBe(200);
     clock += 15_000;
     const next = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
     expect(next.body.token).not.toBe(first.body.token);
     expect(next.body.rotatesSeconds).toBe(15);
+  });
+
+  it("rejects an unsigned or forged kiosk credential, a forged code, the previous window, a reuse, and a revoked kiosk", async () => {
+    let clock = Date.parse("2026-10-23T15:00:00.000Z");
+    const app = createApp(createWorld(), { now: () => new Date(clock) });
+    const barber = await bodyOf(await app.request("/api/staff/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+13195550111", code: "123456" }) }));
+    const staff = { authorization: `Bearer ${barber.body.accessToken}`, "content-type": "application/json" };
+    expect((await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: { authorization: "Bearer kiosk.coralville" } })).status).toBe(401);
+    expect((await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: { authorization: "Bearer forged-device-credential" } })).status).toBe(401);
+    const paired = await bodyOf(await app.request("/api/staff/v1/kiosk/pair", { method: "POST", headers: staff, body: JSON.stringify({ shopId: SHOP_CORALVILLE }) }));
+    expect(paired.status).toBe(201);
+    expect(paired.body.credential.includes("coralville")).toBe(false);
+    expect(paired.body.secretHash).toBeUndefined();
+    const device = { authorization: `Bearer ${paired.body.credential}` };
+    const issued = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
+    const forgedToken = `${issued.body.token.slice(0, -1)}${issued.body.token.endsWith("a") ? "b" : "a"}`;
+    expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: forgedToken }) })).status).toBe(400);
+    expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: issued.body.token }) })).status).toBe(200);
+    expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: issued.body.token }) })).status).toBe(400);
+    const fresh = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
+    clock += 15_000;
+    expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: fresh.body.token }) })).status).toBe(400);
+    const current = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
+    const revoked = await bodyOf(await app.request(`/api/staff/v1/kiosk/${paired.body.kioskId}/revoke`, { method: "POST", headers: staff }));
+    expect(revoked.body.revoked).toBe(true);
+    expect((await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device })).status).toBe(401);
+    expect((await app.request("/api/staff/v1/clock/in", { method: "POST", headers: staff, body: JSON.stringify({ token: current.body.token }) })).status).toBe(400);
   });
 
   it("requires auth on device routes, returns 400 for a bad date, and keeps private responses uncached", async () => {
@@ -246,7 +274,7 @@ describe("review fixes and the customer contract", () => {
     expect((await app.request("/api/staff/v1/me/devices", { method: "POST", headers: staff })).status).toBe(201);
     const step = await bodyOf(await app.request("/api/staff/v1/auth/step-up", { method: "POST", headers: staff, body: JSON.stringify({ pin: "135790" }) }));
     const money = { ...staff, "x-step-up": step.body.stepUpToken as string };
-    for (const path of ["/api/staff/v1/me/earnings/days?from=nope&to=2026-10-25", "/api/staff/v1/me/earnings/tickets?from=2026-10-32&to=2026-10-25", "/api/staff/v1/me/payouts?from=2026-13-01&to=2026-10-25"]) {
+    for (const path of ["/api/staff/v1/me/earnings/days?from=nope&to=2026-10-25", "/api/staff/v1/me/earnings/tickets?from=2026-10-32&to=2026-10-25", "/api/staff/v1/me/payouts?from=2026-13-01&to=2026-10-25", "/api/staff/v1/me/earnings/tickets?from=2026-10-19&to=2026-10-25&date=garbage"]) {
       expect((await app.request(path, { headers: money })).status, path).toBe(400);
     }
     const checks: [string, Record<string, string>][] = [
@@ -255,6 +283,9 @@ describe("review fixes and the customer contract", () => {
       ["/api/v1/me/receipts/rcpt_past", auth(ALEX)],
       ["/api/v1/me/home", auth(ALEX)],
       ["/api/v1/me/payment-methods", auth(ALEX)],
+      ["/api/v1/me/family", auth(ALEX)],
+      ["/api/v1/me/loyalty", auth(ALEX)],
+      ["/api/v1/me/appointments", auth(ALEX)],
       ["/api/staff/v1/me", staff],
       [`/api/staff/v1/clients/${ALEX}`, staff],
       ["/api/staff/v1/me/payout-account", money],

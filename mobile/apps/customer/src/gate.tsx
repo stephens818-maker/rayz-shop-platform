@@ -1,4 +1,4 @@
-import { bootGate, chicagoDate, formatLongDate, setTimeFormat, type AppConfig } from "@rayz/api";
+import { bootGate, chicagoDate, formatLongDate, localeFor, setTimeFormat, type AppConfig } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
 import { Linking, Platform } from "react-native";
@@ -8,7 +8,8 @@ import { ApiError, api, APP_VERSION } from "./net";
 const platform = Platform.OS === "android" ? "android" : "ios";
 
 export function ConfigGate({ children }: { children: ReactNode }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   const config = useQuery({
     queryKey: ["app-config"],
     retry: false,
@@ -39,7 +40,7 @@ export function ConfigGate({ children }: { children: ReactNode }) {
     return (
       <Screen style={{ justifyContent: "flex-end", paddingBottom: 36 }}>
         <Display>{t("comingSoon")}</Display>
-        {config.data?.launchAt ? <Body muted>{formatLongDate(chicagoDate(config.data.launchAt), "en-US")}</Body> : null}
+        {config.data?.launchAt ? <Body muted>{formatLongDate(chicagoDate(config.data.launchAt), locale)}</Body> : null}
       </Screen>
     );
   }

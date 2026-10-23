@@ -1,4 +1,4 @@
-import { formatClock } from "@rayz/api";
+import { formatClock, localeFor } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
@@ -29,7 +29,8 @@ const NEXT: Record<string, { status: string; label: "checkedIn" | "inChair" | "f
 };
 
 export default function Today() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   const router = useRouter();
   const { session } = useStaff();
   const me = useQuery({
@@ -71,7 +72,7 @@ export default function Today() {
         <View key={row.id} style={{ gap: 8, backgroundColor: "#FFFBF6", borderRadius: 18, borderWidth: 1, borderColor: "#E4D7C6", padding: 16 }}>
           <Pressable accessibilityRole="button" onPress={() => router.push(`/client/${row.clientId}`)}>
             <Text style={{ fontSize: 18, fontWeight: "700" }}>{row.clientFirstName}</Text>
-            <Body muted>{`${formatClock(row.startsAt, "en-US")} · ${row.serviceName}`}</Body>
+            <Body muted>{`${formatClock(row.startsAt, locale)} · ${row.serviceName}`}</Body>
           </Pressable>
           <Body muted>{row.status}</Body>
           {(NEXT[row.status] ?? []).map((action) => (

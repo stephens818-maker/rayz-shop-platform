@@ -188,6 +188,12 @@ export function resolveSavedRange(saved: SavedRange | null, today: string, weekS
   return { preset: saved.preset, ...rangeForPreset(saved.preset, today, weekStartDay) };
 }
 
+/** App language to a BCP 47 tag. English stays en-US; Spanish stays es. */
+export function localeFor(lang: string): string {
+  if (lang === "es" || lang.startsWith("es-")) return "es";
+  return "en-US";
+}
+
 export function formatLongDate(iso: string, locale: string): string {
   const [y, m, d] = iso.split("-").map(Number);
   return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, d)));

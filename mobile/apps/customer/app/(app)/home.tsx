@@ -1,4 +1,4 @@
-import { formatCents, formatClock } from "@rayz/api";
+import { formatCents, formatClock, localeFor } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Banner, Body, Button, Card, Display, Empty, Loading, Money, ScrollScreen, useI18n } from "@rayz/ui";
@@ -14,7 +14,8 @@ interface HomePayload {
 }
 
 export default function Home() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const locale = localeFor(lang);
   const router = useRouter();
   const { session } = useSession();
   const home = useQuery({
@@ -48,7 +49,7 @@ export default function Home() {
           <Body muted>{t("nextVisit")}</Body>
           <Body>{next.shop.name}</Body>
           <Body>{`${next.barber.displayName} · ${next.items[0]?.name ?? ""}`}</Body>
-          <Body>{`${formatClock(next.startsAt, "en-US")}`}</Body>
+          <Body>{`${formatClock(next.startsAt, locale)}`}</Body>
           <Button label={t("pay")} onPress={() => router.push(`/pay/${next.code}`)} />
           <Button label={t("visits")} kind="ghost" onPress={() => router.push(`/visit/${next.code}`)} />
         </Card>
