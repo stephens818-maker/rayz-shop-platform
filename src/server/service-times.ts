@@ -33,11 +33,17 @@ async function current(appointmentId: string, tx: DBorTx): Promise<Times | null>
   return t ?? null;
 }
 
+/**
+ * Update, then insert if there was no row. Not an upsert: Postgres checks `appointment_times_order`
+ * against the proposed insert row before it sees the conflict, so a Finish on its own would fail.
+ */
 async function write(appointmentId: string, patch: Patch, tx: DBorTx) {
-  await tx
-    .insert(appointmentTimes)
-    .values({ appointmentId, ...patch, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: appointmentTimes.appointmentId, set: { ...patch, updatedAt: new Date() } });
+  const updated = await tx
+    .update(appointmentTimes)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(appointmentTimes.appointmentId, appointmentId))
+    .returning({ id: appointmentTimes.appointmentId });
+  if (!updated.length) await tx.insert(appointmentTimes).values({ appointmentId, ...patch, updatedAt: new Date() });
 }
 
 async function lockAppointment(id: string, tx: DBorTx) {
