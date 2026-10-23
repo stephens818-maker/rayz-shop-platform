@@ -133,6 +133,23 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-23: core (staff time)
+
+- **My time** at `/admin/my-time`, for a phone. It has quick blocks (lunch, break, personal, other) with a start and a length, recurring blocks with skip and stop, one-tap lunch now, time off requests (a day, a range or part of a day, at one shop or all), and the barber's requests with their status.
+- **Time off** at `/admin/time-off`, per shop:
+  - Pending requests to approve or deny, with the booked appointments in them.
+  - Approved time off coming up, where an appointment can be moved to a free barber at the same time or the client asked to reschedule (`time_off_reschedule`). Appointments are never cancelled.
+  - A month calendar, who's off, recently decided, and the rules (approval mode, longest lunch, longest block, minimum notice), per brand with shop overrides.
+- Blocks and requests over booked appointments warn first and need a confirm. Automatic approval happens only when nothing is booked. Pending time off is held from online booking.
+- The calendar's block panel gained categories, and the calendar shows an "Off today" banner. The dashboard has a "Who's in today" card. There's a new **Who's working, off and blocked** report (`staffing`).
+- Migration `core_0023_staff_time`. The template grants are listed by role key. Custom roles get `blocks.own`, and `blocks.others` if they could already manage the calendar or schedules.
+- **Seed:** brand rules, with Moline set to automatic approval. Makenna has a recurring lunch made from her seeded 12:30 lunches, so the sample history is unchanged. The seed also has time off requests in every state, kept off the Coralville days the booking tests use.
+- **Fixes to existing tests, both date-dependent:**
+  - `scripts/squire-fixture.ts` looped forever when five days before the export date was a Sunday (as it is from 2026-10-23).
+  - The review test P2#24 squeezed in seven minutes before the last slot even when the barber had a client then.
+- Tests: `tests/staff-time.test.ts` and `tests/db/staff-time.test.ts`. The permission template and navigation tests were updated for the new permissions.
+- **Not touched:** anything under `/api/v1` (availability now honours pending time off; see Staff time above).
+
 ### 2026-10-23: core (payroll)
 
 - **Payroll Report** at `/admin/payroll/report`: the workbook's Locations math row for row, plus O.T. Pay (1.5 × base × split OT hours), Training Pay and Labor Cost as real cost. Includes the Locations view, per-employee drill-down, anomalies, a reconciliation gate that blocks approve-and-lock on any $0.01 mismatch, and downloads of locked periods only.

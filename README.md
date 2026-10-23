@@ -44,8 +44,8 @@ To put a demo online for the owner (Vercel and Neon, sample data, mock payments 
 | Admin | `admin@rayz.test` | Brand Admin, every shop | Everything except brand-level settings; manages roles and permissions |
 | Regional | `regional@rayz.test` | Regional Manager, Moline and Rock Island | Manager tools and every report, for those two shops only |
 | Michelle | `michelle@rayz.test` | Shop Manager, Coralville | Manager tools and Coralville's reports |
-| Front desk | `frontdesk@rayz.test` | Front Desk, Coralville | Calendar, walk-ins, checkout for every barber, the drawer, discounts up to 10%, and two reports (view only) |
-| Makenna | `makenna@rayz.test` | Barber, Coralville | Her own calendar column, appointments, clients, and sales (My sales shows only her own numbers) |
+| Front desk | `frontdesk@rayz.test` | Front Desk, Coralville | Calendar, walk-ins, checkout for every barber, the drawer, blocking time for anyone, discounts up to 10%, and three reports (view only) |
+| Makenna | `makenna@rayz.test` | Barber, Coralville | Her own calendar column, appointments, clients, and sales (My sales shows only her own numbers), and **My time** for lunch, blocks and time off requests |
 | Morgan | `manager.moline@rayz.test` | Shop Manager, Moline | Manager tools and Moline's reports, inside the Moline workspace |
 | Kat | `kat@rayz.test` | Barber at Moline and Silvis, Shop Manager at Rock Island | Works one shop at a time under that shop's role; the switcher offers only her three shops |
 | Shop logins | `coralville@rayz.test`, `kimberly@rayz.test`, `le-claire@rayz.test`, `moline@rayz.test`, `rock-island@rayz.test`, `dubuque@rayz.test`, `silvis@rayz.test`, `utica@rayz.test` | Front Desk, that one shop | The shared front-desk sign-in for that shop's workspace (see [Shop workspaces](#shop-workspaces)) |
@@ -72,6 +72,7 @@ Handy demo data:
 7. Sign in as `moline@rayz.test`. The sidebar says **Shop workspace** with Moline's name and address, and every page (calendar, sales, drawer, stock, reports) covers Moline only. Search **Clients** for a Coralville client's full phone number to book them; a partial search won't find them. Then sign in as `regional@rayz.test` and open **Setup → Shop logins** to create a login for Moline or reset the Moline desk's password.
 8. Sign in as `makenna@rayz.test` and open one of her clients: the phone and birthday are masked, email and address aren't there, and **Call through shop line** places the call without showing the number. As `michelle@rayz.test`, click **Reveal** next to a phone and give a reason. As `owner@rayz.test`, open **Setup → Client data protection** to change what a role or person sees (try **What someone sees**), and **Setup → Client data access** to see both lookups and the reveal with its reason.
 9. As `owner@rayz.test`, open **Setup → Shop settings** and use **Open a new location**. Location setup opens for the new shop. Under **Card payments and payouts**, click **Set up card payments with Stripe**. Without keys, a stand-in for Stripe's onboarding opens. Submit it without the bank account to see "Needs attention", then add the bank account. Under **Owners**, add a franchisee and move two shops to it. Then open **Reports → Shop P&L by Stripe account**.
+10. Sign in as `makenna@rayz.test` on a phone (or a narrow window) and open **My time**. Tap **Take lunch now**, block a break, or add a recurring lunch, then request a day off. Sign in as `michelle@rayz.test` and open **Time off** to approve or deny it. If it covers booked appointments, move one to another barber or ask the client to reschedule. As `manager.moline@rayz.test`, Mackenzie's pending day lists her bookings. **Calendar** shows who's off today, and **Reports → Who's working, off and blocked** has the totals.
 
 ### Other commands
 
@@ -85,7 +86,8 @@ pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + see
                    # Coralville never reach Moline's logins through any page, URL, export, API route, action, job or login flow;
                    # client data protection (tests/db/client-privacy.test.ts): hidden and masked details never reach restricted
                    # roles' pages, action results or CSVs, and every reveal, export, call and text is audited;
-                   # entering details (tests/db/client-entry.test.ts): a restricted user's saved phone comes back only masked or hidden
+                   # entering details (tests/db/client-entry.test.ts): a restricted user's saved phone comes back only masked or hidden;
+                   # staff time (tests/db/staff-time.test.ts): recurring blocks, part-day time off, pending holds, conflicts, approval rights
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -126,7 +128,7 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 
 ### Schedules and staff
 
-- Each barber has a weekly schedule *per shop*, can work at several shops, and has days off and time off with a reason. Someone with the schedules permission can block time only for barbers who work at their shops; an all-shops day off is allowed for a barber whose shops are all theirs, and anyone with access to every shop can do it for anyone.
+- Each barber has a weekly schedule *per shop*, can work at several shops, and has days off and time off with a reason. Barbers block their own lunch and breaks and request time off themselves on **My time** (see [Staff time](#staff-time-lunch-blocks-and-time-off)). Someone with the schedules permission can block time only for barbers who work at their shops; an all-shops day off is allowed for a barber whose shops are all theirs, and anyone with access to every shop can do it for anyone.
 - Shops are closed Sundays. Only the Brand Owner can open a shop on a Sunday or change its Sunday hours.
 - Saving a schedule that overlaps the barber's hours at another shop is refused with a clear message.
 - Duplicate first names are handled with unique staff IDs plus admin-set display labels. Saving a duplicate active label is refused, and the error suggests an alternative.
@@ -356,6 +358,50 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
 - **Reports → Service times:** average, median and count per barber, service and shop; the gap from the booked time; % on time (±5 min), over and under; wait time; a weekly trend; filters and CSV. Barbers see only their own times. Where a barber's times consistently differ from the booking length (at least 8 cuts, off by at least 5 min or 15%), the report suggests a new length. **Use N min** saves it as that barber's override (needs `scheduling.timing`).
 - Seeded: Makenna runs long and Delaney runs short, so there are suggestions to try. A few timers were left running.
 
+### Staff time: lunch, blocks and time off
+
+- **My time** (`/admin/my-time`, built for a phone): barbers block their own time.
+  - **Take lunch now** blocks 30 minutes from this minute.
+  - **Block time** adds Lunch, Break, Personal or Other (with a reason) from a start and a length.
+  - **Recurring** repeats a block on chosen days (e.g. lunch every weekday 12:00–12:30), with **Skip** for one day and **Stop repeating**.
+  - **Request time off** covers one day, a range or part of one day, at one shop or all of their shops. The reason is vacation, sick, personal or other, with an optional note.
+  - The page also lists upcoming blocks and the barber's requests with their status.
+  - Blocks and time off are shaded on the day calendar (↻ marks a recurring one) and come off online availability at once.
+- **Recurring blocks** are written ahead about a year (380 days). The notifications cron, or `pnpm worker`, keeps extending them. Removing one occurrence skips that day only.
+- **Approval:**
+  - The brand sets **automatic** or **manager** approval, and a shop can override it. Moline is seeded as automatic.
+  - Automatic approval happens only when nothing is booked in the time; otherwise the request waits for a manager.
+  - A pending request is held from online booking, but the desk can still book into it.
+  - The barber gets an email when a request is decided, and sees the decision on My time and the dashboard.
+- **Booked appointments are never dropped:**
+  - A block or request over bookings lists them and needs **anyway** to save.
+  - Approving lists the affected appointments on the **Time off** page. A manager can **Move to another barber** (barbers free at the same time are marked) or **Ask client to reschedule**. The second option texts or emails the client a link to pick a new time, and the booking stays until they do.
+- **Time off** (`/admin/time-off`) per shop:
+  - requests waiting for a decision;
+  - approved time off coming up, with its affected appointments;
+  - a month calendar (approved solid, pending dashed);
+  - who's off that month;
+  - recently decided requests;
+  - the rules.
+- **Rules**, per brand with shop overrides: approval mode, longest lunch (60 min), longest block (120 min), and minimum notice (7 days; sick time can be the same day). Time at several shops follows the strictest shop. People with `blocks.others` aren't held to the block limits.
+- **Permissions**, each set separately:
+  - `blocks.own`: block your own time.
+  - `blocks.others`: block anyone's time at your shops.
+  - `timeoff.request`: request time off.
+  - `timeoff.approve`: approve requests at your shops, never your own, though the Brand Owner may. All-shop time off for a barber who also works elsewhere needs access to every shop.
+  - The audit log records every block, series, request, decision, move, reschedule ask and rules change.
+- **Who's in:**
+  - The day calendar shows **Off today** with the hours.
+  - The dashboard has a **Who's in today** card: working, partly off, off, and lunch and blocks. Barbers see **My day** instead.
+  - **Reports → Who's working, off and blocked** shows, per day, shop and barber: status, scheduled hours, time off, blocked time and bookings, with CSV.
+- **Seeded:**
+  - Makenna has a recurring lunch from Tuesday to Saturday, 12:30–1:00.
+  - Jessica has a pending week of vacation.
+  - Mackenzie has a pending day at Moline. It's held for a manager because she has bookings that day.
+  - Jen has an approved vacation day next week, with bookings still on it.
+  - A Coralville barber has an approved afternoon off today.
+  - Makenna has a denied request, and Sara has an automatically approved sick day.
+
 ### Reports à la carte
 
 Each report is its own page with **two permissions of its own**: `report.<key>.view` and `report.<key>.export`. Both can be set per role and per person, so someone can see the Sales summary without being able to download it, or get just one report and nothing else.
@@ -379,6 +425,7 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | Client ratings | `client_ratings` | Lowest- and highest-rated clients per shop |
 | Retention and rebook KPIs | `kpis` | Rebook rate, retention, new vs returning, no-shows |
 | Busiest times heatmap | `heatmap` | Visits by weekday and hour |
+| Who's working, off and blocked | `staffing` | Per day, shop and barber: working, partly off or off, scheduled hours, time off, blocked time and bookings |
 | Cash drawer | `cash_drawer` | Drawer closes with expected, counted, and variance |
 | Audit log | `audit_log` | Every audited change, filterable |
 
