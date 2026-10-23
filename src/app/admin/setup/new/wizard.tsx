@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Table, Td, Textarea, Th, cx } from "@/components/ui";
 import { PAYMENTS_MODES, PAYMENTS_MODE_HINT, PAYMENTS_MODE_LABEL, PAYMENTS_STEP_TITLE, statementDescriptorProblem, type PaymentsMode } from "@/domain/connect";
+import { NetworkRuleFields, ruleDraft, ruleFromDraft, type RuleDraft } from "@/components/network-rule-fields";
 import { parseProductLines, type LocationDraftInput } from "@/domain/location-draft";
+import { DEFAULT_NETWORK_RULE, REQUIREMENT_LABEL } from "@/domain/network-access";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
 import { slugify } from "@/lib/ids";
 import { WEEKDAYS, hhmmToMinutes, minutesToHHMM, minutesToLabel } from "@/lib/time";
@@ -22,7 +24,7 @@ const STEPS = [
   { key: "retail", title: "Products and par levels" },
   { key: "vendors", title: "Vendors" },
   { key: "team", title: "Team and payroll" },
-  { key: "devices", title: "Login and phone line" },
+  { key: "devices", title: "Login, sign-in and phone line" },
   { key: "brand", title: "Branding" },
   { key: "review", title: "Review" },
 ] as const;
@@ -37,7 +39,19 @@ const pct = (n: number) => +(n * 100).toFixed(3);
 const cents = (s: string) => (s.trim() === "" ? null : Math.round(Number(s) * 100));
 const int = (s: string) => (s.trim() === "" ? null : Math.max(0, Math.round(Number(s))));
 
-export function LocationWizard({ options, brandIntervalMinutes, canBank }: { options: Options; brandIntervalMinutes: number; canBank: boolean }) {
+export function LocationWizard({
+  options,
+  brandIntervalMinutes,
+  canBank,
+  network,
+}: {
+  options: Options;
+  brandIntervalMinutes: number;
+  canBank: boolean;
+  /** Set when they may limit where staff sign in from. */
+  network: { myIp: string | null; exempt: boolean } | null;
+}) {
+  const [signIn, setSignIn] = useState<RuleDraft>(ruleDraft(DEFAULT_NETWORK_RULE));
   const [step, setStep] = useState<StepKey>("basics");
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -156,8 +170,9 @@ export function LocationWizard({ options, brandIntervalMinutes, canBank }: { opt
       receipt: { ...receipt, headline: receipt.headline.trim() || null, footer: receipt.footer.trim() || null },
       accentColor: brand.accent || null,
       logoUrl: brand.logo.trim() || null,
+      networkAccess: network ? ruleFromDraft(signIn) : DEFAULT_NETWORK_RULE,
     }),
-    [basics, hours, holidays, money, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank],
+    [basics, hours, holidays, money, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank, network, signIn],
   );
 
   const index = STEPS.findIndex((s) => s.key === step);
@@ -884,6 +899,13 @@ export function LocationWizard({ options, brandIntervalMinutes, canBank }: { opt
                   </div>
                 )}
               </fieldset>
+              {network && (
+                <fieldset className="space-y-2 rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200">
+                  <legend className="px-1 text-sm font-semibold text-zinc-800">Where staff can sign in</legend>
+                  <NetworkRuleFields value={signIn} onChange={setSignIn} myIp={network.myIp} exempt={network.exempt} shopName={basics.name || "this location"} />
+                  <p className="text-xs text-zinc-500">Trusted devices are approved once the location exists, under Sign-in security.</p>
+                </fieldset>
+              )}
               <Field label="Shop line (Twilio number)" hint="Buy the number in Twilio and point its webhooks here (see the deploy guide). Texts and calls to and from clients use it; leave blank to use the brand's sender for now.">
                 <Input placeholder="+13195550123" value={line} onChange={(e) => setLine(e.target.value)} />
               </Field>
@@ -922,6 +944,7 @@ export function LocationWizard({ options, brandIntervalMinutes, canBank }: { opt
                 <Item k="Vendors" v={`${Object.keys(vendorPicks).length || "Any"}`} />
                 <Item k="Team" v={team.map((t) => options.staff.find((s) => s.id === t.staffId)?.label).join(", ") || "Nobody yet"} />
                 <Item k="Front desk login" v={login.on && login.email ? login.email : "None"} />
+                <Item k="Staff sign-in" v={network && signIn.enabled ? REQUIREMENT_LABEL[signIn.require] : "From anywhere"} />
                 <Item k="Shop line" v={line || "Brand sender"} />
                 <Item
                   k="Card readers"

@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { ReceiptBrandingSchema, statementDescriptorProblem } from "./connect";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE } from "./location-lifecycle";
+import { DEFAULT_NETWORK_RULE, NetworkRuleSchema } from "./network-access";
 
 const money = z.number().int().min(0).max(10_000_00);
 const minutes = z.number().int().min(0).max(24 * 60);
@@ -114,6 +115,8 @@ export const LocationDraft = z.object({
     .regex(/^#[0-9a-fA-F]{6}$/, "Pick a color like #1f2937")
     .nullable(),
   logoUrl: z.url("Enter the logo's web address").nullable(),
+  /** Where staff may sign in from. Anything but off needs "Set where staff can sign in from". */
+  networkAccess: NetworkRuleSchema.default(DEFAULT_NETWORK_RULE),
 });
 
 export type LocationDraftInput = z.input<typeof LocationDraft>;
@@ -178,6 +181,7 @@ export function draftDefaults(over: Partial<LocationDraftInput> & Pick<LocationD
     readers: [],
     accentColor: null,
     logoUrl: null,
+    networkAccess: DEFAULT_NETWORK_RULE,
     ...over,
   };
 }

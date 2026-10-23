@@ -8,7 +8,11 @@ import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { getLoyaltyConfig } from "@/server/loyalty";
 import { brandInterval } from "@/server/timing";
 import { ShopTimingCard } from "../booking-times/editors";
+import { headers } from "next/headers";
 import { receiptBranding } from "@/domain/connect";
+import { shopNetworkRule } from "@/domain/network-access";
+import { clientIp } from "@/lib/client-ip";
+import { ShopRuleEditor } from "../sign-in-security/client";
 import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor, ReadersEditor, ReceiptEditor, ShopInfoEditor } from "./editors";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -85,6 +89,20 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         />
       )}
       {shopSettings && <ReceiptEditor shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} />}
+      {can(ctx, "network.settings") && (
+        <Card>
+          <CardHeader
+            title="Where staff can sign in"
+            subtitle="Limit sign-in to this shop's network, approved devices, or both. Every location's rule, trusted devices and blocked sign-ins are under Sign-in security."
+            action={
+              <LinkButton variant="secondary" size="sm" href="/admin/sign-in-security">
+                Sign-in security
+              </LinkButton>
+            }
+          />
+          <ShopRuleEditor shopId={shop.id} shopName={shop.name} initial={shopNetworkRule(shop.networkAccess)} myIp={clientIp(await headers())} exempt={ctx.isOwner || can(ctx, "access.remote")} />
+        </Card>
+      )}
       {brand && <LoyaltyEditor initial={loyalty} />}
       {can(ctx, "locations.setup") && (
         <Card>

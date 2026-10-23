@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { LinkButton, PageHeader } from "@/components/ui";
+import { clientIp } from "@/lib/client-ip";
 import { can, guardPage, staffGrantor } from "@/server/auth/staff";
 import { wizardOptions } from "@/server/location-admin";
 import { brandInterval } from "@/server/timing";
@@ -21,7 +23,12 @@ export default async function NewLocationPage() {
           </LinkButton>
         }
       />
-      <LocationWizard options={options} brandIntervalMinutes={interval} canBank={can(ctx, "payments.banking")} />
+      <LocationWizard
+        options={options}
+        brandIntervalMinutes={interval}
+        canBank={can(ctx, "payments.banking")}
+        network={can(ctx, "network.settings") ? { myIp: clientIp(await headers()), exempt: ctx.isOwner || can(ctx, "access.remote") } : null}
+      />
     </div>
   );
 }

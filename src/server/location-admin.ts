@@ -126,6 +126,8 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
   const d = LocationDraft.parse(raw);
   if ((d.paymentsMode !== "connected" || d.statementDescriptor) && !m.grantor.permissions.has("payments.banking"))
     throw forbidden("Choosing where a shop's card money goes needs the banking permission. Leave Payments and banking on the defaults, or ask the Brand Owner.");
+  if (d.networkAccess.enabled && !m.grantor.permissions.has("network.settings"))
+    throw forbidden("Limiting where staff can sign in needs \u201cSet where staff can sign in from\u201d. Leave it off here, or ask the brand.");
   const slugIssue = await checkSlug(d.slug);
   if (slugIssue) throw new AppError("bad_request", slugIssue);
   if (d.twilioNumber && (await db.query.shops.findFirst({ where: eq(shops.twilioNumber, d.twilioNumber), columns: { id: true } })))
@@ -191,6 +193,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         twilioNumber: d.twilioNumber || null,
         accentColor: d.accentColor,
         logoUrl: d.logoUrl,
+        networkAccess: { ...d.networkAccess },
       })
       .returning({ id: shops.id });
     if (d.hours.length) await tx.insert(shopHours).values(d.hours.map((h) => ({ shopId: s.id, ...h })));
@@ -240,6 +243,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         taxRatesVerified: d.taxRatesVerified,
         paymentsMode: d.paymentsMode,
         statementDescriptor: d.statementDescriptor,
+        networkAccess: d.networkAccess,
       },
       s.id,
       tx,
