@@ -14,7 +14,7 @@ export function StripeCardEntry({ publishableKey, amountCents, onPaymentMethod }
   return (
     <Elements
       stripe={stripe}
-      options={{ mode: "payment", amount: Math.max(50, amountCents), currency: "usd", paymentMethodCreation: "manual", appearance: { theme: "stripe" } }}
+      options={{ mode: "payment", amount: Math.max(50, amountCents), currency: "usd", paymentMethodTypes: ["card"], paymentMethodCreation: "manual", appearance: { theme: "stripe" } }}
     >
       <Inner amountCents={amountCents} onPaymentMethod={onPaymentMethod} />
     </Elements>
