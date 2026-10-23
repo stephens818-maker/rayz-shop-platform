@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { installLogScrubbing } from "@/lib/sensitive";
 import { closeDb } from "@/db";
 import { processDueJobs } from "@/server/notifications/queue";
 import { extendSeries } from "@/server/block-series";
@@ -6,6 +7,7 @@ import { runFollowUps } from "@/server/call-ins";
 
 /** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, and drains the notification queue every 30 seconds. `--once` for a single pass. */
 async function main() {
+  installLogScrubbing();
   const once = process.argv.includes("--once");
   do {
     const written = await extendSeries();

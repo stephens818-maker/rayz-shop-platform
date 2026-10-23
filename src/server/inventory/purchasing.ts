@@ -67,6 +67,9 @@ export const VendorInput = z.object({
 });
 export type VendorInput = z.input<typeof VendorInput>;
 
+/** The shop's customer number at the supplier, not a bank account, under a key the audit scrubbing keeps. */
+const vendorAudit = ({ accountNumber, ...v }: z.output<typeof VendorInput>) => ({ ...v, supplierAccount: accountNumber });
+
 export async function saveVendor(who: Who, id: string | null, raw: VendorInput) {
   const v = VendorInput.parse(raw);
   const clash = await db
@@ -81,11 +84,11 @@ export async function saveVendor(who: Who, id: string | null, raw: VendorInput) 
       .where(eq(vendors.id, id))
       .returning();
     if (!row) throw notFound("Vendor");
-    await audit(who.actor, "vendor.update", "vendor", id, v, null);
+    await audit(who.actor, "vendor.update", "vendor", id, vendorAudit(v), null);
     return row;
   }
   const [row] = await db.insert(vendors).values(v).returning();
-  await audit(who.actor, "vendor.create", "vendor", row.id, v, null);
+  await audit(who.actor, "vendor.create", "vendor", row.id, vendorAudit(v), null);
   return row;
 }
 

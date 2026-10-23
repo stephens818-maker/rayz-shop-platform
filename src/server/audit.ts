@@ -1,6 +1,7 @@
 import { eq, inArray, isNull, or, type SQL } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { auditLog } from "@/db/schema";
+import { scrub } from "@/lib/sensitive";
 
 export interface Actor {
   staffId?: string | null;
@@ -26,7 +27,7 @@ export async function audit(
     action,
     entity,
     entityId,
-    details,
+    details: scrub(details),
   });
 }
 
