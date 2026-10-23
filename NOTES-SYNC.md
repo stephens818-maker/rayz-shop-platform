@@ -22,7 +22,7 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking` and `core_0030_time_clock`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live` and `core_0032_clock_blocks`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -183,11 +183,15 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
 - **Notification kinds:** `clock_forgot_out` and `ft_status_change`, both emails to the shop's managers.
 - **Cron:** `/api/cron/notifications` now runs `timeClockCron`. It flags forgotten clock-outs and sends the live clock alerts on every run, and runs the FT/PT check once a night around 3 AM local. The response gains `timeClock`.
 - **Employee Numbers** go into the CSV only, from `payroll_profiles`. The download's audit row holds the period, shops and row count, never the numbers. Nothing calls iSolved.
-- **Availability reads the clock today** (`drizzle/core_0031_clock_live.sql`):
-  - `getAvailability` and `loadDayInput` in `src/server/booking.ts` now hold online time when a barber is on a break or has clocked out early, and can open time before the scheduled start after an early clock-in. This applies only when the date is today. `/api/v1` availability and booking pick this up with no change on your side.
-  - Holds skip `staffOverride` (front desk). The early time applies to both.
-  - The pure logic is in `src/domain/clock-live.ts`, and the loader is `liveClock` in `src/server/clock-live.ts`.
-  - The shop rules are new keys in `shops.time_clock`: `blockOnBreak`, `breakHoldMinutes`, `blockAfterClockOut`, `openEarly` and `lateAlertMinutes`. Their defaults are in `shopClockSettings`.
+- **Clock events write real block-outs** (`drizzle/core_0032_clock_blocks.sql`, `src/domain/clock-blocks.ts`, `src/server/clock-blocks.ts`):
+  - A break, a clock-out before the scheduled end and (when the shop turns on `notInBlock`) "Not in yet" become `time_blocks` rows. `time_blocks` gains `source` (`manual` or `clock`), `clock_key` (unique: `break:<punchId>`, `out:<punchId>`, `not_in:…`), `punch_id`, `end_punch_id`, `clock_open`, `overridden_at` and `overridden_by`. Please treat `source = 'clock'` rows as read-only from the app; they change through punches.
+  - `time_punches` gains `reason_id` and `planned_min` (break start only). `punch()` takes optional `breakReasonId` and `plannedMin`.
+  - `syncClockBlocks` runs inside every punch, edit, add and void. The cron (`refreshClockBlocks`) moves open blocks on to 15 minutes past now.
+  - New table `clock_block_releases`: blocks a manager removed, so the clock doesn't write them back. New reasons `clocked_out` and `not_in` (`used_for = 'clock'`).
+  - Because they're ordinary blocks, `getAvailability` and `loadDayInput` in `src/server/booking.ts` take the time out for online and `staffOverride` booking alike, on any date. `/api/v1` availability and booking pick this up with no change on your side.
+  - The early time after an early clock-in is still read live (`src/domain/clock-live.ts`, `liveClock` in `src/server/clock-live.ts`), today only, for both.
+  - The shop rules are keys in `shops.time_clock`: `blockOnBreak`, `breakHoldMinutes`, `blockAfterClockOut`, `notInBlock` (default false), `openEarly` and `lateAlertMinutes`. Their defaults are in `shopClockSettings`.
+  - Audit actions: `block.create`, `block.update` and `block.delete` (as the person punching, or the manager editing the punch), and `block.clock_override`, `block.clock_release` and `block.clock_reset`.
   - `staff` gains `clock_opens_early` (boolean, default false): the barber's own permission for early time.
   - New table `clock_alert_log` (key, shop, sent at) sends each email once.
   - Clients never see clock status. The slots are simply absent, and the reason stays "No openings on this day". Please keep clock status out of `/api/v1` customer responses too.
@@ -241,6 +245,15 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (clock block-outs)
+
+- **Clock events are real block-outs now**, replacing the calendar overlay and the online-only holds. Break (or the reason picked, for its planned length or the shop's default, running on while it lasts), Clocked out (to the end of the shift) and an optional soft Not in yet. Clocking back in or ending the break trims them.
+- They're marked from the time clock, linked to their punches, and moved, trimmed or removed when a punch is edited, added or voided.
+- Same reasons, colors, privacy and permissions as manual blocks. They take the time out of availability (staff booking too), show in who's off, who's blocked and reports, and drive the affected-clients alert and rebook flow (`/admin/call-ins?block=<id>`).
+- Managers (`blocks.others`) can change, remove or reset them, each audit-logged. Barbers can't change or remove them.
+- Migration `core_0032_clock_blocks`. Tests: `tests/clock-blocks.test.ts` and `tests/db/clock-blocks.test.ts`; `tests/db/clock-live.test.ts` now checks the rows.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
 
 ### 2026-10-23: core (the clock on the calendar)
 
