@@ -77,6 +77,18 @@ describe("permission catalog and templates", () => {
     expect(access("brand_admin").permissions.has("clients.privacy")).toBe(true);
   });
 
+  it("tip payouts: everyone sees their own tips, managers approve payouts, only brand-level roles change the settings", () => {
+    for (const k of ["brand_admin", "regional_manager", "shop_manager", "front_desk", "barber"]) {
+      expect(access(k).permissions.has("tips.own"), k).toBe(true);
+      expect(pageAllowed(access(k).permissions, "/admin/my-tips"), k).toBe(true);
+    }
+    for (const k of ["brand_admin", "regional_manager", "shop_manager"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(true);
+    for (const k of ["front_desk", "barber"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(false);
+    for (const k of ["regional_manager", "shop_manager", "front_desk", "barber"]) expect(access(k).permissions.has("tips.settings"), k).toBe(false);
+    expect(access("brand_admin").permissions.has("tips.settings")).toBe(true);
+    expect(effectiveAccess(role("brand_admin"), {}, null, "selected").permissions.has("tips.settings")).toBe(false);
+  });
+
   it("only the Brand Owner can export the client list by default; managers can reveal, everyone who books can call and text", () => {
     for (const t of ROLE_TEMPLATES) expect(effectiveAccess(t).permissions.has("clients.export"), t.key).toBe(t.key === "brand_owner");
     for (const k of ["brand_admin", "regional_manager", "shop_manager"]) expect(access(k).permissions.has("clients.reveal"), k).toBe(true);
@@ -295,7 +307,7 @@ describe("navigation follows permissions", () => {
     expect(hrefs).not.toContain("/admin/catalog");
     for (const h of hrefs) expect(pageAllowed(fd, h as keyof typeof PAGE_ACCESS)).toBe(true);
     const barber = navFor(access("barber").permissions).flatMap((s) => s.items.map((i) => i.href));
-    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/customers", "/admin/reports", "/admin/timesheets"]);
+    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/my-tips", "/admin/customers", "/admin/reports", "/admin/timesheets"]);
     expect(hrefs).toContain("/admin/my-time");
     expect(hrefs).toContain("/admin/time-off");
     expect(barber).not.toContain("/admin/time-off");

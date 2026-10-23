@@ -295,6 +295,36 @@ describe("iSolved export values", () => {
   });
 });
 
+describe("tips already paid out", () => {
+  it("tips paid outside payroll go to E_Cash Tips Recd; the usual file has no extra column", () => {
+    const lines = [computeLine(input({ tips: 412.5, tipsPaidOut: 300 }), DEFAULT_PAYROLL_SETTINGS)];
+    expect(lines[0]).toMatchObject({ tips: 412.5, tipsInPayroll: 0, tipsOutside: 412.5, tipsPaidOut: 300 });
+    const { blocks, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 412.5, tipsPaidOut: 300 })] }], DEFAULT_PAYROLL_SETTINGS);
+    expect(blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
+    expect(blocks[0].exportRows[0].values[2]).toBe(412.5);
+    expect(blocks[0].exportRows[0].values).toHaveLength(EXPORT_COLUMNS.length);
+    expect(mismatches).toEqual([]);
+  });
+
+  it("tips paid through payroll leave E_Cash Tips Recd and get their own column, so nobody is paid twice", () => {
+    const inputs = [input({ tips: 412.5, tipsInPayroll: 412.5 }), input({ staffId: "b2", employeeNumber: "1002", tips: 100, tipsPaidOut: 100 })];
+    const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs }], DEFAULT_PAYROLL_SETTINGS);
+    expect(blocks[0].exportHeaders).toEqual([...EXPORT_COLUMNS.map((c) => c.header), DEFAULT_PAYROLL_SETTINGS.tipsInPayrollHeader]);
+    expect(blocks[0].exportRows.map((r) => [r.values[2], r.values[6]])).toEqual([
+      [0, 412.5],
+      [100, 0],
+    ]);
+    expect(grand).toMatchObject({ tips: 512.5, tipsInPayroll: 412.5, tipsOutside: 100, tipsPaidOut: 100 });
+    expect(mismatches).toEqual([]);
+    expect(reconcile([{ ...blocks[0], exportRows: blocks[0].exportRows.map((r, i) => (i ? r : { ...r, values: [...r.values.slice(0, 6), 400] })) }], grand).map((m) => m.check)).toContain("export");
+  });
+
+  it("the column's header is a setting, defaulting until it's confirmed", () => {
+    expect(payrollSettings(null).tipsInPayrollHeader).toBe(DEFAULT_PAYROLL_SETTINGS.tipsInPayrollHeader);
+    expect(payrollSettings({ tipsInPayrollHeader: "E_Tips_Dollars" }).tipsInPayrollHeader).toBe("E_Tips_Dollars");
+  });
+});
+
 describe("2-decimal half-up rounding (toggle, off by default)", () => {
   it("rounds half up from the decimal digits, never banker's", () => {
     expect(DEFAULT_PAYROLL_SETTINGS.roundExport2dp).toBe(false);
