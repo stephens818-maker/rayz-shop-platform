@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { ReceiptBranding } from "@/domain/connect";
 import type { LoyaltyConfig } from "@/domain/loyalty";
+import { ordinal, type ReviewRules } from "@/domain/reviews";
 import { SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
 import { registerReaderAction } from "../setup/actions";
 import {
@@ -14,6 +15,7 @@ import {
   saveHoursAction,
   saveLoyaltyAction,
   saveReceiptAction,
+  saveReviewRulesAction,
   saveShopInfoAction,
   saveShopMoneyAction,
   saveShopProfileAction,
@@ -421,7 +423,7 @@ export function ReadersEditor({ shopId, shopName, terminalLocationId, readers }:
   );
 }
 
-export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; shopName: string; initial: ReceiptBranding }) {
+export function ReceiptEditor({ shopId, shopName, initial, brandReviews }: { shopId: string; shopName: string; initial: ReceiptBranding; brandReviews: ReviewRules }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState({ ...initial, headline: initial.headline ?? "", footer: initial.footer ?? "", reviewUrl: initial.reviewUrl ?? "" });
   return (
@@ -447,7 +449,7 @@ export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; s
             </label>
           ))}
         </div>
-        <ReviewFields value={v} onChange={(r) => setV({ ...v, ...r })} />
+        <ReviewFields value={v} brand={brandReviews} onChange={(r) => setV({ ...v, ...r })} />
         <label className="flex items-center gap-2 text-sm text-zinc-700 sm:col-span-2">
           <input type="checkbox" checked={v.allowPrint} onChange={(e) => setV({ ...v, allowPrint: e.target.checked })} /> Show a Print button on the staff receipt (paper is off by default)
         </label>
@@ -457,6 +459,39 @@ export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; s
         msg={msg}
         onClick={() => save(() => saveReceiptAction(shopId, { ...v, headline: v.headline.trim() || null, footer: v.footer.trim() || null, reviewUrl: v.reviewUrl.trim() || null }))}
       />
+    </Card>
+  );
+}
+
+/** The brand's rules for the Google review link; each location can set its own under Receipts. */
+export function ReviewRulesEditor({ initial }: { initial: ReviewRules }) {
+  const { pending, msg, save } = useSave();
+  const [v, setV] = useState({ minVisits: String(initial.minVisits), snoozeDays: String(initial.snoozeDays) });
+  const minVisits = Number(v.minVisits);
+  const snoozeDays = Number(v.snoozeDays);
+  const valid = /^\d+$/.test(v.minVisits) && minVisits >= 1 && minVisits <= 50 && /^\d+$/.test(v.snoozeDays) && snoozeDays <= 365;
+  return (
+    <Card>
+      <CardHeader
+        title="Google reviews"
+        subtitle="When receipts and the follow-up after a visit include Leave a review, for every location that has a review link. A location can set its own under Receipts."
+      />
+      <div className="grid gap-3 p-4 sm:grid-cols-2" data-testid="review-rules">
+        <Field label="Show Leave a review from visit" hint="Completed visits (checked out, not cancelled or no-show) at any location. 1 shows it to everyone.">
+          <Input type="number" min={1} max={50} value={v.minVisits} onChange={(e) => setV({ ...v, minVisits: e.target.value })} data-testid="brand-review-min-visits" />
+        </Field>
+        <Field label="After a tap, don't ask again for (days)" hint="At the location whose link they tapped, on later receipts and follow-ups. 0 never pauses.">
+          <Input type="number" min={0} max={365} value={v.snoozeDays} onChange={(e) => setV({ ...v, snoozeDays: e.target.value })} data-testid="brand-review-snooze-days" />
+        </Field>
+        <p className="text-xs text-zinc-500 sm:col-span-2">
+          {valid
+            ? `${minVisits <= 1 ? "Every client" : `Clients from their ${ordinal(minVisits)} visit on`} see the button${snoozeDays > 0 ? `, then not again at that location for ${snoozeDays} days after they tap it` : ""}. `
+            : ""}
+          Only the visit count decides: never a rating, tip, refund or complaint, since asking only happy clients is against Google&apos;s policy. We can&apos;t see whether
+          someone actually posted a review, so a tap on the link counts.
+        </p>
+      </div>
+      <SaveBar pending={pending} msg={msg} disabled={!valid} onClick={() => save(() => saveReviewRulesAction({ minVisits, snoozeDays }))} />
     </Card>
   );
 }

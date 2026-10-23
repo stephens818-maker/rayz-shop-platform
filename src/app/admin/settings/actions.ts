@@ -18,6 +18,7 @@ import { AppError } from "@/server/errors";
 import { saveLoyaltyConfig } from "@/server/loyalty";
 import { ShopHandoffSchema, TipScreenSchema } from "@/domain/handoff";
 import { saveBrandHandoff, saveShopHandoff } from "@/server/handoff";
+import { saveReviewRules } from "@/server/review-rules";
 
 const Info = z.object({
   name: z.string().trim().min(1),
@@ -230,6 +231,16 @@ export async function saveReceiptAction(shopId: string, raw: z.input<typeof Rece
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { receipt: true } });
     await db.update(shops).set({ receipt: values }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.receipt", "shop", shopId, { before: before ? receiptBranding(before.receipt) : null, after: values }, shopId);
+    revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+/** The brand's rules for when the Google review link is shown: from which visit, and the pause after a tap. */
+export async function saveReviewRulesAction(raw: { minVisits: number; snoozeDays: number }) {
+  return safe(async () => {
+    const ctx = await authorize("settings.brand");
+    await saveReviewRules(raw, ctx.actor);
     revalidatePath("/admin/settings");
     return null;
   });

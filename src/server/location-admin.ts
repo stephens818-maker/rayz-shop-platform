@@ -34,6 +34,7 @@ import { endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/li
 import { Actor, audit } from "./audit";
 import { AppError, forbidden, notFound } from "./errors";
 import { brandHandoffConfig } from "./handoff";
+import { loadReviewRules } from "./review-rules";
 import { locationSetup } from "./location-setup";
 import { registerReader } from "./payments/connect";
 import { createShopLogin, shopLoginRoles } from "./shop-logins";
@@ -102,6 +103,7 @@ export async function wizardOptions(g: Grantor) {
     loginRoles: shopLoginRoles(g, roleRows).map((r) => ({ id: r.id, name: r.name, key: r.key })),
     payCalendars: cal.map((c) => ({ ...c, shop: name(c.shopId) })).filter((c) => c.shop),
     brandTips: (await brandHandoffConfig()).tips,
+    reviewRules: await loadReviewRules(),
   };
 }
 

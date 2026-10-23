@@ -14,8 +14,9 @@ import { shopNetworkRule } from "@/domain/network-access";
 import { clientIp } from "@/lib/client-ip";
 import { ShopRuleEditor } from "../sign-in-security/client";
 import { brandHandoffConfig, shopHandoffConfig } from "@/server/handoff";
+import { loadReviewRules } from "@/server/review-rules";
 import { BrandTipsEditor, ShopHandoffEditor } from "./handoff-editors";
-import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor, ReadersEditor, ReceiptEditor, ShopInfoEditor } from "./editors";
+import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor, ReadersEditor, ReceiptEditor, ReviewRulesEditor, ShopInfoEditor } from "./editors";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -25,7 +26,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const brand = can(ctx, "settings.brand");
   const shopId = workingShopId(ctx, (await searchParams).shop);
   if (!shopId) return <Empty title="No shop selected" />;
-  const [shop, hours, closures, loyalty, brandMinutes, readers, handoff, brandHandoff] = await Promise.all([
+  const [shop, hours, closures, loyalty, brandMinutes, readers, handoff, brandHandoff, reviewRules] = await Promise.all([
     db.query.shops.findFirst({ where: eq(shops.id, shopId) }),
     db.select().from(shopHours).where(eq(shopHours.shopId, shopId)),
     db.select().from(shopClosures).where(and(eq(shopClosures.shopId, shopId), gte(shopClosures.date, todayLocal()))).orderBy(asc(shopClosures.date)),
@@ -34,6 +35,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     db.select().from(terminalReaders).where(eq(terminalReaders.shopId, shopId)).orderBy(asc(terminalReaders.createdAt)),
     shopHandoffConfig(shopId),
     brandHandoffConfig(),
+    loadReviewRules(),
   ]);
   if (!shop) return <Empty title="Shop not found" />;
   return (
@@ -100,7 +102,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           hasReaders={readers.some((r) => r.active && r.stripeReaderId)}
         />
       )}
-      {shopSettings && <ReceiptEditor shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} />}
+      {shopSettings && <ReceiptEditor shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} brandReviews={reviewRules} />}
       {can(ctx, "network.settings") && (
         <Card>
           <CardHeader
@@ -116,6 +118,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         </Card>
       )}
       {can(ctx, "handoff.settings") && <BrandTipsEditor initial={brandHandoff.tips} />}
+      {brand && <ReviewRulesEditor initial={reviewRules} />}
       {brand && <LoyaltyEditor initial={loyalty} />}
       {can(ctx, "locations.setup") && (
         <Card>

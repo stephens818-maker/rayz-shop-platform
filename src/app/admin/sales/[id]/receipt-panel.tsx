@@ -32,6 +32,8 @@ const STATUS: Record<string, string> = {
   opted_out: "Not sent: opted out",
   no_consent: "Not sent: no consent",
   recent: "Not sent: asked recently",
+  few_visits: "Not sent: before the review visit",
+  snoozed: "Not sent: tapped the review link lately",
   none: "",
 };
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });

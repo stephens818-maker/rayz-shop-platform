@@ -102,7 +102,7 @@ export function LocationWizard({
   const [line, setLine] = useState("");
   const [readers, setReaders] = useState<{ label: string; serialNumber: string; registrationCode: string }[]>([]);
   const [pay, setPay] = useState({ mode: "connected" as PaymentsMode, descriptor: "" });
-  const [receipt, setReceipt] = useState({ headline: "", footer: "", showLogo: true, showAddress: true, showPhone: true, reviewUrl: "", reviewFollowUp: { ...REVIEW_FOLLOW_UP_DEFAULT } });
+  const [receipt, setReceipt] = useState({ headline: "", footer: "", showLogo: true, showAddress: true, showPhone: true, reviewUrl: "", reviewFollowUp: { ...REVIEW_FOLLOW_UP_DEFAULT }, reviewMinVisits: null as number | null, reviewSnoozeDays: null as number | null });
   const [brand, setBrand] = useState({ accent: "", logo: "", description: "" });
 
   function menuFrom(source: string): MenuRow[] {
@@ -561,7 +561,7 @@ export function LocationWizard({
                     </label>
                   ))}
                 </div>
-                <ReviewFields value={receipt} onChange={(r) => setReceipt({ ...receipt, ...r })} />
+                <ReviewFields value={receipt} brand={options.reviewRules} onChange={(r) => setReceipt({ ...receipt, ...r })} />
               </fieldset>
             </div>
           )}
