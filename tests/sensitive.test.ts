@@ -209,7 +209,7 @@ describe("SAQ-A: card data only in Stripe's own fields", () => {
   it("keyed cards go through the Payment Element, cards only, and checkout gets a Stripe-only CSP in production", async () => {
     const card = readFileSync("src/app/admin/checkout/[saleId]/stripe-card.tsx", "utf8");
     expect(card).toMatch(/<PaymentElement/);
-    expect(card).toMatch(/paymentMethodTypes: \["card"\]/);
+    expect(card).toMatch(/allowedPaymentMethodTypes: \["card"\]/);
     const { CHECKOUT_CSP } = await import("../next.config");
     expect(CHECKOUT_CSP).toMatch(/frame-src https:\/\/js\.stripe\.com https:\/\/\*\.js\.stripe\.com https:\/\/hooks\.stripe\.com/);
     expect(CHECKOUT_CSP).toMatch(/frame-ancestors 'none'/);
