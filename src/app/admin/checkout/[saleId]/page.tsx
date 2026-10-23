@@ -6,6 +6,7 @@ import { clientPolicy } from "@/server/client-privacy";
 import { inTenant } from "@/server/tenant";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { loadCheckoutContext } from "@/server/checkout";
+import { ticketCoupons } from "@/server/coupons";
 import { lookups } from "@/server/lookups";
 import { getLoyaltyConfig, loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries } from "@/server/ratings";
@@ -50,6 +51,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
     activeHandoffFor(saleId),
     resumeId && UUID.test(resumeId) ? resumeDraft(saleId, resumeId) : null,
   ]);
+  const coupons = await ticketCoupons(c.sale);
   const cards = takesCards(c.shop.paymentsMode, account);
   return (
     <Pos
@@ -65,6 +67,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
       })}
       handoff={{ signature: handoff.shop.signature, unlock: handoff.shop.unlock }}
       withClient={withClient ? { by: withClient.by, startedAt: withClient.startedAt.toISOString() } : null}
+      coupons={coupons}
       resume={
         resume && !withClient
           ? {

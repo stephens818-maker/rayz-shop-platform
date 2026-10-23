@@ -35,6 +35,7 @@ import {
   computeCheckout,
   manualDiscountProblem,
 } from "@/domain/checkout";
+import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
 import { giftCardCode } from "@/lib/ids";
 import { formatCents } from "@/lib/money";
 import { localDateOf, toZoned, todayLocal } from "@/lib/time";
@@ -42,6 +43,7 @@ import { Actor, SYSTEM, audit } from "./audit";
 import { staffAtShopDenied } from "./auth/policy";
 import { createAppointment, getAvailability } from "./booking";
 import { getShop, shopCatalog } from "./catalog";
+import { heldCoupons, redeemCoupons, resolveCoupon } from "./coupons";
 import { AppError, forbidden, notFound } from "./errors";
 import { postMovements } from "./inventory/ledger";
 import { stockLevels } from "./inventory/stock";
@@ -144,22 +146,8 @@ export async function loadCheckoutContext(saleId: string) {
   return { sale, shop, items, customer, appointment: appt, retail: withAvailable, barber, config: pricingConfig(shop), negativeStock: shop.negativeStock };
 }
 
-export async function validatePromo(code: string, shopId: string, today = todayLocal()): Promise<Discount & { refId: string }> {
-  const p = await db.query.promoCodes.findFirst({ where: eq(promoCodes.code, code.trim().toUpperCase()) });
-  if (!p || !p.active) throw new AppError("bad_request", "Promo code not found");
-  if (p.shopId && p.shopId !== shopId) throw new AppError("bad_request", "Promo code isn't valid at this shop");
-  if (p.startsOn && today < p.startsOn) throw new AppError("bad_request", "Promo code isn't active yet");
-  if (p.endsOn && today > p.endsOn) throw new AppError("bad_request", "Promo code has expired");
-  if (p.maxRedemptions !== null && p.redemptions >= p.maxRedemptions) throw new AppError("bad_request", "Promo code has been fully redeemed");
-  return {
-    source: "promo",
-    label: `Promo ${p.code}`,
-    type: p.type === "percent" ? "percent" : "amount",
-    value: p.value,
-    appliesTo: (p.appliesTo as Discount["appliesTo"]) ?? "services",
-    refId: p.id,
-  };
-}
+/** A coupon code checked for this shop, before a client is known. */
+export const validatePromo = (code: string, shopId: string, today = todayLocal()) => resolveCoupon(code, { shopId, today });
 
 export async function lookupGiftCard(code: string) {
   const g = await db.query.giftCards.findFirst({ where: eq(giftCards.code, code.trim().toUpperCase()) });
@@ -194,6 +182,8 @@ export interface FinalizeInput {
   staffId?: string | null;
   lines: CheckoutLineInput[];
   promoCode?: string | null;
+  /** More coupons on the same ticket, where they stack. */
+  promoCodes?: string[] | null;
   manualDiscount?: { type: "percent" | "amount"; value: number; reason: string } | null;
   loyaltyRewardId?: string | null;
   tipCents: number;
@@ -214,33 +204,43 @@ export interface FinalizeInput {
   now?: Date;
 }
 
-async function buildDiscounts(input: Omit<FinalizeInput, "actor">, shopId: string, customerId: string | null) {
-  const discounts: (Discount & { refId?: string | null })[] = [];
-  let promoId: string | null = null;
-  if (input.promoCode) {
-    const d = await validatePromo(input.promoCode, shopId);
-    discounts.push(d);
-    promoId = d.refId;
+async function buildDiscounts(input: Omit<FinalizeInput, "actor">, sale: { id: string; shopId: string; customerId: string | null; appointmentId: string | null }, lines: CartLine[]) {
+  const discounts: Discount[] = [];
+  const codes = [...new Set([input.promoCode, ...(input.promoCodes ?? [])].filter((c): c is string => !!c?.trim()).map((c) => c.trim().toUpperCase()))];
+  const held = codes.length && sale.appointmentId ? (await heldCoupons([sale.appointmentId])).get(sale.appointmentId) : undefined;
+  const coupons: CouponRule[] = [];
+  for (const code of codes) {
+    const rule = await resolveCoupon(code, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId });
+    const promo = await db.query.promoCodes.findFirst({ where: eq(promoCodes.id, rule.promoId), columns: { autoApply: true } });
+    coupons.push({ ...rule, via: held === code ? "booking" : promo?.autoApply ? "auto" : "code" });
   }
-  if (input.manualDiscount && input.manualDiscount.value > 0) {
+  const manual = !!(input.manualDiscount && input.manualDiscount.value > 0);
+  const stack = stackProblem(coupons, { manualDiscount: manual });
+  if (stack) throw new AppError("bad_request", stack);
+  for (const c of coupons) {
+    const r = couponDiscount(c, lines);
+    if (!r.discount) throw new AppError("bad_request", r.problem ?? `${c.code} doesn't apply to this ticket`);
+    discounts.push(r.discount);
+  }
+  if (manual) {
     discounts.push({
       source: "manual",
-      label: `Discount: ${input.manualDiscount.reason || "manager"}`,
-      type: input.manualDiscount.type,
-      value: input.manualDiscount.value,
+      label: `Discount: ${input.manualDiscount!.reason || "manager"}`,
+      type: input.manualDiscount!.type,
+      value: input.manualDiscount!.value,
       appliesTo: "all",
     });
   }
   let rewardId: string | null = null;
   if (input.loyaltyRewardId) {
-    if (!customerId) throw new AppError("bad_request", "Attach a client to use a loyalty reward");
+    if (!sale.customerId) throw new AppError("bad_request", "Attach a client to use a loyalty reward");
     const cfg = await getLoyaltyConfig();
-    if (promoId && !cfg.stackWithPromos) throw new AppError("bad_request", "Loyalty rewards can't be combined with promo codes");
-    const r = await loadRedeemableReward(db, customerId, input.loyaltyRewardId);
+    if (coupons.length && !cfg.stackWithPromos) throw new AppError("bad_request", "Loyalty rewards can't be combined with promo codes");
+    const r = await loadRedeemableReward(db, sale.customerId, input.loyaltyRewardId);
     discounts.push({ source: "loyalty", label: "Loyalty reward", type: "amount", value: r.amountCents, appliesTo: cfg.redeemableOn === "services" ? "services" : "all", refId: r.id });
     rewardId = r.id;
   }
-  return { discounts, promoId, rewardId };
+  return { discounts, coupons, rewardId };
 }
 
 export interface PricedLineMeta {
@@ -254,7 +254,6 @@ export interface PricedLineMeta {
  */
 export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: CardFunding | null) {
   const ctx = await loadCheckoutContext(input.saleId);
-  const { discounts, promoId, rewardId } = await buildDiscounts(input, ctx.shop.id, ctx.sale.customerId);
   const gift = input.giftCard?.code ? await lookupGiftCard(input.giftCard.code) : null;
 
   const menu = await shopCatalog(ctx.shop.id);
@@ -312,6 +311,7 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
   });
   const problem = manualDiscountProblem(input.manualDiscount ?? null, lines, input.maxManualDiscountPct ?? 100);
   if (problem) throw forbidden(problem);
+  const { discounts, coupons, rewardId } = await buildDiscounts(input, ctx.sale, lines);
 
   const totals = computeCheckout({
     lines,
@@ -326,7 +326,10 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
       giftCardBalanceCents: gift?.balanceCents ?? 0,
     },
   });
-  return { ctx, totals, promoId, rewardId, gift, inv, meta };
+  const used = coupons.map((rule) => ({ rule, discountCents: totals.discountBreakdown.find((d) => d.source === "promo" && d.refId === rule.promoId)?.cents ?? 0 }));
+  const idle = used.find((u) => u.discountCents <= 0);
+  if (idle) throw new AppError("bad_request", `${idle.rule.code} doesn't take anything off this ticket`);
+  return { ctx, totals, promoId: coupons[0]?.promoId ?? null, coupons: used, rewardId, gift, inv, meta };
 }
 
 export async function finalizeSale(input: FinalizeInput) {
@@ -340,7 +343,7 @@ export async function finalizeSale(input: FinalizeInput) {
 
   let card: Awaited<ReturnType<typeof inspectPaymentMethod>> | null = null;
   if (input.tender.method === "card") card = await inspectPaymentMethod(input.tender.paymentMethodId);
-  const { ctx, totals, promoId, rewardId, gift, meta } = await priceCart(input, card?.funding ?? null);
+  const { ctx, totals, promoId, coupons, rewardId, gift, meta } = await priceCart(input, card?.funding ?? null);
 
   if (input.expectedTotalCents != null && input.expectedTotalCents !== totals.totalCents) {
     throw new AppError("conflict", "Totals changed — please review the ticket again", { totalCents: totals.totalCents });
@@ -451,11 +454,7 @@ export async function finalizeSale(input: FinalizeInput) {
       );
       stockWarnings.push(...stock.warnings);
 
-      if (promoId) {
-        const [p] = await tx.select().from(promoCodes).where(eq(promoCodes.id, promoId)).for("update");
-        if (p.maxRedemptions !== null && p.redemptions >= p.maxRedemptions) throw new AppError("conflict", "Promo code has been fully redeemed");
-        await tx.update(promoCodes).set({ redemptions: p.redemptions + 1 }).where(eq(promoCodes.id, promoId));
-      }
+      if (coupons.length) await redeemCoupons(tx, coupons, { ...ctx.sale, staffId }, now);
       if (rewardId && ctx.sale.customerId) await markRewardRedeemed(tx, rewardId, ctx.sale.id, ctx.sale.customerId, rewardCents, now);
       if (ctx.sale.customerId && totals.loyaltyEligibleCents > 0) {
         rewardsIssued = await accrueForSale(tx, ctx.sale.customerId, ctx.sale.id, totals.loyaltyEligibleCents, now);

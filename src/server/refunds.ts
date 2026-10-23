@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, Tx } from "@/db";
+import { reverseCoupons } from "./coupons";
 import { appointments, cashDrawers, giftCardLedger, giftCards, payments, promoCodes, refunds, saleItems, sales } from "@/db/schema";
 import {
   LineRefund,
@@ -319,7 +320,8 @@ async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "r
   if (full) {
     // The client didn't get the reward's value as cash, so a full reversal gives the reward back.
     await restoreRewardsForSale(tx, sale.id);
-    if (sale.promoCodeId) await tx.update(promoCodes).set({ redemptions: sql`greatest(${promoCodes.redemptions} - 1, 0)` }).where(eq(promoCodes.id, sale.promoCodeId));
+    // Tickets from before coupon redemptions were recorded only have the one promo code.
+    if (!(await reverseCoupons(tx, sale.id, now)) && sale.promoCodeId) await tx.update(promoCodes).set({ redemptions: sql`greatest(${promoCodes.redemptions} - 1, 0)` }).where(eq(promoCodes.id, sale.promoCodeId));
   }
   if (kind === "void" && sale.appointmentId) await tx.update(appointments).set({ status: "in_service", completedAt: null }).where(eq(appointments.id, sale.appointmentId));
   const status = kind === "void" ? "voided" : full ? "refunded" : "partially_refunded";

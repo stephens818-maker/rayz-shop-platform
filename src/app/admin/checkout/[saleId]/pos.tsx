@@ -5,6 +5,7 @@ import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState, useTran
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, Suggestions, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
+import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
 import { type TipSplitMode, splitBarbers, splitCents, tipWeights } from "@/domain/handoff";
 import { formatMinutes, type TimesView } from "@/domain/service-times";
 import { searchCustomersAction } from "../../calendar/actions";
@@ -38,6 +39,7 @@ type Line = {
 type Resume = {
   lines: Omit<Line, "key">[];
   promoCode: string | null;
+  promoCodes?: string[] | null;
   manualDiscount: { type: "percent" | "amount"; value: number; reason: string } | null;
   loyaltyRewardId: string | null;
   giftCard: { code: string; amountCents: number } | null;
@@ -89,12 +91,14 @@ export function Pos(props: {
   withClient: { by: string; startedAt: string } | null;
   /** Back from the customer screen: the ticket as handed over, with the client's tip. */
   resume: Resume | null;
+  /** The coupon held from the online booking, and coupons that apply automatically for this client. */
+  coupons: { held: { rule: CouponRule | null; code: string; problem: string | null } | null; auto: CouponRule[] };
 }) {
   const router = useRouter();
   const r0 = props.resume;
   const [lines, setLines] = useState<Line[]>(() => (r0?.lines ?? props.initialLines).map((l) => ({ ...l, key: key() })));
-  const [promo, setPromo] = useState<(Discount & { code: string }) | null>(null);
-  const [promoInput, setPromoInput] = useState(r0?.promoCode ?? "");
+  const [coupons, setCoupons] = useState<CouponRule[]>(() => (r0 ? [] : [...(props.coupons.held?.rule ? [props.coupons.held.rule] : []), ...props.coupons.auto]));
+  const [promoInput, setPromoInput] = useState("");
   const [manual, setManual] = useState<{ type: "percent" | "amount"; value: string; reason: string }>(() =>
     r0?.manualDiscount
       ? { type: r0.manualDiscount.type, value: r0.manualDiscount.type === "percent" ? String(r0.manualDiscount.value) : (r0.manualDiscount.value / 100).toFixed(2), reason: r0.manualDiscount.reason }
@@ -122,17 +126,18 @@ export function Pos(props: {
   const priceOf = (l: Line) => l.override?.unitPriceCents ?? l.unitPriceCents;
 
   const reward = props.loyalty?.rewards.find((r) => r.id === rewardId) ?? null;
-  const discounts = useMemo(() => {
-    const d: Discount[] = [];
-    if (promo) d.push(promo);
-    const mv = manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value);
-    if (mv > 0) d.push({ source: "manual", label: `Discount: ${manual.reason || "manager"}`, type: manual.type, value: mv, appliesTo: "all" });
-    if (reward) d.push({ source: "loyalty", label: "Loyalty reward", type: "amount", value: reward.amountCents, appliesTo: props.loyalty!.redeemableOn === "services" ? "services" : "all" });
-    return d;
-  }, [promo, manual, reward, props.loyalty]);
-
   const barberOf = (l: Line) => (l.kind === "service" || l.kind === "addon" ? (l.staffId ?? props.sale.staffId) : null);
   const priced = lines.map((l) => ({ ...l, staffId: barberOf(l), unitPriceCents: priceOf(l), taxCategory: l.refId ? props.taxCategories[l.refId] : undefined }));
+  const couponResults = coupons.map((c) => ({ rule: c, ...couponDiscount(c, priced) }));
+  const discounts: Discount[] = [];
+  for (const c of couponResults) if (c.discount) discounts.push(c.discount);
+  {
+    const mv = manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value);
+    if (mv > 0) discounts.push({ source: "manual", label: `Discount: ${manual.reason || "manager"}`, type: manual.type, value: mv, appliesTo: "all" });
+    if (reward) discounts.push({ source: "loyalty", label: "Loyalty reward", type: "amount", value: reward.amountCents, appliesTo: props.loyalty!.redeemableOn === "services" ? "services" : "all" });
+  }
+  const couponProblem =
+    stackProblem(coupons, { manualDiscount: (manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value)) > 0 }) ?? couponResults.find((c) => c.problem)?.problem ?? null;
   const manualValue = manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value);
   const discountProblem = props.perms.discount ? manualDiscountProblem({ type: manual.type, value: manualValue }, priced, props.perms.maxDiscountPct) : null;
   const preview = (method: "cash" | "card" | "none", funding: CardFunding | null) =>
@@ -156,7 +161,8 @@ export function Pos(props: {
   // Picking a returned ticket back up: re-check the promo and gift card it was handed over with.
   useEffect(() => {
     if (!r0) return;
-    if (r0.promoCode) promoAction(props.sale.id, r0.promoCode).then((r) => (r.ok ? setPromo(r.data) : setError(r.error)));
+    for (const code of [r0.promoCode, ...(r0.promoCodes ?? [])].filter((c): c is string => !!c))
+      promoAction(props.sale.id, code).then((r) => (r.ok ? setCoupons((cs) => (cs.some((c) => c.promoId === r.data.promoId) ? cs : [...cs, r.data])) : setError(r.error)));
     if (r0.giftCard) giftCardAction(r0.giftCard.code).then((r) => (r.ok ? setGift({ code: r.data.code, balanceCents: r.data.balanceCents }) : setError(r.error)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -170,6 +176,18 @@ export function Pos(props: {
       if (ex) return ls.map((l) => (l === ex ? { ...l, qty: l.qty + 1 } : l));
       return [...ls, { key: key(), kind: "product", refId: p.productId, name: `${p.brand} ${p.name}`, unitPriceCents: p.priceCents, qty: 1 }];
     });
+
+  const addFree = (f: NonNullable<CouponRule["freeItem"]>) => {
+    if (f.kind === "product") {
+      const p = props.retail.find((x) => x.productId === f.id);
+      if (p) addProduct(p);
+      else setError(`${f.name} isn't stocked here`);
+      return;
+    }
+    const sv = props.services.find((x) => x.id === f.id);
+    if (sv) setLines((ls) => [...ls, { key: key(), kind: sv.kind, refId: sv.id, name: sv.name, unitPriceCents: sv.priceCents, qty: 1 }]);
+    else setError(`${f.name} isn't on the ${props.shop.name} menu`);
+  };
 
   const act = <T,>(fn: () => Promise<{ ok: true; data: T } | { ok: false; error: string }>, ok: (d: T) => void) =>
     start(async () => {
@@ -190,7 +208,8 @@ export function Pos(props: {
         finalizeAction({
           saleId: props.sale.id,
           lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override, staffId }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null, staffId: staffId ?? null })),
-          promoCode: promo?.code ?? null,
+          promoCode: coupons[0]?.code ?? null,
+          promoCodes: coupons.slice(1).map((c) => c.code),
           manualDiscount: manual.value ? { type: manual.type, value: manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value), reason: manual.reason } : null,
           loyaltyRewardId: rewardId,
           tipCents,
@@ -220,7 +239,8 @@ export function Pos(props: {
       () =>
         handToCustomerAction(props.sale.id, {
           lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override, staffId }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null, staffId: staffId ?? null })),
-          promoCode: promo?.code ?? null,
+          promoCode: coupons[0]?.code ?? null,
+          promoCodes: coupons.slice(1).map((c) => c.code),
           manualDiscount: manual.value ? { type: manual.type, value: manualValue, reason: manual.reason } : null,
           loyaltyRewardId: rewardId,
           giftCard: gift ? { code: gift.code, amountCents: gift.balanceCents } : null,
@@ -471,17 +491,46 @@ export function Pos(props: {
             <CardHeader title="Discounts & rewards" />
             <div className="space-y-3 p-4">
               <div className="flex gap-2">
-                <Input placeholder="Promo code" value={promoInput} onChange={(e) => setPromoInput(e.target.value.toUpperCase())} className="uppercase" />
-                {promo ? (
-                  <Button variant="secondary" onClick={() => setPromo(null)}>
-                    Remove {promo.code}
-                  </Button>
-                ) : (
-                  <Button variant="secondary" disabled={!promoInput || pending} onClick={() => act(() => promoAction(props.sale.id, promoInput), (d) => setPromo(d))}>
-                    Apply
-                  </Button>
-                )}
+                <Input placeholder="Coupon or promo code" value={promoInput} onChange={(e) => setPromoInput(e.target.value.toUpperCase())} className="uppercase" />
+                <Button
+                  variant="secondary"
+                  disabled={!promoInput || pending}
+                  onClick={() =>
+                    act(
+                      () => promoAction(props.sale.id, promoInput),
+                      (d) => {
+                        setCoupons((cs) => (cs.some((c) => c.promoId === d.promoId) ? cs : [...cs, d]));
+                        setPromoInput("");
+                      },
+                    )
+                  }
+                >
+                  Apply
+                </Button>
               </div>
+              {props.coupons.held?.problem && (
+                <Notice tone="amber">
+                  Coupon {props.coupons.held.code} from the online booking can&apos;t be used: {props.coupons.held.problem}.
+                </Notice>
+              )}
+              {couponResults.map((c) => (
+                <div key={c.rule.promoId} className="flex items-center justify-between gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-sm ring-1 ring-zinc-200">
+                  <span>
+                    <span className="font-medium">{c.rule.label}</span>
+                    {c.rule.via !== "code" && <Badge tone="blue">{c.rule.via === "booking" ? "From online booking" : "Applied automatically"}</Badge>}
+                    {c.problem && <span className="block text-xs text-amber-700">{c.problem}</span>}
+                  </span>
+                  {c.problem && c.rule.freeItem && !lines.some((l) => l.refId === c.rule.freeItem!.id) && (
+                    <Button size="sm" variant="secondary" onClick={() => addFree(c.rule.freeItem!)}>
+                      Add {c.rule.freeItem.name}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" onClick={() => setCoupons((cs) => cs.filter((x) => x.promoId !== c.rule.promoId))}>
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              {couponProblem && couponResults.length > 0 && !couponResults.some((c) => c.problem === couponProblem) && <p className="text-xs text-amber-700">{couponProblem}</p>}
               {props.loyalty && (
                 <div className="rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200">
                   <div className="flex items-center justify-between text-sm">

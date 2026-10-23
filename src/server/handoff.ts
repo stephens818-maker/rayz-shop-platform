@@ -117,6 +117,7 @@ export const HandoffDraftInput = z.object({
     .min(1, "Add at least one item")
     .max(100),
   promoCode: z.string().max(40).nullable(),
+  promoCodes: z.array(z.string().max(40)).max(10).nullable().optional(),
   manualDiscount: z.object({ type: z.enum(["percent", "amount"]), value: z.number().min(0), reason: z.string().max(200) }).nullable(),
   loyaltyRewardId: z.uuid().nullable(),
   giftCard: z.object({ code: z.string().max(40), amountCents: z.number().int().min(0) }).nullable(),
@@ -146,6 +147,7 @@ function finalizeFields(d: HandoffDraft) {
   return {
     lines: d.lines as CheckoutLineInput[],
     promoCode: d.promoCode,
+    promoCodes: d.promoCodes ?? null,
     manualDiscount: d.manualDiscount,
     loyaltyRewardId: d.loyaltyRewardId,
     giftCard: d.giftCard,
@@ -575,6 +577,7 @@ export async function resumeDraft(saleId: string, handoffId: string) {
   return {
     lines: d.lines,
     promoCode: d.promoCode,
+    promoCodes: d.promoCodes ?? null,
     manualDiscount: d.manualDiscount,
     loyaltyRewardId: d.loyaltyRewardId,
     giftCard: d.giftCard,

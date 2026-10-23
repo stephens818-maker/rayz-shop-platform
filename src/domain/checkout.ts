@@ -28,6 +28,8 @@ export interface Discount {
   value: number;
   appliesTo: DiscountTarget;
   refId?: string | null;
+  /** Only lines for these services, add-ons or products (by refId); absent is every line appliesTo allows. */
+  lineRefIds?: string[] | null;
 }
 
 export interface TaxRates {
@@ -102,8 +104,9 @@ export interface CheckoutTotals {
 const isService = (k: LineKind) => k === "service" || k === "addon";
 const taxBucket = (l: CartLine): TaxCategory | null => (l.kind === "gift_card" ? null : (l.taxCategory ?? (isService(l.kind) ? "service" : "product")));
 
-function eligible(line: CartLine, target: DiscountTarget) {
+function eligible(line: CartLine, target: DiscountTarget, refIds?: string[] | null) {
   if (line.kind === "gift_card") return false;
+  if (refIds) return !!line.refId && refIds.includes(line.refId);
   if (target === "all") return true;
   if (target === "services") return isService(line.kind);
   return line.kind === "product";
@@ -184,7 +187,7 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
   );
   const discountBreakdown: CheckoutTotals["discountBreakdown"] = [];
   for (const d of discounts) {
-    const idx = lines.map((l, i) => (eligible(l, d.appliesTo) ? i : -1)).filter((i) => i >= 0);
+    const idx = lines.map((l, i) => (eligible(l, d.appliesTo, d.lineRefIds) ? i : -1)).filter((i) => i >= 0);
     const remaining = idx.map((i) => lines[i].grossCents - lines[i].discountCents);
     const base = remaining.reduce((a, b) => a + b, 0);
     if (base <= 0) continue;

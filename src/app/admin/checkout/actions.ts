@@ -10,7 +10,8 @@ import { safe } from "@/server/action";
 import { HANDOFF_COOKIE } from "@/server/auth/cookies";
 import { HANDOFF_TTL, handoffToken } from "@/server/auth/handoff-lock";
 import { StaffContext, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
-import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale, validatePromo } from "@/server/checkout";
+import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale } from "@/server/checkout";
+import { resolveCoupon } from "@/server/coupons";
 import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
 import { findOrCreateCustomer } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
@@ -40,8 +41,7 @@ export async function promoAction(saleId: string, code: string) {
   return safe(async () => {
     const ctx = await requireStaff();
     const sale = await loadSale(ctx, saleId);
-    const d = await validatePromo(code, sale.shopId);
-    return { ...d, code: code.trim().toUpperCase() };
+    return resolveCoupon(code, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId });
   });
 }
 
@@ -110,6 +110,7 @@ export async function finalizeAction(input: {
   saleId: string;
   lines: CheckoutLineInput[];
   promoCode: string | null;
+  promoCodes?: string[] | null;
   manualDiscount: { type: "percent" | "amount"; value: number; reason: string } | null;
   loyaltyRewardId: string | null;
   tipCents: number;
