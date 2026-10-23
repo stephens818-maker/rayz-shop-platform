@@ -141,6 +141,13 @@
       "when": 1792721841196,
       "tag": "0019_slot_timing",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792800000000,
+      "tag": "mobile_customer_app",
+      "breakpoints": true
     }
   ]
 }

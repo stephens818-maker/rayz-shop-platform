@@ -162,6 +162,23 @@ export function openApiDocument(baseUrl: string) {
       },
       "/me/appointments": { get: { tags: ["Me"], summary: "My upcoming and past appointments", security: bearer, responses: { 200: ok("AppointmentList") } } },
       "/me/loyalty": { get: { tags: ["Me"], summary: "Loyalty progress and available rewards (brand-wide)", security: bearer, responses: { 200: ok("Loyalty") } } },
+      "/me/devices": {
+        get: { tags: ["Me"], summary: "Push devices registered for this profile", security: bearer, responses: { 200: { description: "Devices" } } },
+        post: { tags: ["Me"], summary: "Register an APNs, FCM, or Expo push token", security: bearer, responses: { 201: { description: "Registered" } } },
+      },
+      "/me/devices/{id}": {
+        delete: { tags: ["Me"], summary: "Revoke one push device", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { 200: { description: "Revoked" } } },
+      },
+      "/me/purchases": {
+        get: { tags: ["Me"], summary: "Purchase history and the last product bought", security: bearer, responses: { 200: { description: "Purchases" } } },
+      },
+      "/internal/connect/onboard": {
+        post: {
+          tags: ["Me"],
+          summary: "Hosted Stripe Connect onboarding for a shop (test mode, internal secret)",
+          responses: { 200: { description: "Account link" }, 401: err("Not authorized") },
+        },
+      },
     },
     components: {
       securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } },

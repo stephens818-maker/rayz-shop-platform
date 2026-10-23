@@ -195,11 +195,11 @@ describe("Squire import of a realistic export", () => {
     // Squire rows without a booked-at time are kept out of the rebook rate rather than counted as "no".
     expect(await count(sql`select count(*)::int n from appointments where source = 'import' and not booked_at_known`)).toBe(fx.expected.appointments.bookedAtUnknown);
 
-    // Upcoming bookings get reminders but no new confirmation.
+    // A bulk import does not text or email. Reminders exist only when notifyClients is passed.
     const jobs = (await m.db.db.execute(sql`
       select j.kind, count(*)::int n from notification_jobs j join appointments a on a.id = j.appointment_id
       where a.source = 'import' group by 1`)) as unknown as { kind: string; n: number }[];
-    expect(jobs.map((j) => j.kind).sort()).toEqual(["reminder_24h", "reminder_2h"]);
+    expect(jobs).toEqual([]);
   });
 
   it("re-running every file changes nothing: no new clients, visits, tickets, rewards, or reminders", async () => {
@@ -388,18 +388,21 @@ describe("one client record, matched the same way everywhere", () => {
     const mom = await m.customers.findOrCreateCustomer({ firstName: "Dana", lastName: "Quill", phone }, null);
     const son = await m.customers.findOrCreateCustomer({ firstName: "Eli", lastName: "Quill", phone }, null);
     const start = await m.auth.startOtp({ phone });
-    const r = await m.auth.verifyOtp({ phone, code: start.devCode! });
+    if (!("devCode" in start) || !start.devCode) throw new Error("expected a dev code");
+    const r = await m.auth.verifyOtp({ phone, code: start.devCode });
     expect(r).toMatchObject({ needsProfile: false, chooseProfile: true });
     if (!("profiles" in r) || !r.profiles) throw new Error("expected a profile choice");
     expect(r.profiles.map((p) => p.firstName).sort()).toEqual(["Dana", "Eli"]);
     expect(JSON.stringify(r.profiles)).not.toMatch(/Quill/);
 
     const asSon = await m.auth.completeSignIn({ selectionToken: r.selectionToken, customerId: son.id });
+    if (!("customer" in asSon)) throw new Error("expected a signed-in customer");
     expect(asSon.customer.id).toBe(son.id);
     const stranger = await m.customers.findOrCreateCustomer({ firstName: "Zed", phone: nextPhone() }, null);
     await expect(m.auth.completeSignIn({ selectionToken: r.selectionToken, customerId: stranger.id })).rejects.toMatchObject({ code: "forbidden" });
     // A third family member on the same phone gets their own profile.
     const dad = await m.auth.completeSignIn({ selectionToken: r.selectionToken, firstName: "Frank", lastName: "Quill" });
+    if (!("customer" in dad)) throw new Error("expected a signed-in customer");
     expect(dad.isNew).toBe(true);
     expect([mom.id, son.id]).not.toContain(dad.customer.id);
   });

@@ -4,12 +4,19 @@ import {
   appointments,
   clientAccessLog,
   clientRatings,
+  consentEvents,
+  customerDependents,
+  customerDevices,
+  customerFavorites,
+  customerPaymentMethods,
   customerSquireIds,
   customers,
   giftCards,
+  identityTasks,
   loyaltyAccounts,
   loyaltyLedger,
   loyaltyRewards,
+  mobileCheckouts,
   notificationJobs,
   refreshTokens,
   sales,
@@ -21,6 +28,8 @@ import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { Actor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
+import { recordConsent, retainOptOut } from "./mobile/consent";
+import { CONSENT_TEXT_VERSION } from "./mobile/rules";
 
 export type Customer = typeof customers.$inferSelect;
 
@@ -52,8 +61,15 @@ export async function customerBySquireId(tx: DBorTx, squireId: string): Promise<
 }
 
 /** The one match order used everywhere: Squire ID, then email + compatible name, then phone + compatible name. */
-export async function matchCustomer(tx: DBorTx, input: Identity): Promise<{ customer: Customer; via: MatchVia } | null> {
+export async function matchCustomer(
+  tx: DBorTx,
+  input: Identity,
+  /** Customers created earlier in a rolled-back import preview. They are not in the database. */
+  staged: (Customer & { squireIds?: string[] })[] = [],
+): Promise<{ customer: Customer; via: MatchVia } | null> {
   for (const id of input.squireIds ?? []) {
+    const stagedHit = staged.find((c) => c.squireIds?.includes(id));
+    if (stagedHit) return { customer: stagedHit, via: "squire_id" };
     const hit = await customerBySquireId(tx, id);
     if (hit) return { customer: hit, via: "squire_id" };
   }
@@ -63,11 +79,13 @@ export async function matchCustomer(tx: DBorTx, input: Identity): Promise<{ cust
   const conds: SQL[] = [];
   if (phone) conds.push(eq(customers.phone, phone));
   if (email) conds.push(eq(customers.email, email));
-  const candidates = await tx
+  const fromDb = await tx
     .select()
     .from(customers)
     .where(or(...conds))
     .limit(50);
+  const seen = new Set(fromDb.map((c) => c.id));
+  const candidates = [...fromDb, ...staged.filter((c) => !seen.has(c.id) && ((phone && c.phone === phone) || (email && c.email === email)))];
   const m = pickMatch({ firstName: input.firstName, lastName: input.lastName, phone, email }, candidates);
   if (!m) return null;
   return { customer: candidates.find((c) => c.id === m.id)!, via: m.via };
@@ -91,7 +109,12 @@ export async function findOrCreateCustomer(
   input: CustomerInput,
   homeShopId: string | null,
   tx: DBorTx = db,
-  opts: { allowNoContact?: boolean; /** Consent for a brand-new record only (a walk-in who gave a number to be texted). */ smsOptInIfNew?: boolean } = {},
+  opts: {
+    allowNoContact?: boolean;
+    /** Consent for a brand-new record only (a walk-in who gave a number to be texted). */
+    smsOptInIfNew?: boolean;
+    consentSource?: "ios" | "android" | "web" | "pos";
+  } = {},
 ): Promise<Customer> {
   const phone = normalizePhone(input.phone);
   const email = normalizeEmail(input.email);
@@ -107,9 +130,19 @@ export async function findOrCreateCustomer(
     if (!existing.email && email) patch.email = email;
     if (!existing.phone && phone) patch.phone = phone;
     if (!existing.lastName && lastName) patch.lastName = lastName;
-    if (input.smsOptIn !== undefined && input.smsOptIn !== existing.smsOptIn) patch.smsOptIn = input.smsOptIn;
-    if (input.emailOptIn !== undefined && input.emailOptIn !== existing.emailOptIn) patch.emailOptIn = input.emailOptIn;
+    // A stored opt-out is not a blank to fill. Only a consent event can turn it back on.
+    const sms = retainOptOut(existing.smsOptIn, input.smsOptIn);
+    const mail = retainOptOut(existing.emailOptIn, input.emailOptIn);
+    if (sms !== existing.smsOptIn) patch.smsOptIn = sms;
+    if (mail !== existing.emailOptIn) patch.emailOptIn = mail;
     if (!existing.homeShopId && homeShopId) patch.homeShopId = homeShopId;
+    const source = opts.consentSource ?? "web";
+    if (patch.smsOptIn === false) {
+      await recordConsent({ customerId: existing.id, phone: existing.phone ?? phone, channel: "sms_transactional", action: "revoked", source, textVersion: "booking" }, tx);
+    }
+    if (patch.emailOptIn === false) {
+      await recordConsent({ customerId: existing.id, email: existing.email ?? email, channel: "email", action: "revoked", source, textVersion: "booking" }, tx);
+    }
     if (Object.keys(patch).length) await tx.update(customers).set(patch).where(eq(customers.id, existing.id));
     return { ...existing, ...patch };
   }
@@ -117,6 +150,13 @@ export async function findOrCreateCustomer(
     .insert(customers)
     .values({ firstName, lastName, phone, email, homeShopId, smsOptIn: input.smsOptIn ?? (!!phone && !!opts.smsOptInIfNew), emailOptIn: input.emailOptIn ?? false })
     .returning();
+  const source = opts.consentSource ?? (opts.smsOptInIfNew ? "pos" : "web");
+  if (row.smsOptIn) {
+    await recordConsent({ customerId: row.id, phone, channel: "sms_transactional", action: "granted", source, textVersion: CONSENT_TEXT_VERSION }, tx);
+  }
+  if (row.emailOptIn && email) {
+    await recordConsent({ customerId: row.id, email, channel: "email", action: "granted", source, textVersion: CONSENT_TEXT_VERSION }, tx);
+  }
   return row;
 }
 
@@ -159,6 +199,24 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     await repoint("ledger", tx.update(loyaltyLedger).set({ customerId: keepId }).where(eq(loyaltyLedger.customerId, dropId)).returning({ id: loyaltyLedger.id }));
     await repoint("sessions", tx.update(refreshTokens).set({ customerId: keepId }).where(eq(refreshTokens.customerId, dropId)).returning({ id: refreshTokens.id }));
     await repoint("squireIds", tx.update(customerSquireIds).set({ customerId: keepId }).where(eq(customerSquireIds.customerId, dropId)).returning({ squireId: customerSquireIds.squireId }));
+    await repoint("devices", tx.update(customerDevices).set({ customerId: keepId }).where(eq(customerDevices.customerId, dropId)).returning({ id: customerDevices.id }));
+    await repoint("consent", tx.update(consentEvents).set({ customerId: keepId }).where(eq(consentEvents.customerId, dropId)).returning({ id: consentEvents.id }));
+    await repoint("cards", tx.update(customerPaymentMethods).set({ customerId: keepId }).where(eq(customerPaymentMethods.customerId, dropId)).returning({ id: customerPaymentMethods.id }));
+    await repoint("checkouts", tx.update(mobileCheckouts).set({ customerId: keepId }).where(eq(mobileCheckouts.customerId, dropId)).returning({ id: mobileCheckouts.id }));
+    await repoint("identityTasks", tx.update(identityTasks).set({ customerId: keepId }).where(eq(identityTasks.customerId, dropId)).returning({ id: identityTasks.id }));
+    await tx.execute(sql`
+      delete from customer_dependents d
+      where d.guardian_id = ${dropId}
+        and exists (select 1 from customer_dependents k where k.guardian_id = ${keepId} and k.dependent_id = d.dependent_id)
+    `);
+    await repoint("dependents", tx.update(customerDependents).set({ guardianId: keepId }).where(eq(customerDependents.guardianId, dropId)).returning({ id: customerDependents.id }));
+    await tx.update(customerDependents).set({ dependentId: keepId }).where(eq(customerDependents.dependentId, dropId));
+    await tx.execute(sql`
+      delete from customer_favorites d
+      where d.customer_id = ${dropId}
+        and exists (select 1 from customer_favorites k where k.customer_id = ${keepId} and k.staff_id = d.staff_id)
+    `);
+    await tx.update(customerFavorites).set({ customerId: keepId }).where(eq(customerFavorites.customerId, dropId));
     await repoint("ratings", tx.update(clientRatings).set({ customerId: keepId }).where(eq(clientRatings.customerId, dropId)).returning({ id: clientRatings.id }));
 
     const [dropAcct] = await tx.select().from(loyaltyAccounts).where(eq(loyaltyAccounts.customerId, dropId)).for("update");

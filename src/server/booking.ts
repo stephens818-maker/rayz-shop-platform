@@ -227,6 +227,9 @@ export async function createAppointment(input: CreateAppointmentInput) {
   // Walk-ins are seated now, wherever that falls; every other booking starts on the barber's grid.
   const gridExempt = input.source === "walk_in";
   const r = await resolveBooking({ ...input, staffOverride });
+  if (!staffOverride && r.shop.bookingMode !== "native") {
+    throw new AppError("forbidden", r.shop.bookingMode === "closed" ? "Online booking is turned off for this shop" : "This shop books on another site.");
+  }
   const start = new Date(input.startsAt);
   if (Number.isNaN(start.getTime())) throw new AppError("bad_request", "startsAt must be an ISO timestamp");
   const now = input.now ?? new Date();
@@ -345,7 +348,7 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
       shopName: shops.name,
       shopAddress: shops.address,
       shopCity: shops.city,
-      barberName: staff.displayLabel,
+      barberName: staff.firstName,
       customerId: customers.id,
       phone: customers.phone,
       email: customers.email,
@@ -385,7 +388,7 @@ export const pastCutoff = (now: Date, startsAt: Date, cutoffMinutes: number) => 
 
 export async function getAppointmentByCode(code: string, now: Date = new Date()) {
   const [row] = await db
-    .select({ a: appointments, shop: shops, barberName: staff.displayLabel, barberSlug: staff.publicSlug, customer: customers })
+    .select({ a: appointments, shop: shops, barberName: staff.firstName, barberSlug: staff.publicSlug, customer: customers })
     .from(appointments)
     .innerJoin(shops, eq(shops.id, appointments.shopId))
     .innerJoin(staff, eq(staff.id, appointments.staffId))

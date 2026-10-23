@@ -95,9 +95,80 @@ If the mobile side means a specific registry from the plan, say which items it s
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
-- C18 review login and the wallet fee: flags are off until Charles decides.
+- C18 review login and the wallet fee: flags are off until Charles decides. Mobile reads `flags.reviewLogin()` and `flags.walletFee()` (`FEATURE_REVIEW_LOGIN`, `FEATURE_WALLET_FEE`). Both stay off.
+
+## Mobile API workstream (bc-645fbcc0)
+
+Branch: `cursor/mobile-api-auth-a9e1`. PRs into `cursor/rayz-barbershop-v1-8f0b`. Migrations use the `mobile_` prefix and stay additive. Journal tag `mobile_customer_app` is idx 20 (after `0019_slot_timing`). If core adds idx 20 first, this entry gets the next index; the SQL file name does not change.
+
+### Auth tokens
+
+- Access JWT: 1 hour, HS256, `Authorization: Bearer`.
+- Refresh: rotating, 60 days. Reuse revokes the family.
+- OTP purposes: `signin`, `email_change`, `delete`, `step_up`. Email is not a login identifier until `email_verified_at` is set. `PATCH /api/v1/me` rejects `email`.
+- ios/android must send `X-App-Version`. Below `app_config` minimum returns 426 `upgrade_required`. Missing `X-Client` stays allowed (website, cron, tests).
+
+### Customer / Stripe
+
+- Platform Customer and saved cards are still landing on this branch. Pass the platform Customer id into the shared charge path below. Do not create a second PaymentIntent helper.
+- Shop columns, added here because the owner assigned them to the mobile migration before I10 landed:
+  - `shops.stripe_account_id`
+  - `shops.owner_entity_id` uuid, nullable, no FK (franchise hook)
+  - `staff.stripe_account_id` optional Express account. Barber onboarding is optional (`createBarberConnectOnboardingLink`).
+- **Do not hard-wire destination charges.** `chargeCard` stays the low-level platform charge POS already calls. Connect routing is `executeChargePlan` in `src/server/payments/charge-plan.ts`. It supports `destination` and `separate_charges_transfers`. The default is separate charges and transfers: charge on the platform with `on_behalf_of` = the shop, then transfer with `source_transaction` and `transfer_group`. `destination` is selected only with `kind: "destination"` or `CHARGE_PLAN_KIND=destination`, and it cannot pay a barber (no connected-to-connected transfer). POS checkout should call `executeChargePlan` for the same routing. Live keys are refused.
+- **Tip-to-barber is OFF.** It runs only when `FEATURE_TIP_TO_BARBER` is exactly `"true"`. The label is `not for W-2 employees, pending CPA`. Employee tips are expected to go through iSolved payroll. While the flag is off, the tip stays in the shop transfer and the ledger records a `tip` row with status `skipped` and that note. The flag lives next to the charge plan, not in `src/lib/flags.ts`.
+- Ledger: `connect_transfers` stores planned vs executed rows (`shop_net` | `tip`), plus reversals. `reverseChargePlan` claws a tip transfer first, then the shop transfer, and refunds the charge. A destination plan refund sets Stripe `reverse_transfer`. A skipped tip has nothing to claw back.
+- Hosted shop onboarding: `POST /api/v1/internal/connect/onboard` with `IMPORT_SECRET` or `CRON_SECRET`. Body `{ shop }`. Test mode only. No secret key: simulator id `acct_sim_<slug>`.
+- **Conflict to resolve:** core NOTES assign I10 to core and say `chargeCard` will route to the shop's connected account. At `c959576` `chargeCard` still charges the platform key only, and a destination charge cannot pay a barber Express account. Mobile built `executeChargePlan` as the shared interface instead of hard-wiring destination into `chargeCard`. If core's I10 replaces that function, write the new signature here and mobile will follow. Please don't add a second PaymentIntent helper.
+
+### Card fee
+
+Mobile calls `computeCardFee` in `src/server/payments/card-fee.ts` and does not reimplement it. Amounts are `{ chargeCents, tipCents? }`. Wallet fees stay off via `flags.walletFee()`.
+
+### Consent
+
+- `consent_events` is the record. Channels: `sms_transactional`, `sms_marketing`, `email`, `email_marketing`, `push_transactional`, `push_marketing`.
+- `retainOptOut` in `src/server/mobile/consent.ts`: once a flag is false, a later booking or Squire row that says yes does not turn it on. Only `recordConsent` (which writes the event) can grant it again.
+- `findOrCreateCustomer` and the client importer both use that rule. A new row may be created already opted in, and that insert writes a consent event.
+- Imported Squire opt-in is transactional only. Marketing flags stay false. STOP revokes both SMS channels. START grants transactional only.
+
+### /api/v1 additions in this pass
+
+- Per-IP limits when `X-Forwarded-For` or `X-Real-IP` is present: 600/hour on `/api/v1/*`, 20/hour on `POST /auth/otp/start`, 30/hour on `POST /appointments`. OTP is also 5/identifier/hour and 10/device/hour. No IP header is not counted.
+- `GET /appointments/{code}`: a bearer token must own the appointment. With no token the code works only until `cancelCutoffAt`.
+- `GET /shops` includes `lat`, `lng`, `openNow`, `nextSlot`, `bookingMode`, and the card-fee disclosure.
+- `GET /me` returns `notes` / `preferences` (the customer's own note). Staff `customers.notes` are not returned.
+- `GET /me/purchases` returns tickets and `lastProduct`.
+- `POST /me/devices` registers an APNs, FCM, or Expo token. `DELETE /me/devices/{id}` revokes that device.
+- Customer-facing barber names from `getAppointmentByCode`, `messageContext`, and `GET /shops/{shop}/barbers` are first names. `shopBarbers` (admin) is unchanged.
+
+### Import
+
+- Dry-runs roll back in batches of 500 (`IMPORT_BATCH_ROWS` overrides) instead of one transaction, and keep an in-memory preview so a later batch still sees duplicates. Live imports were already batched.
+- A non-id match replaces non-empty name, phone, email, home shop, and preferred barber. Consent still cannot be turned back on.
+- **Imported appointments do not text or email by default.** `runImport(..., { notifyClients: true })` is the only switch, and it still goes through `scheduleAppointmentNotifications`, which sends only to an opted-in phone or email. The default is off for bulk and delta imports. When it is on, an imported booking schedules reminders only (no new confirmation).
+- **Imported sales stay marked.** `sales.is_imported` stays true and `payments.processor` stays `squire_import`. Payroll and the drawer already exclude those. Do not clear either mark.
+
+### Requests for core
+
+- **Web booking checkbox defaults to on.** `src/app/(public)/book/[shop]/wizard.tsx` initializes `smsOptIn: true`. Please default it to off. The API will not turn texts back on after an opt-out, but a brand-new guest whose box is pre-checked is still stored as opted in.
+- When POS adopts Connect, call `executeChargePlan` (not a second PaymentIntent helper, and not a destination hard-wire on every `chargeCard`). Leave tip-to-barber off. Employee tips go through iSolved.
+
+### Open on this side
+
+- Charles: deletion grace, badge thresholds, whether loyalty pools to a guardian, Android SHA-256 for asset links.
+- App Review login stays off.
 
 ## Log
+
+### 2026-10-23: mobile (bc-645fbcc0)
+
+- Opt-out sticks in `findOrCreateCustomer` and the Squire client importer. Re-consent is a `consent_events` row.
+- Dry-run import is batched. Non-id matches update changed contact fields.
+- Per-IP limits, appointment code cutoff, push device registration, purchase history, customer notes, shop geocode / open-now / next slot.
+- `executeChargePlan` defaults to separate charges and transfers. Tip-to-barber stays off, labeled "not for W-2 employees, pending CPA"; employee tips go through iSolved. Ledger is `connect_transfers`.
+- Import `notifyClients` defaults off. `is_imported` and `processor = 'squire_import'` are unchanged so payroll can exclude imported tickets.
+- Reads core `computeCardFee` and `flags.reviewLogin` / `flags.walletFee`.
 
 ### 2026-10-23: core
 

@@ -31,6 +31,7 @@ import { Actor, audit } from "./audit";
 import { roleByKey } from "./auth/access";
 import { EffectiveService, shopCatalog } from "./catalog";
 import { Customer, matchCustomer, mergeNotes } from "./customers";
+import { recordConsent, recordImportedConsent, retainOptOut } from "./mobile/consent";
 import { isDoubleBookingError } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
 import { messageContext } from "./booking";
@@ -247,7 +248,11 @@ export class RowError extends Error {
 
 class DryRunRollback extends Error {}
 
-const BATCH_ROWS = 500;
+/** Live imports commit this many rows at a time. Dry-runs roll each batch back so a 14k preview doesn't hold one transaction. Override in tests with IMPORT_BATCH_ROWS. */
+function batchRows() {
+  const n = Number(process.env.IMPORT_BATCH_ROWS);
+  return Number.isInteger(n) && n > 0 ? n : 500;
+}
 const STORED_ERRORS = 5000;
 
 interface Run {
@@ -256,11 +261,18 @@ interface Run {
   findShop: (name?: string) => typeof shops.$inferSelect | null;
   now: Date;
   dryRun: boolean;
+  /** Bulk and delta imports stay silent unless the caller passes notifyClients. */
+  notifyClients: boolean;
   cfg: LoyaltyConfig;
   catalogs: Map<string, EffectiveService[]>;
   barbers: Map<string, string>;
-  /** Clients already written by an earlier row of this run (a second Squire record for them only fills gaps). */
+  /** Clients already written by an earlier row of this run. */
   touched: Set<string>;
+  /** Survives a rolled-back dry-run batch so the next batch still sees in-file duplicates. */
+  previewCustomers: PreviewCustomer[];
+  previewFormer: Set<string>;
+  previewAppts: Set<string>;
+  previewSales: Set<string>;
   /** Squire loyalty per client this run, summed across that client's Squire records. */
   loyalty: Map<string, { progress: number; rewards: number; issued: number }>;
 }
@@ -273,12 +285,54 @@ interface Row extends Run {
 }
 
 type Outcome = "inserted" | "updated" | "skipped";
+type PreviewCustomer = Customer & { squireIds: string[] };
+
+function rememberPreview(run: Run, row: Customer, squireId?: string) {
+  const existing = run.previewCustomers.find((c) => c.id === row.id);
+  const squireIds = existing?.squireIds ?? [];
+  if (squireId && !squireIds.includes(squireId)) squireIds.push(squireId);
+  if (existing) Object.assign(existing, row, { squireIds });
+  else run.previewCustomers.push({ ...row, squireIds });
+}
+
+async function customerVisible(tx: Tx, id: string) {
+  const [row] = await tx.select({ id: customers.id }).from(customers).where(eq(customers.id, id)).limit(1);
+  return !!row;
+}
+
+/** A dry-run batch can't see customers inserted in an earlier rolled-back batch. Clone one so appointment rows still have a foreign key. */
+async function ensureVisible(c: Row, customer: Customer): Promise<Customer> {
+  if (await customerVisible(c.tx, customer.id)) return customer;
+  const [row] = await c.tx
+    .insert(customers)
+    .values({
+      firstName: customer.firstName,
+      lastName: customer.lastName,
+      phone: customer.phone,
+      email: customer.email,
+      notes: customer.notes,
+      homeShopId: customer.homeShopId,
+      preferredStaffId: customer.preferredStaffId,
+      smsOptIn: customer.smsOptIn,
+      emailOptIn: customer.emailOptIn,
+      importedFrom: customer.importedFrom,
+    })
+    .returning();
+  for (const squireId of (customer as PreviewCustomer).squireIds ?? []) {
+    await c.tx.insert(customerSquireIds).values({ squireId, customerId: row.id, shopId: customer.homeShopId }).onConflictDoNothing();
+  }
+  return row;
+}
 
 const bump = (c: Row, k: keyof ImportStats, n = 1) => {
   c.stats[k] = (c.stats[k] ?? 0) + n;
 };
 
-export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: boolean; actor: Actor; filename?: string; now?: Date }): Promise<ImportResult> {
+export async function runImport(
+  kind: ImportKind,
+  csv: string,
+  opts: { dryRun: boolean; actor: Actor; filename?: string; now?: Date; notifyClients?: boolean },
+): Promise<ImportResult> {
   const parsed = Papa.parse<Record<string, string>>(csv.replace(/^\uFEFF/, ""), { header: true, skipEmptyLines: "greedy" });
   const headerMap = mapHeaders(parsed.meta.fields ?? [], kind);
   const result: ImportResult = {
@@ -308,11 +362,16 @@ export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: b
     findShop,
     now: opts.now ?? new Date(),
     dryRun: opts.dryRun,
+    notifyClients: opts.notifyClients === true,
     cfg: await getLoyaltyConfig(),
     catalogs: new Map(),
     barbers: new Map(),
     touched: new Set(),
     loyalty: new Map(),
+    previewCustomers: [],
+    previewFormer: new Set(),
+    previewAppts: new Set(),
+    previewSales: new Set(),
   };
 
   const processRow = async (tx: Tx, i: number) => {
@@ -333,22 +392,22 @@ export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: b
     }
   };
 
-  if (opts.dryRun) {
-    // One transaction, rolled back, so later rows still see earlier ones (in-file duplicates).
+  const size = batchRows();
+  for (let start = 0; start < parsed.data.length; start += size) {
+    const end = Math.min(parsed.data.length, start + size);
+    const barbersBefore = new Set(run.barbers.keys());
     try {
       await db.transaction(async (tx) => {
-        for (let i = 0; i < parsed.data.length; i++) await processRow(tx, i);
-        throw new DryRunRollback();
+        for (let i = start; i < end; i++) await processRow(tx, i);
+        if (opts.dryRun) throw new DryRunRollback();
       });
     } catch (e) {
       if (!(e instanceof DryRunRollback)) throw e;
+      // Former-barber ids from this batch were rolled back. Drop them so the next batch doesn't point at missing staff.
+      for (const key of run.barbers.keys()) if (!barbersBefore.has(key)) run.barbers.delete(key);
     }
-  } else {
-    for (let start = 0; start < parsed.data.length; start += BATCH_ROWS) {
-      await db.transaction(async (tx) => {
-        for (let i = start; i < Math.min(parsed.data.length, start + BATCH_ROWS); i++) await processRow(tx, i);
-      });
-    }
+  }
+  if (!opts.dryRun) {
     const [r] = await db
       .insert(importRuns)
       .values({
@@ -410,15 +469,17 @@ async function clientForRow(c: Row, r: Record<string, string>, shopId: string): 
   const squireId = c.get(r, "squireId");
   const { phone, email, notes } = contactOf(c, r);
   if (n.placeholder && !squireId && !phone && !email) return { customer: null, label: "Walk-in (Squire)" };
-  const m = await matchCustomer(c.tx, { squireIds: squireId ? [squireId] : [], firstName: n.first, lastName: n.last, phone, email });
+  const m = await matchCustomer(c.tx, { squireIds: squireId ? [squireId] : [], firstName: n.first, lastName: n.last, phone, email }, c.previewCustomers);
   if (m) {
-    await attachSquireId(c, m.customer.id, squireId, shopId);
+    const customer = await ensureVisible(c, m.customer);
+    await attachSquireId(c, customer.id, squireId, shopId);
     const patch: Partial<Customer> = {};
-    if (!m.customer.phone && phone) patch.phone = phone;
-    if (!m.customer.email && email) patch.email = email;
-    if (!m.customer.lastName && n.last) patch.lastName = n.last;
-    if (Object.keys(patch).length) await c.tx.update(customers).set(patch).where(eq(customers.id, m.customer.id));
-    return { customer: { ...m.customer, ...patch }, label: null };
+    if (!customer.phone && phone) patch.phone = phone;
+    if (!customer.email && email) patch.email = email;
+    if (!customer.lastName && n.last) patch.lastName = n.last;
+    if (Object.keys(patch).length) await c.tx.update(customers).set(patch).where(eq(customers.id, customer.id));
+    if (customer.id === m.customer.id) rememberPreview(c, { ...customer, ...patch }, squireId);
+    return { customer: { ...customer, ...patch }, label: null };
   }
   if (!n.first || (!squireId && !phone && !email)) return { customer: null, label: n.full ? `Squire client: ${n.full}` : null };
   const [created] = await c.tx
@@ -426,6 +487,7 @@ async function clientForRow(c: Row, r: Record<string, string>, shopId: string): 
     .values({ firstName: n.first, lastName: n.last, phone, email, homeShopId: shopId, notes: mergeNotes(n.note, notes.join("\n")) })
     .returning();
   await attachSquireId(c, created.id, squireId, shopId);
+  rememberPreview(c, created, squireId);
   bump(c, "clientsCreated");
   return { customer: created, label: null };
 }
@@ -492,7 +554,8 @@ async function resolveBarber(c: Row, name: string, shopId: string | null, opts: 
     .returning({ id: staff.id });
   await c.tx.insert(staffShops).values({ staffId: row.id, shopId, visibleOnline: false }).onConflictDoNothing();
   await c.tx.insert(staffAccessShops).values({ staffId: row.id, shopId }).onConflictDoNothing();
-  bump(c, "formerBarbersCreated");
+  if (!c.previewFormer.has(key)) bump(c, "formerBarbersCreated");
+  c.after.push(() => c.previewFormer.add(key));
   return remember(row.id);
 }
 
@@ -603,7 +666,7 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
   const mail = parseBool(c.get(r, "emailOptIn"));
   const since = parseWhen(c.get(r, "clientSince"));
 
-  const m = await matchCustomer(c.tx, { squireIds: squireId ? [squireId] : [], firstName: n.first, lastName: n.last, phone, email });
+  const m = await matchCustomer(c.tx, { squireIds: squireId ? [squireId] : [], firstName: n.first, lastName: n.last, phone, email }, c.previewCustomers);
   let customerId: string;
   let outcome: Outcome;
   if (!m) {
@@ -619,10 +682,14 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
         preferredStaffId,
         smsOptIn: sms ?? false,
         emailOptIn: mail ?? false,
+        importedFrom: "squire",
         ...(since ? { createdAt: since } : {}),
       })
       .returning();
     customerId = row.id;
+    rememberPreview(c, row, squireId);
+    if (sms) await recordImportedConsent(c.tx, row.id, phone, email, "sms");
+    if (mail) await recordImportedConsent(c.tx, row.id, phone, email, "email");
     bump(c, "clientsCreated");
     outcome = "inserted";
   } else {
@@ -630,6 +697,7 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
     customerId = ex.id;
     const firstTouch = !c.touched.has(ex.id);
     const patch: Partial<typeof customers.$inferInsert> = { notes: mergeNotes(ex.notes, notes) };
+    if (!ex.importedFrom) patch.importedFrom = "squire";
     if (m.via === "squire_id" && firstTouch) {
       // The same Squire record again: Squire's current values win, so a corrected phone lands.
       Object.assign(patch, {
@@ -640,29 +708,42 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
         homeShopId: shop?.id ?? ex.homeShopId,
         preferredStaffId: preferredStaffId ?? ex.preferredStaffId,
       });
-      if (sms !== undefined) patch.smsOptIn = sms;
-      if (mail !== undefined) patch.emailOptIn = mail;
     } else {
-      // Another record for the same person: fill gaps only, and an explicit "no" from any record wins.
+      // Another record for the same person: a non-empty value replaces what we stored.
+      // Consent is the exception: an opt-out is never turned back on from a file.
       Object.assign(patch, {
-        lastName: ex.lastName ?? n.last,
-        phone: ex.phone ?? phone,
-        email: ex.email ?? email,
-        homeShopId: ex.homeShopId ?? shop?.id ?? null,
-        preferredStaffId: ex.preferredStaffId ?? preferredStaffId,
+        firstName: n.first || ex.firstName,
+        lastName: n.last || ex.lastName,
+        phone: phone || ex.phone,
+        email: email || ex.email,
+        homeShopId: shop?.id ?? ex.homeShopId,
+        preferredStaffId: preferredStaffId ?? ex.preferredStaffId,
       });
-      if (sms === false) patch.smsOptIn = false;
-      if (mail === false) patch.emailOptIn = false;
     }
+    const nextSms = retainOptOut(ex.smsOptIn, sms);
+    const nextMail = retainOptOut(ex.emailOptIn, mail);
+    if (nextSms !== ex.smsOptIn) patch.smsOptIn = nextSms;
+    if (nextMail !== ex.emailOptIn) patch.emailOptIn = nextMail;
     if (since && since < ex.createdAt) patch.createdAt = since;
-    await c.tx.update(customers).set(patch).where(eq(customers.id, ex.id));
+    if (await customerVisible(c.tx, ex.id)) {
+      await c.tx.update(customers).set(patch).where(eq(customers.id, ex.id));
+      if (patch.smsOptIn === false) {
+        await recordConsent({ customerId: ex.id, phone: phone ?? ex.phone, channel: "sms_transactional", action: "revoked", source: "import", textVersion: "squire-import" }, c.tx);
+      }
+      if (patch.emailOptIn === false) {
+        await recordConsent({ customerId: ex.id, email: email ?? ex.email, channel: "email", action: "revoked", source: "import", textVersion: "squire-import" }, c.tx);
+      }
+    }
+    rememberPreview(c, { ...ex, ...patch, id: ex.id } as Customer, squireId);
     bump(c, m.via === "squire_id" ? "clientsUpdated" : "duplicatesMerged");
     outcome = "updated";
   }
-  await attachSquireId(c, customerId, squireId, shop?.id ?? null);
+  if (await customerVisible(c.tx, customerId)) await attachSquireId(c, customerId, squireId, shop?.id ?? null);
+  const previewRow = c.previewCustomers.find((x) => x.id === customerId);
+  if (previewRow && squireId && !previewRow.squireIds.includes(squireId)) previewRow.squireIds.push(squireId);
   c.after.push(() => c.touched.add(customerId));
 
-  if (c.get(r, "progress") !== undefined || c.get(r, "rewards") !== undefined) {
+  if ((c.get(r, "progress") !== undefined || c.get(r, "rewards") !== undefined) && (await customerVisible(c.tx, customerId))) {
     await applyLoyalty(c, customerId, money(c.get(r, "progress")) ?? 0, Number(c.get(r, "rewards") ?? 0) || 0);
   }
   return outcome;
@@ -710,6 +791,13 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
     createdAt: bookedAt ?? (isFuture ? c.now : startsAt),
   };
 
+  if (squireApptId && c.previewAppts.has(squireApptId)) {
+    const [live] = await c.tx.select({ id: appointments.id }).from(appointments).where(eq(appointments.squireId, squireApptId)).limit(1);
+    if (!live) {
+      bump(c, "alreadyImported");
+      return "skipped";
+    }
+  }
   const existing = squireApptId
     ? await c.tx.query.appointments.findFirst({ where: eq(appointments.squireId, squireApptId) })
     : await c.tx.query.appointments.findFirst({
@@ -733,6 +821,7 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
       .values({ ...values, code: appointmentCode(), source: "import", squireId: squireApptId ?? null })
       .returning({ id: appointments.id });
     apptId = a.id;
+    if (squireApptId) c.previewAppts.add(squireApptId);
     bump(c, "appointmentsImported");
   }
   await c.tx.insert(appointmentItems).values(items.map((i) => ({ ...i, appointmentId: apptId })));
@@ -740,7 +829,8 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
   if (status === "completed") bump(c, "pastVisits");
   if (status === "no_show") bump(c, "noShows");
   if (status === "cancelled") bump(c, "cancellations");
-  if (status === "booked" && customer && !c.dryRun) {
+  // Off unless this run was started with notifyClients. Recipients still require sms/email opt-in.
+  if (status === "booked" && customer && !c.dryRun && c.notifyClients) {
     await scheduleAppointmentNotifications("imported", await messageContext(apptId, c.tx), c.tx, c.now);
   }
   return existing ? "updated" : "inserted";
@@ -770,6 +860,13 @@ async function importTransaction(c: Row, r: Record<string, string>): Promise<Out
       .update([shop.id, at.toISOString(), c.get(r, "squireId") ?? c.get(r, "phone") ?? c.get(r, "email") ?? c.get(r, "fullName") ?? "", c.get(r, "barber") ?? "", total, tip].join("|"))
       .digest("hex")
       .slice(0, 24)}`;
+  if (c.previewSales.has(ref)) {
+    const [live] = await c.tx.select({ id: sales.id }).from(sales).where(eq(sales.squireRef, ref)).limit(1);
+    if (!live) {
+      bump(c, "alreadyImported");
+      return "skipped";
+    }
+  }
   const [dup] = await c.tx.select({ id: sales.id }).from(sales).where(eq(sales.squireRef, ref));
   if (dup) {
     bump(c, "alreadyImported");
@@ -830,11 +927,13 @@ async function importTransaction(c: Row, r: Record<string, string>): Promise<Out
       paidAt: at,
       voidedAt: voided ? at : null,
       voidReason: voided ? `Squire: ${c.get(r, "status")}` : null,
+      // Payroll and the drawer exclude imported Squire tickets. Leave both marks in place.
       isImported: true,
       squireRef: ref,
       createdAt: at,
     })
     .returning({ id: sales.id });
+  c.previewSales.add(ref);
 
   const catalog = await catalogFor(c, shop.id);
   const lines = c.get(r, "service") ? parseItems(catalog, c.get(r, "service"), c.get(r, "addons"), service) : service > 0 || discount > 0 ? parseItems(catalog, "Services (Squire)", undefined, service) : [];
