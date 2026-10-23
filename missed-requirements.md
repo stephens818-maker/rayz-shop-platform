@@ -164,16 +164,17 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 
 ## 11. Self-service locations and settings
 
-- [x] An Add Location wizard (Brand Owner or Brand Admin, `locations.setup`), 11 steps:
+- [x] An Add Location wizard (Brand Owner or Brand Admin, `locations.setup`), 12 steps:
   - name, address, phone and time zone (Central by default);
   - hours, with Sunday closed by default, closed days and holidays;
-  - service and product tax rates, flagged until verified, the card fee and tip buttons;
+  - service and product tax rates, flagged until verified;
+  - payments and banking: own Stripe account, brand account or cash only, the statement descriptor, the card fee and tip buttons, readers and receipt branding (section 13);
   - slot interval and booking rules, and a public booking link that refuses surnames;
   - services copied from the brand or another shop, with overrides;
   - products and par levels, copied or pasted in bulk;
   - vendors with the shop's own account number;
   - staff, including barbers at several shops, and the pay calendar;
-  - shop logins and what they can do, the Twilio number, Stripe Terminal readers, and branding.
+  - shop logins and what they can do, the Twilio number, and branding.
 - [x] Lifecycle: setting up (hidden from clients), go-live behind a checklist of required steps, temporary close with an end date and a public note, and archive. Archive is refused while anything is booked or open, and all history stays in reports.
 - [x] Nothing in code names a location. Booking, the public site, the calendar, POS, reports and filters, permission scopes, location groups, Today and the digest all read shops from the database and respect status.
 - [x] Self-service for the rest:
