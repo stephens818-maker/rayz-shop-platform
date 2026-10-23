@@ -1,6 +1,7 @@
 "use server";
 
 import { headers } from "next/headers";
+import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
 import { customerFromRequest } from "@/server/auth/customer";
 import { finishBookingDraft, saveBookingDraft } from "@/server/booking-drafts";
@@ -11,10 +12,14 @@ const CHECKS_PER_WINDOW = 20;
 const WINDOW_MS = 10 * 60_000;
 const checks = new Map<string, number[]>();
 
-/** Per server instance, so it slows guessing rather than stopping it; single-use codes also only work for their own client at checkout. */
+/**
+ * Per server instance, so it slows guessing rather than stopping it; single-use codes also only work
+ * for their own client at checkout. Without a trusted client IP every visitor would share one
+ * bucket, so nothing is limited.
+ */
 async function limitChecks() {
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
+  const ip = clientIp(await headers());
+  if (!ip) return;
   const now = Date.now();
   const recent = (checks.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
   if (recent.length >= CHECKS_PER_WINDOW) throw new AppError("rate_limited", "Too many coupon tries. Try again in a few minutes.");

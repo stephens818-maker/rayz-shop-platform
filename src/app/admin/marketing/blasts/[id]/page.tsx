@@ -10,6 +10,7 @@ import { can, guardPage, openShops } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { couponOptions, listBlasts } from "@/server/marketing/campaigns";
 import { loadMarketingSettings } from "@/server/marketing/settings";
+import { inTenant } from "@/server/tenant";
 import { BlastEditor } from "./editor";
 
 export const metadata: Metadata = { title: "Blast" };
@@ -19,7 +20,7 @@ export default async function BlastPage({ params }: { params: Promise<{ id: stri
   const ctx = await guardPage("/admin/marketing/blasts/[id]");
   const { id } = await params;
   const maySend = can(ctx, "marketing.location") || can(ctx, "marketing.manage");
-  const blast = id === "new" ? null : ((await listBlasts(ctx)).find((b) => b.id === id) ?? null);
+  const blast = id === "new" || !(await inTenant(ctx, "marketing_campaign", id)) ? null : ((await listBlasts(ctx)).find((b) => b.id === id) ?? null);
   if (id === "new" ? !maySend : !blast) notFound();
   const shops = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
   const shopIds = shops.map((s) => s.id);

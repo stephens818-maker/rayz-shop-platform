@@ -5,6 +5,7 @@ import {
   callIns,
   cashDrawers,
   giftCards,
+  marketingCampaigns,
   messageThreads,
   notificationJobs,
   promoCodes,
@@ -74,7 +75,8 @@ export type TenantRecord =
   | "call_in"
   | "message_thread"
   | "tip_payout_batch"
-  | "tip_payout";
+  | "tip_payout"
+  | "marketing_campaign";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -103,8 +105,16 @@ export async function recordShops(kind: TenantRecord, id: string, tx: DBorTx = d
       return one(tx.select({ s: cashDrawers.shopId }).from(cashDrawers).where(eq(cashDrawers.id, id)));
     case "gift_card":
       return one(tx.select({ s: giftCards.issuedShopId }).from(giftCards).where(eq(giftCards.id, id)));
-    case "promo":
-      return one(tx.select({ s: promoCodes.shopId }).from(promoCodes).where(eq(promoCodes.id, id)));
+    case "promo": {
+      const [p] = await tx.select({ shopId: promoCodes.shopId, shopIds: promoCodes.shopIds }).from(promoCodes).where(eq(promoCodes.id, id));
+      if (!p) return null;
+      return p.shopIds?.length ? p.shopIds : p.shopId ? [p.shopId] : [];
+    }
+    case "marketing_campaign": {
+      // A blast goes to its locations (none: every location); automated campaigns are the brand's.
+      const [c] = await tx.select({ shopIds: marketingCampaigns.shopIds }).from(marketingCampaigns).where(eq(marketingCampaigns.id, id));
+      return c ? c.shopIds : null;
+    }
     case "message_thread":
       return one(tx.select({ s: messageThreads.shopId }).from(messageThreads).where(eq(messageThreads.id, id)));
     case "tip_payout_batch":

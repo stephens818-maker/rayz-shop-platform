@@ -11,7 +11,7 @@ import { CATCH_UP_DAYS, Segment, TriggerKey, daysToBirthday, milesBetween, reboo
 import { segKey } from "@/domain/report-views";
 import { rebookDue } from "@/domain/today";
 import { addDays, endOfLocalDay, localMinutesOf, startOfLocalDay, todayLocal } from "@/lib/time";
-import { availableMinutesAt } from "../reports";
+import { availableMinutesAt } from "../available-minutes";
 import { consentColumns } from "./consent";
 
 const DAY = 86_400_000;

@@ -1,54 +1,12 @@
 import { sql, SQL } from "drizzle-orm";
-import { db } from "@/db";
 import { payPeriodsBetween, PayPeriod } from "@/domain/payroll";
-import { NO_BARBER } from "@/domain/barbers";
 import { TOTAL, segKey } from "@/domain/report-views";
 import { LocalDate, addDays, diffDays, endOfLocalDay, startOfLocalDay } from "@/lib/time";
+import { ByShop, PAID, ReportScope, Grain, atGrains, grp, ids, keyOf, rows, same, sgrp, staffFilter, uuids } from "./report-sql";
 
-/**
- * Reports are plain indexed aggregates over (shop_id, business_date), run in parallel.
- * Sales are attributed to the day they were paid and the shop that rang them up; refunds to the
- * day they were issued, at the shop of the sale.
- */
-export interface ReportScope {
-  shopIds: string[];
-  from: LocalDate;
-  to: LocalDate;
-  /** One barber; shorthand for `staffIds: [id]`. */
-  staffId?: string | null;
-  /** The selected barbers. Absent or null is everyone, tickets with no barber included. */
-  staffIds?: string[] | null;
-}
-
-const PAID = sql`('paid','refunded','partially_refunded')`;
-const uuids = (xs: string[]) => sql`(${sql.join(xs.length ? xs.map((i) => sql`${i}::uuid`) : [sql`null::uuid`], sql`, `)})`;
-const ids = (s: ReportScope) => uuids(s.shopIds);
-export const staffSelection = (s: Pick<ReportScope, "staffId" | "staffIds">): string[] | null => s.staffIds ?? (s.staffId ? [s.staffId] : null);
-const staffFilter = (col: SQL, s: Pick<ReportScope, "staffId" | "staffIds">) => {
-  const sel = staffSelection(s);
-  return sel ? sql` and ${col} in ${uuids(sel)}` : sql``;
-};
-
-/**
- * Every query can break out by shop, by barber, by both, or return one combined row, from the same
- * SQL: each grouping column is the shop (or barber), or a constant null that folds them together.
- * Tests check that every grain adds up to the coarser ones.
- */
-export interface Grain {
-  byShop?: boolean;
-  byStaff?: boolean;
-}
-export type ByShop = Grain;
-const grp = (o: Grain | undefined, col: SQL) => (o?.byShop ? col : sql`null::uuid`);
-/** Barber grouping column; tickets with no barber group as "none". */
-const sgrp = (o: Grain | undefined, col: SQL) => (o?.byStaff ? sql`coalesce(${col}::text, ${NO_BARBER})` : sql`null::text`);
-/** Joins rows on a grouping column, which is null when folded. */
-const same = (a: SQL, b: SQL) => sql`${a} is not distinct from ${b}`;
-const keyOf = (r: { shop_id: string | null; staff_id: string | null }) => segKey(r.shop_id, r.staff_id);
-
-async function rows<T>(q: SQL): Promise<T[]> {
-  return (await db.execute(q)) as unknown as T[];
-}
+export { staffSelection } from "./report-sql";
+export type { ByShop, Grain, ReportScope } from "./report-sql";
+export { availableMinutesAt } from "./available-minutes";
 
 /**
  * Tickets with more than one barber split their tip (tip_split_moves): each barber's share, less
@@ -74,12 +32,6 @@ async function tipMovesBy(s: ReportScope, o?: Grain): Promise<MoveAgg[]> {
 /** One value per selected shop, with zeros for shops that had nothing. */
 function perShop<T>(s: ReportScope, found: Map<string, T>, zero: () => T): Record<string, T> {
   return Object.fromEntries(s.shopIds.map((id) => [id, found.get(segKey(id, null)) ?? zero()]));
-}
-
-/** Runs a keyed query at several grains and merges the results; keys never collide across grains. */
-async function atGrains<T>(grains: Grain[], f: (g: Grain) => Promise<Map<string, T>>): Promise<Record<string, T>> {
-  const maps = await Promise.all(grains.map(f));
-  return Object.fromEntries(maps.flatMap((x) => [...x]));
 }
 
 export interface SalesTotals {
@@ -552,37 +504,6 @@ export async function appointmentHeatmap(s: ReportScope, o?: Grain) {
       and a.starts_at >= ${start} and a.starts_at < ${end} ${staffFilter(sql`a.staff_id`, s)}
     group by 1, 2, 3, 4`);
 }
-
-/**
- * Scheduled minutes per barber per shop: their weekly schedule on each date in the range, less
- * shop closures and their time off (blocks at that shop or at every shop). Comes from today's
- * schedules, so a past range uses the current ones.
- */
-async function availableMinutesBy(s: ReportScope, o?: Grain): Promise<Map<string, number>> {
-  const r = await rows<{ shop_id: string | null; staff_id: string | null; minutes: number }>(sql`
-    with days as (
-      select d::date as day from generate_series(${s.from}::date, ${s.to}::date, interval '1 day') d
-    ), sched as (
-      select ss.shop_id, ss.staff_id,
-        tstzrange((days.day + make_interval(mins => ss.start_min)) at time zone 'America/Chicago', (days.day + make_interval(mins => ss.end_min)) at time zone 'America/Chicago') r
-      from staff_schedules ss join days on extract(dow from days.day)::int = ss.weekday
-      where ss.shop_id in ${ids(s)} and ss.end_min > ss.start_min ${staffFilter(sql`ss.staff_id`, s)}
-        and not exists (select 1 from shop_closures c where c.shop_id = ss.shop_id and c.date = days.day)
-    ), open as (
-      select sc.shop_id, sc.staff_id, tstzmultirange(sc.r) - coalesce((
-        select range_agg(tstzrange(b.starts_at, b.ends_at)) from time_blocks b
-        where b.staff_id = sc.staff_id and (b.shop_id is null or b.shop_id = sc.shop_id) and tstzrange(b.starts_at, b.ends_at) && sc.r
-      ), '{}'::tstzmultirange) m
-      from sched sc
-    )
-    select ${grp(o, sql`open.shop_id`)} shop_id, ${sgrp(o, sql`open.staff_id`)} staff_id,
-      coalesce(sum(round(extract(epoch from upper(x) - lower(x)) / 60)), 0)::int minutes
-    from open cross join lateral unnest(open.m) x
-    group by 1, 2`);
-  return new Map(r.map((x) => [keyOf(x), x.minutes]));
-}
-
-export const availableMinutesAt = (s: ReportScope, grains: Grain[]) => atGrains(grains, (g) => availableMinutesBy(s, g));
 
 /** Client ratings barbers gave in the range, at the shop of the visit. */
 async function ratingsGivenBy(s: ReportScope, o?: Grain): Promise<Map<string, { n: number; stars: number }>> {
