@@ -262,8 +262,14 @@ export const LINK_STATE_MESSAGE: Record<Exclude<LinkState, "ok">, string> = {
   closed: "This appointment can't be changed online any more. Call or text the shop.",
 };
 
-/** A rebook link works for whoever holds it, so staff screens show messages with the token cut out. */
-export const redactLinks = (body: string) => body.replace(/\/r\/[A-Za-z0-9_-]{43}/g, "/r/•••");
+/**
+ * Rebook and receipt links work for whoever holds them, so staff screens show messages with the token cut out.
+ * `receipts: false` keeps receipt links, for the demo's outbox on sample data.
+ */
+export const redactLinks = (body: string, o: { receipts?: boolean } = {}) => {
+  const out = body.replace(/\/r\/[A-Za-z0-9_-]{43}/g, "/r/•••");
+  return o.receipts === false ? out : out.replace(/\/receipt\/[A-Za-z0-9_-]{43}/g, "/receipt/•••");
+};
 
 // ───────────────────────────── Text replies ─────────────────────────────
 

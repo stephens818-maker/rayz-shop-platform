@@ -218,6 +218,8 @@ describe("rebook link security and expiry", () => {
   it("the token is cut out of messages on staff screens", () => {
     const token = newRebookToken();
     expect(redactLinks(`Pick a time: https://rayz.test/r/${token} Reply STOP`)).toBe("Pick a time: https://rayz.test/r/••• Reply STOP");
+    expect(redactLinks(`Receipt: https://rayz.test/receipt/${token}`)).toBe("Receipt: https://rayz.test/receipt/•••");
+    expect(redactLinks(`Receipt: https://rayz.test/receipt/${token}`, { receipts: false })).toBe(`Receipt: https://rayz.test/receipt/${token}`);
   });
 });
 

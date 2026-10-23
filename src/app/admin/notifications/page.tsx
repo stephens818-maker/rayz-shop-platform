@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { appointments, notificationJobs, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { redactLinks } from "@/domain/outreach";
+import { demoMode } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
@@ -45,9 +46,10 @@ const KIND_LABEL: Record<string, string> = {
   no_show_reminder: "Today: extra reminder",
   running_late: "Today: running late",
   digest: "Morning digest",
+  receipt: "Receipt",
 };
 /** Jobs sent to a client: their number or email shows as the viewer may see it. */
-const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply", "fill_offer", "rebook_nudge", "no_show_reminder", "running_late"]);
+const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply", "fill_offer", "rebook_nudge", "no_show_reminder", "running_late", "receipt"]);
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;
@@ -145,7 +147,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                   <Td className="whitespace-nowrap">{recipient(j)}</Td>
                   <Td className="max-w-md text-xs text-zinc-600">
                     {j.subject && j.channel === "email" && <div className="font-medium text-zinc-800">{j.subject}</div>}
-                    <div className="whitespace-pre-line">{redactLinks(j.body)}</div>
+                    <div className="whitespace-pre-line">{redactLinks(j.body, { receipts: !demoMode() })}</div>
                     {(j.attachments ?? []).length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-2">
                         {(j.attachments ?? []).map((a, i) => (
