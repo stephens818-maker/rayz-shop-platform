@@ -125,8 +125,14 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Instant payouts need Stripe's approval for the platform and an eligible debit card on the employee's account. Turn them off under **Tip payout settings** if Stripe hasn't enabled them.
    - The notifications cron builds the daily and weekly drafts once they're due. Managers still approve each one, and nothing goes out on its own. On the Hobby plan's daily cron that still works, just at that time of day.
    - Confirm the iSolved earning code for tips paid through payroll under **Payroll → Setup** before anyone is paid that way.
-8. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-9. Add the custom domain under **Settings → Domains**.
+8. Keep financial and identity data with Stripe (migration `core_0035_scrub_sensitive`; see [What we store and what Stripe stores](README.md#what-we-store)):
+   - **Tax forms:** in the Stripe Dashboard, open **Connect → Tax reporting** (Tax forms), pick the 1099-K form type and switch on e-delivery, so Stripe files the forms and connected accounts get them in their Express dashboards. Stripe collects each account's TIN during onboarding. Leave employees' tip payout accounts out of 1099 reporting: their tips are W-2 wages, reported through payroll. Have the accountant confirm both before the first January.
+   - **PCI:** check the SAQ type under **Dashboard → Settings → Compliance** once live, card readers included. Keyed cards only pass through Stripe's Payment Element, and production checkout pages send a Stripe-only Content-Security-Policy (`CHECKOUT_CSP` in `next.config.ts`). If checkout ever loads another script, a font or an image host, add it there, or it will be blocked.
+   - **Logs:** the server scrubs every `console` call (`src/instrumentation.ts`), so Vercel's logs and log drains get scrubbed text. Don't log request bodies elsewhere.
+   - **Error tracking or analytics:** none is installed. If one is added, pass every event through `scrub()` from `src/lib/sensitive.ts` in its `beforeSend`, and turn off its request-body, form-input and session-replay capture on checkout.
+   - **Backups:** the migration scrubs existing rows once and records a `privacy.scrub_existing` audit entry if any changed. Neon's point-in-time history from before that keeps the old rows until its restore window passes.
+9. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+10. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

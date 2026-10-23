@@ -174,6 +174,27 @@ The same step sets the **statement descriptor** (what clients see on their card 
 
 **Morning digest:** **Setup → Morning digest** sets the send time, who gets it (by role, plus always or never per person), and which sections go in. The page shows a preview of your own copy, and **Email me a test** sends it to you now.
 
+<a id="what-we-store"></a>
+## What we store and what Stripe stores
+
+*For staff.* Ray'z never asks for, sees or keeps card numbers, bank details or identity numbers. Stripe's own pages and card readers collect them, and Ray'z keeps only what Stripe sends back to show status.
+
+| Whose | Stripe collects and keeps | Ray'z keeps |
+| --- | --- | --- |
+| Clients' cards | The card field on the checkout screen (a Stripe frame) and the Stripe card reader | Stripe's payment IDs, card brand, last 4 digits, debit or credit |
+| Each shop's business | Stripe's onboarding page and the shop's Stripe dashboard: legal entity, EIN, the owner's date of birth, SSN and ID, the bank account | Stripe's account ID, whether cards and payouts are on, what Stripe still needs, payouts and their status |
+| Employees' tip payouts | Stripe's onboarding page and the employee's Stripe dashboard: date of birth, SSN, ID, debit card or bank account | Stripe's account ID, its status, what Stripe still needs, card or bank, the bank or card name and last 4 |
+| Tax forms | Stripe files the shops' 1099-K forms (once tax reporting is on, see DEPLOY.md) and puts them in each shop's Stripe dashboard. Tips are wages on the W-2 through payroll, so employees get no 1099 for them. | Nothing |
+
+These numbers never go in our database, logs, error reports, backups or audit log: full card numbers and security codes, bank account and routing numbers, SSNs, TINs and EINs, dates of birth for identity checks, and ID documents. If one is typed in anyway (a note, a text to the shop, an import file), Ray'z replaces it with "[card number removed]", "[SSN removed]" or "[EIN removed]" before it's saved or logged.
+
+Rules for staff:
+- Never write a card, bank or Social Security number in a note, a message, a spreadsheet or on paper. Cards go in the card field or on the reader, nowhere else.
+- If a client or coworker offers those details, don't take them. Employees set up their payouts themselves under **My banking**, on Stripe's page.
+- Ray'z and Stripe never ask for these numbers by text, email or phone. Treat any such request as a scam.
+
+Card payments stay at PCI SAQ A: card details only ever pass through Stripe's frame or reader. Stripe shows which questionnaire applies under **Dashboard → Settings → Compliance**.
+
 ---
 
 ## What's done
@@ -302,7 +323,7 @@ These came with the Today work, beyond what was asked for:
 - **Split tender:** a gift card plus one cash or card payment. Paying the remainder half in cash and half on a card isn't supported yet.
 - **End-of-day drawer:** a denomination counter, expected against counted cash with the variance, and history.
 - **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, settings changes, permission changes, every stock movement, purchase order step, transfer, and count, and every item a bulk upload creates or changes, including before and after values where it matters. Entries are append-only.
-- **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope.
+- **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope. See [What we store and what Stripe stores](#what-we-store) and [Processor-hosted data](#processor-hosted-data).
 
 ### Card payments: per-location banking (Stripe Connect)
 
@@ -345,6 +366,27 @@ Ray'z is the platform on one Stripe account. Each shop's **payments mode** decid
 <img alt="The simulator's stand-in for Stripe-hosted onboarding" src="docs/screenshots/connect-simulated-onboarding.png" width="800" />
 
 <img alt="Shop P&L by Stripe account, with payouts" src="docs/screenshots/connect-shop-pl.png" width="800" />
+
+<a id="processor-hosted-data"></a>
+### Processor-hosted data
+
+Ray'z is a processor-hosted integration. Cards, bank accounts, debit cards, SSNs, TINs, EINs, dates of birth for identity checks and ID documents are entered only on Stripe's own surfaces: Connect onboarding and the Express dashboards (shops and employees), the Payment Element (keyed cards, cards only), and Terminal readers. No page has a field for them. The owner-facing summary is [What we store and what Stripe stores](#what-we-store).
+
+What still guards against them arriving by mistake:
+- **Logs and errors:** `src/instrumentation.ts` wraps every `console` method at server start (the worker too), so whatever Next, a library or our code logs is scrubbed first, including error messages, stacks, causes and properties. `src/lib/sensitive.ts` holds the rules:
+  - keys such as `routing_number`, `account_number`, `ssn_last_4`, `id_number`, `tax_id`, `dob`, `card_number`, `cvc`, in any casing, lose their values;
+  - card numbers (13 to 19 digits, spaced or not, passing the Luhn check), SSNs (`123-45-6789`, `123 45 6789`) and EINs (`12-3456789`) in any text become `[card number removed]`, `[SSN removed]` or `[EIN removed]`.
+- **The audit log:** `audit()` scrubs its details.
+- **The database:** migration `core_0035` applies the same rules in SQL, in a trigger on every free-text column: notes, reasons, message bodies, subjects, audit details, client custom fields, import errors (which keep the original CSV row) and punch edits. It covers every writer, the mobile API and the importer included. Rows from before the migration were scrubbed once, and one `privacy.scrub_existing` audit entry counts them. Backups are copies of the database, so they hold only scrubbed data from then on.
+- **No error tracker or analytics is installed.** If one is added, run its events through `scrub()` first (DEPLOY.md).
+- **Tax forms:** Stripe Connect tax reporting files shops' 1099-K forms and delivers them in their Express dashboards. Employees' tips are W-2 wages, so their accounts are left out of 1099 reporting.
+- **PCI SAQ A:** keyed cards go only through Stripe's iframe (`allowedPaymentMethodTypes: ["card"]`). In production, checkout pages send a Content-Security-Policy that allows scripts and frames only from Ray'z and Stripe and stops other sites framing them.
+
+Allowed on purpose: the vendor's **account number** (the shop's customer number at a supplier, printed on purchase orders; vendor audits record it as `supplierAccount`) and the client's **birthday** (for greetings, never identity checks).
+
+Limits: a bare run of digits that isn't a card number can't be told from an order number. That includes a 9-digit SSN or routing number typed without dashes, or a 10 to 12 digit bank account number. The rules are a backstop. The real control is that nobody is ever asked for these numbers.
+
+`tests/sensitive.test.ts` checks the rules, the log scrubbing, and that no column in the schema or any migration (and no JSON property in the schema) is one of these fields. `tests/db/sensitive-data.test.ts` plants real-looking values through Stripe webhooks (an employee's and a shop's account, a payout failure), client notes and custom fields, an inbound text, a Squire import, a queued message, an audit entry and a failing server action. It then greps every row of every table, every JSON column, the captured logs, the webhook responses, the banking views and every `/api/v1` GET response and the OpenAPI document. It also checks that every free-text column has the trigger and that the SQL and app rules agree.
 
 ### Inventory, vendors, and purchase orders
 

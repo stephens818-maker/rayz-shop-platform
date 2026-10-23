@@ -23,10 +23,11 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts` and `core_0034_staff_banking`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking` and `core_0035_scrub_sensitive`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
+- **Processor-hosted data only.** Card numbers, bank accounts, debit cards, SSNs, TINs, EINs, dates of birth for identity checks and ID documents are collected only by Stripe (Connect onboarding and the Express dashboards, the Payment Element, Terminal). Neither side adds a column, field, request or response property for them; store only Stripe's IDs, statuses, last 4 and bank or brand names. `src/lib/sensitive.ts` (`scrub`, `findSensitive`, `isForbiddenKey`) holds the rules, and `core_0035_scrub_sensitive` applies them in SQL. A new free-text column (a name ending in `note`, `notes`, `reason`, `body`, `subject`, `detail`, `details`, `errors`, `custom_fields` or `message`) needs a `<table>_scrub_sensitive` trigger calling `scrub_sensitive_row('<column>', ...)`, or `tests/db/sensitive-data.test.ts` fails.
 
 ## Shared interfaces
 
@@ -249,6 +250,8 @@ If the mobile side means a specific registry from the plan, say which items it s
 - (core → mobile) Locations now have a lifecycle in `shops.status`: `setup` (hidden from clients), `live`, `closed` (temporary, with `closed_until` and `closed_note`) and `archived` (`active = false`, which a database check enforces). The pure rules are in `src/domain/location-lifecycle.ts`: `listedPublicly`, `takesOnlineBookings`, `closedOn` and `operational`. PR #8 adds `shops.launch_at` and `booking_mode` as a cutover gate from Squire. That's a separate question (which system takes the bookings), so they should be combined rather than replace each other. Please have `/api/v1` list and book only shops where both the cutover gate and `takesOnlineBookings` allow it. Archived shops should never appear. Temporarily closed shops can be listed with `closed_note`.
 - (core → mobile) Today's open-chair and rebook texts read `customers.sms_marketing_opt_in` from PR #8. They check for the column at runtime and send nothing until it exists. Core doesn't add the column; the consent UI and its capture are yours.
 
+- (core → mobile) Processor-hosted data: the server now scrubs card, bank, SSN and EIN values from every log line (`src/instrumentation.ts` wraps `console`, which covers `errorResponse` in `api.ts`), from audit details, and in the database from every free-text column, including what `importer.ts` writes. Please never add a request or response field for those values to `/api/v1`, `api-schemas.ts` or `openapi.ts`; `tests/db/sensitive-data.test.ts` checks every `/api/v1` GET and the OpenAPI document with `findSensitive`. When the app adds saved cards, collect them with Stripe's mobile Payment Sheet or SetupIntents and keep only the PaymentMethod id, brand and last 4.
+
 - (core → mobile) If the app shows hours or adds a clock-in, please read and write through `src/server/time-clock.ts` (see "Time clock"). Never return `clock_pin_hash`, punch photos or other people's punches from `/api/v1`.
 
 ## Open questions
@@ -264,6 +267,14 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (processor-hosted data)
+
+- **Never stored or logged:** card numbers, bank and routing numbers, SSNs, TINs, EINs, dates of birth for identity checks and ID documents. `src/lib/sensitive.ts` has the rules. `src/instrumentation.ts` and `scripts/worker.ts` scrub every `console` call, and `audit()` scrubs its details. Vendor audits record the supplier account number as `supplierAccount`.
+- Migration `core_0035_scrub_sensitive`: the SQL functions `scrub_sensitive_text`, `scrub_sensitive_jsonb`, `is_forbidden_key` and `luhn_ok`, plus `scrub_sensitive_row` triggers on 39 tables covering their 52 free-text columns. On append-only tables it fires on insert only, elsewhere on insert and on updates of those columns. Existing rows were scrubbed once, with one `privacy.scrub_existing` audit entry if any changed.
+- SAQ A: the Payment Element takes cards only. Production checkout pages get a Stripe-only CSP (`CHECKOUT_CSP` in `next.config.ts`). The onboarding simulator no longer shows test EIN, birth-date or bank numbers. Tax-form notes are on Location setup and My banking.
+- Tests: `tests/sensitive.test.ts` and `tests/db/sensitive-data.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
 
 ### 2026-10-23: core (my banking)
 

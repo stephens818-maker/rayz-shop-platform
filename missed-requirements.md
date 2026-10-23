@@ -321,6 +321,25 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [ ] Try staff onboarding and payouts in real Stripe test mode. The keys aren't set, so the simulator runs. The Connect webhook needs the payout, account and `account.external_account.*` events for staff accounts, and the platform webhook needs `transfer.reversed` (see DEPLOY.md).
 - [ ] Instant payout fee: Stripe's rate is set with `TIP_INSTANT_FEE` (default 1.5%, at least $0.50). Confirm it against the platform's Stripe pricing.
 
+## 16. Processor-hosted data (the business never holds financial or identity data)
+
+- [x] Bank accounts, debit cards, SSNs and TINs, EINs, dates of birth for identity checks, ID documents and card numbers, for employees, shops and clients, are collected only on Stripe's surfaces: Connect onboarding and the Express dashboards, the Payment Element and Terminal. No page has a field for them, which a test checks.
+- [x] The database, logs, audit log and backups keep only Stripe IDs, statuses, last 4 and bank or brand names:
+  - [x] No column or JSON property for those values; a test greps the schema, every migration and the live database.
+  - [x] Every `console` call in the server and the worker is scrubbed (`src/instrumentation.ts`), as are audit details.
+  - [x] A trigger in the database scrubs every free-text column on write, for every writer (`core_0035_scrub_sensitive`). Existing rows were scrubbed once.
+  - [x] Backups copy the scrubbed database.
+- [x] Log and error scrubbing: error messages, stacks, causes and properties too.
+- [x] Tests: `tests/sensitive.test.ts`, and `tests/db/sensitive-data.test.ts`, which plants values through webhooks, notes, texts, imports, queued messages, audits and a failing action. It then greps every table, JSON column, log line, webhook response, banking view, `/api/v1` GET response and the OpenAPI document.
+- [x] PCI SAQ A: keyed cards only through the Payment Element (cards only), card-present only on Terminal readers, and a Stripe-only CSP on production checkout pages.
+- [x] Tax forms: Stripe Connect tax reporting handles 1099s for connected accounts. Shops' forms are in their Stripe dashboard; employees' tips are W-2 wages, so their accounts are left out (DEPLOY.md). Notes on Location setup and My banking.
+- [x] README: [What we store and what Stripe stores](README.md#what-we-store), for staff.
+- [ ] Turn on Stripe tax reporting for connected accounts in the Dashboard (DEPLOY.md), and have the accountant confirm 1099-K for shops on their own accounts and no 1099 for employees' tip accounts.
+- [ ] Confirm the SAQ type under Stripe **Dashboard → Settings → Compliance** once live, card readers included.
+- [ ] Database backups and point-in-time history from before `core_0035` ran keep the old rows until they age out (Neon's restore window). The demo data never held real numbers.
+- [ ] Bare digit runs that aren't card numbers (a 9-digit SSN or routing number without dashes, a bank account number) can't be detected in free text. The control is that nobody asks for them; the scrubbing is a backstop.
+- [ ] No error tracker or analytics is installed. If one is added, its `beforeSend` must run events through `scrub()` (DEPLOY.md).
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.
