@@ -246,8 +246,8 @@ export function roundHalfUp2(x: number): number {
   const [int, frac = ""] = Math.abs(x).toPrecision(15).replace(/\.?0+$/, "").split(".");
   const asNum = Number(int + "." + frac);
   if (frac.length <= 2) return neg ? -asNum : asNum;
-  const cents = BigInt(int) * 100n + BigInt(frac.slice(0, 2).padEnd(2, "0")) + (Number(frac[2]) >= 5 ? 1n : 0n);
-  const v = Number(cents) / 100;
+  const cents = Number(int) * 100 + Number(frac.slice(0, 2).padEnd(2, "0")) + (Number(frac[2]) >= 5 ? 1 : 0);
+  const v = cents / 100;
   return neg ? -v : v;
 }
 
