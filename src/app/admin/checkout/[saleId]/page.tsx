@@ -62,6 +62,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
         priceOverride: can(ctx, "pos.price_override"),
         reassign: can(ctx, "checkout.any"),
       }}
+      canAdd={{ phone: policy.canAdd("phone"), email: policy.canAdd("email") }}
     />
   );
 }

@@ -5,20 +5,20 @@ import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, customerSquireIds, customers, loyaltyLedger, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
-import { BUILTIN_FIELDS, RATINGS_MASKED_HINT, customFieldKey } from "@/domain/client-privacy";
+import { RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
 import { formatPhone } from "@/lib/phone";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage, ratingViewer } from "@/server/auth/staff";
-import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess } from "@/server/client-privacy";
+import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, shownField } from "@/server/client-privacy";
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
 import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
 import { hasShop, inShops } from "@/server/tenant";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
-import { CustomerEditor, GrantReward, MergeInto, NotesEditor, type ShownField } from "./editor";
+import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
 
 export const metadata: Metadata = { title: "Client" };
 
@@ -143,23 +143,20 @@ export default async function CustomerPage({
   const homeShopName = homeShop?.name ?? null;
   const shopRows = await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name));
   const editorShops = scoped ? shopRows.filter((s) => hasShop(ctx, s.id) || s.id === c.homeShopId) : shopRows;
-  const stored: Record<string, string | null> = { phone: c.phone, email: c.email, address: c.address, birthday: c.birthday, notes: c.notes };
+  const stored = { phone: c.phone, email: c.email, address: c.address, birthday: c.birthday, notes: c.notes };
   const fields: ShownField[] = [
-    ...BUILTIN_FIELDS.filter((f) => f.key in stored).map((f) => ({ key: f.key, label: f.label, level: policy.level(f.key), value: policy.show(f.key, stored[f.key]) })),
-    ...policy.custom.map((f) => ({
-      key: customFieldKey(f.id),
-      label: f.label,
-      level: policy.level(customFieldKey(f.id)),
-      value: policy.show(customFieldKey(f.id), c.customFields[f.id]),
-    })),
+    ...(["phone", "email", "address", "birthday", "notes"] as const).map((f) => shownField(policy, f, stored[f])),
+    ...policy.custom.map((f) => shownField(policy, customFieldKey(f.id), c.customFields[f.id], f.label)),
   ];
-  const preferredShown: ShownField = {
-    key: "preferred_barber",
-    label: "Preferred barber",
-    level: policy.level("preferred_barber"),
-    value: policy.show("preferred_barber", preferred),
-  };
+  const preferredShown: ShownField = { ...shownField(policy, "preferred_barber", preferred), saved: !!c.preferredStaffId };
   const isFull = (k: string) => fields.find((f) => f.key === k)?.level === "full";
+  // Only what the person sees in full goes into a form's inputs; everything else is shown through `fields`.
+  const fullValues = Object.fromEntries(
+    [
+      ...Object.entries(stored).map(([k, v]) => [k, k === "phone" && v ? formatPhone(v) || v : v] as const),
+      ...policy.custom.map((f) => [customFieldKey(f.id), c.customFields[f.id]] as const),
+    ].flatMap(([k, v]) => (isFull(k) ? [[k, v ?? ""]] : [])),
+  );
   const canMessage = can(ctx, "clients.message");
   const pager = (key: "v" | "s", pageNo: number, total: number, size: number) =>
     total > size && (
@@ -242,15 +239,10 @@ export default async function CustomerPage({
               fields={fields}
               canReveal={policy.canReveal}
               preferred={preferredShown}
+              values={fullValues}
               initial={{
                 firstName: c.firstName,
                 lastName: c.lastName ?? "",
-                phone: isFull("phone") && c.phone ? formatPhone(c.phone) || c.phone : "",
-                email: isFull("email") ? (c.email ?? "") : "",
-                address: isFull("address") ? (c.address ?? "") : "",
-                birthday: isFull("birthday") ? (c.birthday ?? "") : "",
-                notes: isFull("notes") ? (c.notes ?? "") : "",
-                custom: Object.fromEntries(policy.custom.filter((f) => isFull(customFieldKey(f.id))).map((f) => [f.id, c.customFields[f.id] ?? ""])),
                 smsOptIn: c.smsOptIn,
                 emailOptIn: c.emailOptIn,
                 homeShopId: c.homeShopId,

@@ -8,6 +8,8 @@ import { sales } from "@/db/schema";
 import { safe } from "@/server/action";
 import { StaffContext, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
 import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale, validatePromo } from "@/server/checkout";
+import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
+import { findOrCreateCustomer } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { holdRetail } from "@/server/inventory/stock";
 import { requireInTenant } from "@/server/tenant";
@@ -68,6 +70,23 @@ export async function attachCustomerAction(saleId: string, customerId: string | 
     await db.update(sales).set({ customerId }).where(and(eq(sales.id, saleId), eq(sales.status, "open")));
     revalidatePath(`/admin/checkout/${saleId}`);
     return null;
+  });
+}
+
+/** A client who isn't on file yet: matched by phone or email if they are, otherwise created, then put on the ticket. */
+export async function newClientAtCheckoutAction(saleId: string, input: { firstName: string; lastName?: string; phone?: string; email?: string }) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    const sale = await loadSale(ctx, saleId);
+    if (sale.status !== "open") throw new AppError("conflict", "Ticket is closed");
+    assertCanEnter(await clientPolicy(ctx), input);
+    const c = await db.transaction(async (tx) => {
+      const row = await findOrCreateCustomer(input, sale.shopId, tx, { allowNoContact: true });
+      await tx.update(sales).set({ customerId: row.id }).where(and(eq(sales.id, saleId), eq(sales.status, "open")));
+      return row;
+    });
+    revalidatePath(`/admin/checkout/${saleId}`);
+    return { id: c.id };
   });
 }
 

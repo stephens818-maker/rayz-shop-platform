@@ -7,6 +7,7 @@ import { shops, waitlistEntries } from "@/db/schema";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { quickWalkIn, seatFromWaitlist, updateWaitlistStatus } from "@/server/booking";
+import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
 import { textingDeclined } from "@/server/customers";
 import { AppError, notFound } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
@@ -16,6 +17,7 @@ export async function walkInAction(input: { shopId: string; serviceId: string; n
   return safe(async () => {
     const ctx = await authorize("walkins.manage");
     assertShopAccess(ctx, input.shopId);
+    assertCanEnter(await clientPolicy(ctx), { phone: input.phone });
     const r = await quickWalkIn({ ...input, phone: input.phone || null, actor: ctx.actor });
     revalidatePath("/admin/walk-ins");
     revalidatePath("/admin/calendar");

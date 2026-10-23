@@ -71,7 +71,7 @@ export function DayCalendar({
   today: string;
   nowMin: number | null;
   services: Svc[];
-  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean };
+  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean; addPhone: boolean };
   meId: string;
   initialApptId: string | null;
 }) {
@@ -228,7 +228,7 @@ export function DayCalendar({
         <SidePanel onClose={() => setPanel(null)}>
           {panel.kind === "appt" && <ApptPanel appt={panel.appt} col={panel.col} canManage={canManage} onDone={() => setPanel(null)} />}
           {panel.kind === "block" && <BlockPanel block={panel.block} col={panel.col} onDone={() => setPanel(null)} />}
-          {panel.kind === "new" && <NewPanel col={panel.col} data={data} startMin={panel.startMin} services={services} own={panel.col.id === meId} onDone={() => setPanel(null)} />}
+          {panel.kind === "new" && <NewPanel col={panel.col} data={data} startMin={panel.startMin} services={services} own={panel.col.id === meId} canAddPhone={canManage.addPhone} onDone={() => setPanel(null)} />}
         </SidePanel>
       )}
     </div>
@@ -530,7 +530,23 @@ function BlockPanel({ block, col, onDone }: { block: CalColumn["blocks"][number]
 
 type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; email: string | null; notes: string | null; rating: RatingSummary | null };
 
-function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColumn; data: DayCalendarData; startMin: number; services: Svc[]; own: boolean; onDone: () => void }) {
+function NewPanel({
+  col,
+  data,
+  startMin,
+  services,
+  own,
+  canAddPhone,
+  onDone,
+}: {
+  col: CalColumn;
+  data: DayCalendarData;
+  startMin: number;
+  services: Svc[];
+  own: boolean;
+  canAddPhone: boolean;
+  onDone: () => void;
+}) {
   const [tab, setTab] = useState<"appt" | "block">("appt");
   const { pending, error, run } = useAction();
   const mains = services.filter((s) => s.kind === "service");
@@ -652,7 +668,7 @@ function NewPanel({ col, data, startMin, services, own, onDone }: { col: CalColu
                 <div className="mt-1 grid grid-cols-2 gap-2">
                   <Input placeholder="First name" value={first} onChange={(e) => setFirst(e.target.value)} />
                   <Input placeholder="Last name" value={last} onChange={(e) => setLast(e.target.value)} />
-                  <Input className="col-span-2" placeholder="Mobile (for reminders)" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                  {canAddPhone && <Input className="col-span-2" placeholder="Mobile (for reminders)" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />}
                 </div>
               </>
             )}

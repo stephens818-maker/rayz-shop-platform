@@ -6,6 +6,7 @@ import { Empty, PageHeader } from "@/components/ui";
 import { localMinutesOf, todayLocal, weekdayOf } from "@/lib/time";
 import { guardPage, workingShopId } from "@/server/auth/staff";
 import { estimateWait, waitlistForShop } from "@/server/booking";
+import { clientPolicy } from "@/server/client-privacy";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { WalkIns } from "./walk-ins";
 
@@ -19,7 +20,7 @@ export default async function WalkInsPage() {
   const now = new Date();
   const today = todayLocal(now);
   const nowMin = localMinutesOf(now);
-  const [catalog, barbers, waitlist] = await Promise.all([shopCatalog(shopId), shopBarbers(shopId), waitlistForShop(shopId)]);
+  const [catalog, barbers, waitlist, policy] = await Promise.all([shopCatalog(shopId), shopBarbers(shopId), waitlistForShop(shopId), clientPolicy(ctx)]);
   const ids = barbers.map((b) => b.id);
   const [scheds, current, svcNames] = await Promise.all([
     ids.length ? db.select().from(staffSchedules).where(and(inArray(staffSchedules.staffId, ids), eq(staffSchedules.weekday, weekdayOf(today)))) : [],
@@ -68,6 +69,7 @@ export default async function WalkInsPage() {
       ) : (
         <WalkIns
           shopId={shopId}
+          canAddPhone={policy.canAdd("phone")}
           services={catalog.filter((s) => s.kind === "service").map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin, priceCents: s.priceCents }))}
           barbers={board}
           waitlist={waitlist.map((w) => ({

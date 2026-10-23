@@ -10,7 +10,7 @@ import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, assertShopAccess, can, caller, requireStaff } from "@/server/auth/staff";
 import { createAppointment, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
-import { clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
+import { assertCanEnter, clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
 import { clientSearchScope, searchCustomers } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { ratingSummaries } from "@/server/ratings";
@@ -92,6 +92,7 @@ export async function createStaffAppointmentAction(input: {
     assertShopAccess(ctx, input.shopId);
     if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only book into your own column");
     if (!input.customerId && !input.customer?.firstName) throw new AppError("bad_request", "Pick a client or enter a name");
+    if (!input.customerId && input.customer) assertCanEnter(await clientPolicy(ctx), input.customer);
     const startsAt = staffWallTime(input.date, input.startMin);
     const appt = await createAppointment({
       shopRef: input.shopId,

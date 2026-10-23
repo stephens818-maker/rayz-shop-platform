@@ -1,29 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Fragment, useEffect, useState, useTransition, type ReactNode } from "react";
-import { Button, Card, CardHeader, Field, Input, Select, Textarea } from "@/components/ui";
-import type { Level } from "@/domain/client-privacy";
+import { Fragment, useEffect, useState, useTransition } from "react";
+import { Button, Card, CardHeader, Field, Input, Select, Textarea, cx } from "@/components/ui";
+import type { ShownField } from "@/domain/client-privacy";
 import { findClientsAction, grantRewardAction, mergeCustomersAction, updateCustomerAction, updateNotesAction } from "../actions";
 import { Masked } from "../privacy";
 
-type P = {
-  firstName: string;
-  lastName: string;
-  phone: string;
-  email: string;
-  address: string;
-  birthday: string;
-  notes: string;
-  custom: Record<string, string>;
-  smsOptIn: boolean;
-  emailOptIn: boolean;
-  homeShopId: string | null;
-  preferredStaffId: string | null;
-};
-
-/** A client field as the viewer may see it: `value` is already masked unless the level is full. */
-export type ShownField = { key: string; label: string; level: Level; value: string | null };
+type P = { firstName: string; lastName: string; smsOptIn: boolean; emailOptIn: boolean; homeShopId: string | null; preferredStaffId: string | null };
 
 const INPUT: Record<string, { type?: string; placeholder?: string; wide?: boolean }> = {
   phone: { type: "tel", placeholder: "(319) 555-0123" },
@@ -31,34 +15,140 @@ const INPUT: Record<string, { type?: string; placeholder?: string; wide?: boolea
   address: { placeholder: "Street, city, state zip", wide: true },
   birthday: { type: "date" },
 };
+const NOTES_PLACEHOLDER = "#2 on sides, likes a skin fade…";
 
-/** Masked fields show with Reveal; hidden ones aren't sent at all, so they're only named. */
-function FieldRows({ id, fields, canReveal, input }: { id: string; fields: ShownField[]; canReveal: boolean; input: (f: ShownField) => ReactNode }) {
-  const hidden = fields.filter((f) => f.level === "hidden");
-  return (
-    <>
-      {fields
-        .filter((f) => f.level !== "hidden")
-        .map((f) =>
-          f.level === "full" ? (
-            <Field key={f.key} label={f.label} className={INPUT[f.key]?.wide || f.key.startsWith("custom:") ? "col-span-2" : undefined}>
-              {input(f)}
-            </Field>
-          ) : (
-            <div key={f.key} className="col-span-2 text-sm">
-              <div className="mb-1 text-xs font-medium text-zinc-700">{f.label}</div>
-              <Masked customerId={id} field={f.key} value={f.value} level={f.level} canReveal={canReveal} />
-            </div>
-          ),
-        )}
-      {hidden.length > 0 && <p className="col-span-2 text-xs text-zinc-500">Not shown to you: {hidden.map((f) => f.label.toLowerCase()).join(", ")}.</p>}
-    </>
+const editable = (f: ShownField) => (f.saved ? f.canEdit : f.canAdd);
+const wide = (key: string) => key === "notes" || !!INPUT[key]?.wide || key.startsWith("custom:");
+/** What becomes of a value typed into a field the person doesn't see in full. */
+const afterSave = (f: ShownField) => (f.level === "hidden" ? "You won't see this once it's saved." : "Once saved, you'll see it masked.");
+
+function Control({ field, value, onChange, autoFocus }: { field: string; value: string; onChange: (v: string) => void; autoFocus?: boolean }) {
+  return field === "notes" ? (
+    <Textarea rows={3} value={value} onChange={(e) => onChange(e.target.value)} placeholder={NOTES_PLACEHOLDER} autoFocus={autoFocus} />
+  ) : (
+    <Input type={INPUT[field]?.type} placeholder={INPUT[field]?.placeholder} value={value} onChange={(e) => onChange(e.target.value)} autoFocus={autoFocus} />
   );
+}
+
+/**
+ * One protected field on a form. A field seen in full is an input when the person may enter it.
+ * Anything else shows only as the person may see it (masked, or "Saved, hidden by policy"), with
+ * Replace when they may edit it; what they type stays in the form until it's saved, then the field
+ * shows at their level again. An empty field they may add to is a blank input.
+ */
+function Protected({
+  id,
+  f,
+  canReveal,
+  value,
+  draft,
+  onValue,
+  onDraft,
+}: {
+  id: string;
+  f: ShownField;
+  canReveal: boolean;
+  /** The current value, for a field seen in full. */
+  value: string;
+  /** What's being typed into a field not seen in full; undefined: not being replaced. */
+  draft: string | undefined;
+  onValue: (v: string) => void;
+  onDraft: (v: string | undefined) => void;
+}) {
+  const span = wide(f.key) ? "col-span-2" : undefined;
+  if (f.level === "full")
+    return editable(f) ? (
+      <Field label={f.label} className={span}>
+        <Control field={f.key} value={value} onChange={onValue} />
+      </Field>
+    ) : (
+      <div className={cx("text-sm", span)}>
+        <div className="mb-1 text-xs font-medium text-zinc-700">{f.label}</div>
+        <span className="whitespace-pre-line">{f.value ?? <span className="text-zinc-400">—</span>}</span>
+      </div>
+    );
+  if (!f.saved)
+    return f.canAdd ? (
+      <Field label={f.label} hint={afterSave(f)} className={span}>
+        <Control field={f.key} value={draft ?? ""} onChange={onDraft} />
+      </Field>
+    ) : (
+      <div className="col-span-2 text-sm">
+        <div className="mb-1 text-xs font-medium text-zinc-700">{f.label}</div>
+        <span className="text-zinc-400">—</span>
+      </div>
+    );
+  return (
+    <div className="col-span-2 text-sm">
+      <div className="mb-1 text-xs font-medium text-zinc-700">{f.label}</div>
+      <span className="inline-flex flex-wrap items-center gap-2">
+        {f.level === "hidden" ? (
+          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">Saved, hidden by policy</span>
+        ) : (
+          <Masked customerId={id} field={f.key} value={f.value} level={f.level} canReveal={canReveal} />
+        )}
+        {f.canEdit && draft === undefined && (
+          <button type="button" className="text-xs text-brand-700 underline" onClick={() => onDraft("")}>
+            Replace
+          </button>
+        )}
+      </span>
+      {draft !== undefined && (
+        <div className="mt-2 space-y-1">
+          <Control field={f.key} value={draft} onChange={onDraft} autoFocus />
+          <div className="flex items-center justify-between text-[11px] text-zinc-500">
+            <span>Replaces what&apos;s on file without showing it. {afterSave(f)}</span>
+            <button type="button" className="underline" onClick={() => onDraft(undefined)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Typed values and replacements for the protected fields. `entries` is what goes to the server:
+ * fields seen in full and editable, and anything typed into one that isn't; nothing else, so a
+ * field left alone is never compared or overwritten.
+ */
+function useProtected(fields: ShownField[], initial: Record<string, string>) {
+  const [shown, setShown] = useState(fields);
+  const [values, setValues] = useState(initial);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [version, setVersion] = useState(0);
+  const latest = JSON.stringify(fields);
+  useEffect(() => setShown(JSON.parse(latest)), [latest]);
+  const entries = () =>
+    Object.fromEntries(
+      shown.flatMap((f): [string, string][] => (f.level === "full" ? (editable(f) ? [[f.key, values[f.key] ?? ""]] : []) : drafts[f.key]?.trim() ? [[f.key, drafts[f.key]]] : [])),
+    );
+  /** After a save: show the fields as the server answered (at the person's level) and drop what was typed. */
+  const saved = (next: ShownField[]) => {
+    setShown((cur) => cur.map((f) => next.find((n) => n.key === f.key) ?? f));
+    setDrafts({});
+    setVersion((v) => v + 1);
+  };
+  const field = (f: ShownField, id: string, canReveal: boolean) => (
+    <Protected
+      key={`${f.key}:${version}`}
+      id={id}
+      f={f}
+      canReveal={canReveal}
+      value={values[f.key] ?? ""}
+      draft={drafts[f.key] ?? (f.level !== "full" && !f.saved && f.canAdd ? "" : undefined)}
+      onValue={(v) => setValues({ ...values, [f.key]: v })}
+      onDraft={(v) => setDrafts(({ [f.key]: _, ...rest }) => (v === undefined ? rest : { ...rest, [f.key]: v }))}
+    />
+  );
+  return { shown, entries, saved, field };
 }
 
 export function CustomerEditor({
   id,
   initial,
+  values,
   fields,
   canReveal,
   preferred,
@@ -68,6 +158,8 @@ export function CustomerEditor({
 }: {
   id: string;
   initial: P;
+  /** Fields seen in full, as they are on file. */
+  values: Record<string, string>;
   fields: ShownField[];
   canReveal: boolean;
   preferred: ShownField;
@@ -79,9 +171,26 @@ export function CustomerEditor({
   const [pending, start] = useTransition();
   const [p, setP] = useState(initial);
   const [msg, setMsg] = useState<string | null>(null);
-  const value = (key: string) => (key.startsWith("custom:") ? (p.custom[key.slice(7)] ?? "") : String(p[key as keyof P] ?? ""));
-  const set = (key: string, v: string) => setP(key.startsWith("custom:") ? { ...p, custom: { ...p.custom, [key.slice(7)]: v } } : { ...p, [key]: v });
-  const notes = fields.find((f) => f.key === "notes");
+  const prot = useProtected(fields, values);
+  const notHere = prot.shown.filter((f) => f.level === "hidden" && !f.saved && !f.canAdd);
+  const save = () =>
+    start(async () => {
+      const e = prot.entries();
+      const custom = Object.fromEntries(Object.entries(e).flatMap(([k, v]) => (k.startsWith("custom:") ? [[k.slice(7), v]] : [])));
+      const r = await updateCustomerAction(id, {
+        ...p,
+        phone: e.phone,
+        email: e.email,
+        address: e.address,
+        birthday: e.birthday,
+        notes: e.notes,
+        custom,
+        preferredStaffId: preferred.level === "full" && editable(preferred) ? p.preferredStaffId : undefined,
+      });
+      setMsg(r.ok ? "Saved" : r.error);
+      if (r.ok) prot.saved(r.data.fields);
+      router.refresh();
+    });
   return (
     <Card>
       <CardHeader title="Contact & preferences" />
@@ -92,12 +201,8 @@ export function CustomerEditor({
         <Field label="Last name">
           <Input value={p.lastName} onChange={(e) => setP({ ...p, lastName: e.target.value })} />
         </Field>
-        <FieldRows
-          id={id}
-          canReveal={canReveal}
-          fields={fields.filter((f) => f.key !== "notes")}
-          input={(f) => <Input type={INPUT[f.key]?.type} placeholder={INPUT[f.key]?.placeholder} value={value(f.key)} onChange={(e) => set(f.key, e.target.value)} />}
-        />
+        {prot.shown.filter((f) => f.key !== "notes" && !notHere.includes(f)).map((f) => prot.field(f, id, canReveal))}
+        {notHere.length > 0 && <p className="col-span-2 text-xs text-zinc-500">Not shown to you: {notHere.map((f) => f.label.toLowerCase()).join(", ")}.</p>}
         <Field label="Home shop">
           <Select value={p.homeShopId ?? ""} onChange={(e) => setP({ ...p, homeShopId: e.target.value || null })}>
             <option value="">—</option>
@@ -110,7 +215,7 @@ export function CustomerEditor({
         </Field>
         {preferred.level === "full" ? (
           <Field label="Preferred barber" hint={usualBarber ? `Usually sees ${usualBarber}` : undefined}>
-            <Select value={p.preferredStaffId ?? ""} onChange={(e) => setP({ ...p, preferredStaffId: e.target.value || null })}>
+            <Select disabled={!editable(preferred)} value={p.preferredStaffId ?? ""} onChange={(e) => setP({ ...p, preferredStaffId: e.target.value || null })}>
               <option value="">No preference</option>
               {barbers.map((b) => (
                 <option key={b.id} value={b.id}>
@@ -125,14 +230,7 @@ export function CustomerEditor({
             <Masked customerId={id} field="preferred_barber" value={preferred.value} level="masked" canReveal={canReveal} empty="No preference" />
           </div>
         ) : null}
-        {notes && (
-          <FieldRows
-            id={id}
-            canReveal={canReveal}
-            fields={[{ ...notes, label: "Notes (staff only)" }]}
-            input={() => <Textarea rows={3} value={p.notes} onChange={(e) => setP({ ...p, notes: e.target.value })} placeholder="#2 on sides, likes a skin fade…" />}
-          />
-        )}
+        {prot.shown.filter((f) => f.key === "notes" && !notHere.includes(f)).map((f) => prot.field({ ...f, label: "Notes (staff only)" }, id, canReveal))}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={p.smsOptIn} onChange={(e) => setP({ ...p, smsOptIn: e.target.checked })} /> Texts
         </label>
@@ -141,16 +239,7 @@ export function CustomerEditor({
         </label>
       </div>
       <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
-        <Button
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const r = await updateCustomerAction(id, p);
-              setMsg(r.ok ? "Saved" : r.error);
-              router.refresh();
-            })
-          }
-        >
+        <Button disabled={pending} onClick={save}>
           Save
         </Button>
         {msg && <span className="text-sm text-zinc-600">{msg}</span>}
@@ -159,7 +248,7 @@ export function CustomerEditor({
   );
 }
 
-/** What someone without "edit clients" sees: the details their role shows, and cut notes they can edit when notes are shown in full. */
+/** What someone without "edit clients" sees: the details their role shows, and cut notes as the portal lets them add or edit them. */
 export function NotesEditor({
   id,
   initial,
@@ -179,9 +268,11 @@ export function NotesEditor({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const [notes, setNotes] = useState(initial);
   const [msg, setMsg] = useState<string | null>(null);
+  const prot = useProtected([notesField], { notes: initial });
+  const notes = prot.shown[0];
   const shown = fields.filter((f) => f.level !== "hidden" && f.value);
+  const sending = prot.entries().notes;
   return (
     <Card>
       <CardHeader title="Notes" subtitle={[preferred && `Prefers ${preferred}`, usual && `usually sees ${usual}`].filter(Boolean).join(" · ") || undefined} />
@@ -197,32 +288,26 @@ export function NotesEditor({
           ))}
         </dl>
       )}
-      {notesField.level !== "full" ? (
-        <div className="p-4 text-sm">
-          <Masked customerId={id} field="notes" value={notesField.value} level={notesField.level} canReveal={canReveal} empty="No notes" />
+      <div className="grid grid-cols-2 p-4">{prot.field({ ...notes, label: "Client notes" }, id, canReveal)}</div>
+      {sending !== undefined && (
+        <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
+          <Button
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await updateNotesAction(id, sending);
+                setMsg(r.ok ? "Saved" : r.error);
+                if (r.ok) prot.saved([r.data.notes]);
+                router.refresh();
+              })
+            }
+          >
+            Save notes
+          </Button>
+          {msg && <span className="text-sm text-zinc-600">{msg}</span>}
         </div>
-      ) : (
-        <>
-          <div className="p-4">
-            <Textarea rows={4} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="#2 on sides, likes a skin fade…" />
-          </div>
-          <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
-            <Button
-              disabled={pending}
-              onClick={() =>
-                start(async () => {
-                  const r = await updateNotesAction(id, notes);
-                  setMsg(r.ok ? "Saved" : r.error);
-                  router.refresh();
-                })
-              }
-            >
-              Save notes
-            </Button>
-            {msg && <span className="text-sm text-zinc-600">{msg}</span>}
-          </div>
-        </>
       )}
+      {sending === undefined && msg && <p className="border-t border-zinc-100 px-4 py-3 text-sm text-zinc-600">{msg}</p>}
     </Card>
   );
 }

@@ -12,7 +12,16 @@ type Entry = { id: string; name: string; hasPhone: boolean; status: string; serv
 
 const t = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
 
-export function WalkIns({ shopId, services, barbers, waitlist }: { shopId: string; services: { id: string; name: string; durationMin: number; priceCents: number }[]; barbers: Barber[]; waitlist: Entry[] }) {
+export function WalkIns({
+  shopId,
+  canAddPhone,
+  services,
+  barbers,
+  waitlist,
+}: {
+  shopId: string;
+  canAddPhone: boolean;
+  services: { id: string; name: string; durationMin: number; priceCents: number }[]; barbers: Barber[]; waitlist: Entry[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
@@ -68,7 +77,7 @@ export function WalkIns({ shopId, services, barbers, waitlist }: { shopId: strin
             }}
           >
             <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus className="h-11 text-base" />
-            <Input placeholder="Mobile (optional, for text when ready)" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            {canAddPhone && <Input placeholder="Mobile (optional, for text when ready)" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />}
             <div className="grid grid-cols-2 gap-2">
               {top.map((s) => (
                 <button

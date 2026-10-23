@@ -5,14 +5,14 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { customers, loyaltyLedger, loyaltyRewards, shops, staff } from "@/db/schema";
-import { FieldKey, customFieldId, customFieldKey, isBuiltinField, isRevealable } from "@/domain/client-privacy";
+import { FieldKey, ShownField, customFieldId, customFieldKey, isBuiltinField, isRevealable } from "@/domain/client-privacy";
 import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, authorize, can, requireStaff } from "@/server/auth/staff";
 import { contactClient } from "@/server/client-contact";
-import { clientPolicy, displayFull, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
+import { ClientPolicy, clientPolicy, displayFull, entered, recordClientAccess, searchReach, shownField, showClient } from "@/server/client-privacy";
 import { customerAccess, findOrCreateCustomer, matchCustomer, mergeCustomers, searchCustomers } from "@/server/customers";
 import { AppError, forbidden } from "@/server/errors";
 import { getLoyaltyConfig } from "@/server/loyalty";
@@ -26,27 +26,41 @@ const Birthday = z
     "Birthday doesn't look right",
   );
 
+/**
+ * A client form. Protected details are optional: a field the form leaves out stays as it is, an
+ * empty string clears it. Forms only send what the person may enter (see `entered`).
+ */
 const Profile = z.object({
   firstName: z.string().trim().min(1),
   lastName: z.string().trim(),
-  phone: z.string().trim(),
-  email: z.string().trim(),
-  address: z.string().trim().max(200).default(""),
-  birthday: Birthday.default(""),
-  notes: z.string().trim(),
+  phone: z.string().trim().optional(),
+  email: z.string().trim().optional(),
+  address: z.string().trim().max(200).optional(),
+  birthday: Birthday.optional(),
+  notes: z.string().trim().max(2000).optional(),
   custom: z.record(z.string().uuid(), z.string().trim().max(500)).default({}),
   smsOptIn: z.boolean(),
   emailOptIn: z.boolean(),
   homeShopId: z.string().uuid().nullable(),
-  preferredStaffId: z.string().uuid().nullable(),
+  preferredStaffId: z.string().uuid().nullable().optional(),
 });
 
-function contact(p: { phone: string; email: string }) {
-  const phone = p.phone ? normalizePhone(p.phone) : null;
+function contact(p: { phone?: string; email?: string }) {
+  const phone = p.phone === undefined ? undefined : p.phone ? normalizePhone(p.phone) : null;
   if (p.phone && !phone) throw new AppError("bad_request", "Phone number doesn't look like a US number");
-  const email = p.email ? normalizeEmail(p.email) : null;
+  const email = p.email === undefined ? undefined : p.email ? normalizeEmail(p.email) : null;
   if (p.email && !email) throw new AppError("bad_request", "Email doesn't look right");
   return { phone, email };
+}
+
+type Stored = { phone: string | null; email: string | null; address: string | null; birthday: string | null; notes: string | null; customFields: Record<string, string> };
+
+/** A client's details as the person who just saved them may see them: never more than their level. */
+function savedFields(policy: ClientPolicy, c: Stored): ShownField[] {
+  return [
+    ...(["phone", "email", "address", "birthday", "notes"] as const).map((f) => shownField(policy, f, c[f])),
+    ...policy.custom.map((f) => shownField(policy, customFieldKey(f.id), c.customFields[f.id], f.label)),
+  ];
 }
 
 /** A shop workspace can point a client only at its own shops and barbers; what's on file from elsewhere can stay. */
@@ -65,8 +79,10 @@ async function checkRefs(
 
 /**
  * The client record is shared by every shop, so anyone who may edit clients may correct it; every
- * change is audited. Only details the editor sees in full can change: the rest stay as they are,
- * since the form never had them.
+ * change is audited. Each protected detail changes only as the brand portal allows: filling in an
+ * empty one needs "add", replacing one on file needs "edit", whether or not the editor can see it.
+ * The answer carries the details at the editor's view level, so a value they can't see isn't sent
+ * back even when they just typed it.
  */
 export async function updateCustomerAction(id: string, raw: z.input<typeof Profile>) {
   return safe(async () => {
@@ -75,25 +91,24 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
     const before = await db.query.customers.findFirst({ where: eq(customers.id, id) });
     if (!before) throw new AppError("not_found", "Client not found");
     const policy = await clientPolicy(ctx);
-    const full = (f: FieldKey) => policy.level(f) === "full";
-    const preferredStaffId = full("preferred_barber") ? p.preferredStaffId : before.preferredStaffId;
+    const preferredStaffId = entered(policy, "preferred_barber", before.preferredStaffId, p.preferredStaffId);
     await checkRefs(ctx, { homeShopId: p.homeShopId, preferredStaffId }, before);
     const c = contact(p);
     const customFields = { ...before.customFields };
     for (const f of policy.custom) {
-      if (!full(customFieldKey(f.id))) continue;
-      const v = p.custom[f.id]?.trim();
+      if (!(f.id in p.custom)) continue;
+      const v = entered(policy, customFieldKey(f.id), before.customFields[f.id], p.custom[f.id]);
       if (v) customFields[f.id] = v;
       else delete customFields[f.id];
     }
     const values = {
       firstName: p.firstName,
       lastName: p.lastName || null,
-      phone: full("phone") ? c.phone : before.phone,
-      email: full("email") ? c.email : before.email,
-      address: full("address") ? p.address || null : before.address,
-      birthday: full("birthday") ? p.birthday || null : before.birthday,
-      notes: full("notes") ? p.notes || null : before.notes,
+      phone: entered(policy, "phone", before.phone, c.phone),
+      email: entered(policy, "email", before.email, c.email),
+      address: entered(policy, "address", before.address, p.address),
+      birthday: entered(policy, "birthday", before.birthday, p.birthday),
+      notes: entered(policy, "notes", before.notes, p.notes),
       customFields,
       smsOptIn: p.smsOptIn,
       emailOptIn: p.emailOptIn,
@@ -109,46 +124,68 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
     );
     await audit(ctx.actor, "customer.update", "customer", id, changed, ctx.currentShopId);
     revalidatePath(`/admin/customers/${id}`);
-    return null;
+    return { fields: savedFields(policy, values) };
   });
 }
 
-/** Barbers keep cut notes for clients they've served, when they can see the notes. */
+/**
+ * Barbers keep cut notes for clients they've served. Notes they can't see can still be written
+ * over when the portal lets them edit notes; the old ones are never shown.
+ */
 export async function updateNotesAction(id: string, notes: string) {
   return safe(async () => {
     const ctx = await requireStaff();
     const access = await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, id);
     if (!access) throw forbidden("You can only edit notes for your own clients");
-    if ((await clientPolicy(ctx)).level("notes") !== "full") throw forbidden("Client notes aren't shown to you, so you can't edit them");
-    const value = notes.trim().slice(0, 2000) || null;
+    const before = await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { notes: true } });
+    if (!before) throw new AppError("not_found", "Client not found");
+    const policy = await clientPolicy(ctx);
+    const value = entered(policy, "notes", before.notes, notes.trim().slice(0, 2000));
     await db.update(customers).set({ notes: value }).where(eq(customers.id, id));
     await audit(ctx.actor, "customer.notes", "customer", id, { notes: value }, ctx.currentShopId);
     revalidatePath(`/admin/customers/${id}`);
-    return null;
+    return { notes: shownField(policy, "notes", value) };
   });
 }
 
-const NewClient = Profile.omit({ notes: true }).extend({ notes: z.string().trim().default("") });
-
-/** Runs the same matching as booking: an existing client with this phone/email and a compatible name is returned instead. */
-export async function createCustomerAction(raw: z.input<typeof NewClient>) {
+/**
+ * Runs the same matching as booking: an existing client with this phone/email and a compatible
+ * name is returned instead. Every detail given needs "add"; seeing it isn't required, and the
+ * answer is only the client's id.
+ */
+export async function createCustomerAction(raw: z.input<typeof Profile>) {
   return safe(async () => {
     const ctx = await authorize("clients.edit");
-    const p = NewClient.parse(raw);
-    await checkRefs(ctx, p);
+    const p = Profile.parse(raw);
+    const policy = await clientPolicy(ctx);
+    const add = (f: FieldKey, v: string | null | undefined) => entered(policy, f, null, v ?? undefined);
     const c = contact(p);
-    const existing = c.phone || c.email ? await matchCustomer(db, { firstName: p.firstName, lastName: p.lastName, ...c }) : null;
+    const fields = {
+      phone: add("phone", c.phone),
+      email: add("email", c.email),
+      address: add("address", p.address),
+      birthday: add("birthday", p.birthday),
+      notes: add("notes", p.notes),
+      preferredStaffId: add("preferred_barber", p.preferredStaffId),
+    };
+    const customFields: Record<string, string> = {};
+    for (const f of policy.custom) {
+      const v = add(customFieldKey(f.id), p.custom[f.id]);
+      if (v) customFields[f.id] = v;
+    }
+    await checkRefs(ctx, { homeShopId: p.homeShopId, preferredStaffId: fields.preferredStaffId });
+    const existing = fields.phone || fields.email ? await matchCustomer(db, { firstName: p.firstName, lastName: p.lastName, phone: fields.phone, email: fields.email }) : null;
     if (existing) return { id: existing.customer.id, existed: true };
     const created = await db.transaction(async (tx) => {
       const row = await findOrCreateCustomer(
-        { firstName: p.firstName, lastName: p.lastName, ...c, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn },
+        { firstName: p.firstName, lastName: p.lastName, phone: fields.phone, email: fields.email, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn },
         p.homeShopId ?? ctx.currentShopId,
         tx,
         { allowNoContact: true },
       );
       await tx
         .update(customers)
-        .set({ notes: p.notes || null, preferredStaffId: p.preferredStaffId, address: p.address || null, birthday: p.birthday || null })
+        .set({ notes: fields.notes, preferredStaffId: fields.preferredStaffId, address: fields.address, birthday: fields.birthday, customFields })
         .where(eq(customers.id, row.id));
       return row;
     });

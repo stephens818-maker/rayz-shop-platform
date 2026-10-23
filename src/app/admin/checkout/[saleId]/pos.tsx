@@ -1,12 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
 import { searchCustomersAction } from "../../calendar/actions";
-import { attachCustomerAction, finalizeAction, giftCardAction, holdRetailAction, inspectCardAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
+import { attachCustomerAction, finalizeAction, giftCardAction, holdRetailAction, inspectCardAction, newClientAtCheckoutAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
 import { StripeCardEntry } from "./stripe-card";
 
 type Line = { key: string; kind: LineKind; refId: string | null; name: string; unitPriceCents: number; qty: number; override?: { unitPriceCents: number; reason: string } | null };
@@ -37,6 +37,7 @@ export function Pos(props: {
   payments: { mode: "stripe" | "simulator"; publishableKey: string | null; terminalLabel: string; testCards: { id: string; label: string; funding: string }[] };
   taxCategories: Record<string, TaxCategory>;
   perms: { discount: boolean; maxDiscountPct: number; priceOverride: boolean; reassign: boolean };
+  canAdd: { phone: boolean; email: boolean };
 }) {
   const router = useRouter();
   const [lines, setLines] = useState<Line[]>(() => props.initialLines.map((l) => ({ ...l, key: key() })));
@@ -185,7 +186,7 @@ export function Pos(props: {
         <div className="space-y-4">
           <Card>
             <div className="grid gap-3 p-4 sm:grid-cols-2">
-              <CustomerBox saleId={props.sale.id} customer={props.customer} onError={setError} />
+              <CustomerBox saleId={props.sale.id} customer={props.customer} canAdd={props.canAdd} onError={setError} />
               <div>
                 <div className="mb-1 text-xs font-medium text-zinc-700">Barber (gets service credit + tip)</div>
                 <Select
@@ -638,9 +639,30 @@ function TenderBtn({ on, onClick, title, sub }: { on: boolean; onClick: () => vo
   );
 }
 
-function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null } | null; onError: (e: string) => void }) {
+function CustomerBox({
+  saleId,
+  customer,
+  canAdd,
+  onError,
+}: {
+  saleId: string;
+  customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null } | null;
+  canAdd: { phone: boolean; email: boolean };
+  onError: (e: string) => void;
+}) {
   const router = useRouter();
   const [q, setQ] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ firstName: "", lastName: "", phone: "", email: "" });
+  const set = (k: keyof typeof draft) => (e: ChangeEvent<HTMLInputElement>) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    const r = await newClientAtCheckoutAction(saleId, draft);
+    if (!r.ok) return onError(r.error);
+    setAdding(false);
+    setDraft({ firstName: "", lastName: "", phone: "", email: "" });
+    router.refresh();
+  };
   const [found, setFound] = useState<{ id: string; firstName: string; lastName: string | null; phone: string | null; rating: RatingSummary | null }[]>([]);
   useEffect(() => {
     if (q.trim().length < 2) return setFound([]);
@@ -674,9 +696,31 @@ function CustomerBox({ saleId, customer, onError }: { saleId: string; customer: 
           </div>
           {customer.notes && <p className="mt-1 whitespace-pre-line rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">{customer.notes}</p>}
         </>
+      ) : adding ? (
+        <form onSubmit={create} className="space-y-2 rounded-lg p-2 ring-1 ring-zinc-200">
+          <div className="grid grid-cols-2 gap-2">
+            <Input placeholder="First name" value={draft.firstName} onChange={set("firstName")} required autoFocus />
+            <Input placeholder="Last name" value={draft.lastName} onChange={set("lastName")} />
+            {canAdd.phone && <Input className="col-span-2" placeholder="Mobile" inputMode="tel" value={draft.phone} onChange={set("phone")} />}
+            {canAdd.email && <Input className="col-span-2" placeholder="Email" type="email" value={draft.email} onChange={set("email")} />}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" size="sm" variant="ghost" onClick={() => setAdding(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={!draft.firstName.trim()}>
+              Add client
+            </Button>
+          </div>
+        </form>
       ) : (
         <>
-          <Input placeholder="Search to attach (for loyalty)" value={q} onChange={(e) => setQ(e.target.value)} />
+          <div className="flex gap-2">
+            <Input placeholder="Search to attach (for loyalty)" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Button type="button" variant="secondary" onClick={() => setAdding(true)}>
+              New client
+            </Button>
+          </div>
           {found.length > 0 && (
             <div className="absolute inset-x-0 z-10 mt-1 divide-y divide-zinc-100 rounded-lg bg-white shadow-lg ring-1 ring-zinc-200">
               {found.map((f) => (
