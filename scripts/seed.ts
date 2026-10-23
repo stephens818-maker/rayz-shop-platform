@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, closeDb } from "@/db";
@@ -9,6 +10,8 @@ import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
 import { simulateConnectHistory } from "@/server/payments/connect";
 import { DEFAULT_BLOCK_REASONS } from "@/domain/block-reasons";
+import { offSchedule } from "@/domain/time-clock";
+import { rederive } from "@/server/time-clock";
 import { DEFAULT_STAFF_TIME_RULES, SERIES_HORIZON_DAYS, seriesOccurrences, timeOffSpan } from "@/domain/staff-time";
 import { LocalDate, addDays, diffDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
@@ -910,18 +913,7 @@ async function seedPayroll(o: {
 
   const entries: (typeof t.timeEntries.$inferInsert)[] = [];
   const staffIndex = new Map(people.map((s, i) => [staffByKey.get(s.key)!.id, i]));
-  for (let d = -HISTORY_DAYS; d < 0; d++) {
-    const date = addDays(today, d);
-    const wd = weekdayOf(date);
-    for (const r of scheduleRows) {
-      if (r.weekday !== wd) continue;
-      const i = staffIndex.get(r.staffId) ?? 0;
-      if ((d + i * 3) % 11 === 0) continue;
-      const day = startOfLocalDay(date).getTime();
-      const late = ((d * 7 + i) % 4) * 5;
-      entries.push({ staffId: r.staffId, shopId: r.shopId, kind: "worked", source: "clock", startsAt: new Date(day + (r.startMin + late) * 60_000), endsAt: new Date(day + (r.endMin + 10) * 60_000) });
-    }
-  }
+  const clock = await seedTimeClock({ now, shopBySlug, scheduleRows, staffIndex });
   // The owner's 80 hours a period at Rock Island, at $0 (Q17 is with Charles).
   const charles = staffByKey.get("charles")!.id;
   for (let d = -HISTORY_DAYS; d < 0; d++) {
@@ -951,7 +943,120 @@ async function seedPayroll(o: {
     value: 150,
     reason: "Typed in the workbook; pending Charles (Q17)",
   });
-  console.log(`  payroll: ${people.length} profiles with sample employee numbers, ${entries.length} time entries (clocked, training, PTO), one NetComm override`);
+  for (const id of clock.staffIds) await rederive(id, startOfLocalDay(addDays(today, -HISTORY_DAYS - 1)), now);
+  const [{ n: clocked }] = await db.select({ n: sql<number>`count(*)::int` }).from(t.timeEntries).where(eq(t.timeEntries.source, "clock"));
+  console.log(
+    `  payroll: ${people.length} profiles with sample employee numbers, ${clock.punches} time clock punches (${clocked} clocked time entries from them, one forgotten clock-out, ${clock.working} on the clock now), ${entries.length} other time entries (owner, training, PTO), one NetComm override`,
+  );
+  console.log(`  time clock: front-desk PIN for everyone is ${CLOCK_PIN}; Coralville checks punches by shop device or GPS, the rest accept any`);
+}
+
+/** Rough shop locations for the demo geofence (city-level, not surveyed). */
+const SHOP_COORDS: Record<string, [number, number]> = {
+  coralville: [41.6766, -91.581],
+  kimberly: [41.56, -90.56],
+  "le-claire": [41.598, -90.344],
+  moline: [41.493, -90.487],
+  "rock-island": [41.487, -90.556],
+  dubuque: [42.5006, -90.6646],
+  silvis: [41.51, -90.415],
+  utica: [41.572, -90.518],
+};
+const CLOCK_PIN = process.env.SEED_CLOCK_PIN ?? "2468";
+
+/**
+ * Time clock punches for each barber's scheduled days over the sample history (in, out, a paid rest
+ * break or an unpaid meal on some shifts, a few minutes late now and then), one front-desk device per
+ * shop, demo PINs, one shift yesterday that was never clocked out, and whoever's already started
+ * today on the clock. The time entries are derived from these punches afterwards.
+ */
+async function seedTimeClock(o: { now: Date; shopBySlug: Map<string, Shop>; scheduleRows: { staffId: string; shopId: string; weekday: number; startMin: number; endMin: number }[]; staffIndex: Map<string, number> }) {
+  const { now, shopBySlug, scheduleRows, staffIndex } = o;
+  const today = todayLocal(now);
+  const coords = new Map<string, [number, number]>();
+  for (const [slug, s] of shopBySlug) {
+    const c = SHOP_COORDS[slug];
+    if (!c) continue;
+    coords.set(s.id, c);
+    const timeClock = slug === "coralville" ? { methods: ["device", "gps"], radiusM: 150, networks: [], photo: "optional", graceMinutes: null } : { methods: [], radiusM: 150, networks: [], photo: "off", graceMinutes: null };
+    await db.update(t.shops).set({ latitude: c[0], longitude: c[1], timeClock }).where(eq(t.shops.id, s.id));
+  }
+  const devices = await db
+    .insert(t.clockDevices)
+    .values([...shopBySlug.values()].map((s) => ({ shopId: s.id, label: "Front desk iPad", tokenHash: randomBytes(32).toString("hex"), lastSeenAt: now })))
+    .returning({ id: t.clockDevices.id, shopId: t.clockDevices.shopId });
+  const deviceOf = new Map(devices.map((d) => [d.shopId, d.id]));
+  const pinHash = await bcrypt.hash(CLOCK_PIN, 10);
+  await db.update(t.staff).set({ clockPinHash: pinHash }).where(and(eq(t.staff.kind, "person"), eq(t.staff.active, true)));
+
+  type Punch = typeof t.timePunches.$inferInsert;
+  const punches: Punch[] = [];
+  const at = (date: LocalDate, min: number) => zonedWallTime(date, min).toJSDate();
+  let n = 0;
+  for (let d = -HISTORY_DAYS; d < 0; d++) {
+    const date = addDays(today, d);
+    const wd = weekdayOf(date);
+    for (const r of scheduleRows) {
+      if (r.weekday !== wd) continue;
+      const i = staffIndex.get(r.staffId) ?? 0;
+      if ((d + i * 3) % 11 === 0) continue;
+      const late = ((d * 7 + i) % 4) * 5;
+      const sIn = at(date, r.startMin + late);
+      const sOut = at(date, r.endMin + [5, 0, 10, -20][(((d * 3 + i) % 4) + 4) % 4]);
+      const sched = [{ start: at(date, r.startMin), end: at(date, r.endMin) }];
+      const method = (["device", "network", "gps", "device"] as const)[n % 4];
+      const c = coords.get(r.shopId);
+      const base = {
+        staffId: r.staffId,
+        shopId: r.shopId,
+        source: method === "device" ? ("kiosk" as const) : ("self" as const),
+        method,
+        deviceId: method === "device" ? (deviceOf.get(r.shopId) ?? null) : null,
+        ip: method === "network" ? "203.0.113.10" : null,
+        latitude: method === "gps" && c ? c[0] + 0.0002 : null,
+        longitude: method === "gps" && c ? c[1] - 0.0002 : null,
+        accuracyM: method === "gps" ? 12 : null,
+        distanceM: method === "gps" && c ? 28 : null,
+        createdBy: r.staffId,
+      };
+      const mk = (type: Punch["type"], when: Date, flag: { flag: string | null; minutes: number | null } = { flag: null, minutes: null }): Punch => ({
+        ...base,
+        type,
+        at: when,
+        originalAt: when,
+        flags: flag.flag ? [flag.flag] : [],
+        offScheduleMin: flag.minutes,
+      });
+      punches.push(mk("in", sIn, offSchedule("in", sIn, sched, 5)));
+      const len = (sOut.getTime() - sIn.getTime()) / 60_000;
+      if (len > 7 * 60 && n % 3 === 0) {
+        const bs = new Date(sIn.getTime() + 4 * 3600_000);
+        punches.push(mk("break_start", bs), mk("break_end", new Date(bs.getTime() + 30 * 60_000)));
+      } else if (len > 5 * 60 && n % 3 === 1) {
+        const bs = new Date(sIn.getTime() + 150 * 60_000);
+        punches.push(mk("break_start", bs), mk("break_end", new Date(bs.getTime() + 10 * 60_000)));
+      }
+      punches.push(mk("out", sOut, offSchedule("out", sOut, sched, 5)));
+      n++;
+    }
+  }
+  // The most recent shift with no break: it was never clocked out, and a manager has been told.
+  const lastIn = [...punches].reverse().find((p) => p.type === "in" && punches[punches.indexOf(p) + 1]?.type === "out");
+  if (lastIn) {
+    punches.splice(punches.indexOf(lastIn) + 1, 1);
+    lastIn.flags = [...(lastIn.flags ?? []), "forgot_out"];
+    lastIn.forgotFlaggedAt = now;
+  }
+  let working = 0;
+  for (const r of scheduleRows) {
+    if (r.weekday !== weekdayOf(today) || working >= 3) continue;
+    const start = at(today, r.startMin + 3);
+    if (start >= now || punches.some((p) => p.staffId === r.staffId && p.at >= startOfLocalDay(today))) continue;
+    punches.push({ staffId: r.staffId, shopId: r.shopId, type: "in", at: start, originalAt: start, source: "kiosk", method: "device", deviceId: deviceOf.get(r.shopId) ?? null, flags: [], offScheduleMin: 3, createdBy: r.staffId });
+    working++;
+  }
+  await chunked(punches, 2000, (c) => db.insert(t.timePunches).values(c));
+  return { punches: punches.length, working, staffIds: [...new Set(punches.map((p) => p.staffId))] };
 }
 
 type Shop = typeof t.shops.$inferSelect;
