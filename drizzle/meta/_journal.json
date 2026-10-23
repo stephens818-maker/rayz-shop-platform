@@ -141,6 +141,13 @@
       "when": 1792721841196,
       "tag": "0019_slot_timing",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792724261285,
+      "tag": "core_0020_stripe_connect",
+      "breakpoints": true
     }
   ]
 }

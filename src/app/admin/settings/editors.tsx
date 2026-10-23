@@ -295,9 +295,10 @@ export function LoyaltyEditor({ initial }: { initial: LoyaltyConfig }) {
 
 export function NewShopForm() {
   const { pending, msg, save } = useSave();
+  const router = useRouter();
   const [v, setV] = useState({ name: "", address: "", city: "", state: "IA", zip: "", phone: "" });
   return (
-    <Card>
+    <Card id="new-shop" className="scroll-mt-20">
       <CardHeader title="Open a new location" subtitle="Starts with the full brand menu at default prices and Mon–Sat hours. Online booking stays off until you add barbers and turn it on." />
       <div className="grid gap-3 p-4 sm:grid-cols-3 lg:grid-cols-6">
         <Field label="Name" className="lg:col-span-2">
@@ -321,7 +322,14 @@ export function NewShopForm() {
           <Input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />
         </Field>
       </div>
-      <SaveBar pending={pending} msg={msg} label="Create shop" disabled={!v.name || !v.city} onClick={() => save(() => createShopAction(v), "Shop created. Switch to it with the shop switcher.")} />
+      <SaveBar pending={pending} msg={msg} label="Create shop" disabled={!v.name || !v.city} onClick={() =>
+          save(async () => {
+            const r = await createShopAction(v);
+            if (r.ok) router.push(`/admin/setup?shop=${r.data.id}`);
+            return r;
+          }, "Shop created. Opening location setup…")
+        }
+      />
     </Card>
   );
 }

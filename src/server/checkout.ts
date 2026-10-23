@@ -41,6 +41,7 @@ import { AppError, forbidden, notFound } from "./errors";
 import { postMovements } from "./inventory/ledger";
 import { stockLevels } from "./inventory/stock";
 import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, markRewardRedeemed } from "./loyalty";
+import { chargeDestination } from "./payments/connect";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
 
 export { refundEverything, refundSale, refundableState, voidSale } from "./refunds";
@@ -327,6 +328,9 @@ export async function finalizeSale(input: FinalizeInput) {
   if (input.tender.method === "cash" && input.tender.cashTenderedCents != null && input.tender.cashTenderedCents < totals.primaryChargeCents) {
     throw new AppError("bad_request", "Cash tendered is less than the amount due");
   }
+  // Card charges settle to the shop's own connected account; a shop that isn't set up takes cash or gift cards only.
+  const destination =
+    input.tender.method === "card" && totals.primaryChargeCents > 0 ? await chargeDestination(ctx.shop, totals.primaryChargeCents, input.tender.entryMode === "terminal" ? "terminal" : "keyed") : null;
 
   const businessDate = localDateOf(now);
   const issuedGiftCards: { code: string; amountCents: number }[] = [];
@@ -425,6 +429,7 @@ export async function finalizeSale(input: FinalizeInput) {
           description: `Ray'z ${ctx.shop.name} ticket #${ctx.sale.number}`,
           metadata: { saleId: ctx.sale.id, shop: ctx.shop.slug, cardFeeCents: String(totals.cardFeeCents), attempt },
           idempotencyKey: `sale-${ctx.sale.id}-${attempt}`,
+          destination,
         });
       }
 
@@ -458,6 +463,11 @@ export async function finalizeSale(input: FinalizeInput) {
           cardLast4: c?.card.last4 ?? null,
           cardFunding: c?.card.funding ?? null,
           entryMode: input.tender.method === "card" ? input.tender.entryMode : null,
+          stripeAccountId: c?.destination?.accountId ?? null,
+          applicationFeeCents: c?.destination?.applicationFeeCents ?? 0,
+          processorFeeCents: c?.processorFeeCents ?? null,
+          stripeChargeId: c?.chargeId ?? null,
+          stripeTransferId: c?.transferId ?? null,
         });
       }
 
@@ -503,7 +513,7 @@ export async function finalizeSale(input: FinalizeInput) {
     });
   } catch (e) {
     const own = charge as Awaited<ReturnType<typeof chargeCard>> | null;
-    if (own) await compensateCharge(own.paymentIntentId, totals.primaryChargeCents, ctx.sale.id);
+    if (own) await compensateCharge(own.paymentIntentId, totals.primaryChargeCents, ctx.sale.id, !!own.destination);
     throw e;
   }
 
@@ -519,11 +529,11 @@ export async function finalizeSale(input: FinalizeInput) {
  * Undo a charge this request made when its transaction didn't commit. If the payment row did land
  * (the commit succeeded but the reply was lost), the charge is real and is left alone.
  */
-async function compensateCharge(paymentIntentId: string, amountCents: number, saleId: string) {
+async function compensateCharge(paymentIntentId: string, amountCents: number, saleId: string, reverseTransfer: boolean) {
   const recorded = await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, paymentIntentId) }).catch(() => null);
   if (recorded) return;
   try {
-    await refundCard(paymentIntentId, amountCents, `comp-${paymentIntentId}`);
+    await refundCard(paymentIntentId, amountCents, `comp-${paymentIntentId}`, { reverseTransfer });
     await audit(SYSTEM, "payment.compensated", "sale", saleId, { paymentIntentId, amountCents }, null);
   } catch (err) {
     await audit(SYSTEM, "payment.compensation_failed", "sale", saleId, { paymentIntentId, amountCents, error: (err as Error).message }, null).catch(() => {});

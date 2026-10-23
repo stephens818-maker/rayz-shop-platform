@@ -305,6 +305,8 @@ async function coralvilleState() {
   const q = m.db.db;
   return JSON.stringify({
     shop: await q.select().from(s.shops).where(eq(s.shops.id, cv)),
+    paymentAccount: await q.select().from(s.shopPaymentAccounts).where(eq(s.shopPaymentAccounts.shopId, cv)),
+    owners: await q.select().from(s.ownerEntities),
     hours: await q.select().from(s.shopHours).where(eq(s.shopHours.shopId, cv)),
     closures: await q.select().from(s.shopClosures).where(eq(s.shopClosures.shopId, cv)),
     services: await q.select().from(s.shopServices).where(eq(s.shopServices.shopId, cv)),
@@ -615,6 +617,7 @@ describe("server actions aimed at another shop's records", () => {
     const permissions = await import("@/app/admin/permissions/actions");
     const logins = await import("@/app/admin/shop-logins/actions");
     const timing = await import("@/app/admin/booking-times/actions");
+    const setup = await import("@/app/admin/setup/actions");
     const cv = shop.coralville;
     const coralvilleLogin = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, "coralville@rayz.test") }))!.id;
     const deskRole = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "front_desk") }))!.id;
@@ -766,6 +769,13 @@ describe("server actions aimed at another shop's records", () => {
         "timing service",
         () => timing.saveServiceTimingAction(ids.service, { defaultDurationMin: 60, durationStepMin: 15, bookingIncrementMin: 30, bufferBeforeMin: 5, bufferAfterMin: 5 }),
       ],
+      ["payments onboarding", () => setup.startPaymentsOnboardingAction(cv)],
+      ["payments refresh", () => setup.refreshPaymentsAccountAction(cv)],
+      ["payments simulated onboarding", () => setup.completeSimulatedOnboardingAction(cv, false)],
+      ["payments dashboard", () => setup.expressDashboardAction(cv)],
+      ["shop owner", () => setup.setShopOwnerAction(cv, cvShop.ownerEntityId!)],
+      ["owner entity edit", () => setup.saveOwnerEntityAction(cvShop.ownerEntityId!, { name: "Hijacked LLC", legalName: null, kind: "franchisee", contactEmail: null })],
+      ["owner entity create", () => setup.saveOwnerEntityAction(null, { name: "Sneaky LLC", legalName: null, kind: "franchisee", contactEmail: null })],
     ];
 
     // Each call must be refused for every Moline-side login, and by the tenant check (not just a
@@ -774,7 +784,7 @@ describe("server actions aimed at another shop's records", () => {
     const manager = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, people["manager.moline"]) }))!;
     await m.db.db
       .update(m.schema.staff)
-      .set({ permissionOverrides: { "settings.taxes": true, "giftcards.void": true, "permissions.manage": true, "clients.merge": true, "po.approve": true } })
+      .set({ permissionOverrides: { "settings.taxes": true, "giftcards.void": true, "permissions.manage": true, "clients.merge": true, "po.approve": true, "payments.accounts": true } })
       .where(eq(m.schema.staff.id, manager.id));
     const before = await coralvilleState();
     const errors: Record<string, string[]> = {};

@@ -54,6 +54,8 @@ import { stockLevels } from "./inventory/stock";
 import { suggestionsFor } from "./inventory/purchasing";
 import { ADJUST_REASON_LABEL, LEDGER_KIND_LABEL, PO_STATUS_LABEL, poNumber } from "@/domain/inventory";
 import { diffDays, formatDate, formatDateTime } from "@/lib/time";
+import { ACCOUNT_STATE_LABEL } from "@/domain/connect";
+import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-report";
 
 /**
  * Every a la carte report is one loader returning stats and tables. The report page renders them
@@ -746,6 +748,92 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           sort: order,
         }),
         ...(split ? [split] : []),
+      ],
+    };
+  },
+
+  async shop_accounts({ scope }) {
+    const [accounts, payouts] = await Promise.all([shopAccountRows(scope), payoutRows(scope)]);
+    const cols: Column[] = [
+      text("Owner"),
+      text("Shop"),
+      text("Stripe account"),
+      text("Status"),
+      int("Card charges"),
+      money("Card takings"),
+      money("Card tips"),
+      money("Surcharges"),
+      money("Card refunds"),
+      money("Processing fees"),
+      money("To shop account"),
+      money("Payouts paid"),
+      money("Payouts in transit"),
+      money("Cash"),
+      money("Gift card redemptions"),
+    ];
+    const nums = (r: ShopAccountRow) => [
+      r.cardCharges,
+      r.cardNetCents,
+      r.cardTipsCents,
+      r.surchargeCents,
+      r.cardRefundsCents,
+      r.processingFeesCents,
+      r.toAccountCents,
+      r.payoutsPaidCents,
+      r.payoutsPendingCents,
+      r.cashCents,
+      r.giftCardCents,
+    ];
+    const add = (xs: ShopAccountRow[]) => Array.from({ length: 11 }, (_, i) => xs.reduce((a, r) => a + nums(r)[i], 0));
+    const rowsOut: Cell[][] = [];
+    const styles: ("subtotal" | "total" | undefined)[] = [];
+    const owners = [...new Map(accounts.map((r) => [r.ownerId ?? "none", r.ownerName])).entries()];
+    for (const [ownerId, ownerName] of owners) {
+      const mine = accounts.filter((r) => (r.ownerId ?? "none") === ownerId);
+      for (const r of mine) {
+        rowsOut.push([r.ownerName, r.shopName, r.stripeAccountId ?? "—", ACCOUNT_STATE_LABEL[r.state], ...nums(r)]);
+        styles.push(undefined);
+      }
+      if (owners.length > 1 || mine.length > 1) {
+        rowsOut.push([`${ownerName} total`, `${mine.length} shop${mine.length === 1 ? "" : "s"}`, null, null, ...add(mine)]);
+        styles.push("subtotal");
+      }
+    }
+    if (owners.length > 1) {
+      rowsOut.push(["All owners", `${accounts.length} shops`, null, null, ...add(accounts)]);
+      styles.push("total");
+    }
+    const total = add(accounts);
+    const unrouted = accounts.reduce((a, r) => a + r.unroutedCardCents, 0);
+    const notReady = accounts.filter((r) => r.state !== "enabled");
+    return {
+      stats: [
+        { label: "Card takings", value: formatCents(total[1]), hint: `${total[0]} charges, after ${formatCents(total[4])} refunds` },
+        { label: "Processing fees", value: formatCents(total[5]), hint: total[1] ? `${((total[5] / total[1]) * 100).toFixed(2)}% of card takings` : undefined },
+        { label: "To shop accounts", value: formatCents(total[6]), hint: "card takings less fees" },
+        { label: "Paid out to banks", value: formatCents(total[7]), hint: total[8] ? `${formatCents(total[8])} in transit` : undefined },
+      ],
+      tables: [
+        {
+          id: "accounts",
+          title: "P&L by shop account",
+          subtitle: "Each shop's card charges settle to its own Stripe connected account. Card takings include tips and surcharges, after refunds. Cash and gift cards never touch Stripe.",
+          columns: cols,
+          rows: rowsOut,
+          rowStyles: styles,
+        },
+        {
+          id: "payouts",
+          title: "Payouts",
+          subtitle: "Deposits from each shop's connected account to its bank, by arrival date.",
+          columns: [text("Arrives"), text("Shop"), text("Payout"), text("Status"), money("Amount"), text("Problem")],
+          rows: payouts.map((p) => [p.arrivalDate, p.shopName, p.stripePayoutId, p.status.replace("_", " "), p.amountCents, p.failureMessage]),
+        },
+      ],
+      notes: [
+        ...(notReady.length ? [`Not taking cards yet: ${notReady.map((r) => `${r.shopName} (${ACCOUNT_STATE_LABEL[r.state].toLowerCase()})`).join(", ")}. Finish Payments in Location setup.`] : []),
+        ...(unrouted ? [`${formatCents(unrouted)} of card takings in this range settled before shops had their own accounts, so it isn't in "To shop account".`] : []),
+        "Processing fees are kept on refunded and voided charges, the same as Stripe's own fee.",
       ],
     };
   },
