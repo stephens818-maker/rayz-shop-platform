@@ -2,12 +2,15 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { cashDrawers, staff } from "@/db/schema";
-import { Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { cashDrawers, staff, tipPayouts } from "@/db/schema";
+import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, isValidLocalDate, todayLocal } from "@/lib/time";
-import { guardPage, workingShopId } from "@/server/auth/staff";
+import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { drawerSummary } from "@/server/checkout";
+import { shopTipConfig } from "@/server/tips/ledger";
+import { cashAwaiting } from "@/server/tips/payouts";
+import { BuildBatch, CashAck } from "../tips/client";
 import { CloseDrawerForm } from "./close-form";
 
 export const metadata: Metadata = { title: "Cash drawer" };
@@ -19,7 +22,8 @@ export default async function DrawerPage({ searchParams }: { searchParams: Promi
   if (!shopId) return <Empty title="No shop selected" />;
   const shop = ctx.shops.find((s) => s.id === shopId)!;
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : todayLocal();
-  const [s, history] = await Promise.all([
+  const today = todayLocal();
+  const [s, history, tipSettings, awaiting, draft, paidTips] = await Promise.all([
     drawerSummary(shopId, date),
     db
       .select({ d: cashDrawers, by: staff.displayLabel })
@@ -28,8 +32,18 @@ export default async function DrawerPage({ searchParams }: { searchParams: Promi
       .where(and(eq(cashDrawers.shopId, shopId)))
       .orderBy(desc(cashDrawers.businessDate))
       .limit(14),
+    shopTipConfig(shopId),
+    cashAwaiting(shopId),
+    db.query.tipPayoutBatches.findFirst({ where: (b, { and, eq }) => and(eq(b.shopId, shopId), eq(b.status, "draft")) }),
+    db
+      .select({ p: tipPayouts, name: staff.displayLabel })
+      .from(tipPayouts)
+      .innerJoin(staff, eq(staff.id, tipPayouts.staffId))
+      .where(and(eq(tipPayouts.shopId, shopId), eq(tipPayouts.method, "cash"), eq(tipPayouts.status, "paid"), eq(tipPayouts.drawerDate, date))),
   ]);
   const closed = s.drawer?.closedAt;
+  const canTips = can(ctx, "tips.approve");
+  const showTips = canTips || awaiting.length > 0 || paidTips.length > 0;
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader
@@ -49,7 +63,11 @@ export default async function DrawerPage({ searchParams }: { searchParams: Promi
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat label="Cash sales" value={formatCents(s.cashSalesCents)} hint={`${s.cashTickets} tickets · tips ${formatCents(s.cashTipsCents)}`} />
         <Stat label="Cash refunds" value={formatCents(s.cashRefundsCents)} />
-        <Stat label="Expected in drawer" value={formatCents(s.expectedCents)} hint={`float ${formatCents(s.openingFloatCents)} − payouts ${formatCents(s.payoutsCents)}`} />
+        <Stat
+          label="Expected in drawer"
+          value={formatCents(s.expectedCents)}
+          hint={`float ${formatCents(s.openingFloatCents)} − payouts ${formatCents(s.payoutsCents)}${s.tipPayoutsCents ? ` − tip payouts ${formatCents(s.tipPayoutsCents)}` : ""}`}
+        />
         <Stat label="Card (for reference)" value={formatCents(s.cardCents)} hint={`${s.cardTickets} card payments`} />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1fr]">
@@ -59,15 +77,62 @@ export default async function DrawerPage({ searchParams }: { searchParams: Promi
             <dl className="space-y-1 p-4 text-sm tabular">
               <Row k="Opening float" v={formatCents(s.drawer!.openingFloatCents)} />
               <Row k="Payouts" v={formatCents(s.drawer!.payoutsCents)} />
+              {s.drawer!.tipPayoutsCents > 0 && <Row k="Cash tip payouts" v={formatCents(s.drawer!.tipPayoutsCents)} />}
               <Row k="Expected" v={formatCents(s.drawer!.expectedCents)} />
               <Row k="Counted" v={formatCents(s.drawer!.countedCents ?? 0)} />
               <Row k="Over / short" v={formatCents(s.drawer!.varianceCents ?? 0, { sign: true })} strong />
               {s.drawer!.notes && <p className="pt-2 text-zinc-600">{s.drawer!.notes}</p>}
             </dl>
           ) : (
-            <CloseDrawerForm shopId={shopId} date={date} cashSalesCents={s.cashSalesCents} cashRefundsCents={s.cashRefundsCents} defaultFloatCents={s.openingFloatCents} />
+            <>
+              {awaiting.length > 0 && (
+                <div className="px-4 pt-4">
+                  <Notice>Pay out or hold the cash tips below before closing.</Notice>
+                </div>
+              )}
+              <CloseDrawerForm shopId={shopId} date={date} cashSalesCents={s.cashSalesCents} cashRefundsCents={s.cashRefundsCents} tipPayoutsCents={s.tipPayoutsCents} defaultFloatCents={s.openingFloatCents} />
+            </>
           )}
         </Card>
+        {showTips && date === today && !closed && (
+          <Card className="lg:col-span-2 lg:order-first">
+            <CardHeader
+              title="Tip payouts from the drawer"
+              subtitle="Each employee takes their cash tips and confirms with their clock PIN or by typing their name. It comes out of the expected count."
+              action={
+                canTips && tipSettings.schedule !== "payroll" ? (
+                  draft ? (
+                    <LinkButton size="sm" href={`/admin/tips/${draft.id}`}>
+                      Review and approve tonight&rsquo;s tips
+                    </LinkButton>
+                  ) : (
+                    <BuildBatch shopId={shopId} defaultCutoff={today} today={today} hasDraft={false} label={tipSettings.schedule === "end_of_night" ? "Build tonight's tip payouts" : "Build a tip batch"} />
+                  )
+                ) : undefined
+              }
+            />
+            <div className="divide-y divide-zinc-100">
+              {awaiting.map(({ p, name }) => (
+                <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                  <div>
+                    <div className="font-medium">{name}</div>
+                    <div className="text-sm tabular text-zinc-600">{formatCents(p.netCents)} cash</div>
+                  </div>
+                  <CashAck payoutId={p.id} name={name} amount={formatCents(p.netCents)} />
+                </div>
+              ))}
+              {paidTips.map(({ p, name }) => (
+                <div key={p.id} className="flex items-center justify-between px-4 py-2 text-sm">
+                  <span>
+                    {name} <span className="text-zinc-500">· {p.ackMethod === "pin" ? "PIN" : `signed "${p.ackName}"`} · {formatDateTime(p.acknowledgedAt!)}</span>
+                  </span>
+                  <span className="tabular">{formatCents(p.netCents)}</span>
+                </div>
+              ))}
+              {!awaiting.length && !paidTips.length && <p className="px-4 py-4 text-sm text-zinc-500">No cash tip payouts waiting.</p>}
+            </div>
+          </Card>
+        )}
         <Card>
           <CardHeader title="Recent closes" />
           <Table>

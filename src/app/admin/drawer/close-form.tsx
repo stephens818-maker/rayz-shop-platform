@@ -9,7 +9,21 @@ const DENOMS = [10000, 5000, 2000, 1000, 500, 100, 25, 10, 5, 1];
 const $ = (c: number) => `${c < 0 ? "-" : ""}$${(Math.abs(c) / 100).toFixed(2)}`;
 const cents = (s: string) => Math.round((Number(s) || 0) * 100);
 
-export function CloseDrawerForm({ shopId, date, cashSalesCents, cashRefundsCents, defaultFloatCents }: { shopId: string; date: string; cashSalesCents: number; cashRefundsCents: number; defaultFloatCents: number }) {
+export function CloseDrawerForm({
+  shopId,
+  date,
+  cashSalesCents,
+  cashRefundsCents,
+  tipPayoutsCents,
+  defaultFloatCents,
+}: {
+  shopId: string;
+  date: string;
+  cashSalesCents: number;
+  cashRefundsCents: number;
+  tipPayoutsCents: number;
+  defaultFloatCents: number;
+}) {
   const router = useRouter();
   const [counts, setCounts] = useState<Record<number, string>>({});
   const [float, setFloat] = useState((defaultFloatCents / 100).toFixed(2));
@@ -18,7 +32,7 @@ export function CloseDrawerForm({ shopId, date, cashSalesCents, cashRefundsCents
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const counted = DENOMS.reduce((a, d) => a + d * (Number(counts[d]) || 0), 0);
-  const expected = cents(float) + cashSalesCents - cashRefundsCents - cents(payouts);
+  const expected = cents(float) + cashSalesCents - cashRefundsCents - cents(payouts) - tipPayoutsCents;
   const variance = counted - expected;
   return (
     <div className="space-y-4 p-4">
@@ -46,6 +60,12 @@ export function CloseDrawerForm({ shopId, date, cashSalesCents, cashRefundsCents
           <span>Counted</span>
           <span className="font-semibold">{$(counted)}</span>
         </div>
+        {tipPayoutsCents > 0 && (
+          <div className="flex justify-between text-zinc-600">
+            <span>Cash tip payouts</span>
+            <span>−{$(tipPayoutsCents)}</span>
+          </div>
+        )}
         <div className="flex justify-between">
           <span>Expected</span>
           <span>{$(expected)}</span>

@@ -37,6 +37,9 @@ const COLS: Col[] = [
   { key: "otPay", label: COLUMN_LABEL.otPay, fmt: (l) => fmtMoney(l.otPay), total: (t) => fmtMoney(t.otPay), extra: true },
   { key: "trainingPay", label: COLUMN_LABEL.trainingPay, fmt: (l) => fmtMoney(l.trainingPay), total: (t) => fmtMoney(t.trainingPay), extra: true },
   { key: "laborCost", label: COLUMN_LABEL.laborCost, fmt: (l) => fmtMoney(l.laborCost), total: (t) => fmtMoney(t.laborCost), extra: true },
+  { key: "tipsOutside", label: COLUMN_LABEL.tipsOutside, fmt: (l) => fmtMoney(l.tipsOutside), total: (t) => fmtMoney(t.tipsOutside), extra: true },
+  { key: "tipsInPayroll", label: COLUMN_LABEL.tipsInPayroll, fmt: (l) => fmtMoney(l.tipsInPayroll), total: (t) => fmtMoney(t.tipsInPayroll), extra: true },
+  { key: "tipsPaidOut", label: COLUMN_LABEL.tipsPaidOut, fmt: (l) => fmtMoney(l.tipsPaidOut), total: (t) => fmtMoney(t.tipsPaidOut), extra: true },
 ];
 
 export default async function PayrollReportPage({ searchParams }: { searchParams: Promise<{ period?: string }> }) {
