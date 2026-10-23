@@ -80,7 +80,8 @@ pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + see
                    # and inventory and purchasing permissions; shop isolation (tests/db/tenant.test.ts): canary records at
                    # Coralville never reach Moline's logins through any page, URL, export, API route, action, job or login flow;
                    # client data protection (tests/db/client-privacy.test.ts): hidden and masked details never reach restricted
-                   # roles' pages, action results or CSVs, and every reveal, export, call and text is audited
+                   # roles' pages, action results or CSVs, and every reveal, export, call and text is audited;
+                   # entering details (tests/db/client-entry.test.ts): a restricted user's saved phone comes back only masked or hidden
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -578,6 +579,13 @@ The Brand Owner always sees everything and can't be restricted.
 
 Editing a client changes only the fields the editor sees in full, and saving keeps the fields they can't see.
 
+**Entering details.** Whether someone can enter a detail is set apart from whether they can see it. The protection grid has three settings, **Can see**, **Can add** (fill a detail that's empty), and **Can edit** (change one that's already on file), and each is set by role or person, brand-wide or per shop, with the same "which rule wins" order. Someone working at several shops needs every one of them to allow it. By default everyone can add any detail, the front desk and managers can edit them, and barbers and custom roles can edit only notes.
+
+- Staff enter phone, email, address, birthday, notes, and custom fields when creating a client, booking on the calendar, adding a walk-in, or adding a new client at checkout. A field the person can't add isn't offered.
+- Replacing a detail they can't see in full doesn't show the old value. The field reads **Saved, hidden by policy** with a **Replace** button. What they type stays visible until they save. After that, and after a reload, it shows only the masked form or nothing.
+- Action responses send back only the masked or hidden form of a saved detail, never the value that was typed.
+- When an edit is refused, the check never compares the new value with one the person can't see, so it can't be used to guess a value.
+
 **Staff can still do their job.**
 
 - **Search** by a client's full phone number or email finds them for booking without showing the number. Partial digits or a partial email only match when that person sees the field in full. Name search works as before.
@@ -603,6 +611,8 @@ Editing a client changes only the fields the editor sees in full, and saving kee
 - A per-shop rule applies only at that shop.
 - Lookup limits raise alerts, email the brand admins, then pause. The owner is exempt.
 
+`tests/db/client-entry.test.ts` signs in as restricted users who enter a phone on the profile, the new-client form, the calendar, walk-ins, and at checkout. Each time, the phone saves correctly, and both the action response and the reloaded page show only its masked or hidden form. It also checks that add and edit rules are enforced and that the portal's guards apply to them.
+
 <img alt="Client data protection settings" src="docs/screenshots/client-data-protection.png" width="800" />
 
 <img alt="What a barber sees, checked from the portal" src="docs/screenshots/client-data-who-sees.png" width="800" />
@@ -616,6 +626,12 @@ A shop manager revealing the phone with a reason (email and address stay masked 
 <img alt="Reveal with a reason" src="docs/screenshots/client-reveal-manager.png" width="800" />
 
 <img alt="Client data access report" src="docs/screenshots/client-data-access.png" width="800" />
+
+Who can edit details already on file, and the front desk's view of a client whose address is saved but hidden from them:
+
+<img alt="Can edit rules" src="docs/screenshots/client-data-entry-rules.png" width="800" />
+
+<img alt="Saved, hidden by policy" src="docs/screenshots/client-profile-hidden-by-policy.png" width="800" />
 
 ### Squire importer
 
