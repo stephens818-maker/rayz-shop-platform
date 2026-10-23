@@ -624,7 +624,7 @@ describe("calls to the shop line", () => {
 });
 
 describe("call-in report", () => {
-  it("counts call-ins and how their appointments ended, by barber, without private reasons", async () => {
+  it("counts call-ins and how their appointments ended, by barber; private reasons only for those who may see them", async () => {
     const makenna = await staffBy({ email: "makenna@rayz.test" });
     const cv = await shop("coralville");
     const tue = dayOn(2, 49);
@@ -639,19 +639,21 @@ describe("call-in report", () => {
 
     const S = await import("@/app/admin/reports/scope");
     const L = await import("@/server/report-data");
-    const ctx = (await (await import("@/server/auth/staff")).getStaffContext())!;
+    const auth = await import("@/server/auth/staff");
+    const ctx = (await auth.getStaffContext())!;
     const scope = await S.resolveScope(ctx, { from: mon, to: m.time.addDays(mon, 6) }, "call_ins");
-    const d = await L.REPORT_LOADERS.call_ins({ scope, loc: scope.loc, viewer: ctx, params: {} });
+    const load = (reasons?: ReturnType<typeof auth.reasonViewer>) => L.REPORT_LOADERS.call_ins({ scope, loc: scope.loc, viewer: ctx, reasons, params: {} });
+    const d = await load(auth.reasonViewer(ctx));
     const stat = (label: string) => d.stats.find((s) => s.label === label)!.value;
     expect([stat("Call-ins"), stat("Appointments hit"), stat("Kept or rebooked")]).toEqual(["1", "2", "0"]);
+    expect(d.stats[0].hint).toBe("1 barber");
     const barbers = d.tables.find((t) => t.id === "barbers")!;
     const row = barbers.rows.find((r) => r[0] === "Makenna")!;
     expect(row.slice(1)).toEqual([1, 2, 0, 0, 1, 0, 1, 0]);
-    const log = d.tables.find((t) => t.id === "call_ins")!;
-    const entries = log.rows.filter((r) => r[0] !== "Total");
-    expect(entries).toHaveLength(1);
-    // Sick is a private reason: a shop manager sees "Time off".
-    expect(entries[0]).toEqual([tue, "Makenna", "Time off", "Time off", m.time.formatDate(tue), 2, 0, 1, 0, 1, 0]);
-    expect(d.stats[0].hint).toBe("1 barber");
+    const entries = (x: typeof d) => x.tables.find((t) => t.id === "call_ins")!.rows.filter((r) => r[0] !== "Total");
+    expect(entries(d)).toEqual([[tue, "Makenna", "Sick", "Sick", m.time.formatDate(tue), 2, 0, 1, 0, 1, 0]]);
+    // Sick is a private reason: without "blocks.private" it reads "Time off".
+    expect(auth.reasonViewer(ctx).seesPrivate).toBe(true);
+    expect(entries(await load()).map((r) => r.slice(2, 4))).toEqual([["Time off", "Time off"]]);
   });
 });
