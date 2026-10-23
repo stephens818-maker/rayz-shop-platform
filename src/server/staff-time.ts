@@ -3,6 +3,7 @@ import { db, DBorTx } from "@/db";
 import {
   BlockCategory,
   TimeOffStatus,
+  blockReasons,
   appointmentItems,
   appointments,
   brandSettings,
@@ -16,14 +17,12 @@ import {
   timeBlocks,
   timeOffRequests,
 } from "@/db/schema";
+import { BlockReason, MAX_NOTE, NO_PRIVATE, ReasonViewer, ShownReason } from "@/domain/block-reasons";
 import {
-  REASON_LABEL,
   SERIES_HORIZON_DAYS,
-  SelfBlockCategory,
   StaffDay,
   StaffTimeRules,
   TimeOffRange,
-  TimeOffReasonKey,
   cleanRules,
   isTimeOff,
   noticeProblem,
@@ -40,6 +39,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { LocalDate, addDays, endOfLocalDay, existingWallTime, formatDate, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { extendSeries, insertOccurrences } from "./block-series";
+import { reasonShower, usableReason } from "./block-reasons";
 import { workShopIds } from "./auth/access";
 import { Caller, timeOffDecisionDenied } from "./auth/policy";
 import { ACTIVE_STATUSES, getAvailability, messageContext, rescheduleAppointment } from "./booking";
@@ -163,34 +163,66 @@ async function auditShop(staffId: string, shopId: string | null, tx: DBorTx): Pr
   return l?.shopId ?? null;
 }
 
+/** The free-text note that goes with a reason, or what's wrong with it. */
+export function cleanNote(note: string | null | undefined): string | null {
+  const n = note?.trim() || null;
+  if (n && n.length > MAX_NOTE) throw new AppError("bad_request", `Keep the note to ${MAX_NOTE} characters`);
+  return n;
+}
+
+const categoryOf = (r: BlockReason, timeOff: boolean): BlockCategory => (timeOff ? "time_off" : r.countsAsLunch ? "lunch" : "other");
+
+/** What the audit log keeps of an entry's reason. `private` lets the log hide it from people who can't see private reasons. */
+const reasonDetails = (r: Pick<BlockReason, "id" | "label" | "private"> | null, label: string, note: string | null) => ({ reasonId: r?.id ?? null, reason: r?.label ?? label, note, private: r?.private ?? false });
+
+async function reasonById(id: string | null, tx: DBorTx) {
+  if (!id) return null;
+  const r = await tx.query.blockReasons.findFirst({ where: eq(blockReasons.id, id) });
+  return r ? { id: r.id, label: r.label, private: r.private } : null;
+}
+
 export interface NewBlock {
   staffId: string;
   /** null = all of the barber's shops. */
   shopId: string | null;
   startsAt: Date;
   endsAt: Date;
-  category: BlockCategory;
-  reason: string;
+  reasonId: string;
+  note?: string | null;
+  /** A manager's time off, not a block: needs a reason used for time off. */
+  timeOff?: boolean;
   kind?: "block" | "day_off";
 }
 
 /** Adds a block. With booked appointments in it, nothing is saved unless `confirm`; the appointments always stay booked. */
 export async function addBlock(b: NewBlock, o: { actor: Actor; confirm?: boolean; via: string; auditShopId?: string | null }): Promise<Confirmable<{ blockId: string }>> {
   if (b.endsAt <= b.startsAt) throw new AppError("bad_request", "End must be after start");
-  if (!b.reason.trim()) throw new AppError("bad_request", "Add a reason for the block");
+  const reason = await usableReason(b.reasonId, b.timeOff ? "time_off" : "blocks");
+  const note = cleanNote(b.note);
+  const category = categoryOf(reason, !!b.timeOff);
   const conflicts = await bookedConflicts(b.staffId, b.shopId, [b]);
   if (conflicts.length && !o.confirm) return { done: false, conflicts };
   const blockId = await db.transaction(async (tx) => {
     const [row] = await tx
       .insert(timeBlocks)
-      .values({ staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt: b.endsAt, category: b.category, reason: b.reason.trim(), kind: b.kind ?? "block", createdBy: o.actor.staffId ?? null })
+      .values({ staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt: b.endsAt, category, reasonId: reason.id, reason: reason.label, note, kind: b.kind ?? "block", createdBy: o.actor.staffId ?? null })
       .returning({ id: timeBlocks.id });
     await audit(
       o.actor,
       "block.create",
       "time_block",
       row.id,
-      { staffId: b.staffId, category: b.category, reason: b.reason.trim(), kind: b.kind ?? "block", startsAt: b.startsAt.toISOString(), endsAt: b.endsAt.toISOString(), allShops: b.shopId === null, via: o.via, overlaps: conflicts.map((c) => c.code) },
+      {
+        staffId: b.staffId,
+        category,
+        ...reasonDetails(reason, reason.label, note),
+        kind: b.kind ?? "block",
+        startsAt: b.startsAt.toISOString(),
+        endsAt: b.endsAt.toISOString(),
+        allShops: b.shopId === null,
+        via: o.via,
+        overlaps: conflicts.map((c) => c.code),
+      },
       o.auditShopId !== undefined ? o.auditShopId : await auditShop(b.staffId, b.shopId, tx),
       tx,
     );
@@ -210,7 +242,7 @@ export async function removeBlock(id: string, actor: Actor, via: string, auditSh
       "block.delete",
       "time_block",
       id,
-      { staffId: b.staffId, category: b.category, reason: b.reason, startsAt: b.startsAt.toISOString(), seriesId: b.seriesId, via },
+      { staffId: b.staffId, category: b.category, ...reasonDetails(await reasonById(b.reasonId, tx), b.reason, b.note), startsAt: b.startsAt.toISOString(), seriesId: b.seriesId, via },
       auditShopId !== undefined ? auditShopId : await auditShop(b.staffId, b.shopId, tx),
       tx,
     );
@@ -223,8 +255,8 @@ export async function removeBlock(id: string, actor: Actor, via: string, auditSh
 export interface NewSeries {
   staffId: string;
   shopId: string | null;
-  category: SelfBlockCategory;
-  reason: string;
+  reasonId: string;
+  note?: string | null;
   weekdays: number[];
   startMin: number;
   endMin: number;
@@ -236,7 +268,8 @@ export interface NewSeries {
 export async function createSeries(s: NewSeries, o: { actor: Actor; confirm?: boolean; now?: Date }): Promise<Confirmable<{ seriesId: string; occurrences: number }>> {
   const problem = seriesProblem(s);
   if (problem) throw new AppError("bad_request", problem);
-  if (!s.reason.trim()) throw new AppError("bad_request", "Add a reason for the block");
+  const reason = await usableReason(s.reasonId, "blocks");
+  const note = cleanNote(s.note);
   const now = o.now ?? new Date();
   const through = addDays(todayLocal(now), SERIES_HORIZON_DAYS);
   const occ = seriesOccurrences(s, s.startsOn, through).filter((x) => x.endsAt > now);
@@ -246,7 +279,21 @@ export async function createSeries(s: NewSeries, o: { actor: Actor; confirm?: bo
   return db.transaction(async (tx) => {
     const [row] = await tx
       .insert(timeBlockSeries)
-      .values({ ...s, reason: s.reason.trim(), weekdays: [...new Set(s.weekdays)].sort((a, b) => a - b), materializedThrough: through, createdBy: o.actor.staffId ?? null })
+      .values({
+        staffId: s.staffId,
+        shopId: s.shopId,
+        category: categoryOf(reason, false),
+        reasonId: reason.id,
+        reason: reason.label,
+        note,
+        weekdays: [...new Set(s.weekdays)].sort((a, b) => a - b),
+        startMin: s.startMin,
+        endMin: s.endMin,
+        startsOn: s.startsOn,
+        endsOn: s.endsOn,
+        materializedThrough: through,
+        createdBy: o.actor.staffId ?? null,
+      })
       .returning();
     await insertOccurrences(tx, row, occ);
     await audit(
@@ -254,7 +301,7 @@ export async function createSeries(s: NewSeries, o: { actor: Actor; confirm?: bo
       "block_series.create",
       "time_block_series",
       row.id,
-      { staffId: s.staffId, category: s.category, reason: row.reason, weekdays: row.weekdays, startMin: s.startMin, endMin: s.endMin, startsOn: s.startsOn, endsOn: s.endsOn, allShops: s.shopId === null, overlaps: conflicts.map((c) => c.code) },
+      { staffId: s.staffId, category: row.category, ...reasonDetails(reason, reason.label, note), weekdays: row.weekdays, startMin: s.startMin, endMin: s.endMin, startsOn: s.startsOn, endsOn: s.endsOn, allShops: s.shopId === null, overlaps: conflicts.map((c) => c.code) },
       await auditShop(s.staffId, s.shopId, tx),
       tx,
     );
@@ -271,7 +318,15 @@ export async function endSeries(id: string, actor: Actor, now: Date = new Date()
   return db.transaction(async (tx) => {
     await tx.update(timeBlockSeries).set({ endedAt: now, endsOn: todayLocal(now) }).where(eq(timeBlockSeries.id, id));
     const removed = await tx.delete(timeBlocks).where(and(eq(timeBlocks.seriesId, id), gte(timeBlocks.startsAt, now))).returning({ id: timeBlocks.id });
-    await audit(actor, "block_series.end", "time_block_series", id, { staffId: s.staffId, category: s.category, reason: s.reason, removed: removed.length }, await auditShop(s.staffId, s.shopId, tx), tx);
+    await audit(
+      actor,
+      "block_series.end",
+      "time_block_series",
+      id,
+      { staffId: s.staffId, category: s.category, ...reasonDetails(await reasonById(s.reasonId, tx), s.reason, s.note), removed: removed.length },
+      await auditShop(s.staffId, s.shopId, tx),
+      tx,
+    );
     return { series: s, removed: removed.length };
   });
 }
@@ -289,7 +344,8 @@ export interface TimeOffInput {
   staffId: string;
   shopId: string | null;
   range: TimeOffRange;
-  reason: TimeOffReasonKey;
+  reasonId: string;
+  /** Shown with the reason, to whoever may see it. */
   note?: string | null;
 }
 
@@ -311,7 +367,9 @@ async function writeApprovedBlock(req: RequestRow, tx: DBorTx) {
     endsAt: req.endsAt,
     kind: req.startMin === null ? "day_off" : "block",
     category: "time_off",
-    reason: REASON_LABEL[req.reason as TimeOffReasonKey] ?? "Time off",
+    reasonId: req.reasonId,
+    reason: req.reason,
+    note: req.note,
     requestId: req.id,
     createdBy: req.decidedBy ?? req.requestedBy,
   });
@@ -330,7 +388,7 @@ async function notifyDecision(req: RequestRow, tx: DBorTx) {
       to: s.email,
       subject: `Time off ${verb}: ${what}`,
       body: [
-        `Hi ${s.firstName}, your ${REASON_LABEL[req.reason as TimeOffReasonKey]?.toLowerCase() ?? ""} time off for ${what} was ${verb}${req.decidedVia === "auto" ? " automatically" : ""}.`,
+        `Hi ${s.firstName}, your ${req.reason.toLowerCase()} time off for ${what} was ${verb}${req.decidedVia === "auto" ? " automatically" : ""}.`,
         req.decisionNote ? `Note: ${req.decisionNote}` : null,
         `See your time: ${appBaseUrl()}/admin/my-time`,
       ]
@@ -353,10 +411,12 @@ export async function requestTimeOff(
 ): Promise<Confirmable<{ requestId: string; status: TimeOffStatus; heldForManager: boolean }>> {
   const now = o.now ?? new Date();
   const span = spanOf(input.range);
+  const reason = await usableReason(input.reasonId, "time_off");
+  const note = cleanNote(input.note);
   const shopIds = input.shopId ? [input.shopId] : await workShopIds(input.staffId);
   const rules = await rulesForShops(shopIds);
   if (o.enforceNotice) {
-    const p = noticeProblem(rules, input.reason, input.range.fromDate, todayLocal(now));
+    const p = noticeProblem(rules, reason.noticeExempt, input.range.fromDate, todayLocal(now));
     if (p) throw new AppError("bad_request", p);
   }
   if (span.endsAt <= now) throw new AppError("bad_request", "That time has already passed");
@@ -388,8 +448,9 @@ export async function requestTimeOff(
         endMin: input.range.endMin,
         startsAt: span.startsAt,
         endsAt: span.endsAt,
-        reason: input.reason,
-        note: input.note?.trim() || null,
+        reasonId: reason.id,
+        reason: reason.label,
+        note,
         status: auto ? "approved" : "pending",
         decidedVia: auto ? "auto" : null,
         decidedAt: auto ? now : null,
@@ -402,13 +463,13 @@ export async function requestTimeOff(
       "time_off.request",
       "time_off_request",
       req.id,
-      { staffId: input.staffId, reason: input.reason, range: rangeLabel(req), allShops: input.shopId === null, status: req.status, overlaps: conflicts.map((c) => c.code) },
+      { staffId: input.staffId, ...reasonDetails(reason, reason.label, note), range: rangeLabel(req), allShops: input.shopId === null, status: req.status, overlaps: conflicts.map((c) => c.code) },
       shop,
       tx,
     );
     if (auto) {
       await writeApprovedBlock(req, tx);
-      await audit(o.actor, "time_off.approve", "time_off_request", req.id, { staffId: input.staffId, via: "auto" }, shop, tx);
+      await audit(o.actor, "time_off.approve", "time_off_request", req.id, { staffId: input.staffId, ...reasonDetails(reason, reason.label, note), via: "auto" }, shop, tx);
       await notifyDecision(req, tx);
     }
     return { done: true as const, conflicts, requestId: req.id, status: req.status, heldForManager: !auto && rules.timeOffApproval === "auto" };
@@ -448,7 +509,7 @@ export async function decideTimeOff(id: string, decision: "approve" | "deny", no
       status === "approved" ? "time_off.approve" : "time_off.deny",
       "time_off_request",
       id,
-      { staffId: u.staffId, range: rangeLabel(u), note: u.decisionNote, affected: affected.map((a) => a.code) },
+      { staffId: u.staffId, ...reasonDetails(await reasonById(u.reasonId, tx), u.reason, u.note), range: rangeLabel(u), decisionNote: u.decisionNote, affected: affected.map((a) => a.code) },
       await auditShop(u.staffId, u.shopId, tx),
       tx,
     );
@@ -471,7 +532,15 @@ export async function cancelTimeOff(id: string, who: Approver & { actor: Actor }
   await db.transaction(async (tx) => {
     await tx.update(timeOffRequests).set({ status: "cancelled", updatedAt: now }).where(eq(timeOffRequests.id, id));
     await tx.delete(timeBlocks).where(eq(timeBlocks.requestId, id));
-    await audit(who.actor, "time_off.cancel", "time_off_request", id, { staffId: req.staffId, range: rangeLabel(req), was: req.status }, await auditShop(req.staffId, req.shopId, tx), tx);
+    await audit(
+      who.actor,
+      "time_off.cancel",
+      "time_off_request",
+      id,
+      { staffId: req.staffId, ...reasonDetails(await reasonById(req.reasonId, tx), req.reason, req.note), range: rangeLabel(req), was: req.status },
+      await auditShop(req.staffId, req.shopId, tx),
+      tx,
+    );
   });
   return req;
 }
@@ -544,7 +613,15 @@ export async function askToReschedule(appointmentId: string, actor: Actor) {
 
 // ───────────────────────────── Who's working, off and blocked ─────────────────────────────
 
-export interface StaffingRow extends StaffDay {
+/** A block on a day as one viewer is shown it. */
+export interface ShownBlock extends ShownReason {
+  category: string;
+  startMin: number;
+  endMin: number;
+}
+
+export interface StaffingRow extends Omit<StaffDay, "blocks"> {
+  blocks: ShownBlock[];
   date: LocalDate;
   shopId: string;
   staffId: string;
@@ -554,9 +631,13 @@ export interface StaffingRow extends StaffDay {
 
 const NONE = ["00000000-0000-0000-0000-000000000000"];
 
-/** Per day, shop and barber: hours, time off, blocks and bookings. Days nobody is scheduled or off are left out. */
-export async function staffingFor(shopIds: readonly string[], from: LocalDate, to: LocalDate, staffIds?: readonly string[] | null): Promise<StaffingRow[]> {
+/**
+ * Per day, shop and barber: hours, time off, blocks and bookings, with reasons as `viewer` is shown
+ * them. Days nobody is scheduled or off are left out.
+ */
+export async function staffingFor(shopIds: readonly string[], from: LocalDate, to: LocalDate, viewer: ReasonViewer, staffIds?: readonly string[] | null): Promise<StaffingRow[]> {
   if (!shopIds.length || to < from) return [];
+  const show = await reasonShower(viewer);
   const start = startOfLocalDay(from);
   const end = endOfLocalDay(to);
   const links = await db
@@ -611,7 +692,8 @@ export async function staffingFor(shopIds: readonly string[], from: LocalDate, t
       });
       const n = bookedAt.get(`${date}|${l.shopId}|${l.staffId}`) ?? 0;
       if (d.status === "not_scheduled" && !d.hasTimeOff && !d.pending && !n) continue;
-      rows.push({ ...d, date, shopId: l.shopId, staffId: l.staffId, label: l.label, booked: n });
+      const shown = d.blocks.map((b) => ({ category: b.category, startMin: b.startMin, endMin: b.endMin, ...show({ staffId: l.staffId, ...b }, b.category === "time_off") }));
+      rows.push({ ...d, blocks: shown, date, shopId: l.shopId, staffId: l.staffId, label: l.label, booked: n });
     }
   }
   return rows;
@@ -632,11 +714,17 @@ export interface OffEntry {
   toDate: LocalDate;
   partial: { startMin: number; endMin: number } | null;
   status: "approved" | "pending";
-  reason: string;
+  reason: ShownReason;
 }
 
-/** Approved and pending time off at these shops in the range, for the calendar. */
-export async function timeOffEntries(shopIds: readonly string[], from: LocalDate, to: LocalDate, staffIds?: readonly string[] | null): Promise<{ entries: OffEntry[]; worksAt: Map<string, string[]> }> {
+/** Approved and pending time off at these shops in the range, for the calendar, with reasons as `viewer` is shown them. */
+export async function timeOffEntries(
+  shopIds: readonly string[],
+  from: LocalDate,
+  to: LocalDate,
+  viewer: ReasonViewer,
+  staffIds?: readonly string[] | null,
+): Promise<{ entries: OffEntry[]; worksAt: Map<string, string[]> }> {
   const start = startOfLocalDay(from);
   const end = endOfLocalDay(to);
   const links = shopIds.length
@@ -652,11 +740,11 @@ export async function timeOffEntries(shopIds: readonly string[], from: LocalDate
   const label = new Map(links.map((l) => [l.staffId, l.label]));
   if (!ids.length) return { entries: [], worksAt };
   const shopMatch = (col: typeof timeBlocks.shopId | typeof timeOffRequests.shopId) => or(isNull(col), inArray(col, [...shopIds]));
+  const show = await reasonShower(viewer);
   const [blocks, pending] = await Promise.all([
     db
-      .select({ b: timeBlocks, reason: timeOffRequests.reason })
+      .select()
       .from(timeBlocks)
-      .leftJoin(timeOffRequests, eq(timeOffRequests.id, timeBlocks.requestId))
       .where(
         and(
           inArray(timeBlocks.staffId, ids),
@@ -671,13 +759,15 @@ export async function timeOffEntries(shopIds: readonly string[], from: LocalDate
       .from(timeOffRequests)
       .where(and(inArray(timeOffRequests.staffId, ids), eq(timeOffRequests.status, "pending"), lt(timeOffRequests.startsAt, end), gt(timeOffRequests.endsAt, start), shopMatch(timeOffRequests.shopId))),
   ]);
-  const toEntry = (x: { key: string; requestId: string | null; staffId: string; shopId: string | null; startsAt: Date; endsAt: Date; status: OffEntry["status"]; reason: string }): OffEntry => {
+  type Row = { key: string; requestId: string | null; staffId: string; shopId: string | null; startsAt: Date; endsAt: Date; status: OffEntry["status"]; reasonId: string | null; reason: string; note: string | null };
+  const toEntry = ({ reasonId, reason, note, ...x }: Row): OffEntry => {
     const fromDate = localDateOf(x.startsAt);
     const toDate = localDateOf(new Date(x.endsAt.getTime() - 1));
     const whole = x.startsAt.getTime() === startOfLocalDay(fromDate).getTime() && x.endsAt.getTime() === endOfLocalDay(toDate).getTime();
     const mins = (d: Date) => Math.round((d.getTime() - startOfLocalDay(localDateOf(d)).getTime()) / 60_000);
     return {
       ...x,
+      reason: show({ staffId: x.staffId, reasonId, reason, note }, true),
       label: label.get(x.staffId) ?? "",
       startsAt: x.startsAt.toISOString(),
       endsAt: x.endsAt.toISOString(),
@@ -687,10 +777,8 @@ export async function timeOffEntries(shopIds: readonly string[], from: LocalDate
     };
   };
   const entries = [
-    ...blocks.map(({ b, reason }) =>
-      toEntry({ key: `b:${b.id}`, requestId: b.requestId, staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt: b.endsAt, status: "approved", reason: reason ? REASON_LABEL[reason as TimeOffReasonKey] : b.reason }),
-    ),
-    ...pending.map((p) => toEntry({ key: `r:${p.id}`, requestId: p.id, staffId: p.staffId, shopId: p.shopId, startsAt: p.startsAt, endsAt: p.endsAt, status: "pending", reason: REASON_LABEL[p.reason as TimeOffReasonKey] })),
+    ...blocks.map((b) => toEntry({ ...b, key: `b:${b.id}`, status: "approved" })),
+    ...pending.map((p) => toEntry({ ...p, key: `r:${p.id}`, requestId: p.id, status: "pending" })),
   ].sort((a, b) => a.startsAt.localeCompare(b.startsAt) || a.label.localeCompare(b.label));
   return { entries, worksAt };
 }
@@ -707,8 +795,8 @@ export interface RequestView {
   partial: boolean;
   startsAt: string;
   endsAt: string;
-  reason: TimeOffReasonKey;
-  note: string | null;
+  /** The reason and its note, masked for viewers who can't see a private reason. */
+  reason: ShownReason;
   status: TimeOffStatus;
   decidedVia: string | null;
   decidedBy: string | null;
@@ -723,8 +811,9 @@ export interface RequestView {
  */
 export async function listRequests(
   scope: { staffId: string } | { shopIds: readonly string[]; brandWide: boolean },
-  opts: { statuses?: TimeOffStatus[]; since?: Date; limit?: number } = {},
+  opts: { viewer: ReasonViewer; statuses?: TimeOffStatus[]; since?: Date; limit?: number },
 ): Promise<RequestView[]> {
+  const show = await reasonShower(opts.viewer);
   const decider = sql<string | null>`(select display_label from staff where id = ${timeOffRequests.decidedBy})`;
   let where;
   if ("staffId" in scope) where = eq(timeOffRequests.staffId, scope.staffId);
@@ -755,8 +844,7 @@ export async function listRequests(
     partial: r.startMin !== null,
     startsAt: r.startsAt.toISOString(),
     endsAt: r.endsAt.toISOString(),
-    reason: r.reason as TimeOffReasonKey,
-    note: r.note,
+    reason: show(r, true),
     status: r.status,
     decidedVia: r.decidedVia,
     decidedBy: decidedByLabel,
@@ -768,6 +856,7 @@ export async function listRequests(
 
 /** A barber's upcoming one-off blocks and their recurring ones. */
 export async function myBlocks(staffId: string, now: Date = new Date(), days = 14) {
+  const show = await reasonShower({ staffId, seesPrivate: false });
   const until = endOfLocalDay(addDays(todayLocal(now), days));
   const [blocks, series] = await Promise.all([
     db
@@ -791,13 +880,13 @@ export async function myBlocks(staffId: string, now: Date = new Date(), days = 1
         .groupBy(timeBlocks.seriesId)
     : [];
   return {
-    blocks: blocks.map(({ b, shopName }) => ({ id: b.id, category: b.category, reason: b.reason, startsAt: b.startsAt.toISOString(), endsAt: b.endsAt.toISOString(), shopName })),
+    blocks: blocks.map(({ b, shopName }) => ({ id: b.id, category: b.category, reason: show(b), startsAt: b.startsAt.toISOString(), endsAt: b.endsAt.toISOString(), shopName })),
     series: series.map(({ s, shopName }) => {
       const next = nextOf.find((n) => n.seriesId === s.id);
       return {
         id: s.id,
         category: s.category,
-        reason: s.reason,
+        reason: show(s),
         weekdays: s.weekdays,
         startMin: s.startMin,
         endMin: s.endMin,
@@ -812,7 +901,7 @@ export async function myBlocks(staffId: string, now: Date = new Date(), days = 1
 
 /** Pending requests at these shops (for the dashboard count). */
 export async function pendingCount(shopIds: readonly string[], brandWide: boolean) {
-  return (await listRequests({ shopIds, brandWide }, { statuses: ["pending"], limit: 500 })).length;
+  return (await listRequests({ shopIds, brandWide }, { viewer: NO_PRIVATE, statuses: ["pending"], limit: 500 })).length;
 }
 
 export { isTimeOff };

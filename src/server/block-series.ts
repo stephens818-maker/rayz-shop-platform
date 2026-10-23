@@ -21,7 +21,7 @@ export async function insertOccurrences(tx: DBorTx, s: SeriesRow, occ: readonly 
     const chunk = occ.slice(i, i + 500);
     await tx
       .insert(timeBlocks)
-      .values(chunk.map((o) => ({ staffId: s.staffId, shopId: s.shopId, startsAt: o.startsAt, endsAt: o.endsAt, kind: "block", category: s.category, reason: s.reason, seriesId: s.id, createdBy: s.createdBy })))
+      .values(chunk.map((o) => ({ staffId: s.staffId, shopId: s.shopId, startsAt: o.startsAt, endsAt: o.endsAt, kind: "block", category: s.category, reasonId: s.reasonId, reason: s.reason, note: s.note, seriesId: s.id, createdBy: s.createdBy })))
       .onConflictDoNothing();
   }
 }

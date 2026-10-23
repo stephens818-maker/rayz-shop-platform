@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, shops } from "@/db/schema";
+import { NO_PRIVATE, ReasonViewer, redactReasonDetails } from "@/domain/block-reasons";
 import { ClientPolicy, LOCKED_POLICY, redactAuditDetails, searchesClientDetails } from "./client-privacy";
 import { ReportKey } from "@/domain/permissions";
 import {
@@ -95,6 +96,8 @@ export interface ReportInput {
   viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[] };
   /** What the viewer may see of client records; without it, client details in the audit log are hidden. */
   client?: ClientPolicy;
+  /** Who is looking at block and time off reasons; without it, private reasons are hidden. */
+  reasons?: ReasonViewer;
   params: Record<string, string | undefined>;
 }
 
@@ -652,8 +655,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     return serviceTimesData(scope, loc);
   },
 
-  async staffing({ scope, loc }) {
-    return staffingData(scope, loc);
+  async staffing({ scope, loc, reasons }) {
+    return staffingData(scope, loc, reasons ?? NO_PRIVATE);
   },
 
   async services_vs_products({ scope, loc }) {
@@ -1184,8 +1187,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     };
   },
 
-  async audit_log({ viewer, loc, params, client }) {
-    const r = await auditRows({ viewer, client: client ?? LOCKED_POLICY, loc, q: params.q, entity: params.entity, limit: 10000, offset: 0 });
+  async audit_log({ viewer, loc, params, client, reasons }) {
+    const r = await auditRows({ viewer, client: client ?? LOCKED_POLICY, reasons, loc, q: params.q, entity: params.entity, limit: 10000, offset: 0 });
     const v = auditView(viewer, loc);
     return {
       stats: [],
@@ -1217,13 +1220,26 @@ export function auditView(viewer: ReportInput["viewer"], loc: ViewCtx): ViewCtx 
  * Client details in an entry (a profile edit's before and after, a merged record) come back as the
  * viewer may see them, and searching inside client entries is only for people who see them in full.
  */
-export async function auditRows(o: { viewer: ReportInput["viewer"]; client: ClientPolicy; loc: ViewCtx; q?: string; entity?: string; limit: number; offset: number }) {
+export async function auditRows(o: {
+  viewer: ReportInput["viewer"];
+  client: ClientPolicy;
+  /** Private block and time off reasons show as "Blocked" or "Time off", and aren't searched, unless they may see them. */
+  reasons?: ReasonViewer;
+  loc: ViewCtx;
+  q?: string;
+  entity?: string;
+  limit: number;
+  offset: number;
+}) {
   const q = o.q?.trim();
-  const inDetails = q
-    ? searchesClientDetails(o.client)
-      ? sql`${auditLog.details}::text ilike ${`%${q}%`}`
-      : sql`(${auditLog.entity} not in ('customer', 'client_rating') and ${auditLog.details}::text ilike ${`%${q}%`})`
-    : undefined;
+  const reasons = o.reasons ?? NO_PRIVATE;
+  const clientOk = searchesClientDetails(o.client) ? undefined : sql`${auditLog.entity} not in ('customer', 'client_rating')`;
+  const reasonOk = reasons.seesPrivate
+    ? undefined
+    : reasons.staffId
+      ? sql`(coalesce(${auditLog.details}->>'private', 'false') <> 'true' or ${auditLog.details}->>'staffId' = ${reasons.staffId})`
+      : sql`coalesce(${auditLog.details}->>'private', 'false') <> 'true'`;
+  const inDetails = q ? and(clientOk, reasonOk, sql`${auditLog.details}::text ilike ${`%${q}%`}`) : undefined;
   const ids = o.loc.shops.map((s) => s.id);
   const where = and(
     or(ids.length ? inArray(auditLog.shopId, ids) : sql`false`, auditIncludesBrand(o.viewer) ? isNull(auditLog.shopId) : undefined),
@@ -1241,7 +1257,7 @@ export async function auditRows(o: { viewer: ReportInput["viewer"]; client: Clie
     .orderBy(...order)
     .limit(o.limit)
     .offset(o.offset);
-  return rows.map((r) => ({ ...r, a: { ...r.a, details: redactAuditDetails(o.client, r.a.entity, r.a.details) } }));
+  return rows.map((r) => ({ ...r, a: { ...r.a, details: redactReasonDetails(r.a.entity, redactAuditDetails(o.client, r.a.entity, r.a.details), reasons) } }));
 }
 
 export function tableCsv(t: ReportTable): string {

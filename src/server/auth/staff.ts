@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { cache } from "react";
 import { db } from "@/db";
 import { roles, staff } from "@/db/schema";
+import type { ReasonViewer } from "@/domain/block-reasons";
 import { AdminPage, PAGE_ACCESS } from "@/domain/navigation";
 import { Permission, ShopScope } from "@/domain/permissions";
 import { RatingViewer } from "@/domain/ratings";
@@ -190,6 +191,9 @@ export const staffGrantor = (ctx: StaffContext) => grantor(ctx.access);
 
 /** For blockChangeDenied: who may block whose time. */
 export const blockCaller = (ctx: StaffContext) => ({ ...caller(ctx), blocksOwn: can(ctx, "blocks.own"), blocksOthers: can(ctx, "blocks.others") });
+
+/** For showReason: private reasons are masked unless they may see them or it's their own. */
+export const reasonViewer = (ctx: StaffContext): ReasonViewer => ({ staffId: ctx.staff.id, seesPrivate: can(ctx, "blocks.private") });
 
 /** For time off decisions and cancellations. */
 export const approverOf = (ctx: StaffContext) => ({ ...caller(ctx), canApprove: can(ctx, "timeoff.approve"), isOwner: ctx.isOwner, actor: ctx.actor });

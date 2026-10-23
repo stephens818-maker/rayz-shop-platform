@@ -1,16 +1,18 @@
 import "server-only";
 import { and, asc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { db } from "@/db";
-import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
+import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks, timeOffRequests } from "@/db/schema";
+import type { ReasonViewer, ShownReason } from "@/domain/block-reasons";
 import type { RatingSummary } from "@/domain/ratings";
 import type { TimesView } from "@/domain/service-times";
 import type { IntervalSource } from "@/domain/timing";
-import { LocalDate, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, weekdayOf } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, weekdayOf } from "@/lib/time";
 import type { ClientPolicy } from "./client-privacy";
 import { Tenant, hasShop } from "./tenant";
 import { staffIntervals } from "./timing";
 import { ratingSummaries } from "./ratings";
 import { timesFor } from "./service-times";
+import { reasonShower } from "./block-reasons";
 import { staffingFor } from "./staff-time";
 
 export interface CalAppt {
@@ -44,6 +46,16 @@ export interface CalAppt {
   times: TimesView | null;
 }
 
+export interface CalBlock extends ShownReason {
+  id: string;
+  startMin: number;
+  endMin: number;
+  kind: string;
+  category: string;
+  recurring: boolean;
+  fromRequest: boolean;
+}
+
 export interface CalColumn {
   id: string;
   label: string;
@@ -53,7 +65,8 @@ export interface CalColumn {
   intervalMin: number;
   intervalSource: IntervalSource;
   gridStarts: number[];
-  blocks: { id: string; startMin: number; endMin: number; reason: string; kind: string; category: string; recurring: boolean; fromRequest: boolean }[];
+  /** With the reason as the viewer may see it: a private one is just "Blocked" or "Time off". */
+  blocks: CalBlock[];
   /** `shop` is null for a shop outside the viewer's workspace. */
   elsewhere: { startMin: number; endMin: number; shop: string | null }[];
   appts: CalAppt[];
@@ -69,8 +82,10 @@ export interface DayCalendarData {
   rangeEnd: number;
   columns: CalColumn[];
   /** Barbers here who are off for some or all of the day, or have time off waiting for a manager. */
-  off: { staffId: string; label: string; allDay: boolean; spans: { startMin: number; endMin: number; reason: string }[]; pending: boolean }[];
+  off: { staffId: string; label: string; allDay: boolean; spans: { startMin: number; endMin: number; reason: string; color: string }[]; pending: boolean }[];
 }
+
+const NO_ID = "00000000-0000-0000-0000-000000000000";
 
 const clampDay = (d: Date, date: LocalDate) => {
   const m = localMinutesOf(d);
@@ -83,6 +98,7 @@ const clampDay = (d: Date, date: LocalDate) => {
 /**
  * `viewer` is the workspace looking: barbers' time at shops outside it shows without the shop's name.
  * `privacy` is what they may see of clients: phones and ratings come back already masked or dropped.
+ * `reasons` is who is looking at block and time off reasons: private ones come back as "Blocked".
  */
 export async function loadDayCalendar(
   shopId: string,
@@ -90,6 +106,7 @@ export async function loadDayCalendar(
   onlyStaffId: string | null,
   viewer: Pick<Tenant, "shopIds" | "brandWide">,
   privacy: Pick<ClientPolicy, "show" | "stars">,
+  reasons: ReasonViewer,
 ): Promise<DayCalendarData> {
   const shopLabel = (id: string, name: string) => (viewer.brandWide || hasShop(viewer, id) ? name : null);
   const dayStart = startOfLocalDay(date);
@@ -159,6 +176,7 @@ export async function loadDayCalendar(
     ratingSummaries(apptRows.map((r) => r.a.customerId)),
   ]);
   const times = await timesFor(apptRows.map((r) => r.a.id));
+  const show = await reasonShower(reasons);
 
   const intervals = await staffIntervals(shop, ids);
   const stretchStarts = (spans: { startMin: number; endMin: number }[]) =>
@@ -190,7 +208,7 @@ export async function loadDayCalendar(
           id: b.id,
           startMin: clampDay(b.startsAt, date),
           endMin: clampDay(b.endsAt, date),
-          reason: b.reason,
+          ...show(b, b.category === "time_off" || b.kind === "day_off"),
           kind: b.kind,
           category: b.category,
           recurring: b.seriesId !== null,
@@ -230,14 +248,14 @@ export async function loadDayCalendar(
     };
   });
 
-  const staffing = await staffingFor([shopId], date, date, onlyStaffId ? [onlyStaffId] : null);
+  const staffing = await staffingFor([shopId], date, date, reasons, onlyStaffId ? [onlyStaffId] : null);
   const off = staffing
     .filter((r) => r.status === "off" || r.status === "partly_off" || r.pending || (r.hasTimeOff && r.status === "not_scheduled"))
     .map((r) => ({
       staffId: r.staffId,
       label: r.label,
       allDay: r.status === "off",
-      spans: r.blocks.filter((b) => b.category === "time_off").map((b) => ({ startMin: b.startMin, endMin: b.endMin, reason: b.reason })),
+      spans: r.blocks.filter((b) => b.category === "time_off").map((b) => ({ startMin: b.startMin, endMin: b.endMin, reason: b.label, color: b.color })),
       pending: r.pending,
     }));
 
@@ -255,5 +273,140 @@ export async function loadDayCalendar(
     rangeEnd: Math.ceil(Math.max(...ends) / 60) * 60,
     columns,
     off,
+  };
+}
+
+export interface WeekAppt {
+  id: string;
+  code: string;
+  startMin: number;
+  endMin: number;
+  status: string;
+  customerName: string;
+  services: string[];
+}
+
+export interface WeekDay {
+  date: LocalDate;
+  closed: string | null;
+  /** This barber's hours here that day. */
+  spans: { startMin: number; endMin: number }[];
+  blocks: CalBlock[];
+  /** Time off waiting for a manager. */
+  pending: ({ id: string; startMin: number; endMin: number } & ShownReason)[];
+  appts: WeekAppt[];
+}
+
+export interface WeekCalendarData {
+  shop: { id: string; name: string };
+  weekStart: LocalDate;
+  barber: { id: string; label: string; color: string } | null;
+  /** Who the picker offers. */
+  barbers: { id: string; label: string }[];
+  days: WeekDay[];
+  rangeStart: number;
+  rangeEnd: number;
+}
+
+/** One barber's week at one shop (Sunday to Saturday): hours, closures, blocks with their reasons, time off and appointments. */
+export async function loadWeekCalendar(shopId: string, weekStart: LocalDate, staffId: string | null, barberIds: readonly string[] | null, reasons: ReasonViewer): Promise<WeekCalendarData> {
+  const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
+  if (!shop) throw new Error("shop not found");
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const from = startOfLocalDay(dates[0]);
+  const to = endOfLocalDay(dates[6]);
+  const links = await db
+    .select({ id: staff.id, label: staff.displayLabel, color: staff.color })
+    .from(staffShops)
+    .innerJoin(staff, eq(staff.id, staffShops.staffId))
+    .where(and(eq(staffShops.shopId, shopId), eq(staff.active, true), eq(staff.kind, "person"), barberIds ? inArray(staff.id, barberIds.length ? [...barberIds] : [NO_ID]) : undefined))
+    .orderBy(asc(staff.displayLabel));
+  const barber = links.find((l) => l.id === staffId) ?? links[0] ?? null;
+  const [hours, closures] = await Promise.all([
+    db.select().from(shopHours).where(eq(shopHours.shopId, shopId)),
+    db.select().from(shopClosures).where(and(eq(shopClosures.shopId, shopId), inArray(shopClosures.date, dates))),
+  ]);
+  const base = { shop: { id: shop.id, name: shop.name }, weekStart, barbers: links.map((l) => ({ id: l.id, label: l.label })) };
+  const openMin = hours.length ? Math.min(...hours.map((h) => h.openMin)) : 9 * 60;
+  const closeMin = hours.length ? Math.max(...hours.map((h) => h.closeMin)) : 18 * 60;
+  if (!barber) return { ...base, barber: null, days: [], rangeStart: Math.floor(openMin / 60) * 60, rangeEnd: Math.ceil(closeMin / 60) * 60 };
+
+  const [scheds, blocks, pending, apptRows, show] = await Promise.all([
+    db.select().from(staffSchedules).where(and(eq(staffSchedules.staffId, barber.id), eq(staffSchedules.shopId, shopId))),
+    db
+      .select()
+      .from(timeBlocks)
+      .where(and(eq(timeBlocks.staffId, barber.id), lt(timeBlocks.startsAt, to), gt(timeBlocks.endsAt, from), or(isNull(timeBlocks.shopId), eq(timeBlocks.shopId, shopId)))),
+    db
+      .select()
+      .from(timeOffRequests)
+      .where(
+        and(
+          eq(timeOffRequests.staffId, barber.id),
+          eq(timeOffRequests.status, "pending"),
+          lt(timeOffRequests.startsAt, to),
+          gt(timeOffRequests.endsAt, from),
+          or(isNull(timeOffRequests.shopId), eq(timeOffRequests.shopId, shopId)),
+        ),
+      ),
+    db
+      .select({ a: appointments, firstName: customers.firstName, lastName: customers.lastName })
+      .from(appointments)
+      .leftJoin(customers, eq(customers.id, appointments.customerId))
+      .where(and(eq(appointments.staffId, barber.id), eq(appointments.shopId, shopId), ne(appointments.status, "cancelled"), lt(appointments.startsAt, to), gt(appointments.endsAt, from)))
+      .orderBy(asc(appointments.startsAt)),
+    reasonShower(reasons),
+  ]);
+  const items = apptRows.length
+    ? await db
+        .select({ appointmentId: appointmentItems.appointmentId, name: appointmentItems.name, kind: appointmentItems.kind })
+        .from(appointmentItems)
+        .where(inArray(appointmentItems.appointmentId, apptRows.map((r) => r.a.id)))
+        .orderBy(asc(appointmentItems.kind))
+    : [];
+
+  const days: WeekDay[] = dates.map((date) => {
+    const ds = startOfLocalDay(date);
+    const de = endOfLocalDay(date);
+    const inDay = (x: { startsAt: Date; endsAt: Date }) => x.startsAt < de && x.endsAt > ds;
+    const wd = weekdayOf(date);
+    const closure = closures.find((c) => c.date === date);
+    const open = hours.filter((h) => h.weekday === wd);
+    return {
+      date,
+      closed: closure ? (closure.reason ?? "Closed") : open.length === 0 ? "Closed" : null,
+      spans: scheds.filter((s) => s.weekday === wd).map((s) => ({ startMin: s.startMin, endMin: s.endMin })),
+      blocks: blocks.filter(inDay).map((b) => ({
+        id: b.id,
+        startMin: clampDay(b.startsAt, date),
+        endMin: clampDay(b.endsAt, date),
+        ...show(b, b.category === "time_off" || b.kind === "day_off"),
+        kind: b.kind,
+        category: b.category,
+        recurring: b.seriesId !== null,
+        fromRequest: b.requestId !== null,
+      })),
+      pending: pending.filter(inDay).map((p) => ({ id: p.id, startMin: clampDay(p.startsAt, date), endMin: clampDay(p.endsAt, date), ...show(p, true) })),
+      appts: apptRows
+        .filter((r) => inDay(r.a))
+        .map((r) => ({
+          id: r.a.id,
+          code: r.a.code,
+          startMin: clampDay(r.a.startsAt, date),
+          endMin: clampDay(r.a.endsAt, date),
+          status: r.a.status,
+          customerName: r.firstName ? `${r.firstName}${r.lastName ? ` ${r.lastName.charAt(0)}.` : ""}` : (r.a.notes?.replace(/^Walk-in: /, "") ?? "Walk-in"),
+          services: items.filter((i) => i.appointmentId === r.a.id).map((i) => i.name),
+        })),
+    };
+  });
+  const starts = [openMin, ...days.flatMap((d) => [...d.spans.map((s) => s.startMin), ...d.appts.map((a) => a.startMin)])];
+  const ends = [closeMin, ...days.flatMap((d) => [...d.spans.map((s) => s.endMin), ...d.appts.map((a) => a.endMin)])];
+  return {
+    ...base,
+    barber,
+    days,
+    rangeStart: Math.floor(Math.min(...starts) / 60) * 60,
+    rangeEnd: Math.min(24 * 60, Math.ceil(Math.max(...ends) / 60) * 60),
   };
 }
