@@ -260,6 +260,13 @@
       "when": 1792946400000,
       "tag": "core_0036_network_access",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793032800000,
+      "tag": "core_0037_handoff",
+      "breakpoints": true
     }
   ]
 }

@@ -18,9 +18,11 @@ import { AppError, notFound } from "@/server/errors";
 
 /**
  * Brings the tip ledger up to date with payments and refunds: a tip entry per payment with a tip,
- * a reversal per refund or void that gave tip back, credited to the ticket's barber. Imported Squire
- * history is left out, as payroll leaves it out. Idempotent; runs inside checkout and refunds, and
- * from the cron and before every batch to catch anything else (the seed, a dashboard refund).
+ * a reversal per refund or void that gave tip back, credited to the ticket's barber. A ticket with
+ * several barbers (sale_tip_shares) gets an entry per barber for their share, and its reversals are
+ * split the same way. Imported Squire history is left out, as payroll leaves it out. Idempotent;
+ * runs inside checkout and refunds, and from the cron and before every batch to catch anything else
+ * (the seed, a dashboard refund).
  */
 export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopIds?: readonly string[] } = {}) {
   const only = o.saleId
@@ -35,22 +37,25 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
       : sql``;
   await tx.execute(sql`
     insert into tip_ledger (shop_id, staff_id, sale_id, payment_id, kind, method, amount_cents, fee_cents, business_date)
-    select p.shop_id, s.staff_id, s.id, p.id, 'tip', p.method::text, p.tip_cents,
+    select p.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, p.id, 'tip', p.method::text, coalesce(sh.tip_cents, p.tip_cents),
       case when p.method = 'card' and p.amount_cents > 0
-        then round(coalesce(nullif(p.processor_fee_cents, 0), p.application_fee_cents, 0)::numeric * p.tip_cents / p.amount_cents)::int else 0 end,
+        then round(coalesce(nullif(p.processor_fee_cents, 0), p.application_fee_cents, 0)::numeric * coalesce(sh.tip_cents, p.tip_cents) / p.amount_cents)::int else 0 end,
       s.business_date
     from payments p join sales s on s.id = p.sale_id
-    where p.tip_cents <> 0 and s.staff_id is not null and not s.is_imported and s.status <> 'open' ${only}
-    on conflict (payment_id) where kind = 'tip' do nothing`);
+    left join tip_split_shares sh on sh.source = 'payment' and sh.source_id = p.id
+    where p.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0
+      and not s.is_imported and s.status <> 'open' ${only}
+    on conflict (payment_id, staff_id) where kind = 'tip' do nothing`);
   await tx.execute(sql`
     insert into tip_ledger (shop_id, staff_id, sale_id, payment_id, refund_id, kind, method, amount_cents, fee_cents, business_date)
-    select r.shop_id, s.staff_id, s.id, r.payment_id, r.id, 'refund', r.method::text, -r.tip_cents,
-      -coalesce(case when t.amount_cents > 0 then round(t.fee_cents::numeric * r.tip_cents / t.amount_cents)::int end, 0),
+    select r.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, r.payment_id, r.id, 'refund', r.method::text, -coalesce(sh.tip_cents, r.tip_cents),
+      -coalesce(case when t.amount_cents > 0 then round(t.fee_cents::numeric * coalesce(sh.tip_cents, r.tip_cents) / t.amount_cents)::int end, 0),
       r.business_date
     from refunds r join sales s on s.id = r.sale_id
-    left join tip_ledger t on t.payment_id = r.payment_id and t.kind = 'tip'
-    where r.tip_cents <> 0 and s.staff_id is not null and not s.is_imported ${only}
-    on conflict (refund_id) where kind = 'refund' do nothing`);
+    left join tip_split_shares sh on sh.source = 'refund' and sh.source_id = r.id
+    left join tip_ledger t on t.payment_id = r.payment_id and t.kind = 'tip' and t.staff_id = coalesce(sh.staff_id, s.staff_id)
+    where r.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0 and not s.is_imported ${only}
+    on conflict (refund_id, staff_id) where kind = 'refund' do nothing`);
 }
 
 /**

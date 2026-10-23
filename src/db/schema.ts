@@ -75,6 +75,8 @@ export const brandSettings = pgTable("brand_settings", {
   tipPayouts: jsonb("tip_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Sign-in restriction settings for the brand (BrandNetworkSettings in src/domain/network-access.ts): the blocked sign-in alert. */
   networkAccess: jsonb("network_access").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** The brand's tip presets for the customer screen (BrandHandoff in src/domain/handoff.ts); missing keys use the defaults. */
+  handoff: jsonb("handoff").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -129,6 +131,7 @@ export const shops = pgTable("shops", {
   cardFeeEnabled: boolean("card_fee_enabled").notNull().default(true),
   cardFeeRate: numeric("card_fee_rate", { precision: 6, scale: 5 }).notNull().default("0.03"),
   cardFeeAppliesToTip: boolean("card_fee_applies_to_tip").notNull().default(false),
+  /** Superseded by handoff.tips, and kept in step with it while the presets are percents. */
   tipPresets: jsonb("tip_presets").$type<number[]>().notNull().default(sql`'[20,25,30]'::jsonb`),
   cancelCutoffMinutes: integer("cancel_cutoff_minutes").notNull().default(30),
   /** Null follows the brand default. */
@@ -160,6 +163,8 @@ export const shops = pgTable("shops", {
   tipPayouts: jsonb("tip_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Where staff may sign in to this shop from (ShopNetworkRule in src/domain/network-access.ts); empty is no restriction. */
   networkAccess: jsonb("network_access").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** The customer screen at checkout (ShopHandoff in src/domain/handoff.ts): tip presets, tips on the reader, signature, unlock PIN; missing keys use the defaults. */
+  handoff: jsonb("handoff").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
@@ -1358,6 +1363,77 @@ export const payments = pgTable(
   ],
 );
 
+/**
+ * A ticket with more than one barber on its services: how its tip is split between them. Each
+ * payment's tip, and each tip refund, goes to them in proportion to the weights (the
+ * tip_split_shares view). Tickets without rows here credit the whole tip to sales.staff_id.
+ */
+export const saleTipShares = pgTable(
+  "sale_tip_shares",
+  {
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id),
+    /** Their services' net in cents, or 1 for an even split. */
+    weight: integer("weight").notNull(),
+  },
+  (t) => [primaryKey({ name: "sale_tip_shares_pk", columns: [t.saleId, t.staffId] }), index("sale_tip_shares_staff_idx").on(t.staffId), check("sale_tip_shares_weight", sql`${t.weight} > 0`)],
+);
+
+/**
+ * A ticket handed to the client on the checkout device. While it's active (and, after paying, until
+ * the thank-you screen ends) that browser shows only the customer screen for this ticket.
+ */
+export const checkoutHandoffs = pgTable(
+  "checkout_handoffs",
+  {
+    id: id(),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    startedBy: uuid("started_by")
+      .notNull()
+      .references(() => staff.id),
+    /** active: with the client. paid: paid on the customer screen. returned: taken back by staff before paying. */
+    status: text("status").$type<HandoffStatus>().notNull().default("active"),
+    /** The ticket as staff handed it over (HandoffDraft in src/server/handoff.ts); the client can't change it. */
+    draft: jsonb("draft").$type<Record<string, unknown>>().notNull(),
+    tipCents: integer("tip_cents"),
+    /** Which button: p20, a500, custom, none, or reader. */
+    tipChoice: text("tip_choice"),
+    tipSource: text("tip_source").$type<"screen" | "reader">(),
+    /** SVG path data in a 600×200 box. */
+    signature: text("signature"),
+    signedAt: ts("signed_at"),
+    receiptChannel: text("receipt_channel").$type<"sms" | "email" | "none">(),
+    /** Where to send it, until it's queued; then cleared, leaving only the masked form. */
+    receiptTo: text("receipt_to"),
+    receiptMasked: text("receipt_masked"),
+    /** The client chose to pay cash, so the counter takes it from here. */
+    cashRequested: boolean("cash_requested").notNull().default(false),
+    startedAt: ts("started_at").notNull().defaultNow(),
+    paidAt: ts("paid_at"),
+    /** When the device stops being locked: null while it is. After paying it's the end of the thank-you screen. */
+    endedAt: ts("ended_at"),
+    endedBy: uuid("ended_by").references(() => staff.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    check("checkout_handoffs_status", sql`${t.status} in ('active', 'paid', 'returned')`),
+    check("checkout_handoffs_tip_source", sql`${t.tipSource} is null or ${t.tipSource} in ('screen', 'reader')`),
+    check("checkout_handoffs_receipt_channel", sql`${t.receiptChannel} is null or ${t.receiptChannel} in ('sms', 'email', 'none')`),
+    check("checkout_handoffs_tip", sql`${t.tipCents} is null or ${t.tipCents} >= 0`),
+    uniqueIndex("checkout_handoffs_active_uq").on(t.saleId).where(sql`${t.status} = 'active'`),
+    index("checkout_handoffs_sale_idx").on(t.saleId, t.startedAt),
+  ],
+);
+export type HandoffStatus = "active" | "paid" | "returned";
+
 export const refunds = pgTable(
   "refunds",
   {
@@ -1532,8 +1608,9 @@ export const tipLedger = pgTable(
       "tip_ledger_source",
       sql`(${t.kind} = 'tip' and ${t.paymentId} is not null) or (${t.kind} = 'refund' and ${t.refundId} is not null) or (${t.kind} = 'adjust' and ${t.reason} is not null)`,
     ),
-    uniqueIndex("tip_ledger_payment_uq").on(t.paymentId).where(sql`${t.kind} = 'tip'`),
-    uniqueIndex("tip_ledger_refund_uq").on(t.refundId).where(sql`${t.kind} = 'refund'`),
+    // A split ticket's tip is one entry per barber.
+    uniqueIndex("tip_ledger_payment_uq").on(t.paymentId, t.staffId).where(sql`${t.kind} = 'tip'`),
+    uniqueIndex("tip_ledger_refund_uq").on(t.refundId, t.staffId).where(sql`${t.kind} = 'refund'`),
     index("tip_ledger_staff_date_idx").on(t.staffId, t.businessDate),
     index("tip_ledger_shop_date_idx").on(t.shopId, t.businessDate),
     index("tip_ledger_payout_idx").on(t.payoutId),

@@ -16,7 +16,8 @@ import { forbidden } from "@/server/errors";
 import { clientIp } from "@/lib/client-ip";
 import { assertShop } from "@/server/tenant";
 import { StaffAccess, accessFor, atShop, grantor, withoutShops } from "./access";
-import { SESSION_COOKIE, SHOP_COOKIE, TRUSTED_DEVICE_COOKIE } from "./cookies";
+import { HANDOFF_COOKIE, SESSION_COOKIE, SHOP_COOKIE, TRUSTED_DEVICE_COOKIE } from "./cookies";
+import { lockedHandoff } from "./handoff-lock";
 import { approvedShopIds, devicesFromCookie, evaluateNetwork } from "./network";
 import type { Caller } from "./policy";
 import { signToken, verifyToken } from "./tokens";
@@ -78,6 +79,8 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
+  // A device handed to a client has no staff session until a PIN takes it back, whatever the middleware let through.
+  if (await lockedHandoff(jar.get(HANDOFF_COOKIE)?.value)) return null;
   const payload = await verifyToken<{ sub: string; iat?: number }>(token, "staff_session");
   if (!payload) return null;
   const [row] = await db

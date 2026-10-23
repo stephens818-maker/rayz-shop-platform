@@ -5,6 +5,7 @@ import {
   appointmentItems,
   appointments,
   cashDrawers,
+  checkoutHandoffs,
   customers,
   giftCardLedger,
   giftCards,
@@ -13,6 +14,7 @@ import {
   promoCodes,
   refunds,
   saleItems,
+  saleTipShares,
   sales,
   shopProducts,
   shops,
@@ -20,6 +22,7 @@ import {
   staffShops,
   Shop,
 } from "@/db/schema";
+import { TipSplitMode, splitBarbers, tipWeights } from "@/domain/handoff";
 import { operational } from "@/domain/location-lifecycle";
 import {
   CardFeeConfig,
@@ -177,6 +180,8 @@ export interface CheckoutLineInput {
   unitPriceCents?: number;
   /** Charge something other than the menu price. Managers only; audited with the reason. */
   priceOverride?: { unitPriceCents: number; reason: string } | null;
+  /** Services and add-ons: the barber who did it, when it isn't the ticket's barber. Splits the tip. */
+  staffId?: string | null;
 }
 
 export type TenderInput =
@@ -197,6 +202,10 @@ export interface FinalizeInput {
   /** Total the UI showed; refuse to charge if the server computes something different. */
   expectedTotalCents?: number | null;
   rebookInWeeks?: number | null;
+  /** With more than one barber on the services: split the tip by their services (the default) or evenly. */
+  tipSplit?: TipSplitMode | null;
+  /** The customer screen paying for its own ticket. Without it, a ticket that's with the client can't be paid. */
+  handoffId?: string | null;
   /** Set by the caller from the signed-in person's permissions, never from the request body. */
   canOverridePrice?: boolean;
   /** Largest manual discount allowed, in whole percent of the ticket (gift cards excluded). Defaults to no limit. */
@@ -258,6 +267,9 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
         .where(and(eq(shopProducts.shopId, ctx.shop.id), eq(shopProducts.active, true), inArray(shopProducts.productId, productIds)))
     : [];
   const staffId = input.staffId ?? ctx.sale.staffId;
+  for (const id of new Set(input.lines.filter((l) => l.kind !== "product" && l.kind !== "gift_card" && l.staffId && l.staffId !== staffId).map((l) => l.staffId!))) {
+    await assertStaffAtShop(id, ctx.shop.id);
+  }
   const meta: PricedLineMeta[] = [];
   const lines: CartLine[] = input.lines.map((l, i) => {
     if (l.qty <= 0 || !Number.isInteger(l.qty)) throw new AppError("bad_request", "Quantities must be whole numbers");
@@ -296,7 +308,7 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
       reason = o.reason.trim();
     }
     meta.push({ catalogPriceCents: catalog, overrideReason: reason });
-    return { key: String(i), kind: l.kind, name, unitPriceCents: unit, qty: l.qty, refId: l.refId ?? null, staffId: l.kind === "product" ? null : staffId, taxCategory };
+    return { key: String(i), kind: l.kind, name, unitPriceCents: unit, qty: l.qty, refId: l.refId ?? null, staffId: l.kind === "product" ? null : (l.staffId ?? staffId), taxCategory };
   });
   const problem = manualDiscountProblem(input.manualDiscount ?? null, lines, input.maxManualDiscountPct ?? 100);
   if (problem) throw forbidden(problem);
@@ -360,6 +372,12 @@ export async function finalizeSale(input: FinalizeInput) {
       // A second submit of this ticket waits here, then sees it paid and stops before charging.
       const [locked] = await tx.select().from(sales).where(eq(sales.id, ctx.sale.id)).for("update");
       if (locked.status !== "open") throw new AppError("conflict", "This ticket was already paid");
+      const [withClient] = await tx
+        .select({ id: checkoutHandoffs.id })
+        .from(checkoutHandoffs)
+        .where(and(eq(checkoutHandoffs.saleId, ctx.sale.id), eq(checkoutHandoffs.status, "active")));
+      if (withClient && withClient.id !== input.handoffId) throw new AppError("conflict", "This ticket is with the client on the customer screen. Take it back there, or end the hand-off, first.");
+      if (input.handoffId && !withClient) throw new AppError("conflict", "Staff took this ticket back, so it can't be paid here");
 
       await tx.delete(saleItems).where(eq(saleItems.saleId, ctx.sale.id));
       const items = await tx
@@ -370,7 +388,7 @@ export async function finalizeSale(input: FinalizeInput) {
             kind: l.kind,
             refId: l.refId ?? null,
             name: l.name,
-            staffId: l.kind === "service" || l.kind === "addon" ? staffId : null,
+            staffId: l.kind === "service" || l.kind === "addon" ? (l.staffId ?? staffId) : null,
             qty: l.qty,
             unitPriceCents: l.unitPriceCents,
             grossCents: l.grossCents,
@@ -382,6 +400,13 @@ export async function finalizeSale(input: FinalizeInput) {
           })),
         )
         .returning({ id: saleItems.id });
+
+      const split = splitBarbers(totals.lines, staffId);
+      if (split.length) {
+        const weights = tipWeights(totals.lines, input.tipSplit ?? "services");
+        await tx.insert(saleTipShares).values(weights.map((w) => ({ saleId: ctx.sale.id, staffId: w.staffId, weight: w.weight })));
+        await audit(input.actor, "sale.tip_split", "sale", ctx.sale.id, { mode: input.tipSplit ?? "services", shares: weights }, ctx.shop.id, tx);
+      }
 
       for (const [i, l] of totals.lines.entries()) {
         if (meta[i].overrideReason) {
