@@ -370,7 +370,3 @@ export function missedCallText(o: { shop: string; afterHours: boolean; link: str
   const lead = o.afterHours ? `${o.shop}: Thanks for calling. We're closed right now.` : `${o.shop}: Sorry we missed your call.`;
   return o.rebook ? `${lead} Pick a new time for your appointment here: ${o.link}` : `${lead} Book online anytime: ${o.link} Or text us here.`;
 }
-
-export const HELP_TEXT = (shop: string) => `${shop}: Text us here and the shop will answer. Reply STOP to opt out of texts.`;
-export const STOP_CONFIRM = (shop: string) => `${shop}: You're unsubscribed and won't get more texts. Reply START to opt back in.`;
-export const START_CONFIRM = (shop: string) => `${shop}: You're subscribed to texts again. Reply STOP to opt out.`;
