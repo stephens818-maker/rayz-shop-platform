@@ -5,6 +5,7 @@ const STOCK_VIEW: Permission[] = ["inventory.manage", "inventory.adjust", "inven
 const PURCHASING: Permission[] = ["po.create", "po.approve", "po.send", "po.receive"];
 const CALL_INS: Permission[] = ["callins.mark", "callins.mark_own", "callins.outreach", "callins.voice"];
 const TIMESHEETS: Permission[] = ["timesheet.own", "timesheet.edit", "timesheet.approve", "payroll.export"];
+const MARKETING: Permission[] = ["marketing.view", "marketing.location", "marketing.manage"];
 
 /**
  * What each admin page needs: any one of the listed permissions, or null for any signed-in staff
@@ -82,6 +83,11 @@ export const PAGE_ACCESS = {
   "/admin/timesheets": TIMESHEETS,
   "/admin/timesheets/[staffId]": TIMESHEETS,
   "/admin/time-clock": ["payroll.run", "settings.shop"],
+  "/admin/marketing": MARKETING,
+  "/admin/marketing/automations/[id]": MARKETING,
+  "/admin/marketing/blasts": MARKETING,
+  "/admin/marketing/blasts/[id]": MARKETING,
+  "/admin/marketing/settings": ["marketing.manage"],
   "/admin/reports": REPORTS.map((r) => reportView(r.key)),
   ...(Object.fromEntries(REPORTS.map((r) => [r.href, [reportView(r.key)]])) as Record<(typeof REPORTS)[number]["href"], Permission[]>),
 } satisfies Record<string, readonly Permission[] | null>;
@@ -130,6 +136,14 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/inventory/transfers", label: "Transfers" },
       { href: "/admin/inventory/counts", label: "Counts" },
       { href: "/admin/inventory/settings", label: "Inventory settings" },
+    ],
+  },
+  {
+    title: "Marketing",
+    items: [
+      { href: "/admin/marketing", label: "Campaigns" },
+      { href: "/admin/marketing/blasts", label: "Blasts" },
+      { href: "/admin/marketing/settings", label: "Marketing rules" },
     ],
   },
   {

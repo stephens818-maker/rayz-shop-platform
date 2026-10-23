@@ -120,6 +120,8 @@ const ids = {} as {
   thread: string;
   tipBatch: string;
   tipPayout: string;
+  blast: string;
+  campaign: string;
   marks: Record<keyof typeof MARK, { appt: string; promo: string; sale: string }>;
 };
 let today: string;
@@ -285,6 +287,9 @@ async function seedCanaries() {
   ids.callIn = (await (await import("@/server/call-ins")).markCallIn({ staffId: ids.barber, shopId: cv, kind: "sick", range: { fromDate: tomorrow, toDate: tomorrow, startMin: null, endMin: null } }, { actor })).callInId;
   ids.thread = (await m.db.db.insert(m.schema.messageThreads).values({ shopId: cv, phone: CANARY.phone, customerId: client.id }).returning())[0].id;
   ids.tipBatch = (await m.db.db.insert(m.schema.tipPayoutBatches).values({ shopId: cv, kind: "manual", cutoffDate: today, notes: CANARY.apptNote }).returning())[0].id;
+  ids.blast = (await m.db.db.insert(m.schema.marketingCampaigns).values({ kind: "blast", name: `Coralville blast ${CANARY.apptNote}`, shopIds: [cv], channels: ["sms"] }).returning())[0].id;
+  await (await import("@/server/marketing/campaigns")).ensureTriggerCampaigns();
+  ids.campaign = (await m.db.db.query.marketingCampaigns.findFirst({ where: eq(m.schema.marketingCampaigns.trigger, "lapsed") }))!.id;
   ids.tipPayout = (await m.db.db.insert(m.schema.tipPayouts).values({ batchId: ids.tipBatch, shopId: cv, staffId: ids.barber, method: "cash", status: "pending", grossCents: 2300, netCents: 2300 }).returning())[0].id;
 
   ids.marks = {} as typeof ids.marks;
@@ -458,12 +463,13 @@ function dynamicPages(): [string, Record<string, string>][] {
     ["/admin/inbox/[id]", { id: ids.thread }],
     ["/admin/timesheets/[staffId]", { staffId: ids.barber }],
     ["/admin/tips/[id]", { id: ids.tipBatch }],
+    ["/admin/marketing/blasts/[id]", { id: ids.blast }],
   ];
 }
 
 describe("direct URLs to another shop's records", () => {
   it("covers every dynamic page", () => {
-    const covered = new Set([...dynamicPages().map(([r]) => r), "/admin/permissions/roles/[id]"]);
+    const covered = new Set([...dynamicPages().map(([r]) => r), "/admin/permissions/roles/[id]", "/admin/marketing/automations/[id]"]);
     expect(Object.keys(PAGE_ACCESS).filter((p) => p.includes("[") && !covered.has(p))).toEqual([]);
   });
 
@@ -638,6 +644,7 @@ describe("server actions aimed at another shop's records", () => {
     const timing = await import("@/app/admin/booking-times/actions");
     const setup = await import("@/app/admin/setup/actions");
     const tips = await import("@/app/admin/tips/actions");
+    const marketing = await import("@/app/admin/marketing/actions");
     const cv = shop.coralville;
     const coralvilleLogin = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, "coralville@rayz.test") }))!.id;
     const deskRole = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "front_desk") }))!.id;
@@ -794,6 +801,13 @@ describe("server actions aimed at another shop's records", () => {
       ["tips adjust", () => tips.payoutAction({ payoutId: ids.tipPayout, action: "adjust", reason: "x", cents: 500 })],
       ["tips remove", () => tips.payoutAction({ payoutId: ids.tipPayout, action: "remove", reason: "x" })],
       ["tips cash paid", () => tips.acknowledgeCashAction({ payoutId: ids.tipPayout, by: "name", name: CANARY.barber })],
+      ["marketing campaign on", () => marketing.setLocationAutomationAction({ campaignId: ids.campaign, shopId: cv, enabled: true })],
+      ["marketing blast to coralville", () => marketing.saveBlastAction({ name: "Sneaky", channels: ["push"], templates: { pushTitle: "Hi", pushBody: "Hi" }, segment: {}, shopIds: [cv] })],
+      ["marketing blast count", () => marketing.previewBlastAction({ channels: ["push"], segment: {}, shopIds: [cv] })],
+      ["marketing blast edit", () => marketing.saveBlastAction({ id: ids.blast, name: "Hijacked", channels: ["push"], templates: { pushTitle: "Hi", pushBody: "Hi" }, segment: {} })],
+      ["marketing blast send", () => marketing.scheduleBlastAction(ids.blast, null)],
+      ["marketing blast cancel", () => marketing.cancelBlastAction(ids.blast)],
+      ["marketing test", () => marketing.sendTestAction({ campaignId: ids.campaign, shopId: cv, channel: "sms" })],
     ];
 
     // Each call must be refused for every Moline-side login, and by the tenant check (not just a

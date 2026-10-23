@@ -1,0 +1,31 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { PageHeader } from "@/components/ui";
+import { can, guardPage } from "@/server/auth/staff";
+import { listAutomations } from "@/server/marketing/campaigns";
+import { loadMarketingSettings } from "@/server/marketing/settings";
+import { MarketingSettingsForm } from "./form";
+
+export const metadata: Metadata = { title: "Marketing rules" };
+export const dynamic = "force-dynamic";
+
+export default async function MarketingSettingsPage() {
+  const ctx = await guardPage("/admin/marketing/settings");
+  const [settings, automations] = await Promise.all([loadMarketingSettings(), listAutomations(ctx)]);
+  return (
+    <div className="mx-auto max-w-4xl space-y-5">
+      <PageHeader
+        title="Marketing rules"
+        subtitle={
+          <>
+            <Link href="/admin/marketing" className="underline">
+              Marketing
+            </Link>{" "}
+            · For every location and every campaign. Appointment reminders and receipts aren&apos;t marketing and don&apos;t follow these rules.
+          </>
+        }
+      />
+      <MarketingSettingsForm initial={settings} mayExport={can(ctx, "marketing.export")} campaigns={automations.map((a) => ({ id: a.id, name: a.name }))} />
+    </div>
+  );
+}

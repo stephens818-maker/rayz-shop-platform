@@ -23,8 +23,10 @@ import {
   templatesProblem,
   triggerSettings,
 } from "@/domain/marketing";
+import { couponSummary } from "@/domain/coupons";
 import { z } from "zod";
 import { audit } from "../audit";
+import { ruleOf } from "../coupons";
 import { StaffContext, assertCan, assertShopAccess, can } from "../auth/staff";
 import { clientPolicy } from "../client-privacy";
 import { AppError, forbidden, notFound } from "../errors";
@@ -183,6 +185,39 @@ export async function listAutomations(ctx: StaffContext): Promise<AutomationView
   });
 }
 
+/** Coupons a campaign can carry: active and not past their end date. */
+export async function couponOptions(today: string): Promise<{ id: string; code: string; summary: string; unique: boolean }[]> {
+  const list = await db.select().from(promoCodes).where(eq(promoCodes.active, true)).orderBy(promoCodes.code);
+  const out = [];
+  for (const p of list.filter((x) => !x.endsOn || x.endsOn >= today)) {
+    const r = await ruleOf(p, p.code, "code");
+    out.push({ id: p.id, code: p.code, summary: couponSummary(r), unique: p.codeMode === "unique" });
+  }
+  return out;
+}
+
+/** The last 30 days at these locations, for the overview. */
+export async function marketingOverview(shopIds: string[], now = new Date()) {
+  if (!shopIds.length) return { sent: 0, clicked: 0, unsubscribed: 0, redeemed: 0 };
+  const since = new Date(now.getTime() - 30 * 86_400_000);
+  const inList = sql`(${sql.join(
+    shopIds.map((x) => sql`${x}::uuid`),
+    sql`, `,
+  )})`;
+  const [s] = (await db.execute(sql`
+    select
+      (select count(*)::int from marketing_sends where status = 'queued' and shop_id in ${inList} and created_at >= ${since.toISOString()}) sent,
+      (select count(*)::int from marketing_sends where status = 'queued' and clicks > 0 and shop_id in ${inList} and created_at >= ${since.toISOString()}) clicked,
+      (select count(*)::int from marketing_unsubscribes u join marketing_sends s on s.id = u.send_id where s.shop_id in ${inList} and u.created_at >= ${since.toISOString()}) unsubscribed,
+      (select count(*)::int from coupon_redemptions where campaign_id is not null and reversed_at is null and shop_id in ${inList} and created_at >= ${since.toISOString()}) redeemed`)) as unknown as {
+    sent: number;
+    clicked: number;
+    unsubscribed: number;
+    redeemed: number;
+  }[];
+  return s;
+}
+
 // ───────────────────────────── Blasts ─────────────────────────────
 
 const BlastInput = z.object({
@@ -210,7 +245,7 @@ function blastScope(ctx: StaffContext, shopIds: string[]): string[] {
 function assertMayEdit(ctx: StaffContext, c: Campaign) {
   if (c.kind !== "blast") throw new AppError("bad_request", "That isn't a blast");
   if (can(ctx, "marketing.manage") && ctx.brandWide) return;
-  if (!c.shopIds.length || c.shopIds.some((s) => !ctx.shopIds.includes(s))) throw forbidden("This blast goes to locations you don't manage");
+  if (!c.shopIds.length || c.shopIds.some((s) => !ctx.shopIds.includes(s))) throw forbidden("This blast goes to shops outside yours");
 }
 
 async function checkSegment(ctx: StaffContext, seg: Segment) {
