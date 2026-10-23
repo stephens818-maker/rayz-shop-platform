@@ -7,7 +7,7 @@ import { Badge, Card, Empty, LinkButton, PageHeader, Stat, Table, Td, Th, cx } f
 import { PO_STATUSES, PO_STATUS_LABEL, PoStatus, needsApproval, poNumber } from "@/domain/inventory";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
-import { can, guardPage } from "@/server/auth/staff";
+import { can, guardPage, openShops } from "@/server/auth/staff";
 import { listPos } from "@/server/inventory/purchasing";
 import { NewPoForm } from "./editor";
 import { PO_TONE } from "./tone";
@@ -57,7 +57,7 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
         <Stat label="Waiting on delivery" value={count("sent") + count("partially_received")} hint={`${count("partially_received")} partly received`} />
         <Stat label="On order" value={formatCents(all.filter((p) => p.status !== "draft").reduce((a, p) => a + p.totalCents, 0))} hint="approved, sent and partly received, at order cost" />
       </div>
-      {can(ctx, "po.create") && <NewPoForm vendors={vendorRows} shops={ctx.shops.filter((s) => shopIds.includes(s.id))} />}
+      {can(ctx, "po.create") && <NewPoForm vendors={vendorRows} shops={openShops(ctx).filter((s) => shopIds.includes(s.id))} />}
       <Card>
         <div className="flex flex-wrap gap-1 border-b border-zinc-100 px-3 py-2">
           {tabs.map((t) => (

@@ -33,6 +33,9 @@ interface ShopInfo {
   barberCount: number;
   bookingEnabled: boolean;
   cancelCutoffMinutes: number;
+  closedNote?: string | null;
+  accentColor?: string | null;
+  logoUrl?: string | null;
 }
 
 type Step = "service" | "barber" | "time" | "details";
@@ -124,6 +127,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
     }
   }
 
+  if (shop.closedNote) return <Closed shop={shop} msg={shop.closedNote} />;
   if (!shop.bookingEnabled) return <Closed shop={shop} msg="Online booking is paused for this shop. Please call us." />;
   if (shop.barberCount === 0) return <Closed shop={shop} msg="This shop is opening soon — no barbers are taking bookings yet." />;
 
@@ -132,11 +136,17 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
       <div className="space-y-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Book at {shop.name}</h1>
-          <p className="text-sm text-zinc-500">
-            {shop.address}, {shop.city}, {shop.state}
-          </p>
+        <div className="flex items-center gap-3 border-l-4 pl-3" style={{ borderColor: shop.accentColor ?? "transparent" }}>
+          {shop.logoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={shop.logoUrl} alt="" className="h-12 w-12 rounded-lg object-cover" />
+          )}
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Book at {shop.name}</h1>
+            <p className="text-sm text-zinc-500">
+              {shop.address}, {shop.city}, {shop.state}
+            </p>
+          </div>
         </div>
 
         <Section n={1} title="Service" done={!!service && step !== "service"} summary={service ? `${service.name}${addons.length ? ` + ${addons.map((a) => a.name).join(", ")}` : ""}` : undefined} onEdit={() => setStep("service")}>

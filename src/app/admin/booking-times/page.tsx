@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { services, shopServices, shops, staffServiceDurations } from "@/db/schema";
 import { Empty, Notice, PageHeader } from "@/components/ui";
@@ -14,7 +14,7 @@ export default async function BookingTimesPage({ searchParams }: { searchParams:
   const ctx = await guardPage("/admin/booking-times");
   const { shop: requested } = await searchParams;
   const shopId = workingShopId(ctx, requested);
-  const [brand, shopRows] = await Promise.all([brandInterval(), db.select({ id: shops.id, name: shops.name, minutes: shops.slotIntervalMinutes }).from(shops).where(inArray(shops.id, ctx.shopIds)).orderBy(asc(shops.name))]);
+  const [brand, shopRows] = await Promise.all([brandInterval(), db.select({ id: shops.id, name: shops.name, minutes: shops.slotIntervalMinutes }).from(shops).where(and(inArray(shops.id, ctx.shopIds), ne(shops.status, "archived"))).orderBy(asc(shops.name))]);
   if (!shopRows.length) return <Empty title="No shops in your access" />;
   const shopById = new Map(shopRows.map((s) => [s.id, s]));
 

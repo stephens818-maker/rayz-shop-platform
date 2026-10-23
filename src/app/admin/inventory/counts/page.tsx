@@ -4,7 +4,7 @@ import { Badge, Card, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
 import { countNumber } from "@/domain/inventory";
 import { formatCents } from "@/lib/money";
 import { formatDateTime } from "@/lib/time";
-import { guardPage } from "@/server/auth/staff";
+import { guardPage, openShops } from "@/server/auth/staff";
 import { listCounts } from "@/server/inventory/counts";
 import { stockLevels } from "@/server/inventory/stock";
 import { StartCountForm } from "./forms";
@@ -29,7 +29,7 @@ export default async function CountsPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader title="Counts" subtitle="Cycle counts and full stocktakes. Posting a count sets on-hand to what was counted and records each difference in the stock ledger." />
-      <StartCountForm shops={ctx.shops.filter((s) => shopIds.includes(s.id))} categories={categories} products={[...products.values()].sort((a, b) => a.name.localeCompare(b.name))} />
+      <StartCountForm shops={openShops(ctx).filter((s) => shopIds.includes(s.id))} categories={categories} products={[...products.values()].sort((a, b) => a.name.localeCompare(b.name))} />
       <Card>
         {rows.length === 0 ? (
           <div className="p-4">

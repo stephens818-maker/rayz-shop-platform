@@ -2,10 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge, Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Table, Td, Th, cx } from "@/components/ui";
 import { OWNER_KIND_LABEL, formatFeeRate } from "@/domain/connect";
-import { guardPage } from "@/server/auth/staff";
+import { SHOP_STATUS_LABEL } from "@/domain/location-lifecycle";
+import { can, guardPage } from "@/server/auth/staff";
 import { SETUP_ORDER, locationSetup, ownerEntityList, setupOverview } from "@/server/location-setup";
 import { refreshAccount } from "@/server/payments/connect";
-import { AccountStateBadge, OwnerEditor, OwnerPicker, PaymentsPanel } from "./panels";
+import { AccountStateBadge, LifecyclePanel, OwnerEditor, OwnerPicker, PaymentsPanel } from "./panels";
+
+const STATUS_TONE = { setup: "amber", live: "green", closed: "blue", archived: "gray" } as const;
 
 export const metadata: Metadata = { title: "Location setup" };
 
@@ -15,19 +18,25 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
   const ctx = await guardPage("/admin/setup");
   const { shop: requested, step, stripe } = await searchParams;
   const shopId = requested && ctx.shopIds.includes(requested) ? requested : null;
-  if (!shopId) return <Overview shopIds={ctx.shopIds} canEditOwners={ctx.brandWide} />;
+  if (!shopId) return <Overview shopIds={ctx.shopIds} canEditOwners={ctx.brandWide} canAdd={can(ctx, "locations.setup")} />;
 
   if (stripe === "return") await refreshAccount(shopId).catch(() => null);
   const [setup, owners] = await Promise.all([locationSetup(shopId), ownerEntityList()]);
   if (!setup) return <Empty title="That shop wasn't found" />;
-  const { shop, owner, account, state, steps, mode, fees } = setup;
-  const done = steps.filter((s) => s.done).length;
+  const { shop, owner, account, state, steps, blockers, mode, fees } = setup;
+  const required = steps.filter((s) => s.required);
+  const done = required.filter((s) => s.done).length;
 
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <PageHeader
-        title={`Set up ${shop.name}`}
-        subtitle={`${done} of ${steps.length} steps done. Each step saves as you go, so you can leave and come back.`}
+        title={
+          <span className="flex flex-wrap items-center gap-2">
+            {shop.status === "setup" ? `Set up ${shop.name}` : shop.name}
+            <Badge tone={STATUS_TONE[shop.status]}>{SHOP_STATUS_LABEL[shop.status]}</Badge>
+          </span>
+        }
+        subtitle={`${done} of ${required.length} required steps done${shop.status === "setup" ? " before go-live" : ""}. Each step saves as you go, so you can leave and come back.`}
         actions={
           <LinkButton variant="ghost" href="/admin/setup">
             All locations
@@ -39,11 +48,17 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
         role="progressbar"
         aria-label="Setup progress"
         aria-valuemin={0}
-        aria-valuemax={steps.length}
+        aria-valuemax={required.length}
         aria-valuenow={done}
       >
-        <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${(done / steps.length) * 100}%` }} />
+        <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${(done / required.length) * 100}%` }} />
       </div>
+      <LifecyclePanel
+        shop={{ id: shop.id, name: shop.name, status: shop.status, closedUntil: shop.closedUntil, closedNote: shop.closedNote }}
+        blockers={blockers.map((k) => steps.find((x) => x.key === k)?.title ?? k)}
+        paymentsReady={state === "enabled"}
+        canManage={can(ctx, "locations.setup")}
+      />
       {stripe === "return" && state === "enabled" && (
         <Notice tone="green">{shop.name} can take cards. Its sales, tips, refunds and payouts now settle in its own Stripe account.</Notice>
       )}
@@ -69,6 +84,7 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <h2 className="text-sm font-semibold text-zinc-900">
                         {s.title}
+                        {!s.required && <span className="ml-2 text-xs font-normal text-zinc-400">Recommended</span>}
                         <span className="sr-only">{s.done ? " (done)" : " (to do)"}</span>
                       </h2>
                       {s.href && (
@@ -114,27 +130,24 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
   );
 }
 
-async function Overview({ shopIds, canEditOwners }: { shopIds: string[]; canEditOwners: boolean }) {
+async function Overview({ shopIds, canEditOwners, canAdd }: { shopIds: string[]; canEditOwners: boolean; canAdd: boolean }) {
   const [rows, owners] = await Promise.all([setupOverview(shopIds), ownerEntityList()]);
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
         title="Location setup"
-        subtitle="Everything a shop needs before opening: details, owner, hours, taxes, menu, team, its own Stripe account for card payments and payouts, and online booking."
-        actions={
-          <LinkButton variant="secondary" href="/admin/settings#new-shop">
-            Add a location
-          </LinkButton>
-        }
+        subtitle="Every location and its go-live checklist: details, owner, hours, taxes, menu, team, its own Stripe account for card payments and payouts, and online booking."
+        actions={canAdd && <LinkButton href="/admin/setup/new">Add a location</LinkButton>}
       />
       {rows.length === 0 ? (
-        <Empty title="No locations yet">Add the first shop in Shop settings, and setup starts here.</Empty>
+        <Empty title="No locations yet">Add the first one with Add a location.</Empty>
       ) : (
         <Card>
           <Table>
             <thead>
               <tr>
                 <Th>Location</Th>
+                <Th>Status</Th>
                 <Th>Owner</Th>
                 <Th>Card payments</Th>
                 <Th>Stripe account</Th>
@@ -148,6 +161,9 @@ async function Overview({ shopIds, canEditOwners }: { shopIds: string[]; canEdit
               {rows.map((r) => (
                 <tr key={r.id} className="hover:bg-zinc-50">
                   <Td className="font-medium text-zinc-900">{r.name}</Td>
+                  <Td>
+                    <Badge tone={STATUS_TONE[r.status]}>{SHOP_STATUS_LABEL[r.status]}</Badge>
+                  </Td>
                   <Td>{r.ownerName ? `${r.ownerName}${r.ownerKind === "franchisee" ? " (franchisee)" : ""}` : <span className="text-zinc-400">Not set</span>}</Td>
                   <Td>
                     <AccountStateBadge state={r.state} />
@@ -158,7 +174,7 @@ async function Overview({ shopIds, canEditOwners }: { shopIds: string[]; canEdit
                   </Td>
                   <Td right>
                     <Link href={`/admin/setup?shop=${r.id}`} className="font-medium text-brand-700 hover:underline">
-                      {r.done === r.total ? "Review" : "Continue"}
+                      {r.status === "archived" ? "View" : r.done === r.total ? "Review" : "Continue"}
                       <span className="sr-only"> setting up {r.name}</span>
                     </Link>
                   </Td>

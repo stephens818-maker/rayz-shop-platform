@@ -270,7 +270,7 @@ export async function freeBarberFor(
   const others = await db
     .select({ id: shops.id })
     .from(shops)
-    .where(and(eq(shops.active, true), ne(shops.id, a.shopId), o.shopIds.length ? inArray(shops.id, [...o.shopIds]) : sql`false`))
+    .where(and(eq(shops.status, "live"), ne(shops.id, a.shopId), o.shopIds.length ? inArray(shops.id, [...o.shopIds]) : sql`false`))
     .orderBy(asc(shops.name));
   for (const s of others) {
     const r = await tryShop(s.id);

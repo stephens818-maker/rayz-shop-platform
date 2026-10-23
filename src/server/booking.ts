@@ -27,6 +27,7 @@ import {
   squeezeCheck,
   totalDuration,
 } from "@/domain/availability";
+import { closedOn, takesOnlineBookings } from "@/domain/location-lifecycle";
 import { trailingBuffer } from "@/domain/timing";
 import { appointmentCode } from "@/lib/ids";
 import { normalizePhone } from "@/lib/phone";
@@ -142,7 +143,8 @@ export async function getAvailability(q: AvailabilityQuery) {
   const now = q.now ?? new Date();
   const today = todayLocal(now);
   const tooFar = !q.staffOverride && q.date > addDays(today, r.shop.bookingWindowDays);
-  if (!r.shop.bookingEnabled && !q.staffOverride) return { ...summary(r), slots: [], reason: "Online booking is turned off for this shop" };
+  if (closedOn(r.shop, q.date)) return { ...summary(r), slots: [], reason: r.shop.status === "archived" ? "This location has closed" : "The shop is closed then" };
+  if (!q.staffOverride && !takesOnlineBookings(r.shop, today)) return { ...summary(r), slots: [], reason: "Online booking is turned off for this shop" };
   if (r.barbers.length === 0) return { ...summary(r), slots: [], reason: "No barbers are taking bookings at this shop yet" };
   if (q.date < today || tooFar) return { ...summary(r), slots: [], reason: "Date is outside the booking window" };
   const input = await loadDayInput(r.shop, q.date, {
@@ -240,8 +242,9 @@ export async function createAppointment(input: CreateAppointmentInput) {
   if (Number.isNaN(start.getTime())) throw new AppError("bad_request", "startsAt must be an ISO timestamp");
   const now = input.now ?? new Date();
   const date = localDateOf(start);
+  if (closedOn(r.shop, date)) throw new AppError("conflict", r.shop.status === "archived" ? "This location has closed" : "The shop is closed then");
   if (!staffOverride) {
-    if (!r.shop.bookingEnabled) throw new AppError("forbidden", "Online booking is turned off for this shop");
+    if (!takesOnlineBookings(r.shop, todayLocal(now))) throw new AppError("forbidden", "Online booking is turned off for this shop");
     if (date > addDays(todayLocal(now), r.shop.bookingWindowDays)) throw new AppError("bad_request", "That date is too far out");
   }
   if (r.barbers.length === 0) throw new AppError("slot_unavailable", "No barbers are taking bookings at this shop yet");
@@ -505,6 +508,7 @@ export async function rescheduleAppointment(
   if (Number.isNaN(start.getTime())) throw new AppError("bad_request", "startsAt must be an ISO timestamp");
   const end = new Date(start.getTime() + durationMin * 60_000);
   const date = localDateOf(start);
+  if (closedOn(shop, date)) throw new AppError("conflict", shop.status === "archived" ? "This location has closed" : "The shop is closed then");
   const t = start.getTime();
   // The appointment keeps the times it was booked with; only where it may start follows the target barber's grid today.
   const mainServiceId = items.find((i) => i.kind === "service")?.serviceId;
@@ -615,6 +619,7 @@ export async function quickWalkIn(input: {
   const now = input.now ?? new Date();
   const start = new Date(Math.ceil(now.getTime() / 60_000) * 60_000);
   const shop = await getShop(input.shopId);
+  if (closedOn(shop, localDateOf(now))) throw new AppError("conflict", shop.status === "archived" ? "This location has closed" : "The shop is closed today");
   const [service] = await servicesByIds(shop.id, [input.serviceId]);
   const barbers = await shopBarbers(shop.id);
   const candidates = input.preferredStaffId ? barbers.filter((b) => b.id === input.preferredStaffId) : barbers;

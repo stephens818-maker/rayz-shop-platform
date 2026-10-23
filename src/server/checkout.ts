@@ -15,10 +15,12 @@ import {
   saleItems,
   sales,
   shopProducts,
+  shops,
   staff,
   staffShops,
   Shop,
 } from "@/db/schema";
+import { operational } from "@/domain/location-lifecycle";
 import {
   CardFeeConfig,
   CardFunding,
@@ -68,6 +70,7 @@ export async function openSaleForAppointment(appointmentId: string, actor: Actor
   });
   if (existing) return existing;
   if (["cancelled", "no_show"].includes(appt.status)) throw new AppError("conflict", `Appointment is ${appt.status}`);
+  await assertOpenForSales(appt.shopId);
   const [sale] = await db
     .insert(sales)
     .values({
@@ -96,7 +99,14 @@ export async function openSaleForAppointment(appointmentId: string, actor: Actor
   return sale;
 }
 
+async function assertOpenForSales(shopId: string) {
+  const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { status: true } });
+  if (!shop) throw notFound("Shop");
+  if (!operational(shop)) throw new AppError("conflict", "This location is archived, so it can't take new tickets");
+}
+
 export async function openBlankSale(shopId: string, actor: Actor, staffId: string | null = null) {
+  await assertOpenForSales(shopId);
   const [sale] = await db
     .insert(sales)
     .values({ shopId, staffId, businessDate: todayLocal(), createdBy: actor.staffId ?? null })

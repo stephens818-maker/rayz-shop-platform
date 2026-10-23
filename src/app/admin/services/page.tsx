@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { asc } from "drizzle-orm";
+import { asc, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { services, shopServices, shops } from "@/db/schema";
 import { Card, CardHeader, PageHeader, Table, Td, Th } from "@/components/ui";
@@ -14,7 +14,7 @@ export default async function ServicesPage() {
   const [master, overrides, shopRows] = await Promise.all([
     db.select().from(services).orderBy(asc(services.kind), asc(services.sortOrder), asc(services.name)),
     db.select().from(shopServices),
-    db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name)),
+    db.select({ id: shops.id, name: shops.name }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name)),
   ]);
   const visibleShops = shopRows.filter((s) => ctx.shopIds.includes(s.id));
   const shopId = ctx.currentShopId;

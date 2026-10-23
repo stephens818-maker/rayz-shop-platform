@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { brandSettings, products, shopProducts, shops } from "@/db/schema";
 import { Card, CardHeader, Notice, PageHeader, Table, Th } from "@/components/ui";
@@ -15,7 +15,7 @@ export default async function InventorySettingsPage() {
     db
       .select({ id: shops.id, name: shops.name, email: shops.email, negativeStock: shops.negativeStock, inventoryAlertEmail: shops.inventoryAlertEmail })
       .from(shops)
-      .where(inArray(shops.id, shopIds))
+      .where(and(inArray(shops.id, shopIds), ne(shops.status, "archived")))
       .orderBy(asc(shops.name)),
     db.select({ t: brandSettings.poApprovalThresholdCents }).from(brandSettings).limit(1),
     ctx.brandWide

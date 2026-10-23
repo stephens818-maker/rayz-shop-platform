@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { asc, inArray } from "drizzle-orm";
+import { and, asc, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, staffShops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, PageHeader, Table, Td, Th, cx } from "@/components/ui";
@@ -35,7 +35,7 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
   const [requests, off, shopRows, rules] = await Promise.all([
     listRequests({ shopIds, brandWide: false }, { viewer: reasonViewer(ctx), since: new Date(now.getTime() - 14 * 86_400_000) }),
     timeOffEntries(shopIds, from, to, reasonViewer(ctx)),
-    db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, ctx.shopIds)).orderBy(asc(shops.name)),
+    db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, ctx.shopIds), ne(shops.status, "archived"))).orderBy(asc(shops.name)),
     can(ctx, "settings.shop") ? rulesView(ctx.shopIds) : Promise.resolve(null),
   ]);
   const open = requests.filter((r) => r.status === "pending" || (r.status === "approved" && new Date(r.endsAt) > now));

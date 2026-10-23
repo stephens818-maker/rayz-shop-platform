@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { roles, shops, staff, staffAccessShops, staffShops } from "@/db/schema";
+import { roles, shops, staff, staffAccessShops, staffShops, type ShopStatus } from "@/db/schema";
 import {
   Access,
   BRAND_ONLY,
@@ -25,7 +25,8 @@ export interface StaffAccess extends Access {
   scope: ShopScope;
   /** Shops this person may see and act on. */
   shopIds: string[];
-  shops: { id: string; name: string; slug: string; address: string | null; city: string | null }[];
+  /** Archived shops stay in here, so reports and permissions still cover their history; operational lists use openShops. */
+  shops: { id: string; name: string; slug: string; address: string | null; city: string | null; status: ShopStatus }[];
   /** What they may do at each of their shops, under that shop's role. */
   byShop: Map<string, Access & { role: Role }>;
   /** Their role at a shop where it isn't their main role. */
@@ -46,7 +47,7 @@ export async function loadStaffAccess(staffId: string, tx: DBorTx = db): Promise
 export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DBorTx = db): Promise<StaffAccess> {
   const scope: ShopScope = role.key === OWNER_ROLE_KEY ? "all" : s.shopScope;
   const overrides = cleanOverrides(s.permissionOverrides);
-  const cols = { id: shops.id, name: shops.name, slug: shops.slug, address: shops.address, city: shops.city };
+  const cols = { id: shops.id, name: shops.name, slug: shops.slug, address: shops.address, city: shops.city, status: shops.status };
   const shopRows: (StaffAccess["shops"][number] & { roleId: string | null })[] =
     scope === "all"
       ? (await tx.select(cols).from(shops).orderBy(asc(shops.name))).map((r) => ({ ...r, roleId: null }))

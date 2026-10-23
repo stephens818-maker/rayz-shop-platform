@@ -11,8 +11,8 @@ export interface LocationProps {
   allLabel: string;
 }
 
-export const locationProps = (ctx: { shops: { id: string; name: string }[]; brandWide: boolean }, locations: ReportLocations): LocationProps => ({
-  shops: ctx.shops,
+export const locationProps = (ctx: { shops: { id: string; name: string; status?: string }[]; brandWide: boolean }, locations: ReportLocations): LocationProps => ({
+  shops: ctx.shops.map((s) => ({ id: s.id, name: s.status === "archived" ? `${s.name} (archived)` : s.name })),
   locations,
   allLabel: ctx.brandWide ? "All shops" : "All my shops",
 });

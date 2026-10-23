@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { roles } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatDateTime } from "@/lib/time";
-import { guardPage, staffGrantor } from "@/server/auth/staff";
+import { guardPage, openShops, staffGrantor } from "@/server/auth/staff";
 import { listShopLogins, shopLoginRoles } from "@/server/shop-logins";
 import { LoginActions, NewShopLoginForm } from "./forms";
 
@@ -12,7 +12,7 @@ export const metadata: Metadata = { title: "Shop logins" };
 
 export default async function ShopLoginsPage() {
   const ctx = await guardPage("/admin/shop-logins");
-  const shopList = ctx.currentShopId ? ctx.shops.filter((s) => s.id === ctx.currentShopId) : ctx.shops;
+  const shopList = ctx.currentShopId ? openShops(ctx).filter((s) => s.id === ctx.currentShopId) : openShops(ctx);
   const [logins, roleRows] = await Promise.all([listShopLogins(shopList.map((s) => s.id)), db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name))]);
   const choices = shopLoginRoles(staffGrantor(ctx), roleRows).map((r) => ({ id: r.id, name: r.name, key: r.key }));
 

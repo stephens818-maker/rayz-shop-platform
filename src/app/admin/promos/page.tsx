@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { and, asc, desc, eq, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, giftCardLedger, giftCards, promoCodes, sales, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
@@ -28,7 +28,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
       .from(promoCodes)
       .where(ctx.brandWide ? undefined : or(isNull(promoCodes.shopId), inShops(ctx, promoCodes.shopId)))
       .orderBy(desc(promoCodes.active), desc(promoCodes.createdAt)),
-    db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name)),
+    db.select({ id: shops.id, name: shops.name }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name)),
     db
       .select({ g: giftCards, shop: shops.name, first: customers.firstName, last: customers.lastName })
       .from(giftCards)

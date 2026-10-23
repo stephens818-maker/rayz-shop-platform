@@ -142,7 +142,7 @@ export default async function CustomerPage({
   ]);
   const canSeeSale = (shopId: string) => hasShop(ctx, shopId);
   const homeShopName = homeShop?.name ?? null;
-  const shopRows = await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name));
+  const shopRows = (await db.select({ id: shops.id, name: shops.name, status: shops.status }).from(shops).orderBy(asc(shops.name))).filter((s) => s.status !== "archived" || s.id === c.homeShopId);
   const editorShops = scoped ? shopRows.filter((s) => hasShop(ctx, s.id) || s.id === c.homeShopId) : shopRows;
   const stored = { phone: c.phone, email: c.email, address: c.address, birthday: c.birthday, notes: c.notes };
   const fields: ShownField[] = [

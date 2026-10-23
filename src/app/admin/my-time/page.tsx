@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { and, eq, gt, inArray, lte } from "drizzle-orm";
+import { and, eq, gt, inArray, lte, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, timeBlocks } from "@/db/schema";
 import { Empty, PageHeader } from "@/components/ui";
@@ -25,7 +25,7 @@ export default async function MyTimePage() {
     myBlocks(me, now),
     canRequest ? listRequests({ staffId: me }, { viewer: reasonViewer(ctx), since: new Date(now.getTime() - 30 * 86_400_000), limit: 50 }) : Promise.resolve([]),
     rulesFor(me, null),
-    db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, mine)),
+    db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, mine), ne(shops.status, "archived"))),
     db.query.timeBlocks.findFirst({ where: and(eq(timeBlocks.staffId, me), lte(timeBlocks.startsAt, now), gt(timeBlocks.endsAt, now)) }),
     pickerReasons("blocks"),
     pickerReasons("time_off"),

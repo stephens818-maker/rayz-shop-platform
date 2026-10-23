@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { importRuns, staff } from "@/db/schema";
 import { Card, CardHeader, PageHeader, Table, Td, Th, buttonClass } from "@/components/ui";
 import { formatDateTime } from "@/lib/time";
-import { can, guardPage } from "@/server/auth/staff";
+import { can, guardPage, openShops } from "@/server/auth/staff";
 import { CatalogUploader } from "./uploader";
 
 export const metadata: Metadata = { title: "Bulk upload" };
@@ -44,7 +44,7 @@ export default async function CatalogPage() {
           </div>
         }
       />
-      <CatalogUploader mode={mode} shops={ctx.shops.map((s) => ({ id: s.id, name: s.name }))} canPushAll={mode === "stock" || ctx.brandWide} />
+      <CatalogUploader mode={mode} shops={openShops(ctx).map((s) => ({ id: s.id, name: s.name }))} canPushAll={mode === "stock" || ctx.brandWide} />
 
       <Card className="mt-6">
         <CardHeader title="Recent uploads" subtitle={ctx.brandWide ? "Everyone's uploads" : "Your uploads"} />

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { asc, inArray } from "drizzle-orm";
+import { and, asc, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops } from "@/db/schema";
 import { ReasonTag } from "@/components/reason-picker";
@@ -24,7 +24,7 @@ export default async function CallInsPage() {
     listCallIns(ctx.shopIds, { since: new Date(now.getTime() - 14 * 86_400_000), viewer: reasonViewer(ctx) }),
     barbersAt(ctx.shopIds),
     pickerReasons("time_off"),
-    db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, ctx.shopIds)).orderBy(asc(shops.name)),
+    db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, ctx.shopIds), ne(shops.status, "archived"))).orderBy(asc(shops.name)),
     loadOutreachRules(),
   ]);
   const markable = barbers.filter((b) => b.active && (markOthers || (markOwn && b.id === ctx.staff.id)));

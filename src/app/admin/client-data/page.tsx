@@ -47,7 +47,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
   await guardPage("/admin/client-data");
   const [roleRows, shopRows, fieldRows, ruleRows, people, limits] = await Promise.all([
     db.select({ id: roles.id, name: roles.name, key: roles.key }).from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)),
-    db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name)),
+    db.select({ id: shops.id, name: shops.name }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name)),
     db.select().from(clientFields).orderBy(asc(clientFields.sortOrder), asc(clientFields.label)),
     db.select().from(clientFieldRules),
     db

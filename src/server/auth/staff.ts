@@ -28,7 +28,7 @@ export interface StaffContext {
   /** Row-level scope: shops this user may read and write right now. */
   shopIds: string[];
   shops: StaffAccess["shops"];
-  /** Every shop they're assigned to: what the shop switcher offers. */
+  /** Every shop they're assigned to that isn't archived: what the shop switcher offers. */
   assignedShops: StaffAccess["shops"];
   /** Whether they may work across all their shops at once; not when their role differs between them. */
   combinedView: boolean;
@@ -85,11 +85,12 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   const assigned = await accessFor(me, row.r);
   const combinedView = assigned.uniform && assigned.shopIds.length > 1;
   const pref = jar.get(SHOP_COOKIE)?.value;
+  const open = assigned.shops.filter((s) => s.status !== "archived");
   let currentShopId: string | null;
   if (pref === "all" && combinedView) currentShopId = null;
-  else if (pref && assigned.shopIds.includes(pref)) currentShopId = pref;
+  else if (pref && open.some((s) => s.id === pref)) currentShopId = pref;
   // The brand login starts over every shop; everyone else starts in their first shop.
-  else currentShopId = assigned.scope === "all" && combinedView ? null : (assigned.shopIds[0] ?? null);
+  else currentShopId = assigned.scope === "all" && combinedView ? null : (open[0]?.id ?? assigned.shopIds[0] ?? null);
   // A different role at each shop: the tenant is the shop they're in, under that shop's role.
   const access = assigned.uniform || !currentShopId ? assigned : atShop(assigned, currentShopId);
   const role = (currentShopId && assigned.byShop.get(currentShopId)?.role) || row.r;
@@ -100,7 +101,7 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
     access,
     shopIds: access.shopIds,
     shops: access.shops,
-    assignedShops: assigned.shops,
+    assignedShops: open,
     combinedView,
     currentShopId,
     scope: access.scope,
@@ -112,6 +113,9 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
 });
 
 export const can = (ctx: Pick<StaffContext, "permissions">, p: Permission) => ctx.permissions.has(p);
+
+/** Their shops that are still open for business (not archived), for pickers and day-to-day lists. Reports use all of ctx.shops. */
+export const openShops = (ctx: Pick<StaffContext, "shops">) => ctx.shops.filter((s) => s.status !== "archived");
 export const canAny = (ctx: Pick<StaffContext, "permissions">, ps: readonly Permission[]) => ps.some((p) => ctx.permissions.has(p));
 
 /** Any signed-in staff member. Pages redirect to sign-in; nothing here checks a permission. */

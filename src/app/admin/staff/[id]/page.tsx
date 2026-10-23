@@ -25,8 +25,8 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
   if (!isNew && id !== ctx.staff.id && !(await inTenant(ctx, "staff", id))) notFound();
   const person = isNew ? null : await db.query.staff.findFirst({ where: eq(staff.id, id) });
   if (!isNew && !person) notFound();
-  const shopRows = await db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name));
-  const editableShops = ctx.brandWide ? shopRows : shopRows.filter((s) => hasShop(ctx, s.id));
+  const shopRows = await db.select({ id: shops.id, name: shops.name, status: shops.status }).from(shops).orderBy(asc(shops.name));
+  const editableShops = (ctx.brandWide ? shopRows : shopRows.filter((s) => hasShop(ctx, s.id))).filter((s) => s.status !== "archived");
   const allShops = ctx.brandWide ? shopRows : shopRows.map((s) => (hasShop(ctx, s.id) ? s : { ...s, name: OTHER_SHOP }));
   const mine = <T extends { shopId: string | null }>(rows: T[]) => (ctx.brandWide ? rows : rows.filter((r) => !r.shopId || hasShop(ctx, r.shopId)));
   const [links, scheds, hours, blocks] = person

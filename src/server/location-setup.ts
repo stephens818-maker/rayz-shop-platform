@@ -1,10 +1,11 @@
-import { and, asc, count, eq, inArray } from "drizzle-orm";
+import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { ownerEntities, shopHours, shopPaymentAccounts, shopServices, shops, staffSchedules } from "@/db/schema";
+import { ownerEntities, shopHours, shopPaymentAccounts, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
 import { AccountState, accountState, canCharge } from "@/domain/connect";
+import { REQUIRED_FOR_LIVE, SUPPORTED_TIMEZONE, US_TIMEZONES, goLiveBlockers, slugProblem } from "@/domain/location-lifecycle";
 import { connectMode, feeSchedule } from "./payments/connect";
 
-export type SetupStepKey = "details" | "owner" | "hours" | "taxes" | "menu" | "team" | "payments" | "booking";
+export type SetupStepKey = "details" | "timezone" | "slug" | "owner" | "hours" | "taxes" | "menu" | "team" | "payments" | "booking" | "line" | "readers" | "login" | "retail";
 
 export interface SetupStep {
   key: SetupStepKey;
@@ -13,15 +14,17 @@ export interface SetupStep {
   detail: string;
   /** Where to do it, when it's done somewhere else. */
   href?: string;
+  /** Has to be done before the location can go live. */
+  required: boolean;
 }
 
-export const SETUP_ORDER: SetupStepKey[] = ["details", "owner", "hours", "taxes", "menu", "team", "payments", "booking"];
+export const SETUP_ORDER: SetupStepKey[] = ["details", "timezone", "slug", "owner", "hours", "taxes", "menu", "team", "payments", "booking", "line", "readers", "login", "retail"];
 
 /** Every step of opening a location, worked out from what's already saved, plus its payment account and owner. */
 export async function locationSetup(shopId: string) {
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
   if (!shop) return null;
-  const [account, owner, [hours], [menu], scheduled] = await Promise.all([
+  const [account, owner, [hours], [menu], scheduled, [readers], [logins], [retail], surnames] = await Promise.all([
     db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.shopId, shopId) }),
     shop.ownerEntityId ? db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, shop.ownerEntityId) }) : Promise.resolve(undefined),
     db.select({ n: count() }).from(shopHours).where(eq(shopHours.shopId, shopId)),
@@ -30,16 +33,49 @@ export async function locationSetup(shopId: string) {
       .from(shopServices)
       .where(and(eq(shopServices.shopId, shopId), eq(shopServices.enabled, true))),
     db.selectDistinct({ id: staffSchedules.staffId }).from(staffSchedules).where(eq(staffSchedules.shopId, shopId)),
+    db
+      .select({ n: count() })
+      .from(terminalReaders)
+      .where(and(eq(terminalReaders.shopId, shopId), eq(terminalReaders.active, true))),
+    db
+      .select({ n: count() })
+      .from(staff)
+      .innerJoin(staffAccessShops, eq(staffAccessShops.staffId, staff.id))
+      .where(and(eq(staff.kind, "shop"), eq(staff.active, true), eq(staffAccessShops.shopId, shopId))),
+    db
+      .select({ n: count() })
+      .from(shopProducts)
+      .where(and(eq(shopProducts.shopId, shopId), eq(shopProducts.active, true))),
+    db.select({ n: staff.lastName }).from(staff).where(sql`${staff.lastName} is not null`),
   ]);
+  const slugIssue = slugProblem(shop.slug, surnames.map((r) => r.n));
+  const zone = US_TIMEZONES.find((z) => z.id === shop.timezone)?.label ?? shop.timezone;
   const barbers = scheduled.length;
   const state: AccountState = accountState(account);
   const settings = `/admin/settings?shop=${shopId}`;
-  const steps: SetupStep[] = [
+  const steps: SetupStep[] = ([
     {
       key: "details",
       title: "Address and phone",
       done: !!(shop.address && shop.city && shop.zip && shop.phone),
       detail: shop.address ? `${shop.address}, ${shop.city} ${shop.state} ${shop.zip}${shop.phone ? "" : " · no phone yet"}` : "Add the street address and phone clients will see.",
+      href: settings,
+    },
+    {
+      key: "timezone",
+      title: "Time zone",
+      done: shop.timezone === SUPPORTED_TIMEZONE,
+      detail:
+        shop.timezone === SUPPORTED_TIMEZONE
+          ? "Central time, like every Ray'z shop."
+          : `${zone} time isn't supported yet: every shop's calendar, reminders and reports run on Central time. Change it to Central, or ask for multi-time-zone support first.`,
+      href: settings,
+    },
+    {
+      key: "slug",
+      title: "Booking link",
+      done: !slugIssue,
+      detail: slugIssue ?? `/book/${shop.slug}`,
       href: settings,
     },
     {
@@ -89,18 +125,44 @@ export async function locationSetup(shopId: string) {
       key: "booking",
       title: "Online booking",
       done: shop.bookingEnabled,
-      detail: shop.bookingEnabled ? "Clients can book online." : "Turn on online booking when the shop is ready.",
+      detail: shop.bookingEnabled
+        ? shop.status === "live"
+          ? "Clients can book online."
+          : "Online booking opens the moment the location goes live."
+        : "Online booking is off: clients will have to call.",
       href: settings,
     },
-  ];
-  return { shop, owner: owner ?? null, account: account ?? null, state, steps, mode: connectMode(), fees: feeSchedule() };
+    {
+      key: "line",
+      title: "Shop line (Twilio)",
+      done: !!shop.twilioNumber,
+      detail: shop.twilioNumber ? `Texts and calls go out from ${shop.twilioNumber}.` : "Without its own number, texts go out from the brand's number and client replies don't reach this shop's inbox.",
+      href: settings,
+    },
+    {
+      key: "readers",
+      title: "Card readers",
+      done: readers.n > 0,
+      detail: readers.n ? `${readers.n} Stripe Terminal reader${readers.n === 1 ? "" : "s"}` : "No card reader yet: cards can still be keyed in at checkout.",
+      href: settings,
+    },
+    { key: "login", title: "Front desk login", done: logins.n > 0, detail: logins.n ? `${logins.n} shop login${logins.n === 1 ? "" : "s"}` : "Add a shared login for the front desk.", href: "/admin/shop-logins" },
+    {
+      key: "retail",
+      title: "Retail products",
+      done: retail.n > 0,
+      detail: retail.n ? `${retail.n} products stocked, with reorder points and par levels` : "No retail products yet.",
+      href: `/admin/inventory/settings?shop=${shopId}`,
+    },
+  ] as Omit<SetupStep, "required">[]).map((x) => ({ ...x, required: (REQUIRED_FOR_LIVE as readonly string[]).includes(x.key) }));
+  return { shop, owner: owner ?? null, account: account ?? null, state, steps, blockers: goLiveBlockers(steps), mode: connectMode(), fees: feeSchedule() };
 }
 
 /** One line per shop for the setup overview. */
 export async function setupOverview(shopIds: string[]) {
   if (!shopIds.length) return [];
   const rows = await db
-    .select({ id: shops.id, name: shops.name, ownerName: ownerEntities.name, ownerKind: ownerEntities.kind, account: shopPaymentAccounts })
+    .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, ownerName: ownerEntities.name, ownerKind: ownerEntities.kind, account: shopPaymentAccounts })
     .from(shops)
     .leftJoin(ownerEntities, eq(ownerEntities.id, shops.ownerEntityId))
     .leftJoin(shopPaymentAccounts, eq(shopPaymentAccounts.shopId, shops.id))
@@ -112,12 +174,15 @@ export async function setupOverview(shopIds: string[]) {
     return {
       id: r.id,
       name: r.name,
+      status: r.status,
+      closedUntil: r.closedUntil,
+      blockers: details[i]!.blockers.length,
       ownerName: r.ownerName,
       ownerKind: r.ownerKind,
       stripeAccountId: r.account?.stripeAccountId ?? null,
       state: accountState(r.account),
-      done: steps.filter((s) => s.done).length,
-      total: steps.length,
+      done: steps.filter((s) => s.done && s.required).length,
+      total: steps.filter((s) => s.required).length,
     };
   });
 }

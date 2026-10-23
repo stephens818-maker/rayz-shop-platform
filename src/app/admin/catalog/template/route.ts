@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import { BASE_COLUMNS, shopColumn, templateHeaders } from "@/domain/catalog-import";
-import { routeStaff } from "@/server/auth/staff";
+import { openShops, routeStaff } from "@/server/auth/staff";
 import { toCsv } from "@/server/reports";
 
 /** A blank upload sheet with the caller's shops as per-shop columns and two example rows. */
@@ -8,9 +8,10 @@ export async function GET(req: Request) {
   const ctx = await routeStaff(["catalog.manage", "inventory.manage"]);
   if (ctx instanceof Response) return ctx;
   const format = new URL(req.url).searchParams.get("format") === "xlsx" ? "xlsx" : "csv";
-  const headers = templateHeaders(ctx.shops);
+  const shops = openShops(ctx);
+  const headers = templateHeaders(shops);
   const example = (cols: Record<string, string>) => headers.map((h) => cols[h] ?? "");
-  const first = ctx.shops[0];
+  const first = shops[0];
   const rows = [
     example({
       type: "product",
@@ -44,7 +45,7 @@ export async function GET(req: Request) {
   const help = wb.addWorksheet("Instructions");
   help.addRow(["Column", "What to put in it"]).font = { bold: true };
   for (const c of BASE_COLUMNS) help.addRow([c.key, c.hint]);
-  for (const s of ctx.shops) {
+  for (const s of shops) {
     help.addRow([shopColumn("price", s), `Optional. ${s.name}'s own price; blank keeps the brand price.`]);
     help.addRow([shopColumn("stock", s), `Optional. Products: stock on hand at ${s.name}.`]);
   }

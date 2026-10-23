@@ -6,6 +6,10 @@ import { Badge, Button, Card, CardHeader, Field, Input, Select, cx } from "@/com
 import { useAction } from "@/components/use-action";
 import { ACCOUNT_STATE_LABEL, AccountState, OWNER_KIND_LABEL, requirementLabel } from "@/domain/connect";
 import {
+  archiveLocationAction,
+  closeLocationAction,
+  goLiveAction,
+  reopenLocationAction,
   completeSimulatedOnboardingAction,
   expressDashboardAction,
   refreshPaymentsAccountAction,
@@ -260,5 +264,120 @@ export function OwnerEditor({
         <Problem error={error} />
       </div>
     </div>
+  );
+}
+
+export function LifecyclePanel({
+  shop,
+  blockers,
+  paymentsReady,
+  canManage,
+}: {
+  shop: { id: string; name: string; status: "setup" | "live" | "closed" | "archived"; closedUntil: string | null; closedNote: string | null };
+  blockers: string[];
+  paymentsReady: boolean;
+  canManage: boolean;
+}) {
+  const { pending, error, run } = useAction();
+  const [cashOnly, setCashOnly] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [until, setUntil] = useState("");
+  const [note, setNote] = useState("");
+  const [archiving, setArchiving] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [archived, setArchived] = useState<string | null>(null);
+  const waiting = blockers.filter((b) => !(cashOnly && b === "Card payments and payouts"));
+  if (!canManage) return null;
+  return (
+    <Card>
+      <CardHeader
+        title="Open, close or retire"
+        subtitle={
+          shop.status === "setup"
+            ? "Hidden from the website, the app and online booking. Staff can practice-book and ring up test tickets."
+            : shop.status === "live"
+              ? "Open to clients."
+              : shop.status === "closed"
+                ? `Temporarily closed${shop.closedUntil ? ` through ${shop.closedUntil}` : ""}. Clients see it with your note and can't book.`
+                : "Archived. Its history stays in every report."
+        }
+      />
+      <div className="space-y-3 px-4 pb-4">
+        {shop.status === "setup" && (
+          <>
+            {waiting.length > 0 && <p className="text-sm text-amber-700">Still to do before go-live: {waiting.join(", ")}.</p>}
+            {!paymentsReady && (
+              <label className="flex items-center gap-2 text-sm text-zinc-700">
+                <input type="checkbox" checked={cashOnly} onChange={(e) => setCashOnly(e.target.checked)} /> Open cash-only for now (cards start once Stripe approves the shop)
+              </label>
+            )}
+            <Button disabled={pending || waiting.length > 0} onClick={() => run(() => goLiveAction(shop.id, cashOnly))}>
+              Go live
+            </Button>
+          </>
+        )}
+        {shop.status === "closed" && (
+          <Button disabled={pending} onClick={() => run(() => reopenLocationAction(shop.id))}>
+            Reopen now
+          </Button>
+        )}
+        {shop.status === "live" &&
+          (closing ? (
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="Closed through (blank = until reopened)">
+                <Input type="date" value={until} onChange={(e) => setUntil(e.target.value)} />
+              </Field>
+              <Field label="What clients are told" className="min-w-64 flex-1">
+                <Input value={note} placeholder="Closed for remodeling. See you soon!" onChange={(e) => setNote(e.target.value)} />
+              </Field>
+              <Button disabled={pending} onClick={() => run(() => closeLocationAction(shop.id, until || null, note || null), () => setClosing(false))}>
+                Close temporarily
+              </Button>
+              <Button variant="ghost" onClick={() => setClosing(false)}>
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button variant="secondary" onClick={() => setClosing(true)}>
+              Close temporarily…
+            </Button>
+          ))}
+        {shop.status !== "archived" &&
+          (archiving ? (
+            <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-3">
+              <p className="text-sm text-red-800">
+                Archiving removes {shop.name} from booking, the calendar and every picker, disables its shop logins at once, removes its barbers&apos; hours there and cancels
+                messages not yet sent. Its sales, appointments, payroll and stock history stay in reports. Upcoming appointments have to be moved first.
+              </p>
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label={`Type ${shop.name} to confirm`}>
+                  <Input value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+                </Field>
+                <Button
+                  variant="danger"
+                  disabled={pending || confirm.trim().toLowerCase() !== shop.name.toLowerCase()}
+                  onClick={() =>
+                    run(
+                      () => archiveLocationAction(shop.id, confirm),
+                      (r) => setArchived(`${r.loginsDisabled} login${r.loginsDisabled === 1 ? "" : "s"} disabled, ${r.schedulesRemoved} schedule rows removed, ${r.messagesCancelled} messages cancelled.`),
+                    )
+                  }
+                >
+                  Archive {shop.name}
+                </Button>
+                <Button variant="ghost" onClick={() => setArchiving(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button variant="ghost" className="text-red-700" onClick={() => setArchiving(true)}>
+              Archive this location…
+            </Button>
+          ))}
+        {archived && <p className="text-sm text-emerald-700">Archived. {archived}</p>}
+        <Problem error={error} />
+      </div>
+    </Card>
   );
 }

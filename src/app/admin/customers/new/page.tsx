@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { PageHeader } from "@/components/ui";
 import { customFieldKey } from "@/domain/client-privacy";
-import { guardPage } from "@/server/auth/staff";
+import { guardPage, openShops } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { inShops } from "@/server/tenant";
 import { NewClientForm } from "./form";
@@ -25,7 +25,7 @@ export default async function NewClientPage() {
   return (
     <div className="mx-auto max-w-xl">
       <PageHeader title="New client" subtitle="If someone with this phone or email and a matching first name is already on file, you'll be taken to them instead." />
-      <NewClientForm shops={ctx.shops.map((s) => ({ id: s.id, name: s.name }))} barbers={barbers} defaultShopId={ctx.currentShopId} fields={fields} />
+      <NewClientForm shops={openShops(ctx).map((s) => ({ id: s.id, name: s.name }))} barbers={barbers} defaultShopId={ctx.currentShopId} fields={fields} />
     </div>
   );
 }

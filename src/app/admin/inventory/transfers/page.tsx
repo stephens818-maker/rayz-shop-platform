@@ -6,7 +6,7 @@ import { shops } from "@/db/schema";
 import { Badge, Card, Empty, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { transferNumber } from "@/domain/inventory";
 import { formatDateTime } from "@/lib/time";
-import { can, guardPage } from "@/server/auth/staff";
+import { can, guardPage, openShops } from "@/server/auth/staff";
 import { listTransfers } from "@/server/inventory/transfers";
 import { NewTransferForm } from "./forms";
 import { TRANSFER_TONE } from "./tone";
@@ -29,7 +29,7 @@ export default async function TransfersPage() {
         <Stat label="Outgoing, in transit" value={outgoing.length} hint={`${outgoing.reduce((a, r) => a + r.units, 0)} units`} />
         <Stat label="Received" value={rows.filter((r) => r.status === "received").length} hint="last 200 transfers" />
       </div>
-      {can(ctx, "inventory.transfer") && <NewTransferForm from={ctx.shops.filter((s) => shopIds.includes(s.id))} to={allShops} />}
+      {can(ctx, "inventory.transfer") && <NewTransferForm from={openShops(ctx).filter((s) => shopIds.includes(s.id))} to={allShops} />}
       <Card>
         {rows.length === 0 ? (
           <div className="p-4">
