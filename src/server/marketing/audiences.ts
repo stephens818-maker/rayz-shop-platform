@@ -1,5 +1,5 @@
 /**
- * Who each automated campaign is for at one location, and the clients a blast's segment matches.
+ * Who each automated campaign is for at one location, and the clients a blast's or lapsed sequence's segment matches.
  * A client belongs to the location of their last completed visit (their home shop before their
  * first). Only facts are gathered here; consent, unsubscribes, caps and quiet hours are applied
  * when sending.
@@ -115,6 +115,8 @@ export async function triggerTargets(i: TriggerInput): Promise<Target[]> {
       return announcements(shop, s, now);
     case "fill_slow_day":
       return slowDays(shop, s, clients, now);
+    case "barber_outreach":
+      return [];
   }
 }
 
@@ -226,10 +228,22 @@ export interface SegmentMember {
   customerId: string;
   firstName: string;
   shopId: string;
+  /** The client's barber as the segment's barber filter reads it: primary, most recent, or (any) most recent. */
   staffId: string | null;
+  lastAt: Date | null;
 }
 
-/** Clients a blast's segment matches, within these locations. Consent is checked when sending (and counted in the preview). */
+/** The client's primary barber: the preferred barber on their profile, or who cut them last. */
+export const PRIMARY_BARBER = sql.raw("coalesce(c.preferred_staff_id, v.last_staff)");
+/**
+ * Booked since the last visit: an appointment after it that wasn't cancelled and wasn't a no-show.
+ * Once a lapsed client books they're out; if they cancel or don't show, they're lapsed again.
+ */
+export const BOOKED_SINCE = sql.raw(
+  "exists (select 1 from appointments b where b.customer_id = c.id and b.status not in ('cancelled', 'no_show') and b.starts_at > coalesce(v.last_at, 'epoch'::timestamptz))",
+);
+
+/** Clients a segment matches, within these locations. Consent is checked when sending (and counted in the preview). */
 export async function segmentMembers(seg: Segment, shopIds: readonly string[], now: Date): Promise<SegmentMember[]> {
   const scope = seg.shopIds.length ? seg.shopIds.filter((s) => shopIds.includes(s)) : [...shopIds];
   if (!scope.length) return [];
@@ -237,10 +251,14 @@ export async function segmentMembers(seg: Segment, shopIds: readonly string[], n
   const ago = (days: number) => new Date(now.getTime() - days * DAY).toISOString();
   const where: SQL[] = [sql`coalesce(v.last_shop, c.home_shop_id) in ${uuids(scope)}`];
   if (cols.deleted) where.push(sql`c.deleted_at is null`);
-  if (seg.staffIds.length)
-    where.push(sql`exists (select 1 from appointments x where x.customer_id = c.id and x.status = 'completed' and x.staff_id in ${uuids(seg.staffIds)} and x.starts_at > ${ago(365)})`);
+  if (seg.staffIds.length) {
+    if (seg.barberMatch === "primary") where.push(sql`${PRIMARY_BARBER} in ${uuids(seg.staffIds)}`);
+    else if (seg.barberMatch === "recent") where.push(sql`v.last_staff in ${uuids(seg.staffIds)}`);
+    else where.push(sql`exists (select 1 from appointments x where x.customer_id = c.id and x.status = 'completed' and x.staff_id in ${uuids(seg.staffIds)})`);
+  }
   if (seg.lastVisitWithinDays !== null) where.push(sql`v.last_at >= ${ago(seg.lastVisitWithinDays)}`);
   if (seg.lastVisitOverDays !== null) where.push(sql`v.last_at < ${ago(seg.lastVisitOverDays)}`);
+  if (seg.notBooked) where.push(sql`not ${BOOKED_SINCE}`);
   if (seg.minVisits !== null) where.push(sql`coalesce(v.n, 0) >= ${seg.minVisits}`);
   if (seg.maxVisits !== null) where.push(sql`coalesce(v.n, 0) <= ${seg.maxVisits}`);
   if (seg.minSpendCents !== null) where.push(sql`coalesce(sp.cents, 0) >= ${seg.minSpendCents}`);
@@ -271,9 +289,43 @@ export async function segmentMembers(seg: Segment, shopIds: readonly string[], n
       select customer_id, sum(service_net_cents + product_net_cents)::int cents from sales
       where status in ('paid', 'partially_refunded', 'refunded') and customer_id is not null group by customer_id
     )
-    select c.id, c.first_name, coalesce(v.last_shop, c.home_shop_id) shop_id, coalesce(v.last_staff, c.preferred_staff_id) staff_id
+    select c.id, c.first_name, coalesce(v.last_shop, c.home_shop_id) shop_id, v.last_at,
+      ${seg.barberMatch === "primary" ? PRIMARY_BARBER : seg.barberMatch === "recent" ? sql`v.last_staff` : sql`coalesce(v.last_staff, c.preferred_staff_id)`} staff_id
     from customers c left join v on v.customer_id = c.id left join sp on sp.customer_id = c.id
     where ${sql.join(where, sql` and `)}
-    order by c.first_name, c.id`)) as unknown as { id: string; first_name: string; shop_id: string; staff_id: string | null }[];
-  return rows.map((r) => ({ customerId: r.id, firstName: r.first_name, shopId: r.shop_id, staffId: r.staff_id }));
+    order by c.first_name, c.id`)) as unknown as { id: string; first_name: string; shop_id: string; staff_id: string | null; last_at: string | Date | null }[];
+  return rows.map((r) => ({ customerId: r.id, firstName: r.first_name, shopId: r.shop_id, staffId: r.staff_id, lastAt: r.last_at ? new Date(r.last_at) : null }));
+}
+
+export interface BarberCard {
+  id: string;
+  firstName: string;
+  active: boolean;
+  /** Bookable online at each of these locations, so the link can book with them. */
+  bookableAt: Set<string>;
+  slug: string | null;
+}
+
+/** What a message needs to be signed by a barber and book with them. */
+export async function barberCards(ids: readonly string[]): Promise<Map<string, BarberCard>> {
+  const list = [...new Set(ids)];
+  if (!list.length) return new Map();
+  const rows = await db
+    .select({ id: staff.id, firstName: staff.firstName, active: staff.active, bookable: staff.isBookable, slug: staff.publicSlug, shopId: staffShops.shopId, online: staffShops.visibleOnline })
+    .from(staff)
+    .leftJoin(staffShops, eq(staffShops.staffId, staff.id))
+    .where(inArray(staff.id, list));
+  const out = new Map<string, BarberCard>();
+  for (const r of rows) {
+    const c = out.get(r.id) ?? { id: r.id, firstName: r.firstName, active: r.active, bookableAt: new Set<string>(), slug: r.slug };
+    if (r.active && r.bookable && r.online && r.shopId) c.bookableAt.add(r.shopId);
+    out.set(r.id, c);
+  }
+  return out;
+}
+
+/** Signed with the client's barber and booking with them when they still take bookings there; otherwise from the shop. */
+export function signedBy(card: BarberCard | undefined, shopId: string): Pick<Target, "values" | "link"> {
+  if (!card?.active) return { values: { barber: "your barber" } };
+  return { values: { barber: card.firstName }, link: card.bookableAt.has(shopId) && card.slug ? { barber: card.slug } : undefined };
 }

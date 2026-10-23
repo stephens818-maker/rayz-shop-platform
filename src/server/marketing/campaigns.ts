@@ -66,13 +66,13 @@ export async function ensureTriggerCampaigns(tx: DBorTx = db) {
     .onConflictDoNothing();
 }
 
-const ChannelsSchema = z
+export const ChannelsSchema = z
   .array(z.enum(CHANNELS))
   .min(1, "Pick at least one channel")
   .max(3)
   .refine((a) => new Set(a).size === a.length, "Each channel once");
 
-async function promoOk(promoId: string | null) {
+export async function promoOk(promoId: string | null) {
   if (!promoId) return null;
   const [p] = await db.select().from(promoCodes).where(eq(promoCodes.id, promoId));
   if (!p) throw notFound("Coupon");
@@ -97,13 +97,13 @@ const sorted = (x: unknown): unknown =>
     : x;
 const sameJson = (a: unknown, b: unknown) => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
 
-const parse = <T extends z.ZodType>(s: T, input: unknown): z.infer<T> => {
+export const parse = <T extends z.ZodType>(s: T, input: unknown): z.infer<T> => {
   const r = s.safeParse(input);
   if (!r.success) throw new AppError("bad_request", r.error.issues[0]?.message ?? "Check the campaign");
   return r.data;
 };
 
-async function campaignById(id: string): Promise<Campaign> {
+export async function campaignById(id: string): Promise<Campaign> {
   const [c] = await db.select().from(marketingCampaigns).where(eq(marketingCampaigns.id, id));
   if (!c) throw notFound("Campaign");
   return c;
@@ -262,7 +262,7 @@ const BlastInput = z.object({
 export type BlastInput = z.input<typeof BlastInput>;
 
 /** The locations a person may send to: any for the brand, only their own (and at least one) for a location. */
-function blastScope(ctx: StaffContext, shopIds: string[]): string[] {
+export function blastScope(ctx: StaffContext, shopIds: string[]): string[] {
   if (!mayCreate(ctx) && !maySend(ctx)) throw forbidden("You can't use the Campaign Center");
   if (mayBrand(ctx)) return shopIds;
   const scope = shopIds.length ? shopIds : ctx.shopIds;
@@ -271,15 +271,20 @@ function blastScope(ctx: StaffContext, shopIds: string[]): string[] {
   return scope;
 }
 
-function assertMayEdit(ctx: StaffContext, c: Campaign) {
-  if (c.kind !== "blast") throw new AppError("bad_request", "That isn't a blast");
+export function assertMayEdit(ctx: StaffContext, c: Campaign, kind: "blast" | "sequence" = "blast") {
+  if (c.kind !== kind) throw new AppError("bad_request", kind === "blast" ? "That isn't a blast" : "That isn't a lapsed sequence");
   if (mayBrand(ctx)) return;
-  if (!c.shopIds.length || c.shopIds.some((s) => !ctx.shopIds.includes(s))) throw forbidden("This blast goes to shops outside yours");
+  if (!c.shopIds.length || c.shopIds.some((s) => !ctx.shopIds.includes(s))) throw forbidden(`This ${c.kind === "sequence" ? "sequence" : "blast"} goes to shops outside yours`);
 }
 
-async function checkSegment(ctx: StaffContext, seg: Segment) {
+/** Which client details the person sees, for the segment filters that would reveal them. */
+export async function segmentSees(ctx: StaffContext) {
   const policy = await clientPolicy(ctx);
-  const problem = segmentProblem(seg, { birthday: policy.level("birthday") !== "hidden", ratings: policy.level("ratings") !== "hidden" });
+  return { birthday: policy.level("birthday") !== "hidden", ratings: policy.level("ratings") !== "hidden", preferredBarber: policy.level("preferred_barber") !== "hidden" };
+}
+
+export async function checkSegment(ctx: StaffContext, seg: Segment) {
+  const problem = segmentProblem(seg, await segmentSees(ctx));
   if (problem) throw new AppError("bad_request", problem);
   for (const s of seg.shopIds) if (!ctx.brandWide) assertShopAccess(ctx, s);
 }
@@ -387,6 +392,8 @@ export async function listBlasts(ctx: StaffContext): Promise<BlastView[]> {
 
 export interface BlastPreview {
   matched: number;
+  /** Agreed to marketing on one of the channels and reachable there. */
+  optedIn: number;
   /** Who would get it, by the channel they'd get it on. */
   byChannel: Record<Channel, number>;
   unreachable: number;
@@ -419,20 +426,21 @@ export async function previewBlast(ctx: StaffContext, input: unknown, now = new 
     if (ch) byChannel[ch]++;
     else unreachable++;
   }
-  return { matched: members.length, byChannel, unreachable, sample: [...new Set(members.map((m) => m.firstName))].slice(0, 5) };
+  return { matched: members.length, optedIn: members.length - unreachable, byChannel, unreachable, sample: [...new Set(members.map((m) => m.firstName))].slice(0, 5) };
 }
 
 /** A test of a campaign's wording to the person's own phone or email. */
-export async function sendTest(ctx: StaffContext, o: { campaignId: string; shopId: string; channel: Channel; templates?: unknown }) {
+export async function sendTest(ctx: StaffContext, o: { campaignId: string; shopId: string; channel: Channel; templates?: unknown; promoId?: string | null }) {
   if (!mayCreate(ctx) && !maySend(ctx)) throw forbidden("You can't use the Campaign Center");
   assertShopAccess(ctx, o.shopId);
   const c = await campaignById(o.campaignId);
-  if (c.kind === "blast") assertMayEdit(ctx, c);
+  if (c.kind !== "trigger") assertMayEdit(ctx, c, c.kind);
   const templates = o.templates ? parse(TemplatesSchema, o.templates) : templatesOf(c.templates);
+  const promo = o.promoId === undefined ? undefined : await promoOk(o.promoId);
   const [shop] = await db.select().from(shops).where(eq(shops.id, o.shopId));
   const [me] = await db.select({ id: staff.id, firstName: staff.firstName, phone: staff.phone, email: staff.email }).from(staff).where(eq(staff.id, ctx.staff.id));
   if (!shop || !me) throw notFound("Location");
-  const r = await testSend({ campaign: c, shop, channel: o.channel, to: { staffId: me.id, firstName: me.firstName, phone: me.phone, email: me.email }, templates });
+  const r = await testSend({ campaign: c, shop, channel: o.channel, to: { staffId: me.id, firstName: me.firstName, phone: me.phone, email: me.email }, templates, promo });
   if (!r.ok) throw new AppError("bad_request", r.problem);
   await audit(ctx.actor, "campaign_center.test_sent", "marketing_campaign", c.id, { channel: o.channel }, o.shopId);
   return r;

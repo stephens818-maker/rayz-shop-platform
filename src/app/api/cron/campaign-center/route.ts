@@ -8,7 +8,8 @@ export const maxDuration = 300;
 
 /**
  * Vercel Cron target (see vercel.json): queues the automated campaigns that are due at each location
- * that has them on and the blasts whose time has come, then drains due messages. Marketing due in
+ * that has them on, the lapsed sequences that are on and the blasts whose time has come, then drains
+ * due messages. Marketing due in
  * quiet hours waits in the queue. Safe to run twice: each client gets each occasion once. Closed
  * unless CRON_SECRET is set.
  */

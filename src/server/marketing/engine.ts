@@ -1,5 +1,6 @@
 /**
- * Sends marketing. Run by the cron job (/api/cron/campaign-center) and the local worker. Every message is
+ * Sends marketing: automated campaigns, lapsed sequences and blasts. Run by the cron job
+ * (/api/cron/campaign-center) and the local worker; a barber's own outreach goes through deliver too. Every message is
  * one marketing_sends row whose dedupe key (campaign, client, occasion) is unique, so a second run,
  * or two at once, never sends twice. Only clients who agreed to marketing on a channel get it there,
  * never more than the brand's weekly and monthly caps, and never in quiet hours: a message due then
@@ -7,13 +8,16 @@
  */
 import { and, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { clientNudges, couponCodes, marketingCampaigns, marketingLocationSettings, marketingSends, notificationJobs, promoCodes, shops, staff } from "@/db/schema";
+import { clientNudges, couponCodes, marketingCampaigns, marketingLocationSettings, marketingSends, marketingSteps, notificationJobs, promoCodes, shops, staff } from "@/db/schema";
 import { issuedExpiry, uniqueCode } from "@/domain/coupons";
 import {
   Channel,
+  MANUAL_TRIGGERS,
   MarketingSettings,
   MarketingValues,
   SegmentSchema,
+  SequenceAudienceSchema,
+  SequenceSettingsSchema,
   Templates,
   TemplatesSchema,
   TriggerKey,
@@ -24,13 +28,14 @@ import {
   nextSendAt,
   pickChannel,
   render,
+  stepDue,
   triggerSettings,
 } from "@/domain/marketing";
 import { appBaseUrl } from "@/lib/deployment";
 import { couponSuffix, marketingToken } from "@/lib/ids";
 import { addDays, formatDate, todayLocal } from "@/lib/time";
 import { processDueJobs } from "../notifications/queue";
-import { Target, clientsOf, segmentMembers, triggerTargets } from "./audiences";
+import { Target, barberCards, clientsOf, segmentMembers, signedBy, triggerTargets } from "./audiences";
 import { Contact, contactsFor } from "./consent";
 import { loadMarketingSettings } from "./settings";
 
@@ -40,6 +45,7 @@ export const BRAND_NAME = "Ray'z Barber Shop";
 type Campaign = typeof marketingCampaigns.$inferSelect;
 type Shop = typeof shops.$inferSelect;
 type Promo = typeof promoCodes.$inferSelect;
+type Step = typeof marketingSteps.$inferSelect;
 
 export type DeliverResult = { status: "queued"; sendId: string; jobId: string; channel: Channel } | { status: "skipped"; reason: string } | { status: "dupe" };
 
@@ -95,6 +101,8 @@ export interface DeliverInput {
   promo: Promo | null;
   /** Blasts record clients who were skipped; automated campaigns try them again on the next run while the occasion lasts. */
   recordSkips: boolean;
+  /** Lapsed sequences: the step it is. */
+  stepId?: string | null;
   now: Date;
 }
 
@@ -110,7 +118,7 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
       if (i.recordSkips)
         await tx
           .insert(marketingSends)
-          .values({ campaignId: c.id, customerId: t.customerId, shopId: shop.id, staffId: t.staffId, dedupeKey: key, status: "skipped", skipped: reason, token: marketingToken(), createdAt: now })
+          .values({ campaignId: c.id, customerId: t.customerId, shopId: shop.id, staffId: t.staffId, stepId: i.stepId ?? null, dedupeKey: key, status: "skipped", skipped: reason, token: marketingToken(), createdAt: now })
           .onConflictDoNothing();
       return { status: "skipped", reason };
     };
@@ -192,6 +200,7 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
         token,
         bookPath: bookPathFor(shop.slug, { ...t.link, coupon: code }),
         costCents: costCents(channel, s),
+        stepId: i.stepId ?? null,
         createdAt: now,
       })
       .onConflictDoNothing()
@@ -242,11 +251,11 @@ export async function runTriggers(now = new Date(), o: { shopIds?: string[]; key
     );
   const clients = await clientsOf([...new Set(on.map((r) => r.shop.id))], now);
   for (const { c, l, shop } of on) {
-    if (!isTriggerKey(c.trigger) || (o.keys && !o.keys.includes(c.trigger))) continue;
+    if (!isTriggerKey(c.trigger) || MANUAL_TRIGGERS.has(c.trigger) || (o.keys && !o.keys.includes(c.trigger))) continue;
     try {
       const key = c.trigger;
       const targets = await triggerTargets({ key, shop, settings: triggerSettings(key, { ...c.settings, ...(l.settings ?? {}) }), clients: clients.get(shop.id) ?? [], now });
-      const fresh = await unsent(c.id, targets);
+      const fresh = key === "lapsed" || key === "win_back" ? await notInSequence(await unsent(c.id, targets)) : await unsent(c.id, targets);
       if (!fresh.length) continue;
       const contacts = await contactsFor(fresh.map((x) => x.customerId));
       const promo = await promoById(c.promoId);
@@ -268,9 +277,34 @@ export async function runTriggers(now = new Date(), o: { shopIds?: string[]; key
   return stats;
 }
 
+/**
+ * "We miss you" and win-back leave alone clients a lapsed sequence already wrote to since their
+ * last visit (the occasion carries that visit's day), so nobody hears both.
+ */
+async function notInSequence(targets: Target[]): Promise<Target[]> {
+  if (!targets.length) return targets;
+  const rows = await db
+    .select({ id: marketingSends.customerId, at: sql<string>`max(${marketingSends.createdAt})` })
+    .from(marketingSends)
+    .where(
+      and(
+        sql`${marketingSends.stepId} is not null`,
+        eq(marketingSends.status, "queued"),
+        inArray(marketingSends.customerId, [...new Set(targets.map((t) => t.customerId))]),
+      ),
+    )
+    .groupBy(marketingSends.customerId);
+  const last = new Map(rows.map((r) => [r.id, new Date(r.at).getTime()]));
+  return targets.filter((t) => {
+    const at = last.get(t.customerId);
+    const since = t.occasion.split(":")[1];
+    return at === undefined || !since || at < new Date(`${since}T00:00:00Z`).getTime();
+  });
+}
+
 /** The targets not already sent (one occasion per client; the first target wins). */
-async function unsent(campaignId: string, targets: Target[]): Promise<Target[]> {
-  const byKey = new Map<string, Target>();
+export async function unsent<T extends Target>(campaignId: string, targets: T[]): Promise<T[]> {
+  const byKey = new Map<string, T>();
   for (const t of targets) {
     const k = dedupeKey(campaignId, t.customerId, t.occasion);
     if (!byKey.has(k)) byKey.set(k, t);
@@ -348,11 +382,91 @@ export async function runBlasts(now = new Date(), o: { ids?: string[] } = {}): P
   return stats;
 }
 
-/** The cron pass: automated campaigns, then due blasts. Delivery is the notification queue's job. */
+export interface SequenceTarget extends Target {
+  stepId: string;
+}
+
+export const stepsOf = (campaignId: string, tx: DBorTx = db) => tx.select().from(marketingSteps).where(eq(marketingSteps.campaignId, campaignId)).orderBy(marketingSteps.afterDays);
+
+/**
+ * Who a lapsed sequence writes to now, and with which step: clients of its locations (and barbers)
+ * whose last visit has reached a step, with nothing booked since, before the sequence stops. One
+ * occasion per step per lapse (the last visit's day), so each step goes once and a client who
+ * comes back and lapses again starts over. Signed by the client's barber, booking with them.
+ */
+export async function sequenceTargets(c: Pick<Campaign, "segment" | "settings" | "shopIds">, steps: readonly Pick<Step, "id" | "afterDays">[], scope: readonly string[], now: Date): Promise<SequenceTarget[]> {
+  if (!steps.length) return [];
+  const aud = SequenceAudienceSchema.parse(c.segment ?? {});
+  const { stopAfterDays } = SequenceSettingsSchema.parse(c.settings ?? {});
+  const first = Math.min(...steps.map((x) => x.afterDays));
+  const seg = SegmentSchema.parse({ staffIds: aud.staffIds, barberMatch: aud.barberMatch, notBooked: true, lastVisitOverDays: first, lastVisitWithinDays: stopAfterDays });
+  const shopIds = c.shopIds.length ? c.shopIds.filter((s) => scope.includes(s)) : [...scope];
+  const members = await segmentMembers(seg, shopIds, now);
+  const cards = await barberCards(members.flatMap((m) => (m.staffId ? [m.staffId] : [])));
+  return members.flatMap((m) => {
+    if (!m.lastAt) return [];
+    const step = stepDue(steps, Math.floor((now.getTime() - m.lastAt.getTime()) / DAY), stopAfterDays);
+    if (!step) return [];
+    const lastDay = m.lastAt.toISOString().slice(0, 10);
+    return [{ customerId: m.customerId, shopId: m.shopId, staffId: m.staffId, occasion: `seq:${lastDay}:${step.id}`, stepId: step.id, ...signedBy(m.staffId ? cards.get(m.staffId) : undefined, m.shopId) }];
+  });
+}
+
+/** Lapsed sequences that are on, at live locations. */
+export async function runSequences(now = new Date(), o: { ids?: string[] } = {}): Promise<RunStats> {
+  const stats: RunStats = { queued: 0, skipped: 0, failed: 0 };
+  const list = await db
+    .select()
+    .from(marketingCampaigns)
+    .where(and(eq(marketingCampaigns.kind, "sequence"), eq(marketingCampaigns.enabled, true), o.ids ? inArray(marketingCampaigns.id, o.ids.length ? o.ids : [crypto.randomUUID()]) : undefined));
+  if (!list.length) return stats;
+  const settings = await loadMarketingSettings();
+  const live = await db.select().from(shops).where(eq(shops.status, "live"));
+  const shopById = new Map(live.map((x) => [x.id, x]));
+  for (const c of list) {
+    try {
+      const steps = await stepsOf(c.id);
+      const fresh = await unsent(c.id, await sequenceTargets(c, steps, [...shopById.keys()], now));
+      if (!fresh.length) continue;
+      const contacts = await contactsFor(fresh.map((x) => x.customerId));
+      const promos = new Map<string, Promo | null>();
+      for (const target of fresh) {
+        const step = steps.find((x) => x.id === target.stepId)!;
+        if (step.promoId && !promos.has(step.promoId)) promos.set(step.promoId, await promoById(step.promoId));
+        add(
+          stats,
+          await deliver({
+            campaign: c,
+            shop: shopById.get(target.shopId)!,
+            target,
+            contact: contacts.get(target.customerId),
+            templates: templatesOf(step.templates),
+            channels: channelsOf(c.channels),
+            settings,
+            promo: step.promoId ? (promos.get(step.promoId) ?? null) : null,
+            recordSkips: false,
+            stepId: step.id,
+            now,
+          }).catch((e) => {
+            console.error("marketing sequence send failed", c.id, (e as Error).message);
+            return "failed" as const;
+          }),
+        );
+      }
+    } catch (e) {
+      stats.failed++;
+      console.error("marketing sequence failed", c.id, (e as Error).message);
+    }
+  }
+  return stats;
+}
+
+/** The cron pass: automated campaigns, lapsed sequences, then due blasts. Delivery is the notification queue's job. */
 export async function runMarketing(now = new Date()) {
   const triggers = await runTriggers(now);
+  const sequences = await runSequences(now);
   const blasts = await runBlasts(now);
-  return { triggers, blasts };
+  return { triggers, sequences, blasts };
 }
 
 /**
@@ -360,12 +474,21 @@ export async function runMarketing(now = new Date()) {
  * values and a real link. Not counted in the report; quiet hours and consent don't apply because
  * it's to staff. Sent at once.
  */
-export async function testSend(o: { campaign: Campaign; shop: Shop; channel: Channel; to: { staffId: string; firstName: string; phone: string | null; email: string | null }; templates?: Templates; now?: Date }) {
+export async function testSend(o: {
+  campaign: Campaign;
+  shop: Shop;
+  channel: Channel;
+  to: { staffId: string; firstName: string; phone: string | null; email: string | null };
+  templates?: Templates;
+  /** A sequence step's coupon instead of the campaign's. */
+  promo?: Promo | null;
+  now?: Date;
+}) {
   const now = o.now ?? new Date();
   const s = await loadMarketingSettings();
   const to = o.channel === "sms" ? o.to.phone : o.channel === "email" ? o.to.email : null;
   if (!to) return { ok: false as const, problem: o.channel === "push" ? "Test sends go by text or email" : `Your staff profile has no ${o.channel === "sms" ? "mobile number" : "email"}` };
-  const promo = await promoById(o.campaign.promoId);
+  const promo = o.promo !== undefined ? o.promo : await promoById(o.campaign.promoId);
   const token = marketingToken();
   const base = appBaseUrl();
   const code = promo ? (promo.codeMode === "unique" ? uniqueCode(promo.code, () => "TEST00") : promo.code) : "";

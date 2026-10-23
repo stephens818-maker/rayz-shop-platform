@@ -62,6 +62,7 @@ import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
 import { reviewReportData } from "./review-report";
 import { marketingReportData } from "./marketing/report";
+import { lapsedReportData } from "./marketing/lapsed-report";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
 
@@ -686,6 +687,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async campaign_center({ scope, loc }) {
     return marketingReportData(scope, loc);
+  },
+
+  async lapsed_clients({ scope, loc }) {
+    return lapsedReportData(scope, loc);
   },
 
   async services_vs_products({ scope, loc }) {
