@@ -246,6 +246,13 @@
       "when": 1792773600000,
       "tag": "core_0034_staff_banking",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792860000000,
+      "tag": "core_0035_scrub_sensitive",
+      "breakpoints": true
     }
   ]
 }
