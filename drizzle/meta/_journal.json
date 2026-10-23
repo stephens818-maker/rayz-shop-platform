@@ -162,6 +162,13 @@
       "when": 1793000000000,
       "tag": "mobile_customer_app",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793100000000,
+      "tag": "mobile_launch_at",
+      "breakpoints": true
     }
   ]
 }

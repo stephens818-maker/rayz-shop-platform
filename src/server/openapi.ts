@@ -65,6 +65,7 @@ export function openApiDocument(baseUrl: string) {
         "Send `Authorization: Bearer <accessToken>`. Refresh with `POST /auth/refresh`; reusing an old refresh token revokes all sessions.",
         "",
         "**Time:** timestamps are stored and returned as ISO-8601 UTC. Human text (receipts, reminders, SMS) uses America/Chicago. GET /app/config returns timeFormat (default 12h) so apps can match.",
+        "**Launch:** GET /app/config returns launched and launchAt (ISO UTC, or null). Customer booking, customer payments, and push stay closed until that instant. A build older than minVersion / forceUpdateBelow gets 426 upgrade_required. Fields added after 1.0.0 are additive.",
         "**Money:** integer cents. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
         "**Retries:** `POST /appointments` honors an `Idempotency-Key` header so a flaky mobile network can't double-book.",
       ].join("\n"),
@@ -170,7 +171,11 @@ export function openApiDocument(baseUrl: string) {
         delete: { tags: ["Me"], summary: "Revoke one push device", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { 200: { description: "Revoked" } } },
       },
       "/app/config": {
-        get: { tags: ["Shops"], summary: "App config, including timeFormat (12h by default) and America/Chicago", responses: { 200: { description: "Config" } } },
+        get: {
+          tags: ["Shops"],
+          summary: "App config: timeFormat, launch gate, and the minimum version. New fields are additive.",
+          responses: { 200: { description: "Config" }, 426: err("App version is below forceUpdateBelow") },
+        },
       },
       "/me/purchases": {
         get: { tags: ["Me"], summary: "Purchase history with service, product, tax, and tip kept separate, plus refund records", security: bearer, responses: { 200: { description: "Purchases" } } },

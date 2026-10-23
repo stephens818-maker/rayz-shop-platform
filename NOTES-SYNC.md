@@ -110,7 +110,22 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Mobile API workstream (bc-645fbcc0)
 
-Branch: `cursor/mobile-api-auth-a9e1`. PRs into `cursor/rayz-barbershop-v1-8f0b`. Migration `mobile_customer_app` is journal idx 21, after `core_0020_stripe_connect`. The SQL filename stays `mobile_customer_app.sql`.
+Branch: `cursor/launch-gate-a9e1` (follow-up to `cursor/mobile-api-auth-a9e1`). PRs into `cursor/rayz-barbershop-v1-8f0b`. `mobile_customer_app` is journal idx 22, after `core_0021_service_times`. `mobile_launch_at` is idx 23. The SQL filenames stay `mobile_customer_app.sql` and `mobile_launch_at.sql`.
+
+### Launch (one day, one time)
+
+Charles: the website, the iOS and Android customer apps, and the staff app go live together, and only after each one is complete and sandbox-tested.
+
+`src/server/launch.ts` is the gate. Please call `launchState()` and `assertLaunched()` from any public web path that does not already book through `createAppointment`. The public wizard posts to `POST /api/v1/appointments`, and that path is gated.
+
+- `LAUNCH_AT` is an ISO-8601 UTC timestamp. It overrides `brand_settings.launch_at` (migration `mobile_launch_at`). If both are empty, customer-facing surfaces stay closed. That is the safe default.
+- `launched` is true only when that instant is set and `now >= launchAt`.
+- Gated: online and API booking, customer reschedule, `executeChargePlan({ customerFacing: true })`, and `sendPush`.
+- Not gated, so a shop can be sandbox-tested before launch day: staff calendar bookings, walk-ins, checkout rebooks, the importer, and staff POS (`executeChargePlan` without `customerFacing`). App payment routes must pass `customerFacing: true` or call `assertLaunched("payments")`.
+- A closed surface throws `forbidden` with `details.reason = "not_launched"`, `details.launchAt`, and the message `Ray'z isn't open in the app yet. Coming soon.` The error code stays `forbidden` so a shipped client that only knows the 1.0.0 codes still has a branch for it.
+- `GET /api/v1/app/config` adds `launched`, `launchAt` (ISO UTC or null), `minVersion: { ios, android }`, and `forceUpdateBelow` (the same floor). Older keys stay: `minIos`, `minAndroid`, `latestIos`, `latestAndroid`, store URLs, `flags`, `timezone`, `timeFormat`. A build below the floor still gets `426 upgrade_required`, now with `details.forceUpdate: true`. Store builds can show "coming soon" from `launched` without an app update.
+- After launch, `/api/v1` is additive only. Document version stays `1.0.0`. Do not rename or remove paths, fields, or error codes. `tests/api-contract.test.ts` locks the shipped paths and codes.
+- `pnpm smoke:v1` (`scripts/smoke-v1.ts`) is the release checklist. It refuses `sk_live_` / `rk_live_` / `pk_live_`. With `sk_test_` it confirms a $0.50 PaymentIntent on `pm_card_visa` and refunds it. With no key it uses the simulator through `chargeCard`. Twilio is a GET of the Verify service when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_VERIFY_SERVICE_SID` are set. A send happens only if `TWILIO_SMOKE_TO=+15005550006` (Twilio's magic test number).
 
 ### Clock
 
@@ -145,6 +160,7 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
 - (core → mobile) An app checkout or prepayment for a shop that isn't onboarded fails with `payment_failed` and `details.reason = "payments_not_ready"`. Please show that as "This shop isn't taking cards in the app yet" instead of as a card decline.
+- (mobile → core) Use `launchState` / `assertLaunched` in `src/server/launch.ts` for the website. One `LAUNCH_AT` (or `brand_settings.launch_at`) covers web, iOS, Android, and customer-facing payments and push. Staff calendar and POS stay open before that instant. `GET /api/v1/app/config` already returns `launched` and `launchAt`.
 - (mobile → core) Reuse `formatDateTime` / `formatForHumans` for any new receipt, SMS, or push copy. `brand_settings.time_format` defaults to `12h`.
 - (mobile → core) Default the web booking SMS checkbox to off (`wizard.tsx` `smsOptIn: true`).
 - (mobile → core) Leave tip-to-barber off. Employee tips go through iSolved. Destination charges cannot pay a barber account.
@@ -156,6 +172,14 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 
 ## Log
+
+### 2026-10-23: mobile launch gate (bc-645fbcc0)
+
+- One `LAUNCH_AT` / `brand_settings.launch_at` closes customer booking, customer payments, and push until that UTC instant. Unset means not launched.
+- `GET /api/v1/app/config` adds `launched`, `launchAt`, `minVersion`, and `forceUpdateBelow` without removing existing keys. `/api/v1` stays on document version 1.0.0.
+- `pnpm smoke:v1` walks `/api/v1` and checks Stripe test mode and Twilio test credentials when they are configured.
+- Core service times stay at journal idx 21. Mobile migrations are idx 22 and idx 23.
+- Core's service times report was registered without `src/app/admin/reports/service-times/page.tsx`. This branch adds the same thin `ReportPage` wrapper the other reports use, so the sidebar link resolves. The report math stays in core's `serviceTimesData`.
 
 ### 2026-10-23: mobile (bc-645fbcc0)
 

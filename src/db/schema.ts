@@ -57,6 +57,11 @@ export const brandSettings = pgTable("brand_settings", {
   slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(15),
   /** How humans see a clock. 12h is the default. Customer copy reads this through formatDateTime. */
   timeFormat: text("time_format").$type<"12h" | "24h">().notNull().default("12h"),
+  /**
+   * When the website, customer apps, and customer-facing payments and push go live together.
+   * Null means not launched. LAUNCH_AT in the environment overrides this.
+   */
+  launchAt: ts("launch_at"),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 

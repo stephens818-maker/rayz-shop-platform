@@ -224,6 +224,12 @@ describe("customer app endpoints", () => {
     const cfg = await (await config.GET(new Request("http://localhost/api/v1/app/config"), { params: Promise.resolve({}) })).json();
     expect(cfg.timeFormat).toBe("12h");
     expect(cfg.timezone).toBe("America/Chicago");
+    expect(cfg.launched).toBe(true);
+    expect(cfg.launchAt).toBe("2000-01-01T00:00:00.000Z");
+    expect(cfg.minIos).toEqual(expect.any(String));
+    expect(cfg.minVersion).toEqual({ ios: cfg.minIos, android: cfg.minAndroid });
+    expect(cfg.forceUpdateBelow).toEqual(cfg.minVersion);
+    expect(cfg.flags).toMatchObject({ appReviewLogin: false, walletCardFee: false });
 
     const me = await import("@/app/api/v1/me/route");
     const patched = await me.PATCH(
@@ -357,5 +363,132 @@ describe("customer app endpoints", () => {
     expect(credit.reason).toBe("applies");
     expect(debit.feeCents).toBe(0);
     expect(debit.reason).toBe("not_credit");
+  });
+});
+
+describe("launch gate", () => {
+  const future = "2999-01-01T15:00:00.000Z";
+  const past = "2000-01-01T00:00:00.000Z";
+
+  afterAll(() => {
+    process.env.LAUNCH_AT = past;
+  });
+
+  it("keeps customer booking, payments, and push closed until LAUNCH_AT, and leaves staff booking open", async () => {
+    const { COMING_SOON_MESSAGE } = await import("@/server/launch");
+    const { svc, first, second } = await twoSlots();
+    const booked = await m.booking.createAppointment({
+      shopRef: "coralville",
+      serviceId: svc.id,
+      barberRef: "any",
+      startsAt: first.startsAt,
+      customer: { firstName: "Launch", phone: "+13195550190" },
+      source: "online",
+      actor,
+    });
+
+    process.env.LAUNCH_AT = future;
+    const config = await import("@/app/api/v1/app/config/route");
+    const closed = await (await config.GET(new Request("http://localhost/api/v1/app/config"), { params: Promise.resolve({}) })).json();
+    expect(closed.launched).toBe(false);
+    expect(closed.launchAt).toBe(future);
+    expect(closed.timeFormat).toBe("12h");
+    expect(closed.minVersion).toEqual({ ios: closed.minIos, android: closed.minAndroid });
+    expect(closed.forceUpdateBelow).toEqual(closed.minVersion);
+
+    const tooOld = await config.GET(
+      new Request("http://localhost/api/v1/app/config", { headers: { "x-client": "ios", "x-app-version": "0.0.1" } }),
+      { params: Promise.resolve({}) },
+    );
+    expect(tooOld.status).toBe(426);
+    const upgrade = await tooOld.json();
+    expect(upgrade.error.code).toBe("upgrade_required");
+    expect(upgrade.error.details.forceUpdate).toBe(true);
+    expect(upgrade.error.details.minSupportedVersion).toBe(closed.minIos);
+
+    await expect(
+      m.booking.createAppointment({
+        shopRef: "coralville",
+        serviceId: svc.id,
+        barberRef: "any",
+        startsAt: second.startsAt,
+        customer: { firstName: "Early", phone: "+13195550191" },
+        source: "api",
+        actor,
+      }),
+    ).rejects.toMatchObject({ code: "forbidden", message: COMING_SOON_MESSAGE, details: { reason: "not_launched", surface: "booking", launchAt: future } });
+
+    const staffBooked = await m.booking.createAppointment({
+      shopRef: "coralville",
+      serviceId: svc.id,
+      barberRef: "any",
+      startsAt: second.startsAt,
+      customer: { firstName: "Desk", phone: "+13195550192" },
+      source: "staff",
+      actor,
+    });
+    expect(staffBooked.code).toEqual(expect.any(String));
+
+    await expect(
+      m.booking.rescheduleAppointment(booked.code, { startsAt: second.startsAt, actor, byCustomer: true }),
+    ).rejects.toMatchObject({ details: { reason: "not_launched", surface: "booking" } });
+
+    const { executeChargePlan } = await import("@/server/payments/charge-plan");
+    const shop = await m.catalog.getShop("coralville");
+    await expect(
+      executeChargePlan({
+        shopId: shop.id,
+        paymentMethodId: "pm_card_visa",
+        amountCents: 1500,
+        description: "Customer checkout before launch",
+        idempotencyKey: `prelaunch-${crypto.randomUUID()}`,
+        customerFacing: true,
+      }),
+    ).rejects.toMatchObject({ details: { reason: "not_launched", surface: "payments" } });
+    const pos = await executeChargePlan({
+      shopId: shop.id,
+      paymentMethodId: "pm_card_visa",
+      amountCents: 1500,
+      description: "Staff checkout before launch",
+      idempotencyKey: `pos-${crypto.randomUUID()}`,
+    });
+    expect(pos.processor).toBe("simulator");
+
+    const prevApns = {
+      APNS_KEY_ID: process.env.APNS_KEY_ID,
+      APNS_TEAM_ID: process.env.APNS_TEAM_ID,
+      APNS_PRIVATE_KEY: process.env.APNS_PRIVATE_KEY,
+      APNS_BUNDLE_ID: process.env.APNS_BUNDLE_ID,
+    };
+    process.env.APNS_KEY_ID = "KEY";
+    process.env.APNS_TEAM_ID = "TEAM";
+    process.env.APNS_PRIVATE_KEY = "not-a-real-key";
+    process.env.APNS_BUNDLE_ID = "com.rayz.customer";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    try {
+      const { sendPush } = await import("@/server/mobile/push");
+      await expect(sendPush("apns", "device-token", { type: "reminder", title: "Ray'z", body: "See you soon" })).resolves.toEqual({
+        sent: false,
+        unregistered: false,
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      for (const [key, value] of Object.entries(prevApns)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+
+    delete process.env.LAUNCH_AT;
+    const later = new Date("2999-06-01T15:00:00.000Z");
+    const brand = await m.db.db.query.brandSettings.findFirst();
+    expect(brand?.id).toBeDefined();
+    await m.db.db.update(m.schema.brandSettings).set({ launchAt: later }).where(eq(m.schema.brandSettings.id, brand!.id));
+    const { launchState } = await import("@/server/launch");
+    expect(await launchState()).toMatchObject({ launched: false, launchAt: later.toISOString() });
+    process.env.LAUNCH_AT = past;
+    expect(await launchState()).toMatchObject({ launched: true, launchAt: past });
+    await m.db.db.update(m.schema.brandSettings).set({ launchAt: null }).where(eq(m.schema.brandSettings.id, brand!.id));
   });
 });

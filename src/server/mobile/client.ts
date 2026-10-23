@@ -90,7 +90,12 @@ export async function assertSupportedClient(info: ClientInfo): Promise<void> {
   const min = info.client === "ios" ? cfg.minIos : cfg.minAndroid;
   const store = info.client === "ios" ? cfg.iosStoreUrl : cfg.androidStoreUrl;
   if (compareVersions(info.appVersion, min) < 0) {
-    throw new AppError("upgrade_required", message(info.locale, "upgrade"), { minSupportedVersion: min, storeUrl: store });
+    throw new AppError("upgrade_required", message(info.locale, "upgrade"), {
+      minSupportedVersion: min,
+      storeUrl: store,
+      forceUpdate: true,
+      forceUpdateBelow: { ios: cfg.minIos, android: cfg.minAndroid },
+    });
   }
 }
 

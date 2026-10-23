@@ -34,6 +34,7 @@ import { Actor, audit } from "./audit";
 import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers } from "./catalog";
 import { CustomerInput, findOrCreateCustomer } from "./customers";
 import { AppError, isDoubleBookingError, notFound } from "./errors";
+import { assertLaunched } from "./launch";
 import { AppointmentMessageContext, cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
 import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
 import { bookingPlans, shopInterval, staffIntervals, toStaffPlans } from "./timing";
@@ -223,6 +224,8 @@ export async function createAppointment(input: CreateAppointmentInput) {
     if (prior) return getAppointmentByCode(prior.code);
   }
   const staffOverride = input.source === "staff" || input.source === "walk_in" || input.source === "rebook";
+  // Staff calendar, walk-ins, and checkout rebooks stay open so shops can be sandbox-tested before launch day.
+  if (!staffOverride) await assertLaunched("booking", input.now ?? new Date());
   if (input.squeezeIn && (input.source === "online" || input.source === "api")) throw new AppError("forbidden", "Only staff can squeeze in a booking");
   if (input.squeezeIn && (!input.barberRef || input.barberRef === "any")) throw new AppError("bad_request", "Pick the barber to squeeze the booking in with");
   // Walk-ins are seated now, wherever that falls; every other booking starts on the barber's grid.
@@ -457,6 +460,7 @@ export async function rescheduleAppointment(
   const now = opts.now ?? new Date();
   const { a, shop } = await loadForChange(code);
   if (opts.customerId && a.customerId !== opts.customerId) throw notFound("Appointment");
+  if (opts.byCustomer) await assertLaunched("booking", now);
   if (!["booked", "confirmed"].includes(a.status)) throw new AppError("conflict", `Can't reschedule an appointment that is ${a.status}`);
   if (opts.byCustomer && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
     throw new AppError("cutoff_passed", `Online changes close ${shop.cancelCutoffMinutes} minutes before the appointment. Please call the shop.`);

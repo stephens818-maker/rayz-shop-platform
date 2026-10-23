@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { connectTransfers, shops, staff } from "@/db/schema";
 import { AppError } from "@/server/errors";
+import { assertLaunched } from "@/server/launch";
 import { chargeDestination, shopAccount } from "./connect";
 import { chargeCard, refundCard, stripe } from "./processor";
 
@@ -42,6 +43,11 @@ export interface ChargePlanInput {
   idempotencyKey: string;
   customerId?: string | null;
   kind?: ChargePlanKind;
+  /**
+   * App and web checkout must set this. Staff POS leaves it off so a shop can take cards in the sandbox before launch day.
+   * Customer-facing routes have to pass true (or call assertLaunched("payments") themselves).
+   */
+  customerFacing?: boolean;
 }
 
 export interface ChargePlanResult {
@@ -97,6 +103,7 @@ function resultFrom(kind: ChargePlanKind, charge: Awaited<ReturnType<typeof char
 }
 
 export async function executeChargePlan(input: ChargePlanInput): Promise<ChargePlanResult> {
+  if (input.customerFacing) await assertLaunched("payments");
   if (input.amountCents <= 0) throw new AppError("bad_request", "Charge amount must be positive");
   const tipCents = input.tipCents ?? 0;
   if (tipCents < 0 || tipCents > input.amountCents) throw new AppError("bad_request", "Tip is larger than the charge");
