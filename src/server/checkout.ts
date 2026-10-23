@@ -43,6 +43,7 @@ import { stockLevels } from "./inventory/stock";
 import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, markRewardRedeemed } from "./loyalty";
 import { chargeDestination } from "./payments/connect";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
+import { recordCheckout } from "./service-times";
 
 export { refundEverything, refundSale, refundableState, voidSale } from "./refunds";
 
@@ -497,6 +498,7 @@ export async function finalizeSale(input: FinalizeInput) {
 
       if (ctx.sale.appointmentId) {
         await tx.update(appointments).set({ status: "completed", completedAt: now }).where(eq(appointments.id, ctx.sale.appointmentId));
+        await recordCheckout(ctx.sale.appointmentId, input.actor, tx, now);
       }
       await audit(
         input.actor,

@@ -37,6 +37,8 @@ function formatCell(v: Cell, kind: ColumnKind | undefined) {
   if (kind === "pct" && typeof v === "number") return `${Math.round(v * 100)}%`;
   if (kind === "hours" && typeof v === "number") return (v / 60).toFixed(1);
   if (kind === "decimal" && typeof v === "number") return v.toFixed(2);
+  if (kind === "minutes" && typeof v === "number") return v.toFixed(1);
+  if (kind === "minutes_delta" && typeof v === "number") return `${v > 0.05 ? "+" : v < -0.05 ? "−" : ""}${Math.abs(v).toFixed(1)}`;
   if (kind === "bool") return v ? "Yes" : "";
   return String(v);
 }
@@ -45,7 +47,7 @@ const ROW_STYLE = { subtotal: "bg-zinc-50 font-medium", total: "bg-zinc-100 font
 
 /** One report table: per-row number formats for metric tables, shaded subtotal and total rows. */
 export function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null }) {
-  const right = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct" || k === "hours" || k === "decimal";
+  const right = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct" || k === "hours" || k === "decimal" || k === "minutes" || k === "minutes_delta";
   const kindAt = (i: number, j: number) => (t.rowKinds?.[i] && j > 0 ? t.rowKinds[i] : t.columns[j]?.kind);
   const last = t.columns.length - 1;
   return (

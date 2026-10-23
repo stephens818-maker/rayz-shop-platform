@@ -7,8 +7,11 @@
 import { NO_BARBER, NO_BARBER_LABEL } from "./barbers";
 
 export type Cell = string | number | boolean | null;
-/** `hours` values are minutes, shown as hours; `decimal` is an average like 4.25 stars. */
-export type ColumnKind = "text" | "int" | "money" | "pct" | "bool" | "hours" | "decimal";
+/**
+ * `hours` values are minutes, shown as hours; `decimal` is an average like 4.25 stars; `minutes` is
+ * an average or median in minutes, to a tenth; `minutes_delta` is the same with a sign, like +11.0.
+ */
+export type ColumnKind = "text" | "int" | "money" | "pct" | "bool" | "hours" | "decimal" | "minutes" | "minutes_delta";
 export interface Column {
   label: string;
   kind?: ColumnKind;
@@ -482,6 +485,7 @@ function csvCell(v: Cell, kind: ColumnKind | undefined): string | number | null 
   if (kind === "pct") return pctText(v);
   if (kind === "hours") return (v / 60).toFixed(2);
   if (kind === "decimal") return v.toFixed(2);
+  if (kind === "minutes" || kind === "minutes_delta") return v.toFixed(1);
   return v;
 }
 

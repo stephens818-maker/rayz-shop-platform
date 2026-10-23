@@ -56,6 +56,7 @@ import { ADJUST_REASON_LABEL, LEDGER_KIND_LABEL, PO_STATUS_LABEL, poNumber } fro
 import { diffDays, formatDate, formatDateTime } from "@/lib/time";
 import { ACCOUNT_STATE_LABEL } from "@/domain/connect";
 import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-report";
+import { serviceTimesData } from "./service-times-report";
 
 /**
  * Every a la carte report is one loader returning stats and tables. The report page renders them
@@ -644,6 +645,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async sales_by_barber({ scope, loc }) {
     return barberPerformance(scope, loc);
+  },
+
+  async service_times({ scope, loc }) {
+    return serviceTimesData(scope, loc);
   },
 
   async services_vs_products({ scope, loc }) {

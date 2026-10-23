@@ -82,8 +82,11 @@ describe("permission catalog and templates", () => {
     for (const k of ["front_desk", "barber", "shop_manager"]) expect(access(k).permissions.has("clients.message"), k).toBe(true);
   });
 
-  it("Barber gets only their own sales report; Front Desk gets two reports, view only, and a 10% discount cap", () => {
-    expect(reportsFor(access("barber").permissions).map((r) => [r.key, r.canExport])).toEqual([["my_sales", true]]);
+  it("Barber gets their own sales and service times; Front Desk gets two reports, view only, and a 10% discount cap", () => {
+    expect(reportsFor(access("barber").permissions).map((r) => [r.key, r.canExport])).toEqual([
+      ["my_sales", true],
+      ["service_times", true],
+    ]);
     expect(reportsFor(access("front_desk").permissions).map((r) => [r.key, r.canExport])).toEqual([
       ["card_vs_cash", false],
       ["cash_drawer", false],
