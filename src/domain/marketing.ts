@@ -458,6 +458,3 @@ export function segmentProblem(s: Segment, sees: { birthday: boolean; ratings: b
 
 /** Idempotency: one send per campaign, client and occasion. The database refuses a second row with the same key. */
 export const dedupeKey = (campaignId: string, customerId: string, occasion: string) => `${campaignId}:${customerId}:${occasion}`;
-
-/** HELP, INFO: the carrier-required answer. */
-export const isHelpKeyword = (body: string) => /^\s*(help|info)\s*[.!]?\s*$/i.test(body);
