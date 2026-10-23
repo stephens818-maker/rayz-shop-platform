@@ -53,6 +53,9 @@ export const PAGE_ACCESS = {
   "/admin/location-groups": ["locations.manage"],
   "/admin/barber-groups": ["barber_groups.manage"],
   "/admin/notifications": ["notifications.view", "notifications.send"],
+  "/admin/payroll/report": ["payroll.run", "payroll.approve"],
+  "/admin/payroll/hours": ["payroll.run"],
+  "/admin/payroll/setup": ["payroll.run"],
   "/admin/reports": REPORTS.map((r) => reportView(r.key)),
   ...(Object.fromEntries(REPORTS.map((r) => [r.href, [reportView(r.key)]])) as Record<(typeof REPORTS)[number]["href"], Permission[]>),
 } satisfies Record<string, readonly Permission[] | null>;
@@ -96,6 +99,14 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     ],
   },
   { title: "Insights", items: [{ href: "/admin/reports", label: "Reports" }] },
+  {
+    title: "Payroll",
+    items: [
+      { href: "/admin/payroll/report", label: "Payroll report" },
+      { href: "/admin/payroll/hours", label: "Hours" },
+      { href: "/admin/payroll/setup", label: "Payroll setup" },
+    ],
+  },
   {
     title: "Setup",
     items: [

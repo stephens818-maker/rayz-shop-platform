@@ -23,8 +23,8 @@ export interface ReportScope {
 const PAID = sql`('paid','refunded','partially_refunded')`;
 const uuids = (xs: string[]) => sql`(${sql.join(xs.length ? xs.map((i) => sql`${i}::uuid`) : [sql`null::uuid`], sql`, `)})`;
 const ids = (s: ReportScope) => uuids(s.shopIds);
-export const staffSelection = (s: ReportScope): string[] | null => s.staffIds ?? (s.staffId ? [s.staffId] : null);
-const staffFilter = (col: SQL, s: ReportScope) => {
+export const staffSelection = (s: Pick<ReportScope, "staffId" | "staffIds">): string[] | null => s.staffIds ?? (s.staffId ? [s.staffId] : null);
+const staffFilter = (col: SQL, s: Pick<ReportScope, "staffId" | "staffIds">) => {
   const sel = staffSelection(s);
   return sel ? sql` and ${col} in ${uuids(sel)}` : sql``;
 };
@@ -411,20 +411,14 @@ export interface PayrollRow {
   totalTipsCents: number;
 }
 
-/**
- * Tips per barber per shop per bi-weekly pay period (hours stay in iSolved). A barber who works at
- * several shops gets a row per shop, from the shop each ticket was rung up at. Sales land in the
- * period they were paid; refunds in the period they were issued, which can be a later one.
- */
-export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[]; rows: PayrollRow[] }> {
-  const periods = payPeriodsBetween(s.from, s.to);
-  const out: PayrollRow[] = [];
-  await Promise.all(
-    periods.map(async (p) => {
-      const r = await rows<Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents">>(sql`
+export type PayrollSalesRow = Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents">;
+
+/** Service and product sales and tips per barber per shop, paid in [start, end], less refunds issued in it. */
+export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staffId" | "staffIds">, start: LocalDate, end: LocalDate): Promise<PayrollSalesRow[]> {
+  return rows<PayrollSalesRow>(sql`
         with v as (
           select s.staff_id, s.shop_id, count(*)::int tickets, sum(s.service_net_cents)::int sn, sum(s.product_net_cents)::int pn
-          from sales s where s.shop_id in ${ids(s)} and s.business_date between ${p.start} and ${p.end} and s.status in ${PAID}
+          from sales s where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
             and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
         ), t as (
@@ -433,7 +427,7 @@ export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[
             sum(case when p.method='cash' then p.tip_cents else 0 end)::int cash,
             sum(case when p.method='gift_card' then p.tip_cents else 0 end)::int gc
           from payments p join sales s on s.id = p.sale_id
-          where s.shop_id in ${ids(s)} and s.business_date between ${p.start} and ${p.end} and s.status in ${PAID}
+          where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
             and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
         ), rf as (
@@ -442,7 +436,7 @@ export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[
             sum(case when r.method='cash' then r.tip_cents else 0 end)::int cash,
             sum(case when r.method='gift_card' then r.tip_cents else 0 end)::int gc
           from refunds r join sales s on s.id = r.sale_id
-          where r.shop_id in ${ids(s)} and r.business_date between ${p.start} and ${p.end} and r.kind = 'refund'
+          where r.shop_id in ${uuids(s.shopIds)} and r.business_date between ${start} and ${end} and r.kind = 'refund'
             and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
         ), k as (select staff_id, shop_id from v union select staff_id, shop_id from rf)
@@ -456,6 +450,19 @@ export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[
         left join t on t.staff_id = k.staff_id and t.shop_id = k.shop_id
         left join rf on rf.staff_id = k.staff_id and rf.shop_id = k.shop_id
         order by st.display_label, sh.name`);
+}
+
+/**
+ * Tips per barber per shop per bi-weekly pay period (hours stay in iSolved). A barber who works at
+ * several shops gets a row per shop, from the shop each ticket was rung up at. Sales land in the
+ * period they were paid; refunds in the period they were issued, which can be a later one.
+ */
+export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[]; rows: PayrollRow[] }> {
+  const periods = payPeriodsBetween(s.from, s.to);
+  const out: PayrollRow[] = [];
+  await Promise.all(
+    periods.map(async (p) => {
+      const r = await payrollSalesBetween(s, p.start, p.end);
       for (const row of r) {
         out.push({ ...row, periodStart: p.start, periodEnd: p.end, totalTipsCents: row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents });
       }

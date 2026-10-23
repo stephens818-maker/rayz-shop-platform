@@ -83,6 +83,14 @@ export const FEATURE_PERMISSIONS = [
     hint: "Without it, reports that break down by barber show only the person's own tickets, appointments, tips and ratings.",
   },
   { key: "barber_groups.manage", group: "Staff", label: "Create and edit saved barber groups for reports", brandOnly: true },
+  {
+    key: "payroll.run",
+    group: "Staff",
+    label: "Run payroll: hours, pay rates, iSolved numbers, pay groups and calendars, overrides and the iSolved downloads",
+    hint: "Sees every barber's pay at every shop. Downloads open once a period is approved and locked.",
+    brandOnly: true,
+  },
+  { key: "payroll.approve", group: "Staff", label: "Approve and lock a pay period", hint: "Blocked while any total doesn't reconcile.", brandOnly: true },
   { key: "settings.shop", group: "Settings and data", label: "Edit shop info, weekday hours, closures and booking rules" },
   { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
   {
