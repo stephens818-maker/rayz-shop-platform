@@ -34,6 +34,8 @@ pnpm dev                      # http://localhost:3000
 
 `pnpm db:reset` wipes and reseeds the database. `SEED_HISTORY_DAYS` (default 56) controls how much sample history is generated.
 
+To put a demo online for the owner (Vercel and Neon, sample data, mock payments and messages), follow [DEPLOY.md](DEPLOY.md).
+
 ### Logins (seeded; password `rayz2026!`)
 
 | Who | Email | Role and shops | Sees |
@@ -57,6 +59,7 @@ Handy demo data:
 - The gift card `DEMO-GIFT-2500` has $25.00 on it.
 - The promo code `WELCOME5` takes $5 off services.
 - Client "Jordan" (phone `319-555-0100`) has $290 of loyalty progress, so their next $33 haircut earns a $15 reward.
+- Families share one phone: the Hayes family at Coralville (`319-555-0201`), the Nguyens at Moline (`309-555-0202`), and the Carters at Kimberly (`563-555-0203`), each booked back to back with one barber in the coming days. They show up on **Clients → Duplicates** as a shared phone, and signing in at `/account` with that phone asks which of them it is.
 
 ### Try the full flow
 
@@ -766,19 +769,12 @@ samples/squire/      example Squire CSV exports for the importer
 
 ## Deploying (Vercel + Neon or Supabase)
 
-1. Create a Neon (or Supabase) Postgres database. Use the **pooled** connection string for `DATABASE_URL`. Set `MIGRATE_DATABASE_URL` to the direct, unpooled string for migrations.
-2. Run migrations with `MIGRATE_DATABASE_URL=… pnpm db:migrate`. Don't run the seed in production; load real data with the importer instead.
-3. Import the repo into Vercel. Set the environment variables:
-   - `AUTH_SECRET` (long and random)
-   - `AUTH_DEV_CODES=false` (production builds never return sign-in codes regardless)
-   - `CRON_SECRET` (required: without it the cron endpoint refuses every request)
-   - `APP_BASE_URL`
-   - the Stripe keys
-   - `NOTIFICATIONS_*_PROVIDER` (leave as `disabled` until cutover)
-4. `vercel.json` already schedules `/api/cron/notifications` every 5 minutes. Vercel sends `CRON_SECRET` as a Bearer token.
-5. Point a Stripe webhook at `/api/stripe/webhook` (`charge.refunded`, `charge.dispute.created`).
-6. Keep separate **staging** and **production** projects and databases. Turn on Neon point-in-time restore or Supabase daily backups.
-7. Create the real staff accounts (**Staff & schedules**), confirm each shop's tax rates, and tick "verified".
+[DEPLOY.md](DEPLOY.md) has the exact steps, for both a private demo preview on sample data and production.
+
+- `pnpm vercel-build` (which Vercel runs) applies migrations, then builds. With `DEMO_MODE=true` it also loads the sample data into an empty database; without it, it never seeds.
+- `DEMO_MODE=true` keeps a hosted demo safe: the payment simulator or Stripe test keys only, no texts, emails, or calls (they show in the outbox), customer sign-in codes on screen, one-click demo logins, and a banner on every page.
+- `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
+- Keep separate demo, staging, and production databases, and turn on Neon point-in-time restore or Supabase daily backups.
 
 ## Cutover plan
 
