@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "vercel-build": "tsx scripts/deploy-db.ts && next build",
+    "db:deploy": "tsx scripts/deploy-db.ts",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
