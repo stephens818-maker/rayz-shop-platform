@@ -109,9 +109,10 @@ export const BARBER_REPORTS: ReadonlySet<ReportKey> = new Set([
   "kpis",
   "heatmap",
   "client_ratings",
+  "service_times",
 ]);
 
-export const defaultView = (report?: ReportKey): ReportView => (report === "sales_by_barber" ? "barbers" : "combined");
+export const defaultView = (report?: ReportKey): ReportView => (report === "sales_by_barber" || report === "service_times" ? "barbers" : "combined");
 
 /** Without "See every barber's numbers", reports that break down by barber show only the viewer's own. "My sales" always does. */
 export const selfOnly = (ctx: Pick<StaffContext, "permissions">, report: ReportKey) => report === "my_sales" || !ctx.permissions.has("reports.all_staff");

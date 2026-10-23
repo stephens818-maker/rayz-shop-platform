@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   date,
   index,
   integer,
@@ -885,6 +886,41 @@ export const appointmentItems = pgTable(
     durationMin: integer("duration_min").notNull(),
   },
   (t) => [index("appointment_items_appt_idx").on(t.appointmentId)],
+);
+
+export const timingFinishedVia = pgEnum("timing_finished_via", ["finish", "checkout", "correction"]);
+export const timingReview = pgEnum("timing_review", ["include", "exclude"]);
+
+/**
+ * When an appointment's client arrived, the service started and ended, and they checked out, each
+ * with who recorded it. Checkout stands in for the end when Finish wasn't tapped. Managers can
+ * correct times (logged) and count or leave out a flagged time.
+ */
+export const appointmentTimes = pgTable(
+  "appointment_times",
+  {
+    appointmentId: uuid("appointment_id")
+      .primaryKey()
+      .references(() => appointments.id, { onDelete: "cascade" }),
+    arrivedAt: ts("arrived_at"),
+    arrivedBy: uuid("arrived_by").references(() => staff.id),
+    startedAt: ts("started_at"),
+    startedBy: uuid("started_by").references(() => staff.id),
+    finishedAt: ts("finished_at"),
+    finishedBy: uuid("finished_by").references(() => staff.id),
+    finishedVia: timingFinishedVia("finished_via"),
+    checkedOutAt: ts("checked_out_at"),
+    checkedOutBy: uuid("checked_out_by").references(() => staff.id),
+    review: timingReview("review"),
+    reviewNote: text("review_note"),
+    correctedAt: ts("corrected_at"),
+    correctedBy: uuid("corrected_by").references(() => staff.id),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("appointment_times_started_idx").on(t.startedAt),
+    check("appointment_times_order", sql`${t.finishedAt} is null or (${t.startedAt} is not null and ${t.finishedAt} > ${t.startedAt})`),
+  ],
 );
 
 export const waitlistEntries = pgTable(

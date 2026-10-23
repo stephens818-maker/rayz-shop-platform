@@ -27,6 +27,12 @@ export const FEATURE_PERMISSIONS = [
     label: "Squeeze in an appointment off the time grid, into buffer time or outside hours",
     hint: "Never on top of another appointment's service time or time off. Every squeeze-in is logged.",
   },
+  {
+    key: "service_times.correct",
+    group: "Front desk",
+    label: "Correct recorded service times and choose which count in reports",
+    hint: "Arrival, start and finish times on any appointment at their shops. Every correction is logged with the reason.",
+  },
   { key: "checkout.any", group: "Point of sale", label: "Open tickets and check out any barber's clients", hint: "Without it, people check out only their own clients." },
   { key: "pos.discount", group: "Point of sale", label: "Give manual discounts", hint: "Up to the role's discount limit." },
   { key: "pos.price_override", group: "Point of sale", label: "Change a menu price on a ticket" },
@@ -127,6 +133,12 @@ export const REPORTS = [
   { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },
   { key: "kpis", label: "Retention and rebook KPIs", href: "/admin/reports/kpis" },
   { key: "heatmap", label: "Busiest times heatmap", href: "/admin/reports/heatmap" },
+  {
+    key: "service_times",
+    label: "Service times",
+    href: "/admin/reports/service-times",
+    hint: "Actual time in the chair against the booked time, per barber, service and shop, with wait times and suggested booked durations.",
+  },
   { key: "cash_drawer", label: "Cash drawer", href: "/admin/reports/cash-drawer" },
   { key: "audit_log", label: "Audit log", href: "/admin/audit" },
 ] as const;
@@ -215,6 +227,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "settings.shop",
   "scheduling.timing",
   "calendar.squeeze_in",
+  "service_times.correct",
   "notifications.view",
   "reports.all_staff",
 ];
@@ -288,7 +301,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     name: "Barber",
     description: "Their own column, their own clients and their own sales.",
     defaultScope: "selected",
-    permissions: ["clients.rate", "clients.message", ...reports(["my_sales"])],
+    permissions: ["clients.rate", "clients.message", ...reports(["my_sales", "service_times"])],
     maxDiscountPct: 0,
   },
 ];

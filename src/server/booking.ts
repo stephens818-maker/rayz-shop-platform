@@ -35,6 +35,7 @@ import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers 
 import { CustomerInput, findOrCreateCustomer } from "./customers";
 import { AppError, isDoubleBookingError, notFound } from "./errors";
 import { AppointmentMessageContext, cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
+import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
 import { bookingPlans, shopInterval, staffIntervals, toStaffPlans } from "./timing";
 
 export const ACTIVE_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as const;
@@ -310,6 +311,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
           return a;
         });
         await audit(input.actor, "appointment.create", "appointment", appt.id, { source: input.source, staffId, startsAt: start.toISOString() }, r.shop.id, tx);
+        if (input.source === "walk_in") await recordArrival(appt.id, input.actor, tx, now);
         if (squeeze) {
           await audit(
             input.actor,
@@ -533,10 +535,15 @@ const TRANSITIONS: Record<string, string[]> = {
   no_show: ["booked"],
 };
 
+/**
+ * Status changes also record service times: checking in is the arrival, "in the chair" starts the
+ * service, and stepping back undoes them. Finishing goes through Finish or checkout.
+ */
 export async function setAppointmentStatus(id: string, status: keyof typeof TRANSITIONS, actor: Actor, now = new Date()) {
   const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
   if (!a) throw notFound("Appointment");
   if (!TRANSITIONS[a.status]?.includes(status)) throw new AppError("conflict", `Can't move from ${a.status} to ${status}`);
+  if (status === "in_service") return startService(id, actor, now);
   try {
     await db.transaction(async (tx) => {
       await tx
@@ -550,6 +557,9 @@ export async function setAppointmentStatus(id: string, status: keyof typeof TRAN
         })
         .where(eq(appointments.id, id));
       await audit(actor, `appointment.${status}`, "appointment", id, { from: a.status }, a.shopId, tx);
+      if (status === "checked_in") await recordArrival(id, actor, tx, now);
+      if (status === "booked" && a.status === "checked_in") await clearArrival(id, tx);
+      if (status === "checked_in" && a.status === "in_service") await clearStart(id, tx);
       if (status === "cancelled" || status === "no_show") await cancelPendingReminders(id, tx);
       if (status === "cancelled" && a.customerId) await scheduleAppointmentNotifications("cancelled", await messageContext(id, tx), tx, now);
     });

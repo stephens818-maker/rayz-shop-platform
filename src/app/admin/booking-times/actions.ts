@@ -162,24 +162,43 @@ export async function saveShopDurationAction(shopId: string, serviceId: string, 
 }
 
 /** How long a service takes one barber, at one shop or everywhere. Null minutes removes it. */
+async function setBarberDuration(ctx: StaffContext, staffId: string, serviceId: string, shopId: string | null, minutes: number | null, extra: Record<string, unknown> = {}) {
+  const person = await barberScope(ctx, staffId, shopId);
+  const s = await stepFor(serviceId);
+  const where = and(eq(staffServiceDurations.staffId, staffId), eq(staffServiceDurations.serviceId, serviceId), shopId ? eq(staffServiceDurations.shopId, shopId) : isNull(staffServiceDurations.shopId));
+  if (minutes === null) {
+    await db.delete(staffServiceDurations).where(where);
+  } else {
+    const problem = durationProblem(minutes, s.durationStepMin);
+    if (problem) throw new AppError("bad_request", problem);
+    await db
+      .insert(staffServiceDurations)
+      .values({ staffId, serviceId, shopId, durationMin: minutes })
+      .onConflictDoUpdate({ target: [staffServiceDurations.staffId, staffServiceDurations.serviceId, staffServiceDurations.shopId], set: { durationMin: minutes, updatedAt: new Date() } });
+  }
+  await audit(ctx.actor, "timing.barber_duration", "staff", staffId, { barber: person.displayLabel, service: s.name, shopId, to: minutes, ...extra }, shopId);
+  refresh();
+}
+
 export async function saveBarberDurationAction(staffId: string, serviceId: string, shopId: string | null, minutes: number | null) {
   return safe(async () => {
+    await setBarberDuration(await authorize("scheduling.timing"), staffId, serviceId, shopId, minutes);
+    return null;
+  });
+}
+
+/** One click from the service times report: the barber's own time for this service at this shop, with the evidence logged. */
+export async function acceptDurationSuggestionAction(input: { staffId: string; serviceId: string; shopId: string; minutes: number; evidence: { n: number; avgMin: number; medianMin: number; fromMin: number } }) {
+  return safe(async () => {
     const ctx = await authorize("scheduling.timing");
-    const person = await barberScope(ctx, staffId, shopId);
-    const s = await stepFor(serviceId);
-    const where = and(eq(staffServiceDurations.staffId, staffId), eq(staffServiceDurations.serviceId, serviceId), shopId ? eq(staffServiceDurations.shopId, shopId) : isNull(staffServiceDurations.shopId));
-    if (minutes === null) {
-      await db.delete(staffServiceDurations).where(where);
-    } else {
-      const problem = durationProblem(minutes, s.durationStepMin);
-      if (problem) throw new AppError("bad_request", problem);
-      await db
-        .insert(staffServiceDurations)
-        .values({ staffId, serviceId, shopId, durationMin: minutes })
-        .onConflictDoUpdate({ target: [staffServiceDurations.staffId, staffServiceDurations.serviceId, staffServiceDurations.shopId], set: { durationMin: minutes, updatedAt: new Date() } });
-    }
-    await audit(ctx.actor, "timing.barber_duration", "staff", staffId, { barber: person.displayLabel, service: s.name, shopId, to: minutes }, shopId);
-    refresh();
+    const e = input.evidence;
+    const round = (x: number) => Math.round(x * 10) / 10;
+    await setBarberDuration(ctx, input.staffId, input.serviceId, input.shopId, input.minutes, {
+      from: e.fromMin,
+      via: "service_times_suggestion",
+      evidence: { counted: e.n, avgMin: round(e.avgMin), medianMin: round(e.medianMin) },
+    });
+    revalidatePath("/admin/reports/service-times");
     return null;
   });
 }
