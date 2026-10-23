@@ -132,6 +132,43 @@ export function feeDisclosure(cfg: Pick<CardFeeConfig, "rate" | "enabled">): str
   return `A ${r} surcharge applies to credit card payments only. It does not exceed our cost of acceptance. No surcharge on debit, prepaid, gift card, or cash.`;
 }
 
+export type CardFeeBasis = "charge_excluding_tip" | "charge_including_tip";
+
+export interface CardFeeResult {
+  feeCents: number;
+  /** The rate used, after clamping to MAX_CARD_FEE_RATE; 0 when no fee applies. */
+  rate: number;
+  basis: CardFeeBasis;
+  /** The amount the rate was applied to. */
+  basisCents: number;
+  /** A surcharge is the shop's option, never required: staff may drop any fee that applies. Nothing to waive when the fee is 0. */
+  waivable: boolean;
+  /** Why no fee applies, when it doesn't. */
+  reason: "applies" | "disabled" | "not_credit" | "wallet_fee_off" | "zero_amount";
+  label: string | null;
+  disclosure: string | null;
+}
+
+/**
+ * The credit-card surcharge on one card charge. `chargeCents` is what goes on the card before the
+ * fee, tip included; the tip is treated as the last thing paid, so at most `chargeCents` of it is on the card.
+ */
+export function cardFeeFor(cfg: CardFeeConfig, funding: CardFunding | null | undefined, amounts: { chargeCents: number; tipCents?: number }, opts: { wallet?: boolean; walletFeeOn?: boolean } = {}): CardFeeResult {
+  const rate = Math.min(Math.max(cfg.rate, 0), MAX_CARD_FEE_RATE);
+  const basis: CardFeeBasis = cfg.appliesToTip ? "charge_including_tip" : "charge_excluding_tip";
+  const charge = Math.max(0, Math.round(amounts.chargeCents));
+  const tipOnCharge = Math.min(Math.max(0, Math.round(amounts.tipCents ?? 0)), charge);
+  const basisCents = charge - (cfg.appliesToTip ? 0 : tipOnCharge);
+  const disclosure = feeDisclosure({ ...cfg, rate });
+  const none = (reason: CardFeeResult["reason"]): CardFeeResult => ({ feeCents: 0, rate: 0, basis, basisCents: 0, waivable: false, reason, label: null, disclosure });
+  if (!cfg.enabled || rate <= 0) return none("disabled");
+  if (funding !== "credit") return none("not_credit");
+  if (opts.wallet && !opts.walletFeeOn) return none("wallet_fee_off");
+  const feeCents = applyRate(basisCents, rate);
+  if (feeCents <= 0) return none("zero_amount");
+  return { feeCents, rate, basis, basisCents, waivable: true, reason: "applies", label: feeLabel({ rate }), disclosure };
+}
+
 export function computeCheckout(input: CheckoutInput): CheckoutTotals {
   const lines: LineResult[] = input.lines.map((l) => ({
     ...l,
@@ -196,17 +233,14 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
 
   const cfg = input.cardFee;
   const cardFeeRate = Math.min(Math.max(cfg.rate, 0), MAX_CARD_FEE_RATE);
-  const feeApplies =
-    cfg.enabled && cardFeeRate > 0 && input.tender.method === "card" && input.tender.cardFunding === "credit";
-  // The tip is treated as the last thing paid, so it lands on the primary method.
-  const tipOnPrimary = Math.min(tipCents, primaryBaseCents);
-  const cardFeeBaseCents = feeApplies ? primaryBaseCents - (cfg.appliesToTip ? 0 : tipOnPrimary) : 0;
-  const cardFeeCents = feeApplies ? applyRate(cardFeeBaseCents, cardFeeRate) : 0;
+  const fee = input.tender.method === "card" ? cardFeeFor(cfg, input.tender.cardFunding, { chargeCents: primaryBaseCents, tipCents }) : null;
+  const cardFeeBaseCents = fee?.reason === "applies" ? fee.basisCents : 0;
+  const cardFeeCents = fee?.feeCents ?? 0;
 
   const disclosures: string[] = [];
   const d = feeDisclosure({ ...cfg, rate: cardFeeRate });
   if (d) disclosures.push(d);
-  if (feeApplies && cardFeeCents > 0) disclosures.push(`${feeLabel({ ...cfg, rate: cardFeeRate })}: ${formatCents(cardFeeCents)}`);
+  if (fee?.label) disclosures.push(`${fee.label}: ${formatCents(cardFeeCents)}`);
 
   return {
     lines,
