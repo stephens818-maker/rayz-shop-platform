@@ -92,6 +92,7 @@ interface SimIntent {
   metadata: Record<string, string>;
   destination: Destination | null;
   customerId: string | null;
+  statementDescriptorSuffix: string | null;
 }
 interface SimState {
   intents: Map<string, SimIntent>;
@@ -137,7 +138,7 @@ export async function chargeCard(opts: {
     const existing = sim.byKey.get(opts.idempotencyKey);
     const pi: SimIntent = existing
       ? sim.intents.get(existing)!
-      : { id: simId("sim_pi"), amountCents: opts.amountCents, amountRefundedCents: 0, card: { funding: card.funding, brand: card.brand, last4: card.last4 }, metadata: opts.metadata, destination: dest, customerId: opts.customerId ?? null };
+      : { id: simId("sim_pi"), amountCents: opts.amountCents, amountRefundedCents: 0, card: { funding: card.funding, brand: card.brand, last4: card.last4 }, metadata: opts.metadata, destination: dest, customerId: opts.customerId ?? null, statementDescriptorSuffix: dest ? null : (opts.statementDescriptorSuffix ?? null) };
     if (!existing) {
       sim.intents.set(pi.id, pi);
       sim.byKey.set(opts.idempotencyKey, pi.id);

@@ -7,6 +7,7 @@ import {
   ALL_PERMISSIONS,
   FEATURE_PERMISSIONS,
   Grantor,
+  OWNER_GRANTS,
   OWNER_ONLY,
   Permission,
   REPORTS,
@@ -68,9 +69,10 @@ describe("permission catalog and templates", () => {
     }
   });
 
-  it("Brand Owner has everything; Brand Admin everything except brand settings and the client export", () => {
+  it("Brand Owner has everything; Brand Admin everything except brand settings, banking and the client export", () => {
     expect(access("brand_owner").permissions.size).toBe(ALL_PERMISSIONS.length);
-    expect(access("brand_admin").permissions.size).toBe(ALL_PERMISSIONS.length - OWNER_ONLY.size - 1);
+    expect(access("brand_admin").permissions.size).toBe(ALL_PERMISSIONS.length - OWNER_ONLY.size - OWNER_GRANTS.size - 1);
+    expect(access("brand_admin").permissions.has("payments.banking")).toBe(false);
     expect(access("brand_admin").permissions.has("settings.brand")).toBe(false);
     expect(access("brand_admin").permissions.has("clients.privacy")).toBe(true);
   });

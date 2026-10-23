@@ -315,6 +315,7 @@ async function coralvilleState() {
     paymentAccount: await q.select().from(s.shopPaymentAccounts).where(eq(s.shopPaymentAccounts.shopId, cv)),
     owners: await q.select().from(s.ownerEntities),
     hours: await q.select().from(s.shopHours).where(eq(s.shopHours.shopId, cv)),
+    readers: await q.select().from(s.terminalReaders).where(eq(s.terminalReaders.shopId, cv)),
     closures: await q.select().from(s.shopClosures).where(eq(s.shopClosures.shopId, cv)),
     services: await q.select().from(s.shopServices).where(eq(s.shopServices.shopId, cv)),
     products: await q.select().from(s.shopProducts).where(eq(s.shopProducts.shopId, cv)),
@@ -782,6 +783,10 @@ describe("server actions aimed at another shop's records", () => {
       ["payments refresh", () => setup.refreshPaymentsAccountAction(cv)],
       ["payments simulated onboarding", () => setup.completeSimulatedOnboardingAction(cv, false)],
       ["payments dashboard", () => setup.expressDashboardAction(cv)],
+      ["payments mode", () => setup.setPaymentsModeAction(cv, "cash_only")],
+      ["payments statement descriptor", () => setup.saveStatementDescriptorAction(cv, "HIJACKED CUTS")],
+      ["payments register reader", () => setup.registerReaderAction(cv, { label: "Sneaky", registrationCode: "simulated-wpe", serialNumber: null })],
+      ["settings receipt", () => settings.saveReceiptAction(cv, { headline: "Hijacked", footer: null, showLogo: false, showAddress: false, showPhone: false })],
       ["shop owner", () => setup.setShopOwnerAction(cv, cvShop.ownerEntityId!)],
       ["owner entity edit", () => setup.saveOwnerEntityAction(cvShop.ownerEntityId!, { name: "Hijacked LLC", legalName: null, kind: "franchisee", contactEmail: null })],
       ["owner entity create", () => setup.saveOwnerEntityAction(null, { name: "Sneaky LLC", legalName: null, kind: "franchisee", contactEmail: null })],
@@ -793,7 +798,7 @@ describe("server actions aimed at another shop's records", () => {
     const manager = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, people["manager.moline"]) }))!;
     await m.db.db
       .update(m.schema.staff)
-      .set({ permissionOverrides: { "settings.taxes": true, "giftcards.void": true, "permissions.manage": true, "clients.merge": true, "po.approve": true, "payments.accounts": true } })
+      .set({ permissionOverrides: { "settings.taxes": true, "giftcards.void": true, "permissions.manage": true, "clients.merge": true, "po.approve": true, "payments.accounts": true, "payments.banking": true } })
       .where(eq(m.schema.staff.id, manager.id));
     const before = await coralvilleState();
     const errors: Record<string, string[]> = {};
