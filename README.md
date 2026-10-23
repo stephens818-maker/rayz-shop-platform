@@ -108,21 +108,32 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 
 Everything below happens in the portal. Nothing in the code names a shop, a barber, a service or a list item, so new ones show up everywhere on their own: booking, the public site, the calendar, POS, every report and filter, permission scopes, location groups, Today and the digest.
 
-**Add a location** (Brand Owner or Brand Admin, `locations.setup`): **Setup → Location setup → Add a location**. The wizard has 11 steps and saves the shop hidden from clients ("Setting up"):
+**Add a location** (Brand Owner or Brand Admin, `locations.setup`): **Setup → Location setup → Add a location**. The wizard has 12 steps and saves the shop hidden from clients ("Setting up"):
 
 1. **Name and address:** name, public booking link (never a surname), address, phone, email, time zone (Central by default), owner and location groups.
 2. **Hours and holidays:** weekly hours (Sunday closed by default; only the Brand Owner opens Sundays), closed days and holidays.
-3. **Taxes, card fee and tips:** service and product tax rates, which stay flagged on Today until someone ticks them verified, plus the card fee and tip buttons.
-4. **Online booking:** slot interval, earliest booking, how far ahead clients can book, and the online cancel cutoff.
-5. **Services:** copied from the brand menu or another shop, with per-shop prices, durations and on/off.
-6. **Products and par levels:** copied from another shop, or pasted as a list.
-7. **Vendors:** who supplies the shop, with the shop's own account number at each.
-8. **Team and payroll:** existing barbers (a barber can work at several shops) with their days and hours here, and the pay calendar.
-9. **Login, phone line and card readers:** shop logins and what they can do, the Twilio number, and Stripe Terminal readers.
-10. **Branding:** accent color, logo and the "About this location" text.
-11. **Review**, then save.
+3. **Sales tax:** service and product tax rates, which stay flagged on Today until someone ticks them verified.
+4. **Payments and banking:** where the shop's card money goes, its statement descriptor, card fee, tip buttons, Stripe Terminal readers and receipt. See [Banking per location](#banking-per-location) below.
+5. **Online booking:** slot interval, earliest booking, how far ahead clients can book, and the online cancel cutoff.
+6. **Services:** copied from the brand menu or another shop, with per-shop prices, durations and on/off.
+7. **Products and par levels:** copied from another shop, or pasted as a list.
+8. **Vendors:** who supplies the shop, with the shop's own account number at each.
+9. **Team and payroll:** existing barbers (a barber can work at several shops) with their days and hours here, and the pay calendar.
+10. **Login and phone line:** shop logins and what they can do, and the Twilio number.
+11. **Branding:** accent color, logo and the "About this location" text.
+12. **Review**, then save. A shop on its own Stripe account gets a **Continue to Stripe onboarding** button.
 
-**Go live:** the location's page in **Location setup** shows a checklist. Address and phone, time zone, booking link, owner, hours, taxes, menu, barbers, card payments and payouts are required; the shop line, card readers, front desk login and retail are optional. **Go live** stays greyed out until the required steps are done. Staff can practise bookings and checkouts at a shop that's still setting up; clients can't see it.
+**Go live:** the location's page in **Location setup** shows a checklist. Address and phone, time zone, booking link, owner, hours, taxes, menu, barbers, and payments and banking are required; the shop line, card readers, front desk login and retail are optional. **Go live** stays greyed out until the required steps are done. Staff can practise bookings and checkouts at a shop that's still setting up; clients can't see it.
+
+<a id="banking-per-location"></a>**Banking per location** (Brand Owner, or someone the owner gives `payments.banking`). Each shop's **Payments and banking** step picks one of three:
+
+- **Its own Stripe account and bank.** Use this for a shop that's its own business, such as an LLC with its own EIN. Stripe's hosted onboarding collects the legal entity, EIN, owner identity and bank account. Ray'z stores only the Stripe account ID and what Stripe reports back: charges enabled, payouts enabled, and what's still due. It never stores bank or Social Security numbers. The shop can go live once Stripe enables charges; payouts can follow later.
+- **The brand's Stripe account and bank.** Card sales settle in the brand's main account and are paid out to the brand's bank with the other brand-account shops. There's nothing to onboard, so it doesn't hold up go-live.
+- **No cards.** The shop takes cash and gift cards only and can go live without Stripe. A shop on its own account can also open cash-only while Stripe reviews it, and cards start once Stripe enables charges.
+
+The same step sets the **statement descriptor** (what clients see on their card statement; on the brand's account it's the part after `STRIPE_STATEMENT_PREFIX`, `RAYZ` by default) and shows the **payout schedule** Stripe reports. **Card readers** are registered with the code the reader shows (in test mode, `simulated-wpe`), each to the shop's own Stripe Terminal Location. The **card fee**, **tip buttons** and **receipt** (headline, footer, logo, address, phone) are in Shop settings. Switching a shop between accounts affects new charges only: earlier charges, and their refunds, stay with the account they settled in. Every change is audited.
+
+**Payouts:** **Insights → Payouts** lists every deposit to each shop's bank, and the brand's, with gross, fees, refunds and net. Choose one shop or all of them. Only people who see every shop see the brand account's deposits, because they pool several shops. Today flags a failed payout.
 
 **Temporarily close** (renovation, weather): pick an end date or leave it open, and add the note clients see. Booking stops, the public page shows the note, and the shop reopens by itself the day after the end date. **Archive** (closing for good) needs no upcoming appointments, no open tickets and no open drawer. It signs out the shop logins, removes the barbers' schedules there, cancels its pending messages, turns off its readers and releases its number. All of its sales, payroll, appointments and audit history stay in every report and filter, labelled "(archived)".
 
@@ -265,33 +276,45 @@ These came with the Today work, beyond what was asked for:
 - **Audit log** records sales, voids, refunds, discounts, price, tax, and fee changes, schedule edits, imports, client ratings, settings changes, permission changes, every stock movement, purchase order step, transfer, and count, and every item a bulk upload creates or changes, including before and after values where it matters. Entries are append-only.
 - **Card data never touches our server.** Elements tokenizes cards in the browser and Terminal reads them on the device; we store only brand, last 4, funding, and Stripe IDs, which keeps us in SAQ-A scope.
 
-### Card payments: one Stripe account per shop (Stripe Connect)
+### Card payments: per-location banking (Stripe Connect)
 
-Ray'z is the merchant of record on one platform Stripe account. Each shop gets its own **connected account**, so each shop has its own P&L.
+Ray'z is the platform on one Stripe account. Each shop's **payments mode** decides where its card money settles: its own **connected account** (`connected`, the default), the brand's own account (`brand`), or nowhere (`cash_only`). The [owner's guide](#banking-per-location) covers the choice; this is how it works.
 
-- **Every card charge is a destination charge to the shop where the service happened.** It uses `on_behalf_of` plus `transfer_data.destination`. That shop's revenue, tips, surcharge and refunds land in its own account, and its payouts go to its own bank. `chargeCard` in `src/server/payments/processor.ts` is the only place a PaymentIntent is created.
-- **Clients and saved cards live on the platform** as Stripe Customers, so one saved card pays at any shop. That side is built by the mobile workstream. The POS passes the Customer through when it has one.
-- **Processing fees.** The platform keeps an application fee equal to the shop's processing cost: 2.9% + 30¢ keyed or online, and 2.7% + 5¢ on the reader. Set `CONNECT_FEE_KEYED` or `CONNECT_FEE_TERMINAL` (for example `2.9%+30`) to change them. Refunds pull the money back from the shop's account (`reverse_transfer`) and don't return the fee.
-- **A shop that isn't onboarded can't take cards.** Checkout says so, offers cash or a gift card, and points to Location setup. A disconnected account is refused the same way.
-- **Location setup** (`/admin/setup`) is a step-by-step checklist for opening a shop: address, owner, hours, sales tax, menu, barbers, card payments, and online booking. Creating a shop opens it.
-  - The payments step creates the shop's Express account and sends the person to **Stripe-hosted onboarding**: business details, the representative's identity, and the bank account. When they come back, the step shows what Stripe still needs. Each later click makes a fresh link, because links are single-use.
-  - Account status comes from a separate Connect webhook (`/api/stripe/connect`, events `account.updated`, `account.application.deauthorized` and `payout.*`). The status is one of: Not set up, Onboarding not finished, Stripe is reviewing, Needs attention, Taking card payments, or Disconnected.
-  - Setting up accounts needs the `payments.accounts` permission. The Brand Owner and Brand Admin have it.
-- **Owners.** Every shop belongs to an owner entity, either the brand or a franchisee. A franchisee can own several shops, and each shop still has its own Stripe account. Owners are managed under Location setup.
-- **Shop P&L by Stripe account** (`/admin/reports/shop-accounts`) shows each shop's connected account, grouped and subtotalled by owner, with:
+- **One routing decision.** `chargeRoute` in `src/server/payments/connect.ts` picks the route for every card charge, and `chargeCard` in `src/server/payments/processor.ts` is the only place a PaymentIntent is created. Services, add-ons, products, tips, surcharges and gift cards sold at the POS are all in the sale's one charge, so they all follow the route. Reader payments do too.
+  - **Own account:** a destination charge (`on_behalf_of` plus `transfer_data.destination`). The shop is the merchant on the statement, and the platform keeps an application fee equal to the processing cost: 2.9% + 30¢ keyed or online, and 2.7% + 5¢ on the reader. Set `CONNECT_FEE_KEYED` or `CONNECT_FEE_TERMINAL` (for example `2.9%+30`) to change them. The payment row stores `stripe_account_id`, `stripe_transfer_id`, `application_fee_cents` and `settlement = 'connected'`.
+  - **Brand account:** a plain platform charge with the shop's `statement_descriptor_suffix`, recorded with `settlement = 'platform'` and Stripe's fee in `processor_fee_cents`. The shop is still on every row, so its sales, refunds and fees report on their own.
+  - **Cash only, or own account not ready:** refused before anything is charged (`payment_failed` with reason `cash_only` or `payments_not_ready`). The POS greys out Card and says why.
+- **Refunds follow the money.** A refund reverses the transfer (`reverse_transfer`) when the payment went to a connected account, and is a plain refund when it settled in the brand's. That's decided by the payment, not the shop's current mode, so switching a shop never misroutes an old refund. Processing fees aren't returned.
+- **Readers.** Each shop gets a Stripe Terminal Location, created on first use from its address. Readers register to it with their registration code (`terminal.readers.create`), and checkout refuses a reader that isn't the shop's own and records which reader took each payment (`payments.terminal_reader_id`).
+- **Clients and saved cards live on the platform** as Stripe Customers, so one saved card pays at any shop, on either kind of account. That side is built by the mobile workstream.
+- **Go-live.** The checklist's Payments and banking step is done when the shop is on the brand's account, cash only, or its own account has `charges_enabled`. Payouts can lag. **Open cash-only for now** waives it once, without changing the mode.
+- **Webhooks.**
+  - The platform webhook (`/api/stripe/webhook`) books refunds made in Stripe's dashboard at the payment's shop, whichever account it settled in, logs disputes against that shop, and records the brand account's own `payout.*` as brand payouts.
+  - The Connect webhook (`/api/stripe/connect`) takes `account.updated`, `capability.updated`, `account.external_account.*`, `account.application.deauthorized` and `payout.*` from shops' accounts. It stores the status flags, what's due and the payout schedule, and records payouts against the shop. Events for accounts that aren't ours are acknowledged and ignored.
+  - A paid payout is itemized from its balance transactions (gross, fees including our application fee, refunds), and the result is stored on `shop_payouts`.
+- **Permissions.**
+  - `payments.banking` covers starting or continuing onboarding, opening a shop's Stripe dashboard, changing the mode or the statement descriptor, and choosing anything but the defaults in the wizard. Only the Brand Owner has it by default, and only the Brand Owner can grant or remove it (`OWNER_GRANTS`); a Brand Admin can't, even to themselves.
+  - `payments.accounts` (Brand Owner and Brand Admin) covers viewing status, refreshing it, and owner entities.
+  - Registering readers needs `settings.shop`, and the Payouts page needs the Shop P&L report.
+  - Every change is audited: `payments.mode`, `payments.statement_descriptor`, `payments.terminal_location`, `reader.register`, `shop.receipt`, and the go-live and create entries with the mode.
+- **Owners.** Every shop belongs to an owner entity, either the brand or a franchisee. A franchisee can own several shops. Owners are managed under Location setup.
+- **Shop P&L by Stripe account** (`/admin/reports/shop-accounts`) shows each shop's account (or "Brand account"), grouped and subtotalled by owner, with:
   - card charges, card takings after refunds, tips, surcharge and refunds
-  - processing fees, and what the account received
-  - payouts paid and in transit, with every payout listed
+  - processing fees, and what the accounts received. Brand-account takings are counted at their shop, not as unrouted.
+  - payouts paid and in transit, with every payout's gross, fees and refunds
   - cash and gift cards taken outside Stripe
-- **Without Stripe keys,** each shop gets a simulated account (`sim_acct_…`) and a stand-in for the hosted onboarding page. The seed gives every shop an onboarded simulated account, routes its card history there, and makes daily payouts. Simulated accounts are refused once real keys are set, so every shop goes through Stripe's onboarding then.
+- **Payouts** (`/admin/payouts`) has the same numbers per account, plus the brand account's pooled payouts, each account's payout schedule, and every deposit itemized.
+- **Without Stripe keys,** each shop on its own account gets a simulated account (`sim_acct_…`) and a stand-in for the hosted onboarding page. Readers register as `sim_tmr_…` to a `sim_tml_…` location. The seed gives every shop an onboarded simulated account, routes its card history there, and makes daily payouts, itemized. Brand-account sales get brand payouts. Simulated accounts are refused once real keys are set, so every shop goes through Stripe's onboarding then. Reader-driven collection (`terminal.readers.processPaymentIntent`) is still simulated at the POS.
+
+<img alt="Add a location: the Payments and banking step" src="docs/screenshots/banking-wizard-step.png" width="800" />
+
+<img alt="Location setup: a shop on the brand's account, with its descriptor, payout schedule and Terminal location" src="docs/screenshots/banking-setup-brand-account.png" width="800" />
+
+<img alt="Payouts, every shop and the brand account" src="docs/screenshots/banking-payouts.png" width="800" />
 
 <img alt="Location setup: every shop's setup progress, card payment status and Stripe account, and the owners" src="docs/screenshots/connect-setup-overview.png" width="800" />
 
-<img alt="Setting up Dubuque: the steps, with card payments not set up yet" src="docs/screenshots/connect-setup-not-started.png" width="800" />
-
 <img alt="The simulator's stand-in for Stripe-hosted onboarding" src="docs/screenshots/connect-simulated-onboarding.png" width="800" />
-
-<img alt="Back from onboarding without a bank account: taking cards, payouts waiting" src="docs/screenshots/connect-setup-needs-bank.png" width="800" />
 
 <img alt="Shop P&L by Stripe account, with payouts" src="docs/screenshots/connect-shop-pl.png" width="800" />
 
@@ -980,7 +1003,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 
 - **SMS and email providers.** Sending is **off by default** (`src/server/notifications/providers.ts`). That includes purchase orders emailed to vendors and low-stock alerts: they're queued and shown in the outbox with their attachments, but nothing leaves until a provider is configured. Setting `NOTIFICATIONS_*_PROVIDER=console` logs messages instead, and `simulator` (texts and calls) feeds the call and text simulator. Twilio texts and calls are built (see [Call-ins and the shop line](#call-ins-and-the-shop-line-twilio)) but haven't been tried against a real Twilio account: that needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, a number per shop and A2P 10DLC registration. Resend email is still a stub and needs a verified sending domain.
 - **Calls through the shop line.** **Call through shop line** rings the shop's phone from its Twilio number, then bridges the client (`/api/twilio/voice/bridge`), so neither side sees the other's number. Without Twilio, the call goes to the outbox and is logged under **Calls and texts** on the client's profile.
-- **Stripe without keys.** With no `STRIPE_SECRET_KEY`, a built-in simulator with the same interface runs, using Stripe's published test card IDs (`pm_card_visa`, `pm_card_visa_debit`, and so on), so the POS works end to end offline. Adding test keys (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`) switches to real Stripe test mode: PaymentIntents as destination charges to each shop's connected account, Stripe-hosted onboarding, Elements for keyed cards, the webhook for dashboard refunds and disputes, and the Connect webhook for account status and payouts. Connect must be turned on for the platform account first ([dashboard.stripe.com/test/connect](https://dashboard.stripe.com/test/connect)). For Cloud Agents, add them under Cursor Dashboard → Cloud Agents → Secrets.
+- **Stripe without keys.** With no `STRIPE_SECRET_KEY`, a built-in simulator with the same interface runs, using Stripe's published test card IDs (`pm_card_visa`, `pm_card_visa_debit`, and so on), so the POS works end to end offline. Adding test keys (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`) switches to real Stripe test mode: destination charges to each connected account, plain charges for shops on the brand's account, Stripe-hosted onboarding, Terminal Locations and reader registration, Elements for keyed cards, the webhook for dashboard refunds, disputes and the brand's payouts, and the Connect webhook for account status, payout schedules and shops' payouts. `STRIPE_STATEMENT_PREFIX` (optional, default `RAYZ`) is the brand's descriptor prefix. Connect must be turned on for the platform account first ([dashboard.stripe.com/test/connect](https://dashboard.stripe.com/test/connect)). For Cloud Agents, add them under Cursor Dashboard → Cloud Agents → Secrets.
 - **Stripe Terminal.** The card reader flow is simulated. You pick a test card where a reader would read one. Real hardware needs a Terminal location, a connection token endpoint, and a reader pairing screen.
 - **3-D Secure.** The keyed-card flow doesn't handle `requires_action` yet. That's fine for in-person keyed entry, but it's needed before taking any card-not-present payment.
 - **Tax rates.** The seeded rates are placeholders (IA 7%; IL 0% on services and 8.75% on products) and every shop is marked "unverified". The accountant must confirm each shop's rates before go-live.
