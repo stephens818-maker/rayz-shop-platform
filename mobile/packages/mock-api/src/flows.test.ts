@@ -45,7 +45,7 @@ describe("customer flows", () => {
     expect(creditPreview.body.disclosure).toMatch(/before|credit card/i);
     expect(creditPreview.body.totalCents).toBe(2900 + 203 + 500 + 93);
     expect(creditPreview.body.destination.model).toBe("separate_charges_and_transfers");
-    expect(creditPreview.body.tipTransfer.amountCents).toBe(500);
+    expect(creditPreview.body.tipTransfer).toEqual({ amountCents: 500, disposition: "payroll", copy: "Tips paid through payroll." });
     const debitPreview = await json(await app.request("/api/v1/appointments/NEXT4ALEX01/payment-preview", { method: "POST", headers: auth, body: JSON.stringify({ paymentMethodId: debit.body.paymentMethod.id, tipCents: 500 }) }));
     expect(debitPreview.body.feeCents).toBe(0);
     expect(debitPreview.body.feeReason).toBe("not_credit");
@@ -63,8 +63,8 @@ describe("staff pay, clock, and earnings", () => {
       expect(derivePayoutState(flagsForState(state))).toBe(state);
     }
     const app = createApp();
-    const { token } = await staffSession(app, "+13195550444", "101010");
-    const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const session = await staffSession(app, "+13195550444", "101010");
+    const auth = { authorization: `Bearer ${session.token}`, "content-type": "application/json", "x-step-up": session.stepUp };
     expect((await json(await app.request("/api/staff/v1/me/payout-account", { headers: auth }))).body.account.state).toBe("not_started");
     const moved = await json(await app.request("/api/staff/v1/me/payout-account/session/complete", { method: "POST", headers: auth, body: JSON.stringify({ state: "active" }) }));
     expect(moved.body.state).toBe("active");
@@ -78,15 +78,19 @@ describe("staff pay, clock, and earnings", () => {
     const app = createApp();
     const { token } = await staffSession(app);
     const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
-    const code = await json(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville"));
-    const blocked = await json(await app.request("/api/staff/v1/kiosk/qr?shopId=kimberly"));
-    expect(blocked.status).toBe(409);
+    const code = await json(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: auth }));
+    const missing = await app.request("/api/staff/v1/kiosk/qr?shopId=coralville");
+    expect(missing.status).toBe(401);
+    const otherShop = await app.request("/api/staff/v1/kiosk/qr?shopId=moline", { headers: auth });
+    expect(otherShop.status).toBe(404);
+    const blocked = await app.request("/api/staff/v1/kiosk/qr?shopId=kimberly", { headers: auth });
+    expect(blocked.status).toBe(404);
     const bio = await json(await app.request("/api/staff/v1/clock/in", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token, biometric: true }) }));
     expect(bio.status).toBe(400);
     const inn = await json(await app.request("/api/staff/v1/clock/in", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token }) }));
     expect(inn.status).toBe(200);
-    const missing = await json(await app.request("/api/staff/v1/clock/out", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token, cashTipCents: 1200 }) }));
-    expect(missing.status).toBe(422);
+    const noAttest = await json(await app.request("/api/staff/v1/clock/out", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token, cashTipCents: 1200 }) }));
+    expect(noAttest.status).toBe(422);
     const out = await json(await app.request("/api/staff/v1/clock/out", { method: "POST", headers: auth, body: JSON.stringify({ token: code.body.token, cashTipCents: 1200, attestation: true }) }));
     expect(out.body.punch.cashTipCents).toBe(1200);
     expect(out.body.punch.attestation).toBe(true);
@@ -99,7 +103,7 @@ describe("staff pay, clock, and earnings", () => {
     const lockedOut = await app.request("/api/staff/v1/me/earnings?period=current", { headers: { authorization: `Bearer ${makenna.token}` } });
     expect(lockedOut.status).toBe(403);
     const other = await app.request("/api/staff/v1/me/earnings?period=current&staffId=" + STAFF_CASEY, { headers });
-    expect(other.status).toBe(404);
+    expect(other.status).toBe(400);
     const current = await json(await app.request("/api/staff/v1/me/earnings?period=current", { headers }));
     expect(current.body.grossLabel).toBe(GROSS_LABEL);
     expect(current.body.from).toBe("2026-10-18");
@@ -107,14 +111,16 @@ describe("staff pay, clock, and earnings", () => {
     expect(JSON.stringify(current.body).toLowerCase()).not.toContain("isolved");
     expect(current.body.netPayCents).toBeUndefined();
 
-    const week = await json(await app.request("/api/staff/v1/me/earnings?from=2026-10-12&to=2026-10-18", { headers }));
-    const trainingWeek = week.body.workweeks.find((w: { weekStart: string }) => w.weekStart === "2026-10-12");
+    const week = await json(await app.request("/api/staff/v1/me/earnings?from=2026-10-11&to=2026-10-17", { headers }));
+    expect(week.body.workweeks.find((w: { weekStart: string }) => w.weekStart === "2026-10-18")).toBeUndefined();
+    const trainingWeek = week.body.workweeks.find((w: { weekStart: string }) => w.weekStart === "2026-10-11");
     expect(trainingWeek.otHours).toBe(2);
     expect(trainingWeek.trainingHours).toBe(4);
     expect(trainingWeek.productionHours).toBe(38);
     expect(week.body.trainingPayCents).toBe(4800);
     expect(week.body.greaterOfCents).toBe(38 * 1500);
-    expect(week.body.periods).toHaveLength(2);
+    expect(week.body.otEstimatedCents).toBe(2 * 1.5 * 1500);
+    expect(week.body.periods).toHaveLength(1);
 
     const clipped = await json(await app.request("/api/staff/v1/me/earnings?from=2026-10-16&to=2026-10-20", { headers }));
     expect(clipped.body.workweeks.filter((w: { partial: boolean }) => w.partial).every((w: { otLabel: string }) => w.otLabel === PARTIAL_WEEK_OT_LABEL)).toBe(true);

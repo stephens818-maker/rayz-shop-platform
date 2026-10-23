@@ -10,7 +10,7 @@ export const CASH_TIP_REMINDER = "Declare cash tips by the 10th.";
 export const TRAINING_LINE = "Training";
 
 export type PayrollStatus = "not_yet_processed" | "sent_to_payroll" | "paid_in_paycheck";
-export type PeriodStatus = "draft" | "approved" | "locked";
+export type PeriodStatus = "draft" | "approved" | "locked" | "exported";
 export type TransferStatus = "pending" | "paid" | "reversed";
 export type PayoutStatus = "pending" | "in_transit" | "paid" | "failed" | "canceled";
 export type PayoutAccountState =
@@ -32,7 +32,13 @@ export const PERIOD_STATUS_LABEL: Record<PeriodStatus, string> = {
   draft: "Draft",
   approved: "Approved",
   locked: "Locked",
+  exported: "Exported",
 };
+
+/** Locked and exported periods are frozen snapshots. Approved is still live. */
+export function isSnapshotPeriod(status: PeriodStatus): boolean {
+  return status === "locked" || status === "exported";
+}
 
 export const TRANSFER_STATUS_LABEL: Record<TransferStatus, string> = {
   pending: "Transfer pending",

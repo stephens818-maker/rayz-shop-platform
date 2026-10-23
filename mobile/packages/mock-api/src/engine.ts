@@ -7,6 +7,7 @@ import {
   applyRate,
   clampRange,
   eachDate,
+  isSnapshotPeriod,
   payPeriodFor,
   payPeriodsOverlapping,
   weekCovers,
@@ -26,6 +27,12 @@ export interface ShopRecord {
   slug: string;
   name: string;
   tipTransfers: boolean;
+  /** separate charges are the intended model. destination_charges keeps the tip in the shop charge. */
+  paymentMode: "separate_charges_and_transfers" | "destination_charges";
+  launched: boolean;
+  launchAt: string | null;
+  chargesEnabled: boolean;
+  externalBookingUrl: string | null;
   serviceTaxRate: number;
   cardFeeEnabled: boolean;
   cardFeeRate: number;
@@ -33,6 +40,14 @@ export interface ShopRecord {
   payments: boolean;
   booking: "native" | "external" | "closed";
   clockIn: boolean;
+}
+
+export interface LiveFloor {
+  shopId: string;
+  bookable: number;
+  inService: number;
+  waiting: number;
+  quotedWaitMin: number | null;
 }
 
 export interface StaffRecord {
@@ -93,38 +108,57 @@ export interface PeriodMeta {
 
 export interface EarningsWorld {
   today: string;
+  /** From config. 0 = Sunday. */
+  weekStartDay: number;
   shops: ShopRecord[];
   staff: StaffRecord[];
   hours: HourEntry[];
   sales: SaleRecord[];
   adjustments: AdjustmentRecord[];
   periods: PeriodMeta[];
+  floors: LiveFloor[];
 }
 
-export interface GreaterOfInput {
-  productionMinutes: number;
+/**
+ * Mirrors the platform Payroll Report line.
+ * The real server calls overtimeSlices / computeLine. This sandbox does not import them.
+ *
+ * Pay = max(regular-hours hourly pay, service commission)
+ *     + product commission
+ *     + training hours × training flat rate
+ *     + estimated overtime
+ * OT hours are not on the hourly side of the max.
+ * The OT estimate is 1.5 × the hourly base rate × OT hours. It never uses the training rate.
+ */
+export interface ComputeLineInput {
+  regularProductionMinutes: number;
+  otMinutes: number;
+  trainingMinutes: number;
   hourlyRateCents: number;
+  trainingRateCents: number;
   serviceSalesCents: number;
   productSalesCents: number;
   serviceCommissionRate: number;
   productCommissionRate: number;
 }
 
-export function greaterOf(input: GreaterOfInput) {
-  const hourlyPayCents = Math.round((input.productionMinutes * input.hourlyRateCents) / 60);
+export function computeLine(input: ComputeLineInput) {
+  const hourlyPayCents = Math.round((input.regularProductionMinutes * input.hourlyRateCents) / 60);
   const serviceCommissionCents = applyRate(input.serviceSalesCents, input.serviceCommissionRate);
   const productCommissionCents = applyRate(input.productSalesCents, input.productCommissionRate);
   const commissionCents = serviceCommissionCents + productCommissionCents;
-  const explanationCode = commissionCents > hourlyPayCents ? "commission_higher" : hourlyPayCents > commissionCents ? "hourly_higher" : "equal";
+  const explanationCode = serviceCommissionCents > hourlyPayCents ? "commission_higher" : hourlyPayCents > serviceCommissionCents ? "hourly_higher" : "equal";
   const appliedRule = explanationCode === "commission_higher" ? "commission" : "hourly";
-  const greaterOfCents = Math.max(hourlyPayCents, commissionCents);
-  const topUpCents = appliedRule === "hourly" ? hourlyPayCents - commissionCents : 0;
+  const greaterOfCents = Math.max(hourlyPayCents, serviceCommissionCents);
+  const topUpCents = appliedRule === "hourly" ? Math.max(0, hourlyPayCents - serviceCommissionCents) : 0;
+  const trainingPayCents = Math.round((input.trainingMinutes * input.trainingRateCents) / 60);
+  const otEstimatedCents = Math.round((input.otMinutes * input.hourlyRateCents * 1.5) / 60);
   const explanation =
     explanationCode === "commission_higher"
-      ? "Commission is higher than hourly pay."
+      ? "Service commission is higher than hourly pay."
       : explanationCode === "equal"
-        ? "Hourly pay and commission are equal. Hourly pay is used."
-        : "Hourly pay is higher than commission.";
+        ? "Hourly pay and service commission are equal. Hourly pay is used."
+        : "Hourly pay is higher than service commission.";
   return {
     hourlyPayCents,
     serviceCommissionCents,
@@ -135,7 +169,25 @@ export function greaterOf(input: GreaterOfInput) {
     explanation,
     topUpCents,
     greaterOfCents,
+    trainingPayCents,
+    otEstimatedCents,
   };
+}
+
+/** Chairs free and wait minutes from the floor, not a fixed shop constant. */
+export function liveWait(floor: LiveFloor): { waitMinutes: number; chairsFree: number } {
+  const chairsFree = Math.max(0, floor.bookable - floor.inService);
+  const queue = floor.waiting;
+  let waitMinutes = 0;
+  if (queue > 0 || chairsFree === 0) {
+    const quoted = floor.quotedWaitMin;
+    waitMinutes = quoted != null && quoted > 0 ? quoted : Math.max(queue, chairsFree === 0 ? 1 : 0) * 15;
+  }
+  return { waitMinutes, chairsFree };
+}
+
+export function transfersVisible(shop: Pick<ShopRecord, "tipTransfers" | "paymentMode">): boolean {
+  return shop.tipTransfers && shop.paymentMode !== "destination_charges";
 }
 
 interface Chunk {
@@ -147,10 +199,6 @@ interface Chunk {
 
 function hoursOf(minutes: number): number {
   return minutes / 60;
-}
-
-function money(minutes: number, rateCents: number): number {
-  return Math.round((minutes * rateCents) / 60);
 }
 
 function classifyWeek(entries: HourEntry[]): Chunk[] {
@@ -210,20 +258,22 @@ export function buildEarnings(world: EarningsWorld, staffId: string, range: { fr
   const ownSales = world.sales.filter((s) => s.staffId === staffId && inRange(s.date, from, to));
   const ownAdjustments = world.adjustments.filter((a) => a.staffId === staffId && inRange(a.postedDate, from, to));
 
+  const weekStartDay = world.weekStartDay ?? 0;
   const weekStarts = new Set<string>();
-  for (const date of eachDate(from, to)) weekStarts.add(workweekContaining(date).from);
+  for (const date of eachDate(from, to)) weekStarts.add(workweekContaining(date, weekStartDay).from);
   for (const hour of ownHours) {
-    const week = workweekContaining(hour.date);
+    const week = workweekContaining(hour.date, weekStartDay);
     if (week.to >= from && week.from <= to) weekStarts.add(week.from);
   }
 
   const workweeks: EarningsWorkweek[] = [];
   let productionMinutes = 0;
+  let regularProductionMinutes = 0;
   let trainingMinutes = 0;
-  let otPremium = 0;
+  let otMinutes = 0;
 
   for (const start of [...weekStarts].sort()) {
-    const week = { from: start, to: workweekContaining(start).to };
+    const week = { from: start, to: workweekContaining(start, weekStartDay).to };
     const coverage = weekCovers(week, { from, to });
     if (coverage === "none") continue;
     const fullEntries = ownHours.filter((h) => h.date >= week.from && h.date <= week.to);
@@ -236,14 +286,13 @@ export function buildEarnings(world: EarningsWorld, staffId: string, range: { fr
     const regular = sum((c) => !c.ot);
     const ot = sum((c) => c.ot);
     const inProd = sum((c) => c.kind === "production" && inRange(c.date, from, to));
+    const inProdRegular = sum((c) => c.kind === "production" && !c.ot && inRange(c.date, from, to));
     const inTrain = sum((c) => c.kind === "training" && inRange(c.date, from, to));
+    const inOt = sum((c) => c.ot && inRange(c.date, from, to));
     productionMinutes += inProd;
+    regularProductionMinutes += inProdRegular;
     trainingMinutes += inTrain;
-    for (const chunk of chunks) {
-      if (!chunk.ot || !inRange(chunk.date, from, to)) continue;
-      const rate = chunk.kind === "production" ? person.hourlyRateCents : person.trainingRateCents;
-      otPremium += money(chunk.minutes, rate * 0.5);
-    }
+    otMinutes += inOt;
     const postingMap = new Map<string, { production: number; training: number; regular: number; ot: number }>();
     for (const chunk of chunks) {
       const periodId = payPeriodFor(chunk.date).id;
@@ -284,17 +333,19 @@ export function buildEarnings(world: EarningsWorld, staffId: string, range: { fr
   const lateCash = ownAdjustments.filter((a) => a.kind === "late_cash_tip").reduce((a, row) => a + row.amountCents, 0);
   const cashTipsCents = cashOnTickets + lateCash;
   const giftCardTipsCents = 0;
-  const pay = greaterOf({
-    productionMinutes,
+  const pay = computeLine({
+    regularProductionMinutes,
+    otMinutes,
+    trainingMinutes,
     hourlyRateCents: person.hourlyRateCents,
+    trainingRateCents: person.trainingRateCents,
     serviceSalesCents,
     productSalesCents,
     serviceCommissionRate: person.serviceCommissionRate,
     productCommissionRate: person.productCommissionRate,
   });
-  const trainingPayCents = money(trainingMinutes, person.trainingRateCents);
   const totalTipsCents = cardTipsCents + cashTipsCents + giftCardTipsCents;
-  const totalCents = pay.greaterOfCents + trainingPayCents + otPremium + totalTipsCents;
+  const totalCents = pay.greaterOfCents + pay.productCommissionCents + pay.trainingPayCents + pay.otEstimatedCents + totalTipsCents;
 
   const shopIds = new Set<string>([...ownSales.map((s) => s.shopId), ...ownHours.filter((h) => inRange(h.date, from, to)).map((h) => h.shopId), ...ownAdjustments.map((a) => a.shopId)]);
   const shops: EarningsShopSlice[] = [...shopIds].map((shopId) => {
@@ -304,8 +355,8 @@ export function buildEarnings(world: EarningsWorld, staffId: string, range: { fr
     return {
       shopId,
       shopName: shop.name,
-      tipTransfersEnabled: shop.tipTransfers,
-      payrollCopy: shop.tipTransfers ? null : PAYROLL_TIPS_COPY,
+      tipTransfersEnabled: transfersVisible(shop),
+      payrollCopy: transfersVisible(shop) ? null : PAYROLL_TIPS_COPY,
       cardTipsCents: sales.reduce((n, s) => n + s.cardTipCents, 0),
       cashTipsCents: sales.reduce((n, s) => n + s.cashTipCents, 0) + late,
       serviceSalesCents: sales.reduce((n, s) => n + s.serviceCents, 0),
@@ -327,9 +378,9 @@ export function buildEarnings(world: EarningsWorld, staffId: string, range: { fr
   const adjustments = ownAdjustments.map(toAdjustment);
   const refunds = adjustments.filter((a) => a.kind === "card_tip_refund");
   const partial = workweeks.some((w) => w.partial);
-  const draft = periods.some((p) => p.periodStatus === "draft");
   const exactPeriod = periods.length === 1 && periods[0].start === from && periods[0].end === to;
-  const isEstimate = opts?.snapshot ? periods[0]?.periodStatus === "draft" : exactPeriod ? periods[0].periodStatus === "draft" : draft || partial;
+  const live = periods.some((p) => !isSnapshotPeriod(p.periodStatus));
+  const isEstimate = opts?.snapshot ? false : exactPeriod ? !isSnapshotPeriod(periods[0].periodStatus) : live || partial;
   const single = periods.length === 1 ? periods[0] : null;
 
   return {
@@ -343,7 +394,7 @@ export function buildEarnings(world: EarningsWorld, staffId: string, range: { fr
       end: p.end,
       periodStatus: p.periodStatus,
       payrollStatus: p.payrollStatus,
-      isEstimate: p.periodStatus === "draft",
+      isEstimate: !isSnapshotPeriod(p.periodStatus),
       snapshotId: p.snapshotId,
       computedAt: p.computedAt,
     })),
@@ -357,10 +408,10 @@ export function buildEarnings(world: EarningsWorld, staffId: string, range: { fr
     productionHours: hoursOf(productionMinutes),
     trainingHours: hoursOf(trainingMinutes),
     trainingRateCents: person.trainingRateCents,
-    trainingPayCents,
+    trainingPayCents: pay.trainingPayCents,
     regularHours: workweeks.reduce((n, w) => n + (clampRange(from, to, w.weekStart, w.weekEnd) ? w.regularHours : 0), 0),
     otHours: workweeks.reduce((n, w) => n + w.otHours, 0),
-    otEstimatedCents: otPremium,
+    otEstimatedCents: pay.otEstimatedCents,
     otDisclosure: OT_PAY_LABEL,
     serviceSalesCents,
     productSalesCents,
@@ -400,7 +451,7 @@ export function earningsDays(world: EarningsWorld, staffId: string, range: { fro
 
 export function toTicket(world: EarningsWorld, sale: SaleRecord): EarningsTicket {
   const shop = shopOf(world, sale.shopId);
-  const stripe = shop.tipTransfers;
+  const stripe = transfersVisible(shop) && sale.transfer != null;
   return {
     saleId: sale.id,
     shopId: sale.shopId,

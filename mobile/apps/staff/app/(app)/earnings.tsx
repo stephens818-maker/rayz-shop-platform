@@ -5,12 +5,15 @@ import {
   formatLongDate,
   LATE_ADJUSTMENT_COPY,
   rangeForPreset,
+  setTimeFormat,
   type EarningsDay,
   type EarningsResponse,
   type EarningsTicket,
   type PayrollStatus,
+  type PeriodStatus,
   type RangePreset,
   type SavedRange,
+  type StaffConfig,
 } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
@@ -40,10 +43,24 @@ function payrollKey(status: PayrollStatus): CopyKey {
   return "paidCheck";
 }
 
+function periodKey(status: PeriodStatus): CopyKey | null {
+  if (status === "exported") return "exported";
+  return null;
+}
+
 export default function Earnings() {
   const { t } = useI18n();
   const { session, stepUp, elevate } = useStaff();
   const today = useMemo(() => chicagoToday(), []);
+  const config = useQuery({
+    queryKey: ["staff-config"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/staff/v1/config`);
+      if (!res.ok) throw new Error("config");
+      return (await res.json()) as StaffConfig;
+    },
+  });
+  const weekStart = config.data?.weekStartDay ?? 0;
   const [range, setRange] = useState<SavedRange>(() => loadRange(null, today));
   const [custom, setCustom] = useState(false);
   const [pin, setPin] = useState("");
@@ -51,9 +68,13 @@ export default function Earnings() {
   const [day, setDay] = useState<string | null>(null);
 
   useEffect(() => {
+    if (config.data?.timeFormat) setTimeFormat(config.data.timeFormat);
+  }, [config.data?.timeFormat]);
+
+  useEffect(() => {
     const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(RANGE_KEY);
-    setRange(loadRange(raw, today));
-  }, [today]);
+    setRange(loadRange(raw, today, weekStart));
+  }, [today, weekStart]);
 
   const choose = (next: SavedRange) => {
     setRange(next);
@@ -139,7 +160,7 @@ export default function Earnings() {
             selected={range.preset === preset}
             onPress={() => {
               setCustom(false);
-              choose({ preset, ...rangeForPreset(preset, today) });
+              choose({ preset, ...rangeForPreset(preset, today, weekStart) });
             }}
           />
         ))}
@@ -189,7 +210,7 @@ function Report({
       {view.isEstimate ? <Chip label={t("estimate")} selected /> : null}
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
         {view.periods.map((period) => (
-          <Chip key={period.id} label={`${period.payrollLabel}`} selected />
+          <Chip key={period.id} label={periodKey(period.periodStatus) ? t(periodKey(period.periodStatus)!) : period.payrollLabel} selected />
         ))}
       </View>
       <Card>
@@ -201,9 +222,10 @@ function Report({
         <Body>{t("greaterOf")}</Body>
         <Body muted>{view.appliedRule === "hourly" ? t("hourly") : t("commission")}</Body>
         <Body>{`${t("hourly")} ${formatCents(view.hourlyPayCents)}`}</Body>
-        <Body>{`${t("commission")} ${formatCents(view.commissionCents)}`}</Body>
+        <Body>{`${t("commission")} ${formatCents(view.serviceCommissionCents)}`}</Body>
         <Body>{`${t("topUp")} ${formatCents(view.topUpCents)}`}</Body>
         <Money cents={view.greaterOfCents} />
+        <Body>{`${t("productCommission")} ${formatCents(view.productCommissionCents)}`}</Body>
         {view.trainingLine ? (
           <>
             <Body>{view.trainingLine}</Body>

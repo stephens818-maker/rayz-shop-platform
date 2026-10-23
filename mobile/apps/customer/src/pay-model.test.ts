@@ -19,7 +19,7 @@ const preview: PaymentPreview = {
   disclosure: "A 3% surcharge applies to credit card payments only.",
   totalCents: 3696,
   destination: { model: "separate_charges_and_transfers", shopAccountId: "acct", serviceTransferCents: 3103 },
-  tipTransfer: { amountCents: 500, disposition: "transfer", copy: null },
+  tipTransfer: { amountCents: 500, disposition: "payroll", copy: "Tips paid through payroll." },
 };
 
 describe("pay review", () => {
@@ -29,6 +29,7 @@ describe("pay review", () => {
     expect(model.lines.map((line) => line.label)).toContain("Credit card surcharge (3%)");
     expect(model.disclosure).toMatch(/surcharge/);
     expect(model.totalCents).toBe(3696);
+    expect(model.tipTransferCopy).toBe("Tips paid through payroll.");
   });
 
   it("blocks versions below the store minimum", () => {

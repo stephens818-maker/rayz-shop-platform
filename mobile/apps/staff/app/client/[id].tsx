@@ -6,9 +6,6 @@ import { useStaff } from "../../src/session";
 
 interface ClientCard {
   firstName: string;
-  lastInitial: string;
-  note: string;
-  visits: number;
 }
 
 export default function Client() {
@@ -33,9 +30,7 @@ export default function Client() {
       {client.isLoading ? <Loading label={t("loading")} /> : null}
       {client.data ? (
         <Card>
-          <Body>{`${client.data.firstName} ${client.data.lastInitial}.`}</Body>
-          <Body muted>{client.data.note}</Body>
-          <Body muted>{String(client.data.visits)}</Body>
+          <Body>{client.data.firstName}</Body>
         </Card>
       ) : null}
     </ScrollScreen>

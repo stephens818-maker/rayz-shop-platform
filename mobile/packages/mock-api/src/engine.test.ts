@@ -1,38 +1,83 @@
 import { describe, expect, it } from "vitest";
 import { GROSS_LABEL, PARTIAL_WEEK_OT_LABEL, PAYROLL_TIPS_COPY, rangeForPreset } from "@rayz/api";
-import { greaterOf, payrollCsv, payrollPdf } from "./engine";
+import { computeLine, payrollCsv, payrollPdf, toTicket } from "./engine";
 import { SHOP_CORALVILLE, SHOP_MOLINE, STAFF_CASEY, STAFF_KAT, STAFF_MAKENNA, TODAY } from "./fixtures";
 import { createWorld, declareCashTip, earningsDays, earningsFor } from "./world";
 
 const presets = ["current_period", "last_period", "this_week", "last_week", "month_to_date"] as const;
 
 describe("My Earnings server math", () => {
-  it("computes greater-of at the edges and leaves training out of it", () => {
-    const base = { productionMinutes: 10 * 60, hourlyRateCents: 2000, serviceSalesCents: 40_000, productSalesCents: 0, serviceCommissionRate: 0.5, productCommissionRate: 0.1 };
-    const equal = greaterOf(base);
-    expect(equal.hourlyPayCents).toBe(20_000);
-    expect(equal.commissionCents).toBe(20_000);
-    expect(equal.appliedRule).toBe("hourly");
-    expect(equal.topUpCents).toBe(0);
-    expect(equal.explanationCode).toBe("equal");
+  it("pays max(regular hourly, service commission) plus product commission", () => {
+    const line = computeLine({
+      regularProductionMinutes: 10 * 60,
+      otMinutes: 0,
+      trainingMinutes: 0,
+      hourlyRateCents: 2000,
+      trainingRateCents: 1200,
+      serviceSalesCents: 15_000,
+      productSalesCents: 10_000,
+      serviceCommissionRate: 1,
+      productCommissionRate: 0.1,
+    });
+    expect(line.hourlyPayCents).toBe(20_000);
+    expect(line.serviceCommissionCents).toBe(15_000);
+    expect(line.productCommissionCents).toBe(1_000);
+    expect(line.greaterOfCents).toBe(20_000);
+    expect(line.greaterOfCents + line.productCommissionCents + line.trainingPayCents + line.otEstimatedCents).toBe(21_000);
 
-    const hourly = greaterOf({ ...base, serviceSalesCents: 10_000 });
-    expect(hourly.appliedRule).toBe("hourly");
-    expect(hourly.topUpCents).toBe(15_000);
-    expect(hourly.greaterOfCents).toBe(20_000);
-
-    const commission = greaterOf({ ...base, hourlyRateCents: 1500, serviceSalesCents: 40_000 });
-    expect(commission.hourlyPayCents).toBe(15_000);
-    expect(commission.appliedRule).toBe("commission");
-    expect(commission.topUpCents).toBe(0);
-    expect(commission.greaterOfCents).toBe(20_000);
+    const hourlyWins = computeLine({
+      regularProductionMinutes: 10 * 60,
+      otMinutes: 0,
+      trainingMinutes: 0,
+      hourlyRateCents: 2000,
+      trainingRateCents: 1200,
+      serviceSalesCents: 10_000,
+      productSalesCents: 0,
+      serviceCommissionRate: 0.5,
+      productCommissionRate: 0.1,
+    });
+    expect(hourlyWins.appliedRule).toBe("hourly");
+    expect(hourlyWins.topUpCents).toBe(15_000);
+    const commissionWins = computeLine({
+      regularProductionMinutes: 10 * 60,
+      otMinutes: 0,
+      trainingMinutes: 0,
+      hourlyRateCents: 1500,
+      trainingRateCents: 1200,
+      serviceSalesCents: 40_000,
+      productSalesCents: 0,
+      serviceCommissionRate: 0.5,
+      productCommissionRate: 0.1,
+    });
+    expect(commissionWins.hourlyPayCents).toBe(15_000);
+    expect(commissionWins.appliedRule).toBe("commission");
+    expect(commissionWins.greaterOfCents).toBe(20_000);
   });
 
-  it("treats 38 production hours plus 4 training hours as 2 overtime hours", () => {
+  it("estimates overtime at 1.5 times the hourly rate and never the training rate", () => {
+    const line = computeLine({
+      regularProductionMinutes: 0,
+      otMinutes: 120,
+      trainingMinutes: 240,
+      hourlyRateCents: 1500,
+      trainingRateCents: 1200,
+      serviceSalesCents: 0,
+      productSalesCents: 0,
+      serviceCommissionRate: 0.5,
+      productCommissionRate: 0.1,
+    });
+    expect(line.otEstimatedCents).toBe(2 * 1.5 * 1500);
+    expect(line.otEstimatedCents).not.toBe(2 * 600);
+    expect(line.trainingPayCents).toBe(4 * 1200);
+    expect(line.hourlyPayCents).toBe(0);
+  });
+
+  it("treats 38 production hours plus 4 training hours as 2 overtime hours in the Sunday week", () => {
     const world = createWorld();
     const range = rangeForPreset("last_week", TODAY);
+    expect(range).toEqual({ from: "2026-10-11", to: "2026-10-17" });
     const earnings = earningsFor(world, STAFF_MAKENNA, range);
-    const week = earnings.workweeks.find((w) => w.weekStart === "2026-10-12");
+    const week = earnings.workweeks.find((w) => w.weekStart === "2026-10-11");
     expect(week).toMatchObject({
       productionHours: 38,
       trainingHours: 4,
@@ -41,16 +86,15 @@ describe("My Earnings server math", () => {
       partial: false,
       otLabelCode: "ot_estimated",
     });
-    expect(week?.postings.map((p) => p.periodId).sort()).toEqual(["2026-10-04", "2026-10-18"]);
-    expect(week?.postings.find((p) => p.periodId === "2026-10-18")).toMatchObject({ trainingHours: 4, otHours: 2, productionHours: 0 });
+    expect(week?.postings.map((p) => p.periodId)).toEqual(["2026-10-04"]);
     expect(earnings.trainingPayCents).toBe(4 * 1200);
     expect(earnings.hourlyPayCents).toBe(38 * 1500);
     expect(earnings.greaterOfCents).toBe(38 * 1500);
-    expect(earnings.greaterOfCents).not.toBe(earnings.hourlyPayCents + earnings.trainingPayCents);
-    expect(earnings.otEstimatedCents).toBe(2 * 600);
-    expect(earnings.totalCents).toBe(earnings.greaterOfCents + earnings.trainingPayCents + earnings.otEstimatedCents + earnings.totalTipsCents);
+    expect(earnings.otEstimatedCents).toBe(2 * 1.5 * 1500);
+    expect(earnings.totalCents).toBe(earnings.greaterOfCents + earnings.productCommissionCents + earnings.trainingPayCents + earnings.otEstimatedCents + earnings.totalTipsCents);
     expect(earnings.grossLabel).toBe(GROSS_LABEL);
-    expect(earnings.periods.map((p) => p.id).sort()).toEqual(["2026-10-04", "2026-10-18"]);
+    expect(earnings.periods.map((p) => p.id)).toEqual(["2026-10-04"]);
+    expect(rangeForPreset("this_week", TODAY).from).toBe("2026-10-18");
   });
 
   it("labels overtime when a custom range clips a workweek and crosses two periods", () => {
@@ -65,8 +109,8 @@ describe("My Earnings server math", () => {
   it("uses the partial-week label on month to date and not on a fully covered week", () => {
     const world = createWorld();
     const earnings = earningsFor(world, STAFF_MAKENNA, rangeForPreset("month_to_date", TODAY));
-    const full = earnings.workweeks.find((w) => w.weekStart === "2026-10-12");
-    const clipped = earnings.workweeks.find((w) => w.weekStart === "2026-10-19");
+    const full = earnings.workweeks.find((w) => w.weekStart === "2026-10-11");
+    const clipped = earnings.workweeks.find((w) => w.weekStart === "2026-10-18");
     expect(full?.partial).toBe(false);
     expect(full?.otLabel).not.toBe(PARTIAL_WEEK_OT_LABEL);
     expect(clipped?.partial).toBe(true);
@@ -87,7 +131,8 @@ describe("My Earnings server math", () => {
     expect(locked.periods[0].payrollStatus).toBe("paid_in_paycheck");
     expect(locked.cardTipsCents).toBe(1300);
     expect(locked.cashTipsCents).toBe(200);
-    expect(locked.totalCents).toBe(locked.greaterOfCents + locked.trainingPayCents + locked.otEstimatedCents + locked.totalTipsCents);
+    expect(locked.productCommissionCents).toBe(100);
+    expect(locked.totalCents).toBe(locked.greaterOfCents + locked.productCommissionCents + locked.trainingPayCents + locked.otEstimatedCents + locked.totalTipsCents);
     const days = earningsDays(world, STAFF_MAKENNA, { from: locked.from, to: locked.to });
     expect(days.reduce((n, d) => n + d.cardTipsCents, 0)).toBe(locked.cardTipsCents);
     expect(days.reduce((n, d) => n + d.cashTipsCents, 0)).toBe(locked.cashTipsCents);
@@ -142,5 +187,38 @@ describe("My Earnings server math", () => {
     const makennaIds = new Set(earningsFor(world, STAFF_MAKENNA, rangeForPreset("this_week", TODAY)).shops.map((s) => s.shopId));
     expect(casey.cardTipsCents).not.toBe(0);
     expect(makennaIds.has(SHOP_MOLINE)).toBe(false);
+  });
+
+  it("snapshots exported periods and leaves an approved period live", () => {
+    const world = createWorld();
+    const exported = earningsFor(world, STAFF_MAKENNA, { from: "2026-10-04", to: "2026-10-17" });
+    expect(exported.periods[0].periodStatus).toBe("exported");
+    expect(exported.isEstimate).toBe(false);
+    const hour = world.hours.find((row) => row.date === "2026-10-12" && row.staffId === STAFF_MAKENNA)!;
+    const before = exported.hourlyPayCents;
+    hour.productionMinutes = 0;
+    expect(earningsFor(world, STAFF_MAKENNA, { from: "2026-10-04", to: "2026-10-17" }).hourlyPayCents).toBe(before);
+
+    const period = world.periods.find((row) => row.id === "2026-09-20")!;
+    period.periodStatus = "approved";
+    const live = earningsFor(world, STAFF_MAKENNA, { from: "2026-09-20", to: "2026-10-03" });
+    expect(live.isEstimate).toBe(true);
+    const sale = world.sales.find((row) => row.id === "sale_sep22")!;
+    const card = live.cardTipsCents;
+    sale.cardTipCents = 1;
+    expect(earningsFor(world, STAFF_MAKENNA, { from: "2026-09-20", to: "2026-10-03" }).cardTipsCents).toBe(card - 799);
+  });
+
+  it("hides a tip transfer when the shop uses destination charges or none exists", () => {
+    const world = createWorld();
+    const paid = world.sales.find((row) => row.id === "sale_paid")!;
+    expect(toTicket(world, paid).transfer).not.toBeNull();
+    world.shops.find((shop) => shop.id === SHOP_CORALVILLE)!.paymentMode = "destination_charges";
+    const hidden = toTicket(world, paid);
+    expect(hidden.transfer).toBeNull();
+    expect(hidden.tipDisposition).toBe("payroll");
+    const cash = world.sales.find((row) => row.id === "sale_cash")!;
+    world.shops.find((shop) => shop.id === SHOP_CORALVILLE)!.paymentMode = "separate_charges_and_transfers";
+    expect(toTicket(world, cash).transfer).toBeNull();
   });
 });

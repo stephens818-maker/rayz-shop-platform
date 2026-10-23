@@ -6,7 +6,7 @@ import { peekDraft } from "../src/draft";
 import { api } from "../src/net";
 import { useSession } from "../src/session";
 
-interface Profile { id: string; firstName: string; lastInitial: string | null }
+interface Profile { id: string; firstName: string }
 interface Verify {
   chooseProfile?: boolean;
   needsProfile?: boolean;
@@ -71,7 +71,7 @@ export default function SignIn() {
         <View style={{ gap: 10 }}>
           {pending?.profiles?.map((profile) => (
             <Pressable key={profile.id} accessibilityRole="button" onPress={() => choose(profile.id)} style={{ minHeight: 56, borderRadius: 16, backgroundColor: "#FFFBF6", borderWidth: 1, borderColor: "#E4D7C6", justifyContent: "center", paddingHorizontal: 16 }}>
-              <Text style={{ fontSize: 18, fontWeight: "700" }}>{profile.firstName} {profile.lastInitial ?? ""}</Text>
+              <Text style={{ fontSize: 18, fontWeight: "700" }}>{profile.firstName}</Text>
             </Pressable>
           ))}
         </View>

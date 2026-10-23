@@ -9,19 +9,33 @@ import type {
 /** Hand-typed contracts for endpoints the shop platform does not publish yet. Amounts are integer cents. The app does not compute them. */
 
 export interface ShopGate {
+  id: string;
   shopId: string;
   slug: string;
+  launched: boolean;
+  launchAt: string | null;
+  closedCopy: string | null;
   booking: "native" | "external" | "closed";
   externalBookingUrl: string | null;
   payments: boolean;
+  /** Customer config keeps this false. The staff clock is not on /api/v1. */
   clockIn: boolean;
-  /** Per-shop kill switch. On by default. */
+  /** shops.tip_to_barber. A destination charge still does not transfer the tip. */
   tipTransfers: boolean;
 }
 
 export interface AppConfig {
   timezone: "America/Chicago";
-  timeFormat: "12h";
+  timeFormat: "12h" | "24h";
+  launched: boolean;
+  launchAt: string | null;
+  pilot: boolean;
+  pilotShops: string[];
+  closedShopCopy: string;
+  /** 0 = Sunday. Payroll workweeks default to Sunday. */
+  weekStartDay: number;
+  minVersion: { ios: string; android: string };
+  forceUpdateBelow: { ios: string; android: string };
   minSupportedVersion: { ios: string; android: string };
   latestVersion: { ios: string; android: string };
   supportPhone: string;
@@ -35,7 +49,8 @@ export interface AppConfig {
 
 export interface StaffConfig {
   timezone: "America/Chicago";
-  timeFormat: "12h";
+  timeFormat: "12h" | "24h";
+  weekStartDay: number;
   appName: string;
   minSupportedVersion: { ios: string; android: string };
   latestVersion: { ios: string; android: string };
@@ -289,7 +304,39 @@ export interface PaymentPreview {
   };
   tipTransfer: {
     amountCents: number;
-    disposition: "transfer" | "payroll";
+    /** Stays payroll until chargeCard stops destination-charging the ticket. */
+    disposition: "payroll" | "transfer";
     copy: string | null;
   };
+}
+
+export interface CustomerReceiptRefund {
+  id: string;
+  amountCents: number;
+  serviceCents: number;
+  productCents: number;
+  taxCents: number;
+  tipCents: number;
+  from: string | null;
+}
+
+export interface CustomerReceipt {
+  id: string;
+  shopName: string;
+  serviceName: string | null;
+  serviceCents: number;
+  taxCents: number;
+  tipCents: number;
+  feeCents: number;
+  totalCents: number;
+  tender: string;
+  paidAt: string | null;
+  grossLabel: string;
+  refunds: CustomerReceiptRefund[];
+}
+
+export interface CustomerReceiptList {
+  receipts: { id: string; shopName: string; paidAt: string | null; totalCents: number; serviceName: string | null }[];
+  limit: number;
+  nextCursor: string | null;
 }

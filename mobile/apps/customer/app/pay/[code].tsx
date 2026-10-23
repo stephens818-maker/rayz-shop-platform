@@ -5,8 +5,9 @@ import { useMemo, useState } from "react";
 import { View } from "react-native";
 import { Banner, Body, Button, Card, Chip, Display, Loading, Money, ScrollScreen, useI18n } from "@rayz/ui";
 import { payModel } from "../../src/pay-model";
+import { PayConfirm } from "../../src/pay-flow";
 import { api } from "../../src/net";
-import { TestCardPicker } from "../../src/secure-card";
+import { AddCard } from "../../src/secure-card";
 import { useSession } from "../../src/session";
 
 interface Method { id: string; brand: string; last4: string; funding: string; wallet: boolean }
@@ -41,6 +42,7 @@ export default function Pay() {
       }),
   });
   const model = preview.data ? payModel(preview.data) : null;
+  const lines = model?.lines.filter((line) => line.label !== preview.data?.feeLabel) ?? [];
 
   const pay = () => {
     if (!session || !chosen) return;
@@ -77,8 +79,7 @@ export default function Pay() {
         </Card>
       ) : (
         <>
-          <Body>{t("addTestCard")}</Body>
-          <TestCardPicker token={session.token} onAdded={(card) => { setMethod(card); void cards.refetch(); }} />
+          <AddCard token={session.token} onAdded={(card) => { setMethod(card); void cards.refetch(); }} />
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {cards.data?.paymentMethods.map((card) => (
               <Chip key={card.id} label={`${card.brand} ••${card.last4}`} selected={chosen?.id === card.id} onPress={() => setMethod(card)} />
@@ -94,20 +95,18 @@ export default function Pay() {
           {preview.data && !preview.data.paymentsEnabled ? <Banner>{preview.data.unavailableCopy ?? t("notLive")}</Banner> : null}
           {model && preview.data?.paymentsEnabled ? (
             <Card>
-              {model.lines.map((line) => (
+              {lines.map((line) => (
                 <View key={line.label} style={{ flexDirection: "row", justifyContent: "space-between", minHeight: 32 }}>
                   <Body>{line.label}</Body>
                   <Body>{formatCents(line.cents)}</Body>
                 </View>
               ))}
-              {model.showFee && model.disclosure ? <Banner>{model.disclosure}</Banner> : <Body muted>{t("noFee")}</Body>}
+              {model.disclosure ? <Banner>{model.disclosure}</Banner> : <Body muted>{t("noFee")}</Body>}
               {model.tipTransferCopy ? <Body muted>{model.tipTransferCopy}</Body> : null}
-              <Body muted>{t("pay")}</Body>
-              <Money cents={model.totalCents} large />
             </Card>
           ) : null}
           {error ? <Banner tone="bad">{error}</Banner> : null}
-          <Button label={t("payButton")} disabled={busy || !model || !preview.data?.paymentsEnabled} onPress={pay} />
+          <PayConfirm preview={preview.data ?? null} disabled={busy || !model || !preview.data?.paymentsEnabled} onPress={pay} />
         </>
       )}
     </ScrollScreen>

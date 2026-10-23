@@ -9,6 +9,9 @@ describe("copy", () => {
 
   it("keeps the English gross label exact and out of payroll-vendor wording", () => {
     expect(dictionaries.en.gross).toBe("Gross earnings, before taxes and deductions");
+    expect(dictionaries.en.smsOffNote).toBe("Text START to resubscribe.");
+    expect(dictionaries.en.comingSoon).toBe("Ray'z isn't open in the app yet. Coming soon.");
+    expect(dictionaries.en.payrollTips).toBe("Tips paid through payroll.");
     const blob = Object.values(dictionaries.en).join(" ").toLowerCase();
     expect(blob).not.toContain("isolved");
     expect(blob).not.toContain("net pay");

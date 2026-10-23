@@ -23,6 +23,8 @@ export function earningsView(input: EarningsResponse, payrollLabel: (status: Pay
     explanation: input.explanation,
     appliedRule: input.appliedRule,
     hourlyPayCents: shownCents(input.hourlyPayCents),
+    serviceCommissionCents: shownCents(input.serviceCommissionCents),
+    productCommissionCents: shownCents(input.productCommissionCents),
     commissionCents: shownCents(input.commissionCents),
     topUpCents: shownCents(input.topUpCents),
     greaterOfCents: shownCents(input.greaterOfCents),
@@ -42,6 +44,7 @@ export function earningsView(input: EarningsResponse, payrollLabel: (status: Pay
       id: period.id,
       range: `${period.start} – ${period.end}`,
       payrollLabel: payrollLabel(period.payrollStatus),
+      periodStatus: period.periodStatus,
       estimate: period.isEstimate,
     })),
     workweeks: input.workweeks.map((week) => ({

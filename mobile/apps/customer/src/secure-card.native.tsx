@@ -3,6 +3,7 @@ import { useState } from "react";
 import { View } from "react-native";
 import { Button, useI18n } from "@rayz/ui";
 import { api } from "./net";
+import { skipNativeSheet } from "./flow-controller";
 
 interface Added {
   id: string;
@@ -12,28 +13,45 @@ interface Added {
   wallet: boolean;
 }
 
+interface Setup {
+  paymentMethod: Added;
+  clientSecret: string;
+  ephemeralKey: string;
+  customerId: string;
+}
+
 /**
- * Asks Stripe's sheet only when the server returns a real SetupIntent.
- * The sandbox secret never collects a PAN; the app stores brand and last4.
+ * FlowController (customFlow) opens only for a live SetupIntent.
+ * Sandbox secrets start with seti_test_ and never collect a PAN.
+ * Brand and last4 are whatever Stripe returned.
  */
-export function TestCardPicker({ token, onAdded }: { token: string; onAdded: (card: Added) => void }) {
+export function AddCard({ token, onAdded }: { token: string; onAdded: (card: Added) => void }) {
   const { t } = useI18n();
-  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const { initPaymentSheet, presentPaymentSheet, confirmPaymentSheetPayment } = useStripe();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const add = (funding: "credit" | "debit", wallet: boolean) => {
+  const add = () => {
     setBusy(true);
     setError("");
-    void api<{ paymentMethod: Added; clientSecret?: string }>("/api/v1/me/payment-methods/setup", token, {
+    void api<Setup>("/api/v1/me/payment-methods/setup", token, {
       method: "POST",
-      body: JSON.stringify({ funding, wallet }),
+      body: JSON.stringify({ funding: "credit" }),
     })
       .then(async (body) => {
-        const secret = body.clientSecret ?? "";
-        if (secret && !secret.startsWith("seti_test_sandbox")) {
-          const init = await initPaymentSheet({ setupIntentClientSecret: secret, merchantDisplayName: "Ray'z" });
-          if (!init.error) await presentPaymentSheet();
+        if (!skipNativeSheet(body.clientSecret)) {
+          const init = await initPaymentSheet({
+            setupIntentClientSecret: body.clientSecret,
+            customerEphemeralKeySecret: body.ephemeralKey,
+            customerId: body.customerId,
+            merchantDisplayName: "Ray'z",
+            customFlow: true,
+            primaryButtonLabel: "Save card",
+          });
+          if (!init.error) {
+            const presented = await presentPaymentSheet();
+            if (!presented.error) await confirmPaymentSheetPayment();
+          }
         }
         onAdded(body.paymentMethod);
       })
@@ -43,9 +61,7 @@ export function TestCardPicker({ token, onAdded }: { token: string; onAdded: (ca
 
   return (
     <View style={{ gap: 10 }}>
-      <Button label={t("visaCredit")} kind="secondary" disabled={busy} onPress={() => add("credit", false)} />
-      <Button label={t("mcDebit")} kind="secondary" disabled={busy} onPress={() => add("debit", false)} />
-      <Button label={t("testWallet")} kind="ghost" disabled={busy} onPress={() => add("credit", true)} />
+      <Button label={t("addCard")} kind="secondary" disabled={busy} onPress={add} />
       {error ? <Button label={error} kind="ghost" onPress={() => setError("")} /> : null}
     </View>
   );

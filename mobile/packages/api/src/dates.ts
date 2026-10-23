@@ -4,7 +4,8 @@
  *
  * Payroll periods match the shop platform: bi-weekly, Sunday–Saturday, anchored
  * on Saturday 2026-10-03.
- * Overtime workweeks are Monday–Sunday, so a week can post hours into two periods.
+ * Overtime workweeks are Sunday–Saturday in America/Chicago unless config says
+ * otherwise. `weekStartDay` is 0 (Sunday) by default. Sunday starts a new week.
  */
 
 export const PAYROLL_ANCHOR_END = "2026-10-03";
@@ -81,12 +82,35 @@ export function clampRange(from: string, to: string, boundFrom: string, boundTo:
   return { from: start, to: end };
 }
 
-/** Monday–Sunday workweek that contains `iso`. */
-export function workweekContaining(iso: string): DateRange {
-  const dow = weekday(iso);
-  const sinceMonday = dow === 0 ? 6 : dow - 1;
-  const from = addDays(iso, -sinceMonday);
+/**
+ * Workweek that contains `iso`. `weekStartDay` comes from config (0 = Sunday).
+ * The payroll default is Sunday–Saturday.
+ */
+export function workweekContaining(iso: string, weekStartDay = 0): DateRange {
+  const start = ((weekStartDay % 7) + 7) % 7;
+  const daysSince = (weekday(iso) - start + 7) % 7;
+  const from = addDays(iso, -daysSince);
   return { from, to: addDays(from, 6) };
+}
+
+/** True when the range cuts through a workweek instead of covering it whole. */
+export function clipsWorkweek(from: string, to: string, weekStartDay = 0): boolean {
+  if (!isDate(from) || !isDate(to) || from > to) return true;
+  for (const date of eachDate(from, to)) {
+    const week = workweekContaining(date, weekStartDay);
+    if (weekCovers(week, { from, to }) !== "full") return true;
+  }
+  return false;
+}
+
+/** Calendar date of an instant in America/Chicago, not the UTC date. */
+export function chicagoDate(isoInstant: string, timeZone = TIME_ZONE): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(isoInstant));
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  if (!year || !month || !day) throw new Error("Unreadable instant");
+  return `${year}-${month}-${day}`;
 }
 
 export function weekCovers(week: DateRange, range: DateRange): "full" | "partial" | "none" {
@@ -127,7 +151,7 @@ export function monthStart(iso: string): string {
   return `${iso.slice(0, 7)}-01`;
 }
 
-export function rangeForPreset(preset: Exclude<RangePreset, "custom">, today: string): DateRange {
+export function rangeForPreset(preset: Exclude<RangePreset, "custom">, today: string, weekStartDay = 0): DateRange {
   if (!isDate(today)) throw new Error("today must be YYYY-MM-DD");
   if (preset === "current_period") {
     const p = payPeriodFor(today);
@@ -137,26 +161,26 @@ export function rangeForPreset(preset: Exclude<RangePreset, "custom">, today: st
     const p = payPeriodByIndex(payPeriodFor(today).index - 1);
     return { from: p.start, to: p.end };
   }
-  if (preset === "this_week") return workweekContaining(today);
+  if (preset === "this_week") return workweekContaining(today, weekStartDay);
   if (preset === "last_week") {
-    const current = workweekContaining(today);
-    return workweekContaining(addDays(current.from, -1));
+    const current = workweekContaining(today, weekStartDay);
+    return workweekContaining(addDays(current.from, -1), weekStartDay);
   }
   return { from: monthStart(today), to: today };
 }
 
 /** Presets recompute from today. A custom range keeps the dates the employee picked. */
-export function resolveSavedRange(saved: SavedRange | null, today: string): SavedRange {
+export function resolveSavedRange(saved: SavedRange | null, today: string, weekStartDay = 0): SavedRange {
   if (!saved || saved.preset === "custom") {
     if (saved?.preset === "custom" && isDate(saved.from) && isDate(saved.to)) {
       const from = minDate(saved.from, saved.to);
       const to = maxDate(saved.from, saved.to);
       return { preset: "custom", from, to };
     }
-    const current = rangeForPreset("current_period", today);
+    const current = rangeForPreset("current_period", today, weekStartDay);
     return { preset: "current_period", ...current };
   }
-  return { preset: saved.preset, ...rangeForPreset(saved.preset, today) };
+  return { preset: saved.preset, ...rangeForPreset(saved.preset, today, weekStartDay) };
 }
 
 export function formatLongDate(iso: string, locale: string): string {
@@ -164,11 +188,23 @@ export function formatLongDate(iso: string, locale: string): string {
   return new Intl.DateTimeFormat(locale, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
-export function formatClock(isoInstant: string, locale: string, timeZone = TIME_ZONE): string {
+let clockFormat: "12h" | "24h" = "12h";
+
+/** Apps set this from `/app/config` `timeFormat`. Instants stay ISO UTC. */
+export function setTimeFormat(format: "12h" | "24h"): void {
+  clockFormat = format === "24h" ? "24h" : "12h";
+}
+
+export function currentTimeFormat(): "12h" | "24h" {
+  return clockFormat;
+}
+
+export function formatClock(isoInstant: string, locale: string, timeZone = TIME_ZONE, timeFormat: "12h" | "24h" = clockFormat): string {
+  const hour12 = timeFormat !== "24h";
   return new Intl.DateTimeFormat(locale, {
-    hour: "numeric",
+    hour: hour12 ? "numeric" : "2-digit",
     minute: "2-digit",
-    hour12: true,
+    hour12,
     timeZone,
   }).format(new Date(isoInstant));
 }

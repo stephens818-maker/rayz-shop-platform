@@ -1,11 +1,14 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Body, Button, Display, ScrollScreen, useI18n } from "@rayz/ui";
 import { API_URL } from "../../src/net";
 import { useStaff } from "../../src/session";
+import { signOutSession } from "../../src/sign-out";
 
 export default function Account() {
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { session, clear } = useStaff();
 
   const register = () => {
@@ -27,7 +30,7 @@ export default function Account() {
         label={t("signOut")}
         kind="ghost"
         onPress={() => {
-          void clear().then(() => router.replace("/sign-in"));
+          void signOutSession(queryClient, clear).then(() => router.replace("/sign-in"));
         }}
       />
     </ScrollScreen>

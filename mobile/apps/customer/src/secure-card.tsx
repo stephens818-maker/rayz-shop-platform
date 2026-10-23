@@ -11,18 +11,21 @@ interface Added {
   wallet: boolean;
 }
 
-/** Sandbox instruments. There is no card-number field. */
-export function TestCardPicker({ token, onAdded }: { token: string; onAdded: (card: Added) => void }) {
+/**
+ * One hosted-card action. Brand and last4 come back from Stripe's published test method.
+ * The request never sends a number, brand, or last4.
+ */
+export function AddCard({ token, onAdded }: { token: string; onAdded: (card: Added) => void }) {
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const add = (funding: "credit" | "debit", wallet: boolean) => {
+  const add = () => {
     setBusy(true);
     setError("");
     void api<{ paymentMethod: Added }>("/api/v1/me/payment-methods/setup", token, {
       method: "POST",
-      body: JSON.stringify({ funding, wallet }),
+      body: JSON.stringify({ funding: "credit" }),
     })
       .then((body) => onAdded(body.paymentMethod))
       .catch((err: unknown) => setError(err instanceof Error ? err.message : t("retry")))
@@ -31,9 +34,7 @@ export function TestCardPicker({ token, onAdded }: { token: string; onAdded: (ca
 
   return (
     <View style={{ gap: 10 }}>
-      <Button label={t("visaCredit")} kind="secondary" disabled={busy} onPress={() => add("credit", false)} />
-      <Button label={t("mcDebit")} kind="secondary" disabled={busy} onPress={() => add("debit", false)} />
-      <Button label={t("testWallet")} kind="ghost" disabled={busy} onPress={() => add("credit", true)} />
+      <Button label={t("addCard")} kind="secondary" disabled={busy} onPress={add} />
       {error ? <Button label={error} kind="ghost" onPress={() => setError("")} /> : null}
     </View>
   );

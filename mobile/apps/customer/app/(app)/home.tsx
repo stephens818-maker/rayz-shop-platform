@@ -2,13 +2,14 @@ import { formatCents, formatClock } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Banner, Body, Button, Card, Display, Empty, Loading, Money, ScrollScreen, useI18n } from "@rayz/ui";
+import { loyaltyBadge } from "../../src/loyalty";
 import { api } from "../../src/net";
 import { useSession } from "../../src/session";
 
 interface HomePayload {
   nextAppointment: { appointment: { code: string; startsAt: string; shop: { name: string }; barber: { displayName: string }; items: { name: string }[] } } | null;
   rebook: { code: string; barberName: string; serviceName: string; weeks: number } | null;
-  loyalty: { progressCents: number; thresholdCents: number; availableCents: number; badge: { label: string; reason: string } };
+  loyalty: { progressCents: number; thresholdCents: number; availableCents: number; badge: { label: string; reason: string } | null };
   favoriteShop: { name: string; waitMinutes: number };
 }
 
@@ -34,6 +35,7 @@ export default function Home() {
   }
 
   const next = home.data?.nextAppointment?.appointment;
+  const badge = loyaltyBadge(home.data?.loyalty.badge);
   return (
     <ScrollScreen>
       <Display>{session.firstName}</Display>
@@ -63,8 +65,12 @@ export default function Home() {
       {home.data ? (
         <Card>
           <Body muted>{t("loyaltyTitle")}</Body>
-          <Body>{home.data.loyalty.badge.label}</Body>
-          <Body muted>{home.data.loyalty.badge.reason}</Body>
+          {badge ? (
+            <>
+              <Body>{badge.label}</Body>
+              <Body muted>{badge.reason}</Body>
+            </>
+          ) : null}
           <Money cents={home.data.loyalty.availableCents} />
           <Body muted>{`${t("availableReward")} · ${formatCents(home.data.loyalty.progressCents)} / ${formatCents(home.data.loyalty.thresholdCents)}`}</Body>
         </Card>

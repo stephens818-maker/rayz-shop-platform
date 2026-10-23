@@ -1,6 +1,9 @@
+import type { StaffConfig } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Banner, Body, Button, Display, Field, ScrollScreen, useI18n } from "@rayz/ui";
+import { View } from "react-native";
+import { Banner, Body, Button, Chip, Display, Field, ScrollScreen, useI18n } from "@rayz/ui";
+import { shopForClock } from "../../src/clock-shop";
 import { NativeCamera } from "../../src/native-camera";
 import { API_URL } from "../../src/net";
 import { useStaff } from "../../src/session";
@@ -17,6 +20,7 @@ export default function Clock() {
   const [attest, setAttest] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [picked, setPicked] = useState<string | null>(null);
   const me = useQuery({
     queryKey: ["staff-me", session?.token],
     enabled: Boolean(session),
@@ -26,11 +30,23 @@ export default function Clock() {
       return (await res.json()) as { shops: string[] };
     },
   });
+  const config = useQuery({
+    queryKey: ["staff-config"],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/staff/v1/config`);
+      if (!res.ok) throw new Error(t("retry"));
+      return (await res.json()) as StaffConfig;
+    },
+  });
+  const shops = me.data?.shops ?? [];
+  const shopId = shopForClock(shops, picked);
+  const labelFor = (id: string) => config.data?.shops.find((shop) => shop.shopId === id)?.slug ?? id;
 
   const currentCode = async () => {
-    const shopId = me.data?.shops[0];
-    if (!shopId) throw new Error(t("retry"));
-    const res = await fetch(`${API_URL}/api/staff/v1/kiosk/qr?shopId=${shopId}`);
+    if (!shopId) throw new Error(t("pickShop"));
+    const res = await fetch(`${API_URL}/api/staff/v1/kiosk/qr?shopId=${shopId}`, {
+      headers: { authorization: `Bearer ${session?.token}` },
+    });
     const body = (await res.json()) as Qr;
     if (!res.ok || !body.token) throw new Error(body.error?.message ?? t("retry"));
     return body.token;
@@ -57,6 +73,14 @@ export default function Clock() {
     <ScrollScreen>
       <Display>{t("clockIn")}</Display>
       <Body muted>{t("unlockBody")}</Body>
+      {shops.length > 1 ? (
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+          {shops.map((id) => (
+            <Chip key={id} label={labelFor(id)} selected={picked === id} onPress={() => setPicked(id)} />
+          ))}
+        </View>
+      ) : null}
+      {shops.length > 1 && !shopId ? <Body>{t("pickShop")}</Body> : null}
       <NativeCamera
         onToken={(token) => {
           void punch("in", token);

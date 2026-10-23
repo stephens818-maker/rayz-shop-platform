@@ -1,4 +1,4 @@
-import type { AdjustmentRecord, HourEntry, PeriodMeta, SaleRecord, ShopRecord, StaffRecord } from "./engine";
+import type { AdjustmentRecord, HourEntry, LiveFloor, PeriodMeta, SaleRecord, ShopRecord, StaffRecord } from "./engine";
 
 export const TODAY = "2026-10-23";
 
@@ -24,9 +24,9 @@ const tip = (
 
 export function seedShops(): ShopRecord[] {
   return [
-    { id: SHOP_CORALVILLE, slug: "coralville", name: "Coralville", tipTransfers: true, serviceTaxRate: 0.07, cardFeeEnabled: true, cardFeeRate: 0.03, cardFeeAppliesToTip: false, payments: true, booking: "native", clockIn: true },
-    { id: SHOP_MOLINE, slug: "moline", name: "Moline", tipTransfers: false, serviceTaxRate: 0, cardFeeEnabled: true, cardFeeRate: 0.03, cardFeeAppliesToTip: false, payments: true, booking: "native", clockIn: true },
-    { id: SHOP_KIMBERLY, slug: "kimberly", name: "Kimberly", tipTransfers: false, serviceTaxRate: 0.07, cardFeeEnabled: false, cardFeeRate: 0, cardFeeAppliesToTip: false, payments: false, booking: "external", clockIn: false },
+    { id: SHOP_CORALVILLE, slug: "coralville", name: "Coralville", tipTransfers: true, paymentMode: "separate_charges_and_transfers", launched: true, launchAt: "2026-01-01T00:00:00.000Z", chargesEnabled: true, externalBookingUrl: null, serviceTaxRate: 0.07, cardFeeEnabled: true, cardFeeRate: 0.03, cardFeeAppliesToTip: false, payments: true, booking: "native", clockIn: true },
+    { id: SHOP_MOLINE, slug: "moline", name: "Moline", tipTransfers: false, paymentMode: "separate_charges_and_transfers", launched: true, launchAt: "2026-01-01T00:00:00.000Z", chargesEnabled: true, externalBookingUrl: null, serviceTaxRate: 0, cardFeeEnabled: true, cardFeeRate: 0.03, cardFeeAppliesToTip: false, payments: true, booking: "native", clockIn: true },
+    { id: SHOP_KIMBERLY, slug: "kimberly", name: "Kimberly", tipTransfers: false, paymentMode: "separate_charges_and_transfers", launched: false, launchAt: null, chargesEnabled: false, externalBookingUrl: "https://book.rayzbs.com/shops/kimberly", serviceTaxRate: 0.07, cardFeeEnabled: false, cardFeeRate: 0, cardFeeAppliesToTip: false, payments: false, booking: "external", clockIn: false },
   ];
 }
 
@@ -58,7 +58,7 @@ export function seedHours(): HourEntry[] {
     hours(mk, shop, "2026-10-14", 8),
     hours(mk, shop, "2026-10-15", 8),
     hours(mk, shop, "2026-10-16", 6),
-    hours(mk, shop, "2026-10-18", 0, 4),
+    hours(mk, shop, "2026-10-17", 0, 4),
     hours(mk, shop, "2026-10-19", 8),
     hours(mk, shop, "2026-10-20", 8),
     hours(mk, shop, "2026-10-21", 4),
@@ -108,7 +108,7 @@ export function seedSales(): SaleRecord[] {
       staffId: mk,
       shopId: shop,
       date: "2026-10-20",
-      startedAt: "2026-10-20T14:00:00.000Z",
+      startedAt: "2026-10-20T03:30:00.000Z",
       clientFirstName: "Alex",
       serviceName: "Ray'z Cut",
       serviceCents: 1000,
@@ -274,10 +274,18 @@ export function seedAdjustments(): AdjustmentRecord[] {
   ];
 }
 
+export function seedFloors(): LiveFloor[] {
+  return [
+    { shopId: SHOP_CORALVILLE, bookable: 4, inService: 1, waiting: 0, quotedWaitMin: null },
+    { shopId: SHOP_MOLINE, bookable: 3, inService: 3, waiting: 2, quotedWaitMin: 40 },
+    { shopId: SHOP_KIMBERLY, bookable: 3, inService: 0, waiting: 1, quotedWaitMin: null },
+  ];
+}
+
 export function seedPeriods(): PeriodMeta[] {
   return [
     { id: "2026-09-20", start: "2026-09-20", end: "2026-10-03", periodStatus: "locked", payrollStatus: "paid_in_paycheck", snapshotId: "snap_2026-09-20", computedAt: "2026-10-06T15:00:00.000Z" },
-    { id: "2026-10-04", start: "2026-10-04", end: "2026-10-17", periodStatus: "locked", payrollStatus: "sent_to_payroll", snapshotId: "snap_2026-10-04", computedAt: "2026-10-19T15:00:00.000Z" },
+    { id: "2026-10-04", start: "2026-10-04", end: "2026-10-17", periodStatus: "exported", payrollStatus: "sent_to_payroll", snapshotId: "snap_2026-10-04", computedAt: "2026-10-19T15:00:00.000Z" },
     { id: "2026-10-18", start: "2026-10-18", end: "2026-10-31", periodStatus: "draft", payrollStatus: "not_yet_processed", snapshotId: null, computedAt: null },
   ];
 }

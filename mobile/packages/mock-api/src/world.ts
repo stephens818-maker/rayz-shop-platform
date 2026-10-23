@@ -1,7 +1,7 @@
 import type { EarningsResponse } from "@rayz/api";
-import { LATE_ADJUSTMENT_COPY, payPeriodFor } from "@rayz/api";
+import { isSnapshotPeriod, LATE_ADJUSTMENT_COPY, payPeriodFor } from "@rayz/api";
 import { buildEarnings, earningsDays, nextOpenPeriod, payrollCsv, type AdjustmentRecord, type EarningsWorld } from "./engine";
-import { TODAY, seedAdjustments, seedHours, seedPeriods, seedSales, seedShops, seedStaff } from "./fixtures";
+import { TODAY, seedAdjustments, seedFloors, seedHours, seedPeriods, seedSales, seedShops, seedStaff } from "./fixtures";
 
 export interface World extends EarningsWorld {
   today: string;
@@ -11,16 +11,18 @@ export interface World extends EarningsWorld {
 export function createWorld(): World {
   const world: World = {
     today: TODAY,
+    weekStartDay: 0,
     shops: seedShops(),
     staff: seedStaff(),
     hours: seedHours(),
     sales: seedSales(),
     adjustments: seedAdjustments(),
     periods: seedPeriods(),
+    floors: seedFloors(),
     snapshots: new Map(),
   };
   for (const period of world.periods) {
-    if (period.periodStatus === "draft") continue;
+    if (!isSnapshotPeriod(period.periodStatus)) continue;
     for (const person of world.staff) {
       const snap = buildEarnings(world, person.id, { from: period.start, to: period.end }, { snapshot: true });
       snap.computedAt = period.computedAt;
@@ -34,7 +36,7 @@ export function createWorld(): World {
 
 export function earningsFor(world: World, staffId: string, range: { from: string; to: string }): EarningsResponse {
   const period = world.periods.find((p) => p.start === range.from && p.end === range.to);
-  if (period && period.periodStatus !== "draft") {
+  if (period && isSnapshotPeriod(period.periodStatus)) {
     const snap = world.snapshots.get(`${staffId}|${period.id}`);
     if (snap) return structuredClone(snap);
   }

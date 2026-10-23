@@ -1,3 +1,4 @@
+import { browserSecureStore } from "@rayz/ui";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { API_URL } from "./net";
@@ -17,19 +18,13 @@ interface Store {
   removeItem: (key: string) => Promise<void>;
 }
 
-const webStore: Store = {
-  getItem: async (key) => (typeof localStorage === "undefined" ? null : localStorage.getItem(key)),
-  setItem: async (key, value) => localStorage.setItem(key, value),
-  removeItem: async (key) => localStorage.removeItem(key),
-};
-
 async function nativeStore(): Promise<Store> {
   const SecureStore = await import("expo-secure-store");
   return { getItem: (key) => SecureStore.getItemAsync(key), setItem: (key, value) => SecureStore.setItemAsync(key, value), removeItem: (key) => SecureStore.deleteItemAsync(key) };
 }
 
 async function store(): Promise<Store> {
-  return Platform.OS === "web" ? webStore : nativeStore();
+  return Platform.OS === "web" ? browserSecureStore() : nativeStore();
 }
 
 interface StaffContext {

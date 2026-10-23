@@ -16,6 +16,8 @@ interface Shop {
   description: string;
   bookingMode: "native" | "external" | "closed";
   externalBookingUrl: string | null;
+  launched: boolean;
+  closedCopy: string | null;
   lat: number;
   lng: number;
   hours: { weekday: number; open: string; close: string }[];
@@ -61,7 +63,7 @@ export default function ShopDetail() {
             <Button label={t("book")} onPress={() => router.push(`/book-visit?slug=${row.slug}`)} />
           ) : (
             <>
-              <Banner>{t("notLive")}</Banner>
+              <Banner>{row.closedCopy ?? t("notLive")}</Banner>
               {row.externalBookingUrl ? <Button label={t("bookOnWeb")} onPress={() => Linking.openURL(row.externalBookingUrl!)} /> : null}
             </>
           )}
