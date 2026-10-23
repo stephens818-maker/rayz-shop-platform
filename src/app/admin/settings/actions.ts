@@ -218,7 +218,7 @@ export async function setReaderActiveAction(id: string, active: boolean) {
   });
 }
 
-/** What this shop's printed and emailed receipts show. */
+/** What this shop's receipts show. */
 export async function saveReceiptAction(shopId: string, raw: z.input<typeof ReceiptBrandingSchema>) {
   return safe(async () => {
     const ctx = await authorize("settings.shop");

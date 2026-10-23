@@ -437,7 +437,7 @@ export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; s
   const [v, setV] = useState({ ...initial, headline: initial.headline ?? "", footer: initial.footer ?? "" });
   return (
     <Card>
-      <CardHeader title="Receipts" subtitle={`What ${shopName}'s printed and emailed receipts show.`} />
+      <CardHeader title="Receipts" subtitle={`What ${shopName}'s receipts show, on screen and printed.`} />
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label="Headline" hint={`Blank prints "Ray'z Barber Shop · ${shopName}".`}>
           <Input maxLength={60} value={v.headline} onChange={(e) => setV({ ...v, headline: e.target.value })} />

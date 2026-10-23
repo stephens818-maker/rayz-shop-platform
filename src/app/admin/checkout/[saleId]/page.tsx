@@ -11,6 +11,11 @@ import { getLoyaltyConfig, loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries } from "@/server/ratings";
 import { timesFor } from "@/server/service-times";
 import { TEST_CARDS, paymentsMode, terminal } from "@/server/payments/processor";
+import { shopAccount } from "@/server/payments/connect";
+import { takesCards } from "@/domain/connect";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { db } from "@/db";
+import { terminalReaders } from "@/db/schema";
 import { Pos } from "./pos";
 
 export const metadata: Metadata = { title: "Checkout" };
@@ -23,7 +28,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
   if (c.sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
   const policy = await clientPolicy(ctx);
-  const [catalog, barbers, loyalty, loyaltyCfg, ratings, times, lists] = await Promise.all([
+  const [catalog, barbers, loyalty, loyaltyCfg, ratings, times, lists, account, readers] = await Promise.all([
     shopCatalog(c.shop.id),
     shopBarbers(c.shop.id),
     c.customer ? loyaltyBalance(c.customer.id) : null,
@@ -31,7 +36,14 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
     ratingSummaries([c.customer?.id]),
     timesFor(c.appointment ? [c.appointment.id] : []),
     lookups(),
+    shopAccount(c.shop.id),
+    db
+      .select({ id: terminalReaders.id, label: terminalReaders.label })
+      .from(terminalReaders)
+      .where(and(eq(terminalReaders.shopId, c.shop.id), eq(terminalReaders.active, true), isNotNull(terminalReaders.stripeReaderId)))
+      .orderBy(asc(terminalReaders.createdAt)),
   ]);
+  const cards = takesCards(c.shop.paymentsMode, account);
   return (
     <Pos
       reasons={{ discount: lists.discountReasons, priceChange: lists.priceChangeReasons }}
@@ -60,6 +72,13 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
         publishableKey: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || null,
         terminalLabel: terminal.readerLabel,
         testCards: Object.entries(TEST_CARDS).map(([id, c]) => ({ id, label: c.label, funding: c.funding })),
+        cards,
+        noCards: cards
+          ? null
+          : c.shop.paymentsMode === "cash_only"
+            ? `${c.shop.name} takes cash and gift cards only for now.`
+            : `${c.shop.name} can't take cards until Stripe finishes approving its account. Take cash or a gift card.`,
+        readers,
       }}
       taxCategories={Object.fromEntries([...catalog.map((s) => [s.id, s.taxCategory] as const), ...c.retail.map((p) => [p.productId, p.taxCategory] as const)])}
       perms={{

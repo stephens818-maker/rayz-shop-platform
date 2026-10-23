@@ -37,7 +37,15 @@ export function Pos(props: {
   retail: { productId: string; name: string; brand: string; priceCents: number; stock: number; available: number }[];
   negativeStock: "block" | "warn";
   loyalty: { rewards: { id: string; amountCents: number; expiresAt: string | null }[]; progressCents: number; thresholdCents: number; redeemableOn: "services" | "all" } | null;
-  payments: { mode: "stripe" | "simulator"; publishableKey: string | null; terminalLabel: string; testCards: { id: string; label: string; funding: string }[] };
+  payments: {
+    mode: "stripe" | "simulator";
+    publishableKey: string | null;
+    terminalLabel: string;
+    testCards: { id: string; label: string; funding: string }[];
+    cards: boolean;
+    noCards: string | null;
+    readers: { id: string; label: string }[];
+  };
   taxCategories: Record<string, TaxCategory>;
   perms: { discount: boolean; maxDiscountPct: number; priceOverride: boolean; reassign: boolean };
   canAdd: { phone: boolean; email: boolean };
@@ -56,6 +64,7 @@ export function Pos(props: {
   const [gift, setGift] = useState<{ code: string; balanceCents: number } | null>(null);
   const [tender, setTender] = useState<"cash" | "card" | null>(null);
   const [cardMode, setCardMode] = useState<"terminal" | "keyed">("terminal");
+  const [readerId, setReaderId] = useState<string | null>(props.payments.readers[0]?.id ?? null);
   const [card, setCard] = useState<Card4 | null>(null);
   const [cashTendered, setCashTendered] = useState<number | null>(null);
   const [rebookWeeks, setRebookWeeks] = useState<number | null>(null);
@@ -133,7 +142,7 @@ export function Pos(props: {
             method === "cash"
               ? { method: "cash", cashTenderedCents: cashTendered }
               : method === "card"
-                ? { method: "card", paymentMethodId: card!.paymentMethodId, entryMode: cardMode }
+                ? { method: "card", paymentMethodId: card!.paymentMethodId, entryMode: cardMode, readerId: cardMode === "terminal" ? readerId : null }
                 : { method: "none" },
           expectedTotalCents: totals.totalCents,
           rebookInWeeks: rebookWeeks,
@@ -464,12 +473,20 @@ export function Pos(props: {
                   <TenderBtn on={tender === "cash"} onClick={() => setTender("cash")} title="Cash" sub={$(preview("cash", null).primaryChargeCents)} />
                   <TenderBtn
                     on={tender === "card"}
+                    disabled={!props.payments.cards}
                     onClick={() => setTender("card")}
                     title="Card"
-                    sub={props.config.cardFee.enabled ? `${$(base.primaryChargeCents)} debit · ${$(creditPreview.primaryChargeCents)} credit` : $(base.primaryChargeCents)}
+                    sub={
+                      !props.payments.cards
+                        ? "Not available"
+                        : props.config.cardFee.enabled
+                          ? `${$(base.primaryChargeCents)} debit · ${$(creditPreview.primaryChargeCents)} credit`
+                          : $(base.primaryChargeCents)
+                    }
                   />
                 </div>
               )}
+              {base.primaryBaseCents > 0 && props.payments.noCards && <p className="text-xs text-amber-800">{props.payments.noCards}</p>}
 
               {method === "cash" && (
                 <div className="space-y-2">
@@ -503,6 +520,18 @@ export function Pos(props: {
                       </button>
                     ))}
                   </div>
+                  {cardMode === "terminal" && props.payments.readers.length > 1 && (
+                    <label className="flex items-center gap-2 text-xs text-zinc-600">
+                      Reader
+                      <select className="rounded-md border border-zinc-200 px-2 py-1 text-sm" value={readerId ?? ""} onChange={(e) => setReaderId(e.target.value || null)}>
+                        {props.payments.readers.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {card ? (
                     <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2 ring-1 ring-zinc-200">
                       <div className="text-sm">
@@ -654,9 +683,13 @@ function TipBtn({ on, onClick, big, small }: { on: boolean; onClick: () => void;
   );
 }
 
-function TenderBtn({ on, onClick, title, sub }: { on: boolean; onClick: () => void; title: string; sub: string }) {
+function TenderBtn({ on, onClick, title, sub, disabled }: { on: boolean; onClick: () => void; title: string; sub: string; disabled?: boolean }) {
   return (
-    <button onClick={onClick} className={cx("rounded-xl px-3 py-3 text-left ring-1 transition", on ? "bg-brand-600 text-white ring-brand-600" : "bg-white ring-zinc-300 hover:bg-zinc-50")}>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={cx("rounded-xl px-3 py-3 text-left ring-1 transition disabled:cursor-not-allowed disabled:opacity-50", on ? "bg-brand-600 text-white ring-brand-600" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
+    >
       <div className="font-semibold">{title}</div>
       <div className={cx("text-xs tabular", on ? "text-white/80" : "text-zinc-500")}>{sub}</div>
     </button>

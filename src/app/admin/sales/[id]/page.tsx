@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
+import { receiptBranding } from "@/domain/connect";
 import { appointments, customers, payments, refunds, saleItems, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, LinkButton, Notice, StarBadge } from "@/components/ui";
 import { formatCents, formatRate } from "@/lib/money";
@@ -40,6 +41,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
     sp.rebook ? db.query.appointments.findFirst({ where: eq(appointments.code, sp.rebook) }) : null,
   ]);
   const policy = await clientPolicy(ctx);
+  const receipt = receiptBranding(shop?.receipt);
   const [loyalty, rateable, ratingMap] = await Promise.all([
     customer ? loyaltyBalance(customer.id) : null,
     customer && policy.ratingDetail ? visitForSale(ratingViewer(ctx), id) : null,
@@ -81,10 +83,16 @@ export default async function SalePage({ params, searchParams }: { params: Promi
       <div className="grid gap-4 md:grid-cols-[1fr_300px]">
         <Card className="p-6">
           <div className="text-center">
-            <div className="text-lg font-semibold">Ray&apos;z Barber Shop · {shop?.name}</div>
-            <div className="text-xs text-zinc-500">
-              {shop?.address}, {shop?.city}, {shop?.state} {shop?.zip} · {formatPhone(shop?.phone) || shop?.phone}
-            </div>
+            {receipt.showLogo && shop?.logoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={shop.logoUrl} alt="" className="mx-auto mb-2 h-12 w-12 object-contain" />
+            )}
+            <div className="text-lg font-semibold">{receipt.headline ?? <>Ray&apos;z Barber Shop · {shop?.name}</>}</div>
+            {(receipt.showAddress || (receipt.showPhone && shop?.phone)) && (
+              <div className="text-xs text-zinc-500">
+                {[receipt.showAddress && shop && `${shop.address}, ${shop.city}, ${shop.state} ${shop.zip}`, receipt.showPhone && shop?.phone && (formatPhone(shop.phone) || shop.phone)].filter(Boolean).join(" · ")}
+              </div>
+            )}
             <div className="mt-2 text-xs text-zinc-500">
               Ticket #{sale.number} · {formatDateTime(sale.paidAt ?? sale.createdAt)}
               {barber && ` · Barber: ${barber.displayLabel}`}
@@ -179,7 +187,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
               {loyalty.availableCents > 0 && ` · ${formatCents(loyalty.availableCents)} in rewards ready`}
             </div>
           )}
-          <div className="mt-4 text-center text-xs text-zinc-400">Thank you! Book again at rayzbarbershop.com</div>
+          <div className="mt-4 text-center text-xs text-zinc-400">{receipt.footer ?? "Thank you! Book again at rayzbarbershop.com"}</div>
         </Card>
         <div className="no-print space-y-3">
           <PrintButton />
