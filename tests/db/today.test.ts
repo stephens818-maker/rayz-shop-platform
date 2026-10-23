@@ -85,6 +85,8 @@ beforeAll(async () => {
   await m.db.db.delete(m.schema.timeBlocks).where(and(eq(m.schema.timeBlocks.staffId, ids.makenna), lt(m.schema.timeBlocks.startsAt, at(day, 24 * 60)), gte(m.schema.timeBlocks.endsAt, at(day, 0))));
   fx.walkedIn = await customer("Waiting", { email: "waiting@today.test" });
   fx.walkedInAppt = await appt(fx.walkedIn, day, 9 * 60 + 30, 30, "checked_in");
+  // The seed's own no-shows depend on the hour it ran; only this test's client has a history.
+  await m.db.db.update(m.schema.appointments).set({ status: "completed" }).where(eq(m.schema.appointments.status, "no_show"));
   fx.risky = await customer("Risky", { email: "risky@today.test" });
   for (const back of [30, 60, 90]) await appt(fx.risky, m.time.addDays(day, -back), 13 * 60, 30, "no_show");
   fx.riskyAppt = await appt(fx.risky, day, 11 * 60 + 30, 30, "booked");
