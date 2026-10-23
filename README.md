@@ -132,6 +132,24 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 - Duplicate first names are handled with unique staff IDs plus admin-set display labels. Saving a duplicate active label is refused, and the error suggests an alternative.
 - Who can do what is set by roles, per-person overrides, and shop access, all under **Permissions**. See [Roles and permissions](#roles-and-permissions).
 
+### Booking times
+
+**Setup → Booking times** controls which start times are offered and how long each booking holds the chair.
+
+- **Slot intervals,** where the most specific setting wins: a barber at one shop, then the barber, then the shop, then the brand. The choices are 15, 20 or 30 minutes, or a custom value. A barber's starts are on their own grid, and the whole booking has to fit inside their working hours.
+- **Service timing:**
+  - a duration step (lengths come in multiples of it)
+  - a booking increment (a gray blending that starts only on the half hour, say)
+  - prep and cleanup buffers
+- **Durations per barber,** for every shop or for one. For example, Casey's specialty fade takes 40 minutes everywhere.
+- **The day calendar** draws each barber's own grid. A row toggle switches between each barber's grid and a shop-wide 15, 30 or 60. Prep and cleanup are shaded. Drag an appointment to move it.
+- **Staff bookings** follow the grid, unless the person has the squeeze-in permission. A squeeze-in is logged.
+- **The database** never lets service times overlap. Buffers can't overlap either, unless the booking was squeezed in.
+- **Changing an interval** only changes new availability. Existing bookings keep their times.
+- Covered by `tests/db/slot-timing.test.ts`: mixed grids, multi-shop barbers, interval changes under existing bookings, buffers, add-ons, squeeze-in, and the DST Sundays.
+
+<img alt="Booking times: brand default, shop intervals and per-barber intervals" src="docs/screenshots/booking-times.png" width="800" />
+
 ### Catalog, POS, and money
 
 - A **brand master catalog** of services and add-ons, with per-shop price and duration overrides and per-shop enable/disable. The real Squire prices for each shop are seeded, and Squire's disabled items (design add-ons, memberships) are seeded as disabled.
@@ -172,6 +190,16 @@ Ray'z is the merchant of record on one platform Stripe account. Each shop gets i
   - payouts paid and in transit, with every payout listed
   - cash and gift cards taken outside Stripe
 - **Without Stripe keys,** each shop gets a simulated account (`sim_acct_…`) and a stand-in for the hosted onboarding page. The seed gives every shop an onboarded simulated account, routes its card history there, and makes daily payouts. Simulated accounts are refused once real keys are set, so every shop goes through Stripe's onboarding then.
+
+<img alt="Location setup: every shop's setup progress, card payment status and Stripe account, and the owners" src="docs/screenshots/connect-setup-overview.png" width="800" />
+
+<img alt="Setting up Dubuque: the steps, with card payments not set up yet" src="docs/screenshots/connect-setup-not-started.png" width="800" />
+
+<img alt="The simulator's stand-in for Stripe-hosted onboarding" src="docs/screenshots/connect-simulated-onboarding.png" width="800" />
+
+<img alt="Back from onboarding without a bank account: taking cards, payouts waiting" src="docs/screenshots/connect-setup-needs-bank.png" width="800" />
+
+<img alt="Shop P&L by Stripe account, with payouts" src="docs/screenshots/connect-shop-pl.png" width="800" />
 
 ### Inventory, vendors, and purchase orders
 
