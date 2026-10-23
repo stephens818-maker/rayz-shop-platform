@@ -1,0 +1,381 @@
+/**
+ * The Payroll Report math, row for row the workbook's Locations sheet (spec §2), plus the platform's
+ * additions to the right of it: O.T. Pay, Training Pay and Labor Cost. Every total is a sum of the rows
+ * below it; nothing is typed in or carried over.
+ *
+ * Money is dollars as JavaScript numbers (IEEE doubles, the same arithmetic Excel uses) and each
+ * formula runs in the workbook's order, so an unrounded export matches the workbook to the last digit.
+ */
+
+export interface PayrollSettings {
+  otThresholdHours: number;
+  /** For the report's OT Pay. iSolved computes the real (blended) OT itself. */
+  otMultiplier: number;
+  /** C2: training hours count toward the weekly 40. Off until Charles answers Q11. */
+  trainingCountsTowardOt: boolean;
+  /** Training hours paid at the training rate are labor cost. The workbook leaves them out. */
+  trainingPayInCost: boolean;
+  /** 2-decimal half-up on export values. Off: the workbook's values go out unrounded (pending Charles). */
+  roundExport2dp: boolean;
+  /** Full time = averaging more than this many hours a week. Exactly this many is part time. */
+  ftHoursPerWeek: number;
+  ftBasis: FtBasis;
+  ftWindowWeeks: number;
+}
+
+export type FtBasis = "worked" | "worked_training" | "paid";
+
+export const FT_BASIS_LABEL: Record<FtBasis, string> = {
+  worked: "Clocked worked hours",
+  worked_training: "Worked + training hours",
+  paid: "Worked + training + PTO hours",
+};
+
+export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
+  otThresholdHours: 40,
+  otMultiplier: 1.5,
+  trainingCountsTowardOt: false,
+  trainingPayInCost: true,
+  roundExport2dp: false,
+  ftHoursPerWeek: 32,
+  ftBasis: "worked",
+  ftWindowWeeks: 4,
+};
+
+export function payrollSettings(raw: unknown): PayrollSettings {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Partial<PayrollSettings>;
+  const d = DEFAULT_PAYROLL_SETTINGS;
+  const num = (v: unknown, min: number, max: number, dflt: number) => (typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : dflt);
+  const bool = (v: unknown, dflt: boolean) => (typeof v === "boolean" ? v : dflt);
+  return {
+    otThresholdHours: num(r.otThresholdHours, 1, 80, d.otThresholdHours),
+    otMultiplier: num(r.otMultiplier, 1, 3, d.otMultiplier),
+    trainingCountsTowardOt: bool(r.trainingCountsTowardOt, d.trainingCountsTowardOt),
+    trainingPayInCost: bool(r.trainingPayInCost, d.trainingPayInCost),
+    roundExport2dp: bool(r.roundExport2dp, d.roundExport2dp),
+    ftHoursPerWeek: num(r.ftHoursPerWeek, 1, 60, d.ftHoursPerWeek),
+    ftBasis: r.ftBasis && r.ftBasis in FT_BASIS_LABEL ? r.ftBasis : d.ftBasis,
+    ftWindowWeeks: Math.round(num(r.ftWindowWeeks, 1, 26, d.ftWindowWeeks)),
+  };
+}
+
+/** Values a manager can type over, each with a reason. The workbook had these as hand-typed cells. */
+export const OVERRIDABLE = ["workedHours", "otHours", "serviceSales", "productSales", "tips", "netComm", "ptoHours", "trainingHours"] as const;
+export type Overridable = (typeof OVERRIDABLE)[number];
+export type Overrides = Partial<Record<Overridable, { value: number; reason: string }>>;
+
+export const OVERRIDE_LABEL: Record<Overridable, string> = {
+  workedHours: "Hours worked",
+  otHours: "O.T. hours",
+  serviceSales: "Service $",
+  productSales: "Product $",
+  tips: "Tips",
+  netComm: "NetComm",
+  ptoHours: "PTO hours",
+  trainingHours: "Training hours",
+};
+
+export interface LineInput {
+  staffId: string;
+  name: string;
+  shopId: string;
+  /** iSolved Employee Number; null until it's entered. Lives in the database only. */
+  employeeNumber: string | null;
+  /** Written as text (and kept with its text format) rather than a number, as in the workbook. */
+  keyIsText: boolean;
+  isolvedName: string;
+  hourlyRate: number;
+  servicePct: number;
+  productPct: number;
+  /** Null = paid at the hourly rate. */
+  trainingRate: number | null;
+  /** All hours worked at this shop in the period, OT included (the Squire "Hours Worked" feed). */
+  workedHours: number;
+  otHours: number;
+  ptoHours: number;
+  trainingHours: number;
+  serviceSales: number;
+  productSales: number;
+  tips: number;
+  overrides?: Overrides;
+}
+
+export interface Line {
+  input: LineInput;
+  staffId: string;
+  name: string;
+  shopId: string;
+  /** B: regular hours = worked − OT. */
+  hours: number;
+  /** C */
+  wage: number;
+  /** D = B × C */
+  hourlyTotal: number;
+  /** E */
+  service: number;
+  /** F = E / B; null where the workbook shows #DIV/0!. */
+  grossPerHour: number | null;
+  /** G */
+  servicePct: number;
+  /** H = E × G */
+  commission: number;
+  /** I = H − D */
+  serviceTotal: number;
+  /** J */
+  product: number;
+  /** K */
+  productPct: number;
+  /** L = J × K */
+  productTotal: number;
+  /** M = IF(I>0, I+L, L) — the Comm Sales export column. */
+  netComm: number;
+  /** M as the formula has it, whatever was typed over it. */
+  netCommComputed: number;
+  /** N = IF(I>0, D+I, D) + L — the workbook's Total Wages (no OT, no training). */
+  totalWages: number;
+  /** O = N / E */
+  pctOfGross: number | null;
+  /** P */
+  ptoHours: number;
+  /** Q */
+  otHours: number;
+  /** R */
+  tips: number;
+  /** S */
+  trainingHours: number;
+  /** T = OT multiplier × C × Q. Base rate only; iSolved may compute blended OT higher. */
+  otPay: number;
+  /** U = training rate × S when training pay counts as cost, else 0. */
+  trainingPay: number;
+  /** V = N + T + U */
+  laborCost: number;
+  overridden: Overridable[];
+}
+
+const ov = (i: LineInput, k: Overridable, v: number) => i.overrides?.[k]?.value ?? v;
+
+export function computeLine(i: LineInput, s: PayrollSettings): Line {
+  const worked = ov(i, "workedHours", i.workedHours);
+  const otHours = ov(i, "otHours", i.otHours);
+  const hours = worked - otHours;
+  const wage = i.hourlyRate;
+  const hourlyTotal = hours * wage;
+  const service = ov(i, "serviceSales", i.serviceSales);
+  const commission = service * i.servicePct;
+  const serviceTotal = commission - hourlyTotal;
+  const product = ov(i, "productSales", i.productSales);
+  const productTotal = product * i.productPct;
+  const netCommComputed = serviceTotal > 0 ? serviceTotal + productTotal : productTotal;
+  const netComm = ov(i, "netComm", netCommComputed);
+  const totalWages = (serviceTotal > 0 ? hourlyTotal + serviceTotal : hourlyTotal) + productTotal;
+  const trainingHours = ov(i, "trainingHours", i.trainingHours);
+  const otPay = s.otMultiplier * wage * otHours;
+  const trainingPay = s.trainingPayInCost ? (i.trainingRate ?? wage) * trainingHours : 0;
+  return {
+    input: i,
+    staffId: i.staffId,
+    name: i.name,
+    shopId: i.shopId,
+    hours,
+    wage,
+    hourlyTotal,
+    service,
+    grossPerHour: hours ? service / hours : null,
+    servicePct: i.servicePct,
+    commission,
+    serviceTotal,
+    product,
+    productPct: i.productPct,
+    productTotal,
+    netComm,
+    netCommComputed,
+    totalWages,
+    pctOfGross: service ? totalWages / service : null,
+    ptoHours: ov(i, "ptoHours", i.ptoHours),
+    otHours,
+    tips: ov(i, "tips", i.tips),
+    trainingHours,
+    otPay,
+    trainingPay,
+    laborCost: totalWages + otPay + trainingPay,
+    overridden: OVERRIDABLE.filter((k) => i.overrides?.[k] !== undefined),
+  };
+}
+
+/** The columns that add up. Rates and percentages (C, G, K) don't; F and O are ratios of totals. */
+export const SUMMED = ["hours", "hourlyTotal", "service", "commission", "serviceTotal", "product", "productTotal", "netComm", "totalWages", "ptoHours", "otHours", "tips", "trainingHours", "otPay", "trainingPay", "laborCost"] as const;
+export type Summed = (typeof SUMMED)[number];
+export type Totals = Record<Summed, number> & { grossPerHour: number | null; pctOfGross: number | null; grossProfit: number };
+
+export const COLUMN_LABEL: Record<Summed | "wage" | "grossPerHour" | "servicePct" | "productPct" | "pctOfGross", string> = {
+  hours: "Hours",
+  wage: "Hourly Wage",
+  hourlyTotal: "Hourly Total",
+  service: "Service$",
+  grossPerHour: "Gross /Hr",
+  servicePct: "Service%",
+  commission: "Commission$",
+  serviceTotal: "Service Total",
+  product: "Product$",
+  productPct: "Prod%",
+  productTotal: "Product Total",
+  netComm: "NetComm",
+  totalWages: "Total Wages",
+  pctOfGross: "Total % of Gross",
+  ptoHours: "PTO HRs.",
+  otHours: "O.T. HRS",
+  tips: "TIPS",
+  trainingHours: "Training Hours",
+  otPay: "O.T. Pay",
+  trainingPay: "Training Pay",
+  laborCost: "Labor Cost",
+};
+
+/** Hours columns; the rest are dollars. */
+export const HOUR_COLUMNS: ReadonlySet<string> = new Set(["hours", "ptoHours", "otHours", "trainingHours"]);
+
+export function totalsOf(rows: readonly Pick<Line, Summed>[]): Totals {
+  const t = Object.fromEntries(SUMMED.map((k) => [k, rows.reduce((a, r) => a + r[k], 0)])) as Record<Summed, number>;
+  return { ...t, grossPerHour: t.hours ? t.service / t.hours : null, pctOfGross: t.service ? t.totalWages / t.service : null, grossProfit: t.service - t.laborCost };
+}
+
+/** Half-up to 2 decimals from the decimal digits (6.315 → 6.32), never banker's rounding or binary drift. */
+export function roundHalfUp2(x: number): number {
+  if (!Number.isFinite(x)) return x;
+  const neg = x < 0;
+  const [int, frac = ""] = Math.abs(x).toPrecision(15).replace(/\.?0+$/, "").split(".");
+  const asNum = Number(int + "." + frac);
+  if (frac.length <= 2) return neg ? -asNum : asNum;
+  const cents = BigInt(int) * 100n + BigInt(frac.slice(0, 2).padEnd(2, "0")) + (Number(frac[2]) >= 5 ? 1n : 0n);
+  const v = Number(cents) / 100;
+  return neg ? -v : v;
+}
+
+/** The per-shop iSolved columns, in the workbook's order. Hours only for OT: never OT dollars. */
+export const EXPORT_COLUMNS = [
+  { header: "E_Regular_Hours", from: "hours" },
+  { header: "E_Overtime 1.5_Hours", from: "otHours" },
+  { header: "E_Cash Tips Recd_Dollars", from: "tips" },
+  { header: "E_Comm Sales_Dollars", from: "netComm" },
+  { header: "E_Ray'z Paid Time_Hours", from: "ptoHours" },
+  { header: "E_Training_Hours", from: "trainingHours" },
+] as const satisfies readonly { header: string; from: Summed }[];
+
+export interface ExportRow {
+  staffId: string;
+  key: string | number | null;
+  isolvedName: string;
+  values: number[];
+}
+
+export function exportRows(lines: readonly Line[], s: PayrollSettings): ExportRow[] {
+  return lines.map((l) => ({
+    staffId: l.staffId,
+    key: l.input.employeeNumber === null ? null : l.input.keyIsText || !/^\d+$/.test(l.input.employeeNumber) ? l.input.employeeNumber : Number(l.input.employeeNumber),
+    isolvedName: l.input.isolvedName,
+    values: EXPORT_COLUMNS.map((c) => (s.roundExport2dp ? roundHalfUp2(l[c.from]) : l[c.from])),
+  }));
+}
+
+/** Sums to the cent (or hundredth of an hour) without float drift deciding the answer. */
+const toCents = (x: number) => Math.round(x * 100 + (x >= 0 ? 1e-7 : -1e-7));
+export const sameToTheCent = (a: number, b: number) => toCents(a) === toCents(b);
+
+export interface Mismatch {
+  shopId: string | null;
+  column: string;
+  check: "rows" | "export" | "locations";
+  report: number;
+  other: number;
+  detail: string;
+}
+
+export interface ShopBlock {
+  shopId: string;
+  shop: string;
+  lines: Line[];
+  totals: Totals;
+  exportRows: ExportRow[];
+}
+
+/**
+ * The reconciliation gate (spec §5). Approve-and-lock is blocked while this returns anything:
+ * a report total that isn't the sum of its rows, a per-shop export column whose total isn't the report's,
+ * or a Locations summary that isn't the shop blocks. The tolerance is $0.00.
+ */
+export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch[] {
+  const out: Mismatch[] = [];
+  for (const b of blocks) {
+    for (const k of SUMMED) {
+      const sum = b.lines.reduce((a, l) => a + l[k], 0);
+      if (!sameToTheCent(b.totals[k], sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "rows", report: b.totals[k], other: sum, detail: `${b.shop}: total isn't the sum of its rows` });
+    }
+    EXPORT_COLUMNS.forEach((c, i) => {
+      const sum = b.exportRows.reduce((a, r) => a + r.values[i], 0);
+      if (!sameToTheCent(b.totals[c.from], sum)) out.push({ shopId: b.shopId, column: c.header, check: "export", report: b.totals[c.from], other: sum, detail: `${b.shop}: export ${c.header} adds up to a different total than the report's ${COLUMN_LABEL[c.from]}` });
+    });
+    if (b.exportRows.length !== b.lines.length) out.push({ shopId: b.shopId, column: "Rows", check: "export", report: b.lines.length, other: b.exportRows.length, detail: `${b.shop}: the export has a different number of rows` });
+  }
+  for (const k of ["service", "laborCost", "otPay", "trainingPay", "totalWages", "hours", "otHours", "tips", "netComm"] as const) {
+    const sum = blocks.reduce((a, b) => a + b.totals[k], 0);
+    if (!sameToTheCent(grand[k], sum)) out.push({ shopId: null, column: COLUMN_LABEL[k], check: "locations", report: grand[k], other: sum, detail: "Locations total isn't the sum of the shops" });
+  }
+  return out;
+}
+
+export function assemble(shops: readonly { shopId: string; shop: string; inputs: readonly LineInput[] }[], s: PayrollSettings) {
+  const blocks: ShopBlock[] = shops.map((sh) => {
+    const lines = sh.inputs.map((i) => computeLine(i, s));
+    return { shopId: sh.shopId, shop: sh.shop, lines, totals: totalsOf(lines), exportRows: exportRows(lines, s) };
+  });
+  const grand = totalsOf(blocks.map((b) => b.totals));
+  return { blocks, grand, mismatches: reconcile(blocks, grand) };
+}
+
+export interface FtStatus {
+  staffId: string;
+  averageHours: number;
+  weeks: number;
+  fullTime: boolean;
+}
+
+/** Full time = average weekly hours (on the chosen basis, over the window) strictly above the threshold. */
+export function ftStatus(staffId: string, weekly: readonly { worked: number; training: number; pto: number }[], s: PayrollSettings): FtStatus {
+  const weeks = Math.max(1, s.ftWindowWeeks);
+  const window = weekly.slice(-weeks);
+  const basis = (w: { worked: number; training: number; pto: number }) => w.worked + (s.ftBasis !== "worked" ? w.training : 0) + (s.ftBasis === "paid" ? w.pto : 0);
+  const total = window.reduce((a, w) => a + basis(w), 0);
+  const averageHours = Math.round((total / weeks) * 100) / 100;
+  return { staffId, averageHours, weeks, fullTime: averageHours > s.ftHoursPerWeek };
+}
+
+export interface Anomaly {
+  staffId: string | null;
+  shopId: string | null;
+  kind: "owner_case" | "sales_without_hours" | "override" | "netcomm_gap" | "missing_key" | "training_in_hours" | "no_rate";
+  message: string;
+}
+
+/** Things to look at before locking. None of these block the lock, and none are "fixed" automatically. */
+export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Anomaly[] {
+  const out: Anomaly[] = [];
+  for (const b of blocks) {
+    for (const l of b.lines) {
+      const who = `${l.name} (${b.shop})`;
+      if (l.input.employeeNumber === null) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "missing_key", message: `${who} has no iSolved Employee Number yet, so their Key cell would be blank.` });
+      if (l.hours + l.otHours > 0 && l.laborCost === 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "owner_case", message: `${who}: ${fmtHours(l.hours + l.otHours)} at $0.00 labor cost. Owner or salaried? Left as is until Charles decides (Q17).` });
+      if (l.hours + l.otHours === 0 && l.service > 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "sales_without_hours", message: `${who}: ${fmtMoney(l.service)} of service sales with no hours. Owner case? Left as is (Q17).` });
+      if (!sameToTheCent(l.netComm, l.netCommComputed)) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "netcomm_gap", message: `${who}: NetComm ${fmtMoney(l.netComm)} was typed over the formula's ${fmtMoney(l.netCommComputed)}, a ${fmtMoney(Math.abs(l.netComm - l.netCommComputed))} gap between the report's Total Wages and the export's Comm Sales. Not fixed (Q17).` });
+      for (const k of l.overridden) {
+        if (k === "netComm") continue;
+        out.push({ staffId: l.staffId, shopId: b.shopId, kind: "override", message: `${who}: ${OVERRIDE_LABEL[k]} typed by hand (${l.input.overrides?.[k]?.reason}).` });
+      }
+      if (l.trainingHours > 0 && !s.trainingCountsTowardOt) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "training_in_hours", message: `${who}: ${fmtHours(l.trainingHours)} training. If the clocked hours already include it, it's counted twice (Q11, C2 flag).` });
+      if (l.wage === 0 && l.service > 0 && l.servicePct === 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "no_rate", message: `${who} has sales but no wage or commission rate.` });
+    }
+  }
+  return out;
+}
+
+export const fmtMoney = (x: number) => `${x < 0 ? "-" : ""}$${Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+export const fmtHours = (x: number) => `${x.toLocaleString("en-US", { maximumFractionDigits: 2 })}h`;
