@@ -269,7 +269,7 @@ export async function goLive(m: LocationAdmin, shopId: string, o: { cashOnly?: b
     .update(shops)
     .set({ status: "live", closedUntil: null, closedNote: null, wentLiveAt: s.wentLiveAt ?? now })
     .where(eq(shops.id, shopId));
-  await audit(m.actor, s.status === "closed" ? "shop.reopen" : "shop.go_live", "shop", shopId, { cashOnly: !!o.cashOnly }, shopId);
+  await audit(m.actor, s.status === "closed" ? "shop.reopen" : "shop.go_live", "shop", shopId, { cashOnly: !!o.cashOnly, paymentsMode: s.paymentsMode }, shopId);
 }
 
 /** Booked appointments at the shop from `from` (a local date) through `to` (or forever). */

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Select, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { ACCOUNT_STATE_LABEL, AccountState, OWNER_KIND_LABEL, requirementLabel } from "@/domain/connect";
+import { ACCOUNT_STATE_LABEL, AccountState, OWNER_KIND_LABEL, PAYMENTS_STEP_TITLE, requirementLabel } from "@/domain/connect";
 import {
   archiveLocationAction,
   closeLocationAction,
@@ -286,7 +286,7 @@ export function LifecyclePanel({
   const [archiving, setArchiving] = useState(false);
   const [confirm, setConfirm] = useState("");
   const [archived, setArchived] = useState<string | null>(null);
-  const waiting = blockers.filter((b) => !(cashOnly && b === "Card payments and payouts"));
+  const waiting = blockers.filter((b) => !(cashOnly && b === PAYMENTS_STEP_TITLE));
   if (!canManage) return null;
   return (
     <Card>

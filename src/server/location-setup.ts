@@ -1,7 +1,7 @@
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { ownerEntities, shopHours, shopPaymentAccounts, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
-import { AccountState, accountState, canCharge } from "@/domain/connect";
+import { AccountState, PAYMENTS_STEP_TITLE, accountState, paymentsStep } from "@/domain/connect";
 import { REQUIRED_FOR_LIVE, SUPPORTED_TIMEZONE, US_TIMEZONES, goLiveBlockers, slugProblem } from "@/domain/location-lifecycle";
 import { connectMode, feeSchedule } from "./payments/connect";
 
@@ -108,19 +108,7 @@ export async function locationSetup(shopId: string) {
       detail: barbers ? `${barbers} barber${barbers === 1 ? "" : "s"} with weekly hours here` : "Add barbers and give them hours at this shop.",
       href: "/admin/staff",
     },
-    {
-      key: "payments",
-      title: "Card payments and payouts",
-      done: state === "enabled",
-      detail:
-        state === "enabled"
-          ? "Taking cards; payouts go to the shop's bank."
-          : state === "not_started"
-            ? "Create this shop's Stripe account so its card sales, fees and payouts are its own."
-            : canCharge(account)
-              ? "Taking cards. Stripe needs a few more details before it pays out to the shop's bank."
-              : "Finish Stripe's onboarding so this shop can take cards.",
-    },
+    { key: "payments", title: PAYMENTS_STEP_TITLE, ...paymentsStep(shop.paymentsMode, account) },
     {
       key: "booking",
       title: "Online booking",
@@ -181,6 +169,7 @@ export async function setupOverview(shopIds: string[]) {
       ownerKind: r.ownerKind,
       stripeAccountId: r.account?.stripeAccountId ?? null,
       state: accountState(r.account),
+      paymentsMode: details[i]!.shop.paymentsMode,
       done: steps.filter((s) => s.done && s.required).length,
       total: steps.filter((s) => s.required).length,
     };

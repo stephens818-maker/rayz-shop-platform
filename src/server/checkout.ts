@@ -43,7 +43,7 @@ import { AppError, forbidden, notFound } from "./errors";
 import { postMovements } from "./inventory/ledger";
 import { stockLevels } from "./inventory/stock";
 import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, markRewardRedeemed } from "./loyalty";
-import { chargeDestination } from "./payments/connect";
+import { assertReaderAt, chargeRoute } from "./payments/connect";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
 import { recordCheckout } from "./service-times";
 
@@ -179,7 +179,7 @@ export interface CheckoutLineInput {
 
 export type TenderInput =
   | { method: "cash"; cashTenderedCents?: number | null }
-  | { method: "card"; paymentMethodId: string; entryMode: "keyed" | "terminal" }
+  | { method: "card"; paymentMethodId: string; entryMode: "keyed" | "terminal"; readerId?: string | null }
   | { method: "none" };
 
 export interface FinalizeInput {
@@ -339,9 +339,11 @@ export async function finalizeSale(input: FinalizeInput) {
   if (input.tender.method === "cash" && input.tender.cashTenderedCents != null && input.tender.cashTenderedCents < totals.primaryChargeCents) {
     throw new AppError("bad_request", "Cash tendered is less than the amount due");
   }
-  // Card charges settle to the shop's own connected account; a shop that isn't set up takes cash or gift cards only.
-  const destination =
-    input.tender.method === "card" && totals.primaryChargeCents > 0 ? await chargeDestination(ctx.shop, totals.primaryChargeCents, input.tender.entryMode === "terminal" ? "terminal" : "keyed") : null;
+  // Card charges settle where the shop's payments mode says: the brand's account or the shop's own. A cash-only shop, or one not set up yet, takes cash or gift cards.
+  const route =
+    input.tender.method === "card" && totals.primaryChargeCents > 0 ? await chargeRoute(ctx.shop, totals.primaryChargeCents, input.tender.entryMode === "terminal" ? "terminal" : "keyed") : null;
+  const destination = route?.destination ?? null;
+  const reader = input.tender.method === "card" && input.tender.entryMode === "terminal" && input.tender.readerId ? await assertReaderAt(ctx.shop.id, input.tender.readerId) : null;
 
   const businessDate = localDateOf(now);
   const issuedGiftCards: { code: string; amountCents: number }[] = [];
@@ -441,6 +443,7 @@ export async function finalizeSale(input: FinalizeInput) {
           metadata: { saleId: ctx.sale.id, shop: ctx.shop.slug, cardFeeCents: String(totals.cardFeeCents), attempt },
           idempotencyKey: `sale-${ctx.sale.id}-${attempt}`,
           destination,
+          statementDescriptorSuffix: route?.descriptorSuffix ?? null,
         });
       }
 
@@ -476,9 +479,11 @@ export async function finalizeSale(input: FinalizeInput) {
           entryMode: input.tender.method === "card" ? input.tender.entryMode : null,
           stripeAccountId: c?.destination?.accountId ?? null,
           applicationFeeCents: c?.destination?.applicationFeeCents ?? 0,
-          processorFeeCents: c?.processorFeeCents ?? null,
+          processorFeeCents: c ? (c.processorFeeCents ?? (route?.settlement === "platform" ? route.estimatedFeeCents : null)) : null,
           stripeChargeId: c?.chargeId ?? null,
           stripeTransferId: c?.transferId ?? null,
+          settlement: c ? (c.destination ? "connected" : "platform") : null,
+          terminalReaderId: c ? (reader?.id ?? null) : null,
         });
       }
 

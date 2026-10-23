@@ -137,8 +137,20 @@ export const shops = pgTable("shops", {
   inventoryAlertEmail: text("inventory_alert_email"),
   /** This shop's changes to the brand's staff time rules; missing keys follow the brand. */
   staffTime: jsonb("staff_time").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Where card money settles (src/domain/connect.ts): the brand's own Stripe account, the shop's own connected account, or no cards at all. */
+  paymentsMode: text("payments_mode").$type<PaymentsMode>().notNull().default("connected"),
+  /** What clients see on their card statement. On a connected account it's the account's own descriptor; on the brand account it's the suffix after the brand's prefix. */
+  statementDescriptor: text("statement_descriptor"),
+  /** Receipt branding (ReceiptBranding in src/domain/connect.ts); missing keys use the defaults. */
+  receipt: jsonb("receipt").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** The shop's Stripe Terminal Location (tml_…, or sim_tml_… in the simulator). Its card readers are registered to it. */
+  stripeTerminalLocationId: text("stripe_terminal_location_id").unique(),
   createdAt: createdAt(),
-}, (t) => [check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`)]);
+}, (t) => [
+  check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
+  check("shops_payments_mode", sql`${t.paymentsMode} in ('brand', 'connected', 'cash_only')`),
+]);
+export type PaymentsMode = "brand" | "connected" | "cash_only";
 export type NegativeStockPolicy = "block" | "warn";
 export type ShopStatus = "setup" | "live" | "closed" | "archived";
 
@@ -153,6 +165,11 @@ export const terminalReaders = pgTable(
     label: text("label").notNull(),
     serialNumber: text("serial_number"),
     stripeReaderId: text("stripe_reader_id").unique(),
+    /** As Stripe reports it, e.g. bbpos_wisepos_e or simulated_wisepos_e. */
+    deviceType: text("device_type"),
+    /** The Terminal Location it was registered to: always its shop's. */
+    stripeLocationId: text("stripe_location_id"),
+    registeredAt: ts("registered_at"),
     active: boolean("active").notNull().default(true),
     createdAt: createdAt(),
   },
@@ -176,30 +193,45 @@ export const shopPaymentAccounts = pgTable("shop_payment_accounts", {
   /** Stripe's requirements.currently_due, plus past_due ones, as field names. */
   requirementsDue: jsonb("requirements_due").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   disabledReason: text("disabled_reason"),
+  /** settings.payouts.schedule as Stripe last reported it. Display only: the schedule is changed in Stripe. */
+  payoutSchedule: jsonb("payout_schedule").$type<PayoutSchedule>(),
   /** Set when the account owner disconnects it from the platform. */
   deauthorizedAt: ts("deauthorized_at"),
   createdAt: createdAt(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
-/** Payouts from a shop's connected account to its bank, as Stripe reports them. */
+export interface PayoutSchedule {
+  interval: string;
+  delayDays: number | null;
+  weeklyAnchor?: string | null;
+  monthlyAnchor?: number | null;
+}
+
+/**
+ * Payouts to a bank, as Stripe reports them: from a shop's connected account (shop_id set), or from
+ * the brand's own account (stripe_account_id 'platform', no shop) for every shop on the brand account.
+ */
 export const shopPayouts = pgTable(
   "shop_payouts",
   {
     id: id(),
-    shopId: uuid("shop_id")
-      .notNull()
-      .references(() => shops.id),
+    shopId: uuid("shop_id").references(() => shops.id),
     stripeAccountId: text("stripe_account_id").notNull(),
     stripePayoutId: text("stripe_payout_id").notNull().unique(),
     amountCents: integer("amount_cents").notNull(),
     status: text("status").notNull(), // pending | in_transit | paid | failed | canceled
     arrivalDate: date("arrival_date").notNull(),
     failureMessage: text("failure_message"),
+    /** What the payout is made of, from its balance transactions. Null until Stripe has itemized it. */
+    grossCents: integer("gross_cents"),
+    feeCents: integer("fee_cents"),
+    refundCents: integer("refund_cents"),
+    itemCount: integer("item_count"),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [index("shop_payouts_shop_arrival_idx").on(t.shopId, t.arrivalDate)],
+  (t) => [index("shop_payouts_shop_arrival_idx").on(t.shopId, t.arrivalDate), check("shop_payouts_owner", sql`${t.shopId} is not null or ${t.stripeAccountId} = 'platform'`)],
 );
 
 export const shopHours = pgTable(
@@ -1259,9 +1291,14 @@ export const payments = pgTable(
     processorFeeCents: integer("processor_fee_cents"),
     stripeChargeId: text("stripe_charge_id"),
     stripeTransferId: text("stripe_transfer_id"),
+    /** Card charges only: platform = settled in the brand's own Stripe account; connected = in stripeAccountId. Null for history from before Connect. */
+    settlement: text("settlement").$type<"platform" | "connected">(),
+    /** The card reader that took it, always one of the shop's. */
+    terminalReaderId: uuid("terminal_reader_id").references(() => terminalReaders.id),
     createdAt: createdAt(),
   },
   (t) => [
+    check("payments_settlement", sql`${t.settlement} is null or ${t.settlement} in ('platform', 'connected')`),
     index("payments_shop_date_idx").on(t.shopId, t.businessDate),
     index("payments_account_idx").on(t.stripeAccountId),
     index("payments_sale_idx").on(t.saleId),

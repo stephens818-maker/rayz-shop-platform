@@ -204,6 +204,13 @@
       "when": 1792752000000,
       "tag": "core_0028_digest_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792755600000,
+      "tag": "core_0029_location_banking",
+      "breakpoints": true
     }
   ]
 }

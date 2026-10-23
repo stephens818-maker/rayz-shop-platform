@@ -123,6 +123,8 @@ export async function chargeCard(opts: {
   idempotencyKey: string;
   destination?: Destination | null;
   customerId?: string | null;
+  /** Brand-account charges: the shop's part of the card statement, after the brand's prefix. */
+  statementDescriptorSuffix?: string | null;
 }): Promise<ChargeResult> {
   const s = stripe();
   const dest = opts.destination ?? null;
@@ -165,6 +167,7 @@ export async function chargeCard(opts: {
         description: opts.description,
         metadata: opts.metadata,
         ...(dest ? { on_behalf_of: dest.accountId, transfer_data: { destination: dest.accountId }, application_fee_amount: dest.applicationFeeCents } : {}),
+        ...(!dest && opts.statementDescriptorSuffix ? { statement_descriptor_suffix: opts.statementDescriptorSuffix } : {}),
         expand: ["latest_charge.balance_transaction"],
       },
       { idempotencyKey: opts.idempotencyKey },

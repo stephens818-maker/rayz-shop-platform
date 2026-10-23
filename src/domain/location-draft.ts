@@ -3,6 +3,7 @@
  * server. createLocation (src/server/location-admin.ts) saves it in one transaction.
  */
 import { z } from "zod";
+import { ReceiptBrandingSchema, statementDescriptorProblem } from "./connect";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE } from "./location-lifecycle";
 
 const money = z.number().int().min(0).max(10_000_00);
@@ -65,6 +66,17 @@ export const LocationDraft = z.object({
   cardFeeRate: z.number().min(0).max(0.04),
   cardFeeAppliesToTip: z.boolean(),
   tipPresets: z.array(z.number().int().min(0).max(100)).min(1).max(4),
+  /** Where card money settles. Anything but the default needs the banking permission. */
+  paymentsMode: z.enum(["connected", "brand", "cash_only"]).default("connected"),
+  statementDescriptor: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .nullable()
+    .default(null)
+    .transform((s) => s || null)
+    .refine((s) => !statementDescriptorProblem(s), { error: (i) => statementDescriptorProblem(i.input as string) ?? "Check the statement descriptor" }),
+  receipt: ReceiptBrandingSchema.default({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true }),
 
   slotIntervalMinutes: z.union([z.literal(5), z.literal(10), z.literal(15), z.literal(20), z.literal(30)]).nullable(),
   minLeadMinutes: z.number().int().min(0).max(24 * 60),
@@ -86,7 +98,17 @@ export const LocationDraft = z.object({
     .trim()
     .regex(E164, "Enter the Twilio number as +1 and 10 digits")
     .nullable(),
-  readers: z.array(z.object({ label: z.string().trim().min(1).max(40), serialNumber: z.string().trim().max(40).nullable(), stripeReaderId: z.string().trim().max(60).nullable() })).max(20),
+  /** With a registration code, the reader is registered to the shop's Stripe Terminal Location once the shop is saved. */
+  readers: z
+    .array(
+      z.object({
+        label: z.string().trim().min(1).max(40),
+        serialNumber: z.string().trim().max(40).nullable(),
+        stripeReaderId: z.string().trim().max(60).nullable().default(null),
+        registrationCode: z.string().trim().max(60).nullable().default(null),
+      }),
+    )
+    .max(20),
   accentColor: z
     .string()
     .regex(/^#[0-9a-fA-F]{6}$/, "Pick a color like #1f2937")
@@ -138,6 +160,8 @@ export function draftDefaults(over: Partial<LocationDraftInput> & Pick<LocationD
     cardFeeRate: 0.03,
     cardFeeAppliesToTip: false,
     tipPresets: [20, 25, 30],
+    paymentsMode: "connected",
+    statementDescriptor: null,
     slotIntervalMinutes: null,
     minLeadMinutes: 15,
     bookingWindowDays: 60,
