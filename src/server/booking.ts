@@ -4,6 +4,7 @@ import {
   appointmentItems,
   appointments,
   customers,
+  services,
   shopClosures,
   shopHours,
   shops,
@@ -17,25 +18,32 @@ import {
   BusyAppointment,
   DayAvailabilityInput,
   computeDaySlots,
+  SQUEEZE_BYPASS_LABEL,
+  StaffPlan,
   isSlotFree,
   onSlotGrid,
   pickBarber,
+  squeezeCheck,
   totalDuration,
 } from "@/domain/availability";
+import { trailingBuffer } from "@/domain/timing";
 import { appointmentCode } from "@/lib/ids";
 import { normalizePhone } from "@/lib/phone";
-import { LocalDate, addDays, endOfLocalDay, existingWallTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, existingWallTime, formatTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers } from "./catalog";
 import { CustomerInput, findOrCreateCustomer } from "./customers";
 import { AppError, isDoubleBookingError, notFound } from "./errors";
 import { AppointmentMessageContext, cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
+import { bookingPlans, shopInterval, staffIntervals, toStaffPlans } from "./timing";
 
 export const ACTIVE_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as const;
 
 export interface DayContextOptions {
   durationMin: number;
   staffIds: string[];
+  /** Each barber's timing for this booking (src/server/timing.ts bookingPlans). */
+  plans?: Record<string, StaffPlan>;
   now?: Date;
   ignoreAppointmentId?: string;
   /** Staff-side booking ignores lead time / window limits. */
@@ -63,10 +71,13 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
         startsAt: appointments.startsAt,
         endsAt: appointments.endsAt,
         status: appointments.status,
+        bufferBeforeMin: appointments.bufferBeforeMinutes,
+        bufferAfterMin: appointments.bufferMinutes,
       })
       .from(appointments)
       .where(and(inArray(appointments.staffId, ids), lt(appointments.startsAt, dayEnd), gt(appointments.endsAt, dayStart))),
   ]);
+  const interval = await shopInterval(shop, tx);
   return {
     date,
     shopId: shop.id,
@@ -77,8 +88,9 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
     blocks: blocks.map((b) => ({ staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt: b.endsAt })),
     appointments: appts as BusyAppointment[],
     durationMin: opts.durationMin,
-    slotIntervalMin: shop.slotIntervalMinutes,
+    slotIntervalMin: interval.minutes,
     bufferMin: shop.bufferMinutes,
+    plans: opts.plans,
     minLeadMin: opts.staffOverride ? 0 : shop.minLeadMinutes,
     now: opts.now ?? new Date(),
     ignoreAppointmentId: opts.ignoreAppointmentId,
@@ -111,7 +123,9 @@ async function resolveBooking(q: Pick<AvailabilityQuery, "shopRef" | "serviceId"
     requestedStaffId = b.id;
     staffIds = [b.id];
   }
-  return { shop, service, addons, items, barbers, staffIds, requestedStaffId, durationMin: totalDuration(items) };
+  const timing = await bookingPlans(shop, staffIds, items, tx);
+  const durationMin = requestedStaffId ? timing.get(requestedStaffId)!.plan.durationMin : totalDuration(items);
+  return { shop, service, addons, items, barbers, staffIds, requestedStaffId, durationMin, timing, plans: toStaffPlans(timing) };
 }
 
 export async function getAvailability(q: AvailabilityQuery) {
@@ -125,6 +139,7 @@ export async function getAvailability(q: AvailabilityQuery) {
   const input = await loadDayInput(r.shop, q.date, {
     durationMin: r.durationMin,
     staffIds: r.staffIds,
+    plans: r.plans,
     now,
     ignoreAppointmentId: q.ignoreAppointmentId,
     staffOverride: q.staffOverride,
@@ -181,6 +196,24 @@ export interface CreateAppointmentInput {
   now?: Date;
   /** Skip notifications (walk-ins being served right now). */
   silent?: boolean;
+  /**
+   * Staff only, with "calendar.squeeze_in" (checked by the caller): book this barber off their grid,
+   * into buffer time or outside hours. Never over another service or time off. Audit-logged.
+   */
+  squeezeIn?: boolean;
+}
+
+/** Why this barber can't be booked at this start, in words the front desk can act on. */
+function offGridMessage(day: DayAvailabilityInput, staffId: string, start: Date, barber: string | undefined, intervalMin: number) {
+  const t = start.getTime();
+  const nearby = computeDaySlots({ ...day, staffIds: [staffId] })
+    .map((s) => s.start)
+    .filter((x) => Math.abs(x - t) <= Math.max(intervalMin, 60) * 60_000)
+    .sort((x, y) => Math.abs(x - t) - Math.abs(y - t))
+    .slice(0, 3)
+    .sort((x, y) => x - y);
+  const suggest = nearby.length ? ` Open nearby: ${nearby.map((x) => formatTime(x)).join(", ")}.` : "";
+  return `${formatTime(start)} isn't on ${barber ?? "this barber"}'s ${intervalMin}-minute grid here.${suggest}`;
 }
 
 export async function createAppointment(input: CreateAppointmentInput) {
@@ -189,6 +222,10 @@ export async function createAppointment(input: CreateAppointmentInput) {
     if (prior) return getAppointmentByCode(prior.code);
   }
   const staffOverride = input.source === "staff" || input.source === "walk_in" || input.source === "rebook";
+  if (input.squeezeIn && (input.source === "online" || input.source === "api")) throw new AppError("forbidden", "Only staff can squeeze in a booking");
+  if (input.squeezeIn && (!input.barberRef || input.barberRef === "any")) throw new AppError("bad_request", "Pick the barber to squeeze the booking in with");
+  // Walk-ins are seated now, wherever that falls; every other booking starts on the barber's grid.
+  const gridExempt = input.source === "walk_in";
   const r = await resolveBooking({ ...input, staffOverride });
   const start = new Date(input.startsAt);
   if (Number.isNaN(start.getTime())) throw new AppError("bad_request", "startsAt must be an ISO timestamp");
@@ -200,7 +237,6 @@ export async function createAppointment(input: CreateAppointmentInput) {
   }
   if (r.barbers.length === 0) throw new AppError("slot_unavailable", "No barbers are taking bookings at this shop yet");
 
-  const end = new Date(start.getTime() + r.durationMin * 60_000);
   const estimateCents = r.items.reduce((a, i) => a + i.priceCents, 0);
 
   const created = await db.transaction(async (tx) => {
@@ -211,13 +247,32 @@ export async function createAppointment(input: CreateAppointmentInput) {
         : null;
     if (input.customerId && !customer) throw notFound("Customer");
 
-    const day = await loadDayInput(r.shop, date, { durationMin: r.durationMin, staffIds: r.staffIds, now, staffOverride }, tx);
-    if (!staffOverride && !onSlotGrid(day, start.getTime())) throw new AppError("bad_request", "Pick one of the offered times");
-    const free = r.staffIds.filter((id) => isSlotFree(day, id, start.getTime()));
+    const day = await loadDayInput(r.shop, date, { durationMin: r.durationMin, staffIds: r.staffIds, plans: r.plans, now, staffOverride }, tx);
+    const t = start.getTime();
+    let squeeze: { bypasses: string[] } | null = null;
+    let free: string[];
+    if (input.squeezeIn) {
+      const staffId = r.requestedStaffId!;
+      const check = squeezeCheck(day, staffId, t);
+      if (!check.ok) throw new AppError("slot_unavailable", `Can't squeeze in: ${check.reason.charAt(0).toLowerCase()}${check.reason.slice(1)}`);
+      if (check.bypasses.length) squeeze = { bypasses: check.bypasses };
+      free = [staffId];
+    } else {
+      const onGrid = gridExempt ? r.staffIds : r.staffIds.filter((id) => onSlotGrid(day, t, id));
+      if (!onGrid.length) {
+        if (!staffOverride) throw new AppError("bad_request", "Pick one of the offered times");
+        const id = r.requestedStaffId ?? r.staffIds[0];
+        const b = r.barbers.find((x) => x.id === id);
+        throw new AppError("bad_request", offGridMessage(day, id, start, b?.displayName, r.timing.get(id)!.plan.intervalMin), { offGrid: true });
+      }
+      free = onGrid.filter((id) => isSlotFree(day, id, t));
+    }
     if (free.length === 0) throw new AppError("slot_unavailable", "That time was just taken — please pick another");
     const ordered = r.requestedStaffId ? free : [pickBarber(free, day.appointments, date)!, ...free].filter((v, i, a) => a.indexOf(v) === i);
 
     for (const staffId of ordered) {
+      const { plan, items } = r.timing.get(staffId)!;
+      const end = new Date(t + plan.durationMin * 60_000);
       try {
         const appt = await tx.transaction(async (sp) => {
           const [a] = await sp
@@ -229,7 +284,9 @@ export async function createAppointment(input: CreateAppointmentInput) {
               customerId: customer?.id ?? null,
               startsAt: start,
               endsAt: end,
-              bufferMinutes: r.shop.bufferMinutes,
+              bufferMinutes: trailingBuffer(plan),
+              bufferBeforeMinutes: plan.beforeMin,
+              squeezed: squeeze !== null,
               status: input.source === "walk_in" ? "checked_in" : "booked",
               checkedInAt: input.source === "walk_in" ? now : null,
               source: input.source,
@@ -241,7 +298,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
             })
             .returning();
           await sp.insert(appointmentItems).values(
-            r.items.map((i: EffectiveService) => ({
+            items.map((i: EffectiveService) => ({
               appointmentId: a.id,
               serviceId: i.id,
               kind: i.kind,
@@ -253,6 +310,17 @@ export async function createAppointment(input: CreateAppointmentInput) {
           return a;
         });
         await audit(input.actor, "appointment.create", "appointment", appt.id, { source: input.source, staffId, startsAt: start.toISOString() }, r.shop.id, tx);
+        if (squeeze) {
+          await audit(
+            input.actor,
+            "appointment.squeeze_in",
+            "appointment",
+            appt.id,
+            { staffId, startsAt: start.toISOString(), endsAt: end.toISOString(), bypasses: squeeze.bypasses, bent: squeeze.bypasses.map((b) => SQUEEZE_BYPASS_LABEL[b as keyof typeof SQUEEZE_BYPASS_LABEL]) },
+            r.shop.id,
+            tx,
+          );
+        }
         if (customer && !input.silent) {
           await scheduleAppointmentNotifications("created", await messageContext(appt.id, tx), tx, now);
         }
@@ -379,7 +447,7 @@ export async function cancelAppointment(
 
 export async function rescheduleAppointment(
   code: string,
-  opts: { startsAt: string | Date; barberRef?: string | null; actor: Actor; byCustomer: boolean; customerId?: string | null; now?: Date },
+  opts: { startsAt: string | Date; barberRef?: string | null; actor: Actor; byCustomer: boolean; customerId?: string | null; now?: Date; squeezeIn?: boolean },
 ) {
   const now = opts.now ?? new Date();
   const { a, shop } = await loadForChange(code);
@@ -388,6 +456,7 @@ export async function rescheduleAppointment(
   if (opts.byCustomer && pastCutoff(now, a.startsAt, shop.cancelCutoffMinutes)) {
     throw new AppError("cutoff_passed", `Online changes close ${shop.cancelCutoffMinutes} minutes before the appointment. Please call the shop.`);
   }
+  if (opts.squeezeIn && opts.byCustomer) throw new AppError("forbidden", "Only staff can squeeze in a booking");
   const items = await db.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, a.id));
   const durationMin = totalDuration(items);
   const barberRef = opts.barberRef === undefined ? a.staffId : opts.barberRef;
@@ -401,26 +470,54 @@ export async function rescheduleAppointment(
   } else {
     staffIds = (await shopBarbers(shop.id, { onlineOnly: !staffOverride })).map((b) => b.id);
   }
+  if (opts.squeezeIn && staffIds.length !== 1) throw new AppError("bad_request", "Pick the barber to squeeze the booking in with");
   const start = new Date(opts.startsAt);
   if (Number.isNaN(start.getTime())) throw new AppError("bad_request", "startsAt must be an ISO timestamp");
   const end = new Date(start.getTime() + durationMin * 60_000);
   const date = localDateOf(start);
+  const t = start.getTime();
+  // The appointment keeps the times it was booked with; only where it may start follows the target barber's grid today.
+  const mainServiceId = items.find((i) => i.kind === "service")?.serviceId;
+  const increment = mainServiceId ? (await db.select({ n: services.bookingIncrementMin }).from(services).where(eq(services.id, mainServiceId)))[0]?.n : null;
+  const intervals = await staffIntervals(shop, staffIds);
+  const cleanup = Math.max(0, a.bufferMinutes - shop.bufferMinutes);
+  const plans: Record<string, StaffPlan> = Object.fromEntries(
+    staffIds.map((id) => [id, { durationMin, intervalMin: increment ?? intervals.get(id)!.minutes, beforeMin: a.bufferBeforeMinutes, afterMin: cleanup, gapMin: a.bufferMinutes - cleanup }]),
+  );
 
   await db.transaction(async (tx) => {
-    const day = await loadDayInput(shop, date, { durationMin, staffIds, now, ignoreAppointmentId: a.id, staffOverride }, tx);
-    if (!staffOverride && !onSlotGrid(day, start.getTime())) throw new AppError("bad_request", "Pick one of the offered times");
-    const free = staffIds.filter((id) => isSlotFree(day, id, start.getTime()));
+    const day = await loadDayInput(shop, date, { durationMin, staffIds, plans, now, ignoreAppointmentId: a.id, staffOverride }, tx);
+    let squeeze: string[] | null = null;
+    let free: string[];
+    if (opts.squeezeIn) {
+      const check = squeezeCheck(day, staffIds[0], t);
+      if (!check.ok) throw new AppError("slot_unavailable", `Can't squeeze in: ${check.reason.charAt(0).toLowerCase()}${check.reason.slice(1)}`);
+      if (check.bypasses.length) squeeze = check.bypasses;
+      free = staffIds;
+    } else {
+      const onGrid = staffIds.filter((id) => onSlotGrid(day, t, id));
+      if (!onGrid.length) {
+        if (opts.byCustomer) throw new AppError("bad_request", "Pick one of the offered times");
+        const b = await db.query.staff.findFirst({ where: eq(staff.id, staffIds[0]), columns: { displayLabel: true } });
+        throw new AppError("bad_request", offGridMessage(day, staffIds[0], start, b?.displayLabel, plans[staffIds[0]].intervalMin), { offGrid: true });
+      }
+      free = onGrid.filter((id) => isSlotFree(day, id, t));
+    }
     if (!free.length) throw new AppError("slot_unavailable", "That time isn't available");
     const staffId = free.includes(a.staffId) ? a.staffId : pickBarber(free, day.appointments, date)!;
     try {
       await tx.transaction(async (sp) => {
-        await sp.update(appointments).set({ startsAt: start, endsAt: end, staffId, status: "booked" }).where(eq(appointments.id, a.id));
+        await sp.update(appointments).set({ startsAt: start, endsAt: end, staffId, status: "booked", squeezed: squeeze !== null }).where(eq(appointments.id, a.id));
       });
     } catch (e) {
       if (isDoubleBookingError(e)) throw new AppError("slot_unavailable", "That time was just taken");
       throw e;
     }
     await audit(opts.actor, "appointment.reschedule", "appointment", a.id, { from: a.startsAt.toISOString(), to: start.toISOString(), staffId }, a.shopId, tx);
+    if (squeeze) {
+      const bent = squeeze.map((b) => SQUEEZE_BYPASS_LABEL[b as keyof typeof SQUEEZE_BYPASS_LABEL]);
+      await audit(opts.actor, "appointment.squeeze_in", "appointment", a.id, { staffId, startsAt: start.toISOString(), endsAt: end.toISOString(), bypasses: squeeze, bent, moved: true }, a.shopId, tx);
+    }
     if (a.customerId) await scheduleAppointmentNotifications("rescheduled", await messageContext(a.id, tx), tx, now);
   });
   return getAppointmentByCode(code, now);
@@ -483,7 +580,8 @@ export async function quickWalkIn(input: {
   const [service] = await servicesByIds(shop.id, [input.serviceId]);
   const barbers = await shopBarbers(shop.id);
   const candidates = input.preferredStaffId ? barbers.filter((b) => b.id === input.preferredStaffId) : barbers;
-  const day = await loadDayInput(shop, localDateOf(now), { durationMin: service.durationMin, staffIds: candidates.map((c) => c.id), now, staffOverride: true });
+  const plans = toStaffPlans(await bookingPlans(shop, candidates.map((c) => c.id), [service]));
+  const day = await loadDayInput(shop, localDateOf(now), { durationMin: service.durationMin, staffIds: candidates.map((c) => c.id), plans, now, staffOverride: true });
   const free = candidates.map((c) => c.id).filter((id) => isSlotFree(day, id, start.getTime()));
   const [firstName, ...rest] = input.name.trim().split(/\s+/);
   if (!firstName) throw new AppError("bad_request", "Add the client's name");

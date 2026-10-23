@@ -41,7 +41,6 @@ export default async function SettingsPage() {
           description: shop.description ?? "",
           bookingEnabled: shop.bookingEnabled,
           cancelCutoffMinutes: shop.cancelCutoffMinutes,
-          slotIntervalMinutes: shop.slotIntervalMinutes,
           minLeadMinutes: shop.minLeadMinutes,
           bookingWindowDays: shop.bookingWindowDays,
           bufferMinutes: shop.bufferMinutes,

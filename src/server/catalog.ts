@@ -20,7 +20,12 @@ export interface EffectiveService {
   category: string;
   description: string | null;
   priceCents: number;
+  /** At this shop. A barber's own duration (staff_service_durations) can beat it: see src/server/timing.ts. */
   durationMin: number;
+  durationStepMin: number;
+  bookingIncrementMin: number | null;
+  bufferBeforeMin: number;
+  bufferAfterMin: number;
   bookableOnline: boolean;
   sortOrder: number;
   taxCategory: TaxCategory;
@@ -44,6 +49,10 @@ export async function shopCatalog(shopId: string, opts: { onlineOnly?: boolean }
       description: s.description,
       priceCents: o.priceCents ?? s.defaultPriceCents,
       durationMin: o.durationMin ?? s.defaultDurationMin,
+      durationStepMin: s.durationStepMin,
+      bookingIncrementMin: s.bookingIncrementMin,
+      bufferBeforeMin: s.bufferBeforeMin,
+      bufferAfterMin: s.bufferAfterMin,
       bookableOnline: o.bookableOnline,
       sortOrder: s.sortOrder,
       taxCategory: s.taxCategory,

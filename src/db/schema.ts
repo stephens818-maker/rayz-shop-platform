@@ -52,6 +52,8 @@ export const brandSettings = pgTable("brand_settings", {
   poApprovalThresholdCents: integer("po_approval_threshold_cents"),
   /** Client lookup limits (LookupLimits in src/domain/client-privacy.ts); missing keys use the defaults. */
   clientLookupLimits: jsonb("client_lookup_limits").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
+  /** Brand default booking slot interval. Shops, barbers and a barber at one shop can override it (src/domain/timing.ts). */
+  slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(15),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -77,7 +79,8 @@ export const shops = pgTable("shops", {
   cardFeeAppliesToTip: boolean("card_fee_applies_to_tip").notNull().default(false),
   tipPresets: jsonb("tip_presets").$type<number[]>().notNull().default(sql`'[20,25,30]'::jsonb`),
   cancelCutoffMinutes: integer("cancel_cutoff_minutes").notNull().default(30),
-  slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(15),
+  /** Null follows the brand default. */
+  slotIntervalMinutes: integer("slot_interval_minutes"),
   minLeadMinutes: integer("min_lead_minutes").notNull().default(15),
   bookingWindowDays: integer("booking_window_days").notNull().default(60),
   bufferMinutes: integer("buffer_minutes").notNull().default(0),
@@ -155,6 +158,8 @@ export const staff = pgTable("staff", {
   /** Replaces the role's discount limit for this person. */
   maxDiscountPct: smallint("max_discount_pct"),
   isBookable: boolean("is_bookable").notNull().default(true),
+  /** This barber's slot interval at every shop; null follows each shop. staff_shops can override it per shop. */
+  slotIntervalMinutes: integer("slot_interval_minutes"),
   active: boolean("active").notNull().default(true),
   passwordHash: text("password_hash"),
   squireName: text("squire_name"),
@@ -173,6 +178,8 @@ export const staffShops = pgTable(
     shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
     visibleOnline: boolean("visible_online").notNull().default(true),
     isPrimary: boolean("is_primary").notNull().default(false),
+    /** This barber's slot interval at this shop; null follows the barber, then the shop, then the brand. */
+    slotIntervalMinutes: integer("slot_interval_minutes"),
   },
   (t) => [primaryKey({ columns: [t.staffId, t.shopId] })],
 );
@@ -282,6 +289,13 @@ export const services = pgTable("services", {
   description: text("description"),
   defaultPriceCents: integer("default_price_cents").notNull(),
   defaultDurationMin: integer("default_duration_min").notNull(),
+  /** Every duration for this service (default, shop, barber) is a multiple of this: 5, 10, 15, 20 or 30. */
+  durationStepMin: integer("duration_step_min").notNull().default(5),
+  /** Start times for this service step by this instead of the barber's interval. Null: the barber's interval. */
+  bookingIncrementMin: integer("booking_increment_min"),
+  /** Prep before and cleanup after, held on the barber's calendar. Add-ons' buffers add to the main service's. */
+  bufferBeforeMin: integer("buffer_before_min").notNull().default(0),
+  bufferAfterMin: integer("buffer_after_min").notNull().default(0),
   taxCategory: text("tax_category").$type<TaxCategory>().notNull().default("service"),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(100),
@@ -300,6 +314,20 @@ export const shopServices = pgTable(
     nameOverride: text("name_override"),
   },
   (t) => [primaryKey({ columns: [t.shopId, t.serviceId] })],
+);
+
+/** How long a service takes one barber: at one shop (shop_id set) or everywhere (null). Beats the shop and brand durations. */
+export const staffServiceDurations = pgTable(
+  "staff_service_durations",
+  {
+    id: id(),
+    staffId: uuid("staff_id").notNull().references(() => staff.id, { onDelete: "cascade" }),
+    serviceId: uuid("service_id").notNull().references(() => services.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    durationMin: integer("duration_min").notNull(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("staff_service_durations_uq").on(t.staffId, t.serviceId, t.shopId).nullsNotDistinct(), index("staff_service_durations_staff_idx").on(t.staffId)],
 );
 
 export const products = pgTable("products", {
@@ -751,10 +779,18 @@ export const appointments = pgTable(
     customerId: uuid("customer_id").references(() => customers.id),
     startsAt: ts("starts_at").notNull(),
     endsAt: ts("ends_at").notNull(),
-    /** The shop's buffer when booked. The chair is held until ends_at + buffer. */
+    /** Held after the service when booked: the services' cleanup plus the shop's gap between appointments. */
     bufferMinutes: integer("buffer_minutes").notNull().default(0),
-    /** Set by a trigger (ends_at + buffer_minutes); the no-double-booking constraint covers [starts_at, busy_until). */
+    /** Held before the service when booked: the services' prep time. */
+    bufferBeforeMinutes: integer("buffer_before_minutes").notNull().default(0),
+    /**
+     * Set by a trigger: starts_at - buffer_before_minutes and ends_at + buffer_minutes. The database refuses
+     * overlapping service times always, and overlapping buffers unless the booking was squeezed in (drizzle/0019_slot_timing.sql).
+     */
+    busyFrom: ts("busy_from"),
     busyUntil: ts("busy_until"),
+    /** Booked by staff off the grid, into buffer time or outside hours, with the "Squeeze in" permission. */
+    squeezed: boolean("squeezed").notNull().default(false),
     status: appointmentStatus("status").notNull().default("booked"),
     source: appointmentSource("source").notNull().default("online"),
     anyBarber: boolean("any_barber").notNull().default(false),

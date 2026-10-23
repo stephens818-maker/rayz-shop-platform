@@ -25,7 +25,6 @@ const Info = z.object({
   description: z.string().trim(),
   bookingEnabled: z.boolean(),
   cancelCutoffMinutes: z.number().int().min(0).max(1440),
-  slotIntervalMinutes: z.number().int().refine((n) => [5, 10, 15, 20, 30].includes(n), "Slot interval must be 5, 10, 15, 20 or 30"),
   minLeadMinutes: z.number().int().min(0).max(1440),
   bookingWindowDays: z.number().int().min(1).max(365),
   bufferMinutes: z.number().int().min(0).max(60),

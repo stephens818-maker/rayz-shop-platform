@@ -704,7 +704,6 @@ describe("server actions aimed at another shop's records", () => {
             description: "",
             bookingEnabled: false,
             cancelCutoffMinutes: 0,
-            slotIntervalMinutes: 15,
             minLeadMinutes: 0,
             bookingWindowDays: 30,
             bufferMinutes: 0,

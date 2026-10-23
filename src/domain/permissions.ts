@@ -21,6 +21,12 @@ export const FEATURE_PERMISSIONS = [
   { key: "calendar.manage", group: "Front desk", label: "Book, move and change any barber's appointments", hint: "Without it, people work only in their own column." },
   { key: "walkins.manage", group: "Front desk", label: "Run walk-ins and the waitlist" },
   { key: "schedules.edit", group: "Front desk", label: "Edit schedules and time off" },
+  {
+    key: "calendar.squeeze_in",
+    group: "Front desk",
+    label: "Squeeze in an appointment off the time grid, into buffer time or outside hours",
+    hint: "Never on top of another appointment's service time or time off. Every squeeze-in is logged.",
+  },
   { key: "checkout.any", group: "Point of sale", label: "Open tickets and check out any barber's clients", hint: "Without it, people check out only their own clients." },
   { key: "pos.discount", group: "Point of sale", label: "Give manual discounts", hint: "Up to the role's discount limit." },
   { key: "pos.price_override", group: "Point of sale", label: "Change a menu price on a ticket" },
@@ -73,6 +79,12 @@ export const FEATURE_PERMISSIONS = [
   { key: "barber_groups.manage", group: "Staff", label: "Create and edit saved barber groups for reports", brandOnly: true },
   { key: "settings.shop", group: "Settings and data", label: "Edit shop info, weekday hours, closures and booking rules" },
   { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
+  {
+    key: "scheduling.timing",
+    group: "Settings and data",
+    label: "Set booking slot intervals and service timing at their shops",
+    hint: "Each shop's and barber's interval, service durations, buffers and per-barber times. With access to all shops, also the brand default interval and the brand service timing.",
+  },
   { key: "settings.brand", group: "Settings and data", label: "Change brand-level settings: loyalty program, new shops, Sunday hours", ownerOnly: true },
   { key: "import.run", group: "Settings and data", label: "Run the Squire import", brandOnly: true },
   {
@@ -193,6 +205,8 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "po.receive",
   "staff.manage",
   "settings.shop",
+  "scheduling.timing",
+  "calendar.squeeze_in",
   "notifications.view",
   "reports.all_staff",
 ];

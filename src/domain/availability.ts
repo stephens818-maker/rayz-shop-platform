@@ -32,6 +32,19 @@ export interface BusyAppointment {
   startsAt: Date | number;
   endsAt: Date | number;
   status: string;
+  /** Prep held before it, as booked. */
+  bufferBeforeMin?: number;
+  /** Cleanup and gap held after it, as booked. Missing: the input's bufferMin. */
+  bufferAfterMin?: number;
+}
+
+/** One barber's timing for the booking being looked up (src/domain/timing.ts bookingPlan, resolved for them). */
+export interface StaffPlan {
+  durationMin: number;
+  intervalMin: number;
+  beforeMin: number;
+  afterMin: number;
+  gapMin: number;
 }
 
 /**
@@ -55,9 +68,15 @@ export interface DayAvailabilityInput {
   blocks: TimeBlock[];
   /** Appointments for these barbers at ANY shop — this is what prevents cross-shop double-booking. */
   appointments: BusyAppointment[];
+  /** Defaults for every barber; `plans` overrides them per barber. */
   durationMin: number;
   slotIntervalMin?: number;
+  /** The shop's gap between appointments: held after a new booking, and after existing ones that don't say their own. */
   bufferMin?: number;
+  bufferBeforeMin?: number;
+  bufferAfterMin?: number;
+  /** Per barber: their interval at this shop, their durations, the services' buffers. */
+  plans?: Record<string, Partial<StaffPlan>>;
   minLeadMin?: number;
   now?: Date | number;
   /** When rescheduling, ignore the appointment being moved. */
@@ -66,8 +85,11 @@ export interface DayAvailabilityInput {
 
 export interface Slot {
   start: number;
+  /** The latest end among the barbers offering it (their durations can differ). */
   end: number;
   staffIds: string[];
+  /** Each barber's end time for this start. */
+  ends: Record<string, number>;
 }
 
 const ms = (d: Date | number) => (typeof d === "number" ? d : d.getTime());
@@ -126,8 +148,20 @@ export function overlaps(a: Span, b: Span): boolean {
   return a.start < b.end && b.start < a.end;
 }
 
-/** Free time for one barber at one shop on one local date. */
-export function freeSpansForBarber(input: DayAvailabilityInput, staffId: string): Span[] {
+/** This barber's timing for the booking: their entry in `plans`, falling back to the input's defaults. */
+export function planFor(input: DayAvailabilityInput, staffId: string): StaffPlan {
+  const p = input.plans?.[staffId] ?? {};
+  return {
+    durationMin: p.durationMin ?? input.durationMin,
+    intervalMin: p.intervalMin ?? input.slotIntervalMin ?? 15,
+    beforeMin: p.beforeMin ?? input.bufferBeforeMin ?? 0,
+    afterMin: p.afterMin ?? input.bufferAfterMin ?? 0,
+    gapMin: p.gapMin ?? input.bufferMin ?? 0,
+  };
+}
+
+/** When one barber works at this shop on this date: their weekly hours inside the shop's. Each stretch starts its own slot grid. */
+export function workSpans(input: DayAvailabilityInput, staffId: string): Span[] {
   const { date, shopId } = input;
   if (input.closedDates?.includes(date)) return [];
   const shopOpen = toSpans(date, input.shopHours);
@@ -136,25 +170,47 @@ export function freeSpansForBarber(input: DayAvailabilityInput, staffId: string)
     date,
     input.schedules.filter((s) => s.staffId === staffId && s.shopId === shopId),
   );
-  const bookable = intersectSpans(shopOpen, work);
-  if (bookable.length === 0) return [];
-
-  const buffer = (input.bufferMin ?? 0) * 60_000;
-  const busy: Span[] = [];
-  for (const b of input.blocks) {
-    if (b.staffId !== staffId) continue;
-    if (b.shopId !== null && b.shopId !== shopId) continue;
-    busy.push({ start: ms(b.startsAt), end: ms(b.endsAt) });
-  }
-  for (const a of input.appointments) {
-    if (a.staffId !== staffId) continue;
-    if (a.id && a.id === input.ignoreAppointmentId) continue;
-    if (!(BUSY_STATUSES as readonly string[]).includes(a.status)) continue;
-    // Busy regardless of which shop the appointment is at.
-    busy.push({ start: ms(a.startsAt) - buffer, end: ms(a.endsAt) + buffer });
-  }
-  return subtractSpans(bookable, busy);
+  return intersectSpans(shopOpen, work);
 }
+
+const isBusy = (input: DayAvailabilityInput, a: BusyAppointment, staffId: string) =>
+  a.staffId === staffId && !(a.id && a.id === input.ignoreAppointmentId) && (BUSY_STATUSES as readonly string[]).includes(a.status);
+
+/** Time off and blocks for this barber here (a block with no shop applies everywhere). */
+function blockSpans(input: DayAvailabilityInput, staffId: string): Span[] {
+  return input.blocks.filter((b) => b.staffId === staffId && (b.shopId === null || b.shopId === input.shopId)).map((b) => ({ start: ms(b.startsAt), end: ms(b.endsAt) }));
+}
+
+/** What existing appointments hold, at any shop: service time plus their prep and cleanup buffers. */
+function heldSpans(input: DayAvailabilityInput, staffId: string): Span[] {
+  const gap = input.bufferMin ?? 0;
+  return input.appointments
+    .filter((a) => isBusy(input, a, staffId))
+    .map((a) => ({ start: ms(a.startsAt) - (a.bufferBeforeMin ?? 0) * 60_000, end: ms(a.endsAt) + (a.bufferAfterMin ?? gap) * 60_000 }));
+}
+
+/** Free time for one barber at one shop on one local date: working hours minus blocks and what other appointments hold. */
+export function freeSpansForBarber(input: DayAvailabilityInput, staffId: string): Span[] {
+  const work = workSpans(input, staffId);
+  if (work.length === 0) return [];
+  return subtractSpans(work, [...blockSpans(input, staffId), ...heldSpans(input, staffId)]);
+}
+
+/** What a booking starting at `start` holds: [prep, service, cleanup) must be in working hours; the gap after only must not hit anything. */
+function holdAt(plan: StaffPlan, start: number) {
+  const service = { start, end: start + plan.durationMin * 60_000 };
+  const inHours = { start: start - plan.beforeMin * 60_000, end: service.end + plan.afterMin * 60_000 };
+  return { service, inHours, held: { start: inHours.start, end: inHours.end + plan.gapMin * 60_000 } };
+}
+
+function fits(plan: StaffPlan, start: number, work: Span[], busy: Span[]): boolean {
+  if (plan.durationMin <= 0) return false;
+  const h = holdAt(plan, start);
+  if (!work.some((w) => w.start <= h.inHours.start && w.end >= h.inHours.end)) return false;
+  return !busy.some((b) => overlaps(b, h.held));
+}
+
+const earliestStart = (input: DayAvailabilityInput) => (input.now === undefined ? Date.now() : ms(input.now)) + (input.minLeadMin ?? 0) * 60_000;
 
 /**
  * Weekly hours for one barber must not overlap across shops (they can't be in two chairs).
@@ -175,47 +231,89 @@ export function findScheduleConflicts(rows: BarberWeeklyHours[]): string[] {
   return conflicts;
 }
 
+/** Start times on one barber's grid: every interval from the start of each working stretch, in absolute time. */
+export function gridStarts(input: DayAvailabilityInput, staffId: string): number[] {
+  const step = planFor(input, staffId).intervalMin * 60_000;
+  if (step <= 0) return [];
+  const out: number[] = [];
+  for (const w of workSpans(input, staffId)) for (let t = w.start; t < w.end; t += step) out.push(t);
+  return out;
+}
+
 /**
- * Bookable start times for a day. Slots step in absolute time from each opening, so a
- * DST transition never produces duplicate or phantom slots.
+ * Bookable start times for a day. Each barber's starts step on their own interval from the start
+ * of each stretch they work, in absolute time, so a DST transition never produces duplicate or
+ * phantom slots. A start is offered when the service, add-ons, prep and cleanup all fit inside
+ * their working hours and nothing they hold touches a block or another appointment's held time.
  */
 export function computeDaySlots(input: DayAvailabilityInput): Slot[] {
-  const interval = (input.slotIntervalMin ?? 15) * 60_000;
-  const duration = input.durationMin * 60_000;
-  if (duration <= 0) return [];
-  const now = input.now === undefined ? Date.now() : ms(input.now);
-  const earliest = now + (input.minLeadMin ?? 0) * 60_000;
-  const shopOpen = toSpans(input.date, input.shopHours);
-
+  const earliest = earliestStart(input);
   const byStart = new Map<number, Slot>();
   for (const staffId of input.staffIds) {
-    const free = freeSpansForBarber(input, staffId);
-    for (const open of shopOpen) {
-      for (let t = open.start; t + duration <= open.end; t += interval) {
-        if (t < earliest) continue;
-        const span = { start: t, end: t + duration };
-        if (!free.some((f) => f.start <= span.start && f.end >= span.end)) continue;
-        const existing = byStart.get(t);
-        if (existing) existing.staffIds.push(staffId);
-        else byStart.set(t, { start: t, end: t + duration, staffIds: [staffId] });
-      }
+    const plan = planFor(input, staffId);
+    if (plan.durationMin <= 0) continue;
+    const work = workSpans(input, staffId);
+    const busy = [...blockSpans(input, staffId), ...heldSpans(input, staffId)];
+    for (const t of gridStarts(input, staffId)) {
+      if (t < earliest || !fits(plan, t, work, busy)) continue;
+      const end = t + plan.durationMin * 60_000;
+      const existing = byStart.get(t);
+      if (existing) {
+        existing.staffIds.push(staffId);
+        existing.ends[staffId] = end;
+        existing.end = Math.max(existing.end, end);
+      } else byStart.set(t, { start: t, end, staffIds: [staffId], ends: { [staffId]: end } });
     }
   }
   return [...byStart.values()].sort((a, b) => a.start - b.start);
 }
 
-/** Does `start` sit on the grid computeDaySlots offers (whole intervals after an opening)? */
-export function onSlotGrid(input: DayAvailabilityInput, start: number): boolean {
+/**
+ * Does `start` sit on the grid computeDaySlots offers? With a barber: whole intervals of their
+ * interval after the start of a stretch they work. Without one: the shop's interval after an opening.
+ */
+export function onSlotGrid(input: DayAvailabilityInput, start: number, staffId?: string): boolean {
+  if (staffId) {
+    const step = planFor(input, staffId).intervalMin * 60_000;
+    return workSpans(input, staffId).some((w) => start >= w.start && start < w.end && (start - w.start) % step === 0);
+  }
   const interval = (input.slotIntervalMin ?? 15) * 60_000;
   return toSpans(input.date, input.shopHours).some((open) => start >= open.start && (start - open.start) % interval === 0);
 }
 
-/** Is [start, start+duration) bookable for this barber? Used to validate a booking request server-side. */
+/** Can this barber take the booking at `start` (grid aside)? Used to validate a booking request server-side. */
 export function isSlotFree(input: DayAvailabilityInput, staffId: string, start: number): boolean {
-  const span = { start, end: start + input.durationMin * 60_000 };
+  if (start < earliestStart(input)) return false;
+  const busy = [...blockSpans(input, staffId), ...heldSpans(input, staffId)];
+  return fits(planFor(input, staffId), start, workSpans(input, staffId), busy);
+}
+
+/** The rules a staff "squeeze in" may bend. It never puts two services in one chair at once or books over time off. */
+export type SqueezeBypass = "off_grid" | "buffer" | "outside_hours";
+export const SQUEEZE_BYPASS_LABEL: Record<SqueezeBypass, string> = {
+  off_grid: "off the time grid",
+  buffer: "into buffer time",
+  outside_hours: "outside working hours",
+};
+
+export type SqueezeResult = { ok: true; bypasses: SqueezeBypass[] } | { ok: false; reason: string };
+
+/** What booking at `start` would bend, or why it can't be done even as a squeeze-in. No bypasses: it's an ordinary booking. */
+export function squeezeCheck(input: DayAvailabilityInput, staffId: string, start: number): SqueezeResult {
+  const plan = planFor(input, staffId);
+  if (plan.durationMin <= 0) return { ok: false, reason: "Pick a service" };
   const now = input.now === undefined ? Date.now() : ms(input.now);
-  if (span.start < now + (input.minLeadMin ?? 0) * 60_000) return false;
-  return freeSpansForBarber(input, staffId).some((f) => f.start <= span.start && f.end >= span.end);
+  if (start < now) return { ok: false, reason: "That time has already passed" };
+  const h = holdAt(plan, start);
+  if (blockSpans(input, staffId).some((b) => overlaps(b, h.service))) return { ok: false, reason: "The barber has time off then" };
+  const services = input.appointments.filter((a) => isBusy(input, a, staffId)).map((a) => ({ start: ms(a.startsAt), end: ms(a.endsAt) }));
+  if (services.some((s) => overlaps(s, h.service))) return { ok: false, reason: "The barber is with another client then" };
+  const bypasses: SqueezeBypass[] = [];
+  if (!onSlotGrid(input, start, staffId)) bypasses.push("off_grid");
+  const work = workSpans(input, staffId);
+  if (!work.some((w) => w.start <= h.inHours.start && w.end >= h.inHours.end)) bypasses.push("outside_hours");
+  if ([...blockSpans(input, staffId), ...heldSpans(input, staffId)].some((b) => overlaps(b, h.held))) bypasses.push("buffer");
+  return { ok: true, bypasses };
 }
 
 /**

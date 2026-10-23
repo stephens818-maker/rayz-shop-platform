@@ -48,7 +48,6 @@ type Info = {
   description: string;
   bookingEnabled: boolean;
   cancelCutoffMinutes: number;
-  slotIntervalMinutes: number;
   minLeadMinutes: number;
   bookingWindowDays: number;
   bufferMinutes: number;
@@ -95,15 +94,6 @@ export function ShopInfoEditor({ shopId, initial }: { shopId: string; initial: I
         </Field>
         <Field label="Online cancel/reschedule cutoff (min)">
           <Input inputMode="numeric" value={v.cancelCutoffMinutes} onChange={num("cancelCutoffMinutes")} />
-        </Field>
-        <Field label="Slot interval (min)">
-          <Select value={v.slotIntervalMinutes} onChange={(e) => setV({ ...v, slotIntervalMinutes: Number(e.target.value) })}>
-            {[5, 10, 15, 20, 30].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </Select>
         </Field>
         <Field label="Minimum notice (min)">
           <Input inputMode="numeric" value={v.minLeadMinutes} onChange={num("minLeadMinutes")} />

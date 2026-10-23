@@ -134,6 +134,13 @@
       "when": 1792719603509,
       "tag": "0018_client_entry_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792721841196,
+      "tag": "0019_slot_timing",
+      "breakpoints": true
     }
   ]
 }

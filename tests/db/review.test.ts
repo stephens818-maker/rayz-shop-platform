@@ -430,11 +430,21 @@ describe("P2/P3 booking rules", () => {
     await m.db.db.delete(m.schema.appointments).where(m.drizzle.inArray(m.schema.appointments.code, ["TESTBUFF01", "TESTBUFF03"]));
   });
 
-  it("P2#24: online bookings must start on an offered time; staff can still pick any minute", async () => {
+  it("P2#24: bookings must start on an offered time; staff pick any minute only by squeezing in", async () => {
     const { slot, svc } = await openSlot();
     const offGrid = new Date(new Date(slot.startsAt).getTime() - 7 * 60_000);
     await expect(book(svc, slot.barberIds[0], offGrid)).rejects.toMatchObject({ code: "bad_request" });
-    const staffBooked = await book(svc, slot.barberIds[0], offGrid, "staff");
+    await expect(book(svc, slot.barberIds[0], offGrid, "staff")).rejects.toMatchObject({ code: "bad_request", details: { offGrid: true } });
+    const staffBooked = await m.booking.createAppointment({
+      shopRef: "coralville",
+      serviceId: svc.id,
+      barberRef: slot.barberIds[0],
+      startsAt: offGrid,
+      customer: { firstName: "Rule", phone: `+1319555${String(3500 + ++phoneSeq)}` },
+      source: "staff",
+      squeezeIn: true,
+      actor,
+    });
     expect(new Date(staffBooked.startsAt).getTime()).toBe(offGrid.getTime());
     await m.booking.cancelAppointment(staffBooked.code, { actor, byCustomer: false });
   });

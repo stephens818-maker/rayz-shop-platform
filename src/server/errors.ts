@@ -43,5 +43,5 @@ export const forbidden = (msg = "You don't have access to this") => new AppError
 export function isDoubleBookingError(e: unknown): boolean {
   const err = e as { code?: string; constraint_name?: string; cause?: { code?: string; constraint_name?: string } };
   const c = err?.cause ?? err;
-  return c?.code === "23P01" || c?.constraint_name === "appointments_no_double_booking";
+  return c?.code === "23P01" || c?.constraint_name === "appointments_no_double_booking" || c?.constraint_name === "appointments_no_buffer_overlap";
 }
