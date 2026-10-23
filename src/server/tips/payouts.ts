@@ -491,7 +491,7 @@ export async function applyTransferReversed(tr: Pick<Stripe.Transfer, "id" | "me
 // ───────────────────────────── Notifications ─────────────────────────────
 
 async function notifyPayout(p: TipPayout, what: "sent" | "failed") {
-  const [person] = await db.select({ email: staff.email, first: staff.firstName }).from(staff).where(eq(staff.id, p.staffId));
+  const [person] = await db.select({ email: staff.email, phone: staff.phone, first: staff.firstName }).from(staff).where(eq(staff.id, p.staffId));
   const [shop] = await db.select({ name: shops.name, email: shops.email }).from(shops).where(eq(shops.id, p.shopId));
   const amount = formatCents(p.netCents - p.instantFeeCents);
   const how = p.method === "cash" ? "in cash from the drawer" : p.method === "stripe" ? (p.instant ? "to your debit card (instant)" : "to your bank or debit card") : METHOD_LABEL[p.method].toLowerCase();
@@ -506,6 +506,14 @@ async function notifyPayout(p: TipPayout, what: "sent" | "failed") {
         what === "sent"
           ? `Hi ${person.first}, your tips from Ray'z ${shop?.name ?? ""} were paid out: ${amount} ${how}.${p.instantFeeCents ? ` Stripe's instant payout fee was ${formatCents(p.instantFeeCents)}.` : ""} See your tips: ${appBaseUrl()}/admin/my-tips`
           : `Hi ${person.first}, your tip payout of ${amount} from Ray'z ${shop?.name ?? ""} didn't go through (${p.failureMessage ?? "Stripe failed it"}). The tips go into the next payout. Check your payout setup: ${appBaseUrl()}/admin/my-tips`,
+    });
+  } else if (person?.phone) {
+    await enqueueRaw({
+      kind: "tip_payout",
+      channel: "sms",
+      to: person.phone,
+      shopId: p.shopId,
+      body: what === "sent" ? `Ray'z ${shop?.name ?? ""}: your tips were paid out, ${amount} ${how}. ${appBaseUrl()}/admin/my-tips` : `Ray'z ${shop?.name ?? ""}: your tip payout of ${amount} didn't go through. It goes into the next payout. ${appBaseUrl()}/admin/my-tips`,
     });
   }
   if (what === "failed" && shop?.email) {
