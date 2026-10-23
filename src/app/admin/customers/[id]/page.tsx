@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointments, customerSquireIds, customers, loyaltyLedger, messageThreads, sales, shops, staff } from "@/db/schema";
+import { appointments, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
@@ -22,6 +22,7 @@ import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
 import { ResendReceipt } from "../../sales/[id]/receipt-panel";
 import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
+import { ClientTags } from "./tags";
 
 export const metadata: Metadata = { title: "Client" };
 
@@ -126,6 +127,12 @@ export default async function CustomerPage({
           .orderBy(asc(staff.displayLabel))
       : [],
   ]);
+  const [tags, knownTags] = full
+    ? await Promise.all([
+        db.select({ tag: customerTags.tag }).from(customerTags).where(eq(customerTags.customerId, id)).orderBy(asc(customerTags.tag)),
+        can(ctx, "clients.edit") ? db.selectDistinct({ tag: customerTags.tag }).from(customerTags).orderBy(asc(customerTags.tag)).limit(100) : [],
+      ])
+    : [[], []];
   const staffLabel = async (sid: string | null) =>
     sid ? ((await db.query.staff.findFirst({ where: eq(staff.id, sid), columns: { displayLabel: true } }))?.displayLabel ?? null) : null;
   const viewer = ratingViewer(ctx);
@@ -281,6 +288,12 @@ export default async function CustomerPage({
                 <ContactClient customerId={c.id} canText={c.smsOptIn} hasPhone={!!c.phone} />
                 {!c.smsOptIn && c.phone && <p className="mt-2 text-xs text-zinc-500">This client hasn&apos;t opted in to texts.</p>}
               </div>
+            </Card>
+          )}
+          {full && (
+            <Card>
+              <CardHeader title="Tags" subtitle="For marketing segments, e.g. VIP or Student." />
+              <ClientTags customerId={c.id} tags={tags.map((t) => t.tag)} known={knownTags.map((t) => t.tag)} canEdit={can(ctx, "clients.edit")} />
             </Card>
           )}
           {c.phone && <CallsAndTexts customerId={c.id} shopIds={ctx.brandWide ? null : ctx.shopIds} canInbox={can(ctx, "inbox.view")} />}

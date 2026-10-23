@@ -610,6 +610,20 @@ describe("blasts, location scope and the preview", () => {
     if (policy.level("birthday") === "hidden") await expect(CP.previewBlast(ctx, seg, NOW)).rejects.toThrow(/birthday/);
     else expect((await CP.previewBlast(ctx, seg, NOW)).matched).toBeGreaterThanOrEqual(0);
   });
+
+  it("tags set on the client page are what the segment's tag filter matches", async () => {
+    const A = await import("@/app/admin/customers/actions");
+    await signInAs(fx.owner);
+    const c = await client({ sms: true });
+    const tag = `Student${++seq}`;
+    expect(await A.setClientTagsAction(c.id, [tag, ` ${tag} `, "Regular"])).toEqual({ ok: true, data: null });
+    const rows = await m.db.db.select().from(s().customerTags).where(eq(s().customerTags.customerId, c.id));
+    expect(rows.map((r) => r.tag).sort()).toEqual(["Regular", tag].sort());
+    const p = await CP.previewBlast(await ctxOf(), { channels: ["sms"], segment: { tags: [tag] }, shopIds: [fx.cv] }, NOW);
+    expect(p.matched).toBe(1);
+    expect(await A.setClientTagsAction(c.id, [])).toMatchObject({ ok: true });
+    expect(await m.db.db.select().from(s().customerTags).where(eq(s().customerTags.customerId, c.id))).toHaveLength(0);
+  });
 });
 
 describe("marketing report and export", () => {

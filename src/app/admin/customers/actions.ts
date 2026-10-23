@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { customers, loyaltyLedger, loyaltyRewards, shops, staff } from "@/db/schema";
+import { customerTags, customers, loyaltyLedger, loyaltyRewards, shops, staff } from "@/db/schema";
 import { FieldKey, ShownField, customFieldId, customFieldKey, isBuiltinField, isRevealable } from "@/domain/client-privacy";
 import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
@@ -278,6 +278,25 @@ export async function grantRewardAction(customerId: string, reason: string) {
         .returning();
       await tx.insert(loyaltyLedger).values({ customerId, kind: "reward_issued", rewardCents: cfg.rewardCents });
       await audit(ctx.actor, "loyalty.manual_reward", "customer", customerId, { rewardId: r.id, reason }, ctx.currentShopId, tx);
+    });
+    revalidatePath(`/admin/customers/${customerId}`);
+    return null;
+  });
+}
+
+const Tags = z.array(z.string().trim().min(1).max(40)).max(20, "Up to 20 tags");
+
+/** Labels for segments, like "VIP" or "Student". Replaces the client's tags with these. */
+export async function setClientTagsAction(customerId: string, raw: string[]) {
+  return safe(async () => {
+    const ctx = await authorize("clients.edit");
+    if ((await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, customerId)) !== "full") throw new AppError("not_found", "Client not found");
+    const tags = [...new Set(Tags.parse(raw).map((t) => t.replace(/\s+/g, " ")))];
+    const before = (await db.select({ tag: customerTags.tag }).from(customerTags).where(eq(customerTags.customerId, customerId))).map((r) => r.tag);
+    await db.transaction(async (tx) => {
+      await tx.delete(customerTags).where(eq(customerTags.customerId, customerId));
+      if (tags.length) await tx.insert(customerTags).values(tags.map((tag) => ({ customerId, tag, createdBy: ctx.staff.id })));
+      await audit(ctx.actor, "customer.tags", "customer", customerId, { before, after: tags }, ctx.currentShopId, tx);
     });
     revalidatePath(`/admin/customers/${customerId}`);
     return null;
