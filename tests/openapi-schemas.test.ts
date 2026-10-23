@@ -62,5 +62,7 @@ describe("OpenAPI schemas cover /api/v1", () => {
     expect(text).toContain("weekStartDay");
     expect(text).toContain("Credit card surcharge");
     expect(text).toContain("consentTextVersion");
+    expect(text).toContain("paymentIntentId");
+    expect(text).toContain("card.wallet");
   });
 });

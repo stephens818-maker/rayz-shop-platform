@@ -109,30 +109,24 @@ function resultFrom(kind: ChargePlanKind, charge: Awaited<ReturnType<typeof char
   };
 }
 
-export async function executeChargePlan(input: ChargePlanInput): Promise<ChargePlanResult> {
+async function readyCharge(input: ChargePlanInput) {
   if (input.customerFacing) await assertLaunched("payments", new Date(), input.shopId);
   if (input.amountCents <= 0) throw new AppError("bad_request", "Charge amount must be positive");
   const tipCents = input.tipCents ?? 0;
   if (tipCents < 0 || tipCents > input.amountCents) throw new AppError("bad_request", "Tip is larger than the charge");
-
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, input.shopId) });
   if (!shop) throw new AppError("not_found", "Shop not found");
+  return { tipCents, shop };
+}
+
+/** Write the shop and tip ledger for a charge that already exists. Does not create a PaymentIntent. */
+async function settleCharge(input: ChargePlanInput, charge: Awaited<ReturnType<typeof chargeCard>>): Promise<ChargePlanResult> {
+  const { tipCents, shop } = await readyCharge(input);
   const barber = input.staffId ? await db.query.staff.findFirst({ where: eq(staff.id, input.staffId) }) : undefined;
   const tipsOn = await shopTipsToBarber(shop.id);
   const transferGroup = `tg_${input.idempotencyKey}`.slice(0, 80);
   const barberAccount = barber?.stripeAccountId ?? null;
   const barberFirst = barber?.firstName?.trim().split(/\s+/)[0] || null;
-  const charge = await chargeCard({
-    paymentMethodId: input.paymentMethodId,
-    amountCents: input.amountCents,
-    description: input.description,
-    metadata: { ...input.metadata, shopId: shop.id },
-    idempotencyKey: input.idempotencyKey,
-    customerId: input.customerId,
-    destination: await chargeDestination(shop, input.amountCents, "keyed"),
-    surchargeCents: input.surchargeCents,
-    surchargeLabel: input.surchargeLabel,
-  });
   const destinationCharge = chargeSettledByDestination(charge);
   const sendTip = !destinationCharge && tipsOn && input.kind !== "destination" && !!barberAccount && tipCents > 0;
   const kind: ChargePlanKind = destinationCharge ? "destination" : sendTip ? "separate_charges_transfers" : "destination";
@@ -210,6 +204,30 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
   }
 
   return resultFrom(kind, charge, transferGroup, settled);
+}
+
+export async function executeChargePlan(input: ChargePlanInput): Promise<ChargePlanResult> {
+  const { shop } = await readyCharge(input);
+  const charge = await chargeCard({
+    paymentMethodId: input.paymentMethodId,
+    amountCents: input.amountCents,
+    description: input.description,
+    metadata: { ...input.metadata, shopId: shop.id },
+    idempotencyKey: input.idempotencyKey,
+    customerId: input.customerId,
+    destination: await chargeDestination(shop, input.amountCents, "keyed"),
+    surchargeCents: input.surchargeCents,
+    surchargeLabel: input.surchargeLabel,
+  });
+  return settleCharge(input, charge);
+}
+
+/**
+ * Record a PaymentIntent the customer already confirmed in PaymentSheet.
+ * Verifying and booking that intent is the caller's job. This never calls chargeCard.
+ */
+export async function recordExistingCharge(input: ChargePlanInput, charge: Awaited<ReturnType<typeof chargeCard>>): Promise<ChargePlanResult> {
+  return settleCharge(input, charge);
 }
 
 /**

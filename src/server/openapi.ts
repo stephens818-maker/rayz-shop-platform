@@ -97,7 +97,7 @@ export function openApiDocument(baseUrl: string) {
         "**Launch:** GET /app/config returns the brand launched flag and launchAt, plus shops[] with each shop's own launched flag. A shop stays on Squire until its own instant. closedCopy is the sentence to show instead of a booking form. Customer booking, customer payments, and push for that shop stay closed. A build older than minVersion / forceUpdateBelow gets 426 upgrade_required. Fields added after 1.0.0 are additive.",
         "**Money:** integer cents. Purchase history and receipts add the shop and tip split when the Connect ledger has one. A transferred tip reads as paid to the barber's first name. A refund record names which portion it came from, and that portion is the shop's. Ticket service, product, tax, and tip stay separate. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
         "**Retries:** `POST /appointments` and `POST /appointments/{code}/payments` honor an `Idempotency-Key` header so a flaky mobile network can't double-book or double-charge.",
-        "**Cards:** saved cards use a Stripe SetupIntent and PaymentSheet ephemeral key. Card numbers are not accepted. Charges go through chargeCard. A credit surcharge is sent to Stripe as its own line. The label is Credit card surcharge (3%) at the shop's rate, which stays configurable. Debit, including a debit card in Apple Pay or Google Pay, is not surcharged.",
+        "**Cards:** saved cards use a Stripe SetupIntent and PaymentSheet ephemeral key. Card numbers are not accepted. Charges go through chargeCard. Wallet and funding come from the PaymentMethod (card.wallet, card.funding). A value sent by the client is ignored. A PaymentIntent the customer already confirmed is verified and recorded, and no second charge is created. A credit surcharge is sent to Stripe as its own line. The label is Credit card surcharge (3%) at the shop's rate, which stays configurable. Debit, including a debit card in Apple Pay or Google Pay, is not surcharged.",
         "**SMS:** smsOptIn defaults to false. consentTextVersion is required to opt in. A customer who opted out can opt back in by sending smsOptIn true with a new consentTextVersion. That stores a new consent record.",
         "**Calendar:** GET /app/config returns weekStartDay sunday and timeZone America/Chicago. Payroll weeks are unchanged.",
         "**Privacy:** GET /me returns the customer's own last name. Sign-in profiles and staff surfaces are first names only.",
@@ -262,7 +262,7 @@ export function openApiDocument(baseUrl: string) {
       "/appointments/{code}/payment-preview": {
         post: {
           tags: ["Booking"],
-          summary: "Credit card surcharge before confirm, from computeCardFee. The label is Credit card surcharge (3%) at the shop rate. Integer cents.",
+          summary: "Credit card surcharge before confirm, from computeCardFee. Wallet and funding come from the PaymentMethod, not the request body. The label is Credit card surcharge (3%) at the shop rate. Integer cents.",
           security: bearer,
           parameters: [codeParam],
           requestBody: { required: true, content: jsonContent("PaymentRequest") },
@@ -272,7 +272,7 @@ export function openApiDocument(baseUrl: string) {
       "/appointments/{code}/payments": {
         post: {
           tags: ["Booking"],
-          summary: "Charge a saved card through chargeCard. The credit surcharge is its own Stripe line. Idempotency-Key is honored.",
+          summary: "Charge a saved card through chargeCard, or record a PaymentIntent PaymentSheet already confirmed. A confirmed intent is not charged again. An already-paid appointment does not get a new PaymentIntent. The credit surcharge is its own Stripe line. Idempotency-Key is honored.",
           security: bearer,
           parameters: [codeParam, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }],
           requestBody: { required: true, content: jsonContent("PaymentRequest") },

@@ -144,7 +144,7 @@ describe("customer contract against mock fixtures", () => {
       await call(previewMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-preview`, { code: booked.code }, {
         method: "POST",
         headers: auth,
-        body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500 }),
+        body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500, wallet: true }),
       }),
     );
     expect(creditPreview.body.feeCents).toBe(93);
@@ -165,33 +165,51 @@ describe("customer contract against mock fixtures", () => {
     );
     expect(debitPreview.body.feeCents).toBe(0);
     expect(debitPreview.body.feeReason).toBe("not_credit");
-    const wallet = await json(
+    const lied = await json(
       await call(previewMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-preview`, { code: booked.code }, {
         method: "POST",
         headers: auth,
         body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500, wallet: true }),
       }),
     );
-    expect(wallet.body.feeReason).toBe("wallet_fee_off");
-    expect(wallet.body.feeCents).toBe(0);
-    expect(wallet.body.funding).toBe("credit");
-    const walletDebit = await json(
+    expect(lied.body.feeCents).toBe(93);
+    expect(lied.body.feeReason).toBe("applies");
+    expect(lied.body.wallet).toBe(false);
+    expect(lied.body.funding).toBe("credit");
+    const walletCredit = await json(
       await call(previewMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-preview`, { code: booked.code }, {
         method: "POST",
         headers: auth,
-        body: JSON.stringify({ paymentMethodId: debit.body.paymentMethod.id, tipCents: 500, wallet: true }),
+        body: JSON.stringify({ paymentMethodId: "pm_card_applepay_visa", tipCents: 500, wallet: false }),
       }),
     );
-    expect(walletDebit.body.feeCents).toBe(0);
-    expect(walletDebit.body.feeReason).toBe("not_credit");
-    expect(walletDebit.body.funding).toBe("debit");
+    expect(walletCredit.body.feeReason).toBe("wallet_fee_off");
+    expect(walletCredit.body.feeCents).toBe(0);
+    expect(walletCredit.body.wallet).toBe(true);
+    expect(walletCredit.body.funding).toBe("credit");
+    process.env.FEATURE_WALLET_FEE = "true";
+    try {
+      const walletDebit = await json(
+        await call(previewMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-preview`, { code: booked.code }, {
+          method: "POST",
+          headers: auth,
+          body: JSON.stringify({ paymentMethodId: "pm_card_applepay_visa_debit", tipCents: 500, wallet: false }),
+        }),
+      );
+      expect(walletDebit.body.feeCents).toBe(0);
+      expect(walletDebit.body.feeReason).toBe("not_credit");
+      expect(walletDebit.body.funding).toBe("debit");
+      expect(walletDebit.body.wallet).toBe(true);
+    } finally {
+      delete process.env.FEATURE_WALLET_FEE;
+    }
 
     const payMod = await import("@/app/api/v1/appointments/[code]/payments/route");
     const paid = await json(
       await call(payMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payments`, { code: booked.code }, {
         method: "POST",
         headers: { ...auth, "idempotency-key": "pay-1" },
-        body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500 }),
+        body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500, wallet: true }),
       }),
     );
     expect(paid.status).toBe(200);
@@ -203,10 +221,21 @@ describe("customer contract against mock fixtures", () => {
       await call(payMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payments`, { code: booked.code }, {
         method: "POST",
         headers: { ...auth, "idempotency-key": "pay-1" },
-        body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500 }),
+        body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500, wallet: true }),
       }),
     );
     expect(again.body.id).toBe(paid.body.id);
+    expect(paid.body.wallet).toBe(false);
+    const intentsAfterPay = m.processor.simulatorLedger().intents.length;
+    const secondPay = await json(
+      await call(payMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payments`, { code: booked.code }, {
+        method: "POST",
+        headers: { ...auth, "idempotency-key": "pay-2" },
+        body: JSON.stringify({ paymentMethodId: credit.body.paymentMethod.id, tipCents: 500, wallet: true }),
+      }),
+    );
+    expect(secondPay.body.id).toBe(paid.body.id);
+    expect(m.processor.simulatorLedger().intents.length).toBe(intentsAfterPay);
     const splits = await m.db.db.select().from(m.schema.connectTransfers).where(eq(m.schema.connectTransfers.paymentIntentId, (await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, paid.body.id)))[0].stripePaymentIntentId!));
     expect(splits.some((row) => row.stripeTransferId?.startsWith("sim_tr_split_"))).toBe(false);
     expect(splits.find((row) => row.role === "tip")?.note).toContain("included in shop destination charge");
@@ -355,5 +384,126 @@ describe("customer contract against mock fixtures", () => {
     expect(sale.totalCents).toBe(paid.body.totalCents);
     const still = await json(await call(meMod, "GET", "http://localhost/api/v1/me", {}, { headers: auth }));
     expect(still.status).toBe(401);
+  });
+
+  it("records a confirmed PaymentIntent, reprices a different card, and does not charge twice", async () => {
+    const services = await m.public.publicServices("coralville");
+    const cut = services.services.find((s) => s.slug === "rayz-cut")!;
+    const book = async (phone: string) => {
+      let slot: { startsAt: string; barberIds: string[] } | undefined;
+      for (let i = 4; i < 21 && !slot; i++) {
+        const day = await m.booking.getAvailability({ shopRef: "coralville", date: m.time.addDays(m.time.todayLocal(), i), serviceId: cut.id, barberRef: "any" });
+        slot = day.slots.find((s) => s.barberIds.length > 0);
+      }
+      if (!slot) throw new Error("no slots");
+      return m.booking.createAppointment({
+        shopRef: "coralville",
+        serviceId: cut.id,
+        barberRef: slot.barberIds[0],
+        startsAt: slot.startsAt,
+        customer: { firstName: "Alex", lastName: "Reyes", phone },
+        source: "api",
+        actor,
+      });
+    };
+    const booked = await book("3195550192");
+    const token = (await m.auth.issueTokens(booked.customer!.id, null)).accessToken;
+    const auth = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const payMod = await import("@/app/api/v1/appointments/[code]/payments/route");
+    const previewMod = await import("@/app/api/v1/appointments/[code]/payment-preview/route");
+    const preview = await json(
+      await call(previewMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-preview`, { code: booked.code }, {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({ paymentMethodId: "pm_card_visa", tipCents: 500 }),
+      }),
+    );
+    const debitTotal = 2900 + 203 + 500;
+    expect(preview.body.totalCents).toBe(debitTotal + 93);
+    const accountId = preview.body.destination.shopAccountId as string;
+    expect(accountId).toBeTruthy();
+    const before = m.processor.simulatorLedger().intents.length;
+    const confirmed = await m.processor.chargeCard({
+      paymentMethodId: "pm_card_applepay_visa_debit",
+      amountCents: debitTotal,
+      description: "PaymentSheet",
+      metadata: { appointmentId: booked.id, code: booked.code },
+      idempotencyKey: `sheet-${booked.code}`,
+      destination: { accountId, applicationFeeCents: 50 },
+    });
+    expect(m.processor.simulatorLedger().intents.length).toBe(before + 1);
+    process.env.FEATURE_WALLET_FEE = "true";
+    let paid: { status: number; body: { id: string; feeCents: number; feeReason: string; wallet: boolean; funding: string; totalCents: number } };
+    try {
+      paid = await json(
+        await call(payMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payments`, { code: booked.code }, {
+          method: "POST",
+          headers: { ...auth, "idempotency-key": `sheet-pay-${booked.code}` },
+          body: JSON.stringify({ paymentMethodId: "pm_card_visa", tipCents: 500, wallet: true, paymentIntentId: confirmed.paymentIntentId }),
+        }),
+      );
+    } finally {
+      delete process.env.FEATURE_WALLET_FEE;
+    }
+    expect(paid.status, JSON.stringify(paid.body)).toBe(200);
+    expect(paid.body.feeCents).toBe(0);
+    expect(paid.body.feeReason).toBe("not_credit");
+    expect(paid.body.wallet).toBe(true);
+    expect(paid.body.funding).toBe("debit");
+    expect(paid.body.totalCents).toBe(debitTotal);
+    expect(m.processor.simulatorLedger().intents.length).toBe(before + 1);
+    const [row] = await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, paid.body.id));
+    expect(row.stripePaymentIntentId).toBe(confirmed.paymentIntentId);
+    expect(row.cardFeeCents).toBe(0);
+    const splits = await m.db.db.select().from(m.schema.connectTransfers).where(eq(m.schema.connectTransfers.paymentIntentId, confirmed.paymentIntentId));
+    expect(splits.some((r) => r.stripeTransferId?.startsWith("sim_tr_split_"))).toBe(false);
+
+    const decoy = await m.processor.chargeCard({
+      paymentMethodId: "pm_card_visa",
+      amountCents: debitTotal + 93,
+      description: "already paid",
+      metadata: { appointmentId: booked.id, code: booked.code },
+      idempotencyKey: `sheet-again-${booked.code}`,
+      destination: { accountId, applicationFeeCents: 50 },
+      surchargeCents: 93,
+    });
+    const afterDecoy = m.processor.simulatorLedger().intents.length;
+    const second = await json(
+      await call(payMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payments`, { code: booked.code }, {
+        method: "POST",
+        headers: { ...auth, "idempotency-key": `sheet-pay-again-${booked.code}` },
+        body: JSON.stringify({ paymentMethodId: "pm_card_visa", tipCents: 500, paymentIntentId: decoy.paymentIntentId }),
+      }),
+    );
+    expect(second.body.id).toBe(paid.body.id);
+    expect(m.processor.simulatorLedger().intents.length).toBe(afterDecoy);
+    const sales = await m.db.db.select().from(m.schema.sales).where(eq(m.schema.sales.appointmentId, booked.id));
+    expect(sales.filter((s) => s.status === "paid")).toHaveLength(1);
+
+    const other = await book("3195550193");
+    const otherToken = (await m.auth.issueTokens(other.customer!.id, null)).accessToken;
+    const otherAuth = { authorization: `Bearer ${otherToken}`, "content-type": "application/json" };
+    const badIntent = await m.processor.chargeCard({
+      paymentMethodId: "pm_card_visa",
+      amountCents: 1000,
+      description: "wrong amount",
+      metadata: { appointmentId: other.id, code: other.code },
+      idempotencyKey: `bad-${other.code}`,
+      destination: { accountId, applicationFeeCents: 10 },
+    });
+    const afterBad = m.processor.simulatorLedger().intents.length;
+    const bad = await json(
+      await call(payMod, "POST", `http://localhost/api/v1/appointments/${other.code}/payments`, { code: other.code }, {
+        method: "POST",
+        headers: { ...otherAuth, "idempotency-key": `bad-pay-${other.code}` },
+        body: JSON.stringify({ paymentMethodId: "pm_card_visa", tipCents: 500, paymentIntentId: badIntent.paymentIntentId }),
+      }),
+    );
+    expect(bad.status).toBe(402);
+    expect(bad.body.error.code).toBe("payment_failed");
+    expect(bad.body.error.message).toMatch(/doesn't match/);
+    expect(m.processor.simulatorLedger().intents.length).toBe(afterBad);
+    const otherSales = await m.db.db.select().from(m.schema.sales).where(eq(m.schema.sales.appointmentId, other.id));
+    expect(otherSales).toHaveLength(0);
   });
 });

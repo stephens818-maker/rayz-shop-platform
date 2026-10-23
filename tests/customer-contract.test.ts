@@ -76,6 +76,9 @@ describe("mock payment fixture math", () => {
     expect(pay).toContain("executeChargePlan");
     expect(pay).toContain("computeCardFee");
     expect(pay).toContain("fundingForSurcharge");
+    expect(pay).toContain("retrievePaymentIntent");
+    expect(pay).toContain("recordExistingCharge");
+    expect(pay).not.toContain("input.wallet");
     expect(pay).not.toContain('wallet ? "credit"');
     const plan = readFileSync("src/server/payments/charge-plan.ts", "utf8");
     expect(plan).toContain("surchargeCents");

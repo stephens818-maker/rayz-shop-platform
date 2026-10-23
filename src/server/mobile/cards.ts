@@ -114,7 +114,7 @@ export async function setupCard(customerId: string, input: { funding?: "credit" 
   const paymentMethodId = input.paymentMethodId && TEST_CARDS[input.paymentMethodId] ? input.paymentMethodId : TEST_BY_FUNDING[input.funding ?? "credit"];
   const card = TEST_CARDS[paymentMethodId];
   if (!card) throw new AppError("bad_request", "Unknown test card.");
-  await rememberCard(customerId, paymentMethodId, card, Boolean(input.wallet));
+  await rememberCard(customerId, paymentMethodId, card, Boolean(card.wallet));
   const saved = await db.query.customerPaymentMethods.findFirst({ where: eq(customerPaymentMethods.stripePaymentMethodId, paymentMethodId) });
   const shown = saved ? present(saved) : null;
   return {

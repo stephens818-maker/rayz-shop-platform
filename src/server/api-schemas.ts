@@ -435,7 +435,10 @@ export const DeleteConfirmResponse = z.object({ deleted: z.literal(true) });
 export const PaymentRequest = z.object({
   paymentMethodId: z.string().optional(),
   tipCents: z.number().int().nonnegative().optional(),
-  wallet: z.boolean().optional(),
+  /** Ignored. Wallet and funding are read from the PaymentMethod (`card.wallet`, `card.funding`). */
+  wallet: z.boolean().optional().describe("Ignored. The server reads card.wallet and card.funding from the PaymentMethod."),
+  /** Set when PaymentSheet already confirmed a PaymentIntent. The server records that intent and does not create another charge. */
+  paymentIntentId: z.string().min(1).optional().describe("A PaymentIntent already confirmed in PaymentSheet. Recorded as-is. No second charge is created."),
 });
 export const PaymentPreview = z.object({
   shopId: z.string().uuid(),

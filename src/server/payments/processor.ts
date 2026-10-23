@@ -40,6 +40,8 @@ export interface CardDetails {
   funding: CardFunding;
   brand: string;
   last4: string;
+  /** Stripe `card.wallet.type` (`apple_pay`, `google_pay`, …), or null when the card is not a wallet. */
+  wallet?: string | null;
 }
 
 /**
@@ -47,31 +49,36 @@ export interface CardDetails {
  * and also work against real Stripe test mode.
  */
 export const TEST_CARDS: Record<string, CardDetails & { label: string }> = {
-  pm_card_visa: { label: "Visa (credit)", funding: "credit", brand: "visa", last4: "4242" },
-  pm_card_visa_debit: { label: "Visa (debit)", funding: "debit", brand: "visa", last4: "5556" },
-  pm_card_mastercard: { label: "Mastercard (credit)", funding: "credit", brand: "mastercard", last4: "4444" },
-  pm_card_mastercard_debit: { label: "Mastercard (debit)", funding: "debit", brand: "mastercard", last4: "8210" },
-  pm_card_mastercard_prepaid: { label: "Mastercard (prepaid)", funding: "prepaid", brand: "mastercard", last4: "5100" },
-  pm_card_amex: { label: "Amex (credit)", funding: "credit", brand: "amex", last4: "8431" },
-  pm_card_chargeDeclined: { label: "Declined card", funding: "credit", brand: "visa", last4: "0002" },
+  pm_card_visa: { label: "Visa (credit)", funding: "credit", brand: "visa", last4: "4242", wallet: null },
+  pm_card_visa_debit: { label: "Visa (debit)", funding: "debit", brand: "visa", last4: "5556", wallet: null },
+  pm_card_mastercard: { label: "Mastercard (credit)", funding: "credit", brand: "mastercard", last4: "4444", wallet: null },
+  pm_card_mastercard_debit: { label: "Mastercard (debit)", funding: "debit", brand: "mastercard", last4: "8210", wallet: null },
+  pm_card_mastercard_prepaid: { label: "Mastercard (prepaid)", funding: "prepaid", brand: "mastercard", last4: "5100", wallet: null },
+  pm_card_amex: { label: "Amex (credit)", funding: "credit", brand: "amex", last4: "8431", wallet: null },
+  pm_card_chargeDeclined: { label: "Declined card", funding: "credit", brand: "visa", last4: "0002", wallet: null },
+  /** Simulator stand-in for a Stripe PaymentMethod whose card.wallet.type is apple_pay. Not a client-supplied flag. */
+  pm_card_applepay_visa: { label: "Apple Pay Visa (credit)", funding: "credit", brand: "visa", last4: "4242", wallet: "apple_pay" },
+  pm_card_applepay_visa_debit: { label: "Apple Pay Visa (debit)", funding: "debit", brand: "visa", last4: "5556", wallet: "apple_pay" },
 };
 
 function normalizeFunding(f: string | null | undefined): CardFunding {
   return f === "credit" || f === "debit" || f === "prepaid" ? f : "unknown";
 }
 
-/** Inspect a tokenized card *before* charging so the credit-only fee can be disclosed. */
+function cardDetailsOf(card: { funding?: string | null; brand?: string | null; last4?: string | null; wallet?: string | { type?: string | null } | null }): CardDetails {
+  const wallet = !card.wallet ? null : typeof card.wallet === "string" ? card.wallet : (card.wallet.type ?? null);
+  return { funding: normalizeFunding(card.funding), brand: card.brand ?? "card", last4: card.last4 ?? "", wallet };
+}
+
+/** Inspect a tokenized card *before* charging so the credit-only fee can be disclosed. Funding and wallet come from Stripe's PaymentMethod, never from the client. */
 export async function inspectPaymentMethod(paymentMethodId: string): Promise<CardDetails> {
-  if (TEST_CARDS[paymentMethodId]) {
-    const { funding, brand, last4 } = TEST_CARDS[paymentMethodId];
-    return { funding, brand, last4 };
-  }
+  if (TEST_CARDS[paymentMethodId]) return cardDetailsOf(TEST_CARDS[paymentMethodId]);
   const s = stripe();
   if (!s) throw new AppError("bad_request", "Unknown test card (simulator mode)");
   const pm = await s.paymentMethods.retrieve(paymentMethodId);
   const card = pm.card ?? (pm as unknown as { card_present?: Stripe.PaymentMethod.Card }).card_present;
   if (!card) throw new AppError("bad_request", "Not a card payment method");
-  return { funding: normalizeFunding(card.funding), brand: card.brand ?? "card", last4: card.last4 ?? "" };
+  return cardDetailsOf(card);
 }
 
 export interface ChargeResult {
@@ -117,6 +124,7 @@ interface SimIntent {
   metadata: Record<string, string>;
   destination: Destination | null;
   customerId: string | null;
+  paymentMethodId: string;
   /** Credit-card surcharge sent to Stripe as its own amount. Zero when the card is not credit. */
   surchargeCents: number;
   lineItems: SurchargeLine[];
@@ -207,10 +215,11 @@ export async function chargeCard(opts: {
           id: simId("sim_pi"),
           amountCents: opts.amountCents,
           amountRefundedCents: 0,
-          card: { funding: card.funding, brand: card.brand, last4: card.last4 },
+          card: cardDetailsOf(card),
           metadata: opts.metadata,
           destination: dest,
           customerId: opts.customerId ?? null,
+          paymentMethodId: opts.paymentMethodId,
           surchargeCents: disclosure?.surchargeCents ?? 0,
           lineItems: disclosure?.lineItems ?? [],
         };
@@ -280,6 +289,77 @@ export async function chargeCard(opts: {
   }
 }
 
+export interface RetrievedIntent {
+  id: string;
+  status: string;
+  amountCents: number;
+  currency: string;
+  paymentMethodId: string | null;
+  card: CardDetails;
+  destination: Destination | null;
+  chargeId: string | null;
+  transferId: string | null;
+  customerId: string | null;
+  metadata: Record<string, string>;
+  destinationCharge: boolean;
+  amountRefundedCents: number;
+  processor: "stripe" | "simulator";
+}
+
+/**
+ * Read a PaymentIntent the customer already confirmed (PaymentSheet). Does not create a charge.
+ * Simulator intents are the ones `chargeCard` stored. Live mode retrieves from Stripe test mode.
+ */
+export async function retrievePaymentIntent(paymentIntentId: string): Promise<RetrievedIntent> {
+  assertStripeTestMode();
+  const s = stripe();
+  if (!s || paymentIntentId.startsWith("sim_")) {
+    const pi = sim.intents.get(paymentIntentId);
+    if (!pi) throw new AppError("payment_failed", "Unknown payment.");
+    const suffix = pi.id.slice("sim_pi_".length);
+    return {
+      id: pi.id,
+      status: "succeeded",
+      amountCents: pi.amountCents,
+      currency: "usd",
+      paymentMethodId: pi.paymentMethodId,
+      card: pi.card,
+      destination: pi.destination,
+      chargeId: `sim_ch_${suffix}`,
+      transferId: pi.destination ? `sim_tr_${suffix}` : null,
+      customerId: pi.customerId,
+      metadata: pi.metadata,
+      destinationCharge: !!pi.destination,
+      amountRefundedCents: pi.amountRefundedCents,
+      processor: "simulator",
+    };
+  }
+  const pi = await s.paymentIntents.retrieve(paymentIntentId, { expand: ["payment_method", "latest_charge"] });
+  const pm = typeof pi.payment_method === "string" ? null : pi.payment_method;
+  const paymentMethodId = typeof pi.payment_method === "string" ? pi.payment_method : (pm?.id ?? null);
+  const card = pm?.card ? cardDetailsOf(pm.card) : paymentMethodId ? await inspectPaymentMethod(paymentMethodId) : { funding: "unknown" as const, brand: "card", last4: "", wallet: null };
+  const charge = typeof pi.latest_charge === "string" || !pi.latest_charge ? null : pi.latest_charge;
+  const transferId = !charge || typeof charge.transfer === "string" ? (typeof charge?.transfer === "string" ? charge.transfer : null) : (charge.transfer?.id ?? null);
+  const destAccount = !pi.transfer_data?.destination ? null : typeof pi.transfer_data.destination === "string" ? pi.transfer_data.destination : pi.transfer_data.destination.id;
+  const customerId = !pi.customer ? null : typeof pi.customer === "string" ? pi.customer : pi.customer.id;
+  return {
+    id: pi.id,
+    status: pi.status,
+    amountCents: pi.amount,
+    currency: pi.currency,
+    paymentMethodId,
+    card,
+    destination: destAccount ? { accountId: destAccount, applicationFeeCents: pi.application_fee_amount ?? 0 } : null,
+    chargeId: charge?.id ?? (typeof pi.latest_charge === "string" ? pi.latest_charge : null),
+    transferId,
+    customerId,
+    metadata: pi.metadata ?? {},
+    destinationCharge: !!destAccount || !!transferId,
+    amountRefundedCents: charge?.amount_refunded ?? 0,
+    processor: "stripe",
+  };
+}
+
 /**
  * `reverseTransfer`: the charge went to a shop's connected account, so the refund is pulled back
  * from that account. The application fee isn't returned, the same as Stripe's fee on a refund.
@@ -332,7 +412,6 @@ export const terminal = {
   readerLabel: "Simulated WisePOS E (Stripe Terminal)",
   async collectPaymentMethod(testCard: string): Promise<{ paymentMethodId: string; card: CardDetails }> {
     if (!TEST_CARDS[testCard]) throw new AppError("bad_request", "Unknown test card");
-    const { funding, brand, last4 } = TEST_CARDS[testCard];
-    return { paymentMethodId: testCard, card: { funding, brand, last4 } };
+    return { paymentMethodId: testCard, card: cardDetailsOf(TEST_CARDS[testCard]) };
   },
 };
