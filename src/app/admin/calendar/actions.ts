@@ -2,20 +2,22 @@
 
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { db } from "@/db";
 import { appointments, staffShops, timeBlocks } from "@/db/schema";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { timeBlockChangeDenied } from "@/server/auth/policy";
-import { StaffContext, assertShopAccess, can, caller, requireStaff } from "@/server/auth/staff";
+import { StaffContext, assertShopAccess, authorize, can, caller, requireStaff } from "@/server/auth/staff";
 import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
 import { assertCanEnter, clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
 import { clientSearchScope, searchCustomers } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { ratingSummaries } from "@/server/ratings";
+import { correctServiceTimes, finishService, reviewServiceTime } from "@/server/service-times";
 import { hasShop, requireInTenant } from "@/server/tenant";
-import { isValidLocalDate, localMinutesOf } from "@/lib/time";
+import { isValidLocalDate, localDateOf, localMinutesOf, zonedWallTime } from "@/lib/time";
 
 async function barberShops(staffId: string) {
   return (await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId))).map((l) => l.shopId);
@@ -65,6 +67,58 @@ export async function setStatusAction(id: string, status: Status) {
     await setAppointmentStatus(id, status, ctx.actor);
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
+    return null;
+  });
+}
+
+/** Finish tapped: the end of the service. Start is "In chair" (`setStatusAction(id, "in_service")`). */
+export async function finishServiceAction(id: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadAppt(ctx, id, "checkout.any");
+    await finishService(id, ctx.actor);
+    revalidatePath("/admin/calendar");
+    revalidatePath("/admin");
+    return null;
+  });
+}
+
+const wallTime = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Times are HH:MM")
+  .nullable()
+  .optional();
+const CorrectionInput = z.object({ arrivedAt: wallTime, startedAt: wallTime, finishedAt: wallTime, reason: z.string() });
+
+/**
+ * A manager fixes the recorded times, with a reason. Times are the shop's wall clock (HH:MM) on the
+ * appointment's day, so the browser's time zone doesn't matter. Undefined leaves a time alone; null clears it.
+ */
+export async function correctServiceTimesAction(id: string, input: z.input<typeof CorrectionInput>) {
+  return safe(async () => {
+    const ctx = await authorize("service_times.correct");
+    await requireInTenant(ctx, "appointment", id);
+    const v = CorrectionInput.parse(input);
+    const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
+    if (!a) throw notFound("Appointment");
+    const day = localDateOf(a.startsAt);
+    const when = (s: string | null | undefined) => (s === undefined ? undefined : s === null ? null : zonedWallTime(day, Number(s.slice(0, 2)) * 60 + Number(s.slice(3))).toJSDate());
+    await correctServiceTimes(id, { arrivedAt: when(v.arrivedAt), startedAt: when(v.startedAt), finishedAt: when(v.finishedAt) }, v.reason, ctx.actor);
+    revalidatePath("/admin/calendar");
+    revalidatePath("/admin/reports/service-times");
+    return null;
+  });
+}
+
+/** Count a flagged time anyway, leave a time out, or go back to the flags. */
+export async function reviewServiceTimeAction(id: string, review: "include" | "exclude" | null, note: string | null) {
+  return safe(async () => {
+    const ctx = await authorize("service_times.correct");
+    await requireInTenant(ctx, "appointment", id);
+    if (review !== null && review !== "include" && review !== "exclude") throw new AppError("bad_request", "Pick count or leave out");
+    await reviewServiceTime(id, review, note, ctx.actor);
+    revalidatePath("/admin/calendar");
+    revalidatePath("/admin/reports/service-times");
     return null;
   });
 }

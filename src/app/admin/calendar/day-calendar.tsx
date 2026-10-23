@@ -18,6 +18,7 @@ import {
   startCheckoutAction,
 } from "./actions";
 import { ContactClient } from "../customers/privacy";
+import { ServiceTimesBox } from "./service-times-panel";
 
 const PX = 1.6; // pixels per minute
 const SNAP = 15;
@@ -108,7 +109,7 @@ export function DayCalendar({
   today: string;
   nowMin: number | null;
   services: Svc[];
-  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean; addPhone: boolean };
+  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean; addPhone: boolean; correctTimes: boolean };
   meId: string;
   initialApptId: string | null;
 }) {
@@ -560,7 +561,7 @@ function useAction() {
   return { pending, error, run, router };
 }
 
-function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalColumn; canManage: { sales: boolean; clients: boolean; message: boolean }; onDone: () => void }) {
+function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalColumn; canManage: { sales: boolean; clients: boolean; message: boolean; correctTimes: boolean }; onDone: () => void }) {
   const { pending, error, run, router } = useAction();
   const s = appt.status;
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
@@ -618,6 +619,8 @@ function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalCo
 
       {error && <Notice tone="red">{error}</Notice>}
 
+      {s !== "cancelled" && s !== "no_show" && <ServiceTimesBox appointmentId={appt.id} status={s} times={appt.times} canCorrect={canManage.correctTimes} />}
+
       {open && (
         <div className="space-y-2">
           <Button size="lg" className="w-full" disabled={pending} onClick={checkout}>
@@ -632,11 +635,6 @@ function ApptPanel({ appt, col, canManage, onDone }: { appt: CalAppt; col: CalCo
             {(s === "booked" || s === "confirmed") && (
               <Button variant="secondary" disabled={pending} onClick={() => run(() => setStatusAction(appt.id, "checked_in"))}>
                 Check in
-              </Button>
-            )}
-            {s !== "in_service" && (
-              <Button variant="secondary" disabled={pending} onClick={() => run(() => setStatusAction(appt.id, "in_service"))}>
-                In chair
               </Button>
             )}
             {s === "checked_in" && (

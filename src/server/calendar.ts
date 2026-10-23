@@ -3,12 +3,14 @@ import { and, asc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import type { RatingSummary } from "@/domain/ratings";
+import type { TimesView } from "@/domain/service-times";
 import type { IntervalSource } from "@/domain/timing";
 import { LocalDate, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, weekdayOf } from "@/lib/time";
 import type { ClientPolicy } from "./client-privacy";
 import { Tenant, hasShop } from "./tenant";
 import { staffIntervals } from "./timing";
 import { ratingSummaries } from "./ratings";
+import { timesFor } from "./service-times";
 
 export interface CalAppt {
   id: string;
@@ -37,6 +39,8 @@ export interface CalAppt {
   bufferAfterMin: number;
   /** Booked off the grid, into buffer time or outside hours. */
   squeezed: boolean;
+  /** Arrival, Start, Finish and checkout as recorded, with who recorded each. */
+  times: TimesView | null;
 }
 
 export interface CalColumn {
@@ -151,6 +155,7 @@ export async function loadDayCalendar(
       : [],
     ratingSummaries(apptRows.map((r) => r.a.customerId)),
   ]);
+  const times = await timesFor(apptRows.map((r) => r.a.id));
 
   const intervals = await staffIntervals(shop, ids);
   const stretchStarts = (spans: { startMin: number; endMin: number }[]) =>
@@ -208,6 +213,7 @@ export async function loadDayCalendar(
           bufferBeforeMin: r.a.bufferBeforeMinutes,
           bufferAfterMin: r.a.bufferMinutes,
           squeezed: r.a.squeezed,
+          times: times.get(r.a.id) ?? null,
         })),
     };
   });
