@@ -8,12 +8,14 @@ import { DEFAULT_LOYALTY, accrue, rewardExpiry } from "@/domain/loyalty";
 import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
 import { simulateConnectHistory } from "@/server/payments/connect";
-import { addDays, diffDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+import { DEFAULT_STAFF_TIME_RULES, REASON_LABEL, SERIES_HORIZON_DAYS, TimeOffReasonKey, seriesOccurrences, timeOffSpan } from "@/domain/staff-time";
+import { LocalDate, addDays, diffDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "rayz2026!";
 const HISTORY_DAYS = Number(process.env.SEED_HISTORY_DAYS ?? 56);
 const FUTURE_DAYS = 14;
+const MAKENNA_LUNCH = 12 * 60 + 30;
 
 // Deterministic PRNG so every seed produces the same sample data.
 let seedState = 20261003;
@@ -42,7 +44,7 @@ async function main() {
     cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, customer_squire_ids, customers,
     inventory_ledger, po_receipt_lines, po_receipts, purchase_order_lines, purchase_orders, vendor_products, vendors,
-    stock_transfer_lines, stock_transfers, stock_count_lines, stock_counts, shop_products, products, shop_services, services, time_blocks,
+    stock_transfer_lines, stock_transfers, stock_count_lines, stock_counts, shop_products, products, shop_services, services, time_blocks, time_block_series, time_off_requests,
     location_group_shops, location_groups, staff_group_members, staff_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours,
     shop_payouts, shop_payment_accounts, shops, owner_entities, brand_settings
     RESTART IDENTITY CASCADE`);
@@ -50,7 +52,7 @@ async function main() {
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
   const roleId = (key: string) => roleRows.find((r) => r.key === key)!.id;
 
-  await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY });
+  await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY, staffTime: { ...DEFAULT_STAFF_TIME_RULES } });
 
   // ── Shops, all owned by the brand for now (a franchisee would be a second owner entity) ──
   const [brandOwner] = await db.insert(t.ownerEntities).values({ name: "Ray'z Barber Shop", legalName: "Ray'z Barber Shop LLC", kind: "brand", contactEmail: "owner@rayz.test" }).returning();
@@ -294,6 +296,7 @@ async function main() {
 
   const blocks: (typeof t.timeBlocks.$inferInsert)[] = [];
   const uuid = () => crypto.randomUUID();
+  const makennaId = staffByKey.get("makenna")!.id;
 
   for (let d = -HISTORY_DAYS; d <= FUTURE_DAYS; d++) {
     const date = addDays(today, d);
@@ -304,9 +307,11 @@ async function main() {
       const services = menu.filter((m) => m.svc.kind === "service");
       const addons = menu.filter((m) => m.svc.kind === "addon");
       const pool = customersByShop.get(shop.id) ?? customerRows;
-      const lunchAt = 12 * 60 + (chance(0.5) ? 0 : 30);
-      if (d >= -7) {
-        blocks.push({ staffId: sch.staffId, shopId: shop.id, startsAt: zonedWallTime(date, lunchAt).toJSDate(), endsAt: zonedWallTime(date, lunchAt + 30).toJSDate(), reason: "Lunch" });
+      // Makenna's lunch is a recurring block (seedStaffTime); the coin is still flipped so the sequence holds.
+      const early = chance(0.5);
+      const lunchAt = sch.staffId === makennaId ? MAKENNA_LUNCH : 12 * 60 + (early ? 0 : 30);
+      if (d >= -7 && sch.staffId !== makennaId) {
+        blocks.push({ staffId: sch.staffId, shopId: shop.id, startsAt: zonedWallTime(date, lunchAt).toJSDate(), endsAt: zonedWallTime(date, lunchAt + 30).toJSDate(), category: "lunch", reason: "Lunch" });
       }
       const fill = d < 0 ? 0.62 : d === 0 ? 0.7 : Math.max(0.12, 0.55 - d * 0.03);
       let cursor = sch.startMin;
@@ -671,6 +676,7 @@ async function main() {
 
   await seedPayroll({ now, staffByKey, shopBySlug, scheduleRows });
   await seedServiceTimes({ now, appts, items, staffByKey });
+  await seedStaffTime({ now, staffByKey, shopBySlug, scheduleRows, appts });
 
   console.log("Seed complete.");
   console.log(`  Logins (password: ${DEMO_PASSWORD}):`);
@@ -748,6 +754,97 @@ async function seedServiceTimes(o: {
   });
   await chunked(rows, 2000, (c) => db.insert(t.appointmentTimes).values(c));
   console.log(`  ${rows.length} service timings (Makenna runs long, Delaney short)`);
+}
+
+/**
+ * Staff time: brand rules (a manager approves, Moline approves automatically), Makenna's recurring
+ * lunch, and time off in every state: pending (one with booked appointments), approved for next week
+ * and for part of today, denied, and an automatic sick day.
+ */
+async function seedStaffTime(o: {
+  now: Date;
+  staffByKey: Map<string, typeof t.staff.$inferSelect>;
+  shopBySlug: Map<string, Shop>;
+  scheduleRows: { staffId: string; shopId: string; weekday: number; startMin: number; endMin: number }[];
+  appts: (typeof t.appointments.$inferInsert)[];
+}) {
+  const { now, staffByKey, shopBySlug, scheduleRows, appts } = o;
+  const today = todayLocal(now);
+  const id = (key: string) => staffByKey.get(key)!.id;
+  const coralville = shopBySlug.get("coralville")!.id;
+  const moline = shopBySlug.get("moline")!.id;
+  const molineManager = (await db.query.staff.findFirst({ where: eq(t.staff.email, "manager.moline@rayz.test") }))?.id ?? null;
+  await db.update(t.shops).set({ staffTime: { timeOffApproval: "auto" } }).where(eq(t.shops.id, moline));
+
+  const lunch = { weekdays: [2, 3, 4, 5, 6], startMin: MAKENNA_LUNCH, endMin: MAKENNA_LUNCH + 30, startsOn: addDays(today, -7), endsOn: null };
+  const through = addDays(today, SERIES_HORIZON_DAYS);
+  const [series] = await db
+    .insert(t.timeBlockSeries)
+    .values({ staffId: id("makenna"), shopId: null, category: "lunch", reason: "Lunch", ...lunch, materializedThrough: through, createdBy: id("makenna"), createdAt: new Date(now.getTime() - 8 * 86_400_000) })
+    .returning();
+  const occ = seriesOccurrences(lunch, lunch.startsOn, through);
+  await chunked(occ, 1000, (c) =>
+    db.insert(t.timeBlocks).values(c.map((x) => ({ staffId: series.staffId, shopId: null, startsAt: x.startsAt, endsAt: x.endsAt, category: "lunch" as const, reason: "Lunch", seriesId: series.id, createdBy: series.createdBy }))),
+  );
+
+  const works = (staffId: string, shopId: string, date: LocalDate) => scheduleRows.find((r) => r.staffId === staffId && r.shopId === shopId && r.weekday === weekdayOf(date));
+  const booked = (staffId: string, date: LocalDate) =>
+    appts.filter((a) => a.staffId === staffId && a.status === "booked" && localDateOf(a.startsAt as Date) === date).length;
+  /** The first day from `from` the barber works there, preferring one with bookings. */
+  const workday = (staffId: string, shopId: string, from: number, to: number, withBookings: boolean) => {
+    let fallback: LocalDate | null = null;
+    for (let d = from; d <= to; d++) {
+      const date = addDays(today, d);
+      if (!works(staffId, shopId, date)) continue;
+      fallback ??= date;
+      if (!withBookings || booked(staffId, date) > 0) return date;
+    }
+    return fallback!;
+  };
+  const daysAgo = (n: number) => new Date(now.getTime() - n * 86_400_000);
+  type Req = typeof t.timeOffRequests.$inferInsert;
+  const request = (r: Omit<Req, "startsAt" | "endsAt">): Req => {
+    const span = timeOffSpan({ fromDate: r.fromDate, toDate: r.toDate, startMin: r.startMin ?? null, endMin: r.endMin ?? null });
+    if ("problem" in span) throw new Error(span.problem);
+    return { ...r, startsAt: span.startsAt, endsAt: span.endsAt };
+  };
+
+  const trip = addDays(today, 21 + ((8 - weekdayOf(addDays(today, 21))) % 7));
+  const jessicaDay = workday(id("jessica"), coralville, 4, 12, true);
+  const jenDay = workday(id("jen"), moline, 5, 12, true);
+  const partialWho = ["delaney", "jessica", "michelle"].find((k) => works(id(k), coralville, today));
+  const partialEnd = partialWho ? works(id(partialWho), coralville, today)!.endMin : 0;
+  const rows: Req[] = [
+    request({ staffId: id("delaney"), shopId: null, fromDate: trip, toDate: addDays(trip, 4), reason: "vacation", note: "Family trip to Colorado", requestedBy: id("delaney"), createdAt: daysAgo(1) }),
+    request({ staffId: id("jessica"), shopId: coralville, fromDate: jessicaDay, toDate: jessicaDay, reason: "personal", note: "Moving apartments", requestedBy: id("jessica"), createdAt: daysAgo(2) }),
+    request({ staffId: id("jen"), shopId: null, fromDate: jenDay, toDate: jenDay, reason: "vacation", requestedBy: id("jen"), status: "approved", decidedVia: "manager", decidedBy: molineManager, decidedAt: daysAgo(3), createdAt: daysAgo(4), decisionNote: "Enjoy! Jilane can take your regulars." }),
+    request({ staffId: id("makenna"), shopId: null, fromDate: addDays(today, 15), toDate: addDays(today, 15), reason: "personal", requestedBy: id("makenna"), status: "denied", decidedVia: "manager", decidedBy: id("michelle"), decidedAt: daysAgo(2), createdAt: daysAgo(5), decisionNote: "Two out that day already. Can you swap with Delaney?" }),
+    request({ staffId: id("sara"), shopId: null, fromDate: addDays(today, -2), toDate: addDays(today, -2), reason: "sick", requestedBy: id("sara"), status: "approved", decidedVia: "auto", decidedAt: daysAgo(2), createdAt: daysAgo(2) }),
+  ];
+  if (partialWho) {
+    const decider = partialWho === "michelle" ? id("owner") : id("michelle");
+    rows.push(
+      request({ staffId: id(partialWho), shopId: coralville, fromDate: today, toDate: today, startMin: partialEnd - 150, endMin: partialEnd, reason: "personal", note: "Dentist", requestedBy: id(partialWho), status: "approved", decidedVia: "manager", decidedBy: decider, decidedAt: daysAgo(6), createdAt: daysAgo(7) }),
+    );
+  }
+  const inserted = await db.insert(t.timeOffRequests).values(rows).returning();
+  const approved = inserted.filter((r) => r.status === "approved");
+  if (approved.length) {
+    await db.insert(t.timeBlocks).values(
+      approved.map((r) => ({
+        staffId: r.staffId,
+        shopId: r.shopId,
+        startsAt: r.startsAt,
+        endsAt: r.endsAt,
+        kind: r.startMin === null ? ("day_off" as const) : ("block" as const),
+        category: "time_off" as const,
+        reason: REASON_LABEL[r.reason as TimeOffReasonKey],
+        requestId: r.id,
+        createdBy: r.decidedBy ?? r.requestedBy,
+      })),
+    );
+  }
+  console.log(`  staff time: Makenna's recurring lunch (${occ.length} occurrences), ${inserted.length} time off requests (2 pending), Moline approves automatically`);
 }
 
 /**
