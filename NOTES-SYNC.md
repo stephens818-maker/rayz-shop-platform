@@ -98,6 +98,19 @@ Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook pro
 - **Sales and tips** come from `payrollSalesBetween` in `src/server/reports.ts`, so a ticket counts at the shop it was rung up at, same as the reports.
 - Service times (`drizzle/core_0021_service_times.sql`): `appointment_times` records arrival, start, finish and checkout, each with who recorded it. The mobile side doesn't need to write it; check-in through the API can set arrival later if you'd like it.
 
+### Staff time (core)
+
+- **Code:** `src/domain/staff-time.ts` (pure: rules, limits, notice, recurring occurrences, time off spans, who's in) and `src/server/staff-time.ts` (blocks, series, requests, decisions, affected appointments, staffing). `extendSeries` is in `src/server/block-series.ts`, so the cron route doesn't import the staff app.
+- **Schema** (`drizzle/core_0023_staff_time.sql`):
+  - `time_blocks` gains `category` (lunch, break, personal, other, time_off), `series_id` and `request_id`. Existing `day_off` rows became `time_off`.
+  - `time_block_series`: a weekday pattern written ahead into `time_blocks`.
+  - `time_off_requests`: pending, approved, denied or cancelled, with who decided and how.
+  - `brand_settings.staff_time` and `shops.staff_time` (jsonb rules).
+  - New permissions `blocks.own`, `blocks.others`, `timeoff.request`, `timeoff.approve`, and the report `staffing`.
+- **Availability:** `getAvailability` (and so `/api/v1` availability) now also leaves out **pending** time off for online and API bookings; staff bookings ignore it. Approved time off and every block were already left out. There's nothing to change on the mobile side.
+- **Writes:** to add a block or time off, please go through `addBlock`, `requestTimeOff` and `decideTimeOff`. They check booked appointments, write the audit rows and send the barber's email. Avoid inserting into `time_blocks` directly.
+- **Notification kinds:** `time_off_reschedule` (to the client, with the manage link) and `time_off_decision` (an email to the barber).
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
