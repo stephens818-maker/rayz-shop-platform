@@ -6,7 +6,8 @@ import type { Permission } from "@/domain/permissions";
 import { formatCents } from "@/lib/money";
 import type { ReportData } from "./report-data";
 import { ReportScope, staffSelection } from "./reports";
-import { attendanceRows, laborRows } from "./time-clock";
+import { attendanceRows } from "./time-clock";
+import { laborRows } from "./time-clock-export";
 
 const text = (label: string): Column => ({ label });
 const int = (label: string): Column => ({ label, kind: "int" });

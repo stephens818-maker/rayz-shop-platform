@@ -2,7 +2,7 @@ import { isValidLocalDate } from "@/lib/time";
 import { routeStaff } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import { narrowShops } from "@/server/tenant";
-import { payrollCsv } from "@/server/time-clock";
+import { payrollCsv } from "@/server/time-clock-export";
 
 /** The payroll export for a pay period: ?period=<start>&format=isolved|generic[&shop=<id>]. */
 export async function GET(req: Request) {
