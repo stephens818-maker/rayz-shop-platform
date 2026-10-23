@@ -230,7 +230,7 @@ export function Pos(props: {
       (d) => window.location.replace(`/handoff/${d.id}`),
     );
 
-  const ready = !props.withClient && lines.length > 0 && (method === "none" || method === "cash" || (method === "card" && !!card));
+  const ready = !props.withClient && lines.length > 0 && ((method === "none" && base.primaryBaseCents === 0) || method === "cash" || (method === "card" && !!card));
   const change = cashTendered != null ? cashTendered - totals.primaryChargeCents : 0;
   // Retail on the ticket is held (counts as committed) while the ticket is open.
   const held = lines
@@ -781,9 +781,13 @@ export function Pos(props: {
                 {pending
                   ? "Processing…"
                   : method === "none"
-                    ? lines.length
-                      ? "Complete (paid by gift card)"
-                      : "Add items"
+                    ? !lines.length
+                      ? "Add items"
+                      : base.primaryBaseCents > 0
+                        ? "Choose cash or card"
+                        : gift
+                          ? "Complete (paid by gift card)"
+                          : "Complete"
                     : method === "cash"
                       ? `Take ${$(totals.primaryChargeCents)} cash`
                       : !tender

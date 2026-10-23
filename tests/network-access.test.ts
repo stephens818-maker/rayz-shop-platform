@@ -125,7 +125,9 @@ describe("permissions", () => {
 
   it("checks every admin request in the Node.js middleware, so it can read the database", () => {
     const src = readFileSync("src/middleware.ts", "utf8");
-    expect(src).toMatch(/matcher: \["\/admin\/:path\*"\]/);
+    // Every page runs through it (for the customer-screen lock); the sign-in rules gate everything under /admin.
+    expect(src).toMatch(/matcher: \["\/\(\(\?!_next\/\|api\/\|\.\*\\\\\.\.\*\)\.\*\)"\]/);
+    expect(src).toMatch(/if \(!path\.startsWith\("\/admin"\)\) return NextResponse\.next\(\);/);
     expect(src).toMatch(/runtime: "nodejs"/);
     expect(src).toMatch(/gateRequest\(/);
   });

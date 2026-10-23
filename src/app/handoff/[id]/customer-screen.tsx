@@ -123,9 +123,9 @@ export function CustomerScreen({ initial }: { initial: HandoffView }) {
 }
 
 function Summary({ v, funding, open, onToggle }: { v: HandoffView; funding: string | null; open: boolean; onToggle: () => void }) {
-  const fee = funding === "credit" && v.creditFeeCents > 0;
-  const due = amountsFor(v, funding).chargeCents;
   const paid = v.status === "paid";
+  const fee = (paid || funding === "credit") && v.creditFeeCents > 0;
+  const due = amountsFor(v, funding).chargeCents;
   return (
     <aside className="shrink-0 border-b border-zinc-200 bg-zinc-50 px-4 py-3 sm:px-8 sm:py-4 landscape:flex landscape:h-full landscape:w-[38%] landscape:max-w-md landscape:flex-col landscape:overflow-y-auto landscape:border-b-0 landscape:border-r landscape:px-6 landscape:py-6">
       <div className="flex items-center justify-between gap-3 landscape:block">
@@ -193,7 +193,7 @@ function Row({ k, v, className }: { k: string; v: string; className?: string }) 
 function Progress({ v, current, onPick, disabled }: { v: HandoffView; current: HandoffStep; onPick: (s: HandoffStep) => void; disabled: boolean }) {
   const steps = v.steps.filter((s): s is Exclude<HandoffStep, "done"> => s !== "done");
   return (
-    <ol className="flex min-w-0 flex-wrap gap-1.5 text-sm">
+    <ol className="flex min-w-0 flex-wrap gap-1 text-sm sm:gap-1.5">
       {steps.map((s, i) => {
         const done = finished(v, s);
         const here = s === current;
@@ -204,12 +204,12 @@ function Progress({ v, current, onPick, disabled }: { v: HandoffView; current: H
               disabled={disabled || here || !done}
               onClick={() => onPick(s)}
               className={cx(
-                "min-h-11 rounded-full px-3 font-medium",
+                "min-h-11 rounded-full px-2.5 font-medium sm:px-3",
                 here ? "bg-ink-900 text-white" : done ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200" : "bg-zinc-100 text-zinc-400",
               )}
               aria-current={here ? "step" : undefined}
             >
-              {done && !here ? "✓ " : `${i + 1}. `}
+              {done && !here ? "✓ " : <span className="hidden sm:inline">{i + 1}. </span>}
               {LABEL[s]}
             </button>
           </li>

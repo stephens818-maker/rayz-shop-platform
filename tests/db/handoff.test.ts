@@ -126,6 +126,7 @@ describe("handing a ticket to the client", () => {
     const sale = await saleRow(saleId);
     expect(sale).toMatchObject({ status: "paid", tipCents: v.tipCents, totalCents: v.creditTotalCents });
     expect(sale.cardFeeCents).toBe(v.creditFeeCents);
+    expect(await H.handoffView(id)).toMatchObject({ status: "paid", dueCents: sale.totalCents, creditFeeCents: sale.cardFeeCents, feeLabel: expect.stringMatching(/surcharge/) });
     const row = await handoffRow(id);
     expect(row).toMatchObject({ status: "paid", receiptChannel: "sms", receiptTo: null });
     const [job] = await m.db.db.select().from(s().notificationJobs).where(m.drizzle.and(eq(s().notificationJobs.kind, "receipt"), eq(s().notificationJobs.to, "+13195550142")));
@@ -370,6 +371,9 @@ describe("split tips", () => {
     ]);
     const { splitCents } = await import("@/domain/handoff");
     const expected = splitCents(1001, [...want].map(([id, weight]) => ({ id, weight })));
+    const paidView = await H.handoffView(id);
+    expect(paidView.status).toBe("paid");
+    expect(paidView.split.map((x) => x.cents).sort()).toEqual([...expected.values()].sort());
 
     await tl.syncTipLedger();
     const ledger = await m.db.db.select().from(s().tipLedger).where(eq(s().tipLedger.saleId, saleId));

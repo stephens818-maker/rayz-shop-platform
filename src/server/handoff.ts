@@ -283,6 +283,19 @@ export async function handoffView(id: string): Promise<HandoffView> {
   const splitIds = [...new Set(serviceLines.map((l) => l.staffId).filter((x): x is string => !!x))];
   const weights = splitIds.length > 1 || (splitIds.length === 1 && splitIds[0] !== sale.staffId) ? tipWeights(t!.lines, d.tipSplit ?? "services") : [];
   const shares = weights.length ? splitCents(tipCents, weights.map((w) => ({ id: w.staffId, weight: w.weight }))) : new Map<string, number>();
+  const [paidItems, paidShares] = paid
+    ? await Promise.all([
+        db.query.saleItems.findMany({ where: (i, { eq: e }) => e(i.saleId, r.saleId) }),
+        db
+          .select({ staffId: saleTipShares.staffId, weight: saleTipShares.weight, label: staff.displayLabel })
+          .from(saleTipShares)
+          .innerJoin(staff, eq(staff.id, saleTipShares.staffId))
+          .where(eq(saleTipShares.saleId, r.saleId))
+          .orderBy(asc(saleTipShares.staffId)),
+      ])
+    : [[], []];
+  const paidSplit = splitCents(sale.tipCents, paidShares.map((x) => ({ id: x.staffId, weight: x.weight })));
+  const pricing = (sale.pricing ?? {}) as { discounts?: { label: string; cents: number }[]; cardFee?: { rate: number } };
   // A ticket a gift card covers never reaches the reader, so its tip is asked for on the screen.
   const readerTips = cfg.shop.tipEntry === "reader" && cards && readers.length > 0 && (!t || t.primaryBaseCents - tipCents > 0);
   const receipt = receiptBranding(shop.receipt);
@@ -292,9 +305,9 @@ export async function handoffView(id: string): Promise<HandoffView> {
     status: r.status,
     shop: { name: shop.name, logoUrl: receipt.showLogo ? shop.logoUrl : null, accentColor: shop.accentColor, headline: receipt.headline },
     ticketNumber: sale.number,
-    barbers: (weights.length ? weights.map((w) => w.staffId) : sale.staffId ? [sale.staffId] : []).map((x) => names.get(x) ?? "Your barber"),
-    lines: t ? t.lines.map((l) => ({ name: l.name, qty: l.qty, cents: l.grossCents })) : [],
-    discounts: t ? t.discountBreakdown.map((x) => ({ label: x.label, cents: x.cents })) : [],
+    barbers: paidShares.length ? paidShares.map((x) => x.label) : (weights.length ? weights.map((w) => w.staffId) : sale.staffId ? [sale.staffId] : []).map((x) => names.get(x) ?? "Your barber"),
+    lines: t ? t.lines.map((l) => ({ name: l.name, qty: l.qty, cents: l.grossCents })) : paidItems.map((i) => ({ name: i.name, qty: i.qty, cents: i.grossCents })),
+    discounts: t ? t.discountBreakdown.map((x) => ({ label: x.label, cents: x.cents })) : (pricing.discounts ?? []).map((x) => ({ label: x.label, cents: x.cents })),
     servicesCents: t?.serviceGrossCents ?? sale.serviceGrossCents,
     taxCents: t?.taxCents ?? sale.serviceTaxCents + sale.productTaxCents,
     tipCents: paid ? sale.tipCents : tipCents,
@@ -304,11 +317,11 @@ export async function handoffView(id: string): Promise<HandoffView> {
     totalCents: t?.totalCents ?? sale.totalCents,
     creditTotalCents: credit?.totals.totalCents ?? sale.totalCents,
     creditFeeCents: credit?.totals.cardFeeCents ?? sale.cardFeeCents,
-    feeLabel: credit && credit.totals.cardFeeCents > 0 ? feeLabel({ rate: credit.totals.cardFeeRate }) : null,
+    feeLabel: credit && credit.totals.cardFeeCents > 0 ? feeLabel({ rate: credit.totals.cardFeeRate }) : paid && sale.cardFeeCents > 0 ? feeLabel({ rate: pricing.cardFee?.rate ?? Number(shop.cardFeeRate) }) : null,
     feeNotice: cards ? feeDisclosure({ enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate) }) : null,
     tips: { choices: tipChoices(cfg.tips, t?.serviceGrossCents ?? 0), allowCustom: cfg.tips.allowCustom, allowNoTip: cfg.tips.allowNoTip },
     tip: { cents: r.tipCents, choice: r.tipChoice, source: r.tipSource },
-    split: weights.map((w) => ({ label: names.get(w.staffId) ?? "Barber", cents: shares.get(w.staffId) ?? 0 })),
+    split: paid ? paidShares.map((x) => ({ label: x.label, cents: paidSplit.get(x.staffId) ?? 0 })) : weights.map((w) => ({ label: names.get(w.staffId) ?? "Barber", cents: shares.get(w.staffId) ?? 0 })),
     config: { tipEntry: cfg.shop.tipEntry, signature: cfg.shop.signature, unlock: cfg.shop.unlock, afterPayment: cfg.shop.afterPayment, thankYouSeconds: cfg.shop.thankYouSeconds },
     steps: handoffSteps(cfg.shop, { readerTips }),
     signed: !!r.signature,
