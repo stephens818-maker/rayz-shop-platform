@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import {
   appointmentItems,
@@ -118,7 +118,7 @@ export async function findAffected(c: { staffId: string; shopId: string | null; 
         eq(appointments.staffId, c.staffId),
         inArray(appointments.status, [...AFFECTED_STATUSES]),
         lt(appointments.startsAt, c.endsAt),
-        sql`${appointments.endsAt} > ${c.startsAt}`,
+        gt(appointments.endsAt, c.startsAt),
         c.shopId ? eq(appointments.shopId, c.shopId) : undefined,
       ),
     );
@@ -139,7 +139,7 @@ export async function markCallIn(input: CallInInput, o: { actor: Actor; now?: Da
     const clash = await tx
       .select({ id: callIns.id })
       .from(callIns)
-      .where(and(eq(callIns.staffId, input.staffId), isNull(callIns.cancelledAt), lt(callIns.startsAt, span.endsAt), sql`${callIns.endsAt} > ${span.startsAt}`))
+      .where(and(eq(callIns.staffId, input.staffId), isNull(callIns.cancelledAt), lt(callIns.startsAt, span.endsAt), gt(callIns.endsAt, span.startsAt)))
       .limit(1);
     if (clash.length) throw new AppError("conflict", "This barber is already marked as called in for part of that time");
     const [block] = await tx

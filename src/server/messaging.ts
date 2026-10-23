@@ -143,6 +143,7 @@ export async function queueShopText(t: ShopText, tx: DBorTx = db, now = new Date
       appointmentId: t.appointmentId ?? null,
       outreachId: t.outreachId ?? null,
       runAt: t.runAt ?? now,
+      createdAt: now,
     })
     .returning({ id: notificationJobs.id });
   const thread = await threadFor(t.shopId, t.to, tx);

@@ -106,10 +106,11 @@ export async function callInReportData(scope: ReportScope, loc: ViewCtx, reasons
     };
   });
   const all = tally(outreach);
+  const barbers = new Set(rows.map((r) => r.c.staffId)).size;
   const reached = outreach.filter((o) => o.attempts > 0).length;
   return {
     stats: [
-      { label: "Call-ins", value: String(rows.length), hint: `${new Set(rows.map((r) => r.c.staffId)).size} barbers` },
+      { label: "Call-ins", value: String(rows.length), hint: `${barbers} barber${barbers === 1 ? "" : "s"}` },
       { label: "Appointments hit", value: String(outreach.length), hint: `${reached} contacted` },
       { label: "Kept or rebooked", value: String(all.rebooked), hint: outreach.length ? `${Math.round((all.rebooked / outreach.length) * 100)}% of appointments hit` : undefined },
       { label: "Needs staff", value: String(all.flagged), hint: `${all.no_response} with no response` },
