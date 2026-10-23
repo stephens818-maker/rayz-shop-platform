@@ -48,7 +48,9 @@ export type NotificationKind =
   | "clock_late_in"
   | "clock_affected"
   /** The receipt a client asked for on the customer screen at checkout. */
-  | "receipt";
+  | "receipt"
+  /** A location's Google review link, a set time after the visit (same for every client who agreed to texts or emails). */
+  | "review_request";
 
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
 const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);

@@ -7,13 +7,14 @@ import { extendSeries } from "@/server/block-series";
 import { runFollowUps } from "@/server/call-ins";
 import { sendDueDigests } from "@/server/digest";
 import { timeClockCron } from "@/server/time-clock";
+import { queueReviewFollowUps } from "@/server/reviews";
 import { tipPayoutCron } from "@/server/tips/payouts";
 
 /**
  * Vercel Cron target (see vercel.json). Writes recurring blocks ahead, queues low-stock alerts, retries
  * or flags call-in outreach with no answer, sends the morning digest once it's due, flags forgotten
  * clock-outs (and nightly, full-time/part-time changes), builds the daily and weekly tip payout drafts
- * that are due, then drains due jobs. Closed unless CRON_SECRET is set.
+ * that are due, asks for Google reviews where a location's follow-up is on, then drains due jobs. Closed unless CRON_SECRET is set.
  */
 export const GET = route(async (req) => {
   if (!cronAuthorized(req.headers.get("authorization"), process.env.CRON_SECRET)) throw new AppError("unauthorized", "Bad or missing cron secret");
@@ -23,5 +24,6 @@ export const GET = route(async (req) => {
   const digest = await sendDueDigests();
   const timeClock = await timeClockCron();
   const tipPayouts = await tipPayoutCron();
-  return json({ ...(await processDueJobs()), lowStock, recurringBlocks, followUps, digest, timeClock, tipPayouts });
+  const reviews = await queueReviewFollowUps();
+  return json({ ...(await processDueJobs()), lowStock, recurringBlocks, followUps, digest, timeClock, tipPayouts, reviews });
 });

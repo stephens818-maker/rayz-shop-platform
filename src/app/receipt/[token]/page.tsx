@@ -155,7 +155,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ token:
               )}
               {d.reviewUrl && (
                 <a
-                  href={d.reviewUrl}
+                  href={`/receipt/${token}/review`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex h-12 items-center justify-center rounded-xl bg-white text-base font-semibold text-zinc-900 ring-1 ring-zinc-300"

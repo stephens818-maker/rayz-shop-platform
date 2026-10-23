@@ -20,6 +20,7 @@ import {
   tenderLabel,
 } from "@/domain/receipts";
 import { TOKEN_SHAPE, hashToken, newRebookToken } from "@/domain/rebook-token";
+import { reviewRequestEmail, reviewRequestSms } from "@/domain/reviews";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatCents } from "@/lib/money";
 import { formatPhone, normalizeEmail, normalizePhone } from "@/lib/phone";
@@ -149,6 +150,16 @@ export async function composeReceipt(saleId: string, channel: ReceiptSendChannel
   });
 }
 
+/** The tracked "Leave a review" link: counts the click, then goes on to the location's Google review page. */
+export const reviewLinkUrl = (token: string) => `${receiptUrl(token)}/review`;
+
+/** The review follow-up: the same words and link for every client. The link is tracked; the receipt link is there too. */
+export async function composeReviewRequest(saleId: string, channel: ReceiptSendChannel, token: string, tx: DBorTx = db) {
+  const d = await receiptData(saleId, tx);
+  if (channel === "sms") return { subject: d.shop.title, body: reviewRequestSms({ title: d.shop.title, firstName: d.firstName, url: reviewLinkUrl(token) }) };
+  return reviewRequestEmail({ title: d.shop.title, firstName: d.firstName, url: reviewLinkUrl(token), receiptUrl: receiptUrl(token), footer: d.shop.footer });
+}
+
 // ───────────────────────────── Sending ─────────────────────────────
 
 export interface DeliverInput {
@@ -198,17 +209,17 @@ export async function deliverReceipt(o: DeliverInput, tx: DBorTx = db): Promise<
     typed: o.typed,
   });
   if (!consent.ok) {
-    if (o.purpose === "refund" || o.purpose === "void") {
+    if (o.purpose === "refund" || o.purpose === "void" || o.purpose === "review") {
       await tx.insert(receiptDeliveries).values({ saleId: sale.id, shopId: sale.shopId, customerId: sale.customerId, channel, destination: to, masked, purpose: o.purpose, skipped: consent.code, sentBy: o.sentBy ?? null, createdAt: now });
       return { status: "skipped", masked, why: consent.code };
     }
     throw new AppError("conflict", consent.message, { reason: consent.code });
   }
   const token = newRebookToken();
-  const m = await composeReceipt(sale.id, channel, receiptUrl(token), o.update ?? null, tx);
+  const m = o.purpose === "review" ? await composeReviewRequest(sale.id, channel, token, tx) : await composeReceipt(sale.id, channel, receiptUrl(token), o.update ?? null, tx);
   const [job] = await tx
     .insert(notificationJobs)
-    .values({ kind: "receipt", channel, to, shopId: sale.shopId, customerId: sale.customerId, subject: channel === "email" ? m.subject : null, body: m.body, runAt: now })
+    .values({ kind: o.purpose === "review" ? "review_request" : "receipt", channel, to, shopId: sale.shopId, customerId: sale.customerId, subject: channel === "email" ? m.subject : null, body: m.body, runAt: now })
     .returning({ id: notificationJobs.id });
   const [row] = await tx
     .insert(receiptDeliveries)
@@ -428,7 +439,7 @@ export async function latestReceipts(saleIds: string[]) {
   const rows = await db
     .selectDistinctOn([receiptDeliveries.saleId], { saleId: receiptDeliveries.saleId, channel: receiptDeliveries.channel, masked: receiptDeliveries.masked, at: receiptDeliveries.createdAt })
     .from(receiptDeliveries)
-    .where(and(inArray(receiptDeliveries.saleId, saleIds), isNull(receiptDeliveries.skipped)))
+    .where(and(inArray(receiptDeliveries.saleId, saleIds), isNull(receiptDeliveries.skipped), ne(receiptDeliveries.purpose, "review")))
     .orderBy(receiptDeliveries.saleId, desc(receiptDeliveries.createdAt));
   return new Map(rows.map((r) => [r.saleId, { channel: r.channel, masked: r.masked, at: r.at }]));
 }
