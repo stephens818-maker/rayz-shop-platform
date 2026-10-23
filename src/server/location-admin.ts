@@ -34,6 +34,7 @@ import { endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/li
 import { Actor, audit } from "./audit";
 import { AppError, forbidden, notFound } from "./errors";
 import { locationSetup } from "./location-setup";
+import { registerReader } from "./payments/connect";
 import { createShopLogin, shopLoginRoles } from "./shop-logins";
 
 /** Adding, opening and retiring locations needs locations.setup, which only people who see every shop can hold. */
@@ -123,6 +124,8 @@ export async function checkSlug(slug: string, exceptShopId?: string): Promise<st
 export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) {
   assertAdmin(m);
   const d = LocationDraft.parse(raw);
+  if ((d.paymentsMode !== "connected" || d.statementDescriptor) && !m.grantor.permissions.has("payments.banking"))
+    throw forbidden("Choosing where a shop's card money goes needs the banking permission. Leave Payments and banking on the defaults, or ask the Brand Owner.");
   const slugIssue = await checkSlug(d.slug);
   if (slugIssue) throw new AppError("bad_request", slugIssue);
   if (d.twilioNumber && (await db.query.shops.findFirst({ where: eq(shops.twilioNumber, d.twilioNumber), columns: { id: true } })))
@@ -178,6 +181,9 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         cardFeeRate: String(d.cardFeeRate),
         cardFeeAppliesToTip: d.cardFeeAppliesToTip,
         tipPresets: d.tipPresets,
+        paymentsMode: d.paymentsMode,
+        statementDescriptor: d.statementDescriptor,
+        receipt: d.receipt,
         slotIntervalMinutes: d.slotIntervalMinutes,
         minLeadMinutes: d.minLeadMinutes,
         bookingWindowDays: d.bookingWindowDays,
@@ -217,7 +223,9 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         });
     }
     if (d.locationGroupIds.length) await tx.insert(locationGroupShops).values(d.locationGroupIds.map((groupId) => ({ groupId, shopId: s.id }))).onConflictDoNothing();
-    if (d.readers.length) await tx.insert(terminalReaders).values(d.readers.map((r) => ({ shopId: s.id, label: r.label, serialNumber: r.serialNumber || null, stripeReaderId: r.stripeReaderId || null })));
+    const placeholders = d.readers.filter((r) => !r.registrationCode);
+    if (placeholders.length)
+      await tx.insert(terminalReaders).values(placeholders.map((r) => ({ shopId: s.id, label: r.label, serialNumber: r.serialNumber || null, stripeReaderId: r.stripeReaderId || null })));
     await audit(
       m.actor,
       "shop.create",
@@ -230,6 +238,8 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         products: d.products.length,
         team: d.staff.map((x) => x.staffId),
         taxRatesVerified: d.taxRatesVerified,
+        paymentsMode: d.paymentsMode,
+        statementDescriptor: d.statementDescriptor,
       },
       s.id,
       tx,
@@ -237,8 +247,13 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
     return s.id;
   });
 
+  const readerProblems: string[] = [];
+  for (const r of d.readers.filter((x) => x.registrationCode))
+    await registerReader(id, { label: r.label, registrationCode: r.registrationCode!, serialNumber: r.serialNumber }, m.actor).catch((e: unknown) => {
+      readerProblems.push(`${r.label}: ${e instanceof Error ? e.message : String(e)}`);
+    });
   const login = d.login ? await createShopLogin({ shopIds: [...m.shopIds, id], brandWide: m.brandWide, actor: m.actor, grantor: { ...m.grantor, shopIds: [...m.grantor.shopIds, id] } }, { shopId: id, ...d.login }) : null;
-  return { id, slug: d.slug, login: login ? { email: d.login!.email, password: login.password } : null };
+  return { id, slug: d.slug, paymentsMode: d.paymentsMode, readerProblems, login: login ? { email: d.login!.email, password: login.password } : null };
 }
 
 async function loadShop(id: string) {

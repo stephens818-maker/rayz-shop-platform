@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { ownerEntities, shops } from "@/db/schema";
-import { ownerEntityProblem } from "@/domain/connect";
+import { PAYMENTS_MODES, ownerEntityProblem } from "@/domain/connect";
 import { appBaseUrl } from "@/lib/deployment";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
@@ -14,8 +14,9 @@ import { StaffContext, assertShopAccess, authorize, staffGrantor } from "@/serve
 import { LocationAdmin, archiveLocation, checkSlug, closeTemporarily, createLocation, goLive, reopen } from "@/server/location-admin";
 import type { LocationDraftInput } from "@/domain/location-draft";
 import { AppError, forbidden, notFound } from "@/server/errors";
-import { completeSimulatedOnboarding, expressDashboardUrl, onboardingUrl, refreshAccount } from "@/server/payments/connect";
+import { completeSimulatedOnboarding, expressDashboardUrl, onboardingUrl, refreshAccount, registerReader, setPaymentsMode, setStatementDescriptor } from "@/server/payments/connect";
 
+const BANKING = "Only the Brand Owner, or someone they've given the banking permission, can connect or change a shop's Stripe account and bank";
 const BRAND_RECORD = "Owner entities are records every shop shares, so changing them needs access to all shops";
 
 function refresh(shopId?: string) {
@@ -43,7 +44,7 @@ async function origin() {
 /** Creates the shop's connected account if needed and returns a fresh Stripe-hosted onboarding link. */
 export async function startPaymentsOnboardingAction(shopId: string) {
   return safe(async () => {
-    const ctx = await authorize("payments.accounts");
+    const ctx = await authorize("payments.banking", BANKING);
     await shopFor(ctx, shopId);
     const url = await onboardingUrl(shopId, ctx.actor, await origin());
     refresh(shopId);
@@ -64,7 +65,7 @@ export async function refreshPaymentsAccountAction(shopId: string) {
 /** No Stripe keys: stands in for Stripe's hosted onboarding so the rest of the flow can be tried. */
 export async function completeSimulatedOnboardingAction(shopId: string, withBank: boolean) {
   return safe(async () => {
-    const ctx = await authorize("payments.accounts");
+    const ctx = await authorize("payments.banking", BANKING);
     await shopFor(ctx, shopId);
     await completeSimulatedOnboarding(shopId, ctx.actor, { withBank });
     refresh(shopId);
@@ -74,12 +75,48 @@ export async function completeSimulatedOnboardingAction(shopId: string, withBank
 
 export async function expressDashboardAction(shopId: string) {
   return safe(async () => {
-    const ctx = await authorize("payments.accounts");
+    const ctx = await authorize("payments.banking", BANKING);
     await shopFor(ctx, shopId);
     const url = await expressDashboardUrl(shopId);
     if (!url) throw new AppError("bad_request", "The Stripe dashboard opens once onboarding is finished");
     await audit(ctx.actor, "payments.dashboard_opened", "shop", shopId, {}, shopId);
     return { url };
+  });
+}
+
+/** Where the shop's card money settles: the brand's account, its own connected account, or nowhere (cash only). */
+export async function setPaymentsModeAction(shopId: string, mode: string) {
+  return safe(async () => {
+    const ctx = await authorize("payments.banking", BANKING);
+    await shopFor(ctx, shopId);
+    const m = z.enum(PAYMENTS_MODES).parse(mode);
+    await setPaymentsMode(shopId, m, ctx.actor);
+    refresh(shopId);
+    return null;
+  });
+}
+
+export async function saveStatementDescriptorAction(shopId: string, descriptor: string | null) {
+  return safe(async () => {
+    const ctx = await authorize("payments.banking", BANKING);
+    await shopFor(ctx, shopId);
+    const saved = await setStatementDescriptor(shopId, descriptor, ctx.actor);
+    refresh(shopId);
+    return { descriptor: saved };
+  });
+}
+
+/** Registers a Stripe Terminal reader to the shop's Terminal Location with the code the reader shows. */
+export async function registerReaderAction(shopId: string, v: { label: string; registrationCode: string; serialNumber: string | null }) {
+  return safe(async () => {
+    const ctx = await authorize(["settings.shop", "payments.accounts"], "Registering card readers needs shop settings access");
+    await shopFor(ctx, shopId);
+    const label = v.label.trim();
+    if (!label || label.length > 40) throw new AppError("bad_request", "Name the reader (up to 40 characters), e.g. Front counter");
+    const row = await registerReader(shopId, { label, registrationCode: v.registrationCode, serialNumber: v.serialNumber }, ctx.actor);
+    refresh(shopId);
+    revalidatePath("/admin/settings");
+    return { id: row.id, stripeReaderId: row.stripeReaderId };
   });
 }
 

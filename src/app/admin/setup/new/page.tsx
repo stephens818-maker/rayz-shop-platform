@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { LinkButton, PageHeader } from "@/components/ui";
-import { guardPage, staffGrantor } from "@/server/auth/staff";
+import { can, guardPage, staffGrantor } from "@/server/auth/staff";
 import { wizardOptions } from "@/server/location-admin";
 import { brandInterval } from "@/server/timing";
 import { LocationWizard } from "./wizard";
@@ -21,7 +21,7 @@ export default async function NewLocationPage() {
           </LinkButton>
         }
       />
-      <LocationWizard options={options} brandIntervalMinutes={interval} />
+      <LocationWizard options={options} brandIntervalMinutes={interval} canBank={can(ctx, "payments.banking")} />
     </div>
   );
 }

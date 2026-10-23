@@ -58,7 +58,8 @@ export const PAGE_ACCESS = {
   "/admin/digest": ["settings.lists"],
   "/admin/setup": ["payments.accounts", "locations.setup"],
   "/admin/setup/new": ["locations.setup"],
-  "/admin/setup/simulated-onboarding": ["payments.accounts"],
+  "/admin/setup/simulated-onboarding": ["payments.banking"],
+  "/admin/payouts": ["report.shop_accounts.view"],
   "/admin/import": ["import.run"],
   "/admin/client-data": ["clients.privacy"],
   "/admin/client-data/access": ["clients.privacy"],
@@ -115,7 +116,13 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/inventory/settings", label: "Inventory settings" },
     ],
   },
-  { title: "Insights", items: [{ href: "/admin/reports", label: "Reports" }] },
+  {
+    title: "Insights",
+    items: [
+      { href: "/admin/reports", label: "Reports" },
+      { href: "/admin/payouts", label: "Payouts" },
+    ],
+  },
   {
     title: "Payroll",
     items: [

@@ -3,24 +3,26 @@
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Table, Td, Textarea, Th, cx } from "@/components/ui";
+import { PAYMENTS_MODES, PAYMENTS_MODE_HINT, PAYMENTS_MODE_LABEL, PAYMENTS_STEP_TITLE, statementDescriptorProblem, type PaymentsMode } from "@/domain/connect";
 import { parseProductLines, type LocationDraftInput } from "@/domain/location-draft";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
 import { slugify } from "@/lib/ids";
 import { WEEKDAYS, hhmmToMinutes, minutesToHHMM, minutesToLabel } from "@/lib/time";
-import { checkSlugAction, createLocationAction } from "../actions";
+import { checkSlugAction, createLocationAction, startPaymentsOnboardingAction } from "../actions";
 
 type Options = Awaited<ReturnType<typeof import("@/server/location-admin").wizardOptions>>;
 
 const STEPS = [
   { key: "basics", title: "Name and address" },
   { key: "hours", title: "Hours and holidays" },
-  { key: "money", title: "Taxes, card fee and tips" },
+  { key: "money", title: "Sales tax" },
+  { key: "payments", title: PAYMENTS_STEP_TITLE },
   { key: "booking", title: "Online booking" },
   { key: "menu", title: "Services" },
   { key: "retail", title: "Products and par levels" },
   { key: "vendors", title: "Vendors" },
   { key: "team", title: "Team and payroll" },
-  { key: "devices", title: "Login, phone line and card readers" },
+  { key: "devices", title: "Login and phone line" },
   { key: "brand", title: "Branding" },
   { key: "review", title: "Review" },
 ] as const;
@@ -35,12 +37,12 @@ const pct = (n: number) => +(n * 100).toFixed(3);
 const cents = (s: string) => (s.trim() === "" ? null : Math.round(Number(s) * 100));
 const int = (s: string) => (s.trim() === "" ? null : Math.max(0, Math.round(Number(s))));
 
-export function LocationWizard({ options, brandIntervalMinutes }: { options: Options; brandIntervalMinutes: number }) {
+export function LocationWizard({ options, brandIntervalMinutes, canBank }: { options: Options; brandIntervalMinutes: number; canBank: boolean }) {
   const [step, setStep] = useState<StepKey>("basics");
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [slugNote, setSlugNote] = useState<string | null>(null);
-  const [done, setDone] = useState<{ id: string; slug: string; login: { email: string; password: string } | null } | null>(null);
+  const [done, setDone] = useState<{ id: string; slug: string; paymentsMode: PaymentsMode; readerProblems: string[]; login: { email: string; password: string } | null } | null>(null);
 
   const [basics, setBasics] = useState({
     name: "",
@@ -76,7 +78,9 @@ export function LocationWizard({ options, brandIntervalMinutes }: { options: Opt
   const [payFrom, setPayFrom] = useState("");
   const [login, setLogin] = useState({ on: true, label: "", email: "", roleId: options.loginRoles.find((r) => r.key === "front_desk")?.id ?? options.loginRoles[0]?.id ?? "" });
   const [line, setLine] = useState("");
-  const [readers, setReaders] = useState<{ label: string; serialNumber: string; stripeReaderId: string }[]>([]);
+  const [readers, setReaders] = useState<{ label: string; serialNumber: string; registrationCode: string }[]>([]);
+  const [pay, setPay] = useState({ mode: "connected" as PaymentsMode, descriptor: "" });
+  const [receipt, setReceipt] = useState({ headline: "", footer: "", showLogo: true, showAddress: true, showPhone: true });
   const [brand, setBrand] = useState({ accent: "", logo: "", description: "" });
 
   function menuFrom(source: string): MenuRow[] {
@@ -146,15 +150,20 @@ export function LocationWizard({ options, brandIntervalMinutes }: { options: Opt
       locationGroupIds: basics.groups,
       login: login.on && login.email.trim() ? { label: login.label.trim() || `${basics.name} desk`.slice(0, 24), email: login.email, roleId: login.roleId } : null,
       twilioNumber: line.trim() || null,
-      readers: readers.filter((r) => r.label.trim()).map((r) => ({ label: r.label, serialNumber: r.serialNumber.trim() || null, stripeReaderId: r.stripeReaderId.trim() || null })),
+      readers: readers.filter((r) => r.label.trim()).map((r) => ({ label: r.label, serialNumber: r.serialNumber.trim() || null, registrationCode: r.registrationCode.trim() || null })),
+      paymentsMode: canBank ? pay.mode : "connected",
+      statementDescriptor: canBank ? pay.descriptor.trim().toUpperCase() || null : null,
+      receipt: { ...receipt, headline: receipt.headline.trim() || null, footer: receipt.footer.trim() || null },
       accentColor: brand.accent || null,
       logoUrl: brand.logo.trim() || null,
     }),
-    [basics, hours, holidays, money, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand],
+    [basics, hours, holidays, money, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank],
   );
 
   const index = STEPS.findIndex((s) => s.key === step);
   const go = (d: number) => setStep(STEPS[Math.min(STEPS.length - 1, Math.max(0, index + d))].key);
+  const owner = options.owners.find((o) => o.id === basics.ownerEntityId);
+  const descriptorIssue = pay.descriptor.trim() ? statementDescriptorProblem(pay.descriptor.trim().toUpperCase()) : null;
   const sameState = options.shops.filter((s) => basics.state && s.state.toUpperCase() === basics.state.toUpperCase());
 
   function checkSlug(slug: string) {
@@ -174,6 +183,15 @@ export function LocationWizard({ options, brandIntervalMinutes }: { options: Opt
     });
   }
 
+  function onboard(id: string) {
+    setError(null);
+    start(async () => {
+      const r = await startPaymentsOnboardingAction(id);
+      if (!r.ok) return setError(r.error);
+      window.location.href = r.data.url;
+    });
+  }
+
   if (done)
     return (
       <Card className="space-y-4 p-6">
@@ -186,8 +204,35 @@ export function LocationWizard({ options, brandIntervalMinutes }: { options: Opt
             write it down or save it on the shop&apos;s tablet now.
           </Notice>
         )}
+        {done.readerProblems.length > 0 && (
+          <Notice tone="amber">
+            Some card readers weren&apos;t registered: {done.readerProblems.join("; ")}. Register them from Shop settings with the code each reader shows.
+          </Notice>
+        )}
+        {done.paymentsMode === "connected" && (
+          <Notice tone="blue">
+            Next: Stripe collects {basics.name}&apos;s legal entity, EIN, owner identity and bank account on its own secure pages. Ray&apos;z never sees or stores the bank or
+            Social Security numbers. Cards start working once Stripe enables charges.
+          </Notice>
+        )}
+        {error && (
+          <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
-          <Link className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700" href={`/admin/setup?shop=${done.id}`}>
+          {done.paymentsMode === "connected" && canBank && (
+            <Button disabled={pending} onClick={() => onboard(done.id)}>
+              {pending ? "Opening Stripe…" : "Continue to Stripe onboarding"}
+            </Button>
+          )}
+          <Link
+            className={cx(
+              "rounded-lg px-4 py-2 text-sm font-medium",
+              done.paymentsMode === "connected" && canBank ? "border border-zinc-200 text-zinc-700 hover:bg-zinc-50" : "bg-brand-600 text-white hover:bg-brand-700",
+            )}
+            href={`/admin/setup?shop=${done.id}`}
+          >
             Open the go-live checklist
           </Link>
           <Link className="rounded-lg border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50" href="/admin/setup">
@@ -371,18 +416,118 @@ export function LocationWizard({ options, brandIntervalMinutes }: { options: Opt
                   {!money.verified && <Badge tone="amber" className="ml-2">Flagged until confirmed</Badge>}
                 </span>
               </label>
-              <label className="flex items-center gap-2 text-sm text-zinc-700">
-                <input type="checkbox" checked={money.feeOn} onChange={(e) => setMoney({ ...money, feeOn: e.target.checked })} /> Pass the card fee on to clients
-              </label>
-              <Field label="Card fee %">
-                <Input inputMode="decimal" disabled={!money.feeOn} value={money.fee} onChange={(e) => setMoney({ ...money, fee: e.target.value })} />
-              </Field>
-              <label className="flex items-center gap-2 text-sm text-zinc-700">
-                <input type="checkbox" disabled={!money.feeOn} checked={money.feeOnTip} onChange={(e) => setMoney({ ...money, feeOnTip: e.target.checked })} /> Charge the fee on tips too
-              </label>
-              <Field label="Tip buttons (%)" hint="Comma-separated, up to four.">
-                <Input value={money.tips} onChange={(e) => setMoney({ ...money, tips: e.target.value })} />
-              </Field>
+            </div>
+          )}
+
+          {step === "payments" && (
+            <div className="space-y-5">
+              <fieldset className="space-y-2" disabled={!canBank}>
+                <legend className="text-sm font-semibold text-zinc-800">Where card money goes</legend>
+                {!canBank && (
+                  <Notice tone="amber">
+                    Only the Brand Owner, or someone they&apos;ve given the banking permission, can choose this. The shop starts on its own Stripe account; they connect it from
+                    the checklist.
+                  </Notice>
+                )}
+                {PAYMENTS_MODES.map((m) => (
+                  <label key={m} className="flex items-start gap-2 rounded-lg border border-zinc-200 p-3 text-sm text-zinc-700 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">
+                    <input type="radio" name="payments-mode" className="mt-1" checked={pay.mode === m} onChange={() => setPay({ ...pay, mode: m })} />
+                    <span>
+                      <span className="font-medium text-zinc-900">{PAYMENTS_MODE_LABEL[m]}</span>
+                      <span className="block text-zinc-500">{PAYMENTS_MODE_HINT[m]}</span>
+                    </span>
+                  </label>
+                ))}
+                {owner?.kind === "franchisee" && pay.mode === "brand" && (
+                  <Notice tone="amber">{owner.name} is a franchisee. Its card money would land in the brand&apos;s bank; a separate business usually takes its own account.</Notice>
+                )}
+                {pay.mode === "connected" && (
+                  <p className="text-sm text-zinc-500">
+                    After you create the location, Stripe&apos;s own pages collect the legal entity, EIN, owner identity and bank account. Ray&apos;z stores only the Stripe
+                    account ID and what Stripe reports back.
+                  </p>
+                )}
+                {pay.mode !== "cash_only" && (
+                  <Field
+                    label="Statement descriptor"
+                    hint={
+                      pay.mode === "brand"
+                        ? "What clients see on their card statement, after the brand's prefix. 5 to 22 letters and numbers; blank uses the brand's."
+                        : "What clients see on their card statement, e.g. RAYZ CORALVILLE. 5 to 22 letters and numbers; blank lets Stripe use the business name."
+                    }
+                  >
+                    <Input maxLength={22} className="w-64 uppercase" placeholder={`RAYZ ${basics.name.replace(/^ray'?z\s*/i, "").toUpperCase()}`.slice(0, 22)} value={pay.descriptor} onChange={(e) => setPay({ ...pay, descriptor: e.target.value })} />
+                    {descriptorIssue && <span className="mt-1 block text-sm text-red-700">{descriptorIssue}</span>}
+                  </Field>
+                )}
+              </fieldset>
+              {pay.mode !== "cash_only" && (
+                <fieldset className="grid gap-3 sm:grid-cols-2">
+                  <legend className="mb-2 text-sm font-semibold text-zinc-800">Card fee and tips</legend>
+                  <label className="flex items-center gap-2 text-sm text-zinc-700">
+                    <input type="checkbox" checked={money.feeOn} onChange={(e) => setMoney({ ...money, feeOn: e.target.checked })} /> Pass the card fee on to clients
+                  </label>
+                  <Field label="Card fee %">
+                    <Input inputMode="decimal" disabled={!money.feeOn} value={money.fee} onChange={(e) => setMoney({ ...money, fee: e.target.value })} />
+                  </Field>
+                  <label className="flex items-center gap-2 text-sm text-zinc-700">
+                    <input type="checkbox" disabled={!money.feeOn} checked={money.feeOnTip} onChange={(e) => setMoney({ ...money, feeOnTip: e.target.checked })} /> Charge the fee on tips too
+                  </label>
+                  <Field label="Tip buttons (%)" hint="Comma-separated, up to four.">
+                    <Input value={money.tips} onChange={(e) => setMoney({ ...money, tips: e.target.value })} />
+                  </Field>
+                </fieldset>
+              )}
+              {pay.mode !== "cash_only" && (
+                <fieldset className="space-y-2">
+                  <legend className="text-sm font-semibold text-zinc-800">Stripe Terminal card readers</legend>
+                  <p className="text-sm text-zinc-500">
+                    Each reader is registered to this shop&apos;s own Terminal location, so its payments land in this shop&apos;s books. Enter the code the reader shows
+                    (Settings, then Generate pairing code). Without a code it&apos;s saved as a placeholder to register later.
+                  </p>
+                  {readers.map((r, i) => (
+                    <div key={i} className="flex flex-wrap gap-2">
+                      <Input className="w-48" placeholder="Front counter" aria-label="Reader name" value={r.label} onChange={(e) => setReaders(readers.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+                      <Input className="w-44" placeholder="Serial number" aria-label="Serial number" value={r.serialNumber} onChange={(e) => setReaders(readers.map((x, j) => (j === i ? { ...x, serialNumber: e.target.value } : x)))} />
+                      <Input
+                        className="w-52"
+                        placeholder="Registration code"
+                        aria-label="Registration code"
+                        value={r.registrationCode}
+                        onChange={(e) => setReaders(readers.map((x, j) => (j === i ? { ...x, registrationCode: e.target.value } : x)))}
+                      />
+                      <Button variant="ghost" size="sm" onClick={() => setReaders(readers.filter((_, j) => j !== i))}>
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                  <Button variant="secondary" size="sm" onClick={() => setReaders([...readers, { label: "", serialNumber: "", registrationCode: "" }])}>
+                    + Add a reader
+                  </Button>
+                </fieldset>
+              )}
+              <fieldset className="grid gap-3 sm:grid-cols-2">
+                <legend className="mb-2 text-sm font-semibold text-zinc-800">Receipts</legend>
+                <Field label="Headline" hint={`Blank prints "Ray'z Barber Shop · ${basics.name || "this shop"}".`}>
+                  <Input maxLength={60} value={receipt.headline} onChange={(e) => setReceipt({ ...receipt, headline: e.target.value })} />
+                </Field>
+                <Field label="Footer" hint="Blank prints the brand's thank-you line.">
+                  <Input maxLength={200} value={receipt.footer} onChange={(e) => setReceipt({ ...receipt, footer: e.target.value })} />
+                </Field>
+                <div className="flex flex-wrap gap-4 text-sm text-zinc-700 sm:col-span-2">
+                  {(
+                    [
+                      ["showLogo", "Logo"],
+                      ["showAddress", "Address"],
+                      ["showPhone", "Phone"],
+                    ] as const
+                  ).map(([k, label]) => (
+                    <label key={k} className="flex items-center gap-2">
+                      <input type="checkbox" checked={receipt[k]} onChange={(e) => setReceipt({ ...receipt, [k]: e.target.checked })} /> {label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
             </div>
           )}
 
@@ -742,22 +887,6 @@ export function LocationWizard({ options, brandIntervalMinutes }: { options: Opt
               <Field label="Shop line (Twilio number)" hint="Buy the number in Twilio and point its webhooks here (see the deploy guide). Texts and calls to and from clients use it; leave blank to use the brand's sender for now.">
                 <Input placeholder="+13195550123" value={line} onChange={(e) => setLine(e.target.value)} />
               </Field>
-              <fieldset className="space-y-2">
-                <legend className="text-sm font-semibold text-zinc-800">Stripe Terminal card readers</legend>
-                {readers.map((r, i) => (
-                  <div key={i} className="flex flex-wrap gap-2">
-                    <Input className="w-48" placeholder="Front counter" aria-label="Reader name" value={r.label} onChange={(e) => setReaders(readers.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
-                    <Input className="w-44" placeholder="Serial number" aria-label="Serial number" value={r.serialNumber} onChange={(e) => setReaders(readers.map((x, j) => (j === i ? { ...x, serialNumber: e.target.value } : x)))} />
-                    <Input className="w-52" placeholder="Stripe reader ID (tmr_…)" aria-label="Stripe reader ID" value={r.stripeReaderId} onChange={(e) => setReaders(readers.map((x, j) => (j === i ? { ...x, stripeReaderId: e.target.value } : x)))} />
-                    <Button variant="ghost" size="sm" onClick={() => setReaders(readers.filter((_, j) => j !== i))}>
-                      Remove
-                    </Button>
-                  </div>
-                ))}
-                <Button variant="secondary" size="sm" onClick={() => setReaders([...readers, { label: "", serialNumber: "", stripeReaderId: "" }])}>
-                  + Add a reader
-                </Button>
-              </fieldset>
             </div>
           )}
 
@@ -786,14 +915,18 @@ export function LocationWizard({ options, brandIntervalMinutes }: { options: Opt
                 <Item k="Open" v={hours.filter((h) => h.open).map((h) => WEEKDAYS[h.weekday]).join(", ") || "No days"} />
                 <Item k="Closed days" v={holidays.filter((h) => h.date).length ? `${holidays.filter((h) => h.date).length}` : "None"} />
                 <Item k="Tax" v={`Services ${money.service}%, products ${money.product}%${money.verified ? "" : " (flagged until confirmed)"}`} />
-                <Item k="Card fee" v={money.feeOn ? `${money.fee}%${money.feeOnTip ? ", on tips too" : ""}` : "Off"} />
+                <Item k="Card money" v={PAYMENTS_MODE_LABEL[canBank ? pay.mode : "connected"]} />
+                <Item k="Card fee" v={pay.mode === "cash_only" ? "No cards" : money.feeOn ? `${money.fee}%${money.feeOnTip ? ", on tips too" : ""}` : "Off"} />
                 <Item k="Services" v={`${menu.filter((m) => m.enabled).length} of ${menu.length}`} />
                 <Item k="Products" v={`${retail.filter((r) => r.include).length}`} />
                 <Item k="Vendors" v={`${Object.keys(vendorPicks).length || "Any"}`} />
                 <Item k="Team" v={team.map((t) => options.staff.find((s) => s.id === t.staffId)?.label).join(", ") || "Nobody yet"} />
                 <Item k="Front desk login" v={login.on && login.email ? login.email : "None"} />
                 <Item k="Shop line" v={line || "Brand sender"} />
-                <Item k="Card readers" v={`${readers.filter((r) => r.label.trim()).length}`} />
+                <Item
+                  k="Card readers"
+                  v={`${readers.filter((r) => r.label.trim()).length}${readers.some((r) => r.label.trim() && r.registrationCode.trim()) ? `, ${readers.filter((r) => r.label.trim() && r.registrationCode.trim()).length} registered on save` : ""}`}
+                />
               </dl>
               <Notice tone="blue">The location is created in setup: hidden from the website, the app and online booking until you press Go live on its checklist.</Notice>
               {error && (

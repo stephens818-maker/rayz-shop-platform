@@ -17,7 +17,7 @@ export type { PaymentsMode, PayoutSchedule };
 /** The go-live checklist step for payments. */
 export const PAYMENTS_STEP_TITLE = "Payments and banking";
 
-export const PAYMENTS_MODES: readonly PaymentsMode[] = ["connected", "brand", "cash_only"];
+export const PAYMENTS_MODES = ["connected", "brand", "cash_only"] as const satisfies readonly PaymentsMode[];
 
 export const PAYMENTS_MODE_LABEL: Record<PaymentsMode, string> = {
   connected: "Its own Stripe account and bank",
