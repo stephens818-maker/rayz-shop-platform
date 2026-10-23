@@ -279,7 +279,7 @@ export default async function CustomerPage({
               </div>
             </Card>
           )}
-          {c.phone && <CallsAndTexts phone={c.phone} shopIds={ctx.brandWide ? null : ctx.shopIds} canInbox={can(ctx, "inbox.view")} />}
+          {c.phone && <CallsAndTexts customerId={c.id} shopIds={ctx.brandWide ? null : ctx.shopIds} canInbox={can(ctx, "inbox.view")} />}
           <Card>
             <CardHeader title="Loyalty" subtitle={loyalty.rules.earn} />
             <ul className="divide-y divide-zinc-100 text-sm">
@@ -476,7 +476,9 @@ export default async function CustomerPage({
 }
 
 /** Calls with the client's number and the shop inbox threads, without the number itself. */
-async function CallsAndTexts({ phone, shopIds, canInbox }: { phone: string; shopIds: string[] | null; canInbox: boolean }) {
+async function CallsAndTexts({ customerId, shopIds, canInbox }: { customerId: string; shopIds: string[] | null; canInbox: boolean }) {
+  const phone = (await db.query.customers.findFirst({ where: eq(customers.id, customerId), columns: { phone: true } }))?.phone;
+  if (!phone) return null;
   const [calls, keys, threads] = await Promise.all([
     callsWith(phone, shopIds, 10),
     optOutKeys([phone]),
