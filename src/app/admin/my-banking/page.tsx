@@ -175,6 +175,9 @@ export default async function MyBankingPage({ searchParams }: { searchParams: Pr
       <p className="text-xs text-zinc-500">
         What this app keeps: your Stripe account ID, its status, the type of account, the bank or card name and the last 4 digits. Managers see only the status and the last 4. Your full account and card numbers, Social Security number and ID stay with Stripe.
       </p>
+      <p className="text-xs text-zinc-500">
+        Tax forms: tips are wages, so they&rsquo;re reported on your W-2 through payroll and you won&rsquo;t get a 1099 for them. If Stripe ever needs your tax details it asks on its own page, never here.
+      </p>
     </div>
   );
 }

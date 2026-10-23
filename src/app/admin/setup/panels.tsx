@@ -177,7 +177,7 @@ export function PaymentsPanel({
             {shopName} gets its own Stripe account. Stripe&apos;s own pages collect its legal entity, EIN, owner identity and bank account; Ray&apos;z keeps only the account ID
             and the status Stripe reports. Card charges are made by Ray&apos;z on {shopName}&apos;s behalf and settle there, with tips and surcharges; refunds come back out of it,
             and payouts go to {shopName}&apos;s bank. Clients&apos; saved cards work at every shop. Processing is passed on at {fees.keyed} keyed or online and {fees.terminal} on
-            the card reader, and isn&apos;t returned on refunds.
+            the card reader, and isn&apos;t returned on refunds. Year-end 1099 tax forms for its card sales come from Stripe and appear in the shop&apos;s Stripe dashboard.
           </p>
           {due.length > 0 && state !== "enabled" && (
             <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
@@ -212,7 +212,7 @@ export function PaymentsPanel({
                       )
                     }
                   >
-                    Open the shop&apos;s Stripe dashboard (bank, payouts)
+                    Open the shop&apos;s Stripe dashboard (bank, payouts, tax forms)
                   </Button>
                 )}
               </>
@@ -302,26 +302,14 @@ export function SimulatedOnboardingForm({ shopId, shopName }: { shopId: string; 
     <Card>
       <CardHeader
         title={`Stripe onboarding for ${shopName}`}
-        subtitle="With keys, this is Stripe's own hosted form: business details, the owner's identity, and the bank account for payouts."
+        subtitle="With keys, this is Stripe's own hosted page. This app never sees what is entered there."
       />
-      <div className="grid gap-3 p-4 sm:grid-cols-2">
-        <Field label="Business type">
-          <Select defaultValue="company" disabled>
-            <option value="company">Company (LLC)</option>
-          </Select>
-        </Field>
-        <Field label="EIN" hint="Stripe's test value">
-          <Input defaultValue="000000000" disabled />
-        </Field>
-        <Field label="Representative">
-          <Input defaultValue="Test Representative" disabled />
-        </Field>
-        <Field label="Date of birth" hint="Stripe's test value">
-          <Input defaultValue="1901-01-01" disabled />
-        </Field>
-        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+      <div className="space-y-3 p-4 text-sm">
+        <p>Stripe asks for the business details and EIN, the owner&apos;s identity (date of birth, SSN, ID document if needed) and the bank account for payouts, and verifies them.</p>
+        <p className="text-zinc-500">We get back only whether the account can take payments and receive payouts, what Stripe still needs, and the bank&apos;s name with the last 4 digits.</p>
+        <label className="flex items-center gap-2">
           <input type="checkbox" checked={bank} onChange={(e) => setBank(e.target.checked)} className="h-4 w-4 rounded border-zinc-300" />
-          Add the test bank account (routing 110000000, account 000123456789) so payouts can start
+          Add a test bank account so payouts can start
         </label>
       </div>
       <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
