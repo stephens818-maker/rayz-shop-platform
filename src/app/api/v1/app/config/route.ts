@@ -1,10 +1,8 @@
-import { asc, eq } from "drizzle-orm";
-import { db } from "@/db";
-import { shops } from "@/db/schema";
 import { json, options, route } from "@/server/api";
 import { brandTimeFormat } from "@/server/brand-time";
-import { closedShopCopy, effectiveLaunch, launchState, pilotShopSlugs } from "@/server/launch";
+import { closedShopCopy, launchState, pilotShopSlugs } from "@/server/launch";
 import { loadAppConfig } from "@/server/mobile/client";
+import { shopGateRows } from "@/server/mobile/shop-gates";
 
 /**
  * App boot config. Existing keys stay. `launched` is the brand release (or a pilot shop already open).
@@ -17,11 +15,7 @@ export const OPTIONS = options;
 export const GET = route(async () => {
   const cfg = await loadAppConfig();
   const launch = await launchState();
-  const [pilotShops, copy, rows] = await Promise.all([
-    pilotShopSlugs(),
-    closedShopCopy(),
-    db.select({ id: shops.id, slug: shops.slug, launchAt: shops.launchAt }).from(shops).where(eq(shops.active, true)).orderBy(asc(shops.slug)),
-  ]);
+  const [pilotShops, copy, gates] = await Promise.all([pilotShopSlugs(), closedShopCopy(), shopGateRows(launch)]);
   return json({
     ...cfg,
     timezone: "America/Chicago",
@@ -31,11 +25,28 @@ export const GET = route(async () => {
     pilot: pilotShops.length > 0,
     pilotShops,
     closedShopCopy: copy,
-    shops: rows.map((row) => {
-      const state = effectiveLaunch(row.launchAt, launch);
-      return { id: row.id, slug: row.slug, launched: state.launched, launchAt: state.launchAt, closedCopy: state.launched ? null : copy };
-    }),
+    shops: gates.map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      launched: row.launched,
+      launchAt: row.launchAt,
+      closedCopy: row.launched ? null : copy,
+      shopId: row.shopId,
+      booking: row.booking,
+      externalBookingUrl: row.externalBookingUrl,
+      payments: row.payments,
+      clockIn: row.clockIn,
+      tipTransfers: row.tipTransfers,
+    })),
     minVersion: { ios: cfg.minIos, android: cfg.minAndroid },
     forceUpdateBelow: { ios: cfg.minIos, android: cfg.minAndroid },
+    minSupportedVersion: { ios: cfg.minIos, android: cfg.minAndroid },
+    latestVersion: { ios: cfg.latestIos, android: cfg.latestAndroid },
+    supportPhone: process.env.SUPPORT_PHONE ?? "+13195550199",
+    supportEmail: process.env.SUPPORT_EMAIL ?? "hello@rayzbs.com",
+    privacyUrl: process.env.PRIVACY_URL ?? "https://rayzbs.com/privacy",
+    termsUrl: process.env.TERMS_URL ?? "https://rayzbs.com/terms",
+    deletionUrl: process.env.DELETION_URL ?? "https://rayzbs.com/account/delete",
+    featureFlags: { payments: cfg.flags.payments, family: cfg.flags.family, pushMarketing: cfg.flags.pushMarketing },
   });
 });

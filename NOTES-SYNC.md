@@ -110,7 +110,25 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Mobile API workstream (bc-645fbcc0)
 
-Branch: `cursor/tip-to-barber-a9e1` (stacked on `cursor/i10-receipt-split-a9e1`). PRs into `cursor/rayz-barbershop-v1-8f0b`. Journal order after the payroll merge: `core_0022_payroll` idx 22, then mobile idx 23–27. `mobile_tip_to_barber` is idx 27. SQL filenames are unchanged.
+Branch: `cursor/customer-contract-a9e1` (stacked on `cursor/tip-to-barber-a9e1`). PRs into `cursor/rayz-barbershop-v1-8f0b`. Journal order after the payroll merge: `core_0022_payroll` idx 22, then mobile idx 23–27. `mobile_tip_to_barber` is idx 27. SQL filenames are unchanged. No new migration in this PR.
+
+### Customer contract (mock PR #7)
+
+These handlers match the mock shapes and are covered by `tests/db/customer-contract.test.ts`. They are ready for staging when this PR is on the staging app. Stripe and Twilio stay in test mode, keys from env.
+
+| Endpoint | Staging |
+| --- | --- |
+| `GET /api/v1/app/config` | Ready |
+| `GET /api/v1/me/home` | Ready |
+| `GET/POST /api/v1/me/family`, `DELETE /api/v1/me/family/:id` | Ready |
+| `POST /api/v1/me/payment-methods/setup`, `GET /api/v1/me/payment-methods`, `DELETE /api/v1/me/payment-methods/:id` | Ready |
+| `POST /api/v1/appointments/:code/payment-preview`, `POST /api/v1/appointments/:code/payments` | Ready |
+| `GET /api/v1/me/receipts`, `GET /api/v1/me/receipts/:id` | Ready |
+| `POST /api/v1/me/delete/start`, `POST /api/v1/me/delete/confirm` | Ready |
+| `POST /api/v1/appointments/:code/rebook` | Ready |
+| `GET /api/v1/shops/:shop/live` | Ready |
+
+Cards use a SetupIntent and a PaymentSheet ephemeral key. A posted card number or CVC is refused. Charges call `executeChargePlan`, which calls `chargeCard`. The destination-charge guard is unchanged: no tip transfer is created while `chargeCard` sets `transfer_data`. The 3% credit fee is `computeCardFee` on the preview, before confirm. `GET /me/purchases` is unchanged.
 
 ### Launch (option B: one pilot shop, then the rest)
 
@@ -195,6 +213,12 @@ The CPA approved paying card tips to barbers through Stripe. `shops.tip_to_barbe
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 
 ## Log
+
+### 2026-10-23: mobile customer contract from mock PR #7 (bc-645fbcc0)
+
+- Real `/api/v1` handlers for config, home, family, cards, pay, receipts, account deletion, rebook, and live wait. Contract test runs the Coralville $29 / 7% / $5 tip / 3% fixture from `mobile/packages/mock-api` against those handlers.
+- Where the mock disagrees with an earlier rule, the rule stays. See the cross-check list in the PR.
+- `chargeCard` is still a destination charge in this tree. Tip preview copy stays "Tips paid through payroll." The pay path does not create a PaymentIntent of its own.
 
 ### 2026-10-23: mobile tip routing stays inert on destination charges (bc-645fbcc0)
 

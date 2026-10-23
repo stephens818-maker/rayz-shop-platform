@@ -67,7 +67,8 @@ export function openApiDocument(baseUrl: string) {
         "**Time:** timestamps are stored and returned as ISO-8601 UTC. Human text (receipts, reminders, SMS) uses America/Chicago. GET /app/config returns timeFormat (default 12h) so apps can match.",
         "**Launch:** GET /app/config returns the brand launched flag and launchAt, plus shops[] with each shop's own launched flag. A shop stays on Squire until its own instant. closedCopy is the sentence to show instead of a booking form. Customer booking, customer payments, and push for that shop stay closed. A build older than minVersion / forceUpdateBelow gets 426 upgrade_required. Fields added after 1.0.0 are additive.",
         "**Money:** integer cents. Purchase history and receipts add the shop and tip split when the Connect ledger has one. A transferred tip reads as paid to the barber's first name. A refund record names which portion it came from, and that portion is the shop's. Ticket service, product, tax, and tip stay separate. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
-        "**Retries:** `POST /appointments` honors an `Idempotency-Key` header so a flaky mobile network can't double-book.",
+        "**Retries:** `POST /appointments` and `POST /appointments/{code}/payments` honor an `Idempotency-Key` header so a flaky mobile network can't double-book or double-charge.",
+        "**Cards:** saved cards use a Stripe SetupIntent and PaymentSheet ephemeral key. Card numbers are not accepted. Charges go through chargeCard.",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
@@ -177,6 +178,37 @@ export function openApiDocument(baseUrl: string) {
           summary: "App config: timeFormat, launch gate, and the minimum version. New fields are additive.",
           responses: { 200: { description: "Config" }, 426: err("App version is below forceUpdateBelow") },
         },
+      },
+      "/me/home": { get: { tags: ["Me"], summary: "Next visit, rebook, loyalty, family, and favorite shop", security: bearer, responses: { 200: { description: "Home" }, 401: err("Sign in required") } } },
+      "/me/family": {
+        get: { tags: ["Me"], summary: "Family members on this profile. First names only.", security: bearer, responses: { 200: { description: "Members" }, 401: err("Sign in required") } },
+        post: { tags: ["Me"], summary: "Add a family member. Six is the cap.", security: bearer, responses: { 201: { description: "Created" }, 400: err("Cap reached") } },
+      },
+      "/me/family/{id}": {
+        delete: { tags: ["Me"], summary: "Remove a family member", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { 204: { description: "Removed" }, 404: err("Not found") } },
+      },
+      "/me/payment-methods": { get: { tags: ["Me"], summary: "Saved cards. No card numbers.", security: bearer, responses: { 200: { description: "Cards" } } } },
+      "/me/payment-methods/setup": {
+        post: { tags: ["Me"], summary: "SetupIntent and PaymentSheet ephemeral key", security: bearer, responses: { 200: { description: "Sheet secrets" }, 400: err("Card number refused") } },
+      },
+      "/me/payment-methods/{id}": {
+        delete: { tags: ["Me"], summary: "Detach a saved card", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { 204: { description: "Detached" }, 404: err("Not found") } },
+      },
+      "/me/receipts": { get: { tags: ["Me"], summary: "Receipt list. limit and cursor page the list. Refunds are not folded into the total.", security: bearer, responses: { 200: { description: "Receipts" } } } },
+      "/me/receipts/{id}": { get: { tags: ["Me"], summary: "One gross receipt, with refunds as separate records. Unknown id returns receipt null.", security: bearer, parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { 200: { description: "Receipt" } } } },
+      "/me/delete/start": { post: { tags: ["Me"], summary: "Start account deletion. A dev code is returned only when dev codes are enabled.", security: bearer, responses: { 200: { description: "Consequences" } } } },
+      "/me/delete/confirm": { post: { tags: ["Me"], summary: "Confirm account deletion. Sales stay on the shop books.", security: bearer, responses: { 200: { description: "Deleted" }, 401: err("Code did not match") } } },
+      "/appointments/{code}/payment-preview": {
+        post: { tags: ["Booking"], summary: "Card fee before confirm, from computeCardFee. Integer cents.", security: bearer, parameters: [codeParam], responses: { 200: { description: "Preview" }, 404: err("Appointment not found") } },
+      },
+      "/appointments/{code}/payments": {
+        post: { tags: ["Booking"], summary: "Charge a saved card through chargeCard. Idempotency-Key is honored.", security: bearer, parameters: [codeParam], responses: { 200: { description: "Paid" }, 403: err("Shop is not launched") } },
+      },
+      "/appointments/{code}/rebook": {
+        post: { tags: ["Booking"], summary: "Book the same barber and service three weeks out. The shop gate applies.", security: bearer, parameters: [codeParam], responses: { 201: { description: "Booked" }, 403: err("Shop is not launched") } },
+      },
+      "/shops/{shop}/live": {
+        get: { tags: ["Shops"], summary: "Chairs free and wait minutes for a shop", parameters: [shopParam], responses: { 200: { description: "Live wait" }, 404: err("Shop not found") } },
       },
       "/me/purchases": {
         get: { tags: ["Me"], summary: "Purchase history with service, product, tax, and tip kept separate, the shop and tip settlement when the ledger has one, and refund records that name which portion they came from", security: bearer, responses: { 200: { description: "Purchases" } } },
