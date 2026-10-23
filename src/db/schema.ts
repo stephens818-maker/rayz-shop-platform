@@ -1434,6 +1434,51 @@ export const checkoutHandoffs = pgTable(
 );
 export type HandoffStatus = "active" | "paid" | "returned";
 
+/**
+ * Every digital receipt sent for a ticket, and the client's "no receipt" choice. A sent receipt has
+ * its own link to the receipt page (only the SHA-256 of the token is kept); every link shows the
+ * ticket as it is now, so an old link shows refunds too.
+ */
+export const receiptDeliveries = pgTable(
+  "receipt_deliveries",
+  {
+    id: id(),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    channel: text("channel").$type<"sms" | "email" | "none">().notNull(),
+    /** E.164 phone or lowercased email; null for "no receipt". Refund and void updates go here. */
+    destination: text("destination"),
+    masked: text("masked"),
+    /** ReceiptPurpose in src/domain/receipts.ts. */
+    purpose: text("purpose").$type<"counter" | "handoff" | "refund" | "void" | "resend" | "request">().notNull(),
+    tokenHash: text("token_hash").unique(),
+    jobId: uuid("job_id").references(() => notificationJobs.id, { onDelete: "set null" }),
+    /** Not sent: opted_out (STOP, or receipt emails off) or no_consent. */
+    skipped: text("skipped").$type<"opted_out" | "no_consent">(),
+    sentBy: uuid("sent_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("receipt_deliveries_channel", sql`${t.channel} in ('sms', 'email', 'none')`),
+    check("receipt_deliveries_purpose", sql`${t.purpose} in ('counter', 'handoff', 'refund', 'void', 'resend', 'request')`),
+    check("receipt_deliveries_skipped", sql`${t.skipped} is null or ${t.skipped} in ('opted_out', 'no_consent')`),
+    check("receipt_deliveries_destination", sql`(${t.channel} = 'none') = (${t.destination} is null)`),
+    index("receipt_deliveries_sale_idx").on(t.saleId, t.createdAt),
+    index("receipt_deliveries_destination_idx").on(t.destination, t.createdAt),
+  ],
+);
+
+/** Emails that turned off receipt emails from the receipt page. Texts use contact_opt_outs (STOP). */
+export const receiptOptOuts = pgTable("receipt_opt_outs", {
+  email: text("email").primaryKey(),
+  createdAt: createdAt(),
+});
+
 export const refunds = pgTable(
   "refunds",
   {

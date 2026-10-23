@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { appointments, brandSettings, checkoutHandoffs, customers, notificationJobs, saleTipShares, sales, shops, staff, terminalReaders } from "@/db/schema";
+import { appointments, brandSettings, checkoutHandoffs, customers, saleTipShares, sales, shops, staff, terminalReaders } from "@/db/schema";
 import { feeDisclosure, feeLabel } from "@/domain/checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding, takesCards } from "@/domain/connect";
@@ -24,15 +24,14 @@ import {
   tipScreenProblem,
   tipWeights,
 } from "@/domain/handoff";
-import { formatCents } from "@/lib/money";
 import { normalizePhone } from "@/lib/phone";
-import { formatDateTime } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { loadStaffAccess, staffWithAccessTo } from "./auth/access";
 import { CheckoutLineInput, TenderInput, finalizeSale, priceCart } from "./checkout";
 import { AppError, forbidden, notFound } from "./errors";
 import { shopAccount } from "./payments/connect";
 import { TEST_CARDS, inspectPaymentMethod, paymentsMode, stripe, terminal } from "./payments/processor";
+import { deliverReceipt, isOptedOut } from "./receipts";
 import { checkPin } from "./time-clock";
 
 // ───────────────────────────── Settings ─────────────────────────────
@@ -299,6 +298,8 @@ export async function handoffView(id: string): Promise<HandoffView> {
   // A ticket a gift card covers never reaches the reader, so its tip is asked for on the screen.
   const readerTips = cfg.shop.tipEntry === "reader" && cards && readers.length > 0 && (!t || t.primaryBaseCents - tipCents > 0);
   const receipt = receiptBranding(shop.receipt);
+  // What's on file is offered only where it can be sent: not to a number that replied STOP.
+  const [smsStopped, emailStopped] = await Promise.all([customer?.phone ? isOptedOut("sms", customer.phone) : false, customer?.email ? isOptedOut("email", customer.email.toLowerCase()) : false]);
   return {
     id: r.id,
     saleId: r.saleId,
@@ -325,7 +326,7 @@ export async function handoffView(id: string): Promise<HandoffView> {
     config: { tipEntry: cfg.shop.tipEntry, signature: cfg.shop.signature, unlock: cfg.shop.unlock, afterPayment: cfg.shop.afterPayment, thankYouSeconds: cfg.shop.thankYouSeconds },
     steps: handoffSteps(cfg.shop, { readerTips }),
     signed: !!r.signature,
-    receipt: { channel: r.receiptChannel, masked: r.receiptMasked, onFile: { phone: maskPhone(customer?.phone), email: maskEmail(customer?.email) } },
+    receipt: { channel: r.receiptChannel, masked: r.receiptMasked, onFile: { phone: smsStopped ? null : maskPhone(customer?.phone), email: emailStopped ? null : maskEmail(customer?.email) } },
     pay: {
       mode: paymentsMode(),
       cards,
@@ -390,9 +391,15 @@ export async function chooseReceipt(id: string, raw: z.input<typeof ReceiptInput
       if (!to) throw new AppError("bad_request", v.onFile ? "There's no mobile number on file" : "Enter a 10-digit mobile number");
       masked = maskPhone(to);
     } else {
-      to = v.onFile ? (c?.email ?? null) : (v.to ?? "").toLowerCase();
+      to = v.onFile ? (c?.email?.toLowerCase() ?? null) : (v.to ?? "").toLowerCase();
       if (!to || !z.email().safeParse(to).success) throw new AppError("bad_request", v.onFile ? "There's no email on file" : "Enter an email address like name@example.com");
       masked = maskEmail(to);
+    }
+    if (await isOptedOut(v.channel, to)) {
+      throw new AppError(
+        "conflict",
+        v.channel === "sms" ? "That number has turned off texts from us (it replied STOP). Choose email, or no receipt." : "That email has turned off receipt emails from us. Choose a text, or no receipt.",
+      );
     }
   }
   await db
@@ -460,18 +467,11 @@ export async function payHandoff(id: string, tender: HandoffTender, expectedTota
   const endsAt = cfg.shop.afterPayment === "auto" ? new Date(now.getTime() + cfg.shop.thankYouSeconds * 1000) : null;
   await db.transaction(async (tx) => {
     await tx.update(checkoutHandoffs).set({ status: "paid", paidAt: now, endedAt: endsAt, receiptTo: null }).where(eq(checkoutHandoffs.id, r.id));
-    if (r.receiptChannel && r.receiptChannel !== "none" && r.receiptTo) {
-      const m = await receiptMessage(r.saleId, r.receiptChannel);
-      await tx.insert(notificationJobs).values({
-        kind: "receipt",
-        channel: r.receiptChannel,
-        to: r.receiptTo,
-        shopId: r.shopId,
-        customerId: (await tx.query.sales.findFirst({ where: eq(sales.id, r.saleId), columns: { customerId: true } }))?.customerId ?? null,
-        subject: r.receiptChannel === "email" ? m.subject : null,
-        body: m.body,
-        runAt: now,
-      });
+    if (r.receiptChannel === "none" || r.receiptTo) {
+      // The ticket is paid by now, so a receipt that can't go (a STOP since it was chosen) mustn't undo the payment.
+      await tx
+        .transaction((sp) => deliverReceipt({ saleId: r.saleId, channel: r.receiptChannel!, to: r.receiptTo, purpose: "handoff", sentBy: null, now }, sp))
+        .catch((e) => console.error("handoff: receipt not sent", r.saleId, (e as Error).message));
     }
     await audit(
       actor,
@@ -484,39 +484,6 @@ export async function payHandoff(id: string, tender: HandoffTender, expectedTota
     );
   });
   return { saleId: result.saleId, returnsAt: endsAt?.toISOString() ?? null, rebook: result.rebooked && "code" in result.rebooked ? result.rebooked.code : null };
-}
-
-export async function receiptMessage(saleId: string, channel: "sms" | "email"): Promise<{ subject: string; body: string }> {
-  const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
-  if (!sale) throw notFound("Sale");
-  const shop = await db.query.shops.findFirst({ where: eq(shops.id, sale.shopId) });
-  const b = receiptBranding(shop?.receipt);
-  const title = b.headline ?? `Ray'z Barber Shop · ${shop?.name ?? ""}`;
-  const footer = b.footer ?? "Thank you! Book again at rayzbarbershop.com";
-  const pays = await db.query.payments.findMany({ where: (p, { eq: e }) => e(p.saleId, saleId) });
-  const paidWith = pays.map((p) => (p.method === "card" ? `${p.cardBrand ?? "Card"} ${p.cardLast4 ?? ""}`.trim() : p.method === "gift_card" ? "Gift card" : "Cash")).join(" + ");
-  if (channel === "sms") {
-    return {
-      subject: title,
-      body: `${title} receipt: ticket #${sale.number}, ${formatCents(sale.totalCents)}${sale.tipCents ? ` including a ${formatCents(sale.tipCents)} tip` : ""}. Paid ${paidWith}. ${footer}`,
-    };
-  }
-  const items = await db.query.saleItems.findMany({ where: (i, { eq: e }) => e(i.saleId, saleId) });
-  const lines = [
-    title,
-    `Ticket #${sale.number} · ${formatDateTime(sale.paidAt ?? new Date())}`,
-    "",
-    ...items.map((i) => `${i.name}${i.qty > 1 ? ` × ${i.qty}` : ""}  ${formatCents(i.grossCents)}`),
-    ...(sale.discountCents ? [`Discounts  -${formatCents(sale.discountCents)}`] : []),
-    `Tax  ${formatCents(sale.serviceTaxCents + sale.productTaxCents)}`,
-    `Tip  ${formatCents(sale.tipCents)}`,
-    ...(sale.cardFeeCents ? [`Credit card surcharge  ${formatCents(sale.cardFeeCents)}`] : []),
-    `Total  ${formatCents(sale.totalCents)}`,
-    `Paid with ${paidWith}`,
-    "",
-    footer,
-  ];
-  return { subject: `Your receipt from ${title}`, body: lines.join("\n") };
 }
 
 /** The client wants to pay cash: the device goes back to the counter, with their tip, to take it. */

@@ -131,7 +131,7 @@ describe("handing a ticket to the client", () => {
     expect(row).toMatchObject({ status: "paid", receiptChannel: "sms", receiptTo: null });
     const [job] = await m.db.db.select().from(s().notificationJobs).where(m.drizzle.and(eq(s().notificationJobs.kind, "receipt"), eq(s().notificationJobs.to, "+13195550142")));
     expect(job.body).toContain(`#${sale.number}`);
-    expect(job.body).toContain("tip");
+    expect(job.body).toMatch(/\/receipt\/[A-Za-z0-9_-]{43} /);
     await expect(H.chooseTip(id, "none", 0)).rejects.toThrow(/paid/);
     expect((await H.handoffOnSale(saleId)).screen).toMatchObject({ tipSource: "screen", receiptChannel: "sms" });
 
@@ -465,13 +465,28 @@ describe("settings", () => {
     await H.chooseReceipt(id, { channel: "email", onFile: false, to: "Client@Example.com" });
     expect((await handoffRow(id)).receiptTo).toBe("client@example.com");
     await H.payHandoff(id, keyed(), (await H.handoffView(id)).totalCents);
-    const email = await H.receiptMessage(saleId, "email");
+    const R = await import("@/server/receipts");
+    const email = await R.composeReceipt(saleId, "email", "https://example.test/receipt/x");
     expect(email.subject).toMatch(/receipt/i);
     expect(email.body).toMatch(/Tip\s+\$5\.00/);
-    expect(email.body).toMatch(/Visa 5556/i);
-    const sms = await H.receiptMessage(saleId, "sms");
+    expect(email.body).toMatch(/Visa •••• 5556/i);
+    const sms = await R.composeReceipt(saleId, "sms", "https://example.test/receipt/x");
     expect(sms.body.length).toBeLessThan(320);
     const [job] = await m.db.db.select().from(s().notificationJobs).where(m.drizzle.and(eq(s().notificationJobs.kind, "receipt"), eq(s().notificationJobs.to, "client@example.com")));
     expect(job).toMatchObject({ channel: "email", shopId: fx.shopId });
+    expect(job.body).toMatch(/\/receipt\/[A-Za-z0-9_-]{43}/);
+    const [d] = await m.db.db.select().from(s().receiptDeliveries).where(eq(s().receiptDeliveries.saleId, saleId));
+    expect(d).toMatchObject({ purpose: "handoff", channel: "email", destination: "client@example.com", jobId: job.id });
+  });
+
+  it("records 'no receipt', and doesn't offer or take a number that replied STOP", async () => {
+    const { saleId, id } = await handedOver();
+    await H.chooseTip(id, "none", 0);
+    await m.db.db.insert(s().contactOptOuts).values({ phone: "+13195550177", channel: "sms", source: "reply" }).onConflictDoNothing();
+    await expect(H.chooseReceipt(id, { channel: "sms", onFile: false, to: "319-555-0177" })).rejects.toThrow(/STOP/);
+    await H.chooseReceipt(id, { channel: "none", onFile: false });
+    await H.payHandoff(id, keyed(), (await H.handoffView(id)).totalCents);
+    const rows = await m.db.db.select().from(s().receiptDeliveries).where(eq(s().receiptDeliveries.saleId, saleId));
+    expect(rows).toEqual([expect.objectContaining({ channel: "none", purpose: "handoff", destination: null, tokenHash: null })]);
   });
 });

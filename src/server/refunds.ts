@@ -22,6 +22,7 @@ import { AppError, notFound } from "./errors";
 import { Movement, postMovements } from "./inventory/ledger";
 import { restoreRewardsForSale, reverseForSale } from "./loyalty";
 import { refundCard } from "./payments/processor";
+import { sendUpdatedReceipt } from "./receipts";
 import { syncTipLedger } from "./tips/ledger";
 
 type Sale = typeof sales.$inferSelect;
@@ -217,12 +218,22 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   await postMovements(tx, restock, { actor: o.actor, at: o.now, audit: { action: `inventory.${o.kind}`, entity: "sale", entityId: sale.id, details: { reason: o.reason } } });
 
   const result = await settle(tx, sale, components, o.kind, o.reason, o.now);
+  const receipt = await sendUpdatedReceipt(sale.id, o.kind === "void" ? { kind: "void" } : { kind: "refund", refundedCents: componentsTotal(components) }, tx, o.now);
   await audit(
     o.actor,
     `sale.${o.kind}`,
     "sale",
     sale.id,
-    { amountCents: componentsTotal(components), reason: o.reason, components, items: itemsJson, giftCardsVoided: voided, tenders: plan.map((s) => ({ method: s.method, cents: s.amountCents })), loyalty: result.loyalty },
+    {
+      amountCents: componentsTotal(components),
+      reason: o.reason,
+      components,
+      items: itemsJson,
+      giftCardsVoided: voided,
+      tenders: plan.map((s) => ({ method: s.method, cents: s.amountCents })),
+      loyalty: result.loyalty,
+      receipt: receipt && receipt.status !== "none" ? { status: receipt.status, to: receipt.masked } : null,
+    },
     sale.shopId,
     tx,
   );
@@ -352,6 +363,7 @@ export async function recordProcessorRefund(paymentIntentId: string, amountRefun
     });
     await syncTipLedger(tx, { saleId: sale.id });
     const result = await settle(tx, sale, components, "refund", "Refunded in the Stripe dashboard", now);
+    await sendUpdatedReceipt(sale.id, { kind: "refund", refundedCents: recorded }, tx, now);
     await audit(SYSTEM, "sale.refund", "sale", sale.id, { source: "stripe_dashboard", eventId: ref.eventId, amountCents: recorded, components, giftCardsCut: cut, loyalty: result.loyalty }, sale.shopId, tx);
     return { recorded, reason: "recorded" as const, components, status: result.status };
   });

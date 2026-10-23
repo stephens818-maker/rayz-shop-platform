@@ -137,12 +137,22 @@ export const ReceiptBrandingSchema = z.object({
   showLogo: z.boolean().default(true),
   showAddress: z.boolean().default(true),
   showPhone: z.boolean().default(true),
+  /** The "Leave a review" button on the digital receipt (the shop's Google or Yelp page); no button without it. */
+  reviewUrl: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((u) => !u || /^https:\/\/[^\s/]+\.[^\s]+$/i.test(u), "Use a full https:// link to the review page")
+    .nullable()
+    .default(null),
+  /** Receipts are digital. A Print button on the staff receipt only where the shop turns it on. */
+  allowPrint: z.boolean().default(false),
 });
 export type ReceiptBranding = z.output<typeof ReceiptBrandingSchema>;
 
 export function receiptBranding(raw: unknown): ReceiptBranding {
   const r = ReceiptBrandingSchema.safeParse(raw && typeof raw === "object" ? raw : {});
-  return r.success ? { ...r.data, headline: r.data.headline || null, footer: r.data.footer || null } : ReceiptBrandingSchema.parse({});
+  return r.success ? { ...r.data, headline: r.data.headline || null, footer: r.data.footer || null, reviewUrl: r.data.reviewUrl || null } : ReceiptBrandingSchema.parse({});
 }
 
 export interface PayoutItem {
