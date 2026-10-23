@@ -5,8 +5,10 @@ import { db } from "@/db";
 import { appointmentItems, appointments, customers, shops, staff, waitlistEntries } from "@/db/schema";
 import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
-import { addDays, endOfLocalDay, formatDate, formatTime, startOfLocalDay, todayLocal } from "@/lib/time";
+import { addDays, endOfLocalDay, formatDate, formatTime, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
 import { reportsFor } from "@/domain/navigation";
+import { CATEGORY_LABEL, REASON_LABEL, STATUS_LABEL } from "@/domain/staff-time";
+import { listRequests, pendingCount, staffingFor } from "@/server/staff-time";
 import { can, canAny, guardPage, reportShopIds } from "@/server/auth/staff";
 import { stockLevels } from "@/server/inventory/stock";
 import { timesFor } from "@/server/service-times";
@@ -75,7 +77,25 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     ctx.currentShopId === null && !ownSales ? byShop(scope) : Promise.resolve([]),
     db.select({ name: shops.name }).from(shops).where(and(inArray(shops.id, shopIds), eq(shops.taxRatesVerified, false))),
   ]);
-  const times = await timesFor(upcoming.map((a) => a.id), now);
+  const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
+  const [times, staffing, waitingRequests, myDecisions] = await Promise.all([
+    timesFor(upcoming.map((a) => a.id), now),
+    staffingFor(shopIds, today, today, seesTeam ? null : [ctx.staff.id]),
+    can(ctx, "timeoff.approve") ? pendingCount(shopIds, false) : Promise.resolve(0),
+    can(ctx, "timeoff.request")
+      ? listRequests({ staffId: ctx.staff.id }, { statuses: ["approved", "denied"], limit: 20 }).then((rs) =>
+          rs.filter((r) => r.decidedAt && new Date(r.decidedAt).getTime() > now.getTime() - 7 * 86_400_000 && r.decidedVia !== "auto"),
+        )
+      : Promise.resolve([]),
+  ]);
+  const whosIn = shopIds
+    .map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "", rows: staffing.filter((r) => r.shopId === id) }))
+    .filter((s) => s.rows.length > 0);
+  const blockText = (r: (typeof staffing)[number]) =>
+    r.blocks
+      .filter((b) => b.category !== "time_off")
+      .map((b) => `${(CATEGORY_LABEL[b.category] ?? b.reason).toLowerCase()} ${minutesToLabel(b.startMin)}`)
+      .join(", ");
   const soon = new Date(now.getTime() + 30 * 60_000);
   const runsTimer = (a: { staffId: string; status: string; startsAt: Date }) =>
     (a.staffId === ctx.staff.id || can(ctx, "calendar.manage")) && (a.status === "checked_in" || a.status === "in_service" || a.startsAt <= soon);
@@ -99,6 +119,24 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         }
       />
       {sp.denied && <Notice tone="red">You don&apos;t have access to that page.</Notice>}
+      {waitingRequests > 0 && (
+        <Notice>
+          {waitingRequests} time off request{waitingRequests === 1 ? " is" : "s are"} waiting for a decision.{" "}
+          <Link className="underline" href="/admin/time-off">
+            Review time off
+          </Link>
+        </Notice>
+      )}
+      {myDecisions.map((r) => (
+        <Notice key={r.id} tone={r.status === "approved" ? "green" : "red"}>
+          Your {REASON_LABEL[r.reason].toLowerCase()} time off for {r.range} was {r.status}
+          {r.decidedBy ? ` by ${r.decidedBy}` : ""}
+          {r.decisionNote ? `: “${r.decisionNote}”` : "."}{" "}
+          <Link className="underline" href="/admin/my-time">
+            My time
+          </Link>
+        </Notice>
+      ))}
       {seesSettings && taxShops.length > 0 && (
         <Notice>
           Tax rates are unverified placeholders for {taxShops.map((s) => s.name).join(", ")}. Confirm them in{" "}
@@ -182,6 +220,39 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                   ))}
                 </ul>
               )}
+            </Card>
+          )}
+          {whosIn.length > 0 && (
+            <Card>
+              <CardHeader
+                title={seesTeam ? "Who's in today" : "My day"}
+                action={
+                  <Link className="text-xs underline" href={can(ctx, "report.staffing.view") ? "/admin/reports/staffing" : "/admin/my-time"}>
+                    {can(ctx, "report.staffing.view") ? "Report" : "My time"}
+                  </Link>
+                }
+              />
+              <div className="divide-y divide-zinc-100 text-sm">
+                {whosIn.map((s) => (
+                  <div key={s.id} className="px-4 py-2">
+                    {whosIn.length > 1 && <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">{s.name}</div>}
+                    <ul className="space-y-1">
+                      {s.rows.map((r) => (
+                        <li key={r.staffId} className="flex items-baseline justify-between gap-2">
+                          <span className="font-medium">{r.label}</span>
+                          <span className="text-right text-xs">
+                            <span className={r.status === "off" ? "font-semibold text-violet-700" : r.status === "partly_off" ? "text-violet-700" : r.status === "working" ? "text-emerald-700" : "text-zinc-500"}>
+                              {STATUS_LABEL[r.status]}
+                            </span>
+                            {r.pending && <span className="text-amber-700"> · off requested</span>}
+                            {r.blockedMin > 0 && <span className="text-zinc-500"> · {blockText(r)}</span>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
             </Card>
           )}
           <Card className="p-4 text-sm">
