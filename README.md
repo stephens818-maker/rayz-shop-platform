@@ -125,7 +125,7 @@ Everything below happens in the portal. Nothing in the code names a shop, a barb
 7. **Products and par levels:** copied from another shop, or pasted as a list.
 8. **Vendors:** who supplies the shop, with the shop's own account number at each.
 9. **Team and payroll:** existing barbers (a barber can work at several shops) with their days and hours here, and the pay calendar.
-10. **Login and phone line:** shop logins and what they can do, and the Twilio number.
+10. **Login, sign-in and phone line:** shop logins and what they can do, where staff can sign in from (see [Sign-in restrictions](#sign-in-restrictions)), and the Twilio number.
 11. **Branding:** accent color, logo and the "About this location" text.
 12. **Review**, then save. A shop on its own Stripe account gets a **Continue to Stripe onboarding** button.
 
@@ -146,6 +146,8 @@ The same step sets the **statement descriptor** (what clients see on their card 
 **Staff:**
 - To onboard someone, use **Setup → Staff & schedules → Add staff**. Then set their role and shops under **Permissions**, and their schedule per shop.
 - To offboard someone, open their profile and use **Offboard**, then type their name to confirm. They're signed out on every device at once and taken off online booking. Their schedules, pending time off and recurring blocks end. Their booked appointments stay put and are listed, so you can move each one or ask the client to rebook. The Brand Owner can't be offboarded, and nobody can offboard themselves.
+
+**Keep staff signing in at the shop** (Brand Owner or Brand Admin, `network.settings`): **Setup → Sign-in security** turns on a location's restriction and lists its allowed IP addresses and ranges, with **Use my current IP** while you're on the shop Wi-Fi. The location then refuses its staff and shop logins anywhere else: the POS, the calendar, the time clock and client records. For a shop whose internet address changes, approve its tablet or computer as a trusted device instead. Brand Admins can sign in from anywhere; give **Can access remotely** to anyone else who should. Every blocked try is listed on the same page and emailed to the brand. See [Sign-in restrictions](#sign-in-restrictions).
 
 **Services and add-ons:** use **Setup → Services** for the brand menu, per-shop prices, durations and add-ons.
 
@@ -962,7 +964,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 77 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 80 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -987,6 +989,31 @@ Existing staff were migrated automatically: brand admins became Brand Owner, sho
 <img alt="Role editor" src="docs/screenshots/permissions-role-editor.png" width="800" />
 
 <img alt="Person access editor" src="docs/screenshots/permissions-person.png" width="800" />
+
+<a id="sign-in-restrictions"></a>
+### Sign-in restrictions
+
+A location can keep its staff from signing in anywhere but the shop. **Setup → Sign-in security** (`/admin/sign-in-security`) lists every location. The same rule is on **Shop settings → Where staff can sign in** and in the Add Location wizard's **Login, sign-in and phone line** step. Setting a rule needs `network.settings`, which is brand-only and is held by the Brand Owner and Brand Admin.
+
+- **Per location:** an on/off switch and a list of **allowed IPs**, one per line or comma-separated. Each entry is a single address (`203.0.113.7`) or a CIDR range (`203.0.113.0/24`, IPv6 too). Ranges wider than IPv4 `/16` or IPv6 `/32` are refused. **Use my current IP** adds the address you're connecting from, as the server sees it. Saving warns you if the rule would lock you out of that location.
+- **What it needs:** the shop's network, an approved device, either one, or both. "Either" suits a shop whose address changes now and then.
+- **What it covers:** every staff and shop login with access to that location, and every request, not only sign-in. The middleware (`src/middleware.ts`, Node runtime) checks each `/admin` page, server action and download, so the POS, the calendar, the time clock, client records and reports all follow it. `getStaffContext` checks again for each shop a session may touch. Staff with no admin access are held to the shops they work at. Client booking and the mobile API are for clients, so they aren't affected.
+- **Several shops:** someone who can reach some of their shops from here keeps those and loses the rest for that request. A brand-wide manager who loses any shop is treated as scoped to the shops they can reach, so their brand-only permissions are off until they're back at an allowed place. Someone who can't reach any of their shops is refused. If they were signed in, they're signed out and sent to sign-in with **"Sign-in is only allowed from the shop."** Server actions and downloads get a 403 with the same message.
+- **Who's exempt:** the **Can access remotely** permission (`access.remote`). It's on for Brand Admin by default and off for every other role. Give it to a role, a role at one shop, or one person (for example a chosen manager) under **Permissions**. The Brand Owner is always exempt. The page lists who has it.
+- **Client IP:** read only from headers a trusted proxy wrote (`src/lib/client-ip.ts`, the only place that reads them). On Vercel that's `x-real-ip`, which Vercel's edge sets. Self-hosted, `TRUSTED_PROXY_HOPS` says how many proxies sit in front of the app, and the client is that many entries from the end of `x-forwarded-for`, so an address a client adds itself is ignored. With neither, the address is unknown and a location that needs its network refuses the request. The time clock's network check uses the same reading.
+
+**Trusted devices**, for shops with dynamic IPs, at locations set to need a device, "either" or "both":
+
+- A blocked sign-in at such a location offers **Ask for approval**, with a name for the device ("Front desk iPad"). A manager of that shop (`devices.approve`, on for Shop and Regional Managers and Brand Admin) or the brand approves or declines it on **Sign-in security**. Nobody approves their own request. A manager signed in on the shop's own computer can also approve **This device** directly.
+- An approved browser holds a signed cookie (`rayz_trusted_device`, `httpOnly`, 400 days). The database keeps only its SHA-256 hash, one row per shop, with who asked, from where, who approved it and when it was last used. **Revoke** stops it on its next request. The request link after a block is a signed 15-minute ticket, so nobody can ask on someone else's behalf.
+
+**Blocked sign-ins are logged.** Each blocked sign-in or signed-in request is a `network.blocked` audit entry per location. It records who, the IP, the time, the location, what was missing, the page, the device and the browser. A sign-in that went ahead without some shops is `network.limited`. A page and its prefetches within a minute are one entry. **Sign-in security** lists them for the shops you manage, and so does the audit log. **Alerts** (on by default) email the Brand Owner and brand-wide holders of `network.settings`, at most once an hour per person and location. Changes to a rule (`network.rule`, with before and after), the alert setting, and every device request, approval, decline and revoke are audited too.
+
+Migration `core_0036_network_access` adds the rules (off for every shop), the devices table and the three permissions. Tests: `tests/network-access.test.ts` covers the rules, ranges and client IP. `tests/db/network-access.test.ts` covers the middleware, sessions, sign-in, partial access, exemptions, devices, logging and alerts.
+
+<img alt="Sign-in security in the brand portal" src="docs/screenshots/sign-in-security.png" width="800" />
+
+<img alt="A blocked sign-in on the login page" src="docs/screenshots/sign-in-blocked.png" width="480" />
 
 ### Bulk catalog upload
 

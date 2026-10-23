@@ -18,12 +18,13 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Payroll (`src/domain/payroll/**`, `src/server/payroll/**`, `src/app/admin/payroll/**`) and service times (`src/domain/service-times.ts`, `src/server/service-times*.ts`) | core |
 | Time clock and timesheets (`src/domain/time-clock.ts`, `src/server/time-clock*.ts`, `src/server/labor-report.ts`, `src/app/admin/clock/**`, `src/app/admin/timesheets/**`, `src/app/admin/time-clock/**`) | core |
 | Tip payouts (`src/domain/tips.ts`, `src/server/tips/**`, `src/app/admin/tips/**`, `src/app/admin/my-tips/**`), including employees' Stripe Express accounts | core |
+| Staff sign-in restrictions (`src/domain/network-access.ts`, `src/server/auth/network.ts`, `src/server/sign-in-security.ts`, `src/middleware.ts`, `src/lib/client-ip.ts`, `src/app/admin/sign-in-security/**`) | core |
 
 Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking` and `core_0035_scrub_sensitive`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive` and `core_0036_network_access`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -217,6 +218,15 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
 - **Notification kinds:** `tip_payout`, to the employee (email, or a text if they have no email) when a payout is sent or fails, and to the shop's email when one fails. `tip_banking`, to the employee: Stripe needs more information (email, or a text without one), and security notices when the payout destination or method changes (email and text).
 - **Cron:** `/api/cron/notifications` runs `tipPayoutCron`, which builds each live shop's daily or weekly draft once it's due. The response gains `tipPayouts`.
 
+### Sign-in restrictions (core)
+
+- **Code:** `src/domain/network-access.ts` (pure: rules, IP and CIDR checks, the verdict, `BLOCK_MESSAGE`), `src/lib/client-ip.ts` (`clientIp(headers)`, the only reader of `x-real-ip`, `x-vercel-forwarded-for` and `x-forwarded-for`; a test fails if any other file in `src` names `x-forwarded-for` or `x-real-ip`), `src/server/auth/network.ts` (devices, `evaluateNetwork`, `recordBlocked`, `gateRequest`) and `src/server/sign-in-security.ts` (settings, devices, the portal's lists).
+- **Schema** (`drizzle/core_0036_network_access.sql`): `shops.network_access` (`{enabled, require: ip|device|either|both, allowedIps}`) and `brand_settings.network_access` (`{alertOnBlock}`), both jsonb defaulting to `{}`, meaning off. `trusted_devices`: one row per browser and shop, with only the SHA-256 of the cookie's secret (`token_hash`), status `pending|approved|declined|revoked`, who asked, who decided, and last seen.
+- **Enforcement:** `src/middleware.ts` now runs on the Node runtime and calls `gateRequest` for every `/admin` request with a session cookie. `getStaffContext` calls `evaluateNetwork` and drops the shops a request can't reach (`withoutShops` in `src/server/auth/access.ts`), returning null when none are left. Staff sign-in checks after the password. Exempt: the Brand Owner, and `access.remote` at the shop.
+- **Permissions:** `access.remote` and `devices.approve` (Staff group) and `network.settings` (brand-only). The migration gives Brand Admin all three and Regional and Shop Managers `devices.approve`. There are 80 feature permissions now.
+- **Audit actions:** `network.blocked` and `network.limited` (entity `staff`, one per shop, details `ip`, `via`, `shop`, `missing`, `require`, `path`, `device`, `userAgent`), `network.rule` (entity `shop`), `network.settings` (entity `brand_settings`, the alert), and `device.request`, `device.approve`, `device.decline`, `device.revoke`, `device.trust`. Notification kind `access_alert` (email).
+- **If the app ever adds staff endpoints** to `/api/v1`, please call `evaluateNetwork(access, { ip: clientIp(req.headers), deviceShopIds })` and refuse or narrow the same way, with `BLOCK_MESSAGE`. Customer endpoints aren't affected and nothing in `/api/v1` changed.
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
@@ -267,6 +277,15 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (sign-in restrictions)
+
+- Per-location sign-in restrictions: allowed IPs and CIDR ranges, trusted devices, or either or both, set under **Setup → Sign-in security**, Shop settings and the Add Location wizard. Off for every shop until the brand turns one on.
+- Enforced on every `/admin` request in the middleware (now `runtime: "nodejs"`), in `getStaffContext` and at sign-in. Blocked sessions are signed out with "Sign-in is only allowed from the shop."
+- The client IP comes only from `clientIp()`: `x-real-ip` on Vercel, `TRUSTED_PROXY_HOPS` self-hosted, otherwise unknown. The time clock's network check now uses it too; before, it read the first `x-forwarded-for` entry, which a client can set off Vercel.
+- Migration `core_0036_network_access`; permissions `access.remote`, `devices.approve`, `network.settings`; audit actions `network.*` and `device.*`; notification kind `access_alert`.
+- Tests: `tests/network-access.test.ts` and `tests/db/network-access.test.ts`. `tests/db/session.ts` sets `TRUSTED_PROXY_HOPS=1` and keeps the device cookies.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
 
 ### 2026-10-23: core (processor-hosted data)
 

@@ -113,7 +113,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Register the numbers for A2P 10DLC (brand and campaign) before texting clients; carriers filter unregistered texts.
 6. Set up the time clock, per shop, under **Payroll → Time clock setup**:
    - Enter each shop's latitude and longitude (the seeded ones are approximate, city-level) and its public IP address. While on the shop Wi-Fi, the page shows the address you're connecting from.
-   - The network check reads the first entry of `x-forwarded-for`, which Vercel sets to the client's address. Behind any other proxy, make sure it sets that header and that clients can't spoof it, or use the device or GPS check instead.
+   - The network check reads the client's address the same way sign-in restrictions do (step 9): on Vercel from `x-real-ip`. Self-hosted, it needs `TRUSTED_PROXY_HOPS`. Without it the address is unknown and network punches are refused, so use the device or GPS check instead.
    - Register each front-desk iPad from **Front-desk clock** on the iPad itself. The seeded devices can't be used.
    - Have each person set their PIN on **Time clock**. The seed's demo PIN only exists in seeded data.
    - The notifications cron (every 5 minutes) also flags forgotten clock-outs and emails managers about barbers not clocked in for their first client. Once a night around 3 AM shop time it checks full-time and part-time crossings. Nothing else needs scheduling. On the Hobby plan's daily cron, forgotten clock-outs are flagged once a day, the not-clocked-in email mostly won't arrive in time (Today still shows it), and the FT check only runs if that daily run lands between 3:00 and 3:15 AM. Emails about clients booked over a break or clock-out go right after the punch either way.
@@ -131,8 +131,15 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - **Logs:** the server scrubs every `console` call (`src/instrumentation.ts`), so Vercel's logs and log drains get scrubbed text. Don't log request bodies elsewhere.
    - **Error tracking or analytics:** none is installed. If one is added, pass every event through `scrub()` from `src/lib/sensitive.ts` in its `beforeSend`, and turn off its request-body, form-input and session-replay capture on checkout.
    - **Backups:** the migration scrubs existing rows once and records a `privacy.scrub_existing` audit entry if any changed. Neon's point-in-time history from before that keeps the old rows until its restore window passes.
-9. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-10. Add the custom domain under **Settings → Domains**.
+9. Limit where staff sign in (migration `core_0036_network_access`; see [Sign-in restrictions](README.md#sign-in-restrictions)):
+   - The migration leaves every shop's restriction off and gives Brand Admin **Can access remotely**. Nothing changes until someone turns a location on.
+   - For each shop, sign in on the shop Wi-Fi, open **Setup → Sign-in security**, press **Use my current IP**, and check that the address matches the shop's internet service. Ask the provider whether the address is static. If it isn't, choose **From the shop's network or on an approved device** and approve the shop's devices from **This device** on each one.
+   - Give **Can access remotely** to the managers who work from home, under **Permissions**, before turning a shop on.
+   - The client's address comes from `x-real-ip`, which Vercel's edge sets and clients can't override. Nothing needs setting on Vercel. Self-hosted, set `TRUSTED_PROXY_HOPS` to the number of proxies in front of the app (1 for a single nginx or load balancer that appends to `x-forwarded-for`). Without it the address is unknown and restricted shops refuse every request.
+   - The middleware runs on the Node runtime (`runtime: "nodejs"` in `src/middleware.ts`) because it reads the database. Next.js 15.5 supports this on Vercel with no setting. It only looks up rules for signed-in `/admin` requests, and stops after one indexed query while no shop has a rule on.
+   - Blocked-sign-in alerts go out by email through the notifications cron, so email must be configured.
+10. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+11. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

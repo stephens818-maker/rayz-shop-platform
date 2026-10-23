@@ -340,6 +340,21 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [ ] Bare digit runs that aren't card numbers (a 9-digit SSN or routing number without dashes, a bank account number) can't be detected in free text. The control is that nobody asks for them; the scrubbing is a backstop.
 - [ ] No error tracker or analytics is installed. If one is added, its `beforeSend` must run events through `scrub()` (DEPLOY.md).
 
+## 17. Sign-in restrictions per location (network and devices)
+
+- [x] Each location has an allowed-IP list of single IPs and CIDR ranges (IPv4 and IPv6), with **Use my current IP** and an on/off switch. It's on **Setup → Sign-in security**, Shop settings and the Add Location wizard. Ranges wider than /16 (IPv4) or /32 (IPv6) are refused, and the editor warns before you lock yourself out.
+- [x] With the restriction on, that location's staff and shop logins only sign in and stay signed in from an allowed IP. That covers the POS, calendar, time clock, client data and every other admin page, action and download. It's enforced server-side in the middleware on every request, again in `getStaffContext`, and at sign-in.
+- [x] Client IP only from a trusted proxy: `x-real-ip` on Vercel, `TRUSTED_PROXY_HOPS` entries from the end of `x-forwarded-for` self-hosted, otherwise unknown and refused. The time clock's network check uses the same reading.
+- [x] **Can access remotely** (`access.remote`) exempts roles, roles at one shop, or people. By default only Brand Admin has it, and the Brand Owner is always exempt.
+- [x] Optional trusted devices: a blocked sign-in asks for approval, and a manager (`devices.approve`) or the brand approves it, never their own request. The browser gets a signed, `httpOnly` 400-day cookie, of which the database keeps only a hash. Revoking it takes effect on the next request. Each location requires an allowed IP, an approved device, either or both.
+- [x] Every blocked attempt is in the audit log (`network.blocked`, with who, IP, time, location, what was missing and the page) and on **Sign-in security**. An optional email alert goes to the brand, on by default, at most hourly per person and location.
+- [x] The block message: "Sign-in is only allowed from the shop." It appears on sign-in, after a blocked session is signed out, and in the 403 from actions and downloads.
+- [x] Someone with several shops keeps the ones they can reach. A brand-wide manager away from one restricted shop loses brand-only permissions until they're back.
+- [x] Tests: `tests/network-access.test.ts` and `tests/db/network-access.test.ts`. README: [Sign-in restrictions](README.md#sign-in-restrictions).
+- [ ] Each shop's real public IP and whether its provider keeps it static. Every shop starts with the restriction off.
+- [ ] Who besides Brand Admin gets **Can access remotely**, for example managers who do schedules from home.
+- [ ] The mobile app has no staff sign-in, so there's nothing to restrict there yet. NOTES-SYNC says how to apply it if staff endpoints are added.
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.
