@@ -16,12 +16,13 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Card fee config and `computeCardFee` | core (mobile reads only) |
 | I10 Stripe Connect: platform account, connected account per shop, destination charges, onboarding, per-shop P&L, per-location banking (payments mode, descriptor, Terminal Locations and readers, payouts) | core, except the platform Customer and saved-card side, which is mobile's |
 | Payroll (`src/domain/payroll/**`, `src/server/payroll/**`, `src/app/admin/payroll/**`) and service times (`src/domain/service-times.ts`, `src/server/service-times*.ts`) | core |
+| Time clock and timesheets (`src/domain/time-clock.ts`, `src/server/time-clock*.ts`, `src/server/labor-report.ts`, `src/app/admin/clock/**`, `src/app/admin/timesheets/**`, `src/app/admin/time-clock/**`) | core |
 
 Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs` and `core_0029_location_banking`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking` and `core_0030_time_clock`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -155,6 +156,34 @@ Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook pro
 - **Routes:** `/api/twilio/**` (signed Twilio webhooks) and the public rebook page `/r/[token]`. Nothing under `/api/v1` changed.
 - **Availability:** a call-in is a time off block, so `/api/v1` availability already leaves the barber out.
 
+### Time clock (core)
+
+Everyone is paid hourly and punches in and out. This reverses the earlier "no clock-in" decision.
+
+- **Code:**
+  - `src/domain/time-clock.ts` (pure): pairing, breaks, the evidence check, schedule flags, the FT/PT rolling average, the export layout and DST wall times.
+  - `src/server/time-clock.ts`: punches, the PIN, devices, edits, timesheets, approvals, locks, alerts and the cron pass.
+  - `src/server/time-clock-export.ts`: the payroll CSVs and labor cost.
+  - `src/server/labor-report.ts`: the Labor and Attendance reports.
+  - `src/server/payroll/groups.ts`: pay groups and locks, split out of `payroll/run.ts` so the cron doesn't import the reports module.
+- **Schema** (`drizzle/core_0030_time_clock.sql`):
+  - `time_punches`: one row per punch (`in`, `break_start`, `break_end`, `out`). Each records its shop, `source` (self, kiosk or manager), `method` (device, gps, network, manager or none), lat/lng/accuracy and distance, IP, device, flags, minutes off the schedule, and void and edit stamps.
+  - `time_punch_photos`, and `time_punch_edits`, which is append-only: a trigger refuses updates and deletes.
+  - `clock_devices`: front-desk devices, holding only the SHA-256 of their token.
+  - `timesheets`: per person, shop and period, with employee and manager approval.
+  - `timesheet_locks` and `ft_status_changes`.
+  - `shops` gains `latitude`, `longitude` and `time_clock` (jsonb: methods, radius, networks, grace, photo). `brand_settings` gains `time_clock` (jsonb rules). `staff` gains `clock_pin_hash` (bcrypt), `clock_pin_failures` and `clock_pin_locked_until`. `time_entries` gains `punch_in_id`.
+- **Hours come from punches.** Each shift's paid time is re-derived into `time_entries` (source `clock`, linked by `punch_in_id`) on every punch or edit, so payroll, OT, tips and the Payroll Report need no change. Hand-entered hours still work.
+- **If the app adds clock-in:** call `punch({ staffId, shopId, type, source: "self", evidence: { deviceShopId: null, ip, gps }, deviceId: null, photo, confirmTimeOff, actor })`, and `clockState(staffId)` for what to show.
+  - `punch` returns `{ kind: "confirm", message }` during time off; ask the user, then call again with `confirmTimeOff: true`. Otherwise it returns `{ kind: "done", … }`.
+  - A refused punch throws `AppError("bad_request")` with the reason, such as outside the geofence, not on the shop network or in a locked period. A shop that isn't theirs throws `forbidden`.
+  - Please don't insert into `time_punches` directly.
+  - Gate it on `timeclock.punch`. `punch` itself checks that the shop is one of theirs: a shop they're scheduled at, or one their access covers.
+- **Permissions:** `timeclock.punch`, `timeclock.kiosk`, `timesheet.own`, `timesheet.edit`, `timesheet.approve`, `payroll.rates` and `payroll.export`, plus the reports `labor` and `attendance`. There are 74 feature permissions now.
+- **Notification kinds:** `clock_forgot_out` and `ft_status_change`, both emails to the shop's managers.
+- **Cron:** `/api/cron/notifications` now runs `timeClockCron`. It flags forgotten clock-outs on every run, and runs the FT/PT check once a night around 3 AM local. The response gains `timeClock`.
+- **Employee Numbers** go into the CSV only, from `payroll_profiles`. The download's audit row holds the period, shops and row count, never the numbers. Nothing calls iSolved.
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
@@ -188,14 +217,37 @@ If the mobile side means a specific registry from the plan, say which items it s
 - (core → mobile) Locations now have a lifecycle in `shops.status`: `setup` (hidden from clients), `live`, `closed` (temporary, with `closed_until` and `closed_note`) and `archived` (`active = false`, which a database check enforces). The pure rules are in `src/domain/location-lifecycle.ts`: `listedPublicly`, `takesOnlineBookings`, `closedOn` and `operational`. PR #8 adds `shops.launch_at` and `booking_mode` as a cutover gate from Squire. That's a separate question (which system takes the bookings), so they should be combined rather than replace each other. Please have `/api/v1` list and book only shops where both the cutover gate and `takesOnlineBookings` allow it. Archived shops should never appear. Temporarily closed shops can be listed with `closed_note`.
 - (core → mobile) Today's open-chair and rebook texts read `customers.sms_marketing_opt_in` from PR #8. They check for the column at runtime and send nothing until it exists. Core doesn't add the column; the consent UI and its capture are yours.
 
+- (core → mobile) If the app shows hours or adds a clock-in, please read and write through `src/server/time-clock.ts` (see "Time clock"). Never return `clock_pin_hash`, punch photos or other people's punches from `/api/v1`.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
 - C18 review login and the wallet fee: flags are off until Charles decides.
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 - Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
+- Time clock, pending the owner or the accountant:
+  - Iowa and Illinois overtime rules. It's federal weekly-over-40 for now, with optional daily OT as a setting.
+  - The exact iSolved import template: column names and earning codes. The layout is configurable.
+  - Meal break rules: 30 minutes or more is unpaid by default, and the auto-deduction is off.
+  - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (time clock and hours)
+
+- **Punching:** a phone clock (`/admin/clock`) with the shop's device, GPS or network check, and a front-desk clock (`/admin/clock/kiosk`) on a registered device with personal PINs. Breaks, an optional photo, and the method and location recorded on every punch.
+- **Rules:** late, early and stayed-late against the schedule with grace minutes; a warning during time off; forgotten clock-outs flagged with an email and a Today alert; unpaid breaks from 30 minutes; overtime via the existing payroll rules; overnight and DST handled.
+- **Timesheets** per person, shop and period:
+  - Manager edits with a reason, written to the edit log and the audit log.
+  - Employee then manager approval, then a period lock.
+  - Scheduled vs actual hours.
+  - FT/PT rolling averages over 4, 8, 12 or 13 weeks, with crossing alerts.
+- **Payroll export:** a generic CSV and an iSolved-friendly CSV, with configurable columns. **Reports:** Labor hours and cost (rates gated by `payroll.rates`) and Attendance.
+- **Fixes found while testing:**
+  - An overnight shift over a week boundary lost its after-midnight hours from that week.
+  - A shift still in progress counted as a missed punch.
+- Migration `core_0030_time_clock`. Tests: `tests/time-clock.test.ts` and `tests/db/time-clock.test.ts`. The tenant test covers the new page.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
 
 ### 2026-10-23: core (per-location banking)
 

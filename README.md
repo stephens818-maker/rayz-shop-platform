@@ -74,6 +74,7 @@ Handy demo data:
 9. As `owner@rayz.test`, open **Setup → Shop settings** and use **Open a new location**. Location setup opens for the new shop. Under **Card payments and payouts**, click **Set up card payments with Stripe**. Without keys, a stand-in for Stripe's onboarding opens. Submit it without the bank account to see "Needs attention", then add the bank account. Under **Owners**, add a franchisee and move two shops to it. Then open **Reports → Shop P&L by Stripe account**.
 10. Sign in as `makenna@rayz.test` on a phone (or a narrow window) and open **My time**. Tap **Take lunch now**, block a break, or add a recurring lunch, then request a day off. Sign in as `michelle@rayz.test` and open **Time off** to approve or deny it. If it covers booked appointments, move one to another barber or ask the client to reschedule. As `manager.moline@rayz.test`, Mackenzie's pending day lists her bookings. **Calendar** shows who's off today, and **Reports → Who's working, off and blocked** has the totals.
 11. Set `NOTIFICATIONS_SMS_PROVIDER=simulator` and `NOTIFICATIONS_VOICE_PROVIDER=simulator` in `.env` and restart. As `michelle@rayz.test`, open **Call-ins** and mark Makenna sick for a day she has bookings. On the next screen, keep the suggested options (or **Apply to all**) and send. As `owner@rayz.test`, open **Notifications → Call and text simulator**: reply "1" as one of the clients, open a rebook link and pick a new time, answer an automated call and press 1, or call the shop and let it ring out. Back on the call-in, each appointment shows how it ended; questions are in **Inbox**, and **Reports → Call-ins and client outreach** has the totals.
+12. Sign in as `michelle@rayz.test`, open **Front-desk clock** and click **Register this device** (Coralville). Tap **Makenna**, type the demo PIN `2468` and **Clock in**. Sign in as `makenna@rayz.test` on a phone, open **Time clock** and allow location: Coralville takes its registered device or GPS within 150 m of the shop. Take a break, then open **My timesheet**. Back as Michelle, open **Timesheets → Makenna**, edit a punch with a reason and see it in the edit history. As `owner@rayz.test`, open **Time clock setup**, **Reports → Labor hours and cost** and **Reports → Attendance**. Today lists the seeded forgotten clock-out at Utica.
 
 ### Other commands
 
@@ -93,6 +94,8 @@ pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + see
                    # audit search, or online booking; the manager and the barber see them; renames carry; archived can't be picked
                    # call-ins (tests/db/call-ins.test.ts): affected appointments, reassign vs rebook, channels and permissions,
                    # link security and expiry, "1"/"2" replies, STOP/START/9, the retry then flag, missed-call texts, the inbox, the report
+                   # time clock (tests/db/time-clock.test.ts): punches and breaks, shop checks, the PIN lockout, edits and the audit log,
+                   # approvals and the period lock, export totals, forgotten clock-outs, FT crossings, page access, rate gating
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
@@ -148,6 +151,12 @@ The same step sets the **statement descriptor** (what clients see on their card 
 - **Setup → Client messages**: the wording of confirmations, reminders, cancellations and Today's texts. Each message uses merge fields like `{first_name}`, `{barber}`, `{when}` and `{book_link}`, and shows a live preview and its character count. Reset puts the default back.
 - **Setup → Block reasons**: the reasons for blocks and time off. **Setup → Booking times** sets slot grids and durations.
 
+**Time clock:** everyone is paid hourly and punches in and out, with breaks.
+- **Payroll → Time clock setup**, brand rules (`payroll.run`): which breaks are unpaid (30 minutes or more by default), an optional automatic meal deduction, grace minutes for late and early, when a missing clock-out is flagged, and the iSolved column layout. Overtime (over 40 h a week, optional daily) is set in **Payroll → Setup**.
+- The same page, per shop (`settings.shop`): how a phone punch proves it's at the shop. Choose any of a registered device, GPS within a radius of the shop's latitude and longitude, or the shop's network (its public IP addresses or ranges). You can also make a photo optional or required, and revoke front-desk devices. A shop with none ticked takes any punch from its team, and every punch records how it was made either way.
+- **Front-desk clock:** register the shop's iPad once from **Front-desk clock** while signed in as a manager. Staff then tap their name and type their own PIN, which they set on **Time clock**.
+- **Timesheets** (`timesheet.edit`, `timesheet.approve`): fix punches with a reason, then each person signs off and a manager approves. **Lock the period** once it has ended and everyone is approved. The **Payroll export** card downloads the CSVs (`payroll.export`), and nothing is sent to iSolved.
+
 **Morning digest:** **Setup → Morning digest** sets the send time, who gets it (by role, plus always or never per person), and which sections go in. The page shows a preview of your own copy, and **Email me a test** sends it to you now.
 
 ---
@@ -184,6 +193,8 @@ The same step sets the **statement descriptor** (what clients see on their card 
 | Unconfirmed tax rates, setup checklist, shop not taking cards | Link |
 | Sales against the same day last week, by shop | Link |
 | Failed messages in the last 2 days | Retry |
+| Forgotten clock-outs (urgent; needs `timesheet.edit`) | Link to the timesheet |
+| Someone crossed the 32-hour full-time line (needs `timesheet.approve` or `payroll.run`) | Link to Timesheets |
 
 - Marketing texts (open chair, rebook) follow these rules:
   - They go only to clients who agreed to marketing texts and haven't replied STOP.
@@ -457,13 +468,79 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
 - **Pay groups:** one per shop, each with its own calendar. The main shops are on period 23 = 10/18–10/31 (check Fri 11/6). Dubuque's period 01 was 10/4–10/17 (check 10/23).
 - **Reconciliation gate:** approve-and-lock is blocked while any total is a cent off the sum of its rows, or off the export's column sums, and the mismatch is shown on screen. Anomalies (owner rows, typed values, missing Employee Numbers, training hours while Q11 is open) are listed but never block.
 - **iSolved files:** after approve-and-lock, one xlsx per shop, in exactly the workbook tab's columns, headers, earning codes and formatting (cell types, number formats, fonts, fills). OT goes out as hours only; iSolved applies the rate. Values are unrounded unless the 2-decimal half-up setting is turned on (off, pending Charles). Charles uploads them by hand through iSolved's Timecard Import. There's no iSolved API.
-- **Payroll → Hours** takes time entries (worked, training, PTO) by hand or from a shift CSV. **Payroll → Setup** holds the settings, pay groups and calendars, iSolved profiles (Employee Number, iSolved name, Key as text, row order) and rates.
+- **Payroll → Hours** takes time entries (worked, training, PTO) by hand or from a shift CSV. Worked hours from the [time clock](#time-clock-and-timesheets) land here on their own, with source `clock`; hours entered by hand still count alongside them. **Payroll → Setup** holds the settings, pay groups and calendars, iSolved profiles (Employee Number, iSolved name, Key as text, row order) and rates.
 - Permissions: `payroll.run` (prepare, enter hours, download) and `payroll.approve` (lock). Both are brand-only; Brand Owner and Brand Admin have them.
 - Seeded:
-  - 8 weeks of clocked hours from everyone's schedules. Barbers who work at several shops produce cross-shop OT.
+  - 8 weeks of clock punches from everyone's schedules, which derive the clocked hours. Barbers who work at several shops produce cross-shop OT.
   - Synthetic Employee Numbers and an owner row at $0.
   - Training, a PTO day and a typed NetComm override. Sign in as `owner@rayz.test` and open **Payroll → Payroll report**.
 - Against the real workbook (kept outside the repo): `npx tsx scripts/payroll-golden.ts <workbook.xlsx> [--totals] [--write <dir outside the repo>]`. It prints only cell addresses and counts unless `--totals` is given.
+
+### Time clock and timesheets
+
+Everyone is paid hourly. This reverses the earlier "no clock-in" decision.
+
+- **Punching:** clock in, start a break, end a break, clock out.
+  - **On a phone:** **Time clock** (`/admin/clock`, `timeclock.punch`). Multi-shop barbers pick the shop they're at today from their own shops.
+  - **At the front desk:** **Front-desk clock** (`/admin/clock/kiosk`, `timeclock.kiosk`) on a registered device. Staff tap their name and type a personal 4–6 digit PIN. The PIN is stored as a bcrypt hash, and five wrong tries lock it for 5 minutes.
+  - Every punch is tied to its shop and records how it was made (device, GPS, network or manager), its distance from the shop, the IP address, the device and an optional photo.
+- **Proving you're at the shop** is set per shop, as any one of:
+  - the shop's registered device (an httpOnly cookie holding a random token that's stored only as a hash);
+  - GPS within a radius of the shop's coordinates, which fails when the phone's accuracy is worse than 250 m;
+  - the shop's public IP addresses or CIDR ranges, which is how "on the shop Wi-Fi" shows up to a server.
+
+  A refused punch says why and saves nothing. A shop with no methods ticked accepts any punch from its team.
+- **Rules:**
+  - Late, early-in, early-out and stayed-late flags are set against that day's schedule at that shop, outside the grace minutes (brand default 5, and each shop can override it).
+  - Clocking in during approved time off asks first, then flags the punch.
+  - A missing clock-out is flagged a set time after the scheduled end, or after 12 hours with no schedule. The flag goes on Today for managers with `timesheet.edit`, and the shop's managers get an email once. Someone still on the clock isn't counted as a missed punch until then.
+  - Breaks of 30 minutes or more are unpaid and shorter ones are paid rest breaks. The threshold can be changed, and so can an optional automatic meal deduction on long shifts. Paid hours become time entries, so overtime, payroll, tips and the Payroll Report all use the clock.
+  - Overtime is the existing payroll rule: over 40 hours in a Sun–Sat week across shops of the same FEIN (federal FLSA), with optional daily OT. Iowa and Illinois rules are to be confirmed, so both are settings.
+  - Overnight shifts split their hours at local midnight into the right day, week and period. DST nights count real elapsed time, and the punch editor asks which 1:30 on the fall-back night.
+- **Timesheets** (`/admin/timesheets`):
+  - Per person and shop for each bi-weekly period ending Saturdays (anchored 2026-10-03), shown day by day and week by week.
+  - Scheduled against actual hours. Mid-period, it compares against the schedule through today.
+  - Regular, overtime and break hours (paid and unpaid), with each shift's flags, how it was punched and its photos.
+  - Barbers see only their own (`timesheet.own`). Managers see their shops.
+- **Edits** (`timesheet.edit`): edit, add or void a punch. Every edit needs a reason. Each one is written to an append-only edit log (the database refuses updates and deletes) and to the audit log, with before and after. It clears that timesheet's approvals and re-derives the hours. Nobody but the owner edits their own punches.
+- **Approvals and the lock:**
+  - The employee signs off, then a manager approves (`timesheet.approve`, never their own). A manager who approves without the employee's sign-off must leave a note, and missed punches block both steps.
+  - **Lock the period** works only after the period has ended and every timesheet with hours is approved.
+  - A locked period takes no punches, edits, added hours or sign-offs. Payroll's approve-and-lock also locks it, and reopening needs the owner or `payroll.run` plus a reason.
+- **Full time and part time:** full time means averaging over 32 hours a week; at or under is part time.
+  - Timesheets shows each person's rolling average over 4, 8, 12 or 13 full weeks, with the status and last week's hours.
+  - The threshold and the look-back the alert uses are in **Payroll → Setup**.
+  - A nightly check (3 AM, from the notifications cron) records each crossing once, emails the managers and shows it on Today.
+- **Payroll export** (`payroll.export`):
+  - Per period, per employee and shop: regular, OT, total and break hours (and unpaid break), PTO, training, card and cash tips, and service and product sales.
+  - Two CSVs: a generic one with every field and a totals row, and an iSolved-friendly layout. The iSolved columns are a "Header = field" list under Time clock setup, since the template still needs confirming.
+  - Employee Numbers come from the iSolved profiles. Every download is audited without the numbers. Nothing connects to iSolved.
+- **Reports:**
+  - **Labor hours and cost** gives hours, OT, sales per labor hour, labor cost (hourly rate × hours, OT at the multiplier) and labor % of sales, per shop, per barber or both. Rates and cost need `payroll.rates`; without it the report shows hours only.
+  - **Attendance** covers late and early-out counts and minutes, early-ins, missed punches, forgotten clock-outs, and scheduled days with no punch and no time off.
+  - Both work for one, several or all shops and barbers.
+- **Permissions**, à la carte:
+  - `timeclock.punch`: everyone.
+  - `timeclock.kiosk`: front desk and managers.
+  - `timesheet.own`: everyone.
+  - `timesheet.edit` and `timesheet.approve`: managers.
+  - `payroll.rates` and `payroll.export`: Brand Owner and Brand Admin until granted.
+- **Seeded:**
+  - Eight weeks of punches from the schedules, with meal and rest breaks, some late and early, and one forgotten clock-out (Lindsay at Utica).
+  - Coralville checks device or GPS (150 m) with an optional photo. Every other shop takes any punch.
+  - One front-desk device per shop. Its token is unusable, so register a real one from the browser.
+  - Every person's PIN is `2468` (or `SEED_CLOCK_PIN`).
+  - Shop coordinates are approximate, city-level, and need confirming.
+- **Tests:**
+  - `tests/time-clock.test.ts` (unit): punch pairing and every pairing problem, breaks paid and unpaid, the meal deduction, overnight and both DST nights, the geofence and network checks, the schedule flags, overtime math, the rolling 32-hour FT/PT calculation, and the export layout and totals.
+  - `tests/db/time-clock.test.ts`:
+    - Punching: breaks, each shop's check, time off and late flags, and a shift over a period boundary.
+    - The front-desk clock: the PIN lockout and the device.
+    - Edits: the reason, the edit and audit logs, the append-only edit log, cleared approvals and no self-edits.
+    - Approvals and the period lock.
+    - Export: totals, routes and permissions.
+    - Alerts: forgotten clock-outs and FT crossings.
+    - Page access and rate gating.
 
 ### Service times
 
@@ -745,7 +822,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 67 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 74 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.

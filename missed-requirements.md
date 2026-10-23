@@ -233,6 +233,39 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [ ] Collecting a payment on a real reader (`processPaymentIntent`) is simulated. Registering readers and Terminal Locations calls Stripe when keys are set.
 - [ ] Embedded Connect onboarding isn't used. Stripe-hosted Account Links are, which need no client-side Stripe.js.
 
+## 14. Time clock and hours tracking
+
+The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
+
+- [x] Clock in and out and breaks, from a phone (`/admin/clock`) or the shop's front-desk device with a personal PIN (`/admin/clock/kiosk`). Every punch is tied to its shop; multi-shop barbers pick the shop they're at.
+- [x] Anti-buddy-punching per shop: a registered device, GPS within a geofence, or the shop's network (IP or CIDR). There's an optional or required photo. The method, location, distance, IP and device are recorded on every punch.
+- [x] Rules and alerts:
+  - forgotten clock-outs are flagged, emailed to managers and shown on Today;
+  - clocking in during time off gives a warning;
+  - late, early and stayed-late are flagged against the schedule, with configurable grace minutes;
+  - overtime is weekly over 40 (FLSA), and configurable;
+  - unpaid meal breaks are configurable.
+- [x] Timesheets per day, week and pay period (bi-weekly, ending Saturdays, anchored 2026-10-03), showing scheduled against actual hours:
+  - manager edits need a reason and are logged with before and after;
+  - the employee signs off, then a manager approves;
+  - the period then locks.
+- [x] Full time and part time: rolling average weekly hours over 4, 8, 12 or 13 weeks against the 32-hour line, with alerts on crossings.
+- [x] Payroll export per period, employee and shop: regular, OT and break hours, card and cash tips, and service and product sales. It comes as a generic CSV and an iSolved-friendly CSV, with configurable columns. Nothing connects to iSolved.
+- [x] Reports:
+  - **Labor hours and cost**: hours, cost, labor % of sales and sales per labor hour, with rates behind `payroll.rates`;
+  - **Attendance**: late, early-out, missed punches, forgotten clock-outs and no-shows.
+
+  Both work for one, several or all shops and barbers.
+- [x] Permissions, à la carte: `timeclock.punch`, `timeclock.kiosk`, `timesheet.own`, `timesheet.edit`, `timesheet.approve`, `payroll.rates` and `payroll.export`.
+- [x] Tests: `tests/time-clock.test.ts` and `tests/db/time-clock.test.ts`. They cover pairing, breaks, overnight and DST, overtime math, the rolling 32-hour calculation, edits and the audit log, the period lock and the export totals.
+- [ ] To confirm with the owner or accountant:
+  - [ ] Iowa and Illinois overtime rules. It's federal weekly-over-40 for now, and daily OT is available as a setting.
+  - [ ] The exact iSolved import template: column headers and earning codes. Edit them under **Time clock setup**.
+  - [ ] Meal and rest break rules: 30 minutes or more is unpaid by default, and the automatic meal deduction is off.
+  - [ ] Each shop's exact coordinates, geofence radius and public IP. The seeded coordinates are approximate.
+  - [ ] Which shops require a photo, and which check each shop uses. Only Coralville is set up in the demo.
+- [ ] The mobile app has no clock-in yet. The interface for adding one is in NOTES-SYNC.
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges, `payment_transfers` and tip transfers aren't built.

@@ -110,8 +110,14 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Buy a number per shop and enter it under **Shop settings → Twilio number**. Calls to it ring the shop's phone; missed and after-hours calls get a text with a booking link.
    - For each number, point the messaging webhook at `https://<your domain>/api/twilio/sms` and the voice webhook at `https://<your domain>/api/twilio/voice` (HTTP POST). The app sets the status and call-flow webhooks itself. All are verified with `X-Twilio-Signature`, so `APP_BASE_URL` must match the domain Twilio calls exactly.
    - Register the numbers for A2P 10DLC (brand and campaign) before texting clients; carriers filter unregistered texts.
-6. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-7. Add the custom domain under **Settings → Domains**.
+6. Set up the time clock, per shop, under **Payroll → Time clock setup**:
+   - Enter each shop's latitude and longitude (the seeded ones are approximate, city-level) and its public IP address. While on the shop Wi-Fi, the page shows the address you're connecting from.
+   - The network check reads the first entry of `x-forwarded-for`, which Vercel sets to the client's address. Behind any other proxy, make sure it sets that header and that clients can't spoof it, or use the device or GPS check instead.
+   - Register each front-desk iPad from **Front-desk clock** on the iPad itself. The seeded devices can't be used.
+   - Have each person set their PIN on **Time clock**. The seed's demo PIN only exists in seeded data.
+   - The notifications cron (every 5 minutes) also flags forgotten clock-outs, and once a night around 3 AM shop time it checks full-time and part-time crossings. Nothing else needs scheduling. On the Hobby plan's daily cron, forgotten clock-outs are flagged once a day and the FT check only runs if that daily run lands between 3:00 and 3:15 AM.
+7. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+8. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 
