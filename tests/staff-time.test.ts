@@ -103,41 +103,42 @@ describe("rules and limits", () => {
 
   it("caps a barber's own lunch and other blocks", () => {
     const r = { ...DEFAULT_STAFF_TIME_RULES, maxLunchMin: 45, maxBlockMin: 90 };
-    expect(selfBlockProblem(r, "lunch", 45)).toBeNull();
-    expect(selfBlockProblem(r, "lunch", 60)).toMatch(/at most 45 minutes/);
-    expect(selfBlockProblem(r, "break", 90)).toBeNull();
-    expect(selfBlockProblem(r, "personal", 120)).toMatch(/at most 90 minutes/);
-    expect(selfBlockProblem(r, "lunch", 0)).toMatch(/after start/);
+    // Reasons that count as lunch get the lunch limit; every other reason the block limit.
+    expect(selfBlockProblem(r, true, 45)).toBeNull();
+    expect(selfBlockProblem(r, true, 60)).toMatch(/at most 45 minutes/);
+    expect(selfBlockProblem(r, false, 90)).toBeNull();
+    expect(selfBlockProblem(r, false, 120)).toMatch(/at most 90 minutes/);
+    expect(selfBlockProblem(r, true, 0)).toMatch(/after start/);
   });
 
-  it("needs the minimum notice, except for sick time", () => {
+  it("needs the minimum notice, except for reasons marked no notice needed (sick time)", () => {
     const r = { ...DEFAULT_STAFF_TIME_RULES, minNoticeDays: 7 };
-    expect(noticeProblem(r, "vacation", "2026-10-30", "2026-10-23")).toBeNull();
-    expect(noticeProblem(r, "vacation", "2026-10-29", "2026-10-23")).toMatch(/7 days' notice.*2026-10-30/);
-    expect(noticeProblem(r, "sick", "2026-10-23", "2026-10-23")).toBeNull();
-    expect(noticeProblem(r, "sick", "2026-10-22", "2026-10-23")).toMatch(/past/);
-    expect(noticeProblem({ ...r, minNoticeDays: 0 }, "personal", "2026-10-23", "2026-10-23")).toBeNull();
+    expect(noticeProblem(r, false, "2026-10-30", "2026-10-23")).toBeNull();
+    expect(noticeProblem(r, false, "2026-10-29", "2026-10-23")).toMatch(/7 days' notice.*2026-10-30/);
+    expect(noticeProblem(r, true, "2026-10-23", "2026-10-23")).toBeNull();
+    expect(noticeProblem(r, true, "2026-10-22", "2026-10-23")).toMatch(/past/);
+    expect(noticeProblem({ ...r, minNoticeDays: 0 }, false, "2026-10-23", "2026-10-23")).toBeNull();
   });
 });
 
 describe("who is working, off and blocked", () => {
   const date = "2026-11-10";
   const hours = [{ startMin: 9 * 60, endMin: 17 * 60 }];
-  const lunch = { startsAt: at(date, 720), endsAt: at(date, 750), category: "lunch", kind: "block", reason: "Lunch" };
+  const lunch = { startsAt: at(date, 720), endsAt: at(date, 750), category: "lunch", kind: "block", reasonId: "r-lunch", reason: "Lunch", note: null };
 
   it("working with a lunch: blocked minutes, no time off", () => {
     const d = staffDay({ date, spans: hours, blocks: [lunch], pending: [] });
     expect(d).toMatchObject({ status: "working", scheduledMin: 480, offMin: 0, blockedMin: 30, pending: false, hasTimeOff: false });
-    expect(d.blocks).toEqual([{ category: "lunch", reason: "Lunch", startMin: 720, endMin: 750 }]);
+    expect(d.blocks).toEqual([{ category: "lunch", reasonId: "r-lunch", reason: "Lunch", note: null, startMin: 720, endMin: 750 }]);
   });
 
   it("part of the day off is partly off; the lunch inside it isn't counted twice", () => {
-    const afternoon = { startsAt: at(date, 12 * 60), endsAt: at(date, 17 * 60), category: "time_off", kind: "block", reason: "Personal" };
+    const afternoon = { startsAt: at(date, 12 * 60), endsAt: at(date, 17 * 60), category: "time_off", kind: "block", reasonId: null, reason: "Personal", note: null };
     expect(staffDay({ date, spans: hours, blocks: [lunch, afternoon], pending: [] })).toMatchObject({ status: "partly_off", offMin: 300, blockedMin: 0, hasTimeOff: true });
   });
 
   it("a whole day off, and a day off with no hours there, are off; a pending request shows", () => {
-    const day = { startsAt: startOfLocalDay(date), endsAt: endOfLocalDay(date), category: "time_off", kind: "day_off", reason: "Vacation" };
+    const day = { startsAt: startOfLocalDay(date), endsAt: endOfLocalDay(date), category: "time_off", kind: "day_off", reasonId: null, reason: "Vacation", note: "Lake trip" };
     expect(staffDay({ date, spans: hours, blocks: [day], pending: [] })).toMatchObject({ status: "off", offMin: 480 });
     expect(staffDay({ date, spans: [], blocks: [day], pending: [] })).toMatchObject({ status: "off", offMin: 24 * 60 });
     expect(staffDay({ date, spans: [], blocks: [], pending: [] }).status).toBe("not_scheduled");
