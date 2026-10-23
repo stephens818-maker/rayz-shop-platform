@@ -25,6 +25,8 @@ import { takesCards } from "@/domain/connect";
 import type { ReasonViewer } from "@/domain/block-reasons";
 import { closedOn } from "@/domain/location-lifecycle";
 import { type Permission, reportView } from "@/domain/permissions";
+import { payPeriodFor } from "@/domain/payroll";
+import { FT_LABEL } from "@/domain/time-clock";
 import {
   Alert,
   DRAWER_VARIANCE_CENTS,
@@ -41,7 +43,7 @@ import {
   sortAlerts,
 } from "@/domain/today";
 import { formatCents } from "@/lib/money";
-import { LocalDate, addDays, endOfLocalDay, formatDate, formatTime, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, formatDate, formatTime, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { type StaffContext, reasonViewer, reportShopIds } from "./auth/staff";
 import { ACTIVE_STATUSES } from "./booking";
 import { flaggedCount } from "./call-ins";
@@ -50,6 +52,7 @@ import { locationSetup } from "./location-setup";
 import { unreadCount } from "./messaging";
 import { fillCandidates, marketingConsent, rebookCandidates } from "./outreach-campaigns";
 import { listRequests } from "./staff-time";
+import { clockAlertFacts } from "./time-clock";
 
 /** Who is looking: their open shops in scope and what they may do. Alerts never cover anything else. */
 export interface TodayViewer {
@@ -96,6 +99,7 @@ export async function todayAlerts(v: TodayViewer, now: Date = new Date()): Promi
     has("notifications.view") ? notificationAlerts(ctx) : [],
     has("checkout.any") ? openTicketAlerts(ctx) : [],
     has("inbox.view") ? inboxAlerts(ctx) : [],
+    has("timesheet.edit") || has("timesheet.approve") || has("payroll.run") ? clockAlerts(ctx) : [],
   ]);
   const all = parts.flat();
   const keys = all.map((a) => a.key);
@@ -486,6 +490,40 @@ async function timeOffAlerts(c: Ctx): Promise<Alert[]> {
       linkLabel: "Review",
     },
   ];
+}
+
+async function clockAlerts(c: Ctx): Promise<Alert[]> {
+  const { forgotten, ftChanges } = await clockAlertFacts(c.shops.map((s) => s.id), c.now);
+  const out: Alert[] = [];
+  if (forgotten.length && c.has("timesheet.edit")) {
+    out.push({
+      key: `forgot_clock_out:all:${c.today}:${forgotten.length}`,
+      type: "forgot_clock_out",
+      severity: "high",
+      shopId: null,
+      shop: null,
+      title: `${plural(forgotten.length, "shift")} never clocked out`,
+      detail: "Those shifts count no hours until a clock-out is added on the timesheet, with a reason.",
+      items: forgotten.slice(0, 8).map((f) => ({ label: `${f.label}: in at ${formatTime(f.at)} ${formatDate(f.at)}`, sub: c.name(f.shopId) ?? undefined, href: `/admin/timesheets/${f.staffId}?period=${payPeriodFor(localDateOf(f.at)).start}` })),
+      href: "/admin/timesheets",
+      linkLabel: "Timesheets",
+    });
+  }
+  if (ftChanges.length && (c.has("timesheet.approve") || c.has("payroll.run"))) {
+    out.push({
+      key: `ft_change:all:${c.today}:${ftChanges.length}`,
+      type: "ft_change",
+      severity: "medium",
+      shopId: null,
+      shop: null,
+      title: `${plural(ftChanges.length, "person", "people")} crossed the full-time line`,
+      detail: "Their rolling average weekly hours moved across the full-time threshold this week.",
+      items: ftChanges.map((f) => ({ label: `${f.label}: now ${FT_LABEL[f.to].toLowerCase()}`, sub: `${Number(f.average).toFixed(2)} h/week over ${f.windowWeeks} weeks` })),
+      href: "/admin/timesheets",
+      linkLabel: "See hours",
+    });
+  }
+  return out;
 }
 
 async function callInAlerts(c: Ctx): Promise<Alert[]> {

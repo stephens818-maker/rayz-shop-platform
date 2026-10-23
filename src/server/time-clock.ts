@@ -58,7 +58,7 @@ import {
   type ShopClockSettings,
 } from "@/domain/time-clock";
 import { appBaseUrl } from "@/lib/deployment";
-import { addDays, endOfLocalDay, formatDate, formatTime, localDateOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
+import { addDays, endOfLocalDay, formatDate, formatTime, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { audit, SYSTEM, type Actor } from "./audit";
 import { loadStaffAccess, staffWithAccessTo, workShopIds } from "./auth/access";
 import { AppError, forbidden, notFound } from "./errors";
@@ -1053,6 +1053,14 @@ export async function flagForgottenClockOuts(now = new Date()): Promise<number> 
   return n;
 }
 
+/** The cron's time clock pass: forgotten clock-outs every run; the full-time check once a night (3:00–3:15), since weeks close on Saturday. */
+export async function timeClockCron(now = new Date()) {
+  const forgottenClockOuts = await flagForgottenClockOuts(now);
+  const m = localMinutesOf(now);
+  const ftChanges = m >= 180 && m < 195 ? await checkFtCrossings(now) : 0;
+  return { forgottenClockOuts, ftChanges };
+}
+
 /** For Today: open shifts already flagged as forgotten clock-outs, and recent full-time changes, at these shops. */
 export async function clockAlertFacts(shopIds: readonly string[], now = new Date()) {
   if (!shopIds.length) return { forgotten: [], ftChanges: [] };
@@ -1061,14 +1069,12 @@ export async function clockAlertFacts(shopIds: readonly string[], now = new Date
     .from(timePunches)
     .innerJoin(staff, eq(staff.id, timePunches.staffId))
     .where(and(inArray(timePunches.shopId, [...shopIds]), isNotNull(timePunches.forgotFlaggedAt), isNull(timePunches.voidedAt), gte(timePunches.at, new Date(now.getTime() - 14 * DAY))));
-  const forgotten = [];
-  for (const f of flagged) {
-    const later = await db
-      .select({ id: timePunches.id })
-      .from(timePunches)
-      .where(and(eq(timePunches.staffId, f.staffId), gt(timePunches.at, f.at), isNull(timePunches.voidedAt), inArray(timePunches.type, ["out", "in"])))
-      .limit(1);
-    if (!later.length) forgotten.push(f);
+  const forgotten: typeof flagged = [];
+  if (flagged.length) {
+    const from = new Date(Math.min(...flagged.map((f) => f.at.getTime())) - DAY);
+    const { shifts } = pairPunches((await punchesBetween([...new Set(flagged.map((f) => f.staffId))], from, new Date(now.getTime() + 60_000))).map(asLike));
+    const stillOpen = new Set(shifts.filter((s) => s.end === null).map((s) => s.inId));
+    forgotten.push(...flagged.filter((f) => stillOpen.has(f.id)));
   }
   const ftChanges = await db
     .select({ staffId: ftStatusChanges.staffId, label: staff.displayLabel, to: ftStatusChanges.toStatus, average: ftStatusChanges.averageHours, weekStart: ftStatusChanges.weekStart, windowWeeks: ftStatusChanges.windowWeeks })

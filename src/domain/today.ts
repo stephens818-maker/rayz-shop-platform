@@ -27,7 +27,9 @@ export type AlertType =
   | "failed_payouts"
   | "overdue_deliveries"
   | "waitlist_match"
-  | "unread_texts";
+  | "unread_texts"
+  | "forgot_clock_out"
+  | "ft_change";
 
 export type Severity = "high" | "medium" | "low";
 
@@ -79,6 +81,8 @@ export const ALERT_LABEL: Record<AlertType, string> = {
   overdue_deliveries: "Late deliveries",
   waitlist_match: "Waitlist and open time",
   unread_texts: "Unread client texts",
+  forgot_clock_out: "Forgotten clock-outs",
+  ft_change: "Full time / part time changes",
 };
 
 export const SEVERITY_ORDER: Record<Severity, number> = { high: 0, medium: 1, low: 2 };
