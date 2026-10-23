@@ -203,11 +203,11 @@ describe("Connect webhook", () => {
 
 describe("location setup", () => {
   it("a new shop starts with the brand as owner and no account, then onboards through the (simulated) hosted flow", async () => {
-    const settings = await import("@/app/admin/settings/actions");
     const setup = await import("@/app/admin/setup/actions");
+    const { draftDefaults } = await import("@/domain/location-draft");
     const { locationSetup } = await import("@/server/location-setup");
     await signInAs(await staffId("owner@rayz.test"));
-    const made = await settings.createShopAction({ name: "Davenport", address: "100 Main St", city: "Davenport", state: "IA", zip: "52801", phone: "5635550100" });
+    const made = await setup.createLocationAction(draftDefaults({ name: "Davenport", slug: "davenport", address: "100 Main St", city: "Davenport", state: "IA", zip: "52801", phone: "5635550100" }));
     expect(made.ok).toBe(true);
     const id = (made as { data: { id: string } }).data.id;
     let s = (await locationSetup(id))!;
@@ -316,7 +316,7 @@ describe("Shop P&L by Stripe account", () => {
     expect(overview.text).toMatch(/Davenport/);
     const cv = await shop("coralville");
     const detail = await open("/admin/setup", {}, { shop: cv.id });
-    expect(detail.text).toMatch(/Set up Coralville/);
+    expect(detail.text).toMatch(/Coralville.*Live.*required steps done/);
     expect(detail.text).toMatch(/Taking cards; payouts go to the shop's bank/);
     const davenport = await shop("davenport");
     expect((await open("/admin/setup/simulated-onboarding", {}, { shop: davenport.id })).text).toMatch(/stands in for Stripe/);

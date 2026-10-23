@@ -1,13 +1,14 @@
 "use server";
 
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { ownerEntities, services, shopClosures, shopHours, shopServices, shops } from "@/db/schema";
+import { shopClosures, shopHours, shops, terminalReaders } from "@/db/schema";
+import { US_TIMEZONES } from "@/domain/location-lifecycle";
+import { checkSlug } from "@/server/location-admin";
 import { MAX_CARD_FEE_RATE } from "@/domain/checkout";
 import { hoursProblem } from "@/domain/hours";
-import { slugify } from "@/lib/ids";
 import { normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
@@ -148,28 +149,70 @@ export async function saveLoyaltyAction(raw: z.input<typeof Loyalty>) {
   });
 }
 
-const NewShop = z.object({ name: z.string().trim().min(2), city: z.string().trim().min(1), state: z.string().trim().length(2).toUpperCase(), address: z.string().trim(), zip: z.string().trim(), phone: z.string().trim() });
+const Profile = z.object({
+  slug: z.string().trim().toLowerCase(),
+  timezone: z.string().refine((z) => US_TIMEZONES.some((t) => t.id === z), "Pick a US time zone"),
+  accentColor: z
+    .string()
+    .trim()
+    .refine((c) => !c || /^#[0-9a-fA-F]{6}$/.test(c), "Use a color like #1f2937"),
+  logoUrl: z
+    .string()
+    .trim()
+    .refine((u) => !u || /^https:\/\//.test(u), "Use an https:// address for the logo"),
+});
 
-/** New locations start with the full brand menu at default prices, Mon–Sat hours, and booking off until staffed. */
-export async function createShopAction(raw: z.input<typeof NewShop>) {
+/** The booking link and time zone are location setup (they break links and schedules); branding is shop settings. */
+export async function saveShopProfileAction(shopId: string, raw: z.input<typeof Profile>) {
   return safe(async () => {
-    const ctx = await authorize("settings.brand", "Only the Brand Owner can open a new shop");
-    const v = NewShop.parse(raw);
-    const slug = slugify(v.name);
-    if (await db.query.shops.findFirst({ where: eq(shops.slug, slug) })) throw new AppError("conflict", "A shop with that name already exists");
-    const id = await db.transaction(async (tx) => {
-      const brandOwner = await tx.query.ownerEntities.findFirst({ where: eq(ownerEntities.kind, "brand"), orderBy: asc(ownerEntities.createdAt) });
-      const [s] = await tx
-        .insert(shops)
-        .values({ ...v, slug, phone: v.phone || null, bookingEnabled: false, taxRatesVerified: false, serviceTaxRate: "0", productTaxRate: "0", ownerEntityId: brandOwner?.id ?? null })
-        .returning({ id: shops.id });
-      await tx.insert(shopHours).values([1, 2, 3, 4, 5, 6].map((weekday) => ({ shopId: s.id, weekday, openMin: 9 * 60, closeMin: weekday === 6 ? 15 * 60 : 19 * 60 })));
-      const all = await tx.select({ id: services.id }).from(services).where(eq(services.active, true));
-      if (all.length) await tx.insert(shopServices).values(all.map((x) => ({ shopId: s.id, serviceId: x.id, enabled: true })));
-      await audit(ctx.actor, "shop.create", "shop", s.id, v, s.id, tx);
-      return s.id;
-    });
-    revalidatePath("/admin", "layout");
-    return { id };
+    const ctx = await authorize("settings.shop");
+    assertShopAccess(ctx, shopId);
+    const v = Profile.parse(raw);
+    const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
+    if (!before) throw new AppError("not_found", "Shop not found");
+    const linkChanged = v.slug !== before.slug || v.timezone !== before.timezone;
+    if (linkChanged && !can(ctx, "locations.setup")) throw new AppError("forbidden", "Only the Brand Owner or a Brand Admin can change the booking link or time zone");
+    if (v.slug !== before.slug) {
+      const problem = await checkSlug(v.slug, shopId);
+      if (problem) throw new AppError("bad_request", problem);
+    }
+    const values = { slug: v.slug, timezone: v.timezone, accentColor: v.accentColor || null, logoUrl: v.logoUrl || null };
+    await db.update(shops).set(values).where(eq(shops.id, shopId));
+    await audit(ctx.actor, "shop.profile", "shop", shopId, { ...values, previousSlug: v.slug !== before.slug ? before.slug : undefined }, shopId);
+    revalidatePath("/admin/settings");
+    revalidatePath("/admin/setup");
+    return null;
+  });
+}
+
+const Reader = z.object({ label: z.string().trim().min(1, "Name the reader").max(40), serialNumber: z.string().trim().max(40), stripeReaderId: z.string().trim().max(60) });
+
+export async function addReaderAction(shopId: string, raw: z.input<typeof Reader>) {
+  return safe(async () => {
+    const ctx = await authorize("settings.shop");
+    assertShopAccess(ctx, shopId);
+    const v = Reader.parse(raw);
+    if (v.stripeReaderId && (await db.query.terminalReaders.findFirst({ where: eq(terminalReaders.stripeReaderId, v.stripeReaderId), columns: { id: true } })))
+      throw new AppError("conflict", "That reader is already registered to a shop");
+    const [row] = await db
+      .insert(terminalReaders)
+      .values({ shopId, label: v.label, serialNumber: v.serialNumber || null, stripeReaderId: v.stripeReaderId || null })
+      .returning({ id: terminalReaders.id });
+    await audit(ctx.actor, "reader.add", "terminal_reader", row.id, v, shopId);
+    revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+export async function setReaderActiveAction(id: string, active: boolean) {
+  return safe(async () => {
+    const ctx = await authorize("settings.shop");
+    const r = await db.query.terminalReaders.findFirst({ where: eq(terminalReaders.id, id) });
+    if (!r) throw new AppError("not_found", "Reader not found");
+    assertShopAccess(ctx, r.shopId);
+    await db.update(terminalReaders).set({ active }).where(eq(terminalReaders.id, id));
+    await audit(ctx.actor, active ? "reader.restore" : "reader.retire", "terminal_reader", id, { label: r.label }, r.shopId);
+    revalidatePath("/admin/settings");
+    return null;
   });
 }

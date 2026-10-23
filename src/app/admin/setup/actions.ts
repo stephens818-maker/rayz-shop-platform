@@ -10,7 +10,9 @@ import { ownerEntityProblem } from "@/domain/connect";
 import { appBaseUrl } from "@/lib/deployment";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { StaffContext, assertShopAccess, authorize } from "@/server/auth/staff";
+import { StaffContext, assertShopAccess, authorize, staffGrantor } from "@/server/auth/staff";
+import { LocationAdmin, archiveLocation, checkSlug, closeTemporarily, createLocation, goLive, reopen } from "@/server/location-admin";
+import type { LocationDraftInput } from "@/domain/location-draft";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { completeSimulatedOnboarding, expressDashboardUrl, onboardingUrl, refreshAccount } from "@/server/payments/connect";
 
@@ -120,5 +122,66 @@ export async function saveOwnerEntityAction(id: string | null, raw: z.input<type
     await audit(ctx.actor, "owner_entity.create", "owner_entity", row.id, values, null);
     refresh();
     return { id: row.id };
+  });
+}
+
+async function locationAdmin(): Promise<LocationAdmin> {
+  const ctx = await authorize("locations.setup", "Only the Brand Owner or a Brand Admin can add, open or archive locations");
+  return { actor: ctx.actor, brandWide: ctx.brandWide, shopIds: ctx.shopIds, grantor: staffGrantor(ctx) };
+}
+
+function refreshLocations() {
+  revalidatePath("/admin", "layout");
+  revalidatePath("/", "layout");
+}
+
+export async function checkSlugAction(slug: string) {
+  return safe(async () => {
+    await locationAdmin();
+    return checkSlug(slug.trim().toLowerCase());
+  });
+}
+
+export async function createLocationAction(draft: LocationDraftInput) {
+  return safe(async () => {
+    const r = await createLocation(await locationAdmin(), draft);
+    refreshLocations();
+    return r;
+  });
+}
+
+export async function goLiveAction(shopId: string, cashOnly: boolean) {
+  return safe(async () => {
+    await goLive(await locationAdmin(), shopId, { cashOnly });
+    refreshLocations();
+    return null;
+  });
+}
+
+export async function closeLocationAction(shopId: string, until: string | null, note: string | null) {
+  return safe(async () => {
+    await closeTemporarily(await locationAdmin(), shopId, { until: until || null, note });
+    refreshLocations();
+    return null;
+  });
+}
+
+export async function reopenLocationAction(shopId: string) {
+  return safe(async () => {
+    await reopen(await locationAdmin(), shopId);
+    refreshLocations();
+    return null;
+  });
+}
+
+export async function archiveLocationAction(shopId: string, confirmName: string) {
+  return safe(async () => {
+    const m = await locationAdmin();
+    const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { name: true } });
+    if (!shop) throw notFound("Location");
+    if (confirmName.trim().toLowerCase() !== shop.name.toLowerCase()) throw new AppError("bad_request", `Type ${shop.name} to confirm`);
+    const r = await archiveLocation(m, shopId);
+    refreshLocations();
+    return r;
   });
 }

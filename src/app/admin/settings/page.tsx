@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { and, asc, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
-import { shopClosures, shopHours, shops } from "@/db/schema";
-import { Empty, Notice, PageHeader } from "@/components/ui";
+import { shopClosures, shopHours, shops, terminalReaders } from "@/db/schema";
+import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader } from "@/components/ui";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { getLoyaltyConfig } from "@/server/loyalty";
 import { brandInterval } from "@/server/timing";
 import { ShopTimingCard } from "../booking-times/editors";
-import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, NewShopForm, ShopInfoEditor } from "./editors";
+import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor, ReadersEditor, ShopInfoEditor } from "./editors";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -18,12 +18,13 @@ export default async function SettingsPage() {
   const brand = can(ctx, "settings.brand");
   const shopId = workingShopId(ctx);
   if (!shopId) return <Empty title="No shop selected" />;
-  const [shop, hours, closures, loyalty, brandMinutes] = await Promise.all([
+  const [shop, hours, closures, loyalty, brandMinutes, readers] = await Promise.all([
     db.query.shops.findFirst({ where: eq(shops.id, shopId) }),
     db.select().from(shopHours).where(eq(shopHours.shopId, shopId)),
     db.select().from(shopClosures).where(and(eq(shopClosures.shopId, shopId), gte(shopClosures.date, todayLocal()))).orderBy(asc(shopClosures.date)),
     getLoyaltyConfig(),
     brandInterval(),
+    db.select().from(terminalReaders).where(eq(terminalReaders.shopId, shopId)).orderBy(asc(terminalReaders.createdAt)),
   ]);
   if (!shop) return <Empty title="Shop not found" />;
   return (
@@ -52,6 +53,13 @@ export default async function SettingsPage() {
         }}
       />
       )}
+      {shopSettings && (
+        <ProfileEditor
+          shopId={shop.id}
+          canChangeLink={can(ctx, "locations.setup")}
+          initial={{ slug: shop.slug, timezone: shop.timezone, accentColor: shop.accentColor ?? "", logoUrl: shop.logoUrl ?? "" }}
+        />
+      )}
       {can(ctx, "scheduling.timing") && <ShopTimingCard shopId={shop.id} shopName={shop.name} minutes={shop.slotIntervalMinutes} brand={brandMinutes} />}
       <MoneyEditor
         shopId={shop.id}
@@ -67,8 +75,17 @@ export default async function SettingsPage() {
       />
       {shopSettings && <HoursEditor shopId={shop.id} canSetSunday={brand} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />}
       {shopSettings && <ClosuresEditor shopId={shop.id} multiShop={ctx.shopIds.length > 1} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />}
+      {shopSettings && <ReadersEditor shopId={shop.id} readers={readers.map((r) => ({ id: r.id, label: r.label, serialNumber: r.serialNumber, stripeReaderId: r.stripeReaderId, active: r.active }))} />}
       {brand && <LoyaltyEditor initial={loyalty} />}
-      {brand && <NewShopForm />}
+      {can(ctx, "locations.setup") && (
+        <Card>
+          <CardHeader
+            title="Open a new location"
+            subtitle="The Add Location wizard sets up everything at once: hours, taxes, menu, retail, team, logins, phone line and card readers."
+            action={<LinkButton href="/admin/setup/new">Add a location</LinkButton>}
+          />
+        </Card>
+      )}
     </div>
   );
 }

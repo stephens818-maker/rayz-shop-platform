@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { LoyaltyConfig } from "@/domain/loyalty";
-import { addClosureAction, createShopAction, removeClosureAction, saveHoursAction, saveLoyaltyAction, saveShopInfoAction, saveShopMoneyAction } from "./actions";
+import { SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
+import { addClosureAction, addReaderAction, removeClosureAction, saveHoursAction, saveLoyaltyAction, saveShopInfoAction, saveShopMoneyAction, saveShopProfileAction, setReaderActiveAction } from "./actions";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -297,43 +298,78 @@ export function LoyaltyEditor({ initial }: { initial: LoyaltyConfig }) {
   );
 }
 
-export function NewShopForm() {
+export function ProfileEditor({
+  shopId,
+  initial,
+  canChangeLink,
+}: {
+  shopId: string;
+  initial: { slug: string; timezone: string; accentColor: string; logoUrl: string };
+  canChangeLink: boolean;
+}) {
   const { pending, msg, save } = useSave();
-  const router = useRouter();
-  const [v, setV] = useState({ name: "", address: "", city: "", state: "IA", zip: "", phone: "" });
+  const [v, setV] = useState(initial);
   return (
-    <Card id="new-shop" className="scroll-mt-20">
-      <CardHeader title="Open a new location" subtitle="Starts with the full brand menu at default prices and Mon–Sat hours. Online booking stays off until you add barbers and turn it on." />
-      <div className="grid gap-3 p-4 sm:grid-cols-3 lg:grid-cols-6">
-        <Field label="Name" className="lg:col-span-2">
-          <Input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} placeholder="Davenport" />
+    <Card>
+      <CardHeader title="Booking link, time zone and branding" subtitle="The link clients book at, and how this location's booking page looks." />
+      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Field label="Booking link" hint={canChangeLink ? "/book/… · never a surname. Changing it breaks old links." : "Only the Brand Owner or a Brand Admin can change it."}>
+          <Input value={v.slug} disabled={!canChangeLink} onChange={(e) => setV({ ...v, slug: e.target.value.toLowerCase() })} />
         </Field>
-        <Field label="Address" className="lg:col-span-2">
-          <Input value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />
+        <Field label="Time zone" hint={v.timezone !== SUPPORTED_TIMEZONE ? "Every shop runs on Central time today." : undefined}>
+          <Select value={v.timezone} disabled={!canChangeLink} onChange={(e) => setV({ ...v, timezone: e.target.value })}>
+            {US_TIMEZONES.map((z) => (
+              <option key={z.id} value={z.id}>
+                {z.label}
+              </option>
+            ))}
+          </Select>
         </Field>
-        <Field label="City">
-          <Input value={v.city} onChange={(e) => setV({ ...v, city: e.target.value })} />
+        <Field label="Accent color" hint="Blank uses the brand's.">
+          <Input value={v.accentColor} placeholder="#1f2937" onChange={(e) => setV({ ...v, accentColor: e.target.value })} />
         </Field>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="State">
-            <Input maxLength={2} value={v.state} onChange={(e) => setV({ ...v, state: e.target.value.toUpperCase() })} />
-          </Field>
-          <Field label="ZIP">
-            <Input value={v.zip} onChange={(e) => setV({ ...v, zip: e.target.value })} />
-          </Field>
-        </div>
-        <Field label="Phone">
-          <Input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />
+        <Field label="Logo web address">
+          <Input type="url" value={v.logoUrl} onChange={(e) => setV({ ...v, logoUrl: e.target.value })} />
         </Field>
       </div>
-      <SaveBar pending={pending} msg={msg} label="Create shop" disabled={!v.name || !v.city} onClick={() =>
-          save(async () => {
-            const r = await createShopAction(v);
-            if (r.ok) router.push(`/admin/setup?shop=${r.data.id}`);
-            return r;
-          }, "Shop created. Opening location setup…")
-        }
-      />
+      <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveShopProfileAction(shopId, v))} />
+    </Card>
+  );
+}
+
+export function ReadersEditor({ shopId, readers }: { shopId: string; readers: { id: string; label: string; serialNumber: string | null; stripeReaderId: string | null; active: boolean }[] }) {
+  const { pending, msg, save } = useSave();
+  const [v, setV] = useState({ label: "", serialNumber: "", stripeReaderId: "" });
+  return (
+    <Card>
+      <CardHeader title="Card readers" subtitle="Stripe Terminal readers at this shop. Register each in Stripe and paste its reader ID (tmr_…) here." />
+      <ul className="divide-y divide-zinc-100">
+        {readers.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 text-sm">
+            <span className={r.active ? "text-zinc-900" : "text-zinc-400 line-through"}>
+              {r.label}
+              <span className="ml-2 text-xs text-zinc-500">{[r.serialNumber, r.stripeReaderId ?? "not registered yet"].filter(Boolean).join(" · ")}</span>
+            </span>
+            <Button size="sm" variant="ghost" disabled={pending} onClick={() => save(() => setReaderActiveAction(r.id, !r.active))}>
+              {r.active ? "Retire" : "Bring back"}
+            </Button>
+          </li>
+        ))}
+        {readers.length === 0 && <li className="px-4 py-3 text-sm text-zinc-500">No readers yet. Cards can still be keyed in at checkout.</li>}
+      </ul>
+      <div className="flex flex-wrap gap-2 border-t border-zinc-100 p-4">
+        <Input className="w-48" placeholder="Front counter" aria-label="Reader name" value={v.label} onChange={(e) => setV({ ...v, label: e.target.value })} />
+        <Input className="w-44" placeholder="Serial number" aria-label="Serial number" value={v.serialNumber} onChange={(e) => setV({ ...v, serialNumber: e.target.value })} />
+        <Input className="w-52" placeholder="Stripe reader ID" aria-label="Stripe reader ID" value={v.stripeReaderId} onChange={(e) => setV({ ...v, stripeReaderId: e.target.value })} />
+        <Button variant="secondary" disabled={pending || !v.label.trim()} onClick={() => save(async () => {
+          const r = await addReaderAction(shopId, v);
+          if (r.ok) setV({ label: "", serialNumber: "", stripeReaderId: "" });
+          return r;
+        }, "Reader added")}>
+          Add reader
+        </Button>
+        {msg && <span className={msg.ok ? "self-center text-sm text-emerald-700" : "self-center text-sm text-red-600"}>{msg.text}</span>}
+      </div>
     </Card>
   );
 }
