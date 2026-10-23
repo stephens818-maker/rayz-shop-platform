@@ -87,7 +87,7 @@ export default async function BlastPage({ params }: { params: Promise<{ id: stri
         barbers={barbers}
         items={[...serviceRows.map((s) => ({ id: s.id, name: s.name })), ...productRows.map((p) => ({ id: p.id, name: `${p.brand} ${p.name}` }))]}
         tags={tagRows.map((t) => t.tag)}
-        sees={{ birthday: policy.level("birthday") !== "hidden", ratings: policy.level("ratings") !== "hidden" }}
+        sees={{ birthday: policy.level("birthday") !== "hidden", ratings: policy.level("ratings") !== "hidden", preferredBarber: policy.level("preferred_barber") !== "hidden" }}
         coupons={coupons}
         address={settings.address}
       />

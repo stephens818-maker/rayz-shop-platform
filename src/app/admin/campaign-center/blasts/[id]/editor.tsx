@@ -1,12 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Chips, ItemPicker, toggle } from "@/components/chips";
-import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, cx } from "@/components/ui";
 import { CHANNELS, CHANNEL_LABEL, Channel, EMPTY_SEGMENT, STOP_LINE, Segment, Templates } from "@/domain/marketing";
 import { formatDateTime } from "@/lib/time";
 import { cancelBlastAction, previewBlastAction, saveBlastAction, scheduleBlastAction } from "../../actions";
+import { BarberFilter, LastVisitFilter } from "../../segment-fields";
 import { ChannelOrder, TemplateFields } from "../../template-fields";
 import { TestSend } from "../../test-send";
 
@@ -24,7 +25,7 @@ interface Blast {
   sent: number;
 }
 type Option = { id: string; name: string };
-type Preview = { matched: number; byChannel: Record<Channel, number>; unreachable: number; sample: string[] };
+type Preview = { matched: number; optedIn: number; byChannel: Record<Channel, number>; unreachable: number; sample: string[] };
 
 const NEW_TEMPLATES: Templates = {
   sms: `{shop}: Hi {first_name}, `,
@@ -57,7 +58,7 @@ export function BlastEditor(p: {
   barbers: Option[];
   items: Option[];
   tags: string[];
-  sees: { birthday: boolean; ratings: boolean };
+  sees: { birthday: boolean; ratings: boolean; preferredBarber: boolean };
   coupons: { id: string; code: string; summary: string; unique: boolean }[];
   address: string;
 }) {
@@ -73,10 +74,33 @@ export function BlastEditor(p: {
   const [promoId, setPromoId] = useState(p.blast?.promoId ?? null);
   const [seg, setSeg] = useState<Segment>(p.blast?.segment ?? EMPTY_SEGMENT);
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [counting, setCounting] = useState(false);
+  const asked = useRef(0);
   const [at, setAt] = useState(localInput(p.blast?.scheduledAt ?? null));
   const ro = !p.mayEdit || !p.mayWrite;
-  const s = (x: Partial<Segment>) => (setPreview(null), setSeg({ ...seg, ...x }));
+  const s = (x: Partial<Segment>) => setSeg({ ...seg, ...x });
   const input = () => ({ id, name, channels, templates, segment: seg, promoId, shopIds });
+  const canCount = p.mayWrite || p.maySend;
+
+  // The count follows the filters as they change, a moment after the last change.
+  useEffect(() => {
+    if (!canCount) return;
+    const n = ++asked.current;
+    setCounting(true);
+    const t = setTimeout(async () => {
+      const r = await previewBlastAction({ segment: seg, shopIds, channels });
+      if (n !== asked.current) return;
+      setCounting(false);
+      if (r.ok) {
+        setPreview(r.data);
+        setError(null);
+      } else {
+        setPreview(null);
+        setError(r.error);
+      }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [canCount, seg, shopIds, channels]);
 
   const persist = async (): Promise<string | null> => {
     setError(null);
@@ -88,17 +112,10 @@ export function BlastEditor(p: {
     }
     return r.data.id;
   };
-  const count = () =>
-    start(async () => {
-      setError(null);
-      const r = await previewBlastAction({ segment: seg, shopIds, channels });
-      if (r.ok) setPreview(r.data);
-      else setError(r.error);
-    });
   const send = (when: string | null) =>
     start(async () => {
       setDone(null);
-      if (!when && !confirm(preview ? `Send to ${preview.matched - preview.unreachable} clients now?` : "Send this blast now?")) return;
+      if (!when && !confirm(preview ? `Send to ${preview.optedIn} opted-in clients now?` : "Send this blast now?")) return;
       const saved = p.mayWrite ? await persist() : id;
       if (!saved) return;
       const r = await scheduleBlastAction(saved, when ? new Date(when).toISOString() : null);
@@ -145,7 +162,7 @@ export function BlastEditor(p: {
             </Field>
           </div>
           <Field label="Channels, in the order they're tried">
-            <ChannelOrder value={channels} disabled={ro} onChange={(c) => (setPreview(null), setChannels(c))} />
+            <ChannelOrder value={channels} disabled={ro} onChange={setChannels} />
           </Field>
           <TemplateFields value={templates} channels={channels} disabled={ro} address={p.address} onChange={setTemplates} />
           {p.mayEdit && <TestSend campaignId={id} channels={channels} shops={p.shops.filter((x) => !shopIds.length || shopIds.includes(x.id))} templates={templates} beforeSend={persist} />}
@@ -160,21 +177,12 @@ export function BlastEditor(p: {
               disabled={ro}
               options={[...(p.everyLocation ? [{ id: "", name: "Every location" }] : []), ...p.shops]}
               selected={shopIds.length ? shopIds : p.everyLocation ? [""] : []}
-              onToggle={(x) => (setPreview(null), setShopIds(x === "" ? [] : toggle(shopIds, x)))}
+              onToggle={(x) => setShopIds(x === "" ? [] : toggle(shopIds, x))}
             />
           </Field>
-          {p.barbers.length > 0 && (
-            <Field label="Saw one of these barbers in the last year">
-              <Chips disabled={ro} options={p.barbers} selected={seg.staffIds} onToggle={(x) => s({ staffIds: toggle(seg.staffIds, x) })} />
-            </Field>
-          )}
+          <LastVisitFilter seg={seg} disabled={ro} onChange={s} />
+          <BarberFilter seg={seg} barbers={p.barbers} disabled={ro} seesPreferred={p.sees.preferredBarber} onChange={s} />
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Last visit within (days)">
-              <Input inputMode="numeric" disabled={ro} value={str(seg.lastVisitWithinDays)} onChange={(e) => s({ lastVisitWithinDays: num(e.target.value) })} />
-            </Field>
-            <Field label="No visit in (days)">
-              <Input inputMode="numeric" disabled={ro} value={str(seg.lastVisitOverDays)} onChange={(e) => s({ lastVisitOverDays: num(e.target.value) })} />
-            </Field>
             <Field label="Visits, at least">
               <Input inputMode="numeric" disabled={ro} value={str(seg.minVisits)} onChange={(e) => s({ minVisits: num(e.target.value) })} />
             </Field>
@@ -221,7 +229,7 @@ export function BlastEditor(p: {
               />
             </Field>
           )}
-          <Field label="Bought any of these">
+          <Field label="Had any of these services or products">
             <ItemPicker disabled={ro} placeholder="Search services and products" options={p.items} selected={seg.serviceIds} onChange={(serviceIds) => s({ serviceIds })} />
           </Field>
           {p.tags.length > 0 && (
@@ -229,13 +237,15 @@ export function BlastEditor(p: {
               <Chips disabled={ro} options={p.tags.map((t) => ({ id: t, name: t }))} selected={seg.tags} onToggle={(x) => s({ tags: toggle(seg.tags, x) })} />
             </Field>
           )}
-          <div className="flex flex-wrap items-center gap-3 rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200" data-testid="blast-preview">
-            <Button variant="secondary" size="sm" disabled={pending} onClick={count}>
-              Count clients
-            </Button>
-            {preview ? (
-              <span className="text-sm">
-                <strong>{preview.matched}</strong> match ·{" "}
+          <div className="flex flex-wrap items-center gap-3 rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200" data-testid="blast-preview" aria-live="polite">
+            {!canCount ? (
+              <span className="text-sm text-zinc-500">Counts only, for people who create or send. Contact details never show here.</span>
+            ) : preview ? (
+              <span className={cx("text-sm", counting && "opacity-60")}>
+                <strong className="text-base" data-testid="opted-in-count">
+                  {preview.optedIn}
+                </strong>{" "}
+                opted-in client{preview.optedIn === 1 ? "" : "s"} would get it · {preview.matched} match the filters ·{" "}
                 {CHANNELS.filter((c) => channels.includes(c))
                   .map((c) => `${preview.byChannel[c]} by ${CHANNEL_LABEL[c].toLowerCase()}`)
                   .join(", ")}{" "}
@@ -243,7 +253,7 @@ export function BlastEditor(p: {
                 {preview.sample.length > 0 && <span className="text-zinc-500"> · e.g. {preview.sample.join(", ")}</span>}
               </span>
             ) : (
-              <span className="text-sm text-zinc-500">Counts only. Contact details never show here.</span>
+              <span className="text-sm text-zinc-500">{counting ? "Counting…" : "Counts only. Contact details never show here."}</span>
             )}
           </div>
         </div>

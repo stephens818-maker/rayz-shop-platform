@@ -6,6 +6,7 @@ import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
 import { AppError, forbidden } from "@/server/errors";
 import { cancelBlast, previewBlast, saveAutomation, saveBlast, scheduleBlast, sendTest, setLocationAutomation } from "@/server/marketing/campaigns";
+import { deleteSequence, previewSequence, saveSequence, setSequenceEnabled } from "@/server/marketing/sequences";
 import { saveMarketingSettings } from "@/server/marketing/settings";
 
 const ANY = ["campaign_center.create", "campaign_center.send"] as const;
@@ -64,7 +65,7 @@ export async function previewBlastAction(input: unknown) {
   });
 }
 
-export async function sendTestAction(o: { campaignId: string; shopId: string; channel: Channel; templates?: unknown }) {
+export async function sendTestAction(o: { campaignId: string; shopId: string; channel: Channel; templates?: unknown; promoId?: string | null }) {
   return safe(async () => {
     const ctx = await authorize([...ANY], "You can't use the Campaign Center");
     const r = await sendTest(ctx, o);
@@ -79,5 +80,39 @@ export async function saveMarketingSettingsAction(input: unknown) {
     await saveMarketingSettings(input, ctx.actor);
     revalidatePath("/admin/campaign-center");
     return null;
+  });
+}
+
+export async function saveSequenceAction(input: unknown) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Writing a lapsed sequence needs Campaign Center: create");
+    const id = await saveSequence(ctx, input);
+    revalidatePath("/admin/campaign-center");
+    return { id };
+  });
+}
+
+export async function setSequenceEnabledAction(id: string, enabled: boolean) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.send", "Switching a sequence on or off needs Campaign Center: send");
+    await setSequenceEnabled(ctx, String(id), !!enabled);
+    revalidatePath("/admin/campaign-center");
+    return null;
+  });
+}
+
+export async function deleteSequenceAction(id: string) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Deleting a lapsed sequence needs Campaign Center: create");
+    await deleteSequence(ctx, String(id));
+    revalidatePath("/admin/campaign-center");
+    return null;
+  });
+}
+
+export async function previewSequenceAction(input: unknown) {
+  return safe(async () => {
+    const ctx = await authorize([...ANY], "You can't use the Campaign Center");
+    return previewSequence(ctx, input);
   });
 }

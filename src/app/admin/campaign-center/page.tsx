@@ -5,9 +5,11 @@ import { CHANNEL_LABEL } from "@/domain/marketing";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { couponOptions, listAutomations, marketingOverview } from "@/server/marketing/campaigns";
+import { listSequences } from "@/server/marketing/sequences";
 import { consentColumns } from "@/server/marketing/consent";
 import { loadMarketingSettings } from "@/server/marketing/settings";
 import { AutomationToggles } from "./automation-toggles";
+import { SequenceToggle } from "./sequence-toggle";
 
 export const metadata: Metadata = { title: "Campaign Center" };
 export const dynamic = "force-dynamic";
@@ -15,7 +17,15 @@ export const dynamic = "force-dynamic";
 export default async function CampaignCenterPage() {
   const ctx = await guardPage("/admin/campaign-center");
   const shops = openShops(ctx);
-  const [list, settings, cols, coupons, stats] = await Promise.all([listAutomations(ctx), loadMarketingSettings(), consentColumns(), couponOptions(todayLocal()), marketingOverview(shops.map((s) => s.id))]);
+  const [list, sequences, settings, cols, coupons, stats] = await Promise.all([
+    listAutomations(ctx),
+    listSequences(ctx),
+    loadMarketingSettings(),
+    consentColumns(),
+    couponOptions(todayLocal()),
+    marketingOverview(shops.map((s) => s.id)),
+  ]);
+  const shopName = new Map(ctx.shops.map((s) => [s.id, s.name]));
   const mayToggle = can(ctx, "campaign_center.send");
   const mayCreate = can(ctx, "campaign_center.create");
   const mayBrand = mayCreate && ctx.brandWide;
@@ -30,6 +40,11 @@ export default async function CampaignCenterPage() {
             <LinkButton variant="secondary" href="/admin/reports/campaign-center">
               Report
             </LinkButton>
+            {mayCreate && (
+              <LinkButton variant="secondary" href="/admin/campaign-center/sequences/new">
+                New lapsed sequence
+              </LinkButton>
+            )}
             {mayCreate && <LinkButton href="/admin/campaign-center/blasts/new">New blast</LinkButton>}
           </div>
         }
@@ -58,6 +73,51 @@ export default async function CampaignCenterPage() {
         <Stat label="Coupons redeemed" value={stats.redeemed} />
         <Stat label="Unsubscribed" value={stats.unsubscribed} hint={stats.sent ? `${((stats.unsubscribed / stats.sent) * 100).toFixed(1)}% of messages` : undefined} />
       </div>
+      <Card>
+        <CardHeader
+          title="Lapsed sequences"
+          subtitle="Several messages to the same lapsed client: say a friendly reminder at 2 weeks, a booking link at 3, a coupon at 4 and a bigger one from 6. Each signed by the client's barber with a link to book with them; a client leaves the sequence once they book."
+          action={
+            mayCreate && (
+              <LinkButton size="sm" variant="secondary" href="/admin/campaign-center/sequences/new">
+                New lapsed sequence
+              </LinkButton>
+            )
+          }
+        />
+        {sequences.length ? (
+          <ul className="divide-y divide-zinc-100">
+            {sequences.map((q) => (
+              <li key={q.id} className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto]" data-testid={`sequence-${q.name}`}>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link href={`/admin/campaign-center/sequences/${q.id}`} className="font-semibold text-zinc-900 hover:underline">
+                      {q.name}
+                    </Link>
+                    <span className="text-xs text-zinc-500">{q.channels.map((c) => CHANNEL_LABEL[c]).join(" → ")}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1 text-sm text-zinc-600">
+                    {q.steps.map((st, i) => (
+                      <span key={st.id} className="inline-flex items-center gap-1">
+                        {i > 0 && <span className="text-zinc-300">→</span>}
+                        <span className="rounded bg-zinc-100 px-1.5">{st.label}</span>
+                        {coupon(st.promoId) && <span className="rounded bg-violet-50 px-1.5 text-xs text-violet-700">{coupon(st.promoId)!.code}</span>}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="text-xs text-zinc-400">
+                    {q.shopIds.length ? q.shopIds.map((x) => shopName.get(x) ?? "").join(", ") : "Every location"}
+                    {q.audience.staffIds.length ? ` · ${q.audience.staffIds.length} barber${q.audience.staffIds.length === 1 ? "'s" : "s'"} clients` : " · every barber's clients"} · {q.sent30} sent in the last 30 days
+                  </div>
+                </div>
+                <SequenceToggle id={q.id} enabled={q.enabled} disabled={!mayToggle || !q.mayEdit} />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="px-4 py-3 text-sm text-zinc-500">No lapsed sequences yet.{mayCreate ? " Start one with the four steps above filled in; pick the coupons and switch it on." : ""}</p>
+        )}
+      </Card>
       <Card>
         <CardHeader
           title="Automated campaigns"

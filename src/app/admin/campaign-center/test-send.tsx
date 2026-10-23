@@ -6,7 +6,22 @@ import { CHANNEL_LABEL, Channel, Templates } from "@/domain/marketing";
 import { sendTestAction } from "./actions";
 
 /** Sends this wording to the person's own phone, email or app, marked as a test and left out of the report. */
-export function TestSend({ campaignId, channels, shops, templates, beforeSend }: { campaignId: string | null; channels: Channel[]; shops: { id: string; name: string }[]; templates: Templates; beforeSend?: () => Promise<string | null> }) {
+export function TestSend({
+  campaignId,
+  channels,
+  shops,
+  templates,
+  promoId,
+  beforeSend,
+}: {
+  campaignId: string | null;
+  channels: Channel[];
+  shops: { id: string; name: string }[];
+  templates: Templates;
+  /** A sequence step's coupon. */
+  promoId?: string | null;
+  beforeSend?: () => Promise<string | null>;
+}) {
   const [pending, start] = useTransition();
   const [channel, setChannel] = useState<Channel>(channels[0] ?? "sms");
   const [shopId, setShopId] = useState(shops[0]?.id ?? "");
@@ -45,7 +60,7 @@ export function TestSend({ campaignId, channels, shops, templates, beforeSend }:
             setMsg(null);
             const id = beforeSend ? await beforeSend() : campaignId;
             if (!id) return;
-            const r = await sendTestAction({ campaignId: id, shopId, channel: ch, templates });
+            const r = await sendTestAction({ campaignId: id, shopId, channel: ch, templates, ...(promoId !== undefined ? { promoId } : {}) });
             setMsg(r.ok ? { ok: true, text: `Test sent to ${r.data.to}` } : { ok: false, text: r.error });
           })
         }
