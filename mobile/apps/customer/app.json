@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Ray'z",
+    "slug": "rayz",
+    "version": "3.0.0",
+    "orientation": "portrait",
+    "scheme": "rayz",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "web": { "bundler": "metro", "output": "single" },
+    "ios": {
+      "bundleIdentifier": "com.getsquire.SquireRayzBarbershop",
+      "supportsTablet": false,
+      "infoPlist": { "ITSAppUsesNonExemptEncryption": false }
+    },
+    "android": { "package": "com.rayzbs.app", "versionCode": 1 },
+    "plugins": ["expo-router", "expo-localization"]
+  }
+}

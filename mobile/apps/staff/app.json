@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Ray'z Team",
+    "slug": "rayz-team",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "rayzteam",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": false,
+    "web": { "bundler": "metro", "output": "single" },
+    "ios": {
+      "bundleIdentifier": "com.rayzbs.team",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSFaceIDUsageDescription": "Face ID unlocks Ray'z Team. It is not used to clock in."
+      }
+    },
+    "android": { "package": "com.rayzbs.team", "versionCode": 1 },
+    "plugins": ["expo-router", "expo-localization", "expo-camera"]
+  }
+}
