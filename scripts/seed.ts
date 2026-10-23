@@ -4,11 +4,10 @@ import { and, eq, sql } from "drizzle-orm";
 import { db, closeDb } from "@/db";
 import * as t from "@/db/schema";
 import { computeCheckout, CartLine } from "@/domain/checkout";
-import { DEFAULT_PROCESSING_FEES } from "@/domain/connect";
 import { DEFAULT_LOYALTY, accrue, rewardExpiry } from "@/domain/loyalty";
 import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
-import { simulatePayouts } from "@/server/payments/connect";
+import { simulateConnectHistory } from "@/server/payments/connect";
 import { addDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
@@ -610,18 +609,7 @@ async function main() {
   await seedInventory({ now, shopBySlug, productRows, shopProductRows, targetStock, saleRows, saleItemRows, owner: staffByKey.get("michelle")! });
 
   // ── Stripe Connect: each shop has its own (simulated) connected account, onboarded, with its card history routed there ──
-  await db.insert(t.shopPaymentAccounts).values(
-    shopRows.map((s) => ({ shopId: s.id, stripeAccountId: `sim_acct_${s.slug.replace(/-/g, "_")}`, simulated: true, chargesEnabled: true, payoutsEnabled: true, detailsSubmitted: true })),
-  );
-  const fee = DEFAULT_PROCESSING_FEES;
-  await db.execute(sql`
-    update payments p set stripe_account_id = a.stripe_account_id,
-      application_fee_cents = least(p.amount_cents, case when p.entry_mode = 'terminal'
-        then round(p.amount_cents * ${fee.terminal.rate}::numeric) + ${fee.terminal.fixedCents}
-        else round(p.amount_cents * ${fee.keyed.rate}::numeric) + ${fee.keyed.fixedCents} end)
-    from shop_payment_accounts a
-    where a.shop_id = p.shop_id and p.method = 'card' and p.amount_cents > 0`);
-  await simulatePayouts();
+  await simulateConnectHistory({ shopIds: shopRows.map((s) => s.id) });
   console.log("  Stripe Connect: one simulated connected account per shop, card history routed there, daily payouts");
 
   // ── Booking times (set after the history, as if changed today: booked appointments keep their times) ──

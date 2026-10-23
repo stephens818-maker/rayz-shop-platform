@@ -1,5 +1,5 @@
 import type Stripe from "stripe";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { ownerEntities, shopPaymentAccounts, shopPayouts, shops } from "@/db/schema";
 import { AccountFlags, DEFAULT_PROCESSING_FEES, EntryMode, FeeRate, accountState, canCharge, parseFeeRate, processingFeeCents } from "@/domain/connect";
@@ -215,6 +215,38 @@ export async function recordPayout(accountId: string, p: Pick<Stripe.Payout, "id
     })
     .returning();
   return row;
+}
+
+/**
+ * Demo data only: gives shops a simulated, onboarded account and routes their earlier card payments
+ * to it, as if they'd been on Connect all along. Without `shopIds`, every shop with card history and
+ * no account; shops opened since stay "Not set up" for the setup wizard.
+ */
+export async function simulateConnectHistory(o: { shopIds?: string[] } = {}, tx: DBorTx = db) {
+  const ids = o.shopIds
+    ? o.shopIds
+    : (
+        (await tx.execute(
+          sql`select distinct p.shop_id id from payments p where p.method = 'card' and not exists (select 1 from shop_payment_accounts a where a.shop_id = p.shop_id)`,
+        )) as unknown as { id: string }[]
+      ).map((r) => r.id);
+  if (ids.length) {
+    const rows = await tx.select({ id: shops.id, slug: shops.slug }).from(shops).where(inArray(shops.id, ids));
+    await tx
+      .insert(shopPaymentAccounts)
+      .values(rows.map((s) => ({ shopId: s.id, stripeAccountId: `sim_acct_${s.slug.replace(/-/g, "_")}`, simulated: true, chargesEnabled: true, payoutsEnabled: true, detailsSubmitted: true })))
+      .onConflictDoNothing();
+  }
+  const fee = feeSchedule();
+  await tx.execute(sql`
+    update payments p set stripe_account_id = a.stripe_account_id,
+      application_fee_cents = least(p.amount_cents, case when p.entry_mode = 'terminal'
+        then round(p.amount_cents * ${fee.terminal.rate}::numeric) + ${fee.terminal.fixedCents}
+        else round(p.amount_cents * ${fee.keyed.rate}::numeric) + ${fee.keyed.fixedCents} end)
+    from shop_payment_accounts a
+    where a.shop_id = p.shop_id and a.simulated and p.method = 'card' and p.amount_cents > 0 and p.stripe_account_id is null`);
+  await simulatePayouts(tx);
+  return ids.length;
 }
 
 /** Simulated payouts for simulator accounts: each day's card takings less fees and refunds, two days later. Used by the seed and the demo. */
