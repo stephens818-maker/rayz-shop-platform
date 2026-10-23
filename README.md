@@ -384,6 +384,8 @@ What still guards against them arriving by mistake:
 
 Allowed on purpose: the vendor's **account number** (the shop's customer number at a supplier, printed on purchase orders; vendor audits record it as `supplierAccount`) and the client's **birthday** (for greetings, never identity checks).
 
+<img alt="A client note typed with a card number and an SSN, as stored: both replaced by markers" src="docs/screenshots/sensitive-scrubbed-note.png" width="800" />
+
 Limits: a bare run of digits that isn't a card number can't be told from an order number. That includes a 9-digit SSN or routing number typed without dashes, or a 10 to 12 digit bank account number. The rules are a backstop. The real control is that nobody is ever asked for these numbers.
 
 `tests/sensitive.test.ts` checks the rules, the log scrubbing, and that no column in the schema or any migration (and no JSON property in the schema) is one of these fields. `tests/db/sensitive-data.test.ts` plants real-looking values through Stripe webhooks (an employee's and a shop's account, a payout failure), client notes and custom fields, an inbound text, a Squire import, a queued message, an audit entry and a failing server action. It then greps every row of every table, every JSON column, the captured logs, the webhook responses, the banking views and every `/api/v1` GET response and the OpenAPI document. It also checks that every free-text column has the trigger and that the SQL and app rules agree.
