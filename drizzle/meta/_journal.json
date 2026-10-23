@@ -127,6 +127,13 @@
       "when": 1792573763304,
       "tag": "0017_privacy_alert_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792719603509,
+      "tag": "0018_client_entry_rules",
+      "breakpoints": true
     }
   ]
 }

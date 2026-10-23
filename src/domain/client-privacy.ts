@@ -67,15 +67,93 @@ export function defaultLevel(roleKey: string | null, field: FieldKey): Level {
   return isBuiltinField(field) ? d[field] : d.custom;
 }
 
+// ───────────────────────────── Entry: adding and editing ─────────────────────────────
+
+/**
+ * Entering client details is set apart from seeing them: "add" fills in a field that's empty (a new
+ * client, a booking, a walk-in, checkout), "edit" replaces or clears one that's on file. Someone
+ * may be allowed to enter a detail they can't see; once saved it shows at their view level.
+ */
+export const SETTINGS = ["view", "add", "edit"] as const;
+export type Setting = (typeof SETTINGS)[number];
+export type EntrySetting = Exclude<Setting, "view">;
+export const SETTING_LABEL: Record<Setting, string> = { view: "Can view", add: "Can add", edit: "Can edit" };
+export const ENTRY = ["allow", "deny"] as const;
+export type Entry = (typeof ENTRY)[number];
+export const ENTRY_LABEL: Record<Entry, string> = { allow: "Yes", deny: "No" };
+export const isEntry = (v: unknown): v is Entry => v === "allow" || v === "deny";
+export const RULE_VALUE_LABEL: Record<Level | Entry, string> = { ...LEVEL_LABEL, ...ENTRY_LABEL };
+export const ruleValues = (setting: Setting): readonly (Level | Entry)[] => (setting === "view" ? LEVELS : ENTRY);
+export const isSetting = (v: unknown): v is Setting => typeof v === "string" && (SETTINGS as readonly string[]).includes(v);
+
+/** Ratings come from the rating tools, not from client forms. */
+export const isEntryField = (f: FieldKey) => f !== "ratings";
+
+type EntryDefaults = Record<EntrySetting, Record<BuiltinField | "custom", boolean>>;
+const ANY: Record<BuiltinField | "custom", boolean> = {
+  phone: true,
+  email: true,
+  address: true,
+  birthday: true,
+  notes: true,
+  preferred_barber: true,
+  ratings: false,
+  custom: true,
+};
+const NOTES_ONLY: Record<BuiltinField | "custom", boolean> = { ...ANY, phone: false, email: false, address: false, birthday: false, preferred_barber: false, custom: false };
+const DESK: EntryDefaults = { add: ANY, edit: ANY };
+
+/**
+ * Everyone can take down a client's details where their job has them do it. Replacing what's on
+ * file is for the desk and managers; barbers can rewrite the cut notes but not contact details.
+ */
+export const ROLE_ENTRY_DEFAULTS: Record<RoleTemplateKey, EntryDefaults> = {
+  brand_owner: DESK,
+  brand_admin: DESK,
+  regional_manager: DESK,
+  shop_manager: DESK,
+  front_desk: DESK,
+  barber: { add: ANY, edit: NOTES_ONLY },
+};
+export const CUSTOM_ROLE_ENTRY_DEFAULTS: EntryDefaults = ROLE_ENTRY_DEFAULTS.barber;
+
+export function defaultEntry(roleKey: string | null, field: FieldKey, setting: EntrySetting): boolean {
+  if (!isEntryField(field)) return false;
+  const d = ((roleKey && ROLE_ENTRY_DEFAULTS[roleKey as RoleTemplateKey]) || CUSTOM_ROLE_ENTRY_DEFAULTS)[setting];
+  return isBuiltinField(field) ? d[field] : d.custom;
+}
+
 // ───────────────────────────── Rules ─────────────────────────────
 
-/** A rule from the brand portal: for one role or one person, brand-wide (shopId null) or at one shop. */
+/**
+ * A rule from the brand portal: for one role or one person, brand-wide (shopId null) or at one shop.
+ * A view rule holds a level; an add or edit rule holds allow or deny.
+ */
 export interface FieldRule {
   field: string;
-  level: Level;
+  /** Missing means view. */
+  setting?: Setting;
+  level: string;
   roleId: string | null;
   staffId: string | null;
   shopId: string | null;
+}
+
+export const ruleSetting = (r: Pick<FieldRule, "setting">): Setting => r.setting ?? "view";
+export const validRule = (r: FieldRule) => (ruleSetting(r) === "view" ? isLevel(r.level) : isEntry(r.level));
+
+type Who = { staffId: string; roleId: string; roleKey: string | null };
+
+/** The most specific rule: theirs at this shop, theirs brand-wide, their role's at this shop, their role's brand-wide. */
+function pickRule(rules: readonly FieldRule[], who: Who, shopId: string | null, field: FieldKey, setting: Setting): string | undefined {
+  const mine = rules.filter((r) => r.field === field && ruleSetting(r) === setting);
+  const pick = (p: (r: FieldRule) => boolean) => mine.find(p)?.level;
+  return (
+    (shopId ? pick((r) => r.staffId === who.staffId && r.shopId === shopId) : undefined) ??
+    pick((r) => r.staffId === who.staffId && r.shopId === null) ??
+    (shopId ? pick((r) => r.roleId === who.roleId && r.staffId === null && r.shopId === shopId) : undefined) ??
+    pick((r) => r.roleId === who.roleId && r.staffId === null && r.shopId === null)
+  );
 }
 
 const RANK: Record<Level, number> = { hidden: 0, masked: 1, full: 2 };
@@ -87,34 +165,83 @@ export const atLeast = (l: Level, want: Level) => RANK[l] >= RANK[want];
  * The most specific rule wins: theirs at this shop, theirs brand-wide, their role's at this shop,
  * their role's brand-wide, then the built-in default. The Brand Owner always sees everything.
  */
-export function resolveLevel(rules: readonly FieldRule[], who: { staffId: string; roleId: string; roleKey: string | null }, shopId: string | null, field: FieldKey): Level {
+export function resolveLevel(rules: readonly FieldRule[], who: Who, shopId: string | null, field: FieldKey): Level {
   if (who.roleKey === OWNER_ROLE_KEY) return "full";
-  const mine = rules.filter((r) => r.field === field);
-  const pick = (p: (r: FieldRule) => boolean) => mine.find(p)?.level;
-  return (
-    (shopId ? pick((r) => r.staffId === who.staffId && r.shopId === shopId) : undefined) ??
-    pick((r) => r.staffId === who.staffId && r.shopId === null) ??
-    (shopId ? pick((r) => r.roleId === who.roleId && r.staffId === null && r.shopId === shopId) : undefined) ??
-    pick((r) => r.roleId === who.roleId && r.staffId === null && r.shopId === null) ??
-    defaultLevel(who.roleKey, field)
-  );
+  const l = pickRule(rules, who, shopId, field, "view");
+  return isLevel(l) ? l : defaultLevel(who.roleKey, field);
+}
+
+/** Whether a person may add or edit a field at a shop, by the same precedence as viewing. */
+export function resolveEntry(rules: readonly FieldRule[], who: Who, shopId: string | null, field: FieldKey, setting: EntrySetting): boolean {
+  if (!isEntryField(field)) return false;
+  if (who.roleKey === OWNER_ROLE_KEY) return true;
+  const e = pickRule(rules, who, shopId, field, setting);
+  return isEntry(e) ? e === "allow" : defaultEntry(who.roleKey, field, setting);
 }
 
 /**
- * Who may change a rule. Nobody changes what they see themselves (their own rules or their role's)
- * unless they're the Brand Owner, the Brand Owner's role is always full, and nobody sets a level
- * above what they see themselves.
+ * Who may change a rule. Nobody changes what applies to themselves (their own rules or their
+ * role's) unless they're the Brand Owner, the Brand Owner's role always has everything, and nobody
+ * gives a level or an entry right they don't have themselves.
  */
 export function fieldRuleChangeDenied(
-  caller: { staffId: string; roleId: string; isOwner: boolean; levelAt: (shopId: string | null, field: FieldKey) => Level },
-  rule: { field: FieldKey; roleId: string | null; roleKey: string | null; staffId: string | null; shopId: string | null; level: Level | null },
+  caller: {
+    staffId: string;
+    roleId: string;
+    isOwner: boolean;
+    levelAt: (shopId: string | null, field: FieldKey) => Level;
+    entryAt?: (shopId: string | null, field: FieldKey, setting: EntrySetting) => boolean;
+  },
+  rule: { field: FieldKey; setting?: Setting; roleId: string | null; roleKey: string | null; staffId: string | null; shopId: string | null; level: string | null },
 ): string | null {
+  const setting = rule.setting ?? "view";
   if (!!rule.roleId === !!rule.staffId) return "Pick a role or a person";
   if (rule.roleKey === OWNER_ROLE_KEY) return "The Brand Owner always sees every client detail";
+  if (setting !== "view" && !isEntryField(rule.field)) return "Ratings are entered with the rating tools, not client forms";
+  if (rule.level !== null && (setting === "view" ? !isLevel(rule.level) : !isEntry(rule.level))) return "Pick a level";
   if (caller.isOwner) return null;
   if (rule.staffId === caller.staffId || rule.roleId === caller.roleId) return "You can't change what you see yourself. Ask the Brand Owner.";
-  if (rule.level && !atLeast(caller.levelAt(rule.shopId, rule.field), rule.level)) return "You can't give anyone more than you see yourself";
+  if (setting === "view" && isLevel(rule.level) && !atLeast(caller.levelAt(rule.shopId, rule.field), rule.level)) return "You can't give anyone more than you see yourself";
+  if (setting !== "view" && rule.level === "allow" && !caller.entryAt?.(rule.shopId, rule.field, setting))
+    return `You can't let anyone ${setting} a detail you can't ${setting} yourself`;
   return null;
+}
+
+/**
+ * A client field as one person gets it on a page or in an action's result. `value` is already
+ * masked, or null when hidden; `saved` says something is on file without saying what.
+ */
+export interface ShownField {
+  key: string;
+  label: string;
+  level: Level;
+  value: string | null;
+  saved: boolean;
+  canAdd: boolean;
+  canEdit: boolean;
+}
+
+/** What a person may do with one field on a form. */
+export interface FieldEntry {
+  level: Level;
+  canAdd: boolean;
+  canEdit: boolean;
+}
+
+/**
+ * Whether a form may write `next` into a field holding `before` (undefined: the form left it alone).
+ * A field the person sees in full is compared with what's stored, so re-sending it unchanged is
+ * fine. Anything else is never compared: filling an empty field needs "add", writing over or
+ * clearing one on file needs "edit", even when the new value happens to match, so a refusal can't
+ * confirm a guess.
+ */
+export function entryDenied(e: FieldEntry, before: string | null | undefined, next: string | null | undefined): EntrySetting | null {
+  if (next === undefined) return null;
+  const had = before != null && before !== "";
+  const value = next ?? "";
+  if (e.level === "full" && (before ?? "") === value) return null;
+  if (!had) return value === "" || e.canAdd ? null : "add";
+  return e.canEdit ? null : "edit";
 }
 
 // ───────────────────────────── Masking ─────────────────────────────

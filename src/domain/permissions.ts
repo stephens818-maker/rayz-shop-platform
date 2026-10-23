@@ -39,7 +39,7 @@ export const FEATURE_PERMISSIONS = [
   },
   { key: "clients.message", group: "Clients", label: "Call and text clients through the shop line", hint: "The number stays hidden; calls and texts go through the system." },
   { key: "clients.export", group: "Clients", label: "Export the client list", hint: "Off for everyone but the Brand Owner unless granted. Every export is logged.", brandOnly: true },
-  { key: "clients.edit", group: "Clients", label: "Add clients and edit client details", hint: "Only the details they can see in full." },
+  { key: "clients.edit", group: "Clients", label: "Add clients and edit client details", hint: "Which details they can add or edit is set in Client data protection, apart from which they can see." },
   { key: "clients.merge", group: "Clients", label: "Merge duplicate clients", brandOnly: true },
   { key: "clients.rate", group: "Clients", label: "Rate clients" },
   { key: "clients.ratings_all", group: "Clients", label: "See every rating and note, and rate any visit at their shops", hint: "Without it, people see their own ratings and rate only visits they served." },

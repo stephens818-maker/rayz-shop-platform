@@ -644,14 +644,16 @@ export const clientFieldRules = pgTable(
     id: id(),
     /** A built-in field key, or custom:<client_fields.id>. */
     field: text("field").notNull(),
-    level: text("level").$type<"hidden" | "masked" | "full">().notNull(),
+    /** view: who sees it (level hidden, masked or full); add and edit: who may enter it (allow or deny). */
+    setting: text("setting").$type<"view" | "add" | "edit">().notNull().default("view"),
+    level: text("level").$type<"hidden" | "masked" | "full" | "allow" | "deny">().notNull(),
     roleId: uuid("role_id").references(() => roles.id, { onDelete: "cascade" }),
     staffId: uuid("staff_id").references(() => staff.id, { onDelete: "cascade" }),
     shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
     updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [unique("client_field_rules_uq").on(t.field, t.roleId, t.staffId, t.shopId).nullsNotDistinct(), index("client_field_rules_staff_idx").on(t.staffId), index("client_field_rules_role_idx").on(t.roleId)],
+  (t) => [unique("client_field_rules_uq").on(t.field, t.setting, t.roleId, t.staffId, t.shopId).nullsNotDistinct(), index("client_field_rules_staff_idx").on(t.staffId), index("client_field_rules_role_idx").on(t.roleId)],
 );
 
 /**

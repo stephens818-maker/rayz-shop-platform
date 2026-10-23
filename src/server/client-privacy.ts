@@ -6,17 +6,23 @@ import {
   ACCESS_KINDS,
   AccessKind,
   BUILTIN_FIELDS,
+  EntrySetting,
+  FieldEntry,
   FieldKey,
   FieldRule,
   Level,
   LookupLimits,
+  ShownField,
   cleanLimits,
   customFieldKey,
+  entryDenied,
+  fieldLabel,
   formatBirthday,
-  isLevel,
   maskValue,
   minLevel,
+  resolveEntry,
   resolveLevel,
+  validRule,
 } from "@/domain/client-privacy";
 import { OWNER_ROLE_KEY } from "@/domain/permissions";
 import type { RatingSummary } from "@/domain/ratings";
@@ -37,6 +43,11 @@ export interface ClientPolicy {
   /** Active custom fields, in order. */
   custom: { id: string; label: string }[];
   level(f: FieldKey): Level;
+  /** Fill in the field where it's empty: a new client, a booking, a walk-in, checkout. */
+  canAdd(f: FieldKey): boolean;
+  /** Replace or clear what's on file, seen or not. */
+  canEdit(f: FieldKey): boolean;
+  entry(f: FieldKey): FieldEntry;
   /** The value as this person may see it: the full value (formatted), the masked form, or null. */
   show(f: FieldKey, raw: string | null | undefined): string | null;
   /** A client's star average: dropped when ratings are hidden. */
@@ -71,12 +82,24 @@ export async function rulesFor(staffId: string, roleIds: string[]): Promise<Fiel
     .select()
     .from(clientFieldRules)
     .where(or(eq(clientFieldRules.staffId, staffId), roleIds.length ? and(inArray(clientFieldRules.roleId, roleIds), isNull(clientFieldRules.staffId)) : undefined));
-  return rows.filter((r) => isLevel(r.level));
+  return rows.filter(validRule);
 }
 
 /** Combined across the shops someone works in at once, the strictest level wins. */
 export function levelsFor(rules: readonly FieldRule[], staffId: string, working: readonly Working[], fields: readonly FieldKey[]): Map<FieldKey, Level> {
   return new Map(fields.map((f) => [f, minLevel(...working.map((w) => resolveLevel(rules, { staffId, roleId: w.roleId, roleKey: w.roleKey }, w.shopId, f)))]));
+}
+
+/** Entry rights keyed `add:<field>` and `edit:<field>`; across several shops at once, every one must allow it. */
+export function entriesFor(rules: readonly FieldRule[], staffId: string, working: readonly Working[], fields: readonly FieldKey[]): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  for (const f of fields)
+    for (const s of ["add", "edit"] as EntrySetting[])
+      out.set(
+        `${s}:${f}`,
+        working.every((w) => resolveEntry(rules, { staffId, roleId: w.roleId, roleKey: w.roleKey }, w.shopId, f, s)),
+      );
+  return out;
 }
 
 const FULL_DISPLAY: Partial<Record<FieldKey, (v: string) => string>> = { phone: (v) => formatPhone(v) || v, birthday: (v) => formatBirthday(v) ?? v };
@@ -86,14 +109,27 @@ export function displayFull(f: FieldKey, raw: string | null | undefined): string
   return FULL_DISPLAY[f]?.(raw) ?? raw;
 }
 
-export function makePolicy(o: { staffId: string; isOwner: boolean; canReveal: boolean; custom: { id: string; label: string }[]; levels: Map<FieldKey, Level> }): ClientPolicy {
+export function makePolicy(o: {
+  staffId: string;
+  isOwner: boolean;
+  canReveal: boolean;
+  custom: { id: string; label: string }[];
+  levels: Map<FieldKey, Level>;
+  entries?: Map<string, boolean>;
+}): ClientPolicy {
   const level = (f: FieldKey): Level => (o.isOwner ? "full" : (o.levels.get(f) ?? "hidden"));
+  const may = (s: EntrySetting, f: FieldKey) => f !== "ratings" && (o.isOwner || (o.entries?.get(`${s}:${f}`) ?? false));
+  const canAdd = (f: FieldKey) => may("add", f);
+  const canEdit = (f: FieldKey) => may("edit", f);
   return {
     staffId: o.staffId,
     isOwner: o.isOwner,
     canReveal: o.canReveal,
     custom: o.custom,
     level,
+    canAdd,
+    canEdit,
+    entry: (f) => ({ level: level(f), canAdd: canAdd(f), canEdit: canEdit(f) }),
     show(f, raw) {
       const l = level(f);
       if (l === "hidden") return null;
@@ -123,6 +159,7 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
         canReveal: ctx.permissions.has("clients.reveal"),
         custom,
         levels: levelsFor(rules, ctx.staff.id, working, fields),
+        entries: entriesFor(rules, ctx.staff.id, working, fields),
       });
     })();
     policies.set(ctx, p);
@@ -185,6 +222,32 @@ export function showClient(
     hasPhone: !!c.phone,
     hasEmail: !!c.email,
   };
+}
+
+// ───────────────────────────── Entering details ─────────────────────────────
+
+/** One field for a form or an action's result: as the person may see it, whether something is on file, and what they may enter. */
+export function shownField(p: ClientPolicy, f: FieldKey, raw: string | null | undefined, label = fieldLabel(f, p.custom)): ShownField {
+  return { key: f, label, level: p.level(f), value: p.show(f, raw), saved: raw != null && raw !== "", canAdd: p.canAdd(f), canEdit: p.canEdit(f) };
+}
+
+/**
+ * The value a form leaves in a field (`next` undefined: left alone). Refuses what the person may
+ * not enter; see entryDenied. The old value is never part of the answer.
+ */
+export function entered(p: ClientPolicy, f: FieldKey, before: string | null | undefined, next: string | null | undefined): string | null {
+  const denied = entryDenied(p.entry(f), before, next);
+  const label = fieldLabel(f, p.custom)
+    .toLowerCase()
+    .replace(/^client /, "");
+  if (denied === "add") throw new AppError("forbidden", `You can't add a client's ${label}`);
+  if (denied === "edit") throw new AppError("forbidden", `You can't change a client's ${label} once it's on file`);
+  return next === undefined ? (before ?? null) : next || null;
+}
+
+/** Contact details typed into a booking, walk-in or checkout: each one given needs "add". */
+export function assertCanEnter(p: ClientPolicy, given: Partial<Record<"phone" | "email", string | null | undefined>>) {
+  for (const f of ["phone", "email"] as const) if (given[f]?.trim()) entered(p, f, null, given[f]);
 }
 
 // ───────────────────────────── Audit details ─────────────────────────────
