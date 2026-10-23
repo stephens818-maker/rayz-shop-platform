@@ -319,29 +319,23 @@ describe("staff still do their job", () => {
     expect(sent.every((j) => j.status === "sent" || j.status === "suppressed")).toBe(true);
   });
 
-  it("saving the profile keeps the details the editor can't see", async () => {
-    const { updateCustomerAction, updateNotesAction } = await import("@/app/admin/customers/actions");
+  it("saving the profile keeps the details the editor leaves alone", async () => {
+    const { updateCustomerAction } = await import("@/app/admin/customers/actions");
     await as("frontdesk", shop.coralville);
+    // The profile form sends only what's in an input: the details seen in full and anything typed in.
     const r = await updateCustomerAction(ids.client, {
       firstName: P.first,
       lastName: P.last,
-      phone: "",
-      email: "",
-      address: "",
-      birthday: "",
       notes: P.notes,
-      custom: { [ids.instagram]: "@changed" },
       smsOptIn: true,
       emailOptIn: true,
       homeShopId: shop.coralville,
       preferredStaffId: people.makenna,
     });
     expect(r).toMatchObject({ ok: true });
+    expect(found(JSON.stringify(r), NEVER.frontdesk)).toEqual([]);
     const c = (await m.db.db.query.customers.findFirst({ where: eq(m.schema.customers.id, ids.client) }))!;
-    expect(c).toMatchObject({ phone: P.phone, email: P.email, address: P.address, birthday: P.birthday, customFields: { [ids.instagram]: P.instagram } });
-    await as("makenna", shop.coralville);
-    expect(await updateNotesAction(ids.client, "wiped")).toMatchObject({ ok: false, error: expect.stringMatching(/aren't shown to you/) });
-    expect((await m.db.db.query.customers.findFirst({ where: eq(m.schema.customers.id, ids.client) }))!.notes).toBe(P.notes);
+    expect(c).toMatchObject({ phone: P.phone, email: P.email, address: P.address, birthday: P.birthday, notes: P.notes, customFields: { [ids.instagram]: P.instagram } });
   });
 });
 

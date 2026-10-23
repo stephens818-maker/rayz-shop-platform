@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   BUILTIN_FIELDS,
   DEFAULT_LIMITS,
   FieldRule,
   cleanLimits,
   customFieldKey,
+  defaultEntry,
   defaultLevel,
+  entryDenied,
   fieldRuleChangeDenied,
   formatBirthday,
   maskAddress,
@@ -14,8 +16,12 @@ import {
   maskPhone,
   maskValue,
   minLevel,
+  resolveEntry,
   resolveLevel,
+  validRule,
 } from "@/domain/client-privacy";
+
+vi.mock("server-only", () => ({}));
 
 describe("masking", () => {
   it("keeps only what staff need to recognise a client", () => {
@@ -131,6 +137,102 @@ describe("who may change a rule", () => {
 
   it("the owner can change anyone's, including their own role's rules for others", () => {
     expect(fieldRuleChangeDenied({ ...admin, isOwner: true, levelAt: () => "full" }, { ...base, roleId: "admin-role", roleKey: "brand_admin" })).toBeNull();
+  });
+});
+
+describe("entering details", () => {
+  const who = { staffId: "jilane", roleId: "barber-role", roleKey: "barber" };
+  const rule = (o: Partial<FieldRule>): FieldRule => ({ field: "phone", setting: "add", level: "deny", roleId: null, staffId: null, shopId: null, ...o });
+
+  it("by default everyone can add any detail; the desk and managers can edit them, barbers and custom roles only notes", () => {
+    for (const role of ["brand_admin", "regional_manager", "shop_manager", "front_desk", "barber", null])
+      for (const f of ["phone", "email", "address", "birthday", "notes", "preferred_barber", customFieldKey("x")] as const)
+        expect(defaultEntry(role, f, "add"), `${role} ${f}`).toBe(true);
+    for (const role of ["brand_admin", "regional_manager", "shop_manager", "front_desk"]) expect(defaultEntry(role, "phone", "edit")).toBe(true);
+    for (const role of ["barber", null]) {
+      expect(defaultEntry(role, "phone", "edit")).toBe(false);
+      expect(defaultEntry(role, customFieldKey("x"), "edit")).toBe(false);
+      expect(defaultEntry(role, "notes", "edit")).toBe(true);
+    }
+    expect(defaultEntry("front_desk", "ratings", "add")).toBe(false);
+  });
+
+  it("add and edit rules resolve like view rules, each on its own", () => {
+    const rules = [
+      rule({ roleId: "barber-role", level: "deny" }),
+      rule({ roleId: "barber-role", shopId: "moline", level: "allow" }),
+      rule({ staffId: "jilane", shopId: "silvis", level: "allow" }),
+      rule({ setting: "view", roleId: "barber-role", level: "hidden" }),
+      rule({ setting: "edit", roleId: "barber-role", level: "allow" }),
+    ];
+    expect(resolveEntry(rules, who, "moline", "phone", "add")).toBe(true);
+    expect(resolveEntry(rules, who, "silvis", "phone", "add")).toBe(true);
+    expect(resolveEntry(rules, who, "utica", "phone", "add")).toBe(false);
+    expect(resolveEntry(rules, who, "utica", "phone", "edit")).toBe(true);
+    expect(resolveEntry(rules, who, "utica", "email", "add")).toBe(true);
+    expect(resolveLevel(rules, who, "utica", "phone")).toBe("hidden");
+    expect(resolveEntry([rule({ roleId: "owner" })], { staffId: "o", roleId: "owner", roleKey: "brand_owner" }, null, "phone", "add")).toBe(true);
+    expect(resolveEntry([], { staffId: "o", roleId: "owner", roleKey: "brand_owner" }, null, "ratings", "add")).toBe(false);
+  });
+
+  it("a rule's value must fit its setting", () => {
+    expect(validRule(rule({ level: "allow" }))).toBe(true);
+    expect(validRule(rule({ level: "masked" }))).toBe(false);
+    expect(validRule(rule({ setting: "view", level: "allow" }))).toBe(false);
+    expect(validRule(rule({ setting: undefined, level: "full" }))).toBe(true);
+  });
+
+  it("filling an empty field needs add; changing one on file needs edit, even to the same value, unless it's seen in full", () => {
+    const e = (level: "hidden" | "masked" | "full", canAdd: boolean, canEdit: boolean) => ({ level, canAdd, canEdit });
+    expect(entryDenied(e("hidden", false, false), "+13195551234", undefined)).toBeNull();
+    expect(entryDenied(e("hidden", false, true), null, "+13195551234")).toBe("add");
+    expect(entryDenied(e("hidden", true, false), null, "+13195551234")).toBeNull();
+    expect(entryDenied(e("hidden", false, false), null, "")).toBeNull();
+    expect(entryDenied(e("masked", true, false), "+13195551234", "+13195551234")).toBe("edit");
+    expect(entryDenied(e("hidden", true, false), "+13195551234", "+13195559999")).toBe("edit");
+    expect(entryDenied(e("masked", true, false), "+13195551234", "")).toBe("edit");
+    expect(entryDenied(e("masked", false, true), "+13195551234", "+13195559999")).toBeNull();
+    expect(entryDenied(e("full", false, false), "+13195551234", "+13195551234")).toBeNull();
+    expect(entryDenied(e("full", false, false), "+13195551234", "+13195559999")).toBe("edit");
+  });
+
+  it("nobody grants an add or edit right they don't have, and ratings aren't entered on client forms", () => {
+    const admin = { staffId: "admin", roleId: "admin-role", isOwner: false, levelAt: () => "full" as const, entryAt: () => false };
+    const base = { field: "phone" as const, setting: "add" as const, roleId: "barber-role", roleKey: "barber", staffId: null, shopId: null, level: "allow" };
+    expect(fieldRuleChangeDenied(admin, base)).toBe("You can't let anyone add a detail you can't add yourself");
+    expect(fieldRuleChangeDenied(admin, { ...base, setting: "edit" })).toBe("You can't let anyone edit a detail you can't edit yourself");
+    expect(fieldRuleChangeDenied(admin, { ...base, level: "deny" })).toBeNull();
+    expect(fieldRuleChangeDenied({ ...admin, entryAt: () => true }, base)).toBeNull();
+    expect(fieldRuleChangeDenied(admin, { ...base, level: "masked" })).toBe("Pick a level");
+    expect(fieldRuleChangeDenied(admin, { ...base, setting: "view" })).toBe("Pick a level");
+    expect(fieldRuleChangeDenied({ ...admin, isOwner: true }, { ...base, field: "ratings" })).toMatch(/rating tools/);
+  });
+
+  it("what a form saves, and what the answer shows: never more than the person's level", async () => {
+    const { entered, makePolicy, shownField } = await import("@/server/client-privacy");
+    const levels = new Map([["phone", "masked"] as const, ["address", "hidden"] as const]);
+    const entries = new Map([
+      ["add:phone", true],
+      ["edit:phone", false],
+      ["add:address", true],
+      ["edit:address", true],
+    ]);
+    const p = makePolicy({ staffId: "d", isOwner: false, canReveal: false, custom: [], levels, entries });
+    expect(entered(p, "phone", null, "+13195551234")).toBe("+13195551234");
+    expect(() => entered(p, "phone", "+13195550000", "+13195551234")).toThrow("You can't change a client's phone once it's on file");
+    expect(entered(p, "phone", "+13195550000", undefined)).toBe("+13195550000");
+    expect(entered(p, "address", "1 Old Road, Moline, IL", "2 New Road, Moline, IL")).toBe("2 New Road, Moline, IL");
+    expect(shownField(p, "phone", "+13195551234")).toEqual({ key: "phone", label: "Phone", level: "masked", value: "***-***-1234", saved: true, canAdd: true, canEdit: false });
+    expect(shownField(p, "address", "2 New Road, Moline, IL")).toEqual({
+      key: "address",
+      label: "Address",
+      level: "hidden",
+      value: null,
+      saved: true,
+      canAdd: true,
+      canEdit: true,
+    });
+    expect(shownField(p, "email", null)).toMatchObject({ level: "hidden", saved: false, canAdd: false });
   });
 });
 
