@@ -22,11 +22,13 @@ const tip = (
   payout: { status: payout, amountCents: amount, arrivalDate: arrival, bankLast4: "6789", failureMessage: failure },
 });
 
+const OPEN_MON_SAT = [1, 2, 3, 4, 5, 6];
+
 export function seedShops(): ShopRecord[] {
   return [
-    { id: SHOP_CORALVILLE, slug: "coralville", name: "Coralville", tipTransfers: true, paymentMode: "separate_charges_and_transfers", launched: true, launchAt: "2026-01-01T00:00:00.000Z", chargesEnabled: true, externalBookingUrl: null, serviceTaxRate: 0.07, cardFeeEnabled: true, cardFeeRate: 0.03, cardFeeAppliesToTip: false, payments: true, booking: "native", clockIn: true },
-    { id: SHOP_MOLINE, slug: "moline", name: "Moline", tipTransfers: false, paymentMode: "separate_charges_and_transfers", launched: true, launchAt: "2026-01-01T00:00:00.000Z", chargesEnabled: true, externalBookingUrl: null, serviceTaxRate: 0, cardFeeEnabled: true, cardFeeRate: 0.03, cardFeeAppliesToTip: false, payments: true, booking: "native", clockIn: true },
-    { id: SHOP_KIMBERLY, slug: "kimberly", name: "Kimberly", tipTransfers: false, paymentMode: "separate_charges_and_transfers", launched: false, launchAt: null, chargesEnabled: false, externalBookingUrl: "https://book.rayzbs.com/shops/kimberly", serviceTaxRate: 0.07, cardFeeEnabled: false, cardFeeRate: 0, cardFeeAppliesToTip: false, payments: false, booking: "external", clockIn: false },
+    { id: SHOP_CORALVILLE, slug: "coralville", name: "Coralville", tipTransfers: true, paymentMode: "separate_charges_and_transfers", launched: true, launchAt: "2026-01-01T00:00:00.000Z", chargesEnabled: true, externalBookingUrl: null, serviceTaxRate: 0.07, cardFeeEnabled: true, cardFeeRate: 0.03, cardFeeAppliesToTip: false, payments: true, booking: "native", clockIn: true, openWeekdays: OPEN_MON_SAT },
+    { id: SHOP_MOLINE, slug: "moline", name: "Moline", tipTransfers: false, paymentMode: "separate_charges_and_transfers", launched: true, launchAt: "2026-01-01T00:00:00.000Z", chargesEnabled: true, externalBookingUrl: null, serviceTaxRate: 0, cardFeeEnabled: true, cardFeeRate: 0.03, cardFeeAppliesToTip: false, payments: true, booking: "native", clockIn: true, openWeekdays: OPEN_MON_SAT },
+    { id: SHOP_KIMBERLY, slug: "kimberly", name: "Kimberly", tipTransfers: false, paymentMode: "separate_charges_and_transfers", launched: false, launchAt: null, chargesEnabled: false, externalBookingUrl: "https://book.rayzbs.com/shops/kimberly", serviceTaxRate: 0.07, cardFeeEnabled: false, cardFeeRate: 0, cardFeeAppliesToTip: false, payments: false, booking: "external", clockIn: false, openWeekdays: OPEN_MON_SAT },
   ];
 }
 

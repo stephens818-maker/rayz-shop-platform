@@ -281,12 +281,13 @@ describe("review fixes and the customer contract", () => {
     expect(on.body.pushTransactional).toBe(true);
   });
 
-  it("leaves Sundays and other closed days off the book and answers 426 below the Android minimum", async () => {
+  it("leaves Sundays off the book and answers 426 below the Android minimum", async () => {
     const app = createApp();
     const days = await bodyOf(await app.request("/api/v1/shops/coralville/available-days?from=2026-10-23"));
-    expect(days.body.days.map((day: { date: string }) => day.date)).not.toContain("2026-10-25");
-    expect(days.body.days.map((day: { date: string }) => day.date)).not.toContain("2026-10-24");
-    expect(days.body.days[0].date).toBe("2026-10-23");
+    const dates = days.body.days.map((day: { date: string }) => day.date);
+    expect(dates).toContain("2026-10-24");
+    expect(dates).not.toContain("2026-10-25");
+    expect(dates[0]).toBe("2026-10-23");
     const sunday = await bodyOf(await app.request("/api/v1/shops/coralville/availability?date=2026-10-25"));
     expect(sunday.body.slots).toEqual([]);
     expect(sunday.body.reason).toBe("closed");
@@ -296,5 +297,26 @@ describe("review fixes and the customer contract", () => {
     expect(stale.status).toBe(426);
     const current = await app.request("/api/v1/app/config", { headers: { "x-client": "android", "x-app-version": "1.0.0" } });
     expect(current.status).toBe(200);
+  });
+
+  it("books a Saturday at a shop whose hours include Saturday", async () => {
+    const app = createApp();
+    const shop = await bodyOf(await app.request("/api/v1/shops/coralville"));
+    expect(shop.body.hours.map((row: { weekday: number }) => row.weekday)).toContain(6);
+    expect(shop.body.hours.map((row: { weekday: number }) => row.weekday)).not.toContain(0);
+    const slots = await bodyOf(await app.request("/api/v1/shops/coralville/availability?date=2026-10-24"));
+    expect(slots.body.reason).toBeNull();
+    expect(slots.body.slots.length).toBeGreaterThan(0);
+    const booked = await bodyOf(await app.request("/api/v1/appointments", { method: "POST", headers: auth(ALEX), body: JSON.stringify({ shopId: "coralville", serviceId: "svc-cut", startsAt: slots.body.slots[0].startsAt }) }));
+    expect(booked.status).toBe(201);
+    expect(booked.body.appointment.startsAt.startsWith("2026-10-24")).toBe(true);
+
+    const world = createWorld();
+    world.shops.find((row) => row.slug === "coralville")!.openWeekdays = [1, 2, 3, 4, 5];
+    const weekdaysOnly = createApp(world);
+    const hidden = await bodyOf(await weekdaysOnly.request("/api/v1/shops/coralville/available-days?from=2026-10-23"));
+    expect(hidden.body.days.map((day: { date: string }) => day.date)).not.toContain("2026-10-24");
+    const refused = await bodyOf(await weekdaysOnly.request("/api/v1/appointments", { method: "POST", headers: auth(ALEX), body: JSON.stringify({ shopId: "coralville", serviceId: "svc-cut", startsAt: "2026-10-24T16:00:00.000Z" }) }));
+    expect(refused.status).toBe(409);
   });
 });

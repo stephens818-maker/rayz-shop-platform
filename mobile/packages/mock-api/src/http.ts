@@ -144,10 +144,10 @@ function readQr(token: string, now = Date.now()): string | null {
 
 function publicShop(world: World, id: string) {
   const shop = world.shops.find((s) => s.id === id || s.slug === id)!;
-  const gates: Record<string, { address: string; city: string; state: string; zip: string; phone: string; hours: { weekday: number; open: string; close: string }[] }> = {
-    coralville: { address: "1701 2nd Street", city: "Coralville", state: "IA", zip: "52241", phone: "+13195196700", hours: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, open: "09:00", close: "18:00" })) },
-    moline: { address: "3002 Ave of Cities", city: "Moline", state: "IL", zip: "61265", phone: "+13097640977", hours: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, open: "09:00", close: "19:00" })) },
-    kimberly: { address: "1150 E Kimberly Rd #B", city: "Davenport", state: "IA", zip: "52807", phone: "+15633868505", hours: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, open: "09:00", close: "18:00" })) },
+  const gates: Record<string, { address: string; city: string; state: string; zip: string; phone: string; close: string }> = {
+    coralville: { address: "1701 2nd Street", city: "Coralville", state: "IA", zip: "52241", phone: "+13195196700", close: "18:00" },
+    moline: { address: "3002 Ave of Cities", city: "Moline", state: "IL", zip: "61265", phone: "+13097640977", close: "19:00" },
+    kimberly: { address: "1150 E Kimberly Rd #B", city: "Davenport", state: "IA", zip: "52807", phone: "+15633868505", close: "18:00" },
   };
   const g = gates[shop.slug];
   return {
@@ -165,7 +165,7 @@ function publicShop(world: World, id: string) {
     externalBookingUrl: bookingGate(shop) === "external" ? shop.externalBookingUrl : null,
     cancelCutoffMinutes: 30,
     barberCount: shop.slug === "kimberly" ? 3 : 4,
-    hours: g.hours,
+    hours: (shop.openWeekdays ?? [1, 2, 3, 4, 5, 6]).map((day) => ({ weekday: day, open: "09:00", close: g.close })),
     lat: shop.slug === "coralville" ? 41.6764 : shop.slug === "moline" ? 41.5067 : 41.559,
     lng: shop.slug === "coralville" ? -91.5802 : shop.slug === "moline" ? -90.5151 : -90.5504,
     description: "Modern cuts with an old-school barbershop welcome.",

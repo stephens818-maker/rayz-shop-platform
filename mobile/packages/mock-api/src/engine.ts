@@ -40,6 +40,8 @@ export interface ShopRecord {
   payments: boolean;
   booking: "native" | "external" | "closed";
   clockIn: boolean;
+  /** Weekdays the shop is open. 0 = Sunday … 6 = Saturday. Closed days are whatever is missing. */
+  openWeekdays: number[];
 }
 
 export interface LiveFloor {
