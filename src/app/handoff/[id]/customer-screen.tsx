@@ -79,7 +79,13 @@ export function CustomerScreen({ initial }: { initial: HandoffView }) {
   return (
     <div
       className="fixed inset-0 z-40 flex select-none flex-col overflow-hidden bg-white text-zinc-900 [touch-action:manipulation] landscape:flex-row"
-      style={{ borderTop: `6px solid ${v.shop.accentColor ?? "#111318"}` }}
+      style={{
+        borderTop: `6px solid ${v.shop.accentColor ?? "#111318"}`,
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)",
+        paddingLeft: "env(safe-area-inset-left)",
+        paddingRight: "env(safe-area-inset-right)",
+      }}
       onContextMenu={(e) => e.preventDefault()}
       data-testid="customer-screen"
     >
