@@ -1,10 +1,10 @@
 import { formatCents, type PaymentPreview } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import { Banner, Body, Button, Card, Chip, Display, Loading, Money, ScrollScreen, useI18n } from "@rayz/ui";
-import { payModel } from "../../src/pay-model";
+import { payModel, payRows } from "../../src/pay-model";
 import { PayConfirm } from "../../src/pay-flow";
 import { api } from "../../src/net";
 import { AddCard } from "../../src/secure-card";
@@ -20,6 +20,7 @@ export default function Pay() {
   const router = useRouter();
   const { session } = useSession();
   const [method, setMethod] = useState<Method | null>(null);
+  const [setup, setSetup] = useState<{ clientSecret: string; ephemeralKey: string; customerId: string } | null>(null);
   const [tip, setTip] = useState(500);
   const [paid, setPaid] = useState<{ totalCents: number; feeCents: number; tender: string } | null>(null);
   const [error, setError] = useState("");
@@ -31,7 +32,15 @@ export default function Pay() {
     enabled: Boolean(session),
     queryFn: () => api<{ paymentMethods: Method[] }>("/api/v1/me/payment-methods", session?.token),
   });
-  const chosen = method ?? cards.data?.paymentMethods[0] ?? null;
+  const chosen = method;
+  useEffect(() => {
+    if (!session || !chosen) return;
+    const funding = chosen.funding === "debit" || chosen.funding === "prepaid" ? chosen.funding : "credit";
+    void api<{ clientSecret: string; ephemeralKey: string; customerId: string }>("/api/v1/me/payment-methods/setup", session.token, {
+      method: "POST",
+      body: JSON.stringify({ funding }),
+    }).then((body) => setSetup({ clientSecret: body.clientSecret, ephemeralKey: body.ephemeralKey, customerId: body.customerId }));
+  }, [session, chosen]);
   const preview = useQuery({
     queryKey: ["preview", code, chosen?.id, tip, chosen?.wallet],
     enabled: Boolean(session && chosen),
@@ -42,7 +51,7 @@ export default function Pay() {
       }),
   });
   const model = preview.data ? payModel(preview.data) : null;
-  const lines = model?.lines.filter((line) => line.label !== preview.data?.feeLabel) ?? [];
+  const lines = preview.data ? payRows(preview.data) : [];
 
   const pay = () => {
     if (!session || !chosen) return;
@@ -79,7 +88,7 @@ export default function Pay() {
         </Card>
       ) : (
         <>
-          <AddCard token={session.token} onAdded={(card) => { setMethod(card); void cards.refetch(); }} />
+          <AddCard token={session.token} onAdded={(card, sheet) => { setMethod(card); setSetup(sheet); void cards.refetch(); }} />
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
             {cards.data?.paymentMethods.map((card) => (
               <Chip key={card.id} label={`${card.brand} ••${card.last4}`} selected={chosen?.id === card.id} onPress={() => setMethod(card)} />
@@ -91,6 +100,7 @@ export default function Pay() {
               <Chip key={cents} label={formatCents(cents)} selected={tip === cents} onPress={() => setTip(cents)} />
             ))}
           </View>
+          {!chosen ? <Body>{t("cardSurchargeNote")}</Body> : null}
           {preview.isLoading ? <Loading label={t("loading")} /> : null}
           {preview.data && !preview.data.paymentsEnabled ? <Banner>{preview.data.unavailableCopy ?? t("notLive")}</Banner> : null}
           {model && preview.data?.paymentsEnabled ? (
@@ -106,7 +116,7 @@ export default function Pay() {
             </Card>
           ) : null}
           {error ? <Banner tone="bad">{error}</Banner> : null}
-          <PayConfirm preview={preview.data ?? null} disabled={busy || !model || !preview.data?.paymentsEnabled} onPress={pay} />
+          {chosen ? <PayConfirm preview={preview.data ?? null} setup={setup} disabled={busy || !model || !preview.data?.paymentsEnabled} onPress={pay} /> : null}
         </>
       )}
     </ScrollScreen>

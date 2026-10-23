@@ -4,9 +4,10 @@ import { formatCents, type PaymentPreview } from "@rayz/api";
  * Label for Stripe PaymentSheet.FlowController (customFlow on this SDK).
  * The fee is on the confirm button, before the charge.
  */
-export function flowButtonLabel(preview: Pick<PaymentPreview, "feeCents" | "feeLabel" | "totalCents">): string {
+export function flowButtonLabel(preview: Pick<PaymentPreview, "feeCents" | "totalCents" | "funding">): string {
   const total = formatCents(preview.totalCents);
-  if (preview.feeCents > 0 && preview.feeLabel) return `Pay ${total} · ${preview.feeLabel}`;
+  if (preview.funding === "debit") return `Pay ${total} · No surcharge on debit cards`;
+  if (preview.feeCents > 0) return `Pay ${total} (includes ${formatCents(preview.feeCents)} credit card surcharge)`;
   return `Pay ${total}`;
 }
 
@@ -20,7 +21,7 @@ export function skipNativeSheet(clientSecret: string): boolean {
 }
 
 export function flowSheetParams(
-  preview: Pick<PaymentPreview, "feeCents" | "feeLabel" | "totalCents">,
+  preview: Pick<PaymentPreview, "feeCents" | "totalCents" | "funding">,
   setup: { clientSecret: string; ephemeralKey: string; customerId: string },
 ) {
   return {

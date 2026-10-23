@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   chicagoDate,
   clipsWorkweek,
+  configuredWeekStart,
   formatClock,
   payPeriodFor,
   rangeForPreset,
@@ -27,6 +28,10 @@ describe("Chicago preset date math", () => {
     expect(workweekContaining("2026-11-01")).toEqual({ from: "2026-11-01", to: "2026-11-07" });
     expect(payPeriodFor("2026-11-01")).toMatchObject({ start: "2026-11-01", end: "2026-11-14" });
     expect(rangeForPreset("this_week", "2026-03-08")).toEqual({ from: "2026-03-08", to: "2026-03-14" });
+    expect(configuredWeekStart(undefined)).toBe(0);
+    expect(configuredWeekStart({})).toBe(0);
+    expect(workweekContaining(TODAY, configuredWeekStart(undefined)).from).toBe("2026-10-18");
+    expect(configuredWeekStart({ weekStartDay: 1 })).toBe(1);
   });
 
   it("remembers a custom range and recomputes named presets from today", () => {

@@ -9,8 +9,10 @@ describe("sticky SMS", () => {
   });
 
   it("never sends smsOptIn true", () => {
-    expect(smsPatch(false, { smsMarketingOptIn: true, turnSmsOff: false })).toEqual({ smsOptIn: false, smsMarketingOptIn: true });
+    expect(smsPatch(false, { smsMarketingOptIn: true, turnSmsOff: false })).toEqual({ smsOptIn: false, smsMarketingOptIn: true, consentTextVersion: "2026-10-23" });
     expect(smsPatch(true, { smsMarketingOptIn: false, turnSmsOff: true }).smsOptIn).toBe(false);
     expect(smsPatch(true, { smsMarketingOptIn: true, turnSmsOff: false }).smsOptIn).toBeUndefined();
+    expect(smsPatch(true, { smsMarketingOptIn: true, turnSmsOff: false }).consentTextVersion).toBe("2026-10-23");
+    expect(smsPatch(true, { smsMarketingOptIn: false, turnSmsOff: false }).consentTextVersion).toBeUndefined();
   });
 });

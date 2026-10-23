@@ -32,8 +32,8 @@ export interface AppConfig {
   pilot: boolean;
   pilotShops: string[];
   closedShopCopy: string;
-  /** 0 = Sunday. Payroll workweeks default to Sunday. */
-  weekStartDay: number;
+  /** Sunday unless a response actually includes this field. */
+  weekStartDay?: number;
   minVersion: { ios: string; android: string };
   forceUpdateBelow: { ios: string; android: string };
   minSupportedVersion: { ios: string; android: string };
@@ -50,7 +50,8 @@ export interface AppConfig {
 export interface StaffConfig {
   timezone: "America/Chicago";
   timeFormat: "12h" | "24h";
-  weekStartDay: number;
+  /** Sunday unless a response actually includes this field. */
+  weekStartDay?: number;
   appName: string;
   minSupportedVersion: { ios: string; android: string };
   latestVersion: { ios: string; android: string };
@@ -317,7 +318,15 @@ export interface CustomerReceiptRefund {
   productCents: number;
   taxCents: number;
   tipCents: number;
-  from: string | null;
+  shopPortionCents?: number | null;
+  tipPortionCents?: number | null;
+  from: "shop" | "tip" | "shop_and_tip" | null;
+}
+
+export interface ReceiptSettlement {
+  shopCents: number;
+  tipCents: number;
+  tipStatus: "executed" | "reversed" | "planned" | "with_shop";
 }
 
 export interface CustomerReceipt {
@@ -332,6 +341,8 @@ export interface CustomerReceipt {
   tender: string;
   paidAt: string | null;
   grossLabel: string;
+  barberFirstName?: string | null;
+  settlement?: ReceiptSettlement | null;
   refunds: CustomerReceiptRefund[];
 }
 

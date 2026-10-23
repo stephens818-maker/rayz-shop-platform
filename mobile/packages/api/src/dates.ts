@@ -86,6 +86,11 @@ export function clampRange(from: string, to: string, boundFrom: string, boundTo:
  * Workweek that contains `iso`. `weekStartDay` comes from config (0 = Sunday).
  * The payroll default is Sunday–Saturday.
  */
+/** Sunday unless the config response actually includes `weekStartDay`. */
+export function configuredWeekStart(config: { weekStartDay?: number } | null | undefined): number {
+  return typeof config?.weekStartDay === "number" ? config.weekStartDay : 0;
+}
+
 export function workweekContaining(iso: string, weekStartDay = 0): DateRange {
   const start = ((weekStartDay % 7) + 7) % 7;
   const daysSince = (weekday(iso) - start + 7) % 7;

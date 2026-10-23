@@ -176,6 +176,11 @@ const en = {
   receiptMissing: "That receipt isn't available.",
   deleteCodeHint: "We texted a code. Enter it to delete this account.",
   loadMore: "Load more",
+  cardSurchargeNote: "We add a 3% surcharge to credit card payments. It is not more than what we pay to accept credit cards. Debit cards, prepaid cards, gift cards, and cash have no surcharge.",
+  offlineTitle: "Can't reach Ray'z",
+  offlineBody: "Check your connection and try again.",
+  shopCode: "Shop code",
+  shopCodeHint: "Scan the code at the shop, or type the code on the shop screen.",
 };
 
 const es: Record<keyof typeof en, string> = {
@@ -354,6 +359,11 @@ const es: Record<keyof typeof en, string> = {
   receiptMissing: "Ese recibo no está disponible.",
   deleteCodeHint: "Te enviamos un código. Escríbelo para eliminar esta cuenta.",
   loadMore: "Cargar más",
+  cardSurchargeNote: "Agregamos un recargo del 3% a los pagos con tarjeta de crédito. No es más de lo que pagamos por aceptar tarjetas de crédito. Las tarjetas de débito, prepago, de regalo y el efectivo no tienen recargo.",
+  offlineTitle: "Sin conexión con Ray'z",
+  offlineBody: "Revisa tu conexión e inténtalo de nuevo.",
+  shopCode: "Código de la tienda",
+  shopCodeHint: "Escanea el código en la barbería o escríbelo de la pantalla.",
 };
 
 export type Lang = "en" | "es";

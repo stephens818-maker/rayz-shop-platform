@@ -4,6 +4,7 @@ import {
   formatHours,
   formatLongDate,
   LATE_ADJUSTMENT_COPY,
+  configuredWeekStart,
   rangeForPreset,
   setTimeFormat,
   type EarningsDay,
@@ -60,7 +61,7 @@ export default function Earnings() {
       return (await res.json()) as StaffConfig;
     },
   });
-  const weekStart = config.data?.weekStartDay ?? 0;
+  const weekStart = configuredWeekStart(config.data);
   const [range, setRange] = useState<SavedRange>(() => loadRange(null, today));
   const [custom, setCustom] = useState(false);
   const [pin, setPin] = useState("");

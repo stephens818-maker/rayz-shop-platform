@@ -86,7 +86,11 @@ describe("review fixes and the customer contract", () => {
     const detail = await bodyOf(await app.request("/api/v1/me/receipts/rcpt_past", { headers: auth(ALEX) }));
     expect(detail.body.totalCents).toBe(3603);
     expect(detail.body.serviceCents).toBe(2900);
-    expect(detail.body.refunds).toEqual([expect.objectContaining({ amountCents: 100, from: "shop" })]);
+    expect(detail.body.settlement).toEqual({ shopCents: 3103, tipCents: 500, tipStatus: "with_shop" });
+    expect(detail.body.refunds).toEqual([
+      expect.objectContaining({ amountCents: 100, from: "shop", shopPortionCents: 100, tipPortionCents: 0 }),
+      expect.objectContaining({ from: "shop_and_tip", shopPortionCents: 150, tipPortionCents: 100 }),
+    ]);
   });
 
   it("returns 403 when confirm runs against a closed or unready shop", async () => {
@@ -179,7 +183,7 @@ describe("review fixes and the customer contract", () => {
     expect(kimberly).toMatchObject({ payments: false, booking: "external", clockIn: false, tipTransfers: false, launched: false });
     expect(coral).toMatchObject({ payments: true, booking: "native", clockIn: false, tipTransfers: true, launched: true });
     expect(cfg.body.minVersion).toEqual({ ios: "3.0.0", android: "1.0.0" });
-    expect(cfg.body.weekStartDay).toBe(0);
+    expect(cfg.body.weekStartDay).toBeUndefined();
     expect(cfg.body.launched).toBe(true);
 
     const verified = await bodyOf(await app.request("/api/staff/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+13195550111", code: "123456" }) }));
@@ -215,5 +219,82 @@ describe("review fixes and the customer contract", () => {
     expect((await timed.request("/api/staff/v1/me/earnings?period=current", { headers: money })).status).toBe(200);
     clock += 5 * 60 * 1000 + 1;
     expect((await timed.request("/api/staff/v1/me/earnings?period=current", { headers: money })).status).toBe(403);
+  });
+
+  it("hides the kiosk code from barber tokens and rotates it for a paired device", async () => {
+    let clock = Date.parse("2026-10-23T15:00:00.000Z");
+    const app = createApp(createWorld(), { now: () => new Date(clock) });
+    const barber = await bodyOf(await app.request("/api/staff/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+13195550111", code: "123456" }) }));
+    const denied = await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: { authorization: `Bearer ${barber.body.accessToken}` } });
+    expect(denied.status).toBe(403);
+    const device = { authorization: `Bearer kiosk.${SHOP_CORALVILLE}` };
+    const first = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
+    expect(first.status).toBe(200);
+    clock += 15_000;
+    const next = await bodyOf(await app.request("/api/staff/v1/kiosk/qr?shopId=coralville", { headers: device }));
+    expect(next.body.token).not.toBe(first.body.token);
+    expect(next.body.rotatesSeconds).toBe(15);
+  });
+
+  it("requires auth on device routes, returns 400 for a bad date, and keeps private responses uncached", async () => {
+    const app = createApp();
+    expect((await app.request("/api/v1/me/devices/dev1", { method: "DELETE" })).status).toBe(401);
+    expect((await app.request("/api/v1/me/devices/dev1", { method: "DELETE", headers: auth(ALEX) })).status).toBe(204);
+    expect((await app.request("/api/staff/v1/me/devices", { method: "POST" })).status).toBe(401);
+    const verified = await bodyOf(await app.request("/api/staff/v1/auth/otp/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ phone: "+13195550111", code: "123456" }) }));
+    const staff = { authorization: `Bearer ${verified.body.accessToken}`, "content-type": "application/json" };
+    expect((await app.request("/api/staff/v1/me/devices", { method: "POST", headers: staff })).status).toBe(201);
+    const step = await bodyOf(await app.request("/api/staff/v1/auth/step-up", { method: "POST", headers: staff, body: JSON.stringify({ pin: "135790" }) }));
+    const money = { ...staff, "x-step-up": step.body.stepUpToken as string };
+    for (const path of ["/api/staff/v1/me/earnings/days?from=nope&to=2026-10-25", "/api/staff/v1/me/earnings/tickets?from=2026-10-32&to=2026-10-25", "/api/staff/v1/me/payouts?from=2026-13-01&to=2026-10-25"]) {
+      expect((await app.request(path, { headers: money })).status, path).toBe(400);
+    }
+    const checks: [string, Record<string, string>][] = [
+      ["/api/v1/me", auth(ALEX)],
+      ["/api/v1/me/receipts", auth(ALEX)],
+      ["/api/v1/me/receipts/rcpt_past", auth(ALEX)],
+      ["/api/v1/me/home", auth(ALEX)],
+      ["/api/v1/me/payment-methods", auth(ALEX)],
+      ["/api/staff/v1/me", staff],
+      [`/api/staff/v1/clients/${ALEX}`, staff],
+      ["/api/staff/v1/me/payout-account", money],
+      ["/api/staff/v1/me/calendar", staff],
+    ];
+    for (const [path, headers] of checks) {
+      const res = await app.request(path, { headers });
+      expect(res.headers.get("cache-control"), path).toBe("private, no-store");
+    }
+    expect((await app.request("/api/staff/v1/me/payout-account/session/complete", { method: "POST", headers: staff, body: JSON.stringify({ state: "active" }) })).status).toBe(403);
+  });
+
+  it("requires consentTextVersion to opt in and ignores pushReminders", async () => {
+    const app = createApp();
+    const missing = await bodyOf(await app.request("/api/v1/me", { method: "PATCH", headers: auth(ALEX), body: JSON.stringify({ smsMarketingOptIn: true }) }));
+    expect(missing.status).toBe(400);
+    expect(missing.body.error.message).toBe("consentTextVersion is required to opt in.");
+    const old = await bodyOf(await app.request("/api/v1/me", { method: "PATCH", headers: auth(ALEX), body: JSON.stringify({ pushReminders: false }) }));
+    expect(old.body.pushReminders).toBeUndefined();
+    expect(old.body.pushTransactional).toBe(true);
+    const on = await bodyOf(await app.request("/api/v1/me", { method: "PATCH", headers: auth(ALEX), body: JSON.stringify({ smsMarketingOptIn: true, pushTransactional: true, consentTextVersion: "2026-10-23" }) }));
+    expect(on.status).toBe(200);
+    expect(on.body.smsMarketingOptIn).toBe(true);
+    expect(on.body.pushTransactional).toBe(true);
+  });
+
+  it("leaves Sundays and other closed days off the book and answers 426 below the Android minimum", async () => {
+    const app = createApp();
+    const days = await bodyOf(await app.request("/api/v1/shops/coralville/available-days?from=2026-10-23"));
+    expect(days.body.days.map((day: { date: string }) => day.date)).not.toContain("2026-10-25");
+    expect(days.body.days.map((day: { date: string }) => day.date)).not.toContain("2026-10-24");
+    expect(days.body.days[0].date).toBe("2026-10-23");
+    const sunday = await bodyOf(await app.request("/api/v1/shops/coralville/availability?date=2026-10-25"));
+    expect(sunday.body.slots).toEqual([]);
+    expect(sunday.body.reason).toBe("closed");
+    const booked = await bodyOf(await app.request("/api/v1/appointments", { method: "POST", headers: auth(ALEX), body: JSON.stringify({ shopId: "coralville", serviceId: "svc-cut", startsAt: "2026-10-25T16:00:00.000Z" }) }));
+    expect(booked.status).toBe(409);
+    const stale = await app.request("/api/v1/app/config", { headers: { "x-client": "android", "x-app-version": "0.9.0" } });
+    expect(stale.status).toBe(426);
+    const current = await app.request("/api/v1/app/config", { headers: { "x-client": "android", "x-app-version": "1.0.0" } });
+    expect(current.status).toBe(200);
   });
 });

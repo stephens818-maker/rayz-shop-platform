@@ -1,10 +1,11 @@
-import { formatCents, formatLongDate } from "@rayz/api";
+import { formatCents } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { Body, Button, Card, Display, Money, ScrollScreen, useI18n } from "@rayz/ui";
 import { api } from "../src/net";
-import { receiptTotal, receiptView, type ReceiptView } from "../src/receipt-view";
+import { displayDate } from "../src/civil-date";
+import { receiptTotal, receiptView, refundPortionPhrase, settlementLines, type ReceiptView } from "../src/receipt-view";
 import { useSession } from "../src/session";
 
 interface Row { id: string; shopName: string; paidAt: string; totalCents: number; serviceName: string }
@@ -46,7 +47,7 @@ export default function Receipts() {
       {rows.map((row) => (
         <Card key={row.id}>
           <Body>{row.shopName}</Body>
-          <Body muted>{`${row.serviceName} · ${formatLongDate(row.paidAt.slice(0, 10), "en-US")}`}</Body>
+          <Body muted>{`${row.serviceName} · ${displayDate(row.paidAt)}`}</Body>
           <Money cents={row.totalCents} />
           <Button label={t("receipts")} kind="ghost" onPress={() => setOpen(row.id)} />
         </Card>
@@ -58,9 +59,12 @@ export default function Receipts() {
           <Body>{`${t("services")} ${formatCents(receipt.serviceCents)}`}</Body>
           <Body>{`Tax ${formatCents(receipt.taxCents)}`}</Body>
           <Body>{`${t("tip")} ${formatCents(receipt.tipCents)}`}</Body>
+          {settlementLines(receipt.tipCents, receipt.settlement, receipt.barberFirstName).map((line) => (
+            <Body key={line}>{line}</Body>
+          ))}
           <Body>{`${t("feeTitle")} ${formatCents(receipt.feeCents)}`}</Body>
           {receipt.refunds.map((refund) => (
-            <Body key={refund.id}>{`${t("refund")} ${formatCents(refund.amountCents)}`}</Body>
+            <Body key={refund.id}>{`${t("refund")} ${formatCents(refund.amountCents)}${refundPortionPhrase(refund)}`}</Body>
           ))}
           <Money cents={receiptTotal(receipt) ?? receipt.totalCents} large />
           <Body muted>{receipt.tender}</Body>

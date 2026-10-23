@@ -2,6 +2,7 @@ import { browserSecureStore } from "@rayz/ui";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Platform } from "react-native";
 import { API_URL } from "./net";
+import { signedInSession } from "./sign-in-state";
 
 const KEY = "rayz.team.session";
 
@@ -63,9 +64,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const save = async (next: StaffSession) => {
-    setSession(next);
-    setUnlocked(false);
-    await (await store()).setItem(KEY, JSON.stringify(next));
+    const fresh = signedInSession(next);
+    setSession(fresh.session);
+    setUnlocked(fresh.unlocked);
+    setStepUp(fresh.stepUp);
+    await (await store()).setItem(KEY, JSON.stringify(fresh.session));
   };
   const clear = async () => {
     setSession(null);

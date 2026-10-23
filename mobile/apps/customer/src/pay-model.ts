@@ -17,3 +17,9 @@ export function payModel(preview: PaymentPreview) {
     tipTransferCopy: preview.tipTransfer.copy,
   };
 }
+
+/** Itemized rows include the server surcharge and the server total. */
+export function payRows(preview: PaymentPreview) {
+  const model = payModel(preview);
+  return [...model.lines, { label: "Total", cents: preview.totalCents }];
+}

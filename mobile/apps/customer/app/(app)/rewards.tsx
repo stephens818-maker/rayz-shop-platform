@@ -1,4 +1,5 @@
-import { formatCents, formatLongDate } from "@rayz/api";
+import { formatCents } from "@rayz/api";
+import { displayDate } from "../../src/civil-date";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Banner, Body, Button, Card, Display, Loading, Money, ScrollScreen, useI18n } from "@rayz/ui";
@@ -60,7 +61,7 @@ export default function Rewards() {
       {ledger.data?.entries.map((entry) => (
         <Card key={entry.id}>
           <Body>{entry.label}</Body>
-          <Body muted>{formatLongDate(entry.at.slice(0, 10), "en-US")}</Body>
+          <Body muted>{displayDate(entry.at)}</Body>
           <Money cents={entry.amountCents} />
         </Card>
       ))}

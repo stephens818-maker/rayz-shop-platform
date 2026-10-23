@@ -5,10 +5,10 @@ import { Platform } from "react-native";
 import { Body, Button, Display, ScrollScreen, useI18n } from "@rayz/ui";
 import { api } from "../src/net";
 import { useSession } from "../src/session";
-import { smsPatch, smsToggle } from "../src/sms";
+import { CONSENT_TEXT_VERSION, smsPatch, smsToggle } from "../src/sms";
 
 interface Me {
-  pushReminders: boolean;
+  pushTransactional: boolean;
   pushMarketing: boolean;
   smsOptIn: boolean;
   smsMarketingOptIn: boolean;
@@ -28,7 +28,7 @@ export default function Notifications() {
   const [marketing, setMarketing] = useState<boolean | null>(null);
   const [texts, setTexts] = useState<boolean | null>(null);
   const [smsTurnedOff, setSmsTurnedOff] = useState(false);
-  const reminderOn = reminders ?? me.data?.pushReminders ?? true;
+  const reminderOn = reminders ?? me.data?.pushTransactional ?? true;
   const marketingOn = marketing ?? me.data?.pushMarketing ?? false;
   const textOffers = texts ?? me.data?.smsMarketingOptIn ?? false;
   const sms = smsToggle(Boolean(me.data?.smsOptIn) && !smsTurnedOff);
@@ -36,9 +36,10 @@ export default function Notifications() {
   const save = () => {
     if (!session || !me.data) return;
     const patch = smsPatch(me.data.smsOptIn, { smsMarketingOptIn: textOffers, turnSmsOff: smsTurnedOff || !sms.on });
+    const consent = reminderOn || marketingOn || textOffers ? { consentTextVersion: patch.consentTextVersion ?? CONSENT_TEXT_VERSION } : {};
     void api("/api/v1/me", session.token, {
       method: "PATCH",
-      body: JSON.stringify({ pushReminders: reminderOn, pushMarketing: marketingOn, ...patch }),
+      body: JSON.stringify({ pushTransactional: reminderOn, pushMarketing: marketingOn, ...patch, ...consent }),
     }).then(async () => {
       if (Platform.OS !== "web") {
         const Notifications = await import("expo-notifications");

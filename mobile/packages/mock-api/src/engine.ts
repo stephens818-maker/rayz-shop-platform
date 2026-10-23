@@ -127,8 +127,9 @@ export interface EarningsWorld {
  *     + product commission
  *     + training hours × training flat rate
  *     + estimated overtime
- * OT hours are not on the hourly side of the max.
- * The OT estimate is 1.5 × the hourly base rate × OT hours. It never uses the training rate.
+ * Hourly minutes are production minutes minus every OT minute, so training OT
+ * is not also inside the hourly side. The OT estimate is 1.5 × the hourly
+ * base rate × OT hours. It never uses the training rate.
  */
 export interface ComputeLineInput {
   regularProductionMinutes: number;
@@ -286,11 +287,10 @@ export function buildEarnings(world: EarningsWorld, staffId: string, range: { fr
     const regular = sum((c) => !c.ot);
     const ot = sum((c) => c.ot);
     const inProd = sum((c) => c.kind === "production" && inRange(c.date, from, to));
-    const inProdRegular = sum((c) => c.kind === "production" && !c.ot && inRange(c.date, from, to));
     const inTrain = sum((c) => c.kind === "training" && inRange(c.date, from, to));
     const inOt = sum((c) => c.ot && inRange(c.date, from, to));
     productionMinutes += inProd;
-    regularProductionMinutes += inProdRegular;
+    regularProductionMinutes += Math.max(0, inProd - inOt);
     trainingMinutes += inTrain;
     otMinutes += inOt;
     const postingMap = new Map<string, { production: number; training: number; regular: number; ot: number }>();

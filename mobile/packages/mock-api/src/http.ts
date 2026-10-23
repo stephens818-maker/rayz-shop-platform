@@ -1,4 +1,4 @@
-import { cardFeeFor, chicagoDate, clipsWorkweek, rangeFromSearch, type PaymentPreview } from "@rayz/api";
+import { addDays, cardFeeFor, chicagoDate, clipsWorkweek, needsUpdate, rangeFromSearch, weekday, type PaymentPreview } from "@rayz/api";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { earningsDays, liveWait, payrollCsv, payrollPdf, toTicket, transfersVisible, type ShopRecord } from "./engine";
@@ -25,7 +25,7 @@ interface Customer {
   smsOptIn: boolean;
   smsMarketingOptIn: boolean;
   emailOptIn: boolean;
-  pushReminders: boolean;
+  pushTransactional: boolean;
   pushMarketing: boolean;
   birthYear: number | null;
   guardianId: string | null;
@@ -67,7 +67,15 @@ interface ReceiptRefund {
   productCents: number;
   taxCents: number;
   tipCents: number;
-  from: "shop" | "tip" | null;
+  shopPortionCents?: number | null;
+  tipPortionCents?: number | null;
+  from: "shop" | "tip" | "shop_and_tip" | null;
+}
+
+interface ReceiptSettlement {
+  shopCents: number;
+  tipCents: number;
+  tipStatus: "executed" | "reversed" | "planned" | "with_shop";
 }
 
 interface Receipt {
@@ -83,6 +91,8 @@ interface Receipt {
   tender: string;
   paidAt: string;
   grossLabel: "Gross receipt";
+  barberFirstName?: string | null;
+  settlement?: ReceiptSettlement | null;
   refunds: ReceiptRefund[];
 }
 
@@ -202,9 +212,9 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   const now = () => options.now?.() ?? new Date();
   const devCodes = options.devCodes !== false;
   const customers: Customer[] = [
-    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", firstName: "Alex", phone: FAMILY, email: "alex@example.com", smsOptIn: true, smsMarketingOptIn: false, emailOptIn: true, pushReminders: true, pushMarketing: false, birthYear: 1990, guardianId: null, deletedAt: null },
-    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2", firstName: "Jordan", phone: FAMILY, email: null, smsOptIn: true, smsMarketingOptIn: false, emailOptIn: false, pushReminders: true, pushMarketing: false, birthYear: 1994, guardianId: null, deletedAt: null },
-    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3", firstName: "Sam", phone: null, email: null, smsOptIn: false, smsMarketingOptIn: false, emailOptIn: false, pushReminders: false, pushMarketing: false, birthYear: 2016, guardianId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", deletedAt: null },
+    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", firstName: "Alex", phone: FAMILY, email: "alex@example.com", smsOptIn: true, smsMarketingOptIn: false, emailOptIn: true, pushTransactional: true, pushMarketing: false, birthYear: 1990, guardianId: null, deletedAt: null },
+    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2", firstName: "Jordan", phone: FAMILY, email: null, smsOptIn: true, smsMarketingOptIn: false, emailOptIn: false, pushTransactional: true, pushMarketing: false, birthYear: 1994, guardianId: null, deletedAt: null },
+    { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3", firstName: "Sam", phone: null, email: null, smsOptIn: false, smsMarketingOptIn: false, emailOptIn: false, pushTransactional: false, pushMarketing: false, birthYear: 2016, guardianId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", deletedAt: null },
   ];
   const family = () => customers.filter((row) => row.guardianId && !row.deletedAt).map((row) => ({ id: row.id, guardianId: row.guardianId as string, firstName: row.firstName, birthYear: row.birthYear, smsOptIn: row.smsOptIn }));
   const appointments: Appointment[] = [
@@ -256,7 +266,12 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       tender: "Visa ••4242",
       paidAt: "2026-09-24T17:10:00.000Z",
       grossLabel: "Gross receipt",
-      refunds: [{ id: "rf_past", amountCents: 100, serviceCents: 100, productCents: 0, taxCents: 0, tipCents: 0, from: "shop" }],
+      barberFirstName: "Makenna",
+      settlement: { shopCents: 3103, tipCents: 500, tipStatus: "with_shop" },
+      refunds: [
+        { id: "rf_past", amountCents: 100, serviceCents: 100, productCents: 0, taxCents: 0, tipCents: 0, shopPortionCents: 100, tipPortionCents: 0, from: "shop" },
+        { id: "rf_split", amountCents: 250, serviceCents: 150, productCents: 0, taxCents: 0, tipCents: 100, shopPortionCents: 150, tipPortionCents: 100, from: "shop_and_tip" },
+      ],
     },
   ];
   (world as World & { receipts: Receipt[] }).receipts = receipts;
@@ -290,7 +305,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     smsOptIn: customer.smsOptIn,
     smsMarketingOptIn: customer.smsMarketingOptIn,
     emailOptIn: customer.emailOptIn,
-    pushReminders: customer.pushReminders,
+    pushTransactional: customer.pushTransactional,
     pushMarketing: customer.pushMarketing,
     birthYear: customer.birthYear,
     badge: null as null,
@@ -319,10 +334,21 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   const noStore = (c: { header: (name: string, value: string) => void }) => {
     c.header("cache-control", "private, no-store");
   };
+  const upgradeRequired = (c: { req: { header: (name: string) => string | undefined }; json: (body: unknown, status?: number) => Response }, mins: { ios: string; android: string }) => {
+    const version = c.req.header("x-app-version");
+    if (!version) return null;
+    const platform = c.req.header("x-client") === "android" ? "android" : "ios";
+    if (!needsUpdate(mins[platform], version)) return null;
+    return c.json(err("upgrade_required", "Update the app to continue.", 426).body, 426);
+  };
+  const shopBy = (id: string | undefined) => world.shops.find((shop) => shop.id === id || shop.slug === id);
+  const shopOpen = (shopId: string, isoDate: string) => publicShop(world, shopId).hours.some((row) => row.weekday === weekday(isoDate));
 
   const brandLaunched = world.shops.some((shop) => shop.launched);
-  app.get("/api/v1/app/config", (c) =>
-    c.json({
+  app.get("/api/v1/app/config", (c) => {
+    const blocked = upgradeRequired(c, { ios: "3.0.0", android: "1.0.0" });
+    if (blocked) return blocked;
+    return c.json({
       timezone: "America/Chicago",
       timeFormat: "12h" as const,
       launched: brandLaunched,
@@ -330,7 +356,6 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       pilot: false,
       pilotShops: [] as string[],
       closedShopCopy: CLOSED_COPY,
-      weekStartDay: world.weekStartDay ?? 0,
       minVersion: { ios: "3.0.0", android: "1.0.0" },
       forceUpdateBelow: { ios: "3.0.0", android: "1.0.0" },
       minSupportedVersion: { ios: "3.0.0", android: "1.0.0" },
@@ -342,11 +367,13 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       deletionUrl: "https://rayzbs.com/account/delete",
       featureFlags: { payments: true, family: true, pushMarketing: false },
       shops: world.shops.map((shop) => gateRow(shop, false)),
-    }),
-  );
+    });
+  });
 
-  app.get("/api/staff/v1/config", (c) =>
-    c.json({
+  app.get("/api/staff/v1/config", (c) => {
+    const blocked = upgradeRequired(c, { ios: "1.0.0", android: "1.0.0" });
+    if (blocked) return blocked;
+    return c.json({
       timezone: "America/Chicago",
       timeFormat: "12h" as const,
       weekStartDay: world.weekStartDay ?? 0,
@@ -359,8 +386,8 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       privacyUrl: "https://rayzbs.com/team/privacy",
       termsUrl: "https://rayzbs.com/team/terms",
       shops: world.shops.map((shop) => gateRow(shop, shop.clockIn)),
-    }),
-  );
+    });
+  });
 
   app.get("/api/v1/shops", (c) => c.json({ shops: world.shops.map((s) => publicShop(world, s.id)) }));
   app.get("/api/v1/shops/:shop", (c) => {
@@ -387,17 +414,28 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     }),
   );
   app.get("/api/v1/shops/:shop/availability", (c) => {
+    const shop = shopBy(c.req.param("shop"));
+    if (!shop) return c.json(err("not_found", "Shop not found", 404).body, 404);
     const date = c.req.query("date") ?? world.today;
+    if (!shopOpen(shop.id, date)) return c.json({ shopId: shop.id, date, durationMin: 40, estimateCents: 2900, slots: [], reason: "closed" });
     const slots = [15, 16, 17, 18, 19].map((hour) => ({
       startsAt: `${date}T${String(hour).padStart(2, "0")}:00:00.000Z`,
       endsAt: `${date}T${String(hour).padStart(2, "0")}:40:00.000Z`,
       barberIds: [STAFF_MAKENNA],
     }));
-    return c.json({ shopId: SHOP_CORALVILLE, date, durationMin: 40, estimateCents: 2900, slots, reason: null });
+    return c.json({ shopId: shop.id, date, durationMin: 40, estimateCents: 2900, slots, reason: null });
   });
   app.get("/api/v1/shops/:shop/available-days", (c) => {
+    const shop = shopBy(c.req.param("shop"));
+    if (!shop) return c.json(err("not_found", "Shop not found", 404).body, 404);
     const from = c.req.query("from") ?? world.today;
-    return c.json({ days: [0, 1, 2, 3, 4, 5, 6].map((n) => ({ date: new Date(Date.parse(`${from}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10), slots: 5 })) });
+    const days: { date: string; slots: number }[] = [];
+    for (let n = 0; days.length < 7 && n < 21; n++) {
+      const date = addDays(from, n);
+      if (!shopOpen(shop.id, date)) continue;
+      days.push({ date, slots: 5 });
+    }
+    return c.json({ days });
   });
   app.get("/api/v1/shops/:shop/live", (c) => {
     const shop = world.shops.find((row) => row.id === c.req.param("shop") || row.slug === c.req.param("shop"));
@@ -448,7 +486,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       smsOptIn: true,
       smsMarketingOptIn: false,
       emailOptIn: false,
-      pushReminders: true,
+      pushTransactional: true,
       pushMarketing: false,
       birthYear: body.birthYear ?? null,
       guardianId: null,
@@ -468,19 +506,23 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   app.get("/api/v1/me", (c) => {
     const customer = customerOf(c.req.header("authorization"));
     if (!customer) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    noStore(c);
     return c.json(presentCustomer(customer));
   });
   app.patch("/api/v1/me", async (c) => {
     const customer = customerOf(c.req.header("authorization"));
     if (!customer) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
     const body = await c.req.json<Record<string, unknown>>();
+    const turningOn = (field: "smsMarketingOptIn" | "pushTransactional" | "pushMarketing" | "emailOptIn") => body[field] === true && customer[field] !== true;
+    if ((turningOn("smsMarketingOptIn") || turningOn("pushTransactional") || turningOn("pushMarketing") || turningOn("emailOptIn")) && typeof body.consentTextVersion !== "string") {
+      return c.json(err("bad_request", "consentTextVersion is required to opt in.", 400).body, 400);
+    }
     if (typeof body.firstName === "string" && body.firstName.trim()) customer.firstName = body.firstName.trim().split(/\s+/)[0];
     if (typeof body.email === "string") customer.email = body.email;
     if (typeof body.emailOptIn === "boolean") customer.emailOptIn = body.emailOptIn;
     if (typeof body.smsMarketingOptIn === "boolean") customer.smsMarketingOptIn = body.smsMarketingOptIn;
     if (typeof body.smsMarketing === "boolean") customer.smsMarketingOptIn = body.smsMarketing;
-    if (typeof body.pushReminders === "boolean") customer.pushReminders = body.pushReminders;
-    if (typeof body.pushTransactional === "boolean") customer.pushReminders = body.pushTransactional;
+    if (typeof body.pushTransactional === "boolean") customer.pushTransactional = body.pushTransactional;
     if (typeof body.pushMarketing === "boolean") customer.pushMarketing = body.pushMarketing;
     if (typeof body.birthYear === "number") customer.birthYear = body.birthYear;
     if (body.smsOptIn === false) customer.smsOptIn = false;
@@ -489,6 +531,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   app.get("/api/v1/me/home", (c) => {
     const customer = customerOf(c.req.header("authorization"));
     if (!customer) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    noStore(c);
     const upcoming = appointments.filter((a) => a.customerId === customer.id && a.status === "booked");
     const past = appointments.find((a) => a.customerId === customer.id && a.status === "completed");
     const floor = world.floors.find((row) => row.shopId === SHOP_CORALVILLE);
@@ -528,7 +571,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const body = await c.req.json<{ firstName: string; birthYear?: number }>();
     const firstName = body.firstName?.trim().split(/\s+/)[0] ?? "";
     if (!firstName) return c.json(err("bad_request", "First name is required.", 400).body, 400);
-    const row: Customer = { id: crypto.randomUUID(), firstName, phone: null, email: null, smsOptIn: false, smsMarketingOptIn: false, emailOptIn: false, pushReminders: false, pushMarketing: false, birthYear: body.birthYear ?? null, guardianId: customer.id, deletedAt: null };
+    const row: Customer = { id: crypto.randomUUID(), firstName, phone: null, email: null, smsOptIn: false, smsMarketingOptIn: false, emailOptIn: false, pushTransactional: false, pushMarketing: false, birthYear: body.birthYear ?? null, guardianId: customer.id, deletedAt: null };
     customers.push(row);
     return c.json({ member: { id: row.id, guardianId: customer.id, firstName: row.firstName, birthYear: row.birthYear, smsOptIn: false } }, 201);
   });
@@ -583,6 +626,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
       const pub = publicShop(world, shop.id);
       return c.json(err("conflict", "This shop isn't booking in the app yet.", 409, { bookingMode: shop.booking, externalBookingUrl: pub.externalBookingUrl }).body, 409);
     }
+    if (!shopOpen(shop.id, chicagoDate(body.startsAt))) return c.json(err("slot_unavailable", "This shop is closed that day.", 409).body, 409);
     const row: Appointment = {
       id: crypto.randomUUID(),
       code: `B${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
@@ -640,8 +684,9 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const desired = new Date(Date.parse(row.startsAt) + 21 * 86400000);
     let best: string | null = null;
     let bestDistance = Number.POSITIVE_INFINITY;
-    for (let day = 0; day < 7; day++) {
+    for (let day = 0; day < 14; day++) {
       const date = new Date(Date.UTC(desired.getUTCFullYear(), desired.getUTCMonth(), desired.getUTCDate() + day)).toISOString().slice(0, 10);
+      if (!shopOpen(shop.id, date)) continue;
       for (const hour of [15, 16, 17, 18, 19]) {
         const startsAt = `${date}T${String(hour).padStart(2, "0")}:00:00.000Z`;
         const distance = Math.abs(Date.parse(startsAt) - desired.getTime());
@@ -679,6 +724,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   app.get("/api/v1/me/payment-methods", (c) => {
     const customer = customerOf(c.req.header("authorization"));
     if (!customer) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    noStore(c);
     return c.json({ paymentMethods: cards.filter((card) => card.customerId === customer.id) });
   });
   app.delete("/api/v1/me/payment-methods/:id", (c) => {
@@ -802,6 +848,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const start = cursor ? mine.findIndex((row) => row.id === cursor) + 1 : 0;
     const page = mine.slice(Math.max(0, start), Math.max(0, start) + limit);
     const next = mine[Math.max(0, start) + limit];
+    noStore(c);
     return c.json({
       receipts: page.map((row) => ({ id: row.id, shopName: row.shopName, paidAt: row.paidAt, totalCents: row.totalCents, serviceName: row.serviceName })),
       limit,
@@ -813,6 +860,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     if (!customer) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
     const ids = [customer.id, ...family().filter((row) => row.guardianId === customer.id).map((row) => row.id)];
     const receipt = receipts.find((row) => row.id === c.req.param("id") && ids.includes(row.customerId));
+    noStore(c);
     if (!receipt) return c.json({ receipt: null });
     return c.json(receipt);
   });
@@ -822,7 +870,10 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const body = await c.req.json();
     return c.json({ id: "dev1", ...body }, 201);
   });
-  app.delete("/api/v1/me/devices/:id", (c) => c.body(null, 204));
+  app.delete("/api/v1/me/devices/:id", (c) => {
+    if (!customerOf(c.req.header("authorization"))) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    return c.body(null, 204);
+  });
   app.post("/api/v1/me/delete/start", (c) => {
     const customer = customerOf(c.req.header("authorization"));
     if (!customer) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
@@ -871,6 +922,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   app.get("/api/staff/v1/me", (c) => {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    noStore(c);
     return c.json({ id: gate.staff!.id, firstName: gate.staff!.firstName, shops: gate.staff!.shops });
   });
 
@@ -900,7 +952,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
     const range = earningsQuery(c);
-    const failed = rangeFailure(range, 404);
+    const failed = rangeFailure(range, 400);
     if (failed) return c.json(failed.body, failed.status as 400);
     const step = requireStep(c, gate.staff!.id);
     if (step) return c.json(step.body, 403);
@@ -912,7 +964,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
     const range = earningsQuery(c);
-    const failed = rangeFailure(range, 404);
+    const failed = rangeFailure(range, 400);
     if (failed) return c.json(failed.body, failed.status as 400);
     const step = requireStep(c, gate.staff!.id);
     if (step) return c.json(step.body, 403);
@@ -933,7 +985,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
     const range = earningsQuery(c);
-    const failed = rangeFailure(range, 404);
+    const failed = rangeFailure(range, 400);
     if (failed) return c.json(failed.body, failed.status as 400);
     const step = requireStep(c, gate.staff!.id);
     if (step) return c.json(step.body, 403);
@@ -998,6 +1050,7 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
     const shopId = c.req.query("shopId") || gate.staff!.shops[0];
+    noStore(c);
     return c.json({
       date: c.req.query("date") ?? world.today,
       shopId,
@@ -1019,14 +1072,20 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     const customer = customers.find((row) => row.id === c.req.param("id") && !row.deletedAt);
     const mine = customer && appointments.some((row) => row.customerId === customer.id && row.barberId === gate.staff!.id);
     if (!mine || !customer) return c.json(err("not_found", "Client not found", 404).body, 404);
+    noStore(c);
     return c.json({ firstName: customer.firstName });
   });
 
   app.get("/api/staff/v1/kiosk/qr", (c) => {
-    const gate = requireStaff(c);
-    if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
-    const shop = world.shops.find((s) => s.id === c.req.query("shopId") || s.slug === c.req.query("shopId"));
-    if (!shop || !gate.staff!.shops.includes(shop.id)) return c.json(err("not_found", "Shop not found", 404).body, 404);
+    const header = c.req.header("authorization")?.replace(/^Bearer /, "") ?? "";
+    if (!header) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    if (header.startsWith("staff.")) return c.json(err("forbidden", "Scan the code on the shop screen.", 403).body, 403);
+    if (!header.startsWith("kiosk.")) return c.json(err("unauthorized", "Sign in required", 401).body, 401);
+    const device = shopBy(header.slice("kiosk.".length));
+    if (!device) return c.json(err("unauthorized", "This device isn't paired.", 401).body, 401);
+    const requested = c.req.query("shopId");
+    const shop = requested ? shopBy(requested) : device;
+    if (!shop || shop.id !== device.id) return c.json(err("not_found", "Shop not found", 404).body, 404);
     if (!shop.clockIn) return c.json(err("conflict", "Clock-in isn't live at this shop yet.", 409).body, 409);
     return c.json(qr(shop.id, now().getTime()));
   });
@@ -1061,6 +1120,9 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   app.get("/api/staff/v1/me/payout-account", (c) => {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    const step = requireStep(c, gate.staff!.id);
+    if (step) return c.json(step.body, 403);
+    noStore(c);
     const flags = payouts.get(gate.staff!.id) ?? flagsForState("not_started");
     const state = derivePayoutState(flags);
     return c.json({
@@ -1084,11 +1146,17 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
   app.post("/api/staff/v1/me/payout-account/session", (c) => {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    const step = requireStep(c, gate.staff!.id);
+    if (step) return c.json(step.body, 403);
+    noStore(c);
     return c.json({ clientSecret: `acctsess_test_${gate.staff!.id}`, expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), collection: "embedded" });
   });
   app.post("/api/staff/v1/me/payout-account/session/complete", async (c) => {
     const gate = requireStaff(c);
     if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    const step = requireStep(c, gate.staff!.id);
+    if (step) return c.json(step.body, 403);
+    noStore(c);
     const body = await c.req.json<{ state?: string }>();
     const next = flagsForState((body.state as "active") || "in_progress");
     payouts.set(gate.staff!.id, next);
@@ -1123,7 +1191,11 @@ export function createApp(world = createWorld(), options: AppOptions = {}) {
     payouts.set(gate.staff!.id, flags);
     return c.json({ instantOptIn: flags.instantOptIn });
   });
-  app.post("/api/staff/v1/me/devices", (c) => c.json({ id: "sdev1" }, 201));
+  app.post("/api/staff/v1/me/devices", async (c) => {
+    const gate = requireStaff(c);
+    if ("error" in gate && gate.error) return c.json(gate.error.body, 401);
+    return c.json({ id: "sdev1" }, 201);
+  });
 
   return app;
 }

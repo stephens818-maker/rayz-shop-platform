@@ -88,8 +88,8 @@ describe("My Earnings server math", () => {
     });
     expect(week?.postings.map((p) => p.periodId)).toEqual(["2026-10-04"]);
     expect(earnings.trainingPayCents).toBe(4 * 1200);
-    expect(earnings.hourlyPayCents).toBe(38 * 1500);
-    expect(earnings.greaterOfCents).toBe(38 * 1500);
+    expect(earnings.hourlyPayCents).toBe(36 * 1500);
+    expect(earnings.greaterOfCents).toBe(36 * 1500);
     expect(earnings.otEstimatedCents).toBe(2 * 1.5 * 1500);
     expect(earnings.totalCents).toBe(earnings.greaterOfCents + earnings.productCommissionCents + earnings.trainingPayCents + earnings.otEstimatedCents + earnings.totalTipsCents);
     expect(earnings.grossLabel).toBe(GROSS_LABEL);

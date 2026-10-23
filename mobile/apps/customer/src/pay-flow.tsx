@@ -8,7 +8,7 @@ export function PayConfirm({
   disabled,
   onPress,
 }: {
-  preview: Pick<PaymentPreview, "feeCents" | "feeLabel" | "totalCents"> | null;
+  preview: Pick<PaymentPreview, "feeCents" | "totalCents" | "funding"> | null;
   disabled: boolean;
   onPress: () => void;
   setup?: { clientSecret: string; ephemeralKey: string; customerId: string } | null;

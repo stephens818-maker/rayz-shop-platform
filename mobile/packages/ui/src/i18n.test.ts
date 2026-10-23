@@ -10,6 +10,7 @@ describe("copy", () => {
   it("keeps the English gross label exact and out of payroll-vendor wording", () => {
     expect(dictionaries.en.gross).toBe("Gross earnings, before taxes and deductions");
     expect(dictionaries.en.smsOffNote).toBe("Text START to resubscribe.");
+    expect(dictionaries.en.cardSurchargeNote).toBe("We add a 3% surcharge to credit card payments. It is not more than what we pay to accept credit cards. Debit cards, prepaid cards, gift cards, and cash have no surcharge.");
     expect(dictionaries.en.comingSoon).toBe("Ray'z isn't open in the app yet. Coming soon.");
     expect(dictionaries.en.payrollTips).toBe("Tips paid through payroll.");
     const blob = Object.values(dictionaries.en).join(" ").toLowerCase();

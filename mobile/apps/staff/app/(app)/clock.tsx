@@ -8,11 +8,6 @@ import { NativeCamera } from "../../src/native-camera";
 import { API_URL } from "../../src/net";
 import { useStaff } from "../../src/session";
 
-interface Qr {
-  token: string;
-  error?: { message: string };
-}
-
 export default function Clock() {
   const { t } = useI18n();
   const { session } = useStaff();
@@ -21,6 +16,7 @@ export default function Clock() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
+  const [code, setCode] = useState("");
   const me = useQuery({
     queryKey: ["staff-me", session?.token],
     enabled: Boolean(session),
@@ -41,16 +37,6 @@ export default function Clock() {
   const shops = me.data?.shops ?? [];
   const shopId = shopForClock(shops, picked);
   const labelFor = (id: string) => config.data?.shops.find((shop) => shop.shopId === id)?.slug ?? id;
-
-  const currentCode = async () => {
-    if (!shopId) throw new Error(t("pickShop"));
-    const res = await fetch(`${API_URL}/api/staff/v1/kiosk/qr?shopId=${shopId}`, {
-      headers: { authorization: `Bearer ${session?.token}` },
-    });
-    const body = (await res.json()) as Qr;
-    if (!res.ok || !body.token) throw new Error(body.error?.message ?? t("retry"));
-    return body.token;
-  };
 
   const punch = async (direction: "in" | "out", token: string) => {
     setError("");
@@ -86,10 +72,16 @@ export default function Clock() {
           void punch("in", token);
         }}
       />
+      <Field label={t("shopCode")} value={code} onChangeText={setCode} autoCapitalize="none" />
+      <Body muted>{t("shopCodeHint")}</Body>
       <Button
         label={t("clockIn")}
         onPress={() => {
-          void currentCode().then((token) => punch("in", token)).catch((err: unknown) => setError(err instanceof Error ? err.message : t("retry")));
+          if (!code.trim()) {
+            setError(t("shopCodeHint"));
+            return;
+          }
+          void punch("in", code.trim());
         }}
       />
       <Field label={t("cashToday")} value={cash} onChangeText={setCash} keyboardType="decimal-pad" />
@@ -98,7 +90,11 @@ export default function Clock() {
         label={t("clockOut")}
         kind="secondary"
         onPress={() => {
-          void currentCode().then((token) => punch("out", token)).catch((err: unknown) => setError(err instanceof Error ? err.message : t("retry")));
+          if (!code.trim()) {
+            setError(t("shopCodeHint"));
+            return;
+          }
+          void punch("out", code.trim());
         }}
       />
       {message ? <Banner tone="good">{message}</Banner> : null}

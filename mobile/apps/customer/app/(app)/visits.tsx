@@ -1,8 +1,9 @@
-import { formatClock, formatLongDate } from "@rayz/api";
+import { formatClock } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { Banner, Body, Button, Display, Empty, Loading, ScrollScreen, Title, useI18n } from "@rayz/ui";
+import { displayDate } from "../../src/civil-date";
 import { api } from "../../src/net";
 import { useSession } from "../../src/session";
 
@@ -35,7 +36,7 @@ export default function Visits() {
     return (
       <Pressable key={a.code} accessibilityRole="button" onPress={() => router.push(`/visit/${a.code}`)} style={{ minHeight: 72, borderRadius: 18, backgroundColor: "#FFFBF6", borderWidth: 1, borderColor: "#E4D7C6", justifyContent: "center", paddingHorizontal: 16 }}>
         <Text style={{ fontSize: 17, fontWeight: "700" }}>{a.shop.name}</Text>
-        <Body muted>{`${formatLongDate(a.startsAt.slice(0, 10), "en-US")} · ${formatClock(a.startsAt, "en-US")} · ${a.barber.displayName}`}</Body>
+        <Body muted>{`${displayDate(a.startsAt)} · ${formatClock(a.startsAt, "en-US")} · ${a.barber.displayName}`}</Body>
       </Pressable>
     );
   };

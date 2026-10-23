@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PaymentPreview } from "@rayz/api";
 import { needsUpdate } from "./net";
-import { payModel } from "./pay-model";
+import { payModel, payRows } from "./pay-model";
 
 const preview: PaymentPreview = {
   shopId: "shop",
@@ -30,6 +30,13 @@ describe("pay review", () => {
     expect(model.disclosure).toMatch(/surcharge/);
     expect(model.totalCents).toBe(3696);
     expect(model.tipTransferCopy).toBe("Tips paid through payroll.");
+    expect(payRows(preview).map((line) => `${line.label} ${line.cents}`)).toEqual([
+      "Service 2900",
+      "Tax 203",
+      "Tip 500",
+      "Credit card surcharge (3%) 93",
+      "Total 3696",
+    ]);
   });
 
   it("blocks versions below the store minimum", () => {

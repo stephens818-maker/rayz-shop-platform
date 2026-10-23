@@ -1,4 +1,5 @@
-import { formatCents, formatClock, formatLongDate } from "@rayz/api";
+import { chicagoDate, formatCents, formatClock } from "@rayz/api";
+import { displayDate } from "../../src/civil-date";
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
@@ -29,9 +30,9 @@ export default function Visit() {
   const visit = useQuery({ queryKey: ["visit", code], queryFn: () => api<{ appointment: Appointment }>(`/api/v1/appointments/${code}`, session?.token) });
   const row = visit.data?.appointment;
   const slots = useQuery({
-    queryKey: ["move", row?.shop.slug, row?.startsAt.slice(0, 10)],
+    queryKey: ["move", row?.shop.slug, row ? chicagoDate(row.startsAt) : ""],
     enabled: Boolean(row?.canReschedule),
-    queryFn: () => api<{ slots: { startsAt: string }[] }>(`/api/v1/shops/${row?.shop.slug}/availability?date=${row?.startsAt.slice(0, 10)}`),
+    queryFn: () => api<{ slots: { startsAt: string }[] }>(`/api/v1/shops/${row?.shop.slug}/availability?date=${row ? chicagoDate(row.startsAt) : ""}`),
   });
 
   const mutate = (path: string, body?: unknown) => {
@@ -51,7 +52,7 @@ export default function Visit() {
           <Display>{row.shop.name}</Display>
           <Body>{row.items[0]?.name ?? ""}</Body>
           <Body muted>{`${row.barber.displayName} · ${row.customer.firstName}`}</Body>
-          <Body>{`${formatLongDate(row.startsAt.slice(0, 10), "en-US")} · ${formatClock(row.startsAt, "en-US")}`}</Body>
+          <Body>{`${displayDate(row.startsAt)} · ${formatClock(row.startsAt, "en-US")}`}</Body>
           <Body>{formatCents(row.estimateCents)}</Body>
           <Body muted>{row.status}</Body>
           {error ? <Banner tone="bad">{error}</Banner> : null}

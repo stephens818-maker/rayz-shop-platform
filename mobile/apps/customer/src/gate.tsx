@@ -1,26 +1,37 @@
-import { setTimeFormat, type AppConfig } from "@rayz/api";
+import { bootGate, chicagoDate, formatLongDate, setTimeFormat, type AppConfig } from "@rayz/api";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, type ReactNode } from "react";
-import { Linking } from "react-native";
+import { Linking, Platform } from "react-native";
 import { Body, Button, Display, Screen, useI18n } from "@rayz/ui";
-import { api, APP_VERSION } from "./net";
-import { bootGate } from "./boot-gate";
+import { ApiError, api, APP_VERSION } from "./net";
+
+const platform = Platform.OS === "android" ? "android" : "ios";
 
 export function ConfigGate({ children }: { children: ReactNode }) {
   const { t } = useI18n();
-  const config = useQuery({ queryKey: ["app-config"], queryFn: () => api<AppConfig>("/api/v1/app/config") });
+  const config = useQuery({
+    queryKey: ["app-config"],
+    retry: false,
+    queryFn: () => api<AppConfig>("/api/v1/app/config", null, { headers: { "x-client": platform } }),
+  });
   useEffect(() => {
     if (config.data?.timeFormat) setTimeFormat(config.data.timeFormat);
   }, [config.data?.timeFormat]);
-  const gate = config.data
-    ? bootGate({ launched: config.data.launched, launchAt: config.data.launchAt, minVersion: config.data.minVersion }, APP_VERSION)
-    : "open";
+  if (config.isPending) {
+    return (
+      <Screen style={{ justifyContent: "flex-end", paddingBottom: 36 }}>
+        <Body>{t("loading")}</Body>
+      </Screen>
+    );
+  }
+  const status = config.error instanceof ApiError ? config.error.status : undefined;
+  const gate = config.isSuccess ? bootGate(config.data, APP_VERSION, platform) : bootGate(null, APP_VERSION, platform, status);
   if (gate === "update") {
     return (
       <Screen style={{ justifyContent: "flex-end", paddingBottom: 36 }}>
         <Display>{t("updateRequired")}</Display>
         <Body muted>{t("updateBody")}</Body>
-        <Button label={t("continue")} onPress={() => Linking.openURL("https://apps.apple.com/app/rayz")} />
+        <Button label={t("continue")} onPress={() => Linking.openURL(platform === "android" ? "https://play.google.com/store/apps/details?id=com.rayz.customer" : "https://apps.apple.com/app/rayz")} />
       </Screen>
     );
   }
@@ -28,7 +39,16 @@ export function ConfigGate({ children }: { children: ReactNode }) {
     return (
       <Screen style={{ justifyContent: "flex-end", paddingBottom: 36 }}>
         <Display>{t("comingSoon")}</Display>
-        {config.data?.launchAt ? <Body muted>{config.data.launchAt.slice(0, 10)}</Body> : null}
+        {config.data?.launchAt ? <Body muted>{formatLongDate(chicagoDate(config.data.launchAt), "en-US")}</Body> : null}
+      </Screen>
+    );
+  }
+  if (gate === "offline") {
+    return (
+      <Screen style={{ justifyContent: "flex-end", paddingBottom: 36 }}>
+        <Display>{t("offlineTitle")}</Display>
+        <Body muted>{t("offlineBody")}</Body>
+        <Button label={t("retry")} onPress={() => void config.refetch()} />
       </Screen>
     );
   }

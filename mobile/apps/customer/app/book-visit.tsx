@@ -1,4 +1,5 @@
 import { formatCents, formatClock, formatLongDate } from "@rayz/api";
+import { displayDate } from "../src/civil-date";
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
@@ -113,7 +114,7 @@ export default function BookVisit() {
         <>
           <Body>{t("selectTime")}</Body>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            {days.data?.days.slice(0, 7).map((item) => (
+            {days.data?.days.filter((item) => item.slots > 0).slice(0, 7).map((item) => (
               <Chip key={item.date} label={formatLongDate(item.date, "en-US")} selected={item.date === day} onPress={() => { setDay(item.date); setSlot(""); }} />
             ))}
           </View>
@@ -127,7 +128,7 @@ export default function BookVisit() {
         <>
           <Body>{service.name}</Body>
           <Body muted>{barber.name || t("anyBarber")}</Body>
-          {slot ? <Body>{`${formatLongDate(slot.slice(0, 10), "en-US")} · ${formatClock(slot, "en-US")}`}</Body> : null}
+          {slot ? <Body>{`${displayDate(slot)} · ${formatClock(slot, "en-US")}`}</Body> : null}
           <Body>{formatCents(service.priceCents)}</Body>
           <Body>{t("forWhom")}</Body>
           <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
