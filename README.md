@@ -661,6 +661,8 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | Busiest times heatmap | `heatmap` | Visits by weekday and hour |
 | Who's working, off and blocked | `staffing` | Per day, shop and barber: working, partly off or off, scheduled hours, time off and blocks with their reasons, and bookings; hours by reason |
 | Call-ins and client outreach | `call_ins` | Call-ins by shop and barber, the appointments they hit, and how each ended: moved, rebooked, declined, no response, flagged |
+| Labor hours and cost | `labor` | Clocked hours and OT, sales per labor hour; with `payroll.rates`, hourly rate, labor cost and labor % of sales |
+| Attendance | `attendance` | Late, left early, early in, missed punches, forgotten clock-outs, and scheduled days with no punch |
 | Cash drawer | `cash_drawer` | Drawer closes with expected, counted, and variance |
 | Audit log | `audit_log` | Every audited change, filterable |
 
