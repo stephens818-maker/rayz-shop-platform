@@ -168,6 +168,10 @@ describe("Connect webhook", () => {
       expect(now).toMatchObject({ chargesEnabled: true, payoutsEnabled: false, requirementsDue: ["external_account"] });
       const state = (await import("@/domain/connect")).accountState(now);
       expect(state).toBe("restricted");
+      expect((await connect.chargeDestination(s, 5000, "keyed")).accountId).toBe(a.stripeAccountId);
+      const today = m.time.todayLocal();
+      const [row] = await accountReport.shopAccountRows({ shopIds: [s.id], from: today, to: today });
+      expect(row).toMatchObject({ state: "restricted", canCharge: true });
 
       await deliver("account.application.deauthorized", { id: "ca_x", object: "application" }, a.stripeAccountId);
       now = (await account(s.id))!;

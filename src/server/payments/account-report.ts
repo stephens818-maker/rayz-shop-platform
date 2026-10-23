@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { AccountState, accountState } from "@/domain/connect";
+import { AccountState, accountState, canCharge } from "@/domain/connect";
 import type { OwnerEntityKind } from "@/db/schema";
 import type { ReportScope } from "@/server/reports";
 
@@ -12,6 +12,7 @@ export interface ShopAccountRow {
   ownerKind: OwnerEntityKind | null;
   stripeAccountId: string | null;
   state: AccountState;
+  canCharge: boolean;
   cardCharges: number;
   /** Card takings after refunds, tips and surcharges included: what went through the shop's account. */
   cardNetCents: number;
@@ -87,7 +88,7 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
     left join ref on ref.shop_id = sh.id
     left join po on po.shop_id = sh.id
     where sh.id in ${ids}
-    order by oe.id is null, oe.kind <> 'brand', oe.name, oe.id, sh.name`)) as unknown as (Omit<ShopAccountRow, "state" | "toAccountCents"> & {
+    order by oe.id is null, oe.kind <> 'brand', oe.name, oe.id, sh.name`)) as unknown as (Omit<ShopAccountRow, "state" | "canCharge" | "toAccountCents"> & {
     chargesEnabled: boolean | null;
     payoutsEnabled: boolean | null;
     detailsSubmitted: boolean | null;
@@ -95,22 +96,19 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
     disabledReason: string | null;
     deauthorizedAt: Date | null;
   })[];
-  return rows.map(({ chargesEnabled, payoutsEnabled, detailsSubmitted, requirementsDue, disabledReason, deauthorizedAt, ...r }) => ({
-    ...r,
-    state: accountState(
-      r.stripeAccountId
-        ? {
-            chargesEnabled: !!chargesEnabled,
-            payoutsEnabled: !!payoutsEnabled,
-            detailsSubmitted: !!detailsSubmitted,
-            requirementsDue: requirementsDue ?? [],
-            disabledReason,
-            deauthorizedAt,
-          }
-        : null,
-    ),
-    toAccountCents: r.cardNetCents - r.unroutedCardCents - r.processingFeesCents,
-  }));
+  return rows.map(({ chargesEnabled, payoutsEnabled, detailsSubmitted, requirementsDue, disabledReason, deauthorizedAt, ...r }) => {
+    const flags = r.stripeAccountId
+      ? {
+          chargesEnabled: !!chargesEnabled,
+          payoutsEnabled: !!payoutsEnabled,
+          detailsSubmitted: !!detailsSubmitted,
+          requirementsDue: requirementsDue ?? [],
+          disabledReason,
+          deauthorizedAt,
+        }
+      : null;
+    return { ...r, state: accountState(flags), canCharge: canCharge(flags), toAccountCents: r.cardNetCents - r.unroutedCardCents - r.processingFeesCents };
+  });
 }
 
 export interface PayoutRow {

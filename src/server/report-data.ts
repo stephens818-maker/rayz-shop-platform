@@ -805,7 +805,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     }
     const total = add(accounts);
     const unrouted = accounts.reduce((a, r) => a + r.unroutedCardCents, 0);
-    const notReady = accounts.filter((r) => r.state !== "enabled");
+    const notReady = accounts.filter((r) => !r.canCharge);
+    const restricted = accounts.filter((r) => r.canCharge && r.state !== "enabled");
     return {
       stats: [
         { label: "Card takings", value: formatCents(total[1]), hint: `${total[0]} charges, after ${formatCents(total[4])} refunds` },
@@ -832,6 +833,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       ],
       notes: [
         ...(notReady.length ? [`Not taking cards yet: ${notReady.map((r) => `${r.shopName} (${ACCOUNT_STATE_LABEL[r.state].toLowerCase()})`).join(", ")}. Finish Payments in Location setup.`] : []),
+        ...(restricted.length ? [`Stripe needs more details before paying out: ${restricted.map((r) => r.shopName).join(", ")}. See Payments in Location setup.`] : []),
         ...(unrouted ? [`${formatCents(unrouted)} of card takings in this range settled before shops had their own accounts, so it isn't in "To shop account".`] : []),
         "Processing fees are kept on refunded and voided charges, the same as Stripe's own fee.",
       ],

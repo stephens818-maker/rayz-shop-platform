@@ -77,7 +77,11 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
                         </Link>
                       )}
                     </div>
-                    <p className="text-sm text-zinc-600">{s.detail}</p>
+                    {key === "owner" ? (
+                      <p className="text-sm text-zinc-600">The shop&apos;s P&amp;L rolls up to its owner. A franchisee can own several shops.</p>
+                    ) : (
+                      <p className="text-sm text-zinc-600">{s.detail}</p>
+                    )}
                     {key === "owner" && <OwnerPicker shopId={shop.id} ownerId={owner?.id ?? null} owners={owners.map((o) => ({ id: o.id, name: o.name, kind: o.kind }))} />}
                     {key === "payments" && (
                       <PaymentsPanel
@@ -91,6 +95,7 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
                             simulated: account.simulated,
                             requirementsDue: account.requirementsDue,
                             disabledReason: account.disabledReason,
+                            chargesEnabled: account.chargesEnabled,
                             payoutsEnabled: account.payoutsEnabled,
                           }
                         }

@@ -1,7 +1,7 @@
 import { and, asc, count, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { ownerEntities, shopHours, shopPaymentAccounts, shopServices, shops, staffSchedules } from "@/db/schema";
-import { AccountState, accountState } from "@/domain/connect";
+import { AccountState, accountState, canCharge } from "@/domain/connect";
 import { connectMode, feeSchedule } from "./payments/connect";
 
 export type SetupStepKey = "details" | "owner" | "hours" | "taxes" | "menu" | "team" | "payments" | "booking";
@@ -81,7 +81,9 @@ export async function locationSetup(shopId: string) {
           ? "Taking cards; payouts go to the shop's bank."
           : state === "not_started"
             ? "Create this shop's Stripe account so its card sales, fees and payouts are its own."
-            : "Finish Stripe's onboarding so this shop can take cards.",
+            : canCharge(account)
+              ? "Taking cards. Stripe needs a few more details before it pays out to the shop's bank."
+              : "Finish Stripe's onboarding so this shop can take cards.",
     },
     {
       key: "booking",

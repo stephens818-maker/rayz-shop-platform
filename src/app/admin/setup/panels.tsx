@@ -45,7 +45,7 @@ export function OwnerPicker({ shopId, ownerId, owners }: { shopId: string; owner
       </label>
       <Select
         id={`owner-${shopId}`}
-        className="w-64"
+        className="w-80 max-w-full"
         value={shown}
         disabled={pending}
         onChange={(e) => {
@@ -84,7 +84,7 @@ export function PaymentsPanel({
   shopName: string;
   state: AccountState;
   mode: "stripe" | "simulator";
-  account: { stripeAccountId: string; simulated: boolean; requirementsDue: string[]; disabledReason: string | null; payoutsEnabled: boolean } | null;
+  account: { stripeAccountId: string; simulated: boolean; requirementsDue: string[]; disabledReason: string | null; chargesEnabled: boolean; payoutsEnabled: boolean } | null;
   fees: { keyed: string; terminal: string };
   expired: boolean;
 }) {
@@ -95,7 +95,8 @@ export function PaymentsPanel({
       else window.location.href = d.url;
     });
   const due = [...new Set((account?.requirementsDue ?? []).map(requirementLabel))];
-  const startLabel = state === "not_started" || state === "disconnected" ? "Set up card payments with Stripe" : "Continue Stripe onboarding";
+  const startLabel =
+    state === "not_started" || state === "disconnected" ? "Set up card payments with Stripe" : account?.chargesEnabled ? "Add the missing details" : "Continue Stripe onboarding";
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -119,16 +120,11 @@ export function PaymentsPanel({
           </ul>
         </div>
       )}
-      {state === "enabled" && account && !account.payoutsEnabled && <p className="text-sm text-amber-800">Cards work, but payouts wait until a bank account is added.</p>}
+      {account?.chargesEnabled && !account.payoutsEnabled && <p className="text-sm text-amber-800">Cards work, but payouts wait until Stripe has everything above.</p>}
       <div className="flex flex-wrap gap-2">
         {state !== "enabled" && (
           <Button disabled={pending} onClick={() => go(() => startPaymentsOnboardingAction(shopId))}>
             {pending ? "Opening Stripe…" : startLabel}
-          </Button>
-        )}
-        {state === "enabled" && due.length > 0 && (
-          <Button variant="secondary" disabled={pending} onClick={() => go(() => startPaymentsOnboardingAction(shopId))}>
-            Add the missing details
           </Button>
         )}
         {account && mode === "stripe" && !account.simulated && (
