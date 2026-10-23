@@ -1,29 +1,13 @@
 /**
- * Staff self-service time: quick and recurring blocks (lunch, breaks, personal time) and time off
- * requests. Pure: the rules and their limits, recurring occurrences, time off spans and who is
- * working, off or blocked on a day. Server code (src/server/staff-time.ts) loads rows and calls these.
+ * Staff self-service time: quick and recurring blocks (lunch, breaks, the bank...) and time off
+ * requests, each with a reason from the brand's list (src/domain/block-reasons.ts). Pure: the rules
+ * and their limits, recurring occurrences, time off spans and who is working, off or blocked on a
+ * day. Server code (src/server/staff-time.ts) loads rows and calls these.
  */
 import { LocalDate, addDays, diffDays, endOfLocalDay, localMinutesOf, startOfLocalDay, weekdayOf, zonedWallTime } from "@/lib/time";
 
-export const BLOCK_CATEGORIES = [
-  { key: "lunch", label: "Lunch" },
-  { key: "break", label: "Break" },
-  { key: "personal", label: "Personal" },
-  { key: "other", label: "Other" },
-] as const;
-export type SelfBlockCategory = (typeof BLOCK_CATEGORIES)[number]["key"];
-export const CATEGORY_LABEL: Record<string, string> = { lunch: "Lunch", break: "Break", personal: "Personal", other: "Blocked", time_off: "Time off" };
-export const isSelfBlockCategory = (s: unknown): s is SelfBlockCategory => BLOCK_CATEGORIES.some((c) => c.key === s);
-
-export const TIME_OFF_REASONS = [
-  { key: "vacation", label: "Vacation" },
-  { key: "sick", label: "Sick" },
-  { key: "personal", label: "Personal" },
-  { key: "other", label: "Other" },
-] as const;
-export type TimeOffReasonKey = (typeof TIME_OFF_REASONS)[number]["key"];
-export const REASON_LABEL: Record<TimeOffReasonKey, string> = { vacation: "Vacation", sick: "Sick", personal: "Personal", other: "Other" };
-export const isTimeOffReason = (s: unknown): s is TimeOffReasonKey => TIME_OFF_REASONS.some((r) => r.key === s);
+/** What a block is written as: lunch is held to the lunch limit; time off comes from a request or a manager. */
+export type BlockKind = "lunch" | "other" | "time_off";
 
 /** Durations offered as one-tap chips for a quick block. */
 export const QUICK_DURATIONS = [15, 30, 45, 60, 90, 120] as const;
@@ -40,7 +24,7 @@ export interface StaffTimeRules {
   timeOffApproval: "auto" | "manager";
   /** Longest lunch a barber can block for themselves. */
   maxLunchMin: number;
-  /** Longest break, personal or other block a barber can add for themselves. */
+  /** Longest block for any other reason a barber can add for themselves. */
   maxBlockMin: number;
   /** Days ahead a time off request must start. Sick time is exempt. */
   minNoticeDays: number;
@@ -90,17 +74,17 @@ export function strictestRules(list: readonly StaffTimeRules[]): StaffTimeRules 
 }
 
 /** A barber's own block against the limits. People who can block anyone's time aren't held to them. */
-export function selfBlockProblem(rules: StaffTimeRules, category: SelfBlockCategory, minutes: number): string | null {
+export function selfBlockProblem(rules: StaffTimeRules, isLunch: boolean, minutes: number): string | null {
   if (!(minutes > 0)) return "End must be after start";
-  if (category === "lunch" && minutes > rules.maxLunchMin) return `Lunch can be at most ${rules.maxLunchMin} minutes here`;
-  if (category !== "lunch" && minutes > rules.maxBlockMin) return `A block can be at most ${rules.maxBlockMin} minutes here. Ask a manager for longer, or request time off.`;
+  if (isLunch && minutes > rules.maxLunchMin) return `Lunch can be at most ${rules.maxLunchMin} minutes here`;
+  if (!isLunch && minutes > rules.maxBlockMin) return `A block can be at most ${rules.maxBlockMin} minutes here. Ask a manager for longer, or request time off.`;
   return null;
 }
 
-/** Minimum notice for a time off request. Sick time can be asked for the same day. */
-export function noticeProblem(rules: StaffTimeRules, reason: TimeOffReasonKey, fromDate: LocalDate, today: LocalDate): string | null {
+/** Minimum notice for a time off request. Reasons marked "no notice needed" (sick time) can be asked for the same day. */
+export function noticeProblem(rules: StaffTimeRules, noticeExempt: boolean, fromDate: LocalDate, today: LocalDate): string | null {
   if (fromDate < today) return "Time off can't start in the past";
-  if (reason === "sick" || rules.minNoticeDays === 0) return null;
+  if (noticeExempt || rules.minNoticeDays === 0) return null;
   const days = diffDays(fromDate, today);
   if (days < rules.minNoticeDays) return `Time off needs ${rules.minNoticeDays} days' notice here (from ${addDays(today, rules.minNoticeDays)}). For anything sooner, ask a manager.`;
   return null;
@@ -219,12 +203,31 @@ export function overlapMinutes(inside: readonly Interval[], windows: readonly In
 export type DayStatus = "working" | "partly_off" | "off" | "not_scheduled";
 export const STATUS_LABEL: Record<DayStatus, string> = { working: "Working", partly_off: "Partly off", off: "Off", not_scheduled: "Not scheduled" };
 
+export interface DayBlockInput {
+  startsAt: Date;
+  endsAt: Date;
+  category: string;
+  kind: string;
+  reasonId: string | null;
+  reason: string;
+  note: string | null;
+}
+
+export interface DayBlock {
+  category: string;
+  reasonId: string | null;
+  reason: string;
+  note: string | null;
+  startMin: number;
+  endMin: number;
+}
+
 export interface StaffDayInput {
   date: LocalDate;
   /** This barber's hours at this shop on this day. */
   spans: readonly { startMin: number; endMin: number }[];
   /** Blocks that apply here: this shop's and all-shop ones. */
-  blocks: readonly { startsAt: Date; endsAt: Date; category: string; kind: string; reason: string }[];
+  blocks: readonly DayBlockInput[];
   /** Pending requests that cover part of the day. */
   pending: readonly { startsAt: Date; endsAt: Date }[];
 }
@@ -237,7 +240,7 @@ export interface StaffDay {
   /** Lunch, breaks and other blocks within their hours. */
   blockedMin: number;
   /** "Lunch 12:00–12:30" etc., in local minutes for the caller to format. */
-  blocks: { category: string; reason: string; startMin: number; endMin: number }[];
+  blocks: DayBlock[];
   /** A time off request waiting for a manager covers part of the day. */
   pending: boolean;
   /** Has time off on the day at all (even outside their hours here). */
@@ -273,7 +276,9 @@ export function staffDay(input: StaffDayInput): StaffDay {
     scheduledMin,
     offMin: scheduledMin ? offMin : unionMinutes(off),
     blockedMin,
-    blocks: input.blocks.map((b) => ({ category: isTimeOff(b) ? "time_off" : b.category, reason: b.reason, startMin: toMin(b.startsAt), endMin: toMin(b.endsAt) })).sort((a, b) => a.startMin - b.startMin),
+    blocks: input.blocks
+      .map((b) => ({ category: isTimeOff(b) ? "time_off" : b.category, reasonId: b.reasonId, reason: b.reason, note: b.note, startMin: toMin(b.startsAt), endMin: toMin(b.endsAt) }))
+      .sort((a, b) => a.startMin - b.startMin),
     pending,
     hasTimeOff: off.length > 0,
   };

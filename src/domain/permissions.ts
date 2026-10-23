@@ -24,7 +24,7 @@ export const FEATURE_PERMISSIONS = [
   {
     key: "blocks.own",
     group: "Front desk",
-    label: "Block out their own time: lunch, breaks and personal time",
+    label: "Block out their own time: lunch, breaks, the bank, the doctor...",
     hint: "Within the shop's limits, such as the longest lunch. Every block is logged.",
   },
   { key: "blocks.others", group: "Front desk", label: "Block out time for anyone at their shops", hint: "Not held to the self-service limits. Every block is logged." },
@@ -35,6 +35,13 @@ export const FEATURE_PERMISSIONS = [
     label: "Approve and deny time off requests at their shops",
     hint: "Never their own request. Shows the appointments the time off affects so they can be moved or the clients asked to reschedule.",
   },
+  {
+    key: "blocks.private",
+    group: "Front desk",
+    label: "See private block and time off reasons",
+    hint: "Reasons marked private, such as Doctor, show as \"Blocked\" or \"Time off\" to everyone else. People always see their own.",
+  },
+  { key: "blocks.reasons", group: "Settings and data", label: "Edit the block reasons list", hint: "The reasons, their calendar colors and which are private. Brand-wide." },
   {
     key: "calendar.squeeze_in",
     group: "Front desk",
@@ -255,6 +262,8 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "blocks.others",
   "timeoff.request",
   "timeoff.approve",
+  "blocks.private",
+  "blocks.reasons",
   "notifications.view",
   "reports.all_staff",
 ];

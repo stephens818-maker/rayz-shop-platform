@@ -323,6 +323,30 @@ export const staffSchedules = pgTable(
   (t) => [index("staff_schedules_staff_idx").on(t.staffId), index("staff_schedules_shop_idx").on(t.shopId)],
 );
 
+/**
+ * The brand's reasons for blocked time and time off (Lunch, Bank, Doctor...), each with its calendar
+ * color. Private reasons are shown as "Blocked" or "Time off" to staff without "See private reasons".
+ * Archived, not deleted, so old entries keep theirs.
+ */
+export const blockReasons = pgTable(
+  "block_reasons",
+  {
+    id: id(),
+    key: text("key").notNull().unique(),
+    label: text("label").notNull(),
+    color: text("color").notNull(),
+    usedFor: text("used_for").$type<"blocks" | "time_off" | "both">().notNull().default("both"),
+    countsAsLunch: boolean("counts_as_lunch").notNull().default(false),
+    noticeExempt: boolean("notice_exempt").notNull().default(false),
+    private: boolean("private").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(100),
+    archivedAt: ts("archived_at"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("block_reasons_label_unique").on(sql`lower(${t.label})`).where(sql`${t.archivedAt} IS NULL`)],
+);
+
 export const timeBlocks = pgTable(
   "time_blocks",
   {
@@ -333,9 +357,12 @@ export const timeBlocks = pgTable(
     startsAt: ts("starts_at").notNull(),
     endsAt: ts("ends_at").notNull(),
     kind: text("kind").notNull().default("block"), // block | day_off
-    /** lunch | break | personal | other | time_off (from an approved request or a manager's time off). */
+    /** lunch (held to the lunch limit) | other | time_off (from an approved request or a manager's time off). */
     category: text("category").$type<BlockCategory>().notNull().default("other"),
+    reasonId: uuid("reason_id").references(() => blockReasons.id),
+    /** The reason's label when it was saved (null reason_id: entries from before the list). */
     reason: text("reason").notNull(),
+    note: text("note"),
     /** One occurrence of a recurring block. */
     seriesId: uuid("series_id").references(() => timeBlockSeries.id, { onDelete: "set null" }),
     /** The approved time off request this block is. */
@@ -349,7 +376,7 @@ export const timeBlocks = pgTable(
     index("time_blocks_request_idx").on(t.requestId),
   ],
 );
-export type BlockCategory = "lunch" | "break" | "personal" | "other" | "time_off";
+export type BlockCategory = "lunch" | "other" | "time_off";
 
 /**
  * A recurring block, e.g. lunch every weekday 12:00–12:30. Its occurrences are written to
@@ -364,7 +391,9 @@ export const timeBlockSeries = pgTable(
     /** null = all of the barber's shops. */
     shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
     category: text("category").$type<BlockCategory>().notNull(),
+    reasonId: uuid("reason_id").references(() => blockReasons.id),
     reason: text("reason").notNull(),
+    note: text("note"),
     /** 0 = Sunday … 6 = Saturday. */
     weekdays: smallint("weekdays").array().notNull(),
     startMin: integer("start_min").notNull(),
@@ -380,7 +409,6 @@ export const timeBlockSeries = pgTable(
   (t) => [index("time_block_series_staff_idx").on(t.staffId), check("time_block_series_order", sql`${t.startMin} < ${t.endMin}`)],
 );
 
-export type TimeOffReason = "vacation" | "sick" | "personal" | "other";
 export type TimeOffStatus = "pending" | "approved" | "denied" | "cancelled";
 
 /**
@@ -402,7 +430,9 @@ export const timeOffRequests = pgTable(
     endMin: integer("end_min"),
     startsAt: ts("starts_at").notNull(),
     endsAt: ts("ends_at").notNull(),
-    reason: text("reason").$type<TimeOffReason>().notNull(),
+    reasonId: uuid("reason_id").references(() => blockReasons.id),
+    /** The reason's label when it was asked for. */
+    reason: text("reason").notNull(),
     note: text("note"),
     status: text("status").$type<TimeOffStatus>().notNull().default("pending"),
     /** "auto" when the shop's rules approved it on submission. */

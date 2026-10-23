@@ -169,6 +169,13 @@
       "when": 1792734297221,
       "tag": "core_0023_staff_time",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792740689981,
+      "tag": "core_0024_block_reasons",
+      "breakpoints": true
     }
   ]
 }
