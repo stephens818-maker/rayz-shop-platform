@@ -10,13 +10,16 @@ import { type PickReason, ReasonDot, ReasonPicker } from "@/components/reason-pi
 import { reasonText } from "@/domain/block-reasons";
 import type { BookedConflict } from "@/server/staff-time";
 import { INTERVAL_SOURCE_LABEL } from "@/domain/timing";
-import type { CalAppt, CalClock, CalColumn, DayCalendarData } from "@/server/calendar";
-import { HOLD_LABEL, LIVE_STATUS_LABEL, callInHref } from "@/domain/clock-live";
+import type { CalAppt, CalBlock, CalClock, CalColumn, DayCalendarData } from "@/server/calendar";
+import { CLOCK_HOLD_LABEL, LIVE_STATUS_LABEL, callInHref } from "@/domain/clock-live";
 import {
   calendarPulseAction,
   createBlockAction,
   createStaffAppointmentAction,
   deleteBlockAction,
+  overrideClockBlockAction,
+  releaseClockBlockAction,
+  resetClockBlockAction,
   moveAppointmentAction,
   searchCustomersAction,
   setStatusAction,
@@ -95,7 +98,7 @@ export function blockLabel(b: Pick<CalColumn["blocks"][number], "label" | "kind"
 
 /** Hover text for a block: the reason with its note, and when. */
 export function blockTitle(b: CalColumn["blocks"][number]) {
-  return `${reasonText(b)} · ${label(b.startMin)}–${label(Math.min(b.endMin, 24 * 60 - 1))}${b.recurring ? " · repeats" : ""}`;
+  return `${reasonText(b)} · ${label(b.startMin)}–${label(Math.min(b.endMin, 24 * 60 - 1))}${b.recurring ? " · repeats" : ""}${b.clock ? ` · from the time clock${b.clock.open ? ", still going" : ""}` : ""}`;
 }
 
 /** A link to the same date and barber in the other view. */
@@ -141,7 +144,7 @@ export function DayCalendar({
   today: string;
   nowMin: number | null;
   services: Svc[];
-  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean; addPhone: boolean; correctTimes: boolean; callIns: boolean };
+  canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean; addPhone: boolean; correctTimes: boolean; callIns: boolean; clockBlocks: boolean };
   meId: string;
   initialApptId: string | null;
   /** What the block picker offers. */
@@ -428,13 +431,10 @@ export function DayCalendar({
               <span className="inline-block h-3 w-1 rounded-sm bg-emerald-500" /> Clocked in
             </span>
             <span className="flex items-center gap-1">
-              <span className="shade-break inline-block h-3 w-3 rounded-sm" /> Break
-            </span>
-            <span className="flex items-center gap-1">
               <span className="inline-block h-3 w-1 rounded-sm bg-red-500" /> Late or left early
             </span>
             <span className="flex items-center gap-1">
-              <span className="shade-clock-hold inline-block h-3 w-3 rounded-sm ring-1 ring-red-200" /> Online booking held by the clock
+              <span aria-hidden>⏱</span> Blocked by the time clock
             </span>
           </>
         )}
@@ -445,8 +445,10 @@ export function DayCalendar({
 
       {panel && (
         <SidePanel onClose={() => setPanel(null)}>
-          {panel.kind === "appt" && <ApptPanel appt={panel.appt} col={panel.col} shopId={data.shop.id} canManage={canManage} onDone={() => setPanel(null)} />}
-          {panel.kind === "block" && <BlockPanel block={panel.block} col={panel.col} onDone={() => setPanel(null)} />}
+          {panel.kind === "appt" && <ApptPanel appt={panel.appt} col={panel.col} canManage={canManage} onDone={() => setPanel(null)} />}
+          {panel.kind === "block" && (
+            <BlockPanel block={panel.block} col={panel.col} date={data.date} canOverride={canManage.clockBlocks} canCallIn={canManage.callIns} onDone={() => setPanel(null)} />
+          )}
           {panel.kind === "new" && (
             <NewPanel
               key={`${panel.col.id}:${panel.startMin}`}
@@ -582,8 +584,6 @@ function Column({
           </div>
         ))}
         {col.clock?.early && <div className="pointer-events-none absolute inset-x-0 bg-emerald-50/80" style={{ top: top(col.clock.early.startMin), height: h(col.clock.early.startMin, col.clock.early.endMin) }} />}
-        {col.clock?.holds.map((x, i) => <div key={`h${i}`} className="shade-clock-hold pointer-events-none absolute inset-x-0" style={{ top: top(x.startMin), height: h(x.startMin, x.endMin) }} />)}
-        {col.clock?.breaks.map((b, i) => <div key={`br${i}`} className="shade-break pointer-events-none absolute inset-x-0" style={{ top: top(b.startMin), height: Math.max(h(b.startMin, b.endMin), 3) }} />)}
         {col.blocks.map((b) => (
           <button
             key={b.id}
@@ -593,10 +593,19 @@ function Column({
             }}
             title={blockTitle(b)}
             aria-label={blockTitle(b)}
-            className="shade-reason absolute inset-x-1 overflow-hidden rounded-md py-0.5 pl-2.5 pr-1.5 text-left text-[11px] font-semibold leading-tight text-zinc-900"
-            style={{ top: top(b.startMin), height: h(b.startMin, b.endMin), ["--reason" as string]: b.color }}
+            className={cx(
+              b.clock?.kind === "not_in" ? "shade-reason-soft text-zinc-600" : "shade-reason text-zinc-900",
+              "absolute inset-x-1 overflow-hidden rounded-md py-0.5 pl-2.5 pr-1.5 text-left text-[11px] font-semibold leading-tight",
+            )}
+            style={{ top: top(b.startMin), height: Math.max(h(b.startMin, b.endMin), 4), ["--reason" as string]: b.color }}
           >
+            {b.clock && (
+              <span className="mr-1" aria-hidden>
+                ⏱
+              </span>
+            )}
             {blockLabel(b)}
+            {b.clock?.open && <span className="ml-1 font-normal opacity-70">{b.clock.kind === "not_in" ? "· until they clock in" : "· until the break ends"}</span>}
             {b.recurring && <span className="ml-1 opacity-60">↻</span>}
             {b.note && b.endMin - b.startMin >= 45 && <span className="block truncate font-normal text-zinc-700">{b.note}</span>}
           </button>
@@ -639,8 +648,8 @@ function Column({
                   </span>
                 )}
                 {a.clockHold && (
-                  <span className="ml-auto shrink-0 rounded bg-red-600 px-1 text-[10px] font-semibold uppercase tracking-wide text-white" title={`${col.label} is ${HOLD_LABEL[a.clockHold].toLowerCase()}: move or rebook this client`}>
-                    {a.clockHold === "break" ? "on break" : "clocked out"}
+                  <span className="ml-auto shrink-0 rounded bg-red-600 px-1 text-[10px] font-semibold uppercase tracking-wide text-white" title={`${col.label} is ${CLOCK_HOLD_LABEL[a.clockHold.kind]}: move or rebook this client`}>
+                    {CLOCK_HOLD_LABEL[a.clockHold.kind]}
                   </span>
                 )}
               </div>
@@ -669,6 +678,12 @@ function Column({
     </div>
   );
 }
+
+const HOLD_NOTICE: Record<NonNullable<CalAppt["clockHold"]>["kind"], string> = {
+  break: "is on a break over this appointment",
+  clocked_out: "clocked out before this appointment",
+  not_in: "hasn't clocked in for this appointment",
+};
 
 const dur = (min: number) => (min < 60 ? `${min}m` : min % 60 ? `${Math.floor(min / 60)}h ${min % 60}m` : `${min / 60}h`);
 
@@ -717,8 +732,6 @@ function ClockMarks({ clock, col, nowMin, top, h }: { clock: CalClock; col: CalC
   const overdue = clock.overdueMin !== null && schedStart !== null && nowMin !== null;
   const leftEarly = clock.earlyOutMin !== null && clock.lastOutMin !== null;
   const tags: { min: number; tone: string; text: string }[] = [
-    ...clock.breaks.map((b) => ({ min: b.startMin, tone: "bg-amber-200 text-amber-950", text: `Break${b.open ? ` since ${label(b.startMin)}` : ` ${dur(b.endMin - b.startMin)}`}` })),
-    ...clock.holds.map((x) => ({ min: x.startMin, tone: "bg-white text-red-800 ring-1 ring-red-200", text: x.why === "break" ? `Online booking held to ${label(x.endMin)}` : "Clocked out · online booking closed" })),
     ...(clock.early ? [{ min: clock.early.startMin, tone: "bg-emerald-600 text-white", text: "Opened early" }] : []),
     ...(late ? [{ min: clock.firstInMin!, tone: "bg-red-600 text-white", text: `Late ${dur(clock.lateMin!)}` }] : []),
     ...(overdue ? [{ min: schedStart!, tone: "bg-red-600 text-white", text: "Not clocked in" }] : []),
@@ -786,18 +799,15 @@ function useAction() {
 function ApptPanel({
   appt,
   col,
-  shopId,
   canManage,
   onDone,
 }: {
   appt: CalAppt;
   col: CalColumn;
-  shopId: string;
   canManage: { sales: boolean; clients: boolean; message: boolean; correctTimes: boolean; callIns: boolean };
   onDone: () => void;
 }) {
   const { pending, error, run, router } = useAction();
-  const hold = appt.clockHold ? col.clock?.holds.find((x) => x.why === appt.clockHold) : undefined;
   const s = appt.status;
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
   const checkout = () =>
@@ -854,11 +864,11 @@ function ApptPanel({
 
       {appt.clockHold && (
         <Notice tone="red">
-          {col.label} {appt.clockHold === "break" ? "is on a break over this appointment" : "clocked out before this appointment"}. Move this client to another barber or ask them to pick a new time.
-          {hold && canManage.callIns && (
+          {col.label} {HOLD_NOTICE[appt.clockHold.kind]}. Move this client to another barber or ask them to pick a new time.
+          {canManage.callIns && (
             <>
               {" "}
-              <Link className="font-medium underline" href={callInHref(col.id, shopId, hold)}>
+              <Link className="font-medium underline" href={callInHref(appt.clockHold.blockId)}>
                 Reassign or rebook
               </Link>
             </>
@@ -934,8 +944,128 @@ function ApptPanel({
   );
 }
 
-function BlockPanel({ block, col, onDone }: { block: CalColumn["blocks"][number]; col: CalColumn; onDone: () => void }) {
+const PUNCH_START: Record<NonNullable<CalBlock["clock"]>["kind"], string> = { break: "Break started", clocked_out: "Clocked out", not_in: "Scheduled start" };
+const PUNCH_END: Record<NonNullable<CalBlock["clock"]>["kind"], string> = { break: "Break ended", clocked_out: "Clocked back in", not_in: "Clocked in" };
+
+function ClockBlockPanel({
+  block,
+  col,
+  date,
+  canOverride,
+  canCallIn,
+  onDone,
+}: {
+  block: CalBlock & { clock: NonNullable<CalBlock["clock"]> };
+  col: CalColumn;
+  date: string;
+  canOverride: boolean;
+  canCallIn: boolean;
+  onDone: () => void;
+}) {
   const { pending, error, run } = useAction();
+  const c = block.clock;
+  const [start, setStart] = useState(hhmm(block.startMin));
+  const [end, setEnd] = useState(hhmm(Math.min(block.endMin, 24 * 60 - 1)));
+  const [note, setNote] = useState("");
+  const booked = col.appts.some((a) => a.clockHold?.blockId === block.id);
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-1.5">
+        <Badge tone="blue">⏱ Auto from the time clock</Badge>
+        {c.open && <Badge tone="amber">{c.kind === "not_in" ? "Until they clock in" : "Until the break ends"}</Badge>}
+        {c.overridden && <Badge tone="violet">Times set by a manager</Badge>}
+      </div>
+      <h2 className="flex items-center gap-2 text-lg font-semibold">
+        <ReasonDot color={block.color} className="size-3" />
+        {block.label}
+      </h2>
+      {block.hidden && <p className="text-xs text-zinc-500">The reason is private.</p>}
+      <div className="text-sm text-zinc-500">
+        {col.label} · {label(block.startMin)}–{label(Math.min(block.endMin, 24 * 60 - 1))}
+      </div>
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+        <dt className="text-zinc-500">{PUNCH_START[c.kind]}</dt>
+        <dd className="tabular">{c.punchMin !== null ? label(c.punchMin) : c.kind === "not_in" ? label(block.startMin) : "—"}</dd>
+        <dt className="text-zinc-500">{PUNCH_END[c.kind]}</dt>
+        <dd className="tabular">{c.endPunchMin !== null ? label(c.endPunchMin) : c.open ? "Not yet" : "—"}</dd>
+      </dl>
+      <p className="text-sm text-zinc-600">
+        {c.overridden
+          ? "A manager set these times, so punch edits no longer move it. Put it back to follow the punches again."
+          : "It follows the punches: correct a punch on the timesheet and this block moves with it."}{" "}
+        Online booking is closed while it lasts.
+      </p>
+      <div className="flex flex-wrap gap-3 text-sm">
+        {canOverride && (
+          <Link className="text-zinc-700 underline" href={c.timesheetHref}>
+            Punches on the timesheet
+          </Link>
+        )}
+        {booked && canCallIn && (
+          <Link className="font-medium text-red-700 underline" href={callInHref(block.id)}>
+            Reassign or rebook the clients in it
+          </Link>
+        )}
+      </div>
+      {error && <Notice tone="red">{error}</Notice>}
+      {canOverride ? (
+        <div className="space-y-3 border-t border-zinc-100 pt-3">
+          <div className="text-sm font-medium">Manager override</div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="From">
+              <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} />
+            </Field>
+            <Field label="To">
+              <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+            </Field>
+          </div>
+          <Field label="Why (kept in the audit log)">
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Covered the front desk" maxLength={300} />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={pending} onClick={() => run(() => overrideClockBlockAction(block.id, { date, startMin: fromHHMM(start), endMin: fromHHMM(end), note: note || null }))}>
+              Set these times
+            </Button>
+            <Button
+              variant="danger"
+              disabled={pending}
+              onClick={() => {
+                if (confirm("Remove this block and reopen the time? The time clock won't put it back.")) run(() => releaseClockBlockAction(block.id, note || null), onDone);
+              }}
+            >
+              Remove block
+            </Button>
+            {c.overridden && (
+              <Button variant="ghost" disabled={pending} onClick={() => run(() => resetClockBlockAction(block.id), onDone)}>
+                Back to the clock times
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-zinc-500">Only a manager can change or remove a block from the time clock.</p>
+      )}
+    </div>
+  );
+}
+
+function BlockPanel({
+  block,
+  col,
+  date,
+  canOverride,
+  canCallIn,
+  onDone,
+}: {
+  block: CalBlock;
+  col: CalColumn;
+  date: string;
+  canOverride: boolean;
+  canCallIn: boolean;
+  onDone: () => void;
+}) {
+  const { pending, error, run } = useAction();
+  if (block.clock) return <ClockBlockPanel block={{ ...block, clock: block.clock }} col={col} date={date} canOverride={canOverride} canCallIn={canCallIn} onDone={onDone} />;
   return (
     <div className="space-y-4">
       <Badge tone="amber">{block.kind === "day_off" ? "Day off" : block.category === "time_off" ? "Time off" : "Blocked time"}</Badge>

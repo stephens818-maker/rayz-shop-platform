@@ -18,7 +18,7 @@ import {
   timeOffSpan,
   weekdaysLabel,
 } from "@/domain/staff-time";
-import { blockChangeDenied, timeOffDecisionDenied } from "@/server/auth/policy";
+import { blockChangeDenied, clockBlockChangeDenied, timeOffDecisionDenied } from "@/server/auth/policy";
 import { endOfLocalDay, localMinutesOf, startOfLocalDay, weekdayOf, zonedWallTime } from "@/lib/time";
 
 const at = (date: string, min: number) => zonedWallTime(date, min).toJSDate();
@@ -159,6 +159,13 @@ describe("who may block time and decide time off", () => {
     expect(blockChangeDenied(manager, { staffId: "other", shopId: coralville }, [coralville])).toBeNull();
     expect(blockChangeDenied(manager, { staffId: "other", shopId: moline }, [coralville, moline])).toMatch(/outside your access/);
     expect(blockChangeDenied(manager, { staffId: "other", shopId: null }, [coralville, moline])).toMatch(/shops you don't manage/);
+  });
+
+  it("a block from the time clock is a manager's to change, even for a barber's own time", () => {
+    expect(clockBlockChangeDenied(barber, { staffId: "barber", shopId: coralville }, [coralville])).toMatch(/Only a manager/);
+    expect(clockBlockChangeDenied(manager, { staffId: "other", shopId: coralville }, [coralville])).toBeNull();
+    expect(clockBlockChangeDenied(manager, { staffId: "manager", shopId: coralville }, [coralville])).toBeNull();
+    expect(clockBlockChangeDenied(manager, { staffId: "other", shopId: moline }, [moline])).toMatch(/outside your access/);
   });
 
   it("requesting is separate from approving: no approval permission, no decision", () => {

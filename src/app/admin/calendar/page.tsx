@@ -46,7 +46,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
         today={today}
         nowMin={date === today ? localMinutesOf(new Date()) : null}
         services={catalog.map((s) => ({ id: s.id, name: s.name, kind: s.kind, priceCents: s.priceCents, durationMin: s.durationMin }))}
-        canManage={{ walkins: can(ctx, "walkins.manage"), sales: can(ctx, "sales.view"), schedules: can(ctx, "schedules.edit"), clients: can(ctx, "clients.view_all"), message: can(ctx, "clients.message"), addPhone: policy.canAdd("phone"), correctTimes: can(ctx, "service_times.correct"), callIns: can(ctx, "callins.mark") }}
+        canManage={{ walkins: can(ctx, "walkins.manage"), sales: can(ctx, "sales.view"), schedules: can(ctx, "schedules.edit"), clients: can(ctx, "clients.view_all"), message: can(ctx, "clients.message"), addPhone: policy.canAdd("phone"), correctTimes: can(ctx, "service_times.correct"), callIns: can(ctx, "callins.mark"), clockBlocks: can(ctx, "blocks.others") }}
         meId={ctx.staff.id}
         initialApptId={sp.appt ?? null}
         reasons={reasons}

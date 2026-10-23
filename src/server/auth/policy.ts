@@ -46,6 +46,16 @@ export function blockChangeDenied(
 }
 
 /**
+ * Changing or removing a block the time clock wrote: a manager's call ("Block out others' time"),
+ * at the block's shop. Barbers can't take their own break or clock-out block off the calendar; they
+ * fix the punch instead.
+ */
+export function clockBlockChangeDenied(caller: Caller & { blocksOthers: boolean }, block: { staffId: string; shopId: string | null }, barberShopIds: string[]): string | null {
+  if (!caller.blocksOthers) return "Only a manager can change a block from the time clock. Correct the punch instead.";
+  return timeBlockChangeDenied(caller, block, barberShopIds);
+}
+
+/**
  * Approving or denying time off: needs "Approve time off", never for yourself (the Brand Owner
  * excepted), and only for time at your shops. Time off at every shop for a barber who also works
  * at shops you don't run needs access to every shop.

@@ -249,7 +249,7 @@ export function Recurring({ series, today, limits, reasons }: { series: SeriesVi
   );
 }
 
-export function Upcoming({ blocks }: { blocks: { id: string; category: string; reason: ShownReason; startsAt: string; endsAt: string; shopName: string | null }[] }) {
+export function Upcoming({ blocks }: { blocks: { id: string; category: string; reason: ShownReason; startsAt: string; endsAt: string; shopName: string | null; fromClock: boolean }[] }) {
   const { pending, error, run } = useRun();
   return (
     <Card>
@@ -263,9 +263,15 @@ export function Upcoming({ blocks }: { blocks: { id: string; category: string; r
               <span className="font-medium">{when(b.startsAt)}</span>–{timeOnly(b.endsAt)}
               {b.reason.note && <span className="text-zinc-500"> · {b.reason.note}</span>}
             </span>
-            <button className="ml-auto text-xs text-red-600 underline" disabled={pending} onClick={() => run(() => removeMyBlockAction(b.id))}>
-              Remove
-            </button>
+            {b.fromClock ? (
+              <span className="ml-auto text-xs text-zinc-500" title="It ends with your punch. Only a manager can change it.">
+                ⏱ From the time clock
+              </span>
+            ) : (
+              <button className="ml-auto text-xs text-red-600 underline" disabled={pending} onClick={() => run(() => removeMyBlockAction(b.id))}>
+                Remove
+              </button>
+            )}
           </li>
         ))}
       </ul>

@@ -7,7 +7,8 @@ import { db } from "@/db";
 import { appointments, staffShops, timeBlocks } from "@/db/schema";
 import { safe } from "@/server/action";
 import { selfBlockProblem } from "@/domain/staff-time";
-import { blockChangeDenied } from "@/server/auth/policy";
+import { blockChangeDenied, clockBlockChangeDenied } from "@/server/auth/policy";
+import { overrideClockBlock, releaseClockBlock, resetClockBlock } from "@/server/clock-blocks";
 import { StaffContext, assertShopAccess, authorize, blockCaller, can, requireStaff } from "@/server/auth/staff";
 import { addBlock, removeBlock, rulesFor } from "@/server/staff-time";
 import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
@@ -268,11 +269,68 @@ export async function deleteBlockAction(id: string) {
     const ctx = await requireStaff();
     const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
     if (!b || (b.shopId && !hasShop(ctx, b.shopId))) throw notFound("Block");
-    const denied = blockChangeDenied(blockCaller(ctx), b, await barberShops(b.staffId));
-    if (denied) throw forbidden(denied);
-    await removeBlock(id, ctx.actor, "calendar", b.shopId);
-    revalidatePath("/admin/calendar");
-    revalidatePath("/admin/my-time");
+    if (b.source === "clock") {
+      const denied = clockBlockChangeDenied(blockCaller(ctx), b, await barberShops(b.staffId));
+      if (denied) throw forbidden(denied);
+      await releaseClockBlock(id, ctx.actor, null);
+    } else {
+      const denied = blockChangeDenied(blockCaller(ctx), b, await barberShops(b.staffId));
+      if (denied) throw forbidden(denied);
+      await removeBlock(id, ctx.actor, "calendar", b.shopId);
+    }
+    revalidateBlocks();
+    return null;
+  });
+}
+
+function revalidateBlocks() {
+  revalidatePath("/admin/calendar");
+  revalidatePath("/admin/my-time");
+  revalidatePath("/admin");
+}
+
+/** A block the time clock wrote, which this manager may change: else not found or forbidden. */
+async function clockBlockFor(ctx: StaffContext, id: string) {
+  const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
+  if (!b || b.source !== "clock" || !b.shopId || !hasShop(ctx, b.shopId)) throw notFound("Block");
+  const denied = clockBlockChangeDenied(blockCaller(ctx), b, await barberShops(b.staffId));
+  if (denied) throw forbidden(denied);
+  return b;
+}
+
+const Override = z.object({ date: z.string().refine(isValidLocalDate), startMin: z.number().int().min(0).max(1440), endMin: z.number().int().min(0).max(1440), note: z.string().max(300).nullish() });
+
+/** A manager sets a clock block's times by hand: punch edits stop moving it until it's reset. Audit-logged. */
+export async function overrideClockBlockAction(id: string, input: z.input<typeof Override>) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    const v = Override.parse(input);
+    if (v.endMin <= v.startMin) throw new AppError("bad_request", "End must be after start");
+    await clockBlockFor(ctx, id);
+    await overrideClockBlock(id, { startsAt: staffWallTime(v.date, v.startMin), endsAt: staffWallTime(v.date, v.endMin) }, ctx.actor, v.note);
+    revalidateBlocks();
+    return null;
+  });
+}
+
+/** A manager takes a clock block off: the time reopens and the clock won't write it again. Audit-logged. */
+export async function releaseClockBlockAction(id: string, note?: string | null) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await clockBlockFor(ctx, id);
+    await releaseClockBlock(id, ctx.actor, typeof note === "string" ? note.slice(0, 300) : null);
+    revalidateBlocks();
+    return null;
+  });
+}
+
+/** Undo a manager's times: the block follows the punches again. Audit-logged. */
+export async function resetClockBlockAction(id: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await clockBlockFor(ctx, id);
+    await resetClockBlock(id, ctx.actor);
+    revalidateBlocks();
     return null;
   });
 }

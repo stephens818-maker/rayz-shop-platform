@@ -18,6 +18,7 @@ import {
   timeOffRequests,
 } from "@/db/schema";
 import { BlockReason, MAX_NOTE, NO_PRIVATE, ReasonViewer, ShownReason } from "@/domain/block-reasons";
+import { effectiveEnd } from "@/domain/clock-blocks";
 import {
   SERIES_HORIZON_DAYS,
   StaffDay,
@@ -238,6 +239,7 @@ export async function removeBlock(id: string, actor: Actor, via: string, auditSh
   const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
   if (!b) throw notFound("Block");
   if (b.requestId) throw new AppError("conflict", "This is approved time off. Cancel the request instead, so the barber is told.");
+  if (b.source === "clock") throw new AppError("conflict", "This block is from the time clock. Correct the punch, or a manager can change or remove it on the calendar.");
   await db.transaction(async (tx) => {
     await tx.delete(timeBlocks).where(eq(timeBlocks.id, id));
     await audit(
@@ -879,7 +881,15 @@ export async function myBlocks(staffId: string, now: Date = new Date(), days = 1
         .groupBy(timeBlocks.seriesId)
     : [];
   return {
-    blocks: blocks.map(({ b, shopName }) => ({ id: b.id, category: b.category, reason: show(b), startsAt: b.startsAt.toISOString(), endsAt: b.endsAt.toISOString(), shopName })),
+    blocks: blocks.map(({ b, shopName }) => ({
+      id: b.id,
+      category: b.category,
+      reason: show(b),
+      startsAt: b.startsAt.toISOString(),
+      endsAt: effectiveEnd(b, now).toISOString(),
+      shopName,
+      fromClock: b.source === "clock",
+    })),
     series: series.map(({ s, shopName }) => {
       const next = nextOf.find((n) => n.seriesId === s.id);
       return {
