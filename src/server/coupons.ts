@@ -64,7 +64,7 @@ export async function priorVisits(customerId: string, o: { saleId?: string | nul
     select count(*)::int as n from (
       select shop_id, business_date as d from sales
         where customer_id = ${customerId} and status in ('paid', 'partially_refunded', 'refunded') and id is distinct from ${o.saleId ?? null}::uuid
-          and appointment_id is distinct from ${o.appointmentId ?? null}::uuid
+          and (${o.appointmentId ?? null}::uuid is null or appointment_id is distinct from ${o.appointmentId ?? null}::uuid)
       union
       select shop_id, (starts_at at time zone 'America/Chicago')::date from appointments
         where customer_id = ${customerId} and status = 'completed' and id is distinct from ${o.appointmentId ?? null}::uuid

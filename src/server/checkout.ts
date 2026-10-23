@@ -210,7 +210,7 @@ async function buildDiscounts(input: Omit<FinalizeInput, "actor">, sale: { id: s
   const held = codes.length && sale.appointmentId ? (await heldCoupons([sale.appointmentId])).get(sale.appointmentId) : undefined;
   const coupons: CouponRule[] = [];
   for (const code of codes) {
-    const rule = await resolveCoupon(code, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId });
+    const rule = await resolveCoupon(code, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId, today: todayLocal(input.now ?? new Date()) });
     const promo = await db.query.promoCodes.findFirst({ where: eq(promoCodes.id, rule.promoId), columns: { autoApply: true } });
     coupons.push({ ...rule, via: held === code ? "booking" : promo?.autoApply ? "auto" : "code" });
   }
