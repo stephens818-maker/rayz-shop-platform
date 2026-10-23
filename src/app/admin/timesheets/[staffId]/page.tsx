@@ -10,7 +10,7 @@ import { formatDate, formatDateTime, formatTime, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { can, canAny, guardPage } from "@/server/auth/staff";
 import { inTenant } from "@/server/tenant";
-import { recentPeriods, timesheetView } from "@/server/time-clock";
+import { chosenPeriod, recentPeriods, timesheetView } from "@/server/time-clock";
 import { AddPunch, ApproveOwn, ClearPin, EditPunch, ManagerApprove } from "../timesheets";
 
 export const metadata: Metadata = { title: "Timesheet" };
@@ -30,7 +30,7 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
   if (own ? !can(ctx, "timesheet.own") && !manage : !manage || !(await inTenant(ctx, "staff", staffId))) notFound();
   const today = todayLocal();
   const periods = recentPeriods(today);
-  const period = periods.find((p) => p.start === sp.period) ?? periods[0];
+  const period = chosenPeriod(sp.period, today);
   const view = await timesheetView(staffId, period.start, own ? null : ctx.shopIds);
   const canEdit = can(ctx, "timesheet.edit") && (!own || ctx.isOwner);
   const canApprove = can(ctx, "timesheet.approve") && !own;

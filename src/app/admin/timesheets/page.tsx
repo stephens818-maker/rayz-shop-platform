@@ -9,7 +9,7 @@ import { FT_LABEL } from "@/domain/time-clock";
 import { addDays, formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { can, canAny, guardPage } from "@/server/auth/staff";
 import { narrowShops } from "@/server/tenant";
-import { ftOverview, recentPeriods, timesheetList } from "@/server/time-clock";
+import { chosenPeriod, ftOverview, recentPeriods, timesheetList } from "@/server/time-clock";
 import { LockPeriod } from "./timesheets";
 
 export const metadata: Metadata = { title: "Timesheets" };
@@ -24,7 +24,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
   const sp = await searchParams;
   const today = todayLocal();
   const periods = recentPeriods(today);
-  const period = periods.find((p) => p.start === sp.period) ?? periods[0];
+  const period = chosenPeriod(sp.period, today);
   const shopId = ctx.shops.find((s) => s.id === sp.shop)?.id ?? null;
   const shopIds = narrowShops(ctx, shopId ? [shopId] : null);
   const window = WINDOWS.find((w) => String(w) === sp.window) ?? 8;

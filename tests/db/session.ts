@@ -2,20 +2,24 @@
  * A fake cookie jar so tests can call admin pages, server actions and route handlers as a given
  * staff member. Test files mock next/headers with `headersMock` and sign in with `signInAs`.
  */
-export const jar: { token?: string; shop?: string } = {};
+export const jar: { token?: string; shop?: string; device?: string; ip?: string } = {};
+
+const COOKIES = { rayz_session: "token", rayz_shop: "shop", rayz_clock_device: "device" } as const;
 
 export const headersMock = {
   cookies: async () => ({
     get: (name: string) => {
-      const value = name === "rayz_session" ? jar.token : name === "rayz_shop" ? jar.shop : undefined;
+      const key = COOKIES[name as keyof typeof COOKIES];
+      const value = key ? jar[key] : undefined;
       return value ? { name, value } : undefined;
     },
     set(name: string, value: string) {
       if (name === "rayz_shop") jar.shop = value;
+      if (name === "rayz_clock_device") jar.device = value;
     },
     delete() {},
   }),
-  headers: async () => new Headers(),
+  headers: async () => new Headers(jar.ip ? { "x-forwarded-for": jar.ip } : {}),
 };
 
 export async function signInAs(staffId: string | null, shop?: string) {

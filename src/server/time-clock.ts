@@ -52,7 +52,7 @@ import {
   type ShopClockSettings,
 } from "@/domain/time-clock";
 import { appBaseUrl } from "@/lib/deployment";
-import { addDays, endOfLocalDay, formatDate, formatTime, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
+import { addDays, endOfLocalDay, formatDate, formatTime, isValidLocalDate, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { audit, SYSTEM, type Actor } from "./audit";
 import { loadStaffAccess, staffWithAccessTo, workShopIds } from "./auth/access";
 import { AppError, forbidden, notFound } from "./errors";
@@ -543,6 +543,15 @@ export function recentPeriods(today: LocalDate, count = 8): PayPeriod[] {
   return Array.from({ length: count }, (_, i) => cur.index - i)
     .filter((i) => i >= 0)
     .map((i) => payPeriodByIndex(i));
+}
+
+/** The period a link asks for (?period=<start>), or the current one when it names none. */
+export function chosenPeriod(requested: string | undefined, today: LocalDate): PayPeriod {
+  if (requested && isValidLocalDate(requested)) {
+    const p = payPeriodFor(requested);
+    if (p.index >= 0) return p;
+  }
+  return payPeriodFor(today);
 }
 
 /**
