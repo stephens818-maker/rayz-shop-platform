@@ -7,6 +7,8 @@ import { Slot, SlotPicker } from "@/components/slot-picker";
 import { Button, Field, Input, cx } from "@/components/ui";
 import { ApiError, api, dollars, fmtDay, fmtTime, getTokens } from "@/lib/api-client";
 import { EMAIL_CONSENT_TEXT, SMS_CONSENT_TEXT, consentFields, initialBookingForm } from "@/domain/booking-consent";
+import type { BookingCouponView } from "@/server/coupons";
+import { checkCouponAction, finishDraftAction, holdCouponAction, saveDraftAction } from "./actions";
 
 interface Service {
   id: string;
@@ -55,6 +57,39 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const idem = useRef(crypto.randomUUID());
+  const draft = useRef(crypto.randomUUID());
+  const [couponText, setCouponText] = useState(params.get("coupon") ?? "");
+  const [coupon, setCoupon] = useState<BookingCouponView | null>(null);
+  const [couponMsg, setCouponMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [couponBusy, setCouponBusy] = useState(false);
+
+  async function applyCoupon(code: string, list = catalog) {
+    if (!code.trim()) return;
+    setCouponBusy(true);
+    setCouponMsg(null);
+    const r = await checkCouponAction(shop.slug, code);
+    setCouponBusy(false);
+    if (!r.ok) return setCouponMsg({ ok: false, text: r.error });
+    setCoupon(r.data);
+    setCouponText(r.data.code);
+    const addon = r.data.freeAddonId ? list?.addons.find((a) => a.id === r.data.freeAddonId) : null;
+    if (addon) {
+      setAddonIds((ids) => (ids.includes(addon.id) ? ids : [...ids, addon.id]));
+      if (slot) {
+        setSlot(null);
+        setStep("time");
+      }
+      setCouponMsg({ ok: true, text: `${addon.name} added to your booking, free.` });
+    }
+  }
+
+  function saveDraft(over: { startsAt?: string | null } = {}) {
+    if (!serviceId) return;
+    saveDraftAction(
+      { token: draft.current, shopSlug: shop.slug, serviceId, barberSlug: barber, startsAt: over.startsAt !== undefined ? over.startsAt : (slot?.startsAt ?? null), phone: form.phone || null, email: form.email || null },
+      getTokens()?.accessToken ?? null,
+    ).catch(() => {});
+  }
 
   useEffect(() => {
     Promise.all([api<{ services: Service[]; addons: Service[] }>(`/shops/${shop.slug}/services`), api<{ barbers: Barber[] }>(`/shops/${shop.slug}/barbers`)])
@@ -68,6 +103,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
           setStep(params.get("barber") ? "time" : "barber");
         }
         if (params.get("barber") && !b.barbers.some((x) => x.slug === params.get("barber"))) setBarber("any");
+        if (params.get("coupon")) applyCoupon(params.get("coupon")!, c);
       })
       .catch((e) => setError(e.message));
     if (getTokens()) api<{ firstName: string }>("/me").then(setSignedIn).catch(() => {});
@@ -80,9 +116,15 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
     const q = new URLSearchParams();
     if (svc) q.set("service", svc.slug);
     if (barber !== "any") q.set("barber", barber);
+    if (coupon) q.set("coupon", coupon.code);
     const next = `/book/${shop.slug}${q.size ? `?${q}` : ""}`;
     window.history.replaceState(null, "", next);
-  }, [serviceId, barber, catalog, shop.slug]);
+  }, [serviceId, barber, catalog, shop.slug, coupon]);
+
+  useEffect(() => {
+    saveDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serviceId, barber, slot?.startsAt]);
 
   const service = catalog?.services.find((s) => s.id === serviceId) ?? null;
   const addons = useMemo(() => (catalog?.addons ?? []).filter((a) => addonIds.includes(a.id)), [catalog, addonIds]);
@@ -114,6 +156,8 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
           customer: signedIn ? undefined : { firstName: form.firstName, lastName: form.lastName || null, phone: form.phone, email: form.email || null, ...consentFields(form) },
         }),
       });
+      if (coupon) await holdCouponAction(r.appointment.code, coupon.code);
+      await finishDraftAction(draft.current, r.appointment.code);
       router.push(`/a/${r.appointment.code}?new=1`);
     } catch (e) {
       const err = e as ApiError;
@@ -263,10 +307,10 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
                 <Input autoComplete="family-name" value={form.lastName} onChange={(e) => setForm({ ...form, lastName: e.target.value })} />
               </Field>
               <Field label="Mobile phone">
-                <Input type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="(319) 555-0123" />
+                <Input type="tel" inputMode="tel" autoComplete="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} onBlur={() => saveDraft()} placeholder="(319) 555-0123" />
               </Field>
               <Field label="Email (optional)">
-                <Input type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                <Input type="email" autoComplete="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} onBlur={() => saveDraft()} />
               </Field>
               <label className="flex items-start gap-2 text-sm text-zinc-600 sm:col-span-2">
                 <input type="checkbox" className="mt-1" checked={form.smsOptIn} onChange={(e) => setForm({ ...form, smsOptIn: e.target.checked })} />
@@ -306,6 +350,42 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
             <span className="tabular text-lg font-semibold">{dollars(total)}</span>
           </div>
           <p className="mt-1 text-xs text-zinc-400">Tax and tip at checkout. Pay at the shop.</p>
+          <div className="mt-3 border-t border-zinc-100 pt-3" data-testid="booking-coupon">
+            {coupon ? (
+              <div className="text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-emerald-700">
+                    {coupon.code}: {coupon.summary}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-xs text-zinc-500 underline"
+                    onClick={() => {
+                      setCoupon(null);
+                      setCouponMsg(null);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+                {coupon.note && <p className="mt-1 text-xs text-zinc-500">{coupon.note}</p>}
+              </div>
+            ) : (
+              <form
+                className="flex gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  applyCoupon(couponText);
+                }}
+              >
+                <Input className="w-full uppercase" placeholder="Coupon code" aria-label="Coupon code" value={couponText} onChange={(e) => setCouponText(e.target.value.toUpperCase())} />
+                <Button type="submit" variant="secondary" disabled={couponBusy || !couponText.trim()}>
+                  Apply
+                </Button>
+              </form>
+            )}
+            {couponMsg && <p className={cx("mt-1 text-xs", couponMsg.ok ? "text-emerald-700" : "text-red-700")}>{couponMsg.text}</p>}
+          </div>
         </div>
       </aside>
     </div>
