@@ -413,12 +413,16 @@ export interface PayrollRow {
 
 export type PayrollSalesRow = Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents">;
 
-/** Service and product sales and tips per barber per shop, paid in [start, end], less refunds issued in it. */
+/**
+ * Service and product sales and tips per barber per shop, paid in [start, end], less refunds issued in it.
+ * Tickets imported from Squire are left out: Squire already paid those tips through its own payroll.
+ */
 export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staffId" | "staffIds">, start: LocalDate, end: LocalDate): Promise<PayrollSalesRow[]> {
   return rows<PayrollSalesRow>(sql`
         with v as (
           select s.staff_id, s.shop_id, count(*)::int tickets, sum(s.service_net_cents)::int sn, sum(s.product_net_cents)::int pn
           from sales s where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
+            and not s.is_imported
             and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
         ), t as (
@@ -428,6 +432,7 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
             sum(case when p.method='gift_card' then p.tip_cents else 0 end)::int gc
           from payments p join sales s on s.id = p.sale_id
           where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
+            and not s.is_imported
             and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
         ), rf as (
@@ -437,7 +442,7 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
             sum(case when r.method='gift_card' then r.tip_cents else 0 end)::int gc
           from refunds r join sales s on s.id = r.sale_id
           where r.shop_id in ${uuids(s.shopIds)} and r.business_date between ${start} and ${end} and r.kind = 'refund'
-            and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
+            and not s.is_imported and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
         ), k as (select staff_id, shop_id from v union select staff_id, shop_id from rf)
         select st.id "staffId", st.staff_code "staffCode", st.display_label label, sh.id "shopId", sh.name shop, coalesce(v.tickets,0) tickets,

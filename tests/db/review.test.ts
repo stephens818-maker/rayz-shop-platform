@@ -358,6 +358,24 @@ describe("P1#9–10 payroll and reports are net of refunds", () => {
     expect(r.rows.find((x) => x.staffId === staffId)).toMatchObject({ tickets: 1, serviceSalesCents: 0, cashTipsCents: 0, totalTipsCents: 0, tipRefundsCents: 600 });
   });
 
+  it("tickets imported from Squire never reach payroll tips or sales", async () => {
+    const s = await shop();
+    const staffId = await coralvilleBarber(s.id);
+    const svc = await cut(s.id);
+    const ours = await m.checkout.openBlankSale(s.id, actor, staffId);
+    await m.checkout.finalizeSale({ saleId: ours.id, lines: [{ kind: "service", refId: svc.id, qty: 1 }], tipCents: 300, tender: cash, actor, now: at("2027-04-06") });
+    const squire = await m.checkout.openBlankSale(s.id, actor, staffId);
+    await m.checkout.finalizeSale({ saleId: squire.id, lines: [{ kind: "service", refId: svc.id, qty: 1 }], tipCents: 900, tender: credit, actor, now: at("2027-04-07") });
+    await m.db.db.update(m.schema.sales).set({ isImported: true }).where(eq(m.schema.sales.id, squire.id));
+
+    const r = await m.reports.payrollTips({ shopIds: [s.id], staffId, from: "2027-04-04", to: "2027-04-17" });
+    const rows = r.rows.filter((x) => x.staffId === staffId);
+    expect(rows.reduce((t, x) => t + x.tickets, 0)).toBe(1);
+    expect(rows.reduce((t, x) => t + x.cardTipsCents, 0)).toBe(0);
+    expect(rows.reduce((t, x) => t + x.cashTipsCents, 0)).toBe(300);
+    expect(rows.reduce((t, x) => t + x.serviceSalesCents, 0)).toBe(svc.priceCents);
+  });
+
   it("credit/debit split, daily, monthly, and per-shop totals all subtract refunds and agree with the summary", async () => {
     const s = await shop();
     const svc = await cut(s.id);
