@@ -166,7 +166,7 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
             <input type="checkbox" checked={blockOnBreak} onChange={(e) => setBlockOnBreak(e.target.checked)} /> A break blocks out
           </label>
           <Input type="number" min={5} max={120} value={hold} onChange={(e) => setHold(e.target.value)} className="w-20" aria-label="Minutes a break blocks when no length is picked" />
-          <span>min from its start when no length is picked (on past that while it lasts; trimmed when it ends)</span>
+          <span className="min-w-[16rem] flex-1">min from its start when no length is picked (on past that while it lasts; trimmed when it ends)</span>
         </div>
         <label className="flex items-center gap-1.5">
           <input type="checkbox" checked={blockAfterClockOut} onChange={(e) => setBlockAfterClockOut(e.target.checked)} /> Clocking out before the scheduled end blocks out the rest of that shift (&quot;Clocked out&quot;, trimmed if they clock back in)
