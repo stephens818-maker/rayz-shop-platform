@@ -21,7 +21,7 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time` and `core_0024_block_reasons`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons` and `core_0025_call_ins`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -117,6 +117,22 @@ Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook pro
 - **Writes:** to add a block or time off, please go through `addBlock`, `requestTimeOff` and `decideTimeOff`, which now take a `reasonId` (and an optional `note`) instead of a category or reason key. They check booked appointments, write the audit rows and send the barber's email. Avoid inserting into `time_blocks` directly.
 - **Notification kinds:** `time_off_reschedule` (to the client, with the manage link) and `time_off_decision` (an email to the barber).
 
+### Call-ins and the shop line (core)
+
+- **Code:** `src/domain/outreach.ts` (pure: rules, quiet hours, message wording, reply parsing, link states, follow-up timing) and `src/domain/twiml.ts`. Server: `src/server/call-ins.ts` (mark, affected appointments, reassign, outreach, text answers, follow-ups), `src/server/rebook-links.ts`, `src/server/messaging.ts` (opt-outs, inbox threads, call log), `src/server/shop-line.ts` (Twilio webhook handlers), `src/server/client-contact.ts` (staff text and click-to-call), `src/server/call-in-report.ts` and `src/server/twilio/*`.
+- **Schema** (`drizzle/core_0025_call_ins.sql`):
+  - `call_ins` (barber, shop or all, span, reason, note) with its own `time_blocks` row, so the calendar and availability treat it as time off.
+  - `appointment_outreach` (one per affected appointment: option, status notified/delivered/rebooked/declined/no_response/flagged, attempts, next follow-up), `rebook_links` (SHA-256 of the token only, expiry, used and revoked).
+  - `message_threads` and `messages` (the per-shop inbox), `call_logs` (in, out, missed, after hours, click-to-call), `contact_opt_outs` (phone and channel, with the customer ids STOP turned off).
+  - New columns: `brand_settings.outreach` (jsonb rules), `customers.allow_other_shop`, `notification_jobs.provider_message_id`, `delivered_at` and `outreach_id`, and `shops.twilio_number` (unique).
+  - A private **Emergency** time off reason.
+  - New permissions `callins.mark`, `callins.mark_own`, `callins.outreach`, `callins.voice`, `inbox.view` and the report `call_ins`. There are 63 feature permissions now.
+- **Notification kinds:** `callin_reassign`, `callin_rebook`, `callin_voice`, `callin_link` (the press-1 text), `missed_call` and `shop_reply`. `staff_call` (click-to-call) now really dials through Twilio, and `NOTIFICATIONS_VOICE_PROVIDER=twilio` is no longer a stub.
+- **Opt-outs apply to every text.** `processDueJobs` now suppresses any SMS job to a number in `contact_opt_outs` (reminders included), and automated call-in calls to a number that pressed 9. If the app queues texts through `notification_jobs`, there's nothing to change.
+- **Consent (mobile's area), touched lightly:** STOP sets `customers.sms_opt_in = false` for every client on that number and records which ones; START turns those same clients back on. Nothing else writes `sms_opt_in`. Please don't turn `sms_opt_in` back on for a number that's in `contact_opt_outs`, or the next text will be suppressed anyway.
+- **Routes:** `/api/twilio/**` (signed Twilio webhooks) and the public rebook page `/r/[token]`. Nothing under `/api/v1` changed.
+- **Availability:** a call-in is a time off block, so `/api/v1` availability already leaves the barber out.
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
@@ -143,6 +159,8 @@ If the mobile side means a specific registry from the plan, say which items it s
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
 - (core → mobile) An app checkout or prepayment for a shop that isn't onboarded fails with `payment_failed` and `details.reason = "payments_not_ready"`. Please show that as "This shop isn't taking cards in the app yet" instead of as a card decline.
 
+- (core → mobile) Twilio now handles STOP and START on each shop number and writes `contact_opt_outs`. If the app shows a client's text consent, please treat a number in `contact_opt_outs` (channel `sms`) as not texting, whatever `sms_opt_in` says.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -151,6 +169,18 @@ If the mobile side means a specific registry from the plan, say which items it s
 - Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
 
 ## Log
+
+### 2026-10-23: core (call-ins)
+
+- **Call-ins** at `/admin/call-ins`: a manager (or a barber with `callins.mark_own`) marks a barber called in (sick, emergency or other) for a whole day, part of a day or a range. It writes a time off block that shows on the calendar and lists every affected appointment.
+- Per appointment, or one choice for all: move to a free barber (same shop, or another shop when the client allows it), with a text and a decline option; text and email a sorry note with the original time and a one-tap rebook link (`/r/[token]`, keeps the service and add-ons, any barber or a chosen one); or an automated Twilio call (press 1 for the link by text, 2 for the shop, voicemail message, 9 for no more calls).
+- Replies: "1" takes the offered time (or keeps the move), "2" declines. Anything else lands in the shop's **Inbox**, where staff answer without seeing the number when it's masked for them.
+- Shop line: each shop's Twilio number forwards to the shop phone. Missed and after-hours calls get a booking (or rebook) text, at most one per number and shop every 12 hours. Calls are logged on the client's profile, and click-to-call bridges through the shop line.
+- Tracking per appointment, one retry after the follow-up wait with no answer, then flagged for staff. New **Call-ins** report by shop and barber.
+- Quiet hours, opt-ins and STOP are respected. Everything is off until Twilio keys are set; the outbox and the call and text simulator work without them.
+- Migration `core_0025_call_ins`. Grants: Brand Admin, Regional Manager and Shop Manager get mark, outreach, calls, inbox and the report; the front desk gets outreach and the inbox; `callins.mark_own` is on Brand Admin only. Custom roles get mark, outreach, calls and the report with `timeoff.approve`, and the inbox with `calendar.manage`.
+- Tests: `tests/outreach.test.ts` and `tests/db/call-ins.test.ts`. `tenant.test.ts` covers the new pages and actions.
+- **Not touched:** anything under `/api/v1`.
 
 ### 2026-10-23: core (block reasons)
 
