@@ -110,7 +110,7 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
       if (i.recordSkips)
         await tx
           .insert(marketingSends)
-          .values({ campaignId: c.id, customerId: t.customerId, shopId: shop.id, staffId: t.staffId, dedupeKey: key, status: "skipped", skipped: reason, token: marketingToken() })
+          .values({ campaignId: c.id, customerId: t.customerId, shopId: shop.id, staffId: t.staffId, dedupeKey: key, status: "skipped", skipped: reason, token: marketingToken(), createdAt: now })
           .onConflictDoNothing();
       return { status: "skipped", reason };
     };
@@ -133,7 +133,7 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
         for (let n = 0; n < 5 && !couponCodeId; n++) {
           const [row] = await tx
             .insert(couponCodes)
-            .values({ promoId: i.promo.id, code: uniqueCode(i.promo.code, (k) => couponSuffix(k)), customerId: t.customerId, campaignId: c.id, expiresOn })
+            .values({ promoId: i.promo.id, code: uniqueCode(i.promo.code, (k) => couponSuffix(k)), customerId: t.customerId, campaignId: c.id, expiresOn, createdAt: now })
             .onConflictDoNothing()
             .returning({ id: couponCodes.id, code: couponCodes.code });
           if (row) [couponCodeId, code] = [row.id, row.code];
@@ -192,11 +192,11 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
         token,
         bookPath: bookPathFor(shop.slug, { ...t.link, coupon: code }),
         costCents: costCents(channel, s),
+        createdAt: now,
       })
       .onConflictDoNothing()
       .returning({ id: marketingSends.id });
     if (!send) throw new DupeRace();
-    if (couponCodeId) await tx.update(couponCodes).set({ campaignId: c.id }).where(eq(couponCodes.id, couponCodeId));
     return { status: "queued", sendId: send.id, jobId: job.id, channel };
   }).catch((e): DeliverResult => {
     if (e instanceof DupeRace) return { status: "dupe" };
@@ -393,6 +393,7 @@ export async function testSend(o: { campaign: Campaign; shop: Shop; channel: Cha
       jobId: j[0].id,
       token,
       bookPath: bookPathFor(o.shop.slug, { coupon: code || null }),
+      createdAt: now,
     });
     return j;
   });
