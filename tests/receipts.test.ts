@@ -86,8 +86,10 @@ describe("receipt settings", () => {
     expect(receiptBranding({ reviewUrl: "" }).reviewUrl).toBeNull();
   });
 
-  it("takes only an https review link", () => {
-    expect(ReceiptBrandingSchema.parse({ reviewUrl: "https://g.page/r/abc/review" }).reviewUrl).toBe("https://g.page/r/abc/review");
+  it("takes only a Google review link", () => {
+    expect(ReceiptBrandingSchema.parse({ reviewUrl: "https://g.page/r/CQx1rayz/review" }).reviewUrl).toBe("https://g.page/r/CQx1rayz/review");
+    expect(ReceiptBrandingSchema.parse({ reviewUrl: "ChIJN1t_tDeuEmsRUsoyG83frY4" }).reviewUrl).toBe("https://search.google.com/local/writereview?placeid=ChIJN1t_tDeuEmsRUsoyG83frY4");
+    expect(receiptBranding({ reviewUrl: "https://www.yelp.com/writeareview/biz/rayz" }).reviewUrl).toBeNull();
     expect(() => ReceiptBrandingSchema.parse({ reviewUrl: "javascript:alert(1)" })).toThrow();
     expect(() => ReceiptBrandingSchema.parse({ reviewUrl: "http://example.com" })).toThrow();
   });

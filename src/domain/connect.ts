@@ -10,6 +10,7 @@
  * Pure: the states, the fee schedule, statement descriptors, payout schedules and their labels.
  */
 import { z } from "zod";
+import { REVIEW_FOLLOW_UP_DEFAULT, ReviewFollowUpSchema, googleReviewLink, reviewFollowUp, storedReviewLink } from "./reviews";
 import type { PaymentsMode, PayoutSchedule } from "@/db/schema";
 
 export type { PaymentsMode, PayoutSchedule };
@@ -137,22 +138,33 @@ export const ReceiptBrandingSchema = z.object({
   showLogo: z.boolean().default(true),
   showAddress: z.boolean().default(true),
   showPhone: z.boolean().default(true),
-  /** The "Leave a review" button on the digital receipt (the shop's Google or Yelp page); no button without it. */
+  /**
+   * The location's Google review link, behind the receipt's "Leave a review" button and the follow-up.
+   * Takes a g.page/r/… or writereview?placeid=… link or a Place ID; saved as the write-review URL.
+   * No link, no button.
+   */
   reviewUrl: z
     .string()
-    .trim()
-    .max(500)
-    .refine((u) => !u || /^https:\/\/[^\s/]+\.[^\s]+$/i.test(u), "Use a full https:// link to the review page")
+    .max(600)
     .nullable()
-    .default(null),
+    .default(null)
+    .transform((v, ctx) => {
+      const r = googleReviewLink(v);
+      if (r.ok) return r.url;
+      ctx.addIssue({ code: "custom", message: r.message });
+      return z.NEVER;
+    }),
+  reviewFollowUp: ReviewFollowUpSchema.default({ ...REVIEW_FOLLOW_UP_DEFAULT }),
   /** Receipts are digital. A Print button on the staff receipt only where the shop turns it on. */
   allowPrint: z.boolean().default(false),
 });
 export type ReceiptBranding = z.output<typeof ReceiptBrandingSchema>;
 
+/** Stored settings, read defensively: a link that isn't Google's or follow-up settings out of range fall back to none and off. */
 export function receiptBranding(raw: unknown): ReceiptBranding {
-  const r = ReceiptBrandingSchema.safeParse(raw && typeof raw === "object" ? raw : {});
-  return r.success ? { ...r.data, headline: r.data.headline || null, footer: r.data.footer || null, reviewUrl: r.data.reviewUrl || null } : ReceiptBrandingSchema.parse({});
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const r = ReceiptBrandingSchema.safeParse({ ...o, reviewUrl: storedReviewLink(o.reviewUrl), reviewFollowUp: reviewFollowUp(o.reviewFollowUp) });
+  return r.success ? { ...r.data, headline: r.data.headline || null, footer: r.data.footer || null } : ReceiptBrandingSchema.parse({});
 }
 
 export interface PayoutItem {

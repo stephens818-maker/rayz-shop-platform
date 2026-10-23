@@ -274,6 +274,13 @@
       "when": 1793119200000,
       "tag": "core_0038_digital_receipts",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793205600000,
+      "tag": "core_0039_google_reviews",
+      "breakpoints": true
     }
   ]
 }

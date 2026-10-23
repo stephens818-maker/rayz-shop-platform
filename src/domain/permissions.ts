@@ -282,6 +282,12 @@ export const REPORTS = [
   { key: "staffing", label: "Who's working, off and blocked", href: "/admin/reports/staffing", hint: "Per day, shop and barber: scheduled hours, time off, blocked time and bookings." },
   { key: "call_ins", label: "Call-ins and client outreach", href: "/admin/reports/call-ins", hint: "Call-ins by shop and barber, the appointments they hit, and how many clients were moved, rebooked, declined or never answered." },
   {
+    key: "google_reviews",
+    label: "Google review links",
+    href: "/admin/reports/reviews",
+    hint: "Review follow-ups sent and clicks on each location's Google review link, from receipts and follow-ups, by location and barber.",
+  },
+  {
     key: "labor",
     label: "Labor hours and cost",
     href: "/admin/reports/labor",

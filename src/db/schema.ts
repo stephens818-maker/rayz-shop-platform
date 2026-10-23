@@ -1455,21 +1455,51 @@ export const receiptDeliveries = pgTable(
     destination: text("destination"),
     masked: text("masked"),
     /** ReceiptPurpose in src/domain/receipts.ts. */
-    purpose: text("purpose").$type<"counter" | "handoff" | "refund" | "void" | "resend" | "request">().notNull(),
+    purpose: text("purpose").$type<"counter" | "handoff" | "refund" | "void" | "resend" | "request" | "review">().notNull(),
     tokenHash: text("token_hash").unique(),
     jobId: uuid("job_id").references(() => notificationJobs.id, { onDelete: "set null" }),
-    /** Not sent: opted_out (STOP, or receipt emails off) or no_consent. */
-    skipped: text("skipped").$type<"opted_out" | "no_consent">(),
+    /** Not sent: opted_out (STOP, or receipt emails off), no_consent, or recent (a review request: asked lately). */
+    skipped: text("skipped").$type<"opted_out" | "no_consent" | "recent">(),
     sentBy: uuid("sent_by").references(() => staff.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [
     check("receipt_deliveries_channel", sql`${t.channel} in ('sms', 'email', 'none')`),
-    check("receipt_deliveries_purpose", sql`${t.purpose} in ('counter', 'handoff', 'refund', 'void', 'resend', 'request')`),
-    check("receipt_deliveries_skipped", sql`${t.skipped} is null or ${t.skipped} in ('opted_out', 'no_consent')`),
+    check("receipt_deliveries_purpose", sql`${t.purpose} in ('counter', 'handoff', 'refund', 'void', 'resend', 'request', 'review')`),
+    check("receipt_deliveries_skipped", sql`${t.skipped} is null or ${t.skipped} in ('opted_out', 'no_consent', 'recent')`),
     check("receipt_deliveries_destination", sql`(${t.channel} = 'none') = (${t.destination} is null)`),
     index("receipt_deliveries_sale_idx").on(t.saleId, t.createdAt),
     index("receipt_deliveries_destination_idx").on(t.destination, t.createdAt),
+    index("receipt_deliveries_customer_idx").on(t.customerId, t.shopId, t.purpose, t.createdAt),
+  ],
+);
+
+/**
+ * A client opening the location's Google review link: "Leave a review" on the receipt page, or the
+ * link in the follow-up. Counted per location and per the ticket's barber. Link previews and email
+ * scanners aren't recorded. Google doesn't say whether a review was posted, so these are clicks.
+ */
+export const reviewClicks = pgTable(
+  "review_clicks",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    /** The ticket's barber when it was clicked. */
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    deliveryId: uuid("delivery_id").references(() => receiptDeliveries.id, { onDelete: "set null" }),
+    source: text("source").$type<"receipt" | "follow_up">().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("review_clicks_source", sql`${t.source} in ('receipt', 'follow_up')`),
+    index("review_clicks_shop_idx").on(t.shopId, t.createdAt),
+    index("review_clicks_staff_idx").on(t.staffId, t.createdAt),
+    index("review_clicks_sale_idx").on(t.saleId),
   ],
 );
 

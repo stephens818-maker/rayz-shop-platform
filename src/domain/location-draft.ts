@@ -80,7 +80,7 @@ export const LocationDraft = z.object({
     .default(null)
     .transform((s) => s || null)
     .refine((s) => !statementDescriptorProblem(s), { error: (i) => statementDescriptorProblem(i.input as string) ?? "Check the statement descriptor" }),
-  receipt: ReceiptBrandingSchema.default({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true, reviewUrl: null, allowPrint: false }),
+  receipt: ReceiptBrandingSchema.default({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true, reviewUrl: null, reviewFollowUp: { enabled: false, delayHours: 3, repeatDays: 90 }, allowPrint: false }),
 
   slotIntervalMinutes: z.union([z.literal(5), z.literal(10), z.literal(15), z.literal(20), z.literal(30)]).nullable(),
   minLeadMinutes: z.number().int().min(0).max(24 * 60),

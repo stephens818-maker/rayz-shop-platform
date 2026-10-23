@@ -12,8 +12,9 @@ export type ReceiptSendChannel = "sms" | "email";
  * - refund, void: the updated receipt after the ticket changed.
  * - resend: staff sent it again from the ticket or the client's history.
  * - request: the client asked for a copy themselves.
+ * - review: the location's Google review follow-up after the visit (src/domain/reviews.ts).
  */
-export const RECEIPT_PURPOSES = ["counter", "handoff", "refund", "void", "resend", "request"] as const;
+export const RECEIPT_PURPOSES = ["counter", "handoff", "refund", "void", "resend", "request", "review"] as const;
 export type ReceiptPurpose = (typeof RECEIPT_PURPOSES)[number];
 export const RECEIPT_PURPOSE_LABEL: Record<ReceiptPurpose, string> = {
   counter: "At checkout",
@@ -22,7 +23,11 @@ export const RECEIPT_PURPOSE_LABEL: Record<ReceiptPurpose, string> = {
   void: "Void update",
   resend: "Sent again by staff",
   request: "Requested by the client",
+  review: "Google review request",
 };
+
+/** Why a message wasn't sent. `recent`: the client was already asked for a review at this location lately. */
+export type ReceiptSkip = "opted_out" | "no_consent" | "recent";
 
 /** Purposes where the client is choosing it right then: their choice is the consent for this one message. */
 const CLIENT_ASKED: readonly ReceiptPurpose[] = ["counter", "handoff", "request"];
@@ -36,6 +41,7 @@ export type ConsentResult = { ok: true } | { ok: false; code: "opted_out" | "no_
  * - Anything else (a refund update, a resend by staff to what's on file) needs the client to have
  *   chosen that destination for this ticket before, or to have agreed to texts or emails from us.
  *   A destination staff type in for a resend counts as the client asking.
+ * - A review request isn't a receipt: only agreeing to texts or emails counts, not choosing a receipt.
  */
 export function receiptConsent(o: { channel: ReceiptSendChannel; purpose: ReceiptPurpose; optedOut: boolean; optedIn: boolean; chosenForSale: boolean; typed?: boolean }): ConsentResult {
   if (o.optedOut)
@@ -44,6 +50,10 @@ export function receiptConsent(o: { channel: ReceiptSendChannel; purpose: Receip
       code: "opted_out",
       message: o.channel === "sms" ? "That number has turned off texts from us (it replied STOP). Send it by email instead." : "That email has turned off receipt emails from us. Send it by text instead.",
     };
+  if (o.purpose === "review") {
+    if (o.optedIn) return { ok: true };
+    return { ok: false, code: "no_consent", message: o.channel === "sms" ? "The client hasn't agreed to texts." : "The client hasn't agreed to emails." };
+  }
   if (CLIENT_ASKED.includes(o.purpose) || o.chosenForSale || o.optedIn || (o.purpose === "resend" && o.typed)) return { ok: true };
   return {
     ok: false,
@@ -133,7 +143,7 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
     ...(o.refunds.length ? [row("You paid, after refunds", o.totalCents - o.refunds.reduce((a, r) => a + r.cents, 0))] : []),
     ...(o.loyalty ? ["", o.loyalty] : []),
     "",
-    `See your receipt, rebook or leave a review: ${o.url}`,
+    `See your receipt or rebook: ${o.url}`,
     "",
     o.footer,
   ];
