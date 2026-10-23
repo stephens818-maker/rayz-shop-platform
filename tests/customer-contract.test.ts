@@ -77,7 +77,9 @@ describe("mock payment fixture math", () => {
     expect(pay).not.toContain("paymentIntents.create");
     expect(pay).not.toContain("executeChargePlan");
     expect(pay).toContain("chargeCard");
+    expect(pay).not.toContain("confirmPaymentIntent");
     expect(pay).toContain("Confirm the payment sheet before charging.");
+    expect(pay).toContain("The payment is still processing.");
     expect(pay).toContain("computeCardFee");
     expect(pay).toContain("fundingForSurcharge");
     expect(pay).toContain("retrievePaymentIntent");
@@ -94,14 +96,12 @@ describe("mock payment fixture math", () => {
     expect(cards).toContain("Card numbers stay in Stripe");
   });
 
-  it("accepts FEATURE_WALLET_FEE as 1, true, or on", () => {
+  it("turns FEATURE_WALLET_FEE on only for the exact string true", () => {
     const previous = process.env.FEATURE_WALLET_FEE;
     try {
-      for (const value of ["1", "true", "TRUE", "on", " On "]) {
-        process.env.FEATURE_WALLET_FEE = value;
-        expect(flags.walletFee(), value).toBe(true);
-      }
-      for (const value of ["yes", "false", "0", ""]) {
+      process.env.FEATURE_WALLET_FEE = "true";
+      expect(flags.walletFee()).toBe(true);
+      for (const value of ["1", "TRUE", "on", " On ", "yes", "false", "0", " true ", ""]) {
         process.env.FEATURE_WALLET_FEE = value;
         expect(flags.walletFee(), value).toBe(false);
       }

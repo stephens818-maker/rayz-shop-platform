@@ -11,7 +11,7 @@ import { accrueForSale } from "@/server/loyalty";
 import { recordExistingCharge, reverseChargePlan, type ChargePlanResult } from "@/server/payments/charge-plan";
 import { chargeDestination, shopAccount } from "@/server/payments/connect";
 import { computeCardFee } from "@/server/payments/card-fee";
-import { assertIssuedStripeSecret, cancelPaymentIntent, chargeCard, confirmPaymentIntent, inspectPaymentMethod, refundCard, retrievePaymentIntent, updatePaymentIntent, type CardDetails } from "@/server/payments/processor";
+import { assertIssuedStripeSecret, cancelPaymentIntent, chargeCard, inspectPaymentMethod, refundCard, retrievePaymentIntent, updatePaymentIntent, type CardDetails } from "@/server/payments/processor";
 import { ensureStripeCustomer, ephemeralKeyForCustomer } from "./cards";
 import { shopTakesCards } from "./shop-gates";
 
@@ -363,7 +363,38 @@ async function loadOwned(customerId: string, code: string) {
   return appt;
 }
 
-/** Price the visit and hand PaymentSheet a client secret. A bare card is not charged here. */
+function sheetResponse(preview: PaymentPreview, sheet: { id: string; clientSecret: string; ephemeralKey: string; customerId: string; paymentMethodId: string }) {
+  return {
+    id: sheet.id,
+    clientSecret: sheet.clientSecret,
+    ephemeralKey: sheet.ephemeralKey,
+    customerId: sheet.customerId,
+    paymentMethodId: sheet.paymentMethodId,
+    funding: preview.funding,
+    feeCents: preview.feeCents,
+    totalCents: preview.totalCents,
+    amountCents: preview.totalCents,
+    currency: "usd" as const,
+    breakdown: {
+      serviceCents: preview.serviceCents,
+      productCents: preview.productCents,
+      taxCents: preview.taxCents,
+      tipCents: preview.tipCents,
+      feeCents: preview.feeCents,
+      totalCents: preview.totalCents,
+    },
+  };
+}
+
+/** Stripe has the intent but the customer has not been charged yet. Do not refund it. */
+function paymentStillOpen(status: string, paymentIntentId: string, amountCents: number): never {
+  const details = { status, paymentIntentId, amountCents };
+  if (status === "processing") throw new AppError("conflict", "The payment is still processing.", details);
+  if (status === "requires_action") throw new AppError("conflict", "The card needs authentication before it can be recorded.", details);
+  throw new AppError("bad_request", "Confirm the payment sheet before charging.", details);
+}
+
+/** Price the visit and hand PaymentSheet a client secret. A bare card is not charged here. Stripe confirms it on the device. */
 export async function createPaymentIntent(customerId: string, code: string, input: { paymentMethodId?: string; tipCents?: number }) {
   if (!input.paymentMethodId) throw new AppError("bad_request", "Choose a saved card.");
   const preview = await previewPayment(customerId, code, input);
@@ -381,16 +412,16 @@ export async function createPaymentIntent(customerId: string, code: string, inpu
       const stripeCustomerId = await ensureStripeCustomer(customerId);
       const secret = prior.clientSecret ?? `pi_test_${prior.id.replace(/^sim_pi_/, "")}`;
       assertIssuedStripeSecret(secret);
-      return {
+      return sheetResponse(preview, {
         id: prior.id,
         clientSecret: secret,
         ephemeralKey: await ephemeralKeyForCustomer(stripeCustomerId),
         customerId: stripeCustomerId,
         paymentMethodId: input.paymentMethodId,
-        funding: preview.funding,
-        feeCents: preview.feeCents,
-        totalCents: preview.totalCents,
-      };
+      });
+    }
+    if (prior && (prior.status === "processing" || prior.status === "requires_action")) {
+      paymentStillOpen(prior.status, prior.id, prior.amountCents);
     }
     let nextStatus = "canceled";
     if (prior && prior.status === "succeeded" && prior.amountRefundedCents === 0) {
@@ -434,16 +465,13 @@ export async function createPaymentIntent(customerId: string, code: string, inpu
     stripePaymentIntentId: created.paymentIntentId,
     status: "quoted",
   });
-  return {
+  return sheetResponse(preview, {
     id: created.paymentIntentId,
     clientSecret: created.clientSecret,
     ephemeralKey: await ephemeralKeyForCustomer(stripeCustomerId),
     customerId: stripeCustomerId,
     paymentMethodId: input.paymentMethodId,
-    funding: preview.funding,
-    feeCents: preview.feeCents,
-    totalCents: preview.totalCents,
-  };
+  });
 }
 
 /**
@@ -483,33 +511,36 @@ async function payConfirmed(customerId: string, appt: PaidAppointment, paymentIn
   }
   let stored = storedPrice(quote, intent.metadata);
   const actualPm = intent.paymentMethodId;
-  if (stored && actualPm && actualPm !== stored.paymentMethodId && intent.status !== "succeeded" && intent.status !== "canceled") {
-    const repriced = await previewPayment(customerId, appt.code, { paymentMethodId: actualPm, tipCents: stored.tipCents });
-    await refuseIfClosed(repriced);
-    const metadata = priceMetadata(appt, repriced, actualPm);
-    intent = await updatePaymentIntent(paymentIntentId, {
-      amountCents: repriced.totalCents,
-      paymentMethodId: actualPm,
-      metadata,
-      surchargeCents: repriced.feeCents,
-      surchargeLabel: repriced.feeLabel ?? undefined,
-    });
-    const nextCard = await inspectPaymentMethod(actualPm);
-    await db
-      .update(mobileCheckouts)
-      .set({
-        tipCents: repriced.tipCents,
-        subtotalCents: repriced.serviceCents + repriced.productCents,
-        taxCents: repriced.taxCents,
-        feeCents: repriced.feeCents,
-        totalCents: repriced.totalCents,
-        funding: repriced.funding,
-        wallet: nextCard.wallet ?? null,
-      })
-      .where(eq(mobileCheckouts.id, quote.id));
-    intent = await confirmPaymentIntent(paymentIntentId);
-    const fresh = await db.query.mobileCheckouts.findFirst({ where: eq(mobileCheckouts.id, quote.id) });
-    stored = fresh ? storedPrice(fresh, intent.metadata) : null;
+  if (intent.status === "processing" || intent.status === "requires_action") {
+    paymentStillOpen(intent.status, intent.id, intent.amountCents);
+  }
+  if (intent.status !== "succeeded" && intent.status !== "canceled") {
+    if (stored && actualPm && actualPm !== stored.paymentMethodId && intent.status === "requires_confirmation") {
+      const repriced = await previewPayment(customerId, appt.code, { paymentMethodId: actualPm, tipCents: stored.tipCents });
+      await refuseIfClosed(repriced);
+      const metadata = priceMetadata(appt, repriced, actualPm);
+      intent = await updatePaymentIntent(paymentIntentId, {
+        amountCents: repriced.totalCents,
+        paymentMethodId: actualPm,
+        metadata,
+        surchargeCents: repriced.feeCents,
+        surchargeLabel: repriced.feeLabel ?? undefined,
+      });
+      const nextCard = await inspectPaymentMethod(actualPm);
+      await db
+        .update(mobileCheckouts)
+        .set({
+          tipCents: repriced.tipCents,
+          subtotalCents: repriced.serviceCents + repriced.productCents,
+          taxCents: repriced.taxCents,
+          feeCents: repriced.feeCents,
+          totalCents: repriced.totalCents,
+          funding: repriced.funding,
+          wallet: nextCard.wallet ?? null,
+        })
+        .where(eq(mobileCheckouts.id, quote.id));
+    }
+    paymentStillOpen(intent.status, intent.id, intent.amountCents);
   }
   if (intent.status !== "succeeded") throw new AppError("bad_request", "Confirm the payment sheet before charging.");
   if (intent.amountRefundedCents > 0) throw new AppError("payment_failed", "That payment was refunded.");

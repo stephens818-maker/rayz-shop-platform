@@ -443,15 +443,26 @@ export const PaymentRequest = z.object({
    */
   paymentIntentId: z.string().min(1).optional().describe("PaymentIntent from POST /appointments/{code}/payment-intents. POST /payments records it and ignores a client-sent tip."),
 });
+export const PaymentBreakdown = z.object({
+  serviceCents: Cents,
+  productCents: Cents,
+  taxCents: Cents,
+  tipCents: Cents,
+  feeCents: Cents,
+  totalCents: Cents,
+});
 export const PaymentIntentSheet = z.object({
   id: z.string(),
-  clientSecret: z.string(),
+  clientSecret: z.string().describe("PaymentSheet client secret. Stripe confirms this on the device. There is no confirm route."),
   ephemeralKey: z.string(),
   customerId: z.string(),
   paymentMethodId: z.string(),
   funding: z.enum(["credit", "debit", "prepaid", "unknown"]).nullable(),
   feeCents: Cents,
   totalCents: Cents,
+  amountCents: Cents.describe("Amount Stripe will confirm, in cents. Same as totalCents."),
+  currency: z.literal("usd"),
+  breakdown: PaymentBreakdown,
 });
 export const PaymentPreview = z.object({
   shopId: z.string().uuid(),
@@ -643,6 +654,7 @@ export const apiSchemas = {
   DeleteConfirm,
   DeleteConfirmResponse,
   PaymentRequest,
+  PaymentBreakdown,
   PaymentIntentSheet,
   PaymentPreview,
   PaymentResult,

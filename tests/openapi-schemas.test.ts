@@ -65,5 +65,12 @@ describe("OpenAPI schemas cover /api/v1", () => {
     expect(text).toContain("consentTextVersion");
     expect(text).toContain("paymentIntentId");
     expect(text).toContain("card.wallet");
+    expect(text).toContain("amountCents");
+    expect(text).toContain("clientSecret");
+    expect(text).toContain("ephemeralKey");
+    expect(text).toContain("customerId");
+    expect(text).toContain("requires_action");
+    const paths = Object.keys(doc.paths);
+    expect(paths.some((path) => path.includes("payment") && path.includes("confirm"))).toBe(false);
   });
 });

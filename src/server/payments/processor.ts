@@ -143,7 +143,7 @@ interface SimIntent {
   destination: Destination | null;
   customerId: string | null;
   paymentMethodId: string;
-  status: "requires_confirmation" | "succeeded" | "canceled";
+  status: "requires_confirmation" | "requires_action" | "processing" | "succeeded" | "canceled";
   /** Simulator secrets are pi_test_ with no `_secret_`, so the app treats them as sandbox. */
   clientSecret: string;
   /** Credit-card surcharge sent to Stripe as its own amount. Zero when the card is not credit. */
@@ -480,7 +480,7 @@ export async function confirmPaymentIntent(paymentIntentId: string): Promise<Ret
 }
 
 /** Test helper. Moves a simulated intent after it was created. Refused when a Stripe client is configured. */
-export function adjustSimulatedIntent(paymentIntentId: string, patch: { amountCents?: number; paymentMethodId?: string }) {
+export function adjustSimulatedIntent(paymentIntentId: string, patch: { amountCents?: number; paymentMethodId?: string; status?: SimIntent["status"] }) {
   if (process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_") || process.env.STRIPE_SECRET_KEY?.startsWith("sk_live_")) {
     throw new Error("adjustSimulatedIntent is for the simulator");
   }
@@ -492,6 +492,7 @@ export function adjustSimulatedIntent(paymentIntentId: string, patch: { amountCe
     pi.paymentMethodId = patch.paymentMethodId;
     pi.card = cardDetailsOf(card);
   }
+  if (patch.status) pi.status = patch.status;
 }
 
 /**

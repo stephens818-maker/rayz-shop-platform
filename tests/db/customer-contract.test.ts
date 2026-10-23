@@ -203,7 +203,7 @@ describe("customer contract against mock fixtures", () => {
     } finally {
       delete process.env.FEATURE_WALLET_FEE;
     }
-    process.env.FEATURE_WALLET_FEE = "on";
+    process.env.FEATURE_WALLET_FEE = "true";
     try {
       const walletOn = await json(
         await call(previewMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-preview`, { code: booked.code }, {
@@ -218,6 +218,22 @@ describe("customer contract against mock fixtures", () => {
       expect(walletOn.body.wallet).toBe(true);
     } finally {
       delete process.env.FEATURE_WALLET_FEE;
+    }
+    for (const flag of ["on", "1"]) {
+      process.env.FEATURE_WALLET_FEE = flag;
+      try {
+        const walletOff = await json(
+          await call(previewMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-preview`, { code: booked.code }, {
+            method: "POST",
+            headers: auth,
+            body: JSON.stringify({ paymentMethodId: "pm_card_applepay_visa", tipCents: 500 }),
+          }),
+        );
+        expect(walletOff.body.feeCents, flag).toBe(0);
+        expect(walletOff.body.feeReason, flag).toBe("wallet_fee_off");
+      } finally {
+        delete process.env.FEATURE_WALLET_FEE;
+      }
     }
 
     const payMod = await import("@/app/api/v1/appointments/[code]/payments/route");
@@ -252,6 +268,9 @@ describe("customer contract against mock fixtures", () => {
     expect(sheet.body.funding).toBe("credit");
     expect(sheet.body.feeCents).toBe(93);
     expect(sheet.body.totalCents).toBe(2900 + 203 + 500 + 93);
+    expect(sheet.body.amountCents).toBe(2900 + 203 + 500 + 93);
+    expect(sheet.body.currency).toBe("usd");
+    expect(sheet.body.breakdown).toEqual({ serviceCents: 2900, productCents: 0, taxCents: 203, tipCents: 500, feeCents: 93, totalCents: 2900 + 203 + 500 + 93 });
     const reused = await json(
       await call(intentMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-intents`, { code: booked.code }, {
         method: "POST",
@@ -551,6 +570,7 @@ describe("customer contract against mock fixtures", () => {
       }),
     );
     const beforeReprice = m.processor.simulatorLedger().intents.length;
+    const refundsBeforeReprice = m.processor.simulatorLedger().refunds.length;
     m.processor.adjustSimulatedIntent(openSheet.body.id, { paymentMethodId: "pm_card_applepay_visa_debit" });
     const repriced = await json(
       await call(payMod, "POST", `http://localhost/api/v1/appointments/${swapped.code}/payments`, { code: swapped.code }, {
@@ -559,12 +579,27 @@ describe("customer contract against mock fixtures", () => {
         body: JSON.stringify({ paymentIntentId: openSheet.body.id, tipCents: 0, paymentMethodId: "pm_card_visa" }),
       }),
     );
-    expect(repriced.status, JSON.stringify(repriced.body)).toBe(200);
-    expect(repriced.body.feeCents).toBe(0);
-    expect(repriced.body.tipCents).toBe(500);
-    expect(repriced.body.totalCents).toBe(debitTotal);
-    expect(repriced.body.funding).toBe("debit");
+    expect(repriced.status, JSON.stringify(repriced.body)).toBe(400);
+    expect(repriced.body.error.message).toBe("Confirm the payment sheet before charging.");
+    expect(repriced.body.error.details.status).toBe("requires_confirmation");
+    expect(repriced.body.error.details.amountCents).toBe(debitTotal);
     expect(m.processor.simulatorLedger().intents.find((row) => row.id === openSheet.body.id)?.amountCents).toBe(debitTotal);
+    expect(m.processor.simulatorLedger().intents.find((row) => row.id === openSheet.body.id)?.status).toBe("requires_confirmation");
+    expect(m.processor.simulatorLedger().intents.length).toBe(beforeReprice);
+    expect(m.processor.simulatorLedger().refunds.length).toBe(refundsBeforeReprice);
+    await m.processor.confirmPaymentIntent(openSheet.body.id);
+    const repricedPaid = await json(
+      await call(payMod, "POST", `http://localhost/api/v1/appointments/${swapped.code}/payments`, { code: swapped.code }, {
+        method: "POST",
+        headers: { ...swappedAuth, "idempotency-key": `reprice-pay-${swapped.code}` },
+        body: JSON.stringify({ paymentIntentId: openSheet.body.id, tipCents: 0 }),
+      }),
+    );
+    expect(repricedPaid.status, JSON.stringify(repricedPaid.body)).toBe(200);
+    expect(repricedPaid.body.feeCents).toBe(0);
+    expect(repricedPaid.body.tipCents).toBe(500);
+    expect(repricedPaid.body.totalCents).toBe(debitTotal);
+    expect(repricedPaid.body.funding).toBe("debit");
     expect(m.processor.simulatorLedger().intents.length).toBe(beforeReprice);
 
     const mismatch = await book("3195550195");
@@ -642,6 +677,36 @@ describe("customer contract against mock fixtures", () => {
     expect(unknown.status).toBe(400);
     expect(unknown.body.error.message).toBe("Confirm the payment sheet before charging.");
     expect(m.processor.simulatorLedger().refunds.length).toBe(refundsAtOrphan);
+
+    const pending = await book("3195550197");
+    const pendingToken = (await m.auth.issueTokens(pending.customer!.id, null)).accessToken;
+    const pendingAuth = { authorization: `Bearer ${pendingToken}`, "content-type": "application/json" };
+    const pendingSheet = await json(
+      await call(intentMod, "POST", `http://localhost/api/v1/appointments/${pending.code}/payment-intents`, { code: pending.code }, {
+        method: "POST",
+        headers: pendingAuth,
+        body: JSON.stringify({ paymentMethodId: "pm_card_visa", tipCents: 500 }),
+      }),
+    );
+    const refundsBeforePending = m.processor.simulatorLedger().refunds.length;
+    for (const status of ["processing", "requires_action"] as const) {
+      m.processor.adjustSimulatedIntent(pendingSheet.body.id, { status });
+      const waiting = await json(
+        await call(payMod, "POST", `http://localhost/api/v1/appointments/${pending.code}/payments`, { code: pending.code }, {
+          method: "POST",
+          headers: { ...pendingAuth, "idempotency-key": `pending-${status}-${pending.code}` },
+          body: JSON.stringify({ paymentIntentId: pendingSheet.body.id, tipCents: 0 }),
+        }),
+      );
+      expect(waiting.status, status).toBe(409);
+      expect(waiting.body.error.code, status).toBe("conflict");
+      expect(waiting.body.error.details.status, status).toBe(status);
+      expect(waiting.body.error.message, status).not.toMatch(/refunded/);
+    }
+    expect(m.processor.simulatorLedger().refunds.length).toBe(refundsBeforePending);
+    const pendingSales = await m.db.db.select().from(m.schema.sales).where(eq(m.schema.sales.appointmentId, pending.id));
+    expect(pendingSales).toHaveLength(0);
+    expect(m.processor.simulatorLedger().intents.find((row) => row.id === pendingSheet.body.id)?.status).toBe("requires_action");
     const strangerSales = await m.db.db.select().from(m.schema.sales).where(eq(m.schema.sales.appointmentId, stranger.id));
     expect(strangerSales).toHaveLength(0);
   });
