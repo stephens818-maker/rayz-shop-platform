@@ -9,6 +9,7 @@ export interface ReceiptRefund {
   productCents: number;
   taxCents: number;
   tipCents: number;
+  feeCents?: number;
   shopPortionCents?: number | null;
   tipPortionCents?: number | null;
   from?: RefundFrom | null;
@@ -23,6 +24,10 @@ export interface ReceiptSale {
   productCents: number;
   taxCents: number;
   tipCents: number;
+  /** Credit-card surcharge, kept off the service and tax lines. */
+  feeCents?: number;
+  /** For example "Credit card surcharge (3%)". The percent is the shop's rate. */
+  feeLabel?: string | null;
   totalCents: number;
   /** Barber first name only. Never a surname. */
   barberFirstName?: string | null;
@@ -76,11 +81,13 @@ export async function renderReceiptText(sale: ReceiptSale): Promise<string> {
       const tipCovered = extra.some((line) => line.startsWith("Tip "));
       return [...(tipCovered ? [] : [`Tip ${dollars(sale.tipCents)}`]), ...extra];
     })(),
+    ...((sale.feeCents ?? 0) > 0 ? [`${sale.feeLabel || "Credit card surcharge"} ${dollars(sale.feeCents ?? 0)}`] : []),
     `Total ${dollars(sale.totalCents)}`,
   ];
   for (const r of sale.refunds) {
+    const surcharge = (r.feeCents ?? 0) > 0 ? `, ${sale.feeLabel || "credit card surcharge"} ${dollars(r.feeCents ?? 0)}` : "";
     lines.push(
-      `Refund ${await formatForHumans(r.createdAt)} ${dollars(r.amountCents)}${refundPortionPhrase(r)} (services ${dollars(r.serviceCents)}, products ${dollars(r.productCents)}, tax ${dollars(r.taxCents)}, tip ${dollars(r.tipCents)})`,
+      `Refund ${await formatForHumans(r.createdAt)} ${dollars(r.amountCents)}${refundPortionPhrase(r)} (services ${dollars(r.serviceCents)}, products ${dollars(r.productCents)}, tax ${dollars(r.taxCents)}, tip ${dollars(r.tipCents)}${surcharge})`,
     );
   }
   return lines.join("\n");

@@ -77,6 +77,18 @@ export function lineRefunds(lines: RefundableLine[], requested: { saleItemId: st
   return out;
 }
 
+/**
+ * The surcharge that belongs to one partial refund.
+ * `refundedBaseCents` is the pre-surcharge amount in this refund. Cumulative rounding
+ * makes successive partials add up to `originalFeeCents`.
+ */
+export function surchargeShare(originalFeeCents: number, originalBaseCents: number, alreadyRefundedBaseCents: number, refundedBaseCents: number): number {
+  if (originalFeeCents <= 0 || originalBaseCents <= 0 || refundedBaseCents <= 0) return 0;
+  const from = Math.max(0, Math.min(alreadyRefundedBaseCents, originalBaseCents));
+  const to = Math.max(from, Math.min(originalBaseCents, from + refundedBaseCents));
+  return Math.round((originalFeeCents * to) / originalBaseCents) - Math.round((originalFeeCents * from) / originalBaseCents);
+}
+
 export function componentsFromLines(lines: LineRefund[], tipCents: number, cardFeeCents: number): RefundComponents {
   const c = { ...ZERO, tipCents, cardFeeCents };
   for (const l of lines) {

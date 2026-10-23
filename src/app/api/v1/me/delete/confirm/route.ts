@@ -1,12 +1,10 @@
-import { z } from "zod";
 import { body, json, options, route } from "@/server/api";
+import { DeleteConfirm } from "@/server/api-schemas";
 import { confirmDeletion } from "@/server/mobile/account-deletion";
 
 export const OPTIONS = options;
 
-const Confirm = z.object({ code: z.string().optional() });
-
 export const POST = route(async (req) => {
-  const input = await body(req, Confirm);
+  const input = await body(req, DeleteConfirm);
   return json(await confirmDeletion(req, input.code ?? ""));
 });

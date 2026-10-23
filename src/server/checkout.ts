@@ -28,6 +28,7 @@ import {
   TaxCategory,
   TaxRates,
   computeCheckout,
+  feeLabel,
   manualDiscountProblem,
 } from "@/domain/checkout";
 import { giftCardCode } from "@/lib/ids";
@@ -431,6 +432,8 @@ export async function finalizeSale(input: FinalizeInput) {
           metadata: { saleId: ctx.sale.id, shop: ctx.shop.slug, cardFeeCents: String(totals.cardFeeCents), attempt },
           idempotencyKey: `sale-${ctx.sale.id}-${attempt}`,
           destination,
+          surchargeCents: totals.cardFeeCents,
+          surchargeLabel: totals.cardFeeCents > 0 ? feeLabel({ rate: totals.cardFeeRate }) : undefined,
         });
       }
 

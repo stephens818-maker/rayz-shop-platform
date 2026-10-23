@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customerDependents, customers, mobileCheckouts, payments, saleItems, sales, shops } from "@/db/schema";
+import { fundingForSurcharge } from "@/domain/checkout";
 import { applyRate } from "@/lib/money";
 import { localDateOf } from "@/lib/time";
 import { customerActor, audit } from "@/server/audit";
@@ -104,7 +105,9 @@ export async function previewPayment(
   }
   const wallet = Boolean(input.wallet);
   const chargeCents = serviceCents + taxCents + tipCents;
-  const fee = await computeCardFee(shop.id, wallet ? "credit" : funding, { chargeCents, tipCents }, { wallet });
+  // A wallet is not treated as credit. Stripe's funding is used, and a missing funding skips the surcharge.
+  const resolvedFunding = fundingForSurcharge(funding, wallet);
+  const fee = await computeCardFee(shop.id, resolvedFunding, { chargeCents, tipCents }, { wallet });
   return {
     shopId: shop.id,
     paymentsEnabled: true,
@@ -112,7 +115,7 @@ export async function previewPayment(
     serviceCents,
     taxCents,
     tipCents,
-    funding: wallet ? "credit" : funding,
+    funding: resolvedFunding,
     wallet,
     feeCents: fee.feeCents,
     feeRate: fee.rate,
@@ -171,6 +174,8 @@ export async function payAppointment(
     idempotencyKey: chargeKey,
     customerId: stripeCustomerId,
     customerFacing: true,
+    surchargeCents: preview.feeCents,
+    surchargeLabel: preview.feeLabel ?? undefined,
   });
   const now = new Date();
   const businessDate = localDateOf(now);

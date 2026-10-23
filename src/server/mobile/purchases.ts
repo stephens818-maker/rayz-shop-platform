@@ -1,7 +1,15 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { connectTransfers, payments, refunds, saleItems, sales, shops, staff } from "@/db/schema";
+import { feeLabel } from "@/domain/checkout";
 import { renderReceiptText, receiptPdf, type ReceiptSale } from "./receipt";
+
+function storedFeeRate(pricing: unknown): number | null {
+  if (!pricing || typeof pricing !== "object") return null;
+  const row = pricing as { feeRate?: unknown; cardFee?: { rate?: unknown } };
+  const rate = typeof row.feeRate === "number" ? row.feeRate : typeof row.cardFee?.rate === "number" ? row.cardFee.rate : null;
+  return rate && rate > 0 ? rate : null;
+}
 import { portionsForRefunds, settlementFromLedger, type LedgerPayment, type LedgerTransfer } from "./settlement";
 
 function iso(value: Date | string | null | undefined): string | null {
@@ -24,6 +32,9 @@ export async function purchaseHistory(customerId: string, limit = 20) {
       serviceTaxCents: sales.serviceTaxCents,
       productTaxCents: sales.productTaxCents,
       tipCents: sales.tipCents,
+      feeCents: sales.cardFeeCents,
+      pricing: sales.pricing,
+      cardFeeRate: shops.cardFeeRate,
       totalCents: sales.totalCents,
       barberFirstName: staff.firstName,
     })
@@ -51,6 +62,7 @@ export async function purchaseHistory(customerId: string, limit = 20) {
           productCents: refunds.productNetCents,
           taxCents: refunds.taxCents,
           tipCents: refunds.tipCents,
+          feeCents: refunds.cardFeeCents,
           method: refunds.method,
         })
         .from(refunds)
@@ -120,6 +132,8 @@ export async function purchaseHistory(customerId: string, limit = 20) {
       productCents: r.productCents,
       taxCents: r.serviceTaxCents + r.productTaxCents,
       tipCents: r.tipCents,
+      feeCents: r.feeCents,
+      feeLabel: r.feeCents > 0 ? feeLabel({ rate: storedFeeRate(r.pricing) ?? Number(r.cardFeeRate) }) : null,
       totalCents: r.totalCents,
       shop: { name: r.shopName, slug: r.shopSlug },
       barberFirstName: r.barberFirstName?.trim().split(/\s+/)[0] || null,
@@ -133,6 +147,7 @@ export async function purchaseHistory(customerId: string, limit = 20) {
         productCents: f.productCents,
         taxCents: f.taxCents,
         tipCents: f.tipCents,
+        feeCents: f.feeCents,
         shopPortionCents: portions[i]?.shopPortionCents ?? null,
         tipPortionCents: portions[i]?.tipPortionCents ?? null,
         from: portions[i]?.from ?? null,
@@ -169,6 +184,8 @@ export async function receiptForCustomer(customerId: string, saleId: string) {
     productCents: sale.productCents,
     taxCents: sale.taxCents,
     tipCents: sale.tipCents,
+    feeCents: sale.feeCents,
+    feeLabel: sale.feeLabel,
     totalCents: sale.totalCents,
     barberFirstName: sale.barberFirstName,
     settlement: sale.settlement,

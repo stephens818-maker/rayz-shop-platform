@@ -1,5 +1,5 @@
-import { z } from "zod";
 import { json, options, route } from "@/server/api";
+import { StaffOnboardRequest } from "@/server/api-schemas";
 import { AppError } from "@/server/errors";
 import { barberFromBearer, staffOnboardingLink } from "@/server/mobile/staff-connect";
 
@@ -17,7 +17,7 @@ export const POST = route(async (req) => {
     } catch {
       throw new AppError("bad_request", "Body must be JSON");
     }
-    shop = z.object({ shop: z.string().min(1).optional() }).parse(raw).shop;
+    shop = StaffOnboardRequest.parse(raw).shop;
   }
   return json(await staffOnboardingLink(barber.id, shop));
 });

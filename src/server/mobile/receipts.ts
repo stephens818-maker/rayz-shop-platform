@@ -1,7 +1,15 @@
 import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { connectTransfers, customerDependents, payments, refunds, saleItems, sales, shops } from "@/db/schema";
+import { feeLabel } from "@/domain/checkout";
 import { portionsForRefunds, settlementFromLedger } from "./settlement";
+
+function storedFeeRate(pricing: unknown): number | null {
+  if (!pricing || typeof pricing !== "object") return null;
+  const row = pricing as { feeRate?: unknown; cardFee?: { rate?: unknown } };
+  const rate = typeof row.feeRate === "number" ? row.feeRate : typeof row.cardFee?.rate === "number" ? row.cardFee.rate : null;
+  return rate && rate > 0 ? rate : null;
+}
 
 function iso(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -82,6 +90,8 @@ export async function customerReceipt(customerId: string, saleId: string) {
       productTaxCents: sales.productTaxCents,
       tipCents: sales.tipCents,
       feeCents: sales.cardFeeCents,
+      pricing: sales.pricing,
+      cardFeeRate: shops.cardFeeRate,
       totalCents: sales.totalCents,
       paidAt: sales.paidAt,
       customerId: sales.customerId,
@@ -116,6 +126,7 @@ export async function customerReceipt(customerId: string, saleId: string) {
       productCents: refunds.productNetCents,
       taxCents: refunds.taxCents,
       tipCents: refunds.tipCents,
+      feeCents: refunds.cardFeeCents,
       method: refunds.method,
     })
     .from(refunds)
@@ -158,6 +169,7 @@ export async function customerReceipt(customerId: string, saleId: string) {
     taxCents: row.serviceTaxCents + row.productTaxCents,
     tipCents: row.tipCents,
     feeCents: row.feeCents,
+    feeLabel: row.feeCents > 0 ? feeLabel({ rate: storedFeeRate(row.pricing) ?? Number(row.cardFeeRate) }) : null,
     totalCents: row.totalCents,
     tender: tenderLabel(pay?.brand ?? null, pay?.last4 ?? null),
     paidAt: iso(row.paidAt),
@@ -184,6 +196,7 @@ export async function customerReceipt(customerId: string, saleId: string) {
       productCents: f.productCents,
       taxCents: f.taxCents,
       tipCents: f.tipCents,
+      feeCents: f.feeCents,
       shopPortionCents: portions[i]?.shopPortionCents ?? null,
       tipPortionCents: portions[i]?.tipPortionCents ?? null,
       from: portions[i]?.from ?? null,

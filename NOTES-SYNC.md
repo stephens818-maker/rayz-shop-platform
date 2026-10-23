@@ -128,7 +128,7 @@ These handlers match the mock shapes and are covered by `tests/db/customer-contr
 | `POST /api/v1/appointments/:code/rebook` | Ready |
 | `GET /api/v1/shops/:shop/live` | Ready |
 
-Cards use a SetupIntent and a PaymentSheet ephemeral key. A posted card number or CVC is refused. Charges call `executeChargePlan`, which calls `chargeCard`. The destination-charge guard is unchanged: no tip transfer is created while `chargeCard` sets `transfer_data`. The 3% credit fee is `computeCardFee` on the preview, before confirm. `GET /me/purchases` is unchanged.
+Cards use a SetupIntent and a PaymentSheet ephemeral key. A posted card number or CVC is refused. Charges call `executeChargePlan`, which calls `chargeCard`. The destination-charge guard is unchanged: no tip transfer is created while `chargeCard` sets `transfer_data`. The credit surcharge is `computeCardFee` on the preview, before confirm. On a credit charge, `executeChargePlan` passes `surchargeCents` into `chargeCard`, which sends it to Stripe as `amount_details.surcharge` plus its own line item. The receipt label is `Credit card surcharge (3%)` from `feeLabel` and the shop's `card_fee_rate` (default 0.03, clamped at 3%). That shop column is the brand's configurable rate. A debit card, including a debit card in Apple Pay or Google Pay, is not surcharged, even when the wallet-fee flag is on. If Stripe does not give a funding type, the surcharge is skipped. A partial refund returns a prorated share of the surcharge. The original sale total is not reduced. `GET /app/config` adds `weekStartDay: "sunday"` and `timeZone: "America/Chicago"`. Payroll week math is unchanged. `GET /me` returns the customer's own last name. Sign-in profiles are first names only. A customer can opt back into SMS by sending `smsOptIn: true` with a new `consentTextVersion`. That writes another `consent_events` row. The default stays false.
 
 ### Launch (option B: one pilot shop, then the rest)
 
@@ -191,7 +191,7 @@ The CPA approved paying card tips to barbers through Stripe. `shops.tip_to_barbe
 
 ### Consent and other /api/v1 notes
 
-- Opt-out sticks. A later booking or Squire row cannot turn it back on. Re-consent is a `consent_events` row. `src/app/(public)/book/[shop]/wizard.tsx` still initializes `smsOptIn: true`. Please default that checkbox off.
+- Opt-out sticks. A later booking or Squire row cannot turn it back on. A customer can opt back in from `PATCH /api/v1/me` by sending `smsOptIn: true` with a new `consentTextVersion`. That stores a new `consent_events` row (TCPA). `consentTextVersion` is required whenever a channel is turned on. `smsOptIn` defaults to false. `src/app/(public)/book/[shop]/wizard.tsx` still initializes `smsOptIn: true`. Please default that checkbox off.
 - Per-IP limits, appointment-code cutoff, devices, customer notes, and shop geocode / open-now / next slot are on this branch.
 - Mobile reads `computeCardFee` and `flags.reviewLogin` / `flags.walletFee`.
 
@@ -213,6 +213,15 @@ The CPA approved paying card tips to barbers through Stripe. `shops.tip_to_barbe
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 
 ## Log
+
+### 2026-10-23: surcharge, profile, consent, calendar, OpenAPI (bc-645fbcc0)
+
+- Credit charges send the surcharge to Stripe from `executeChargePlan` as its own amount and line item. The receipt label is `Credit card surcharge (3%)`. The percent follows `shops.card_fee_rate`. No new brand column: that shop setting is the configurable rate. Debit in a wallet is not surcharged. Partial refunds return a prorated surcharge.
+- `GET /me` keeps the customer's own last name. Sign-in profiles no longer return `lastInitial`.
+- SMS opt-back-in is allowed with a new consent record and `consentTextVersion`. Default `smsOptIn` stays false.
+- `GET /app/config` returns `weekStartDay: "sunday"` and `timeZone: "America/Chicago"`.
+- Zod request and response schemas cover the `/api/v1` operations, including config, home, family, cards, receipts, and payment preview. `tests/db/openapi-contract.test.ts` parses live responses with those schemas.
+- This branch stays on merge-base `887bf1e` with `cursor/rayz-barbershop-v1-8f0b`. It already shares `76655fc` with PR #7. It was not rebased.
 
 ### 2026-10-23: mobile customer contract from mock PR #7 (bc-645fbcc0)
 

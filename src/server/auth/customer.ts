@@ -140,7 +140,7 @@ export async function verifyOtp(input: {
     needsProfile: false as const,
     chooseProfile: true as const,
     selectionToken,
-    profiles: profiles.map((p) => ({ id: p.id, firstName: p.firstName, lastInitial: p.lastName?.[0]?.toUpperCase() ?? null })),
+    profiles: profiles.map((p) => ({ id: p.id, firstName: p.firstName })),
   };
 }
 

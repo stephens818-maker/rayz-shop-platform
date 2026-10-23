@@ -4,6 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import Stripe from "stripe";
+import { surchargeShare } from "@/domain/refunds";
 import { Mods, actor, loadModules } from "./setup";
 
 let m: Mods;
@@ -267,13 +268,18 @@ describe("P1#8 partial refunds follow the chosen line", () => {
     const st = await m.checkout.refundableState(t.sale.id);
     const svcItem = st.items.find((i) => i.kind === "service")!;
     const out = await m.checkout.refundSale({ saleId: t.sale.id, items: [{ saleItemId: svcItem.id, qty: 1 }], tipCents: 0, refundCardFee: false, reason: "Bad fade", restock: false, actor });
-    expect(out.components).toEqual({ serviceNetCents: t.svc.priceCents, productNetCents: 0, giftCardSalesCents: 0, taxCents: r.totals.serviceTaxCents, tipCents: 0, cardFeeCents: 0 });
+    const originalBase = r.totals.totalCents - r.totals.cardFeeCents - 800;
+    const serviceBase = t.svc.priceCents + r.totals.serviceTaxCents;
+    const feeShare = surchargeShare(r.totals.cardFeeCents, originalBase, 0, serviceBase);
+    expect(feeShare).toBeGreaterThan(0);
+    expect(feeShare).toBeLessThan(r.totals.cardFeeCents);
+    expect(out.components).toEqual({ serviceNetCents: t.svc.priceCents, productNetCents: 0, giftCardSalesCents: 0, taxCents: r.totals.serviceTaxCents, tipCents: 0, cardFeeCents: feeShare });
     const [card] = await giftCardsFor(t.sale.id);
     expect((await m.checkout.lookupGiftCard(card.code)).balanceCents).toBe(5000);
     expect((await m.loyalty.loyaltyBalance(c.id)).progressCents).toBe(0);
 
     const tip = await m.checkout.refundSale({ saleId: t.sale.id, items: [], tipCents: 800, refundCardFee: true, reason: "Goodwill", restock: false, actor });
-    expect(tip.components).toMatchObject({ tipCents: 800, cardFeeCents: r.totals.cardFeeCents, serviceNetCents: 0 });
+    expect(tip.components).toMatchObject({ tipCents: 800, cardFeeCents: r.totals.cardFeeCents - feeShare, serviceNetCents: 0 });
     await expect(m.checkout.refundSale({ saleId: t.sale.id, items: [{ saleItemId: svcItem.id, qty: 1 }], tipCents: 0, refundCardFee: false, reason: "again", restock: false, actor })).rejects.toThrow(/already refunded/);
   });
 });

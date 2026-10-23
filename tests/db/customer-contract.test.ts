@@ -21,7 +21,7 @@ afterAll(async () => {
 
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 
-function call(mod: { POST?: Function; GET?: Function; DELETE?: Function }, method: "POST" | "GET" | "DELETE", url: string, params: Record<string, string>, init: RequestInit = {}) {
+function call(mod: { POST?: Function; GET?: Function; DELETE?: Function; PATCH?: Function }, method: "POST" | "GET" | "DELETE" | "PATCH", url: string, params: Record<string, string>, init: RequestInit = {}) {
   const handler = mod[method] as (req: Request, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>;
   return handler(new Request(url, init), { params: Promise.resolve(params) });
 }
@@ -36,6 +36,8 @@ describe("customer contract against mock fixtures", () => {
     const configMod = await import("@/app/api/v1/app/config/route");
     const cfg = await json(await call(configMod, "GET", "http://localhost/api/v1/app/config", {}));
     expect(cfg.body.timezone).toBe("America/Chicago");
+    expect(cfg.body.timeZone).toBe("America/Chicago");
+    expect(cfg.body.weekStartDay).toBe("sunday");
     expect(cfg.body.timeFormat).toBe("12h");
     expect(cfg.body.minSupportedVersion).toEqual(cfg.body.minVersion);
     expect(cfg.body.latestVersion).toEqual({ ios: cfg.body.latestIos, android: cfg.body.latestAndroid });
@@ -146,7 +148,7 @@ describe("customer contract against mock fixtures", () => {
       }),
     );
     expect(creditPreview.body.feeCents).toBe(93);
-    expect(creditPreview.body.feeLabel).toMatch(/3%/);
+    expect(creditPreview.body.feeLabel).toBe("Credit card surcharge (3%)");
     expect(creditPreview.body.disclosure).toMatch(/credit card/i);
     expect(creditPreview.body.taxCents).toBe(203);
     expect(creditPreview.body.totalCents).toBe(2900 + 203 + 500 + 93);
@@ -172,6 +174,17 @@ describe("customer contract against mock fixtures", () => {
     );
     expect(wallet.body.feeReason).toBe("wallet_fee_off");
     expect(wallet.body.feeCents).toBe(0);
+    expect(wallet.body.funding).toBe("credit");
+    const walletDebit = await json(
+      await call(previewMod, "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-preview`, { code: booked.code }, {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({ paymentMethodId: debit.body.paymentMethod.id, tipCents: 500, wallet: true }),
+      }),
+    );
+    expect(walletDebit.body.feeCents).toBe(0);
+    expect(walletDebit.body.feeReason).toBe("not_credit");
+    expect(walletDebit.body.funding).toBe("debit");
 
     const payMod = await import("@/app/api/v1/appointments/[code]/payments/route");
     const paid = await json(
@@ -197,6 +210,13 @@ describe("customer contract against mock fixtures", () => {
     const splits = await m.db.db.select().from(m.schema.connectTransfers).where(eq(m.schema.connectTransfers.paymentIntentId, (await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, paid.body.id)))[0].stripePaymentIntentId!));
     expect(splits.some((row) => row.stripeTransferId?.startsWith("sim_tr_split_"))).toBe(false);
     expect(splits.find((row) => row.role === "tip")?.note).toContain("included in shop destination charge");
+    const charged = (await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, paid.body.id)))[0];
+    const intent = m.processor.simulatorLedger().intents.find((row) => row.id === charged.stripePaymentIntentId);
+    expect(intent?.surchargeCents).toBe(93);
+    expect(intent?.lineItems).toEqual([
+      { productName: "Services", productCode: "services", unitCost: 2900 + 203 + 500, quantity: 1 },
+      { productName: "Credit card surcharge (3%)", productCode: "surcharge", unitCost: 93, quantity: 1 },
+    ]);
 
     const receiptsMod = await import("@/app/api/v1/me/receipts/route");
     const list = await json(await call(receiptsMod, "GET", "http://localhost/api/v1/me/receipts?limit=1", {}, { headers: auth }));
@@ -211,6 +231,7 @@ describe("customer contract against mock fixtures", () => {
     expect(detail.body.taxCents).toBe(203);
     expect(detail.body.tipCents).toBe(500);
     expect(detail.body.feeCents).toBe(93);
+    expect(detail.body.feeLabel).toBe("Credit card surcharge (3%)");
     expect(detail.body.totalCents).toBe(paid.body.totalCents);
     expect(detail.body.tender).toBe("Visa ••4242");
     expect(detail.body.refunds).toEqual([]);
@@ -281,6 +302,32 @@ describe("customer contract against mock fixtures", () => {
     expect(closedRebook.body.error.details.reason).toBe("not_launched");
     await m.db.db.execute(m.drizzle.sql`update shops set launch_at = '2000-01-01T00:00:00.000Z' where slug = 'coralville'`);
 
+    const meMod = await import("@/app/api/v1/me/route");
+    const me = await json(await call(meMod, "GET", "http://localhost/api/v1/me", {}, { headers: auth }));
+    expect(me.status).toBe(200);
+    expect(me.body.lastName).toBe("Reyes");
+    expect(me.body.smsOptIn).toBe(false);
+    const missingVersion = await json(
+      await call(meMod, "PATCH", "http://localhost/api/v1/me", {}, { method: "PATCH", headers: auth, body: JSON.stringify({ smsOptIn: true }) }),
+    );
+    expect(missingVersion.status).toBe(400);
+    expect(missingVersion.body.error.message).toMatch(/consentTextVersion/);
+    const optedIn = await json(
+      await call(meMod, "PATCH", "http://localhost/api/v1/me", {}, { method: "PATCH", headers: auth, body: JSON.stringify({ smsOptIn: true, consentTextVersion: "2026-10-a" }) }),
+    );
+    expect(optedIn.body.smsOptIn).toBe(true);
+    const optedOut = await json(
+      await call(meMod, "PATCH", "http://localhost/api/v1/me", {}, { method: "PATCH", headers: auth, body: JSON.stringify({ smsOptIn: false }) }),
+    );
+    expect(optedOut.body.smsOptIn).toBe(false);
+    const optedBack = await json(
+      await call(meMod, "PATCH", "http://localhost/api/v1/me", {}, { method: "PATCH", headers: auth, body: JSON.stringify({ smsOptIn: true, consentTextVersion: "2026-10-b" }) }),
+    );
+    expect(optedBack.body.smsOptIn).toBe(true);
+    const events = await m.db.db.select().from(m.schema.consentEvents).where(eq(m.schema.consentEvents.customerId, customerId));
+    expect(events.filter((row) => row.channel === "sms_transactional" && row.action === "granted")).toHaveLength(2);
+    expect(events.some((row) => row.channel === "sms_transactional" && row.action === "revoked")).toBe(true);
+
     const optOut = await m.db.db.update(m.schema.customers).set({ smsOptIn: false }).where(eq(m.schema.customers.id, customerId)).returning({ smsOptIn: m.schema.customers.smsOptIn });
     expect(optOut[0].smsOptIn).toBe(false);
     const startMod = await import("@/app/api/v1/me/delete/start/route");
@@ -306,8 +353,7 @@ describe("customer contract against mock fixtures", () => {
     const [sale] = await m.db.db.select().from(m.schema.sales).where(eq(m.schema.sales.id, paid.body.id));
     expect(sale.status).toBe("paid");
     expect(sale.totalCents).toBe(paid.body.totalCents);
-    const me = await import("@/app/api/v1/me/route");
-    const still = await json(await call(me, "GET", "http://localhost/api/v1/me", {}, { headers: auth }));
+    const still = await json(await call(meMod, "GET", "http://localhost/api/v1/me", {}, { headers: auth }));
     expect(still.status).toBe(401);
   });
 });

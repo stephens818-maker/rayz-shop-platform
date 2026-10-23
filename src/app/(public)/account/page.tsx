@@ -32,7 +32,6 @@ interface Appt {
 interface Profile {
   id: string;
   firstName: string;
-  lastInitial: string | null;
 }
 type Tokens = { needsProfile: false; accessToken: string; refreshToken: string; expiresIn: number };
 type Verified = Tokens | { needsProfile: true; selectionToken: string } | { chooseProfile: true; selectionToken: string; profiles: Profile[] };
@@ -133,7 +132,7 @@ export default function AccountPage() {
               <div className="text-sm font-medium">Who&apos;s signing in?</div>
               {selection.profiles.map((p) => (
                 <Button key={p.id} variant="secondary" className="w-full" disabled={busy} onClick={() => complete({ customerId: p.id })}>
-                  {p.firstName} {p.lastInitial ? `${p.lastInitial}.` : ""}
+                  {p.firstName}
                 </Button>
               ))}
             </div>

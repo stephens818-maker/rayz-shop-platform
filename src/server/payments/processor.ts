@@ -102,6 +102,13 @@ export interface Destination {
  * returns the original PaymentIntent, refunds can't exceed the charge, and calls take a moment so
  * overlapping requests really overlap.
  */
+export interface SurchargeLine {
+  productName: string;
+  productCode: string;
+  unitCost: number;
+  quantity: number;
+}
+
 interface SimIntent {
   id: string;
   amountCents: number;
@@ -110,6 +117,9 @@ interface SimIntent {
   metadata: Record<string, string>;
   destination: Destination | null;
   customerId: string | null;
+  /** Credit-card surcharge sent to Stripe as its own amount. Zero when the card is not credit. */
+  surchargeCents: number;
+  lineItems: SurchargeLine[];
 }
 interface SimState {
   intents: Map<string, SimIntent>;
@@ -128,10 +138,46 @@ export function simulatorLedger() {
 }
 
 /**
+ * Visa wants the credit surcharge as its own amount, separate from the sale.
+ * The SDK types don't include `amount_details.surcharge` yet, so the field is added beside the line items.
+ * A known debit, prepaid, or unknown test card never gets one, even if the caller passed cents.
+ */
+export function surchargeDisclosure(paymentMethodId: string, amountCents: number, surchargeCents: number | undefined, label: string | undefined): { surchargeCents: number; lineItems: SurchargeLine[] } | null {
+  const cents = surchargeCents ?? 0;
+  if (!Number.isInteger(cents) || cents <= 0) return null;
+  if (cents > amountCents) throw new AppError("bad_request", "Surcharge is larger than the charge");
+  const known = TEST_CARDS[paymentMethodId];
+  if (known && known.funding !== "credit") return null;
+  const saleCents = amountCents - cents;
+  const name = label?.trim() || "Credit card surcharge";
+  return {
+    surchargeCents: cents,
+    lineItems: [
+      ...(saleCents > 0 ? [{ productName: "Services", productCode: "services", unitCost: saleCents, quantity: 1 }] : []),
+      { productName: name, productCode: "surcharge", unitCost: cents, quantity: 1 },
+    ],
+  };
+}
+
+function stripeAmountDetails(disclosure: { surchargeCents: number; lineItems: SurchargeLine[] }): Stripe.PaymentIntentCreateParams["amount_details"] {
+  const details: Stripe.PaymentIntentCreateParams.AmountDetails & { surcharge?: { amount: number } } = {
+    line_items: disclosure.lineItems.map((line) => ({
+      product_name: line.productName,
+      product_code: line.productCode,
+      unit_cost: line.unitCost,
+      quantity: line.quantity,
+    })),
+    surcharge: { amount: disclosure.surchargeCents },
+  };
+  return details;
+}
+
+/**
  * The one place a PaymentIntent is created. With a destination, it's a destination charge on the
  * platform settled on behalf of the shop's connected account: the shop is the merchant on the
  * statement, gets the charge less the application fee, and refunds come back out of its account.
  * `customerId` is a platform-level Stripe Customer, so a saved card can pay at any shop.
+ * `surchargeCents` is the credit-card surcharge, sent as its own Stripe line. Debit is never surcharged.
  */
 export async function chargeCard(opts: {
   paymentMethodId: string;
@@ -141,10 +187,13 @@ export async function chargeCard(opts: {
   idempotencyKey: string;
   destination?: Destination | null;
   customerId?: string | null;
+  surchargeCents?: number;
+  surchargeLabel?: string;
 }): Promise<ChargeResult> {
   assertStripeTestMode();
   const s = stripe();
   const dest = opts.destination ?? null;
+  const disclosure = surchargeDisclosure(opts.paymentMethodId, opts.amountCents, opts.surchargeCents, opts.surchargeLabel);
   if (dest && (dest.applicationFeeCents < 0 || dest.applicationFeeCents > opts.amountCents)) throw new AppError("bad_request", "The processing fee can't be more than the charge");
   if (!s) {
     const card = TEST_CARDS[opts.paymentMethodId];
@@ -154,7 +203,17 @@ export async function chargeCard(opts: {
     const existing = sim.byKey.get(opts.idempotencyKey);
     const pi: SimIntent = existing
       ? sim.intents.get(existing)!
-      : { id: simId("sim_pi"), amountCents: opts.amountCents, amountRefundedCents: 0, card: { funding: card.funding, brand: card.brand, last4: card.last4 }, metadata: opts.metadata, destination: dest, customerId: opts.customerId ?? null };
+      : {
+          id: simId("sim_pi"),
+          amountCents: opts.amountCents,
+          amountRefundedCents: 0,
+          card: { funding: card.funding, brand: card.brand, last4: card.last4 },
+          metadata: opts.metadata,
+          destination: dest,
+          customerId: opts.customerId ?? null,
+          surchargeCents: disclosure?.surchargeCents ?? 0,
+          lineItems: disclosure?.lineItems ?? [],
+        };
     if (!existing) {
       sim.intents.set(pi.id, pi);
       sim.byKey.set(opts.idempotencyKey, pi.id);
@@ -184,6 +243,7 @@ export async function chargeCard(opts: {
         confirm: true,
         description: opts.description,
         metadata: opts.metadata,
+        ...(disclosure ? { amount_details: stripeAmountDetails(disclosure) } : {}),
         ...(dest ? { on_behalf_of: dest.accountId, transfer_data: { destination: dest.accountId }, application_fee_amount: dest.applicationFeeCents } : {}),
         expand: ["latest_charge.balance_transaction"],
       },

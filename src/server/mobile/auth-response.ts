@@ -5,7 +5,7 @@ export async function authBody(r: {
   needsProfile?: boolean;
   chooseProfile?: boolean;
   selectionToken?: string;
-  profiles?: { id: string; firstName: string; lastInitial: string | null }[];
+  profiles?: { id: string; firstName: string }[];
   needsEmailFactor?: boolean;
   needsStepUp?: "email";
   emailHint?: string | null;

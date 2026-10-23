@@ -126,6 +126,17 @@ export function feeLabel(cfg: Pick<CardFeeConfig, "rate">): string {
   return `Credit card surcharge (${formatRate(cfg.rate)})`;
 }
 
+/**
+ * Wallet buttons are often labeled credit. Use the funding Stripe actually returns.
+ * Debit, prepaid, unknown, or missing funding is never surcharged, even when the wallet fee flag is on.
+ * A wallet whose card Stripe calls credit still follows that flag.
+ */
+export function fundingForSurcharge(funding: CardFunding | null | undefined, wallet: boolean): CardFunding | null {
+  if (!wallet) return funding ?? null;
+  if (funding === "credit") return "credit";
+  return funding ?? "unknown";
+}
+
 export function feeDisclosure(cfg: Pick<CardFeeConfig, "rate" | "enabled">): string | null {
   if (!cfg.enabled || cfg.rate <= 0) return null;
   const r = formatRate(Math.min(cfg.rate, MAX_CARD_FEE_RATE));

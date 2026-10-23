@@ -46,6 +46,10 @@ export interface ChargePlanInput {
   idempotencyKey: string;
   customerId?: string | null;
   kind?: ChargePlanKind;
+  /** Credit-card surcharge, in cents. Sent to Stripe as its own line. Omit or 0 for debit and wallets without a known credit card. */
+  surchargeCents?: number;
+  /** Shown on the Stripe line and the receipt, for example "Credit card surcharge (3%)". The rate comes from the shop. */
+  surchargeLabel?: string;
   /**
    * App and web checkout must set this. Staff POS leaves it off so a shop can take cards in the sandbox before launch day.
    * Customer-facing routes have to pass true (or call assertLaunched("payments") themselves).
@@ -126,6 +130,8 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
     idempotencyKey: input.idempotencyKey,
     customerId: input.customerId,
     destination: await chargeDestination(shop, input.amountCents, "keyed"),
+    surchargeCents: input.surchargeCents,
+    surchargeLabel: input.surchargeLabel,
   });
   const destinationCharge = chargeSettledByDestination(charge);
   const sendTip = !destinationCharge && tipsOn && input.kind !== "destination" && !!barberAccount && tipCents > 0;

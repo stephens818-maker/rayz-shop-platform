@@ -10,6 +10,7 @@ import { shopGateRows } from "@/server/mobile/shop-gates";
  * must not be offered for booking or payment. `minVersion` and `forceUpdateBelow` repeat the floor
  * the server already enforces with 426.
  * `timeFormat` is the brand clock (default 12h). Instants elsewhere stay ISO-8601 UTC.
+ * `weekStartDay` is the app calendar. Payroll week math is unchanged.
  */
 export const OPTIONS = options;
 export const GET = route(async () => {
@@ -19,6 +20,8 @@ export const GET = route(async () => {
   return json({
     ...cfg,
     timezone: "America/Chicago",
+    timeZone: "America/Chicago",
+    weekStartDay: "sunday",
     timeFormat: await brandTimeFormat(),
     launched: launch.launched || pilotShops.length > 0,
     launchAt: launch.launchAt,

@@ -15,6 +15,8 @@ export function shopCardFeeConfig(shop: { cardFeeEnabled: boolean; cardFeeRate: 
  * The credit-card surcharge a shop adds to one card charge: the shop's card fee settings applied
  * to the amount going on the card (tip included in `chargeCents`). Read-only; the POS uses the
  * same calculation through computeCheckout.
+ * The rate is `shops.card_fee_rate` (default 0.03, clamped to 3%). That column is the brand's
+ * per-shop setting. The charge path does not hardcode 3%.
  */
 export async function computeCardFee(
   shopId: string,

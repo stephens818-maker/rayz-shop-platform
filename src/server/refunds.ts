@@ -14,6 +14,7 @@ import {
   componentsFromLines,
   componentsTotal,
   lineRefunds,
+  surchargeShare,
 } from "@/domain/refunds";
 import { formatCents } from "@/lib/money";
 import { localDateOf } from "@/lib/time";
@@ -178,8 +179,18 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   }
 
   // A dashboard refund takes value without naming a line, so never give back more of a component than is left.
+  // A partial refund returns the surcharge in proportion to the pre-surcharge amount refunded.
+  // The tip is outside that base unless the sale's fee was configured to include it.
+  // Checking the fee box with nothing else refunded returns whatever surcharge is still outstanding.
   const left = remainingComponents(sale, st.done);
-  const asked = componentsFromLines(lines, o.tipCents, o.refundCardFee ? st.cardFeeRemainingCents : 0);
+  const includeTip = feeAppliesToTip(sale);
+  const thisBase = lines.reduce((sum, l) => sum + l.netCents + l.taxCents, 0) + (includeTip ? o.tipCents : 0);
+  const originalBase = Math.max(0, sale.totalCents - sale.cardFeeCents - (includeTip ? 0 : sale.tipCents));
+  const alreadyBase = preFeeBase(st.done, includeTip);
+  let cardFeeCents = surchargeShare(sale.cardFeeCents, originalBase, alreadyBase, thisBase);
+  if (o.refundCardFee && thisBase === 0) cardFeeCents = st.cardFeeRemainingCents;
+  cardFeeCents = Math.max(0, Math.min(cardFeeCents, st.cardFeeRemainingCents));
+  const asked = componentsFromLines(lines, o.tipCents, cardFeeCents);
   const components = Object.fromEntries(Object.entries(asked).map(([k, v]) => [k, Math.max(0, Math.min(v, left[k as keyof RefundComponents]))])) as unknown as RefundComponents;
   if (o.kind === "refund" && componentsTotal(components) <= 0) throw new AppError("bad_request", "Nothing left to refund on what you picked");
 
@@ -225,6 +236,16 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
     tx,
   );
   return { refundedCents: componentsTotal(components), components, tenders: plan.map((s) => ({ method: s.method, cents: s.amountCents })), giftCardsVoided: voided, status: result.status };
+}
+
+function feeAppliesToTip(sale: Sale): boolean {
+  const pricing = sale.pricing;
+  if (!pricing || typeof pricing !== "object") return false;
+  return (pricing as { cardFee?: { appliesToTip?: boolean } }).cardFee?.appliesToTip === true;
+}
+
+function preFeeBase(c: RefundComponents, includeTip: boolean): number {
+  return c.serviceNetCents + c.productNetCents + c.giftCardSalesCents + c.taxCents + (includeTip ? c.tipCents : 0);
 }
 
 function remainingComponents(sale: Sale, done: RefundComponents): RefundComponents {
