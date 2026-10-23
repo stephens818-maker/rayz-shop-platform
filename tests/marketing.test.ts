@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { formatCents } from "@/lib/money";
 import {
   EMPTY_SEGMENT,
   MARKETING_DEFAULTS,
@@ -127,6 +128,9 @@ describe("sending rules", () => {
   it("ROI is revenue less cost over cost", () => {
     expect(roi(10_000, 2_000)).toBe(4);
     expect(roi(500, 0)).toBeNull();
+    expect(formatCents(97.29999999999993)).toBe("$0.97");
+    expect(formatCents(-0.3)).toBe("$0.00");
+    expect(formatCents(150.5, { sign: true })).toBe("+$1.51");
   });
 
   it("bad settings fall back field by field", () => {

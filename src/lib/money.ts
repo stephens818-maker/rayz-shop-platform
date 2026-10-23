@@ -1,4 +1,6 @@
-export function formatCents(cents: number, opts: { sign?: boolean } = {}): string {
+/** Fractions of a cent (per-message costs) are rounded to the nearest cent. */
+export function formatCents(raw: number, opts: { sign?: boolean } = {}): string {
+  const cents = Math.round(raw);
   const neg = cents < 0;
   const abs = Math.abs(cents);
   const s = `$${Math.floor(abs / 100).toLocaleString("en-US")}.${(abs % 100).toString().padStart(2, "0")}`;

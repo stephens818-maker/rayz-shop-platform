@@ -379,7 +379,7 @@ export async function previewBlast(ctx: StaffContext, input: unknown, now = new 
     if (ch) byChannel[ch]++;
     else unreachable++;
   }
-  return { matched: members.length, byChannel, unreachable, sample: members.slice(0, 5).map((m) => m.firstName) };
+  return { matched: members.length, byChannel, unreachable, sample: [...new Set(members.map((m) => m.firstName))].slice(0, 5) };
 }
 
 /** A test of a campaign's wording to the person's own phone or email. */
