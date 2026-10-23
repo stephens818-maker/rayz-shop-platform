@@ -3,6 +3,6 @@
   "regions": ["cle1"],
   "crons": [
     { "path": "/api/cron/notifications", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/marketing", "schedule": "*/15 * * * *" }
+    { "path": "/api/cron/campaign-center", "schedule": "*/15 * * * *" }
   ]
 }

@@ -684,7 +684,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     return reviewReportData(scope, loc);
   },
 
-  async marketing({ scope, loc }) {
+  async campaign_center({ scope, loc }) {
     return marketingReportData(scope, loc);
   },
 

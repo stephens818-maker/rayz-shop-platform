@@ -12,11 +12,11 @@ export async function loadMarketingSettings(tx: DBorTx = db): Promise<MarketingS
 
 export async function saveMarketingSettings(input: unknown, actor: Actor): Promise<MarketingSettings> {
   const r = MarketingSettingsSchema.safeParse(input);
-  if (!r.success) throw new AppError("bad_request", r.error.issues[0]?.message ?? "Check the marketing settings");
+  if (!r.success) throw new AppError("bad_request", r.error.issues[0]?.message ?? "Check the Campaign Center settings");
   if (r.data.quietStart === r.data.quietEnd) throw new AppError("bad_request", "Quiet hours need a different start and end");
   if (r.data.capPerMonth < r.data.capPerWeek) throw new AppError("bad_request", "The monthly limit can't be lower than the weekly limit");
   const before = await loadMarketingSettings();
   await db.update(brandSettings).set({ marketing: { ...r.data }, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(actor, "brand.marketing_rules", "brand_settings", "1", { before, after: r.data }, null);
+  await audit(actor, "brand.campaign_center_settings", "brand_settings", "1", { before, after: r.data }, null);
   return r.data;
 }

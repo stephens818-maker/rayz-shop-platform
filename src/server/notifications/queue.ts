@@ -51,7 +51,7 @@ export type NotificationKind =
   | "receipt"
   /** A location's Google review link, a set time after the visit (same for every client who agreed to texts or emails). */
   | "review_request"
-  /** Marketing / Engage: an automated campaign or a blast, only to clients who agreed to marketing on that channel. */
+  /** Campaign Center: an automated campaign or a blast, only to clients who agreed to marketing on that channel. */
   | "marketing";
 
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */

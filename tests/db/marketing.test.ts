@@ -1,5 +1,5 @@
 /**
- * Marketing / Engage against a real database: coupons at checkout and from online booking (limits,
+ * The Campaign Center against a real database: coupons at checkout and from online booking (limits,
  * single-use codes, first visit only, stacking, free add-ons, auto-apply, refunds giving them back,
  * loyalty on the net), the engine (consent from the customer app's columns, once per occasion,
  * quiet hours, frequency caps, the email footer, coupon codes issued per client), STOP, START, HELP
@@ -25,7 +25,7 @@ let LINE: typeof import("@/server/shop-line");
 let L: typeof import("@/server/report-data");
 let S: typeof import("@/app/admin/reports/scope");
 let clickRoute: typeof import("@/app/m/[token]/route").GET;
-let exportRoute: typeof import("@/app/admin/marketing/export/route").GET;
+let exportRoute: typeof import("@/app/admin/campaign-center/export/route").GET;
 const fx = { cv: "", cvSlug: "coralville", cvLine: "", other: "", michelle: "", owner: "", barber: "", cut: "", cutCents: 0, addon: "", addonCents: 0, marketing: {} as Record<string, unknown> };
 let seq = 0;
 
@@ -54,7 +54,7 @@ beforeAll(async () => {
   L = await import("@/server/report-data");
   S = await import("@/app/admin/reports/scope");
   clickRoute = (await import("@/app/m/[token]/route")).GET;
-  exportRoute = (await import("@/app/admin/marketing/export/route")).GET;
+  exportRoute = (await import("@/app/admin/campaign-center/export/route")).GET;
   const shops = await m.db.db.query.shops.findMany({ where: eq(s().shops.active, true) });
   const cv = shops.find((x) => x.slug === "coralville")!;
   fx.cv = cv.id;
@@ -602,6 +602,57 @@ describe("blasts, location scope and the preview", () => {
     await expect(CP.saveAutomation(ctx, birthday.id, { name: "x", channels: ["sms"], templates: { sms: "Reply STOP" } })).rejects.toThrow();
   });
 
+  it("create writes and drafts, send switches and sends; neither alone does the other's job", async () => {
+    await signInAs(fx.michelle);
+    const full = await ctxOf();
+    expect([...full.permissions].filter((p) => p.startsWith("campaign_center."))).toEqual(["campaign_center.view", "campaign_center.create", "campaign_center.send"]);
+    const without = (p: string) => ({ ...full, permissions: new Set([...full.permissions].filter((x) => x !== p)) });
+    const writer = without("campaign_center.send");
+    const sender = without("campaign_center.create");
+    const viewer = { ...full, permissions: new Set([...full.permissions].filter((x) => !x.startsWith("campaign_center.") || x === "campaign_center.view")) };
+    const sms = "{shop}: hi {first_name}. Reply STOP to opt out.";
+    const lapsed = await campaign("lapsed");
+    await CP.setLocationAutomation(full, { campaignId: lapsed.id, shopId: fx.cv, enabled: false });
+
+    await expect(CP.setLocationAutomation(writer, { campaignId: lapsed.id, shopId: fx.cv, enabled: true })).rejects.toThrow(/send/);
+    await CP.setLocationAutomation(writer, { campaignId: lapsed.id, shopId: fx.cv, enabled: false, templates: { sms } });
+    await expect(CP.setLocationAutomation(sender, { campaignId: lapsed.id, shopId: fx.cv, enabled: false, templates: null })).rejects.toThrow(/create/);
+    await CP.setLocationAutomation(sender, { campaignId: lapsed.id, shopId: fx.cv, enabled: true, templates: { sms } });
+    const [row] = await m.db.db.select().from(s().marketingLocationSettings).where(and(eq(s().marketingLocationSettings.campaignId, lapsed.id), eq(s().marketingLocationSettings.shopId, fx.cv)));
+    expect(row).toMatchObject({ enabled: true, templates: { sms } });
+    await CP.setLocationAutomation(full, { campaignId: lapsed.id, shopId: fx.cv, enabled: false });
+
+    const base = { name: "Split duties", channels: ["sms"], templates: { sms }, segment: {}, shopIds: [fx.cv] };
+    await expect(CP.saveBlast(sender, base)).rejects.toThrow(/create/);
+    const id = await CP.saveBlast(writer, base);
+    await expect(CP.scheduleBlast(writer, id, new Date(NOW.getTime() + DAY), NOW)).rejects.toThrow(/send/);
+    await CP.scheduleBlast(sender, id, new Date(NOW.getTime() + DAY), NOW);
+    await expect(CP.cancelBlast(writer, id)).rejects.toThrow(/send/);
+    await CP.cancelBlast(sender, id);
+    const draft = await CP.saveBlast(writer, { ...base, name: "Draft only" });
+    await expect(CP.cancelBlast(sender, draft)).rejects.toThrow(/create/);
+    await CP.cancelBlast(writer, draft);
+
+    expect((await CP.listBlasts(viewer)).find((b) => b.id === id)).toBeTruthy();
+    await expect(CP.previewBlast(viewer, { channels: ["sms"], segment: {}, shopIds: [fx.cv] }, NOW)).rejects.toThrow();
+    await expect(CP.sendTest(viewer, { campaignId: lapsed.id, shopId: fx.cv, channel: "sms" })).rejects.toThrow();
+    await expect(CP.setLocationAutomation(viewer, { campaignId: lapsed.id, shopId: fx.cv, enabled: true })).rejects.toThrow();
+  });
+
+  it("only brand-wide create changes the brand's version and the settings", async () => {
+    const A = await import("@/app/admin/campaign-center/actions");
+    const birthday = await campaign("birthday");
+    const input = { name: birthday.name, channels: ["sms"], templates: { sms: "{shop}: happy birthday {first_name}! Reply STOP to opt out." } };
+    await signInAs(fx.michelle);
+    const local = await ctxOf();
+    expect(local.brandWide).toBe(false);
+    expect(local.permissions.has("campaign_center.create")).toBe(true);
+    await expect(CP.saveAutomation(local, birthday.id, input)).rejects.toThrow(/brand/);
+    expect(await A.saveMarketingSettingsAction({})).toMatchObject({ ok: false, error: expect.stringMatching(/brand/) });
+    await signInAs(fx.owner);
+    await CP.saveAutomation(await ctxOf(), birthday.id, { ...input, templates: birthday.templates, channels: birthday.channels, name: birthday.name });
+  });
+
   it("a filter on a detail the person can't see is refused", async () => {
     await signInAs(fx.michelle);
     const ctx = await ctxOf();
@@ -645,8 +696,8 @@ describe("marketing report and export", () => {
     const paid = await pay({ customerId: c.id, codes: [p.code], saleId: sale.id, now: at("2028-02-23", "10:40") });
     expect((await redemptions(paid.id))[0].campaignId).toBe(id);
 
-    const scope = await S.resolveScope(ctx, { from: "2028-02-21", to: "2028-02-21", shop: fx.cv }, "marketing");
-    const data = await L.REPORT_LOADERS.marketing({ scope, loc: scope.loc, viewer: ctx, params: {} });
+    const scope = await S.resolveScope(ctx, { from: "2028-02-21", to: "2028-02-21", shop: fx.cv }, "campaign_center");
+    const data = await L.REPORT_LOADERS.campaign_center({ scope, loc: scope.loc, viewer: ctx, params: {} });
     const t = data.tables.find((x) => x.id === "campaigns")!;
     const row = t.rows.find((r) => r[0] === "Spring (blast)")!;
     const col = (label: string) => row[t.columns.findIndex((x) => x.label === label)];
@@ -662,10 +713,10 @@ describe("marketing report and export", () => {
   it("only people with the export permission get contact lists, and each export is audited", async () => {
     await consent(true);
     await signInAs(fx.michelle);
-    expect((await exportRoute(new Request("http://x/admin/marketing/export"))).status).toBe(403);
+    expect((await exportRoute(new Request("http://x/admin/campaign-center/export"))).status).toBe(403);
     await signInAs(fx.owner);
     const c = await client({ sms: true, first: "Exportable" });
-    const r = await exportRoute(new Request("http://x/admin/marketing/export"));
+    const r = await exportRoute(new Request("http://x/admin/campaign-center/export"));
     expect(r.status).toBe(200);
     const csv = await r.text();
     expect(csv.split("\n")[0]).toMatch(/First name,Last name,Phone,Email,Marketing texts/);
@@ -673,7 +724,7 @@ describe("marketing report and export", () => {
     const [a] = await m.db.db
       .select()
       .from(s().auditLog)
-      .where(eq(s().auditLog.action, "marketing.export"))
+      .where(eq(s().auditLog.action, "campaign_center.export"))
       .orderBy(m.drizzle.desc(s().auditLog.at))
       .limit(1);
     expect((a.details as { customerIds: string[] }).customerIds).toContain(c.id);
@@ -688,5 +739,28 @@ describe("marketing report and export", () => {
     const [t] = await m.db.db.select().from(s().marketingSends).where(and(eq(s().marketingSends.campaignId, lapsed.id), eq(s().marketingSends.status, "test")));
     expect(t.customerId).toBeNull();
     expect((await job(t.jobId)).subject).toMatch(/^\[Test\]/);
+  });
+});
+
+describe("renamed to the Campaign Center", () => {
+  it("the migration moves roles and overrides to the new permission names, keeping what each could do", async () => {
+    const { readFileSync } = await import("node:fs");
+    const name = `Old marketing role ${++seq}`;
+    const [role] = await m.db.db
+      .insert(s().roles)
+      .values({ name, permissions: ["calendar.manage", "marketing.view", "marketing.location", "marketing.manage", "report.marketing.view", "report.marketing.export"] })
+      .returning();
+    const [person] = await m.db.db.select().from(s().staff).where(eq(s().staff.id, fx.barber));
+    await m.db.db
+      .update(s().staff)
+      .set({ permissionOverrides: { "marketing.export": true, "marketing.location": true, "marketing.manage": false, "sales.view": true } })
+      .where(eq(s().staff.id, fx.barber));
+    for (const q of readFileSync("drizzle/core_0042_campaign_center.sql", "utf8").split("--> statement-breakpoint")) await exec(sql.raw(q));
+    const [after] = await m.db.db.select().from(s().roles).where(eq(s().roles.id, role.id));
+    expect(after.permissions).toEqual(["calendar.manage", "campaign_center.view", "campaign_center.create", "campaign_center.send", "report.campaign_center.view", "report.campaign_center.export"]);
+    const [p] = await m.db.db.select().from(s().staff).where(eq(s().staff.id, fx.barber));
+    expect(p.permissionOverrides).toEqual({ "campaign_center.export": true, "campaign_center.create": false, "campaign_center.send": false, "sales.view": true });
+    await m.db.db.update(s().staff).set({ permissionOverrides: person.permissionOverrides }).where(eq(s().staff.id, fx.barber));
+    await m.db.db.delete(s().roles).where(eq(s().roles.id, role.id));
   });
 });

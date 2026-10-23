@@ -9,26 +9,28 @@ import { consentColumns } from "@/server/marketing/consent";
 import { loadMarketingSettings } from "@/server/marketing/settings";
 import { AutomationToggles } from "./automation-toggles";
 
-export const metadata: Metadata = { title: "Marketing" };
+export const metadata: Metadata = { title: "Campaign Center" };
 export const dynamic = "force-dynamic";
 
-export default async function MarketingPage() {
-  const ctx = await guardPage("/admin/marketing");
+export default async function CampaignCenterPage() {
+  const ctx = await guardPage("/admin/campaign-center");
   const shops = openShops(ctx);
   const [list, settings, cols, coupons, stats] = await Promise.all([listAutomations(ctx), loadMarketingSettings(), consentColumns(), couponOptions(todayLocal()), marketingOverview(shops.map((s) => s.id))]);
-  const mayToggle = can(ctx, "marketing.location") || can(ctx, "marketing.manage");
+  const mayToggle = can(ctx, "campaign_center.send");
+  const mayCreate = can(ctx, "campaign_center.create");
+  const mayBrand = mayCreate && ctx.brandWide;
   const coupon = (id: string | null) => coupons.find((c) => c.id === id);
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader
-        title="Marketing"
+        title="Campaign Center"
         subtitle="Automated campaigns and one-off blasts by text, email and app push. Only clients who agreed to marketing get them, never in quiet hours and never more than the brand's limits."
         actions={
           <div className="flex gap-2">
-            <LinkButton variant="secondary" href="/admin/reports/marketing">
+            <LinkButton variant="secondary" href="/admin/reports/campaign-center">
               Report
             </LinkButton>
-            <LinkButton href="/admin/marketing/blasts/new">New blast</LinkButton>
+            {mayCreate && <LinkButton href="/admin/campaign-center/blasts/new">New blast</LinkButton>}
           </div>
         }
       />
@@ -40,9 +42,9 @@ export default async function MarketingPage() {
       {!settings.address.trim() && (
         <Notice tone="amber">
           Marketing emails need the brand&apos;s postal address (CAN-SPAM).{" "}
-          {can(ctx, "marketing.manage") ? (
-            <Link className="underline" href="/admin/marketing/settings">
-              Add it in Marketing rules
+          {mayBrand ? (
+            <Link className="underline" href="/admin/campaign-center/settings">
+              Add it in Campaign Center settings
             </Link>
           ) : (
             "Ask the brand to add it"
@@ -66,7 +68,7 @@ export default async function MarketingPage() {
             <li key={a.id} className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto]" data-testid={`automation-${a.trigger}`}>
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Link href={`/admin/marketing/automations/${a.id}`} className="font-semibold text-zinc-900 hover:underline">
+                  <Link href={`/admin/campaign-center/automations/${a.id}`} className="font-semibold text-zinc-900 hover:underline">
                     {a.name}
                   </Link>
                   <span className="text-xs text-zinc-500">{a.channels.map((c) => CHANNEL_LABEL[c]).join(" → ")}</span>
@@ -81,7 +83,7 @@ export default async function MarketingPage() {
         </ul>
       </Card>
       <div className="grid gap-3 md:grid-cols-3">
-        <Link href="/admin/marketing/blasts" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+        <Link href="/admin/campaign-center/blasts" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
           <div className="font-semibold">Blasts</div>
           <div className="text-sm text-zinc-600">One-off texts, emails and pushes to a segment, now or scheduled.</div>
         </Link>
@@ -89,15 +91,15 @@ export default async function MarketingPage() {
           <div className="font-semibold">Coupons</div>
           <div className="text-sm text-zinc-600">Percent, dollars or a free add-on, with limits. Attach one to a campaign.</div>
         </Link>
-        {can(ctx, "marketing.manage") ? (
-          <Link href="/admin/marketing/settings" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
-            <div className="font-semibold">Marketing rules</div>
+        {mayBrand ? (
+          <Link href="/admin/campaign-center/settings" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+            <div className="font-semibold">Settings</div>
             <div className="text-sm text-zinc-600">Quiet hours, frequency limits, the postal address, attribution, costs, the HELP reply.</div>
           </Link>
         ) : (
           <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
             <div className="font-semibold">Contact lists</div>
-            <div className="text-sm text-zinc-600">You see counts, not contact lists. Only the brand can export marketing contacts.</div>
+            <div className="text-sm text-zinc-600">You see counts, not contact lists. Only the brand can export campaign contacts.</div>
           </div>
         )}
       </div>

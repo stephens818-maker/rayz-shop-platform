@@ -48,7 +48,7 @@ const KIND_LABEL: Record<string, string> = {
   digest: "Morning digest",
   receipt: "Receipt",
   review_request: "Google review request",
-  marketing: "Marketing",
+  marketing: "Campaign Center",
 };
 /** Jobs sent to a client: their number or email shows as the viewer may see it. */
 const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply", "fill_offer", "rebook_nudge", "no_show_reminder", "running_late", "receipt", "review_request", "marketing"]);

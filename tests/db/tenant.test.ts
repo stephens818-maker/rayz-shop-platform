@@ -463,13 +463,13 @@ function dynamicPages(): [string, Record<string, string>][] {
     ["/admin/inbox/[id]", { id: ids.thread }],
     ["/admin/timesheets/[staffId]", { staffId: ids.barber }],
     ["/admin/tips/[id]", { id: ids.tipBatch }],
-    ["/admin/marketing/blasts/[id]", { id: ids.blast }],
+    ["/admin/campaign-center/blasts/[id]", { id: ids.blast }],
   ];
 }
 
 describe("direct URLs to another shop's records", () => {
   it("covers every dynamic page", () => {
-    const covered = new Set([...dynamicPages().map(([r]) => r), "/admin/permissions/roles/[id]", "/admin/marketing/automations/[id]"]);
+    const covered = new Set([...dynamicPages().map(([r]) => r), "/admin/permissions/roles/[id]", "/admin/campaign-center/automations/[id]"]);
     expect(Object.keys(PAGE_ACCESS).filter((p) => p.includes("[") && !covered.has(p))).toEqual([]);
   });
 
@@ -644,7 +644,7 @@ describe("server actions aimed at another shop's records", () => {
     const timing = await import("@/app/admin/booking-times/actions");
     const setup = await import("@/app/admin/setup/actions");
     const tips = await import("@/app/admin/tips/actions");
-    const marketing = await import("@/app/admin/marketing/actions");
+    const campaignCenter = await import("@/app/admin/campaign-center/actions");
     const cv = shop.coralville;
     const coralvilleLogin = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, "coralville@rayz.test") }))!.id;
     const deskRole = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "front_desk") }))!.id;
@@ -801,13 +801,13 @@ describe("server actions aimed at another shop's records", () => {
       ["tips adjust", () => tips.payoutAction({ payoutId: ids.tipPayout, action: "adjust", reason: "x", cents: 500 })],
       ["tips remove", () => tips.payoutAction({ payoutId: ids.tipPayout, action: "remove", reason: "x" })],
       ["tips cash paid", () => tips.acknowledgeCashAction({ payoutId: ids.tipPayout, by: "name", name: CANARY.barber })],
-      ["marketing campaign on", () => marketing.setLocationAutomationAction({ campaignId: ids.campaign, shopId: cv, enabled: true })],
-      ["marketing blast to coralville", () => marketing.saveBlastAction({ name: "Sneaky", channels: ["push"], templates: { pushTitle: "Hi", pushBody: "Hi" }, segment: {}, shopIds: [cv] })],
-      ["marketing blast count", () => marketing.previewBlastAction({ channels: ["push"], segment: {}, shopIds: [cv] })],
-      ["marketing blast edit", () => marketing.saveBlastAction({ id: ids.blast, name: "Hijacked", channels: ["push"], templates: { pushTitle: "Hi", pushBody: "Hi" }, segment: {} })],
-      ["marketing blast send", () => marketing.scheduleBlastAction(ids.blast, null)],
-      ["marketing blast cancel", () => marketing.cancelBlastAction(ids.blast)],
-      ["marketing test", () => marketing.sendTestAction({ campaignId: ids.campaign, shopId: cv, channel: "sms" })],
+      ["campaign center campaign on", () => campaignCenter.setLocationAutomationAction({ campaignId: ids.campaign, shopId: cv, enabled: true })],
+      ["campaign center blast to coralville", () => campaignCenter.saveBlastAction({ name: "Sneaky", channels: ["push"], templates: { pushTitle: "Hi", pushBody: "Hi" }, segment: {}, shopIds: [cv] })],
+      ["campaign center blast count", () => campaignCenter.previewBlastAction({ channels: ["push"], segment: {}, shopIds: [cv] })],
+      ["campaign center blast edit", () => campaignCenter.saveBlastAction({ id: ids.blast, name: "Hijacked", channels: ["push"], templates: { pushTitle: "Hi", pushBody: "Hi" }, segment: {} })],
+      ["campaign center blast send", () => campaignCenter.scheduleBlastAction(ids.blast, null)],
+      ["campaign center blast cancel", () => campaignCenter.cancelBlastAction(ids.blast)],
+      ["campaign center test", () => campaignCenter.sendTestAction({ campaignId: ids.campaign, shopId: cv, channel: "sms" })],
     ];
 
     // Each call must be refused for every Moline-side login, and by the tenant check (not just a

@@ -17,7 +17,7 @@ const BRAND_LEVEL: Record<string, string> = {
   "customers/[id]/page.tsx":
     "Clients are brand-wide and their visit history follows them to every shop; ratings and notes are filtered to the viewer's shops, and only their own shops' tickets are linked",
   "import/[runId]/errors/route.ts": "Import runs are brand-level; the route needs import.run, which only all-shops access keeps",
-  "marketing/automations/[id]/page.tsx": "Automated campaigns are the brand's; the page shows and switches only the viewer's own locations, and rewording needs marketing.manage",
+  "campaign-center/automations/[id]/page.tsx": "Automated campaigns are the brand's; the page shows and switches only the viewer's own locations, and rewording the brand's version needs Campaign Center: create with access to all shops",
   "inventory/[id]/page.tsx": "A product is brand catalog; stock, ledger and orders on the page are filtered to the viewer's shops",
   "permissions/roles/[id]/page.tsx": "Roles are brand-level templates; editing needs roles.manage",
   "vendors/[id]/page.tsx": "Vendors are brand-level; the page needs vendors.manage, which only all-shops access keeps",

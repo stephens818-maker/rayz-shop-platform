@@ -17,11 +17,12 @@ export const metadata: Metadata = { title: "Blast" };
 export const dynamic = "force-dynamic";
 
 export default async function BlastPage({ params }: { params: Promise<{ id: string }> }) {
-  const ctx = await guardPage("/admin/marketing/blasts/[id]");
+  const ctx = await guardPage("/admin/campaign-center/blasts/[id]");
   const { id } = await params;
-  const maySend = can(ctx, "marketing.location") || can(ctx, "marketing.manage");
+  const mayCreate = can(ctx, "campaign_center.create");
+  const maySend = can(ctx, "campaign_center.send");
   const blast = id === "new" || !(await inTenant(ctx, "marketing_campaign", id)) ? null : ((await listBlasts(ctx)).find((b) => b.id === id) ?? null);
-  if (id === "new" ? !maySend : !blast) notFound();
+  if (id === "new" ? !mayCreate : !blast) notFound();
   const shops = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
   const shopIds = shops.map((s) => s.id);
   const [policy, settings, coupons, barbers, serviceRows, productRows, tagRows] = await Promise.all([
@@ -55,7 +56,7 @@ export default async function BlastPage({ params }: { params: Promise<{ id: stri
         title={blast ? blast.name : "New blast"}
         subtitle={
           <>
-            <Link href="/admin/marketing/blasts" className="underline">
+            <Link href="/admin/campaign-center/blasts" className="underline">
               Blasts
             </Link>{" "}
             · Goes only to clients who agreed to marketing, once each, outside quiet hours ({settings.quietStart}–{settings.quietEnd} local) and within the brand&apos;s limits.
@@ -63,9 +64,25 @@ export default async function BlastPage({ params }: { params: Promise<{ id: stri
         }
       />
       <BlastEditor
-        blast={blast && { id: blast.id, name: blast.name, status: blast.status, channels: blast.channels, templates: blast.templates, segment: blast.segment, promoId: blast.promoId, shopIds: blast.shopIds, scheduledAt: blast.scheduledAt?.toISOString() ?? null, sentAt: blast.sentAt?.toISOString() ?? null, sent: blast.sent }}
-        mayEdit={blast ? blast.mayEdit : maySend}
-        everyLocation={ctx.brandWide && can(ctx, "marketing.manage")}
+        blast={
+          blast && {
+            id: blast.id,
+            name: blast.name,
+            status: blast.status,
+            channels: blast.channels,
+            templates: blast.templates,
+            segment: blast.segment,
+            promoId: blast.promoId,
+            shopIds: blast.shopIds,
+            scheduledAt: blast.scheduledAt?.toISOString() ?? null,
+            sentAt: blast.sentAt?.toISOString() ?? null,
+            sent: blast.sent,
+          }
+        }
+        mayEdit={blast ? blast.mayEdit : mayCreate}
+        mayWrite={mayCreate}
+        maySend={maySend}
+        everyLocation={ctx.brandWide && mayCreate}
         shops={shops}
         barbers={barbers}
         items={[...serviceRows.map((s) => ({ id: s.id, name: s.name })), ...productRows.map((p) => ({ id: p.id, name: `${p.brand} ${p.name}` }))]}

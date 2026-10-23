@@ -46,7 +46,12 @@ const localInput = (iso: string | null) => {
 
 export function BlastEditor(p: {
   blast: Blast | null;
+  /** In their scope and not sent yet. */
   mayEdit: boolean;
+  /** Campaign Center: create. */
+  mayWrite: boolean;
+  /** Campaign Center: send. */
+  maySend: boolean;
   everyLocation: boolean;
   shops: Option[];
   barbers: Option[];
@@ -69,7 +74,7 @@ export function BlastEditor(p: {
   const [seg, setSeg] = useState<Segment>(p.blast?.segment ?? EMPTY_SEGMENT);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [at, setAt] = useState(localInput(p.blast?.scheduledAt ?? null));
-  const ro = !p.mayEdit;
+  const ro = !p.mayEdit || !p.mayWrite;
   const s = (x: Partial<Segment>) => (setPreview(null), setSeg({ ...seg, ...x }));
   const input = () => ({ id, name, channels, templates, segment: seg, promoId, shopIds });
 
@@ -79,7 +84,7 @@ export function BlastEditor(p: {
     if (!r.ok) return (setError(r.error), null);
     if (!id) {
       setId(r.data.id);
-      window.history.replaceState(null, "", `/admin/marketing/blasts/${r.data.id}`);
+      window.history.replaceState(null, "", `/admin/campaign-center/blasts/${r.data.id}`);
     }
     return r.data.id;
   };
@@ -94,11 +99,15 @@ export function BlastEditor(p: {
     start(async () => {
       setDone(null);
       if (!when && !confirm(preview ? `Send to ${preview.matched - preview.unreachable} clients now?` : "Send this blast now?")) return;
-      const saved = await persist();
+      const saved = p.mayWrite ? await persist() : id;
       if (!saved) return;
       const r = await scheduleBlastAction(saved, when ? new Date(when).toISOString() : null);
       if (!r.ok) return setError(r.error);
-      setDone(when ? `Scheduled for ${formatDateTime(new Date(when))}.` : `Sent: ${r.data.queued} queued${r.data.skipped ? `, ${r.data.skipped} skipped (limits or consent)` : ""}. Messages due in quiet hours go out when they end.`);
+      setDone(
+        when
+          ? `Scheduled for ${formatDateTime(new Date(when))}.`
+          : `Sent: ${r.data.queued} queued${r.data.skipped ? `, ${r.data.skipped} skipped (limits or consent)` : ""}. Messages due in quiet hours go out when they end.`,
+      );
       router.refresh();
     });
 
@@ -108,7 +117,11 @@ export function BlastEditor(p: {
       {p.blast && (
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <Badge tone={p.blast.status === "sent" ? "green" : p.blast.status === "scheduled" ? "blue" : p.blast.status === "cancelled" ? "red" : "gray"}>{p.blast.status}</Badge>
-          {p.blast.sentAt && <span>Sent {formatDateTime(p.blast.sentAt)} to {p.blast.sent} clients</span>}
+          {p.blast.sentAt && (
+            <span>
+              Sent {formatDateTime(p.blast.sentAt)} to {p.blast.sent} clients
+            </span>
+          )}
           {p.blast.status === "scheduled" && p.blast.scheduledAt && <span>Goes out {formatDateTime(p.blast.scheduledAt)}</span>}
         </div>
       )}
@@ -135,7 +148,7 @@ export function BlastEditor(p: {
             <ChannelOrder value={channels} disabled={ro} onChange={(c) => (setPreview(null), setChannels(c))} />
           </Field>
           <TemplateFields value={templates} channels={channels} disabled={ro} address={p.address} onChange={setTemplates} />
-          {!ro && <TestSend campaignId={id} channels={channels} shops={p.shops.filter((x) => !shopIds.length || shopIds.includes(x.id))} templates={templates} beforeSend={persist} />}
+          {p.mayEdit && <TestSend campaignId={id} channels={channels} shops={p.shops.filter((x) => !shopIds.length || shopIds.includes(x.id))} templates={templates} beforeSend={persist} />}
         </div>
       </Card>
 
@@ -238,22 +251,24 @@ export function BlastEditor(p: {
 
       {error && <Notice tone="red">{error}</Notice>}
       {done && <Notice tone="green">{done}</Notice>}
-      {!ro && (
+      {p.mayEdit && (
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              disabled={pending || !name.trim()}
-              onClick={() =>
-                start(async () => {
-                  setDone(null);
-                  if (await persist()) setDone("Saved as a draft.");
-                })
-              }
-            >
-              Save draft
-            </Button>
-            {id && (
+            {p.mayWrite && (
+              <Button
+                variant="secondary"
+                disabled={pending || !name.trim()}
+                onClick={() =>
+                  start(async () => {
+                    setDone(null);
+                    if (await persist()) setDone("Saved as a draft.");
+                  })
+                }
+              >
+                Save draft
+              </Button>
+            )}
+            {id && (p.blast?.status === "scheduled" ? p.maySend : p.mayWrite) && (
               <Button
                 variant="danger"
                 disabled={pending}
@@ -261,7 +276,7 @@ export function BlastEditor(p: {
                   start(async () => {
                     const r = await cancelBlastAction(id);
                     if (!r.ok) return setError(r.error);
-                    router.push("/admin/marketing/blasts");
+                    router.push("/admin/campaign-center/blasts");
                   })
                 }
               >
@@ -269,20 +284,24 @@ export function BlastEditor(p: {
               </Button>
             )}
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <Field label="Send at (your time)">
-              <Input type="datetime-local" className="w-56" value={at} onChange={(e) => setAt(e.target.value)} />
-            </Field>
-            <Button variant="secondary" disabled={pending || !name.trim() || !at} onClick={() => send(at)}>
-              Schedule
-            </Button>
-            <Button disabled={pending || !name.trim()} onClick={() => send(null)} data-testid="send-now">
-              Send now
-            </Button>
-          </div>
+          {p.maySend ? (
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="Send at (your time)">
+                <Input type="datetime-local" className="w-56" value={at} onChange={(e) => setAt(e.target.value)} />
+              </Field>
+              <Button variant="secondary" disabled={pending || !name.trim() || !at} onClick={() => send(at)}>
+                Schedule
+              </Button>
+              <Button disabled={pending || !name.trim()} onClick={() => send(null)} data-testid="send-now">
+                Send now
+              </Button>
+            </div>
+          ) : (
+            <span className="text-sm text-zinc-500">Someone with Campaign Center: send schedules or sends it.</span>
+          )}
         </div>
       )}
-      {sent && <p className="text-sm text-zinc-500">This blast went out, so it can&apos;t be changed. See how it did in the marketing report.</p>}
+      {sent && <p className="text-sm text-zinc-500">This blast went out, so it can&apos;t be changed. See how it did in the Campaign Center report.</p>}
     </>
   );
 }

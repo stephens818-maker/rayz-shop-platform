@@ -10,13 +10,13 @@ import { toCsv } from "@/server/reports";
 const MAX_ROWS = 50_000;
 
 /**
- * Marketing contacts as a CSV: who has agreed to marketing on each channel, or who one campaign went
- * to (?campaign=<id>). Only for "export marketing contacts" (brand-level, off for every role until the
- * Brand Owner grants it); everyone else sees counts. Phone and email are exported as the exporter
+ * Campaign Center contacts as a CSV: who has agreed to marketing on each channel, or who one campaign
+ * went to (?campaign=<id>). Only for "Campaign Center: export" (brand-level, off for every role until
+ * the Brand Owner grants it); everyone else sees counts. Phone and email are exported as the exporter
  * sees them, and every export is audited with the clients it contained.
  */
 export async function GET(req: Request) {
-  const ctx = await routeStaff("marketing.export");
+  const ctx = await routeStaff("campaign_center.export");
   if (ctx instanceof Response) return ctx;
   const campaignId = new URL(req.url).searchParams.get("campaign");
   const policy = await clientPolicy(ctx);
@@ -89,8 +89,8 @@ export async function GET(req: Request) {
   const fields = [...(showPhone ? [`phone:${policy.level("phone")}`] : []), ...(showEmail ? [`email:${policy.level("email")}`] : [])];
   const detail = { export: "marketing_contacts", campaignId: campaign?.id ?? null, clients: people.length, fields };
   await recordClientAccess(ctx, { kind: "export", detail });
-  await audit(ctx.actor, "marketing.export", "customer", null, { ...detail, customerIds: people.map((p) => p.id) }, ctx.currentShopId);
-  const name = `rayz-marketing-${campaign ? "campaign" : "contacts"}-${new Date().toISOString().slice(0, 10)}.csv`;
+  await audit(ctx.actor, "campaign_center.export", "customer", null, { ...detail, customerIds: people.map((p) => p.id) }, ctx.currentShopId);
+  const name = `rayz-campaign-center-${campaign ? "campaign" : "contacts"}-${new Date().toISOString().slice(0, 10)}.csv`;
   return new Response(toCsv(headers, data), {
     headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${name}"`, "Cache-Control": "no-store" },
   });

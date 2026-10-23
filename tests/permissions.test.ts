@@ -69,11 +69,11 @@ describe("permission catalog and templates", () => {
     }
   });
 
-  it("Brand Owner has everything; Brand Admin everything except brand settings, banking and the client and marketing exports", () => {
+  it("Brand Owner has everything; Brand Admin everything except brand settings, banking and the client and Campaign Center exports", () => {
     expect(access("brand_owner").permissions.size).toBe(ALL_PERMISSIONS.length);
     expect(access("brand_admin").permissions.size).toBe(ALL_PERMISSIONS.length - OWNER_ONLY.size - OWNER_GRANTS.size - 2);
     expect(access("brand_admin").permissions.has("clients.export")).toBe(false);
-    expect(access("brand_admin").permissions.has("marketing.export")).toBe(false);
+    expect(access("brand_admin").permissions.has("campaign_center.export")).toBe(false);
     expect(access("brand_admin").permissions.has("payments.banking")).toBe(false);
     expect(access("brand_admin").permissions.has("settings.brand")).toBe(false);
     expect(access("brand_admin").permissions.has("clients.privacy")).toBe(true);
@@ -115,17 +115,30 @@ describe("permission catalog and templates", () => {
 
   it("the migrations seed exactly the templates in code", () => {
     const sql = readFileSync(join(process.cwd(), "drizzle/0009_permissions_and_catalog.sql"), "utf8");
-    // Later migrations grant permissions to templates (|| '[...]') or take them away (- 'key'), in file order.
+    // Later migrations grant permissions to templates (|| '[...]'), take them away (- 'key') or rename
+    // them in every role (a VALUES list of old and new names), in file order.
     const later = readdirSync(join(process.cwd(), "drizzle"))
       .filter((f) => f.endsWith(".sql") && f > "0009")
       .sort()
       .map((f) => readFileSync(join(process.cwd(), "drizzle", f), "utf8"))
       .join("\n");
-    const changes = [...later.matchAll(/UPDATE "roles" SET "permissions" = "permissions" (?:\|\| '(\[.*?\])'::jsonb|- '([\w.]+)') WHERE "key" (?:IN \(([^)]*)\)|= ('\w+'))/g)].map((m) => ({
-      add: m[1] ? (JSON.parse(m[1]) as string[]) : [],
-      remove: m[2] ? [m[2]] : [],
-      keys: [...(m[3] ?? m[4]).matchAll(/'(\w+)'/g)].map((k) => k[1]),
-    }));
+    const ALL_KEYS = ROLE_TEMPLATES.map((t) => t.key as string);
+    const changes = [
+      ...[...later.matchAll(/UPDATE "roles" SET "permissions" = "permissions" (?:\|\| '(\[.*?\])'::jsonb|- '([\w.]+)') WHERE "key" (?:IN \(([^)]*)\)|= ('\w+'))/g)].map((m) => ({
+        at: m.index,
+        add: m[1] ? (JSON.parse(m[1]) as string[]) : [],
+        remove: m[2] ? [m[2]] : [],
+        rename: [] as [string, string][],
+        keys: [...(m[3] ?? m[4]).matchAll(/'(\w+)'/g)].map((k) => k[1]),
+      })),
+      ...[...later.matchAll(/UPDATE "roles" r SET "permissions" = \([\s\S]*?LEFT JOIN \(VALUES([\s\S]*?)\) m\(k, n\)/g)].map((m) => ({
+        at: m.index,
+        add: [] as string[],
+        remove: [] as string[],
+        rename: [...m[1].matchAll(/\('([\w.]+)', '([\w.]+)'\)/g)].map((p) => [p[1], p[2]] as [string, string]),
+        keys: [...ALL_KEYS],
+      })),
+    ].sort((a, b) => a.at - b.at);
     const grants = changes.filter((c) => c.add.length);
     const rows = [...sql.matchAll(/^\s*\('(\w+)', '((?:[^']|'')*)', '((?:[^']|'')*)', '(\[.*?\])'::jsonb, (\d+), '(\w+)', (\d+)\)/gm)].map((m) => ({
       key: m[1],
@@ -141,6 +154,9 @@ describe("permission catalog and templates", () => {
       for (const c of changes.filter((c) => c.keys.includes(r.key))) {
         c.add.forEach((p) => perms.add(p));
         c.remove.forEach((p) => perms.delete(p));
+        const renamed = c.rename.filter(([from]) => perms.has(from));
+        renamed.forEach(([from]) => perms.delete(from));
+        renamed.forEach(([, to]) => perms.add(to));
       }
       return { ...r, permissions: [...perms].sort() };
     });

@@ -1,8 +1,9 @@
 /**
- * Setting up marketing. The brand (marketing.manage) writes each automated campaign's wording,
- * settings, channels and coupon; a location (marketing.location) switches campaigns on for its
- * shops, can reword them there, and sends blasts to its own clients. Nobody sees a contact list
- * here: a preview is counts and a few first names.
+ * Setting up the Campaign Center. "Create" writes wording, settings, coupons and blast drafts: with
+ * access to all shops that's the brand's version of each automated campaign and blasts to every
+ * location, otherwise only their own locations' wording and blasts to their shops. "Send" switches
+ * campaigns on or off at their shops and sends, schedules or cancels blasts. Nobody sees a contact
+ * list here: a preview is counts and a few first names.
  */
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
@@ -27,6 +28,7 @@ import { couponSummary } from "@/domain/coupons";
 import { z } from "zod";
 import { audit } from "../audit";
 import { ruleOf } from "../coupons";
+import type { Permission } from "@/domain/permissions";
 import { StaffContext, assertCan, assertShopAccess, can } from "../auth/staff";
 import { clientPolicy } from "../client-privacy";
 import { AppError, forbidden, notFound } from "../errors";
@@ -38,7 +40,13 @@ import { loadMarketingSettings } from "./settings";
 
 type Campaign = typeof marketingCampaigns.$inferSelect;
 
-/** One campaign row per trigger, written the first time anyone opens marketing. */
+const ANY: Permission[] = ["campaign_center.view", "campaign_center.create", "campaign_center.send"];
+const mayCreate = (ctx: StaffContext) => can(ctx, "campaign_center.create");
+const maySend = (ctx: StaffContext) => can(ctx, "campaign_center.send");
+/** The brand's own versions: create, with access to every shop. */
+const mayBrand = (ctx: StaffContext) => mayCreate(ctx) && ctx.brandWide;
+
+/** One campaign row per trigger, written the first time anyone opens the Campaign Center. */
 export async function ensureTriggerCampaigns(tx: DBorTx = db) {
   const have = await tx.select({ trigger: marketingCampaigns.trigger }).from(marketingCampaigns).where(eq(marketingCampaigns.kind, "trigger"));
   const missing = TRIGGER_KEYS.filter((k) => !have.some((h) => h.trigger === k));
@@ -79,6 +87,16 @@ const AutomationInput = z.object({
   promoId: z.uuid().nullable().default(null),
 });
 
+const sorted = (x: unknown): unknown =>
+  x && typeof x === "object" && !Array.isArray(x)
+    ? Object.fromEntries(
+        Object.entries(x)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([k, y]) => [k, sorted(y)]),
+      )
+    : x;
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(sorted(a)) === JSON.stringify(sorted(b));
+
 const parse = <T extends z.ZodType>(s: T, input: unknown): z.infer<T> => {
   const r = s.safeParse(input);
   if (!r.success) throw new AppError("bad_request", r.error.issues[0]?.message ?? "Check the campaign");
@@ -93,7 +111,7 @@ async function campaignById(id: string): Promise<Campaign> {
 
 /** The brand's version of an automated campaign. */
 export async function saveAutomation(ctx: StaffContext, id: string, input: unknown) {
-  assertCan(ctx, "marketing.manage");
+  if (!mayBrand(ctx)) throw forbidden("Only the brand changes a campaign's wording for every location");
   const c = await campaignById(id);
   if (c.kind !== "trigger" || !isTriggerKey(c.trigger)) throw new AppError("bad_request", "That isn't an automated campaign");
   const v = parse(AutomationInput, input);
@@ -101,8 +119,11 @@ export async function saveAutomation(ctx: StaffContext, id: string, input: unkno
   const problem = templatesProblem(v.templates, v.channels, { hasCoupon: !!promo });
   if (problem) throw new AppError("bad_request", problem);
   const settings = triggerSettings(c.trigger, v.settings);
-  await db.update(marketingCampaigns).set({ name: v.name, channels: v.channels, templates: { ...v.templates }, settings, promoId: promo?.id ?? null, updatedAt: new Date() }).where(eq(marketingCampaigns.id, id));
-  await audit(ctx.actor, "marketing.automation_saved", "marketing_campaign", id, { trigger: c.trigger, channels: v.channels, settings, promoId: promo?.id ?? null }, null);
+  await db
+    .update(marketingCampaigns)
+    .set({ name: v.name, channels: v.channels, templates: { ...v.templates }, settings, promoId: promo?.id ?? null, updatedAt: new Date() })
+    .where(eq(marketingCampaigns.id, id));
+  await audit(ctx.actor, "campaign_center.automation_saved", "marketing_campaign", id, { trigger: c.trigger, channels: v.channels, settings, promoId: promo?.id ?? null }, null);
 }
 
 const LocationInput = z.object({
@@ -116,7 +137,7 @@ const LocationInput = z.object({
 
 /** On or off at one location, with that location's own wording and settings if it has them. */
 export async function setLocationAutomation(ctx: StaffContext, input: unknown) {
-  if (!can(ctx, "marketing.location") && !can(ctx, "marketing.manage")) throw forbidden("You can't change campaigns at this location");
+  if (!mayCreate(ctx) && !maySend(ctx)) throw forbidden("You can't change campaigns at this location");
   const v = parse(LocationInput, input);
   assertShopAccess(ctx, v.shopId);
   const c = await campaignById(v.campaignId);
@@ -127,11 +148,19 @@ export async function setLocationAutomation(ctx: StaffContext, input: unknown) {
   if (problem) throw new AppError("bad_request", problem);
   const settings = v.settings ? triggerSettings(c.trigger, v.settings) : null;
   const row = { enabled: v.enabled, templates: templates && Object.keys(templates).length ? (templates as Record<string, string>) : null, settings, updatedBy: ctx.staff.id, updatedAt: new Date() };
+  const [was] = await db
+    .select()
+    .from(marketingLocationSettings)
+    .where(and(eq(marketingLocationSettings.campaignId, c.id), eq(marketingLocationSettings.shopId, v.shopId)));
+  if (!!was?.enabled !== row.enabled && !maySend(ctx)) throw forbidden("Switching a campaign on or off needs Campaign Center: send");
+  if ((!sameJson(was?.templates ?? null, row.templates) || !sameJson(was?.settings ?? null, row.settings)) && !mayCreate(ctx)) {
+    throw forbidden("Changing a location's wording or settings needs Campaign Center: create");
+  }
   await db
     .insert(marketingLocationSettings)
     .values({ campaignId: c.id, shopId: v.shopId, ...row })
     .onConflictDoUpdate({ target: [marketingLocationSettings.campaignId, marketingLocationSettings.shopId], set: row });
-  await audit(ctx.actor, v.enabled ? "marketing.automation_on" : "marketing.automation_off", "marketing_campaign", c.id, { trigger: c.trigger, ownWording: !!row.templates, settings }, v.shopId);
+  await audit(ctx.actor, v.enabled ? "campaign_center.automation_on" : "campaign_center.automation_off", "marketing_campaign", c.id, { trigger: c.trigger, ownWording: !!row.templates, settings }, v.shopId);
 }
 
 export interface AutomationView {
@@ -148,7 +177,7 @@ export interface AutomationView {
 }
 
 export async function listAutomations(ctx: StaffContext): Promise<AutomationView[]> {
-  assertCan(ctx, ["marketing.view", "marketing.location", "marketing.manage"]);
+  assertCan(ctx, ANY);
   await ensureTriggerCampaigns();
   const list = await db.select().from(marketingCampaigns).where(eq(marketingCampaigns.kind, "trigger"));
   const myShops = ctx.shops.filter((s) => s.status !== "archived");
@@ -234,8 +263,8 @@ export type BlastInput = z.input<typeof BlastInput>;
 
 /** The locations a person may send to: any for the brand, only their own (and at least one) for a location. */
 function blastScope(ctx: StaffContext, shopIds: string[]): string[] {
-  if (can(ctx, "marketing.manage") && ctx.brandWide) return shopIds;
-  if (!can(ctx, "marketing.location") && !can(ctx, "marketing.manage")) throw forbidden("You can't send marketing");
+  if (!mayCreate(ctx) && !maySend(ctx)) throw forbidden("You can't use the Campaign Center");
+  if (mayBrand(ctx)) return shopIds;
   const scope = shopIds.length ? shopIds : ctx.shopIds;
   for (const s of scope) assertShopAccess(ctx, s);
   if (!scope.length) throw forbidden("Pick a location");
@@ -244,7 +273,7 @@ function blastScope(ctx: StaffContext, shopIds: string[]): string[] {
 
 function assertMayEdit(ctx: StaffContext, c: Campaign) {
   if (c.kind !== "blast") throw new AppError("bad_request", "That isn't a blast");
-  if (can(ctx, "marketing.manage") && ctx.brandWide) return;
+  if (mayBrand(ctx)) return;
   if (!c.shopIds.length || c.shopIds.some((s) => !ctx.shopIds.includes(s))) throw forbidden("This blast goes to shops outside yours");
 }
 
@@ -256,6 +285,7 @@ async function checkSegment(ctx: StaffContext, seg: Segment) {
 }
 
 export async function saveBlast(ctx: StaffContext, input: unknown): Promise<string> {
+  if (!mayCreate(ctx)) throw forbidden("Writing a blast needs Campaign Center: create");
   const v = parse(BlastInput, input);
   const shopIds = blastScope(ctx, v.shopIds);
   await checkSegment(ctx, v.segment);
@@ -268,26 +298,27 @@ export async function saveBlast(ctx: StaffContext, input: unknown): Promise<stri
     assertMayEdit(ctx, c);
     if (c.status !== "draft" && c.status !== "scheduled") throw new AppError("conflict", "This blast already went out");
     await db.update(marketingCampaigns).set(row).where(eq(marketingCampaigns.id, c.id));
-    await audit(ctx.actor, "marketing.blast_saved", "marketing_campaign", c.id, { name: v.name, channels: v.channels, shopIds }, shopIds.length === 1 ? shopIds[0] : null);
+    await audit(ctx.actor, "campaign_center.blast_saved", "marketing_campaign", c.id, { name: v.name, channels: v.channels, shopIds }, shopIds.length === 1 ? shopIds[0] : null);
     return c.id;
   }
   const [c] = await db
     .insert(marketingCampaigns)
     .values({ kind: "blast", status: "draft", createdBy: ctx.staff.id, ...row })
     .returning({ id: marketingCampaigns.id });
-  await audit(ctx.actor, "marketing.blast_created", "marketing_campaign", c.id, { name: v.name, channels: v.channels, shopIds }, shopIds.length === 1 ? shopIds[0] : null);
+  await audit(ctx.actor, "campaign_center.blast_created", "marketing_campaign", c.id, { name: v.name, channels: v.channels, shopIds }, shopIds.length === 1 ? shopIds[0] : null);
   return c.id;
 }
 
 /** Send it at `at`, or now. Sending now runs it straight away; the queue delivers outside quiet hours. */
 export async function scheduleBlast(ctx: StaffContext, id: string, at: Date | null, now = new Date()) {
+  if (!maySend(ctx)) throw forbidden("Sending a blast needs Campaign Center: send");
   const c = await campaignById(id);
   assertMayEdit(ctx, c);
   if (c.status !== "draft" && c.status !== "scheduled") throw new AppError("conflict", "This blast already went out");
   if (at && at.getTime() < now.getTime() - 60_000) throw new AppError("bad_request", "Pick a time in the future");
   const when = at ?? now;
   await db.update(marketingCampaigns).set({ status: "scheduled", scheduledAt: when, updatedAt: now }).where(eq(marketingCampaigns.id, id));
-  await audit(ctx.actor, at ? "marketing.blast_scheduled" : "marketing.blast_sent", "marketing_campaign", id, { at: when.toISOString() }, c.shopIds.length === 1 ? c.shopIds[0] : null);
+  await audit(ctx.actor, at ? "campaign_center.blast_scheduled" : "campaign_center.blast_sent", "marketing_campaign", id, { at: when.toISOString() }, c.shopIds.length === 1 ? c.shopIds[0] : null);
   if (at) return { queued: 0, skipped: 0, failed: 0 };
   const stats = await runBlasts(now, { ids: [id] });
   await processDueJobs({ now, shopIds: c.shopIds.length ? c.shopIds : undefined });
@@ -298,8 +329,10 @@ export async function cancelBlast(ctx: StaffContext, id: string) {
   const c = await campaignById(id);
   assertMayEdit(ctx, c);
   if (c.status !== "scheduled" && c.status !== "draft") throw new AppError("conflict", "This blast already went out");
+  if (c.status === "scheduled" ? !maySend(ctx) : !mayCreate(ctx))
+    throw forbidden(c.status === "scheduled" ? "Cancelling a scheduled blast needs Campaign Center: send" : "Discarding a draft needs Campaign Center: create");
   await db.update(marketingCampaigns).set({ status: "cancelled", updatedAt: new Date() }).where(eq(marketingCampaigns.id, id));
-  await audit(ctx.actor, "marketing.blast_cancelled", "marketing_campaign", id, {}, c.shopIds.length === 1 ? c.shopIds[0] : null);
+  await audit(ctx.actor, "campaign_center.blast_cancelled", "marketing_campaign", id, {}, c.shopIds.length === 1 ? c.shopIds[0] : null);
 }
 
 export interface BlastView {
@@ -318,7 +351,7 @@ export interface BlastView {
 }
 
 export async function listBlasts(ctx: StaffContext): Promise<BlastView[]> {
-  assertCan(ctx, ["marketing.view", "marketing.location", "marketing.manage"]);
+  assertCan(ctx, ANY);
   const rows = await db.select().from(marketingCampaigns).where(eq(marketingCampaigns.kind, "blast")).orderBy(desc(marketingCampaigns.createdAt)).limit(200);
   const visible = rows.filter((c) => ctx.brandWide || (c.shopIds.length > 0 && c.shopIds.some((s) => ctx.shopIds.includes(s))));
   const counts = visible.length
@@ -348,7 +381,7 @@ export async function listBlasts(ctx: StaffContext): Promise<BlastView[]> {
     scheduledAt: c.scheduledAt,
     sentAt: c.sentAt,
     sent: counts.find((x) => x.id === c.id)?.n ?? 0,
-    mayEdit: (c.status === "draft" || c.status === "scheduled") && (ctx.brandWide ? can(ctx, "marketing.manage") : c.shopIds.length > 0 && c.shopIds.every((s) => ctx.shopIds.includes(s))),
+    mayEdit: (c.status === "draft" || c.status === "scheduled") && (mayCreate(ctx) || maySend(ctx)) && (mayBrand(ctx) || (c.shopIds.length > 0 && c.shopIds.every((s) => ctx.shopIds.includes(s)))),
   }));
 }
 
@@ -366,7 +399,14 @@ export async function previewBlast(ctx: StaffContext, input: unknown, now = new 
   const v = parse(BlastInput.pick({ segment: true, shopIds: true, channels: true }), input);
   const shopIds = blastScope(ctx, v.shopIds);
   await checkSegment(ctx, v.segment);
-  const scope = shopIds.length ? shopIds : (await db.select({ id: shops.id }).from(shops).where(sql`${shops.status} <> 'archived'`)).map((s) => s.id);
+  const scope = shopIds.length
+    ? shopIds
+    : (
+        await db
+          .select({ id: shops.id })
+          .from(shops)
+          .where(sql`${shops.status} <> 'archived'`)
+      ).map((s) => s.id);
   const members = await segmentMembers(v.segment, scope, now);
   const contacts = await contactsFor(members.map((m) => m.customerId));
   const settings = await loadMarketingSettings();
@@ -384,7 +424,7 @@ export async function previewBlast(ctx: StaffContext, input: unknown, now = new 
 
 /** A test of a campaign's wording to the person's own phone or email. */
 export async function sendTest(ctx: StaffContext, o: { campaignId: string; shopId: string; channel: Channel; templates?: unknown }) {
-  if (!can(ctx, "marketing.location") && !can(ctx, "marketing.manage")) throw forbidden("You can't send marketing");
+  if (!mayCreate(ctx) && !maySend(ctx)) throw forbidden("You can't use the Campaign Center");
   assertShopAccess(ctx, o.shopId);
   const c = await campaignById(o.campaignId);
   if (c.kind === "blast") assertMayEdit(ctx, c);
@@ -394,6 +434,6 @@ export async function sendTest(ctx: StaffContext, o: { campaignId: string; shopI
   if (!shop || !me) throw notFound("Location");
   const r = await testSend({ campaign: c, shop, channel: o.channel, to: { staffId: me.id, firstName: me.firstName, phone: me.phone, email: me.email }, templates });
   if (!r.ok) throw new AppError("bad_request", r.problem);
-  await audit(ctx.actor, "marketing.test_sent", "marketing_campaign", c.id, { channel: o.channel }, o.shopId);
+  await audit(ctx.actor, "campaign_center.test_sent", "marketing_campaign", c.id, { channel: o.channel }, o.shopId);
   return r;
 }

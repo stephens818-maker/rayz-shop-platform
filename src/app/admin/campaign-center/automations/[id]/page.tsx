@@ -13,21 +13,21 @@ export const metadata: Metadata = { title: "Campaign" };
 export const dynamic = "force-dynamic";
 
 export default async function AutomationPage({ params }: { params: Promise<{ id: string }> }) {
-  const ctx = await guardPage("/admin/marketing/automations/[id]");
+  const ctx = await guardPage("/admin/campaign-center/automations/[id]");
   const { id } = await params;
   const [list, settings, coupons] = await Promise.all([listAutomations(ctx), loadMarketingSettings(), couponOptions(todayLocal())]);
   const a = list.find((x) => x.id === id);
   if (!a || !isTriggerKey(a.trigger)) notFound();
-  const mayManage = can(ctx, "marketing.manage");
-  const mayLocation = mayManage || can(ctx, "marketing.location");
+  const mayWrite = can(ctx, "campaign_center.create");
+  const maySwitch = can(ctx, "campaign_center.send");
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
         title={a.name}
         subtitle={
           <>
-            <Link href="/admin/marketing" className="underline">
-              Marketing
+            <Link href="/admin/campaign-center" className="underline">
+              Campaign Center
             </Link>{" "}
             · {a.when}
           </>
@@ -38,8 +38,9 @@ export default async function AutomationPage({ params }: { params: Promise<{ id:
         locations={a.locations}
         coupons={coupons}
         address={settings.address}
-        mayManage={mayManage}
-        mayLocation={mayLocation}
+        mayBrand={mayWrite && ctx.brandWide}
+        mayWrite={mayWrite}
+        maySwitch={maySwitch}
       />
     </div>
   );

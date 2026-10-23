@@ -1,5 +1,5 @@
 /**
- * Marketing / Engage rules, kept pure: the automated campaigns and their settings, the message
+ * Campaign Center rules, kept pure: the automated campaigns and their settings, the message
  * templates and merge fields, quiet hours in the shop's time zone, frequency caps, which channel a
  * client hears on, the segment builder's filters and the report's ROI. The engine in
  * src/server/marketing gathers the facts and these decide.

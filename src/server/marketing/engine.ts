@@ -1,5 +1,5 @@
 /**
- * Sends marketing. Run by the cron job (/api/cron/marketing) and the local worker. Every message is
+ * Sends marketing. Run by the cron job (/api/cron/campaign-center) and the local worker. Every message is
  * one marketing_sends row whose dedupe key (campaign, client, occasion) is unique, so a second run,
  * or two at once, never sends twice. Only clients who agreed to marketing on a channel get it there,
  * never more than the brand's weekly and monthly caps, and never in quiet hours: a message due then

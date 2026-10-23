@@ -5,7 +5,7 @@ const STOCK_VIEW: Permission[] = ["inventory.manage", "inventory.adjust", "inven
 const PURCHASING: Permission[] = ["po.create", "po.approve", "po.send", "po.receive"];
 const CALL_INS: Permission[] = ["callins.mark", "callins.mark_own", "callins.outreach", "callins.voice"];
 const TIMESHEETS: Permission[] = ["timesheet.own", "timesheet.edit", "timesheet.approve", "payroll.export"];
-const MARKETING: Permission[] = ["marketing.view", "marketing.location", "marketing.manage"];
+const CAMPAIGN_CENTER: Permission[] = ["campaign_center.view", "campaign_center.create", "campaign_center.send"];
 
 /**
  * What each admin page needs: any one of the listed permissions, or null for any signed-in staff
@@ -83,11 +83,11 @@ export const PAGE_ACCESS = {
   "/admin/timesheets": TIMESHEETS,
   "/admin/timesheets/[staffId]": TIMESHEETS,
   "/admin/time-clock": ["payroll.run", "settings.shop"],
-  "/admin/marketing": MARKETING,
-  "/admin/marketing/automations/[id]": MARKETING,
-  "/admin/marketing/blasts": MARKETING,
-  "/admin/marketing/blasts/[id]": MARKETING,
-  "/admin/marketing/settings": ["marketing.manage"],
+  "/admin/campaign-center": CAMPAIGN_CENTER,
+  "/admin/campaign-center/automations/[id]": CAMPAIGN_CENTER,
+  "/admin/campaign-center/blasts": CAMPAIGN_CENTER,
+  "/admin/campaign-center/blasts/[id]": CAMPAIGN_CENTER,
+  "/admin/campaign-center/settings": CAMPAIGN_CENTER,
   "/admin/reports": REPORTS.map((r) => reportView(r.key)),
   ...(Object.fromEntries(REPORTS.map((r) => [r.href, [reportView(r.key)]])) as Record<(typeof REPORTS)[number]["href"], Permission[]>),
 } satisfies Record<string, readonly Permission[] | null>;
@@ -139,11 +139,11 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     ],
   },
   {
-    title: "Marketing",
+    title: "Campaign Center",
     items: [
-      { href: "/admin/marketing", label: "Campaigns" },
-      { href: "/admin/marketing/blasts", label: "Blasts" },
-      { href: "/admin/marketing/settings", label: "Marketing rules" },
+      { href: "/admin/campaign-center", label: "Campaigns" },
+      { href: "/admin/campaign-center/blasts", label: "Blasts" },
+      { href: "/admin/campaign-center/settings", label: "Settings" },
     ],
   },
   {

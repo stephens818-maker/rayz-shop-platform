@@ -79,7 +79,7 @@ export const brandSettings = pgTable("brand_settings", {
   handoff: jsonb("handoff").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** When the Google review link is shown (ReviewRules in src/domain/reviews.ts): from visit N, and the pause after a tap. */
   reviews: jsonb("reviews").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
-  /** Marketing rules (MarketingSettings in src/domain/marketing.ts): quiet hours, frequency caps, the postal address, attribution, costs. */
+  /** Campaign Center settings (MarketingSettings in src/domain/marketing.ts): quiet hours, frequency caps, the postal address, attribution, costs. */
   marketing: jsonb("marketing").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
@@ -2590,7 +2590,7 @@ export const digestSends = pgTable(
   (t) => [primaryKey({ columns: [t.date, t.staffId] })],
 );
 
-// ───────────────────────────── Marketing / Engage ─────────────────────────────
+// ───────────────────────────── Campaign Center ─────────────────────────────
 
 export type CampaignKind = "trigger" | "blast";
 export type BlastStatus = "draft" | "scheduled" | "sending" | "sent" | "cancelled";

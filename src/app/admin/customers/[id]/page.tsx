@@ -292,7 +292,7 @@ export default async function CustomerPage({
           )}
           {full && (
             <Card>
-              <CardHeader title="Tags" subtitle="For marketing segments, e.g. VIP or Student." />
+              <CardHeader title="Tags" subtitle="For Campaign Center segments, e.g. VIP or Student." />
               <ClientTags customerId={c.id} tags={tags.map((t) => t.tag)} known={knownTags.map((t) => t.tag)} canEdit={can(ctx, "clients.edit")} />
             </Card>
           )}

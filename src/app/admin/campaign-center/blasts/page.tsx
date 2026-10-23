@@ -19,10 +19,10 @@ const STATUS: Record<string, { label: string; tone: "gray" | "green" | "blue" | 
 };
 
 export default async function BlastsPage() {
-  const ctx = await guardPage("/admin/marketing/blasts");
+  const ctx = await guardPage("/admin/campaign-center/blasts");
   const list = await listBlasts(ctx);
   const shops = openShops(ctx);
-  const maySend = can(ctx, "marketing.location") || can(ctx, "marketing.manage");
+  const mayCreate = can(ctx, "campaign_center.create");
   const where = (ids: string[]) => (ids.length ? ids.map((id) => shops.find((s) => s.id === id)?.name ?? OTHER_SHOP).join(", ") : "Every location");
   return (
     <div className="mx-auto max-w-6xl space-y-5">
@@ -30,13 +30,13 @@ export default async function BlastsPage() {
         title="Blasts"
         subtitle={
           <>
-            <Link href="/admin/marketing" className="underline">
-              Marketing
+            <Link href="/admin/campaign-center" className="underline">
+              Campaign Center
             </Link>{" "}
             · One-off messages to a segment of clients who agreed to marketing. Each client gets it once, on the first channel they agreed to.
           </>
         }
-        actions={maySend && <LinkButton href="/admin/marketing/blasts/new">New blast</LinkButton>}
+        actions={mayCreate && <LinkButton href="/admin/campaign-center/blasts/new">New blast</LinkButton>}
       />
       <Card>
         {list.length ? (
@@ -55,7 +55,7 @@ export default async function BlastsPage() {
               {list.map((b) => (
                 <tr key={b.id}>
                   <Td>
-                    <Link href={`/admin/marketing/blasts/${b.id}`} className="font-semibold hover:underline">
+                    <Link href={`/admin/campaign-center/blasts/${b.id}`} className="font-semibold hover:underline">
                       {b.name}
                     </Link>
                   </Td>
@@ -71,7 +71,7 @@ export default async function BlastsPage() {
             </tbody>
           </Table>
         ) : (
-          <Empty title="No blasts yet">{maySend ? "Write one, pick who gets it, preview the count and send a test to yourself first." : "Blasts your locations send show up here."}</Empty>
+          <Empty title="No blasts yet">{mayCreate ? "Write one, pick who gets it, preview the count and send a test to yourself first." : "Blasts your locations send show up here."}</Empty>
         )}
       </Card>
     </div>

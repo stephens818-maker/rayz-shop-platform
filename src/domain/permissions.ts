@@ -3,7 +3,7 @@
  * permissions are worked out, and who may grant what. Server code loads the rows and calls these.
  */
 
-export const PERMISSION_GROUPS = ["Front desk", "Point of sale", "Clients", "Marketing", "Catalog and inventory", "Staff", "Settings and data"] as const;
+export const PERMISSION_GROUPS = ["Front desk", "Point of sale", "Clients", "Campaign Center", "Catalog and inventory", "Staff", "Settings and data"] as const;
 export type PermissionGroup = (typeof PERMISSION_GROUPS)[number];
 
 interface PermissionDef {
@@ -112,24 +112,29 @@ export const FEATURE_PERMISSIONS = [
     label: "Text clients about open chairs and overdue rebooks",
     hint: "From Today. Only clients who agreed to marketing texts or emails, outside quiet hours, and never the same client twice in a week.",
   },
-  { key: "marketing.view", group: "Marketing", label: "See marketing campaigns, coupons and what they sent" },
   {
-    key: "marketing.location",
-    group: "Marketing",
-    label: "Turn automated campaigns on or off at their shops, edit their wording there, and send blasts to their shops' clients",
-    hint: "Only to clients who agreed to marketing, outside quiet hours and within the brand's frequency limits. They see counts, never contact lists.",
+    key: "campaign_center.view",
+    group: "Campaign Center",
+    label: "Campaign Center: view",
+    hint: "See automated campaigns, blasts and what they sent at their shops. Counts only, never contact lists.",
   },
   {
-    key: "marketing.manage",
-    group: "Marketing",
-    label: "Set up the brand's campaigns and marketing rules: wording, coupons, quiet hours, frequency limits, the postal address",
-    brandOnly: true,
+    key: "campaign_center.create",
+    group: "Campaign Center",
+    label: "Campaign Center: create",
+    hint: "Write campaign wording, pick coupons, draft blasts and send tests. With access to all shops, also the brand's version of each campaign, blasts to every location and the Campaign Center settings: quiet hours, frequency limits, the postal address.",
   },
   {
-    key: "marketing.export",
-    group: "Marketing",
-    label: "Export a campaign audience's contact list",
-    hint: "Off for everyone but the Brand Owner unless granted. Details are exported as Client data lets them see them, and every export is logged.",
+    key: "campaign_center.send",
+    group: "Campaign Center",
+    label: "Campaign Center: send",
+    hint: "Switch automated campaigns on or off at their shops, and send, schedule or cancel blasts. Only to clients who agreed to marketing, outside quiet hours and within the brand's frequency limits.",
+  },
+  {
+    key: "campaign_center.export",
+    group: "Campaign Center",
+    label: "Campaign Center: export",
+    hint: "Export a campaign audience's contact list. Off for everyone but the Brand Owner unless granted. Details are exported as Client data lets them see them, and every export is logged.",
     brandOnly: true,
   },
   { key: "catalog.prices", group: "Catalog and inventory", label: "Edit services and prices at their shops" },
@@ -308,9 +313,9 @@ export const REPORTS = [
     hint: "Review follow-ups sent and clicks on each location's Google review link, from receipts and follow-ups, by location and barber.",
   },
   {
-    key: "marketing",
-    label: "Marketing campaigns",
-    href: "/admin/reports/marketing",
+    key: "campaign_center",
+    label: "Campaign Center",
+    href: "/admin/reports/campaign-center",
     hint: "Per campaign, location and barber: messages sent and delivered, clicks, bookings, coupon redemptions, attributed revenue, ROI and unsubscribes.",
   },
   {
@@ -430,8 +435,9 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "notifications.view",
   "reports.all_staff",
   "clients.campaigns",
-  "marketing.view",
-  "marketing.location",
+  "campaign_center.view",
+  "campaign_center.create",
+  "campaign_center.send",
   "timeclock.punch",
   "timeclock.kiosk",
   "timesheet.own",
@@ -465,7 +471,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     name: "Brand Admin",
     description: "Runs the whole brand day to day. Everything except brand-level settings and granting Brand Owner.",
     defaultScope: "all",
-    permissions: ALL_PERMISSIONS.filter((p) => !OWNER_ONLY.has(p) && !OWNER_GRANTS.has(p) && p !== "clients.export" && p !== "marketing.export"),
+    permissions: ALL_PERMISSIONS.filter((p) => !OWNER_ONLY.has(p) && !OWNER_GRANTS.has(p) && p !== "clients.export" && p !== "campaign_center.export"),
     maxDiscountPct: 100,
   },
   {
