@@ -12,6 +12,7 @@ import {
   accessByShop,
   cleanOverrides,
   effectiveAccess,
+  sameAccess,
   unionAccess,
 } from "@/domain/permissions";
 
@@ -77,6 +78,29 @@ export function atShop(a: StaffAccess, shopId: string): StaffAccess {
   const here = a.byShop.get(shopId);
   if (!here) return { ...a, permissions: new Set(), maxDiscountPct: 0, shopIds: [], shops: [] };
   return { ...a, ...here, role: a.role, shopIds: [shopId], shops: a.shops.filter((s) => s.id === shopId) };
+}
+
+/**
+ * The same person with some of their shops out of reach (a location's sign-in restriction). Brand-only
+ * permissions work on records every shop shares, so losing any shop takes them away too.
+ */
+export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAccess {
+  if (!drop.size || !a.shopIds.some((id) => drop.has(id))) return a;
+  const narrow = <T extends Access>(x: T): T => (a.scope === "all" ? { ...x, permissions: new Set([...x.permissions].filter((p) => !BRAND_ONLY.has(p))) } : x);
+  const byShop = new Map([...a.byShop].filter(([id]) => !drop.has(id)).map(([id, x]) => [id, narrow(x)] as const));
+  const list = [...byShop.values()];
+  const union: Access = list.length ? unionAccess(list) : { isOwner: false, permissions: new Set(), maxDiscountPct: 0 };
+  return {
+    ...a,
+    ...union,
+    scope: a.scope === "all" ? "selected" : a.scope,
+    shopIds: a.shopIds.filter((id) => !drop.has(id)),
+    shops: a.shops.filter((s) => !drop.has(s.id)),
+    byShop,
+    shopRoles: Object.fromEntries(Object.entries(a.shopRoles).filter(([id]) => !drop.has(id))),
+    uniform: list.every((x) => sameAccess(x, list[0])),
+    needsAllShops: a.scope === "all" ? [...a.permissions].filter((p) => BRAND_ONLY.has(p)) : a.needsAllShops,
+  };
 }
 
 export const grantor = (a: Pick<StaffAccess, "staffId" | "isOwner" | "permissions" | "maxDiscountPct" | "scope" | "shopIds">): Grantor => ({

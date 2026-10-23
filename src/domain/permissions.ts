@@ -126,6 +126,18 @@ export const FEATURE_PERMISSIONS = [
   { key: "permissions.manage", group: "Staff", label: "Manage roles, permissions and shop access" },
   { key: "logins.manage", group: "Staff", label: "Create and disable shop logins and reset their passwords", hint: "For the shops in their access." },
   {
+    key: "access.remote",
+    group: "Staff",
+    label: "Can access remotely: sign in from anywhere, even at locations that only allow sign-in from the shop",
+    hint: "Exempt from each location's network and device rule. Only the Brand Admin role has it to start; give it to the managers who work from home.",
+  },
+  {
+    key: "devices.approve",
+    group: "Staff",
+    label: "Approve trusted devices for signing in at their shops",
+    hint: "For locations that accept approved devices. Never a device they asked for themselves.",
+  },
+  {
     key: "reports.all_staff",
     group: "Staff",
     label: "See every barber's numbers in reports",
@@ -217,6 +229,13 @@ export const FEATURE_PERMISSIONS = [
     brandOnly: true,
   },
   { key: "settings.lists", group: "Settings and data", label: "Edit client message wording, pick lists and the morning digest", brandOnly: true },
+  {
+    key: "network.settings",
+    group: "Settings and data",
+    label: "Set where staff can sign in from: each location's allowed networks and devices",
+    hint: "Turn each location's sign-in restriction on or off, edit its allowed IPs, approve or remove devices at any shop, and set the blocked sign-in alert.",
+    brandOnly: true,
+  },
 ] as const satisfies readonly PermissionDef[];
 
 export type FeaturePermission = (typeof FEATURE_PERMISSIONS)[number]["key"];
@@ -372,6 +391,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "timesheet.approve",
   "tips.own",
   "tips.approve",
+  "devices.approve",
 ];
 /** Regional managers also approve big orders and run the shop logins for their shops. */
 const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "logins.manage", "po.approve"];

@@ -253,6 +253,13 @@
       "when": 1792860000000,
       "tag": "core_0035_scrub_sensitive",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792946400000,
+      "tag": "core_0036_network_access",
+      "breakpoints": true
     }
   ]
 }

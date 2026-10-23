@@ -73,6 +73,8 @@ export const brandSettings = pgTable("brand_settings", {
   timeClock: jsonb("time_clock").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Tip payout policy for the brand (BrandTipPolicy in src/domain/tips.ts): allowed methods, employee choice, instant payouts. */
   tipPayouts: jsonb("tip_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Sign-in restriction settings for the brand (BrandNetworkSettings in src/domain/network-access.ts): the blocked sign-in alert. */
+  networkAccess: jsonb("network_access").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -156,6 +158,8 @@ export const shops = pgTable("shops", {
   timeClock: jsonb("time_clock").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** When and how this shop pays out tips (ShopTipSettings in src/domain/tips.ts); missing keys use the defaults. */
   tipPayouts: jsonb("tip_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Where staff may sign in to this shop from (ShopNetworkRule in src/domain/network-access.ts); empty is no restriction. */
+  networkAccess: jsonb("network_access").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
@@ -1677,7 +1681,11 @@ export const auditLog = pgTable(
     entityId: text("entity_id"),
     details: jsonb("details"),
   },
-  (t) => [index("audit_shop_at_idx").on(t.shopId, t.at), index("audit_entity_idx").on(t.entity, t.entityId)],
+  (t) => [
+    index("audit_shop_at_idx").on(t.shopId, t.at),
+    index("audit_entity_idx").on(t.entity, t.entityId),
+    index("audit_network_at_idx").on(t.at).where(sql`${t.action} like 'network.%'`),
+  ],
 );
 
 export interface ImportRowError {
@@ -1922,6 +1930,41 @@ export const clockDevices = pgTable("clock_devices", {
   revokedAt: ts("revoked_at"),
   createdAt: createdAt(),
 });
+
+export type TrustedDeviceStatus = "pending" | "approved" | "declined" | "revoked";
+
+/**
+ * A browser approved for signing in at a shop whose sign-in restriction accepts devices. The browser
+ * holds a signed long-lived cookie with the device's ID and a secret; only the secret's hash is
+ * stored, so a database copy can't be turned into a cookie, and revoking the row ends it at once.
+ */
+export const trustedDevices = pgTable(
+  "trusted_devices",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    /** One browser approved for two shops has a row for each, with the same hash. */
+    tokenHash: text("token_hash").notNull(),
+    status: text("status").$type<TrustedDeviceStatus>().notNull().default("pending"),
+    /** Who asked for it (a blocked sign-in on this browser), or who approved it while signed in on it. */
+    requestedBy: uuid("requested_by").references(() => staff.id, { onDelete: "set null" }),
+    requestedIp: text("requested_ip"),
+    userAgent: text("user_agent"),
+    decidedBy: uuid("decided_by").references(() => staff.id, { onDelete: "set null" }),
+    decidedAt: ts("decided_at"),
+    lastSeenAt: ts("last_seen_at"),
+    lastIp: text("last_ip"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("trusted_devices_token_shop_uq").on(t.tokenHash, t.shopId),
+    index("trusted_devices_shop_idx").on(t.shopId, t.status),
+    check("trusted_devices_status", sql`${t.status} in ('pending', 'approved', 'declined', 'revoked')`),
+  ],
+);
 
 /**
  * One clock punch: in, out, or a break starting or ending, at the shop where it happened, with how it

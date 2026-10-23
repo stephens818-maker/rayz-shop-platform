@@ -1,7 +1,7 @@
 import "server-only";
 import bcrypt from "bcryptjs";
 import { and, eq } from "drizzle-orm";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { db } from "@/db";
@@ -11,14 +11,17 @@ import { AdminPage, PAGE_ACCESS } from "@/domain/navigation";
 import { Permission, ShopScope } from "@/domain/permissions";
 import { RatingViewer } from "@/domain/ratings";
 import { Actor } from "@/server/audit";
+import type { NetworkManager } from "@/server/sign-in-security";
 import { forbidden } from "@/server/errors";
+import { clientIp } from "@/lib/client-ip";
 import { assertShop } from "@/server/tenant";
-import { StaffAccess, accessFor, atShop, grantor } from "./access";
+import { StaffAccess, accessFor, atShop, grantor, withoutShops } from "./access";
+import { SESSION_COOKIE, SHOP_COOKIE, TRUSTED_DEVICE_COOKIE } from "./cookies";
+import { approvedShopIds, devicesFromCookie, evaluateNetwork } from "./network";
 import type { Caller } from "./policy";
 import { signToken, verifyToken } from "./tokens";
 
-export const SESSION_COOKIE = "rayz_session";
-export const SHOP_COOKIE = "rayz_shop";
+export { SESSION_COOKIE, SHOP_COOKIE };
 const SESSION_TTL = 60 * 60 * 12;
 
 export interface StaffContext {
@@ -66,7 +69,11 @@ export async function endSession() {
   jar.delete(SHOP_COOKIE);
 }
 
-/** Permissions are read from the database on every request, so a change applies at once. */
+/**
+ * Permissions are read from the database on every request, so a change applies at once. So is each
+ * location's sign-in restriction: shops this request can't reach are left out, and with none left
+ * there's no session.
+ */
 export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
@@ -82,7 +89,11 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   const me = row.s;
   // Token times are whole seconds, so a sign-in in the same second as a reset stays valid.
   if (me.sessionsValidAfter && (payload.iat ?? 0) < Math.floor(me.sessionsValidAfter.getTime() / 1000)) return null;
-  const assigned = await accessFor(me, row.r);
+  const all = await accessFor(me, row.r);
+  const device = await devicesFromCookie(jar.get(TRUSTED_DEVICE_COOKIE)?.value);
+  const verdict = await evaluateNetwork(all, { ip: clientIp(await headers()), deviceShopIds: approvedShopIds(device) });
+  if (verdict.full) return null;
+  const assigned = withoutShops(all, new Set(verdict.blocked.map((b) => b.shopId)));
   const combinedView = assigned.uniform && assigned.shopIds.length > 1;
   const pref = jar.get(SHOP_COOKIE)?.value;
   const open = assigned.shops.filter((s) => s.status !== "archived");
@@ -198,6 +209,15 @@ export const blockCaller = (ctx: StaffContext) => ({ ...caller(ctx), blocksOwn: 
 
 /** For showReason: private reasons are masked unless they may see them or it's their own. */
 export const reasonViewer = (ctx: StaffContext): ReasonViewer => ({ staffId: ctx.staff.id, seesPrivate: can(ctx, "blocks.private") });
+
+/** For the sign-in restriction: the brand sets rules, managers approve devices at their shops. */
+export const networkManager = (ctx: StaffContext): NetworkManager => ({
+  actor: ctx.actor,
+  staffId: ctx.staff.id,
+  shopIds: ctx.shopIds,
+  canSetRules: can(ctx, "network.settings"),
+  canApprove: can(ctx, "devices.approve"),
+});
 
 /** For time off decisions and cancellations. */
 export const approverOf = (ctx: StaffContext) => ({ ...caller(ctx), canApprove: can(ctx, "timeoff.approve"), isOwner: ctx.isOwner, actor: ctx.actor });

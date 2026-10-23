@@ -19,6 +19,8 @@ export type NotificationKind =
   | "staff_text"
   | "staff_call"
   | "privacy_alert"
+  /** A sign-in blocked by a location's network or device rule, to the brand. */
+  | "access_alert"
   | "time_off_reschedule"
   | "time_off_decision"
   /** Call-in outreach: moved to another barber, a rebook link, an automated call, and the link texted after pressing 1. */

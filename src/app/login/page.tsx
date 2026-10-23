@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/ui";
 import { demoMode } from "@/lib/deployment";
+import { deviceRequestShops } from "./actions";
 import { DemoLogin, LoginForm } from "./form";
 
 export const metadata: Metadata = { title: "Staff sign in" };
@@ -13,8 +14,9 @@ const DEMO_LOGINS: DemoLogin[] = [
   { email: "makenna@rayz.test", who: "Makenna, barber", sees: "her own column, clients and sales" },
 ];
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
-  const { next } = await searchParams;
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; blocked?: string }> }) {
+  const { next, blocked } = await searchParams;
+  const deviceShops = await deviceRequestShops();
   const showDemo = demoMode() || process.env.NODE_ENV !== "production" || process.env.SHOW_DEMO_LOGINS === "true";
   return (
     <div className="grid min-h-dvh place-items-center bg-ink-900 px-4 py-10">
@@ -27,7 +29,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <div className="rounded-2xl bg-white p-6 shadow-xl">
           <h1 className="text-lg font-semibold">Staff sign in</h1>
           <p className="mt-1 text-sm text-zinc-500">Owners, managers and barbers.</p>
-          <LoginForm next={next ?? ""} demo={showDemo ? { password: process.env.SEED_PASSWORD ? null : "rayz2026!", logins: DEMO_LOGINS } : undefined} />
+          <LoginForm next={next ?? ""} blocked={blocked ? { deviceShops } : undefined} demo={showDemo ? { password: process.env.SEED_PASSWORD ? null : "rayz2026!", logins: DEMO_LOGINS } : undefined} />
         </div>
       </div>
     </div>

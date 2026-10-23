@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { z } from "zod";
+import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
 import { forbidden } from "@/server/errors";
@@ -15,10 +16,8 @@ const Photo = z.string().max(400_000).nullable();
 const BreakPlan = { breakReasonId: z.uuid().nullable().optional(), plannedMin: z.number().int().nullable().optional() };
 type BreakPlanInput = { breakReasonId?: string | null; plannedMin?: number | null };
 
-/** The caller's public address as the hosting proxy reports it (Vercel sets x-forwarded-for; its first entry is the client). */
 async function requestIp(): Promise<string | null> {
-  const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip")?.trim() || null;
+  return clientIp(await headers());
 }
 
 async function thisDevice() {

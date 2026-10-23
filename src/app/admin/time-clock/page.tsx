@@ -3,6 +3,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { Card, CardHeader, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
 import { EXPORT_FIELDS, mappingText } from "@/domain/time-clock";
+import { clientIp } from "@/lib/client-ip";
 import { formatDateTime } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { loadSettings } from "@/server/payroll/run";
@@ -16,8 +17,7 @@ export default async function TimeClockSetupPage() {
   const brand = can(ctx, "payroll.run");
   const shopLevel = can(ctx, "settings.shop");
   const mine = openShops(ctx).map((s) => s.id);
-  const h = await headers();
-  const myIp = h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip")?.trim() || null;
+  const myIp = clientIp(await headers());
   const [rules, pay, clocks, devices] = await Promise.all([loadClockRules(), brand ? loadSettings() : null, shopLevel ? shopClocks(mine) : [], shopLevel ? listDevices(mine) : []]);
   return (
     <div className="mx-auto max-w-4xl space-y-4">
