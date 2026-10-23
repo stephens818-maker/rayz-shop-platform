@@ -215,7 +215,7 @@ export function RulesEditor({
     <Card>
       <CardHeader
         title="Rules"
-        subtitle="Limits on what barbers block for themselves, how much notice time off needs (sick time is exempt), and who approves it. Blank follows the brand. Managers blocking someone else's time aren't held to the limits."
+        subtitle="Limits on what barbers block for themselves, how much notice time off needs (reasons set to need no notice, like Sick, are exempt), and who approves it. Blank follows the brand. Managers blocking someone else's time aren't held to the limits."
       />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

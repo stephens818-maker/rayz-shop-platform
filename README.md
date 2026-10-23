@@ -375,6 +375,7 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   - **Private** (Doctor and Sick to start): people without `blocks.private` see just "Blocked", or "Time off", in neutral gray with no note. The barber always sees their own. The masking is done on the server, so the label and note never reach their browser.
   - The day and week calendars write the reason on the shaded block in its color, with the note on longer blocks; hovering or tapping shows the full note. The week view (**Week** on the calendar) shows one barber's seven days.
   - Customers booking online never see a reason: the time just isn't offered.
+  - Upgrading (migration `core_0024_block_reasons`) maps existing entries by category and reason text. An old entry whose text matches no reason keeps that text as its label, in gray, and isn't private.
 - **Recurring blocks** are written ahead about a year (380 days). The notifications cron, or `pnpm worker`, keeps extending them. Removing one occurrence skips that day only.
 - **Approval:**
   - The brand sets **automatic** or **manager** approval, and a shop can override it. Moline is seeded as automatic.
@@ -391,7 +392,7 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   - who's off that month;
   - recently decided requests;
   - the rules.
-- **Rules**, per brand with shop overrides: approval mode, longest lunch (60 min), longest block (120 min), and minimum notice (7 days; sick time can be the same day). Time at several shops follows the strictest shop. People with `blocks.others` aren't held to the block limits.
+- **Rules**, per brand with shop overrides: approval mode, longest lunch (60 min), longest block (120 min), and minimum notice (7 days; reasons with **No notice needed**, like Sick, can be the same day). Time at several shops follows the strictest shop. People with `blocks.others` aren't held to the block limits.
 - **Permissions**, each set separately:
   - `blocks.own`: block your own time.
   - `blocks.others`: block anyone's time at your shops.
