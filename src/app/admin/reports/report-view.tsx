@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
 import { reportFor, reportsFor } from "@/domain/navigation";
 import { ReportKey, reportExport } from "@/domain/permissions";
@@ -7,7 +8,7 @@ import { formatCents } from "@/lib/money";
 import { WEEKDAYS, formatDate } from "@/lib/time";
 import { StaffContext, can, guardPage } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
-import { Cell, ColumnKind, REPORT_LOADERS, ReportTable } from "@/server/report-data";
+import { Cell, ColumnKind, REPORT_LOADERS, ReportData, ReportTable } from "@/server/report-data";
 import { LocationNotice, ReportFilters, locationProps, reportQuery } from "./filters";
 import { ReportParams, resolveScope } from "./scope";
 
@@ -46,7 +47,7 @@ function formatCell(v: Cell, kind: ColumnKind | undefined) {
 const ROW_STYLE = { subtotal: "bg-zinc-50 font-medium", total: "bg-zinc-100 font-semibold" } as const;
 
 /** One report table: per-row number formats for metric tables, shaded subtotal and total rows. */
-export function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null }) {
+export function ReportTableCard({ t, csv, rowAction }: { t: ReportTable; csv: string | null; rowAction?: (row: number) => ReactNode }) {
   const right = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct" || k === "hours" || k === "decimal" || k === "minutes" || k === "minutes_delta";
   const kindAt = (i: number, j: number) => (t.rowKinds?.[i] && j > 0 ? t.rowKinds[i] : t.columns[j]?.kind);
   const last = t.columns.length - 1;
@@ -76,6 +77,7 @@ export function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null
                   {c.label}
                 </Th>
               ))}
+              {rowAction && <Th />}
             </tr>
           </thead>
           <tbody>
@@ -92,6 +94,7 @@ export function ReportTableCard({ t, csv }: { t: ReportTable; csv: string | null
                       {formatCell(v, kindAt(i, j))}
                     </Td>
                   ))}
+                  {rowAction && <Td right>{rowAction(i)}</Td>}
                 </tr>
               );
             })}
@@ -155,7 +158,16 @@ function Heatmap({ title, cells }: { title: string; cells: { dow: number; hour: 
  * limited to the viewer's access, and CSV links only appear with the report's export permission.
  * Every report covers one shop, any set of shops, a saved group or all shops, combined or by location.
  */
-export async function ReportPage({ report, searchParams }: { report: ReportKey; searchParams: ReportParams & Record<string, string | string[] | undefined> }) {
+export async function ReportPage({
+  report,
+  searchParams,
+  rowActions,
+}: {
+  report: ReportKey;
+  searchParams: ReportParams & Record<string, string | string[] | undefined>;
+  /** Per table id, a control at the end of each row (for example "Accept" on a suggestion). */
+  rowActions?: (data: ReportData, ctx: StaffContext) => Record<string, (row: number) => ReactNode>;
+}) {
   const meta = reportFor(report);
   const ctx = await guardPage(meta.href);
   const scope = await resolveScope(ctx, searchParams, report);
@@ -169,6 +181,7 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
   const barberLabel = scope.barbers?.pickable && scope.barbers.selection.staffIds ? scope.barbers.label : null;
   const exportAll = data.tables.find((t) => t.exportOnly && t.id !== "heatmap");
   const heatmapCsv = data.heatmaps && data.tables.some((t) => t.id === "heatmap") ? csv("heatmap") : null;
+  const actions = rowActions?.(data, ctx) ?? {};
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -218,7 +231,7 @@ export async function ReportPage({ report, searchParams }: { report: ReportKey; 
       {data.tables
         .filter((t) => !t.exportOnly)
         .map((t) => (
-          <ReportTableCard key={t.id} t={t} csv={csv(t.id)} />
+          <ReportTableCard key={t.id} t={t} csv={csv(t.id)} rowAction={actions[t.id]} />
         ))}
       {heatmapCsv && (
         <p className="mt-2 text-right text-xs">

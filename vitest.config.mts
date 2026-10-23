@@ -10,5 +10,8 @@ export default defineConfig({
     environment: "node",
     env: { TZ: "UTC" },
     fileParallelism: false,
+    // The on-disk module cache keys on a file's own text, so the `import.meta.glob` of admin pages in
+    // tests/db/render.ts kept serving the old page list after a page was added.
+    fsModuleCache: false,
   },
 });

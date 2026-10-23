@@ -119,7 +119,7 @@ export function PayGroupRow({ g, tabs }: { g: GroupRow; tabs: string[] }) {
         <Input aria-label="That period's number" type="number" value={v.anchorNumber} onChange={num("anchorNumber")} className="h-8 w-16 text-xs" />
       </td>
       <td className="px-2 py-1.5">
-        <Select aria-label="Period length" value={v.periodDays} onChange={num("periodDays")} className="h-8 w-28 text-xs">
+        <Select aria-label="Period length" value={v.periodDays} onChange={num("periodDays")} className="h-8 w-36 text-xs">
           <option value={14}>Bi-weekly</option>
           <option value={7}>Weekly</option>
         </Select>
