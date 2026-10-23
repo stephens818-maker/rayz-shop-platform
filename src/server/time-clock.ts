@@ -21,7 +21,7 @@ import {
   type PunchMethod,
   type PunchSource,
 } from "@/db/schema";
-import { payPeriodFor, type PayPeriod } from "@/domain/payroll";
+import { payPeriodByIndex, payPeriodFor, type PayPeriod } from "@/domain/payroll";
 import { periodOf } from "@/domain/payroll/calendar";
 import { dailyHours, overtimeSlices, sliceKey, splitByLocalDay, weekStartOf, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
 import type { PayrollSettings } from "@/domain/payroll/calc";
@@ -544,6 +544,14 @@ export async function punchPhoto(punchId: string, shopIds: readonly string[]) {
 /** A timesheet period: the bi-weekly pay periods ending Saturdays, anchored on 10/03/2026. */
 export const periodFor = (date: LocalDate): PayPeriod => payPeriodFor(date);
 
+/** The pay period holding `today` and the ones before it, back to the first (ending 10/03/2026). */
+export function recentPeriods(today: LocalDate, count = 8): PayPeriod[] {
+  const cur = payPeriodFor(today);
+  return Array.from({ length: count }, (_, i) => cur.index - i)
+    .filter((i) => i >= 0)
+    .map((i) => payPeriodByIndex(i));
+}
+
 /**
  * Overtime slices for everyone's time entries over whole workweeks around [from, to], across every
  * shop (OT adds up across shops of one legal entity), with locked payroll OT kept.
@@ -619,8 +627,6 @@ export interface TimesheetView {
   shops: TimesheetShop[];
   edits: { at: string; by: string | null; action: string; reason: string; before: unknown; after: unknown }[];
 }
-
-const toCenti = (min: number) => Math.floor((min * 100) / 60 + 0.5 + 1e-9);
 
 /** Shifts with their paid time, breaks and the flags on their punches. */
 function shiftViews(shifts: Shift[], punches: Map<string, PunchRow>, rules: ClockRules, sched: Map<string, ScheduleRow[]>): ShiftView[] {

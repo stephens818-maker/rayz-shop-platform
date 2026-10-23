@@ -4,6 +4,7 @@ import { Permission, REPORTS, ReportKey, reportExport, reportView } from "./perm
 const STOCK_VIEW: Permission[] = ["inventory.manage", "inventory.adjust", "inventory.transfer", "inventory.stocktake", "po.create", "po.receive", "catalog.manage", "catalog.prices"];
 const PURCHASING: Permission[] = ["po.create", "po.approve", "po.send", "po.receive"];
 const CALL_INS: Permission[] = ["callins.mark", "callins.mark_own", "callins.outreach", "callins.voice"];
+const TIMESHEETS: Permission[] = ["timesheet.own", "timesheet.edit", "timesheet.approve", "payroll.export"];
 
 /**
  * What each admin page needs: any one of the listed permissions, or null for any signed-in staff
@@ -70,6 +71,11 @@ export const PAGE_ACCESS = {
   "/admin/payroll/report": ["payroll.run", "payroll.approve"],
   "/admin/payroll/hours": ["payroll.run"],
   "/admin/payroll/setup": ["payroll.run"],
+  "/admin/clock": ["timeclock.punch"],
+  "/admin/clock/kiosk": ["timeclock.kiosk", "settings.shop"],
+  "/admin/timesheets": TIMESHEETS,
+  "/admin/timesheets/[staffId]": TIMESHEETS,
+  "/admin/time-clock": ["payroll.run", "settings.shop"],
   "/admin/reports": REPORTS.map((r) => reportView(r.key)),
   ...(Object.fromEntries(REPORTS.map((r) => [r.href, [reportView(r.key)]])) as Record<(typeof REPORTS)[number]["href"], Permission[]>),
 } satisfies Record<string, readonly Permission[] | null>;
@@ -94,6 +100,8 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     items: [
       { href: "/admin", label: "Today" },
       { href: "/admin/calendar", label: "Calendar" },
+      { href: "/admin/clock", label: "Time clock" },
+      { href: "/admin/clock/kiosk", label: "Front-desk clock" },
       { href: "/admin/my-time", label: "My time" },
       { href: "/admin/time-off", label: "Time off" },
       { href: "/admin/call-ins", label: "Call-ins" },
@@ -126,9 +134,11 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
   {
     title: "Payroll",
     items: [
+      { href: "/admin/timesheets", label: "Timesheets" },
       { href: "/admin/payroll/report", label: "Payroll report" },
       { href: "/admin/payroll/hours", label: "Hours" },
       { href: "/admin/payroll/setup", label: "Payroll setup" },
+      { href: "/admin/time-clock", label: "Time clock setup" },
     ],
   },
   {

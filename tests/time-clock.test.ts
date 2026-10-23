@@ -27,6 +27,9 @@ import {
   shiftWork,
   shopClockSettings,
   verifyPunch,
+  isRepeatedWallTime,
+  wallInstant,
+  wallStamp,
   type PunchLike,
   type PunchType,
 } from "@/domain/time-clock";
@@ -149,6 +152,20 @@ describe("overnight and DST shifts", () => {
     const w = shiftWork(shifts[0], RULES);
     expect(w.unpaidBreakMin).toBe(90);
     expect(w.workedMin).toBe(9 * 60 - 90);
+  });
+
+  it("a manager's edit picks either 1:30 on the fall-back night, and refuses the skipped hour", () => {
+    const first = wallInstant("2026-11-01T01:30")!;
+    const second = wallInstant("2026-11-01T01:30", true)!;
+    expect(minutes(first, second)).toBe(60);
+    expect(isRepeatedWallTime("2026-11-01T01:30")).toBe(true);
+    expect(isRepeatedWallTime("2026-11-01T02:30")).toBe(false);
+    expect(wallStamp(first)).toEqual({ local: "2026-11-01T01:30", later: false });
+    expect(wallStamp(second)).toEqual({ local: "2026-11-01T01:30", later: true });
+    expect(wallInstant("2027-03-14T02:30")).toBeNull();
+    expect(wallInstant("2027-03-14T03:30")).toEqual(at("2027-03-14T03:30"));
+    expect(wallInstant("2026-11-02T09:00", true)).toEqual(at("2026-11-02T09:00"));
+    expect(wallInstant("nonsense")).toBeNull();
   });
 });
 

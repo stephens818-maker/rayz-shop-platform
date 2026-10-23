@@ -6,8 +6,35 @@
  */
 import { z } from "zod";
 import type { LocalDate } from "@/lib/time";
-import { localDateOf, zonedWallTime } from "@/lib/time";
+import { existingWallTime, localDateOf, toZoned, zonedWallTime } from "@/lib/time";
 import { minutesToCenti } from "./payroll/overtime";
+
+/**
+ * A shop wall-clock time ("2026-11-01T01:30") as an instant. Null for the hour skipped when clocks
+ * spring forward. In the hour repeated when they fall back, `later` picks the second one.
+ */
+export function wallInstant(local: string, later = false): Date | null {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(local);
+  if (!m || Number(m[2]) > 23 || Number(m[3]) > 59) return null;
+  const dt = existingWallTime(m[1], Number(m[2]) * 60 + Number(m[3]));
+  if (!dt || !dt.isValid) return null;
+  const alt = dt.plus({ hours: 1 });
+  return later && alt.hour === dt.hour && alt.minute === dt.minute ? alt.toJSDate() : dt.toJSDate();
+}
+
+/** Whether a wall-clock time falls in the hour that happens twice when clocks fall back. */
+export function isRepeatedWallTime(local: string): boolean {
+  const a = wallInstant(local, false);
+  const b = wallInstant(local, true);
+  return !!a && !!b && a.getTime() !== b.getTime();
+}
+
+/** The wall-clock form of an instant, for an edit field: the inverse of wallInstant. */
+export function wallStamp(at: Date | string): { local: string; later: boolean } {
+  const z = toZoned(at);
+  const local = z.toFormat("yyyy-MM-dd'T'HH:mm");
+  return { local, later: wallInstant(local, false)?.getTime() !== z.startOf("minute").toMillis() };
+}
 
 export type PunchType = "in" | "out" | "break_start" | "break_end";
 export const PUNCH_LABEL: Record<PunchType, string> = { in: "Clock in", out: "Clock out", break_start: "Start break", break_end: "End break" };
@@ -532,6 +559,13 @@ export function verifyPunch(shopId: string, shop: { name: string; latitude: numb
             ? ` You look to be ${distanceM >= 1000 ? `${(distanceM / 1000).toFixed(1)} km` : `${distanceM} m`} away.`
             : "";
   return { ok: false, problem: `Punch ${ways.join(", or ")}.${why}`, distanceM };
+}
+
+/** What a phone punch at this shop needs, in a sentence for the clock page. */
+export function clockRuleText(s: ShopClockSettings): string {
+  if (!s.methods.length) return "Punches from anywhere are accepted here; where you are is still recorded.";
+  const ways = s.methods.map((m) => (m === "device" ? "on the shop's front-desk device" : m === "network" ? "on the shop's Wi-Fi" : `within ${s.radiusM} m of the shop (location on)`));
+  return `Punch ${ways.join(", or ")}.`;
 }
 
 // ───────────────────────────── PINs ─────────────────────────────
