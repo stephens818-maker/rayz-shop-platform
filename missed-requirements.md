@@ -297,21 +297,28 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [x] Payout schedule per shop, within the brand's allowed methods: end of night at drawer close, daily on a delay of N days, weekly, with payroll only, or manual.
 - [x] Methods:
   - [x] Cash from the drawer at close: a cash payout record, deducted from the drawer's expected cash, acknowledged by the employee with their clock PIN or name on the device. The drawer can't close while one is waiting.
-  - [x] Stripe Connect Express accounts for staff, through Stripe-hosted onboarding (no bank details in the app). Transfers come from the shop's Stripe balance (or the brand's), with instant payout where eligible and its fee shown.
+  - [x] Stripe Connect Express accounts for staff, through Stripe-hosted onboarding (no bank details in the app; see My banking below). Transfers come from the shop's Stripe balance (or the brand's), with instant payout where eligible and its fee shown.
   - [x] Payroll export only.
   - [x] Each employee chooses, if the brand allows it.
 - [x] Managers review and approve every batch, with each employee's breakdown by ticket. Hold, adjust, take out and cancel need a reason and go in the audit log; nobody adjusts their own.
 - [x] The same tip can't be paid twice: claims under row locks, a database trigger, unique indexes and Stripe idempotency keys. History before tip payouts is recorded as already paid.
 - [x] Reconciled against Stripe (`payout.paid`, `payout.failed`, `payout.canceled`, `transfer.reversed`, `account.updated`) and against the cash drawer. A failed payout reverses the money and puts its tips in the next batch.
 - [x] Permissions: `tips.own`, `tips.approve` and `tips.settings`.
+- [x] **My banking** (`/admin/my-banking`):
+  - [x] Employees add or change their bank account or debit card on Stripe's hosted Express pages (onboarding through an Account Link, changes in their Express dashboard). Stripe collects identity, tax and bank details. The app keeps only the Stripe account id, its status, and the type, bank or card name and last 4 that Stripe returns.
+  - [x] Status: not set up, pending verification, ready or action needed, with what Stripe needs in plain words and its deadline.
+  - [x] The employee is told when Stripe needs more information, once per new request.
+  - [x] A change of payout destination or method sends a security notice (email and text) and goes in the audit log.
+  - [x] Managers see only the method, status and last 4.
+  - [ ] Stripe's embedded account onboarding and management components aren't used; the hosted pages do the same job without another frontend dependency. Say if the embedded ones are wanted.
 - [x] **My tips**: today, pending, ready, in a payout, paid out and history. The employee is emailed (or texted) when a payout is sent or fails.
 - [x] Every tip still flows into the pay period's payroll and iSolved file. Tips paid in cash or by Stripe go out as tips received (`E_Cash Tips Recd_Dollars`), so they're reported but not paid again; tips paid through payroll get their own column and are locked as paid at approve-and-lock.
 - [x] **Reports → Tip payouts** by shop and employee.
-- [x] Tests: `tests/tips.test.ts`, `tests/db/tips.test.ts` and `tests/payroll-engine.test.ts` cover ledger math with refunds, delayed availability, double-payout prevention, the cash drawer deduction, the Stripe webhooks and the payroll export with tips already paid.
+- [x] Tests: `tests/tips.test.ts`, `tests/banking-status.test.ts`, `tests/db/tips.test.ts` and `tests/payroll-engine.test.ts` cover ledger math with refunds, delayed availability, double-payout prevention, the cash drawer deduction, the Stripe transfer and payout webhooks, the banking status flow and the payroll export with tips already paid.
 - [ ] To confirm with the accountant or a lawyer: whether the card fee may be taken out of card tips in Iowa and Illinois, and how it's reported. It's off at every shop.
 - [ ] To confirm with Charles: the iSolved earning code for tips paid through payroll. It's `E_Tips Paid In Payroll_Dollars` for now, a setting under **Payroll → Setup**, and the column only appears when someone is paid that way.
 - [ ] Each shop's schedule, delay and method. The demo sets Coralville to end of night in cash and Moline to daily, two days after the tip; every other shop is manual in cash.
-- [ ] Try staff onboarding and payouts in real Stripe test mode. The keys aren't set, so the simulator runs. The Connect webhook needs the payout and account events for staff accounts, and the platform webhook needs `transfer.reversed` (see DEPLOY.md).
+- [ ] Try staff onboarding and payouts in real Stripe test mode. The keys aren't set, so the simulator runs. The Connect webhook needs the payout, account and `account.external_account.*` events for staff accounts, and the platform webhook needs `transfer.reversed` (see DEPLOY.md).
 - [ ] Instant payout fee: Stripe's rate is set with `TIP_INSTANT_FEE` (default 1.5%, at least $0.50). Confirm it against the platform's Stripe pricing.
 
 ## Deferred by decision
