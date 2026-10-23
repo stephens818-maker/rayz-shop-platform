@@ -377,13 +377,25 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [x] A branded receipt page for phones per link: the shop's logo, name, address and phone, the itemized services and products, discounts, tax, tip, the credit card surcharge and disclosure, the payment method (card brand and last 4 only), the barber's first name, loyalty progress, **Rebook** (same barber and service) and **Leave a review** (the shop's review link). No last name, phone or email on the page; each link's token is stored only as a hash; not indexed.
 - [x] Refunds and voids, from the POS or a Stripe dashboard refund, send an updated receipt to where the client chose for that ticket. The page always shows the ticket as it is now, with the refund and the net paid. A failed update never blocks the refund and is recorded as not sent.
 - [x] Staff resend from the ticket's receipt card or the client's purchases, with the history of every receipt (when, where, why, by whom, delivery status). Clients ask for copies at `/receipt` with their number or email: links to their last 3 receipts in 13 months, the same answer whether or not they're a client, at most 3 an hour per destination.
-- [x] Consent: STOP (`contact_opt_outs`) and **Stop receipt emails** are always respected; updates and resends to what's on file need the client to have chosen it for that ticket or to have opted in (`sms_opt_in`, `email_opt_in`). Texts end with "Reply STOP to opt out." Core only reads the consent the mobile side owns.
+- [x] Consent: STOP (`contact_opt_outs`) and **Stop receipt and review emails** are always respected; updates and resends to what's on file need the client to have chosen it for that ticket or to have opted in (`sms_opt_in`, `email_opt_in`). Texts end with "Reply STOP to opt out." Core only reads the consent the mobile side owns.
 - [x] Audit: `receipt.sent`, `receipt.none`, `receipt.resent`, `receipt.requested`, `receipt.email_opt_out`.
 - [x] Tests: `tests/receipts.test.ts`, `tests/db/receipts.test.ts`, and the receipt step in `tests/db/handoff.test.ts`. README: [Digital receipts](README.md#digital-receipts).
-- [ ] Each shop's review link (Google, Yelp…) under **Shop settings → Receipts**. Without one there's no **Leave a review** button.
+- [x] Each location's review link under **Shop settings → Receipts**; without one there's no **Leave a review** button. It's Google only now (section 20).
 - [ ] Receipt texts go out under the shop's A2P 10DLC campaign; confirm the campaign's use case covers transactional receipts.
-- [ ] Whether **Stop receipt emails** should also stop other transactional emails (it's receipts only today), and whether the brand wants paper available anywhere.
+- [ ] Whether **Stop receipt and review emails** should also stop other transactional emails (it covers receipts and Google review requests today), and whether the brand wants paper available anywhere.
 - [ ] Imported Squire tickets have no digital receipt (not offered, not in copy requests).
+
+## 20. Google reviews
+
+- [x] **Leave a review** on the digital receipt links to the location's Google review page. The link is set per location in **Shop settings → Receipts** and in the new location wizard: a `g.page/r/…` link, a `search.google.com/local/writereview?placeid=…` link, or a Place ID (turned into the write-review link). Other sites are refused; blank hides the button.
+- [x] Optional follow-up text or email a set number of hours after the visit (default 3, 1 to 48), per location, off by default. Only to clients who agreed to texts or emails; STOP and **Stop receipt and review emails** win; not in quiet hours; once per ticket and at most every 90 days per client per location (configurable).
+- [x] No review gating: every client gets the same link and message; ratings, tips, refunds and complaints aren't looked at. Only voided tickets (rung up by mistake) and imported tickets are skipped.
+- [x] Clicks counted per location and per barber (the ticket's barber), from the receipt and from the follow-up, in **Reports → Google review links** with CSV. Link previews and email scanners aren't counted.
+- [x] Tests: `tests/reviews.test.ts`, `tests/db/google-reviews.test.ts`. README: [Google reviews](README.md#google-reviews).
+- [ ] Each location's real link: in Google Business Profile, **Ask for reviews** gives the `g.page/r/…` link (or look up the Place ID).
+- [ ] Review texts go out under the shop's A2P 10DLC campaign; confirm the campaign covers them (they're customer care, not marketing, but carriers may ask).
+- [ ] Whether to turn the follow-up on, and the delay and repeat days per location.
+- [ ] Google doesn't report which reviews came from the link, so the report counts clicks, not reviews.
 
 ## Deferred by decision
 

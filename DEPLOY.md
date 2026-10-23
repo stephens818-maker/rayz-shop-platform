@@ -53,7 +53,7 @@ Things to try:
 - **Book online:** open `/`, pick a shop, and book. To sign in as a customer at `/account`, use a seeded phone such as `319-555-0100` (Jordan) or `319-555-0201` (the Hayes family: three people on one phone). The one-time code is shown on screen in demo mode.
 - **Check out:** open the calendar as `coralville@rayz.test`, click an appointment, choose **Check out**, add a tip, and pay with a test card such as "Visa (credit)".
 - **Customer screen:** on the same ticket, tap **Hand to customer** instead. Pick a tip, a receipt and a test card on the client's side, then hand it back: the device returns to staff by itself after the thank-you, or tap **Staff** and use a time clock PIN (every demo barber's is `2468`).
-- **Receipts:** after paying, choose **Text** or **Email** on the ticket. The text is under **Notifications** (suppressed); open its `/receipt/…` link on a phone. Refund the ticket and the same link shows the refund, and an updated receipt is queued. Clients ask for copies at `/receipt`.
+- **Receipts:** after paying, choose **Text** or **Email** on the ticket. With a Google review link set under **Shop settings → Receipts**, the receipt shows **Leave a review**; its clicks are in **Reports → Google review links**. The text is under **Notifications** (suppressed); open its `/receipt/…` link on a phone. Refund the ticket and the same link shows the refund, and an updated receipt is queued. Clients ask for copies at `/receipt`.
 - **Gift card and promo:** `DEMO-GIFT-2500` holds $25, and `WELCOME5` takes $5 off.
 - **Messages:** every confirmation, reminder, and purchase order email that would have gone out is listed under **Notifications** as "suppressed".
 
@@ -149,11 +149,15 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - On shop iPads, turn on **Guided Access** (Settings → Accessibility) so the client can't leave the browser either. The app locks itself, not the device.
 11. Set up digital receipts (migration `core_0038_digital_receipts`; see [Digital receipts](README.md#digital-receipts)):
    - The migration adds the receipt history and the receipt email opt-out list. Existing receipt settings get no review link and no Print button, so the ticket's Print button disappears; turn **Show a Print button** back on under **Shop settings → Receipts** for any shop that still needs paper.
-   - Enter each shop's review link (`https://` only) under **Shop settings → Receipts**.
    - Receipt links are built from `APP_BASE_URL`, so set it to the public domain before texts or emails go live, or every link points at the wrong host. Links never expire, so don't change the domain without a redirect from the old one.
    - Receipts go through the notifications cron, like confirmations, so SMS and email must be configured. Make sure the A2P 10DLC campaign covers transactional receipts.
-12. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-13. Add the custom domain under **Settings → Domains**.
+12. Set up Google reviews (migration `core_0039_google_reviews`; see [Google reviews](README.md#google-reviews)):
+   - The migration adds the click log, the review follow-up to the receipt history, and **Google review links** report permissions for Brand Admin, Regional Manager and Shop Manager. A review link saved before that isn't Google's stops showing (no button) until it's replaced.
+   - For each location, open Google Business Profile → **Ask for reviews**, copy the `g.page/r/…` link, and paste it under **Shop settings → Receipts → Google review link** (a write-review link or the Place ID also works). The field shows where clients will go.
+   - The follow-up is off everywhere until a location turns it on. It runs on the notifications cron, so SMS and email must be configured; on the Hobby plan's daily cron it goes out once a day (tickets from the last day, outside quiet hours), not a few hours after each visit.
+   - Review texts go out under the shop's A2P 10DLC campaign: make sure its use case and sample messages cover them. Don't add a "were you happy?" step in front of the link; Google treats that as review gating.
+13. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+14. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

@@ -375,7 +375,7 @@ export async function resolveReceipt(token: string, now = new Date()): Promise<R
   return { state: "ok", delivery, data, emailStopped };
 }
 
-/** "Stop receipt emails" on the page from an emailed link. Texts stop with STOP. */
+/** "Stop receipt and review emails" on the page from an emailed link. Texts stop with STOP. */
 export async function stopReceiptEmails(token: string) {
   const r = await resolveReceipt(token);
   if (r.state !== "ok") throw notFound("Receipt");
