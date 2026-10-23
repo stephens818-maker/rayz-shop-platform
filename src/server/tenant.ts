@@ -15,6 +15,8 @@ import {
   staffShops,
   stockCounts,
   stockTransfers,
+  tipPayoutBatches,
+  tipPayouts,
   waitlistEntries,
 } from "@/db/schema";
 import { AppError, forbidden } from "./errors";
@@ -70,7 +72,9 @@ export type TenantRecord =
   | "promo"
   | "staff"
   | "call_in"
-  | "message_thread";
+  | "message_thread"
+  | "tip_payout_batch"
+  | "tip_payout";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -103,6 +107,10 @@ export async function recordShops(kind: TenantRecord, id: string, tx: DBorTx = d
       return one(tx.select({ s: promoCodes.shopId }).from(promoCodes).where(eq(promoCodes.id, id)));
     case "message_thread":
       return one(tx.select({ s: messageThreads.shopId }).from(messageThreads).where(eq(messageThreads.id, id)));
+    case "tip_payout_batch":
+      return one(tx.select({ s: tipPayoutBatches.shopId }).from(tipPayoutBatches).where(eq(tipPayoutBatches.id, id)));
+    case "tip_payout":
+      return one(tx.select({ s: tipPayouts.shopId }).from(tipPayouts).where(eq(tipPayouts.id, id)));
     case "call_in": {
       // One shop, or every shop the barber works at for a call-in at all of them.
       const [c] = await tx.select({ shopId: callIns.shopId, staffId: callIns.staffId }).from(callIns).where(eq(callIns.id, id));

@@ -10,6 +10,7 @@ import { addDays, isValidLocalDate, todayLocal } from "@/lib/time";
 import { safe } from "@/server/action";
 import { StaffContext, assertShopAccess, authorize } from "@/server/auth/staff";
 import { AppError, notFound } from "@/server/errors";
+import { requireInTenant } from "@/server/tenant";
 import { saveBrandTipPolicy, saveShopTipSettings, shopTipConfig } from "@/server/tips/ledger";
 import { acknowledgeCashPayout, adjustPayout, approveBatch, buildBatch, cancelBatch, holdPayout, releasePayout, removePayout } from "@/server/tips/payouts";
 
@@ -21,16 +22,16 @@ function refresh(batchId?: string) {
 }
 
 async function batchIn(ctx: StaffContext, batchId: string) {
+  await requireInTenant(ctx, "tip_payout_batch", batchId);
   const b = await db.query.tipPayoutBatches.findFirst({ where: eq(tipPayoutBatches.id, batchId) });
   if (!b) throw notFound("Tip payout batch");
-  assertShopAccess(ctx, b.shopId);
   return b;
 }
 
 async function payoutIn(ctx: StaffContext, payoutId: string) {
+  await requireInTenant(ctx, "tip_payout", payoutId);
   const p = await db.query.tipPayouts.findFirst({ where: eq(tipPayouts.id, payoutId) });
   if (!p) throw notFound("Tip payout");
-  assertShopAccess(ctx, p.shopId);
   return p;
 }
 

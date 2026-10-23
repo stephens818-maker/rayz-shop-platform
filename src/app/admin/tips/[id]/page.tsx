@@ -7,6 +7,7 @@ import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
 import { shopTipConfig } from "@/server/tips/ledger";
+import { inTenant } from "@/server/tenant";
 import { batchDetail } from "@/server/tips/payouts";
 import { BatchActions, PayoutActions } from "../client";
 import { BATCH_KIND_LABEL, BATCH_STATUS_LABEL, BATCH_STATUS_TONE, PAYOUT_STATUS_TONE } from "../labels";
@@ -19,9 +20,9 @@ const ENTRY_METHOD: Record<string, string> = { card: "Card", cash: "Cash", gift_
 export default async function TipBatchPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await guardPage("/admin/tips/[id]");
-  if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
+  if (!(await inTenant(ctx, "tip_payout_batch", id))) notFound();
   const d = await batchDetail(id);
-  if (!d || !ctx.shopIds.includes(d.batch.shopId)) notFound();
+  if (!d) notFound();
   const { batch, payouts } = d;
   const shop = ctx.shops.find((s) => s.id === batch.shopId);
   const settings = await shopTipConfig(batch.shopId);
