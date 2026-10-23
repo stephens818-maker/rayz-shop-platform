@@ -392,6 +392,8 @@ describe("launch gate", () => {
     const closed = await (await config.GET(new Request("http://localhost/api/v1/app/config"), { params: Promise.resolve({}) })).json();
     expect(closed.launched).toBe(false);
     expect(closed.launchAt).toBe(future);
+    expect(closed.pilot).toBe(false);
+    expect(closed.pilotShops).toEqual([]);
     expect(closed.timeFormat).toBe("12h");
     expect(closed.minVersion).toEqual({ ios: closed.minIos, android: closed.minAndroid });
     expect(closed.forceUpdateBelow).toEqual(closed.minVersion);
@@ -490,5 +492,99 @@ describe("launch gate", () => {
     process.env.LAUNCH_AT = past;
     expect(await launchState()).toMatchObject({ launched: true, launchAt: past });
     await m.db.db.update(m.schema.brandSettings).set({ launchAt: null }).where(eq(m.schema.brandSettings.id, brand!.id));
+  });
+
+  it("lets one shop pilot before the brand instant, and hold a shop back after it", async () => {
+    const { COMING_SOON_MESSAGE, effectiveLaunch } = await import("@/server/launch");
+    expect(effectiveLaunch(new Date("2020-01-01T00:00:00.000Z"), { launched: false, launchAt: future, scope: "brand" }, new Date("2026-01-01T00:00:00.000Z")).launched).toBe(true);
+    expect(effectiveLaunch(null, { launched: false, launchAt: future, scope: "brand" }).launched).toBe(false);
+
+    process.env.LAUNCH_AT = future;
+    const coralville = await m.catalog.getShop("coralville");
+    const moline = await m.catalog.getShop("moline");
+    const pilotAt = new Date("2020-01-01T00:00:00.000Z");
+    await m.db.db.update(m.schema.shops).set({ launchAt: pilotAt }).where(eq(m.schema.shops.id, coralville.id));
+    try {
+      const { svc, slot } = await openSlot(8);
+      const booked = await m.booking.createAppointment({
+        shopRef: "coralville",
+        serviceId: svc.id,
+        barberRef: "any",
+        startsAt: slot.startsAt,
+        customer: { firstName: "Pilot", phone: "+13195550193" },
+        source: "online",
+        actor,
+      });
+      expect(booked.code).toEqual(expect.any(String));
+
+      const molineSvc = (await m.public.publicServices("moline")).services[0];
+      if (!molineSvc) throw new Error("moline has no services");
+      let molineSlot: string | undefined;
+      for (let i = 4; i < 20 && !molineSlot; i++) {
+        const day = await m.booking.getAvailability({ shopRef: "moline", date: m.time.addDays(m.time.todayLocal(), i), serviceId: molineSvc.id, barberRef: "any" });
+        molineSlot = day.slots.at(-1)?.startsAt;
+      }
+      await expect(
+        m.booking.createAppointment({
+          shopRef: "moline",
+          serviceId: molineSvc.id,
+          barberRef: "any",
+          startsAt: molineSlot!,
+          customer: { firstName: "Wait", phone: "+13195550194" },
+          source: "api",
+          actor,
+        }),
+      ).rejects.toMatchObject({ message: COMING_SOON_MESSAGE, details: { reason: "not_launched", scope: "brand", shopId: moline.id } });
+
+      const config = await import("@/app/api/v1/app/config/route");
+      const cfg = await (await config.GET(new Request("http://localhost/api/v1/app/config"), { params: Promise.resolve({}) })).json();
+      expect(cfg.launched).toBe(true);
+      expect(cfg.pilot).toBe(true);
+      expect(cfg.pilotShops).toEqual(["coralville"]);
+      expect(cfg.launchAt).toBe(future);
+
+      const shops = await import("@/app/api/v1/shops/route");
+      const list = await (await shops.GET(new Request("http://localhost/api/v1/shops"), { params: Promise.resolve({}) })).json();
+      expect(list.shops.find((s: { slug: string }) => s.slug === "coralville")).toMatchObject({ launched: true, launchAt: pilotAt.toISOString() });
+      expect(list.shops.find((s: { slug: string }) => s.slug === "moline")).toMatchObject({ launched: false, launchAt: future });
+
+      const { executeChargePlan } = await import("@/server/payments/charge-plan");
+      const paid = await executeChargePlan({
+        shopId: coralville.id,
+        paymentMethodId: "pm_card_visa",
+        amountCents: 1200,
+        description: "Pilot shop checkout",
+        idempotencyKey: `pilot-${crypto.randomUUID()}`,
+        customerFacing: true,
+      });
+      expect(paid.processor).toBe("simulator");
+      await expect(
+        executeChargePlan({
+          shopId: moline.id,
+          paymentMethodId: "pm_card_visa",
+          amountCents: 1200,
+          description: "Held shop checkout",
+          idempotencyKey: `held-${crypto.randomUUID()}`,
+          customerFacing: true,
+        }),
+      ).rejects.toMatchObject({ details: { reason: "not_launched", shopId: moline.id } });
+
+      process.env.LAUNCH_AT = past;
+      await m.db.db.update(m.schema.shops).set({ launchAt: new Date(future) }).where(eq(m.schema.shops.id, coralville.id));
+      await expect(
+        m.booking.createAppointment({
+          shopRef: "coralville",
+          serviceId: svc.id,
+          barberRef: "any",
+          startsAt: slot.startsAt,
+          customer: { firstName: "Held", phone: "+13195550195" },
+          source: "online",
+          actor,
+        }),
+      ).rejects.toMatchObject({ details: { reason: "not_launched", scope: "shop" } });
+    } finally {
+      process.env.LAUNCH_AT = past;
+      await m.db.db.update(m.schema.shops).set({ launchAt: null }).where(eq(m.schema.shops.id, coralville.id));
+    }
   });
 });

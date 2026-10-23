@@ -50,6 +50,9 @@ export const Shop = z.object({
   cardFeeMayApply: z.boolean(),
   cardFeeDisclosure: z.string().nullable(),
   nextSlot: z.object({ startsAt: z.string(), serviceId: z.string() }).nullable(),
+  /** False until this shop's launch instant. A null shop instant follows the brand. */
+  launched: z.boolean(),
+  launchAt: z.string().nullable(),
 });
 export const ShopList = z.object({ shops: z.array(Shop) });
 

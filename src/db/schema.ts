@@ -119,6 +119,11 @@ export const shops = pgTable("shops", {
   cancellationPolicy: text("cancellation_policy"),
   /** When Squire online booking was frozen for this shop, before the delta import. */
   squireFrozenAt: ts("squire_frozen_at"),
+  /**
+   * Null follows the brand LAUNCH_AT. Set it earlier to pilot this shop, or later to hold it back
+   * after the brand is open.
+   */
+  launchAt: ts("launch_at"),
   /** block: a sale or adjustment that would take on-hand below zero is refused. warn: it goes through with a warning. */
   negativeStock: text("negative_stock").$type<NegativeStockPolicy>().notNull().default("block"),
   /** Where low-stock alerts go. Falls back to the shop email. */

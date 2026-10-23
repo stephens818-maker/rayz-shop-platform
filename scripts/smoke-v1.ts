@@ -225,7 +225,7 @@ async function apiWalk() {
   const cfgText = await expectStatus("GET /app/config", cfgRes, (s) => s === 200);
   if (cfgRes.status === 200) {
     const cfg = JSON.parse(cfgText) as Record<string, unknown>;
-    const keys = ["minIos", "minAndroid", "latestIos", "latestAndroid", "iosStoreUrl", "androidStoreUrl", "flags", "timezone", "timeFormat", "launched", "launchAt", "minVersion", "forceUpdateBelow"];
+    const keys = ["minIos", "minAndroid", "latestIos", "latestAndroid", "iosStoreUrl", "androidStoreUrl", "flags", "timezone", "timeFormat", "launched", "launchAt", "pilot", "pilotShops", "minVersion", "forceUpdateBelow"];
     const missing = keys.filter((k) => !(k in cfg));
     if (missing.length) fail("app config fields", missing.join(", "));
     else pass("app config fields", `launched=${String(cfg.launched)}`);

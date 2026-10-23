@@ -103,7 +103,7 @@ function resultFrom(kind: ChargePlanKind, charge: Awaited<ReturnType<typeof char
 }
 
 export async function executeChargePlan(input: ChargePlanInput): Promise<ChargePlanResult> {
-  if (input.customerFacing) await assertLaunched("payments");
+  if (input.customerFacing) await assertLaunched("payments", new Date(), input.shopId);
   if (input.amountCents <= 0) throw new AppError("bad_request", "Charge amount must be positive");
   const tipCents = input.tipCents ?? 0;
   if (tipCents < 0 || tipCents > input.amountCents) throw new AppError("bad_request", "Tip is larger than the charge");

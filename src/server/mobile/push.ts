@@ -4,7 +4,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { customerDevices } from "@/db/schema";
 import { demoMode } from "@/lib/deployment";
-import { launchState } from "@/server/launch";
+import { shopLaunchState, launchState } from "@/server/launch";
 
 export interface PushPayload {
   type: string;
@@ -21,9 +21,18 @@ export function pushConfigured(provider: "apns" | "fcm" | "expo"): boolean {
   return Boolean(process.env.EXPO_ACCESS_TOKEN);
 }
 
-/** Send one push. Returns unregistered when APNs says 410 or FCM says UNREGISTERED so the caller can revoke the device. Nothing is sent before launch. */
-export async function sendPush(provider: "apns" | "fcm" | "expo", token: string, payload: PushPayload): Promise<{ sent: boolean; unregistered: boolean }> {
-  if (!(await launchState()).launched) return { sent: false, unregistered: false };
+/**
+ * Send one push. Returns unregistered when APNs says 410 or FCM says UNREGISTERED so the caller can revoke the device.
+ * Nothing is sent before launch. Pass the appointment's shop so a pilot shop can notify while the brand is still closed.
+ */
+export async function sendPush(
+  provider: "apns" | "fcm" | "expo",
+  token: string,
+  payload: PushPayload,
+  shopId?: string | null,
+): Promise<{ sent: boolean; unregistered: boolean }> {
+  const open = shopId ? (await shopLaunchState(shopId)).launched : (await launchState()).launched;
+  if (!open) return { sent: false, unregistered: false };
   if (!pushConfigured(provider)) return { sent: false, unregistered: false };
   if (provider === "expo") return sendExpo(token, payload);
   if (provider === "fcm") return sendFcm(token, payload);

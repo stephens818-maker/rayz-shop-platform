@@ -169,6 +169,13 @@
       "when": 1793100000000,
       "tag": "mobile_launch_at",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793200000000,
+      "tag": "mobile_shop_launch",
+      "breakpoints": true
     }
   ]
 }

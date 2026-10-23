@@ -65,7 +65,7 @@ export function openApiDocument(baseUrl: string) {
         "Send `Authorization: Bearer <accessToken>`. Refresh with `POST /auth/refresh`; reusing an old refresh token revokes all sessions.",
         "",
         "**Time:** timestamps are stored and returned as ISO-8601 UTC. Human text (receipts, reminders, SMS) uses America/Chicago. GET /app/config returns timeFormat (default 12h) so apps can match.",
-        "**Launch:** GET /app/config returns launched and launchAt (ISO UTC, or null). Customer booking, customer payments, and push stay closed until that instant. A build older than minVersion / forceUpdateBelow gets 426 upgrade_required. Fields added after 1.0.0 are additive.",
+        "**Launch:** GET /app/config returns launched and launchAt (ISO UTC, or null). A shop can set its own instant for a pilot; config then returns pilot and pilotShops, and each shop returns launched. Customer booking, customer payments, and push stay closed until the shop is open. A build older than minVersion / forceUpdateBelow gets 426 upgrade_required. Fields added after 1.0.0 are additive.",
         "**Money:** integer cents. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
         "**Retries:** `POST /appointments` honors an `Idempotency-Key` header so a flaky mobile network can't double-book.",
       ].join("\n"),

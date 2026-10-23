@@ -120,6 +120,7 @@ Charles: the website, the iOS and Android customer apps, and the staff app go li
 
 - `LAUNCH_AT` is an ISO-8601 UTC timestamp. It overrides `brand_settings.launch_at` (migration `mobile_launch_at`). If both are empty, customer-facing surfaces stay closed. That is the safe default.
 - `launched` is true only when that instant is set and `now >= launchAt`.
+- A shop may set `shops.launch_at` (migration `mobile_shop_launch`, journal idx 24). That instant replaces the brand instant for that shop only. Null follows the brand. Set it earlier to pilot one shop, or later to hold a shop back after the brand is open. `GET /api/v1/app/config` then returns `pilot: true` and `pilotShops` (slugs), and `launched: true` so a store build leaves the full-screen coming-soon state. Each shop on `GET /shops` returns its own `launched` and `launchAt`. Customer booking, customer payments, and push for that shop follow the shop instant. Staff tools stay open.
 - Gated: online and API booking, customer reschedule, `executeChargePlan({ customerFacing: true })`, and `sendPush`.
 - Not gated, so a shop can be sandbox-tested before launch day: staff calendar bookings, walk-ins, checkout rebooks, the importer, and staff POS (`executeChargePlan` without `customerFacing`). App payment routes must pass `customerFacing: true` or call `assertLaunched("payments")`.
 - A closed surface throws `forbidden` with `details.reason = "not_launched"`, `details.launchAt`, and the message `Ray'z isn't open in the app yet. Coming soon.` The error code stays `forbidden` so a shipped client that only knows the 1.0.0 codes still has a branch for it.
@@ -176,7 +177,8 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 ### 2026-10-23: mobile launch gate (bc-645fbcc0)
 
 - One `LAUNCH_AT` / `brand_settings.launch_at` closes customer booking, customer payments, and push until that UTC instant. Unset means not launched.
-- `GET /api/v1/app/config` adds `launched`, `launchAt`, `minVersion`, and `forceUpdateBelow` without removing existing keys. `/api/v1` stays on document version 1.0.0.
+- `GET /api/v1/app/config` adds `launched`, `launchAt`, `pilot`, `pilotShops`, `minVersion`, and `forceUpdateBelow` without removing existing keys. `/api/v1` stays on document version 1.0.0.
+- `shops.launch_at` pilots one shop, or holds one shop back, without a second brand timestamp.
 - `pnpm smoke:v1` walks `/api/v1` and checks Stripe test mode and Twilio test credentials when they are configured.
 - Core service times stay at journal idx 21. Mobile migrations are idx 22 and idx 23.
 - Core's service times report was registered without `src/app/admin/reports/service-times/page.tsx`. This branch adds the same thin `ReportPage` wrapper the other reports use, so the sidebar link resolves. The report math stays in core's `serviceTimesData`.
