@@ -67,7 +67,7 @@ async function starts(shopSlug: string, staffId: string, date: string, serviceSl
 
 async function column(shopSlug: string, date: string, staffId: string) {
   const shop = await shopOf(shopSlug);
-  const day = await cal.loadDayCalendar(shop.id, date, null, { shopIds: [shop.id], brandWide: true }, { show: (_f, raw) => raw ?? null, stars: () => null });
+  const day = await cal.loadDayCalendar(shop.id, date, null, { shopIds: [shop.id], brandWide: true }, { show: (_f, raw) => raw ?? null, stars: () => null }, { staffId: null, seesPrivate: true });
   return day.columns.find((c) => c.id === staffId)!;
 }
 

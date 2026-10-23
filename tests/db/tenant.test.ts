@@ -111,6 +111,7 @@ const ids = {} as {
   giftCard: string;
   wait: string;
   block: string;
+  reason: string;
   product: string;
   vendor: string;
   service: string;
@@ -274,6 +275,7 @@ async function seedCanaries() {
       .values({ staffId: ids.barber, shopId: cv, startsAt: at(0, 15 * 60), endsAt: at(0, 16 * 60), reason: CANARY.block })
       .returning()
   )[0].id;
+  ids.reason = (await m.db.db.query.blockReasons.findFirst({ where: eq(m.schema.blockReasons.key, "personal") }))!.id;
   await m.db.db.insert(m.schema.auditLog).values({ actorLabel: "test", shopId: cv, action: "test.canary", entity: "test", details: { note: CANARY.audit } });
 
   ids.marks = {} as typeof ids.marks;
@@ -632,7 +634,7 @@ describe("server actions aimed at another shop's records", () => {
         () =>
           calendar.createStaffAppointmentAction({ shopId: cv, staffId: ids.barber, date: today, startMin: 17 * 60, serviceId: ids.service, addonIds: [], customerId: ids.client }),
       ],
-      ["calendar block", () => calendar.createBlockAction({ shopId: cv, staffId: ids.floater, date: today, startMin: 18 * 60, endMin: 19 * 60, reason: "x", allShops: false })],
+      ["calendar block", () => calendar.createBlockAction({ shopId: cv, staffId: ids.floater, date: today, startMin: 18 * 60, endMin: 19 * 60, reasonId: ids.reason, allShops: false })],
       ["calendar unblock", () => calendar.deleteBlockAction(ids.block)],
       ["sale void", () => sales.voidAction(ids.sale, "x")],
       [
@@ -731,7 +733,7 @@ describe("server actions aimed at another shop's records", () => {
         () => staffActions.saveProfileAction({ id: ids.barber, firstName: "x", displayLabel: "Renamed", color: "#000000", isBookable: true, active: true, shopIds: [shop.moline] }),
       ],
       ["staff schedule", () => staffActions.saveScheduleAction(ids.barber, [])],
-      ["staff time off", () => staffActions.addTimeOffAction({ staffId: ids.barber, shopId: cv, from: today, to: today, allDay: true, startMin: 0, endMin: 0, reason: "x" })],
+      ["staff time off", () => staffActions.addTimeOffAction({ staffId: ids.barber, shopId: cv, from: today, to: today, allDay: true, startMin: 0, endMin: 0, reasonId: ids.reason })],
       ["staff time off delete", () => staffActions.deleteTimeOffAction(ids.block)],
       [
         "client home shop",

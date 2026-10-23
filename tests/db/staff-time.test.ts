@@ -25,7 +25,12 @@ beforeAll(async () => {
   mine = await import("@/app/admin/my-time/actions");
   decide = await import("@/app/admin/time-off/actions");
   closed = new Set((await m.db.db.select().from(m.schema.shopClosures)).map((c) => c.date));
+  reasons = new Map((await m.db.db.select().from(m.schema.blockReasons)).map((r) => [r.key, r.id]));
 }, 180_000);
+
+let reasons = new Map<string, string>();
+const rid = (key: string) => reasons.get(key)!;
+const ALL = { staffId: null, seesPrivate: true };
 
 afterAll(async () => {
   await m?.db.closeDb();
@@ -86,16 +91,16 @@ describe("recurring blocks", () => {
     const wed = m.time.addDays(tue, 1);
     expect(clear(await starts("coralville", makenna.id, tue), 900, 915)).toBe(false);
 
-    const made = ok(await mine.createMySeriesAction({ category: "break", weekdays: [2, 4], startMin: 900, endMin: 915, startsOn: tue }));
+    const made = ok(await mine.createMySeriesAction({ reasonId: rid("break"), weekdays: [2, 4], startMin: 900, endMin: 915, startsOn: tue }));
     expect(made.saved).toBe(true);
     expect(made.occurrences).toBeGreaterThan(100);
     for (const d of [tue, m.time.addDays(tue, 2), m.time.addDays(tue, 7)]) expect(clear(await starts("coralville", makenna.id, d), 900, 915), d).toBe(true);
     expect(clear(await starts("coralville", makenna.id, wed), 900, 915)).toBe(false);
 
-    const s = (await m.db.db.query.timeBlockSeries.findFirst({ where: m.drizzle.and(eq(m.schema.timeBlockSeries.staffId, makenna.id), eq(m.schema.timeBlockSeries.category, "break")) }))!;
+    const s = (await m.db.db.query.timeBlockSeries.findFirst({ where: m.drizzle.and(eq(m.schema.timeBlockSeries.staffId, makenna.id), eq(m.schema.timeBlockSeries.reasonId, rid("break"))) }))!;
     expect([s.shopId, s.weekdays]).toEqual([null, [2, 4]]);
     const first = (await m.db.db.query.timeBlocks.findFirst({ where: m.drizzle.and(eq(m.schema.timeBlocks.seriesId, s.id), eq(m.schema.timeBlocks.startsAt, at(tue, 900))) }))!;
-    expect(first.category).toBe("break");
+    expect([first.category, first.reasonId, first.reason]).toEqual(["other", rid("break"), "Break"]);
     ok(await mine.removeMyBlockAction(first.id));
     expect(clear(await starts("coralville", makenna.id, tue), 900, 915)).toBe(false);
     expect(clear(await starts("coralville", makenna.id, m.time.addDays(tue, 7)), 900, 915)).toBe(true);
@@ -125,7 +130,7 @@ describe("time off", () => {
     const jessica = await staffBy({ label: "Jessica" });
     const cv = await shop("coralville");
     const thu = dayOn(4, 29);
-    const ask = () => st.requestTimeOff({ staffId: jessica.id, shopId: cv.id, range: { fromDate: thu, toDate: thu, startMin: 14 * 60, endMin: 17 * 60 }, reason: "personal" }, { actor, enforceNotice: false });
+    const ask = () => st.requestTimeOff({ staffId: jessica.id, shopId: cv.id, range: { fromDate: thu, toDate: thu, startMin: 14 * 60, endMin: 17 * 60 }, reasonId: rid("personal") }, { actor, enforceNotice: false });
 
     const pending = await ask();
     expect(pending).toMatchObject({ done: true, status: "pending" });
@@ -133,7 +138,7 @@ describe("time off", () => {
     expect(clear(online, 840, 1020)).toBe(true);
     expect(online.mins.some((x) => x < 600)).toBe(true);
     expect(clear(await starts("coralville", jessica.id, thu, true), 840, 1020)).toBe(false);
-    expect((await st.staffingFor([cv.id], thu, thu, [jessica.id]))[0]).toMatchObject({ status: "working", pending: true });
+    expect((await st.staffingFor([cv.id], thu, thu, ALL, [jessica.id]))[0]).toMatchObject({ status: "working", pending: true });
 
     await as("michelle@rayz.test");
     ok(await decide.decideTimeOffAction((pending as { requestId: string }).requestId, "deny", "Short that day"));
@@ -147,7 +152,7 @@ describe("time off", () => {
     expect(clear(after, 840, 1020)).toBe(true);
     expect(after.mins.some((x) => x < 600)).toBe(true);
     expect(clear(await starts("coralville", jessica.id, thu, true), 840, 1020)).toBe(true);
-    expect((await st.staffingFor([cv.id], thu, thu, [jessica.id]))[0]).toMatchObject({ status: "partly_off", offMin: 180, hasTimeOff: true, pending: false });
+    expect((await st.staffingFor([cv.id], thu, thu, ALL, [jessica.id]))[0]).toMatchObject({ status: "partly_off", offMin: 180, hasTimeOff: true, pending: false });
   });
 
   it("a shop that approves automatically does so only when nothing is booked; otherwise a manager decides", async () => {
@@ -156,25 +161,25 @@ describe("time off", () => {
     const thu = m.time.addDays(wed, 1);
     const whole = (d: string) => ({ fromDate: d, toDate: d, startMin: null, endMin: null });
 
-    const auto = (await st.requestTimeOff({ staffId: jilane.id, shopId: null, range: whole(wed), reason: "vacation" }, { actor, enforceNotice: true })) as { requestId: string; status: string };
+    const auto = (await st.requestTimeOff({ staffId: jilane.id, shopId: null, range: whole(wed), reasonId: rid("vacation") }, { actor, enforceNotice: true })) as { requestId: string; status: string };
     expect(auto.status).toBe("approved");
     expect(await request(auto.requestId)).toMatchObject({ decidedVia: "auto" });
     expect((await starts("moline", jilane.id, wed)).mins).toEqual([]);
     expect(await audits(auto.requestId)).toEqual(["time_off.approve", "time_off.request"]);
 
     const a = await book("moline", jilane.id, thu, 10 * 60);
-    const warned = await st.requestTimeOff({ staffId: jilane.id, shopId: null, range: whole(thu), reason: "vacation" }, { actor, enforceNotice: true });
+    const warned = await st.requestTimeOff({ staffId: jilane.id, shopId: null, range: whole(thu), reasonId: rid("vacation") }, { actor, enforceNotice: true });
     expect(warned.done).toBe(false);
     expect(warned.conflicts.map((c) => c.code)).toEqual([a.code]);
     expect(await m.db.db.query.timeOffRequests.findFirst({ where: m.drizzle.and(eq(m.schema.timeOffRequests.staffId, jilane.id), eq(m.schema.timeOffRequests.fromDate, thu)) })).toBeUndefined();
-    const held = await st.requestTimeOff({ staffId: jilane.id, shopId: null, range: whole(thu), reason: "vacation" }, { actor, confirm: true, enforceNotice: true });
+    const held = await st.requestTimeOff({ staffId: jilane.id, shopId: null, range: whole(thu), reasonId: rid("vacation") }, { actor, confirm: true, enforceNotice: true });
     expect(held).toMatchObject({ done: true, status: "pending", heldForManager: true });
     expect((await appt(a.id)).status).toBe("booked");
-    await expect(st.requestTimeOff({ staffId: jilane.id, shopId: null, range: whole(thu), reason: "sick" }, { actor, enforceNotice: true })).rejects.toThrow(/already time off/);
+    await expect(st.requestTimeOff({ staffId: jilane.id, shopId: null, range: whole(thu), reasonId: rid("sick") }, { actor, enforceNotice: true })).rejects.toThrow(/already time off/);
 
     // Kat also works at shops where a manager approves: the strictest shop wins.
     const kat = await staffBy({ email: "kat@rayz.test" });
-    const katDay = await st.requestTimeOff({ staffId: kat.id, shopId: null, range: whole(dayOn(1, 36)), reason: "vacation" }, { actor, enforceNotice: true });
+    const katDay = await st.requestTimeOff({ staffId: kat.id, shopId: null, range: whole(dayOn(1, 36)), reasonId: rid("vacation") }, { actor, enforceNotice: true });
     expect(katDay).toMatchObject({ done: true, status: "pending", heldForManager: false });
   });
 });
@@ -188,13 +193,13 @@ describe("booked appointments are warned about and never dropped", () => {
     const firstMin = m.time.localMinutesOf(new Date(first.startsAt));
 
     await as("makenna@rayz.test");
-    const warned = ok(await mine.quickBlockAction({ category: "personal", date: fri, startMin: firstMin, minutes: 30 }));
+    const warned = ok(await mine.quickBlockAction({ reasonId: rid("personal"), date: fri, startMin: firstMin, minutes: 30 }));
     expect(warned).toEqual({ saved: false, conflicts: [expect.objectContaining({ code: first.code })] });
     expect(await m.db.db.query.timeBlocks.findFirst({ where: m.drizzle.and(eq(m.schema.timeBlocks.staffId, makenna.id), eq(m.schema.timeBlocks.startsAt, at(fri, firstMin))) })).toBeUndefined();
-    expect(ok(await mine.quickBlockAction({ category: "personal", date: fri, startMin: firstMin, minutes: 30, confirm: true })).saved).toBe(true);
+    expect(ok(await mine.quickBlockAction({ reasonId: rid("personal"), date: fri, startMin: firstMin, minutes: 30, confirm: true })).saved).toBe(true);
     expect((await appt(first.id)).status).toBe("booked");
 
-    const off = { shopId: null, fromDate: fri, toDate: fri, allDay: true, reason: "vacation" };
+    const off = { shopId: null, fromDate: fri, toDate: fri, allDay: true, reasonId: rid("vacation") };
     const t1 = ok(await mine.requestTimeOffAction(off));
     expect(t1.saved).toBe(false);
     expect(t1.conflicts.map((c) => c.code).sort()).toEqual([first.code, second.code].sort());
@@ -251,27 +256,27 @@ describe("limits, notice and who decides", () => {
   it("holds barbers to the longest lunch and block and the minimum notice; managers aren't held to the block limits", async () => {
     const wed = dayOn(3, 43);
     await as("makenna@rayz.test");
-    expect(err(await mine.quickBlockAction({ category: "lunch", date: wed, startMin: 11 * 60, minutes: 90 }))).toMatch(/Lunch can be at most 60 minutes/);
-    expect(err(await mine.quickBlockAction({ category: "personal", date: wed, startMin: 9 * 60, minutes: 150 }))).toMatch(/at most 120 minutes/);
-    expect(err(await mine.createMySeriesAction({ category: "lunch", weekdays: [3], startMin: 720, endMin: 810, startsOn: wed }))).toMatch(/at most 60 minutes/);
-    expect(err(await mine.quickBlockAction({ category: "other", date: wed, startMin: 9 * 60, minutes: 30 }))).toMatch(/reason/);
+    expect(err(await mine.quickBlockAction({ reasonId: rid("lunch"), date: wed, startMin: 11 * 60, minutes: 90 }))).toMatch(/Lunch can be at most 60 minutes/);
+    expect(err(await mine.quickBlockAction({ reasonId: rid("personal"), date: wed, startMin: 9 * 60, minutes: 150 }))).toMatch(/at most 120 minutes/);
+    expect(err(await mine.createMySeriesAction({ reasonId: rid("lunch"), weekdays: [3], startMin: 720, endMin: 810, startsOn: wed }))).toMatch(/at most 60 minutes/);
+    expect(err(await mine.quickBlockAction({ reasonId: "", date: wed, startMin: 9 * 60, minutes: 30 }))).toMatch(/Pick a reason/);
     const today = m.time.todayLocal();
     const soon = m.time.addDays(today, 3);
-    expect(err(await mine.requestTimeOffAction({ shopId: null, fromDate: soon, toDate: soon, allDay: true, reason: "vacation" }))).toMatch(/7 days' notice/);
+    expect(err(await mine.requestTimeOffAction({ shopId: null, fromDate: soon, toDate: soon, allDay: true, reasonId: rid("vacation") }))).toMatch(/7 days' notice/);
     const tomorrow = m.time.addDays(today, 1);
-    expect(ok(await mine.requestTimeOffAction({ shopId: null, fromDate: tomorrow, toDate: tomorrow, allDay: false, startMin: 6 * 60, endMin: 8 * 60, reason: "sick" })).saved).toBe(true);
+    expect(ok(await mine.requestTimeOffAction({ shopId: null, fromDate: tomorrow, toDate: tomorrow, allDay: false, startMin: 6 * 60, endMin: 8 * 60, reasonId: rid("sick") })).saved).toBe(true);
     const moline = await shop("moline");
-    expect(err(await mine.requestTimeOffAction({ shopId: moline.id, fromDate: wed, toDate: wed, allDay: true, reason: "vacation" }))).toMatch(/don't work at that shop/);
+    expect(err(await mine.requestTimeOffAction({ shopId: moline.id, fromDate: wed, toDate: wed, allDay: true, reasonId: rid("vacation") }))).toMatch(/don't work at that shop/);
 
     expect(err(await decide.saveRulesAction((await shop("coralville")).id, { maxLunchMin: 45 }))).toMatch(/can't change the time off rules/);
     await as("michelle@rayz.test");
     expect(err(await decide.saveRulesAction(null, { maxLunchMin: 45 }))).toMatch(/every shop/);
     const cv = await shop("coralville");
     ok(await decide.saveRulesAction(cv.id, { maxLunchMin: 45 }));
-    expect(ok(await mine.quickBlockAction({ category: "lunch", date: wed, startMin: 11 * 60, minutes: 90 })).saved).toBe(true);
+    expect(ok(await mine.quickBlockAction({ reasonId: rid("lunch"), date: wed, startMin: 11 * 60, minutes: 90 })).saved).toBe(true);
     await as("makenna@rayz.test");
-    expect(err(await mine.quickBlockAction({ category: "lunch", date: wed, startMin: 11 * 60, minutes: 50 }))).toMatch(/at most 45 minutes/);
-    expect(ok(await mine.quickBlockAction({ category: "lunch", date: wed, startMin: 11 * 60, minutes: 45 })).saved).toBe(true);
+    expect(err(await mine.quickBlockAction({ reasonId: rid("lunch"), date: wed, startMin: 11 * 60, minutes: 50 }))).toMatch(/at most 45 minutes/);
+    expect(ok(await mine.quickBlockAction({ reasonId: rid("lunch"), date: wed, startMin: 11 * 60, minutes: 45 })).saved).toBe(true);
     await as("michelle@rayz.test");
     ok(await decide.saveRulesAction(cv.id, {}));
     expect(await audits(cv.id)).toEqual(["staff_time.rules", "staff_time.rules"]);
@@ -279,7 +284,7 @@ describe("limits, notice and who decides", () => {
 
   it("requesting is separate from approving: barbers and the desk can't decide, nobody decides their own, and other shops are refused", async () => {
     const sat = dayOn(6, 43);
-    const whole = { shopId: null, fromDate: sat, toDate: sat, allDay: true, reason: "vacation" };
+    const whole = { shopId: null, fromDate: sat, toDate: sat, allDay: true, reasonId: rid("vacation") };
     await as("makenna@rayz.test");
     ok(await mine.requestTimeOffAction(whole));
     const makenna = await staffBy({ email: "makenna@rayz.test" });
@@ -316,7 +321,7 @@ describe("limits, notice and who decides", () => {
 
     // Kat works at Moline, Rock Island and Silvis: time off at all of them needs someone with all three.
     const kat = await staffBy({ email: "kat@rayz.test" });
-    const all = (await st.requestTimeOff({ staffId: kat.id, shopId: null, range: { fromDate: dayOn(2, 43), toDate: dayOn(2, 43), startMin: null, endMin: null }, reason: "personal" }, { actor, enforceNotice: false })) as { requestId: string };
+    const all = (await st.requestTimeOff({ staffId: kat.id, shopId: null, range: { fromDate: dayOn(2, 43), toDate: dayOn(2, 43), startMin: null, endMin: null }, reasonId: rid("personal") }, { actor, enforceNotice: false })) as { requestId: string };
     for (const who of ["manager.moline@rayz.test", "regional@rayz.test"]) {
       await as(who);
       expect(err(await decide.decideTimeOffAction(all.requestId, "approve", "")), who).toMatch(/shops you don't manage/);
