@@ -25,6 +25,8 @@ export const PAYMENTS_MODE_LABEL: Record<PaymentsMode, string> = {
   cash_only: "No cards (cash and gift cards only)",
 };
 
+export const PAYMENTS_MODE_SHORT: Record<PaymentsMode, string> = { connected: "Own account", brand: "Brand account", cash_only: "Cash only" };
+
 export const PAYMENTS_MODE_HINT: Record<PaymentsMode, string> = {
   connected: "For a shop that's its own business (an LLC with its own EIN). Stripe collects its legal details, owner and bank account, and pays out to that bank.",
   brand: "Card sales settle in the brand's main Stripe account and are paid out to the brand's bank with every other shop on it. Nothing to onboard.",

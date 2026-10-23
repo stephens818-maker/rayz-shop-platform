@@ -3,7 +3,7 @@ import { asc, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { shopPaymentAccounts, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Input, PageHeader, Select, Stat, Table, Td, Th, buttonClass } from "@/components/ui";
-import { ACCOUNT_STATE_LABEL, PAYMENTS_MODE_LABEL, payoutScheduleLabel } from "@/domain/connect";
+import { ACCOUNT_STATE_LABEL, payoutScheduleLabel } from "@/domain/connect";
 import { formatCents } from "@/lib/money";
 import { addDays, todayLocal, type LocalDate } from "@/lib/time";
 import { guardPage, reportShopIds } from "@/server/auth/staff";
@@ -14,6 +14,7 @@ export const metadata: Metadata = { title: "Payouts" };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const STATUS_TONE = { paid: "green", in_transit: "blue", pending: "amber", failed: "red", canceled: "gray" } as const;
+const NOW = { brand: "Now on the brand's account", cash_only: "Now cash only", connected: "" } as const;
 const $ = (c: number | null) => (c == null ? "—" : formatCents(c));
 
 export default async function PayoutsPage({ searchParams }: { searchParams: Promise<{ shop?: string; from?: string; to?: string }> }) {
@@ -21,8 +22,8 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const requested = sp.shop ?? (ctx.currentShopId ? ctx.currentShopId : "all");
   const shopIds = reportShopIds(ctx, requested);
-  const to = (sp.to && DAY.test(sp.to) ? sp.to : todayLocal()) as LocalDate;
-  const from = (sp.from && DAY.test(sp.from) && sp.from <= to ? sp.from : addDays(to, -30)) as LocalDate;
+  const to = (sp.to && DAY.test(sp.to) ? sp.to : addDays(todayLocal(), 7)) as LocalDate;
+  const from = (sp.from && DAY.test(sp.from) && sp.from <= to ? sp.from : addDays(todayLocal(), -30)) as LocalDate;
   const scope = { shopIds, from, to };
   const allShops = shopIds.length === ctx.shopIds.length;
   const withBrand = ctx.brandWide && allShops;
@@ -63,7 +64,7 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
       <form method="get" className="flex flex-wrap items-end gap-2">
         <label className="text-sm text-zinc-700">
           <span className="mb-1 block text-xs font-medium text-zinc-500">Shop</span>
-          <Select name="shop" defaultValue={shopIds.length === 1 ? shopIds[0] : "all"} className="w-56">
+          <Select name="shop" defaultValue={shopIds.length === 1 ? shopIds[0] : "all"} className="w-72">
             {ctx.shopIds.length > 1 && <option value="all">{ctx.brandWide ? "Every shop and the brand account" : "All my shops"}</option>}
             {names.map((n) => (
               <option key={n.id} value={n.id}>
@@ -93,13 +94,12 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
       </div>
 
       <Card>
-        <CardHeader title="By account" subtitle="Card takings are by business date, after refunds, with tips and surcharges. Payouts are by the day they reach the bank, so the two don't line up day for day." />
+        <CardHeader title="By account" subtitle="Card takings are by business date, after refunds, with tips and surcharges. Payout schedules are as Stripe reports them. Payouts are by the day they reach the bank, so the two don't line up day for day." />
         <Table>
           <thead>
             <tr>
               <Th>Account</Th>
-              <Th>Pays out to</Th>
-              <Th>Schedule (from Stripe)</Th>
+              <Th>Pays out</Th>
               <Th right>Card takings</Th>
               <Th right>Fees</Th>
               <Th right>To account</Th>
@@ -112,15 +112,23 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
               const mine = payouts.filter((p) => p.shopId === a.shopId);
               return (
                 <tr key={a.shopId}>
-                  <Td>
+                  <Td className="max-w-56 whitespace-normal">
                     <div className="font-medium text-zinc-900">{a.shopName}</div>
                     <div className="text-xs text-zinc-500">
-                      {a.stripeAccountId ? <code>{a.stripeAccountId}</code> : "No account yet"} · {ACCOUNT_STATE_LABEL[a.state]}
-                      {a.paymentsMode !== "connected" && ` · now ${PAYMENTS_MODE_LABEL[a.paymentsMode].toLowerCase()}`}
+                      {a.stripeAccountId ? <code>{a.stripeAccountId}</code> : "No account yet"}
+                      <br />
+                      {ACCOUNT_STATE_LABEL[a.state]}
+                      {a.paymentsMode !== "connected" && (
+                        <div className="mt-1">
+                          <Badge>{NOW[a.paymentsMode]}</Badge>
+                        </div>
+                      )}
                     </div>
                   </Td>
-                  <Td className="text-zinc-600">{a.ownerName}&apos;s bank</Td>
-                  <Td className="text-zinc-600">{payoutScheduleLabel(scheduleOf(a.shopId))}</Td>
+                  <Td className="max-w-44 whitespace-normal text-zinc-600">
+                    <div>To {a.ownerName}&apos;s bank</div>
+                    <div className="text-xs text-zinc-500">{payoutScheduleLabel(scheduleOf(a.shopId))}</div>
+                  </Td>
                   <Td right>{$(a.cardCents)}</Td>
                   <Td right>{$(a.feeCents)}</Td>
                   <Td right>{$(a.netCents)}</Td>
@@ -131,12 +139,14 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
             })}
             {onBrand.length > 0 && (
               <tr className="bg-zinc-50/60">
-                <Td>
+                <Td className="max-w-56 whitespace-normal">
                   <div className="font-medium text-zinc-900">Brand account</div>
                   <div className="text-xs text-zinc-500">{onBrand.map((a) => a.shopName).join(", ")}</div>
                 </Td>
-                <Td className="text-zinc-600">The brand&apos;s bank</Td>
-                <Td className="text-zinc-600">{payoutScheduleLabel(brandSchedule)}</Td>
+                <Td className="max-w-44 whitespace-normal text-zinc-600">
+                  <div>To the brand&apos;s bank</div>
+                  <div className="text-xs text-zinc-500">{payoutScheduleLabel(brandSchedule)}</div>
+                </Td>
                 <Td right>{$(brandCard)}</Td>
                 <Td right>{$(brandFees)}</Td>
                 <Td right>{$(brandCard - brandFees)}</Td>

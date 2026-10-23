@@ -421,7 +421,7 @@ describe("reports and payouts", () => {
     expect(page.text).toContain("Daily, 2 days after the charge");
     expect(page.text).toContain((await shop(shopIds.brand)).stripeTerminalLocationId!);
     const overview = await open("/admin/setup");
-    expect(overview.text).toContain("No cards (cash and gift cards only)");
+    expect(overview.text).toMatch(/Muscatine[\s\S]*Cash only/);
 
     const [sale] = await m.db.db.select().from(m.schema.sales).where(m.drizzle.and(eq(m.schema.sales.shopId, shopIds.brand), eq(m.schema.sales.status, "paid"))).limit(1);
     const receipt = await open("/admin/sales/[id]", { id: sale.id });

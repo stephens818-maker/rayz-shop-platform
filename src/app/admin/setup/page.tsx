@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge, Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Table, Td, Th, cx } from "@/components/ui";
-import { OWNER_KIND_LABEL, PAYMENTS_MODE_LABEL, formatFeeRate, payoutScheduleLabel } from "@/domain/connect";
+import { OWNER_KIND_LABEL, PAYMENTS_MODE_SHORT, formatFeeRate, payoutScheduleLabel } from "@/domain/connect";
 import { SHOP_STATUS_LABEL } from "@/domain/location-lifecycle";
 import { can, guardPage } from "@/server/auth/staff";
 import { SETUP_ORDER, locationSetup, ownerEntityList, setupOverview } from "@/server/location-setup";
@@ -175,9 +175,9 @@ async function Overview({ shopIds, canEditOwners, canAdd }: { shopIds: string[];
                     <Badge tone={STATUS_TONE[r.status]}>{SHOP_STATUS_LABEL[r.status]}</Badge>
                   </Td>
                   <Td>{r.ownerName ? `${r.ownerName}${r.ownerKind === "franchisee" ? " (franchisee)" : ""}` : <span className="text-zinc-400">Not set</span>}</Td>
-                  <Td className="text-zinc-600">{PAYMENTS_MODE_LABEL[r.paymentsMode]}</Td>
+                  <Td className="text-zinc-600">{PAYMENTS_MODE_SHORT[r.paymentsMode]}</Td>
                   <Td>{r.paymentsMode === "connected" ? <AccountStateBadge state={r.state} /> : <span className="text-zinc-400">—</span>}</Td>
-                  <Td>{r.paymentsMode === "brand" ? <span className="text-zinc-500">Brand account</span> : r.stripeAccountId ? <code className="text-xs text-zinc-600">{r.stripeAccountId}</code> : <span className="text-zinc-400">None yet</span>}</Td>
+                  <Td>{r.paymentsMode === "brand" ? <span className="text-zinc-400">—</span> : r.stripeAccountId ? <code className="text-xs text-zinc-600">{r.stripeAccountId}</code> : <span className="text-zinc-400">None yet</span>}</Td>
                   <Td right>
                     {r.done}/{r.total}
                   </Td>
@@ -196,7 +196,7 @@ async function Overview({ shopIds, canEditOwners, canAdd }: { shopIds: string[];
       <Card>
         <CardHeader
           title="Owners"
-          subtitle="Who owns each location's business. Shops are grouped by owner in the Shop P&L report, so a franchisee who owns several shops sees them together; each shop still has its own Stripe account."
+          subtitle="Who owns each location's business. Shops are grouped by owner in the Shop P&L report, so a franchisee who owns several shops sees them together. Where each shop's card money goes is set in its Payments and banking step."
           action={<OwnerEditor owner={null} canEdit={canEditOwners} />}
         />
         <ul className="divide-y divide-zinc-100">
