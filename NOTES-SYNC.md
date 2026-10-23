@@ -14,14 +14,14 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Mobile workstream C1–C22 and I1–I16, except where noted below | mobile |
 | Admin back office (`src/app/admin/**`), booking engine (`src/server/booking.ts`, `src/domain/availability.ts`, `src/domain/timing.ts`), POS and checkout, refunds, reports, inventory, permissions and roles, client data protection, notifications back office | core |
 | Card fee config and `computeCardFee` | core (mobile reads only) |
-| I10 Stripe Connect: platform account, connected account per shop, destination charges, onboarding, per-shop P&L | core, except the platform Customer and saved-card side, which is mobile's |
+| I10 Stripe Connect: platform account, connected account per shop, destination charges, onboarding, per-shop P&L, per-location banking (payments mode, descriptor, Terminal Locations and readers, payouts) | core, except the platform Customer and saved-card side, which is mobile's |
 | Payroll (`src/domain/payroll/**`, `src/server/payroll/**`, `src/app/admin/payroll/**`) and service times (`src/domain/service-times.ts`, `src/server/service-times*.ts`) | core |
 
 Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations` and `core_0028_digest_jobs`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs` and `core_0029_location_banking`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -88,6 +88,28 @@ One Ray'z platform account, and one Express connected account per shop. The plat
 - **Env:** `STRIPE_CONNECT_WEBHOOK_SECRET` is the signing secret of a separate **Connect** webhook endpoint at `/api/stripe/connect` (events `account.updated`, `account.application.deauthorized`, `payout.*`).
 - **Without keys:** accounts are `sim_acct_…`, and onboarding is a stand-in page. Simulated accounts are refused in Stripe mode, so a shop has to onboard for real once keys are set.
 
+### Per-location banking (core)
+
+Each shop has a **payments mode** in `shops.payments_mode`: `connected` (the default; its own Express account and bank, for a separate LLC), `brand` (charges on the brand's own Stripe account, paid out to the brand bank) or `cash_only`. Pure rules are in `src/domain/connect.ts` (`PAYMENTS_MODES`, `takesCards`, `paymentsStep`, `statementDescriptorProblem`, `descriptorSuffix`, `receiptBranding`, `summarizePayout`).
+
+- **Route every card charge through `chargeRoute(shop, amountCents, "keyed" | "terminal")`** in `src/server/payments/connect.ts`, then pass the result to `chargeCard`. It returns:
+  - `{ settlement: "connected", destination, estimatedFeeCents }`: pass `destination` (a destination charge, as before).
+  - `{ settlement: "platform", destination: null, estimatedFeeCents, descriptorSuffix }`: no destination, and pass `statementDescriptorSuffix: descriptorSuffix`. Store `processor_fee_cents` (Stripe's, or the estimate) and `settlement = 'platform'`.
+  - For a cash-only shop it throws `AppError("payment_failed", …, { reason: "cash_only" })`. A shop on its own account that Stripe hasn't enabled still throws `reason: "payments_not_ready"`.
+  - `chargeDestination` still works, but only knows about own accounts. Please use `chargeRoute` for app checkout and prepayment so brand-account and cash-only shops behave correctly.
+- **Refunds** follow the original payment, not the shop's current mode: `reverse_transfer` when the payment has a `stripe_account_id`, a plain refund when it settled on the brand account. `refundSale` and the webhooks already do this.
+- **Webhooks:** `/api/stripe/webhook` (platform) books dashboard refunds and disputes at the payment's shop, and records the brand account's own payouts. `/api/stripe/connect` handles `account.updated`, `capability.updated`, `account.external_account.*`, `account.application.deauthorized` and the connected accounts' `payout.*`.
+- **Terminal:** `ensureTerminalLocation(shopId)` creates one Stripe Terminal Location per shop (`shops.stripe_terminal_location_id`). `registerReader(shopId, { label, registrationCode })` registers a reader to it. `assertReaderAt(shopId, readerId)` refuses a reader from another shop; checkout stores `payments.terminal_reader_id`.
+- **Permission:** `payments.banking` is an owner grant (only the Brand Owner gives or removes it; Brand Admin's template doesn't have it). It covers choosing the mode, onboarding, the Express dashboard and the statement descriptor. `payments.accounts` still covers viewing status and refreshing it. Every change is audited (`payments.mode`, `payments.account_created`, `payments.onboarding_started`, `payments.dashboard_opened`, `payments.statement_descriptor`, `payments.terminal_location`, `reader.register`, `shop.receipt`).
+- **We never store bank numbers, SSNs or EINs.** Stripe-hosted onboarding (Account Links) collects them. We keep the account ID, `charges_enabled`, `payouts_enabled`, `requirements_due` and the payout schedule Stripe reports. `tests/banking.test.ts` fails if a column like that appears.
+- **Schema** (`drizzle/core_0029_location_banking.sql`):
+  - `shops`: `payments_mode`, `statement_descriptor`, `receipt` (jsonb) and `stripe_terminal_location_id`.
+  - `shop_payment_accounts.payout_schedule`.
+  - `shop_payouts.shop_id` is now nullable: brand-account payouts are stored with `stripe_account_id = 'platform'` and no shop (a check enforces this). It also gains `gross_cents`, `fee_cents`, `refund_cents` and `item_count`.
+  - `terminal_readers`: `device_type`, `stripe_location_id` and `registered_at`.
+  - `payments`: `settlement` (`platform` or `connected`) and `terminal_reader_id`.
+- **Env:** optional `STRIPE_STATEMENT_PREFIX` (default `RAYZ`) for brand-account shops' statements.
+
 ### Payroll (core)
 
 Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook problems: [`docs/payroll-workbook-discrepancies.md`](docs/payroll-workbook-discrepancies.md).
@@ -152,12 +174,14 @@ If the mobile side means a specific registry from the plan, say which items it s
   - `busy_from` and `busy_until` are set by a trigger from `buffer_before_minutes` and `buffer_minutes`.
   - The `appointments_no_double_booking` constraint stops service times overlapping. `appointments_no_buffer_overlap` stops buffers overlapping, unless the booking has `squeezed = true`.
   - Online and API bookings must start on a time from `getAvailability`, which is per barber now (`slot.ends[staffId]`). Squeeze-in is staff-only.
-- `payments` gains Connect columns. See the I10 section above.
+- `payments` gains Connect columns. See the I10 section above, and `settlement` and `terminal_reader_id` in the per-location banking section.
+- `shop_payouts.shop_id` can be null (brand-account payouts). Join with a left join.
 
 ## Requests for the other agent
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
 - (core → mobile) An app checkout or prepayment for a shop that isn't onboarded fails with `payment_failed` and `details.reason = "payments_not_ready"`. Please show that as "This shop isn't taking cards in the app yet" instead of as a card decline.
+- (core → mobile) Card charges should now go through `chargeRoute` (see "Per-location banking"). A cash-only shop fails with `details.reason = "cash_only"`; please show it as "This shop takes cash only" and don't offer card prepayment there.
 
 - (core → mobile) Twilio now handles STOP and START on each shop number and writes `contact_opt_outs`. If the app shows a client's text consent, please treat a number in `contact_opt_outs` (channel `sms`) as not texting, whatever `sms_opt_in` says.
 
@@ -172,6 +196,18 @@ If the mobile side means a specific registry from the plan, say which items it s
 - Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
 
 ## Log
+
+### 2026-10-23: core (per-location banking)
+
+- **Payments mode per shop** (`connected`, `brand` or `cash_only`), chosen in the Add Location wizard's new **Payments and banking** step and in Location setup. Only holders of `payments.banking` (an owner grant) can choose it, onboard or change the descriptor.
+- **Wizard step:** mode, statement descriptor, card fee and tips (moved here), readers by registration code, and receipt branding. The done screen goes straight to Stripe onboarding.
+- **Go-live gating:** the checklist blocks go-live until Stripe enables charges on a shop's own account. A brand-account shop is ready right away; a cash-only shop passes with the cash-only waiver.
+- **Routing:** `chargeRoute` sends each charge, tip and gift card sale to the brand account or the shop's account, and refuses cash-only shops. Refunds follow the original account. POS picks the shop's own readers and disables Card when the shop can't take cards.
+- **Payouts page** at `/admin/payouts` (per shop and brand-wide, with fees and refunds). Shop P&L reconciles brand-account shops. Today flags failed payouts.
+- **Receipts** use each shop's branding (`shops.receipt`).
+- Migration `core_0029_location_banking`.
+- Tests: `tests/banking.test.ts` and `tests/db/banking.test.ts`. The tenant test covers the new actions.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
 
 ### 2026-10-23: core (self-service locations, Today, morning digest)
 

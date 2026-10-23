@@ -102,7 +102,7 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] One platform account, and a connected (Express) account per shop.
 - [x] Destination charges (`on_behalf_of` + `transfer_data`) to the shop where the service happened, with the processing fee as the application fee.
 - [x] Refunds reverse the transfer.
-- [x] Shops that aren't onboarded can't take cards.
+- [x] Shops that aren't onboarded can't take cards. Shops can also use the brand account or take cash only (see section 13).
 - [x] The location setup wizard creates each shop's account and runs Stripe-hosted onboarding, with a simulator stand-in when there are no keys.
 - [x] The Connect webhook tracks account status, disconnects and payouts.
 - [x] Owner entities (brand or franchisee) group shops. A franchisee can own several shop accounts.
@@ -203,6 +203,34 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Morning digest by email to the owner and managers, configurable at **Setup → Morning digest** (time, roles, people, sections), with a preview and a test send. It covers yesterday's sales by shop, today's team (working, off, blocked) and the alerts, each copy scoped to that person's shops and permissions. It's sent once per person per day.
 - [x] Tests: `tests/today.test.ts` and `tests/db/today.test.ts`.
 - [ ] Marketing texts (open chair, rebook) wait on the marketing consent columns from PR #8. Until then the alerts say to call through the shop line.
+
+## 13. Per-location banking (Stripe Connect)
+
+- [x] The owner picks a payments mode for each shop:
+  - **Own Stripe account**: a connected account with its own bank, for a separate LLC.
+  - **Brand account**: charges on the brand's Stripe account, paid out to the brand bank.
+  - **Cash only**.
+- [x] The Add Location wizard has a **Payments and banking** step, and its done screen opens Stripe-hosted onboarding (Account Links). Stripe collects the legal entity, EIN, owner identity and bank. The app stores only the Stripe account ID and what Stripe reports: charges enabled, payouts enabled, requirements due and the payout schedule. A test fails if a bank, SSN or EIN column ever appears.
+- [x] The go-live checklist blocks until Stripe enables charges on the shop's own account, unless the owner picks cash only. A brand-account shop is ready at once.
+- [x] Per-location settings:
+  - the statement descriptor (as `RAYZ* SUFFIX` on the brand account);
+  - the payout schedule, read from Stripe;
+  - the card fee and tipping presets;
+  - Terminal readers registered by code to the shop's own Terminal Location;
+  - receipt branding.
+- [x] Every charge, tip, gift card sale and Terminal payment goes to the right account through `chargeRoute`. Cash-only shops are refused, and POS only offers the shop's own readers. Refunds follow the account the payment settled in, even after a mode switch.
+- [x] Both webhooks are location-aware:
+  - the platform webhook handles dashboard refunds, disputes and the brand account's payouts;
+  - the Connect webhook handles account and capability updates, bank changes, deauthorization and payouts.
+- [x] Reports and payouts reconcile per shop:
+  - Shop P&L covers brand-account shops;
+  - the **Payouts** page works per shop and brand-wide, with fees and refunds;
+  - Today flags failed payouts.
+- [x] Only the Brand Owner, or someone they've granted `payments.banking`, can choose the mode, onboard, open the Express dashboard or change the descriptor. Every change is audited.
+- [x] Tests: `tests/banking.test.ts` and `tests/db/banking.test.ts` cover charge routing, refunds, webhooks and go-live gating.
+- [ ] Try it in real Stripe test mode with Connect test accounts. The four Stripe keys aren't set yet, so the simulator runs.
+- [ ] Collecting a payment on a real reader (`processPaymentIntent`) is simulated. Registering readers and Terminal Locations calls Stripe when keys are set.
+- [ ] Embedded Connect onboarding isn't used. Stripe-hosted Account Links are, which need no client-side Stripe.js.
 
 ## Deferred by decision
 

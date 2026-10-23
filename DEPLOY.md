@@ -93,6 +93,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    | `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` | live keys at cutover |
    | `STRIPE_CONNECT_WEBHOOK_SECRET` | the signing secret of the Connect webhook (step 4) |
    | `CONNECT_FEE_KEYED`, `CONNECT_FEE_TERMINAL` | optional: the processing fee passed on to each shop, e.g. `2.9%+30` and `2.7%+5` (the defaults) |
+   | `STRIPE_STATEMENT_PREFIX` | optional: the start of card statements for shops on the brand account (default `RAYZ`, shown as `RAYZ* CLINTON`). It should match the brand account's shortened descriptor in Stripe. |
    | `NOTIFICATIONS_*` | leave `disabled` until the shop goes live (see the README's cutover plan) |
    | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | the Twilio account, for texts, call-in calls and the shop line. Set `NOTIFICATIONS_SMS_PROVIDER` and `NOTIFICATIONS_VOICE_PROVIDER` to `twilio` when the shop goes live. |
    | `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM` | optional fallbacks for shops without their own Twilio number |
@@ -100,10 +101,11 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    Don't set `DEMO_MODE`. Without it the build only ever applies migrations. It never seeds.
 3. Deploy. The build applies migrations. To run them yourself instead, set `SKIP_DB_MIGRATE=true` and run `DATABASE_URL_UNPOOLED=… pnpm db:migrate`.
 4. Set up Stripe:
-   - Turn on **Connect** for the platform account (Express accounts; the platform pays the fees and covers losses).
-   - Point a Stripe webhook at `https://<your domain>/api/stripe/webhook` for `charge.refunded` and `charge.dispute.created`, and copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
-   - Add a second webhook, set to **listen to events on connected accounts**, at `https://<your domain>/api/stripe/connect` for `account.updated`, `account.application.deauthorized`, and `payout.created`, `payout.updated`, `payout.paid`, `payout.failed` and `payout.canceled`. Copy its signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET`.
-   - Then open **Location setup** for each shop and finish **Card payments and payouts**. A shop takes cards only once Stripe approves its account.
+   - Turn on **Connect** for the platform account (Express accounts; the platform pays the fees and covers losses). Add the brand's bank account to the platform account. Shops set to **Brand account** are paid out there.
+   - Turn on **Terminal**. The app creates one Terminal Location per shop from its address the first time a reader is registered there. Readers are registered with the code they show, under **Shop settings → Card readers**.
+   - Point a Stripe webhook at `https://<your domain>/api/stripe/webhook` for `charge.refunded`, `charge.dispute.created`, and `payout.created`, `payout.updated`, `payout.paid`, `payout.failed` and `payout.canceled` (the brand account's own payouts). Copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
+   - Add a second webhook, set to **listen to events on connected accounts**, at `https://<your domain>/api/stripe/connect` for `account.updated`, `capability.updated`, `account.external_account.created`, `account.external_account.updated`, `account.external_account.deleted`, `account.application.deauthorized`, and the same five `payout.*` events. Copy its signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET`.
+   - Then open **Location setup** for each shop. Under **Payments and banking**, the Brand Owner (or someone they've given the banking permission) picks the shop's own Stripe account, the brand account, or cash only. For the shop's own account, they finish Stripe's onboarding, where Stripe collects the legal entity, EIN, owner identity and bank. The app keeps only the Stripe account ID and the status Stripe reports. A shop on its own account takes cards only once Stripe enables charges.
 5. Set up Twilio (when texts and calls go live):
    - Buy a number per shop and enter it under **Shop settings → Twilio number**. Calls to it ring the shop's phone; missed and after-hours calls get a text with a booking link.
    - For each number, point the messaging webhook at `https://<your domain>/api/twilio/sms` and the voice webhook at `https://<your domain>/api/twilio/voice` (HTTP POST). The app sets the status and call-flow webhooks itself. All are verified with `X-Twilio-Signature`, so `APP_BASE_URL` must match the domain Twilio calls exactly.
