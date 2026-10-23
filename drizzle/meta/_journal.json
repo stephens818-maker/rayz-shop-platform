@@ -218,6 +218,13 @@
       "when": 1792759200000,
       "tag": "core_0030_time_clock",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792762800000,
+      "tag": "core_0031_clock_live",
+      "breakpoints": true
     }
   ]
 }

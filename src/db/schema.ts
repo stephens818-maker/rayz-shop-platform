@@ -320,6 +320,8 @@ export const staff = pgTable("staff", {
   clockPinHash: text("clock_pin_hash"),
   clockPinFailures: smallint("clock_pin_failures").notNull().default(0),
   clockPinLockedUntil: ts("clock_pin_locked_until"),
+  /** They allow clocking in early to open earlier slots that day, where the shop turns that on. */
+  clockOpensEarly: boolean("clock_opens_early").notNull().default(false),
   createdAt: createdAt(),
 });
 
@@ -1769,6 +1771,19 @@ export const timePunchPhotos = pgTable("time_punch_photos", {
     .references(() => timePunches.id, { onDelete: "cascade" }),
   dataUrl: text("data_url").notNull(),
   createdAt: createdAt(),
+});
+
+/**
+ * Clock alerts already emailed to managers, so each goes out once: "late_in:<staff>:<shop>:<date>"
+ * for not clocked in before the first appointment, "affected:<punch>" for clients booked over a break
+ * or after an early clock-out.
+ */
+export const clockAlertLog = pgTable("clock_alert_log", {
+  key: text("key").primaryKey(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .references(() => shops.id, { onDelete: "cascade" }),
+  sentAt: ts("sent_at").notNull().defaultNow(),
 });
 
 /** Every manager change to a punch, with the reason and the values before and after. Append-only. */

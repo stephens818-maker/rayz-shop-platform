@@ -18,6 +18,8 @@ import {
 import {
   BusyAppointment,
   DayAvailabilityInput,
+  EarlyOpening,
+  TimeBlock,
   computeDaySlots,
   SQUEEZE_BYPASS_LABEL,
   StaffPlan,
@@ -28,6 +30,7 @@ import {
   totalDuration,
 } from "@/domain/availability";
 import { closedOn, takesOnlineBookings } from "@/domain/location-lifecycle";
+import { shopClockSettings } from "@/domain/time-clock";
 import { trailingBuffer } from "@/domain/timing";
 import { appointmentCode } from "@/lib/ids";
 import { formatPhone, normalizePhone } from "@/lib/phone";
@@ -36,6 +39,7 @@ import { Actor, audit } from "./audit";
 import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers } from "./catalog";
 import { CustomerInput, findOrCreateCustomer } from "./customers";
 import { AppError, isDoubleBookingError, notFound } from "./errors";
+import { liveClock } from "./clock-live";
 import { AppointmentMessageContext, cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
 import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
 import { bookingPlans, shopInterval, staffIntervals, toStaffPlans } from "./timing";
@@ -88,6 +92,8 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
           .where(and(inArray(timeOffRequests.staffId, ids), eq(timeOffRequests.status, "pending"), lt(timeOffRequests.startsAt, dayEnd), gt(timeOffRequests.endsAt, dayStart))),
   ]);
   const interval = await shopInterval(shop, tx);
+  const now = opts.now ?? new Date();
+  const clock = await clockAdjustments(shop, date, opts, now, tx);
   return {
     date,
     shopId: shop.id,
@@ -95,16 +101,38 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
     closedDates: closures.map((c) => c.date),
     staffIds: opts.staffIds,
     schedules: schedules.map((s) => ({ staffId: s.staffId, shopId: s.shopId, weekday: s.weekday, startMin: s.startMin, endMin: s.endMin })),
-    blocks: [...blocks, ...pending].map((b) => ({ staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt: b.endsAt })),
+    blocks: [...[...blocks, ...pending].map((b) => ({ staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt: b.endsAt })), ...clock.holds],
     appointments: appts as BusyAppointment[],
     durationMin: opts.durationMin,
     slotIntervalMin: interval.minutes,
     bufferMin: shop.bufferMinutes,
     plans: opts.plans,
     minLeadMin: opts.staffOverride ? 0 : shop.minLeadMinutes,
-    now: opts.now ?? new Date(),
+    now,
     ignoreAppointmentId: opts.ignoreAppointmentId,
+    early: clock.early,
   };
+}
+
+/**
+ * Today only, as the shop's clock rules say: a break or an early clock-out holds the time from
+ * online booking (the shop can still book it), and an early clock-in opens the time before the
+ * scheduled start for barbers who allow it. Clients see only the slots that result.
+ */
+async function clockAdjustments(shop: Shop, date: LocalDate, opts: DayContextOptions, now: Date, tx: DBorTx): Promise<{ holds: TimeBlock[]; early: EarlyOpening[] }> {
+  const none = { holds: [], early: [] };
+  if (date !== todayLocal(now) || !opts.staffIds.length) return none;
+  const s = shopClockSettings(shop.timeClock);
+  const holdsOnline = !opts.staffOverride && (s.blockOnBreak || s.blockAfterClockOut);
+  if (!holdsOnline && !s.openEarly) return none;
+  const { days } = await liveClock(shop, date, opts.staffIds, now, tx);
+  const holds: TimeBlock[] = [];
+  const early: EarlyOpening[] = [];
+  for (const d of days.values()) {
+    if (holdsOnline) holds.push(...d.holds.map((h) => ({ staffId: d.staffId, shopId: shop.id, startsAt: h.start, endsAt: h.end })));
+    if (d.early) early.push({ staffId: d.staffId, start: d.early.start, end: d.early.end });
+  }
+  return { holds, early };
 }
 
 export interface AvailabilityQuery {

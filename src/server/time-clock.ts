@@ -3,6 +3,7 @@ import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } f
 import { db, type DBorTx } from "@/db";
 import {
   brandSettings,
+  clockAlertLog,
   clockDevices,
   ftStatusChanges,
   payrollLockedOt,
@@ -52,10 +53,13 @@ import {
   type ShopClockSettings,
 } from "@/domain/time-clock";
 import { appBaseUrl } from "@/lib/deployment";
+import { callInHref } from "@/domain/clock-live";
+import type { Permission } from "@/domain/permissions";
 import { addDays, endOfLocalDay, formatDate, formatTime, isValidLocalDate, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { audit, SYSTEM, type Actor } from "./audit";
 import { loadStaffAccess, staffWithAccessTo, workShopIds } from "./auth/access";
 import { AppError, forbidden, notFound } from "./errors";
+import { clockFallout } from "./clock-live";
 import { enqueueShopEmail } from "./notifications/queue";
 import { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings } from "./payroll/groups";
 import { randomToken, sha256 } from "./auth/tokens";
@@ -129,7 +133,26 @@ export async function saveShopClock(shopId: string, v: { settings: ShopClockSett
   if (s.methods.includes("gps") && lat === null) throw bad("Set the shop's location before turning on the GPS check.");
   if (s.methods.includes("network") && !s.networks.length) throw bad("Add the shop's network address before turning on the network check.");
   await db.update(shops).set({ timeClock: s as unknown as Record<string, unknown>, latitude: lat, longitude: lng }).where(eq(shops.id, shopId));
-  await audit(actor, "timeclock.shop_rules", "shop", shopId, { methods: s.methods, radiusM: s.radiusM, networks: s.networks.length, photo: s.photo, graceMinutes: s.graceMinutes, locationSet: lat !== null }, shopId);
+  await audit(
+    actor,
+    "timeclock.shop_rules",
+    "shop",
+    shopId,
+    {
+      methods: s.methods,
+      radiusM: s.radiusM,
+      networks: s.networks.length,
+      photo: s.photo,
+      graceMinutes: s.graceMinutes,
+      locationSet: lat !== null,
+      blockOnBreak: s.blockOnBreak,
+      breakHoldMinutes: s.breakHoldMinutes,
+      blockAfterClockOut: s.blockAfterClockOut,
+      openEarly: s.openEarly,
+      lateAlertMinutes: s.lateAlertMinutes,
+    },
+    shopId,
+  );
   return s;
 }
 
@@ -182,6 +205,12 @@ export async function setPin(staffId: string, pin: string, actor: Actor) {
   if (p) throw bad(p);
   await db.update(staff).set({ clockPinHash: await bcrypt.hash(pin, 10), clockPinFailures: 0, clockPinLockedUntil: null }).where(eq(staff.id, staffId));
   await audit(actor, "timeclock.pin_set", "staff", staffId, {});
+}
+
+/** The barber's own choice: whether clocking in early opens earlier slots that day, where the shop allows it. */
+export async function setOpensEarly(staffId: string, on: boolean, actor: Actor) {
+  await db.update(staff).set({ clockOpensEarly: on }).where(eq(staff.id, staffId));
+  await audit(actor, "timeclock.opens_early", "staff", staffId, { on });
 }
 
 export async function clearPin(staffId: string, actor: Actor, shopId: string | null) {
@@ -435,6 +464,14 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
     await audit(req.actor, "timeclock.punch", "time_punch", row.id, { staffId: req.staffId, type: req.type, source: req.source, method, flags, distanceM, photo: !!req.photo, approvalsCleared: cleared }, req.shopId, tx);
     return row.id;
   });
+  // Clients booked over a break or after an early clock-out: the managers hear now, not at the next cron run.
+  if (req.type === "break_start" || req.type === "out") {
+    try {
+      await sendClockFallout(now, { onlyStaffId: req.staffId, shopIds: [req.shopId] });
+    } catch (e) {
+      console.error("clock fallout after punch failed", e);
+    }
+  }
   return { kind: "done", punchId: result, type: req.type, at: now, shop: clock.name, flags, notes };
 }
 
@@ -963,7 +1000,7 @@ export async function ftOverview(staffIds: readonly string[], asOf: LocalDate, w
   return { rows, lastWeek, window: w, threshold: s.ftHoursPerWeek };
 }
 
-async function managersOf(shopIds: string[], perms: ("timesheet.edit" | "timesheet.approve" | "payroll.run")[], exclude: string | null) {
+async function managersOf(shopIds: string[], perms: Permission[], exclude: string | null) {
   const ids = await staffWithAccessTo(shopIds);
   const people = ids.length ? await db.select({ id: staff.id, email: staff.email, active: staff.active, kind: staff.kind }).from(staff).where(inArray(staff.id, ids)) : [];
   const out: { id: string; email: string }[] = [];
@@ -1067,12 +1104,62 @@ export async function flagForgottenClockOuts(now = new Date()): Promise<number> 
   return n;
 }
 
-/** The cron's time clock pass: forgotten clock-outs every run; the full-time check once a night (3:00–3:15), since weeks close on Saturday. */
+/** The cron's time clock pass: forgotten clock-outs and live clock alerts every run; the full-time check once a night (3:00–3:15), since weeks close on Saturday. */
 export async function timeClockCron(now = new Date()) {
   const forgottenClockOuts = await flagForgottenClockOuts(now);
+  const clockAlerts = await sendClockFallout(now);
   const m = localMinutesOf(now);
   const ftChanges = m >= 180 && m < 195 ? await checkFtCrossings(now) : 0;
-  return { forgottenClockOuts, ftChanges };
+  return { forgottenClockOuts, clockAlerts, ftChanges };
+}
+
+/**
+ * Emails the managers who run each live shop's calendar, once each (clock_alert_log): a barber not
+ * clocked in `lateAlertMinutes` before their first client, and clients booked over a break or after
+ * an early clock-out, with the call-in link to move or rebook them. `onlyStaffId` limits it to one
+ * person, right after they punch.
+ */
+export async function sendClockFallout(now = new Date(), o: { onlyStaffId?: string; shopIds?: string[] } = {}): Promise<number> {
+  const shopIds = o.shopIds ?? (await db.select({ id: shops.id }).from(shops).where(eq(shops.status, "live"))).map((s) => s.id);
+  const today = todayLocal(now);
+  const base = appBaseUrl();
+  let n = 0;
+  for (const f of await clockFallout(shopIds, now)) {
+    const notes = [
+      ...f.late.map((l) => ({
+        key: `late_in:${l.staffId}:${f.shopId}:${today}`,
+        kind: "clock_late_in" as const,
+        staffId: l.staffId,
+        subject: `${l.label} isn't clocked in for their ${formatTime(l.appt.startsAt)} client`,
+        body: [
+          `${l.label} hasn't clocked in at ${f.shop}, and their first client today${l.appt.first ? `, ${l.appt.first},` : ""} is at ${formatTime(l.appt.startsAt)}.`,
+          "Check they're on the way, or move their first clients to another barber.",
+          `Calendar: ${base}/admin/calendar?shop=${f.shopId}&appt=${l.appt.id}`,
+        ].join("\n\n"),
+      })),
+      ...f.affected.map((a) => ({
+        key: `affected:${a.staffId}:${f.shopId}:${a.start.toISOString()}`,
+        kind: "clock_affected" as const,
+        staffId: a.staffId,
+        subject: `${a.label} ${a.why === "break" ? "is on a break" : "clocked out early"}: ${a.appts.length} ${a.appts.length === 1 ? "client" : "clients"} booked`,
+        body: [
+          `${a.label} ${a.why === "break" ? `started a break at ${formatTime(a.start)}` : `clocked out at ${formatTime(a.start)}`} at ${f.shop}. Booked in that time:`,
+          a.appts.map((x) => `- ${formatTime(x.startsAt)} ${x.first ?? "Walk-in"} (${x.code})`).join("\n"),
+          a.why === "break" ? `Online booking is held until ${formatTime(a.end)}.` : "Online booking is closed for the rest of the day.",
+          `Move or rebook them: ${base}${callInHref(a.staffId, f.shopId, { why: a.why, startMin: localMinutesOf(a.start), endMin: localDateOf(a.end) > today ? 24 * 60 : localMinutesOf(a.end) })}`,
+        ].join("\n\n"),
+      })),
+    ].filter((x) => !o.onlyStaffId || x.staffId === o.onlyStaffId);
+    for (const note of notes) {
+      const [first] = await db.insert(clockAlertLog).values({ key: note.key, shopId: f.shopId, sentAt: now }).onConflictDoNothing().returning({ key: clockAlertLog.key });
+      if (!first) continue;
+      n++;
+      await audit(SYSTEM, `timeclock.${note.kind}`, "staff", note.staffId, { key: note.key }, f.shopId);
+      for (const m of await managersOf([f.shopId], ["calendar.manage"], note.staffId))
+        await enqueueShopEmail({ kind: note.kind, to: m.email, subject: note.subject, body: note.body, shopId: f.shopId });
+    }
+  }
+  return n;
 }
 
 /** For Today: open shifts already flagged as forgotten clock-outs, and recent full-time changes, at these shops. */

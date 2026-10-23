@@ -81,6 +81,11 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
   const [grace, setGrace] = useState(initial.graceMinutes === null ? "" : String(initial.graceMinutes));
   const [lat, setLat] = useState(latitude === null ? "" : String(latitude));
   const [lng, setLng] = useState(longitude === null ? "" : String(longitude));
+  const [blockOnBreak, setBlockOnBreak] = useState(initial.blockOnBreak);
+  const [hold, setHold] = useState(String(initial.breakHoldMinutes));
+  const [blockAfterClockOut, setBlockAfterClockOut] = useState(initial.blockAfterClockOut);
+  const [openEarly, setOpenEarly] = useState(initial.openEarly);
+  const [lateAlert, setLateAlert] = useState(initial.lateAlertMinutes === null ? "" : String(initial.lateAlertMinutes));
   const [ok, setOk] = useState(false);
   const toggle = (m: ClockMethod) => {
     setOk(false);
@@ -95,7 +100,18 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
           () =>
             saveShopClockAction({
               shopId,
-              settings: { methods, radiusM: num(radius), networks: networks.split(/[\s,]+/).filter(Boolean), photo, graceMinutes: grace.trim() === "" ? null : num(grace) },
+              settings: {
+                methods,
+                radiusM: num(radius),
+                networks: networks.split(/[\s,]+/).filter(Boolean),
+                photo,
+                graceMinutes: grace.trim() === "" ? null : num(grace),
+                blockOnBreak,
+                breakHoldMinutes: num(hold),
+                blockAfterClockOut,
+                openEarly,
+                lateAlertMinutes: lateAlert.trim() === "" ? null : num(lateAlert),
+              },
               latitude: lat.trim() === "" ? null : num(lat),
               longitude: lng.trim() === "" ? null : num(lng),
             }),
@@ -141,6 +157,28 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
           <option value="required">Required</option>
         </Select>
       </Field>
+      <fieldset className="space-y-2 rounded-lg bg-zinc-50 p-3 text-sm ring-1 ring-zinc-200">
+        <legend className="px-1 text-xs font-medium text-zinc-600">Online booking follows the clock (today only; clients see only the open times)</legend>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-1.5">
+            <input type="checkbox" checked={blockOnBreak} onChange={(e) => setBlockOnBreak(e.target.checked)} /> A break closes online booking for
+          </label>
+          <Input type="number" min={5} max={120} value={hold} onChange={(e) => setHold(e.target.value)} className="w-20" aria-label="Minutes a break holds" />
+          <span>min from its start (longer while it lasts)</span>
+        </div>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={blockAfterClockOut} onChange={(e) => setBlockAfterClockOut(e.target.checked)} /> Clocking out before the scheduled end closes online booking for the rest of the day
+        </label>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={openEarly} onChange={(e) => setOpenEarly(e.target.checked)} /> Clocking in early opens the time before the scheduled start, for barbers who allow it on their Time clock page
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <span>Tell managers when a barber isn&apos;t clocked in</span>
+          <Input type="number" min={0} max={120} value={lateAlert} onChange={(e) => setLateAlert(e.target.value)} className="w-20" aria-label="Minutes before the first appointment" />
+          <span>min before their first appointment (blank: off)</span>
+        </div>
+        <p className="text-xs text-zinc-500">Clients booked over a break or after an early clock-out are flagged on Today and the calendar, with the call-in flow to move or rebook them.</p>
+      </fieldset>
       <div className="flex items-center gap-3">
         <Button size="sm" disabled={pending}>
           Save

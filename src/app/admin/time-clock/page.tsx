@@ -50,7 +50,7 @@ export default async function TimeClockSetupPage() {
       {shopLevel &&
         clocks.map((c) => (
           <Card key={c.id}>
-            <CardHeader title={`${c.name}: checking punches`} />
+            <CardHeader title={`${c.name}: checking punches and the calendar`} />
             <ShopClockForm shopId={c.id} initial={c.settings} latitude={c.latitude} longitude={c.longitude} myIp={myIp} />
           </Card>
         ))}

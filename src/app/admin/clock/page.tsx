@@ -9,7 +9,7 @@ import { formatDate, formatTime, startOfLocalDay, todayLocal } from "@/lib/time"
 import { workShopIds } from "@/server/auth/access";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { clockState, shopClocks } from "@/server/time-clock";
-import { ClockPanel, PinForm, type ClockShop } from "./clock";
+import { ClockPanel, OpensEarlyForm, PinForm, type ClockShop } from "./clock";
 
 export const metadata: Metadata = { title: "Time clock" };
 
@@ -31,8 +31,9 @@ export default async function ClockPage() {
       .innerJoin(shops, eq(shops.id, timePunches.shopId))
       .where(and(eq(timePunches.staffId, me), gte(timePunches.at, startOfLocalDay(todayLocal(now))), isNull(timePunches.voidedAt)))
       .orderBy(asc(timePunches.at)),
-    db.select({ pin: staff.clockPinHash }).from(staff).where(eq(staff.id, me)),
+    db.select({ pin: staff.clockPinHash, opensEarly: staff.clockOpensEarly }).from(staff).where(eq(staff.id, me)),
   ]);
+  const earlyShops = clocks.filter((c) => c.settings.openEarly && team.includes(c.id)).map((c) => c.name);
   const primary = team.find((s) => open.includes(s)) ?? null;
   const list: ClockShop[] = clocks.map((c) => ({ id: c.id, name: c.name, gps: c.settings.methods.includes("gps"), photo: c.settings.photo, rule: clockRuleText(c.settings) }));
   return (
@@ -97,6 +98,7 @@ export default async function ClockPage() {
         )}
       </Card>
       {can(ctx, "timeclock.punch") && <PinForm hasPin={!!mine?.pin} />}
+      {can(ctx, "timeclock.punch") && <OpensEarlyForm on={!!mine?.opensEarly} shops={earlyShops} />}
     </div>
   );
 }

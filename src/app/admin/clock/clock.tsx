@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { FLAG_LABEL, PUNCH_LABEL, type PunchFlag, type PunchType } from "@/domain/time-clock";
-import { kioskPunchAction, kioskStatusAction, punchAction, registerDeviceAction, setPinAction } from "./actions";
+import { kioskPunchAction, kioskStatusAction, punchAction, registerDeviceAction, setOpensEarlyAction, setPinAction } from "./actions";
 
 type Gps = { lat: number; lng: number; accuracyM: number | null };
 type Done = { kind: "done"; type: PunchType; at: Date | string; shop: string; flags: PunchFlag[]; notes: string[] };
@@ -212,6 +212,38 @@ export function PinForm({ hasPin }: { hasPin: boolean }) {
         {saved && <span className="text-xs text-emerald-700">Saved.</span>}
         {error && <span className="text-xs text-red-700">{error}</span>}
       </form>
+    </Card>
+  );
+}
+
+/** The barber's own say on whether an early clock-in opens their book early. */
+export function OpensEarlyForm({ on, shops }: { on: boolean; shops: string[] }) {
+  const { pending, error, run } = useAction();
+  const [value, setValue] = useState(on);
+  return (
+    <Card>
+      <CardHeader
+        title="Clocking in early"
+        subtitle={
+          shops.length
+            ? `At ${shops.join(" and ")}, clocking in before your scheduled start can open that time for online booking. Only if you say so here.`
+            : "None of your shops opens time for an early clock-in right now; this applies if one turns it on."
+        }
+      />
+      <label className="flex items-center gap-2 p-4 pt-0 text-sm">
+        <input
+          type="checkbox"
+          checked={value}
+          disabled={pending}
+          onChange={(e) => {
+            const next = e.target.checked;
+            setValue(next);
+            run(() => setOpensEarlyAction(next));
+          }}
+        />
+        Open my book from when I clock in, if that&apos;s before my scheduled start
+        {error && <span className="text-xs text-red-700">{error}</span>}
+      </label>
     </Card>
   );
 }

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
 import { forbidden } from "@/server/errors";
-import { DEVICE_COOKIE, checkPin, clearPin, clockState, deviceFromToken, punch, registerDevice, revokeDevice, setPin, type PunchResult } from "@/server/time-clock";
+import { DEVICE_COOKIE, checkPin, clearPin, clockState, deviceFromToken, punch, registerDevice, revokeDevice, setOpensEarly, setPin, type PunchResult } from "@/server/time-clock";
 
 const PunchType = z.enum(["in", "out", "break_start", "break_end"]);
 const Gps = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180), accuracyM: z.number().min(0).max(100_000).nullable() }).nullable();
@@ -93,6 +93,15 @@ export async function setPinAction(pin: string) {
   return safe(async () => {
     const ctx = await authorize("timeclock.punch");
     await setPin(ctx.staff.id, z.string().max(12).parse(pin), ctx.actor);
+    refresh();
+    return null;
+  });
+}
+
+export async function setOpensEarlyAction(on: boolean) {
+  return safe(async () => {
+    const ctx = await authorize("timeclock.punch");
+    await setOpensEarly(ctx.staff.id, z.boolean().parse(on), ctx.actor);
     refresh();
     return null;
   });
