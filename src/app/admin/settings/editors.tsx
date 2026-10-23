@@ -65,13 +65,11 @@ type Info = {
   minLeadMinutes: number;
   bookingWindowDays: number;
   bufferMinutes: number;
-  tipPresets: number[];
 };
 
 export function ShopInfoEditor({ shopId, initial }: { shopId: string; initial: Info }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState(initial);
-  const [tips, setTips] = useState(initial.tipPresets.join(", "));
   const num = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) => setV({ ...v, [k]: Number(e.target.value) || 0 });
   return (
     <Card>
@@ -121,23 +119,12 @@ export function ShopInfoEditor({ shopId, initial }: { shopId: string; initial: I
         <Field label="Buffer between appts (min)">
           <Input inputMode="numeric" value={v.bufferMinutes} onChange={num("bufferMinutes")} />
         </Field>
-        <Field label="Tip presets (%)" hint="Shown as big buttons at checkout">
-          <Input value={tips} onChange={(e) => setTips(e.target.value)} />
-        </Field>
       </div>
       <SaveBar
         pending={pending}
         msg={msg}
         onClick={() =>
-          save(() =>
-            saveShopInfoAction(shopId, {
-              ...v,
-              tipPresets: tips
-                .split(/[,\s]+/)
-                .map(Number)
-                .filter((n) => n > 0),
-            }),
-          )
+          save(() => saveShopInfoAction(shopId, v))
         }
       />
     </Card>

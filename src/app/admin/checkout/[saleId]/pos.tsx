@@ -5,13 +5,47 @@ import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState, useTran
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, Suggestions, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
+import { type TipSplitMode, splitBarbers, splitCents, tipWeights } from "@/domain/handoff";
 import { formatMinutes, type TimesView } from "@/domain/service-times";
 import { searchCustomersAction } from "../../calendar/actions";
 import { ServiceTimer } from "../../calendar/service-times-panel";
-import { attachCustomerAction, finalizeAction, giftCardAction, holdRetailAction, inspectCardAction, newClientAtCheckoutAction, promoAction, setBarberAction, terminalCollectAction } from "../actions";
+import {
+  attachCustomerAction,
+  endHandoffAction,
+  finalizeAction,
+  giftCardAction,
+  handToCustomerAction,
+  holdRetailAction,
+  inspectCardAction,
+  newClientAtCheckoutAction,
+  promoAction,
+  setBarberAction,
+  terminalCollectAction,
+} from "../actions";
 import { StripeCardEntry } from "./stripe-card";
 
-type Line = { key: string; kind: LineKind; refId: string | null; name: string; unitPriceCents: number; qty: number; override?: { unitPriceCents: number; reason: string } | null };
+type Line = {
+  key: string;
+  kind: LineKind;
+  refId: string | null;
+  name: string;
+  unitPriceCents: number;
+  qty: number;
+  override?: { unitPriceCents: number; reason: string } | null;
+  /** A service done by someone other than the ticket's barber; they share the tip. */
+  staffId?: string | null;
+};
+type Resume = {
+  lines: Omit<Line, "key">[];
+  promoCode: string | null;
+  manualDiscount: { type: "percent" | "amount"; value: number; reason: string } | null;
+  loyaltyRewardId: string | null;
+  giftCard: { code: string; amountCents: number } | null;
+  rebookInWeeks: number | null;
+  tipSplit: TipSplitMode | null;
+  tipCents: number | null;
+  cash: boolean;
+};
 type Card4 = { paymentMethodId: string; funding: CardFunding; brand: string; last4: string };
 
 const $ = (c: number) => `${c < 0 ? "-" : ""}$${(Math.abs(c) / 100).toFixed(2)}`;
@@ -50,24 +84,35 @@ export function Pos(props: {
   perms: { discount: boolean; maxDiscountPct: number; priceOverride: boolean; reassign: boolean };
   canAdd: { phone: boolean; email: boolean };
   reasons?: { discount: string[]; priceChange: string[] };
+  handoff: { signature: boolean; unlock: "staff" | "manager" };
+  /** The ticket is with the client on a customer screen right now. */
+  withClient: { by: string; startedAt: string } | null;
+  /** Back from the customer screen: the ticket as handed over, with the client's tip. */
+  resume: Resume | null;
 }) {
   const router = useRouter();
-  const [lines, setLines] = useState<Line[]>(() => props.initialLines.map((l) => ({ ...l, key: key() })));
+  const r0 = props.resume;
+  const [lines, setLines] = useState<Line[]>(() => (r0?.lines ?? props.initialLines).map((l) => ({ ...l, key: key() })));
   const [promo, setPromo] = useState<(Discount & { code: string }) | null>(null);
-  const [promoInput, setPromoInput] = useState("");
-  const [manual, setManual] = useState<{ type: "percent" | "amount"; value: string; reason: string }>({ type: "percent", value: "", reason: "" });
-  const [rewardId, setRewardId] = useState<string | null>(null);
-  const [tipCents, setTipCents] = useState(0);
-  const [tipMode, setTipMode] = useState<string>("none");
-  const [customTip, setCustomTip] = useState("");
-  const [giftInput, setGiftInput] = useState("");
+  const [promoInput, setPromoInput] = useState(r0?.promoCode ?? "");
+  const [manual, setManual] = useState<{ type: "percent" | "amount"; value: string; reason: string }>(() =>
+    r0?.manualDiscount
+      ? { type: r0.manualDiscount.type, value: r0.manualDiscount.type === "percent" ? String(r0.manualDiscount.value) : (r0.manualDiscount.value / 100).toFixed(2), reason: r0.manualDiscount.reason }
+      : { type: "percent", value: "", reason: "" },
+  );
+  const [rewardId, setRewardId] = useState<string | null>(r0?.loyaltyRewardId ?? null);
+  const [tipCents, setTipCents] = useState(r0?.tipCents ?? 0);
+  const [tipMode, setTipMode] = useState<string>(r0?.tipCents ? "custom" : "none");
+  const [customTip, setCustomTip] = useState(r0?.tipCents ? (r0.tipCents / 100).toFixed(2) : "");
+  const [tipSplit, setTipSplit] = useState<TipSplitMode>(r0?.tipSplit ?? "services");
+  const [giftInput, setGiftInput] = useState(r0?.giftCard?.code ?? "");
   const [gift, setGift] = useState<{ code: string; balanceCents: number } | null>(null);
-  const [tender, setTender] = useState<"cash" | "card" | null>(null);
+  const [tender, setTender] = useState<"cash" | "card" | null>(r0?.cash ? "cash" : null);
   const [cardMode, setCardMode] = useState<"terminal" | "keyed">("terminal");
   const [readerId, setReaderId] = useState<string | null>(props.payments.readers[0]?.id ?? null);
   const [card, setCard] = useState<Card4 | null>(null);
   const [cashTendered, setCashTendered] = useState<number | null>(null);
-  const [rebookWeeks, setRebookWeeks] = useState<number | null>(null);
+  const [rebookWeeks, setRebookWeeks] = useState<number | null>(r0?.rebookInWeeks ?? null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -86,7 +131,8 @@ export function Pos(props: {
     return d;
   }, [promo, manual, reward, props.loyalty]);
 
-  const priced = lines.map((l) => ({ ...l, unitPriceCents: priceOf(l), taxCategory: l.refId ? props.taxCategories[l.refId] : undefined }));
+  const barberOf = (l: Line) => (l.kind === "service" || l.kind === "addon" ? (l.staffId ?? props.sale.staffId) : null);
+  const priced = lines.map((l) => ({ ...l, staffId: barberOf(l), unitPriceCents: priceOf(l), taxCategory: l.refId ? props.taxCategories[l.refId] : undefined }));
   const manualValue = manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value);
   const discountProblem = props.perms.discount ? manualDiscountProblem({ type: manual.type, value: manualValue }, priced, props.perms.maxDiscountPct) : null;
   const preview = (method: "cash" | "card" | "none", funding: CardFunding | null) =>
@@ -103,6 +149,17 @@ export function Pos(props: {
   const totals = preview(method, method === "card" ? (card?.funding ?? null) : null);
   const creditPreview = preview("card", "credit");
   const tips = tipSuggestions(base.serviceGrossCents, props.config.tipPresets);
+  const splitIds = splitBarbers(priced, props.sale.staffId);
+  const shares = splitIds.length ? splitCents(tipCents, tipWeights(base.lines, tipSplit).map((w) => ({ id: w.staffId, weight: w.weight }))) : null;
+  const barberName = (id: string) => props.barbers.find((b) => b.id === id)?.label ?? (props.barber?.id === id ? props.barber.label : "Barber");
+
+  // Picking a returned ticket back up: re-check the promo and gift card it was handed over with.
+  useEffect(() => {
+    if (!r0) return;
+    if (r0.promoCode) promoAction(props.sale.id, r0.promoCode).then((r) => (r.ok ? setPromo(r.data) : setError(r.error)));
+    if (r0.giftCard) giftCardAction(r0.giftCard.code).then((r) => (r.ok ? setGift({ code: r.data.code, balanceCents: r.data.balanceCents }) : setError(r.error)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => setCashTendered(null), [totals.primaryChargeCents]);
 
@@ -132,7 +189,7 @@ export function Pos(props: {
       () =>
         finalizeAction({
           saleId: props.sale.id,
-          lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null })),
+          lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override, staffId }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null, staffId: staffId ?? null })),
           promoCode: promo?.code ?? null,
           manualDiscount: manual.value ? { type: manual.type, value: manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value), reason: manual.reason } : null,
           loyaltyRewardId: rewardId,
@@ -146,6 +203,7 @@ export function Pos(props: {
                 : { method: "none" },
           expectedTotalCents: totals.totalCents,
           rebookInWeeks: rebookWeeks,
+          tipSplit: splitIds.length ? tipSplit : null,
         }),
       (d) => {
         const q = new URLSearchParams({ done: "1" });
@@ -157,7 +215,22 @@ export function Pos(props: {
       },
     );
 
-  const ready = lines.length > 0 && (method === "none" || method === "cash" || (method === "card" && !!card));
+  const handToCustomer = () =>
+    act(
+      () =>
+        handToCustomerAction(props.sale.id, {
+          lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override, staffId }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null, staffId: staffId ?? null })),
+          promoCode: promo?.code ?? null,
+          manualDiscount: manual.value ? { type: manual.type, value: manualValue, reason: manual.reason } : null,
+          loyaltyRewardId: rewardId,
+          giftCard: gift ? { code: gift.code, amountCents: gift.balanceCents } : null,
+          rebookInWeeks: rebookWeeks,
+          tipSplit: splitIds.length ? tipSplit : null,
+        }),
+      (d) => window.location.replace(`/handoff/${d.id}`),
+    );
+
+  const ready = !props.withClient && lines.length > 0 && (method === "none" || method === "cash" || (method === "card" && !!card));
   const change = cashTendered != null ? cashTendered - totals.primaryChargeCents : 0;
   // Retail on the ticket is held (counts as committed) while the ticket is open.
   const held = lines
@@ -194,6 +267,25 @@ export function Pos(props: {
       {!props.shop.taxVerified && (
         <div className="mb-3">
           <Notice>Tax rates for {props.shop.name} are placeholders until verified in Shop settings.</Notice>
+        </div>
+      )}
+      {props.withClient && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900 ring-1 ring-blue-200" role="status">
+          <span>
+            This ticket is with the client on the customer screen (handed over by {props.withClient.by} at{" "}
+            {new Date(props.withClient.startedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}). A staff PIN on that screen takes it back.
+          </span>
+          <Button size="sm" variant="secondary" disabled={pending} onClick={() => act(() => endHandoffAction(props.sale.id), () => router.refresh())}>
+            End hand-off here
+          </Button>
+        </div>
+      )}
+      {r0 && !props.withClient && (
+        <div className="mb-3">
+          <Notice tone="blue">
+            Back from the customer screen.{" "}
+            {r0.cash ? `The client wants to pay cash${r0.tipCents ? ` with a ${$(r0.tipCents)} tip` : ""}.` : r0.tipCents != null ? `Their ${$(r0.tipCents)} tip is filled in.` : "They hadn't chosen a tip yet."}
+          </Notice>
         </div>
       )}
       <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
@@ -233,6 +325,23 @@ export function Pos(props: {
                       {l.kind.replace("_", " ")}
                       {l.override && <span className="normal-case text-amber-700"> · price changed: {l.override.reason}</span>}
                     </div>
+                    {(l.kind === "service" || l.kind === "addon") && props.perms.reassign && props.barbers.length > 1 && (
+                      <select
+                        aria-label={`Barber for ${l.name}`}
+                        className="mt-1 max-w-full rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-xs text-zinc-700"
+                        value={l.staffId ?? ""}
+                        onChange={(e) => setLines((ls) => ls.map((x) => (x.key === l.key ? { ...x, staffId: e.target.value || null } : x)))}
+                      >
+                        <option value="">{props.barber ? `${props.barber.label} (ticket barber)` : "Ticket barber"}</option>
+                        {props.barbers
+                          .filter((b) => b.id !== props.sale.staffId)
+                          .map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.label}
+                            </option>
+                          ))}
+                      </select>
+                    )}
                   </div>
                   {l.kind === "product" ? (
                     <div className="flex items-center rounded-lg ring-1 ring-zinc-300">
@@ -444,6 +553,28 @@ export function Pos(props: {
                   className={cx("h-12 text-base", tipMode === "custom" && "ring-2 ring-ink-900")}
                 />
               </div>
+              {shares && (
+                <div className="rounded-lg bg-zinc-50 p-3 text-sm ring-1 ring-zinc-200" data-testid="tip-split">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="font-medium">Split the tip</span>
+                    <div className="flex rounded-md bg-zinc-200/70 p-0.5 text-xs">
+                      {(["services", "even"] as const).map((m) => (
+                        <button key={m} onClick={() => setTipSplit(m)} className={cx("rounded px-2 py-1 font-medium", tipSplit === m ? "bg-white shadow-sm" : "text-zinc-600")}>
+                          {m === "services" ? "By services" : "Evenly"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <ul className="space-y-0.5 tabular">
+                    {splitIds.map((id) => (
+                      <li key={id} className="flex justify-between">
+                        <span>{barberName(id)}</span>
+                        <span>{$(shares.get(id) ?? 0)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -635,6 +766,17 @@ export function Pos(props: {
             <div className="space-y-2 border-t border-zinc-100 p-4">
               {error && <Notice tone="red">{error}</Notice>}
               {msg && <Notice tone="green">{msg}</Notice>}
+              <Button
+                size="lg"
+                variant="secondary"
+                className="h-14 w-full text-lg"
+                disabled={!!props.withClient || lines.length === 0 || pending}
+                onClick={() => (setMsg(null), handToCustomer())}
+                data-testid="hand-to-customer"
+              >
+                Hand to customer
+              </Button>
+              <p className="text-xs text-zinc-500">The client picks a tip{props.handoff.signature ? ", signs" : ""}, chooses a receipt and pays on this device. It locks to this ticket until a {props.handoff.unlock === "manager" ? "manager's" : "staff"} PIN.</p>
               <Button size="lg" className="h-14 w-full text-lg" disabled={!ready || pending} onClick={() => (setMsg(null), charge())}>
                 {pending
                   ? "Processing…"

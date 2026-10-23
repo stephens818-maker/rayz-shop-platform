@@ -33,6 +33,7 @@ import { Grantor } from "@/domain/permissions";
 import { endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { AppError, forbidden, notFound } from "./errors";
+import { brandHandoffConfig } from "./handoff";
 import { locationSetup } from "./location-setup";
 import { registerReader } from "./payments/connect";
 import { createShopLogin, shopLoginRoles } from "./shop-logins";
@@ -100,6 +101,7 @@ export async function wizardOptions(g: Grantor) {
     owners,
     loginRoles: shopLoginRoles(g, roleRows).map((r) => ({ id: r.id, name: r.name, key: r.key })),
     payCalendars: cal.map((c) => ({ ...c, shop: name(c.shopId) })).filter((c) => c.shop),
+    brandTips: (await brandHandoffConfig()).tips,
   };
 }
 
@@ -182,7 +184,8 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         cardFeeEnabled: d.cardFeeEnabled,
         cardFeeRate: String(d.cardFeeRate),
         cardFeeAppliesToTip: d.cardFeeAppliesToTip,
-        tipPresets: d.tipPresets,
+        tipPresets: d.handoff.tips?.type === "percent" ? d.handoff.tips.values : d.tipPresets,
+        handoff: d.handoff as unknown as Record<string, unknown>,
         paymentsMode: d.paymentsMode,
         statementDescriptor: d.statementDescriptor,
         receipt: d.receipt,

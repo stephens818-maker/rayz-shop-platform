@@ -16,19 +16,23 @@ import { takesCards } from "@/domain/connect";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { terminalReaders } from "@/db/schema";
+import { activeHandoffFor, resumeDraft, shopHandoffConfig } from "@/server/handoff";
 import { Pos } from "./pos";
 
 export const metadata: Metadata = { title: "Checkout" };
 
-export default async function CheckoutPage({ params }: { params: Promise<{ saleId: string }> }) {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export default async function CheckoutPage({ params, searchParams }: { params: Promise<{ saleId: string }>; searchParams: Promise<{ resume?: string }> }) {
   const { saleId } = await params;
+  const { resume: resumeId } = await searchParams;
   const ctx = await guardPage("/admin/checkout/[saleId]");
   if (!(await inTenant(ctx, "sale", saleId))) notFound();
   const c = await loadCheckoutContext(saleId);
   if (c.sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
   const policy = await clientPolicy(ctx);
-  const [catalog, barbers, loyalty, loyaltyCfg, ratings, times, lists, account, readers] = await Promise.all([
+  const [catalog, barbers, loyalty, loyaltyCfg, ratings, times, lists, account, readers, handoff, withClient, resume] = await Promise.all([
     shopCatalog(c.shop.id),
     shopBarbers(c.shop.id),
     c.customer ? loyaltyBalance(c.customer.id) : null,
@@ -42,6 +46,9 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
       .from(terminalReaders)
       .where(and(eq(terminalReaders.shopId, c.shop.id), eq(terminalReaders.active, true), isNotNull(terminalReaders.stripeReaderId)))
       .orderBy(asc(terminalReaders.createdAt)),
+    shopHandoffConfig(c.shop.id),
+    activeHandoffFor(saleId),
+    resumeId && UUID.test(resumeId) ? resumeDraft(saleId, resumeId) : null,
   ]);
   const cards = takesCards(c.shop.paymentsMode, account);
   return (
@@ -50,12 +57,30 @@ export default async function CheckoutPage({ params }: { params: Promise<{ saleI
       sale={{ id: c.sale.id, number: c.sale.number, staffId: c.sale.staffId, hasAppointment: !!c.appointment }}
       timer={c.appointment ? { appointmentId: c.appointment.id, status: c.appointment.status, times: times.get(c.appointment.id) ?? null } : null}
       shop={{ id: c.shop.id, name: c.shop.name, taxVerified: c.shop.taxRatesVerified }}
-      config={c.config}
+      config={{ ...c.config, tipPresets: handoff.tips.type === "percent" ? handoff.tips.values : c.config.tipPresets }}
       feeNotice={feeDisclosure(c.config.cardFee)}
       initialLines={c.items.map((i) => {
         const menu = i.kind === "product" ? c.retail.find((p) => p.productId === i.refId)?.priceCents : catalog.find((s) => s.id === i.refId)?.priceCents;
-        return { kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: menu ?? i.unitPriceCents, qty: i.qty };
+        return { kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: menu ?? i.unitPriceCents, qty: i.qty, staffId: i.staffId && i.staffId !== c.sale.staffId ? i.staffId : null };
       })}
+      handoff={{ signature: handoff.shop.signature, unlock: handoff.shop.unlock }}
+      withClient={withClient ? { by: withClient.by, startedAt: withClient.startedAt.toISOString() } : null}
+      resume={
+        resume && !withClient
+          ? {
+              ...resume,
+              lines: resume.lines.map((l) => ({
+                kind: l.kind,
+                refId: l.refId ?? null,
+                name: l.name ?? "",
+                unitPriceCents: l.unitPriceCents ?? 0,
+                qty: l.qty,
+                override: l.priceOverride ?? null,
+                staffId: l.staffId ?? null,
+              })),
+            }
+          : null
+      }
       customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: policy.show("phone", c.customer.phone), notes: policy.show("notes", c.customer.notes), rating: policy.stars(ratings.get(c.customer.id)) } : null}
       barber={c.barber ? { id: c.barber.id, label: c.barber.displayLabel } : null}
       barbers={barbers.map((b) => ({ id: b.id, label: b.displayName }))}

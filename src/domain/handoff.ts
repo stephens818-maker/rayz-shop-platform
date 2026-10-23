@@ -4,6 +4,8 @@
  * Tip presets are the brand's, or the location's own; everything else is per location.
  */
 
+import { z } from "zod";
+
 export const TIP_PRESET_TYPES = ["percent", "amount"] as const;
 export type TipPresetType = (typeof TIP_PRESET_TYPES)[number];
 
@@ -100,6 +102,28 @@ export function shopHandoffProblem(s: ShopHandoff): string | null {
   return null;
 }
 
+export const TipScreenSchema = z
+  .object({
+    type: z.enum(TIP_PRESET_TYPES),
+    values: z.array(z.number().int()).max(MAX_TIP_PRESETS),
+    allowCustom: z.boolean(),
+    allowNoTip: z.boolean(),
+  })
+  .refine((t) => !tipScreenProblem(t), { error: (i) => tipScreenProblem(i.input as TipScreen) ?? "Check the tip presets" });
+
+export const ShopHandoffSchema = z.object({
+  tips: TipScreenSchema.nullable(),
+  tipEntry: z.enum(TIP_ENTRY),
+  signature: z.boolean(),
+  unlock: z.enum(UNLOCK_RULES),
+  afterPayment: z.enum(AFTER_PAYMENT),
+  thankYouSeconds: z
+    .number()
+    .int()
+    .min(THANK_YOU_SECONDS.min, `The thank-you screen shows for ${THANK_YOU_SECONDS.min} to ${THANK_YOU_SECONDS.max} seconds`)
+    .max(THANK_YOU_SECONDS.max, `The thank-you screen shows for ${THANK_YOU_SECONDS.min} to ${THANK_YOU_SECONDS.max} seconds`),
+});
+
 export const effectiveTips = (shop: ShopHandoff, brand: BrandHandoff): TipScreen => shop.tips ?? brand.tips;
 
 /** Percent presets are of the services before discounts, as at the counter. */
@@ -130,6 +154,14 @@ export function screenTipProblem(cents: number): string | null {
   return null;
 }
 export const bigTip = (cents: number, serviceGrossCents: number) => cents > 2000 && cents > serviceGrossCents / 2;
+
+/** What's charged to the card now, and the ticket total checkout confirms: credit cards carry the surcharge. */
+export function amountsFor(
+  v: { dueCents: number; creditDueCents: number; totalCents: number; creditTotalCents: number },
+  funding: string | null,
+): { chargeCents: number; totalCents: number } {
+  return funding === "credit" ? { chargeCents: v.creditDueCents, totalCents: v.creditTotalCents } : { chargeCents: v.dueCents, totalCents: v.totalCents };
+}
 
 // ───────────────────────────── Steps ─────────────────────────────
 

@@ -4,6 +4,7 @@
  */
 import { z } from "zod";
 import { ReceiptBrandingSchema, statementDescriptorProblem } from "./connect";
+import { DEFAULT_SHOP_HANDOFF, ShopHandoffSchema } from "./handoff";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE } from "./location-lifecycle";
 import { DEFAULT_NETWORK_RULE, NetworkRuleSchema } from "./network-access";
 
@@ -67,6 +68,8 @@ export const LocationDraft = z.object({
   cardFeeRate: z.number().min(0).max(0.04),
   cardFeeAppliesToTip: z.boolean(),
   tipPresets: z.array(z.number().int().min(0).max(100)).min(1).max(4),
+  /** The customer screen at checkout: tip presets (null uses the brand's), tips on the reader, signature, and whose PIN takes the device back. */
+  handoff: ShopHandoffSchema.default(DEFAULT_SHOP_HANDOFF),
   /** Where card money settles. Anything but the default needs the banking permission. */
   paymentsMode: z.enum(["connected", "brand", "cash_only"]).default("connected"),
   statementDescriptor: z

@@ -16,6 +16,8 @@ import { audit } from "@/server/audit";
 import { assertShopAccess, authorize, can } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import { saveLoyaltyConfig } from "@/server/loyalty";
+import { ShopHandoffSchema, TipScreenSchema } from "@/domain/handoff";
+import { saveBrandHandoff, saveShopHandoff } from "@/server/handoff";
 
 const Info = z.object({
   name: z.string().trim().min(1),
@@ -32,7 +34,7 @@ const Info = z.object({
   minLeadMinutes: z.number().int().min(0).max(1440),
   bookingWindowDays: z.number().int().min(1).max(365),
   bufferMinutes: z.number().int().min(0).max(60),
-  tipPresets: z.array(z.number().int().min(1).max(100)).min(1).max(4),
+  tipPresets: z.array(z.number().int().min(1).max(100)).min(1).max(4).optional(),
 });
 
 export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Info>) {
@@ -228,6 +230,27 @@ export async function saveReceiptAction(shopId: string, raw: z.input<typeof Rece
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { receipt: true } });
     await db.update(shops).set({ receipt: values }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.receipt", "shop", shopId, { before: before ? receiptBranding(before.receipt) : null, after: values }, shopId);
+    revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+/** The customer screen at checkout for one location. With tips on the reader, the presets are pushed to its Stripe Terminal readers. */
+export async function saveShopHandoffAction(shopId: string, raw: z.input<typeof ShopHandoffSchema>) {
+  return safe(async () => {
+    const ctx = await authorize("settings.shop");
+    assertShopAccess(ctx, shopId);
+    const r = await saveShopHandoff(shopId, ShopHandoffSchema.parse(raw), ctx.actor);
+    revalidatePath("/admin/settings");
+    return r.reader;
+  });
+}
+
+/** The brand's tip presets: every location's customer screen uses them unless it sets its own. */
+export async function saveBrandTipsAction(raw: z.input<typeof TipScreenSchema>) {
+  return safe(async () => {
+    const ctx = await authorize("handoff.settings");
+    await saveBrandHandoff(TipScreenSchema.parse(raw), ctx.actor);
     revalidatePath("/admin/settings");
     return null;
   });

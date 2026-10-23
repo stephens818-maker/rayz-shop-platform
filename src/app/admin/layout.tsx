@@ -4,6 +4,7 @@ import { Logo } from "@/components/ui";
 import { navFor } from "@/domain/navigation";
 import { requireStaff } from "@/server/auth/staff";
 import { logout } from "../login/actions";
+import { BfcacheGuard } from "./bfcache-guard";
 import { AdminNav, BackToBrand, ShopSwitcher } from "./nav";
 
 export const metadata: Metadata = { title: { default: "Admin", template: "%s · Ray'z Admin" } };
@@ -14,6 +15,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const address = here ? [here.address, here.city].filter(Boolean).join(", ") : "";
   return (
     <div className="min-h-dvh bg-zinc-50 lg:flex">
+      <BfcacheGuard />
       <aside className="no-print bg-ink-900 text-zinc-300 lg:sticky lg:top-0 lg:flex lg:h-dvh lg:w-60 lg:shrink-0 lg:flex-col">
         <div className="flex items-center justify-between gap-2 px-4 py-3 lg:block lg:py-4">
           <Link href="/admin">

@@ -6,6 +6,8 @@ import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Table, T
 import { PAYMENTS_MODES, PAYMENTS_MODE_HINT, PAYMENTS_MODE_LABEL, PAYMENTS_STEP_TITLE, statementDescriptorProblem, type PaymentsMode } from "@/domain/connect";
 import { NetworkRuleFields, ruleDraft, ruleFromDraft, type RuleDraft } from "@/components/network-rule-fields";
 import { parseProductLines, type LocationDraftInput } from "@/domain/location-draft";
+import { DEFAULT_SHOP_HANDOFF, type ShopHandoff, type TipScreen } from "@/domain/handoff";
+import { HandoffRuleFields, TipPresetFields, describeTips } from "../../settings/handoff-editors";
 import { DEFAULT_NETWORK_RULE, REQUIREMENT_LABEL } from "@/domain/network-access";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
 import { slugify } from "@/lib/ids";
@@ -79,7 +81,11 @@ export function LocationWizard({
     }),
   );
   const [holidays, setHolidays] = useState<{ date: string; reason: string }[]>([]);
-  const [money, setMoney] = useState({ service: "0", product: "0", verified: false, feeOn: true, fee: "3", feeOnTip: false, tips: "20,25,30" });
+  const [money, setMoney] = useState({ service: "0", product: "0", verified: false, feeOn: true, fee: "3", feeOnTip: false });
+  const [screen, setScreen] = useState<{ own: boolean; tips: TipScreen; rules: Omit<ShopHandoff, "tips"> }>(() => {
+    const { tips: _, ...rules } = DEFAULT_SHOP_HANDOFF;
+    return { own: false, tips: options.brandTips, rules };
+  });
   const [booking, setBooking] = useState({ online: true, interval: "", lead: "15", window: "60", cutoff: "30" });
   const [menuSource, setMenuSource] = useState("brand");
   const [menu, setMenu] = useState<MenuRow[]>(() => menuFrom("brand"));
@@ -147,10 +153,8 @@ export function LocationWizard({
       cardFeeEnabled: money.feeOn,
       cardFeeRate: Number(money.fee) / 100,
       cardFeeAppliesToTip: money.feeOnTip,
-      tipPresets: money.tips
-        .split(",")
-        .map((x) => Number(x.trim()))
-        .filter((x) => Number.isFinite(x) && x > 0),
+      tipPresets: (screen.own ? screen.tips : options.brandTips).type === "percent" ? (screen.own ? screen.tips : options.brandTips).values : [20, 25, 30],
+      handoff: { ...screen.rules, tips: screen.own ? screen.tips : null },
       slotIntervalMinutes: booking.interval ? (Number(booking.interval) as 5 | 10 | 15 | 20 | 30) : null,
       minLeadMinutes: Number(booking.lead) || 0,
       bookingWindowDays: Number(booking.window) || 60,
@@ -172,7 +176,7 @@ export function LocationWizard({
       logoUrl: brand.logo.trim() || null,
       networkAccess: network ? ruleFromDraft(signIn) : DEFAULT_NETWORK_RULE,
     }),
-    [basics, hours, holidays, money, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank, network, signIn],
+    [basics, hours, holidays, money, screen, options.brandTips, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank, network, signIn],
   );
 
   const index = STEPS.findIndex((s) => s.key === step);
@@ -478,7 +482,7 @@ export function LocationWizard({
               </fieldset>
               {pay.mode !== "cash_only" && (
                 <fieldset className="grid gap-3 sm:grid-cols-2">
-                  <legend className="mb-2 text-sm font-semibold text-zinc-800">Card fee and tips</legend>
+                  <legend className="mb-2 text-sm font-semibold text-zinc-800">Card fee</legend>
                   <label className="flex items-center gap-2 text-sm text-zinc-700">
                     <input type="checkbox" checked={money.feeOn} onChange={(e) => setMoney({ ...money, feeOn: e.target.checked })} /> Pass the card fee on to clients
                   </label>
@@ -488,9 +492,6 @@ export function LocationWizard({
                   <label className="flex items-center gap-2 text-sm text-zinc-700">
                     <input type="checkbox" disabled={!money.feeOn} checked={money.feeOnTip} onChange={(e) => setMoney({ ...money, feeOnTip: e.target.checked })} /> Charge the fee on tips too
                   </label>
-                  <Field label="Tip buttons (%)" hint="Comma-separated, up to four.">
-                    <Input value={money.tips} onChange={(e) => setMoney({ ...money, tips: e.target.value })} />
-                  </Field>
                 </fieldset>
               )}
               {pay.mode !== "cash_only" && (
@@ -521,6 +522,22 @@ export function LocationWizard({
                   </Button>
                 </fieldset>
               )}
+              <fieldset className="space-y-3">
+                <legend className="mb-2 text-sm font-semibold text-zinc-800">Customer screen at checkout</legend>
+                <p className="text-sm text-zinc-500">&ldquo;Hand to customer&rdquo; turns the device to the client for the tip, signature, receipt and payment, locked to the ticket until a staff PIN.</p>
+                <label className="flex items-center gap-2 text-sm text-zinc-700">
+                  <input type="radio" name="wizard-tips" checked={!screen.own} onChange={() => setScreen({ ...screen, own: false })} /> The brand&apos;s tip buttons: {describeTips(options.brandTips)}
+                </label>
+                <label className="flex items-center gap-2 text-sm text-zinc-700">
+                  <input type="radio" name="wizard-tips" checked={screen.own} onChange={() => setScreen({ ...screen, own: true })} /> This location&apos;s own
+                </label>
+                {screen.own && (
+                  <div className="ml-6 rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200">
+                    <TipPresetFields value={screen.tips} onChange={(tips) => setScreen({ ...screen, tips })} />
+                  </div>
+                )}
+                <HandoffRuleFields value={screen.rules} onChange={(rules) => setScreen({ ...screen, rules })} hasReaders={pay.mode !== "cash_only" && readers.some((r) => r.label.trim())} />
+              </fieldset>
               <fieldset className="grid gap-3 sm:grid-cols-2">
                 <legend className="mb-2 text-sm font-semibold text-zinc-800">Receipts</legend>
                 <Field label="Headline" hint={`Blank prints "Ray'z Barber Shop · ${basics.name || "this shop"}".`}>
@@ -939,6 +956,10 @@ export function LocationWizard({
                 <Item k="Tax" v={`Services ${money.service}%, products ${money.product}%${money.verified ? "" : " (flagged until confirmed)"}`} />
                 <Item k="Card money" v={PAYMENTS_MODE_LABEL[canBank ? pay.mode : "connected"]} />
                 <Item k="Card fee" v={pay.mode === "cash_only" ? "No cards" : money.feeOn ? `${money.fee}%${money.feeOnTip ? ", on tips too" : ""}` : "Off"} />
+                <Item
+                  k="Customer screen"
+                  v={`${describeTips(screen.own ? screen.tips : options.brandTips)}${screen.rules.tipEntry === "reader" ? ", tips on the reader" : ""}${screen.rules.signature ? ", signature" : ""}, ${screen.rules.unlock === "manager" ? "manager" : "staff"} PIN`}
+                />
                 <Item k="Services" v={`${menu.filter((m) => m.enabled).length} of ${menu.length}`} />
                 <Item k="Products" v={`${retail.filter((r) => r.include).length}`} />
                 <Item k="Vendors" v={`${Object.keys(vendorPicks).length || "Any"}`} />

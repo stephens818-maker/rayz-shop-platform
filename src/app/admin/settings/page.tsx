@@ -13,6 +13,8 @@ import { receiptBranding } from "@/domain/connect";
 import { shopNetworkRule } from "@/domain/network-access";
 import { clientIp } from "@/lib/client-ip";
 import { ShopRuleEditor } from "../sign-in-security/client";
+import { brandHandoffConfig, shopHandoffConfig } from "@/server/handoff";
+import { BrandTipsEditor, ShopHandoffEditor } from "./handoff-editors";
 import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor, ReadersEditor, ReceiptEditor, ShopInfoEditor } from "./editors";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -23,13 +25,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const brand = can(ctx, "settings.brand");
   const shopId = workingShopId(ctx, (await searchParams).shop);
   if (!shopId) return <Empty title="No shop selected" />;
-  const [shop, hours, closures, loyalty, brandMinutes, readers] = await Promise.all([
+  const [shop, hours, closures, loyalty, brandMinutes, readers, handoff, brandHandoff] = await Promise.all([
     db.query.shops.findFirst({ where: eq(shops.id, shopId) }),
     db.select().from(shopHours).where(eq(shopHours.shopId, shopId)),
     db.select().from(shopClosures).where(and(eq(shopClosures.shopId, shopId), gte(shopClosures.date, todayLocal()))).orderBy(asc(shopClosures.date)),
     getLoyaltyConfig(),
     brandInterval(),
     db.select().from(terminalReaders).where(eq(terminalReaders.shopId, shopId)).orderBy(asc(terminalReaders.createdAt)),
+    shopHandoffConfig(shopId),
+    brandHandoffConfig(),
   ]);
   if (!shop) return <Empty title="Shop not found" />;
   return (
@@ -54,7 +58,6 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           minLeadMinutes: shop.minLeadMinutes,
           bookingWindowDays: shop.bookingWindowDays,
           bufferMinutes: shop.bufferMinutes,
-          tipPresets: shop.tipPresets,
         }}
       />
       )}
@@ -88,6 +91,15 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           readers={readers.map((r) => ({ id: r.id, label: r.label, serialNumber: r.serialNumber, stripeReaderId: r.stripeReaderId, deviceType: r.deviceType, stripeLocationId: r.stripeLocationId, active: r.active }))}
         />
       )}
+      {shopSettings && (
+        <ShopHandoffEditor
+          shopId={shop.id}
+          shopName={shop.name}
+          initial={handoff.shop}
+          brandTips={brandHandoff.tips}
+          hasReaders={readers.some((r) => r.active && r.stripeReaderId)}
+        />
+      )}
       {shopSettings && <ReceiptEditor shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} />}
       {can(ctx, "network.settings") && (
         <Card>
@@ -103,6 +115,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           <ShopRuleEditor shopId={shop.id} shopName={shop.name} initial={shopNetworkRule(shop.networkAccess)} myIp={clientIp(await headers())} exempt={ctx.isOwner || can(ctx, "access.remote")} />
         </Card>
       )}
+      {can(ctx, "handoff.settings") && <BrandTipsEditor initial={brandHandoff.tips} />}
       {brand && <LoyaltyEditor initial={loyalty} />}
       {can(ctx, "locations.setup") && (
         <Card>

@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { appointments, brandSettings, checkoutHandoffs, customers, notificationJobs, saleTipShares, sales, shops, staff, terminalReaders } from "@/db/schema";
-import { feeDisclosure, feeLabel, type CardFunding } from "@/domain/checkout";
+import { feeDisclosure, feeLabel } from "@/domain/checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding, takesCards } from "@/domain/connect";
 import {
@@ -57,6 +57,11 @@ export async function saveBrandHandoff(tips: TipScreen, actor: Actor) {
   const clean: BrandHandoff = { tips: { type: tips.type, values: [...tips.values], allowCustom: tips.allowCustom, allowNoTip: tips.allowNoTip } };
   await db.update(brandSettings).set({ handoff: clean as unknown as Record<string, unknown>, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
   await audit(actor, "handoff.brand_settings", "brand_settings", "1", { before, after: clean }, null);
+  const onReader = (await db.select({ id: shops.id, h: shops.handoff }).from(shops)).filter((s) => {
+    const h = shopHandoff(s.h);
+    return h.tipEntry === "reader" && !h.tips;
+  });
+  for (const s of onReader) await syncReaderTipping(s.id, clean.tips).catch((e: Error) => console.error(`Reader tips for shop ${s.id}: ${e.message}`));
   return clean;
 }
 
@@ -220,6 +225,9 @@ export interface HandoffView {
   dueCents: number;
   /** The same paid with a credit card, and the surcharge in it. */
   creditDueCents: number;
+  /** The ticket's total before gift cards, as checkout confirms it: without and with the surcharge. */
+  totalCents: number;
+  creditTotalCents: number;
   creditFeeCents: number;
   feeLabel: string | null;
   feeNotice: string | null;
@@ -293,6 +301,8 @@ export async function handoffView(id: string): Promise<HandoffView> {
     giftCardCents: t?.giftCardAppliedCents ?? 0,
     dueCents: t?.primaryChargeCents ?? sale.totalCents,
     creditDueCents: credit?.totals.primaryChargeCents ?? sale.totalCents,
+    totalCents: t?.totalCents ?? sale.totalCents,
+    creditTotalCents: credit?.totals.totalCents ?? sale.totalCents,
     creditFeeCents: credit?.totals.cardFeeCents ?? sale.cardFeeCents,
     feeLabel: credit && credit.totals.cardFeeCents > 0 ? feeLabel({ rate: credit.totals.cardFeeRate }) : null,
     feeNotice: cards ? feeDisclosure({ enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate) }) : null,
@@ -335,7 +345,12 @@ export async function chooseTip(id: string, choice: string, cents: number) {
   }
   const problem = screenTipProblem(cents);
   if (problem) throw new AppError("bad_request", problem);
-  await db.update(checkoutHandoffs).set({ tipCents: cents, tipChoice: choice, tipSource: "screen" }).where(and(eq(checkoutHandoffs.id, r.id), eq(checkoutHandoffs.status, "active")));
+  // A signature agrees to an amount, so a different tip is signed for again.
+  const resign = r.signature && r.tipCents !== cents ? { signature: null, signedAt: null } : {};
+  await db
+    .update(checkoutHandoffs)
+    .set({ tipCents: cents, tipChoice: choice, tipSource: "screen", ...resign })
+    .where(and(eq(checkoutHandoffs.id, r.id), eq(checkoutHandoffs.status, "active")));
   return handoffView(id);
 }
 
@@ -401,10 +416,6 @@ export async function inspectCard(id: string, paymentMethodId: string) {
   await activeRow(id);
   const card = await inspectPaymentMethod(paymentMethodId);
   return { card: { paymentMethodId, ...card }, view: await handoffView(id) };
-}
-
-export function totalFor(v: Pick<HandoffView, "dueCents" | "creditDueCents">, funding: CardFunding | null) {
-  return funding === "credit" ? v.creditDueCents : v.dueCents;
 }
 
 export type HandoffTender = { method: "card"; paymentMethodId: string; entryMode: "keyed" | "terminal"; readerId?: string | null } | { method: "none" };

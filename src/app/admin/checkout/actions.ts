@@ -1,19 +1,24 @@
 "use server";
 
 import { and, eq } from "drizzle-orm";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { sales } from "@/db/schema";
 import { safe } from "@/server/action";
+import { HANDOFF_COOKIE } from "@/server/auth/cookies";
+import { HANDOFF_TTL, handoffToken } from "@/server/auth/handoff-lock";
 import { StaffContext, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
 import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale, validatePromo } from "@/server/checkout";
 import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
 import { findOrCreateCustomer } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
+import { HandoffDraftInput, endHandoffFromCounter, startHandoff } from "@/server/handoff";
 import { holdRetail } from "@/server/inventory/stock";
 import { requireInTenant } from "@/server/tenant";
 import { inspectPaymentMethod, terminal } from "@/server/payments/processor";
+import type { TipSplitMode } from "@/domain/handoff";
 
 async function loadSale(ctx: StaffContext, saleId: string) {
   await requireInTenant(ctx, "sale", saleId);
@@ -112,6 +117,7 @@ export async function finalizeAction(input: {
   tender: TenderInput;
   expectedTotalCents: number;
   rebookInWeeks: number | null;
+  tipSplit?: TipSplitMode | null;
 }) {
   return safe(async () => {
     const ctx = await requireStaff();
@@ -134,6 +140,43 @@ export async function holdRetailAction(saleId: string, lines: { productId: strin
     const ctx = await requireStaff();
     await loadSale(ctx, saleId);
     await holdRetail(saleId, lines);
+    return null;
+  });
+}
+
+/**
+ * Turns this device to the client for the ticket as it stands: this browser is locked to the
+ * customer screen (a signed cookie the middleware checks) until a staff PIN takes it back.
+ */
+export async function handToCustomerAction(saleId: string, draft: HandoffDraftInput) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadSale(ctx, saleId);
+    const h = await startHandoff(saleId, draft, {
+      actor: ctx.actor,
+      staffId: ctx.staff.id,
+      canDiscount: can(ctx, "pos.discount"),
+      canOverridePrice: can(ctx, "pos.price_override"),
+      maxManualDiscountPct: ctx.maxDiscountPct,
+    });
+    (await cookies()).set(HANDOFF_COOKIE, await handoffToken(h.id), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: HANDOFF_TTL,
+    });
+    return { id: h.id };
+  });
+}
+
+/** Ends a hand-off from another device, e.g. when the client walked away with the tablet. */
+export async function endHandoffAction(saleId: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadSale(ctx, saleId);
+    await endHandoffFromCounter(saleId, ctx.actor);
+    revalidatePath(`/admin/checkout/${saleId}`);
     return null;
   });
 }

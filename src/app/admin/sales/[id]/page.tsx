@@ -13,6 +13,8 @@ import { formatDateTime, localDateOf } from "@/lib/time";
 import { can, guardPage, ratingViewer } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { refundableState } from "@/server/checkout";
+import { splitCents } from "@/domain/handoff";
+import { handoffOnSale } from "@/server/handoff";
 import { inTenant } from "@/server/tenant";
 import { lookups } from "@/server/lookups";
 import { loyaltyBalance } from "@/server/loyalty";
@@ -42,11 +44,14 @@ export default async function SalePage({ params, searchParams }: { params: Promi
   ]);
   const policy = await clientPolicy(ctx);
   const receipt = receiptBranding(shop?.receipt);
-  const [loyalty, rateable, ratingMap] = await Promise.all([
+  const [loyalty, rateable, ratingMap, screen] = await Promise.all([
     customer ? loyaltyBalance(customer.id) : null,
     customer && policy.ratingDetail ? visitForSale(ratingViewer(ctx), id) : null,
     ratingSummaries([customer?.id]),
+    handoffOnSale(id),
   ]);
+  const tipShares = screen.shares.length ? splitCents(sale.tipCents, screen.shares.map((x) => ({ id: x.staffId, weight: x.weight }))) : null;
+  const splitName = new Map(screen.shares.map((x) => [x.staffId, x.label]));
   const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { rate: number } };
   const manager = can(ctx, "sales.refund");
   const refundable = manager && ["paid", "partially_refunded"].includes(sale.status) ? await refundableState(id) : null;
@@ -109,6 +114,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                   <td className="py-1">
                     {i.name}
                     {i.qty > 1 && <span className="text-zinc-500"> × {i.qty}</span>}
+                    {i.staffId && i.staffId !== sale.staffId && splitName.has(i.staffId) && <span className="text-zinc-500"> · {splitName.get(i.staffId)}</span>}
                     {i.overrideReason && i.catalogPriceCents != null && (
                       <span className="block text-[11px] text-zinc-500">
                         Price changed from {formatCents(i.catalogPriceCents)}: {i.overrideReason}
@@ -141,9 +147,19 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                 </tr>
               )}
               <tr>
-                <td>Tip</td>
+                <td>
+                  Tip
+                  {screen.screen?.tipSource && <span className="text-zinc-500"> ({screen.screen.tipSource === "reader" ? "on the reader" : "on the customer screen"})</span>}
+                </td>
                 <td className="text-right">{formatCents(sale.tipCents)}</td>
               </tr>
+              {tipShares &&
+                screen.shares.map((x) => (
+                  <tr key={x.staffId} className="text-xs text-zinc-500" data-testid="tip-share">
+                    <td className="pl-3">{x.label}</td>
+                    <td className="text-right">{formatCents(tipShares.get(x.staffId) ?? 0)}</td>
+                  </tr>
+                ))}
               {sale.cardFeeCents > 0 && (
                 <tr className="text-amber-800">
                   <td>{pricing.cardFee ? feeLabel(pricing.cardFee) : "Credit card surcharge"}</td>
@@ -181,6 +197,14 @@ export default async function SalePage({ params, searchParams }: { params: Promi
               ))}
             </div>
           )}
+          {screen.screen?.signature && (
+            <div className="mt-4 border-t border-dashed border-zinc-300 pt-3">
+              <svg viewBox="0 0 600 200" className="mx-auto block h-16 w-48" role="img" aria-label="Client's signature">
+                <path d={screen.screen.signature} fill="none" stroke="#111318" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <div className="text-center text-[11px] text-zinc-500">Signed on the customer screen{screen.screen.signedAt ? ` · ${formatDateTime(screen.screen.signedAt)}` : ""}</div>
+            </div>
+          )}
           {loyalty && loyalty.enabled && (
             <div className="mt-3 text-center text-xs text-zinc-500">
               Loyalty: {formatCents(loyalty.progressCents)} of {formatCents(loyalty.thresholdCents)} toward your next {formatCents(loyalty.rewardCents)} reward
@@ -191,6 +215,16 @@ export default async function SalePage({ params, searchParams }: { params: Promi
         </Card>
         <div className="no-print space-y-3">
           <PrintButton />
+          {screen.screen && (
+            <div className="rounded-xl bg-white px-4 py-3 text-sm text-zinc-600 ring-1 ring-zinc-200">
+              Paid on the customer screen.{" "}
+              {screen.screen.receiptChannel === "sms"
+                ? `Receipt texted to ${screen.screen.receiptMasked}.`
+                : screen.screen.receiptChannel === "email"
+                  ? `Receipt emailed to ${screen.screen.receiptMasked}.`
+                  : "No receipt wanted."}
+            </div>
+          )}
           {customer && (
             <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm ring-1 ring-zinc-200">
               <Link className="font-medium underline" href={`/admin/customers/${customer.id}`}>
