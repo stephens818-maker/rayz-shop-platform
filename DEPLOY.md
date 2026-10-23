@@ -94,7 +94,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    | `STRIPE_CONNECT_WEBHOOK_SECRET` | the signing secret of the Connect webhook (step 4) |
    | `CONNECT_FEE_KEYED`, `CONNECT_FEE_TERMINAL` | optional: the processing fee passed on to each shop, e.g. `2.9%+30` and `2.7%+5` (the defaults) |
    | `STRIPE_STATEMENT_PREFIX` | optional: the start of card statements for shops on the brand account (default `RAYZ`, shown as `RAYZ* CLINTON`). It should match the brand account's shortened descriptor in Stripe. |
-   | `TIP_INSTANT_FEE` | optional: Stripe's instant payout fee taken from an employee's instant tip payout, as `percent%+minimum cents`, e.g. `1.5%+50` (the default) |
+   | `TIP_INSTANT_FEE` | optional: Stripe's instant payout fee taken from an employee's instant tip payout, as a percentage and a minimum in cents, e.g. `1.5%min50` (the default) |
    | `NOTIFICATIONS_*` | leave `disabled` until the shop goes live (see the README's cutover plan) |
    | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | the Twilio account, for texts, call-in calls and the shop line. Set `NOTIFICATIONS_SMS_PROVIDER` and `NOTIFICATIONS_VOICE_PROVIDER` to `twilio` when the shop goes live. |
    | `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM` | optional fallbacks for shops without their own Twilio number |
