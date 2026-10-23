@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { and, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { DEFAULT_INSTANT_FEE, ENTRY_STATUS_LABEL, METHOD_LABEL, STATUS_LABEL, effectiveMethod, entryStatus, parseInstantFee } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
-import { formatDate, formatDateTime, todayLocal } from "@/lib/time";
+import { addDays, formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { guardPage } from "@/server/auth/staff";
 import { connectMode } from "@/server/payments/connect";
@@ -20,7 +21,7 @@ const KIND_LABEL: Record<string, string> = { tip: "Tip", refund: "Refunded", adj
 const METHOD: Record<string, string> = { card: "Card", cash: "Cash", gift_card: "Gift card", adjust: "Manager" };
 const STATUS_TONE = { pending_settlement: "gray", available: "blue", in_batch: "amber", paid_out: "green" } as const;
 
-export default async function MyTipsPage({ searchParams }: { searchParams: Promise<{ stripe?: string }> }) {
+export default async function MyTipsPage({ searchParams }: { searchParams: Promise<{ stripe?: string; history?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/my-tips");
   if (ctx.staff.kind !== "person") return <Empty title="Shop logins don't earn tips">Sign in as yourself to see your tips.</Empty>;
@@ -36,6 +37,8 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
   const state = staffAccountState(acct);
   const rate = parseInstantFee(process.env.TIP_INSTANT_FEE) ?? DEFAULT_INSTANT_FEE;
   const methods = t.perShop.map((s) => ({ shop: shopName.get(s.shopId) ?? "", method: effectiveMethod(s.settings, t.policy, acct?.method ?? null), schedule: s.settings.schedule }));
+  const longHistory = sp.history === "60";
+  const history = longHistory ? t.recent : t.recent.filter((e) => e.businessDate >= addDays(today, -13));
   const wantsStripe = t.policy.methods.includes("stripe") && (acct?.method === "stripe" || methods.some((m) => m.method === "stripe"));
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -131,8 +134,16 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
         )}
       </Card>
       <Card>
-        <CardHeader title="Tip history" subtitle="The last 60 days, by ticket. Card tips are paid once their card money has settled." />
-        {t.recent.length ? (
+        <CardHeader
+          title="Tip history"
+          subtitle={`The last ${longHistory ? 60 : 14} days, by ticket. Card tips are paid once their card money has settled.`}
+          action={
+            <Link className="text-sm text-brand-700 hover:underline" href={longHistory ? "/admin/my-tips" : "/admin/my-tips?history=60"}>
+              {longHistory ? "Last 14 days" : "Last 60 days"}
+            </Link>
+          }
+        />
+        {history.length ? (
           <Table>
             <thead>
               <tr>
@@ -145,7 +156,7 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
               </tr>
             </thead>
             <tbody>
-              {t.recent.map((e) => {
+              {history.map((e) => {
                 const st = entryStatus(e, settingsOf.get(e.shopId)!, today);
                 return (
                   <tr key={e.id}>
@@ -168,7 +179,7 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
             </tbody>
           </Table>
         ) : (
-          <p className="px-4 py-6 text-sm text-zinc-500">No tips in the last 60 days.</p>
+          <p className="px-4 py-6 text-sm text-zinc-500">No tips in the last {longHistory ? 60 : 14} days.</p>
         )}
       </Card>
     </div>

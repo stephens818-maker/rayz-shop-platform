@@ -106,7 +106,7 @@ export default async function DrawerPage({ searchParams }: { searchParams: Promi
                       Review and approve tonight&rsquo;s tips
                     </LinkButton>
                   ) : (
-                    <BuildBatch shopId={shopId} defaultCutoff={today} today={today} hasDraft={false} label={tipSettings.schedule === "end_of_night" ? "Build tonight's tip payouts" : "Build a tip batch"} />
+                    <BuildBatch shopId={shopId} defaultCutoff={today} today={today} hasDraft={false} label={awaiting.length || paidTips.length ? "Build a batch for later tips" : tipSettings.schedule === "end_of_night" ? "Build tonight's tip payouts" : "Build a tip batch"} />
                   )
                 ) : undefined
               }
