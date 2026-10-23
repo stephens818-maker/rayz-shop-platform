@@ -618,10 +618,10 @@ export async function batchesFor(shopIds: readonly string[], limit = 30) {
   return db
     .select({
       b: tipPayoutBatches,
-      payouts: sql<number>`(select count(*)::int from tip_payouts p where p.batch_id = ${tipPayoutBatches.id} and p.status <> 'cancelled')`,
-      netCents: sql<number>`(select coalesce(sum(p.net_cents), 0)::int from tip_payouts p where p.batch_id = ${tipPayoutBatches.id} and p.status <> 'cancelled')`,
-      held: sql<number>`(select count(*)::int from tip_payouts p where p.batch_id = ${tipPayoutBatches.id} and p.status = 'held')`,
-      failed: sql<number>`(select count(*)::int from tip_payouts p where p.batch_id = ${tipPayoutBatches.id} and p.status = 'failed')`,
+      payouts: sql<number>`(select count(*)::int from tip_payouts p where p.batch_id = tip_payout_batches.id and p.status <> 'cancelled')`,
+      netCents: sql<number>`(select coalesce(sum(p.net_cents), 0)::int from tip_payouts p where p.batch_id = tip_payout_batches.id and p.status <> 'cancelled')`,
+      held: sql<number>`(select count(*)::int from tip_payouts p where p.batch_id = tip_payout_batches.id and p.status = 'held')`,
+      failed: sql<number>`(select count(*)::int from tip_payouts p where p.batch_id = tip_payout_batches.id and p.status = 'failed')`,
     })
     .from(tipPayoutBatches)
     .where(and(inArray(tipPayoutBatches.shopId, [...shopIds]), ne(tipPayoutBatches.kind, "opening")))

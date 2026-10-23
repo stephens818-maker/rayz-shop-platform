@@ -210,6 +210,7 @@ describe("cash tips from the drawer", () => {
     const pc = (await mine(r.batchId, c.id))!;
     expect([pb.method, pb.status, pb.netCents]).toEqual(["cash", "approved", 2000]);
     expect((await tp.cashAwaiting(sh.id)).map((x) => x.p.id).sort()).toEqual([pb.id, pc.id].sort());
+    expect((await tp.batchesFor([sh.id])).find((x) => x.b.id === r.batchId)).toMatchObject({ payouts: 2, netCents: 2400, held: 0, failed: 0 });
 
     const close = { shopId: sh.id, date: today, openingFloatCents: before.openingFloatCents, payoutsCents: 0, countedCents: 0, actor };
     await expect(m.checkout.closeDrawer(close)).rejects.toMatchObject({ message: expect.stringMatching(/still waiting to be paid/) });
