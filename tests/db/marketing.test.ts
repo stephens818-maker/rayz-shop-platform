@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
-import { TRIGGERS, type TriggerKey } from "@/domain/marketing";
+import { DEFAULT_LAPSED_STEPS, LAPSED_BUCKETS, SKIP_LABEL, TRIGGERS, type TriggerKey, lapsedBetween, lapsedOver } from "@/domain/marketing";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -100,14 +100,15 @@ async function consent(on: boolean) {
   C.resetConsentCache();
 }
 
-type ClientOpts = { sms?: boolean; email?: boolean; push?: boolean; first?: string; birthday?: string; home?: string; noPhone?: boolean };
+type ClientOpts = { sms?: boolean; email?: boolean; push?: boolean; first?: string; last?: string; birthday?: string; home?: string; noPhone?: boolean; preferred?: string };
 async function client(o: ClientOpts = {}) {
   const n = String(1000 + ((++seq * 37) % 9000)).padStart(4, "0");
   const [c] = await m.db.db
     .insert(s().customers)
     .values({
       firstName: o.first ?? "Mark",
-      lastName: "Etting",
+      lastName: o.last ?? "Etting",
+      preferredStaffId: o.preferred ?? null,
       phone: o.noPhone ? null : `+1319556${n}`,
       email: `mark${n}.${seq}@example.com`,
       smsOptIn: true,
@@ -123,7 +124,7 @@ async function client(o: ClientOpts = {}) {
   return c;
 }
 
-async function visit(customerId: string, when: Date, o: { shop?: string; staff?: string; status?: "completed" | "no_show" | "booked"; createdAt?: Date } = {}) {
+async function visit(customerId: string, when: Date, o: { shop?: string; staff?: string; status?: "completed" | "no_show" | "booked" | "cancelled"; createdAt?: Date } = {}) {
   const [a] = await m.db.db
     .insert(s().appointments)
     .values({
@@ -605,7 +606,7 @@ describe("blasts, location scope and the preview", () => {
   it("create writes and drafts, send switches and sends; neither alone does the other's job", async () => {
     await signInAs(fx.michelle);
     const full = await ctxOf();
-    expect([...full.permissions].filter((p) => p.startsWith("campaign_center."))).toEqual(["campaign_center.view", "campaign_center.create", "campaign_center.send"]);
+    expect([...full.permissions].filter((p) => p.startsWith("campaign_center."))).toEqual(["campaign_center.view", "campaign_center.create", "campaign_center.send", "campaign_center.own_clients"]);
     const without = (p: string) => ({ ...full, permissions: new Set([...full.permissions].filter((x) => x !== p)) });
     const writer = without("campaign_center.send");
     const sender = without("campaign_center.create");
@@ -739,6 +740,291 @@ describe("marketing report and export", () => {
     const [t] = await m.db.db.select().from(s().marketingSends).where(and(eq(s().marketingSends.campaignId, lapsed.id), eq(s().marketingSends.status, "test")));
     expect(t.customerId).toBeNull();
     expect((await job(t.jobId)).subject).toMatch(/^\[Test\]/);
+  });
+});
+
+describe("lapsed clients: weeks, barbers and sequences", () => {
+  let SQ: typeof import("@/server/marketing/sequences");
+  let MY: typeof import("@/server/marketing/my-clients");
+  let AU: typeof import("@/server/marketing/audiences");
+  const ago = (d: number, from = NOW) => new Date(from.getTime() - d * DAY);
+  const barber = { first: "", slug: "", label: "" };
+  const onlineAtCv = (on: boolean) => m.db.db.update(s().staffShops).set({ visibleOnline: on }).where(and(eq(s().staffShops.staffId, fx.barber), eq(s().staffShops.shopId, fx.cv)));
+  beforeAll(async () => {
+    SQ = await import("@/server/marketing/sequences");
+    MY = await import("@/server/marketing/my-clients");
+    AU = await import("@/server/marketing/audiences");
+    const [b] = await m.db.db.select().from(s().staff).where(eq(s().staff.id, fx.barber));
+    Object.assign(barber, { first: b.firstName, slug: b.publicSlug, label: b.displayLabel });
+    await onlineAtCv(true);
+  });
+  const steps = (promos: (string | null)[] = []) => DEFAULT_LAPSED_STEPS.map((x, i) => ({ afterDays: x.afterDays, templates: x.templates, promoId: promos[i] ?? null }));
+  const sequence = (o: Record<string, unknown> = {}) => ({
+    name: `Lapsed ${++seq}`,
+    channels: ["sms"],
+    shopIds: [fx.cv],
+    audience: { staffIds: [fx.barber], barberMatch: "primary" },
+    settings: { stopAfterDays: 120 },
+    ...o,
+  });
+
+  it("the segment builder: last visit by weeks or a range, the client's primary, most recent or any barber, nothing booked since", async () => {
+    expect(fx.barber).not.toBe(fx.michelle);
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const tag = `lapsed${++seq}`;
+    const [B, M] = [fx.barber, fx.michelle];
+    const mk = async (first: string, o: ClientOpts, visits: [number, string][], booking?: "booked" | "cancelled") => {
+      const c = await client({ sms: true, first, ...o });
+      await m.db.db.insert(s().customerTags).values({ customerId: c.id, tag });
+      for (const [d, staffId] of visits) await visit(c.id, ago(d), { staff: staffId });
+      if (booking) await visit(c.id, new Date(NOW.getTime() + 3 * DAY), { staff: B, status: booking, createdAt: ago(1) });
+      return c;
+    };
+    await mk("Prefers", { preferred: B }, [[150, M]]);
+    await mk("Recent", {}, [[200, M], [150, B]]);
+    await mk("Once", {}, [[200, B], [150, M]]);
+    await mk("Booked", {}, [[150, B]], "booked");
+    await mk("Cancelled", {}, [[150, B]], "cancelled");
+    await mk("NoText", { sms: false }, [[150, B]]);
+    await mk("Lately", {}, [[130, B]]);
+    const preview = async (segment: Record<string, unknown>) => {
+      const p = await CP.previewBlast(ctx, { channels: ["sms"], shopIds: [fx.cv], segment: { tags: [tag], staffIds: [B], ...segment } }, NOW);
+      expect(JSON.stringify(p)).not.toMatch(/@example\.com|\+1319/);
+      return { matched: p.matched, optedIn: p.optedIn, names: p.sample.sort() };
+    };
+    const over20 = lapsedOver(20);
+    expect(await preview({ ...over20, barberMatch: "primary" })).toEqual({ matched: 4, optedIn: 3, names: ["Cancelled", "NoText", "Prefers", "Recent"] });
+    expect((await preview({ ...over20, notBooked: false, barberMatch: "primary" })).matched).toBe(5);
+    expect(await preview({ ...over20, barberMatch: "recent" })).toMatchObject({ matched: 3, names: ["Cancelled", "NoText", "Recent"] });
+    expect(await preview({ ...over20, barberMatch: "any" })).toMatchObject({ matched: 4, names: ["Cancelled", "NoText", "Once", "Recent"] });
+    expect(await preview({ ...lapsedBetween(126, 133), barberMatch: "any" })).toMatchObject({ matched: 1, names: ["Lately"] });
+  });
+
+  it("a lapsed sequence sends each client the step for how long it's been, once per lapse, signed by their barber, and stops when they book", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const B = fx.barber;
+    const small = await promo({ codeMode: "unique", code: `BACK${++seq}`, validDays: 14, value: 500 });
+    const big = await promo({ codeMode: "unique", code: `MISS${++seq}`, validDays: 14, value: 1000 });
+    await expect(SQ.saveSequence(ctx, sequence({ steps: steps() }))).rejects.toThrow(/Step 3 \(4 weeks\): .*pick a coupon/i);
+    await expect(SQ.saveSequence(ctx, sequence({ steps: [steps()[0], { ...steps()[1], afterDays: 18 }] }))).rejects.toThrow(/at least a week/);
+    const id = await SQ.saveSequence(ctx, sequence({ steps: steps([null, null, small.id, big.id]) }));
+    const st = await E.stepsOf(id);
+    expect(st.map((x) => x.afterDays)).toEqual([14, 21, 28, 42]);
+    const stepOf = (stepId: string | null) => st.find((x) => x.id === stepId)?.afterDays;
+
+    const at = async (d: number, o: ClientOpts = {}) => {
+      const c = await client({ sms: true, preferred: B, ...o });
+      await visit(c.id, ago(d), { staff: B });
+      return c;
+    };
+    const [c15, c22, c30, c50, c200] = [await at(15), await at(22), await at(30), await at(50), await at(200)];
+    const booked = await at(30);
+    await visit(booked.id, new Date(NOW.getTime() + 2 * DAY), { staff: B, status: "booked", createdAt: ago(2) });
+    const michelles = await at(30, { preferred: fx.michelle });
+    const mine = async (c: { id: string }) => (await sendsFor(c.id)).filter((x) => x.campaignId === id);
+
+    const input = { id, ...sequence(), steps: st.map((x) => ({ id: x.id, afterDays: x.afterDays })) };
+    const pv = await SQ.previewSequence(ctx, input, NOW);
+    expect(pv.steps.map((x) => [x.label, x.matched, x.optedIn, x.due])).toEqual([
+      ["2 weeks", 1, 1, 1],
+      ["3 weeks", 1, 1, 1],
+      ["4 weeks", 1, 1, 1],
+      ["6 weeks+", 1, 1, 1],
+    ]);
+    expect(JSON.stringify(pv)).not.toMatch(/@example\.com|\+1319/);
+
+    expect((await E.runSequences(NOW, { ids: [id] })).queued).toBe(0);
+    await SQ.setSequenceEnabled(ctx, id, true);
+    expect((await E.runSequences(NOW, { ids: [id] })).queued).toBe(4);
+    for (const [c, d] of [[c15, 14], [c22, 21], [c30, 28], [c50, 42]] as const) {
+      const [x] = await mine(c);
+      expect(stepOf(x.stepId), String(d)).toBe(d);
+      expect(x.staffId).toBe(B);
+      expect(x.bookPath).toContain(`barber=${barber.slug}`);
+      expect((await job(x.jobId)).body).toContain(barber.first);
+    }
+    const body = async (c: { id: string }) => (await job((await mine(c))[0].jobId)).body;
+    expect(await body(c15)).not.toContain(small.code);
+    expect(await body(c30)).toContain(`${small.code}-`);
+    expect(await body(c50)).toContain(`${big.code}-`);
+    for (const c of [c200, booked, michelles]) expect(await mine(c)).toHaveLength(0);
+    expect((await E.runSequences(NOW, { ids: [id] })).queued).toBe(0);
+    expect((await SQ.previewSequence(ctx, input, NOW)).due).toBe(0);
+
+    const lapsed = await turnOn("lapsed");
+    const ctl = await client({ sms: true });
+    await visit(ctl.id, ago(50));
+    await E.runTriggers(new Date(NOW.getTime() + HOUR), { shopIds: [fx.cv], keys: ["lapsed"] });
+    expect((await sendsFor(c50.id)).filter((x) => x.campaignId === lapsed.id)).toHaveLength(0);
+    expect((await sendsFor(ctl.id)).map((x) => x.campaignId)).toEqual([lapsed.id]);
+
+    const t1 = new Date(NOW.getTime() + 8 * DAY);
+    expect((await E.runSequences(t1, { ids: [id] })).queued).toBe(2);
+    expect((await mine(c15)).map((x) => stepOf(x.stepId)).sort()).toEqual([14, 21]);
+    expect((await mine(c22)).map((x) => stepOf(x.stepId)).sort()).toEqual([21, 28]);
+
+    const next = await visit(c15.id, new Date(NOW.getTime() + 20 * DAY), { staff: B, status: "booked", createdAt: new Date(t1.getTime() + HOUR) });
+    const t2 = new Date(NOW.getTime() + 16 * DAY);
+    await E.runSequences(t2, { ids: [id] });
+    expect(await mine(c15)).toHaveLength(2);
+    await m.db.db.update(s().appointments).set({ status: "cancelled", cancelledAt: t2 }).where(eq(s().appointments.id, next.id));
+    await E.runSequences(t2, { ids: [id] });
+    expect((await mine(c15)).map((x) => stepOf(x.stepId)).sort()).toEqual([14, 21, 28]);
+
+    const v = (await SQ.listSequences(ctx, t2)).find((x) => x.id === id)!;
+    expect(v).toMatchObject({ enabled: true, mayEdit: true, audience: { staffIds: [B], barberMatch: "primary" }, settings: { stopAfterDays: 120 } });
+    expect(v.steps.map((x) => x.label)).toEqual(["2 weeks", "3 weeks", "4 weeks", "6 weeks+"]);
+    expect(v.sent30).toBeGreaterThanOrEqual(7);
+    await SQ.setSequenceEnabled(ctx, id, false);
+    await SQ.deleteSequence(ctx, id);
+    expect((await SQ.listSequences(ctx)).some((x) => x.id === id)).toBe(false);
+  });
+
+  it("signed by the client's barber with a link to book with them, or by 'your barber' when they can't be booked online", async () => {
+    const B = fx.barber;
+    expect(AU.signedBy((await AU.barberCards([B])).get(B), fx.cv)).toEqual({ values: { barber: barber.first }, link: { barber: barber.slug } });
+    expect(AU.signedBy(undefined, fx.cv)).toEqual({ values: { barber: "your barber" } });
+    await onlineAtCv(false);
+    try {
+      expect(AU.signedBy((await AU.barberCards([B])).get(B), fx.cv)).toEqual({ values: { barber: barber.first }, link: undefined });
+    } finally {
+      await onlineAtCv(true);
+    }
+  });
+
+  it("create writes sequences and send switches them; a location manager only for their own locations", async () => {
+    await signInAs(fx.michelle);
+    const full = await ctxOf();
+    const without = (p: string) => ({ ...full, permissions: new Set([...full.permissions].filter((x) => x !== p)) });
+    const writer = without("campaign_center.send");
+    const sender = without("campaign_center.create");
+    const base = sequence({ audience: { staffIds: [] }, steps: steps().slice(0, 2) });
+    await expect(SQ.saveSequence(full, { ...base, shopIds: [fx.other] })).rejects.toThrow();
+    await expect(SQ.saveSequence(sender, base)).rejects.toThrow(/create/);
+    const id = await SQ.saveSequence(writer, base);
+    expect(await m.db.db.query.marketingCampaigns.findFirst({ where: eq(s().marketingCampaigns.id, id) })).toMatchObject({ kind: "sequence", enabled: false, shopIds: [fx.cv] });
+    await expect(SQ.setSequenceEnabled(writer, id, true)).rejects.toThrow(/send/);
+    await SQ.setSequenceEnabled(sender, id, true);
+    await expect(SQ.deleteSequence(writer, id)).rejects.toThrow(/Turn it off/);
+    await expect(SQ.deleteSequence(sender, id)).rejects.toThrow(/create/);
+    await SQ.setSequenceEnabled(sender, id, false);
+    await SQ.deleteSequence(writer, id);
+    await expect(SQ.setSequenceEnabled(sender, id, true)).rejects.toThrow(/deleted/);
+  });
+
+  it("a barber allowed to sees their own lapsed clients without contact details and sends them the barber's message", async () => {
+    await consent(true);
+    const B = fx.barber;
+    const [person] = await m.db.db.select().from(s().staff).where(eq(s().staff.id, B));
+    const outreach = await campaign("barber_outreach");
+    try {
+      await signInAs(B);
+      const plain = await ctxOf();
+      expect(plain.permissions.has("campaign_center.own_clients")).toBe(false);
+      await expect(MY.myLapsedClients(plain, NOW)).rejects.toThrow(/own lapsed clients/);
+      await m.db.db
+        .update(s().staff)
+        .set({ permissionOverrides: { ...(person.permissionOverrides ?? {}), "campaign_center.own_clients": true } })
+        .where(eq(s().staff.id, B));
+      const ctx = await ctxOf();
+      const mk = async (first: string, d: number, o: ClientOpts = {}) => {
+        const c = await client({ sms: true, first, last: "Ortiz", preferred: B, ...o });
+        await visit(c.id, ago(d), { staff: o.preferred ?? B });
+        return c;
+      };
+      const mine = await mk("Jamal", 20);
+      const quiet = await mk("Quinn", 25, { sms: false });
+      const again = await mk("Remy", 30);
+      const theirs = await mk("Theo", 20, { preferred: fx.michelle });
+
+      let list = await MY.myLapsedClients(ctx, NOW);
+      const row = (id: string) => list.clients.find((x) => x.customerId === id);
+      expect(list.shops.find((x) => x.id === fx.cv)?.on).toBe(false);
+      expect(row(mine.id)).toMatchObject({ name: "Jamal O.", sinceDays: 20, bucket: "2–3 wks", channel: "sms", sentAt: null, blocked: expect.stringMatching(/switched on/) });
+      expect(row(theirs.id)).toBeUndefined();
+      expect(JSON.stringify(list)).not.toMatch(/@example\.com|\+1319|Ortiz/);
+      await expect(MY.sendToMyClients(ctx, [mine.id], NOW)).rejects.toThrow(/switched on/);
+
+      await turnOn("barber_outreach");
+      expect((await E.runTriggers(NOW, { shopIds: [fx.cv], keys: ["barber_outreach"] })).queued).toBe(0);
+      list = await MY.myLapsedClients(ctx, NOW);
+      expect(row(mine.id)?.blocked).toBeNull();
+      expect(row(quiet.id)).toMatchObject({ channel: null, blocked: SKIP_LABEL.no_consent });
+      await expect(MY.sendToMyClients(ctx, [mine.id, theirs.id], NOW)).rejects.toThrow(/own lapsed clients/);
+      await expect(MY.sendToMyClients(ctx, [quiet.id], NOW)).rejects.toThrow(/agreed/);
+      expect(await sendsFor(mine.id)).toHaveLength(0);
+
+      expect(await MY.sendToMyClients(ctx, [mine.id], NOW)).toEqual({ queued: 1, skipped: [] });
+      const [send] = (await sendsFor(mine.id)).filter((x) => x.campaignId === outreach.id);
+      expect(send).toMatchObject({ staffId: B, status: "queued" });
+      expect(send.bookPath).toContain(`barber=${barber.slug}`);
+      expect((await job(send.jobId)).body).toContain(`it's ${barber.first}`);
+      list = await MY.myLapsedClients(ctx, NOW);
+      expect(row(mine.id)?.blocked).toMatch(/already sent/);
+      expect(list.sentToday).toBe(1);
+
+      await m.db.db.update(s().marketingCampaigns).set({ settings: { maxPerDay: 1 } }).where(eq(s().marketingCampaigns.id, outreach.id));
+      await expect(MY.sendToMyClients(ctx, [again.id], NOW)).rejects.toThrow(/today's limit of 1/);
+      const [a] = await m.db.db
+        .select()
+        .from(s().auditLog)
+        .where(eq(s().auditLog.action, "campaign_center.own_clients_sent"))
+        .orderBy(m.drizzle.desc(s().auditLog.at))
+        .limit(1);
+      expect(a.details).toMatchObject({ picked: 1, queued: 1 });
+    } finally {
+      await m.db.db.update(s().staff).set({ permissionOverrides: person.permissionOverrides }).where(eq(s().staff.id, B));
+      await m.db.db.update(s().marketingCampaigns).set({ settings: outreach.settings }).where(eq(s().marketingCampaigns.id, outreach.id));
+    }
+  });
+
+  it("the report: each barber's lapsed clients by weeks since the last visit, lapsed messages and the rebook rate", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const LR = await import("@/server/marketing/lapsed-report");
+    const B = fx.barber;
+    const later = new Date(NOW.getTime() + 400 * DAY);
+    const at = async (d: number) => {
+      const c = await client({ sms: true, preferred: B });
+      await visit(c.id, ago(d, later), { staff: B });
+      return c;
+    };
+    const [a] = [await at(16), await at(30), await at(50)];
+    const booked = await at(30);
+    await visit(booked.id, new Date(later.getTime() + 2 * DAY), { staff: B, status: "booked", createdAt: ago(1, later) });
+    const p = await promo({ codeMode: "unique", code: `REP${++seq}`, validDays: 14 });
+    const all = steps([null, null, p.id, p.id]);
+    const name = `Report sequence ${++seq}`;
+    const id = await SQ.saveSequence(ctx, sequence({ name, steps: [all[0], all[2], all[3]] }));
+    await SQ.setSequenceEnabled(ctx, id, true);
+    expect((await E.runSequences(later, { ids: [id] })).queued).toBe(3);
+    await visit(a.id, new Date(later.getTime() + 5 * DAY), { staff: B, status: "booked", createdAt: new Date(later.getTime() + DAY) });
+
+    const day = m.time.todayLocal(later);
+    const scope = await S.resolveScope(ctx, { from: day, to: day, shop: fx.cv }, "lapsed_clients");
+    const data = await LR.lapsedReportData(scope, scope.loc, later);
+    const t = data.tables.find((x) => x.id === "barbers")!;
+    const row = t.rows.find((r) => r[0] === barber.label)!;
+    const col = (label: string) => row[t.columns.findIndex((x) => x.label === label)];
+    expect(LAPSED_BUCKETS.map((x) => col(x.label))).toEqual([1, 0, 1, 0, 1, 0, 0]);
+    expect(["Lapsed", "Lapsed messages", "Clients messaged", "Rebooked"].map(col)).toEqual([3, 3, 3, 1]);
+    expect(Number(col("Rebook rate"))).toBeCloseTo(1 / 3, 5);
+    const steps30 = data.tables.find((x) => x.id === "campaigns")!;
+    expect(steps30.rows.map((r) => r[0]).sort()).toEqual([`${name} · 2 weeks`, `${name} · 4 weeks`, `${name} · 6 weeks+`, "Total"]);
+    expect(data.stats.find((x) => x.label === "Rebook rate")?.value).toBe("33%");
+    await SQ.setSequenceEnabled(ctx, id, false);
+  });
+
+  it("the migration gives managers and brand admins the lapsed list and the report; barbers only when someone allows it", async () => {
+    const roles = await m.db.db.select().from(s().roles);
+    const perms = (k: string) => roles.find((r) => r.key === k)?.permissions ?? [];
+    for (const k of ["brand_admin", "shop_manager"]) expect(perms(k), k).toEqual(expect.arrayContaining(["campaign_center.own_clients", "report.lapsed_clients.view", "report.lapsed_clients.export"]));
+    expect(perms("barber")).not.toContain("campaign_center.own_clients");
   });
 });
 
