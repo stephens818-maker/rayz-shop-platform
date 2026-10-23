@@ -1,6 +1,7 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { EmailAttachment, contactOptOuts, notificationJobs, shops } from "@/db/schema";
+import { EmailAttachment, brandSettings, contactOptOuts, notificationJobs, shops } from "@/db/schema";
+import { MergeValues, SavedTemplates, cutoffText, fill, isTemplateKind, templateFor } from "@/domain/message-templates";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
 import { emailProvider, smsProvider, voiceProvider } from "./providers";
@@ -46,33 +47,40 @@ export interface AppointmentMessageContext {
   email: string | null;
   smsOptIn: boolean;
   emailOptIn: boolean;
+  firstName?: string | null;
+  shopSlug?: string;
+  shopPhone?: string | null;
+  cancelCutoffMinutes?: number;
 }
 
 const baseUrl = appBaseUrl;
 
-export function renderMessage(kind: NotificationKind, c: AppointmentMessageContext): { subject: string; body: string } {
-  const when = formatDateTime(c.startsAt);
-  const link = `${baseUrl()}/a/${c.code}`;
-  const shop = `Ray'z ${c.shopName}`;
-  switch (kind) {
-    case "confirmation":
-      return { subject: `${shop}: you're booked`, body: `${shop}: You're booked with ${c.barberName} on ${when}${c.shopAddress ? ` at ${c.shopAddress}` : ""}. Cancel or reschedule: ${link}` };
-    case "reschedule":
-      return { subject: `${shop}: appointment moved`, body: `${shop}: Your appointment is now ${when} with ${c.barberName}. Details: ${link}` };
-    case "reminder_24h":
-      return { subject: `${shop}: see you tomorrow`, body: `${shop}: Reminder — ${when} with ${c.barberName}. Need to change it? ${link}` };
-    case "reminder_2h":
-      return { subject: `${shop}: see you soon`, body: `${shop}: See you at ${when} with ${c.barberName}. Changes allowed up to 30 min before: ${link}` };
-    case "cancellation":
-      return { subject: `${shop}: appointment cancelled`, body: `${shop}: Your ${when} appointment was cancelled. Book again anytime: ${baseUrl()}/book` };
-    case "time_off_reschedule":
-      return {
-        subject: `${shop}: please pick a new time`,
-        body: `${shop}: ${c.barberName} is out for your ${when} appointment. Please pick another time or barber: ${link}. Your booking stays until you change it.`,
-      };
-    default:
-      return { subject: shop, body: shop };
-  }
+export function mergeValues(c: AppointmentMessageContext, extra: MergeValues = {}): MergeValues {
+  return {
+    shop: `Ray'z ${c.shopName}`,
+    first_name: c.firstName ?? "there",
+    barber: c.barberName,
+    when: formatDateTime(c.startsAt),
+    address: c.shopAddress,
+    link: `${baseUrl()}/a/${c.code}`,
+    book_link: c.shopSlug ? `${baseUrl()}/book/${c.shopSlug}` : `${baseUrl()}/book`,
+    cutoff: cutoffText(c.cancelCutoffMinutes ?? 30),
+    phone: c.shopPhone ?? "",
+    ...extra,
+  };
+}
+
+/** The brand's saved wording, or none. Read per batch of messages so an edit applies to the next one. */
+export async function savedTemplates(tx: DBorTx = db): Promise<SavedTemplates> {
+  const [b] = await tx.select({ t: brandSettings.messageTemplates }).from(brandSettings).limit(1);
+  return (b?.t ?? {}) as SavedTemplates;
+}
+
+export function renderMessage(kind: NotificationKind, c: AppointmentMessageContext, saved?: SavedTemplates, extra?: MergeValues): { subject: string; body: string } {
+  const values = mergeValues(c, extra);
+  if (!isTemplateKind(kind)) return { subject: values.shop!, body: values.shop! };
+  const t = templateFor(kind, saved);
+  return { subject: fill(t.subject, values), body: fill(t.body, values) };
 }
 
 function recipients(c: AppointmentMessageContext) {
@@ -107,9 +115,11 @@ export async function scheduleAppointmentNotifications(
     if (r24 > now) jobs.push({ kind: "reminder_24h", runAt: r24 });
     if (r2 > now) jobs.push({ kind: "reminder_2h", runAt: r2 });
   }
+  const to = recipients(c);
+  const saved = jobs.length && to.length ? await savedTemplates(tx) : {};
   const rows = jobs.flatMap((j) =>
-    recipients(c).map((r) => {
-      const m = renderMessage(j.kind, c);
+    to.map((r) => {
+      const m = renderMessage(j.kind, c, saved);
       return {
         appointmentId: c.appointmentId,
         customerId: c.customerId,
@@ -128,9 +138,11 @@ export async function scheduleAppointmentNotifications(
 }
 
 /** One message about an appointment, now, on each channel the client opted in to. Returns how many were queued. */
-export async function enqueueAppointmentMessage(kind: NotificationKind, c: AppointmentMessageContext, tx: DBorTx = db, now: Date = new Date()) {
-  const m = renderMessage(kind, c);
-  const rows = recipients(c).map((r) => ({
+export async function enqueueAppointmentMessage(kind: NotificationKind, c: AppointmentMessageContext, tx: DBorTx = db, now: Date = new Date(), extra?: MergeValues) {
+  const to = recipients(c);
+  if (!to.length) return 0;
+  const m = renderMessage(kind, c, await savedTemplates(tx), extra);
+  const rows = to.map((r) => ({
     appointmentId: c.appointmentId,
     customerId: c.customerId,
     shopId: c.shopId,

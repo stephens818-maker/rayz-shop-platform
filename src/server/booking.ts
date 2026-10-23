@@ -30,7 +30,7 @@ import {
 import { closedOn, takesOnlineBookings } from "@/domain/location-lifecycle";
 import { trailingBuffer } from "@/domain/timing";
 import { appointmentCode } from "@/lib/ids";
-import { normalizePhone } from "@/lib/phone";
+import { formatPhone, normalizePhone } from "@/lib/phone";
 import { LocalDate, addDays, endOfLocalDay, existingWallTime, formatTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers } from "./catalog";
@@ -358,6 +358,10 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
       shopName: shops.name,
       shopAddress: shops.address,
       shopCity: shops.city,
+      shopSlug: shops.slug,
+      shopPhone: shops.phone,
+      cutoff: shops.cancelCutoffMinutes,
+      firstName: customers.firstName,
       barberName: staff.displayLabel,
       customerId: customers.id,
       phone: customers.phone,
@@ -383,6 +387,10 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
     email: row.email,
     smsOptIn: row.smsOptIn ?? false,
     emailOptIn: row.emailOptIn ?? false,
+    firstName: row.firstName,
+    shopSlug: row.shopSlug,
+    shopPhone: row.shopPhone ? formatPhone(row.shopPhone) : null,
+    cancelCutoffMinutes: row.cutoff,
   };
 }
 
