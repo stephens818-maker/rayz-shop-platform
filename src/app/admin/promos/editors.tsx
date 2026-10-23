@@ -2,8 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { Chips, ItemPicker, toggle } from "@/components/chips";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
-import { createPromoAction, issueGiftCardAction, togglePromoAction, voidGiftCardAction } from "./actions";
+import { CODE_MODES, CODE_MODE_LABEL, COUPON_TYPES, COUPON_TYPE_LABEL, type CodeMode, type CouponType } from "@/domain/coupons";
+import { issueGiftCardAction, saveCouponAction, togglePromoAction, voidGiftCardAction } from "./actions";
+import type { CouponFormValues } from "./coupon-input";
 
 export function PromoToggle({ id, active }: { id: string; active: boolean }) {
   const router = useRouter();
@@ -15,88 +18,185 @@ export function PromoToggle({ id, active }: { id: string; active: boolean }) {
   );
 }
 
-export function PromoForm({ shops, allShops }: { shops: { id: string; name: string }[]; allShops: boolean }) {
+type Item = { id: string; name: string; kind?: string };
+const num = (s: string) => (s.trim() === "" || !Number.isFinite(Number(s)) ? null : Math.max(0, Math.round(Number(s))));
+const str = (n: number | null) => (n === null ? "" : String(n));
+const BLANK: CouponFormValues = {
+  code: "",
+  description: null,
+  type: "percent",
+  value: 0,
+  appliesTo: "services",
+  serviceIds: [],
+  productIds: [],
+  freeItemKind: null,
+  freeItemId: null,
+  shopIds: [],
+  minSpendCents: null,
+  startsOn: null,
+  endsOn: null,
+  maxRedemptions: null,
+  maxPerCustomer: null,
+  codeMode: "shared",
+  validDays: null,
+  firstVisitOnly: false,
+  stackable: false,
+  autoApply: false,
+};
+
+export function CouponForm({ initial, editingId, locked, shops, allShops, services, products }: { initial: CouponFormValues | null; editingId: string | null; locked: boolean; shops: Item[]; allShops: boolean; services: Item[]; products: Item[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [v, setV] = useState({ code: "", description: "", type: "percent" as "percent" | "amount", value: "", appliesTo: "services" as "services" | "products" | "all", shopId: allShops ? "" : (shops[0]?.id ?? ""), startsOn: "", endsOn: "", max: "" });
+  const [v, setV] = useState<CouponFormValues>(initial ?? { ...BLANK, shopIds: allShops ? [] : shops.map((s) => s.id) });
+  const [valueText, setValueText] = useState(initial ? (initial.type === "amount" ? String(initial.value / 100) : String(initial.value)) : "");
+  const [minSpend, setMinSpend] = useState(initial?.minSpendCents ? String(initial.minSpendCents / 100) : "");
+  const set = (x: Partial<CouponFormValues>) => setV({ ...v, ...x });
+  const free = [...services.map((s) => ({ id: `${s.kind === "addon" ? "addon" : "service"}:${s.id}`, name: `${s.name}${s.kind === "addon" ? " (add-on)" : ""}` })), ...products.map((p) => ({ id: `product:${p.id}`, name: p.name }))];
+  const submit = () =>
+    start(async () => {
+      const value = v.type === "free_item" ? 0 : v.type === "amount" ? Math.round(Number(valueText) * 100) : Math.round(Number(valueText));
+      const r = await saveCouponAction(editingId, { ...v, value, minSpendCents: minSpend ? Math.round(Number(minSpend) * 100) : null });
+      setError(r.ok ? null : r.error);
+      if (!r.ok) return;
+      if (editingId) router.push("/admin/promos");
+      else {
+        setV({ ...BLANK, shopIds: v.shopIds });
+        setValueText("");
+        setMinSpend("");
+      }
+      router.refresh();
+    });
   return (
-    <div className="border-t border-zinc-100 p-4">
-      <div className="mb-2 text-sm font-semibold">New promo</div>
-      <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-8">
-        <Field label="Code" className="lg:col-span-1">
-          <Input className="uppercase" value={v.code} onChange={(e) => setV({ ...v, code: e.target.value.toUpperCase() })} />
+    <div className="space-y-4 border-t border-zinc-100 p-4" data-testid="coupon-form">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold">{editingId ? `Edit ${initial?.code}` : "New coupon"}</div>
+        {editingId && (
+          <a className="text-xs underline" href="/admin/promos">
+            Cancel
+          </a>
+        )}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Field label={v.codeMode === "unique" ? "Code prefix" : "Code"} hint={locked ? "Used or sent, so the code stays" : v.codeMode === "unique" ? "Each client gets e.g. PREFIX-7K2Q9D" : undefined}>
+          <Input className="uppercase" value={v.code} disabled={locked} onChange={(e) => set({ code: e.target.value.toUpperCase() })} />
         </Field>
-        <Field label="Type">
-          <Select value={v.type} onChange={(e) => setV({ ...v, type: e.target.value as "percent" | "amount" })}>
-            <option value="percent">% off</option>
-            <option value="amount">$ off</option>
-          </Select>
-        </Field>
-        <Field label={v.type === "percent" ? "Percent" : "Dollars"}>
-          <Input inputMode="decimal" value={v.value} onChange={(e) => setV({ ...v, value: e.target.value })} />
-        </Field>
-        <Field label="On">
-          <Select value={v.appliesTo} onChange={(e) => setV({ ...v, appliesTo: e.target.value as typeof v.appliesTo })}>
-            <option value="services">Services</option>
-            <option value="products">Products</option>
-            <option value="all">Everything</option>
-          </Select>
-        </Field>
-        <Field label="Shop">
-          <Select value={v.shopId} onChange={(e) => setV({ ...v, shopId: e.target.value })}>
-            {allShops && <option value="">All shops</option>}
-            {shops.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
+        <Field label="Kind of codes">
+          <Select value={v.codeMode} disabled={locked} onChange={(e) => set({ codeMode: e.target.value as CodeMode, autoApply: e.target.value === "unique" ? false : v.autoApply })}>
+            {CODE_MODES.map((m) => (
+              <option key={m} value={m}>
+                {CODE_MODE_LABEL[m]}
               </option>
             ))}
           </Select>
         </Field>
+        <Field label="Discount">
+          <Select value={v.type} onChange={(e) => set({ type: e.target.value as CouponType })}>
+            {COUPON_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {COUPON_TYPE_LABEL[t]}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        {v.type === "free_item" ? (
+          <Field label="Free item" hint="One of it, when it's on the ticket">
+            <Select
+              value={v.freeItemId ? `${v.freeItemKind}:${v.freeItemId}` : ""}
+              onChange={(e) => {
+                const [kind, id] = e.target.value.split(":");
+                set({ freeItemKind: (kind || null) as CouponFormValues["freeItemKind"], freeItemId: id || null });
+              }}
+            >
+              <option value="">Pick one</option>
+              {free.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : (
+          <Field label={v.type === "percent" ? "Percent off" : "Dollars off"}>
+            <Input inputMode="decimal" value={valueText} onChange={(e) => setValueText(e.target.value)} />
+          </Field>
+        )}
+      </div>
+      {v.type !== "free_item" && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="On">
+            <Select value={v.appliesTo} onChange={(e) => set({ appliesTo: e.target.value as CouponFormValues["appliesTo"] })}>
+              <option value="services">Services</option>
+              <option value="products">Products</option>
+              <option value="all">Everything</option>
+            </Select>
+          </Field>
+          {v.appliesTo !== "products" && (
+            <Field label="Only these services and add-ons" hint="None picked: every service">
+              <ItemPicker placeholder="Search services" options={services} selected={v.serviceIds} onChange={(serviceIds) => set({ serviceIds })} />
+            </Field>
+          )}
+          {v.appliesTo !== "services" && (
+            <Field label="Only these products" hint="None picked: every product">
+              <ItemPicker placeholder="Search products" options={products} selected={v.productIds} onChange={(productIds) => set({ productIds })} />
+            </Field>
+          )}
+        </div>
+      )}
+      <Field label="Locations">
+        <Chips
+          options={[...(allShops ? [{ id: "", name: "All shops" }] : []), ...shops]}
+          selected={v.shopIds.length ? v.shopIds : allShops ? [""] : []}
+          onToggle={(id) => set({ shopIds: id === "" ? [] : toggle(v.shopIds, id) })}
+        />
+      </Field>
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <Field label="Minimum spend ($)">
+          <Input inputMode="decimal" value={minSpend} onChange={(e) => setMinSpend(e.target.value)} />
+        </Field>
         <Field label="Starts">
-          <Input type="date" value={v.startsOn} onChange={(e) => setV({ ...v, startsOn: e.target.value })} />
+          <Input type="date" value={v.startsOn ?? ""} onChange={(e) => set({ startsOn: e.target.value || null })} />
         </Field>
         <Field label="Ends">
-          <Input type="date" value={v.endsOn} onChange={(e) => setV({ ...v, endsOn: e.target.value })} />
+          <Input type="date" value={v.endsOn ?? ""} onChange={(e) => set({ endsOn: e.target.value || null })} />
         </Field>
-        <Field label="Max uses">
-          <Input inputMode="numeric" value={v.max} onChange={(e) => setV({ ...v, max: e.target.value })} />
+        <Field label="Most uses in total">
+          <Input inputMode="numeric" value={str(v.maxRedemptions)} onChange={(e) => set({ maxRedemptions: num(e.target.value) || null })} />
         </Field>
-        <Field label="Description" className="sm:col-span-3 lg:col-span-7">
-          <Input value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
+        <Field label="Most uses per client">
+          <Input inputMode="numeric" value={str(v.maxPerCustomer)} onChange={(e) => set({ maxPerCustomer: num(e.target.value) || null })} />
+        </Field>
+        {v.codeMode === "unique" && (
+          <Field label="Code works for (days)">
+            <Input inputMode="numeric" value={str(v.validDays)} onChange={(e) => set({ validDays: num(e.target.value) || null })} />
+          </Field>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-5 text-sm">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={v.firstVisitOnly} onChange={(e) => set({ firstVisitOnly: e.target.checked })} />
+          First visit only
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={v.stackable} onChange={(e) => set({ stackable: e.target.checked })} />
+          Combines with other coupons and discounts
+        </label>
+        <label className="flex items-center gap-2" title="Needs a limit per client or first visit only">
+          <input type="checkbox" checked={v.autoApply} disabled={v.codeMode === "unique"} onChange={(e) => set({ autoApply: e.target.checked })} />
+          Apply automatically when the client qualifies
+        </label>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <Field label="Description (staff and the booking page see it)">
+          <Input value={v.description ?? ""} onChange={(e) => set({ description: e.target.value || null })} />
         </Field>
         <div className="flex items-end">
-          <Button
-            className="w-full"
-            disabled={pending || !v.code || !v.value}
-            onClick={() =>
-              start(async () => {
-                const r = await createPromoAction({
-                  code: v.code,
-                  description: v.description || null,
-                  type: v.type,
-                  value: v.type === "percent" ? Math.round(Number(v.value)) : Math.round(Number(v.value) * 100),
-                  appliesTo: v.appliesTo,
-                  shopId: v.shopId || null,
-                  startsOn: v.startsOn || null,
-                  endsOn: v.endsOn || null,
-                  maxRedemptions: v.max ? Number(v.max) : null,
-                });
-                setError(r.ok ? null : r.error);
-                if (r.ok) setV({ ...v, code: "", value: "", description: "" });
-                router.refresh();
-              })
-            }
-          >
-            Create
+          <Button disabled={pending || !v.code} onClick={submit}>
+            {editingId ? "Save coupon" : "Create coupon"}
           </Button>
         </div>
       </div>
-      {error && (
-        <div className="mt-2">
-          <Notice tone="red">{error}</Notice>
-        </div>
-      )}
+      {error && <Notice tone="red">{error}</Notice>}
     </div>
   );
 }

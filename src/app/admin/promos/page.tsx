@@ -1,17 +1,21 @@
 import type { Metadata } from "next";
-import { and, asc, desc, eq, ilike, isNull, ne, or, sql } from "drizzle-orm";
+import Link from "next/link";
+import { and, asc, desc, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, giftCardLedger, giftCards, promoCodes, sales, shops } from "@/db/schema";
+import { couponCodes, customers, giftCardLedger, giftCards, products, promoCodes, sales, services, shops } from "@/db/schema";
+import { couponSummary } from "@/domain/coupons";
 import { Badge, Card, CardHeader, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { formatDateTime, todayLocal } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
+import { ruleOf } from "@/server/coupons";
 import { OTHER_SHOP, hasShop, inShops } from "@/server/tenant";
-import { GiftCardTools, PromoForm, PromoToggle, VoidGiftCard } from "./editors";
+import { CouponForm, GiftCardTools, PromoToggle, VoidGiftCard } from "./editors";
+import { couponInputOf, scopeOf } from "./coupon-input";
 
 export const metadata: Metadata = { title: "Promos & gift cards" };
 
-export default async function PromosPage({ searchParams }: { searchParams: Promise<{ gc?: string }> }) {
+export default async function PromosPage({ searchParams }: { searchParams: Promise<{ gc?: string; edit?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/promos");
   const managesPromos = can(ctx, "promos.manage");
@@ -26,7 +30,6 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
     db
       .select()
       .from(promoCodes)
-      .where(ctx.brandWide ? undefined : or(isNull(promoCodes.shopId), inShops(ctx, promoCodes.shopId)))
       .orderBy(desc(promoCodes.active), desc(promoCodes.createdAt)),
     db.select({ id: shops.id, name: shops.name }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name)),
     db
@@ -42,7 +45,17 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
       .from(giftCards)
       .where(issuedHere),
   ]);
-  const visible = promos.filter((p) => ctx.brandWide || !p.shopId || ctx.shopIds.includes(p.shopId));
+  const shown = promos.filter((p) => ctx.brandWide || !scopeOf(p).length || scopeOf(p).some((s) => ctx.shopIds.includes(s)));
+  const visible = await Promise.all(shown.map(async (p) => ({ p, summary: couponSummary(await ruleOf(p, p.code, "code")) })));
+  const editing = managesPromos && sp.edit ? (shown.find((p) => p.id === sp.edit) ?? null) : null;
+  const [serviceRows, productRows, issued] = managesPromos
+    ? await Promise.all([
+        db.select({ id: services.id, name: services.name, kind: services.kind }).from(services).where(eq(services.active, true)).orderBy(asc(services.name)),
+        db.select({ id: products.id, name: sql<string>`${products.brand} || ' ' || ${products.name}` }).from(products).where(eq(products.active, true)).orderBy(asc(products.brand), asc(products.name)).limit(500),
+        editing ? db.select({ id: couponCodes.promoId }).from(couponCodes).where(eq(couponCodes.promoId, editing.id)).limit(1) : [],
+      ])
+    : [[], [], []];
+  const issuedFor = new Set(issued.map((x) => x.id));
   const single = cards.length === 1 ? cards[0] : null;
   const ledger = single
     ? (
@@ -60,14 +73,14 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
     <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader title="Promos & gift cards" />
       <Card>
-        <CardHeader title="Promo codes" subtitle="Applied at checkout. Percent discounts apply before fixed amounts. Discounts reduce loyalty earnings." />
+        <CardHeader title="Coupons and promo codes" subtitle="Applied at checkout and when booking online, by code or automatically. Percent discounts apply before fixed amounts. Coupons reduce the net service spend that earns loyalty." />
         <Table>
           <thead>
             <tr>
               <Th>Code</Th>
               <Th>Discount</Th>
-              <Th>On</Th>
-              <Th>Shop</Th>
+              <Th>Rules</Th>
+              <Th>Locations</Th>
               <Th>Dates</Th>
               <Th right>Used</Th>
               <Th>Status</Th>
@@ -75,31 +88,60 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
             </tr>
           </thead>
           <tbody>
-            {visible.map((p) => {
+            {visible.map(({ p, summary }) => {
               const expired = p.endsOn && p.endsOn < today;
-              const editable = managesPromos && (ctx.brandWide || (!!p.shopId && ctx.shopIds.includes(p.shopId)));
+              const scope = scopeOf(p);
+              const editable = managesPromos && (ctx.brandWide || (scope.length > 0 && scope.every((s) => ctx.shopIds.includes(s))));
               return (
-                <tr key={p.id}>
-                  <Td className="font-mono font-semibold">{p.code}</Td>
-                  <Td>
-                    {p.type === "percent" ? `${p.value}% off` : `${formatCents(p.value)} off`}
+                <tr key={p.id} className={p.id === sp.edit ? "bg-amber-50" : undefined}>
+                  <Td className="font-mono font-semibold">{p.codeMode === "unique" ? `${p.code}-…` : p.code}</Td>
+                  <Td className="whitespace-normal">
+                    {summary}
                     {p.description && <div className="text-xs text-zinc-500">{p.description}</div>}
                   </Td>
-                  <Td className="capitalize">{p.appliesTo}</Td>
-                  <Td>{p.shopId ? shopRows.find((s) => s.id === p.shopId)?.name : "All shops"}</Td>
+                  <Td className="whitespace-normal">
+                    <div className="flex max-w-64 flex-wrap gap-1">
+                      {p.codeMode === "unique" && <Badge tone="violet">{p.validDays ? `Single-use, ${p.validDays} days` : "Single-use codes"}</Badge>}
+                      {p.autoApply && <Badge tone="blue">Applies itself</Badge>}
+                      {p.firstVisitOnly && <Badge>First visit</Badge>}
+                      {p.maxPerCustomer && <Badge>{p.maxPerCustomer === 1 ? "Once per client" : `${p.maxPerCustomer} per client`}</Badge>}
+                      {p.stackable && <Badge>Stacks</Badge>}
+                    </div>
+                  </Td>
+                  <Td className="whitespace-normal text-xs">{scope.length ? [...new Set(scope.map((id) => ((ctx.brandWide || ctx.shopIds.includes(id)) && shopRows.find((s) => s.id === id)?.name) || OTHER_SHOP))].join(", ") : "All shops"}</Td>
                   <Td className="text-xs">{p.startsOn || p.endsOn ? `${p.startsOn ?? "…"} → ${p.endsOn ?? "…"}` : "Always"}</Td>
                   <Td right>
                     {p.redemptions}
                     {p.maxRedemptions ? ` / ${p.maxRedemptions}` : ""}
                   </Td>
                   <Td>{!p.active ? <Badge>Off</Badge> : expired ? <Badge tone="amber">Expired</Badge> : <Badge tone="green">Active</Badge>}</Td>
-                  <Td>{editable && <PromoToggle id={p.id} active={p.active} />}</Td>
+                  <Td>
+                    {editable && (
+                      <span className="flex gap-3">
+                        <Link className="text-xs underline" href={`/admin/promos?edit=${p.id}`}>
+                          Edit
+                        </Link>
+                        <PromoToggle id={p.id} active={p.active} />
+                      </span>
+                    )}
+                  </Td>
                 </tr>
               );
             })}
           </tbody>
         </Table>
-        {managesPromos && <PromoForm shops={shopRows.filter((s) => ctx.shopIds.includes(s.id))} allShops={ctx.brandWide} />}
+        {managesPromos && (
+          <CouponForm
+            key={editing?.id ?? "new"}
+            initial={editing ? couponInputOf(editing) : null}
+            editingId={editing?.id ?? null}
+            locked={!!editing && (editing.redemptions > 0 || issuedFor.has(editing.id))}
+            shops={shopRows.filter((s) => ctx.shopIds.includes(s.id))}
+            allShops={ctx.brandWide}
+            services={serviceRows}
+            products={productRows}
+          />
+        )}
       </Card>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

@@ -700,21 +700,8 @@ describe("server actions aimed at another shop's records", () => {
       ["stock settings", () => inventory.saveInventorySettingsAction({ shopId: cv } as never)],
       ["low-stock alert", () => inventory.sendLowStockAlertsAction([cv], true)],
       ["promo toggle", () => promos.togglePromoAction(ids.promo, false)],
-      [
-        "promo create",
-        () =>
-          promos.createPromoAction({
-            code: "CVSNEAK1",
-            description: null,
-            type: "percent",
-            value: 50,
-            appliesTo: "all",
-            shopId: cv,
-            startsOn: null,
-            endsOn: null,
-            maxRedemptions: null,
-          }),
-      ],
+      ["promo create", () => promos.saveCouponAction(null, { code: "CVSNEAK1", type: "percent", value: 50, appliesTo: "all", shopIds: [cv] })],
+      ["promo edit", () => promos.saveCouponAction(ids.promo, { code: "CVSNEAK2", type: "percent", value: 90, appliesTo: "all", shopIds: [shop.moline] })],
       ["gift card void", () => promos.voidGiftCardAction(ids.giftCard, "x")],
       ["gift card issue", () => promos.issueGiftCardAction(cv, 1000, "x")],
       [
