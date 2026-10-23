@@ -204,17 +204,17 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
 
   const sales = await payrollSalesBetween({ shopIds: [...runShops] }, start, end);
   const salesOf = new Map(sales.map((r) => [`${r.staffId}|${r.shopId}`, r]));
-  const keys = new Set([...hours.keys(), ...salesOf.keys()]);
+  const overrides = await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
+  const keys = new Set([...hours.keys(), ...salesOf.keys(), ...overrides.map((o) => `${o.staffId}|${o.shopId}`)]);
   const staffIds = [...new Set([...keys].map((k) => k.split("|")[0]))];
 
-  const [people, profiles, rates, overrides] = staffIds.length
+  const [people, profiles, rates] = staffIds.length
     ? await Promise.all([
         db.select({ id: staff.id, label: staff.displayLabel, first: staff.firstName, last: staff.lastName }).from(staff).where(inArray(staff.id, staffIds)),
         db.select().from(payrollProfiles).where(inArray(payrollProfiles.staffId, staffIds)),
         db.select().from(payrollRates).where(inArray(payrollRates.staffId, staffIds)),
-        db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops]))),
       ])
-    : [[], [], [], []];
+    : [[], [], []];
   const person = new Map(people.map((p) => [p.id, p]));
   const profile = new Map(profiles.map((p) => [p.staffId, p]));
   const rateOf = (staffId: string, shopId: string) => rates.find((r) => r.staffId === staffId && r.shopId === shopId) ?? rates.find((r) => r.staffId === staffId && r.shopId === null);
