@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { cardFeeFor, feeLabel, fundingForSurcharge } from "@/domain/checkout";
 import { surchargeShare } from "@/domain/refunds";
+import { flags } from "@/lib/flags";
 import { applyRate } from "@/lib/money";
+import { assertIssuedStripeSecret, assertStripeTestMode } from "@/server/payments/processor";
 
 /**
  * Numbers locked to mobile PR #7 mock-api flows:
@@ -73,11 +75,14 @@ describe("mock payment fixture math", () => {
     const pay = readFileSync("src/server/mobile/pay.ts", "utf8");
     const cards = readFileSync("src/server/mobile/cards.ts", "utf8");
     expect(pay).not.toContain("paymentIntents.create");
-    expect(pay).toContain("executeChargePlan");
+    expect(pay).not.toContain("executeChargePlan");
+    expect(pay).toContain("chargeCard");
+    expect(pay).toContain("Confirm the payment sheet before charging.");
     expect(pay).toContain("computeCardFee");
     expect(pay).toContain("fundingForSurcharge");
     expect(pay).toContain("retrievePaymentIntent");
     expect(pay).toContain("recordExistingCharge");
+    expect(pay).toContain("refundUnrecorded");
     expect(pay).not.toContain("input.wallet");
     expect(pay).not.toContain('wallet ? "credit"');
     const plan = readFileSync("src/server/payments/charge-plan.ts", "utf8");
@@ -87,5 +92,70 @@ describe("mock payment fixture math", () => {
     expect(cards).toContain("setupIntents.create");
     expect(cards).toContain("ephemeralKeys.create");
     expect(cards).toContain("Card numbers stay in Stripe");
+  });
+
+  it("accepts FEATURE_WALLET_FEE as 1, true, or on", () => {
+    const previous = process.env.FEATURE_WALLET_FEE;
+    try {
+      for (const value of ["1", "true", "TRUE", "on", " On "]) {
+        process.env.FEATURE_WALLET_FEE = value;
+        expect(flags.walletFee(), value).toBe(true);
+      }
+      for (const value of ["yes", "false", "0", ""]) {
+        process.env.FEATURE_WALLET_FEE = value;
+        expect(flags.walletFee(), value).toBe(false);
+      }
+      delete process.env.FEATURE_WALLET_FEE;
+      expect(flags.walletFee()).toBe(false);
+      process.env.FEATURE_REVIEW_LOGIN = "on";
+      expect(flags.reviewLogin()).toBe(false);
+      process.env.FEATURE_REVIEW_LOGIN = "true";
+      expect(flags.reviewLogin()).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.FEATURE_WALLET_FEE;
+      else process.env.FEATURE_WALLET_FEE = previous;
+      delete process.env.FEATURE_REVIEW_LOGIN;
+    }
+  });
+
+  it("refuses live Stripe keys and live secrets unless STRIPE_MODE is live", () => {
+    const secret = process.env.STRIPE_SECRET_KEY;
+    const publishable = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+    const mode = process.env.STRIPE_MODE;
+    const demo = process.env.DEMO_MODE;
+    try {
+      delete process.env.STRIPE_MODE;
+      process.env.STRIPE_SECRET_KEY = "sk_live_example";
+      expect(() => assertStripeTestMode()).toThrow(/Live Stripe keys/);
+      delete process.env.STRIPE_SECRET_KEY;
+      process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = "pk_live_example";
+      expect(() => assertStripeTestMode()).toThrow(/Live Stripe keys/);
+      delete process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+      process.env.STRIPE_SECRET_KEY = "sk_test_example";
+      expect(() => assertStripeTestMode()).not.toThrow();
+      delete process.env.STRIPE_SECRET_KEY;
+      expect(() => assertStripeTestMode()).not.toThrow();
+      process.env.DEMO_MODE = "true";
+      process.env.STRIPE_SECRET_KEY = "sk_live_example";
+      expect(() => assertStripeTestMode()).not.toThrow();
+      delete process.env.DEMO_MODE;
+      delete process.env.STRIPE_SECRET_KEY;
+      expect(() => assertIssuedStripeSecret("pi_live_secret")).toThrow(/Live Stripe keys/);
+      expect(() => assertIssuedStripeSecret("ek_live_secret")).toThrow(/Live Stripe keys/);
+      expect(() => assertIssuedStripeSecret("pi_test_sandbox")).not.toThrow();
+      process.env.STRIPE_MODE = "live";
+      process.env.STRIPE_SECRET_KEY = "sk_live_example";
+      expect(() => assertStripeTestMode()).not.toThrow();
+      expect(() => assertIssuedStripeSecret("pi_live_secret")).not.toThrow();
+    } finally {
+      if (secret === undefined) delete process.env.STRIPE_SECRET_KEY;
+      else process.env.STRIPE_SECRET_KEY = secret;
+      if (publishable === undefined) delete process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+      else process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = publishable;
+      if (mode === undefined) delete process.env.STRIPE_MODE;
+      else process.env.STRIPE_MODE = mode;
+      if (demo === undefined) delete process.env.DEMO_MODE;
+      else process.env.DEMO_MODE = demo;
+    }
   });
 });

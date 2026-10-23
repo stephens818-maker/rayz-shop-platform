@@ -45,6 +45,7 @@ describe("OpenAPI schemas cover /api/v1", () => {
       "get /me/receipts": "ReceiptList",
       "get /me/receipts/{id}": "CustomerReceipt",
       "post /appointments/{code}/payment-preview": "PaymentPreview",
+      "post /appointments/{code}/payment-intents": "PaymentIntentSheet",
     };
     for (const [key, name] of Object.entries(required)) {
       const [method, path] = key.split(" ");

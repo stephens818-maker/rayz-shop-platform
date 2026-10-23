@@ -10,16 +10,32 @@ import { AppError } from "@/server/errors";
  */
 
 let stripeClient: Stripe | null | undefined;
-/** Live keys are never used. A demo also ignores anything that is not an sk_test_ key. */
+/** Live charges are allowed only when the deployment says so. This branch stays in test mode. */
+export function stripeLiveAllowed(): boolean {
+  return process.env.STRIPE_MODE === "live";
+}
+
+/**
+ * Live keys are refused unless STRIPE_MODE=live.
+ * A demo does not throw: `stripe()` drops the live key and the simulator runs, so the key is never used.
+ */
 export function assertStripeTestMode() {
   const secret = process.env.STRIPE_SECRET_KEY ?? "";
   const publishable = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? process.env.STRIPE_PUBLISHABLE_KEY ?? "";
-  if (secret.startsWith("sk_live_") || secret.startsWith("rk_live_") || publishable.startsWith("pk_live_")) {
+  const live = secret.startsWith("sk_live_") || secret.startsWith("rk_live_") || publishable.startsWith("pk_live_");
+  if (live && !stripeLiveAllowed() && !demoMode()) throw new AppError("forbidden", "Live Stripe keys are refused. Use a test-mode key.");
+}
+
+/** A secret we hand to an app. Test mode never issues a live-mode secret. */
+export function assertIssuedStripeSecret(secret: string | null | undefined) {
+  if (!secret || stripeLiveAllowed()) return;
+  if (secret.startsWith("pi_live_") || secret.startsWith("ek_live_") || secret.startsWith("seti_live_") || secret.startsWith("pk_live_")) {
     throw new AppError("forbidden", "Live Stripe keys are refused. Use a test-mode key.");
   }
 }
 
 export function stripe(): Stripe | null {
+  assertStripeTestMode();
   if (stripeClient !== undefined) return stripeClient;
   const key = process.env.STRIPE_SECRET_KEY;
   if (key && (key.startsWith("sk_live_") || key.startsWith("rk_live_"))) {
@@ -96,6 +112,8 @@ export interface ChargeResult {
    * The shop already received the whole ticket, tip included. Do not create another transfer.
    */
   destinationCharge: boolean;
+  /** Present for an unconfirmed PaymentSheet intent. Null once the charge has finished. */
+  clientSecret: string | null;
 }
 
 /** Where a card charge settles: a shop's connected account, with the processing fee kept by the platform. */
@@ -125,6 +143,9 @@ interface SimIntent {
   destination: Destination | null;
   customerId: string | null;
   paymentMethodId: string;
+  status: "requires_confirmation" | "succeeded" | "canceled";
+  /** Simulator secrets are pi_test_ with no `_secret_`, so the app treats them as sandbox. */
+  clientSecret: string;
   /** Credit-card surcharge sent to Stripe as its own amount. Zero when the card is not credit. */
   surchargeCents: number;
   lineItems: SurchargeLine[];
@@ -197,6 +218,8 @@ export async function chargeCard(opts: {
   customerId?: string | null;
   surchargeCents?: number;
   surchargeLabel?: string;
+  /** False leaves the intent for PaymentSheet to confirm. Staff checkout confirms immediately. */
+  confirm?: boolean;
 }): Promise<ChargeResult> {
   assertStripeTestMode();
   const s = stripe();
@@ -209,10 +232,11 @@ export async function chargeCard(opts: {
     await simLatency();
     if (opts.paymentMethodId === "pm_card_chargeDeclined") throw new AppError("payment_failed", "Your card was declined.");
     const existing = sim.byKey.get(opts.idempotencyKey);
+    const createdId = simId("sim_pi");
     const pi: SimIntent = existing
       ? sim.intents.get(existing)!
       : {
-          id: simId("sim_pi"),
+          id: createdId,
           amountCents: opts.amountCents,
           amountRefundedCents: 0,
           card: cardDetailsOf(card),
@@ -220,6 +244,8 @@ export async function chargeCard(opts: {
           destination: dest,
           customerId: opts.customerId ?? null,
           paymentMethodId: opts.paymentMethodId,
+          status: opts.confirm === false ? "requires_confirmation" : "succeeded",
+          clientSecret: `pi_test_${createdId.slice("sim_pi_".length)}`,
           surchargeCents: disclosure?.surchargeCents ?? 0,
           lineItems: disclosure?.lineItems ?? [],
         };
@@ -228,16 +254,20 @@ export async function chargeCard(opts: {
       sim.byKey.set(opts.idempotencyKey, pi.id);
     }
     if (pi.amountRefundedCents > 0) throw new AppError("payment_failed", "That payment was already refunded. Start the charge again.");
+    if (opts.confirm !== false && pi.status === "requires_confirmation") pi.status = "succeeded";
     const suffix = pi.id.slice("sim_pi_".length);
+    const clientSecret = pi.status === "succeeded" ? null : pi.clientSecret;
+    assertIssuedStripeSecret(pi.clientSecret);
     return {
       processor: "simulator",
       paymentIntentId: pi.id,
       card: pi.card,
       destination: pi.destination,
-      chargeId: `sim_ch_${suffix}`,
-      transferId: pi.destination ? `sim_tr_${suffix}` : null,
+      chargeId: pi.status === "succeeded" ? `sim_ch_${suffix}` : null,
+      transferId: pi.status === "succeeded" && pi.destination ? `sim_tr_${suffix}` : null,
       processorFeeCents: pi.destination?.applicationFeeCents ?? null,
       destinationCharge: !!pi.destination,
+      clientSecret,
     };
   }
   if (dest?.accountId.startsWith("sim_")) throw new AppError("payment_failed", "This shop's account is from the simulator. Set it up with Stripe before taking cards.", { reason: "payments_not_ready" });
@@ -249,7 +279,7 @@ export async function chargeCard(opts: {
         payment_method: opts.paymentMethodId,
         ...(opts.customerId ? { customer: opts.customerId } : {}),
         automatic_payment_methods: { enabled: true, allow_redirects: "never" },
-        confirm: true,
+        confirm: opts.confirm !== false,
         description: opts.description,
         metadata: opts.metadata,
         ...(disclosure ? { amount_details: stripeAmountDetails(disclosure) } : {}),
@@ -258,6 +288,22 @@ export async function chargeCard(opts: {
       },
       { idempotencyKey: opts.idempotencyKey },
     );
+    assertIssuedStripeSecret(pi.client_secret);
+    if (opts.confirm === false) {
+      if (!pi.client_secret) throw new AppError("payment_failed", "Stripe did not return a client secret.");
+      const card = await inspectPaymentMethod(opts.paymentMethodId);
+      return {
+        processor: "stripe",
+        paymentIntentId: pi.id,
+        card,
+        destination: dest,
+        chargeId: null,
+        transferId: null,
+        processorFeeCents: null,
+        destinationCharge: !!dest,
+        clientSecret: pi.client_secret,
+      };
+    }
     if (pi.status === "requires_action") {
       await s.paymentIntents.cancel(pi.id).catch(() => {});
       throw new AppError("payment_failed", "This card needs 3-D Secure authentication. Use the card reader or another card.");
@@ -281,6 +327,7 @@ export async function chargeCard(opts: {
       transferId,
       processorFeeCents: bt && typeof bt !== "string" ? bt.fee : null,
       destinationCharge: !!transferDataAccount || !!transferId || !!dest,
+      clientSecret: null,
     };
   } catch (e) {
     if (e instanceof AppError) throw e;
@@ -304,6 +351,7 @@ export interface RetrievedIntent {
   destinationCharge: boolean;
   amountRefundedCents: number;
   processor: "stripe" | "simulator";
+  clientSecret: string | null;
 }
 
 /**
@@ -317,21 +365,23 @@ export async function retrievePaymentIntent(paymentIntentId: string): Promise<Re
     const pi = sim.intents.get(paymentIntentId);
     if (!pi) throw new AppError("payment_failed", "Unknown payment.");
     const suffix = pi.id.slice("sim_pi_".length);
+    const settled = (pi.status ?? "succeeded") === "succeeded";
     return {
       id: pi.id,
-      status: "succeeded",
+      status: pi.status ?? "succeeded",
       amountCents: pi.amountCents,
       currency: "usd",
       paymentMethodId: pi.paymentMethodId,
       card: pi.card,
       destination: pi.destination,
-      chargeId: `sim_ch_${suffix}`,
-      transferId: pi.destination ? `sim_tr_${suffix}` : null,
+      chargeId: settled ? `sim_ch_${suffix}` : null,
+      transferId: settled && pi.destination ? `sim_tr_${suffix}` : null,
       customerId: pi.customerId,
       metadata: pi.metadata,
       destinationCharge: !!pi.destination,
       amountRefundedCents: pi.amountRefundedCents,
       processor: "simulator",
+      clientSecret: pi.clientSecret,
     };
   }
   const pi = await s.paymentIntents.retrieve(paymentIntentId, { expand: ["payment_method", "latest_charge"] });
@@ -357,7 +407,91 @@ export async function retrievePaymentIntent(paymentIntentId: string): Promise<Re
     destinationCharge: !!destAccount || !!transferId,
     amountRefundedCents: charge?.amount_refunded ?? 0,
     processor: "stripe",
+    clientSecret: pi.status === "succeeded" ? null : (pi.client_secret ?? null),
   };
+}
+
+function simIntent(paymentIntentId: string): SimIntent {
+  const pi = sim.intents.get(paymentIntentId);
+  if (!pi) throw new AppError("payment_failed", "Unknown payment.");
+  return pi;
+}
+
+/** Change the amount and card on an unconfirmed PaymentIntent. Does not create a new one. */
+export async function updatePaymentIntent(paymentIntentId: string, opts: { amountCents: number; paymentMethodId: string; metadata: Record<string, string>; surchargeCents?: number; surchargeLabel?: string }): Promise<RetrievedIntent> {
+  assertStripeTestMode();
+  const disclosure = surchargeDisclosure(opts.paymentMethodId, opts.amountCents, opts.surchargeCents, opts.surchargeLabel);
+  const s = stripe();
+  if (!s || paymentIntentId.startsWith("sim_")) {
+    const pi = simIntent(paymentIntentId);
+    if (pi.status !== "requires_confirmation") throw new AppError("conflict", "That payment can no longer be changed.");
+    const card = TEST_CARDS[opts.paymentMethodId];
+    if (!card) throw new AppError("payment_failed", "Unknown simulated card");
+    pi.amountCents = opts.amountCents;
+    pi.paymentMethodId = opts.paymentMethodId;
+    pi.card = cardDetailsOf(card);
+    pi.metadata = opts.metadata;
+    pi.surchargeCents = disclosure?.surchargeCents ?? 0;
+    pi.lineItems = disclosure?.lineItems ?? [];
+    return retrievePaymentIntent(paymentIntentId);
+  }
+  await s.paymentIntents.update(paymentIntentId, {
+    amount: opts.amountCents,
+    payment_method: opts.paymentMethodId,
+    metadata: opts.metadata,
+    ...(disclosure ? { amount_details: stripeAmountDetails(disclosure) } : {}),
+  });
+  return retrievePaymentIntent(paymentIntentId);
+}
+
+/** Drop an unused PaymentIntent so a new price can replace it. */
+export async function cancelPaymentIntent(paymentIntentId: string): Promise<void> {
+  assertStripeTestMode();
+  const s = stripe();
+  if (!s || paymentIntentId.startsWith("sim_")) {
+    const pi = sim.intents.get(paymentIntentId);
+    if (!pi || pi.status === "canceled") return;
+    if (pi.status === "succeeded") throw new AppError("conflict", "That payment already went through.");
+    pi.status = "canceled";
+    return;
+  }
+  await s.paymentIntents.cancel(paymentIntentId).catch((err: Stripe.errors.StripeError) => {
+    if (err.code === "payment_intent_unexpected_state") return;
+    throw new AppError("payment_failed", err.message ?? "Could not cancel the payment.");
+  });
+}
+
+/** What PaymentSheet does on device. Tests call this to mark a sandbox intent confirmed. */
+export async function confirmPaymentIntent(paymentIntentId: string): Promise<RetrievedIntent> {
+  assertStripeTestMode();
+  const s = stripe();
+  if (!s || paymentIntentId.startsWith("sim_")) {
+    const pi = simIntent(paymentIntentId);
+    if (pi.status === "canceled") throw new AppError("payment_failed", "That payment was canceled.");
+    if (pi.amountRefundedCents > 0) throw new AppError("payment_failed", "That payment was already refunded.");
+    if (pi.paymentMethodId === "pm_card_chargeDeclined") throw new AppError("payment_failed", "Your card was declined.");
+    pi.status = "succeeded";
+    return retrievePaymentIntent(paymentIntentId);
+  }
+  const current = await retrievePaymentIntent(paymentIntentId);
+  if (current.status === "succeeded") return current;
+  await s.paymentIntents.confirm(paymentIntentId, current.paymentMethodId ? { payment_method: current.paymentMethodId } : {});
+  return retrievePaymentIntent(paymentIntentId);
+}
+
+/** Test helper. Moves a simulated intent after it was created. Refused when a Stripe client is configured. */
+export function adjustSimulatedIntent(paymentIntentId: string, patch: { amountCents?: number; paymentMethodId?: string }) {
+  if (process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_") || process.env.STRIPE_SECRET_KEY?.startsWith("sk_live_")) {
+    throw new Error("adjustSimulatedIntent is for the simulator");
+  }
+  const pi = simIntent(paymentIntentId);
+  if (patch.amountCents != null) pi.amountCents = patch.amountCents;
+  if (patch.paymentMethodId) {
+    const card = TEST_CARDS[patch.paymentMethodId];
+    if (!card) throw new Error("Unknown simulated card");
+    pi.paymentMethodId = patch.paymentMethodId;
+    pi.card = cardDetailsOf(card);
+  }
 }
 
 /**

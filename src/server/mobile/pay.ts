@@ -8,11 +8,11 @@ import { customerActor, audit } from "@/server/audit";
 import { AppError, notFound } from "@/server/errors";
 import { assertLaunched, closedShopCopy, shopLaunchState } from "@/server/launch";
 import { accrueForSale } from "@/server/loyalty";
-import { executeChargePlan, recordExistingCharge, reverseChargePlan, type ChargePlanResult } from "@/server/payments/charge-plan";
-import { shopAccount } from "@/server/payments/connect";
+import { recordExistingCharge, reverseChargePlan, type ChargePlanResult } from "@/server/payments/charge-plan";
+import { chargeDestination, shopAccount } from "@/server/payments/connect";
 import { computeCardFee } from "@/server/payments/card-fee";
-import { inspectPaymentMethod, retrievePaymentIntent, type CardDetails } from "@/server/payments/processor";
-import { ensureStripeCustomer } from "./cards";
+import { assertIssuedStripeSecret, cancelPaymentIntent, chargeCard, confirmPaymentIntent, inspectPaymentMethod, refundCard, retrievePaymentIntent, updatePaymentIntent, type CardDetails } from "@/server/payments/processor";
+import { ensureStripeCustomer, ephemeralKeyForCustomer } from "./cards";
 import { shopTakesCards } from "./shop-gates";
 
 const UNAVAILABLE = "This shop isn't taking cards in the app yet.";
@@ -22,6 +22,7 @@ export interface PaymentPreview {
   paymentsEnabled: boolean;
   unavailableCopy: string | null;
   serviceCents: number;
+  productCents: number;
   taxCents: number;
   tipCents: number;
   funding: "credit" | "debit" | "prepaid" | "unknown" | null;
@@ -70,6 +71,7 @@ export async function previewPayment(
   if (!shop) throw notFound("Shop");
   const items = await db.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, appt.id));
   const serviceCents = items.filter((i) => i.kind === "service" || i.kind === "addon").reduce((sum, i) => sum + i.priceCents, 0) || appt.estimateCents;
+  const productCents = 0;
   const tipCents = input.tipCents ?? 0;
   if (!Number.isInteger(tipCents) || tipCents < 0) throw new AppError("bad_request", "Tip must be zero or more.");
   const launch = await shopLaunchState(shop.id);
@@ -84,6 +86,7 @@ export async function previewPayment(
       paymentsEnabled: false,
       unavailableCopy,
       serviceCents,
+      productCents,
       taxCents: 0,
       tipCents,
       funding: null,
@@ -106,13 +109,14 @@ export async function previewPayment(
     wallet = Boolean(card.wallet);
     funding = fundingForSurcharge(card.funding, wallet);
   }
-  const chargeCents = serviceCents + taxCents + tipCents;
+  const chargeCents = serviceCents + productCents + taxCents + tipCents;
   const fee = await computeCardFee(shop.id, funding, { chargeCents, tipCents }, { wallet });
   return {
     shopId: shop.id,
     paymentsEnabled: true,
     unavailableCopy: null,
     serviceCents,
+    productCents,
     taxCents,
     tipCents,
     funding,
@@ -148,7 +152,7 @@ async function refuseIfClosed(preview: PaymentPreview) {
   throw new AppError("payment_failed", UNAVAILABLE, { reason: "payments_not_ready" });
 }
 
-async function bookSale(customerId: string, appt: PaidAppointment, preview: PaymentPreview, plan: ChargePlanResult, card: CardDetails, key: string | null) {
+async function bookSale(customerId: string, appt: PaidAppointment, preview: PaymentPreview, plan: ChargePlanResult, card: CardDetails, key: string | null, quoteId: string) {
   const now = new Date();
   const businessDate = localDateOf(now);
   const saleId = await db.transaction(async (tx) => {
@@ -215,22 +219,21 @@ async function bookSale(customerId: string, appt: PaidAppointment, preview: Paym
       stripeChargeId: plan.chargeId,
       stripeTransferId: plan.transfers.find((row) => row.role === "shop_net")?.stripeTransferId ?? null,
     });
-    await tx.insert(mobileCheckouts).values({
-      appointmentId: appt.id,
-      customerId,
-      shopId: preview.shopId,
-      idempotencyKey: key,
-      tipCents: preview.tipCents,
-      subtotalCents: preview.serviceCents,
-      taxCents: preview.taxCents,
-      feeCents: preview.feeCents,
-      totalCents: preview.totalCents,
-      funding: preview.funding,
-      wallet: card.wallet ?? null,
-      stripePaymentIntentId: plan.paymentIntentId,
-      status: "paid",
-      saleId: sale.id,
-    });
+    await tx
+      .update(mobileCheckouts)
+      .set({
+        idempotencyKey: key,
+        tipCents: preview.tipCents,
+        subtotalCents: preview.serviceCents + preview.productCents,
+        taxCents: preview.taxCents,
+        feeCents: preview.feeCents,
+        totalCents: preview.totalCents,
+        funding: preview.funding,
+        wallet: card.wallet ?? null,
+        status: "paid",
+        saleId: sale.id,
+      })
+      .where(eq(mobileCheckouts.id, quoteId));
     if (appt.customerId) await accrueForSale(tx, appt.customerId, sale.id, preview.serviceCents, now);
     return sale.id;
   });
@@ -239,9 +242,96 @@ async function bookSale(customerId: string, appt: PaidAppointment, preview: Paym
   return saleId;
 }
 
-async function finishPayment(customerId: string, appt: PaidAppointment, preview: PaymentPreview, plan: ChargePlanResult, card: CardDetails, key: string | null, chargeKey: string) {
+interface StoredPrice {
+  serviceCents: number;
+  productCents: number;
+  taxCents: number;
+  tipCents: number;
+  feeCents: number;
+  feeRate: number;
+  feeReason: string;
+  feeLabel: string | null;
+  totalCents: number;
+  funding: PaymentPreview["funding"];
+  wallet: boolean;
+  paymentMethodId: string;
+}
+
+function priceMetadata(appt: PaidAppointment, preview: PaymentPreview, paymentMethodId: string): Record<string, string> {
+  return {
+    appointmentId: appt.id,
+    code: appt.code,
+    serviceCents: String(preview.serviceCents),
+    productCents: String(preview.productCents),
+    taxCents: String(preview.taxCents),
+    tipCents: String(preview.tipCents),
+    feeCents: String(preview.feeCents),
+    totalCents: String(preview.totalCents),
+    paymentMethodId,
+    funding: preview.funding ?? "",
+    wallet: preview.wallet ? "1" : "0",
+    feeReason: preview.feeReason,
+    feeRate: String(preview.feeRate),
+    feeLabel: preview.feeLabel ?? "",
+  };
+}
+
+function storedPrice(row: typeof mobileCheckouts.$inferSelect, metadata: Record<string, string>): StoredPrice | null {
+  const serviceCents = Number(metadata.serviceCents);
+  const productCents = Number(metadata.productCents ?? "0");
+  const feeRate = Number(metadata.feeRate ?? "0");
+  const funding = metadata.funding === "credit" || metadata.funding === "debit" || metadata.funding === "prepaid" || metadata.funding === "unknown" ? metadata.funding : null;
+  const amounts = [serviceCents, productCents, row.taxCents, row.tipCents, row.feeCents, row.totalCents, row.subtotalCents];
+  if (amounts.some((n) => !Number.isInteger(n) || n < 0)) return null;
+  if (serviceCents + productCents !== row.subtotalCents) return null;
+  if (row.subtotalCents + row.taxCents + row.tipCents + row.feeCents !== row.totalCents) return null;
+  if (metadata.tipCents !== String(row.tipCents) || metadata.totalCents !== String(row.totalCents) || metadata.feeCents !== String(row.feeCents)) return null;
+  if (!metadata.paymentMethodId) return null;
+  return {
+    serviceCents,
+    productCents,
+    taxCents: row.taxCents,
+    tipCents: row.tipCents,
+    feeCents: row.feeCents,
+    feeRate: Number.isFinite(feeRate) ? feeRate : 0,
+    feeReason: metadata.feeReason || "applies",
+    feeLabel: metadata.feeLabel || null,
+    totalCents: row.totalCents,
+    funding,
+    wallet: metadata.wallet === "1",
+    paymentMethodId: metadata.paymentMethodId,
+  };
+}
+
+function previewFromStored(shopId: string, stored: StoredPrice, shopAccountId: string | null): PaymentPreview {
+  return {
+    shopId,
+    paymentsEnabled: true,
+    unavailableCopy: null,
+    serviceCents: stored.serviceCents,
+    productCents: stored.productCents,
+    taxCents: stored.taxCents,
+    tipCents: stored.tipCents,
+    funding: stored.funding,
+    wallet: stored.wallet,
+    feeCents: stored.feeCents,
+    feeRate: stored.feeRate,
+    feeReason: stored.feeReason,
+    feeLabel: stored.feeLabel,
+    disclosure: null,
+    totalCents: stored.totalCents,
+    destination: {
+      model: "separate_charges_and_transfers",
+      shopAccountId,
+      serviceTransferCents: stored.serviceCents + stored.productCents + stored.taxCents,
+    },
+    tipTransfer: { amountCents: stored.tipCents, disposition: "payroll", copy: "Tips paid through payroll." },
+  };
+}
+
+async function finishPayment(customerId: string, appt: PaidAppointment, preview: PaymentPreview, plan: ChargePlanResult, card: CardDetails, key: string | null, chargeKey: string, quoteId: string) {
   try {
-    const saleId = await bookSale(customerId, appt, preview, plan, card, key);
+    const saleId = await bookSale(customerId, appt, preview, plan, card, key, quoteId);
     return paidReceipt(customerId, saleId, preview);
   } catch (e) {
     if (duplicateKey(e)) {
@@ -256,40 +346,224 @@ async function finishPayment(customerId: string, appt: PaidAppointment, preview:
   }
 }
 
-/**
- * The customer confirmed this PaymentIntent in PaymentSheet. Record it.
- * Price from the PaymentMethod on the intent. Never create a second charge.
- */
-async function payConfirmed(customerId: string, appt: PaidAppointment, input: PayInput, key: string | null) {
-  const intent = await retrievePaymentIntent(input.paymentIntentId!);
-  if (intent.status !== "succeeded" || intent.amountRefundedCents > 0 || intent.currency !== "usd") {
-    throw new AppError("payment_failed", "That payment is not complete.");
+/** A succeeded charge that we will not book. Refund it before anything else is charged. */
+async function refundUnrecorded(intentId: string, amountCents: number, shopId: string, reason: string) {
+  try {
+    await refundCard(intentId, amountCents, `mismatch-${intentId}`, { reverseTransfer: true });
+  } catch (e) {
+    await audit(customerActor("customer"), "payment.mismatch_refunded", "payment_intent", intentId, { amountCents, reason, refunded: false }, shopId);
+    throw new AppError("payment_failed", "The charge didn't match the price, and the refund failed.");
   }
-  if (intent.metadata.appointmentId !== appt.id && intent.metadata.code !== appt.code) {
+  await audit(customerActor("customer"), "payment.mismatch_refunded", "payment_intent", intentId, { amountCents, reason, refunded: true }, shopId);
+}
+
+async function loadOwned(customerId: string, code: string) {
+  const appt = await db.query.appointments.findFirst({ where: eq(appointments.code, code.toUpperCase()) });
+  if (!appt || !(await ownsAppointment(customerId, appt.customerId))) throw notFound("Appointment");
+  return appt;
+}
+
+/** Price the visit and hand PaymentSheet a client secret. A bare card is not charged here. */
+export async function createPaymentIntent(customerId: string, code: string, input: { paymentMethodId?: string; tipCents?: number }) {
+  if (!input.paymentMethodId) throw new AppError("bad_request", "Choose a saved card.");
+  const preview = await previewPayment(customerId, code, input);
+  await refuseIfClosed(preview);
+  const appt = await loadOwned(customerId, code);
+  const paid = { id: appt.id, code: appt.code, customerId: appt.customerId, staffId: appt.staffId };
+  const existingSale = await db.query.sales.findFirst({ where: and(eq(sales.appointmentId, appt.id), eq(sales.status, "paid")) });
+  if (existingSale) throw new AppError("conflict", "This visit is already paid.");
+  const open = await db.select().from(mobileCheckouts).where(and(eq(mobileCheckouts.appointmentId, appt.id), eq(mobileCheckouts.status, "quoted")));
+  for (const row of open) {
+    if (!row.stripePaymentIntentId) continue;
+    const prior = await retrievePaymentIntent(row.stripePaymentIntentId).catch(() => null);
+    const same = prior && prior.status !== "canceled" && prior.paymentMethodId === input.paymentMethodId && row.tipCents === preview.tipCents && row.totalCents === preview.totalCents;
+    if (same && prior) {
+      const stripeCustomerId = await ensureStripeCustomer(customerId);
+      const secret = prior.clientSecret ?? `pi_test_${prior.id.replace(/^sim_pi_/, "")}`;
+      assertIssuedStripeSecret(secret);
+      return {
+        id: prior.id,
+        clientSecret: secret,
+        ephemeralKey: await ephemeralKeyForCustomer(stripeCustomerId),
+        customerId: stripeCustomerId,
+        paymentMethodId: input.paymentMethodId,
+        funding: preview.funding,
+        feeCents: preview.feeCents,
+        totalCents: preview.totalCents,
+      };
+    }
+    let nextStatus = "canceled";
+    if (prior && prior.status === "succeeded" && prior.amountRefundedCents === 0) {
+      await refundUnrecorded(prior.id, prior.amountCents, preview.shopId, "Unused confirmed intent replaced.");
+      nextStatus = "refunded";
+    } else if (prior && prior.status !== "canceled" && prior.status !== "succeeded") {
+      await cancelPaymentIntent(prior.id);
+    }
+    await db.update(mobileCheckouts).set({ status: nextStatus }).where(eq(mobileCheckouts.id, row.id));
+  }
+  const card = await inspectPaymentMethod(input.paymentMethodId);
+  const stripeCustomerId = await ensureStripeCustomer(customerId);
+  const shop = await db.query.shops.findFirst({ where: eq(shops.id, preview.shopId) });
+  if (!shop) throw notFound("Shop");
+  const metadata = priceMetadata(paid, preview, input.paymentMethodId);
+  const created = await chargeCard({
+    paymentMethodId: input.paymentMethodId,
+    amountCents: preview.totalCents,
+    description: `Ray'z appointment ${appt.code}`,
+    metadata,
+    idempotencyKey: `app-intent:${appt.id}:${input.paymentMethodId}:${preview.totalCents}:${Date.now()}`,
+    customerId: stripeCustomerId,
+    destination: await chargeDestination(shop, preview.totalCents, "keyed"),
+    surchargeCents: preview.feeCents,
+    surchargeLabel: preview.feeLabel ?? undefined,
+    confirm: false,
+  });
+  if (!created.clientSecret) throw new AppError("payment_failed", "Stripe did not return a client secret.");
+  assertIssuedStripeSecret(created.clientSecret);
+  await db.insert(mobileCheckouts).values({
+    appointmentId: appt.id,
+    customerId,
+    shopId: preview.shopId,
+    tipCents: preview.tipCents,
+    subtotalCents: preview.serviceCents + preview.productCents,
+    taxCents: preview.taxCents,
+    feeCents: preview.feeCents,
+    totalCents: preview.totalCents,
+    funding: preview.funding,
+    wallet: card.wallet ?? null,
+    stripePaymentIntentId: created.paymentIntentId,
+    status: "quoted",
+  });
+  return {
+    id: created.paymentIntentId,
+    clientSecret: created.clientSecret,
+    ephemeralKey: await ephemeralKeyForCustomer(stripeCustomerId),
+    customerId: stripeCustomerId,
+    paymentMethodId: input.paymentMethodId,
+    funding: preview.funding,
+    feeCents: preview.feeCents,
+    totalCents: preview.totalCents,
+  };
+}
+
+/**
+ * Record a PaymentIntent PaymentSheet already confirmed. The tip and the fee are the ones stored
+ * with that intent. A client-sent tip is ignored. A succeeded charge is either recorded or refunded.
+ */
+async function payConfirmed(customerId: string, appt: PaidAppointment, paymentIntentId: string, key: string | null) {
+  const quote = await db.query.mobileCheckouts.findFirst({ where: eq(mobileCheckouts.stripePaymentIntentId, paymentIntentId) });
+  if (!quote || quote.appointmentId !== appt.id || quote.customerId !== customerId) throw new AppError("bad_request", "Confirm the payment sheet before charging.");
+  if (quote.status === "paid" && quote.saleId) {
+    const intent = await retrievePaymentIntent(paymentIntentId).catch(() => null);
+    const stored = intent ? storedPrice(quote, intent.metadata) : null;
+    const account = await shopAccount(quote.shopId);
+    const preview = stored
+      ? previewFromStored(quote.shopId, stored, account?.stripeAccountId ?? null)
+      : previewFromStored(quote.shopId, {
+          serviceCents: quote.subtotalCents,
+          productCents: 0,
+          taxCents: quote.taxCents,
+          tipCents: quote.tipCents,
+          feeCents: quote.feeCents,
+          feeRate: 0,
+          feeReason: "applies",
+          feeLabel: null,
+          totalCents: quote.totalCents,
+          funding: quote.funding === "credit" || quote.funding === "debit" || quote.funding === "prepaid" || quote.funding === "unknown" ? quote.funding : null,
+          wallet: Boolean(quote.wallet),
+          paymentMethodId: intent?.paymentMethodId ?? "",
+        }, account?.stripeAccountId ?? null);
+    return paidReceipt(customerId, quote.saleId, preview);
+  }
+  if (quote.status === "canceled" || quote.status === "refunded") throw new AppError("bad_request", "Confirm the payment sheet before charging.");
+  let intent = await retrievePaymentIntent(paymentIntentId);
+  if (intent.currency !== "usd") throw new AppError("payment_failed", "That payment is not complete.");
+  if (intent.metadata.appointmentId !== appt.id || (intent.metadata.code && intent.metadata.code !== appt.code)) {
     throw new AppError("payment_failed", "That payment isn't for this appointment.");
   }
-  if (intent.metadata.appointmentId && intent.metadata.appointmentId !== appt.id) throw new AppError("payment_failed", "That payment isn't for this appointment.");
-  if (intent.metadata.code && intent.metadata.code !== appt.code) throw new AppError("payment_failed", "That payment isn't for this appointment.");
-  if (!intent.paymentMethodId) throw new AppError("payment_failed", "That payment has no card.");
-  const preview = await previewPayment(customerId, appt.code, { paymentMethodId: intent.paymentMethodId, tipCents: input.tipCents });
-  await refuseIfClosed(preview);
-  if (intent.amountCents !== preview.totalCents) throw new AppError("payment_failed", "The confirmed charge doesn't match the price.");
+  let stored = storedPrice(quote, intent.metadata);
+  const actualPm = intent.paymentMethodId;
+  if (stored && actualPm && actualPm !== stored.paymentMethodId && intent.status !== "succeeded" && intent.status !== "canceled") {
+    const repriced = await previewPayment(customerId, appt.code, { paymentMethodId: actualPm, tipCents: stored.tipCents });
+    await refuseIfClosed(repriced);
+    const metadata = priceMetadata(appt, repriced, actualPm);
+    intent = await updatePaymentIntent(paymentIntentId, {
+      amountCents: repriced.totalCents,
+      paymentMethodId: actualPm,
+      metadata,
+      surchargeCents: repriced.feeCents,
+      surchargeLabel: repriced.feeLabel ?? undefined,
+    });
+    const nextCard = await inspectPaymentMethod(actualPm);
+    await db
+      .update(mobileCheckouts)
+      .set({
+        tipCents: repriced.tipCents,
+        subtotalCents: repriced.serviceCents + repriced.productCents,
+        taxCents: repriced.taxCents,
+        feeCents: repriced.feeCents,
+        totalCents: repriced.totalCents,
+        funding: repriced.funding,
+        wallet: nextCard.wallet ?? null,
+      })
+      .where(eq(mobileCheckouts.id, quote.id));
+    intent = await confirmPaymentIntent(paymentIntentId);
+    const fresh = await db.query.mobileCheckouts.findFirst({ where: eq(mobileCheckouts.id, quote.id) });
+    stored = fresh ? storedPrice(fresh, intent.metadata) : null;
+  }
+  if (intent.status !== "succeeded") throw new AppError("bad_request", "Confirm the payment sheet before charging.");
+  if (intent.amountRefundedCents > 0) throw new AppError("payment_failed", "That payment was refunded.");
+  const chargedPm = intent.paymentMethodId ?? stored?.paymentMethodId ?? null;
+  if (stored && chargedPm && chargedPm !== stored.paymentMethodId) {
+    const repriced = await previewPayment(customerId, appt.code, { paymentMethodId: chargedPm, tipCents: stored.tipCents });
+    if (intent.amountCents !== repriced.totalCents) {
+      await refundUnrecorded(intent.id, intent.amountCents, quote.shopId, "Confirmed card and amount did not match the stored price.");
+      await db.update(mobileCheckouts).set({ status: "refunded" }).where(eq(mobileCheckouts.id, quote.id));
+      throw new AppError("payment_failed", "The charge didn't match the price, so it was refunded.");
+    }
+    const metadata = priceMetadata(appt, repriced, chargedPm);
+    const nextCard = await inspectPaymentMethod(chargedPm);
+    await db
+      .update(mobileCheckouts)
+      .set({
+        tipCents: repriced.tipCents,
+        subtotalCents: repriced.serviceCents + repriced.productCents,
+        taxCents: repriced.taxCents,
+        feeCents: repriced.feeCents,
+        totalCents: repriced.totalCents,
+        funding: repriced.funding,
+        wallet: nextCard.wallet ?? null,
+      })
+      .where(eq(mobileCheckouts.id, quote.id));
+    const fresh = await db.query.mobileCheckouts.findFirst({ where: eq(mobileCheckouts.id, quote.id) });
+    stored = fresh ? storedPrice(fresh, { ...intent.metadata, ...metadata }) : null;
+  }
+  if (!stored || intent.amountCents !== stored.totalCents) {
+    if (intent.amountRefundedCents === 0) {
+      await refundUnrecorded(intent.id, intent.amountCents, quote.shopId, "Confirmed amount did not match the stored breakdown.");
+      await db.update(mobileCheckouts).set({ status: "refunded" }).where(eq(mobileCheckouts.id, quote.id));
+    }
+    throw new AppError("payment_failed", "The charge didn't match the price, so it was refunded.");
+  }
   const priorPay = await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, intent.id) });
+  const account = await shopAccount(quote.shopId);
+  const preview = previewFromStored(quote.shopId, stored, account?.stripeAccountId ?? intent.destination?.accountId ?? null);
   if (priorPay) return paidReceipt(customerId, priorPay.saleId, preview);
-  const card = await inspectPaymentMethod(intent.paymentMethodId);
+  const card = await inspectPaymentMethod(stored.paymentMethodId);
   const chargeKey = `app-pay:${intent.id}`;
-  const plan = await recordExistingCharge(
+  let plan: ChargePlanResult;
+  try {
+    plan = await recordExistingCharge(
     {
       shopId: preview.shopId,
       staffId: appt.staffId,
-      paymentMethodId: intent.paymentMethodId,
+      paymentMethodId: stored.paymentMethodId,
       amountCents: preview.totalCents,
       tipCents: preview.tipCents,
       description: `Ray'z appointment ${appt.code}`,
       metadata: { appointmentId: appt.id, code: appt.code },
       idempotencyKey: chargeKey,
       customerId: intent.customerId,
-      customerFacing: true,
     },
     {
       processor: intent.processor,
@@ -300,50 +574,40 @@ async function payConfirmed(customerId: string, appt: PaidAppointment, input: Pa
       transferId: intent.transferId,
       processorFeeCents: intent.destination?.applicationFeeCents ?? null,
       destinationCharge: intent.destinationCharge,
+      clientSecret: null,
     },
-  );
-  return finishPayment(customerId, appt, preview, plan, card, key, chargeKey);
+    );
+  } catch (e) {
+    if (intent.amountRefundedCents === 0) {
+      await refundUnrecorded(intent.id, intent.amountCents, quote.shopId, "The charge succeeded but could not be recorded.").catch(() => undefined);
+      await db.update(mobileCheckouts).set({ status: "refunded" }).where(eq(mobileCheckouts.id, quote.id));
+    }
+    throw e;
+  }
+  return finishPayment(customerId, appt, preview, plan, card, key, chargeKey, quote.id);
 }
 
 export async function payAppointment(customerId: string, code: string, input: PayInput, idempotencyKey: string | null) {
-  if (!input.paymentMethodId && !input.paymentIntentId) throw new AppError("bad_request", "paymentMethodId is required.");
-  const appt = await db.query.appointments.findFirst({ where: eq(appointments.code, code.toUpperCase()) });
-  if (!appt || !(await ownsAppointment(customerId, appt.customerId))) throw notFound("Appointment");
-  const paid = { id: appt.id, code: appt.code, customerId: appt.customerId, staffId: appt.staffId };
-  const existingSale = await db.query.sales.findFirst({ where: and(eq(sales.appointmentId, appt.id), eq(sales.status, "paid")) });
-  if (existingSale) {
-    const preview = await previewPayment(customerId, code, { paymentMethodId: input.paymentMethodId, tipCents: input.tipCents });
-    return paidReceipt(customerId, existingSale.id, preview);
-  }
+  const apptRow = await loadOwned(customerId, code);
+  const appt = { id: apptRow.id, code: apptRow.code, customerId: apptRow.customerId, staffId: apptRow.staffId };
   const key = idempotencyKey?.trim() || null;
   if (key) {
     const prior = await db.query.mobileCheckouts.findFirst({ where: eq(mobileCheckouts.idempotencyKey, key) });
     if (prior?.saleId && prior.status === "paid") {
-      const preview = await previewPayment(customerId, code, { paymentMethodId: input.paymentMethodId, tipCents: input.tipCents });
-      return paidReceipt(customerId, prior.saleId, preview);
+      const intent = prior.stripePaymentIntentId ? await retrievePaymentIntent(prior.stripePaymentIntentId).catch(() => null) : null;
+      const stored = intent ? storedPrice(prior, intent.metadata) : null;
+      const account = await shopAccount(prior.shopId);
+      if (stored) return paidReceipt(customerId, prior.saleId, previewFromStored(prior.shopId, stored, account?.stripeAccountId ?? null));
     }
   }
-  if (input.paymentIntentId) return payConfirmed(customerId, paid, input, key);
-  const preview = await previewPayment(customerId, code, { paymentMethodId: input.paymentMethodId, tipCents: input.tipCents });
-  await refuseIfClosed(preview);
-  const stripeCustomerId = await ensureStripeCustomer(customerId);
-  const card = await inspectPaymentMethod(input.paymentMethodId!);
-  const chargeKey = `app-pay:${key ?? `${appt.id}:${preview.totalCents}:${preview.tipCents}`}`;
-  const plan = await executeChargePlan({
-    shopId: preview.shopId,
-    staffId: appt.staffId,
-    paymentMethodId: input.paymentMethodId!,
-    amountCents: preview.totalCents,
-    tipCents: preview.tipCents,
-    description: `Ray'z appointment ${appt.code}`,
-    metadata: { appointmentId: appt.id, code: appt.code },
-    idempotencyKey: chargeKey,
-    customerId: stripeCustomerId,
-    customerFacing: true,
-    surchargeCents: preview.feeCents,
-    surchargeLabel: preview.feeLabel ?? undefined,
-  });
-  return finishPayment(customerId, paid, preview, plan, card, key, chargeKey);
+  const existingSale = await db.query.sales.findFirst({ where: and(eq(sales.appointmentId, appt.id), eq(sales.status, "paid")) });
+  if (existingSale) throw new AppError("conflict", "This visit is already paid.");
+  if (!input.paymentIntentId) {
+    const preview = await previewPayment(customerId, code, { paymentMethodId: input.paymentMethodId, tipCents: input.tipCents });
+    await refuseIfClosed(preview);
+    throw new AppError("bad_request", "Confirm the payment sheet before charging.");
+  }
+  return payConfirmed(customerId, appt, input.paymentIntentId, key);
 }
 
 async function paidReceipt(customerId: string, saleId: string, preview: PaymentPreview) {

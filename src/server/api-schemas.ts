@@ -437,14 +437,28 @@ export const PaymentRequest = z.object({
   tipCents: z.number().int().nonnegative().optional(),
   /** Ignored. Wallet and funding are read from the PaymentMethod (`card.wallet`, `card.funding`). */
   wallet: z.boolean().optional().describe("Ignored. The server reads card.wallet and card.funding from the PaymentMethod."),
-  /** Set when PaymentSheet already confirmed a PaymentIntent. The server records that intent and does not create another charge. */
-  paymentIntentId: z.string().min(1).optional().describe("A PaymentIntent already confirmed in PaymentSheet. Recorded as-is. No second charge is created."),
+  /**
+   * Required on POST /payments. The customer app confirms this PaymentIntent in PaymentSheet.
+   * A bare paymentMethodId is not charged.
+   */
+  paymentIntentId: z.string().min(1).optional().describe("PaymentIntent from POST /appointments/{code}/payment-intents. POST /payments records it and ignores a client-sent tip."),
+});
+export const PaymentIntentSheet = z.object({
+  id: z.string(),
+  clientSecret: z.string(),
+  ephemeralKey: z.string(),
+  customerId: z.string(),
+  paymentMethodId: z.string(),
+  funding: z.enum(["credit", "debit", "prepaid", "unknown"]).nullable(),
+  feeCents: Cents,
+  totalCents: Cents,
 });
 export const PaymentPreview = z.object({
   shopId: z.string().uuid(),
   paymentsEnabled: z.boolean(),
   unavailableCopy: z.string().nullable(),
   serviceCents: Cents,
+  productCents: Cents,
   taxCents: Cents,
   tipCents: Cents,
   funding: z.enum(["credit", "debit", "prepaid", "unknown"]).nullable(),
@@ -629,6 +643,7 @@ export const apiSchemas = {
   DeleteConfirm,
   DeleteConfirmResponse,
   PaymentRequest,
+  PaymentIntentSheet,
   PaymentPreview,
   PaymentResult,
   LiveWait,

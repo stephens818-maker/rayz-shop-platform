@@ -4,7 +4,7 @@ import Stripe from "stripe";
 import { db } from "@/db";
 import { customerPaymentMethods, customers } from "@/db/schema";
 import { AppError, notFound } from "@/server/errors";
-import { assertStripeTestMode, stripe, TEST_CARDS, type CardDetails } from "@/server/payments/processor";
+import { assertIssuedStripeSecret, assertStripeTestMode, stripe, TEST_CARDS, type CardDetails } from "@/server/payments/processor";
 
 const RAW_CARD_KEYS = ["number", "cvc", "cvv", "pan", "cardNumber", "exp", "expiry", "expMonth", "expYear"];
 
@@ -43,6 +43,17 @@ function present(row: typeof customerPaymentMethods.$inferSelect): SavedCard {
     expMonth: row.expMonth,
     expYear: row.expYear,
   };
+}
+
+/** PaymentSheet ephemeral key for a platform Customer. Simulator keys are ek_test_ and never live. */
+export async function ephemeralKeyForCustomer(stripeCustomerId: string): Promise<string> {
+  assertStripeTestMode();
+  const s = stripe();
+  if (!s) return `ek_test_${randomBytes(8).toString("hex")}`;
+  const ephemeral = await s.ephemeralKeys.create({ customer: stripeCustomerId }, { apiVersion: Stripe.API_VERSION });
+  assertIssuedStripeSecret(ephemeral.secret);
+  if (!ephemeral.secret) throw new AppError("payment_failed", "Stripe did not return an ephemeral key.");
+  return ephemeral.secret;
 }
 
 /** Platform Stripe Customer. The name sent to Stripe is the first name only. */
@@ -103,11 +114,11 @@ export async function setupCard(customerId: string, input: { funding?: "credit" 
       usage: "off_session",
       automatic_payment_methods: { enabled: true },
     });
-    const ephemeral = await s.ephemeralKeys.create({ customer: stripeCustomerId }, { apiVersion: Stripe.API_VERSION });
+    assertIssuedStripeSecret(setup.client_secret);
     return {
       paymentMethod: null,
       clientSecret: setup.client_secret,
-      ephemeralKey: ephemeral.secret,
+      ephemeralKey: await ephemeralKeyForCustomer(stripeCustomerId),
       customerId: stripeCustomerId,
     };
   }

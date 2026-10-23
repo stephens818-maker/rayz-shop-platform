@@ -215,10 +215,18 @@ describe("OpenAPI schemas match live /api/v1 responses", () => {
       }),
     );
     assertLive("/appointments/{code}/payment-preview", "post", 200, preview.body);
+    const sheet = await jsonOf(
+      await call(await import("@/app/api/v1/appointments/[code]/payment-intents/route"), "POST", `http://localhost/api/v1/appointments/${booked.code}/payment-intents`, { code: booked.code }, {
+        headers: auth,
+        body: JSON.stringify({ paymentMethodId: setup.body.paymentMethod.id, tipCents: 500 }),
+      }),
+    );
+    assertLive("/appointments/{code}/payment-intents", "post", 200, sheet.body);
+    await m.processor.confirmPaymentIntent(sheet.body.id);
     const paid = await jsonOf(
       await call(await import("@/app/api/v1/appointments/[code]/payments/route"), "POST", `http://localhost/api/v1/appointments/${booked.code}/payments`, { code: booked.code }, {
         headers: { ...auth, "idempotency-key": "openapi-pay" },
-        body: JSON.stringify({ paymentMethodId: setup.body.paymentMethod.id, tipCents: 500 }),
+        body: JSON.stringify({ paymentIntentId: sheet.body.id }),
       }),
     );
     assertLive("/appointments/{code}/payments", "post", 200, paid.body);

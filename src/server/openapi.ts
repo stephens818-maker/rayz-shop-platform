@@ -68,6 +68,7 @@ export function openApiDocument(baseUrl: string) {
     DeleteConfirm: S.DeleteConfirm,
     DeleteConfirmResponse: S.DeleteConfirmResponse,
     PaymentRequest: S.PaymentRequest,
+    PaymentIntentSheet: S.PaymentIntentSheet,
     PaymentPreview: S.PaymentPreview,
     PaymentResult: S.PaymentResult,
     LiveWait: S.LiveWait,
@@ -97,7 +98,7 @@ export function openApiDocument(baseUrl: string) {
         "**Launch:** GET /app/config returns the brand launched flag and launchAt, plus shops[] with each shop's own launched flag. A shop stays on Squire until its own instant. closedCopy is the sentence to show instead of a booking form. Customer booking, customer payments, and push for that shop stay closed. A build older than minVersion / forceUpdateBelow gets 426 upgrade_required. Fields added after 1.0.0 are additive.",
         "**Money:** integer cents. Purchase history and receipts add the shop and tip split when the Connect ledger has one. A transferred tip reads as paid to the barber's first name. A refund record names which portion it came from, and that portion is the shop's. Ticket service, product, tax, and tip stay separate. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
         "**Retries:** `POST /appointments` and `POST /appointments/{code}/payments` honor an `Idempotency-Key` header so a flaky mobile network can't double-book or double-charge.",
-        "**Cards:** saved cards use a Stripe SetupIntent and PaymentSheet ephemeral key. Card numbers are not accepted. Charges go through chargeCard. Wallet and funding come from the PaymentMethod (card.wallet, card.funding). A value sent by the client is ignored. A PaymentIntent the customer already confirmed is verified and recorded, and no second charge is created. A credit surcharge is sent to Stripe as its own line. The label is Credit card surcharge (3%) at the shop's rate, which stays configurable. Debit, including a debit card in Apple Pay or Google Pay, is not surcharged.",
+        "**Cards:** saved cards use a Stripe SetupIntent and PaymentSheet ephemeral key. Card numbers are not accepted. The customer app pays only through POST /appointments/{code}/payment-intents (an unconfirmed PaymentIntent) and then POST /appointments/{code}/payments with that confirmed intent. A bare card id on the customer payments route is 400. Staff POS and web checkout still charge on the server through chargeCard. Wallet and funding come from the PaymentMethod (card.wallet, card.funding). A value sent by the client is ignored. The priced breakdown, including the tip, is stored on the intent and a checkout row. POST /payments checks that breakdown and never uses a tip sent by the app. A different card on an unconfirmed intent is repriced and confirmed on the server. A succeeded charge that does not match is refunded and logged. A credit surcharge is sent to Stripe as its own line. The label is Credit card surcharge (3%) at the shop's rate, which stays configurable. Debit, including a debit card in Apple Pay or Google Pay, is not surcharged. Live Stripe keys are refused unless STRIPE_MODE=live.",
         "**SMS:** smsOptIn defaults to false. consentTextVersion is required to opt in. A customer who opted out can opt back in by sending smsOptIn true with a new consentTextVersion. That stores a new consent record.",
         "**Calendar:** GET /app/config returns weekStartDay sunday and timeZone America/Chicago. Payroll weeks are unchanged.",
         "**Privacy:** GET /me returns the customer's own last name. Sign-in profiles and staff surfaces are first names only.",
@@ -269,14 +270,24 @@ export function openApiDocument(baseUrl: string) {
           responses: { 200: ok("PaymentPreview"), 404: err("Appointment not found") },
         },
       },
+      "/appointments/{code}/payment-intents": {
+        post: {
+          tags: ["Booking"],
+          summary: "Price the visit on the server (service, product, tax, tip, and the surcharge from the PaymentMethod) and return a PaymentSheet client secret, ephemeral key, and customer. The breakdown is stored on the intent and a checkout row. An already-paid visit is 409. An older unused intent is reused when the card, tip, and total match, or canceled. A succeeded unused intent is refunded before a new one is created. Does not confirm the charge.",
+          security: bearer,
+          parameters: [codeParam],
+          requestBody: { required: true, content: jsonContent("PaymentRequest") },
+          responses: { 200: ok("PaymentIntentSheet"), 403: err("Shop is not launched"), 409: err("This visit is already paid") },
+        },
+      },
       "/appointments/{code}/payments": {
         post: {
           tags: ["Booking"],
-          summary: "Charge a saved card through chargeCard, or record a PaymentIntent PaymentSheet already confirmed. A confirmed intent is not charged again. An already-paid appointment does not get a new PaymentIntent. The credit surcharge is its own Stripe line. Idempotency-Key is honored.",
+          summary: "Record a PaymentIntent the customer confirmed in PaymentSheet. The tip and fee are the stored breakdown, never a tip sent by the app. A bare card id is 400. A different card on an unconfirmed intent is repriced and confirmed here. A succeeded charge that does not match the stored price is refunded and logged. An already-paid visit is 409. Idempotency-Key is honored. Staff POS does not use this route.",
           security: bearer,
           parameters: [codeParam, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }],
           requestBody: { required: true, content: jsonContent("PaymentRequest") },
-          responses: { 200: ok("PaymentResult"), 403: err("Shop is not launched") },
+          responses: { 200: ok("PaymentResult"), 400: err("Confirm the payment sheet before charging"), 402: err("The charge was refunded"), 403: err("Shop is not launched"), 409: err("This visit is already paid") },
         },
       },
       "/appointments/{code}/rebook": {

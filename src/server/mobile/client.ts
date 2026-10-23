@@ -62,7 +62,7 @@ export async function loadAppConfig(): Promise<ResolvedConfig> {
   const row = await db.query.appConfig.findFirst();
   const flags = { ...DEFAULT_FLAGS, ...(row?.flags ?? {}) };
   // The review login and the wallet fee cannot be turned on from the database alone.
-  // Same switches as src/lib/flags.ts (FEATURE_REVIEW_LOGIN, FEATURE_WALLET_FEE).
+  // FEATURE_REVIEW_LOGIN is exact "true". FEATURE_WALLET_FEE accepts 1, true, and on.
   if (!featureFlags.reviewLogin()) flags.appReviewLogin = false;
   if (!featureFlags.walletFee()) flags.walletCardFee = false;
   const cfg: ResolvedConfig = {
