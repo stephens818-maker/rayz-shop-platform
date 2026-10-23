@@ -57,8 +57,10 @@ ALTER TABLE "time_blocks" ADD CONSTRAINT "time_blocks_request_id_time_off_reques
 CREATE UNIQUE INDEX "time_blocks_series_start_unique" ON "time_blocks" USING btree ("series_id","starts_at");--> statement-breakpoint
 CREATE INDEX "time_blocks_request_idx" ON "time_blocks" USING btree ("request_id");--> statement-breakpoint
 UPDATE "time_blocks" SET "category" = 'time_off' WHERE "kind" = 'day_off';--> statement-breakpoint
-UPDATE "roles" SET "permissions" = "permissions" || '["blocks.own"]'::jsonb WHERE "key" IS DISTINCT FROM 'brand_owner' AND NOT ("permissions" ? 'blocks.own');--> statement-breakpoint
-UPDATE "roles" SET "permissions" = "permissions" || '["blocks.others"]'::jsonb WHERE ("permissions" ? 'calendar.manage' OR "permissions" ? 'schedules.edit') AND NOT ("permissions" ? 'blocks.others');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["blocks.own"]'::jsonb WHERE "key" IN ('brand_admin', 'regional_manager', 'shop_manager', 'front_desk', 'barber') AND NOT ("permissions" ? 'blocks.own');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["blocks.others"]'::jsonb WHERE "key" IN ('brand_admin', 'regional_manager', 'shop_manager', 'front_desk') AND NOT ("permissions" ? 'blocks.others');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["blocks.own"]'::jsonb WHERE "key" IS NULL AND NOT ("permissions" ? 'blocks.own');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["blocks.others"]'::jsonb WHERE "key" IS NULL AND ("permissions" ? 'calendar.manage' OR "permissions" ? 'schedules.edit') AND NOT ("permissions" ? 'blocks.others');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["timeoff.request"]'::jsonb WHERE "key" IN ('brand_admin', 'regional_manager', 'shop_manager', 'front_desk', 'barber') AND NOT ("permissions" ? 'timeoff.request');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["timeoff.approve"]'::jsonb WHERE "key" IN ('brand_admin', 'regional_manager', 'shop_manager') AND NOT ("permissions" ? 'timeoff.approve');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["report.staffing.view","report.staffing.export"]'::jsonb WHERE "key" IN ('brand_admin', 'regional_manager', 'shop_manager') AND NOT ("permissions" ? 'report.staffing.view');--> statement-breakpoint

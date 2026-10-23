@@ -82,13 +82,14 @@ describe("permission catalog and templates", () => {
     for (const k of ["front_desk", "barber", "shop_manager"]) expect(access(k).permissions.has("clients.message"), k).toBe(true);
   });
 
-  it("Barber gets their own sales and service times; Front Desk gets two reports, view only, and a 10% discount cap", () => {
+  it("Barber gets their own sales and service times; Front Desk gets three reports, view only, and a 10% discount cap", () => {
     expect(reportsFor(access("barber").permissions).map((r) => [r.key, r.canExport])).toEqual([
       ["my_sales", true],
       ["service_times", true],
     ]);
     expect(reportsFor(access("front_desk").permissions).map((r) => [r.key, r.canExport])).toEqual([
       ["card_vs_cash", false],
+      ["staffing", false],
       ["cash_drawer", false],
     ]);
     expect(access("front_desk").maxDiscountPct).toBe(10);
@@ -292,7 +293,10 @@ describe("navigation follows permissions", () => {
     expect(hrefs).not.toContain("/admin/catalog");
     for (const h of hrefs) expect(pageAllowed(fd, h as keyof typeof PAGE_ACCESS)).toBe(true);
     const barber = navFor(access("barber").permissions).flatMap((s) => s.items.map((i) => i.href));
-    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/customers", "/admin/reports"]);
+    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/my-time", "/admin/customers", "/admin/reports"]);
+    expect(hrefs).toContain("/admin/my-time");
+    expect(hrefs).toContain("/admin/time-off");
+    expect(barber).not.toContain("/admin/time-off");
   });
 
   it("every report page needs that report's view permission", () => {

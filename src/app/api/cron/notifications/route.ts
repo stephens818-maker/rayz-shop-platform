@@ -3,7 +3,7 @@ import { AppError } from "@/server/errors";
 import { allShopIds, sendLowStockAlerts } from "@/server/inventory/adjust";
 import { cronAuthorized } from "@/server/notifications/cron";
 import { processDueJobs } from "@/server/notifications/queue";
-import { extendSeries } from "@/server/staff-time";
+import { extendSeries } from "@/server/block-series";
 
 /**
  * Vercel Cron target (see vercel.json). Writes recurring blocks ahead, queues low-stock alerts, then

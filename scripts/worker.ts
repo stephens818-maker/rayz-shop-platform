@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { closeDb } from "@/db";
 import { processDueJobs } from "@/server/notifications/queue";
-import { extendSeries } from "@/server/staff-time";
+import { extendSeries } from "@/server/block-series";
 
 /** Local stand-in for Vercel Cron: writes recurring blocks ahead and drains the notification queue every 30 seconds. `--once` for a single pass. */
 async function main() {

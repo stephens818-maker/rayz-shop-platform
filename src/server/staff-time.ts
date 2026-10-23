@@ -39,6 +39,7 @@ import {
 import { appBaseUrl } from "@/lib/deployment";
 import { LocalDate, addDays, endOfLocalDay, existingWallTime, formatDate, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
+import { extendSeries, insertOccurrences } from "./block-series";
 import { workShopIds } from "./auth/access";
 import { Caller, timeOffDecisionDenied } from "./auth/policy";
 import { ACTIVE_STATUSES, getAvailability, messageContext, rescheduleAppointment } from "./booking";
@@ -231,19 +232,6 @@ export interface NewSeries {
   endsOn: LocalDate | null;
 }
 
-type SeriesRow = typeof timeBlockSeries.$inferSelect;
-const pattern = (s: Pick<SeriesRow, "weekdays" | "startMin" | "endMin" | "startsOn" | "endsOn">) => ({ weekdays: s.weekdays, startMin: s.startMin, endMin: s.endMin, startsOn: s.startsOn, endsOn: s.endsOn });
-
-async function insertOccurrences(tx: DBorTx, s: SeriesRow, occ: readonly { startsAt: Date; endsAt: Date }[]) {
-  for (let i = 0; i < occ.length; i += 500) {
-    const chunk = occ.slice(i, i + 500);
-    await tx
-      .insert(timeBlocks)
-      .values(chunk.map((o) => ({ staffId: s.staffId, shopId: s.shopId, startsAt: o.startsAt, endsAt: o.endsAt, kind: "block", category: s.category, reason: s.reason, seriesId: s.id, createdBy: s.createdBy })))
-      .onConflictDoNothing();
-  }
-}
-
 /** A recurring block, written ahead through the horizon. Booked appointments in any occurrence need `confirm`. */
 export async function createSeries(s: NewSeries, o: { actor: Actor; confirm?: boolean; now?: Date }): Promise<Confirmable<{ seriesId: string; occurrences: number }>> {
   const problem = seriesProblem(s);
@@ -274,28 +262,7 @@ export async function createSeries(s: NewSeries, o: { actor: Actor; confirm?: bo
   });
 }
 
-/** Writes recurring blocks ahead to the horizon; the notifications cron runs it. Returns how many occurrences it wrote. */
-export async function extendSeries(now: Date = new Date(), tx: DBorTx = db) {
-  const through = addDays(todayLocal(now), SERIES_HORIZON_DAYS);
-  const due = await tx
-    .select()
-    .from(timeBlockSeries)
-    .where(
-      and(
-        isNull(timeBlockSeries.endedAt),
-        lt(timeBlockSeries.materializedThrough, through),
-        or(isNull(timeBlockSeries.endsOn), gt(timeBlockSeries.endsOn, timeBlockSeries.materializedThrough)),
-      ),
-    );
-  let written = 0;
-  for (const s of due) {
-    const occ = seriesOccurrences(pattern(s), addDays(s.materializedThrough, 1), through);
-    await insertOccurrences(tx, s, occ);
-    await tx.update(timeBlockSeries).set({ materializedThrough: through }).where(eq(timeBlockSeries.id, s.id));
-    written += occ.length;
-  }
-  return written;
-}
+export { extendSeries };
 
 /** Ends a recurring block: occurrences that haven't started are removed, past ones stay for the record. */
 export async function endSeries(id: string, actor: Actor, now: Date = new Date()) {
