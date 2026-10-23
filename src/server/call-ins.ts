@@ -42,7 +42,8 @@ import {
   voiceScript,
 } from "@/domain/outreach";
 import { TimeOffRange, rangeLabel, timeOffSpan } from "@/domain/staff-time";
-import { LocalDate, addDays, existingWallTime, formatDate, formatTime, localDateOf, minutesToLabel, todayLocal } from "@/lib/time";
+import { effectiveEnd } from "@/domain/clock-blocks";
+import { LocalDate, addDays, existingWallTime, formatDate, formatTime, localDateOf, localMinutesOf, minutesToLabel, todayLocal } from "@/lib/time";
 import { Actor, SYSTEM, audit, customerActor } from "./audit";
 import { reasonShower, usableReason } from "./block-reasons";
 import { cancelAppointment, createAppointment, getAvailability, messageContext, rescheduleAppointment } from "./booking";
@@ -197,6 +198,117 @@ export async function markCallIn(input: CallInInput, o: { actor: Actor; now?: Da
   });
 }
 
+/**
+ * The rebook flow for clients booked inside a block the time clock wrote (a break, an early clock-out,
+ * not in yet). The clock block is the call-in's block: no time off is written, and cancelling the
+ * call-in leaves it to the clock. Run again for the same block (a break that ran on), it adds the
+ * clients booked since and returns the same call-in.
+ */
+export async function markCallInFromClockBlock(blockId: string, o: { actor: Actor; now?: Date }) {
+  const now = o.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const b = await tx.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, blockId) });
+    if (!b || b.source !== "clock" || !b.shopId) throw notFound("Block");
+    const endsAt = effectiveEnd(b, now);
+    if (endsAt <= now) throw new AppError("bad_request", "That block is already over");
+    const day = localDateOf(b.startsAt);
+    const endMin = localDateOf(endsAt) === day ? localMinutesOf(endsAt) : 24 * 60;
+    const [same] = await tx
+      .select()
+      .from(callIns)
+      .where(and(eq(callIns.blockId, b.id), isNull(callIns.cancelledAt)))
+      .limit(1);
+    let ci = same;
+    if (ci) {
+      if (endsAt > ci.endsAt) [ci] = await tx.update(callIns).set({ endsAt, endMin }).where(eq(callIns.id, ci.id)).returning();
+    } else {
+      const clash = await tx
+        .select({ id: callIns.id })
+        .from(callIns)
+        .where(and(eq(callIns.staffId, b.staffId), isNull(callIns.cancelledAt), lt(callIns.startsAt, endsAt), gt(callIns.endsAt, b.startsAt)))
+        .limit(1);
+      if (clash.length) return { callInId: clash[0].id, affected: 0, existing: true };
+      [ci] = await tx
+        .insert(callIns)
+        .values({
+          staffId: b.staffId,
+          shopId: b.shopId,
+          kind: "other",
+          reasonId: b.reasonId,
+          reason: b.reason,
+          note: null,
+          fromDate: day,
+          toDate: day,
+          startMin: localMinutesOf(b.startsAt),
+          endMin,
+          startsAt: b.startsAt,
+          endsAt,
+          blockId: b.id,
+          createdBy: o.actor.staffId ?? null,
+          createdAt: now,
+        })
+        .returning();
+    }
+    const listed = new Set((await tx.select({ id: appointmentOutreach.appointmentId }).from(appointmentOutreach).where(eq(appointmentOutreach.callInId, ci.id))).map((r) => r.id));
+    const affected = (await findAffected(ci, now, tx)).filter((a) => !listed.has(a.id));
+    if (affected.length) {
+      await tx.insert(appointmentOutreach).values(
+        affected.map((a) => ({ callInId: ci.id, appointmentId: a.id, shopId: a.shopId, customerId: a.customerId, originalStartsAt: a.startsAt, originalStaffId: a.staffId })),
+      );
+    }
+    const reason = b.reasonId ? await tx.query.blockReasons.findFirst({ where: eq(blockReasons.id, b.reasonId) }) : null;
+    await audit(
+      o.actor,
+      same ? "callin.update" : "callin.create",
+      "call_in",
+      ci.id,
+      { staffId: b.staffId, kind: "other", reasonId: b.reasonId, reason: b.reason, private: reason?.private ?? false, range: rangeLabel(ci), clockBlockId: b.id, affected: affected.map((a) => a.code) },
+      b.shopId,
+      tx,
+    );
+    return { callInId: ci.id, affected: affected.length, existing: !!same };
+  });
+}
+
+/** The clock block a "Reassign or rebook" link points at, with who's booked in it, for a viewer at its shop. */
+export async function clockBlockCallIn(blockId: string, o: { shopIds: readonly string[]; viewer: ReasonViewer; now?: Date }) {
+  const now = o.now ?? new Date();
+  const [row] = await db
+    .select({ b: timeBlocks, barber: staff.displayLabel })
+    .from(timeBlocks)
+    .innerJoin(staff, eq(staff.id, timeBlocks.staffId))
+    .where(eq(timeBlocks.id, blockId));
+  if (!row || row.b.source !== "clock" || !row.b.shopId || !o.shopIds.includes(row.b.shopId)) return null;
+  const b = row.b;
+  const endsAt = effectiveEnd(b, now);
+  const show = await reasonShower(o.viewer);
+  const affected = await findAffected({ staffId: b.staffId, shopId: b.shopId, startsAt: b.startsAt, endsAt }, now);
+  const names = affected.length
+    ? new Map(
+        (await db.select({ id: customers.id, f: customers.firstName, l: customers.lastName }).from(customers).where(inArray(customers.id, affected.map((a) => a.customerId).filter((x): x is string => !!x)))).map(
+          (c) => [c.id, `${c.f}${c.l ? ` ${c.l.charAt(0)}.` : ""}`],
+        ),
+      )
+    : new Map<string, string>();
+  const [ci] = await db
+    .select({ id: callIns.id })
+    .from(callIns)
+    .where(and(eq(callIns.blockId, b.id), isNull(callIns.cancelledAt)))
+    .limit(1);
+  return {
+    id: b.id,
+    staffId: b.staffId,
+    barber: row.barber,
+    label: show(b).label,
+    startsAt: b.startsAt.toISOString(),
+    endsAt: endsAt.toISOString(),
+    open: b.clockOpen && !b.overriddenAt,
+    over: endsAt <= now,
+    booked: affected.map((a) => ({ code: a.code, name: (a.customerId && names.get(a.customerId)) || (a.notes?.replace(/^Walk-in: /, "") ?? "Walk-in"), startsAt: a.startsAt.toISOString() })),
+    callInId: ci?.id ?? null,
+  };
+}
+
 /** The barber can come in after all: the time off goes, open links stop working, and anything not yet sent is dropped. */
 export async function cancelCallIn(id: string, actor: Actor, now = new Date()) {
   const ci = await db.query.callIns.findFirst({ where: eq(callIns.id, id) });
@@ -204,7 +316,7 @@ export async function cancelCallIn(id: string, actor: Actor, now = new Date()) {
   if (ci.cancelledAt) throw new AppError("conflict", "This call-in was already cancelled");
   await db.transaction(async (tx) => {
     await tx.update(callIns).set({ cancelledAt: now, cancelledBy: actor.staffId ?? null }).where(eq(callIns.id, id));
-    if (ci.blockId) await tx.delete(timeBlocks).where(eq(timeBlocks.id, ci.blockId));
+    if (ci.blockId) await tx.delete(timeBlocks).where(and(eq(timeBlocks.id, ci.blockId), ne(timeBlocks.source, "clock")));
     const rows = await tx.select({ id: appointmentOutreach.id }).from(appointmentOutreach).where(eq(appointmentOutreach.callInId, id));
     const ids = rows.map((r) => r.id);
     if (ids.length) {

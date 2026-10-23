@@ -6,7 +6,7 @@ import { type PickReason, ReasonPicker } from "@/components/reason-picker";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Table, Td, Th, cx } from "@/components/ui";
 import { CALL_IN_KINDS, CALL_IN_KIND_LABEL, CallInKind, OPTION_LABEL, OUTREACH_OPTIONS, OutreachOption, OutreachRules, STATUS_LABEL, STATUS_TONE, isOpen } from "@/domain/outreach";
 import type { OutreachResult, OutreachView } from "@/server/call-ins";
-import { cancelCallInAction, closeOutreachAction, markCallInAction, saveOutreachRulesAction, sendOutreachAction } from "./actions";
+import { callInFromClockBlockAction, cancelCallInAction, closeOutreachAction, markCallInAction, saveOutreachRulesAction, sendOutreachAction } from "./actions";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -36,6 +36,50 @@ const mins = (s: string) => {
   const [h, m] = s.split(":").map(Number);
   return h * 60 + (m || 0);
 };
+
+/** From a clock block on the calendar or Today: its clients go straight into the rebook flow. */
+export function ClockBlockCallIn({
+  block,
+}: {
+  block: { id: string; barber: string; label: string; startsAt: string; endsAt: string; open: boolean; booked: { code: string; name: string; startsAt: string }[]; callInId: string | null };
+}) {
+  const { pending, error, run, router } = useRun();
+  return (
+    <Card>
+      <CardHeader
+        title={`Clients booked in ${block.barber}'s ${block.label.toLowerCase()}`}
+        subtitle={`${when(block.startsAt)}–${timeOnly(block.endsAt)}${block.open ? " and still going" : ""} · from the time clock`}
+      />
+      <div className="space-y-3 p-4">
+        {block.booked.length === 0 ? (
+          <p className="text-sm text-zinc-500">Nobody is booked in it any more.</p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {block.booked.map((a) => (
+              <li key={a.code}>
+                <span className="font-medium">{timeOnly(a.startsAt)}</span> {a.name}
+              </li>
+            ))}
+          </ul>
+        )}
+        <Messages error={error} ok={null} />
+        <div className="flex flex-wrap gap-2">
+          {block.booked.length > 0 && (
+            <Button disabled={pending} onClick={() => run(() => callInFromClockBlockAction(block.id), (d) => void router.push(`/admin/call-ins/${d.callInId}`))}>
+              {block.callInId ? "Add new clients and continue" : "Start rebooking"}
+            </Button>
+          )}
+          {block.callInId && (
+            <Button variant="secondary" disabled={pending} onClick={() => router.push(`/admin/call-ins/${block.callInId}`)}>
+              Open the call-in
+            </Button>
+          )}
+        </div>
+        <p className="text-xs text-zinc-500">No time off is written: the clock block stays as it is and ends with the punch.</p>
+      </div>
+    </Card>
+  );
+}
 
 function Messages({ error, ok }: { error: string | null; ok: string | null }) {
   return (

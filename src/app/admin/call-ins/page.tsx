@@ -4,26 +4,33 @@ import { and, asc, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops } from "@/db/schema";
 import { ReasonTag } from "@/components/reason-picker";
-import { Badge, Card, CardHeader, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
+import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Table, Td, Th } from "@/components/ui";
 import { CALL_IN_KIND_LABEL, quietLabel } from "@/domain/outreach";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, reasonViewer } from "@/server/auth/staff";
 import { barbersAt } from "@/server/barbers";
 import { pickerReasons } from "@/server/block-reasons";
-import { listCallIns, loadOutreachRules } from "@/server/call-ins";
-import { MarkCallIn, OutreachRulesEditor } from "./client";
+import { clockBlockCallIn, listCallIns, loadOutreachRules } from "@/server/call-ins";
+import { ClockBlockCallIn, MarkCallIn, OutreachRulesEditor } from "./client";
 
 export const metadata: Metadata = { title: "Call-ins" };
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-/** `?staff=&shop=&from=HH:MM[&to=HH:MM]` fills the form in, from a break or clock-out flagged on the calendar or Today. */
-export default async function CallInsPage({ searchParams }: { searchParams: Promise<{ staff?: string; shop?: string; from?: string; to?: string }> }) {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `?block=<id>` opens the rebook flow for clients booked inside a time clock block (from the calendar,
+ * Today or the manager email). `?staff=&shop=&from=HH:MM[&to=HH:MM]` fills the form in.
+ */
+export default async function CallInsPage({ searchParams }: { searchParams: Promise<{ block?: string; staff?: string; shop?: string; from?: string; to?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/call-ins");
   const now = new Date();
   const markOthers = can(ctx, "callins.mark");
   const markOwn = can(ctx, "callins.mark_own");
+  const found = sp.block && UUID.test(sp.block) && (markOthers || markOwn) ? await clockBlockCallIn(sp.block, { shopIds: ctx.shopIds, viewer: reasonViewer(ctx), now }) : null;
+  const fromBlock = found && (markOthers || found.staffId === ctx.staff.id) ? found : null;
   const [list, barbers, reasons, shopRows, rules] = await Promise.all([
     listCallIns(ctx.shopIds, { since: new Date(now.getTime() - 14 * 86_400_000), viewer: reasonViewer(ctx) }),
     barbersAt(ctx.shopIds),
@@ -49,6 +56,13 @@ export default async function CallInsPage({ searchParams }: { searchParams: Prom
         title="Call-ins"
         subtitle="When a barber calls in sick or can't make it: mark the time off, see every client booked in it, and move them, send a rebook link or call them automatically."
       />
+
+      {sp.block &&
+        (fromBlock && !fromBlock.over ? (
+          <ClockBlockCallIn block={fromBlock} />
+        ) : (
+          <Notice tone="blue">{fromBlock ? "That time clock block is over, so there's nobody left to rebook from it." : "That time clock block is gone: the punch was corrected or a manager removed it."}</Notice>
+        ))}
 
       {(markOthers || markOwn) && markable.length > 0 && (
         <MarkCallIn today={todayLocal(now)} barbers={markable.map((b) => ({ id: b.id, name: b.name, shopIds: b.shopIds }))} shops={shopRows} reasons={reasons} me={ctx.staff.id} prefill={prefill} />

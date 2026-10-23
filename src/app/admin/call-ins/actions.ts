@@ -4,16 +4,16 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { appointmentOutreach, callIns } from "@/db/schema";
+import { appointmentOutreach, callIns, timeBlocks } from "@/db/schema";
 import { CALL_IN_KINDS, OUTREACH_OPTIONS } from "@/domain/outreach";
 import { isValidLocalDate } from "@/lib/time";
 import { safe } from "@/server/action";
 import { StaffContext, assertShopAccess, authorize, caller, can } from "@/server/auth/staff";
 import { workShopIds } from "@/server/auth/access";
 import { callInDenied } from "@/server/auth/policy";
-import { Who, cancelCallIn, closeByStaff, markCallIn, saveOutreachRules, sendOutreach } from "@/server/call-ins";
+import { Who, cancelCallIn, closeByStaff, markCallIn, markCallInFromClockBlock, saveOutreachRules, sendOutreach } from "@/server/call-ins";
 import { forbidden, notFound } from "@/server/errors";
-import { requireInTenant } from "@/server/tenant";
+import { hasShop, requireInTenant } from "@/server/tenant";
 
 const MARKERS = ["callins.mark", "callins.mark_own"] as const;
 
@@ -64,6 +64,19 @@ export async function markCallInAction(input: z.input<typeof Mark>) {
       { actor: ctx.actor },
     );
     refresh();
+    return r;
+  });
+}
+
+/** Clients booked inside a break, early clock-out or "Not in yet" block: open the rebook flow on that block. */
+export async function callInFromClockBlockAction(blockId: string) {
+  return safe(async () => {
+    const ctx = await authorize(MARKERS, "You can't mark call-ins");
+    const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, blockId) });
+    if (!b || b.source !== "clock" || !b.shopId || !hasShop(ctx, b.shopId)) throw notFound("Block");
+    await assertCanMark(ctx, { staffId: b.staffId, shopId: b.shopId });
+    const r = await markCallInFromClockBlock(blockId, { actor: ctx.actor });
+    refresh(r.callInId);
     return r;
   });
 }
