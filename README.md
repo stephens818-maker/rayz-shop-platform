@@ -348,6 +348,14 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   - Training, a PTO day and a typed NetComm override. Sign in as `owner@rayz.test` and open **Payroll → Payroll report**.
 - Against the real workbook (kept outside the repo): `npx tsx scripts/payroll-golden.ts <workbook.xlsx> [--totals] [--write <dir outside the repo>]`. It prints only cell addresses and counts unless `--totals` is given.
 
+### Service times
+
+- **Capture:** checking in is the arrival (a walk-in arrives when it's added). **Start** puts the customer in the chair and **Finish** ends the service. Taking payment ends it if nobody tapped Finish, and records the checkout either way. Every stamp records who did it.
+- **Where:** Start and Finish are in the calendar's appointment panel, on each row of the barber's **Up next** list, and on the checkout screen. Up next offers Start only to customers who are checked in or due within 30 minutes. Barbers can start and finish only their own appointments.
+- **Corrections:** in the appointment panel, anyone with `service_times.correct` can fix the arrival, start and finish times (shop time on the appointment's day). A reason is required, and the old times are logged. Flagged times (over 3× or under 0.25× the booked length, or a timer left running) are left out of averages until a manager chooses **Count it anyway**. Any time can be left out of averages.
+- **Reports → Service times:** average, median and count per barber, service and shop; the gap from the booked time; % on time (±5 min), over and under; wait time; a weekly trend; filters and CSV. Barbers see only their own times. Where a barber's times consistently differ from the booking length (at least 8 cuts, off by at least 5 min or 15%), the report suggests a new length. **Use N min** saves it as that barber's override (needs `scheduling.timing`).
+- Seeded: Makenna runs long and Delaney runs short, so there are suggestions to try. A few timers were left running.
+
 ### Reports à la carte
 
 Each report is its own page with **two permissions of its own**: `report.<key>.view` and `report.<key>.export`. Both can be set per role and per person, so someone can see the Sales summary without being able to download it, or get just one report and nothing else.

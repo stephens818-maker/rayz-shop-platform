@@ -129,4 +129,5 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 
 - [x] Arrival, start, finish and checkout captured with who recorded each; checkout stands in for Finish.
 - [x] Manager corrections with audit, outlier flags (left out of averages by default), average, median and count, and duration suggestions.
-- [ ] Start/Finish buttons on the calendar, the barber's view and the POS; the Service times report page with one-click accept of suggestions; seeded timings; tests.
+- [x] Start/Finish on the calendar's appointment panel, the barber's Up next list and the checkout screen; corrections and count/leave-out in the appointment panel.
+- [x] The Service times report page with one-click **Use N min** on each suggestion; seeded timings; unit tests (`tests/service-times.test.ts`) and DB tests (`tests/db/service-times.test.ts`).

@@ -144,7 +144,13 @@ If the mobile side means a specific registry from the plan, say which items it s
 - Migration `core_0022_payroll`; the seed adds sample payroll data with synthetic Employee Numbers.
 - Tests: `tests/payroll-engine.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`.
 - Docs: `docs/payroll-report-spec.md` and `docs/payroll-workbook-discrepancies.md` (anonymized).
-- **Earlier today, service times part 1:** the `appointment_times` table, capture through status changes and checkout, manager corrections with audit, outlier flags, the Service times report and duration suggestions. Migration `core_0021_service_times`. The calendar, barber and POS timer buttons, the report page and the tests are next.
+- **Service times:**
+  - The `appointment_times` table, capture through status changes and checkout, manager corrections with audit, outlier flags, duration suggestions. Migration `core_0021_service_times`.
+  - Start and Finish are in the calendar panel, on the barber's Up next list and on the checkout screen. The calendar panel's old "In chair" button is now Start.
+  - Added the Service times report page (`/admin/reports/service-times`) with **Use N min**.
+  - Fixed: Finish and checkout's stand-in Finish used to fail the `appointment_times_order` check. Postgres checks an upsert's insert row before it sees the conflict, so writes now update first and insert only when there's no row.
+  - Tests: `tests/service-times.test.ts` and `tests/db/service-times.test.ts`.
+  - `vitest.config.mts` turns off Vitest's on-disk module cache, which was serving a stale page list to the page-rendering tests.
 - **Not touched:** anything under `/api/v1`.
 
 ### 2026-10-23: core (I10 Stripe Connect)
