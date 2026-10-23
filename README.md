@@ -1015,6 +1015,8 @@ Migration `core_0036_network_access` adds the rules (off for every shop), the de
 
 <img alt="A blocked sign-in on the login page" src="docs/screenshots/sign-in-blocked.png" width="480" />
 
+<img alt="The sign-in rule in the Add Location wizard" src="docs/screenshots/sign-in-wizard.png" width="800" />
+
 ### Bulk catalog upload
 
 **Bulk upload** (`/admin/catalog`) loads retail products, services, and add-ons from a CSV or Excel file.
