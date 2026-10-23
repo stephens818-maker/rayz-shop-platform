@@ -118,6 +118,8 @@ const ids = {} as {
   molineBarber: string;
   callIn: string;
   thread: string;
+  tipBatch: string;
+  tipPayout: string;
   marks: Record<keyof typeof MARK, { appt: string; promo: string; sale: string }>;
 };
 let today: string;
@@ -282,6 +284,8 @@ async function seedCanaries() {
   const tomorrow = m.time.addDays(today, 1);
   ids.callIn = (await (await import("@/server/call-ins")).markCallIn({ staffId: ids.barber, shopId: cv, kind: "sick", range: { fromDate: tomorrow, toDate: tomorrow, startMin: null, endMin: null } }, { actor })).callInId;
   ids.thread = (await m.db.db.insert(m.schema.messageThreads).values({ shopId: cv, phone: CANARY.phone, customerId: client.id }).returning())[0].id;
+  ids.tipBatch = (await m.db.db.insert(m.schema.tipPayoutBatches).values({ shopId: cv, kind: "manual", cutoffDate: today, notes: CANARY.apptNote }).returning())[0].id;
+  ids.tipPayout = (await m.db.db.insert(m.schema.tipPayouts).values({ batchId: ids.tipBatch, shopId: cv, staffId: ids.barber, method: "cash", status: "pending", grossCents: 2300, netCents: 2300 }).returning())[0].id;
 
   ids.marks = {} as typeof ids.marks;
   const [walkIn] = await m.db.db.insert(m.schema.customers).values({ firstName: "Marker", lastName: "Client", phone: "+13095557790", homeShopId: shop.moline }).returning();
@@ -345,6 +349,9 @@ async function coralvilleState() {
     client: await q.select().from(s.customers).where(eq(s.customers.id, ids.client)),
     logins: await q.select().from(s.staff).where(eq(s.staff.email, "coralville@rayz.test")),
     jobs: await q.select({ id: s.notificationJobs.id, status: s.notificationJobs.status }).from(s.notificationJobs).where(eq(s.notificationJobs.shopId, cv)),
+    tipBatches: await q.select().from(s.tipPayoutBatches).where(eq(s.tipPayoutBatches.shopId, cv)),
+    tipPayouts: await q.select().from(s.tipPayouts).where(eq(s.tipPayouts.shopId, cv)),
+    tipLedger: (await q.select({ n: m.drizzle.count() }).from(s.tipLedger).where(eq(s.tipLedger.shopId, cv)))[0],
   });
 }
 
@@ -450,6 +457,7 @@ function dynamicPages(): [string, Record<string, string>][] {
     ["/admin/call-ins/[id]", { id: ids.callIn }],
     ["/admin/inbox/[id]", { id: ids.thread }],
     ["/admin/timesheets/[staffId]", { staffId: ids.barber }],
+    ["/admin/tips/[id]", { id: ids.tipBatch }],
   ];
 }
 
@@ -629,6 +637,7 @@ describe("server actions aimed at another shop's records", () => {
     const logins = await import("@/app/admin/shop-logins/actions");
     const timing = await import("@/app/admin/booking-times/actions");
     const setup = await import("@/app/admin/setup/actions");
+    const tips = await import("@/app/admin/tips/actions");
     const cv = shop.coralville;
     const coralvilleLogin = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, "coralville@rayz.test") }))!.id;
     const deskRole = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "front_desk") }))!.id;
@@ -791,6 +800,13 @@ describe("server actions aimed at another shop's records", () => {
       ["shop owner", () => setup.setShopOwnerAction(cv, cvShop.ownerEntityId!)],
       ["owner entity edit", () => setup.saveOwnerEntityAction(cvShop.ownerEntityId!, { name: "Hijacked LLC", legalName: null, kind: "franchisee", contactEmail: null })],
       ["owner entity create", () => setup.saveOwnerEntityAction(null, { name: "Sneaky LLC", legalName: null, kind: "franchisee", contactEmail: null })],
+      ["tips build batch", () => tips.buildBatchAction({ shopId: cv })],
+      ["tips approve batch", () => tips.approveBatchAction(ids.tipBatch)],
+      ["tips cancel batch", () => tips.cancelBatchAction(ids.tipBatch, "x")],
+      ["tips hold", () => tips.payoutAction({ payoutId: ids.tipPayout, action: "hold", reason: "x" })],
+      ["tips adjust", () => tips.payoutAction({ payoutId: ids.tipPayout, action: "adjust", reason: "x", cents: 500 })],
+      ["tips remove", () => tips.payoutAction({ payoutId: ids.tipPayout, action: "remove", reason: "x" })],
+      ["tips cash paid", () => tips.acknowledgeCashAction({ payoutId: ids.tipPayout, by: "name", name: CANARY.barber })],
     ];
 
     // Each call must be refused for every Moline-side login, and by the tenant check (not just a
