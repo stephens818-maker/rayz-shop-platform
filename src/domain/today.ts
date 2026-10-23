@@ -24,6 +24,7 @@ export type AlertType =
   | "failed_notifications"
   | "open_tickets"
   | "not_taking_cards"
+  | "failed_payouts"
   | "overdue_deliveries"
   | "waitlist_match"
   | "unread_texts";
@@ -74,6 +75,7 @@ export const ALERT_LABEL: Record<AlertType, string> = {
   failed_notifications: "Messages that didn't send",
   open_tickets: "Tickets left open",
   not_taking_cards: "Can't take cards",
+  failed_payouts: "Payouts that failed",
   overdue_deliveries: "Late deliveries",
   waitlist_match: "Waitlist and open time",
   unread_texts: "Unread client texts",

@@ -12,6 +12,7 @@ import {
   refunds,
   sales,
   shopPaymentAccounts,
+  shopPayouts,
   shops,
   staff,
   staffSchedules,
@@ -19,7 +20,8 @@ import {
   vendors,
   waitlistEntries,
 } from "@/db/schema";
-import type { ShopStatus } from "@/db/schema";
+import type { PaymentsMode, ShopStatus } from "@/db/schema";
+import { takesCards } from "@/domain/connect";
 import type { ReasonViewer } from "@/domain/block-reasons";
 import { closedOn } from "@/domain/location-lifecycle";
 import { type Permission, reportView } from "@/domain/permissions";
@@ -58,7 +60,7 @@ export interface TodayViewer {
   reasons: ReasonViewer;
 }
 
-type ShopRow = { id: string; name: string; status: ShopStatus; closedUntil: string | null; taxRatesVerified: boolean; slug: string };
+type ShopRow = { id: string; name: string; status: ShopStatus; closedUntil: string | null; taxRatesVerified: boolean; slug: string; paymentsMode: PaymentsMode };
 
 const NONE = ["00000000-0000-0000-0000-000000000000"];
 const ids = (xs: readonly string[]) => (xs.length ? [...xs] : NONE);
@@ -69,7 +71,7 @@ export async function todayAlerts(v: TodayViewer, now: Date = new Date()): Promi
   const today = todayLocal(now);
   const shopRows: ShopRow[] = v.shopIds.length
     ? await db
-        .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, taxRatesVerified: shops.taxRatesVerified, slug: shops.slug })
+        .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, taxRatesVerified: shops.taxRatesVerified, slug: shops.slug, paymentsMode: shops.paymentsMode })
         .from(shops)
         .where(and(inArray(shops.id, v.shopIds), ne(shops.status, "archived")))
         .orderBy(asc(shops.name))
@@ -699,7 +701,7 @@ async function setupAlerts(c: Ctx): Promise<Alert[]> {
     if (c.has("payments.accounts")) {
       const live = c.shops.filter((s) => s.status === "live");
       const accounts = live.length ? await db.select().from(shopPaymentAccounts).where(inArray(shopPaymentAccounts.shopId, live.map((s) => s.id))) : [];
-      const notReady = live.filter((s) => !accounts.find((a) => a.shopId === s.id)?.chargesEnabled);
+      const notReady = live.filter((s) => s.paymentsMode !== "cash_only" && !takesCards(s.paymentsMode, accounts.find((a) => a.shopId === s.id)));
       for (const s of notReady)
         out.push({
           key: `not_taking_cards:${s.id}:${c.today}`,
@@ -712,6 +714,30 @@ async function setupAlerts(c: Ctx): Promise<Alert[]> {
           href: `/admin/setup?shop=${s.id}`,
           linkLabel: "Finish payments",
         });
+      const failed = await db
+        .select({ shopId: shopPayouts.shopId, amountCents: shopPayouts.amountCents, failureMessage: shopPayouts.failureMessage, id: shopPayouts.stripePayoutId })
+        .from(shopPayouts)
+        .where(
+          and(
+            eq(shopPayouts.status, "failed"),
+            gte(shopPayouts.updatedAt, new Date(c.now.getTime() - 7 * 86_400_000)),
+            c.v.brandWide ? or(inArray(shopPayouts.shopId, ids(c.shops.map((s) => s.id))), isNull(shopPayouts.shopId)) : inArray(shopPayouts.shopId, ids(c.shops.map((s) => s.id))),
+          ),
+        );
+      for (const p of failed) {
+        const shop = p.shopId ? c.shops.find((s) => s.id === p.shopId) : null;
+        out.push({
+          key: `failed_payout:${p.id}`,
+          type: "failed_payouts",
+          severity: "high",
+          shopId: p.shopId,
+          shop: shop?.name ?? null,
+          title: `A ${formatCents(p.amountCents)} payout to ${shop ? `${shop.name}'s` : "the brand's"} bank failed`,
+          detail: p.failureMessage ?? "Stripe couldn't deposit it. Check the bank account in Stripe.",
+          href: p.shopId ? `/admin/payouts?shop=${p.shopId}` : "/admin/payouts?shop=all",
+          linkLabel: "Payouts",
+        });
+      }
     }
   }
   return out;

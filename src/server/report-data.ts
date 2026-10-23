@@ -55,7 +55,7 @@ import { stockLevels } from "./inventory/stock";
 import { suggestionsFor } from "./inventory/purchasing";
 import { ADJUST_REASON_LABEL, LEDGER_KIND_LABEL, PO_STATUS_LABEL, poNumber } from "@/domain/inventory";
 import { diffDays, formatDate, formatDateTime } from "@/lib/time";
-import { ACCOUNT_STATE_LABEL } from "@/domain/connect";
+import { ACCOUNT_STATE_LABEL, PAYMENTS_MODE_LABEL } from "@/domain/connect";
 import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-report";
 import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
@@ -770,8 +770,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     };
   },
 
-  async shop_accounts({ scope }) {
-    const [accounts, payouts] = await Promise.all([shopAccountRows(scope), payoutRows(scope)]);
+  async shop_accounts({ scope, viewer }) {
+    const brandPayouts = viewer.brandWide && scope.shopIds.length === viewer.shopIds.length;
+    const [accounts, payouts] = await Promise.all([shopAccountRows(scope), payoutRows(scope, { brand: brandPayouts })]);
     const cols: Column[] = [
       text("Owner"),
       text("Shop"),
@@ -783,7 +784,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       money("Surcharges"),
       money("Card refunds"),
       money("Processing fees"),
-      money("To shop account"),
+      money("To Stripe accounts"),
       money("Payouts paid"),
       money("Payouts in transit"),
       money("Cash"),
@@ -809,7 +810,13 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     for (const [ownerId, ownerName] of owners) {
       const mine = accounts.filter((r) => (r.ownerId ?? "none") === ownerId);
       for (const r of mine) {
-        rowsOut.push([r.ownerName, r.shopName, r.stripeAccountId ?? "—", ACCOUNT_STATE_LABEL[r.state], ...nums(r)]);
+        rowsOut.push([
+          r.ownerName,
+          r.shopName,
+          r.paymentsMode === "brand" ? "Brand account" : (r.stripeAccountId ?? "—"),
+          r.paymentsMode === "connected" ? ACCOUNT_STATE_LABEL[r.state] : PAYMENTS_MODE_LABEL[r.paymentsMode],
+          ...nums(r),
+        ]);
         styles.push(undefined);
       }
       if (owners.length > 1 || mine.length > 1) {
@@ -823,20 +830,23 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     }
     const total = add(accounts);
     const unrouted = accounts.reduce((a, r) => a + r.unroutedCardCents, 0);
-    const notReady = accounts.filter((r) => !r.canCharge);
-    const restricted = accounts.filter((r) => r.canCharge && r.state !== "enabled");
+    const notReady = accounts.filter((r) => r.paymentsMode === "connected" && !r.canCharge);
+    const cashOnly = accounts.filter((r) => r.paymentsMode === "cash_only");
+    const restricted = accounts.filter((r) => r.paymentsMode === "connected" && r.canCharge && r.state !== "enabled");
+    const brandSettled = accounts.reduce((a, r) => a + r.brandSettledCents, 0);
     return {
       stats: [
         { label: "Card takings", value: formatCents(total[1]), hint: `${total[0]} charges, after ${formatCents(total[4])} refunds` },
         { label: "Processing fees", value: formatCents(total[5]), hint: total[1] ? `${((total[5] / total[1]) * 100).toFixed(2)}% of card takings` : undefined },
-        { label: "To shop accounts", value: formatCents(total[6]), hint: "card takings less fees" },
+        { label: "To Stripe accounts", value: formatCents(total[6]), hint: brandSettled ? `card takings less fees; ${formatCents(brandSettled)} in the brand's account` : "card takings less fees" },
         { label: "Paid out to banks", value: formatCents(total[7]), hint: total[8] ? `${formatCents(total[8])} in transit` : undefined },
       ],
       tables: [
         {
           id: "accounts",
           title: "P&L by shop account",
-          subtitle: "Each shop's card charges settle to its own Stripe connected account. Card takings include tips and surcharges, after refunds. Cash and gift cards never touch Stripe.",
+          subtitle:
+            "Card charges settle in the shop's own Stripe connected account, or the brand's account for shops set to use it. Card takings include tips and surcharges, after refunds. Cash and gift cards never touch Stripe.",
           columns: cols,
           rows: rowsOut,
           rowStyles: styles,
@@ -844,15 +854,17 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         {
           id: "payouts",
           title: "Payouts",
-          subtitle: "Deposits from each shop's connected account to its bank, by arrival date.",
-          columns: [text("Arrives"), text("Shop"), text("Payout"), text("Status"), money("Amount"), text("Problem")],
-          rows: payouts.map((p) => [p.arrivalDate, p.shopName, p.stripePayoutId, p.status.replace("_", " "), p.amountCents, p.failureMessage]),
+          subtitle: `Deposits from each shop's connected account to its bank, by arrival date${brandPayouts ? ", and the brand account's pooled deposits to the brand's bank" : ""}. The Payouts page itemizes each one.`,
+          columns: [text("Arrives"), text("Account"), text("Payout"), text("Status"), money("Gross"), money("Fees"), money("Refunds"), money("Net deposit"), text("Problem")],
+          rows: payouts.map((p) => [p.arrivalDate, p.shopName, p.stripePayoutId, p.status.replace("_", " "), p.grossCents, p.feeCents, p.refundCents, p.amountCents, p.failureMessage]),
         },
       ],
       notes: [
         ...(notReady.length ? [`Not taking cards yet: ${notReady.map((r) => `${r.shopName} (${ACCOUNT_STATE_LABEL[r.state].toLowerCase()})`).join(", ")}. Finish Payments in Location setup.`] : []),
         ...(restricted.length ? [`Stripe needs more details before paying out: ${restricted.map((r) => r.shopName).join(", ")}. See Payments in Location setup.`] : []),
-        ...(unrouted ? [`${formatCents(unrouted)} of card takings in this range settled before shops had their own accounts, so it isn't in "To shop account".`] : []),
+        ...(cashOnly.length ? [`Cash and gift cards only: ${cashOnly.map((r) => r.shopName).join(", ")}.`] : []),
+        ...(brandSettled ? [`Shops on the brand's account are paid out together to the brand's bank, so their payout columns stay empty; the brand account's deposits are on the Payouts page.`] : []),
+        ...(unrouted ? [`${formatCents(unrouted)} of card takings in this range settled before shops had their own accounts, so it isn't in "To Stripe accounts".`] : []),
         "Processing fees are kept on refunded and voided charges, the same as Stripe's own fee.",
       ],
     };

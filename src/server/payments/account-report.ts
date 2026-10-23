@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/db";
-import { AccountState, accountState, canCharge } from "@/domain/connect";
-import type { OwnerEntityKind } from "@/db/schema";
+import { AccountState, accountState, takesCards } from "@/domain/connect";
+import type { OwnerEntityKind, PaymentsMode } from "@/db/schema";
 import type { ReportScope } from "@/server/reports";
 
 export interface ShopAccountRow {
@@ -11,19 +11,28 @@ export interface ShopAccountRow {
   ownerName: string;
   ownerKind: OwnerEntityKind | null;
   stripeAccountId: string | null;
+  /** Where the shop's card money goes now. Earlier charges stay where they settled. */
+  paymentsMode: PaymentsMode;
   state: AccountState;
   canCharge: boolean;
   cardCharges: number;
-  /** Card takings after refunds, tips and surcharges included: what went through the shop's account. */
+  /** Card takings after refunds, tips and surcharges included: what went through the shop's account or the brand's. */
   cardNetCents: number;
+  /** The part of cardNetCents that settled in the brand's own Stripe account. */
+  brandSettledCents: number;
+  /** The part of processingFeesCents on charges that settled in the brand's account. */
+  brandFeesCents: number;
   cardTipsCents: number;
   surchargeCents: number;
   cardRefundsCents: number;
-  /** Application fees kept by the platform on this shop's charges: the shop's processing cost. Voided and refunded charges still cost it. */
+  /**
+   * The shop's processing cost: application fees on charges to its own account, Stripe's fee on charges
+   * to the brand's. Voided and refunded charges still cost it.
+   */
   processingFeesCents: number;
-  /** cardNetCents less processingFeesCents: what the account received. */
+  /** cardNetCents less unrouted takings and processingFeesCents: what the accounts received. */
   toAccountCents: number;
-  /** Card takings from before Connect, or anything not routed to an account. */
+  /** Card takings from before Connect that aren't tied to any account. */
   unroutedCardCents: number;
   payoutsPaidCents: number;
   payoutsPendingCents: number;
@@ -41,10 +50,12 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
       select p.shop_id,
         count(*) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided')::int charges,
         coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int card,
-        coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.stripe_account_id is null and p.status <> 'voided' and sa.status <> 'voided'), 0)::int unrouted,
+        coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.stripe_account_id is null and p.settlement is distinct from 'platform' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int unrouted,
+        coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.settlement = 'platform' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int brand,
         coalesce(sum(p.tip_cents) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int tips,
         coalesce(sum(p.card_fee_cents) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int surcharge,
-        coalesce(sum(p.application_fee_cents) filter (where p.method = 'card'), 0)::int fees,
+        coalesce(sum(case when p.settlement = 'platform' then p.processor_fee_cents else p.application_fee_cents end) filter (where p.method = 'card'), 0)::int fees,
+        coalesce(sum(p.processor_fee_cents) filter (where p.method = 'card' and p.settlement = 'platform'), 0)::int brand_fees,
         coalesce(sum(p.amount_cents) filter (where p.method = 'cash' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int cash,
         coalesce(sum(p.amount_cents) filter (where p.method = 'gift_card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int gift
       from payments p join sales sa on sa.id = p.sale_id
@@ -55,7 +66,8 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
         coalesce(sum(r.amount_cents) filter (where r.method = 'card'), 0)::int card,
         coalesce(sum(r.tip_cents) filter (where r.method = 'card'), 0)::int tips,
         coalesce(sum(r.card_fee_cents) filter (where r.method = 'card'), 0)::int surcharge,
-        coalesce(sum(r.amount_cents) filter (where r.method = 'card' and p.stripe_account_id is null), 0)::int unrouted,
+        coalesce(sum(r.amount_cents) filter (where r.method = 'card' and p.stripe_account_id is null and p.settlement is distinct from 'platform'), 0)::int unrouted,
+        coalesce(sum(r.amount_cents) filter (where r.method = 'card' and p.settlement = 'platform'), 0)::int brand,
         coalesce(sum(r.amount_cents) filter (where r.method = 'cash'), 0)::int cash,
         coalesce(sum(r.amount_cents) filter (where r.method = 'gift_card'), 0)::int gift
       from refunds r left join payments p on p.id = r.payment_id
@@ -69,14 +81,16 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
       group by shop_id
     )
     select sh.id "shopId", sh.name "shopName", oe.id "ownerId", coalesce(oe.name, 'No owner set') "ownerName", oe.kind "ownerKind",
-      a.stripe_account_id "stripeAccountId", a.charges_enabled "chargesEnabled", a.payouts_enabled "payoutsEnabled", a.details_submitted "detailsSubmitted",
+      a.stripe_account_id "stripeAccountId", sh.payments_mode "paymentsMode", a.charges_enabled "chargesEnabled", a.payouts_enabled "payoutsEnabled", a.details_submitted "detailsSubmitted",
       a.requirements_due "requirementsDue", a.disabled_reason "disabledReason", a.deauthorized_at "deauthorizedAt",
       coalesce(pay.charges, 0) "cardCharges",
       coalesce(pay.card, 0) - coalesce(ref.card, 0) "cardNetCents",
+      coalesce(pay.brand, 0) - coalesce(ref.brand, 0) "brandSettledCents",
       coalesce(pay.tips, 0) - coalesce(ref.tips, 0) "cardTipsCents",
       coalesce(pay.surcharge, 0) - coalesce(ref.surcharge, 0) "surchargeCents",
       coalesce(ref.card, 0) "cardRefundsCents",
       coalesce(pay.fees, 0) "processingFeesCents",
+      coalesce(pay.brand_fees, 0) "brandFeesCents",
       coalesce(pay.unrouted, 0) - coalesce(ref.unrouted, 0) "unroutedCardCents",
       coalesce(po.paid, 0) "payoutsPaidCents", coalesce(po.pending, 0) "payoutsPendingCents",
       coalesce(pay.cash, 0) - coalesce(ref.cash, 0) "cashCents",
@@ -107,24 +121,33 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
           deauthorizedAt,
         }
       : null;
-    return { ...r, state: accountState(flags), canCharge: canCharge(flags), toAccountCents: r.cardNetCents - r.unroutedCardCents - r.processingFeesCents };
+    return { ...r, state: accountState(flags), canCharge: takesCards(r.paymentsMode, flags), toAccountCents: r.cardNetCents - r.unroutedCardCents - r.processingFeesCents };
   });
 }
 
 export interface PayoutRow {
-  shopId: string;
+  /** Null for a payout from the brand's own account, which pools every brand-account shop. */
+  shopId: string | null;
   shopName: string;
+  stripeAccountId: string;
   stripePayoutId: string;
   amountCents: number;
   status: string;
   arrivalDate: string;
   failureMessage: string | null;
+  grossCents: number | null;
+  feeCents: number | null;
+  refundCents: number | null;
+  itemCount: number | null;
 }
 
-export async function payoutRows(s: ReportScope): Promise<PayoutRow[]> {
+/** Payouts arriving in the scope's dates. With `brand`, the brand account's pooled payouts too. */
+export async function payoutRows(s: ReportScope, o: { brand?: boolean } = {}): Promise<PayoutRow[]> {
   return (await db.execute(sql`
-    select p.shop_id "shopId", sh.name "shopName", p.stripe_payout_id "stripePayoutId", p.amount_cents "amountCents", p.status, p.arrival_date::text "arrivalDate", p.failure_message "failureMessage"
-    from shop_payouts p join shops sh on sh.id = p.shop_id
-    where p.shop_id in ${uuids(s.shopIds)} and p.arrival_date between ${s.from} and ${s.to}
-    order by p.arrival_date desc, sh.name`)) as unknown as PayoutRow[];
+    select p.shop_id "shopId", coalesce(sh.name, 'Brand account') "shopName", p.stripe_account_id "stripeAccountId", p.stripe_payout_id "stripePayoutId",
+      p.amount_cents "amountCents", p.status, p.arrival_date::text "arrivalDate", p.failure_message "failureMessage",
+      p.gross_cents "grossCents", p.fee_cents "feeCents", p.refund_cents "refundCents", p.item_count "itemCount"
+    from shop_payouts p left join shops sh on sh.id = p.shop_id
+    where (p.shop_id in ${uuids(s.shopIds)}${o.brand ? sql` or p.shop_id is null` : sql``}) and p.arrival_date between ${s.from} and ${s.to}
+    order by p.arrival_date desc, p.shop_id is null, sh.name`)) as unknown as PayoutRow[];
 }
