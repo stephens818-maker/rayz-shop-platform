@@ -47,6 +47,7 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
     db.select({ pin: staff.clockPinHash }).from(staff).where(eq(staff.id, staffId)),
   ]);
   const shopName = new Map(shopRows.map((s) => [s.id, s.name]));
+  const inSheet = new Set(view.punchIds);
   const pickShops = shopRows.filter((s) => editShopIds.includes(s.id) && (team.includes(s.id) || view.shops.some((v) => v.shopId === s.id)));
   const snap = (s: Snap) => (s ? `${PUNCH_LABEL[s.type]} ${formatDateTime(s.at)} at ${shopName.get(s.shopId) ?? "another shop"}${s.voided ? " (void)" : ""}` : "nothing");
   const q = (start: string) => `/admin/timesheets/${staffId}?period=${start}`;
@@ -74,15 +75,17 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
       {!view.shops.length && <Empty title="No time or schedule in this period" />}
       {view.shops.map((s) => {
         const locked = !!s.locked || s.payrollLocked;
-        const mine = punches.filter((p) => p.shopId === s.shopId);
-        const diff = s.totals.workedCenti - Math.round((s.totals.scheduledMin * 100) / 60);
+        const mine = punches.filter((p) => p.shopId === s.shopId && inSheet.has(p.id));
+        const running = today >= period.start && today <= period.end;
+        const dueMin = running ? s.days.filter((d) => d.date <= today).reduce((a, d) => a + d.scheduledMin, 0) : s.totals.scheduledMin;
+        const diff = s.totals.workedCenti - Math.round((dueMin * 100) / 60);
         return (
           <Card key={s.shopId}>
             <CardHeader
               title={s.shop}
               subtitle={
                 <>
-                  {hours(s.totals.workedCenti)} h worked ({hours(s.totals.regularCenti)} regular, {hours(s.totals.otCenti)} overtime) against {fromMin(s.totals.scheduledMin)} h scheduled ({diff >= 0 ? "+" : ""}
+                  {hours(s.totals.workedCenti)} h worked ({hours(s.totals.regularCenti)} regular, {hours(s.totals.otCenti)} overtime) against {fromMin(s.totals.scheduledMin)} h scheduled{running ? `, ${fromMin(dueMin)} h of it through today` : ""} ({diff >= 0 ? "+" : ""}
                   {hours(diff)}). Breaks {fromMin(s.totals.breakMin)} h, {fromMin(s.totals.unpaidBreakMin)} h unpaid.
                   {s.totals.ptoCenti > 0 && ` PTO ${hours(s.totals.ptoCenti)} h.`}
                   {s.totals.trainingCenti > 0 && ` Training ${hours(s.totals.trainingCenti)} h.`}

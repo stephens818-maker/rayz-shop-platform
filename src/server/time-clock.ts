@@ -577,11 +577,8 @@ export async function hoursSlices(from: LocalDate, to: LocalDate, staffIds: read
     .select({ staffId: payrollLockedOt.staffId, shopId: payrollLockedOt.shopId, periodStart: payrollLockedOt.periodStart, weekStart: payrollLockedOt.weekStart, ot: payrollLockedOt.otCenti })
     .from(payrollLockedOt)
     .where(inArray(payrollLockedOt.weekStart, weeks));
-  const inWeeks = entries.flatMap((e) => {
-    const parts = splitByLocalDay(e);
-    return parts.length && parts[0].date >= wFrom && parts[0].date <= wTo ? [e] : [];
-  });
-  const slices = overtimeSlices(dailyHours(inWeeks), {
+  const days = dailyHours(entries).filter((d) => d.date >= wFrom && d.date <= wTo);
+  const slices = overtimeSlices(days, {
     thresholdCenti: Math.round(s.otThresholdHours * 100),
     trainingCountsTowardOt: s.trainingCountsTowardOt,
     dailyThresholdCenti: s.dailyOtHours ? Math.round(s.dailyOtHours * 100) : null,
@@ -589,7 +586,7 @@ export async function hoursSlices(from: LocalDate, to: LocalDate, staffIds: read
     periodOf: (shopId, date) => periodOf(groupOf.get(shopId)?.calendar ?? DEFAULT_CALENDAR, date).start,
     locked: new Map(lockedRows.map((l) => [sliceKey(l), l.ot])),
   });
-  return { slices, entries: inWeeks, settings: s };
+  return { slices, entries, settings: s };
 }
 
 export interface ShiftView {
@@ -627,6 +624,8 @@ export interface TimesheetView {
   label: string;
   period: { start: LocalDate; end: LocalDate };
   shops: TimesheetShop[];
+  /** The punches behind this period's hours: those of shifts that overlap it (an overnight shift's hours split at midnight), unpaired ones dated in it, and voided ones. */
+  punchIds: string[];
   edits: { at: string; by: string | null; action: string; reason: string; before: unknown; after: unknown }[];
 }
 
@@ -680,12 +679,13 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
   const byId = new Map(punches.map((p) => [p.id, p]));
   const { shifts, problems } = pairPunches(punches.map(asLike));
   const inPeriod = (d: LocalDate) => d >= period.start && d <= period.end;
-  const views = shiftViews(
-    shifts.filter((s) => inPeriod(localDateOf(s.start))),
-    byId,
-    rules,
-    sched,
-  );
+  const periodShifts = shifts.filter((s) => inPeriod(localDateOf(s.start)));
+  const views = shiftViews(periodShifts, byId, rules, sched);
+  const overlapping = shifts.filter((s) => inPeriod(localDateOf(s.start)) || (s.end && inPeriod(localDateOf(new Date(s.end.getTime() - 1)))));
+  const owned = new Set<string>([
+    ...overlapping.flatMap((s) => [s.inId, s.outId, ...s.breaks.flatMap((b) => [b.startId, b.endId])].filter((x): x is string => !!x)),
+    ...problems.filter((p) => inPeriod(localDateOf(p.at))).map((p) => p.punchId),
+  ]);
   const mySlices = slices.filter((s) => s.staffId === staffId);
   const dayMinutes = new Map<string, { worked: number; other: number }>();
   for (const e of entries) {
@@ -756,9 +756,8 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
       payrollLocked: pg ? await hoursLockedOnPayroll(shopId, period.start) : false,
     });
   }
-  const punchIds = punches.map((p) => p.id);
   const voided = await db.select({ id: timePunches.id }).from(timePunches).where(and(eq(timePunches.staffId, staffId), isNotNull(timePunches.voidedAt), gte(timePunches.at, period.startsAt), lt(timePunches.at, period.endsAt)));
-  const allIds = [...punchIds, ...voided.map((v) => v.id)];
+  const allIds = [...owned, ...voided.map((v) => v.id)];
   const edits = allIds.length
     ? await db
         .select({ at: timePunchEdits.createdAt, by: staff.displayLabel, action: timePunchEdits.action, reason: timePunchEdits.reason, before: timePunchEdits.before, after: timePunchEdits.after })
@@ -772,6 +771,7 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
     label: who.displayLabel,
     period: { start: period.start, end: period.end },
     shops: out,
+    punchIds: allIds,
     edits: edits.map((e) => ({ ...e, at: e.at.toISOString() })),
   };
 }

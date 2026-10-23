@@ -136,6 +136,24 @@ describe("punching", () => {
     const early = await punchAt(mk, cv.id, "out", at(next, sched.endMin - 30));
     expect(early.flags).toEqual(["early_out"]);
   });
+
+  it("a shift over the end of a pay period splits its hours at midnight and its punches show on both sheets", async () => {
+    const mk = await staffBy("makenna@rayz.test");
+    const cv = await shop("coralville");
+    const p = period(8);
+    const before = await punchAt(mk, cv.id, "in", at(m.time.addDays(p.end, -1), 9 * 60));
+    await punchAt(mk, cv.id, "out", at(m.time.addDays(p.end, -1), 10 * 60));
+    const inn = await punchAt(mk, cv.id, "in", at(p.end, 21 * 60));
+    const out = await punchAt(mk, cv.id, "out", at(m.time.addDays(p.end, 1), 2 * 60));
+    const first = await tc.timesheetView(mk.id, p.start, [cv.id]);
+    expect(first.punchIds).toEqual(expect.arrayContaining([before.punchId, inn.punchId, out.punchId]));
+    expect(first.shops[0].totals.workedCenti).toBe(400);
+    expect(first.shops[0].days.at(-1)!.shifts.map((s) => s.inId)).toEqual([inn.punchId]);
+    const second = await tc.timesheetView(mk.id, period(9).start, [cv.id]);
+    expect(second.punchIds).toEqual(expect.arrayContaining([inn.punchId, out.punchId]));
+    expect(second.punchIds).not.toContain(before.punchId);
+    expect(second.shops[0].totals.workedCenti).toBe(200);
+  });
 });
 
 describe("the front-desk clock", () => {
