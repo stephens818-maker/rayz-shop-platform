@@ -94,6 +94,8 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    | `STRIPE_CONNECT_WEBHOOK_SECRET` | the signing secret of the Connect webhook (step 4) |
    | `CONNECT_FEE_KEYED`, `CONNECT_FEE_TERMINAL` | optional: the processing fee passed on to each shop, e.g. `2.9%+30` and `2.7%+5` (the defaults) |
    | `NOTIFICATIONS_*` | leave `disabled` until the shop goes live (see the README's cutover plan) |
+   | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | the Twilio account, for texts, call-in calls and the shop line. Set `NOTIFICATIONS_SMS_PROVIDER` and `NOTIFICATIONS_VOICE_PROVIDER` to `twilio` when the shop goes live. |
+   | `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM` | optional fallbacks for shops without their own Twilio number |
 
    Don't set `DEMO_MODE`. Without it the build only ever applies migrations. It never seeds.
 3. Deploy. The build applies migrations. To run them yourself instead, set `SKIP_DB_MIGRATE=true` and run `DATABASE_URL_UNPOOLED=… pnpm db:migrate`.
@@ -102,8 +104,12 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Point a Stripe webhook at `https://<your domain>/api/stripe/webhook` for `charge.refunded` and `charge.dispute.created`, and copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
    - Add a second webhook, set to **listen to events on connected accounts**, at `https://<your domain>/api/stripe/connect` for `account.updated`, `account.application.deauthorized`, and `payout.created`, `payout.updated`, `payout.paid`, `payout.failed` and `payout.canceled`. Copy its signing secret into `STRIPE_CONNECT_WEBHOOK_SECRET`.
    - Then open **Location setup** for each shop and finish **Card payments and payouts**. A shop takes cards only once Stripe approves its account.
-5. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-6. Add the custom domain under **Settings → Domains**.
+5. Set up Twilio (when texts and calls go live):
+   - Buy a number per shop and enter it under **Shop settings → Twilio number**. Calls to it ring the shop's phone; missed and after-hours calls get a text with a booking link.
+   - For each number, point the messaging webhook at `https://<your domain>/api/twilio/sms` and the voice webhook at `https://<your domain>/api/twilio/voice` (HTTP POST). The app sets the status and call-flow webhooks itself. All are verified with `X-Twilio-Signature`, so `APP_BASE_URL` must match the domain Twilio calls exactly.
+   - Register the numbers for A2P 10DLC (brand and campaign) before texting clients; carriers filter unregistered texts.
+6. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+7. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 
