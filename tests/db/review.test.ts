@@ -431,14 +431,22 @@ describe("P2/P3 booking rules", () => {
   });
 
   it("P2#24: bookings must start on an offered time; staff pick any minute only by squeezing in", async () => {
-    const { slot, svc } = await openSlot();
-    const offGrid = new Date(new Date(slot.startsAt).getTime() - 7 * 60_000);
-    await expect(book(svc, slot.barberIds[0], offGrid)).rejects.toMatchObject({ code: "bad_request" });
-    await expect(book(svc, slot.barberIds[0], offGrid, "staff")).rejects.toMatchObject({ code: "bad_request", details: { offGrid: true } });
+    const { date, svc } = await openSlot();
+    // Seven minutes before an offered start, with the barber free from then on: an earlier offered start covers the gap.
+    const a = await m.booking.getAvailability({ shopRef: "coralville", date, serviceId: svc.id, barberRef: "any" });
+    const ms = (x: { startsAt: string | Date }) => new Date(x.startsAt).getTime();
+    const free = a.slots
+      .flatMap((s) => s.barberIds.map((b) => ({ s, b })))
+      .find(({ s, b }) => a.slots.some((p) => p.barberIds.includes(b) && ms(p) <= ms(s) - 7 * 60_000 && ms(p) + a.durationMin * 60_000 >= ms(s)))!;
+    expect(free).toBeDefined();
+    const barber = free.b;
+    const offGrid = new Date(ms(free.s) - 7 * 60_000);
+    await expect(book(svc, barber, offGrid)).rejects.toMatchObject({ code: "bad_request" });
+    await expect(book(svc, barber, offGrid, "staff")).rejects.toMatchObject({ code: "bad_request", details: { offGrid: true } });
     const staffBooked = await m.booking.createAppointment({
       shopRef: "coralville",
       serviceId: svc.id,
-      barberRef: slot.barberIds[0],
+      barberRef: barber,
       startsAt: offGrid,
       customer: { firstName: "Rule", phone: `+1319555${String(3500 + ++phoneSeq)}` },
       source: "staff",

@@ -1,6 +1,6 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, closeDb } from "@/db";
 import * as t from "@/db/schema";
 import { computeCheckout, CartLine } from "@/domain/checkout";
@@ -9,7 +9,7 @@ import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
 import { simulateConnectHistory } from "@/server/payments/connect";
 import { DEFAULT_STAFF_TIME_RULES, REASON_LABEL, SERIES_HORIZON_DAYS, TimeOffReasonKey, seriesOccurrences, timeOffSpan } from "@/domain/staff-time";
-import { LocalDate, addDays, diffDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+import { LocalDate, addDays, diffDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "rayz2026!";
@@ -296,7 +296,6 @@ async function main() {
 
   const blocks: (typeof t.timeBlocks.$inferInsert)[] = [];
   const uuid = () => crypto.randomUUID();
-  const makennaId = staffByKey.get("makenna")!.id;
 
   for (let d = -HISTORY_DAYS; d <= FUTURE_DAYS; d++) {
     const date = addDays(today, d);
@@ -307,10 +306,8 @@ async function main() {
       const services = menu.filter((m) => m.svc.kind === "service");
       const addons = menu.filter((m) => m.svc.kind === "addon");
       const pool = customersByShop.get(shop.id) ?? customerRows;
-      // Makenna's lunch is a recurring block (seedStaffTime); the coin is still flipped so the sequence holds.
-      const early = chance(0.5);
-      const lunchAt = sch.staffId === makennaId ? MAKENNA_LUNCH : 12 * 60 + (early ? 0 : 30);
-      if (d >= -7 && sch.staffId !== makennaId) {
+      const lunchAt = 12 * 60 + (chance(0.5) ? 0 : 30);
+      if (d >= -7) {
         blocks.push({ staffId: sch.staffId, shopId: shop.id, startsAt: zonedWallTime(date, lunchAt).toJSDate(), endsAt: zonedWallTime(date, lunchAt + 30).toJSDate(), category: "lunch", reason: "Lunch" });
       }
       const fill = d < 0 ? 0.62 : d === 0 ? 0.7 : Math.max(0.12, 0.55 - d * 0.03);
@@ -758,8 +755,9 @@ async function seedServiceTimes(o: {
 
 /**
  * Staff time: brand rules (a manager approves, Moline approves automatically), Makenna's recurring
- * lunch, and time off in every state: pending (one with booked appointments), approved for next week
- * and for part of today, denied, and an automatic sick day.
+ * lunch, and time off in every state: pending (one at Moline held for a manager because it has
+ * bookings), approved for next week and for part of today, denied, and an automatic sick day. Kept
+ * off the Coralville days the booking tests use.
  */
 async function seedStaffTime(o: {
   now: Date;
@@ -782,7 +780,14 @@ async function seedStaffTime(o: {
     .insert(t.timeBlockSeries)
     .values({ staffId: id("makenna"), shopId: null, category: "lunch", reason: "Lunch", ...lunch, materializedThrough: through, createdBy: id("makenna"), createdAt: new Date(now.getTime() - 8 * 86_400_000) })
     .returning();
-  const occ = seriesOccurrences(lunch, lunch.startsOn, through);
+  // The sample history gave her a lunch at 12:00 or 12:30 each day. The 12:30 ones become the series; days she took
+  // it at noon keep that one-off block and skip the series, as if she'd removed that occurrence.
+  const mk = id("makenna");
+  const oneOffs = await db.select().from(t.timeBlocks).where(and(eq(t.timeBlocks.staffId, mk), eq(t.timeBlocks.category, "lunch")));
+  const atNoon = new Set(oneOffs.filter((b) => localMinutesOf(b.startsAt) !== MAKENNA_LUNCH).map((b) => localDateOf(b.startsAt)));
+  const replaced = oneOffs.filter((b) => localMinutesOf(b.startsAt) === MAKENNA_LUNCH).map((b) => b.id);
+  if (replaced.length) await db.delete(t.timeBlocks).where(inArray(t.timeBlocks.id, replaced));
+  const occ = seriesOccurrences(lunch, lunch.startsOn, through).filter((x) => !atNoon.has(x.date));
   await chunked(occ, 1000, (c) =>
     db.insert(t.timeBlocks).values(c.map((x) => ({ staffId: series.staffId, shopId: null, startsAt: x.startsAt, endsAt: x.endsAt, category: "lunch" as const, reason: "Lunch", seriesId: series.id, createdBy: series.createdBy }))),
   );
@@ -810,13 +815,14 @@ async function seedStaffTime(o: {
   };
 
   const trip = addDays(today, 21 + ((8 - weekdayOf(addDays(today, 21))) % 7));
-  const jessicaDay = workday(id("jessica"), coralville, 4, 12, true);
+  const mackenzieDay = workday(id("mackenzie"), moline, 4, 12, true);
   const jenDay = workday(id("jen"), moline, 5, 12, true);
-  const partialWho = ["delaney", "jessica", "michelle"].find((k) => works(id(k), coralville, today));
+  const partialWho = ["jessica", "delaney", "michelle"].find((k) => works(id(k), coralville, today));
   const partialEnd = partialWho ? works(id(partialWho), coralville, today)!.endMin : 0;
   const rows: Req[] = [
-    request({ staffId: id("delaney"), shopId: null, fromDate: trip, toDate: addDays(trip, 4), reason: "vacation", note: "Family trip to Colorado", requestedBy: id("delaney"), createdAt: daysAgo(1) }),
-    request({ staffId: id("jessica"), shopId: coralville, fromDate: jessicaDay, toDate: jessicaDay, reason: "personal", note: "Moving apartments", requestedBy: id("jessica"), createdAt: daysAgo(2) }),
+    request({ staffId: id("jessica"), shopId: null, fromDate: trip, toDate: addDays(trip, 4), reason: "vacation", note: "Family trip to Colorado", requestedBy: id("jessica"), createdAt: daysAgo(1) }),
+    // Moline approves automatically, but this day has bookings, so it waits for a manager.
+    request({ staffId: id("mackenzie"), shopId: moline, fromDate: mackenzieDay, toDate: mackenzieDay, reason: "personal", note: "Moving apartments", requestedBy: id("mackenzie"), createdAt: daysAgo(2) }),
     request({ staffId: id("jen"), shopId: null, fromDate: jenDay, toDate: jenDay, reason: "vacation", requestedBy: id("jen"), status: "approved", decidedVia: "manager", decidedBy: molineManager, decidedAt: daysAgo(3), createdAt: daysAgo(4), decisionNote: "Enjoy! Jilane can take your regulars." }),
     request({ staffId: id("makenna"), shopId: null, fromDate: addDays(today, 15), toDate: addDays(today, 15), reason: "personal", requestedBy: id("makenna"), status: "denied", decidedVia: "manager", decidedBy: id("michelle"), decidedAt: daysAgo(2), createdAt: daysAgo(5), decisionNote: "Two out that day already. Can you swap with Delaney?" }),
     request({ staffId: id("sara"), shopId: null, fromDate: addDays(today, -2), toDate: addDays(today, -2), reason: "sick", requestedBy: id("sara"), status: "approved", decidedVia: "auto", decidedAt: daysAgo(2), createdAt: daysAgo(2) }),
