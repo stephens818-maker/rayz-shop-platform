@@ -31,7 +31,7 @@ function useRun() {
 const when = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-function AffectedRow({ a }: { a: AffectedAppointment }) {
+export function AffectedRow({ a }: { a: AffectedAppointment }) {
   const { pending, error, ok, run } = useRun();
   const [options, setOptions] = useState<{ staffId: string; label: string; free: boolean }[] | null>(null);
   const [to, setTo] = useState("");

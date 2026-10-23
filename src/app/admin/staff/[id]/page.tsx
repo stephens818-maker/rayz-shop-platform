@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { roles, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
-import { Notice, PageHeader } from "@/components/ui";
+import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
 import { formatDateTime } from "@/lib/time";
 import { accessState, loadStaffAccess } from "@/server/auth/access";
@@ -13,7 +13,9 @@ import { pickerReasons, reasonShower } from "@/server/block-reasons";
 import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
 import { barberIntervalRows } from "@/server/timing";
 import { StaffTimingCard } from "../../booking-times/editors";
-import { ProfileForm, ScheduleEditor, TimeOff } from "./editors";
+import { futureBookings } from "@/server/offboarding";
+import { AffectedRow } from "../../time-off/client";
+import { OffboardCard, ProfileForm, ScheduleEditor, TimeOff } from "./editors";
 
 export const metadata: Metadata = { title: "Staff member" };
 
@@ -49,6 +51,8 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
   const canSchedule = can(ctx, "schedules.edit");
   const timing = person && person.kind === "person" && can(ctx, "scheduling.timing") ? (await barberIntervalRows(ctx, person.id))[0] : undefined;
   const [show, offReasons] = await Promise.all([reasonShower(reasonViewer(ctx)), pickerReasons("time_off")]);
+  const canOffboard = !!person && person.active && person.id !== ctx.staff.id && !editDenied && !target?.isOwner;
+  const ahead = person && !person.active && can(ctx, "timeoff.approve") ? (await futureBookings(person.id)).filter((a) => hasShop(ctx, a.shopId)) : [];
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -125,6 +129,21 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         </>
       )}
       {timing && <StaffTimingCard barber={timing} />}
+      {person && person.kind === "person" && (ahead.length > 0 || canOffboard) && (
+        <>
+          {ahead.length > 0 && !person.active && (
+            <Card>
+              <CardHeader title="Still booked with them" subtitle="Move these to another barber or ask the client to pick a new time." />
+              <ul className="divide-y divide-zinc-100">
+                {ahead.map((a) => (
+                  <AffectedRow key={a.id} a={a} />
+                ))}
+              </ul>
+            </Card>
+          )}
+          {canOffboard && <OffboardCard staffId={person.id} label={person.displayLabel} />}
+        </>
+      )}
     </div>
   );
 }

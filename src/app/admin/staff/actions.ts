@@ -17,6 +17,7 @@ import { accessState, loadStaffAccess, workShopIds } from "@/server/auth/access"
 import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, authorize, caller, staffGrantor } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
+import { offboardStaff } from "@/server/offboarding";
 import { addBlock, removeBlock } from "@/server/staff-time";
 
 /** Profile edits: nobody edits a person who holds access they don't have. */
@@ -95,6 +96,7 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
       isBookable: p.isBookable,
       active: p.active,
       squireName: p.squireName || null,
+      ...(p.id && !p.active ? { sessionsValidAfter: new Date() } : {}),
       ...(p.password ? { passwordHash: await bcrypt.hash(p.password, 10) } : {}),
     };
     const id = await db.transaction(async (tx) => {
@@ -147,6 +149,23 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
     revalidatePath("/admin/staff");
     revalidatePath("/admin/permissions");
     return { id };
+  });
+}
+
+/** Leaving the team: sign-in stops at once; booked appointments are returned to move. */
+export async function offboardStaffAction(staffId: string, confirmLabel: string, reason: string) {
+  return safe(async () => {
+    const ctx = await authorize("staff.manage");
+    const target = await assertCanEditProfile(ctx, staffId);
+    if (target.isOwner) throw forbidden("The Brand Owner can't be offboarded");
+    const person = await db.query.staff.findFirst({ where: eq(staff.id, staffId), columns: { displayLabel: true } });
+    if (confirmLabel.trim().toLowerCase() !== person?.displayLabel.toLowerCase()) throw new AppError("bad_request", `Type "${person?.displayLabel}" to confirm`);
+    const r = await offboardStaff(staffId, { ...ctx.actor, staffId: ctx.staff.id }, reason.trim() || null);
+    revalidatePath("/admin/staff");
+    revalidatePath(`/admin/staff/${staffId}`);
+    revalidatePath("/admin/calendar");
+    revalidatePath("/admin/permissions");
+    return { schedules: r.schedules, recurringBlocks: r.recurringBlocks, timeOffRequests: r.timeOffRequests, bookings: r.bookings.length };
   });
 }
 

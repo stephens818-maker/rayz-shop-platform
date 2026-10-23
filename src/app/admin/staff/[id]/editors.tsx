@@ -7,7 +7,7 @@ import { type PickReason, ReasonPicker, ReasonTag } from "@/components/reason-pi
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, cx } from "@/components/ui";
 import type { ShownReason } from "@/domain/block-reasons";
 import type { BookedConflict } from "@/server/staff-time";
-import { addTimeOffAction, deleteTimeOffAction, saveProfileAction, saveScheduleAction } from "../actions";
+import { addTimeOffAction, deleteTimeOffAction, offboardStaffAction, saveProfileAction, saveScheduleAction } from "../actions";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -397,6 +397,63 @@ export function TimeOff({
           </li>
         ))}
       </ul>
+    </Card>
+  );
+}
+
+/** Leaving the team, in one step. Their history stays; booked appointments are listed to move. */
+export function OffboardCard({ staffId, label }: { staffId: string; label: string }) {
+  const { pending, error, ok, run } = useRun();
+  const [open, setOpen] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [reason, setReason] = useState("");
+  return (
+    <Card>
+      <CardHeader title="Offboard" subtitle="When someone leaves. Sign-in stops at once; sales, tips, punches and payroll history stay." />
+      <div className="space-y-3 p-4 text-sm">
+        {!open ? (
+          <Button variant="secondary" onClick={() => setOpen(true)}>
+            Offboard {label}…
+          </Button>
+        ) : (
+          <>
+            <ul className="list-disc space-y-1 pl-5 text-zinc-600">
+              <li>Signs them out everywhere and turns off their login</li>
+              <li>Takes them off online booking and every shop&apos;s schedule</li>
+              <li>Ends their recurring blocks and cancels pending time-off requests</li>
+              <li>Leaves booked appointments booked, listed below to move or reschedule</li>
+            </ul>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Reason (private, in the audit log)">
+                <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Optional" />
+              </Field>
+              <Field label={`Type "${label}" to confirm`}>
+                <Input value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+              </Field>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="danger"
+                disabled={pending || confirm.trim().toLowerCase() !== label.toLowerCase()}
+                onClick={() =>
+                  run(
+                    () => offboardStaffAction(staffId, confirm, reason),
+                    (d) =>
+                      `Done. Removed ${d.schedules} schedule row${d.schedules === 1 ? "" : "s"}, ended ${d.recurringBlocks} recurring block${d.recurringBlocks === 1 ? "" : "s"}, cancelled ${d.timeOffRequests} time-off request${d.timeOffRequests === 1 ? "" : "s"}.${d.bookings ? ` ${d.bookings} booked appointment${d.bookings === 1 ? "" : "s"} still need${d.bookings === 1 ? "s" : ""} a new barber.` : ""}`,
+                  )
+                }
+              >
+                Offboard now
+              </Button>
+              <Button variant="secondary" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+            </div>
+          </>
+        )}
+        {error && <Notice tone="red">{error}</Notice>}
+        {ok && <Notice tone="green">{ok}</Notice>}
+      </div>
     </Card>
   );
 }
