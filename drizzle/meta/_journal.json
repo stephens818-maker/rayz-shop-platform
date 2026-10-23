@@ -197,6 +197,13 @@
       "when": 1792749250844,
       "tag": "core_0027_locations",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792752000000,
+      "tag": "core_0028_digest_jobs",
+      "breakpoints": true
     }
   ]
 }

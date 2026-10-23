@@ -5,15 +5,18 @@ import { cronAuthorized } from "@/server/notifications/cron";
 import { processDueJobs } from "@/server/notifications/queue";
 import { extendSeries } from "@/server/block-series";
 import { runFollowUps } from "@/server/call-ins";
+import { sendDueDigests } from "@/server/digest";
 
 /**
  * Vercel Cron target (see vercel.json). Writes recurring blocks ahead, queues low-stock alerts, retries
- * or flags call-in outreach with no answer, then drains due jobs. Closed unless CRON_SECRET is set.
+ * or flags call-in outreach with no answer, sends the morning digest once it's due, then drains due
+ * jobs. Closed unless CRON_SECRET is set.
  */
 export const GET = route(async (req) => {
   if (!cronAuthorized(req.headers.get("authorization"), process.env.CRON_SECRET)) throw new AppError("unauthorized", "Bad or missing cron secret");
   const recurringBlocks = await extendSeries();
   const lowStock = await sendLowStockAlerts(null, await allShopIds());
   const followUps = await runFollowUps();
-  return json({ ...(await processDueJobs()), lowStock, recurringBlocks, followUps });
+  const digest = await sendDueDigests();
+  return json({ ...(await processDueJobs()), lowStock, recurringBlocks, followUps, digest });
 });

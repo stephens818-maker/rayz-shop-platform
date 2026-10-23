@@ -67,7 +67,7 @@ export const brandSettings = pgTable("brand_settings", {
   messageTemplates: jsonb("message_templates").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Pick lists staff choose from (src/domain/lookups.ts); missing lists use the defaults. */
   lookups: jsonb("lookups").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
-  /** The morning digest email (DigestSettings in src/domain/today.ts); missing keys use the defaults. */
+  /** The morning digest email (DigestSettings in src/domain/digest.ts); missing keys use the defaults. */
   digest: jsonb("digest").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
@@ -1369,7 +1369,7 @@ export const notificationJobs = pgTable(
     /** The shop the message is from. Only sign-in codes, which are brand-level, have none. */
     shopId: uuid("shop_id").references(() => shops.id),
     purchaseOrderId: uuid("purchase_order_id").references(() => purchaseOrders.id),
-    kind: text("kind").notNull(), // confirmation | reminder_24h | reminder_2h | cancellation | reschedule | otp | waitlist_ready | purchase_order | low_stock | staff_text | staff_call | privacy_alert
+    kind: text("kind").notNull(), // confirmation | reminder_24h | reminder_2h | cancellation | reschedule | otp | waitlist_ready | purchase_order | low_stock | staff_text | staff_call | privacy_alert | digest | …
     channel: text("channel").notNull(), // sms | email | voice
     to: text("to").notNull(),
     subject: text("subject"),
