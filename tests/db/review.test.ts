@@ -437,6 +437,17 @@ describe("P2/P3 booking rules", () => {
     const start = new Date(slot.startsAt);
     const end = new Date(start.getTime() + 30 * 60_000);
     const base = { staffId: slot.barberIds[0], shopId: s.id, status: "booked" as const, source: "staff" as const };
+    // The last offered slot can sit just before a sample booking; clear the hour after it so only the buffer is in the way.
+    await m.db.db
+      .update(m.schema.appointments)
+      .set({ status: "cancelled", cancelledAt: new Date() })
+      .where(
+        m.drizzle.and(
+          eq(m.schema.appointments.staffId, base.staffId),
+          m.drizzle.lt(m.schema.appointments.startsAt, new Date(end.getTime() + 75 * 60_000)),
+          m.drizzle.gt(m.schema.appointments.endsAt, end),
+        ),
+      );
     const [first] = await m.db.db.insert(m.schema.appointments).values({ ...base, code: "TESTBUFF01", startsAt: start, endsAt: end, bufferMinutes: 15 }).returning();
     expect(first.busyUntil!.getTime()).toBe(end.getTime() + 15 * 60_000);
     const inside = new Date(end.getTime() + 10 * 60_000);
