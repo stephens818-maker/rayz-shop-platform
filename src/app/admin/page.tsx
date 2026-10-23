@@ -7,9 +7,9 @@ import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, StatusBa
 import { formatCents } from "@/lib/money";
 import { addDays, endOfLocalDay, formatDate, formatTime, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
 import { reportsFor } from "@/domain/navigation";
-import { CATEGORY_LABEL, REASON_LABEL, STATUS_LABEL } from "@/domain/staff-time";
+import { STATUS_LABEL } from "@/domain/staff-time";
 import { listRequests, pendingCount, staffingFor } from "@/server/staff-time";
-import { can, canAny, guardPage, reportShopIds } from "@/server/auth/staff";
+import { can, canAny, guardPage, reasonViewer, reportShopIds } from "@/server/auth/staff";
 import { stockLevels } from "@/server/inventory/stock";
 import { timesFor } from "@/server/service-times";
 import { ServiceTimer } from "./calendar/service-times-panel";
@@ -80,10 +80,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
   const [times, staffing, waitingRequests, myDecisions] = await Promise.all([
     timesFor(upcoming.map((a) => a.id), now),
-    staffingFor(shopIds, today, today, seesTeam ? null : [ctx.staff.id]),
+    staffingFor(shopIds, today, today, reasonViewer(ctx), seesTeam ? null : [ctx.staff.id]),
     can(ctx, "timeoff.approve") ? pendingCount(shopIds, false) : Promise.resolve(0),
     can(ctx, "timeoff.request")
-      ? listRequests({ staffId: ctx.staff.id }, { statuses: ["approved", "denied"], limit: 20 }).then((rs) =>
+      ? listRequests({ staffId: ctx.staff.id }, { viewer: reasonViewer(ctx), statuses: ["approved", "denied"], limit: 20 }).then((rs) =>
           rs.filter((r) => r.decidedAt && new Date(r.decidedAt).getTime() > now.getTime() - 7 * 86_400_000 && r.decidedVia !== "auto"),
         )
       : Promise.resolve([]),
@@ -94,13 +94,14 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const blockText = (r: (typeof staffing)[number]) =>
     r.blocks
       .filter((b) => b.category !== "time_off")
-      .map((b) => `${(CATEGORY_LABEL[b.category] ?? b.reason).toLowerCase()} ${minutesToLabel(b.startMin)}`)
+      .map((b) => `${b.label.toLowerCase()} ${minutesToLabel(b.startMin)}`)
       .join(", ");
   const offText = (r: (typeof staffing)[number]) =>
     r.blocks
       .filter((b) => b.category === "time_off")
-      .map((b) => `off ${minutesToLabel(b.startMin)}–${minutesToLabel(b.endMin % (24 * 60))}`)
+      .map((b) => `${b.label.toLowerCase()} ${minutesToLabel(b.startMin)}–${minutesToLabel(b.endMin % (24 * 60))}`)
       .join(", ");
+  const offReason = (r: (typeof staffing)[number]) => [...new Set(r.blocks.filter((b) => b.category === "time_off").map((b) => b.label.toLowerCase()))].join(", ");
   const soon = new Date(now.getTime() + 30 * 60_000);
   const runsTimer = (a: { staffId: string; status: string; startsAt: Date }) =>
     (a.staffId === ctx.staff.id || can(ctx, "calendar.manage")) && (a.status === "checked_in" || a.status === "in_service" || a.startsAt <= soon);
@@ -134,7 +135,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       )}
       {myDecisions.map((r) => (
         <Notice key={r.id} tone={r.status === "approved" ? "green" : "red"}>
-          Your {REASON_LABEL[r.reason].toLowerCase()} time off for {r.range} was {r.status}
+          Your {r.reason.label.toLowerCase()} time off for {r.range} was {r.status}
           {r.decidedBy ? ` by ${r.decidedBy}` : ""}
           {r.decisionNote ? `: “${r.decisionNote}”` : "."}{" "}
           <Link className="underline" href="/admin/my-time">
@@ -250,6 +251,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                               {STATUS_LABEL[r.status]}
                             </span>
                             {r.status === "partly_off" && <span className="text-violet-700"> · {offText(r)}</span>}
+                            {r.status === "off" && offReason(r) && <span className="text-violet-700"> · {offReason(r)}</span>}
                             {r.pending && <span className="text-amber-700"> · off requested</span>}
                             {r.blockedMin > 0 && <span className="text-zinc-500"> · {blockText(r)}</span>}
                           </span>

@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Badge, Button, Field, Input, LinkButton, Notice, Select, StarBadge, StatusBadge, Textarea, buttonClass, cx } from "@/components/ui";
 import { ConflictConfirm } from "@/components/conflict-confirm";
 import type { RatingSummary } from "@/domain/ratings";
-import { BLOCK_CATEGORIES, CATEGORY_LABEL, type SelfBlockCategory } from "@/domain/staff-time";
+import { type PickReason, ReasonDot, ReasonPicker } from "@/components/reason-picker";
+import { reasonText } from "@/domain/block-reasons";
 import type { BookedConflict } from "@/server/staff-time";
 import { INTERVAL_SOURCE_LABEL } from "@/domain/timing";
 import type { CalAppt, CalColumn, DayCalendarData } from "@/server/calendar";
@@ -83,11 +84,29 @@ function shiftDate(d: string, n: number) {
 function prettyDate(d: string) {
   return new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
 }
-function blockLabel(b: CalColumn["blocks"][number]) {
-  if (b.kind === "day_off") return `Day off · ${b.reason}`;
-  if (b.category === "time_off") return `Off · ${b.reason}`;
-  const kind = CATEGORY_LABEL[b.category];
-  return b.category === "other" || !kind || b.reason === kind ? b.reason : `${kind} · ${b.reason}`;
+/** The block's reason as written on it; time off says so unless the reason is already just "Time off". */
+export function blockLabel(b: Pick<CalColumn["blocks"][number], "label" | "kind" | "category" | "hidden">) {
+  if ((b.kind === "day_off" || b.category === "time_off") && !b.hidden) return `Off · ${b.label}`;
+  return b.label;
+}
+
+/** Hover text for a block: the reason with its note, and when. */
+export function blockTitle(b: CalColumn["blocks"][number]) {
+  return `${reasonText(b)} · ${label(b.startMin)}–${label(Math.min(b.endMin, 24 * 60 - 1))}${b.recurring ? " · repeats" : ""}`;
+}
+
+/** A link to the same date and barber in the other view. */
+export function ViewToggle({ view, date, staffId }: { view: "day" | "week"; date: string; staffId?: string | null }) {
+  const href = (v: "day" | "week") => `/admin/calendar?${new URLSearchParams({ ...(v === "week" ? { view: "week" } : {}), date, ...(staffId && v === "week" ? { staff: staffId } : {}) })}`;
+  return (
+    <div className="flex rounded-lg ring-1 ring-zinc-300" role="group" aria-label="Calendar view">
+      {(["day", "week"] as const).map((v) => (
+        <Link key={v} href={href(v)} aria-current={view === v ? "page" : undefined} className={cx("h-9 px-3 text-sm font-medium leading-9 first:rounded-l-lg last:rounded-r-lg", view === v ? "bg-ink-900 text-white" : "hover:bg-zinc-100")}>
+          {v === "day" ? "Day" : "Week"}
+        </Link>
+      ))}
+    </div>
+  );
 }
 
 const APPT_STYLE: Record<string, string> = {
@@ -113,6 +132,7 @@ export function DayCalendar({
   canManage,
   meId,
   initialApptId,
+  reasons,
 }: {
   data: DayCalendarData;
   today: string;
@@ -121,6 +141,8 @@ export function DayCalendar({
   canManage: { walkins: boolean; sales: boolean; schedules: boolean; clients: boolean; message: boolean; addPhone: boolean; correctTimes: boolean };
   meId: string;
   initialApptId: string | null;
+  /** What the block picker offers. */
+  reasons: PickReason[];
 }) {
   const router = useRouter();
   const [panel, setPanel] = useState<Panel | null>(() => {
@@ -198,6 +220,7 @@ export function DayCalendar({
     est: active.reduce((s, a) => s + a.estimateCents, 0),
   };
   const go = (d: string) => router.push(`/admin/calendar?date=${d}`);
+  const legend = [...new Map(data.columns.flatMap((c) => c.blocks).map((b) => [b.label, { label: b.label, color: b.color }])).values()];
 
   return (
     <div className="flex flex-col gap-3">
@@ -219,6 +242,7 @@ export function DayCalendar({
             </button>
           </div>
           <input type="date" value={data.date} onChange={(e) => e.target.value && go(e.target.value)} className="h-9 rounded-lg px-2 text-sm ring-1 ring-zinc-300" />
+          <ViewToggle view="day" date={data.date} staffId={data.columns.length === 1 ? data.columns[0].id : null} />
           {canManage.walkins && (
             <LinkButton href="/admin/walk-ins" size="sm" className="h-9">
               + Walk-in
@@ -265,9 +289,9 @@ export function DayCalendar({
               <span className="font-medium">{o.label}</span>{" "}
               <span className="text-violet-800">
                 {o.allDay
-                  ? `(${o.spans[0]?.reason ?? "time off"}, all day)`
+                  ? `(${o.spans[0]?.reason ?? "Time off"}, all day)`
                   : o.spans.length
-                    ? `(${o.spans.map((s) => `${label(s.startMin)}–${label(Math.min(s.endMin, 24 * 60 - 1))}`).join(", ")})`
+                    ? `(${o.spans.map((s) => `${s.reason} ${label(s.startMin)}–${label(Math.min(s.endMin, 24 * 60 - 1))}`).join(", ")})`
                     : ""}
                 {o.pending && " · time off requested, waiting for a manager"}
               </span>
@@ -345,9 +369,11 @@ export function DayCalendar({
         <span className="flex items-center gap-1">
           <span className="inline-block h-3 w-3 rounded-sm shade-off ring-1 ring-zinc-200" /> Not working
         </span>
-        <span className="flex items-center gap-1">
-          <span className="inline-block h-3 w-3 rounded-sm shade-block ring-1 ring-orange-200" /> Blocked
-        </span>
+        {legend.map((r) => (
+          <span key={r.label} className="flex items-center gap-1">
+            <span className="shade-reason inline-block h-3 w-3 rounded-sm" style={{ ["--reason" as string]: r.color }} /> {r.label}
+          </span>
+        ))}
         <span className="flex items-center gap-1">
           <span className="inline-block h-3 w-3 rounded-sm bg-zinc-200" /> At another shop
         </span>
@@ -363,7 +389,19 @@ export function DayCalendar({
         <SidePanel onClose={() => setPanel(null)}>
           {panel.kind === "appt" && <ApptPanel appt={panel.appt} col={panel.col} canManage={canManage} onDone={() => setPanel(null)} />}
           {panel.kind === "block" && <BlockPanel block={panel.block} col={panel.col} onDone={() => setPanel(null)} />}
-          {panel.kind === "new" && <NewPanel key={`${panel.col.id}:${panel.startMin}`} col={panel.col} data={data} startMin={panel.startMin} services={services} own={panel.col.id === meId} canAddPhone={canManage.addPhone} onDone={() => setPanel(null)} />}
+          {panel.kind === "new" && (
+            <NewPanel
+              key={`${panel.col.id}:${panel.startMin}`}
+              col={panel.col}
+              data={data}
+              startMin={panel.startMin}
+              services={services}
+              own={panel.col.id === meId}
+              canAddPhone={canManage.addPhone}
+              reasons={reasons}
+              onDone={() => setPanel(null)}
+            />
+          )}
         </SidePanel>
       )}
     </div>
@@ -486,11 +524,14 @@ function Column({
               e.stopPropagation();
               onBlock(b);
             }}
-            className="shade-block absolute inset-x-1 overflow-hidden rounded-md px-1.5 py-0.5 text-left text-[11px] font-medium text-orange-900 ring-1 ring-orange-200"
-            style={{ top: top(b.startMin), height: h(b.startMin, b.endMin) }}
+            title={blockTitle(b)}
+            aria-label={blockTitle(b)}
+            className="shade-reason absolute inset-x-1 overflow-hidden rounded-md py-0.5 pl-2.5 pr-1.5 text-left text-[11px] font-semibold leading-tight text-zinc-900"
+            style={{ top: top(b.startMin), height: h(b.startMin, b.endMin), ["--reason" as string]: b.color }}
           >
             {blockLabel(b)}
-            {b.recurring && <span className="ml-1 opacity-60" title="Repeats">↻</span>}
+            {b.recurring && <span className="ml-1 opacity-60">↻</span>}
+            {b.note && b.endMin - b.startMin >= 45 && <span className="block truncate font-normal text-zinc-700">{b.note}</span>}
           </button>
         ))}
         {appts.map((a) => {
@@ -717,8 +758,13 @@ function BlockPanel({ block, col, onDone }: { block: CalColumn["blocks"][number]
   const { pending, error, run } = useAction();
   return (
     <div className="space-y-4">
-      <Badge tone="amber">{block.kind === "day_off" ? "Day off" : (CATEGORY_LABEL[block.category] ?? "Blocked time")}</Badge>
-      <h2 className="text-lg font-semibold">{block.reason}</h2>
+      <Badge tone="amber">{block.kind === "day_off" ? "Day off" : block.category === "time_off" ? "Time off" : "Blocked time"}</Badge>
+      <h2 className="flex items-center gap-2 text-lg font-semibold">
+        <ReasonDot color={block.color} className="size-3" />
+        {block.label}
+      </h2>
+      {block.note && <p className="whitespace-pre-wrap rounded-lg bg-zinc-50 px-3 py-2 text-sm text-zinc-700">{block.note}</p>}
+      {block.hidden && <p className="text-xs text-zinc-500">The reason is private.</p>}
       <div className="text-sm text-zinc-500">
         {col.label} · {label(block.startMin)}–{label(Math.min(block.endMin, 24 * 60 - 1))}
         {block.recurring && " · repeats"}
@@ -750,6 +796,7 @@ function NewPanel({
   services,
   own,
   canAddPhone,
+  reasons,
   onDone,
 }: {
   col: CalColumn;
@@ -758,6 +805,7 @@ function NewPanel({
   services: Svc[];
   own: boolean;
   canAddPhone: boolean;
+  reasons: PickReason[];
   onDone: () => void;
 }) {
   const [tab, setTab] = useState<"appt" | "block">("appt");
@@ -775,14 +823,14 @@ function NewPanel({
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [endTime, setEndTime] = useState(hhmm(startMin + 60));
-  const [category, setCategory] = useState<SelfBlockCategory>("lunch");
-  const [reason, setReason] = useState("");
+  const [reasonId, setReasonId] = useState<string | null>(reasons[0]?.id ?? null);
+  const [note, setNote] = useState("");
   const [conflicts, setConflicts] = useState<BookedConflict[] | null>(null);
   // Your own time off (doctor, errands) should close your book everywhere, not just here.
   const [allShops, setAllShops] = useState(own);
   const block = (confirm: boolean) =>
     run(
-      () => createBlockAction({ shopId: data.shop.id, staffId: col.id, date: data.date, startMin: fromHHMM(time), endMin: fromHHMM(endTime), reason, category, allShops, confirm }),
+      () => createBlockAction({ shopId: data.shop.id, staffId: col.id, date: data.date, startMin: fromHHMM(time), endMin: fromHHMM(endTime), reasonId: reasonId ?? "", note: note || null, allShops, confirm }),
       (d) => {
         const r = d as { saved: boolean; conflicts: BookedConflict[] };
         if (r.saved) onDone();
@@ -996,16 +1044,7 @@ function NewPanel({
               <Input type="time" step={900} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
             </Field>
           </div>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Kind of block">
-            {BLOCK_CATEGORIES.map((c) => (
-              <button key={c.key} aria-pressed={category === c.key} onClick={() => setCategory(c.key)} className={cx(buttonClass(category === c.key ? "dark" : "secondary", "sm"), "rounded-full")}>
-                {c.label}
-              </button>
-            ))}
-          </div>
-          <Field label={category === "other" ? "Reason (required)" : "Note (optional)"}>
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={category === "other" ? "e.g. Training" : "e.g. Dentist"} />
-          </Field>
+          <ReasonPicker reasons={reasons} value={reasonId} onChange={setReasonId} note={note} onNote={setNote} />
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={allShops} onChange={(e) => setAllShops(e.target.checked)} /> Block at all shops
           </label>
@@ -1013,7 +1052,7 @@ function NewPanel({
           {conflicts ? (
             <ConflictConfirm conflicts={conflicts} pending={pending} onConfirm={() => block(true)} onCancel={() => setConflicts(null)} />
           ) : (
-            <Button className="w-full" disabled={pending || (category === "other" && !reason.trim())} onClick={() => block(false)}>
+            <Button className="w-full" disabled={pending || !reasonId} onClick={() => block(false)}>
               Block time
             </Button>
           )}

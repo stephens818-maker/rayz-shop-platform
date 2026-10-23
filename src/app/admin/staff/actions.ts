@@ -200,13 +200,13 @@ export async function addTimeOffAction(input: {
   allDay: boolean;
   startMin: number;
   endMin: number;
-  reason: string;
+  reasonId: string;
+  note?: string | null;
   confirm?: boolean;
 }) {
   return safe(async () => {
     const ctx = await authorize("schedules.edit");
     await assertCanSchedule(ctx, input.staffId);
-    if (!input.reason.trim()) throw new AppError("bad_request", "A reason is required");
     const denied = timeBlockChangeDenied(caller(ctx), { staffId: input.staffId, shopId: input.shopId }, await workShopIds(input.staffId));
     if (denied) throw forbidden(denied);
     if (input.to < input.from) throw new AppError("bad_request", "End date is before start date");
@@ -214,7 +214,7 @@ export async function addTimeOffAction(input: {
     const endsAt = input.allDay ? startOfLocalDay(addDays(input.to, 1)) : staffWallTime(input.to, input.endMin);
     if (endsAt <= startsAt) throw new AppError("bad_request", "End must be after start");
     const r = await addBlock(
-      { staffId: input.staffId, shopId: input.shopId, startsAt, endsAt, reason: input.reason, category: "time_off", kind: input.allDay ? "day_off" : "block" },
+      { staffId: input.staffId, shopId: input.shopId, startsAt, endsAt, reasonId: input.reasonId, note: input.note, timeOff: true, kind: input.allDay ? "day_off" : "block" },
       { actor: ctx.actor, confirm: input.confirm, via: "staff_page", auditShopId: input.shopId },
     );
     if (r.done) {

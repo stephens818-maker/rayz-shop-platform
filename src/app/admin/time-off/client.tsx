@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
-import { REASON_LABEL, type StaffTimeRules } from "@/domain/staff-time";
+import { ReasonTag } from "@/components/reason-picker";
+import type { StaffTimeRules } from "@/domain/staff-time";
 import type { AffectedAppointment, RequestView } from "@/server/staff-time";
 import { askRescheduleAction, cancelTimeOffAction, decideTimeOffAction, reassignAction, reassignOptionsAction, saveRulesAction } from "./actions";
 
@@ -108,9 +109,10 @@ export function RequestCard({ request: r, affected, canDecide, why }: { request:
             {r.staffLabel}
             <span className="font-normal text-zinc-600">{r.range}</span>
             <Badge tone={isPending ? "amber" : "green"}>{isPending ? "waiting" : r.decidedVia === "auto" ? "approved (auto)" : "approved"}</Badge>
+            <ReasonTag reason={r.reason} />
           </span>
         }
-        subtitle={`${REASON_LABEL[r.reason]} · ${r.shopName ?? "all their shops"}${r.note ? ` · "${r.note}"` : ""}`}
+        subtitle={`${r.shopName ?? "All their shops"}${r.reason.note ? ` · "${r.reason.note}"` : ""}`}
       />
       {affected.length > 0 && (
         <div className="border-t border-amber-100 bg-amber-50/50">

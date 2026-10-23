@@ -32,6 +32,20 @@ body {
 .shade-block {
   background-image: repeating-linear-gradient(135deg, rgb(254 215 170 / 0.85) 0 6px, rgb(255 237 213 / 0.85) 6px 12px);
 }
+/* Blocked time in its reason's color (set --reason on the element) */
+.shade-reason {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--reason, #a1a1aa) 30%, white) 0 6px,
+    color-mix(in srgb, var(--reason, #a1a1aa) 16%, white) 6px 12px
+  );
+  box-shadow: inset 3px 0 0 var(--reason, #a1a1aa), inset 0 0 0 1px color-mix(in srgb, var(--reason, #a1a1aa) 45%, white);
+}
+.shade-reason-pending {
+  background: color-mix(in srgb, var(--reason, #a1a1aa) 10%, white);
+  outline: 1.5px dashed color-mix(in srgb, var(--reason, #a1a1aa) 80%, black);
+  outline-offset: -1.5px;
+}
 /* Prep and cleanup time held around an appointment */
 .shade-buffer {
   background-image: repeating-linear-gradient(45deg, rgb(212 212 216 / 0.55) 0 3px, transparent 3px 7px);

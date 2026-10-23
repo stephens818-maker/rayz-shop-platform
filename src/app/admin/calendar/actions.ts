@@ -6,7 +6,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { appointments, staffShops, timeBlocks } from "@/db/schema";
 import { safe } from "@/server/action";
-import { CATEGORY_LABEL, isSelfBlockCategory, selfBlockProblem } from "@/domain/staff-time";
+import { selfBlockProblem } from "@/domain/staff-time";
 import { blockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, assertShopAccess, authorize, blockCaller, can, requireStaff } from "@/server/auth/staff";
 import { addBlock, removeBlock, rulesFor } from "@/server/staff-time";
@@ -14,6 +14,7 @@ import { createAppointment, getAvailability, rescheduleAppointment, setAppointme
 import { openSaleForAppointment } from "@/server/checkout";
 import { assertCanEnter, clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
 import { clientSearchScope, searchCustomers } from "@/server/customers";
+import { usableReason } from "@/server/block-reasons";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { ratingSummaries } from "@/server/ratings";
 import { correctServiceTimes, finishService, reviewServiceTime } from "@/server/service-times";
@@ -220,29 +221,27 @@ export async function createBlockAction(input: {
   date: string;
   startMin: number;
   endMin: number;
-  reason: string;
+  reasonId: string;
+  note?: string | null;
   allShops: boolean;
-  category?: string;
   confirm?: boolean;
 }) {
   return safe(async () => {
     const ctx = await requireStaff();
     assertShopAccess(ctx, input.shopId);
-    const category = input.category ?? "other";
-    if (!isSelfBlockCategory(category)) throw new AppError("bad_request", "Pick lunch, break, personal or other");
-    const reason = input.reason.trim() || CATEGORY_LABEL[category];
     if (input.endMin <= input.startMin) throw new AppError("bad_request", "End must be after start");
     const shopId = input.allShops ? null : input.shopId;
     const shopsOfBarber = await barberShops(input.staffId);
     const denied = blockChangeDenied(blockCaller(ctx), { staffId: input.staffId, shopId }, shopsOfBarber);
     if (denied) throw forbidden(denied);
     if (input.allShops && !shopsOfBarber.includes(input.shopId)) throw forbidden("That barber doesn't work at this shop");
+    const reason = await usableReason(input.reasonId, "blocks");
     if (input.staffId === ctx.staff.id && !can(ctx, "blocks.others")) {
-      const problem = selfBlockProblem(await rulesFor(input.staffId, shopId), category, input.endMin - input.startMin);
+      const problem = selfBlockProblem(await rulesFor(input.staffId, shopId), reason.countsAsLunch, input.endMin - input.startMin);
       if (problem) throw new AppError("bad_request", problem);
     }
     const r = await addBlock(
-      { staffId: input.staffId, shopId, startsAt: staffWallTime(input.date, input.startMin), endsAt: staffWallTime(input.date, input.endMin), category, reason },
+      { staffId: input.staffId, shopId, startsAt: staffWallTime(input.date, input.startMin), endsAt: staffWallTime(input.date, input.endMin), reasonId: reason.id, note: input.note },
       { actor: ctx.actor, confirm: input.confirm, via: "calendar", auditShopId: input.shopId },
     );
     if (r.done) {

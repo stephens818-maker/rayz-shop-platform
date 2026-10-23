@@ -8,7 +8,8 @@ import { Notice, PageHeader } from "@/components/ui";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
 import { formatDateTime } from "@/lib/time";
 import { accessState, loadStaffAccess } from "@/server/auth/access";
-import { can, guardPage, staffGrantor } from "@/server/auth/staff";
+import { can, guardPage, reasonViewer, staffGrantor } from "@/server/auth/staff";
+import { pickerReasons, reasonShower } from "@/server/block-reasons";
 import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
 import { barberIntervalRows } from "@/server/timing";
 import { StaffTimingCard } from "../../booking-times/editors";
@@ -47,6 +48,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
     : [];
   const canSchedule = can(ctx, "schedules.edit");
   const timing = person && person.kind === "person" && can(ctx, "scheduling.timing") ? (await barberIntervalRows(ctx, person.id))[0] : undefined;
+  const [show, offReasons] = await Promise.all([reasonShower(reasonViewer(ctx)), pickerReasons("time_off")]);
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -111,10 +113,11 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
           <TimeOff
             staffId={person.id}
             shops={editableShops.filter((s) => links.some((l) => l.shopId === s.id))}
+            reasons={offReasons}
             blocks={blocks.map((b) => ({
               id: b.id,
               label: `${formatDateTime(b.startsAt)} → ${formatDateTime(b.endsAt)}`,
-              reason: b.reason,
+              reason: show(b, b.category === "time_off" || b.kind === "day_off"),
               kind: b.kind,
               shop: b.shopId ? (allShops.find((s) => s.id === b.shopId)?.name ?? "") : "All shops",
             }))}

@@ -3,8 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { ConflictConfirm } from "@/components/conflict-confirm";
-import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, buttonClass, cx } from "@/components/ui";
-import { BLOCK_CATEGORIES, CATEGORY_LABEL, LUNCH_NOW_MIN, QUICK_DURATIONS, REASON_LABEL, TIME_OFF_REASONS, type SelfBlockCategory, type TimeOffReasonKey, weekdaysLabel } from "@/domain/staff-time";
+import { type PickReason, ReasonPicker, ReasonTag } from "@/components/reason-picker";
+import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, buttonClass, cx } from "@/components/ui";
+import type { ShownReason } from "@/domain/block-reasons";
+import { LUNCH_NOW_MIN, QUICK_DURATIONS, weekdaysLabel } from "@/domain/staff-time";
 import type { BookedConflict, RequestView } from "@/server/staff-time";
 import { cancelMyRequestAction, createMySeriesAction, endMySeriesAction, lunchNowAction, quickBlockAction, removeMyBlockAction, requestTimeOffAction } from "./actions";
 
@@ -43,18 +45,6 @@ const TZ = "America/Chicago";
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const timeOnly = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-function Chips<K extends string>({ options, value, onChange, label: aria }: { options: readonly { key: K; label: string }[]; value: K; onChange: (k: K) => void; label: string }) {
-  return (
-    <div className="flex flex-wrap gap-2" role="group" aria-label={aria}>
-      {options.map((o) => (
-        <button key={o.key} type="button" aria-pressed={value === o.key} onClick={() => onChange(o.key)} className={cx(buttonClass(value === o.key ? "dark" : "secondary", "md"), "rounded-full")}>
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 function Messages({ error, ok }: { error: string | null; ok: string | null }) {
   return (
@@ -103,29 +93,32 @@ export function LunchNow({ current }: { current: { label: string; untilMin: numb
 type Limits = { maxLunchMin: number; maxBlockMin: number } | null;
 const limitText = (limits: Limits) => (limits ? `Lunch up to ${limits.maxLunchMin} min, other blocks up to ${limits.maxBlockMin} min.` : null);
 
-export function QuickBlock({ today, defaultStartMin, limits }: { today: string; defaultStartMin: number; limits: Limits }) {
+const firstNonLunch = (reasons: readonly PickReason[]) => (reasons.find((r) => !r.countsAsLunch) ?? reasons[0])?.id ?? null;
+const labelOf = (reasons: readonly PickReason[], id: string | null) => reasons.find((r) => r.id === id)?.label ?? "Block";
+
+export function QuickBlock({ today, defaultStartMin, limits, reasons }: { today: string; defaultStartMin: number; limits: Limits; reasons: PickReason[] }) {
   const { pending, error, ok, run } = useRun();
-  const [category, setCategory] = useState<SelfBlockCategory>("break");
+  const [reasonId, setReasonId] = useState<string | null>(firstNonLunch(reasons));
   const [date, setDate] = useState(today);
   const [start, setStart] = useState(hhmm(defaultStartMin));
   const [minutes, setMinutes] = useState(15);
-  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
   const [conflicts, setConflicts] = useState<BookedConflict[] | null>(null);
   const go = (confirm: boolean) =>
     run(
-      () => quickBlockAction({ category, date, startMin: mins(start), minutes, reason, confirm }),
+      () => quickBlockAction({ reasonId: reasonId ?? "", note: note || null, date, startMin: mins(start), minutes, confirm }),
       (d: Saved) => {
         if (!d.saved) return void setConflicts(d.conflicts);
         setConflicts(null);
-        setReason("");
-        return `${CATEGORY_LABEL[category]} blocked from ${label(mins(start))} to ${label(mins(start) + minutes)}.`;
+        setNote("");
+        return `${labelOf(reasons, reasonId)} blocked from ${label(mins(start))} to ${label(mins(start) + minutes)}.`;
       },
     );
   return (
     <Card>
       <CardHeader title="Block time" subtitle={limitText(limits)} />
       <div className="space-y-4 p-4">
-        <Chips label="Kind of block" options={BLOCK_CATEGORIES} value={category} onChange={setCategory} />
+        <ReasonPicker reasons={reasons} value={reasonId} onChange={setReasonId} note={note} onNote={setNote} />
         <div className="grid grid-cols-2 gap-3">
           <Field label="Day">
             <Input type="date" min={today} value={date} onChange={(e) => setDate(e.target.value)} />
@@ -143,13 +136,10 @@ export function QuickBlock({ today, defaultStartMin, limits }: { today: string; 
             ))}
           </div>
         </Field>
-        <Field label={category === "other" ? "Reason (required)" : "Note (optional)"}>
-          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={category === "other" ? "e.g. Training" : "e.g. Dentist"} />
-        </Field>
         {conflicts ? (
           <ConflictConfirm conflicts={conflicts} pending={pending} onConfirm={() => go(true)} onCancel={() => setConflicts(null)} />
         ) : (
-          <Button size="lg" className="w-full" disabled={pending || (category === "other" && !reason.trim())} onClick={() => go(false)}>
+          <Button size="lg" className="w-full" disabled={pending || !reasonId} onClick={() => go(false)}>
             Block {label(mins(start))}–{label(mins(start) + minutes)}
           </Button>
         )}
@@ -162,7 +152,7 @@ export function QuickBlock({ today, defaultStartMin, limits }: { today: string; 
 type SeriesView = {
   id: string;
   category: string;
-  reason: string;
+  reason: ShownReason;
   weekdays: number[];
   startMin: number;
   endMin: number;
@@ -172,24 +162,25 @@ type SeriesView = {
   next: { blockId: string; startsAt: string } | null;
 };
 
-export function Recurring({ series, today, limits }: { series: SeriesView[]; today: string; limits: Limits }) {
+export function Recurring({ series, today, limits, reasons }: { series: SeriesView[]; today: string; limits: Limits; reasons: PickReason[] }) {
   const { pending, error, ok, run } = useRun();
-  const [category, setCategory] = useState<SelfBlockCategory>("lunch");
+  const [reasonId, setReasonId] = useState<string | null>((reasons.find((r) => r.countsAsLunch) ?? reasons[0])?.id ?? null);
   const [days, setDays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [start, setStart] = useState("12:00");
   const [end, setEnd] = useState("12:30");
   const [startsOn, setStartsOn] = useState(today);
   const [endsOn, setEndsOn] = useState("");
-  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
   const [conflicts, setConflicts] = useState<BookedConflict[] | null>(null);
   const toggle = (d: number) => setDays((xs) => (xs.includes(d) ? xs.filter((x) => x !== d) : [...xs, d]));
   const go = (confirm: boolean) =>
     run(
-      () => createMySeriesAction({ category, reason, weekdays: days, startMin: mins(start), endMin: mins(end), startsOn, endsOn: endsOn || null, confirm }),
+      () => createMySeriesAction({ reasonId: reasonId ?? "", note: note || null, weekdays: days, startMin: mins(start), endMin: mins(end), startsOn, endsOn: endsOn || null, confirm }),
       (d) => {
         if (!d.saved) return void setConflicts(d.conflicts);
         setConflicts(null);
-        return `${CATEGORY_LABEL[category]} ${weekdaysLabel(days).toLowerCase()} ${label(mins(start))}–${label(mins(end))} is set.`;
+        setNote("");
+        return `${labelOf(reasons, reasonId)} ${weekdaysLabel(days).toLowerCase()} ${label(mins(start))}–${label(mins(end))} is set.`;
       },
     );
   return (
@@ -199,11 +190,11 @@ export function Recurring({ series, today, limits }: { series: SeriesView[]; tod
         <ul className="divide-y divide-zinc-100 border-b border-zinc-100">
           {series.map((s) => (
             <li key={s.id} className="flex flex-wrap items-center gap-2 px-4 py-3 text-sm">
-              <Badge tone="amber">{CATEGORY_LABEL[s.category] ?? s.category}</Badge>
+              <ReasonTag reason={s.reason} />
               <span className="font-medium">
                 {weekdaysLabel(s.weekdays)} {label(s.startMin)}–{label(s.endMin)}
               </span>
-              {s.reason !== CATEGORY_LABEL[s.category] && <span className="text-zinc-500">{s.reason}</span>}
+              {s.reason.note && <span className="text-zinc-500">{s.reason.note}</span>}
               {s.endsOn && <span className="text-xs text-zinc-500">until {s.endsOn}</span>}
               <span className="flex w-full gap-3 sm:ml-auto sm:w-auto">
                 {s.next && (
@@ -220,7 +211,7 @@ export function Recurring({ series, today, limits }: { series: SeriesView[]; tod
         </ul>
       )}
       <div className="space-y-4 p-4">
-        <Chips label="Kind of block" options={BLOCK_CATEGORIES} value={category} onChange={setCategory} />
+        <ReasonPicker reasons={reasons} value={reasonId} onChange={setReasonId} note={note} onNote={setNote} notePlaceholder="e.g. School pickup" />
         <Field label="Days">
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Days">
             {DAYS.map((d, i) => (
@@ -244,16 +235,11 @@ export function Recurring({ series, today, limits }: { series: SeriesView[]; tod
             <Input type="date" min={startsOn} value={endsOn} onChange={(e) => setEndsOn(e.target.value)} />
           </Field>
         </div>
-        {category === "other" && (
-          <Field label="Reason (required)">
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} />
-          </Field>
-        )}
         {limits && <p className="text-xs text-zinc-500">{limitText(limits)}</p>}
         {conflicts ? (
           <ConflictConfirm conflicts={conflicts} pending={pending} confirmLabel="Repeat anyway" onConfirm={() => go(true)} onCancel={() => setConflicts(null)} />
         ) : (
-          <Button size="lg" className="w-full" disabled={pending || !days.length} onClick={() => go(false)}>
+          <Button size="lg" className="w-full" disabled={pending || !days.length || !reasonId} onClick={() => go(false)}>
             Repeat {weekdaysLabel(days).toLowerCase()} {label(mins(start))}–{label(mins(end))}
           </Button>
         )}
@@ -263,7 +249,7 @@ export function Recurring({ series, today, limits }: { series: SeriesView[]; tod
   );
 }
 
-export function Upcoming({ blocks }: { blocks: { id: string; category: string; reason: string; startsAt: string; endsAt: string; shopName: string | null }[] }) {
+export function Upcoming({ blocks }: { blocks: { id: string; category: string; reason: ShownReason; startsAt: string; endsAt: string; shopName: string | null }[] }) {
   const { pending, error, run } = useRun();
   return (
     <Card>
@@ -272,10 +258,10 @@ export function Upcoming({ blocks }: { blocks: { id: string; category: string; r
         {blocks.length === 0 && <li className="px-4 py-3 text-sm text-zinc-500">Nothing blocked.</li>}
         {blocks.map((b) => (
           <li key={b.id} className="flex items-center gap-2 px-4 py-3 text-sm">
-            <Badge tone="amber">{CATEGORY_LABEL[b.category] ?? "Blocked"}</Badge>
+            <ReasonTag reason={b.reason} />
             <span>
               <span className="font-medium">{when(b.startsAt)}</span>–{timeOnly(b.endsAt)}
-              {b.reason !== CATEGORY_LABEL[b.category] && <span className="text-zinc-500"> · {b.reason}</span>}
+              {b.reason.note && <span className="text-zinc-500"> · {b.reason.note}</span>}
             </span>
             <button className="ml-auto text-xs text-red-600 underline" disabled={pending} onClick={() => run(() => removeMyBlockAction(b.id))}>
               Remove
@@ -292,9 +278,19 @@ export function Upcoming({ blocks }: { blocks: { id: string; category: string; r
   );
 }
 
-export function TimeOffForm({ today, shops, rules }: { today: string; shops: { id: string; name: string }[]; rules: { minNoticeDays: number; approval: "auto" | "manager" } }) {
+export function TimeOffForm({
+  today,
+  shops,
+  rules,
+  reasons,
+}: {
+  today: string;
+  shops: { id: string; name: string }[];
+  rules: { minNoticeDays: number; approval: "auto" | "manager" };
+  reasons: PickReason[];
+}) {
   const { pending, error, ok, run } = useRun();
-  const [reason, setReason] = useState<TimeOffReasonKey>("vacation");
+  const [reasonId, setReasonId] = useState<string | null>(reasons[0]?.id ?? null);
   const [allDay, setAllDay] = useState(true);
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
@@ -303,9 +299,10 @@ export function TimeOffForm({ today, shops, rules }: { today: string; shops: { i
   const [shopId, setShopId] = useState("");
   const [note, setNote] = useState("");
   const [conflicts, setConflicts] = useState<BookedConflict[] | null>(null);
+  const noticeFree = reasons.filter((r) => r.noticeExempt).map((r) => r.label.toLowerCase()).join(" or ");
   const go = (confirm: boolean) =>
     run(
-      () => requestTimeOffAction({ shopId: shopId || null, fromDate: from, toDate: allDay ? to : from, allDay, startMin: mins(start), endMin: mins(end), reason, note, confirm }),
+      () => requestTimeOffAction({ shopId: shopId || null, fromDate: from, toDate: allDay ? to : from, allDay, startMin: mins(start), endMin: mins(end), reasonId: reasonId ?? "", note: note || null, confirm }),
       (d) => {
         if (!d.saved) return void setConflicts(d.conflicts);
         setConflicts(null);
@@ -318,10 +315,10 @@ export function TimeOffForm({ today, shops, rules }: { today: string; shops: { i
     <Card>
       <CardHeader
         title="Request time off"
-        subtitle={`${rules.minNoticeDays ? `${rules.minNoticeDays} days' notice (sick time any day). ` : ""}${rules.approval === "auto" ? "Approved automatically when nothing is booked in it." : "A manager approves it; you'll get an email."}`}
+        subtitle={`${rules.minNoticeDays ? `${rules.minNoticeDays} days' notice${noticeFree ? ` (${noticeFree} any day)` : ""}. ` : ""}${rules.approval === "auto" ? "Approved automatically when nothing is booked in it." : "A manager approves it; you'll get an email."}`}
       />
       <div className="space-y-4 p-4">
-        <Chips label="Reason" options={TIME_OFF_REASONS} value={reason} onChange={setReason} />
+        <ReasonPicker reasons={reasons} value={reasonId} onChange={setReasonId} note={note} onNote={setNote} notePlaceholder="e.g. Family wedding" timeOff />
         <div className="flex rounded-lg bg-zinc-100 p-1 text-sm" role="radiogroup" aria-label="Whole days or part of a day">
           {[
             { v: true, l: "Whole days" },
@@ -366,9 +363,6 @@ export function TimeOffForm({ today, shops, rules }: { today: string; shops: { i
             </Select>
           </Field>
         )}
-        <Field label="Note for your manager (optional)">
-          <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
-        </Field>
         {conflicts ? (
           <ConflictConfirm
             conflicts={conflicts}
@@ -379,8 +373,8 @@ export function TimeOffForm({ today, shops, rules }: { today: string; shops: { i
             onCancel={() => setConflicts(null)}
           />
         ) : (
-          <Button size="lg" className="w-full" disabled={pending} onClick={() => go(false)}>
-            Request {REASON_LABEL[reason].toLowerCase()} time off
+          <Button size="lg" className="w-full" disabled={pending || !reasonId} onClick={() => go(false)}>
+            Request {labelOf(reasons, reasonId).toLowerCase()} time off
           </Button>
         )}
         <Messages error={error} ok={ok} />
@@ -404,9 +398,10 @@ export function MyRequests({ requests }: { requests: RequestView[] }) {
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone={STATUS_TONE[r.status]}>{r.status === "approved" && r.decidedVia === "auto" ? "approved (auto)" : r.status}</Badge>
               <span className="font-medium">{r.range}</span>
+              <ReasonTag reason={r.reason} />
               <span className="text-zinc-500">
-                {REASON_LABEL[r.reason]}
-                {r.shopName ? ` · ${r.shopName}` : ""}
+                {r.reason.note ? r.reason.note : ""}
+                {r.shopName ? `${r.reason.note ? " · " : ""}${r.shopName}` : ""}
               </span>
               {(r.status === "pending" || (r.status === "approved" && new Date(r.startsAt).getTime() > now)) && (
                 <button className="ml-auto text-xs text-red-600 underline" disabled={pending} onClick={() => run(() => cancelMyRequestAction(r.id))}>

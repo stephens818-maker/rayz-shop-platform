@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { ConflictConfirm } from "@/components/conflict-confirm";
+import { type PickReason, ReasonPicker, ReasonTag } from "@/components/reason-picker";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, cx } from "@/components/ui";
+import type { ShownReason } from "@/domain/block-reasons";
 import type { BookedConflict } from "@/server/staff-time";
 import { addTimeOffAction, deleteTimeOffAction, saveProfileAction, saveScheduleAction } from "../actions";
 
@@ -288,7 +290,17 @@ export function ScheduleEditor({
   );
 }
 
-export function TimeOff({ staffId, shops, blocks }: { staffId: string; shops: { id: string; name: string }[]; blocks: { id: string; label: string; reason: string; kind: string; shop: string }[] }) {
+export function TimeOff({
+  staffId,
+  shops,
+  blocks,
+  reasons,
+}: {
+  staffId: string;
+  shops: { id: string; name: string }[];
+  blocks: { id: string; label: string; reason: ShownReason; kind: string; shop: string }[];
+  reasons: PickReason[];
+}) {
   const { pending, error, run } = useRun();
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const [from, setFrom] = useState(today);
@@ -296,23 +308,24 @@ export function TimeOff({ staffId, shops, blocks }: { staffId: string; shops: { 
   const [allDay, setAllDay] = useState(true);
   const [start, setStart] = useState("12:00");
   const [end, setEnd] = useState("13:00");
-  const [reason, setReason] = useState("");
+  const [reasonId, setReasonId] = useState<string | null>(reasons[0]?.id ?? null);
+  const [note, setNote] = useState("");
   const [shopId, setShopId] = useState<string>("");
   const [conflicts, setConflicts] = useState<BookedConflict[] | null>(null);
   const add = (confirm: boolean) =>
     run(
-      () => addTimeOffAction({ staffId, shopId: shopId || null, from, to, allDay, startMin: mins(start), endMin: mins(end), reason, confirm }),
+      () => addTimeOffAction({ staffId, shopId: shopId || null, from, to, allDay, startMin: mins(start), endMin: mins(end), reasonId: reasonId ?? "", note: note || null, confirm }),
       (d) => (d.saved ? "Added" : null),
       (d) => {
         if (d.saved) {
-          setReason("");
+          setNote("");
           setConflicts(null);
         } else setConflicts(d.conflicts);
       },
     );
   return (
     <Card>
-      <CardHeader title="Days off & blocked time" subtitle="Blocks remove availability online and shade the calendar. A reason is required. Requests barbers send come in on Time off." />
+      <CardHeader title="Days off & time off" subtitle="Time off removes availability online and shows on the calendar with its reason. Requests barbers send come in on Time off." />
       <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="From">
           <Input type="date" value={from} onChange={(e) => (setFrom(e.target.value), e.target.value > to && setTo(e.target.value))} />
@@ -343,11 +356,11 @@ export function TimeOff({ staffId, shops, blocks }: { staffId: string; shops: { 
             ))}
           </Select>
         </Field>
-        <Field label="Reason" className="sm:col-span-2 lg:col-span-3">
-          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Vacation, training, appointment…" />
-        </Field>
+        <div className="sm:col-span-2 lg:col-span-3">
+          <ReasonPicker reasons={reasons} value={reasonId} onChange={setReasonId} note={note} onNote={setNote} notePlaceholder="e.g. Family trip" timeOff />
+        </div>
         <div className="flex items-end">
-          <Button className="w-full" disabled={pending || !!conflicts} onClick={() => add(false)}>
+          <Button className="w-full" disabled={pending || !!conflicts || !reasonId} onClick={() => add(false)}>
             Add
           </Button>
         </div>
@@ -374,7 +387,8 @@ export function TimeOff({ staffId, shops, blocks }: { staffId: string; shops: { 
         {blocks.map((b) => (
           <li key={b.id} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
             <Badge tone={b.kind === "day_off" ? "violet" : "amber"}>{b.kind === "day_off" ? "Day off" : "Block"}</Badge>
-            <span className="font-medium">{b.reason}</span>
+            <ReasonTag reason={b.reason} />
+            {b.reason.note && <span className="text-zinc-600">{b.reason.note}</span>}
             <span className="text-zinc-500">{b.label}</span>
             <span className="text-xs text-zinc-400">{b.shop}</span>
             <button className="ml-auto text-xs text-red-600 underline" disabled={pending} onClick={() => run(() => deleteTimeOffAction(b.id), "Removed")}>

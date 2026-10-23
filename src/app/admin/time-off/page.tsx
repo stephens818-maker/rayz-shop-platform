@@ -4,10 +4,11 @@ import { asc, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, staffShops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, PageHeader, Table, Td, Th, cx } from "@/components/ui";
-import { REASON_LABEL } from "@/domain/staff-time";
+import { ReasonDot, ReasonTag } from "@/components/reason-picker";
+import { reasonText } from "@/domain/block-reasons";
 import { LocalDate, WEEKDAYS, addDays, formatDate, minutesToLabel, todayLocal, weekdayOf } from "@/lib/time";
 import { timeOffDecisionDenied } from "@/server/auth/policy";
-import { approverOf, can, guardPage, reportShopIds } from "@/server/auth/staff";
+import { approverOf, can, guardPage, reasonViewer, reportShopIds } from "@/server/auth/staff";
 import { affectedByRequests, listRequests, rulesView, timeOffEntries } from "@/server/staff-time";
 import { RequestCard, RulesEditor } from "./client";
 
@@ -32,8 +33,8 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
   const canApprove = can(ctx, "timeoff.approve");
   const now = new Date();
   const [requests, off, shopRows, rules] = await Promise.all([
-    listRequests({ shopIds, brandWide: false }, { since: new Date(now.getTime() - 14 * 86_400_000) }),
-    timeOffEntries(shopIds, from, to),
+    listRequests({ shopIds, brandWide: false }, { viewer: reasonViewer(ctx), since: new Date(now.getTime() - 14 * 86_400_000) }),
+    timeOffEntries(shopIds, from, to, reasonViewer(ctx)),
     db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, ctx.shopIds)).orderBy(asc(shops.name)),
     can(ctx, "settings.shop") ? rulesView(ctx.shopIds) : Promise.resolve(null),
   ]);
@@ -105,7 +106,7 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
       <Card>
         <CardHeader
           title={`${formatDate(from, "MMMM yyyy")} · ${scopeLabel}`}
-          subtitle="Approved time off in solid, requests waiting for a manager dashed."
+          subtitle="Approved time off in solid, requests waiting for a manager dashed, each in its reason's color."
           action={
             <div className="flex gap-2 text-sm">
               <Link className="rounded-md px-2 py-1 ring-1 ring-zinc-300" href={href({ month: shiftMonth(month, -1) })}>
@@ -135,11 +136,14 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
                   {list.slice(0, 4).map((e) => (
                     <div
                       key={e.key}
-                      title={`${e.label}: ${e.reason}${e.partial ? ` ${minutesToLabel(e.partial.startMin)}–${minutesToLabel(e.partial.endMin % 1440)}` : ""}${e.status === "pending" ? " (waiting)" : ""}`}
-                      className={cx("truncate rounded px-1 py-0.5", e.status === "pending" ? "border border-dashed border-amber-400 text-amber-900" : "bg-violet-100 text-violet-900")}
+                      title={`${e.label}: ${reasonText(e.reason)}${e.partial ? ` ${minutesToLabel(e.partial.startMin)}–${minutesToLabel(e.partial.endMin % 1440)}` : ""}${e.status === "pending" ? " (waiting)" : ""}`}
+                      className={cx("flex items-center gap-1 truncate rounded px-1 py-0.5 text-zinc-900", e.status === "pending" ? "shade-reason-pending" : "shade-reason")}
+                      style={{ ["--reason" as string]: e.reason.color }}
                     >
-                      {e.label}
-                      {e.partial && " ½"}
+                      <span className="truncate">
+                        {e.label} · {e.reason.label}
+                        {e.partial && " ½"}
+                      </span>
                     </div>
                   ))}
                   {list.length > 4 && <div className="text-zinc-500">+{list.length - 4} more</div>}
@@ -175,7 +179,10 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
                     {e.fromDate === e.toDate ? formatDate(e.fromDate) : `${formatDate(e.fromDate)} – ${formatDate(e.toDate)}`}
                     {e.partial && `, ${minutesToLabel(e.partial.startMin)}–${minutesToLabel(e.partial.endMin % 1440)}`}
                   </Td>
-                  <Td>{e.reason}</Td>
+                  <Td>
+                    <ReasonTag reason={e.reason} />
+                    {e.reason.note && <div className="mt-0.5 text-xs text-zinc-500">{e.reason.note}</div>}
+                  </Td>
                   <Td>{e.shopId ? (shopName.get(e.shopId) ?? "Another shop") : "All their shops"}</Td>
                   <Td>{e.status === "pending" ? <Badge tone="amber">waiting</Badge> : <Badge tone="green">approved</Badge>}</Td>
                 </tr>
@@ -202,7 +209,11 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
                 <tr key={r.id}>
                   <Td className="font-medium">{r.staffLabel}</Td>
                   <Td>{r.range}</Td>
-                  <Td>{REASON_LABEL[r.reason]}</Td>
+                  <Td>
+                    <span className="inline-flex items-center gap-1.5">
+                      <ReasonDot color={r.reason.color} /> {reasonText(r.reason)}
+                    </span>
+                  </Td>
                   <Td>
                     {r.status}
                     {r.decidedBy && ` by ${r.decidedBy}`}

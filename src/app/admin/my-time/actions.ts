@@ -5,13 +5,15 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { timeBlockSeries, timeBlocks, timeOffRequests } from "@/db/schema";
-import { CATEGORY_LABEL, LUNCH_NOW_MIN, SelfBlockCategory, isSelfBlockCategory, isTimeOffReason, selfBlockProblem } from "@/domain/staff-time";
+import type { BlockReason } from "@/domain/block-reasons";
+import { LUNCH_NOW_MIN, selfBlockProblem } from "@/domain/staff-time";
 import { isValidLocalDate, localDateOf, localMinutesOf } from "@/lib/time";
 import { safe } from "@/server/action";
 import { workShopIds } from "@/server/auth/access";
 import { blockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, approverOf, authorize, blockCaller, can, requireStaff } from "@/server/auth/staff";
 import { staffWallTime } from "@/server/booking";
+import { lunchReason, usableReason } from "@/server/block-reasons";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { addBlock, cancelTimeOff, createSeries, endSeries, removeBlock, requestTimeOff, rulesFor } from "@/server/staff-time";
 
@@ -24,39 +26,41 @@ function refresh() {
 }
 
 /** Your own block, at every shop you work at. Held to the shop's limits unless you can block anyone's time. */
-async function ownBlock(ctx: StaffContext, category: SelfBlockCategory, startsAt: Date, endsAt: Date, reason: string, confirm: boolean, via: string) {
+async function ownBlock(ctx: StaffContext, reason: BlockReason, startsAt: Date, endsAt: Date, note: string | null, confirm: boolean, via: string) {
   const me = ctx.staff.id;
   const denied = blockChangeDenied(blockCaller(ctx), { staffId: me, shopId: null }, await workShopIds(me));
   if (denied) throw forbidden(denied);
   if (!can(ctx, "blocks.others")) {
-    const problem = selfBlockProblem(await rulesFor(me, null), category, Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000));
+    const problem = selfBlockProblem(await rulesFor(me, null), reason.countsAsLunch, Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000));
     if (problem) throw new AppError("bad_request", problem);
   }
-  const r = await addBlock({ staffId: me, shopId: null, startsAt, endsAt, category, reason: reason.trim() || CATEGORY_LABEL[category] }, { actor: ctx.actor, confirm, via });
+  const r = await addBlock({ staffId: me, shopId: null, startsAt, endsAt, reasonId: reason.id, note }, { actor: ctx.actor, confirm, via });
   if (r.done) refresh();
   return { saved: r.done, conflicts: r.conflicts };
 }
 
+const ReasonId = z.string("Pick a reason").uuid("Pick a reason");
+const Note = z.string().max(200, "Keep the note to 200 characters").nullable().optional().default(null);
+
 const Quick = z.object({
-  category: z.string(),
+  reasonId: ReasonId,
+  note: Note,
   date: z.string().refine(isValidLocalDate, "Pick a date"),
   startMin: z.number().int().min(0).max(24 * 60 - 1),
   minutes: z.number().int().min(5, "At least 5 minutes").max(12 * 60),
-  reason: z.string().optional().default(""),
   confirm: z.boolean().optional().default(false),
 });
 
-/** Lunch, a break, personal or other time from a start and a length. */
+/** A block from a start and a length, for a reason on the brand's list. */
 export async function quickBlockAction(input: z.input<typeof Quick>) {
   return safe(async () => {
     const ctx = await authorize(BLOCKERS, "You can't block out your own time");
     const v = Quick.parse(input);
-    if (!isSelfBlockCategory(v.category)) throw new AppError("bad_request", "Pick lunch, break, personal or other");
-    if (v.category === "other" && !v.reason.trim()) throw new AppError("bad_request", "Add a reason for the block");
+    const reason = await usableReason(v.reasonId, "blocks");
     const startsAt = staffWallTime(v.date, v.startMin);
     const endsAt = new Date(startsAt.getTime() + v.minutes * 60_000);
     if (endsAt <= new Date()) throw new AppError("bad_request", "That time has already passed");
-    return ownBlock(ctx, v.category, startsAt, endsAt, v.reason, v.confirm, "my_time");
+    return ownBlock(ctx, reason, startsAt, endsAt, v.note, v.confirm, "my_time");
   });
 }
 
@@ -68,7 +72,7 @@ export async function lunchNowAction(confirm = false) {
     const startsAt = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
     const rules = await rulesFor(ctx.staff.id, null);
     const minutes = can(ctx, "blocks.others") ? LUNCH_NOW_MIN : Math.min(LUNCH_NOW_MIN, rules.maxLunchMin);
-    const r = await ownBlock(ctx, "lunch", startsAt, new Date(startsAt.getTime() + minutes * 60_000), "Lunch", confirm, "lunch_now");
+    const r = await ownBlock(ctx, await lunchReason(), startsAt, new Date(startsAt.getTime() + minutes * 60_000), null, confirm, "lunch_now");
     return { ...r, until: localMinutesOf(new Date(startsAt.getTime() + minutes * 60_000)), date: localDateOf(startsAt) };
   });
 }
@@ -87,8 +91,8 @@ export async function removeMyBlockAction(id: string) {
 }
 
 const Series = z.object({
-  category: z.string(),
-  reason: z.string().optional().default(""),
+  reasonId: ReasonId,
+  note: Note,
   weekdays: z.array(z.number().int().min(0).max(6)).min(1, "Pick at least one day"),
   startMin: z.number().int().min(0).max(24 * 60),
   endMin: z.number().int().min(0).max(24 * 60),
@@ -102,17 +106,16 @@ export async function createMySeriesAction(input: z.input<typeof Series>) {
   return safe(async () => {
     const ctx = await authorize(BLOCKERS, "You can't block out your own time");
     const v = Series.parse(input);
-    if (!isSelfBlockCategory(v.category)) throw new AppError("bad_request", "Pick lunch, break, personal or other");
-    if (v.category === "other" && !v.reason.trim()) throw new AppError("bad_request", "Add a reason for the block");
+    const reason = await usableReason(v.reasonId, "blocks");
     const me = ctx.staff.id;
     const denied = blockChangeDenied(blockCaller(ctx), { staffId: me, shopId: null }, await workShopIds(me));
     if (denied) throw forbidden(denied);
     if (!can(ctx, "blocks.others")) {
-      const problem = selfBlockProblem(await rulesFor(me, null), v.category, v.endMin - v.startMin);
+      const problem = selfBlockProblem(await rulesFor(me, null), reason.countsAsLunch, v.endMin - v.startMin);
       if (problem) throw new AppError("bad_request", problem);
     }
     const r = await createSeries(
-      { staffId: me, shopId: null, category: v.category, reason: v.reason.trim() || CATEGORY_LABEL[v.category], weekdays: v.weekdays, startMin: v.startMin, endMin: v.endMin, startsOn: v.startsOn, endsOn: v.endsOn },
+      { staffId: me, shopId: null, reasonId: reason.id, note: v.note, weekdays: v.weekdays, startMin: v.startMin, endMin: v.endMin, startsOn: v.startsOn, endsOn: v.endsOn },
       { actor: ctx.actor, confirm: v.confirm },
     );
     if (r.done) refresh();
@@ -140,8 +143,8 @@ const Request = z.object({
   allDay: z.boolean(),
   startMin: z.number().int().min(0).max(24 * 60).optional(),
   endMin: z.number().int().min(0).max(24 * 60).optional(),
-  reason: z.string(),
-  note: z.string().max(500).optional().default(""),
+  reasonId: ReasonId,
+  note: Note,
   confirm: z.boolean().optional().default(false),
 });
 
@@ -150,7 +153,6 @@ export async function requestTimeOffAction(input: z.input<typeof Request>) {
   return safe(async () => {
     const ctx = await authorize("timeoff.request", "You can't request time off");
     const v = Request.parse(input);
-    if (!isTimeOffReason(v.reason)) throw new AppError("bad_request", "Pick vacation, sick, personal or other");
     const mine = await workShopIds(ctx.staff.id);
     if (!mine.length) throw forbidden("You aren't on any shop's team yet");
     if (v.shopId && !mine.includes(v.shopId)) throw forbidden("You don't work at that shop");
@@ -158,7 +160,7 @@ export async function requestTimeOffAction(input: z.input<typeof Request>) {
       ? { fromDate: v.fromDate, toDate: v.toDate, startMin: null, endMin: null }
       : { fromDate: v.fromDate, toDate: v.fromDate, startMin: v.startMin ?? null, endMin: v.endMin ?? null };
     const r = await requestTimeOff(
-      { staffId: ctx.staff.id, shopId: v.shopId, range, reason: v.reason, note: v.note },
+      { staffId: ctx.staff.id, shopId: v.shopId, range, reasonId: v.reasonId, note: v.note },
       { actor: ctx.actor, confirm: v.confirm, enforceNotice: true },
     );
     if (r.done) {
