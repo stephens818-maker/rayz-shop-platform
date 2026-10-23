@@ -1,0 +1,434 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui";
+import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
+import { formatDate, formatDateTime } from "@/lib/time";
+import { can, guardPage } from "@/server/auth/staff";
+import { buildPayroll, periodChoices, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { LockButton, OverrideForm } from "./client";
+
+export const metadata: Metadata = { title: "Payroll report" };
+
+const hrs = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = (x: number | null) => (x === null ? "—" : `${(x * 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`);
+const ratio = (x: number | null) => (x === null ? "—" : hrs(x));
+const cell = (k: string, v: number) => (HOUR_COLUMNS.has(k) ? hrs(v) : fmtMoney(v));
+
+type Col = { key: keyof Line & string; label: string; fmt: (l: Line) => string; total?: (t: Totals) => string; extra?: boolean };
+const COLS: Col[] = [
+  { key: "hours", label: COLUMN_LABEL.hours, fmt: (l) => hrs(l.hours), total: (t) => hrs(t.hours) },
+  { key: "wage", label: COLUMN_LABEL.wage, fmt: (l) => fmtMoney(l.wage) },
+  { key: "hourlyTotal", label: COLUMN_LABEL.hourlyTotal, fmt: (l) => fmtMoney(l.hourlyTotal), total: (t) => fmtMoney(t.hourlyTotal) },
+  { key: "service", label: COLUMN_LABEL.service, fmt: (l) => fmtMoney(l.service), total: (t) => fmtMoney(t.service) },
+  { key: "grossPerHour", label: COLUMN_LABEL.grossPerHour, fmt: (l) => ratio(l.grossPerHour), total: (t) => ratio(t.grossPerHour) },
+  { key: "servicePct", label: COLUMN_LABEL.servicePct, fmt: (l) => pct(l.servicePct) },
+  { key: "commission", label: COLUMN_LABEL.commission, fmt: (l) => fmtMoney(l.commission), total: (t) => fmtMoney(t.commission) },
+  { key: "serviceTotal", label: COLUMN_LABEL.serviceTotal, fmt: (l) => fmtMoney(l.serviceTotal), total: (t) => fmtMoney(t.serviceTotal) },
+  { key: "product", label: COLUMN_LABEL.product, fmt: (l) => fmtMoney(l.product), total: (t) => fmtMoney(t.product) },
+  { key: "productPct", label: COLUMN_LABEL.productPct, fmt: (l) => pct(l.productPct) },
+  { key: "productTotal", label: COLUMN_LABEL.productTotal, fmt: (l) => fmtMoney(l.productTotal), total: (t) => fmtMoney(t.productTotal) },
+  { key: "netComm", label: COLUMN_LABEL.netComm, fmt: (l) => fmtMoney(l.netComm), total: (t) => fmtMoney(t.netComm) },
+  { key: "totalWages", label: COLUMN_LABEL.totalWages, fmt: (l) => fmtMoney(l.totalWages), total: (t) => fmtMoney(t.totalWages) },
+  { key: "pctOfGross", label: COLUMN_LABEL.pctOfGross, fmt: (l) => pct(l.pctOfGross), total: (t) => pct(t.pctOfGross) },
+  { key: "ptoHours", label: COLUMN_LABEL.ptoHours, fmt: (l) => hrs(l.ptoHours), total: (t) => hrs(t.ptoHours) },
+  { key: "otHours", label: COLUMN_LABEL.otHours, fmt: (l) => hrs(l.otHours), total: (t) => hrs(t.otHours) },
+  { key: "tips", label: COLUMN_LABEL.tips, fmt: (l) => fmtMoney(l.tips), total: (t) => fmtMoney(t.tips) },
+  { key: "trainingHours", label: COLUMN_LABEL.trainingHours, fmt: (l) => hrs(l.trainingHours), total: (t) => hrs(t.trainingHours) },
+  { key: "otPay", label: COLUMN_LABEL.otPay, fmt: (l) => fmtMoney(l.otPay), total: (t) => fmtMoney(t.otPay), extra: true },
+  { key: "trainingPay", label: COLUMN_LABEL.trainingPay, fmt: (l) => fmtMoney(l.trainingPay), total: (t) => fmtMoney(t.trainingPay), extra: true },
+  { key: "laborCost", label: COLUMN_LABEL.laborCost, fmt: (l) => fmtMoney(l.laborCost), total: (t) => fmtMoney(t.laborCost), extra: true },
+];
+
+export default async function PayrollReportPage({ searchParams }: { searchParams: Promise<{ period?: string }> }) {
+  const sp = await searchParams;
+  const ctx = await guardPage("/admin/payroll/report");
+  const choices = await periodChoices();
+  const current = choices.findIndex((c) => c.current);
+  const chosen = choices.find((c) => c.key === sp.period) ?? choices[current + 1] ?? choices[0];
+  const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
+  const canRun = can(ctx, "payroll.run");
+  const canApprove = can(ctx, "payroll.approve");
+
+  return (
+    <div className="mx-auto max-w-[1400px]">
+      <PageHeader
+        title="Payroll report"
+        subtitle={
+          chosen && (
+            <>
+              {formatDate(chosen.start, "MMM d")} – {formatDate(chosen.end, "MMM d, yyyy")} · {periodNumbers(chosen.groups)} · bi-weekly, Sunday to Saturday
+            </>
+          )
+        }
+        actions={
+          view && view.locked === "none" && canApprove ? (
+            <LockButton
+              start={view.start}
+              end={view.end}
+              label={`${formatDate(view.start, "MMM d")} – ${formatDate(view.end, "MMM d")} for ${view.blocks.length} shop${view.blocks.length === 1 ? "" : "s"}`}
+              blocked={view.mismatches.length ? `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile` : null}
+            />
+          ) : undefined
+        }
+      />
+      <div className="no-print mb-4 flex flex-wrap gap-1.5">
+        {choices.slice(0, 8).map((c) => (
+          <Link
+            key={c.key}
+            href={`/admin/payroll/report?period=${c.key}`}
+            className={cx("rounded-full px-3 py-1 text-sm ring-1", c.key === chosen?.key ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
+          >
+            {formatDate(c.start, "MMM d")} – {formatDate(c.end, "MMM d")}
+            {c.current && " · current"}
+            {c.lockedGroups > 0 && (c.lockedGroups === c.groups.length ? " · locked" : ` · ${c.lockedGroups} locked`)}
+          </Link>
+        ))}
+      </div>
+      {!view ? (
+        <Notice>No shop has a pay period with those dates.</Notice>
+      ) : (
+        <Report view={view} canRun={canRun} />
+      )}
+    </div>
+  );
+}
+
+function periodNumbers(groups: { label: string; number: number; checkDate: string }[]) {
+  const by = new Map<string, string[]>();
+  for (const g of groups) {
+    const k = `period ${String(g.number).padStart(2, "0")}, check ${formatDate(g.checkDate, "EEE MMM d")}`;
+    by.set(k, [...(by.get(k) ?? []), g.label]);
+  }
+  const parts = [...by.entries()];
+  return parts.length === 1 ? parts[0][0] : parts.map(([k, labels]) => `${labels.join(", ")}: ${k}`).join(" · ");
+}
+
+function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
+  const lockedAt = view.blocks.find((b) => b.locked)?.locked;
+  return (
+    <div className="space-y-4">
+      {view.locked === "all" && lockedAt ? (
+        <Notice tone="green">
+          Approved and locked {formatDateTime(lockedAt.at)}
+          {lockedAt.by && ` by ${lockedAt.by}`}. Everything below, and each shop&apos;s file, is exactly what was approved. Upload each file in iSolved (Timecard Import), picking that shop&apos;s pay
+          group.
+        </Notice>
+      ) : view.mismatches.length ? (
+        <Card>
+          <CardHeader title="Totals don't reconcile: approve and lock is blocked" subtitle="Every total has to equal the sum of its rows, each shop's export has to add up to the report, and the Locations totals to the shops. Tolerance: $0.00." />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-red-50 text-left text-xs text-red-800">
+                <tr>
+                  <th className="px-3 py-2">Where</th>
+                  <th className="px-3 py-2">Column</th>
+                  <th className="px-3 py-2 text-right">Report</th>
+                  <th className="px-3 py-2 text-right">Should be</th>
+                  <th className="px-3 py-2 text-right">Difference</th>
+                </tr>
+              </thead>
+              <tbody>
+                {view.mismatches.map((m, i) => (
+                  <tr key={i} className="border-t border-zinc-100">
+                    <td className="px-3 py-1.5">{m.detail}</td>
+                    <td className="px-3 py-1.5">{m.column}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{m.report.toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{m.other.toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-right font-medium tabular-nums text-red-700">{(m.report - m.other).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      ) : (
+        <Notice tone="green">
+          Every total reconciles to the cent: each shop&apos;s totals are the sum of its rows, each shop&apos;s iSolved file adds up to its report columns, and the Locations totals are the sum
+          of the shops.{view.locked === "some" && " Some shops in this period are already locked."}
+        </Notice>
+      )}
+
+      <Locations view={view} />
+
+      {view.anomalies.length > 0 && (
+        <Card>
+          <CardHeader title={`Anomalies (${view.anomalies.length})`} subtitle="For review. None of these block the lock and none are changed automatically." />
+          <ul className="divide-y divide-zinc-100 text-sm">
+            {view.anomalies.map((a, i) => (
+              <li key={i} className="flex gap-2 px-4 py-2">
+                <Badge tone={a.kind === "owner_case" || a.kind === "netcomm_gap" || a.kind === "sales_without_hours" ? "amber" : "gray"}>{a.kind.replace(/_/g, " ")}</Badge>
+                <span>{a.message}</span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      <Notice tone="blue">
+        O.T. HRS come from the cross-shop rule: each Sunday–Saturday week, hours at every shop of the same legal entity add up, everything over {view.settings.otThresholdHours} is overtime, and
+        it&apos;s shared out to the shops by their share of that week&apos;s hours. O.T. Pay is {view.settings.otMultiplier} × base rate × those hours and is labor cost here; iSolved computes the
+        real OT itself (it may compute blended OT higher). The iSolved files carry OT <strong>hours</strong> only. Training Pay is {view.settings.trainingPayInCost ? "in" : "left out of"} labor
+        cost. Export values go out {view.settings.roundExport2dp ? "rounded to 2 decimals, half up" : "unrounded, exactly as computed"}.
+      </Notice>
+
+      {view.blocks.map((b) => (
+        <ShopBlockCard key={b.shopId} b={b} view={view} canRun={canRun} />
+      ))}
+    </div>
+  );
+}
+
+function Locations({ view }: { view: PayrollView }) {
+  return (
+    <Card>
+      <CardHeader title="Locations" subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Every number is a sum of the shop blocks below." />
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-50 text-left text-xs text-zinc-500">
+            <tr>
+              <th className="px-3 py-2">Location</th>
+              <th className="px-3 py-2 text-right">Service Sales</th>
+              <th className="px-3 py-2 text-right">Total Wages</th>
+              <th className="px-3 py-2 text-right">O.T. Pay</th>
+              <th className="px-3 py-2 text-right">Training Pay</th>
+              <th className="px-3 py-2 text-right">Employee Cost</th>
+              <th className="px-3 py-2 text-right">Gross Profit</th>
+              <th className="px-3 py-2 text-right">Cost % of Sales</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...view.blocks.map((b) => ({ name: b.shop, t: b.totals, locked: !!b.locked })), { name: "Total", t: view.grand, locked: false }].map((r) => (
+              <tr key={r.name} className={cx("border-t border-zinc-100", r.name === "Total" && "bg-zinc-50 font-semibold")}>
+                <td className="px-3 py-1.5">
+                  {r.name} {r.locked && <Badge tone="green">locked</Badge>}
+                </td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.service)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.totalWages)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.otPay)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.trainingPay)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.laborCost)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.grossProfit)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{pct(r.t.service ? r.t.laborCost / r.t.service : null)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; canRun: boolean }) {
+  const s = view.settings;
+  const downloadable = !!b.locked && canRun;
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <>
+            {b.shop} <span className="font-normal text-zinc-500">· pay group {b.payGroup} · period {String(b.period.number).padStart(2, "0")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
+          </>
+        }
+        subtitle={b.locked ? `Locked ${formatDateTime(b.locked.at)}${b.locked.by ? ` by ${b.locked.by}` : ""}` : "Open: live from hours, sales and overrides"}
+        action={
+          downloadable ? (
+            <a className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" href={`/admin/payroll/download?group=${b.payGroupId}&start=${view.start}&end=${view.end}`}>
+              Download iSolved file
+            </a>
+          ) : (
+            <span className="text-xs text-zinc-500">The iSolved file downloads after approve and lock.</span>
+          )
+        }
+      />
+      {b.lines.length === 0 ? (
+        <p className="px-4 py-3 text-sm text-zinc-500">No hours or sales at {b.shop} in this period. Its file would have the header row only.</p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full whitespace-nowrap text-xs">
+              <thead className="bg-zinc-50 text-left text-[11px] text-zinc-500">
+                <tr>
+                  <th className="sticky left-0 bg-zinc-50 px-2 py-2">Employee Name</th>
+                  {COLS.map((c) => (
+                    <th key={c.key} className={cx("px-2 py-2 text-right", c.extra && "bg-sky-50 text-sky-800")}>
+                      {c.label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {b.lines.map((l) => (
+                  <tr key={l.staffId} className="border-t border-zinc-100">
+                    <td className="sticky left-0 bg-white px-2 py-1.5 font-medium">
+                      <a href={`#${b.shopId}-${l.staffId}`} className="hover:underline">
+                        {l.name}
+                      </a>
+                      {l.overridden.length > 0 && <span title="Has typed-over values"> ✎</span>}
+                    </td>
+                    {COLS.map((c) => (
+                      <td key={c.key} className={cx("px-2 py-1.5 text-right tabular-nums", c.extra && "bg-sky-50/40", l.overridden.includes(c.key as never) && "bg-amber-50")}>
+                        {c.fmt(l)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-semibold">
+                  <td className="sticky left-0 bg-zinc-50 px-2 py-1.5">Total</td>
+                  {COLS.map((c) => (
+                    <td key={c.key} className="px-2 py-1.5 text-right tabular-nums">
+                      {c.total?.(b.totals) ?? ""}
+                    </td>
+                  ))}
+                </tr>
+                <tr className="bg-zinc-50">
+                  <td className="sticky left-0 bg-zinc-50 px-2 py-1.5">Gross Profit</td>
+                  <td colSpan={COLS.length} className="px-2 py-1.5 text-left tabular-nums">
+                    {fmtMoney(b.totals.service)} service − {fmtMoney(b.totals.laborCost)} labor cost = <strong>{fmtMoney(b.totals.grossProfit)}</strong>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="divide-y divide-zinc-100 border-t border-zinc-100">
+            {b.lines.map((l) => (
+              <details key={l.staffId} id={`${b.shopId}-${l.staffId}`} className="group px-4 py-2 text-sm">
+                <summary className="cursor-pointer select-none font-medium">
+                  {l.name}: {fmtMoney(l.laborCost)} labor cost
+                  {view.ft[l.staffId] && (
+                    <Badge tone={view.ft[l.staffId].fullTime ? "blue" : "gray"} className="ml-2">
+                      {view.ft[l.staffId].fullTime ? "Full time" : "Part time"}
+                    </Badge>
+                  )}
+                </summary>
+                <div className="mt-2 grid gap-4 lg:grid-cols-2">
+                  <div className="space-y-2">
+                    <p>
+                      <span className="font-medium">Labor cost</span> = Total Wages {fmtMoney(l.totalWages)} + O.T. Pay {fmtMoney(l.otPay)} + Training Pay {fmtMoney(l.trainingPay)} ={" "}
+                      <strong>{fmtMoney(l.laborCost)}</strong>
+                    </p>
+                    <p>
+                      <span className="font-medium">O.T. Pay</span> = {s.otMultiplier} × {fmtMoney(l.wage)} base rate × {hrs(l.otHours)} OT hours = {fmtMoney(l.otPay)}.{" "}
+                      <span className="text-amber-800">iSolved may compute blended OT higher.</span>
+                    </p>
+                    <p>
+                      <span className="font-medium">Training Pay</span>:{" "}
+                      {s.trainingPayInCost
+                        ? `${hrs(l.trainingHours)} h × ${fmtMoney(l.input.trainingRate ?? l.wage)}${l.input.trainingRate === null ? " (hourly rate)" : " training rate"} = ${fmtMoney(l.trainingPay)}`
+                        : "left out of labor cost (setting)"}
+                      {!s.trainingCountsTowardOt && l.trainingHours > 0 && " · training doesn't count toward the weekly 40 (C2 off, Q11)"}
+                    </p>
+                    {view.ft[l.staffId] && (
+                      <p>
+                        <span className="font-medium">{view.ft[l.staffId].fullTime ? "Full time" : "Part time"}</span>: averaged {hrs(view.ft[l.staffId].averageHours)} h/week over the last{" "}
+                        {view.ft[l.staffId].weeks} weeks ({FT_BASIS_LABEL[s.ftBasis].toLowerCase()}); full time is more than {s.ftHoursPerWeek}. Pending Charles.
+                      </p>
+                    )}
+                    <p className="text-xs text-zinc-500">
+                      Worked {hrs(l.input.workedHours)} h at {b.shop} this period = {hrs(l.hours)} regular + {hrs(l.otHours)} OT. Gross service {fmtMoney(l.service)} (card + cash + gift card,
+                      before tax and tips).
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    {(view.weeks[l.staffId] ?? []).length > 0 && (
+                      <table className="w-full text-xs">
+                        <thead className="text-left text-zinc-500">
+                          <tr>
+                            <th className="py-1">Week of</th>
+                            <th className="py-1">Shop</th>
+                            <th className="py-1 text-right">Hours toward 40</th>
+                            <th className="py-1 text-right">OT share</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {view.weeks[l.staffId].flatMap((w) => [
+                            ...w.slices.map((x, i) => (
+                              <tr key={`${w.weekStart}-${i}`} className={cx(!x.inThisRun && "text-zinc-400")}>
+                                <td className="py-0.5">{i === 0 ? formatDate(w.weekStart, "MMM d") : ""}</td>
+                                <td className="py-0.5">
+                                  {x.shop}
+                                  {x.periodStart !== view.start && ` (period from ${formatDate(x.periodStart, "MMM d")})`}
+                                  {x.locked && " · locked"}
+                                </td>
+                                <td className="py-0.5 text-right tabular-nums">{hrs(x.basis)}</td>
+                                <td className="py-0.5 text-right tabular-nums">{hrs(x.ot)}</td>
+                              </tr>
+                            )),
+                            <tr key={`${w.weekStart}-t`} className="border-b border-zinc-100 font-medium">
+                              <td />
+                              <td className="py-0.5">All shops</td>
+                              <td className="py-0.5 text-right tabular-nums">{hrs(w.basis)}</td>
+                              <td className="py-0.5 text-right tabular-nums">{hrs(w.ot)}</td>
+                            </tr>,
+                          ])}
+                        </tbody>
+                      </table>
+                    )}
+                    {canRun && !b.locked ? (
+                      <OverrideForm shopId={b.shopId} periodStart={view.start} staffId={l.staffId} current={l.input.overrides ?? {}} />
+                    ) : (
+                      Object.entries(l.input.overrides ?? {}).map(([k, o]) => (
+                        <p key={k} className="text-xs">
+                          Typed over: {k} = {o!.value} ({o!.reason})
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </details>
+            ))}
+          </div>
+        </>
+      )}
+      <ExportPreview b={b} />
+    </Card>
+  );
+}
+
+function ExportPreview({ b }: { b: BlockView }) {
+  return (
+    <details className="border-t border-zinc-100 px-4 py-2 text-sm">
+      <summary className="cursor-pointer select-none font-medium">
+        iSolved file: sheet &quot;{b.exportTab}&quot;, {b.exportRows.length} row{b.exportRows.length === 1 ? "" : "s"}, values exactly as they go in the file
+      </summary>
+      <div className="mt-2 overflow-x-auto">
+        <table className="whitespace-nowrap font-mono text-[11px]">
+          <thead>
+            <tr className="bg-zinc-100">
+              <th className="px-2 py-1 text-left">Key</th>
+              <th className="px-2 py-1 text-left" />
+              {EXPORT_COLUMNS.map((c) => (
+                <th key={c.header} className="px-2 py-1 text-right">
+                  {c.header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {b.exportRows.map((r) => (
+              <tr key={r.staffId} className="border-t border-zinc-100">
+                <td className="px-2 py-0.5">{r.key === null ? <span className="text-red-700">missing</span> : typeof r.key === "string" ? `"${r.key}"` : r.key}</td>
+                <td className="px-2 py-0.5">{r.isolvedName}</td>
+                {r.values.map((v, i) => (
+                  <td key={i} className="px-2 py-0.5 text-right">
+                    {String(v)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            <tr className="border-t border-zinc-300 text-zinc-500">
+              <td className="px-2 py-0.5" colSpan={2}>
+                Adds up to (not in the file)
+              </td>
+              {EXPORT_COLUMNS.map((c, i) => (
+                <td key={c.header} className="px-2 py-0.5 text-right">
+                  {cell(c.from, b.exportRows.reduce((a, r) => a + r.values[i], 0))}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}

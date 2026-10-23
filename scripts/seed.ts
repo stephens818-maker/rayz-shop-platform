@@ -8,7 +8,7 @@ import { DEFAULT_LOYALTY, accrue, rewardExpiry } from "@/domain/loyalty";
 import { ROLE_TEMPLATES, templateFor, templateRow } from "@/domain/permissions";
 import { appointmentCode, giftCardCode, slugify, staffPublicSlug } from "@/lib/ids";
 import { simulateConnectHistory } from "@/server/payments/connect";
-import { addDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+import { addDays, diffDays, localDateOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "rayz2026!";
@@ -669,6 +669,8 @@ async function main() {
     await db.insert(t.staffAccessShops).values({ staffId: row.id, shopId: shop.id });
   }
 
+  await seedPayroll({ now, staffByKey, shopBySlug, scheduleRows });
+
   console.log("Seed complete.");
   console.log(`  Logins (password: ${DEMO_PASSWORD}):`);
   console.log("    owner@rayz.test      Brand Owner, every shop");
@@ -680,6 +682,84 @@ async function main() {
   console.log("    manager.moline@rayz.test  Shop Manager, Moline");
   console.log("    kat@rayz.test        Barber at Moline and Silvis, Shop Manager at Rock Island (one shop at a time)");
   console.log(`    <shop>@rayz.test     Shop login (front desk) for one shop: ${SHOPS.map((s) => s.slug).join(", ")}`);
+}
+
+/**
+ * Payroll sample data, all made up: iSolved-style employee numbers, pay rates, and clocked hours from
+ * each barber's schedule over the sample history (some long weeks, so cross-shop overtime shows up),
+ * a little training and PTO, the owner's hours at $0 (Q17), and one NetComm typed over (Q17).
+ * Deterministic, and run last, so nothing above changes.
+ */
+async function seedPayroll(o: {
+  now: Date;
+  staffByKey: Map<string, typeof t.staff.$inferSelect>;
+  shopBySlug: Map<string, Shop>;
+  scheduleRows: { staffId: string; shopId: string; weekday: number; startMin: number; endMin: number }[];
+}) {
+  const { now, staffByKey, shopBySlug, scheduleRows } = o;
+  const today = todayLocal(now);
+  const people = STAFF.filter((s) => s.active !== false);
+  await db.insert(t.payrollProfiles).values(
+    people.map((s, i) => ({
+      staffId: staffByKey.get(s.key)!.id,
+      employeeNumber: String(910100 + i * 7),
+      keyIsText: i % 5 === 2,
+      isolvedName: s.displayLabel.toUpperCase(),
+      exportPosition: i,
+    })),
+  );
+  await db.insert(t.payrollRates).values(
+    people.map((s) =>
+      s.key === "charles"
+        ? { staffId: staffByKey.get(s.key)!.id, hourlyRate: 0, servicePct: 0, productPct: 0 }
+        : { staffId: staffByKey.get(s.key)!.id, hourlyRate: s.key === "casey" ? 25 : s.key === "makenna" ? 16 : 15.5, servicePct: 0.4, productPct: 0.15, trainingRate: s.key === "jamie" ? 12 : null },
+    ),
+  );
+
+  const entries: (typeof t.timeEntries.$inferInsert)[] = [];
+  const staffIndex = new Map(people.map((s, i) => [staffByKey.get(s.key)!.id, i]));
+  for (let d = -HISTORY_DAYS; d < 0; d++) {
+    const date = addDays(today, d);
+    const wd = weekdayOf(date);
+    for (const r of scheduleRows) {
+      if (r.weekday !== wd) continue;
+      const i = staffIndex.get(r.staffId) ?? 0;
+      if ((d + i * 3) % 11 === 0) continue;
+      const day = startOfLocalDay(date).getTime();
+      const late = ((d * 7 + i) % 4) * 5;
+      entries.push({ staffId: r.staffId, shopId: r.shopId, kind: "worked", source: "clock", startsAt: new Date(day + (r.startMin + late) * 60_000), endsAt: new Date(day + (r.endMin + 10) * 60_000) });
+    }
+  }
+  // The owner's 80 hours a period at Rock Island, at $0 (Q17 is with Charles).
+  const charles = staffByKey.get("charles")!.id;
+  for (let d = -HISTORY_DAYS; d < 0; d++) {
+    const date = addDays(today, d);
+    if (weekdayOf(date) === 0 || weekdayOf(date) === 6) continue;
+    const day = startOfLocalDay(date).getTime();
+    entries.push({ staffId: charles, shopId: shopBySlug.get("rock-island")!.id, kind: "worked", source: "import", startsAt: new Date(day + 9 * 3600_000), endsAt: new Date(day + 17 * 3600_000) });
+  }
+  // Training and PTO.
+  const jamie = staffByKey.get("jamie")!.id;
+  for (const d of [-20, -13, -6]) {
+    const day = startOfLocalDay(addDays(today, d)).getTime();
+    entries.push({ staffId: jamie, shopId: shopBySlug.get("moline")!.id, kind: "training", source: "import", startsAt: new Date(day + 7 * 3600_000), endsAt: new Date(day + 8.75 * 3600_000), note: "New-hire training" });
+  }
+  const makenna = staffByKey.get("makenna")!.id;
+  const ptoDay = startOfLocalDay(addDays(today, -9)).getTime();
+  entries.push({ staffId: makenna, shopId: shopBySlug.get("coralville")!.id, kind: "pto", source: "manual", startsAt: new Date(ptoDay + 9 * 3600_000), endsAt: new Date(ptoDay + 17 * 3600_000) });
+  await chunked(entries, 2000, (c) => db.insert(t.timeEntries).values(c));
+
+  // A NetComm typed over the formula in the last closed period, as in the workbook (Q17): flagged, not fixed.
+  const closedStart = addDays("2026-10-18", Math.floor((diffDays(addDays(today, -14), "2026-10-18")) / 14) * 14);
+  await db.insert(t.payrollOverrides).values({
+    shopId: shopBySlug.get("coralville")!.id,
+    periodStart: closedStart,
+    staffId: makenna,
+    field: "netComm",
+    value: 150,
+    reason: "Typed in the workbook; pending Charles (Q17)",
+  });
+  console.log(`  payroll: ${people.length} profiles with sample employee numbers, ${entries.length} time entries (clocked, training, PTO), one NetComm override`);
 }
 
 type Shop = typeof t.shops.$inferSelect;

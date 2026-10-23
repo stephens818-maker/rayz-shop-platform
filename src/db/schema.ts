@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -58,10 +59,15 @@ export const brandSettings = pgTable("brand_settings", {
   /** How humans see a clock. 12h is the default. Customer copy reads this through formatDateTime. */
   timeFormat: text("time_format").$type<"12h" | "24h">().notNull().default("12h"),
   /**
-   * When the website, customer apps, and customer-facing payments and push go live together.
-   * Null means not launched. LAUNCH_AT in the environment overrides this.
+   * When the store apps leave the full-screen coming-soon state.
+   * Null means the apps are not released. LAUNCH_AT in the environment overrides this.
+   * A shop does not go live from this instant. Each shop has its own gate.
    */
   launchAt: ts("launch_at"),
+  /** Shown for a shop that is still on Squire. CLOSED_SHOP_COPY in the environment overrides this. */
+  closedShopCopy: text("closed_shop_copy"),
+  /** Payroll settings (PayrollSettings in src/domain/payroll/calc.ts); missing keys use the defaults. */
+  payroll: jsonb("payroll").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -120,8 +126,8 @@ export const shops = pgTable("shops", {
   /** When Squire online booking was frozen for this shop, before the delta import. */
   squireFrozenAt: ts("squire_frozen_at"),
   /**
-   * Null follows the brand LAUNCH_AT. Set it earlier to pilot this shop, or later to hold it back
-   * after the brand is open.
+   * Required per-shop gate. Null means this shop is still on Squire, even when the brand
+   * LAUNCH_AT has passed. Set it to open the shop. Set it in the future to roll the shop back.
    */
   launchAt: ts("launch_at"),
   /** block: a sale or adjustment that would take on-hand below zero is refused. warn: it goes through with a warning. */
@@ -1551,3 +1557,159 @@ export type Service = typeof services.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
 export type Customer = typeof customers.$inferSelect;
 export type Sale = typeof sales.$inferSelect;
+
+// ───────────────────────────── Payroll ─────────────────────────────
+
+/**
+ * Each shop is an iSolved pay group with its own pay calendar (Dubuque's differs from the rest).
+ * The label is whatever Charles calls the pay group; no iSolved IDs are stored in the repo.
+ * Shops of the same legal entity (one FEIN) share overtime across shops.
+ */
+export const payGroups = pgTable(
+  "pay_groups",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .unique()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    legalEntity: text("legal_entity").notNull().default("Ray'z Inc."),
+    /** The workbook tab this shop's export copies: its sheet name and formatting. */
+    exportTab: text("export_tab").notNull(),
+    /** First day of a known period, and that period's number in iSolved. */
+    anchorStart: date("anchor_start", { mode: "string" }).notNull(),
+    anchorNumber: integer("anchor_number").notNull(),
+    periodDays: integer("period_days").notNull().default(14),
+    checkOffsetDays: integer("check_offset_days").notNull().default(6),
+    numberResetsYearly: boolean("number_resets_yearly").notNull().default(true),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [check("pay_groups_period_days", sql`${t.periodDays} in (7, 14)`)],
+);
+
+/** Payroll identity. The iSolved Employee Number is the export's Key and lives only in the database. */
+export const payrollProfiles = pgTable("payroll_profiles", {
+  staffId: uuid("staff_id")
+    .primaryKey()
+    .references(() => staff.id, { onDelete: "cascade" }),
+  employeeNumber: text("employee_number"),
+  /** The Key cell is text, not a number, in the workbook (kept exactly as it is). */
+  keyIsText: boolean("key_is_text").notNull().default(false),
+  /** Column B of the export, as iSolved spells the name. */
+  isolvedName: text("isolved_name"),
+  /** Row order in the shop export (the workbook's order); ties and blanks go by name. */
+  exportPosition: integer("export_position"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Pay rates per barber, for every shop (shop null) or one shop. */
+export const payrollRates = pgTable(
+  "payroll_rates",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    hourlyRate: doublePrecision("hourly_rate").notNull().default(0),
+    servicePct: doublePrecision("service_pct").notNull().default(0),
+    productPct: doublePrecision("product_pct").notNull().default(0.15),
+    /** Null: training is paid at the hourly rate. */
+    trainingRate: doublePrecision("training_rate"),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("payroll_rates_uq").on(t.staffId, t.shopId).nullsNotDistinct()],
+);
+
+export const timeEntryKind = pgEnum("time_entry_kind", ["worked", "training", "pto"]);
+
+/** Clocked or imported time, by shop. Payroll and overtime are worked out from these. */
+export const timeEntries = pgTable(
+  "time_entries",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    kind: timeEntryKind("kind").notNull().default("worked"),
+    startsAt: ts("starts_at").notNull(),
+    endsAt: ts("ends_at").notNull(),
+    source: text("source").$type<"clock" | "import" | "manual">().notNull().default("manual"),
+    note: text("note"),
+    createdBy: uuid("created_by").references(() => staff.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("time_entries_starts_idx").on(t.startsAt),
+    index("time_entries_staff_idx").on(t.staffId),
+    check("time_entries_order", sql`${t.endsAt} > ${t.startsAt}`),
+  ],
+);
+
+/** A value typed over the computed one for one barber, shop and pay period, with the reason. */
+export const payrollOverrides = pgTable(
+  "payroll_overrides",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    field: text("field").notNull(),
+    value: doublePrecision("value").notNull(),
+    reason: text("reason").notNull(),
+    createdBy: uuid("created_by").references(() => staff.id),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("payroll_overrides_uq").on(t.shopId, t.periodStart, t.staffId, t.field)],
+);
+
+/**
+ * An approved and locked pay period for one pay group: the report rows, totals and export rows as
+ * they were approved, which is what the download serves from then on.
+ */
+export const payrollRuns = pgTable(
+  "payroll_runs",
+  {
+    id: id(),
+    payGroupId: uuid("pay_group_id")
+      .notNull()
+      .references(() => payGroups.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    periodNumber: integer("period_number").notNull(),
+    checkDate: date("check_date", { mode: "string" }).notNull(),
+    settings: jsonb("settings").notNull(),
+    snapshot: jsonb("snapshot").notNull(),
+    lockedAt: ts("locked_at").notNull().defaultNow(),
+    lockedBy: uuid("locked_by").references(() => staff.id),
+  },
+  (t) => [unique("payroll_runs_uq").on(t.payGroupId, t.periodStart)],
+);
+
+/** OT hours (hundredths) a locked period kept for one slice of a workweek, so a later period can't move them. */
+export const payrollLockedOt = pgTable(
+  "payroll_locked_ot",
+  {
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => payrollRuns.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    weekStart: date("week_start", { mode: "string" }).notNull(),
+    otCenti: integer("ot_centi").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.staffId, t.shopId, t.periodStart, t.weekStart] })],
+);
