@@ -116,6 +116,8 @@ const ids = {} as {
   vendor: string;
   service: string;
   molineBarber: string;
+  callIn: string;
+  thread: string;
   marks: Record<keyof typeof MARK, { appt: string; promo: string; sale: string }>;
 };
 let today: string;
@@ -277,6 +279,9 @@ async function seedCanaries() {
   )[0].id;
   ids.reason = (await m.db.db.query.blockReasons.findFirst({ where: eq(m.schema.blockReasons.key, "personal") }))!.id;
   await m.db.db.insert(m.schema.auditLog).values({ actorLabel: "test", shopId: cv, action: "test.canary", entity: "test", details: { note: CANARY.audit } });
+  const tomorrow = m.time.addDays(today, 1);
+  ids.callIn = (await (await import("@/server/call-ins")).markCallIn({ staffId: ids.barber, shopId: cv, kind: "sick", range: { fromDate: tomorrow, toDate: tomorrow, startMin: null, endMin: null } }, { actor })).callInId;
+  ids.thread = (await m.db.db.insert(m.schema.messageThreads).values({ shopId: cv, phone: CANARY.phone, customerId: client.id }).returning())[0].id;
 
   ids.marks = {} as typeof ids.marks;
   const [walkIn] = await m.db.db.insert(m.schema.customers).values({ firstName: "Marker", lastName: "Client", phone: "+13095557790", homeShopId: shop.moline }).returning();
@@ -441,6 +446,8 @@ function dynamicPages(): [string, Record<string, string>][] {
     ["/admin/customers/[id]", { id: ids.client }],
     ["/admin/inventory/[id]", { id: ids.product }],
     ["/admin/vendors/[id]", { id: ids.vendor }],
+    ["/admin/call-ins/[id]", { id: ids.callIn }],
+    ["/admin/inbox/[id]", { id: ids.thread }],
   ];
 }
 

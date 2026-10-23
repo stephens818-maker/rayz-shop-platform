@@ -123,8 +123,6 @@ async function mark(staffId: string, shopId: string | null, range: ReturnType<ty
   return acts.markCallInAction({ staffId, shopId, kind, ...range });
 }
 const send = (callInId: string, choices: { appointmentId: string; option: "reassign" | "rebook" | "voice" }[]) => acts.sendOutreachAction(callInId, choices);
-const callInFor = async (staffId: string, fromDate: string) =>
-  (await m.db.db.query.callIns.findFirst({ where: and(eq(m.schema.callIns.staffId, staffId), eq(m.schema.callIns.fromDate, fromDate), m.drizzle.isNull(m.schema.callIns.cancelledAt)) }))!;
 
 describe("marking a call-in", () => {
   it("writes the time off with the reason and lists every booked appointment in it; others' appointments and other days aren't touched", async () => {
