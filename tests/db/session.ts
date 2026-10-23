@@ -1,10 +1,13 @@
 /**
  * A fake cookie jar so tests can call admin pages, server actions and route handlers as a given
  * staff member. Test files mock next/headers with `headersMock` and sign in with `signInAs`.
+ * `jar.ip` is the address the hosting proxy reports, as on a deployment with one trusted proxy.
  */
-export const jar: { token?: string; shop?: string; device?: string; ip?: string } = {};
+export const jar: { token?: string; shop?: string; device?: string; ip?: string; trusted?: string; deviceRequest?: string; userAgent?: string } = {};
 
-const COOKIES = { rayz_session: "token", rayz_shop: "shop", rayz_clock_device: "device" } as const;
+process.env.TRUSTED_PROXY_HOPS ??= "1";
+
+const COOKIES = { rayz_session: "token", rayz_shop: "shop", rayz_clock_device: "device", rayz_trusted_device: "trusted", rayz_device_request: "deviceRequest" } as const;
 
 export const headersMock = {
   cookies: async () => ({
@@ -14,12 +17,15 @@ export const headersMock = {
       return value ? { name, value } : undefined;
     },
     set(name: string, value: string) {
-      if (name === "rayz_shop") jar.shop = value;
-      if (name === "rayz_clock_device") jar.device = value;
+      const key = COOKIES[name as keyof typeof COOKIES];
+      if (key && key !== "token") jar[key] = value;
     },
-    delete() {},
+    delete(c: string | { name: string }) {
+      const name = typeof c === "string" ? c : c.name;
+      if (name === "rayz_device_request") jar.deviceRequest = undefined;
+    },
   }),
-  headers: async () => new Headers(jar.ip ? { "x-forwarded-for": jar.ip } : {}),
+  headers: async () => new Headers({ ...(jar.ip ? { "x-forwarded-for": jar.ip } : {}), ...(jar.userAgent ? { "user-agent": jar.userAgent } : {}) }),
 };
 
 export async function signInAs(staffId: string | null, shop?: string) {
