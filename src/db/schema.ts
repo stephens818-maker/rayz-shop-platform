@@ -1247,7 +1247,7 @@ export const refunds = pgTable(
     createdBy: uuid("created_by"),
     createdAt: createdAt(),
   },
-  (t) => [index("refunds_shop_date_idx").on(t.shopId, t.businessDate)],
+  (t) => [index("refunds_shop_date_idx").on(t.shopId, t.businessDate), index("refunds_sale_idx").on(t.saleId)],
 );
 
 export const cashDrawers = pgTable(

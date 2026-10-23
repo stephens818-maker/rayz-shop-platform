@@ -532,3 +532,17 @@ describe("P2#29 stock and promo caps hold under concurrent checkouts", () => {
     expect(p!.redemptions).toBe(1);
   });
 });
+
+describe("append-only history", () => {
+  it("refuses to change or delete audit log and gift card ledger rows", async () => {
+    const sql = m.drizzle.sql;
+    const [a] = await m.db.db.insert(m.schema.auditLog).values({ action: "test.append_only", entity: "test" }).returning();
+    const [card] = await m.db.db.insert(m.schema.giftCards).values({ code: "APPENDONLY1", initialCents: 500, balanceCents: 500 }).returning();
+    const [g] = await m.db.db.insert(m.schema.giftCardLedger).values({ giftCardId: card.id, deltaCents: 500, kind: "issue" }).returning();
+    await expect(m.db.db.execute(sql`update audit_log set action = 'x' where id = ${a.id}`)).rejects.toThrow();
+    await expect(m.db.db.execute(sql`delete from audit_log where id = ${a.id}`)).rejects.toThrow();
+    await expect(m.db.db.execute(sql`update gift_card_ledger set delta_cents = 0 where id = ${g.id}`)).rejects.toThrow();
+    await expect(m.db.db.execute(sql`delete from gift_card_ledger where id = ${g.id}`)).rejects.toThrow();
+    expect((await m.db.db.select().from(m.schema.auditLog).where(eq(m.schema.auditLog.id, a.id)))[0].action).toBe(a.action);
+  });
+});

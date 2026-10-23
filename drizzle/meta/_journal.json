@@ -183,6 +183,13 @@
       "when": 1792743517735,
       "tag": "core_0025_call_ins",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792748968867,
+      "tag": "core_0026_append_only",
+      "breakpoints": true
     }
   ]
 }
