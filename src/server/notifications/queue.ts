@@ -4,7 +4,7 @@ import { EmailAttachment, brandSettings, contactOptOuts, notificationJobs, shops
 import { MergeValues, SavedTemplates, cutoffText, fill, isTemplateKind, templateFor } from "@/domain/message-templates";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
-import { emailProvider, smsProvider, voiceProvider } from "./providers";
+import { emailProvider, pushProvider, smsProvider, voiceProvider } from "./providers";
 
 export type NotificationKind =
   | "confirmation"
@@ -50,7 +50,9 @@ export type NotificationKind =
   /** The receipt a client asked for on the customer screen at checkout. */
   | "receipt"
   /** A location's Google review link, a set time after the visit (same for every client who agreed to texts or emails). */
-  | "review_request";
+  | "review_request"
+  /** Marketing / Engage: an automated campaign or a blast, only to clients who agreed to marketing on that channel. */
+  | "marketing";
 
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
 const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);
@@ -249,6 +251,7 @@ export async function processDueJobs(
   const sms = smsProvider();
   const email = emailProvider();
   const voice = voiceProvider();
+  const push = pushProvider();
   const stats = { sent: 0, suppressed: 0, failed: 0 };
 
   await db.transaction(async (tx) => {
@@ -277,7 +280,7 @@ export async function processDueJobs(
     );
 
     for (const job of due) {
-      const provider = job.channel === "sms" ? sms : job.channel === "voice" ? voice : email;
+      const provider = job.channel === "sms" ? sms : job.channel === "voice" ? voice : job.channel === "push" ? push : email;
       const stopped = (job.channel === "sms" && optedOut.has(`sms:${job.to}`)) || (job.channel === "voice" && AUTOMATED_CALLS.has(job.kind) && optedOut.has(`voice:${job.to}`));
       if (stopped) {
         await tx
@@ -304,7 +307,9 @@ export async function processDueJobs(
               ? AUTOMATED_CALLS.has(job.kind) && job.outreachId
                 ? await voice.outreachCall(job.to, { outreachId: job.outreachId, jobId: job.id, callerId: line })
                 : await voice.bridgeCall(job.to, job.subject, { jobId: job.id, callerId: line })
-              : await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body, job.attachments ?? []);
+              : job.channel === "push"
+                ? await push.sendPush(job.to, job.subject ?? "Ray'z Barber Shop", job.body)
+                : await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body, job.attachments ?? []);
         await tx
           .update(notificationJobs)
           .set({ status: "sent", sentAt: new Date(), provider: provider.name, providerMessageId: r.providerMessageId ?? null, attempts: job.attempts + 1 })

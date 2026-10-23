@@ -1869,7 +1869,7 @@ export const notificationJobs = pgTable(
     shopId: uuid("shop_id").references(() => shops.id),
     purchaseOrderId: uuid("purchase_order_id").references(() => purchaseOrders.id),
     kind: text("kind").notNull(), // confirmation | reminder_24h | reminder_2h | cancellation | reschedule | otp | waitlist_ready | purchase_order | low_stock | staff_text | staff_call | privacy_alert | digest | …
-    channel: text("channel").notNull(), // sms | email | voice
+    channel: text("channel").notNull(), // sms | email | voice | push
     to: text("to").notNull(),
     subject: text("subject"),
     body: text("body").notNull(),
@@ -2673,6 +2673,8 @@ export const marketingSends = pgTable(
     jobId: uuid("job_id").references(() => notificationJobs.id, { onDelete: "set null" }),
     couponCodeId: uuid("coupon_code_id").references(() => couponCodes.id, { onDelete: "set null" }),
     token: text("token").notNull().unique(),
+    /** Where the tracked link goes: the location's booking page, with the barber, service and coupon. */
+    bookPath: text("book_path"),
     clicks: integer("clicks").notNull().default(0),
     firstClickAt: ts("first_click_at"),
     costCents: doublePrecision("cost_cents").notNull().default(0),

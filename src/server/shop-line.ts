@@ -10,6 +10,9 @@ import { formatDate, formatTime, localDateOf } from "@/lib/time";
 import { SYSTEM, audit } from "./audit";
 import { answerByText, loadOutreachRules, noteInThread, openOutreachFor } from "./call-ins";
 import { logCall, logMessage, optedOut, queueShopText, recordOptIn, recordOptOut, sendDue, threadFor, updateCall } from "./messaging";
+import { resubscribePhone } from "./marketing/consent";
+import { stopFromText } from "./marketing/links";
+import { loadMarketingSettings } from "./marketing/settings";
 import { issueLink } from "./rebook-links";
 import { webhookUrl } from "./twilio/client";
 
@@ -51,14 +54,24 @@ export async function handleInboundSms(i: InboundSms, now = new Date()) {
   // Carriers and Twilio answer STOP, START and HELP themselves; the shop only records them.
   if (reply === "stop") {
     const ids = await recordOptOut(phone, "sms", "reply");
+    await stopFromText(phone, ids[0] ?? null, now);
     await logMessage(thread.id, { direction: "note", body: "Replied STOP: texts to this number are off until it replies START.", auto: true }, db, now);
     await audit(SYSTEM, "sms.opt_out", "message_thread", thread.id, { customers: ids.length }, shop.id);
     return { twiml: EMPTY_RESPONSE, threadId: thread.id, handled: reply };
   }
   if (reply === "start") {
     const ids = await recordOptIn(phone);
+    await resubscribePhone(phone);
     await logMessage(thread.id, { direction: "note", body: "Replied START: texts are back on.", auto: true }, db, now);
     await audit(SYSTEM, "sms.opt_in", "message_thread", thread.id, { customers: ids.length }, shop.id);
+    return { twiml: EMPTY_RESPONSE, threadId: thread.id, handled: reply };
+  }
+  if (reply === "help") {
+    // With Twilio Advanced Opt-Out on, Twilio answers HELP with the same text (set in the Messaging Service).
+    if (process.env.TWILIO_ADVANCED_OPT_OUT !== "1") {
+      const jobId = await queueShopText({ shopId: shop.id, to: phone, body: (await loadMarketingSettings()).helpText, kind: "shop_reply", auto: true }, db, now);
+      await sendDue([jobId]);
+    }
     return { twiml: EMPTY_RESPONSE, threadId: thread.id, handled: reply };
   }
   if (outreach && (reply === "accept" || reply === "decline")) {

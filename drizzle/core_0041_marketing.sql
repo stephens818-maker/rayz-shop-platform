@@ -96,6 +96,7 @@ CREATE TABLE "marketing_sends" (
 	"job_id" uuid REFERENCES "notification_jobs"("id") ON DELETE set null,
 	"coupon_code_id" uuid REFERENCES "coupon_codes"("id") ON DELETE set null,
 	"token" text NOT NULL UNIQUE,
+	"book_path" text,
 	"clicks" integer DEFAULT 0 NOT NULL,
 	"first_click_at" timestamp with time zone,
 	"cost_cents" double precision DEFAULT 0 NOT NULL,
