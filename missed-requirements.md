@@ -401,7 +401,16 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [ ] Whether the pause after a tap should cover every location (it's per location now, since each has its own Google listing), and whether walk-ins with no client on file should ever see the button (they count as a 1st visit).
 - [ ] Google doesn't report which reviews came from the link, so the report counts clicks, not reviews.
 
-## 21. Marketing / Engage
+## 21. Campaign Center
+
+Called "Marketing / Engage" in the first request; renamed to the Campaign Center everywhere it shows.
+
+**Name and permissions:**
+- [x] Nav section **Campaign Center** (Campaigns, Blasts, Settings), pages under `/admin/campaign-center`, the report **Campaign Center** at `/admin/reports/campaign-center`, the cron at `/api/cron/campaign-center`.
+- [x] Permissions **Campaign Center: view / create / send / export** (`campaign_center.*`), a **Campaign Center** group in the role editor, and the report permissions `report.campaign_center.view` and `.export`.
+- [x] Create and send are separate: create writes wording, coupons and blast drafts (with access to all shops, also the brand's version and Settings); send switches campaigns on or off and sends, schedules or cancels blasts.
+- [x] Migration `core_0042_campaign_center` renames the old keys in roles and per-person overrides, keeping what each person could do.
+- [x] Code-level names stay as they were (`src/server/marketing/`, `marketing_*` tables, the `marketing` notification kind). "Marketing" still appears in the UI where it means the legal category: marketing consent, marketing texts and emails.
 
 **Coupons:**
 - [x] Percent off, dollars off, or a free add-on, service or product (taken off at its price; online booking adds it for the client).
@@ -450,7 +459,7 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 **Compliance and consent:**
 - [x] Marketing consent is separate from appointment messages. It's read from PR #8's columns; nothing goes out until they exist.
 - [x] Texts:
-  - STOP, START and HELP on the shop line (HELP text in Marketing rules, or Twilio Advanced Opt-Out);
+  - STOP, START and HELP on the shop line (HELP text in Campaign Center → Settings, or Twilio Advanced Opt-Out);
   - texts must say how to opt out.
 - [x] Email:
   - one-click unsubscribe and the brand's postal address in every message;
@@ -459,7 +468,7 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [x] Frequency caps per client: 2 a week and 6 a month by default, including Today's texts.
 - [x] Contact lists:
   - Staff see counts only.
-  - Exports need `marketing.export` (Brand Owner unless granted), follow client-data settings, and are audited.
+  - Exports need **Campaign Center: export** (Brand Owner unless granted), follow client-data settings, and are audited.
 
 **Reporting:**
 - [x] Per campaign, location and barber:
@@ -470,18 +479,18 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [x] Attribution is last touch within 7 days (configurable). CSV export.
 
 **Engine and tests:**
-- [x] `/api/cron/marketing` every 15 minutes (Vercel Cron) and `pnpm worker`.
+- [x] `/api/cron/campaign-center` every 15 minutes (Vercel Cron) and `pnpm worker`.
 - [x] Idempotent sends: one row per client per occasion, under a per-client lock.
 - [x] Providers are stubs in dev.
-- [x] Tests: `tests/coupons.test.ts`, `tests/marketing.test.ts`, `tests/db/marketing.test.ts`. README: [Marketing / Engage](README.md#marketing--engage).
+- [x] Tests: `tests/coupons.test.ts`, `tests/marketing.test.ts`, `tests/db/marketing.test.ts`. README: [Campaign Center](README.md#campaign-center).
 
 **Still open:**
 - [ ] Marketing consent columns from PR #8 (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing`, `customer_devices`). The names are assumed until the mobile side confirms them, and the consent capture and TCPA wording are on the app side.
 - [ ] Before any location turns a campaign on:
   - an A2P 10DLC campaign registered with a marketing use case;
-  - the brand's postal address, under Marketing rules;
+  - the brand's postal address, under Campaign Center → Settings;
   - a real email provider (Postmark broadcast stream or Resend; both are stubs) and real push (Expo stub).
-- [ ] Message costs for ROI are estimates set under Marketing rules (1¢ a text, 0.1¢ an email by default); replace them with the real rates.
+- [ ] Message costs for ROI are estimates set under Campaign Center → Settings (1¢ a text, 0.1¢ an email by default); replace them with the real rates.
 - [ ] "Nearby" for announcements uses the shops' coordinates (clients of locations within the radius), since client addresses aren't used. The seeded coordinates are approximate.
 - [ ] "Finish your booking" only knows about the website's booking flow. App bookings would need to call `saveBookingDraft` (NOTES-SYNC).
 - [ ] Which campaigns to switch on, their wording and coupons per location.

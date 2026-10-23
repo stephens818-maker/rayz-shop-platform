@@ -26,7 +26,7 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts`, `core_0039_google_reviews`, `core_0040_review_visits` and `core_0041_marketing`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts`, `core_0039_google_reviews`, `core_0040_review_visits`, `core_0041_marketing` and `core_0042_campaign_center`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -271,12 +271,14 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
 - **Cron:** `/api/cron/notifications` runs `queueReviewFollowUps()` before sending due jobs.
 - **If the app shows a Leave a review link**, please link to `/receipt/{token}/review` (or use `receiptData(saleId).reviewUrl`, which applies the visit and pause rules; `reviewTiming(saleId)` says why it's held) so clicks are counted, and don't add a rating step in front of it.
 
-### Marketing / Engage (core)
+### Campaign Center (core)
+
+Called "Marketing / Engage" at first. The UI, routes, permissions and report now say Campaign Center; the code paths, tables and notification kind keep `marketing`.
 
 - **Code:**
   - Pure: `src/domain/coupons.ts` (`couponDiscount`, `couponProblem`, `stackProblem`, `couponSummary`, `uniqueCode`, `issuedExpiry`) and `src/domain/marketing.ts` (`TRIGGERS`, `render`/`fill`, `templatesProblem`, `inQuiet`, `nextSendAt`, `capProblem`, `pickChannel`, `SegmentSchema`, `dedupeKey`, `roi`).
   - Server: `src/server/coupons.ts`, `src/server/booking-drafts.ts`, and `src/server/marketing/` (`consent`, `audiences`, `engine`, `campaigns`, `links`, `report`, `settings`).
-  - Routes: `/api/cron/marketing`, `/m/{token}` and `/m/{token}/unsubscribe`, and `/admin/marketing/export`.
+  - Routes: `/admin/campaign-center` (campaigns, blasts, settings, `/export`), `/admin/reports/campaign-center`, `/api/cron/campaign-center`, and `/m/{token}` and `/m/{token}/unsubscribe` (unchanged, since they're in messages already sent).
   - Shared report helpers moved out of `reports.ts` into `report-sql.ts` and `available-minutes.ts`; `reports.ts` re-exports them.
 - **Schema** (`drizzle/core_0041_marketing.sql`):
   - `promo_codes` gains `free_item_kind`/`free_item_id` (type `free_item`), `service_ids`, `product_ids`, `shop_ids` (jsonb, empty means all), `min_spend_cents`, `max_per_customer`, `code_mode` (`shared|unique`), `valid_days`, `first_visit_only`, `stackable` (default true) and `auto_apply`. Existing codes are unchanged shared codes.
@@ -290,7 +292,7 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
   - `booking_drafts`: unfinished online bookings by a browser token.
   - `customer_tags`.
   - `brand_settings.marketing`: quiet hours, caps, postal address, HELP text, attribution days and costs.
-  - Permissions `marketing.view`/`.location`/`.manage`/`.export` and `report.marketing.view`/`.export`.
+  - Permissions, renamed by `drizzle/core_0042_campaign_center.sql` in `roles.permissions` and `staff.permission_overrides`: `campaign_center.view`, `.create`, `.send` and `.export` (labels "Campaign Center: view/create/send/export"), and `report.campaign_center.view`/`.export`. The old `marketing.location` and `marketing.manage` each became create plus send; `marketing.*` keys no longer exist.
 - **Consent (read-only for core):**
   - Marketing reach per channel reads the columns below. `consentColumns()` checks which exist once a minute; until they do, nobody qualifies.
     - `customers.sms_marketing_opt_in`
@@ -304,9 +306,9 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
   - STOP also adds an `sms` unsubscribe and cancels pending marketing jobs. START removes the STOP unsubscribes.
   - HELP gets the brand's HELP text unless `TWILIO_ADVANCED_OPT_OUT=1`.
 - **Audit actions:**
-  - Campaigns: `marketing.automation_saved`, `marketing.automation_on`/`_off`, `marketing.test_sent`.
-  - Blasts: `marketing.blast_created`, `_saved`, `_scheduled`, `_sent`, `_cancelled`.
-  - Other: `marketing.export`, `brand.marketing_rules`, `promo.create`/`.update`, `customer.tags`.
+  - Campaigns: `campaign_center.automation_saved`, `campaign_center.automation_on`/`_off`, `campaign_center.test_sent`.
+  - Blasts: `campaign_center.blast_created`, `_saved`, `_scheduled`, `_sent`, `_cancelled`.
+  - Other: `campaign_center.export`, `brand.campaign_center_settings`, `promo.create`/`.update`, `customer.tags`. Rows written before the rename keep their `marketing.*` and `brand.marketing_rules` names.
 - **If the app takes coupons or bookings:**
   - **Bookings:** check and hold a code with `checkBookingCoupon(shopSlug, code)` and `holdBookingCoupon(appointmentCode, code)` right after booking, so the POS picks it up.
   - **Checkout:** redeem only through checkout's `redeemCoupons` (it re-checks limits under a lock), and never increment `promo_codes.redemptions` yourself.
@@ -347,7 +349,7 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 - (core → mobile) Locations now have a lifecycle in `shops.status`: `setup` (hidden from clients), `live`, `closed` (temporary, with `closed_until` and `closed_note`) and `archived` (`active = false`, which a database check enforces). The pure rules are in `src/domain/location-lifecycle.ts`: `listedPublicly`, `takesOnlineBookings`, `closedOn` and `operational`. PR #8 adds `shops.launch_at` and `booking_mode` as a cutover gate from Squire. That's a separate question (which system takes the bookings), so they should be combined rather than replace each other. Please have `/api/v1` list and book only shops where both the cutover gate and `takesOnlineBookings` allow it. Archived shops should never appear. Temporarily closed shops can be listed with `closed_note`.
 - (core → mobile) Today's open-chair and rebook texts read `customers.sms_marketing_opt_in` from PR #8. They check for the column at runtime and send nothing until it exists. Core doesn't add the column; the consent UI and its capture are yours.
-- (core → mobile) Marketing (see "Marketing / Engage") reads these PR #8 names:
+- (core → mobile) The Campaign Center (see "Campaign Center") reads these PR #8 names:
   - `customers.sms_marketing_opt_in`, `email_marketing_opt_in` and `push_marketing` (booleans);
   - `customer_devices.push_enabled`, `revoked_at` and `last_seen_at`.
 
@@ -374,6 +376,14 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-23: core (Marketing renamed to the Campaign Center)
+
+- Nav **Campaign Center → Campaigns, Blasts, Settings**; pages under `/admin/campaign-center`, the report **Campaign Center** at `/admin/reports/campaign-center`, and the cron at `/api/cron/campaign-center` (`vercel.json`). The old routes never shipped, so there are no redirects.
+- Permissions **Campaign Center: view / create / send / export** (`campaign_center.*`) and `report.campaign_center.*`. Create and send are now separate: create writes and drafts (brand-level with access to all shops), send switches campaigns and sends, schedules or cancels blasts. Migration `core_0042_campaign_center` renames the old keys in roles and per-person overrides. If the app ever checks staff permissions, use the new names.
+- Audit actions renamed to `campaign_center.*` and `brand.campaign_center_settings`.
+- Tests: `tests/db/marketing.test.ts` (create and send apart, brand-wide create, the rename migration), `tests/permissions.test.ts` (templates replayed through the rename).
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written or migrated.
+
 ### 2026-10-23: core (Marketing / Engage)
 
 - **Coupons:**
@@ -382,7 +392,7 @@ If the mobile side means a specific registry from the plan, say which items it s
   - They lower loyalty's net service spend.
 - **Campaigns:** ten automated campaigns, switched on and worded per location, and blasts with a segment builder, preview, test send, schedule or send now.
 - **Engine:** consent from PR #8's columns only, STOP, HELP and unsubscribe, quiet hours (9 PM to 9 AM local), weekly and monthly caps, and idempotent sends on a 15-minute cron.
-- **Reporting:** a report by campaign, location and barber, and a contact export behind `marketing.export`.
+- **Reporting:** a report by campaign, location and barber, and a contact export behind `marketing.export` (now **Campaign Center: export**).
 - Migration `core_0041_marketing`. Tests: `tests/coupons.test.ts`, `tests/marketing.test.ts`, `tests/db/marketing.test.ts`.
 - **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts` (only imported, to read a signed-in customer for booking drafts), `importer.ts`, and no consent columns were written or migrated.
 

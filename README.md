@@ -176,7 +176,7 @@ The same step sets the **statement descriptor** (what clients see on their card 
 
 **Customer screen at checkout:** the brand's tip buttons are under **Setup → Shop settings → Tip buttons on the customer screen** (`handoff.settings`, brand-only). Each shop's **Customer screen at checkout** card (`settings.shop`) uses the brand's buttons or its own (percent or dollar amounts, up to 4, with custom and no tip on or off), and sets whether the tip is asked on the screen or on the Stripe Terminal reader, whether the client signs, whether any staff PIN or only a manager's takes the device back, and what happens after payment. Percent buttons are also the counter's quick tips. See [Customer screen at checkout](#customer-screen-at-checkout).
 
-**Marketing:** before anything goes out, set the brand's postal address, quiet hours and weekly and monthly limits under **Marketing → Marketing rules**. Then, under **Marketing → Campaigns**, give each campaign its wording and coupon and switch it on at the locations that want it. Managers can switch campaigns at their own shops and send blasts to their clients. Coupons are under **Promos & gift cards**. See [Marketing / Engage](#marketing--engage).
+**Campaign Center:** before anything goes out, set the brand's postal address, quiet hours and weekly and monthly limits under **Campaign Center → Settings**. Then, under **Campaign Center → Campaigns**, give each campaign its wording and coupon and switch it on at the locations that want it. Managers can switch campaigns at their own shops and write and send blasts to their clients (**Campaign Center: create** and **send**). Coupons are under **Promos & gift cards**. See [Campaign Center](#campaign-center).
 
 **Morning digest:** **Setup → Morning digest** sets the send time, who gets it (by role, plus always or never per person), and which sections go in. The page shows a preview of your own copy, and **Email me a test** sends it to you now.
 
@@ -242,7 +242,7 @@ Card payments stay at PCI SAQ A: card details only ever pass through Stripe's fr
 
 - Marketing texts (open chair, rebook) follow these rules:
   - They go only to clients who agreed to marketing texts and haven't replied STOP.
-  - They're sent between 9 AM and 8 PM (open-chair texts until 7 PM), at most one per client per week and 40 per send. They also count toward the brand's marketing limits (see [Marketing / Engage](#marketing--engage)).
+  - They're sent between 9 AM and 8 PM (open-chair texts until 7 PM), at most one per client per week and 40 per send. They also count toward the brand's marketing limits (see [Campaign Center](#campaign-center)).
   - Until the consent columns from PR #8 exist, nobody qualifies, and the alert says to call clients through the shop line instead.
 - **Morning digest:** one email per person, sent within five minutes of the set time (7 AM by default) and never after noon. It covers:
   - yesterday's sales by shop against the same day the week before;
@@ -1062,7 +1062,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 86 feature permissions (front desk, point of sale, clients, marketing, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 86 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -1265,22 +1265,25 @@ Who can edit details already on file, and the front desk's view of a client whos
 
 <img alt="Saved, hidden by policy" src="docs/screenshots/client-profile-hidden-by-policy.png" width="800" />
 
-### Marketing / Engage
+### Campaign Center
 
-Brand-level campaigns and coupons, switched on and worded per location. Nav: **Marketing → Campaigns, Blasts, Marketing rules**; coupons are under **Promos & gift cards**; the report is **Reports → Marketing**.
+Brand-level campaigns and coupons, switched on and worded per location, at `/admin/campaign-center`. Nav: **Campaign Center → Campaigns, Blasts, Settings**; coupons are under **Promos & gift cards**; the report is **Reports → Campaign Center** (`/admin/reports/campaign-center`).
 
-**Who can do what.** These are new permissions; roles get them through migration `core_0041_marketing`.
+**Who can do what.** Four permissions in the role editor's **Campaign Center** group. Migration `core_0041_marketing` gave them to roles under their first names; `core_0042_campaign_center` renames them in every role and per-person override and keeps what each person could do.
 
 | Permission | What it allows | Who has it |
 |---|---|---|
-| `marketing.view` | See campaigns and blasts, with counts | Brand Admin, Regional Manager, Shop Manager |
-| `marketing.location` | Turn campaigns on or off at their shops, give their shops their own wording and settings, and send blasts to their shops' clients | Brand Admin, Regional Manager, Shop Manager |
-| `marketing.manage` (brand-only) | Brand wording, coupons on campaigns, and the marketing rules | Brand Admin |
-| `marketing.export` (brand-only) | Download contact lists | Brand Owner only, unless granted |
+| **Campaign Center: view** (`campaign_center.view`) | See campaigns and blasts at their shops, with counts | Brand Admin, Regional Manager, Shop Manager |
+| **Campaign Center: create** (`campaign_center.create`) | Write their shops' own wording and settings, pick coupons, draft blasts to their shops and send tests. With access to all shops: also the brand's version of each campaign, blasts to every location, and **Settings** | Brand Admin, Regional Manager, Shop Manager |
+| **Campaign Center: send** (`campaign_center.send`) | Switch campaigns on or off at their shops, and send, schedule or cancel blasts | Brand Admin, Regional Manager, Shop Manager |
+| **Campaign Center: export** (`campaign_center.export`, all shops only) | Download contact lists | Brand Owner only, unless granted |
 
+- Create and send are separate. Someone with only create can write a blast but not send it. Someone with only send can send a draft or switch a campaign on but can't change its wording. Discarding a draft needs create; cancelling a scheduled blast needs send.
 - A manager's blast can only target their own shops, and a blast that includes other shops is read-only for them ("This blast goes to shops outside yours").
+- Settings are shown read-only to anyone without create and access to all shops.
 - Staff see counts, never contact lists.
-- The export (`/admin/marketing/export`, all clients who agreed to marketing, or one campaign's recipients) shows phone and email the way **Client data** settings let the exporter see them. Every export is audited with the clients it contained.
+- Inside the code the module keeps its first name: `src/server/marketing/`, `src/domain/marketing.ts`, the `marketing_*` tables and the `marketing` notification kind. "Marketing" in the UI is the legal category (marketing consent, marketing texts and emails), not the module.
+- The export (`/admin/campaign-center/export`, all clients who agreed to marketing, or one campaign's recipients) shows phone and email the way **Client data** settings let the exporter see them. Every export is audited with the clients it contained.
 
 **Coupons** (Promos & gift cards → Coupons; `promos.manage`):
 - **Types:** percent off, dollars off, or a free add-on, service or product. The free item is taken off at its price when it's on the ticket, and online booking adds it for the client.
@@ -1301,7 +1304,7 @@ Brand-level campaigns and coupons, switched on and worded per location. Nav: **M
 - **Loyalty:** coupons lower net service spend, so loyalty is earned on what the client actually paid for services.
 - **Online booking:** `/book/{shop}` has a coupon box, filled in from a campaign link (`?coupon=`). The coupon is checked and shown as "Free Beard Trim", "$5 off" and so on, held on the appointment, and applied when the ticket is opened. A coupon that no longer works by then is shown on the ticket with the reason. Checks are limited to 20 per 10 minutes per client IP (the trusted-proxy IP, see `TRUSTED_PROXY_HOPS`).
 
-**Automated campaigns** (Marketing → Campaigns): ten campaigns, each switched on per location, off by default.
+**Automated campaigns** (Campaign Center → Campaigns): ten campaigns, each switched on per location, off by default.
 
 | Campaign | Who gets it | Default |
 |---|---|---|
@@ -1323,7 +1326,7 @@ Brand-level campaigns and coupons, switched on and worded per location. Nav: **M
 - **Test send:** sends the campaign to yourself, by text or email.
 - **Missed runs:** a campaign that missed a day catches up for 14 days, and each client gets each occasion once (one birthday a year, one lapse per last visit, and so on).
 
-**Blasts** (Marketing → Blasts): one-off text, email or push.
+**Blasts** (Campaign Center → Blasts): one-off text, email or push.
 - **Segment builder:**
   - locations and barbers;
   - last visit (from and to days ago), visit count and spend (min and max);
@@ -1337,13 +1340,13 @@ Brand-level campaigns and coupons, switched on and worded per location. Nav: **M
   - A scheduled blast can be cancelled until it goes out.
 - **Results:** a sent blast shows queued and skipped counts with the reasons ("No marketing consent", "Weekly limit reached", …).
 
-**Consent and compliance** (Marketing → Marketing rules; `marketing.manage`):
+**Consent and compliance** (Campaign Center → Settings; Campaign Center: create, with access to all shops):
 - **Marketing consent is separate from appointment texts and emails.** It's read from the customer app's columns (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing` and `customer_devices`, PR #8). Core never writes them. Until they exist nobody qualifies, so nothing goes out.
 - **Always wins:** a STOP (`contact_opt_outs`), an unsubscribe, or a deleted client.
 - **Texts (Twilio, A2P 10DLC):**
   - A campaign's text has to say how to opt out ("Reply STOP to opt out." in every default) and stay under 320 characters with sample values filled in.
   - STOP turns marketing texts off and cancels any that are waiting. START undoes it.
-  - HELP is answered with the brand's HELP text (from the rules page), unless `TWILIO_ADVANCED_OPT_OUT=1`, where Twilio answers.
+  - HELP is answered with the brand's HELP text (from Settings), unless `TWILIO_ADVANCED_OPT_OUT=1`, where Twilio answers.
 - **Emails (CAN-SPAM):**
   - Every email has the brand's postal address and a one-click unsubscribe link (`/m/{token}/unsubscribe`).
   - No marketing email is sent until the address is set.
@@ -1356,14 +1359,14 @@ Brand-level campaigns and coupons, switched on and worded per location. Nav: **M
   - Each message's link is `/m/{token}`. It counts the click (not link previews or mail scanners), then opens the location's booking page with the barber, service and coupon filled in.
   - The token says nothing about the client.
 
-**Reporting** (Reports → Marketing; `report.marketing.view`, CSV with `.export`):
+**Reporting** (Reports → Campaign Center; `report.campaign_center.view`, CSV with `.export`):
 - **Measures:** sends, delivered, clicks, bookings, redemptions, attributed revenue, cost, ROI, unsubscribes and unsubscribe rate.
 - **Grouping:** by campaign, location and barber.
 - **Attribution:** a booking, paid ticket or redemption within the attribution window (default 7 days) counts toward the latest message the client got before it (last touch).
-- **Cost:** message costs per channel are set on the rules page.
+- **Cost:** message costs per channel are set in Settings.
 
 **Engine:**
-- `/api/cron/marketing` (Vercel Cron, every 15 minutes, `CRON_SECRET`) and `pnpm worker` queue what's due, then drain the queue.
+- `/api/cron/campaign-center` (Vercel Cron, every 15 minutes, `CRON_SECRET`) and `pnpm worker` queue what's due, then drain the queue.
 - Every message is one `marketing_sends` row with a unique key (campaign, client, occasion), written under a per-client lock, so a second run, or two at once, never sends twice.
 - In dev, providers are stubs: texts `console` or `simulator`, email `console`, and push `console`, `simulator` or the `expo` stub (`NOTIFICATIONS_PUSH_PROVIDER`). The demo shows everything as suppressed in **Notifications**.
 
@@ -1375,21 +1378,24 @@ Brand-level campaigns and coupons, switched on and worded per location. Nav: **M
   - consent, idempotency, quiet hours, caps;
   - STOP, START and HELP, unsubscribe and clicks;
   - every campaign's audience, blasts and scope, the coupon editor and booking drafts;
-  - the report and the export.
+  - create and send kept apart, brand-wide create for the brand's version and Settings;
+  - the report, the export, and the rename migration on roles and overrides.
 
-<img alt="Campaigns with per-location switches" src="docs/screenshots/marketing-campaigns.png" width="800" />
+<img alt="Campaign Center: campaigns with per-location switches" src="docs/screenshots/campaign-center-campaigns.png" width="800" />
 
-<img alt="Campaign editor: brand wording, coupon, per-location overrides, test send" src="docs/screenshots/marketing-campaign-editor.png" width="800" />
+<img alt="Campaign editor: brand wording, coupon, per-location overrides, test send" src="docs/screenshots/campaign-center-campaign-editor.png" width="800" />
 
-<img alt="Blast with the segment builder and preview" src="docs/screenshots/marketing-blast.png" width="800" />
+<img alt="Blast with the segment builder and preview" src="docs/screenshots/campaign-center-blast.png" width="800" />
 
-<img alt="A sent blast: queued and skipped with reasons" src="docs/screenshots/marketing-blast-sent.png" width="800" /> <img alt="Blasts list" src="docs/screenshots/marketing-blasts.png" width="800" />
+<img alt="A sent blast" src="docs/screenshots/campaign-center-blast-sent.png" width="800" /> <img alt="Blasts list" src="docs/screenshots/campaign-center-blasts.png" width="800" />
 
-<img alt="Marketing rules: quiet hours, caps, postal address, HELP text, costs, export" src="docs/screenshots/marketing-rules.png" width="800" />
+<img alt="Campaign Center settings: quiet hours, caps, postal address, HELP text, costs, export" src="docs/screenshots/campaign-center-settings.png" width="800" />
 
-<img alt="Marketing report by campaign, location and barber" src="docs/screenshots/marketing-report.png" width="800" />
+<img alt="Campaign Center report by campaign, location and barber" src="docs/screenshots/campaign-center-report.png" width="800" />
 
-<img alt="A Coralville manager sees only Coralville" src="docs/screenshots/marketing-manager.png" width="800" />
+<img alt="A Coralville manager sees only Coralville" src="docs/screenshots/campaign-center-manager.png" width="800" /> <img alt="Settings are read-only for a manager" src="docs/screenshots/campaign-center-manager-settings.png" width="800" />
+
+<img alt="The role editor's Campaign Center permissions: view, create, send, export" src="docs/screenshots/campaign-center-permissions.png" width="800" />
 
 <img alt="Coupons with their rules" src="docs/screenshots/coupons.png" width="800" /> <img alt="A campaign's free add-on applied in online booking" src="docs/screenshots/booking-coupon.png" width="400" />
 
@@ -1516,10 +1522,10 @@ src/
   app/(public)/      customer booking site (shop picker, /book/[shop], /a/[code], /account, /docs/api)
   app/admin/         staff app (calendar, walk-ins, checkout, sales, drawer, reports, payroll, setup pages)
   app/api/v1/        versioned booking API (+ openapi.json)
-  app/api/cron/      notification queue drain, low-stock alerts and marketing campaigns (Vercel Cron)
+  app/api/cron/      notification queue drain, low-stock alerts and Campaign Center campaigns (Vercel Cron)
   domain/            pure logic: availability, checkout, payroll, loyalty, inventory (levels, suggested orders, receiving), PO documents
   server/            data services: booking, calendar, checkout, reports, loyalty, importer, notifications, auth, payments
-  server/marketing/  campaigns, audiences, consent, the send engine, tracked links and the marketing report
+  server/marketing/  the Campaign Center: campaigns, audiences, consent, the send engine, tracked links and the report
   server/inventory/  stock ledger, stock levels, adjustments and alerts, vendors and purchase orders, transfers, counts, inventory reports
   db/                Drizzle schema + client
 scripts/             migrate, seed (real shops/services/prices + sample history), worker, import CLI
@@ -1533,7 +1539,7 @@ samples/squire/      example Squire CSV exports for the importer
 
 - `pnpm vercel-build` (which Vercel runs) applies migrations, then builds. With `DEMO_MODE=true` it also loads the sample data into an empty database; without it, it never seeds.
 - `DEMO_MODE=true` keeps a hosted demo safe: the payment simulator or Stripe test keys only, no texts, emails, or calls (they show in the outbox), customer sign-in codes on screen, one-click demo logins, and a banner on every page.
-- `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes and `/api/cron/marketing` every 15. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
+- `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes and `/api/cron/campaign-center` every 15. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
 - Keep separate demo, staging, and production databases, and turn on Neon point-in-time restore or Supabase daily backups.
 
 ## Cutover plan
@@ -1570,8 +1576,8 @@ samples/squire/      example Squire CSV exports for the importer
 ## Next steps
 
 - Real Stripe Terminal readers: a location, connection tokens, reader pairing, and reading the tip back from the reader's PaymentIntent (the tip buttons are already synced to the reader's configuration).
-- Marketing consent: the open-chair and rebook texts on Today and every marketing campaign and blast are built, but wait on the marketing consent columns from PR #8 (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing`, `customer_devices`).
-- Real email and push providers for marketing (Postmark broadcast stream or Resend, Expo push).
+- Marketing consent: the open-chair and rebook texts on Today and every Campaign Center campaign and blast are built, but wait on the marketing consent columns from PR #8 (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing`, `customer_devices`).
+- Real email and push providers for the Campaign Center (Postmark broadcast stream or Resend, Expo push).
 - Shops outside Central time: today a shop in another zone can be saved but not opened.
 - Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training flag stays off; merging PR #8; `DEMO_MODE` in production (it would break the Vercel demo).
 - Customer card-on-file and deposits or no-show fees, if the shop wants them (Squire had none). This requires 3DS.
