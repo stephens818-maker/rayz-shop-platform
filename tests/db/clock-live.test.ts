@@ -1,9 +1,8 @@
 /**
  * The time clock driving the calendar and online booking on the day itself: a barber not clocked in
- * close to their first client alerts the managers (once), a break holds the overlapping online
- * time and an early clock-out the rest of the day (the shop can still book both), clients booked
- * in that time are flagged with the call-in link to move or rebook them, and online booking says
- * nothing about the clock. One coming day Makenna works at Coralville, walked through in time order.
+ * close to their first client alerts the managers (once), a break and an early clock-out write real
+ * block-outs (trimmed by the next punch), clients booked in them are flagged with the rebook link for
+ * that block, and online booking says nothing about the clock. One coming day Makenna works at Coralville, walked through in time order.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Mods, loadModules } from "./setup";
@@ -60,6 +59,12 @@ const column = async () => {
   const d = await cal.loadDayCalendar(cv, day, null, { shopIds: [cv], brandWide: true }, { show: (_f, raw) => raw ?? null, stars: () => null }, { staffId: null, seesPrivate: true });
   return d.columns.find((c) => c.id === mk.id)!;
 };
+const clockRows = () =>
+  m.db.db
+    .select()
+    .from(m.schema.timeBlocks)
+    .where(m.drizzle.and(eq(m.schema.timeBlocks.staffId, mk.id), eq(m.schema.timeBlocks.source, "clock"), m.drizzle.gte(m.schema.timeBlocks.startsAt, at(day, 0)), m.drizzle.lt(m.schema.timeBlocks.startsAt, at(day, 24 * 60))))
+    .orderBy(m.schema.timeBlocks.startsAt);
 const emailsOf = (kind: "clock_late_in" | "clock_affected") => m.db.db.select().from(m.schema.notificationJobs).where(m.drizzle.and(eq(m.schema.notificationJobs.kind, kind), m.drizzle.like(m.schema.notificationJobs.subject, `${mk.displayLabel} %`)));
 
 beforeAll(async () => {
@@ -139,75 +144,82 @@ describe("not clocked in for the first client", () => {
 });
 
 describe("a break", () => {
-  it("holds the overlapping online time, not the shop's, and flags the client booked in it", async () => {
+  it("writes a Break block-out linked to the punch: online and shop-side booking both lose the time, and the client in it is flagged", async () => {
     const before = await slots(clockTo(13 * 60 + 55));
     expect(before.some((s) => overlaps(s, 14 * 60 + 45, 15 * 60))).toBe(true);
 
     const now = clockTo(14 * 60);
-    await punchAt("break_start", now);
-    const online = await slots(now);
-    expect(online.filter((s) => overlaps(s, 14 * 60, 15 * 60))).toEqual([]);
-    expect(online.some((s) => m.time.localMinutesOf(new Date(s.startsAt)) >= 15 * 60)).toBe(true);
-    const shopSide = await slots(now, true);
-    expect(shopSide.some((s) => overlaps(s, 14 * 60 + 45, 15 * 60))).toBe(true);
+    const r = await punchAt("break_start", now);
+    const [b] = await clockRows();
+    expect(b).toMatchObject({ source: "clock", clockKey: `break:${r.punchId}`, punchId: r.punchId, endPunchId: null, clockOpen: true, reason: "Break", startsAt: now, endsAt: at(day, 15 * 60) });
+    expect((await slots(now)).filter((s) => overlaps(s, 14 * 60, 15 * 60))).toEqual([]);
+    expect((await slots(now, true)).filter((s) => overlaps(s, 14 * 60, 15 * 60))).toEqual([]);
+    expect((await slots(now)).some((s) => m.time.localMinutesOf(new Date(s.startsAt)) >= 15 * 60)).toBe(true);
 
     const col = await column();
-    expect(col.clock).toMatchObject({ status: "break", holds: [{ startMin: 14 * 60, endMin: 15 * 60, why: "break" }] });
-    expect(col.clock!.breaks).toEqual([{ startMin: 14 * 60, endMin: 14 * 60, open: true }]);
-    expect(col.appts.find((a) => a.id === fx.duringBreak)!.clockHold).toBe("break");
+    expect(col.clock).toMatchObject({ status: "break" });
+    expect(col.blocks.find((x) => x.id === b.id)).toMatchObject({ startMin: 14 * 60, endMin: 15 * 60, label: "Break", clock: { kind: "break", open: true, overridden: false, punchMin: 14 * 60, endPunchMin: null } });
+    expect(col.appts.find((a) => a.id === fx.duringBreak)!.clockHold).toEqual({ kind: "break", blockId: b.id });
     expect(col.appts.find((a) => a.id === fx.afterOut)!.clockHold).toBeNull();
 
-    const href = live.callInHref(mk.id, cv, { why: "break", startMin: 14 * 60, endMin: 15 * 60 });
-    expect(href).toBe(`/admin/call-ins?staff=${mk.id}&shop=${cv}&from=14%3A00&to=15%3A00`);
-    const alert = (await alerts(now)).find((a) => a.key === `clock_affected:${cv}:${mk.id}:${day}:${now.getTime()}`)!;
+    const href = live.callInHref(b.id);
+    const alert = (await alerts(now)).find((a) => a.key === `clock_affected:break:${r.punchId}:${fx.duringBreak}`)!;
     expect(alert).toMatchObject({ type: "clock_affected", severity: "high", href, linkLabel: "Reassign or rebook" });
     expect(alert.items?.map((i) => i.label)).toEqual(["2:15 PM Breaktime"]);
 
     const emails = await emailsOf("clock_affected");
     expect(emails.length).toBeGreaterThan(0);
-    expect(emails[0].subject).toBe(`${mk.displayLabel} is on a break: 1 client booked`);
+    expect(new Set(emails.map((e) => e.subject))).toEqual(new Set([`${mk.displayLabel} is on a break: 1 client booked`]));
     expect(emails[0].body).toContain(href);
+    expect(emails.map((e) => e.to)).not.toContain("makenna@rayz.test");
+    await tc.sendClockFallout(clockTo(14 * 60 + 5));
+    expect(await emailsOf("clock_affected")).toHaveLength(emails.length);
   });
 
-  it("lets go when the break ends", async () => {
+  it("is trimmed to the break end, which opens the time again and clears the flag", async () => {
     const now = clockTo(14 * 60 + 20);
-    await punchAt("break_end", now);
+    const r = await punchAt("break_end", now);
+    const [b] = await clockRows();
+    expect(b).toMatchObject({ startsAt: at(day, 14 * 60), endsAt: now, clockOpen: false, endPunchId: r.punchId });
     expect((await slots(now)).some((s) => overlaps(s, 14 * 60 + 45, 15 * 60))).toBe(true);
     const col = await column();
-    expect(col.clock).toMatchObject({ status: "in", holds: [] });
-    expect(col.clock!.breaks).toEqual([{ startMin: 14 * 60, endMin: 14 * 60 + 20, open: false }]);
+    expect(col.clock).toMatchObject({ status: "in" });
+    expect(col.blocks.find((x) => x.id === b.id)).toMatchObject({ endMin: 14 * 60 + 20, clock: { open: false, endPunchMin: 14 * 60 + 20 } });
     expect((await alerts(now)).some((a) => a.type === "clock_affected" && a.key.includes(mk.id))).toBe(false);
   });
 });
 
 describe("an early clock-out", () => {
-  it("closes the rest of the day online, flags the clients after it and links the call-in from the clock-out", async () => {
+  it("blocks the rest of the shift as Clocked out, flags the clients after it and links the rebook flow for that block", async () => {
     const now = clockTo(15 * 60);
-    await punchAt("out", now);
+    const r = await punchAt("out", now);
+    const out = (await clockRows()).find((x) => x.clockKey?.startsWith("out:"))!;
+    expect(out).toMatchObject({ reason: "Clocked out", punchId: r.punchId, startsAt: now, clockOpen: false });
+    expect(m.time.localMinutesOf(out.endsAt)).toBeGreaterThanOrEqual(17 * 60);
     expect(await slots(now)).toEqual([]);
-    expect(startMins(await slots(now, true)).some((x) => x >= 15 * 60)).toBe(true);
 
     const col = await column();
     expect(col.clock).toMatchObject({ status: "out", lastOutMin: 15 * 60 });
     expect(col.clock!.earlyOutMin).toBeGreaterThan(0);
-    expect(col.clock!.holds).toMatchObject([{ startMin: 15 * 60, why: "clocked_out" }]);
-    expect(col.appts.find((a) => a.id === fx.afterOut)!.clockHold).toBe("clocked_out");
+    expect(col.appts.find((a) => a.id === fx.afterOut)!.clockHold).toEqual({ kind: "clocked_out", blockId: out.id });
 
     const [f] = await fallout.clockFallout([cv], now);
-    expect(f.affected.filter((a) => a.staffId === mk.id)).toMatchObject([{ why: "clocked_out", start: now, appts: [{ id: fx.afterOut }] }]);
+    expect(f.affected.filter((a) => a.staffId === mk.id)).toMatchObject([{ blockId: out.id, why: "clocked_out", start: now, appts: [{ id: fx.afterOut }] }]);
 
-    const href = `/admin/call-ins?staff=${mk.id}&shop=${cv}&from=15%3A00`;
-    const alert = (await alerts(now)).find((a) => a.key === `clock_affected:${cv}:${mk.id}:${day}:${now.getTime()}`)!;
+    const href = live.callInHref(out.id);
+    const alert = (await alerts(now)).find((a) => a.key === `clock_affected:${out.clockKey}:${fx.afterOut}`)!;
     expect(alert).toMatchObject({ title: `${mk.displayLabel} clocked out early: 1 client booked in that time`, href });
     const emails = await emailsOf("clock_affected");
     expect(emails.some((e) => e.subject === `${mk.displayLabel} clocked out early: 1 client booked` && e.body.includes(href))).toBe(true);
   });
 
-  it("opens back up when they clock back in", async () => {
+  it("is trimmed when they clock back in, and the time opens up", async () => {
     const now = clockTo(15 * 60 + 30);
-    await punchAt("in", now);
+    const r = await punchAt("in", now);
+    const out = (await clockRows()).find((x) => x.clockKey?.startsWith("out:"))!;
+    expect(out).toMatchObject({ endsAt: now, endPunchId: r.punchId });
     expect(startMins(await slots(now)).some((x) => x >= 15 * 60 + 45)).toBe(true);
-    expect((await column()).clock).toMatchObject({ status: "in", holds: [] });
+    expect((await column()).clock).toMatchObject({ status: "in" });
   });
 
   it("never shows clients the clock: just the slots and a plain reason", async () => {

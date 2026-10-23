@@ -55,6 +55,17 @@ beforeAll(async () => {
   const closed = new Set((await m.db.db.select().from(m.schema.shopClosures)).map((c) => c.date));
   day = m.time.addDays(m.time.todayLocal(), 1);
   while (!hours.some((h) => h.weekday === m.time.weekdayOf(day)) || closed.has(day)) day = m.time.addDays(day, 1);
+  // The sample bookings can fill a busy day; clear hers so the online check has open time either side of the blocks.
+  await m.db.db
+    .update(m.schema.appointments)
+    .set({ status: "cancelled", cancelledAt: new Date() })
+    .where(
+      m.drizzle.and(
+        eq(m.schema.appointments.staffId, people.makenna),
+        m.drizzle.gte(m.schema.appointments.startsAt, m.time.startOfLocalDay(day)),
+        m.drizzle.lt(m.schema.appointments.startsAt, m.time.endOfLocalDay(day)),
+      ),
+    );
 
   await as("owner");
   ids.quokka = ok(
