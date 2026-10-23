@@ -166,7 +166,10 @@ describe("client ratings never reach customers", () => {
 
   it("the ratings table is only mentioned where it's defined and where a merge moves it", () => {
     const mentions = [...files].filter((f) => /clientRatings|client_ratings/.test(readFileSync(f, "utf8"))).map(rel).sort();
-    expect(mentions).toEqual(["src/db/schema.ts", "src/server/customers.ts"]);
+    expect(mentions.filter((f) => f !== "src/domain/permissions.ts")).toEqual(["src/db/schema.ts", "src/server/customers.ts"]);
+    // The permission catalog (reached by the cron's morning digest) names the ratings report, not the table.
+    const catalog = readFileSync(join(SRC, "domain", "permissions.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
+    expect(catalog).toEqual([`  { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },`]);
     const customers = readFileSync(join(SRC, "server", "customers.ts"), "utf8");
     const uses = customers.split("\n").filter((l) => /clientRatings/.test(l) && !/^\s*clientRatings,$/.test(l));
     expect(uses).toHaveLength(1);
