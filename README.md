@@ -745,7 +745,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 63 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 67 feature permissions (front desk, point of sale, clients, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
