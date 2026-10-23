@@ -223,14 +223,26 @@ describe("customer app endpoints", () => {
     const again = await purchases.GET(new Request("http://localhost/api/v1/me/purchases", { headers: auth }), { params: Promise.resolve({}) });
     const afterRefund = await again.json();
     expect(afterRefund.purchases[0].productCents).toBe(1200);
+    expect(afterRefund.purchases[0].settlement).toBeNull();
     expect(afterRefund.purchases[0].refunds).toEqual([
-      expect.objectContaining({ amountCents: 400, productCents: 400, serviceCents: 0, taxCents: 0, tipCents: 0, createdAt: refundAt.toISOString() }),
+      expect.objectContaining({
+        amountCents: 400,
+        productCents: 400,
+        serviceCents: 0,
+        taxCents: 0,
+        tipCents: 0,
+        createdAt: refundAt.toISOString(),
+        shopPortionCents: null,
+        tipPortionCents: null,
+        from: null,
+      }),
     ]);
     const receiptRoute = await import("@/app/api/v1/me/purchases/receipt/route");
     const receiptRes = await receiptRoute.GET(new Request(`http://localhost/api/v1/me/purchases/receipt?id=${sale.id}`, { headers: auth }), { params: Promise.resolve({}) });
     const receipt = await receiptRes.json();
     expect(receipt.receipt.text).toMatch(/Products \$12\.00/);
     expect(receipt.receipt.text).toMatch(/Refund /);
+    expect(receipt.receipt.text).not.toMatch(/from the shop/);
     expect(receipt.receipt.text).not.toMatch(/\b(?:[01]\d|2[0-3]):[0-5]\d\b(?!\s*[AP]M)/);
     expect(receipt.receipt.productCents).toBe(1200);
 
@@ -378,6 +390,139 @@ describe("customer app endpoints", () => {
     expect(credit.reason).toBe("applies");
     expect(debit.feeCents).toBe(0);
     expect(debit.reason).toBe("not_credit");
+  });
+
+  it("shows the shop and tip split the ledger recorded, and which portion a refund came from", async () => {
+    const customer = await m.customers.findOrCreateCustomer({ firstName: "Ivy", phone: "+13195550186" }, null);
+    const token = (await m.auth.issueTokens(customer.id, null)).accessToken;
+    const auth = { authorization: `Bearer ${token}` };
+    const shop = await m.catalog.getShop("coralville");
+    const day = m.time.todayLocal();
+    const purchases = await import("@/app/api/v1/me/purchases/route");
+    const receiptRoute = await import("@/app/api/v1/me/purchases/receipt/route");
+
+    const [withShop] = await m.db.db
+      .insert(m.schema.sales)
+      .values({
+        shopId: shop.id,
+        customerId: customer.id,
+        status: "partially_refunded",
+        businessDate: day,
+        serviceNetCents: 2000,
+        serviceGrossCents: 2000,
+        tipCents: 500,
+        totalCents: 2500,
+        paidAt: new Date("2026-06-01T15:00:00Z"),
+      })
+      .returning();
+    await m.db.db.insert(m.schema.payments).values({
+      saleId: withShop.id,
+      shopId: shop.id,
+      businessDate: day,
+      method: "card",
+      status: "partially_refunded",
+      amountCents: 2500,
+      tipCents: 500,
+      applicationFeeCents: 100,
+      stripeAccountId: "sim_acct_coralville",
+      stripePaymentIntentId: "pi_receipt_with_shop",
+    });
+    await m.db.db.insert(m.schema.refunds).values({
+      saleId: withShop.id,
+      shopId: shop.id,
+      businessDate: day,
+      method: "card",
+      amountCents: 500,
+      tipCents: 500,
+      reason: "Tip back to the client, taken from the shop",
+      createdAt: new Date("2026-06-02T15:00:00Z"),
+    });
+
+    const [split] = await m.db.db
+      .insert(m.schema.sales)
+      .values({
+        shopId: shop.id,
+        customerId: customer.id,
+        status: "partially_refunded",
+        businessDate: day,
+        serviceNetCents: 2000,
+        serviceGrossCents: 2000,
+        tipCents: 500,
+        totalCents: 2500,
+        paidAt: new Date("2026-07-01T15:00:00Z"),
+      })
+      .returning();
+    await m.db.db.insert(m.schema.payments).values({
+      saleId: split.id,
+      shopId: shop.id,
+      businessDate: day,
+      method: "card",
+      status: "partially_refunded",
+      amountCents: 2500,
+      tipCents: 500,
+      stripePaymentIntentId: "pi_receipt_split",
+    });
+    await m.db.db.insert(m.schema.connectTransfers).values([
+      {
+        paymentIntentId: "pi_receipt_split",
+        chargeId: "ch_receipt_split",
+        transferGroup: "tg_receipt_split",
+        destinationAccount: "sim_acct_coralville",
+        shopId: shop.id,
+        role: "shop_net",
+        amountCents: 2000,
+        status: "executed",
+      },
+      {
+        paymentIntentId: "pi_receipt_split",
+        chargeId: "ch_receipt_split",
+        transferGroup: "tg_receipt_split",
+        destinationAccount: "acct_sim_staff_makenna",
+        shopId: shop.id,
+        role: "tip",
+        amountCents: 500,
+        reversedCents: 500,
+        status: "reversed",
+      },
+    ]);
+    await m.db.db.insert(m.schema.refunds).values({
+      saleId: split.id,
+      shopId: shop.id,
+      businessDate: day,
+      method: "card",
+      amountCents: 700,
+      serviceNetCents: 200,
+      tipCents: 500,
+      reason: "Ledger reversed the tip",
+      createdAt: new Date("2026-07-02T15:00:00Z"),
+    });
+
+    const body = await (await purchases.GET(new Request("http://localhost/api/v1/me/purchases", { headers: auth }), { params: Promise.resolve({}) })).json();
+    const held = body.purchases.find((p: { id: string }) => p.id === withShop.id);
+    const moved = body.purchases.find((p: { id: string }) => p.id === split.id);
+    expect(held.tipCents).toBe(500);
+    expect(held.serviceCents).toBe(2000);
+    expect(held.settlement).toEqual({ shopCents: 2400, tipCents: 0, tipStatus: "with_shop", transferGroup: null });
+    expect(held.refunds[0]).toMatchObject({ amountCents: 500, tipCents: 500, shopPortionCents: 500, tipPortionCents: 0, from: "shop" });
+    expect(moved.settlement).toEqual({ shopCents: 2000, tipCents: 500, tipStatus: "reversed", transferGroup: "tg_receipt_split" });
+    expect(moved.refunds[0]).toMatchObject({ amountCents: 700, shopPortionCents: 200, tipPortionCents: 500, from: "shop_and_tip" });
+
+    const heldText = await (
+      await receiptRoute.GET(new Request(`http://localhost/api/v1/me/purchases/receipt?id=${withShop.id}`, { headers: auth }), { params: Promise.resolve({}) })
+    ).json();
+    expect(heldText.receipt.text).toMatch(/Tip \$5\.00 stays with the shop for iSolved\./);
+    expect(heldText.receipt.text).toMatch(/Shop \$24\.00/);
+    expect(heldText.receipt.text).toMatch(/from the shop/);
+    expect(heldText.receipt.text.toLowerCase()).not.toMatch(/rating|stars|client_rating/);
+
+    const splitText = await (
+      await receiptRoute.GET(new Request(`http://localhost/api/v1/me/purchases/receipt?id=${split.id}`, { headers: auth }), { params: Promise.resolve({}) })
+    ).json();
+    expect(splitText.receipt.text).toMatch(/Shop \$20\.00/);
+    expect(splitText.receipt.text).toMatch(/Tip to the barber \$5\.00/);
+    expect(splitText.receipt.text).toMatch(/from the shop \$2\.00 and the tip \$5\.00/);
+    expect(splitText.receipt.serviceCents).toBe(2000);
+    expect(splitText.receipt.tipCents).toBe(500);
   });
 });
 

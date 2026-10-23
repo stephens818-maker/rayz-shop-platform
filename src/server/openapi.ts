@@ -66,7 +66,7 @@ export function openApiDocument(baseUrl: string) {
         "",
         "**Time:** timestamps are stored and returned as ISO-8601 UTC. Human text (receipts, reminders, SMS) uses America/Chicago. GET /app/config returns timeFormat (default 12h) so apps can match.",
         "**Launch:** GET /app/config returns the brand launched flag and launchAt, plus shops[] with each shop's own launched flag. A shop stays on Squire until its own instant. closedCopy is the sentence to show instead of a booking form. Customer booking, customer payments, and push for that shop stay closed. A build older than minVersion / forceUpdateBelow gets 426 upgrade_required. Fields added after 1.0.0 are additive.",
-        "**Money:** integer cents. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
+        "**Money:** integer cents. Purchase history and receipts add the shop and tip split when the Connect ledger has one, and a refund record names which portion it came from. Ticket service, product, tax, and tip stay separate. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
         "**Retries:** `POST /appointments` honors an `Idempotency-Key` header so a flaky mobile network can't double-book.",
       ].join("\n"),
     },
@@ -178,7 +178,7 @@ export function openApiDocument(baseUrl: string) {
         },
       },
       "/me/purchases": {
-        get: { tags: ["Me"], summary: "Purchase history with service, product, tax, and tip kept separate, plus refund records", security: bearer, responses: { 200: { description: "Purchases" } } },
+        get: { tags: ["Me"], summary: "Purchase history with service, product, tax, and tip kept separate, the shop and tip settlement when the ledger has one, and refund records that name which portion they came from", security: bearer, responses: { 200: { description: "Purchases" } } },
       },
       "/me/purchases/receipt": {
         get: { tags: ["Me"], summary: "Receipt text for one sale. format=pdf returns a PDF. Refunds stay separate.", security: bearer, responses: { 200: { description: "Receipt" } } },

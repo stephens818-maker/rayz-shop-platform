@@ -1,4 +1,5 @@
 import { formatForHumans } from "@/server/brand-time";
+import type { RefundFrom, SettlementView } from "./settlement";
 
 export interface ReceiptRefund {
   id: string;
@@ -8,6 +9,9 @@ export interface ReceiptRefund {
   productCents: number;
   taxCents: number;
   tipCents: number;
+  shopPortionCents?: number | null;
+  tipPortionCents?: number | null;
+  from?: RefundFrom | null;
 }
 
 export interface ReceiptSale {
@@ -20,10 +24,33 @@ export interface ReceiptSale {
   taxCents: number;
   tipCents: number;
   totalCents: number;
+  settlement?: SettlementView | null;
   refunds: ReceiptRefund[];
 }
 
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+/** Shop and tip lines from the ledger. Omitted when the ticket has no Connect settlement. */
+export function settlementLines(ticketTipCents: number, settlement: SettlementView | null | undefined): string[] {
+  if (!settlement) return [];
+  const lines = [`Shop ${dollars(settlement.shopCents)}`];
+  if (settlement.tipStatus === "with_shop" && ticketTipCents > 0) {
+    lines.push(`Tip ${dollars(ticketTipCents)} stays with the shop for iSolved.`);
+  } else if (settlement.tipCents > 0 && (settlement.tipStatus === "executed" || settlement.tipStatus === "reversed" || settlement.tipStatus === "planned")) {
+    lines.push(`Tip to the barber ${dollars(settlement.tipCents)}`);
+  }
+  return lines;
+}
+
+/** Account the refund left. Blank when the ledger did not record a card settlement. */
+export function refundPortionPhrase(refund: Pick<ReceiptRefund, "from" | "shopPortionCents" | "tipPortionCents">): string {
+  if (refund.from === "shop") return " from the shop";
+  if (refund.from === "tip") return " from the tip";
+  if (refund.from === "shop_and_tip" && refund.shopPortionCents != null && refund.tipPortionCents != null) {
+    return ` from the shop ${dollars(refund.shopPortionCents)} and the tip ${dollars(refund.tipPortionCents)}`;
+  }
+  return "";
+}
 
 /** Email body. Amounts are the original ticket. Refunds are their own lines with their own dates. */
 export async function renderReceiptText(sale: ReceiptSale): Promise<string> {
@@ -36,10 +63,13 @@ export async function renderReceiptText(sale: ReceiptSale): Promise<string> {
     `Products ${dollars(sale.productCents)}`,
     `Tax ${dollars(sale.taxCents)}`,
     `Tip ${dollars(sale.tipCents)}`,
+    ...settlementLines(sale.tipCents, sale.settlement),
     `Total ${dollars(sale.totalCents)}`,
   ];
   for (const r of sale.refunds) {
-    lines.push(`Refund ${await formatForHumans(r.createdAt)} ${dollars(r.amountCents)} (services ${dollars(r.serviceCents)}, products ${dollars(r.productCents)}, tax ${dollars(r.taxCents)}, tip ${dollars(r.tipCents)})`);
+    lines.push(
+      `Refund ${await formatForHumans(r.createdAt)} ${dollars(r.amountCents)}${refundPortionPhrase(r)} (services ${dollars(r.serviceCents)}, products ${dollars(r.productCents)}, tax ${dollars(r.taxCents)}, tip ${dollars(r.tipCents)})`,
+    );
   }
   return lines.join("\n");
 }

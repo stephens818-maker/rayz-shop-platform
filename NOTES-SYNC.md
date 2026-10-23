@@ -110,7 +110,7 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Mobile API workstream (bc-645fbcc0)
 
-Branch: `cursor/pilot-rollout-a9e1`. PRs into `cursor/rayz-barbershop-v1-8f0b`. Journal order after the payroll merge: `core_0022_payroll` idx 22, `mobile_customer_app` idx 23, `mobile_launch_at` idx 24, `mobile_shop_launch` idx 25, `mobile_closed_shop_copy` idx 26. SQL filenames are unchanged.
+Branch: `cursor/i10-receipt-split-a9e1` (stacked on `cursor/pilot-rollout-a9e1`). PRs into `cursor/rayz-barbershop-v1-8f0b`. Journal order after the payroll merge: `core_0022_payroll` idx 22, `mobile_customer_app` idx 23, `mobile_launch_at` idx 24, `mobile_shop_launch` idx 25, `mobile_closed_shop_copy` idx 26. SQL filenames are unchanged. No new migration for the receipt split.
 
 ### Launch (option B: one pilot shop, then the rest)
 
@@ -151,6 +151,8 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 
 `GET /api/v1/me/purchases` returns `paidAt` (ISO UTC) and `serviceCents`, `productCents`, `taxCents`, `tipCents` unreduced by refunds. Refunds are a separate array with their own `createdAt`. `GET /api/v1/me/purchases/receipt` returns the same split as text, or a PDF with `format=pdf`. Payroll calc is untouched.
 
+When a card charge has a Connect settlement, each purchase adds `settlement`: `shopCents`, `tipCents`, `tipStatus` (`executed`, `planned`, `reversed`, `failed`, `skipped`, or `with_shop`), and `transferGroup`. `with_shop` means the tip stayed inside the shop amount (the flag is off, so it still goes to iSolved). A separate tip transfer shows that tip amount and `executed`. Each refund adds `shopPortionCents`, `tipPortionCents`, and `from` (`shop`, `tip`, or `shop_and_tip`) when that settlement exists. A card refund with no tip reversal is `from: "shop"` even if the ticket's own `tipCents` was refunded. Cash, and any ticket with no Connect rows, leaves `settlement` and the portion fields null. The receipt text says "from the shop" only when the ledger recorded that.
+
 ### Import
 
 - Bulk and delta imports do not text or email unless `runImport(..., { notifyClients: true })`. Consent still applies. Imported bookings schedule reminders only.
@@ -158,9 +160,13 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 
 ### Connect and tips
 
-- PaymentIntents are created only in core's `chargeCard`. `executeChargePlan` calls it. While `FEATURE_TIP_TO_BARBER` is not exactly `"true"`, the whole ticket including the tip uses core's destination charge (`chargeDestination`). The ledger row for the tip is `skipped` with the note `not for W-2 employees, pending CPA. Employee tips go through iSolved payroll.`
-- **Tip-to-barber stays OFF.** It is not for W-2 employees, pending CPA. Employee tips go through iSolved. The flag is not in `src/lib/flags.ts`.
-- **Conflict:** core I10 hard-wires destination charges, which cannot pay a barber Express account. The owner asked for a ChargePlan that can also do separate charges and transfers, with tip routing off until a CPA confirms. Mobile did not add a second PaymentIntent helper. Separate charges run only if the tip flag is turned on. Please don't add another PaymentIntent creator.
+Charles approved I10 as separate charges and transfers. The sale amount goes to the shop's connected account. The tip goes to the barber's Express account with `source_transaction` and `transfer_group`. That tip transfer stays behind `FEATURE_TIP_TO_BARBER` until the CPA weighs in. The flag stays off. Tips are exported to iSolved either way. Refunds and disputes come out of the shop's portion only. Do not claw a tip back.
+
+- PaymentIntents are created only in core's `chargeCard`. `executeChargePlan` calls it. Mobile does not add a second charge path for this approval. Receipts and purchase history read the split. They do not create a PaymentIntent or a transfer.
+- The read is `connect_transfers` joined on `payments.stripe_payment_intent_id`. Please write, from inside `chargeCard`, one `shop_net` row (shop account, sale amount, `transfer_group`) and one `tip` row (barber Express account, tip amount, same `transfer_group`, `source_transaction` = the charge id). While the flag is off, the tip row is `skipped` and the shop row's note can say the tip is included in the shop amount. On a refund or a dispute, increase `reversed_cents` on the shop row only. Leave the tip row's `reversed_cents` at 0.
+- Until those rows exist, a payment with `stripe_account_id` is shown as one shop amount (charge minus `application_fee_cents`) and `tipStatus: "with_shop"`. `payments.stripe_transfer_id` is a single id, so it cannot show the shop and the tip separately.
+- **Tip-to-barber stays OFF.** The label is unchanged: not for W-2 employees, pending CPA. Employee tips go through iSolved. The flag is not in `src/lib/flags.ts`. The iSolved column stays `E_Cash Tips Recd_Dollars`. Payroll calc was not edited.
+- **What is on core today:** `chargeCard` still destination-charges the whole ticket (`on_behalf_of` + `transfer_data.destination`), tip included. `refundCard(..., { reverseTransfer: true })` reverses that one transfer. Disputes are an audit row (`stripe.charge.dispute.created`) and do not record a shop-only portion. Mobile displays the ledger as stored, including a tip clawback if `reversed_cents` is set on the tip row.
 - `payments_not_ready` will be shown as "This shop isn't taking cards in the app yet" when app checkout lands. Not a card decline.
 - `staff.stripe_account_id` is an optional barber Express account. It is unused while the tip flag is off.
 
@@ -179,7 +185,7 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 - (mobile → core) Time clock and kiosk pairing are not in `/api/v1`. Core's `time_entries` is the punch table (completed shifts, `source` clock / import / manual). Mobile will not add a second one. An in-progress clock-in cannot be stored while `ends_at` is required and must be after `starts_at`. There is still no kiosk-pairing table. Staff schedule, sales, and tips views for the staff app are not started.
 - (mobile → core) Reuse `formatDateTime` / `formatForHumans` for any new receipt, SMS, or push copy. `brand_settings.time_format` defaults to `12h`.
 - (mobile → core) Default the web booking SMS checkbox to off (`wizard.tsx` `smsOptIn: true`).
-- (mobile → core) Leave tip-to-barber off. Employee tips go through iSolved. Destination charges cannot pay a barber account.
+- (mobile → core) Charles approved separate charges and transfers for I10. Sale amount to the shop's connected account. Tip to the barber's Express account through `source_transaction` and `transfer_group`, behind `FEATURE_TIP_TO_BARBER` (leave it off). Tips still export to iSolved. Refunds and disputes come from the shop portion only. Do not claw the tip. Please do that inside `chargeCard`. Write one `shop_net` row and one `tip` row on `connect_transfers` (same `transfer_group`). Mobile reads those rows and does not create a second PaymentIntent. `payments.stripe_transfer_id` cannot represent both portions. `chargeCard` on this branch is still a destination charge of the whole ticket.
 
 ## Open questions
 
@@ -188,6 +194,13 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 
 ## Log
+
+### 2026-10-23: mobile receipt split (bc-645fbcc0)
+
+- Charles approved I10: separate charges and transfers. Sale to the shop account, tip to the barber Express account via `source_transaction` and `transfer_group`. `FEATURE_TIP_TO_BARBER` stays off until the CPA. Tips still export to iSolved. Refunds and disputes come from the shop portion only. No tip clawback.
+- Core still owns the charge. Mobile did not add a PaymentIntent or a transfer. `executeChargePlan` still calls `chargeCard`.
+- `GET /api/v1/me/purchases` and the receipt text/PDF show `settlement` from `connect_transfers` when those rows exist. A destination payment with no transfer rows shows the net on the shop and the tip staying with the shop. A card refund names `from` (`shop`, `tip`, or `shop_and_tip`) from tip `reversed_cents`. No reversal means the refund came from the shop, even when the ticket tip was refunded.
+- Core has not pushed that ledger. `chargeCard` is still a destination charge. `refundCard` still sets `reverse_transfer` on that one transfer. Disputes are audit-only.
 
 ### 2026-10-23: mobile option B rollout (bc-645fbcc0)
 
