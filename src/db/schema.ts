@@ -79,6 +79,8 @@ export const brandSettings = pgTable("brand_settings", {
   handoff: jsonb("handoff").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** When the Google review link is shown (ReviewRules in src/domain/reviews.ts): from visit N, and the pause after a tap. */
   reviews: jsonb("reviews").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Marketing rules (MarketingSettings in src/domain/marketing.ts): quiet hours, frequency caps, the postal address, attribution, costs. */
+  marketing: jsonb("marketing").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -1223,6 +1225,83 @@ export const promoCodes = pgTable("promo_codes", {
   maxRedemptions: integer("max_redemptions"),
   redemptions: integer("redemptions").notNull().default(0),
   active: boolean("active").notNull().default(true),
+  /** free_item coupons: the add-on, service or product that's free (one of it). */
+  freeItemKind: text("free_item_kind").$type<"service" | "addon" | "product">(),
+  freeItemId: uuid("free_item_id"),
+  /** Only these services and add-ons, and these products; both empty is whatever applies_to allows. */
+  serviceIds: jsonb("service_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  productIds: jsonb("product_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  /** Valid at these locations; empty (and shop_id null) is every location. */
+  shopIds: jsonb("shop_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  minSpendCents: integer("min_spend_cents"),
+  maxPerCustomer: integer("max_per_customer"),
+  /** shared: everyone uses `code`. unique: campaigns issue single-use codes (coupon_codes), `code` is their prefix. */
+  codeMode: text("code_mode").$type<"shared" | "unique">().notNull().default("shared"),
+  /** Single-use codes stop working this many days after they're sent. */
+  validDays: integer("valid_days"),
+  firstVisitOnly: boolean("first_visit_only").notNull().default(false),
+  /** Combines with other coupons and manual discounts. Existing promo codes always did. */
+  stackable: boolean("stackable").notNull().default(true),
+  /** Applied at checkout, without a code, when the client is eligible. */
+  autoApply: boolean("auto_apply").notNull().default(false),
+  createdAt: createdAt(),
+});
+
+/** Single-use codes a campaign issued for one client. */
+export const couponCodes = pgTable(
+  "coupon_codes",
+  {
+    id: id(),
+    promoId: uuid("promo_id")
+      .notNull()
+      .references(() => promoCodes.id, { onDelete: "cascade" }),
+    code: text("code").notNull().unique(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id"),
+    expiresOn: date("expires_on"),
+    redeemedAt: ts("redeemed_at"),
+    saleId: uuid("sale_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("coupon_codes_customer_idx").on(t.customerId, t.promoId)],
+);
+
+/** Every coupon used on a ticket, for limits, attribution and the report. Reversed when the ticket is fully refunded or voided. */
+export const couponRedemptions = pgTable(
+  "coupon_redemptions",
+  {
+    id: id(),
+    promoId: uuid("promo_id")
+      .notNull()
+      .references(() => promoCodes.id),
+    couponCodeId: uuid("coupon_code_id").references(() => couponCodes.id),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    staffId: uuid("staff_id"),
+    campaignId: uuid("campaign_id"),
+    discountCents: integer("discount_cents").notNull(),
+    /** How it got on the ticket: typed at the POS, held from an online booking, or applied automatically. */
+    via: text("via").$type<"code" | "booking" | "auto">().notNull(),
+    reversedAt: ts("reversed_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("coupon_redemptions_sale_promo_uq").on(t.saleId, t.promoId), index("coupon_redemptions_customer_idx").on(t.customerId, t.promoId), index("coupon_redemptions_campaign_idx").on(t.campaignId)],
+);
+
+/** A coupon a client entered when booking online, held for checkout. */
+export const appointmentCoupons = pgTable("appointment_coupons", {
+  appointmentId: uuid("appointment_id")
+    .primaryKey()
+    .references(() => appointments.id, { onDelete: "cascade" }),
+  promoId: uuid("promo_id")
+    .notNull()
+    .references(() => promoCodes.id, { onDelete: "cascade" }),
+  code: text("code").notNull(),
   createdAt: createdAt(),
 });
 
@@ -2509,4 +2588,148 @@ export const digestSends = pgTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.date, t.staffId] })],
+);
+
+// ───────────────────────────── Marketing / Engage ─────────────────────────────
+
+export type CampaignKind = "trigger" | "blast";
+export type BlastStatus = "draft" | "scheduled" | "sending" | "sent" | "cancelled";
+
+/**
+ * A marketing campaign: one brand-level row per automated trigger (switched on per location in
+ * marketing_location_settings), or a one-off blast to a segment. Wording, settings and segment are
+ * jsonb (Templates, trigger settings and Segment in src/domain/marketing.ts).
+ */
+export const marketingCampaigns = pgTable(
+  "marketing_campaigns",
+  {
+    id: id(),
+    kind: text("kind").$type<CampaignKind>().notNull(),
+    /** Trigger campaigns: which trigger (TriggerKey). One row per trigger. */
+    trigger: text("trigger"),
+    name: text("name").notNull(),
+    /** Channels in the order tried: each client gets one message, on the first they can receive. */
+    channels: jsonb("channels").$type<string[]>().notNull().default(sql`'["sms","email","push"]'::jsonb`),
+    templates: jsonb("templates").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+    settings: jsonb("settings").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
+    segment: jsonb("segment").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    promoId: uuid("promo_id").references(() => promoCodes.id, { onDelete: "set null" }),
+    /** Blasts: the locations it's for; empty is every location (brand-wide). */
+    shopIds: jsonb("shop_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** Blasts only. Trigger campaigns run wherever a location has them on. */
+    status: text("status").$type<BlastStatus>().notNull().default("draft"),
+    scheduledAt: ts("scheduled_at"),
+    sentAt: ts("sent_at"),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("marketing_campaigns_trigger_uq").on(t.trigger).where(sql`${t.kind} = 'trigger'`), index("marketing_campaigns_due_idx").on(t.status, t.scheduledAt)],
+);
+
+/** A trigger campaign at one location: on or off, with optional wording and settings of its own. */
+export const marketingLocationSettings = pgTable(
+  "marketing_location_settings",
+  {
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => marketingCampaigns.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(false),
+    /** Null follows the brand's wording and settings. */
+    templates: jsonb("templates").$type<Record<string, string>>(),
+    settings: jsonb("settings").$type<Record<string, number>>(),
+    updatedBy: uuid("updated_by"),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.campaignId, t.shopId] })],
+);
+
+export type SendStatus = "queued" | "skipped" | "test";
+
+/**
+ * One client and one campaign occasion. The dedupe key is unique, so running the engine twice (or
+ * two cron runs at once) can't send twice. The token is the tracked booking link and the email
+ * unsubscribe link.
+ */
+export const marketingSends = pgTable(
+  "marketing_sends",
+  {
+    id: id(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => marketingCampaigns.id, { onDelete: "cascade" }),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "set null" }),
+    /** The barber it's about or the client's usual barber, for the report. */
+    staffId: uuid("staff_id"),
+    channel: text("channel").$type<"sms" | "email" | "push">(),
+    dedupeKey: text("dedupe_key").notNull().unique(),
+    status: text("status").$type<SendStatus>().notNull(),
+    /** Why it wasn't sent (SKIP_LABEL in src/domain/marketing.ts). */
+    skipped: text("skipped"),
+    jobId: uuid("job_id").references(() => notificationJobs.id, { onDelete: "set null" }),
+    couponCodeId: uuid("coupon_code_id").references(() => couponCodes.id, { onDelete: "set null" }),
+    token: text("token").notNull().unique(),
+    clicks: integer("clicks").notNull().default(0),
+    firstClickAt: ts("first_click_at"),
+    costCents: doublePrecision("cost_cents").notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [index("marketing_sends_campaign_idx").on(t.campaignId, t.createdAt), index("marketing_sends_customer_idx").on(t.customerId, t.createdAt)],
+);
+
+/** Unsubscribes from marketing, per channel: an email link, STOP to a marketing text, or staff. Checked before every marketing send. */
+export const marketingUnsubscribes = pgTable(
+  "marketing_unsubscribes",
+  {
+    id: id(),
+    channel: text("channel").$type<"sms" | "email" | "push">().notNull(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "cascade" }),
+    email: text("email"),
+    phone: text("phone"),
+    source: text("source").$type<"link" | "stop" | "staff">().notNull(),
+    campaignId: uuid("campaign_id").references(() => marketingCampaigns.id, { onDelete: "set null" }),
+    sendId: uuid("send_id").references(() => marketingSends.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("marketing_unsubscribes_customer_idx").on(t.customerId), index("marketing_unsubscribes_email_idx").on(t.email), index("marketing_unsubscribes_phone_idx").on(t.phone)],
+);
+
+/** Online bookings started and not finished, for the "finish your booking" campaign. */
+export const bookingDrafts = pgTable(
+  "booking_drafts",
+  {
+    id: id(),
+    /** Made by the booking page, so it can update its own draft without signing in. */
+    token: text("token").notNull().unique(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    serviceId: uuid("service_id"),
+    staffId: uuid("staff_id"),
+    startsAt: ts("starts_at"),
+    /** Set when the booking went through. */
+    appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("booking_drafts_open_idx").on(t.updatedAt).where(sql`${t.appointmentId} is null`)],
+);
+
+/** Labels staff put on clients, e.g. "VIP" or "Student", for segments. */
+export const customerTags = pgTable(
+  "customer_tags",
+  {
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    tag: text("tag").notNull(),
+    createdBy: uuid("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.customerId, t.tag] }), index("customer_tags_tag_idx").on(t.tag)],
 );

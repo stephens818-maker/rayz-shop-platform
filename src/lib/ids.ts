@@ -9,6 +9,10 @@ export const giftCardCode = () => {
   return raw.match(/.{4}/g)!.join("-");
 };
 export const shortSuffix = customAlphabet("23456789abcdefghjkmnpqrstuvwxyz", 4);
+/** The random part of a client's single-use coupon code: 6 of 31 symbols, about 30 bits. */
+export const couponSuffix = customAlphabet(SAFE, 6);
+/** A marketing message's tracked link: 22 letters and digits, about 131 bits. */
+export const marketingToken = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 22);
 
 export function slugify(s: string): string {
   return s

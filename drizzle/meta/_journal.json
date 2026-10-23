@@ -288,6 +288,13 @@
       "when": 1793206500000,
       "tag": "core_0040_review_visits",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793210100000,
+      "tag": "core_0041_marketing",
+      "breakpoints": true
     }
   ]
 }
