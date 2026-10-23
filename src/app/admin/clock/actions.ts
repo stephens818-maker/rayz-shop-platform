@@ -11,6 +11,9 @@ import { DEVICE_COOKIE, checkPin, clearPin, clockState, deviceFromToken, punch, 
 const PunchType = z.enum(["in", "out", "break_start", "break_end"]);
 const Gps = z.object({ lat: z.number().min(-90).max(90), lng: z.number().min(-180).max(180), accuracyM: z.number().min(0).max(100_000).nullable() }).nullable();
 const Photo = z.string().max(400_000).nullable();
+/** Break start only: what the break is for and how long it's planned to take (empty: open). */
+const BreakPlan = { breakReasonId: z.uuid().nullable().optional(), plannedMin: z.number().int().nullable().optional() };
+type BreakPlanInput = { breakReasonId?: string | null; plannedMin?: number | null };
 
 /** The caller's public address as the hosting proxy reports it (Vercel sets x-forwarded-for; its first entry is the client). */
 async function requestIp(): Promise<string | null> {
@@ -28,10 +31,10 @@ function refresh() {
 }
 
 /** A punch from the signed-in person's own phone or browser. */
-export async function punchAction(input: { shopId: string; type: string; gps: { lat: number; lng: number; accuracyM: number | null } | null; photo: string | null; confirmTimeOff?: boolean }) {
+export async function punchAction(input: { shopId: string; type: string; gps: { lat: number; lng: number; accuracyM: number | null } | null; photo: string | null; confirmTimeOff?: boolean } & BreakPlanInput) {
   return safe<PunchResult>(async () => {
     const ctx = await authorize("timeclock.punch");
-    const v = z.object({ shopId: z.uuid(), type: PunchType, gps: Gps, photo: Photo, confirmTimeOff: z.boolean().optional() }).parse(input);
+    const v = z.object({ shopId: z.uuid(), type: PunchType, gps: Gps, photo: Photo, confirmTimeOff: z.boolean().optional(), ...BreakPlan }).parse(input);
     const device = await thisDevice();
     const r = await punch({
       staffId: ctx.staff.id,
@@ -42,6 +45,8 @@ export async function punchAction(input: { shopId: string; type: string; gps: { 
       deviceId: device?.shopId === v.shopId ? device.id : null,
       photo: v.photo,
       confirmTimeOff: v.confirmTimeOff,
+      breakReasonId: v.breakReasonId ?? null,
+      plannedMin: v.plannedMin ?? null,
       actor: ctx.actor,
     });
     refresh();
@@ -68,10 +73,10 @@ export async function kioskStatusAction(input: { staffId: string; pin: string })
 }
 
 /** A punch on the front-desk clock, as the person whose PIN was typed. */
-export async function kioskPunchAction(input: { staffId: string; pin: string; type: string; photo: string | null; confirmTimeOff?: boolean }) {
+export async function kioskPunchAction(input: { staffId: string; pin: string; type: string; photo: string | null; confirmTimeOff?: boolean } & BreakPlanInput) {
   return safe<PunchResult>(async () => {
     const { ctx, device } = await kioskDevice();
-    const v = z.object({ staffId: z.uuid(), pin: z.string().max(12), type: PunchType, photo: Photo, confirmTimeOff: z.boolean().optional() }).parse(input);
+    const v = z.object({ staffId: z.uuid(), pin: z.string().max(12), type: PunchType, photo: Photo, confirmTimeOff: z.boolean().optional(), ...BreakPlan }).parse(input);
     await checkPin(v.staffId, v.pin);
     const r = await punch({
       staffId: v.staffId,
@@ -82,6 +87,8 @@ export async function kioskPunchAction(input: { staffId: string; pin: string; ty
       deviceId: device.id,
       photo: v.photo,
       confirmTimeOff: v.confirmTimeOff,
+      breakReasonId: v.breakReasonId ?? null,
+      plannedMin: v.plannedMin ?? null,
       actor: { staffId: v.staffId, label: `kiosk:${device.label} (${ctx.staff.displayLabel})` },
     });
     refresh();

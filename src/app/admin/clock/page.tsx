@@ -8,6 +8,7 @@ import { FLAG_LABEL, METHOD_LABEL, PUNCH_LABEL, clockRuleText, type PunchFlag } 
 import { formatDate, formatTime, startOfLocalDay, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { can, guardPage, openShops } from "@/server/auth/staff";
+import { breakReasons } from "@/server/block-reasons";
 import { clockState, shopClocks } from "@/server/time-clock";
 import { ClockPanel, OpensEarlyForm, PinForm, type ClockShop } from "./clock";
 
@@ -22,7 +23,7 @@ export default async function ClockPage() {
   const ids = [...new Set([...team, ...openShops(ctx).map((s) => s.id)])];
   const open = ids.length ? (await db.select({ id: shops.id }).from(shops).where(and(inArray(shops.id, ids), ne(shops.status, "archived")))).map((s) => s.id) : [];
   if (!open.length) return <Empty title="You aren't on a shop's team yet">Ask a manager to add you to a shop.</Empty>;
-  const [state, clocks, today, [mine]] = await Promise.all([
+  const [state, clocks, today, [mine], reasons] = await Promise.all([
     clockState(me, now),
     shopClocks(open),
     db
@@ -32,6 +33,7 @@ export default async function ClockPage() {
       .where(and(eq(timePunches.staffId, me), gte(timePunches.at, startOfLocalDay(todayLocal(now))), isNull(timePunches.voidedAt)))
       .orderBy(asc(timePunches.at)),
     db.select({ pin: staff.clockPinHash, opensEarly: staff.clockOpensEarly }).from(staff).where(eq(staff.id, me)),
+    breakReasons(),
   ]);
   const earlyShops = clocks.filter((c) => c.settings.openEarly && team.includes(c.id)).map((c) => c.name);
   const primary = team.find((s) => open.includes(s)) ?? null;
@@ -62,6 +64,7 @@ export default async function ClockPage() {
         breakSince={state.shift?.breakStart?.toISOString() ?? null}
         next={state.next}
         defaultShopId={primary}
+        breakReasons={reasons}
       />
       <Card>
         <CardHeader title="Today" subtitle={today.length ? undefined : "No punches yet today."} />

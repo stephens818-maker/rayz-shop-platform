@@ -102,8 +102,46 @@ export interface ClockShop {
   rule: string;
 }
 
+export interface BreakReason {
+  id: string;
+  label: string;
+}
+
+const PLANNED = [10, 15, 20, 30, 45, 60] as const;
+
+/** At break start: what it's for and how long, for the block-out it puts on the calendar. */
+function BreakPlan({ reasons, reasonId, minutes, onChange }: { reasons: BreakReason[]; reasonId: string; minutes: string; onChange: (v: { reasonId?: string; minutes?: string }) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 text-sm">
+      <label className="block">
+        <span className="mb-1 block text-xs text-zinc-500">Break for</span>
+        <Select value={reasonId} onChange={(e) => onChange({ reasonId: e.target.value })} aria-label="Break reason">
+          {reasons.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.label}
+            </option>
+          ))}
+        </Select>
+      </label>
+      <label className="block">
+        <span className="mb-1 block text-xs text-zinc-500">How long</span>
+        <Select value={minutes} onChange={(e) => onChange({ minutes: e.target.value })} aria-label="Planned break length">
+          <option value="">Until I end it</option>
+          {PLANNED.map((m) => (
+            <option key={m} value={m}>
+              {m} minutes
+            </option>
+          ))}
+        </Select>
+      </label>
+    </div>
+  );
+}
+
+const planOf = (type: PunchType, reasonId: string, minutes: string) => (type === "break_start" ? { breakReasonId: reasonId || null, plannedMin: minutes ? Number(minutes) : null } : {});
+
 /** The phone clock: pick the shop you're working at, then clock in, take a break, clock out. */
-export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next, defaultShopId }: {
+export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next, defaultShopId, breakReasons }: {
   shops: ClockShop[];
   state: "off" | "working" | "on_break";
   shiftShopId: string | null;
@@ -111,10 +149,13 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
   breakSince: string | null;
   next: PunchType[];
   defaultShopId: string | null;
+  breakReasons: BreakReason[];
 }) {
   const router = useRouter();
   const [shopId, setShopId] = useState(shiftShopId ?? defaultShopId ?? shops[0]?.id ?? "");
   const [photo, setPhoto] = useState<string | null>(null);
+  const [breakReasonId, setBreakReasonId] = useState(breakReasons[0]?.id ?? "");
+  const [planned, setPlanned] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Done | null>(null);
   const [step, setStep] = useState<string | null>(null);
@@ -131,7 +172,7 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
         gps = await location();
       }
       setStep(null);
-      const r = await punchAction({ shopId, type, gps, photo, confirmTimeOff });
+      const r = await punchAction({ shopId, type, gps, photo, confirmTimeOff, ...planOf(type, breakReasonId, planned) });
       if (!r.ok) return setError(r.error);
       if (r.data.kind === "confirm") {
         if (window.confirm(r.data.message)) go(type, true);
@@ -139,6 +180,7 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
       }
       setDone(r.data);
       setPhoto(null);
+      setPlanned("");
       router.refresh();
     });
 
@@ -165,6 +207,17 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
       )}
       {shop && <p className="text-xs text-zinc-500">{shop.rule}</p>}
       {shop && <PhotoInput mode={shop.photo} value={photo} onChange={setPhoto} />}
+      {next.includes("break_start") && breakReasons.length > 0 && (
+        <BreakPlan
+          reasons={breakReasons}
+          reasonId={breakReasonId}
+          minutes={planned}
+          onChange={(v) => {
+            if (v.reasonId !== undefined) setBreakReasonId(v.reasonId);
+            if (v.minutes !== undefined) setPlanned(v.minutes);
+          }}
+        />
+      )}
       <div className="grid grid-cols-2 gap-3">
         {next.map((t) => (
           <Button key={t} variant={BUTTON_TONE[t]} className={cx("h-14 text-base", next.length === 1 && "col-span-2")} disabled={pending || !shopId} onClick={() => go(t)}>
@@ -283,9 +336,11 @@ export function RegisterDevice({ shops }: { shops: { id: string; name: string }[
 }
 
 /** The shared front-desk clock: tap your name, type your PIN, punch. It forgets you after each punch. */
-export function Kiosk({ shop, people, photo }: { shop: string; people: { id: string; label: string; hasPin: boolean }[]; photo: "off" | "optional" | "required" }) {
+export function Kiosk({ shop, people, photo, breakReasons }: { shop: string; people: { id: string; label: string; hasPin: boolean }[]; photo: "off" | "optional" | "required"; breakReasons: BreakReason[] }) {
   const [who, setWho] = useState<{ id: string; label: string } | null>(null);
   const [pin, setPin] = useState("");
+  const [breakReasonId, setBreakReasonId] = useState(breakReasons[0]?.id ?? "");
+  const [planned, setPlanned] = useState("");
   const [status, setStatus] = useState<{ state: string; next: PunchType[]; shop: string | null; since: string | null } | null>(null);
   const [shot, setShot] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -297,6 +352,8 @@ export function Kiosk({ shop, people, photo }: { shop: string; people: { id: str
     setPin("");
     setStatus(null);
     setShot(null);
+    setBreakReasonId(breakReasons[0]?.id ?? "");
+    setPlanned("");
   };
   const check = () =>
     start(async () => {
@@ -311,7 +368,7 @@ export function Kiosk({ shop, people, photo }: { shop: string; people: { id: str
   const go = (type: PunchType, confirmTimeOff = false) =>
     start(async () => {
       setError(null);
-      const r = await kioskPunchAction({ staffId: who!.id, pin, type, photo: shot, confirmTimeOff });
+      const r = await kioskPunchAction({ staffId: who!.id, pin, type, photo: shot, confirmTimeOff, ...planOf(type, breakReasonId, planned) });
       if (!r.ok) return setError(r.error);
       if (r.data.kind === "confirm") {
         if (window.confirm(r.data.message)) go(type, true);
@@ -377,6 +434,17 @@ export function Kiosk({ shop, people, photo }: { shop: string; people: { id: str
             {who.label}: {status.state === "off" ? "clocked out" : status.state === "working" ? `working since ${time(status.since!)}` : "on a break"}
           </div>
           <PhotoInput mode={photo} value={shot} onChange={setShot} />
+          {status.next.includes("break_start") && breakReasons.length > 0 && (
+            <BreakPlan
+              reasons={breakReasons}
+              reasonId={breakReasonId}
+              minutes={planned}
+              onChange={(v) => {
+                if (v.reasonId !== undefined) setBreakReasonId(v.reasonId);
+                if (v.minutes !== undefined) setPlanned(v.minutes);
+              }}
+            />
+          )}
           <div className="grid grid-cols-2 gap-3">
             {status.next.map((t) => (
               <Button key={t} variant={BUTTON_TONE[t]} className="h-16 text-lg" disabled={pending} onClick={() => go(t)}>

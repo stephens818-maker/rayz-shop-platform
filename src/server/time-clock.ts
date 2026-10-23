@@ -53,13 +53,15 @@ import {
   type ShopClockSettings,
 } from "@/domain/time-clock";
 import { appBaseUrl } from "@/lib/deployment";
-import { callInHref } from "@/domain/clock-live";
+import { callInHref, clockBlockTitle } from "@/domain/clock-live";
 import type { Permission } from "@/domain/permissions";
 import { addDays, endOfLocalDay, formatDate, formatTime, isValidLocalDate, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { audit, SYSTEM, type Actor } from "./audit";
 import { loadStaffAccess, staffWithAccessTo, workShopIds } from "./auth/access";
 import { AppError, forbidden, notFound } from "./errors";
 import { clockFallout } from "./clock-live";
+import { refreshClockBlocks, syncClockBlocks } from "./clock-blocks";
+import { usableReason } from "./block-reasons";
 import { enqueueShopEmail } from "./notifications/queue";
 import { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings } from "./payroll/groups";
 import { randomToken, sha256 } from "./auth/tokens";
@@ -148,6 +150,7 @@ export async function saveShopClock(shopId: string, v: { settings: ShopClockSett
       blockOnBreak: s.blockOnBreak,
       breakHoldMinutes: s.breakHoldMinutes,
       blockAfterClockOut: s.blockAfterClockOut,
+      notInBlock: s.notInBlock,
       openEarly: s.openEarly,
       lateAlertMinutes: s.lateAlertMinutes,
     },
@@ -341,9 +344,15 @@ export interface PunchRequest {
   photo: string | null;
   /** Clock in anyway during time off, after the warning. */
   confirmTimeOff?: boolean;
+  /** Break start only: the reason (a block reason; none is Break) and planned minutes, for the block it writes. */
+  breakReasonId?: string | null;
+  plannedMin?: number | null;
   actor: Actor;
   now?: Date;
 }
+
+/** The longest break length someone can plan at break start. */
+export const MAX_PLANNED_BREAK_MIN = 240;
 
 export type PunchResult = { kind: "confirm"; message: string } | { kind: "done"; punchId: string; type: PunchType; at: Date; shop: string; flags: PunchFlag[]; notes: string[] };
 
@@ -434,6 +443,16 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
   }
   if (distanceM !== null && clock.settings.methods.length && method !== "gps" && distanceM > clock.settings.radiusM * 3) flags.push("off_site");
 
+  let breakReasonId: string | null = null;
+  let plannedMin: number | null = null;
+  if (req.type === "break_start") {
+    if (req.breakReasonId) breakReasonId = (await usableReason(req.breakReasonId, "blocks")).id;
+    if (req.plannedMin !== undefined && req.plannedMin !== null) {
+      if (!Number.isInteger(req.plannedMin) || req.plannedMin < 5 || req.plannedMin > MAX_PLANNED_BREAK_MIN) throw bad(`Plan a break of 5 to ${MAX_PLANNED_BREAK_MIN} minutes, or leave the length open.`);
+      plannedMin = req.plannedMin;
+    }
+  }
+
   const gps = req.evidence.gps;
   const result = await db.transaction(async (tx) => {
     const [row] = await tx
@@ -455,13 +474,24 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
         hasPhoto: !!req.photo,
         flags,
         offScheduleMin,
+        reasonId: breakReasonId,
+        plannedMin,
         createdBy: req.actor.staffId ?? null,
       })
       .returning({ id: timePunches.id });
     if (req.photo) await tx.insert(timePunchPhotos).values({ punchId: row.id, dataUrl: req.photo });
     await rederive(req.staffId, now, now, tx, rules);
     const cleared = await clearApprovals(req.staffId, req.shopId, [date], tx);
-    await audit(req.actor, "timeclock.punch", "time_punch", row.id, { staffId: req.staffId, type: req.type, source: req.source, method, flags, distanceM, photo: !!req.photo, approvalsCleared: cleared }, req.shopId, tx);
+    await audit(
+      req.actor,
+      "timeclock.punch",
+      "time_punch",
+      row.id,
+      { staffId: req.staffId, type: req.type, source: req.source, method, flags, distanceM, photo: !!req.photo, approvalsCleared: cleared, ...(req.type === "break_start" ? { reasonId: breakReasonId, plannedMin } : {}) },
+      req.shopId,
+      tx,
+    );
+    await syncClockBlocks([req.staffId], { from: now, to: now }, { tx, now, actor: req.actor });
     return row.id;
   });
   // Clients booked over a break or after an early clock-out: the managers hear now, not at the next cron run.
@@ -523,9 +553,12 @@ export async function editPunch(e: Editor, punchId: string, change: { at?: Date;
   return db.transaction(async (tx) => {
     await tx.update(timePunches).set({ type: next.type, at: next.at, shopId: next.shopId, editedAt: now }).where(eq(timePunches.id, punchId));
     await tx.insert(timePunchEdits).values({ punchId, action: "edit", before, after, reason: why, editedBy: e.staffId });
-    await rederive(p.staffId, p.at < next.at ? p.at : next.at, p.at > next.at ? p.at : next.at, tx);
+    const lo = p.at < next.at ? p.at : next.at;
+    const hi = p.at > next.at ? p.at : next.at;
+    await rederive(p.staffId, lo, hi, tx);
     const cleared = (await clearApprovals(p.staffId, p.shopId, [localDateOf(p.at)], tx)) + (await clearApprovals(p.staffId, next.shopId, [localDateOf(next.at)], tx));
     await audit(e.actor, "timeclock.punch_edit", "time_punch", punchId, { staffId: p.staffId, before, after, reason: why, approvalsCleared: cleared }, next.shopId, tx);
+    await syncClockBlocks([p.staffId], { from: lo, to: hi }, { tx, now, actor: e.actor });
     return punchId;
   });
 }
@@ -548,6 +581,7 @@ export async function addPunch(e: Editor, v: { staffId: string; shopId: string; 
     await rederive(v.staffId, v.at, v.at, tx);
     const cleared = await clearApprovals(v.staffId, v.shopId, [localDateOf(v.at)], tx);
     await audit(e.actor, "timeclock.punch_add", "time_punch", row.id, { staffId: v.staffId, before: null, after, reason: why, approvalsCleared: cleared }, v.shopId, tx);
+    await syncClockBlocks([v.staffId], { from: v.at, to: v.at }, { tx, now, actor: e.actor });
     return row.id;
   });
 }
@@ -567,6 +601,7 @@ export async function voidPunch(e: Editor, punchId: string, reason: string, now 
     await rederive(p.staffId, p.at, p.at, tx);
     const cleared = await clearApprovals(p.staffId, p.shopId, [localDateOf(p.at)], tx);
     await audit(e.actor, "timeclock.punch_void", "time_punch", punchId, { staffId: p.staffId, before, after, reason: why, approvalsCleared: cleared }, p.shopId, tx);
+    await syncClockBlocks([p.staffId], { from: p.at, to: p.at }, { tx, now, actor: e.actor });
   });
 }
 
@@ -1107,16 +1142,17 @@ export async function flagForgottenClockOuts(now = new Date()): Promise<number> 
 /** The cron's time clock pass: forgotten clock-outs and live clock alerts every run; the full-time check once a night (3:00–3:15), since weeks close on Saturday. */
 export async function timeClockCron(now = new Date()) {
   const forgottenClockOuts = await flagForgottenClockOuts(now);
+  const blocks = await refreshClockBlocks(now);
   const clockAlerts = await sendClockFallout(now);
   const m = localMinutesOf(now);
   const ftChanges = m >= 180 && m < 195 ? await checkFtCrossings(now) : 0;
-  return { forgottenClockOuts, clockAlerts, ftChanges };
+  return { forgottenClockOuts, clockBlocks: blocks.created + blocks.updated + blocks.removed, clockAlerts, ftChanges };
 }
 
 /**
  * Emails the managers who run each live shop's calendar, once each (clock_alert_log): a barber not
- * clocked in `lateAlertMinutes` before their first client, and clients booked over a break or after
- * an early clock-out, with the call-in link to move or rebook them. `onlyStaffId` limits it to one
+ * clocked in `lateAlertMinutes` before their first client, and clients booked inside a clock block
+ * (each client once per block), with the call-in link to move or rebook them. `onlyStaffId` limits it to one
  * person, right after they punch.
  */
 export async function sendClockFallout(now = new Date(), o: { onlyStaffId?: string; shopIds?: string[] } = {}): Promise<number> {
@@ -1124,39 +1160,49 @@ export async function sendClockFallout(now = new Date(), o: { onlyStaffId?: stri
   const today = todayLocal(now);
   const base = appBaseUrl();
   let n = 0;
+  const firstTime = async (key: string, shopId: string) => !!(await db.insert(clockAlertLog).values({ key, shopId, sentAt: now }).onConflictDoNothing().returning({ key: clockAlertLog.key }))[0];
+  const tell = async (kind: "clock_late_in" | "clock_affected", staffId: string, shopId: string, subject: string, body: string, details: Record<string, unknown>) => {
+    n++;
+    await audit(SYSTEM, `timeclock.${kind}`, "staff", staffId, details, shopId);
+    for (const m of await managersOf([shopId], ["calendar.manage"], staffId)) await enqueueShopEmail({ kind, to: m.email, subject, body, shopId });
+  };
   for (const f of await clockFallout(shopIds, now)) {
-    const notes = [
-      ...f.late.map((l) => ({
-        key: `late_in:${l.staffId}:${f.shopId}:${today}`,
-        kind: "clock_late_in" as const,
-        staffId: l.staffId,
-        subject: `${l.label} isn't clocked in for their ${formatTime(l.appt.startsAt)} client`,
-        body: [
+    for (const l of f.late) {
+      if (o.onlyStaffId && l.staffId !== o.onlyStaffId) continue;
+      const key = `late_in:${l.staffId}:${f.shopId}:${today}`;
+      if (!(await firstTime(key, f.shopId))) continue;
+      await tell(
+        "clock_late_in",
+        l.staffId,
+        f.shopId,
+        `${l.label} isn't clocked in for their ${formatTime(l.appt.startsAt)} client`,
+        [
           `${l.label} hasn't clocked in at ${f.shop}, and their first client today${l.appt.first ? `, ${l.appt.first},` : ""} is at ${formatTime(l.appt.startsAt)}.`,
           "Check they're on the way, or move their first clients to another barber.",
           `Calendar: ${base}/admin/calendar?shop=${f.shopId}&appt=${l.appt.id}`,
         ].join("\n\n"),
-      })),
-      ...f.affected.map((a) => ({
-        key: `affected:${a.staffId}:${f.shopId}:${a.start.toISOString()}`,
-        kind: "clock_affected" as const,
-        staffId: a.staffId,
-        subject: `${a.label} ${a.why === "break" ? "is on a break" : "clocked out early"}: ${a.appts.length} ${a.appts.length === 1 ? "client" : "clients"} booked`,
-        body: [
-          `${a.label} ${a.why === "break" ? `started a break at ${formatTime(a.start)}` : `clocked out at ${formatTime(a.start)}`} at ${f.shop}. Booked in that time:`,
-          a.appts.map((x) => `- ${formatTime(x.startsAt)} ${x.first ?? "Walk-in"} (${x.code})`).join("\n"),
-          a.why === "break" ? `Online booking is held until ${formatTime(a.end)}.` : "Online booking is closed for the rest of the day.",
-          `Move or rebook them: ${base}${callInHref(a.staffId, f.shopId, { why: a.why, startMin: localMinutesOf(a.start), endMin: localDateOf(a.end) > today ? 24 * 60 : localMinutesOf(a.end) })}`,
+        { key },
+      );
+    }
+    for (const a of f.affected) {
+      if (o.onlyStaffId && a.staffId !== o.onlyStaffId) continue;
+      const fresh: typeof a.appts = [];
+      for (const x of a.appts) if (await firstTime(`affected:${a.key}:${x.id}`, f.shopId)) fresh.push(x);
+      if (!fresh.length) continue;
+      const span = `${formatTime(a.start)}–${a.open ? `${formatTime(a.end)} and on until ${a.why === "break" ? "the break ends" : "they clock in"}` : formatTime(a.end)}`;
+      await tell(
+        "clock_affected",
+        a.staffId,
+        f.shopId,
+        `${clockBlockTitle(a.label, a.why)}: ${fresh.length} ${fresh.length === 1 ? "client" : "clients"} booked`,
+        [
+          `${clockBlockTitle(a.label, a.why)} at ${f.shop}, so the calendar is blocked ${span}. Booked in that time:`,
+          fresh.map((x) => `- ${formatTime(x.startsAt)} ${x.first ?? "Walk-in"} (${x.code})`).join("\n"),
+          "Online booking is closed then.",
+          `Move or rebook them: ${base}${callInHref(a.blockId)}`,
         ].join("\n\n"),
-      })),
-    ].filter((x) => !o.onlyStaffId || x.staffId === o.onlyStaffId);
-    for (const note of notes) {
-      const [first] = await db.insert(clockAlertLog).values({ key: note.key, shopId: f.shopId, sentAt: now }).onConflictDoNothing().returning({ key: clockAlertLog.key });
-      if (!first) continue;
-      n++;
-      await audit(SYSTEM, `timeclock.${note.kind}`, "staff", note.staffId, { key: note.key }, f.shopId);
-      for (const m of await managersOf([f.shopId], ["calendar.manage"], note.staffId))
-        await enqueueShopEmail({ kind: note.kind, to: m.email, subject: note.subject, body: note.body, shopId: f.shopId });
+        { key: `affected:${a.key}`, blockId: a.blockId, appointments: fresh.map((x) => x.code) },
+      );
     }
   }
   return n;
