@@ -3,7 +3,7 @@ import { json, options, route } from "@/server/api";
 import { AppError } from "@/server/errors";
 import { barberFromBearer, staffOnboardingLink } from "@/server/mobile/staff-connect";
 
-/** Stripe-hosted Express onboarding. No bank details or tax id are accepted here. */
+/** Stripe-hosted Account Link for a recipient account. No bank details or tax id are accepted here. */
 export const OPTIONS = options;
 export const POST = route(async (req) => {
   const barber = await barberFromBearer(req);

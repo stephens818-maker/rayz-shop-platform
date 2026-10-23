@@ -11,15 +11,27 @@ import { shopTipsToBarber } from "./tip-routing";
 /**
  * Shared charge path for the app and POS. PaymentIntents are created only by `chargeCard`.
  *
- * Card tips follow `shops.tip_to_barber`. On (the launch default) the sale is transferred to the
- * shop and the tip is transferred to the barber's Express account. Off, the whole ticket including
- * the tip uses core's destination charge to the shop. Tips still export to iSolved as Cash Tips Recd.
- * A refund reverses the shop transfer only. The tip transfer is not clawed back.
+ * `chargeCard` still destination-charges the whole ticket. That already pays the shop the tip.
+ * This function does not create a tip or shop transfer on top of transfer_data. Separate transfers
+ * run only when the returned charge has no transfer_data. Until core ships that, tip routing records
+ * the tip as included in the shop destination charge and sends nothing.
+ * A refund reverses the shop transfer only. The tip is not clawed back.
  */
 export type ChargePlanKind = "destination" | "separate_charges_transfers";
 
 /** Ledger note when the tip stayed in the shop transfer. */
 export const TIP_WITH_SHOP_NOTE = "Tip stayed with the shop. Exported to iSolved as Cash Tips Recd.";
+
+/** Ledger note when chargeCard used transfer_data. No second transfer is sent. */
+export const DESTINATION_TIP_NOTE = "included in shop destination charge";
+
+/** True when chargeCard settled the ticket with transfer_data. A later transfer would pay the tip twice. */
+export function chargeSettledByDestination(charge: { destinationCharge?: boolean; destination: { accountId: string } | null; transferId: string | null }): boolean {
+  if (charge.destinationCharge === true) return true;
+  if (charge.transferId) return true;
+  if (charge.destination?.accountId) return true;
+  return false;
+}
 
 export { shopTipsToBarber, tipToBarberEnabled } from "./tip-routing";
 
@@ -103,43 +115,36 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
   if (!shop) throw new AppError("not_found", "Shop not found");
   const barber = input.staffId ? await db.query.staff.findFirst({ where: eq(staff.id, input.staffId) }) : undefined;
   const tipsOn = await shopTipsToBarber(shop.id);
-  const kind: ChargePlanKind = input.kind ?? (tipsOn ? "separate_charges_transfers" : "destination");
   const transferGroup = `tg_${input.idempotencyKey}`.slice(0, 80);
   const barberAccount = barber?.stripeAccountId ?? null;
   const barberFirst = barber?.firstName?.trim().split(/\s+/)[0] || null;
-  const sendTip = tipsOn && kind === "separate_charges_transfers" && !!barberAccount && tipCents > 0;
-
-  const charge = sendTip
-    ? await chargeCard({
-        paymentMethodId: input.paymentMethodId,
-        amountCents: input.amountCents,
-        description: input.description,
-        metadata: { ...input.metadata, shopId: shop.id, chargePlan: kind },
-        idempotencyKey: input.idempotencyKey,
-        customerId: input.customerId,
-      })
-    : await chargeCard({
-        paymentMethodId: input.paymentMethodId,
-        amountCents: input.amountCents,
-        description: input.description,
-        metadata: { ...input.metadata, shopId: shop.id, chargePlan: "destination" },
-        idempotencyKey: input.idempotencyKey,
-        customerId: input.customerId,
-        destination: await chargeDestination(shop, input.amountCents, "keyed"),
-      });
+  const charge = await chargeCard({
+    paymentMethodId: input.paymentMethodId,
+    amountCents: input.amountCents,
+    description: input.description,
+    metadata: { ...input.metadata, shopId: shop.id },
+    idempotencyKey: input.idempotencyKey,
+    customerId: input.customerId,
+    destination: await chargeDestination(shop, input.amountCents, "keyed"),
+  });
+  const destinationCharge = chargeSettledByDestination(charge);
+  const sendTip = !destinationCharge && tipsOn && input.kind !== "destination" && !!barberAccount && tipCents > 0;
+  const kind: ChargePlanKind = destinationCharge ? "destination" : sendTip ? "separate_charges_transfers" : "destination";
 
   const prior = await db.select().from(connectTransfers).where(eq(connectTransfers.paymentIntentId, charge.paymentIntentId));
-  if (prior.length) return resultFrom(sendTip ? kind : "destination", charge, transferGroup, prior);
+  if (prior.length) return resultFrom(kind, charge, transferGroup, prior);
 
   const account = await shopAccount(shop.id);
   const shopAccountId = charge.destination?.accountId ?? account?.stripeAccountId ?? null;
   const fee = charge.destination?.applicationFeeCents ?? 0;
   const shopAmount = sendTip ? input.amountCents - tipCents : input.amountCents - fee;
-  const tipNote = sendTip
-    ? `Tip paid to ${barberFirst ?? "your barber"}.`
-    : !barberAccount && tipsOn
-      ? `No Express account yet. ${TIP_WITH_SHOP_NOTE}`
-      : TIP_WITH_SHOP_NOTE;
+  const tipNote = destinationCharge
+    ? `${DESTINATION_TIP_NOTE}. Exported to iSolved as Cash Tips Recd.`
+    : sendTip
+      ? `Tip paid to ${barberFirst ?? "your barber"}.`
+      : !barberAccount && tipsOn
+        ? `No recipient account yet. ${TIP_WITH_SHOP_NOTE}`
+        : TIP_WITH_SHOP_NOTE;
 
   const rows: (typeof connectTransfers.$inferInsert)[] = [];
   if (tipCents > 0) {
@@ -167,7 +172,7 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
       role: "shop_net",
       amountCents: shopAmount,
       status: "planned",
-      note: sendTip ? null : `destination charge. Includes the tip. ${TIP_WITH_SHOP_NOTE}`,
+      note: sendTip ? null : `destination charge. Includes the tip. ${destinationCharge ? DESTINATION_TIP_NOTE : TIP_WITH_SHOP_NOTE}`,
       stripeTransferId: sendTip ? null : charge.transferId,
     });
   }
@@ -182,6 +187,7 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
       } else settled.push(row);
       continue;
     }
+    if (destinationCharge) throw new AppError("payment_failed", "Refusing to transfer on top of a destination charge.");
     const stripeTransferId = await createTransfer({
       amountCents: row.amountCents,
       destination: row.destinationAccount!,
@@ -197,7 +203,7 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
     settled.push(updated);
   }
 
-  return resultFrom(sendTip ? "separate_charges_transfers" : "destination", charge, transferGroup, settled);
+  return resultFrom(kind, charge, transferGroup, settled);
 }
 
 /**

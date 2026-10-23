@@ -90,6 +90,7 @@ async function accountView(barber: Barber) {
     return {
       account: {
         stripeAccountId: barber.stripeAccountId,
+        accountType: "recipient" as const,
         status: "enabled" as const,
         chargesEnabled: true,
         payoutsEnabled: true,
@@ -108,6 +109,7 @@ async function accountView(barber: Barber) {
     return {
       account: {
         stripeAccountId: barber.stripeAccountId,
+        accountType: "recipient" as const,
         status,
         chargesEnabled: !!account.charges_enabled,
         payoutsEnabled: !!account.payouts_enabled,
@@ -120,6 +122,7 @@ async function accountView(barber: Barber) {
     return {
       account: {
         stripeAccountId: barber.stripeAccountId,
+        accountType: "recipient" as const,
         status: "restricted" as const,
         chargesEnabled: false,
         payoutsEnabled: false,

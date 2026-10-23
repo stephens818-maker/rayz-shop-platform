@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { chargeSettledByDestination } from "@/server/payments/charge-plan";
 import { refundPortionPhrase, settlementLines } from "@/server/mobile/receipt";
 import { portionsForRefunds, settlementFromLedger, type LedgerPayment, type LedgerTransfer } from "@/server/mobile/settlement";
 
@@ -139,5 +140,15 @@ describe("receipt settlement copy", () => {
     expect(routing).not.toContain("process.env.FEATURE_TIP_TO_BARBER");
     expect(charge).not.toContain("pending CPA");
     expect(readFileSync("src/server/mobile/receipt.ts", "utf8")).not.toContain("pending CPA");
+    const onboard = readFileSync("src/server/payments/barber-connect.ts", "utf8");
+    expect(onboard).toContain('type: "none"');
+    expect(onboard).toContain("account_onboarding");
+    expect(onboard).not.toContain('type: "express"');
+  });
+
+  it("refuses a second transfer when the charge used transfer_data", () => {
+    expect(chargeSettledByDestination({ destinationCharge: true, destination: { accountId: "acct_shop" }, transferId: "tr_1" })).toBe(true);
+    expect(chargeSettledByDestination({ destination: { accountId: "acct_shop" }, transferId: "tr_1" })).toBe(true);
+    expect(chargeSettledByDestination({ destinationCharge: false, destination: null, transferId: null })).toBe(false);
   });
 });

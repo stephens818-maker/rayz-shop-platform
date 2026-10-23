@@ -187,7 +187,7 @@ export function openApiDocument(baseUrl: string) {
       "/staff/connect": {
         get: {
           tags: ["Staff"],
-          summary: "Barber Express account, recent tip transfers, and payout schedule. Gated on the shop tip switch. Stripe hosts onboarding.",
+          summary: "Barber recipient account, recent tip transfers, and payout schedule. Gated on the shop tip switch. Stripe hosts onboarding.",
           security: bearer,
           responses: { 200: { description: "Status" }, 401: err("Sign in required") },
         },
@@ -195,7 +195,7 @@ export function openApiDocument(baseUrl: string) {
       "/staff/connect/onboard": {
         post: {
           tags: ["Staff"],
-          summary: "Stripe-hosted Express onboarding link for the signed-in barber. Refused when the shop tip switch is off.",
+          summary: "Stripe-hosted Account Link for the barber's recipient account. Refused when the shop tip switch is off.",
           security: bearer,
           responses: { 200: { description: "Account link" }, 401: err("Sign in required"), 403: err("Shop keeps tips") },
         },

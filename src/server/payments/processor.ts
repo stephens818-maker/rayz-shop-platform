@@ -84,6 +84,11 @@ export interface ChargeResult {
   transferId: string | null;
   /** What Stripe charged the platform for this charge, when the balance transaction says. */
   processorFeeCents: number | null;
+  /**
+   * True when this PaymentIntent used transfer_data (a destination charge).
+   * The shop already received the whole ticket, tip included. Do not create another transfer.
+   */
+  destinationCharge: boolean;
 }
 
 /** Where a card charge settles: a shop's connected account, with the processing fee kept by the platform. */
@@ -164,6 +169,7 @@ export async function chargeCard(opts: {
       chargeId: `sim_ch_${suffix}`,
       transferId: pi.destination ? `sim_tr_${suffix}` : null,
       processorFeeCents: pi.destination?.applicationFeeCents ?? null,
+      destinationCharge: !!pi.destination,
     };
   }
   if (dest?.accountId.startsWith("sim_")) throw new AppError("payment_failed", "This shop's account is from the simulator. Set it up with Stripe before taking cards.", { reason: "payments_not_ready" });
@@ -194,14 +200,18 @@ export async function chargeCard(opts: {
     const pmd = charge?.payment_method_details;
     const card = pmd?.card ?? pmd?.card_present;
     const bt = charge?.balance_transaction;
+    const transferId = typeof charge?.transfer === "string" ? charge.transfer : (charge?.transfer?.id ?? null);
+    const transferDataDestination = pi.transfer_data?.destination;
+    const transferDataAccount = typeof transferDataDestination === "string" ? transferDataDestination : (transferDataDestination?.id ?? null);
     return {
       processor: "stripe",
       paymentIntentId: pi.id,
       card: { funding: normalizeFunding(card?.funding), brand: card?.brand ?? "card", last4: card?.last4 ?? "" },
       destination: dest,
       chargeId: charge?.id ?? null,
-      transferId: typeof charge?.transfer === "string" ? charge.transfer : (charge?.transfer?.id ?? null),
+      transferId,
       processorFeeCents: bt && typeof bt !== "string" ? bt.fee : null,
+      destinationCharge: !!transferDataAccount || !!transferId || !!dest,
     };
   } catch (e) {
     if (e instanceof AppError) throw e;

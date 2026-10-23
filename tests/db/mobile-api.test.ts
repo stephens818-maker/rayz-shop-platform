@@ -326,9 +326,9 @@ describe("customer app endpoints", () => {
     });
   });
 
-  it("pays a card tip to the barber when the shop switch is on, and refunds only the shop portion", async () => {
+  it("does not transfer a tip after a destination charge, and refunds only the shop portion", async () => {
     const { createBarberConnectOnboardingLink } = await import("@/server/payments/barber-connect");
-    const { TIP_WITH_SHOP_NOTE, executeChargePlan, reverseChargePlan } = await import("@/server/payments/charge-plan");
+    const { executeChargePlan, reverseChargePlan } = await import("@/server/payments/charge-plan");
     const { shopTipsToBarber } = await import("@/server/payments/tip-routing");
     const shop = await m.catalog.getShop("coralville");
     expect(await shopTipsToBarber(shop.id)).toBe(true);
@@ -356,7 +356,10 @@ describe("customer app endpoints", () => {
 
     const [makenna] = await m.db.db.select().from(m.schema.staff).where(eq(m.schema.staff.firstName, "Makenna"));
     const barber = await createBarberConnectOnboardingLink(makenna.id);
+    expect(barber.accountType).toBe("recipient");
     expect(barber.stripeAccountId).toMatch(/^acct_sim_staff_/);
+    expect(barber.url).toMatch(/^https:\/\/connect\.stripe\.com\/setup\/c\//);
+    expect(JSON.stringify(barber).toLowerCase()).not.toContain("express");
     await m.db.db.update(m.schema.shops).set({ tipToBarber: false }).where(eq(m.schema.shops.id, shop.id));
     try {
       const held = await executeChargePlan({
@@ -369,7 +372,8 @@ describe("customer app endpoints", () => {
         idempotencyKey: `mobile-off-${crypto.randomUUID()}`,
       });
       expect(held.tipToBarber).toBe(false);
-      expect(held.transfers.find((r) => r.role === "tip")).toMatchObject({ status: "skipped", note: TIP_WITH_SHOP_NOTE });
+      expect(held.transfers.find((r) => r.role === "tip")?.note).toContain("included in shop destination charge");
+      expect(held.transfers.some((r) => r.stripeTransferId?.startsWith("sim_tr_split_"))).toBe(false);
     } finally {
       await m.db.db.update(m.schema.shops).set({ tipToBarber: true }).where(eq(m.schema.shops.id, shop.id));
     }
@@ -380,22 +384,20 @@ describe("customer app endpoints", () => {
       paymentMethodId: "pm_card_visa",
       amountCents: 2500,
       tipCents: 500,
-      description: "Tip paid to the barber",
+      description: "Shop switch is on, but chargeCard still destination-charged",
       idempotencyKey: `mobile-tip-${crypto.randomUUID()}`,
     });
-    expect(split.tipToBarber).toBe(true);
-    expect(split.destinationAccount).toBeNull();
-    expect(split.transfers.find((r) => r.role === "tip")).toMatchObject({
-      status: "executed",
-      amountCents: 500,
-      destinationAccount: barber.stripeAccountId,
-      note: "Tip paid to Makenna.",
-    });
-    expect(split.transfers.find((r) => r.role === "shop_net")).toMatchObject({ status: "executed", amountCents: 2000 });
+    expect(split.kind).toBe("destination");
+    expect(split.tipToBarber).toBe(false);
+    expect(split.destinationAccount).toMatch(/^sim_acct_/);
+    expect(split.transfers.find((r) => r.role === "tip")).toMatchObject({ status: "skipped", amountCents: 500, stripeTransferId: null });
+    expect(split.transfers.find((r) => r.role === "tip")?.note).toContain("included in shop destination charge");
+    expect(split.transfers.find((r) => r.role === "shop_net")?.stripeTransferId).toMatch(/^sim_tr_/);
+    expect(split.transfers.some((r) => r.stripeTransferId?.startsWith("sim_tr_split_"))).toBe(false);
     const claw = await reverseChargePlan({ paymentIntentId: split.paymentIntentId, refundCents: 500, idempotencyKey: `rev-${split.paymentIntentId}` });
     expect(claw.reversals).toEqual([expect.objectContaining({ role: "shop_net", amountCents: 500 })]);
     const tipRow = (await m.db.db.select().from(m.schema.connectTransfers).where(eq(m.schema.connectTransfers.paymentIntentId, split.paymentIntentId))).find((r) => r.role === "tip");
-    expect(tipRow).toMatchObject({ status: "executed", reversedCents: 0 });
+    expect(tipRow).toMatchObject({ status: "skipped", reversedCents: 0 });
 
     const back = await reverseChargePlan({ paymentIntentId: plan.paymentIntentId, refundCents: shopNet!.amountCents, idempotencyKey: `rev-${plan.paymentIntentId}` });
     expect(back.reversals).toEqual([expect.objectContaining({ role: "shop_net", amountCents: shopNet!.amountCents })]);
@@ -584,13 +586,15 @@ describe("customer app endpoints", () => {
     const link = await onboardRoute.POST(new Request("http://localhost/api/v1/staff/connect/onboard", { method: "POST", headers: auth, body: JSON.stringify({ shop: "coralville" }) }), { params: Promise.resolve({}) });
     const linkBody = await link.json();
     expect(link.status).toBe(200);
-    expect(linkBody.url).toMatch(/^https:\/\/connect\.stripe\.com\/setup\/e\//);
+    expect(linkBody.url).toMatch(/^https:\/\/connect\.stripe\.com\/setup\/c\//);
+    expect(linkBody.accountType).toBe("recipient");
     expect(linkBody.mode).toBe("simulator");
+    expect(JSON.stringify(linkBody).toLowerCase()).not.toContain("express");
     expect(linkBody.stripeAccountId).toMatch(/^acct_sim_staff_/);
     expect(JSON.stringify(linkBody).toLowerCase()).not.toMatch(/ssn|bank_account|routing/);
 
     const again = await statusRoute.GET(new Request("http://localhost/api/v1/staff/connect", { headers: auth }), { params: Promise.resolve({}) });
-    expect((await again.json()).account).toMatchObject({ mode: "simulator", status: "enabled", payoutsEnabled: true });
+    expect((await again.json()).account).toMatchObject({ mode: "simulator", status: "enabled", payoutsEnabled: true, accountType: "recipient" });
 
     await m.db.db.update(m.schema.shops).set({ tipToBarber: false }).where(eq(m.schema.shops.id, shop.id));
     try {
