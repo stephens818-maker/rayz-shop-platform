@@ -30,6 +30,8 @@ const KIND_LABEL: Record<string, string> = {
   privacy_alert: "Client data alert",
   time_off_reschedule: "Time off: please reschedule",
   time_off_decision: "Time off decision",
+  clock_forgot_out: "Forgotten clock-out",
+  ft_status_change: "Full-time / part-time change",
   callin_reassign: "Call-in: moved to another barber",
   callin_rebook: "Call-in: rebook link",
   callin_voice: "Call-in: automated call",

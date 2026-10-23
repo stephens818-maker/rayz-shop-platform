@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { auditLog, shops } from "@/db/schema";
 import { NO_PRIVATE, ReasonViewer, redactReasonDetails } from "@/domain/block-reasons";
 import { ClientPolicy, LOCKED_POLICY, redactAuditDetails, searchesClientDetails } from "./client-privacy";
-import { ReportKey } from "@/domain/permissions";
+import { Permission, ReportKey } from "@/domain/permissions";
 import {
   Cell,
   Column,
@@ -60,6 +60,7 @@ import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-
 import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
+import { attendanceData, laborData } from "./labor-report";
 
 /**
  * Every a la carte report is one loader returning stats and tables. The report page renders them
@@ -94,7 +95,7 @@ export interface ReportInput {
   /** Combined, by location, by barber or by location and barber, over the selected shops and barbers. */
   loc: ViewCtx;
   /** The viewer's access: brand-level rows (no shop) are only for people with every shop. */
-  viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[] };
+  viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[]; permissions?: ReadonlySet<Permission> };
   /** What the viewer may see of client records; without it, client details in the audit log are hidden. */
   client?: ClientPolicy;
   /** Who is looking at block and time off reasons; without it, private reasons are hidden. */
@@ -654,6 +655,14 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async service_times({ scope, loc }) {
     return serviceTimesData(scope, loc);
+  },
+
+  async labor({ scope, loc, viewer }) {
+    return laborData(scope, loc, viewer.permissions);
+  },
+
+  async attendance({ scope, loc }) {
+    return attendanceData(scope, loc);
   },
 
   async staffing({ scope, loc, reasons }) {

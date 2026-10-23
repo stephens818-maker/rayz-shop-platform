@@ -34,7 +34,10 @@ export type NotificationKind =
   | "rebook_nudge"
   | "no_show_reminder"
   | "running_late"
-  | "digest";
+  | "digest"
+  /** Time clock: a forgotten clock-out, and someone crossing the full-time line, both to their managers. */
+  | "clock_forgot_out"
+  | "ft_status_change";
 
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
 const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);

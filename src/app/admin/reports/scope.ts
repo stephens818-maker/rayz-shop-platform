@@ -110,6 +110,8 @@ export const BARBER_REPORTS: ReadonlySet<ReportKey> = new Set([
   "heatmap",
   "client_ratings",
   "service_times",
+  "labor",
+  "attendance",
 ]);
 
 export const defaultView = (report?: ReportKey): ReportView => (report === "sales_by_barber" || report === "service_times" ? "barbers" : "combined");

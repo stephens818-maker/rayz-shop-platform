@@ -1,6 +1,6 @@
-import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { brandSettings, payGroups, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, shops, staff, timeEntries } from "@/db/schema";
+import { brandSettings, payGroups, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, shops, staff, timeEntries, timesheetLocks } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -185,6 +185,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   const slices = overtimeSlices(days, {
     thresholdCenti: Math.round(settings.otThresholdHours * 100),
     trainingCountsTowardOt: settings.trainingCountsTowardOt,
+    dailyThresholdCenti: settings.dailyOtHours ? Math.round(settings.dailyOtHours * 100) : null,
     entityOf: (shopId) => groupOf.get(shopId)?.legalEntity ?? "",
     periodOf: (shopId, date) => periodOf(calOf(shopId), date).start,
     locked,
@@ -351,6 +352,7 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
   const slices = overtimeSlices(dailyHours(entries), {
     thresholdCenti: Math.round(settings.otThresholdHours * 100),
     trainingCountsTowardOt: settings.trainingCountsTowardOt,
+    dailyThresholdCenti: settings.dailyOtHours ? Math.round(settings.dailyOtHours * 100) : null,
     entityOf: (shopId) => groupOf.get(shopId)?.legalEntity ?? "",
     periodOf: (shopId, date) => periodOf(groupOf.get(shopId)?.calendar ?? DEFAULT_CALENDAR, date).start,
     locked: new Map(lockedRows.map((l) => [sliceKey({ ...l }), l.otCenti])),
@@ -408,6 +410,15 @@ export async function isLockedOn(shopId: string, date: LocalDate): Promise<boole
   if (!g) return false;
   const [r] = await db.select({ id: payrollRuns.id }).from(payrollRuns).where(and(eq(payrollRuns.payGroupId, g.id), eq(payrollRuns.periodStart, p.start)));
   return !!r;
+}
+
+/** Hours at a shop on a date can't change: its timesheets are locked for the period, or the pay period is approved and locked. */
+export async function hoursLockedOn(shopId: string, date: LocalDate): Promise<boolean> {
+  const [t] = await db
+    .select({ s: timesheetLocks.periodStart })
+    .from(timesheetLocks)
+    .where(and(eq(timesheetLocks.shopId, shopId), lte(timesheetLocks.periodStart, date), gte(timesheetLocks.periodEnd, date)));
+  return !!t || isLockedOn(shopId, date);
 }
 
 export async function savePayrollSettings(next: PayrollSettings, actor: Actor) {
@@ -521,7 +532,7 @@ export async function addTimeEntries(list: TimeEntryInput[], actor: Actor): Prom
   for (const [i, e] of list.entries()) {
     const p = timeEntryProblem(e);
     if (p) return { error: list.length > 1 ? `Row ${i + 1}: ${p}` : p };
-    if (await isLockedOn(e.shopId, todayLocal(e.startsAt))) return { error: `${list.length > 1 ? `Row ${i + 1}: ` : ""}that pay period is locked.` };
+    if (await hoursLockedOn(e.shopId, todayLocal(e.startsAt))) return { error: `${list.length > 1 ? `Row ${i + 1}: ` : ""}that pay period is locked.` };
   }
   if (!list.length) return { added: 0 };
   const rows = await db
@@ -535,7 +546,8 @@ export async function addTimeEntries(list: TimeEntryInput[], actor: Actor): Prom
 export async function deleteTimeEntry(id: string, actor: Actor): Promise<string | null> {
   const [e] = await db.select().from(timeEntries).where(eq(timeEntries.id, id));
   if (!e) return "That entry is gone.";
-  if (await isLockedOn(e.shopId, todayLocal(e.startsAt))) return "That pay period is locked.";
+  if (e.punchInId) return "That entry comes from clock punches. Fix the punches on the timesheet instead.";
+  if (await hoursLockedOn(e.shopId, todayLocal(e.startsAt))) return "That pay period is locked.";
   await db.delete(timeEntries).where(eq(timeEntries.id, id));
   await audit(actor, "payroll.time_delete", "time_entry", id, { staffId: e.staffId, kind: e.kind, startsAt: e.startsAt.toISOString(), endsAt: e.endsAt.toISOString() }, e.shopId);
   return null;
