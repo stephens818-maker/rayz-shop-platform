@@ -3,7 +3,7 @@ import Link from "next/link";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { notificationJobs, shops } from "@/db/schema";
-import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Table, Td, Th } from "@/components/ui";
+import { Badge, Card, CardHeader, Empty, Notice, PageHeader } from "@/components/ui";
 import { formatDateTime } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
@@ -68,28 +68,21 @@ export default async function SimulatorPage() {
             <Empty title="No automated calls yet">Send an automated call from a call-in.</Empty>
           </div>
         ) : (
-          <Table>
-            <thead>
-              <tr>
-                <Th>Placed</Th>
-                <Th>Shop</Th>
-                <Th>To</Th>
-                <Th>Script</Th>
-                <Th>Answer as</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {mine.map(({ j, shopName: s }) => (
-                <tr key={j.id} className="align-top">
-                  <Td className="whitespace-nowrap">{formatDateTime(j.createdAt)}</Td>
-                  <Td>{s}</Td>
-                  <Td className="whitespace-nowrap">{who(j.to)}</Td>
-                  <Td className="max-w-sm text-xs text-zinc-600">{j.body}</Td>
-                  <Td>{j.status === "sent" ? <OutreachCallButtons jobId={j.id} /> : <Badge>{j.status}</Badge>}</Td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+          <ul className="divide-y divide-zinc-100 text-sm">
+            {mine.map(({ j, shopName: s }) => (
+              <li key={j.id} className="space-y-2 px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                  <span>{formatDateTime(j.createdAt)}</span>
+                  <span>
+                    {s} → {who(j.to)}
+                  </span>
+                  <Badge tone={j.status === "sent" ? "green" : "gray"}>{j.status}</Badge>
+                </div>
+                <p className="text-xs text-zinc-600">{j.body}</p>
+                {j.status === "sent" && <OutreachCallButtons jobId={j.id} />}
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
 
