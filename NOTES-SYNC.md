@@ -21,7 +21,7 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons` and `core_0025_call_ins`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations` and `core_0028_digest_jobs`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -161,6 +161,9 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 - (core → mobile) Twilio now handles STOP and START on each shop number and writes `contact_opt_outs`. If the app shows a client's text consent, please treat a number in `contact_opt_outs` (channel `sms`) as not texting, whatever `sms_opt_in` says.
 
+- (core → mobile) Locations now have a lifecycle in `shops.status`: `setup` (hidden from clients), `live`, `closed` (temporary, with `closed_until` and `closed_note`) and `archived` (`active = false`, which a database check enforces). The pure rules are in `src/domain/location-lifecycle.ts`: `listedPublicly`, `takesOnlineBookings`, `closedOn` and `operational`. PR #8 adds `shops.launch_at` and `booking_mode` as a cutover gate from Squire. That's a separate question (which system takes the bookings), so they should be combined rather than replace each other. Please have `/api/v1` list and book only shops where both the cutover gate and `takesOnlineBookings` allow it. Archived shops should never appear. Temporarily closed shops can be listed with `closed_note`.
+- (core → mobile) Today's open-chair and rebook texts read `customers.sms_marketing_opt_in` from PR #8. They check for the column at runtime and send nothing until it exists. Core doesn't add the column; the consent UI and its capture are yours.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -169,6 +172,41 @@ If the mobile side means a specific registry from the plan, say which items it s
 - Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
 
 ## Log
+
+### 2026-10-23: core (self-service locations, Today, morning digest)
+
+- **Review fixes first:**
+  - The booking SMS opt-in now starts unchecked, with TCPA wording.
+  - Payroll tips and sales leave out Squire-imported tickets.
+  - `audit_log` and `gift_card_ledger` are append-only (`core_0026_append_only`), and refunds are indexed by sale.
+- **Locations (`core_0027_locations`):**
+  - The Add Location wizard (`/admin/setup/new`, `locations.setup`) and the lifecycle described above.
+  - A go-live checklist with required steps, temporary close, and archive. Archive is refused while appointments, open tickets or an open drawer remain, and it keeps all history.
+  - Branding, card readers (`terminal_readers`) and shop vendor accounts (`shop_vendors`).
+  - Booking, the public site, call-ins, POS and every picker respect status. Reports and permissions include archived shops, labelled "(archived)".
+  - Only `America/Chicago` can go live.
+- **Self-service:**
+  - Staff offboarding: `active = false`, `sessions_valid_after = now`, schedules removed and recurring blocks ended. Booked appointments are listed to move.
+  - Brand-editable client messages (`brand_settings.message_templates`, with merge fields).
+  - Picklists (`brand_settings.lookups`).
+  - New permission `settings.lists`.
+- **Today:**
+  - `src/server/today.ts` builds alerts per viewer, scoped by shop and gated by permission. The actions in `src/app/admin/today/actions.ts` work each alert out again on the server before acting.
+  - Texts go through `src/server/outreach-campaigns.ts`, deduplicated in `client_nudges`. Dismissals are stored in `alert_dismissals`.
+  - New notification kinds: `fill_offer`, `rebook_nudge`, `no_show_reminder`, `running_late` and `digest`.
+- **Morning digest:**
+  - Built in `src/server/digest.ts` and set up at `/admin/digest`; settings live in `brand_settings.digest`.
+  - The notifications cron sends it, once per person per day (`digest_sends`).
+  - `core_0028_digest_jobs` lets `digest` jobs have no shop.
+- Tests:
+  - New: `tests/db/locations.test.ts`, `tests/db/today.test.ts`, `tests/today.test.ts` and `tests/message-templates.test.ts`.
+  - Changed: `tests/ratings.test.ts` now allows the permission catalog's `client_ratings` report key. The cron reaches that file through the digest; it isn't the table.
+- **Deferred by decision:**
+  - I10 separate charges, `payment_transfers` and tip transfers: destination charges stay.
+  - The Q11/C2 flag stays off.
+  - Merging PR #8.
+  - `DEMO_MODE` in production, because it breaks the Vercel demo.
+- **Not touched:** anything under `/api/v1`, `src/server/api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent. The cron route imports from `@/server/api` but doesn't change it.
 
 ### 2026-10-23: core (call-ins)
 

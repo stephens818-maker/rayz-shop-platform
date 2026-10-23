@@ -161,3 +161,52 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Rules: opt-ins, STOP and quiet hours respected; rebook links are tied to one appointment, expire, stop after use or a newer link, and only their hash is stored. Off until Twilio keys are set, with the outbox and call and text simulator for development. Separate permissions for marking, outreach and automated calls, and every action is audited.
 - [x] Tests: `tests/outreach.test.ts` and `tests/db/call-ins.test.ts` (affected appointments, reassign versus rebook, link security and expiry, the "1" reply, retries, opt-outs).
 - [ ] Try it against a real Twilio account: needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, a number per shop with its webhooks set, and A2P 10DLC registration.
+
+## 11. Self-service locations and settings
+
+- [x] An Add Location wizard (Brand Owner or Brand Admin, `locations.setup`), 11 steps:
+  - name, address, phone and time zone (Central by default);
+  - hours, with Sunday closed by default, closed days and holidays;
+  - service and product tax rates, flagged until verified, the card fee and tip buttons;
+  - slot interval and booking rules, and a public booking link that refuses surnames;
+  - services copied from the brand or another shop, with overrides;
+  - products and par levels, copied or pasted in bulk;
+  - vendors with the shop's own account number;
+  - staff, including barbers at several shops, and the pay calendar;
+  - shop logins and what they can do, the Twilio number, Stripe Terminal readers, and branding.
+- [x] Lifecycle: setting up (hidden from clients), go-live behind a checklist of required steps, temporary close with an end date and a public note, and archive. Archive is refused while anything is booked or open, and all history stays in reports.
+- [x] Nothing in code names a location. Booking, the public site, the calendar, POS, reports and filters, permission scopes, location groups, Today and the digest all read shops from the database and respect status.
+- [x] Self-service for the rest:
+  - services and add-ons (already on Setup → Services);
+  - staff onboarding, and offboarding that revokes access at once, takes the person off booking and schedules, and lists their booked appointments to move;
+  - picklists;
+  - client message wording with merge fields and preview;
+  - block reasons, booking times and settings.
+- [x] Test: `tests/db/locations.test.ts` creates a location through the wizard and finds it in booking, the calendar, POS, reports, permissions and groups. It then archives the location and checks that its history is kept. The owner's guide is in the README.
+- [ ] Shops outside Central time: they can be saved but not opened until multi-time-zone support is built.
+
+## 12. Today command center and the morning digest
+
+- [x] **Needs attention** on Today, per shop and per permission. Most alerts have a one-click fix and a confirm step. The alerts:
+  - open chair time, with a text to clients due for a cut;
+  - no-show risk, with an extra reminder;
+  - low stock, with a drafted purchase order;
+  - time off waiting and call-in fallout;
+  - regulars overdue to rebook, with a text;
+  - barbers running behind, with a note to their next clients;
+  - drawer variances;
+  - unusual refunds, discounts and client lookups;
+  - unconfirmed tax rates and setup checklist items;
+  - sales against the same day last week, by shop;
+  - failed messages, with a retry.
+- [x] Extras: booked with a barber who's off, waitlist while chairs are open, drafts waiting to send, late deliveries, tickets left open, drawers never closed, a shop that can't take cards, and unread client texts.
+- [x] Morning digest by email to the owner and managers, configurable at **Setup → Morning digest** (time, roles, people, sections), with a preview and a test send. It covers yesterday's sales by shop, today's team (working, off, blocked) and the alerts, each copy scoped to that person's shops and permissions. It's sent once per person per day.
+- [x] Tests: `tests/today.test.ts` and `tests/db/today.test.ts`.
+- [ ] Marketing texts (open chair, rebook) wait on the marketing consent columns from PR #8. Until then the alerts say to call through the shop line.
+
+## Deferred by decision
+
+- I10 stays on destination charges; separate charges, `payment_transfers` and tip transfers aren't built.
+- The Q11/C2 training flag stays off.
+- PR #8 isn't merged.
+- `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.
