@@ -60,6 +60,7 @@ import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-
 import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
+import { reviewReportData } from "./review-report";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
 
@@ -676,6 +677,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async call_ins({ scope, loc, reasons }) {
     return callInReportData(scope, loc, reasons ?? NO_PRIVATE);
+  },
+
+  async google_reviews({ scope, loc }) {
+    return reviewReportData(scope, loc);
   },
 
   async services_vs_products({ scope, loc }) {

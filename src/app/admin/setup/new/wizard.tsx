@@ -8,6 +8,8 @@ import { NetworkRuleFields, ruleDraft, ruleFromDraft, type RuleDraft } from "@/c
 import { parseProductLines, type LocationDraftInput } from "@/domain/location-draft";
 import { DEFAULT_SHOP_HANDOFF, type ShopHandoff, type TipScreen } from "@/domain/handoff";
 import { HandoffRuleFields, TipPresetFields, describeTips } from "../../settings/handoff-editors";
+import { ReviewFields } from "../../settings/review-fields";
+import { REVIEW_FOLLOW_UP_DEFAULT } from "@/domain/reviews";
 import { DEFAULT_NETWORK_RULE, REQUIREMENT_LABEL } from "@/domain/network-access";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
 import { slugify } from "@/lib/ids";
@@ -100,7 +102,7 @@ export function LocationWizard({
   const [line, setLine] = useState("");
   const [readers, setReaders] = useState<{ label: string; serialNumber: string; registrationCode: string }[]>([]);
   const [pay, setPay] = useState({ mode: "connected" as PaymentsMode, descriptor: "" });
-  const [receipt, setReceipt] = useState({ headline: "", footer: "", showLogo: true, showAddress: true, showPhone: true });
+  const [receipt, setReceipt] = useState({ headline: "", footer: "", showLogo: true, showAddress: true, showPhone: true, reviewUrl: "", reviewFollowUp: { ...REVIEW_FOLLOW_UP_DEFAULT } });
   const [brand, setBrand] = useState({ accent: "", logo: "", description: "" });
 
   function menuFrom(source: string): MenuRow[] {
@@ -171,7 +173,7 @@ export function LocationWizard({
       readers: readers.filter((r) => r.label.trim()).map((r) => ({ label: r.label, serialNumber: r.serialNumber.trim() || null, registrationCode: r.registrationCode.trim() || null })),
       paymentsMode: canBank ? pay.mode : "connected",
       statementDescriptor: canBank ? pay.descriptor.trim().toUpperCase() || null : null,
-      receipt: { ...receipt, headline: receipt.headline.trim() || null, footer: receipt.footer.trim() || null },
+      receipt: { ...receipt, headline: receipt.headline.trim() || null, footer: receipt.footer.trim() || null, reviewUrl: receipt.reviewUrl.trim() || null },
       accentColor: brand.accent || null,
       logoUrl: brand.logo.trim() || null,
       networkAccess: network ? ruleFromDraft(signIn) : DEFAULT_NETWORK_RULE,
@@ -559,6 +561,7 @@ export function LocationWizard({
                     </label>
                   ))}
                 </div>
+                <ReviewFields value={receipt} onChange={(r) => setReceipt({ ...receipt, ...r })} />
               </fieldset>
             </div>
           )}

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
+import type { ReceiptBranding } from "@/domain/connect";
 import type { LoyaltyConfig } from "@/domain/loyalty";
 import { SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
 import { registerReaderAction } from "../setup/actions";
@@ -18,6 +19,7 @@ import {
   saveShopProfileAction,
   setReaderActiveAction,
 } from "./actions";
+import { ReviewFields } from "./review-fields";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
@@ -419,7 +421,7 @@ export function ReadersEditor({ shopId, shopName, terminalLocationId, readers }:
   );
 }
 
-export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; shopName: string; initial: { headline: string | null; footer: string | null; showLogo: boolean; showAddress: boolean; showPhone: boolean; reviewUrl: string | null; allowPrint: boolean } }) {
+export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; shopName: string; initial: ReceiptBranding }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState({ ...initial, headline: initial.headline ?? "", footer: initial.footer ?? "", reviewUrl: initial.reviewUrl ?? "" });
   return (
@@ -445,9 +447,7 @@ export function ReceiptEditor({ shopId, shopName, initial }: { shopId: string; s
             </label>
           ))}
         </div>
-        <Field label="Review link" hint="The receipt's “Leave a review” button opens this, e.g. the shop's Google review page. Blank hides the button." className="sm:col-span-2">
-          <Input type="url" inputMode="url" maxLength={500} placeholder="https://g.page/r/…/review" value={v.reviewUrl} onChange={(e) => setV({ ...v, reviewUrl: e.target.value })} />
-        </Field>
+        <ReviewFields value={v} onChange={(r) => setV({ ...v, ...r })} />
         <label className="flex items-center gap-2 text-sm text-zinc-700 sm:col-span-2">
           <input type="checkbox" checked={v.allowPrint} onChange={(e) => setV({ ...v, allowPrint: e.target.checked })} /> Show a Print button on the staff receipt (paper is off by default)
         </label>

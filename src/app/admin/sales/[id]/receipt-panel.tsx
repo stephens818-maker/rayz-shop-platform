@@ -31,6 +31,7 @@ const STATUS: Record<string, string> = {
   cancelled: "Cancelled",
   opted_out: "Not sent: opted out",
   no_consent: "Not sent: no consent",
+  recent: "Not sent: asked recently",
   none: "",
 };
 const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -147,7 +148,7 @@ export function ReceiptPanel({ saleId, onFile, atCheckout, history, highlight }:
           <ul className="space-y-1.5 border-t border-zinc-100 pt-3 text-xs text-zinc-600" data-testid="receipt-history">
             {history.map((h) => (
               <li key={h.id}>
-                <span className="font-medium text-zinc-800">{h.channel === "none" ? "No receipt wanted" : `${h.channel === "sms" ? "Texted" : "Emailed"} to ${h.masked}`}</span>
+                <span className="font-medium text-zinc-800">{h.channel === "none" ? (h.purpose === "review" ? "Not sent" : "No receipt wanted") : `${h.channel === "sms" ? "Texted" : "Emailed"} to ${h.masked}`}</span>
                 {" · "}
                 {RECEIPT_PURPOSE_LABEL[h.purpose]}
                 {STATUS[h.status] ? ` · ${STATUS[h.status]}` : ""}

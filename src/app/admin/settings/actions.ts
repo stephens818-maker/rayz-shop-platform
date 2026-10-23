@@ -226,7 +226,7 @@ export async function saveReceiptAction(shopId: string, raw: z.input<typeof Rece
     const ctx = await authorize("settings.shop");
     assertShopAccess(ctx, shopId);
     const v = ReceiptBrandingSchema.parse(raw);
-    const values = { ...v, headline: v.headline?.trim() || null, footer: v.footer?.trim() || null };
+    const values = { ...v, headline: v.headline?.trim() || null, footer: v.footer?.trim() || null, reviewFollowUp: { ...v.reviewFollowUp, enabled: v.reviewFollowUp.enabled && !!v.reviewUrl } };
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { receipt: true } });
     await db.update(shops).set({ receipt: values }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.receipt", "shop", shopId, { before: before ? receiptBranding(before.receipt) : null, after: values }, shopId);
