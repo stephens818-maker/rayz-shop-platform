@@ -366,8 +366,11 @@ describe("alerts", () => {
     const cv = await shop("coralville");
     const day = m.time.addDays(period(7).start, 1);
     const inn = await punchAt(mk, cv.id, "in", at(day, 9 * 60));
+    const missed = async (now: Date) => (await tc.attendanceRows([cv.id], day, day, [mk.id], now)).reduce((a, r) => a + r.missed, 0);
+    expect(await missed(at(day, 12 * 60))).toBe(0);
     const later = at(day, 23 * 60);
     expect(await tc.flagForgottenClockOuts(later)).toBe(1);
+    expect(await missed(later)).toBe(1);
     expect(await tc.flagForgottenClockOuts(later)).toBe(0);
     const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, inn.punchId));
     expect(p.flags).toContain("forgot_out");

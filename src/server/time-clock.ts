@@ -73,6 +73,17 @@ const DAY = 86_400_000;
 const SHIFT_REACH = 36 * 3600_000;
 /** An open shift older than this no longer stops a new clock-in; it waits for a manager instead. */
 const STALE_OPEN_MS = 24 * 3600_000;
+
+/** Whether a problem is only someone still at work: an open shift that is their latest, not stale and not flagged forgotten. */
+function onTheClock(shifts: readonly Shift[], byId: ReadonlyMap<string, { flags: unknown }>, now: Date) {
+  const latest = new Map<string, Shift>();
+  for (const s of shifts) if (s.start.getTime() >= (latest.get(s.staffId)?.start.getTime() ?? -Infinity)) latest.set(s.staffId, s);
+  return (p: PairProblem) => {
+    if (p.kind !== "open_shift") return false;
+    const s = latest.get(p.staffId);
+    return !!s && s.inId === p.punchId && now.getTime() - s.start.getTime() <= STALE_OPEN_MS && !((byId.get(p.punchId)?.flags as string[] | undefined) ?? []).includes("forgot_out");
+  };
+}
 export const DEVICE_COOKIE = "rayz_clock_device";
 const MAX_PHOTO_CHARS = 400_000;
 
@@ -678,6 +689,7 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
   const name = new Map(names.map((s) => [s.id, s.name]));
   const byId = new Map(punches.map((p) => [p.id, p]));
   const { shifts, problems } = pairPunches(punches.map(asLike));
+  const working = onTheClock(shifts, byId, new Date());
   const inPeriod = (d: LocalDate) => d >= period.start && d <= period.end;
   const periodShifts = shifts.filter((s) => inPeriod(localDateOf(s.start)));
   const views = shiftViews(periodShifts, byId, rules, sched);
@@ -745,7 +757,7 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
         unpaidBreakMin: shopShifts.reduce((a, s) => a + s.unpaidBreakMin, 0),
         scheduledMin: days.reduce((a, d) => a + d.scheduledMin, 0),
       },
-      problems: problemsIn(problems, shopId, inPeriod),
+      problems: problemsIn(problems.filter((p) => !working(p)), shopId, inPeriod),
       approval: {
         employeeAt: sheet?.employeeApprovedAt?.toISOString() ?? null,
         managerAt: sheet?.managerApprovedAt?.toISOString() ?? null,
@@ -1143,9 +1155,10 @@ export async function attendanceRows(shopIds: readonly string[], from: LocalDate
       r.earlyOutMin += Math.max(0, -(pout.offScheduleMin ?? 0));
     }
   }
+  const working = onTheClock(shifts, byId, now);
   for (const p of problems) {
     const d = localDateOf(p.at);
-    if (inRange(d) && p.kind !== "break_not_ended") row(p.staffId, p.shopId, d).missed++;
+    if (inRange(d) && p.kind !== "break_not_ended" && !working(p)) row(p.staffId, p.shopId, d).missed++;
   }
   const people = staffIds
     ? [...staffIds]
