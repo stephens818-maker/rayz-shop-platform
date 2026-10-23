@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hoursProblem } from "@/domain/hours";
 import { labelContainsSurname } from "@/lib/ids";
-import { staffAtShopDenied, timeBlockChangeDenied } from "@/server/auth/policy";
+import { callInDenied, staffAtShopDenied, timeBlockChangeDenied } from "@/server/auth/policy";
 
 const CORALVILLE = "11111111-1111-1111-1111-111111111111";
 const IOWA_CITY = "22222222-2222-2222-2222-222222222222";
@@ -92,5 +92,22 @@ describe("review P2#21: Sunday hours are a brand-level setting (settings.brand)"
     expect(hoursProblem([{ weekday: 1, openMin: 600, closeMin: 540 }], who)?.code).toBe("bad_request");
     expect(hoursProblem([{ weekday: 1, openMin: 540, closeMin: 1500 }], who)?.code).toBe("bad_request");
     expect(hoursProblem([week[0], week[0]], who)?.code).toBe("bad_request");
+  });
+});
+
+describe("marking a call-in", () => {
+  const barber = { staffId: "makenna", brandWide: false, shopIds: [CORALVILLE] };
+  it("someone else needs \"Mark a barber as called in\"; yourself, that or \"Mark themselves\"", () => {
+    expect(callInDenied({ ...manager, markOthers: true, markOwn: false }, { staffId: "makenna", shopId: CORALVILLE }, [CORALVILLE])).toBeNull();
+    expect(callInDenied({ ...manager, markOthers: false, markOwn: true }, { staffId: "makenna", shopId: CORALVILLE }, [CORALVILLE])).toMatch(/only mark yourself/);
+    expect(callInDenied({ ...barber, markOthers: false, markOwn: true }, { staffId: "makenna", shopId: null }, [CORALVILLE])).toBeNull();
+    expect(callInDenied({ ...barber, markOthers: false, markOwn: false }, { staffId: "makenna", shopId: null }, [CORALVILLE])).toMatch(/Call the shop manager/);
+  });
+  it("stays inside the caller's shops, like the time off it writes", () => {
+    const m = { ...manager, markOthers: true, markOwn: false };
+    expect(callInDenied(m, { staffId: "x", shopId: IOWA_CITY }, [IOWA_CITY])).toMatch(/outside your access/);
+    expect(callInDenied(m, { staffId: "x", shopId: null }, [CORALVILLE, IOWA_CITY])).not.toBeNull();
+    expect(callInDenied({ ...admin, markOthers: true, markOwn: true }, { staffId: "x", shopId: null }, [CORALVILLE, IOWA_CITY])).toBeNull();
+    expect(callInDenied(m, { staffId: "x", shopId: null }, [])).toMatch(/doesn't work at any shop/);
   });
 });
