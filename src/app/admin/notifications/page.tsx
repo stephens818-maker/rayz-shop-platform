@@ -36,9 +36,14 @@ const KIND_LABEL: Record<string, string> = {
   callin_link: "Call-in: link after a call",
   missed_call: "Missed call text",
   shop_reply: "Shop text",
+  fill_offer: "Today: open-chair offer",
+  rebook_nudge: "Today: due to rebook",
+  no_show_reminder: "Today: extra reminder",
+  running_late: "Today: running late",
+  digest: "Morning digest",
 };
 /** Jobs sent to a client: their number or email shows as the viewer may see it. */
-const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply"]);
+const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply", "fill_offer", "rebook_nudge", "no_show_reminder", "running_late"]);
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;

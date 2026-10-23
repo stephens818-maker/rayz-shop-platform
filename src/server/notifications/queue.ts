@@ -28,7 +28,13 @@ export type NotificationKind =
   | "callin_link"
   /** The shop line: texts after a missed or after-hours call, and replies to a client's text. */
   | "missed_call"
-  | "shop_reply";
+  | "shop_reply"
+  /** Today's suggested actions and the morning digest. */
+  | "fill_offer"
+  | "rebook_nudge"
+  | "no_show_reminder"
+  | "running_late"
+  | "digest";
 
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
 const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);
@@ -139,8 +145,13 @@ export async function scheduleAppointmentNotifications(
 
 /** One message about an appointment, now, on each channel the client opted in to. Returns how many were queued. */
 export async function enqueueAppointmentMessage(kind: NotificationKind, c: AppointmentMessageContext, tx: DBorTx = db, now: Date = new Date(), extra?: MergeValues) {
+  return (await queueAppointmentMessage(kind, c, tx, now, extra)).length;
+}
+
+/** The same, returning the queued jobs' ids so the caller can send them at once. */
+export async function queueAppointmentMessage(kind: NotificationKind, c: AppointmentMessageContext, tx: DBorTx = db, now: Date = new Date(), extra?: MergeValues): Promise<string[]> {
   const to = recipients(c);
-  if (!to.length) return 0;
+  if (!to.length) return [];
   const m = renderMessage(kind, c, await savedTemplates(tx), extra);
   const rows = to.map((r) => ({
     appointmentId: c.appointmentId,
@@ -153,8 +164,8 @@ export async function enqueueAppointmentMessage(kind: NotificationKind, c: Appoi
     body: m.body,
     runAt: now,
   }));
-  if (rows.length) await tx.insert(notificationJobs).values(rows);
-  return rows.length;
+  if (!rows.length) return [];
+  return (await tx.insert(notificationJobs).values(rows).returning({ id: notificationJobs.id })).map((r) => r.id);
 }
 
 /**

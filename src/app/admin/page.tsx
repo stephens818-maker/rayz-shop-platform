@@ -8,13 +8,12 @@ import { formatCents } from "@/lib/money";
 import { addDays, endOfLocalDay, formatDate, formatTime, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
 import { reportsFor } from "@/domain/navigation";
 import { STATUS_LABEL } from "@/domain/staff-time";
-import { listRequests, pendingCount, staffingFor } from "@/server/staff-time";
+import { listRequests, staffingFor } from "@/server/staff-time";
 import { can, canAny, guardPage, reasonViewer, reportShopIds } from "@/server/auth/staff";
-import { flaggedCount } from "@/server/call-ins";
-import { unreadCount } from "@/server/messaging";
-import { stockLevels } from "@/server/inventory/stock";
+import { todayAlerts, viewerOf } from "@/server/today";
 import { timesFor } from "@/server/service-times";
 import { ServiceTimer } from "./calendar/service-times-panel";
+import { TodayAlerts } from "./today/alerts";
 import { byShop, salesSummary } from "@/server/reports";
 
 export const metadata: Metadata = { title: "Today" };
@@ -31,8 +30,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const scope = { shopIds, from: today, to: today, staffId: salesStaffId };
   const lastWeek = { shopIds, from: addDays(today, -7), to: addDays(today, -7), staffId: salesStaffId };
   const seesWalkins = can(ctx, "walkins.manage");
-  const seesStock = canAny(ctx, ["inventory.manage", "inventory.adjust", "po.create"]);
-  const seesSettings = can(ctx, "settings.shop") || can(ctx, "settings.taxes");
   const now = new Date();
   const apptWhere = and(
     inArray(appointments.shopId, shopIds),
@@ -41,7 +38,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     staffId ? eq(appointments.staffId, staffId) : undefined,
   );
 
-  const [summary, prior, statusCounts, upcoming, waitlist, lowStock, shopRows, taxShops] = await Promise.all([
+  const [summary, prior, statusCounts, upcoming, waitlist, shopRows, alerts] = await Promise.all([
     salesSummary(scope),
     salesSummary(lastWeek),
     db.select({ status: appointments.status, n: sql<number>`count(*)::int` }).from(appointments).where(apptWhere).groupBy(appointments.status),
@@ -68,29 +65,18 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     !seesWalkins
       ? Promise.resolve([{ n: 0 }])
       : db.select({ n: sql<number>`count(*)::int` }).from(waitlistEntries).where(and(inArray(waitlistEntries.shopId, shopIds), eq(waitlistEntries.status, "waiting"))),
-    !seesStock
-      ? Promise.resolve([])
-      : stockLevels(shopIds).then((rows) =>
-          rows
-            .filter((r) => r.low)
-            .sort((a, b) => a.available - b.available)
-            .slice(0, 8),
-        ),
     ctx.currentShopId === null && !ownSales ? byShop(scope) : Promise.resolve([]),
-    db.select({ name: shops.name }).from(shops).where(and(inArray(shops.id, shopIds), eq(shops.taxRatesVerified, false))),
+    todayAlerts(viewerOf(ctx), now),
   ]);
   const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
-  const [times, staffing, waitingRequests, myDecisions, callInFlags, unreadTexts] = await Promise.all([
+  const [times, staffing, myDecisions] = await Promise.all([
     timesFor(upcoming.map((a) => a.id), now),
     staffingFor(shopIds, today, today, reasonViewer(ctx), seesTeam ? null : [ctx.staff.id]),
-    can(ctx, "timeoff.approve") ? pendingCount(shopIds, false) : Promise.resolve(0),
     can(ctx, "timeoff.request")
       ? listRequests({ staffId: ctx.staff.id }, { viewer: reasonViewer(ctx), statuses: ["approved", "denied"], limit: 20 }).then((rs) =>
           rs.filter((r) => r.decidedAt && new Date(r.decidedAt).getTime() > now.getTime() - 7 * 86_400_000 && r.decidedVia !== "auto"),
         )
       : Promise.resolve([]),
-    can(ctx, "callins.outreach") ? flaggedCount(shopIds) : Promise.resolve(0),
-    can(ctx, "inbox.view") ? unreadCount(shopIds) : Promise.resolve(0),
   ]);
   const whosIn = shopIds
     .map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "", rows: staffing.filter((r) => r.shopId === id) }))
@@ -129,30 +115,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         }
       />
       {sp.denied && <Notice tone="red">You don&apos;t have access to that page.</Notice>}
-      {waitingRequests > 0 && (
-        <Notice>
-          {waitingRequests} time off request{waitingRequests === 1 ? " is" : "s are"} waiting for a decision.{" "}
-          <Link className="underline" href="/admin/time-off">
-            Review time off
-          </Link>
-        </Notice>
-      )}
-      {callInFlags > 0 && (
-        <Notice tone="red">
-          {callInFlags === 1 ? "One client" : `${callInFlags} clients`} from a call-in still need{callInFlags === 1 ? "s" : ""} a call from the shop: outreach couldn&apos;t reach them or got no answer.{" "}
-          <Link className="underline" href="/admin/call-ins">
-            Call-ins
-          </Link>
-        </Notice>
-      )}
-      {unreadTexts > 0 && (
-        <Notice tone="blue">
-          {unreadTexts} unread text{unreadTexts === 1 ? "" : "s"} from clients.{" "}
-          <Link className="underline" href="/admin/inbox">
-            Inbox
-          </Link>
-        </Notice>
-      )}
+      <TodayAlerts alerts={alerts} multiShop={shopIds.length > 1} />
       {myDecisions.map((r) => (
         <Notice key={r.id} tone={r.status === "approved" ? "green" : "red"}>
           Your {r.reason.label.toLowerCase()} time off for {r.range} was {r.status}
@@ -163,15 +126,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           </Link>
         </Notice>
       ))}
-      {seesSettings && taxShops.length > 0 && (
-        <Notice>
-          Tax rates are unverified placeholders for {taxShops.map((s) => s.name).join(", ")}. Confirm them in{" "}
-          <Link className="underline" href="/admin/settings">
-            Shop settings
-          </Link>{" "}
-          before going live.
-        </Notice>
-      )}
       {can(ctx, "notifications.view") && notificationsOff && (
         <Notice tone="blue">
           Customer texts and emails are off (stub provider). Reminders are queued and marked &ldquo;suppressed&rdquo;; see{" "}
@@ -225,29 +179,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           )}
         </Card>
         <div className="space-y-4">
-          {seesStock && (
-            <Card>
-              <CardHeader title="Low stock" action={<Link className="text-xs underline" href="/admin/inventory/low-stock">Reorder</Link>} />
-              {lowStock.length === 0 ? (
-                <div className="px-4 py-3 text-sm text-zinc-500">All products above their reorder point.</div>
-              ) : (
-                <ul className="divide-y divide-zinc-100 text-sm">
-                  {lowStock.map((p, i) => (
-                    <li key={i} className="flex justify-between px-4 py-2">
-                      <span className="truncate">
-                        {p.brand} {p.name}
-                        {ctx.currentShopId === null && <span className="text-xs text-zinc-500"> · {p.shop}</span>}
-                      </span>
-                      <span className={p.available <= 0 ? "font-semibold text-red-600" : "text-amber-700"}>
-                        {p.available}
-                        {p.onOrder + p.inTransit > 0 && <span className="text-xs text-zinc-500"> +{p.onOrder + p.inTransit} coming</span>}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Card>
-          )}
           {whosIn.length > 0 && (
             <Card>
               <CardHeader
