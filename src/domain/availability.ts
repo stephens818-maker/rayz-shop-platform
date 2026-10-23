@@ -81,6 +81,15 @@ export interface DayAvailabilityInput {
   now?: Date | number;
   /** When rescheduling, ignore the appointment being moved. */
   ignoreAppointmentId?: string;
+  /** Time a barber opened ahead of a scheduled stretch by clocking in early (src/domain/clock-live.ts). */
+  early?: EarlyOpening[];
+}
+
+/** Bookable time before a scheduled stretch. `end` is that stretch's start; its slots count back from there, so the day's grid doesn't move. */
+export interface EarlyOpening {
+  staffId: string;
+  start: Date | number;
+  end: Date | number;
 }
 
 export interface Slot {
@@ -160,8 +169,8 @@ export function planFor(input: DayAvailabilityInput, staffId: string): StaffPlan
   };
 }
 
-/** When one barber works at this shop on this date: their weekly hours inside the shop's. Each stretch starts its own slot grid. */
-export function workSpans(input: DayAvailabilityInput, staffId: string): Span[] {
+/** Their weekly hours inside the shop's on this date. Each stretch starts its own slot grid. */
+function scheduledSpans(input: DayAvailabilityInput, staffId: string): Span[] {
   const { date, shopId } = input;
   if (input.closedDates?.includes(date)) return [];
   const shopOpen = toSpans(date, input.shopHours);
@@ -171,6 +180,22 @@ export function workSpans(input: DayAvailabilityInput, staffId: string): Span[] 
     input.schedules.filter((s) => s.staffId === staffId && s.shopId === shopId),
   );
   return intersectSpans(shopOpen, work);
+}
+
+/** Early-opened time inside shop hours, each with the scheduled start its slots count back from. */
+function earlySpans(input: DayAvailabilityInput, staffId: string): (Span & { anchor: number })[] {
+  if (!input.early?.length || input.closedDates?.includes(input.date)) return [];
+  const shopOpen = toSpans(input.date, input.shopHours);
+  return input.early
+    .filter((e) => e.staffId === staffId)
+    .flatMap((e) => intersectSpans(shopOpen, [{ start: ms(e.start), end: ms(e.end) }]).map((s) => ({ ...s, anchor: ms(e.end) })));
+}
+
+/** When one barber works at this shop on this date: their weekly hours inside the shop's, plus any time an early clock-in opened. */
+export function workSpans(input: DayAvailabilityInput, staffId: string): Span[] {
+  const base = scheduledSpans(input, staffId);
+  const early = earlySpans(input, staffId);
+  return early.length ? mergeSpans([...base, ...early]) : base;
 }
 
 const isBusy = (input: DayAvailabilityInput, a: BusyAppointment, staffId: string) =>
@@ -231,13 +256,17 @@ export function findScheduleConflicts(rows: BarberWeeklyHours[]): string[] {
   return conflicts;
 }
 
-/** Start times on one barber's grid: every interval from the start of each working stretch, in absolute time. */
+/**
+ * Start times on one barber's grid: every interval from the start of each scheduled stretch, and,
+ * before a stretch an early clock-in opened, every interval back from its start. In absolute time.
+ */
 export function gridStarts(input: DayAvailabilityInput, staffId: string): number[] {
   const step = planFor(input, staffId).intervalMin * 60_000;
   if (step <= 0) return [];
-  const out: number[] = [];
-  for (const w of workSpans(input, staffId)) for (let t = w.start; t < w.end; t += step) out.push(t);
-  return out;
+  const out = new Set<number>();
+  for (const w of scheduledSpans(input, staffId)) for (let t = w.start; t < w.end; t += step) out.add(t);
+  for (const e of earlySpans(input, staffId)) for (let t = e.anchor - step; t >= e.start; t -= step) if (t < e.end) out.add(t);
+  return [...out].sort((a, b) => a - b);
 }
 
 /**
@@ -275,7 +304,10 @@ export function computeDaySlots(input: DayAvailabilityInput): Slot[] {
 export function onSlotGrid(input: DayAvailabilityInput, start: number, staffId?: string): boolean {
   if (staffId) {
     const step = planFor(input, staffId).intervalMin * 60_000;
-    return workSpans(input, staffId).some((w) => start >= w.start && start < w.end && (start - w.start) % step === 0);
+    return (
+      scheduledSpans(input, staffId).some((w) => start >= w.start && start < w.end && (start - w.start) % step === 0) ||
+      earlySpans(input, staffId).some((e) => start >= e.start && start < e.end && (e.anchor - start) % step === 0)
+    );
   }
   const interval = (input.slotIntervalMin ?? 15) * 60_000;
   return toSpans(input.date, input.shopHours).some((open) => start >= open.start && (start - open.start) % interval === 0);

@@ -426,9 +426,29 @@ export interface ShopClockSettings {
   photo: "off" | "optional" | "required";
   /** Null follows the brand's grace minutes. */
   graceMinutes: number | null;
+  /** A break closes online booking over it: from the break's start for breakHoldMinutes, or longer while it lasts. */
+  blockOnBreak: boolean;
+  breakHoldMinutes: number;
+  /** Clocking out before the scheduled end closes online booking for the rest of the day here, until they clock back in. */
+  blockAfterClockOut: boolean;
+  /** Clocking in before the scheduled start opens the time in between for booking, for barbers who allow it. */
+  openEarly: boolean;
+  /** Managers are told when a barber isn't clocked in this many minutes before their first appointment. Null: off. */
+  lateAlertMinutes: number | null;
 }
 
-export const DEFAULT_SHOP_CLOCK: ShopClockSettings = { methods: [], radiusM: 150, networks: [], photo: "off", graceMinutes: null };
+export const DEFAULT_SHOP_CLOCK: ShopClockSettings = {
+  methods: [],
+  radiusM: 150,
+  networks: [],
+  photo: "off",
+  graceMinutes: null,
+  blockOnBreak: true,
+  breakHoldMinutes: 30,
+  blockAfterClockOut: true,
+  openEarly: false,
+  lateAlertMinutes: 10,
+};
 
 export const ShopClockSettingsSchema = z.object({
   methods: z.array(z.enum(["device", "gps", "network"])).max(3),
@@ -436,18 +456,29 @@ export const ShopClockSettingsSchema = z.object({
   networks: z.array(z.string().trim().min(1).max(64)).max(20),
   photo: z.enum(["off", "optional", "required"]),
   graceMinutes: z.number().int().min(0).max(60).nullable(),
+  blockOnBreak: z.boolean(),
+  breakHoldMinutes: z.number().int().min(5).max(120),
+  blockAfterClockOut: z.boolean(),
+  openEarly: z.boolean(),
+  lateAlertMinutes: z.number().int().min(0).max(120).nullable(),
 });
 
 export function shopClockSettings(raw: unknown): ShopClockSettings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const p = ShopClockSettingsSchema.partial().safeParse(r);
   const v = p.success ? p.data : {};
+  const d = DEFAULT_SHOP_CLOCK;
   return {
-    methods: [...new Set(v.methods ?? DEFAULT_SHOP_CLOCK.methods)],
-    radiusM: v.radiusM ?? DEFAULT_SHOP_CLOCK.radiusM,
-    networks: (v.networks ?? DEFAULT_SHOP_CLOCK.networks).filter((n) => parseCidr(n) !== null),
-    photo: v.photo ?? DEFAULT_SHOP_CLOCK.photo,
-    graceMinutes: v.graceMinutes === undefined ? DEFAULT_SHOP_CLOCK.graceMinutes : v.graceMinutes,
+    methods: [...new Set(v.methods ?? d.methods)],
+    radiusM: v.radiusM ?? d.radiusM,
+    networks: (v.networks ?? d.networks).filter((n) => parseCidr(n) !== null),
+    photo: v.photo ?? d.photo,
+    graceMinutes: v.graceMinutes === undefined ? d.graceMinutes : v.graceMinutes,
+    blockOnBreak: v.blockOnBreak ?? d.blockOnBreak,
+    breakHoldMinutes: v.breakHoldMinutes ?? d.breakHoldMinutes,
+    blockAfterClockOut: v.blockAfterClockOut ?? d.blockAfterClockOut,
+    openEarly: v.openEarly ?? d.openEarly,
+    lateAlertMinutes: v.lateAlertMinutes === undefined ? d.lateAlertMinutes : v.lateAlertMinutes,
   };
 }
 
