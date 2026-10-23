@@ -153,7 +153,7 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
                             </span>
                             {sh.breaks.map((b) => (
                               <span key={b.startId} className="text-xs text-zinc-500">
-                                break {formatTime(b.start)}–{b.end ? formatTime(b.end) : "?"} {b.paid ? "(paid)" : "(unpaid)"}
+                                break {formatTime(b.start)}–{b.end ? `${formatTime(b.end)} ${b.paid ? "(paid)" : "(unpaid)"}` : "?"}
                               </span>
                             ))}
                             {sh.flags.map((f) => (
