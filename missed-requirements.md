@@ -111,3 +111,22 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [ ] Try it in real Stripe test mode. This needs test keys with Connect turned on (`STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CONNECT_WEBHOOK_SECRET`).
 - [ ] Charles to confirm the fee model: the application fee equals the processing cost and isn't returned on refunds.
 - [ ] C18 review login and the wallet fee: the flags stay off until decided.
+
+## 6. Payroll (C4, totals integrity, iSolved export)
+
+- [x] Payroll Report computed row for row like the workbook (33 rows, 293 cells, 0 differences), with every total summed from its rows.
+- [x] O.T. Pay (1.5 × base × split OT hours) and Training Pay (setting, on) counted in labor cost; the Locations view's Employee Cost is labor cost.
+- [x] Cross-shop OT per Sun–Sat America/Chicago workweek per FEIN, split by share of hours. Tested: 25 h + 20 h, a week spanning two pay periods, a DST week, and the training flag on and off.
+- [x] Reconciliation gate blocks approve-and-lock on any $0.01 mismatch and shows it on screen.
+- [x] Per-shop pay groups and calendars; Dubuque has its own calendar and file (Q16 resolved).
+- [x] Per-shop iSolved xlsx in the workbook's exact format, OT hours only, unrounded by default, formatting copied per tab and diffed in a test. Downloads only after approve-and-lock. No iSolved API.
+- [x] FT/PT: averaging more than 32 h/week; basis and window are settings.
+- [x] `docs/payroll-report-spec.md` and the anonymized `docs/payroll-workbook-discrepancies.md`.
+- [ ] Charles: Q11 (training inside clocked hours; C2 flag off), Q17 (the owner row and the Coralville NetComm gap), the FT basis and window, and 2-decimal rounding (off).
+- [ ] Enter the real Employee Numbers, iSolved names and rates on Payroll → Setup (they're never in the repo).
+
+## 7. Service time tracking
+
+- [x] Arrival, start, finish and checkout captured with who recorded each; checkout stands in for Finish.
+- [x] Manager corrections with audit, outlier flags (left out of averages by default), average, median and count, and duration suggestions.
+- [ ] Start/Finish buttons on the calendar, the barber's view and the POS; the Service times report page with one-click accept of suggestions; seeded timings; tests.

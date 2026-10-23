@@ -15,12 +15,13 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Admin back office (`src/app/admin/**`), booking engine (`src/server/booking.ts`, `src/domain/availability.ts`, `src/domain/timing.ts`), POS and checkout, refunds, reports, inventory, permissions and roles, client data protection, notifications back office | core |
 | Card fee config and `computeCardFee` | core (mobile reads only) |
 | I10 Stripe Connect: platform account, connected account per shop, destination charges, onboarding, per-shop P&L | core, except the platform Customer and saved-card side, which is mobile's |
+| Payroll (`src/domain/payroll/**`, `src/server/payroll/**`, `src/app/admin/payroll/**`) and service times (`src/domain/service-times.ts`, `src/server/service-times*.ts`) | core |
 
 Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times` and `core_0022_payroll`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -87,6 +88,16 @@ One Ray'z platform account, and one Express connected account per shop. The plat
 - **Env:** `STRIPE_CONNECT_WEBHOOK_SECRET` is the signing secret of a separate **Connect** webhook endpoint at `/api/stripe/connect` (events `account.updated`, `account.application.deauthorized`, `payout.*`).
 - **Without keys:** accounts are `sim_acct_…`, and onboarding is a stand-in page. Simulated accounts are refused in Stripe mode, so a shop has to onboard for real once keys are set.
 
+### Payroll (core)
+
+Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook problems: [`docs/payroll-workbook-discrepancies.md`](docs/payroll-workbook-discrepancies.md).
+
+- **No iSolved connection.** Output is a per-shop xlsx in the workbook's exact format, downloaded after approve-and-lock and uploaded by hand. Nothing calls iSolved. Exports go through `PayrollExporter` in `src/server/payroll/export.ts`.
+- **Employee Numbers are sensitive.** `payroll_profiles.employee_number` lives in the database only. Please never return it from `/api/v1` or put it in logs, push payloads or fixtures.
+- **Schema** (`drizzle/core_0022_payroll.sql`): `pay_groups` (one per shop, each with its own calendar and legal entity), `payroll_profiles`, `payroll_rates`, `time_entries`, `payroll_overrides`, `payroll_runs` (locked snapshots), `payroll_locked_ot`, and `brand_settings.payroll` (jsonb). New permissions `payroll.run` and `payroll.approve` (brand-only, added to Brand Admin).
+- **Sales and tips** come from `payrollSalesBetween` in `src/server/reports.ts`, so a ticket counts at the shop it was rung up at, same as the reports.
+- Service times (`drizzle/core_0021_service_times.sql`): `appointment_times` records arrival, start, finish and checkout, each with who recorded it. The mobile side doesn't need to write it; check-in through the API can set arrival later if you'd like it.
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
@@ -118,8 +129,23 @@ If the mobile side means a specific registry from the plan, say which items it s
 - Which C/I/S items does "brand-sync registry" refer to? See above.
 - C18 review login and the wallet fee: flags are off until Charles decides.
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
+- Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
 
 ## Log
+
+### 2026-10-23: core (payroll)
+
+- **Payroll Report** at `/admin/payroll/report`: the workbook's Locations math row for row, plus O.T. Pay (1.5 × base × split OT hours), Training Pay and Labor Cost as real cost. Includes the Locations view, per-employee drill-down, anomalies, a reconciliation gate that blocks approve-and-lock on any $0.01 mismatch, and downloads of locked periods only.
+- **Cross-shop OT (C4):** per Sun–Sat America/Chicago workweek, across every shop of the same legal entity (default Ray'z Inc.), split by share of hours, across pay periods and DST weeks. Locked periods keep their OT.
+- **Per-shop pay groups and calendars.** The main shops are on period 23 = 10/18–10/31 (check 11/6). Dubuque has its own calendar (period 01 = 10/4–10/17, check 10/23) and its own export file, which resolves Q16.
+- **iSolved export:** a per-shop xlsx with the same columns, headers and codes as the workbook (including `E_Cash Tips Recd_Dollars`). It carries OT hours only, never OT dollars, unrounded by default, and copies each tab's formatting cell for cell. There's no iSolved API; the export is behind `PayrollExporter`.
+- **Declined by Charles (keep iSolved as-is):** C1 blended-rate OT and C3 moving card tips off Cash Tips Recd. Neither is built and there are no flags for them.
+- Also added Payroll → Hours (time entries plus shift CSV import) and Payroll → Setup (settings, pay groups, profiles and rates).
+- Migration `core_0022_payroll`; the seed adds sample payroll data with synthetic Employee Numbers.
+- Tests: `tests/payroll-engine.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`.
+- Docs: `docs/payroll-report-spec.md` and `docs/payroll-workbook-discrepancies.md` (anonymized).
+- **Earlier today, service times part 1:** the `appointment_times` table, capture through status changes and checkout, manager corrections with audit, outlier flags, the Service times report and duration suggestions. Migration `core_0021_service_times`. The calendar, barber and POS timer buttons, the report page and the tests are next.
+- **Not touched:** anything under `/api/v1`.
 
 ### 2026-10-23: core (I10 Stripe Connect)
 
