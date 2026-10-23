@@ -5,7 +5,21 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { brandSettings, clientAccessAlerts, clientFieldRules, clientFields, roles, shops, staff } from "@/db/schema";
-import { FieldKey, LEVELS, Level, cleanLimits, customFieldId, fieldLabel, fieldRuleChangeDenied, isBuiltinField, resolveLevel } from "@/domain/client-privacy";
+import {
+  Entry,
+  EntrySetting,
+  FieldKey,
+  Level,
+  SETTINGS,
+  SETTING_LABEL,
+  cleanLimits,
+  customFieldId,
+  fieldLabel,
+  fieldRuleChangeDenied,
+  isBuiltinField,
+  resolveEntry,
+  resolveLevel,
+} from "@/domain/client-privacy";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, authorize } from "@/server/auth/staff";
@@ -16,13 +30,17 @@ function revalidate() {
   revalidatePath("/admin", "layout");
 }
 
-/** What the caller sees of a field at a shop (or brand-wide), for "nobody gives more than they see". */
-async function callerLevels(ctx: StaffContext) {
+/** What the caller sees and may enter of a field at a shop (or brand-wide), for "nobody gives more than they have". */
+async function callerRights(ctx: StaffContext) {
   const roleIds = [ctx.access.role.id, ...[...ctx.access.byShop.values()].map((s) => s.role.id)];
   const rules = ctx.isOwner ? [] : await rulesFor(ctx.staff.id, [...new Set(roleIds)]);
-  return (shopId: string | null, field: FieldKey): Level => {
+  const who = (shopId: string | null) => {
     const role = (shopId && ctx.access.byShop.get(shopId)?.role) || ctx.access.role;
-    return resolveLevel(rules, { staffId: ctx.staff.id, roleId: role.id, roleKey: role.key }, shopId, field);
+    return { staffId: ctx.staff.id, roleId: role.id, roleKey: role.key };
+  };
+  return {
+    levelAt: (shopId: string | null, field: FieldKey): Level => resolveLevel(rules, who(shopId), shopId, field),
+    entryAt: (shopId: string | null, field: FieldKey, setting: EntrySetting) => resolveEntry(rules, who(shopId), shopId, field, setting),
   };
 }
 
@@ -33,11 +51,13 @@ const RuleSchema = z.object({
   roleId: z.string().uuid().nullable(),
   staffId: z.string().uuid().nullable(),
   shopId: z.string().uuid().nullable(),
-  /** null removes the rule, so the next one down applies. */
-  level: z.enum(LEVELS).nullable(),
+  /** "view": how visible the field is; "add" and "edit": whether it may be entered. */
+  setting: z.enum(SETTINGS).default("view"),
+  /** hidden, masked or full for view; allow or deny for add and edit. null removes the rule, so the next one down applies. */
+  level: z.string().nullable(),
 });
 
-/** Set or clear how visible one client field is to a role or a person, brand-wide or at one shop. */
+/** Set or clear how visible one client field is to a role or a person, or whether they may add or edit it, brand-wide or at one shop. */
 export async function setFieldRuleAction(raw: z.input<typeof RuleSchema>) {
   return safe(async () => {
     const ctx = await authorize("clients.privacy", "You can't change client data protection");
@@ -53,12 +73,13 @@ export async function setFieldRuleAction(raw: z.input<typeof RuleSchema>) {
     const shop = p.shopId ? await db.query.shops.findFirst({ where: eq(shops.id, p.shopId), columns: { name: true } }) : null;
     if (p.shopId && !shop) throw notFound("Shop");
     const denied = fieldRuleChangeDenied(
-      { staffId: ctx.staff.id, roleId: ctx.access.role.id, isOwner: ctx.isOwner, levelAt: await callerLevels(ctx) },
-      { field, roleId: p.roleId, roleKey: role?.key ?? personRole?.key ?? null, staffId: p.staffId, shopId: p.shopId, level: p.level },
+      { staffId: ctx.staff.id, roleId: ctx.access.role.id, isOwner: ctx.isOwner, ...(await callerRights(ctx)) },
+      { field, setting: p.setting, roleId: p.roleId, roleKey: role?.key ?? personRole?.key ?? null, staffId: p.staffId, shopId: p.shopId, level: p.level },
     );
     if (denied) throw forbidden(denied);
     const match = and(
       eq(clientFieldRules.field, field),
+      eq(clientFieldRules.setting, p.setting),
       p.roleId ? eq(clientFieldRules.roleId, p.roleId) : isNull(clientFieldRules.roleId),
       p.staffId ? eq(clientFieldRules.staffId, p.staffId) : isNull(clientFieldRules.staffId),
       p.shopId ? eq(clientFieldRules.shopId, p.shopId) : isNull(clientFieldRules.shopId),
@@ -66,7 +87,10 @@ export async function setFieldRuleAction(raw: z.input<typeof RuleSchema>) {
     await db.transaction(async (tx) => {
       const [before] = await tx.select({ level: clientFieldRules.level }).from(clientFieldRules).where(match);
       await tx.delete(clientFieldRules).where(match);
-      if (p.level) await tx.insert(clientFieldRules).values({ field, roleId: p.roleId, staffId: p.staffId, shopId: p.shopId, level: p.level, updatedBy: ctx.staff.id });
+      if (p.level)
+        await tx
+          .insert(clientFieldRules)
+          .values({ field, setting: p.setting, roleId: p.roleId, staffId: p.staffId, shopId: p.shopId, level: p.level as Level | Entry, updatedBy: ctx.staff.id });
       await audit(
         ctx.actor,
         "client_data.rule",
@@ -74,6 +98,7 @@ export async function setFieldRuleAction(raw: z.input<typeof RuleSchema>) {
         field,
         {
           field: fieldLabel(field, custom),
+          setting: SETTING_LABEL[p.setting],
           for: role ? { role: role.name } : { person: person!.displayLabel },
           where: shop?.name ?? "brand default",
           from: before?.level ?? "inherit",

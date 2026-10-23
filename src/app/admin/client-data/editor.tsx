@@ -3,10 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Field, Input, Select, cx } from "@/components/ui";
-import { LEVELS, LEVEL_LABEL, type Level, type LookupLimits } from "@/domain/client-privacy";
+import { RULE_VALUE_LABEL, SETTINGS, SETTING_LABEL, type Entry, type Level, type LookupLimits, type Setting, ruleValues } from "@/domain/client-privacy";
 import { acknowledgeAlertAction, saveCustomFieldAction, saveLookupLimitsAction, setFieldRuleAction } from "./actions";
 
-type Rule = { field: string; roleId: string | null; staffId: string | null; shopId: string | null };
+type Rule = { field: string; setting: Setting; roleId: string | null; staffId: string | null; shopId: string | null };
+type Value = Level | Entry;
 type Result = { ok: true; data: unknown } | { ok: false; error: string };
 
 function useRun() {
@@ -24,31 +25,29 @@ function useRun() {
   return { pending, error, run };
 }
 
-const TONE: Record<Level, string> = {
-  hidden: "bg-red-50 text-red-800 ring-red-200",
-  masked: "bg-amber-50 text-amber-900 ring-amber-200",
-  full: "bg-emerald-50 text-emerald-900 ring-emerald-200",
-};
+const RED = "bg-red-50 text-red-800 ring-red-200";
+const GREEN = "bg-emerald-50 text-emerald-900 ring-emerald-200";
+const TONE: Record<Value, string> = { hidden: RED, masked: "bg-amber-50 text-amber-900 ring-amber-200", full: GREEN, allow: GREEN, deny: RED };
 
-/** One role × field: a level set here, or inherit the brand default / built-in default. */
-export function RuleCell({ rule, level, inherited, from }: { rule: Rule; level: Level | null; inherited: Level; from: string }) {
+/** One role × field × setting: a level (or allow / deny) set here, or inherit the brand default / built-in default. */
+export function RuleCell({ rule, level, inherited, from }: { rule: Rule; level: Value | null; inherited: Value; from: string }) {
   const { pending, error, run } = useRun();
   const shown = level ?? inherited;
   return (
     <div>
       <select
-        aria-label={`${rule.field} level`}
+        aria-label={`${rule.field} ${rule.setting}`}
         disabled={pending}
         value={level ?? ""}
-        onChange={(e) => run(() => setFieldRuleAction({ ...rule, level: (e.target.value || null) as Level | null }))}
+        onChange={(e) => run(() => setFieldRuleAction({ ...rule, level: e.target.value || null }))}
         className={cx("h-8 rounded-md px-1.5 text-xs ring-1", TONE[shown], !level && "border-dashed opacity-80")}
       >
         <option value="">
-          {LEVEL_LABEL[inherited]} ({from})
+          {RULE_VALUE_LABEL[inherited]} ({from})
         </option>
-        {LEVELS.map((l) => (
+        {ruleValues(rule.setting).map((l) => (
           <option key={l} value={l}>
-            {LEVEL_LABEL[l]}
+            {RULE_VALUE_LABEL[l]}
           </option>
         ))}
       </select>
@@ -82,9 +81,16 @@ export function PersonRuleForm({
   const [staffId, setStaffId] = useState("");
   const [field, setField] = useState(fields[0]?.key ?? "phone");
   const [shopId, setShopId] = useState("");
-  const [level, setLevel] = useState<Level>("hidden");
+  const [setting, setSetting] = useState<Setting>("view");
+  const [level, setLevel] = useState<Value>("hidden");
+  const choices = setting === "view" ? fields : fields.filter((f) => f.key !== "ratings");
+  const pickSetting = (t: Setting) => {
+    setSetting(t);
+    setLevel(t === "view" ? "hidden" : "deny");
+    if (t !== "view" && field === "ratings") setField(choices.find((f) => f.key !== "ratings")?.key ?? "phone");
+  };
   return (
-    <div className="grid gap-2 border-t border-zinc-100 p-4 sm:grid-cols-5">
+    <div className="grid gap-2 border-t border-zinc-100 p-4 sm:grid-cols-6">
       <Select aria-label="Person" value={staffId} onChange={(e) => setStaffId(e.target.value)}>
         <option value="">Person…</option>
         {people.map((p) => (
@@ -93,8 +99,15 @@ export function PersonRuleForm({
           </option>
         ))}
       </Select>
+      <Select aria-label="Setting" value={setting} onChange={(e) => pickSetting(e.target.value as Setting)}>
+        {SETTINGS.map((t) => (
+          <option key={t} value={t}>
+            {SETTING_LABEL[t]}
+          </option>
+        ))}
+      </Select>
       <Select aria-label="Field" value={field} onChange={(e) => setField(e.target.value)}>
-        {fields.map((f) => (
+        {choices.map((f) => (
           <option key={f.key} value={f.key}>
             {f.label}
           </option>
@@ -108,17 +121,17 @@ export function PersonRuleForm({
           </option>
         ))}
       </Select>
-      <Select aria-label="Level" value={level} onChange={(e) => setLevel(e.target.value as Level)}>
-        {LEVELS.map((l) => (
+      <Select aria-label="Level" value={level} onChange={(e) => setLevel(e.target.value as Value)}>
+        {ruleValues(setting).map((l) => (
           <option key={l} value={l}>
-            {LEVEL_LABEL[l]}
+            {RULE_VALUE_LABEL[l]}
           </option>
         ))}
       </Select>
-      <Button disabled={pending || !staffId} onClick={() => run(() => setFieldRuleAction({ field, roleId: null, staffId, shopId: shopId || null, level }))}>
+      <Button disabled={pending || !staffId} onClick={() => run(() => setFieldRuleAction({ field, setting, roleId: null, staffId, shopId: shopId || null, level }))}>
         Add rule
       </Button>
-      {error && <p className="text-sm text-red-600 sm:col-span-5">{error}</p>}
+      {error && <p className="text-sm text-red-600 sm:col-span-6">{error}</p>}
     </div>
   );
 }
