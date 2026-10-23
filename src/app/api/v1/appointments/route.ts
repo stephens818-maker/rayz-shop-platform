@@ -4,12 +4,17 @@ import { customerActor } from "@/server/audit";
 import { customerFromRequest } from "@/server/auth/customer";
 import { createAppointment } from "@/server/booking";
 import { AppError } from "@/server/errors";
+import { readClient } from "@/server/mobile/client";
+import { limitGuestBooking } from "@/server/mobile/rate-limit";
 
 export const OPTIONS = options;
 export const POST = route(async (req) => {
   const b = await body(req, CreateAppointment);
+  const info = readClient(req);
   const customerId = await customerFromRequest(req);
+  if ((info.client === "ios" || info.client === "android") && !customerId) throw new AppError("unauthorized", "Sign in to book.");
   if (!customerId && !b.customer) throw new AppError("bad_request", "customer is required when not signed in");
+  if (!customerId) await limitGuestBooking({ ip: info.ip, phone: b.customer?.phone });
   const idem = req.headers.get("idempotency-key");
   const appointment = await createAppointment({
     shopRef: b.shopId,

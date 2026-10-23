@@ -108,10 +108,46 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Online and API bookings must start on a time from `getAvailability`, which is per barber now (`slot.ends[staffId]`). Squeeze-in is staff-only.
 - `payments` gains Connect columns. See the I10 section above.
 
+## Mobile API workstream (bc-645fbcc0)
+
+Branch: `cursor/mobile-api-auth-a9e1`. PRs into `cursor/rayz-barbershop-v1-8f0b`. Migration `mobile_customer_app` is journal idx 21, after `core_0020_stripe_connect`. The SQL filename stays `mobile_customer_app.sql`.
+
+### Clock
+
+`brand_settings.time_format` is `'12h'` or `'24h'`, default `'12h'`. Core had not added this column yet, so the mobile migration adds it. The one formatter is `formatDateTime` / `formatTime` in `src/lib/time.ts` (optional second argument, default `'12h'`). `brandTimeFormat()` and `formatForHumans()` in `src/server/brand-time.ts` read the column. Appointment reminders call that. Receipt text and PDF use it. `GET /api/v1/app/config` returns `timeFormat` and `timezone: America/Chicago`. JSON instants stay ISO-8601 UTC. Please reuse these helpers. Don't add a second formatter.
+
+Shop hour strings `open` / `close` stay `HH:MM` because the public site parses them. `openLabel` / `closeLabel` are the 12-hour display.
+
+### Purchases
+
+`GET /api/v1/me/purchases` returns `paidAt` (ISO UTC) and `serviceCents`, `productCents`, `taxCents`, `tipCents` unreduced by refunds. Refunds are a separate array with their own `createdAt`. `GET /api/v1/me/purchases/receipt` returns the same split as text, or a PDF with `format=pdf`. Payroll calc is untouched.
+
+### Import
+
+- Bulk and delta imports do not text or email unless `runImport(..., { notifyClients: true })`. Consent still applies. Imported bookings schedule reminders only.
+- `sales.is_imported` and `payments.processor = 'squire_import'` are unchanged so payroll can exclude them.
+
+### Connect and tips
+
+- PaymentIntents are created only in core's `chargeCard`. `executeChargePlan` calls it. While `FEATURE_TIP_TO_BARBER` is not exactly `"true"`, the whole ticket including the tip uses core's destination charge (`chargeDestination`). The ledger row for the tip is `skipped` with the note `not for W-2 employees, pending CPA. Employee tips go through iSolved payroll.`
+- **Tip-to-barber stays OFF.** It is not for W-2 employees, pending CPA. Employee tips go through iSolved. The flag is not in `src/lib/flags.ts`.
+- **Conflict:** core I10 hard-wires destination charges, which cannot pay a barber Express account. The owner asked for a ChargePlan that can also do separate charges and transfers, with tip routing off until a CPA confirms. Mobile did not add a second PaymentIntent helper. Separate charges run only if the tip flag is turned on. Please don't add another PaymentIntent creator.
+- `payments_not_ready` will be shown as "This shop isn't taking cards in the app yet" when app checkout lands. Not a card decline.
+- `staff.stripe_account_id` is an optional barber Express account. It is unused while the tip flag is off.
+
+### Consent and other /api/v1 notes
+
+- Opt-out sticks. A later booking or Squire row cannot turn it back on. Re-consent is a `consent_events` row. `src/app/(public)/book/[shop]/wizard.tsx` still initializes `smsOptIn: true`. Please default that checkbox off.
+- Per-IP limits, appointment-code cutoff, devices, customer notes, and shop geocode / open-now / next slot are on this branch.
+- Mobile reads `computeCardFee` and `flags.reviewLogin` / `flags.walletFee`.
+
 ## Requests for the other agent
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
 - (core → mobile) An app checkout or prepayment for a shop that isn't onboarded fails with `payment_failed` and `details.reason = "payments_not_ready"`. Please show that as "This shop isn't taking cards in the app yet" instead of as a card decline.
+- (mobile → core) Reuse `formatDateTime` / `formatForHumans` for any new receipt, SMS, or push copy. `brand_settings.time_format` defaults to `12h`.
+- (mobile → core) Default the web booking SMS checkbox to off (`wizard.tsx` `smsOptIn: true`).
+- (mobile → core) Leave tip-to-barber off. Employee tips go through iSolved. Destination charges cannot pay a barber account.
 
 ## Open questions
 
@@ -120,6 +156,12 @@ If the mobile side means a specific registry from the plan, say which items it s
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 
 ## Log
+
+### 2026-10-23: mobile (bc-645fbcc0)
+
+- Import `notifyClients` defaults off. `is_imported` and `processor = 'squire_import'` stay so payroll can exclude imported tickets.
+- Tip-to-barber stays off, labeled "not for W-2 employees, pending CPA". Employee tips go through iSolved. `executeChargePlan` calls core `chargeCard` and does not create its own PaymentIntent.
+- `brand_settings.time_format` (default `12h`) plus `formatForHumans`. `GET /api/v1/app/config` exposes `timeFormat`. Purchase history and receipts keep service, product, tax, tip, and refunds separate.
 
 ### 2026-10-23: core (I10 Stripe Connect)
 

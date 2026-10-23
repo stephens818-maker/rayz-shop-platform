@@ -148,6 +148,13 @@
       "when": 1792724261285,
       "tag": "core_0020_stripe_connect",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792900000000,
+      "tag": "mobile_customer_app",
+      "breakpoints": true
     }
   ]
 }
