@@ -370,6 +370,21 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [ ] Guided Access (iPad) or screen pinning (Android) still helps: the lock covers the app, not the home button or other apps. Worth a line in staff training.
 - [ ] Whether the brand wants signatures on by default (off until a location turns it on), and its tip buttons (20/25/30% today).
 
+## 19. Digital receipts
+
+- [x] Receipts are digital only: **Text** (a link), **Email** or **No receipt**, at the counter right after paying and in the customer screen's receipt step. Paper isn't offered: the ticket's Print button only shows where a shop turns on **Show a Print button** (off by default).
+- [x] The phone or email on file is offered first. Staff whose **Client data** settings mask or hide it see it masked (`***-***-1234`, `j***@example.com`) and can still send to it, or type the one the client gives.
+- [x] A branded receipt page for phones per link: the shop's logo, name, address and phone, the itemized services and products, discounts, tax, tip, the credit card surcharge and disclosure, the payment method (card brand and last 4 only), the barber's first name, loyalty progress, **Rebook** (same barber and service) and **Leave a review** (the shop's review link). No last name, phone or email on the page; each link's token is stored only as a hash; not indexed.
+- [x] Refunds and voids, from the POS or a Stripe dashboard refund, send an updated receipt to where the client chose for that ticket. The page always shows the ticket as it is now, with the refund and the net paid. A failed update never blocks the refund and is recorded as not sent.
+- [x] Staff resend from the ticket's receipt card or the client's purchases, with the history of every receipt (when, where, why, by whom, delivery status). Clients ask for copies at `/receipt` with their number or email: links to their last 3 receipts in 13 months, the same answer whether or not they're a client, at most 3 an hour per destination.
+- [x] Consent: STOP (`contact_opt_outs`) and **Stop receipt emails** are always respected; updates and resends to what's on file need the client to have chosen it for that ticket or to have opted in (`sms_opt_in`, `email_opt_in`). Texts end with "Reply STOP to opt out." Core only reads the consent the mobile side owns.
+- [x] Audit: `receipt.sent`, `receipt.none`, `receipt.resent`, `receipt.requested`, `receipt.email_opt_out`.
+- [x] Tests: `tests/receipts.test.ts`, `tests/db/receipts.test.ts`, and the receipt step in `tests/db/handoff.test.ts`. README: [Digital receipts](README.md#digital-receipts).
+- [ ] Each shop's review link (Google, Yelp…) under **Shop settings → Receipts**. Without one there's no **Leave a review** button.
+- [ ] Receipt texts go out under the shop's A2P 10DLC campaign; confirm the campaign's use case covers transactional receipts.
+- [ ] Whether **Stop receipt emails** should also stop other transactional emails (it's receipts only today), and whether the brand wants paper available anywhere.
+- [ ] Imported Squire tickets have no digital receipt (not offered, not in copy requests).
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.

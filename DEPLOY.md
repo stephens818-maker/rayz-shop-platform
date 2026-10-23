@@ -53,6 +53,7 @@ Things to try:
 - **Book online:** open `/`, pick a shop, and book. To sign in as a customer at `/account`, use a seeded phone such as `319-555-0100` (Jordan) or `319-555-0201` (the Hayes family: three people on one phone). The one-time code is shown on screen in demo mode.
 - **Check out:** open the calendar as `coralville@rayz.test`, click an appointment, choose **Check out**, add a tip, and pay with a test card such as "Visa (credit)".
 - **Customer screen:** on the same ticket, tap **Hand to customer** instead. Pick a tip, a receipt and a test card on the client's side, then hand it back: the device returns to staff by itself after the thank-you, or tap **Staff** and use a time clock PIN (every demo barber's is `2468`).
+- **Receipts:** after paying, choose **Text** or **Email** on the ticket. The text is under **Notifications** (suppressed); open its `/receipt/…` link on a phone. Refund the ticket and the same link shows the refund, and an updated receipt is queued. Clients ask for copies at `/receipt`.
 - **Gift card and promo:** `DEMO-GIFT-2500` holds $25, and `WELCOME5` takes $5 off.
 - **Messages:** every confirmation, reminder, and purchase order email that would have gone out is listed under **Notifications** as "suppressed".
 
@@ -146,8 +147,13 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - **Tips on the reader:** with live Stripe keys and a registered reader, saving the setting pushes the shop's first three buttons to a Terminal configuration on its Stripe Terminal Location. If Stripe refuses, the settings page says so; save again once it's fixed. Reading the tip back from a real reader isn't wired yet (see the README's Next steps), so keep shops on **On the customer screen** until it is.
    - The middleware now runs on every page, not just `/admin` (matcher `/((?!_next/|api/|.*\..*).*)`), so a handed-over browser can't leave the customer screen. Without the `rayz_handoff` cookie, non-admin pages pass straight through with no database query. With it, there's one indexed lookup per request.
    - On shop iPads, turn on **Guided Access** (Settings → Accessibility) so the client can't leave the browser either. The app locks itself, not the device.
-11. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-12. Add the custom domain under **Settings → Domains**.
+11. Set up digital receipts (migration `core_0038_digital_receipts`; see [Digital receipts](README.md#digital-receipts)):
+   - The migration adds the receipt history and the receipt email opt-out list. Existing receipt settings get no review link and no Print button, so the ticket's Print button disappears; turn **Show a Print button** back on under **Shop settings → Receipts** for any shop that still needs paper.
+   - Enter each shop's review link (`https://` only) under **Shop settings → Receipts**.
+   - Receipt links are built from `APP_BASE_URL`, so set it to the public domain before texts or emails go live, or every link points at the wrong host. Links never expire, so don't change the domain without a redirect from the old one.
+   - Receipts go through the notifications cron, like confirmations, so SMS and email must be configured. Make sure the A2P 10DLC campaign covers transactional receipts.
+12. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+13. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

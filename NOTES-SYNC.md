@@ -20,12 +20,13 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Tip payouts (`src/domain/tips.ts`, `src/server/tips/**`, `src/app/admin/tips/**`, `src/app/admin/my-tips/**`), including employees' Stripe Express accounts | core |
 | Staff sign-in restrictions (`src/domain/network-access.ts`, `src/server/auth/network.ts`, `src/server/sign-in-security.ts`, `src/middleware.ts`, `src/lib/client-ip.ts`, `src/app/admin/sign-in-security/**`) | core |
 | Customer screen at checkout and split tips (`src/domain/handoff.ts`, `src/server/handoff.ts`, `src/server/auth/handoff-lock.ts`, `src/app/handoff/**`) | core |
+| Digital receipts (`src/domain/receipts.ts`, `src/server/receipts.ts`, `src/app/receipt/**`, the ticket's receipt panel). The consent itself (opt-ins, wording, STOP) stays mobile's; receipts only read it | core |
 
 Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive` and `core_0036_network_access`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff` and `core_0038_digital_receipts`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -243,6 +244,19 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
 - **Reports:** every query that credits tips to the ticket's barber adds `tip_split_moves`, so per-barber tips are split and shop totals are unchanged. `payrollSalesBetween` does the same. If the app ever shows a barber's tips, please read through these functions rather than `sales.tip_cents`.
 - **If the app checks out a ticket with several barbers** later, please pass `staffId` per line and `tipSplit`, and leave the split to `finalizeSale`. Please don't write `sale_tip_shares` directly.
 
+### Digital receipts (core)
+
+- **Code:** `src/domain/receipts.ts` (pure: `receiptConsent`, `cardLabel`, `tenderLabel`, `barberFirstName`, the text and email wording, `REQUEST_LIMIT`), `src/server/receipts.ts` (`receiptData`, `deliverReceipt`, `sendUpdatedReceipt`, `sendReceiptFromStaff`, `requestReceiptCopies`, `resolveReceipt`, `stopReceiptEmails`, `saleReceiptState`, `isOptedOut`), `src/app/receipt/**` (the page and the copy request) and `src/app/admin/sales/[id]/receipt-panel.tsx`.
+- **Schema** (`drizzle/core_0038_digital_receipts.sql`):
+  - `receipt_deliveries`: one row per receipt sent or chosen. `sale_id`, `shop_id`, `customer_id`, `channel` (`sms|email|none`), `destination` (null exactly when `none`), `masked`, `purpose` (`counter|handoff|refund|void|resend|request`), `token_hash` (SHA-256 of the link's token, unique), `job_id` (the `notification_jobs` row, kind `receipt`), `skipped` (`opted_out|no_consent`, when an update wasn't sent), `sent_by`.
+  - `receipt_opt_outs` (`email` primary key): emails that used **Stop receipt emails** on a receipt. Receipts only; it isn't marketing consent.
+  - `ReceiptBranding` (in `shops`' receipt settings) gains `reviewUrl` (`https://` or null) and `allowPrint` (default false).
+- **Consent:** a number in `contact_opt_outs` (sms) or an email in `receipt_opt_outs` is never sent a receipt. Choosing a receipt at checkout or asking for copies is consent for that receipt. Updates (refund, void) and resends to what's on file need the client to have chosen that destination for the ticket, or `sms_opt_in`/`email_opt_in`; a destination staff type in counts as the client asking. Core reads these columns and doesn't write them.
+- **Hand-off:** the receipt step and `payHandoff` now go through `deliverReceipt` (purpose `handoff`) in a savepoint, so a receipt failure never undoes the payment. An opted-out number on file isn't offered.
+- **Refunds and voids:** `reverse()` and `recordProcessorRefund` call `sendUpdatedReceipt` (never throws, savepoint), and their audit details carry `receipt: {status, to}`.
+- **Audit actions:** `receipt.sent`, `receipt.none`, `receipt.resent`, `receipt.requested`, `receipt.email_opt_out` (destination masked).
+- **If the app shows receipts**, please send them through `deliverReceipt` (purpose `request` or `resend`) or `requestReceiptCopies(contact)` and use the `/receipt/{token}` page, rather than building a receipt of your own. Only the token's hash is stored, so a link can't be rebuilt from a row later. Please also and treat `receipt_opt_outs` as "no receipt emails" for that address.
+
 ### Brand-to-shop settings ("brand-sync registry")
 
 There's no module by that name yet. These are the places where a brand setting flows down to shops today:
@@ -293,6 +307,15 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (digital receipts)
+
+- Receipts are a text with a link, an email, or none; paper is off unless a shop turns on the Print button. The number or email on file is offered first, masked for staff whose client-data settings mask or hide it.
+- A branded receipt page per link (`/receipt/{token}`): shop info, items, tip, fee, tax, card brand and last 4, the barber's first name, loyalty, Rebook and Leave a review.
+- Refunds and voids send an updated receipt; staff resend from the ticket or the client's purchases; clients ask for copies at `/receipt`.
+- Migration `core_0038_digital_receipts`; settings `reviewUrl`, `allowPrint`. The hand-off receipt step goes through the same code.
+- Tests: `tests/receipts.test.ts`, `tests/db/receipts.test.ts`, and the receipt step in `tests/db/handoff.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written.
 
 ### 2026-10-23: core (customer screen at checkout)
 
