@@ -58,6 +58,7 @@ export default async function RolePage({ params }: { params: Promise<{ id: strin
             : []
         }
         mine={[...ctx.permissions]}
+        isOwner={ctx.isOwner}
         myMaxDiscount={ctx.maxDiscountPct}
         people={n}
         readOnly={readOnly}

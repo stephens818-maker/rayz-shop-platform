@@ -15,6 +15,8 @@ interface PermissionDef {
   ownerOnly?: boolean;
   /** Works on records every shop shares, so it only takes effect for people with access to all shops. */
   brandOnly?: boolean;
+  /** Not in any role but Brand Owner to start, and only the Brand Owner can grant or remove it. */
+  ownerGrants?: boolean;
 }
 
 export const FEATURE_PERMISSIONS = [
@@ -150,8 +152,15 @@ export const FEATURE_PERMISSIONS = [
     key: "payments.accounts",
     group: "Settings and data",
     label: "Set up each shop's Stripe account for card payments and payouts, and choose who owns each shop",
-    hint: "Starts Stripe-hosted onboarding for a shop and manages owner entities. Card payments at a shop start once its account is approved.",
+    hint: "Sees each shop's payment setup and Stripe status, refreshes it, and manages owner entities. Connecting or changing a shop's bank or Stripe account needs the banking permission.",
     brandOnly: true,
+  },
+  {
+    key: "payments.banking",
+    group: "Settings and data",
+    label: "Connect or change a shop's banking and Stripe account",
+    hint: "Choose the brand account, the shop's own account or cash only; start or redo Stripe onboarding (legal entity, EIN, owner, bank account); open the shop's Stripe dashboard; set the statement descriptor. Only the Brand Owner can grant it.",
+    ownerGrants: true,
   },
   { key: "settings.brand", group: "Settings and data", label: "Change brand-level settings: loyalty program, new shops, Sunday hours", ownerOnly: true },
   { key: "import.run", group: "Settings and data", label: "Run the Squire import", brandOnly: true },
@@ -220,6 +229,7 @@ export const ALL_PERMISSIONS: Permission[] = [...FEATURE_PERMISSIONS.map((p) => 
 const KNOWN = new Set<string>(ALL_PERMISSIONS);
 export const OWNER_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "ownerOnly" in p && p.ownerOnly).map((p) => p.key));
 export const BRAND_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "brandOnly" in p && p.brandOnly).map((p) => p.key));
+export const OWNER_GRANTS = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "ownerGrants" in p && p.ownerGrants).map((p) => p.key));
 
 export const isPermission = (s: unknown): s is Permission => typeof s === "string" && KNOWN.has(s);
 
@@ -331,7 +341,7 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
     name: "Brand Admin",
     description: "Runs the whole brand day to day. Everything except brand-level settings and granting Brand Owner.",
     defaultScope: "all",
-    permissions: ALL_PERMISSIONS.filter((p) => !OWNER_ONLY.has(p) && p !== "clients.export"),
+    permissions: ALL_PERMISSIONS.filter((p) => !OWNER_ONLY.has(p) && !OWNER_GRANTS.has(p) && p !== "clients.export"),
     maxDiscountPct: 100,
   },
   {
@@ -499,6 +509,8 @@ export function roleChangeDenied(caller: Grantor, before: RoleDef | null, after:
   if (owner.length) return `Only the Brand Owner can ${permissionLabel(owner[0]).replace(/^Change/, "change")}`;
   const prev = new Set((before?.permissions ?? []).filter(isPermission));
   const changed = [...new Set([...next, ...prev])].filter((p) => next.has(p) !== prev.has(p));
+  const ownerGrant = changed.find((p) => OWNER_GRANTS.has(p));
+  if (ownerGrant && !caller.isOwner) return `Only the Brand Owner can grant or remove "${permissionLabel(ownerGrant)}"`;
   const lack = missing(caller, changed);
   if (lack.length) return youLack(lack);
   const nextMax = after?.maxDiscountPct ?? 0;
@@ -538,6 +550,8 @@ export function userAccessChangeDenied(
     if (next.shopIds.some((s) => !caller.shopIds.includes(s))) return "You can only give access to your own shops";
   }
   const gained = [...next.permissions].filter((p) => !current.permissions.has(p));
+  const ownerGrant = [...gained, ...[...current.permissions].filter((p) => !next.permissions.has(p))].find((p) => OWNER_GRANTS.has(p));
+  if (ownerGrant && !caller.isOwner) return `Only the Brand Owner can grant or remove "${permissionLabel(ownerGrant)}"`;
   const lack = missing(caller, gained);
   if (lack.length) return youLack(lack);
   if (next.maxDiscountPct > current.maxDiscountPct && next.maxDiscountPct > caller.maxDiscountPct) return `You can't set a discount limit above your own (${caller.maxDiscountPct}%)`;

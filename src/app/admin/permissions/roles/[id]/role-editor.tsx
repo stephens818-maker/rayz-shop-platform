@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, cx } from "@/components/ui";
-import { BRAND_ONLY, FEATURE_PERMISSIONS, OWNER_ONLY, PERMISSION_GROUPS, Permission, REPORTS, SCOPE_LABEL, SHOP_SCOPES, ShopScope, reportExport, reportView } from "@/domain/permissions";
+import { BRAND_ONLY, FEATURE_PERMISSIONS, OWNER_GRANTS, OWNER_ONLY, PERMISSION_GROUPS, Permission, REPORTS, SCOPE_LABEL, SHOP_SCOPES, ShopScope, reportExport, reportView } from "@/domain/permissions";
 import { deleteRoleAction, resetRoleAction, saveRoleAction } from "../../actions";
 
 type RoleForm = { id: string; key: string | null; name: string; description: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope };
@@ -14,6 +14,7 @@ export function RoleEditor({
   template,
   starters,
   mine,
+  isOwner = false,
   myMaxDiscount,
   people,
   readOnly,
@@ -22,6 +23,7 @@ export function RoleEditor({
   template: { permissions: string[]; maxDiscountPct: number } | null;
   starters: Starter[];
   mine: string[];
+  isOwner?: boolean;
   myMaxDiscount: number;
   people: number;
   readOnly: string | null;
@@ -44,7 +46,7 @@ export function RoleEditor({
   const dirty = changed.length > 0 || name !== (initial?.name ?? "") || description !== (initial?.description ?? "") || scope !== (initial?.defaultScope ?? "one") || maxPct !== (initial?.maxDiscountPct ?? 0);
 
   /** Why this toggle can't be flipped by the person editing, if it can't. */
-  const blocked = (p: Permission) => (locked ? readOnly : OWNER_ONLY.has(p) ? "Brand Owner only" : !has.has(p) ? "You don't have this yourself" : null);
+  const blocked = (p: Permission) => (locked ? readOnly : OWNER_ONLY.has(p) ? "Brand Owner only" : OWNER_GRANTS.has(p) && !isOwner ? "Only the Brand Owner grants this" : !has.has(p) ? "You don't have this yourself" : null);
 
   const toggle = (p: Permission, on: boolean) => {
     const next = new Set(perms);

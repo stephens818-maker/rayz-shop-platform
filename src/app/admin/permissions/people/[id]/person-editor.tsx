@@ -6,6 +6,7 @@ import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/co
 import {
   BRAND_ONLY,
   FEATURE_PERMISSIONS,
+  OWNER_GRANTS,
   OWNER_ONLY,
   OWNER_ROLE_KEY,
   Overrides,
@@ -249,7 +250,7 @@ export function PersonAccessEditor({
                 <ul className="divide-y divide-zinc-100">
                   {rows.map((p) => {
                     const o = s.overrides[p];
-                    const lack = !has.has(p);
+                    const lack = !has.has(p) || (OWNER_GRANTS.has(p) && !iAmOwner);
                     const exportWithoutView = p.endsWith(".export") && !after.permissions.has(p.replace(/\.export$/, ".view") as Permission);
                     return (
                       <li key={p} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
