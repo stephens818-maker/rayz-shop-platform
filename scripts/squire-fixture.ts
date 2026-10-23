@@ -453,7 +453,9 @@ export function makeSquireFixture(opts: { exportDate?: string; seed?: number } =
     lateClient.phone = phone.e164;
     const rec: SquireRecord = { squireId: `SQ-${squireSeq++}`, shop: shop.name, first: "Tobias", last: "Wendt", phoneRaw: fmt(phone), emailRaw: "", sms: "", mail: "", barber: "", since: "", notes: "" };
     lateClient.records.push(rec);
-    for (const d of [-20, -5]) {
+    for (let d of [-20, -5]) {
+      // A one-day window has to be a day the shop is open, or slot() never finds a time.
+      while (!shop.days.includes(exportAt.startOf("day").plus({ days: d }).weekday)) d--;
       const barber = shop.barbers[0];
       addVisit({ at: slot(shop, barber, d, d + 1), shop, barber, person: lateClient, rec, status: "Checked Out" });
     }
