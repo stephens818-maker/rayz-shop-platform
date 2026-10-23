@@ -130,6 +130,12 @@ export const shops = pgTable("shops", {
    * LAUNCH_AT has passed. Set it to open the shop. Set it in the future to roll the shop back.
    */
   launchAt: ts("launch_at"),
+  /**
+   * Launch default is on: a card tip is paid to the barber's Express account.
+   * Set false to keep that shop's tips in the shop account (the kill switch).
+   * Core owns this column. Mobile does not read FEATURE_TIP_TO_BARBER.
+   */
+  tipToBarber: boolean("tip_to_barber").notNull().default(true),
   /** block: a sale or adjustment that would take on-hand below zero is refused. warn: it goes through with a warning. */
   negativeStock: text("negative_stock").$type<NegativeStockPolicy>().notNull().default("block"),
   /** Where low-stock alerts go. Falls back to the shop email. */
@@ -251,7 +257,7 @@ export const staff = pgTable("staff", {
   active: boolean("active").notNull().default(true),
   passwordHash: text("password_hash"),
   squireName: text("squire_name"),
-  /** Optional Express account. Tip transfers stay off: not for W-2 employees, pending CPA. */
+  /** Express account for card tips. Stripe hosts onboarding. We never store bank details or a tax id. */
   stripeAccountId: text("stripe_account_id"),
   /** "shop": a shared login for one shop (its front desk), not a person; never bookable. */
   kind: text("kind").$type<"person" | "shop">().notNull().default("person"),

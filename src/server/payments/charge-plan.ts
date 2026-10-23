@@ -6,31 +6,22 @@ import { AppError } from "@/server/errors";
 import { assertLaunched } from "@/server/launch";
 import { chargeDestination, shopAccount } from "./connect";
 import { chargeCard, refundCard, stripe } from "./processor";
+import { shopTipsToBarber } from "./tip-routing";
 
 /**
  * Shared charge path for the app and POS. PaymentIntents are created only by `chargeCard`.
  *
- * Tip-to-barber stays off unless FEATURE_TIP_TO_BARBER is exactly "true".
- * That path is not for W-2 employees, pending CPA. Employee tips go through iSolved payroll.
- * While it is off, the whole charge (tip included) uses core's destination charge to the shop.
+ * Card tips follow `shops.tip_to_barber`. On (the launch default) the sale is transferred to the
+ * shop and the tip is transferred to the barber's Express account. Off, the whole ticket including
+ * the tip uses core's destination charge to the shop. Tips still export to iSolved as Cash Tips Recd.
+ * A refund reverses the shop transfer only. The tip transfer is not clawed back.
  */
 export type ChargePlanKind = "destination" | "separate_charges_transfers";
 
-/** Not for W-2 employees, pending CPA. */
-export const TIP_TO_BARBER_LABEL = "not for W-2 employees, pending CPA";
+/** Ledger note when the tip stayed in the shop transfer. */
+export const TIP_WITH_SHOP_NOTE = "Tip stayed with the shop. Exported to iSolved as Cash Tips Recd.";
 
-/** Shown on skipped tip ledger rows while the flag is off. */
-export const TIP_TO_BARBER_NOTE = `${TIP_TO_BARBER_LABEL}. Employee tips go through iSolved payroll.`;
-
-export function tipToBarberEnabled() {
-  return process.env.FEATURE_TIP_TO_BARBER === "true";
-}
-
-/** Off by default. Separate charges run only when the tip flag is on and this env asks for them. */
-export function chargePlanKind(): ChargePlanKind {
-  if (tipToBarberEnabled() && process.env.CHARGE_PLAN_KIND !== "destination") return "separate_charges_transfers";
-  return "destination";
-}
+export { shopTipsToBarber, tipToBarberEnabled } from "./tip-routing";
 
 export interface ChargePlanInput {
   shopId: string;
@@ -111,10 +102,12 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, input.shopId) });
   if (!shop) throw new AppError("not_found", "Shop not found");
   const barber = input.staffId ? await db.query.staff.findFirst({ where: eq(staff.id, input.staffId) }) : undefined;
-  const kind = input.kind ?? chargePlanKind();
+  const tipsOn = await shopTipsToBarber(shop.id);
+  const kind: ChargePlanKind = input.kind ?? (tipsOn ? "separate_charges_transfers" : "destination");
   const transferGroup = `tg_${input.idempotencyKey}`.slice(0, 80);
   const barberAccount = barber?.stripeAccountId ?? null;
-  const sendTip = tipToBarberEnabled() && kind === "separate_charges_transfers" && !!barberAccount && tipCents > 0;
+  const barberFirst = barber?.firstName?.trim().split(/\s+/)[0] || null;
+  const sendTip = tipsOn && kind === "separate_charges_transfers" && !!barberAccount && tipCents > 0;
 
   const charge = sendTip
     ? await chargeCard({
@@ -142,13 +135,11 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
   const shopAccountId = charge.destination?.accountId ?? account?.stripeAccountId ?? null;
   const fee = charge.destination?.applicationFeeCents ?? 0;
   const shopAmount = sendTip ? input.amountCents - tipCents : input.amountCents - fee;
-  const tipNote = !tipToBarberEnabled()
-    ? TIP_TO_BARBER_NOTE
-    : !sendTip && kind === "destination"
-      ? `Destination charges cannot pay a barber account. ${TIP_TO_BARBER_LABEL}`
-      : !barberAccount
-        ? "no_barber_account"
-        : null;
+  const tipNote = sendTip
+    ? `Tip paid to ${barberFirst ?? "your barber"}.`
+    : !barberAccount && tipsOn
+      ? `No Express account yet. ${TIP_WITH_SHOP_NOTE}`
+      : TIP_WITH_SHOP_NOTE;
 
   const rows: (typeof connectTransfers.$inferInsert)[] = [];
   if (tipCents > 0) {
@@ -162,7 +153,7 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
       role: "tip",
       amountCents: tipCents,
       status: sendTip ? "planned" : "skipped",
-      note: sendTip ? null : tipNote,
+      note: tipNote,
     });
   }
   if (shopAmount > 0 && shopAccountId) {
@@ -176,7 +167,7 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
       role: "shop_net",
       amountCents: shopAmount,
       status: "planned",
-      note: sendTip ? null : `destination charge. Includes the tip. ${TIP_TO_BARBER_NOTE}`,
+      note: sendTip ? null : `destination charge. Includes the tip. ${TIP_WITH_SHOP_NOTE}`,
       stripeTransferId: sendTip ? null : charge.transferId,
     });
   }
@@ -210,19 +201,18 @@ export async function executeChargePlan(input: ChargePlanInput): Promise<ChargeP
 }
 
 /**
- * Refund the charge and claw transfers back. A tip transfer is reversed first, up to the tip
- * portion, then the shop transfer. A skipped tip (the W-2 / iSolved default) has nothing to claw.
- * Destination charges use Stripe `reverse_transfer` on the refund.
+ * Refund the customer and pull funds back from the shop transfer only.
+ * A tip transfer is never reversed. Destination charges use Stripe `reverse_transfer` on the shop charge.
  */
 export async function reverseChargePlan(opts: { paymentIntentId: string; refundCents: number; idempotencyKey: string }) {
   if (opts.refundCents <= 0) throw new AppError("bad_request", "Refund amount must be positive");
   const rows = await db.select().from(connectTransfers).where(eq(connectTransfers.paymentIntentId, opts.paymentIntentId));
-  const order = [...rows.filter((r) => r.role === "tip"), ...rows.filter((r) => r.role === "shop_net")];
-  const destination = order.some((r) => r.note?.startsWith("destination charge"));
+  const shopRows = rows.filter((r) => r.role === "shop_net");
+  const destination = shopRows.some((r) => r.note?.startsWith("destination charge"));
   let left = opts.refundCents;
-  const reversals: { role: "shop_net" | "tip"; amountCents: number; reversalId: string }[] = [];
+  const reversals: { role: "shop_net"; amountCents: number; reversalId: string }[] = [];
 
-  for (const row of order) {
+  for (const row of shopRows) {
     if (left <= 0) break;
     if (row.status !== "executed" && row.status !== "reversed") continue;
     const remaining = row.amountCents - row.reversedCents;
@@ -234,7 +224,7 @@ export async function reverseChargePlan(opts: { paymentIntentId: string; refundC
       .update(connectTransfers)
       .set({ reversedCents, status: reversedCents >= row.amountCents ? "reversed" : "executed", reversalId, updatedAt: new Date() })
       .where(eq(connectTransfers.id, row.id));
-    reversals.push({ role: row.role, amountCents: take, reversalId });
+    reversals.push({ role: "shop_net", amountCents: take, reversalId });
     left -= take;
   }
 

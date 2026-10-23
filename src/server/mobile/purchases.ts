@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { connectTransfers, payments, refunds, saleItems, sales, shops } from "@/db/schema";
+import { connectTransfers, payments, refunds, saleItems, sales, shops, staff } from "@/db/schema";
 import { renderReceiptText, receiptPdf, type ReceiptSale } from "./receipt";
 import { portionsForRefunds, settlementFromLedger, type LedgerPayment, type LedgerTransfer } from "./settlement";
 
@@ -25,9 +25,11 @@ export async function purchaseHistory(customerId: string, limit = 20) {
       productTaxCents: sales.productTaxCents,
       tipCents: sales.tipCents,
       totalCents: sales.totalCents,
+      barberFirstName: staff.firstName,
     })
     .from(sales)
     .innerJoin(shops, eq(shops.id, sales.shopId))
+    .leftJoin(staff, eq(staff.id, sales.staffId))
     .where(and(eq(sales.customerId, customerId), inArray(sales.status, ["paid", "partially_refunded", "refunded"])))
     .orderBy(desc(sales.paidAt))
     .limit(Math.min(50, Math.max(1, limit)));
@@ -120,6 +122,7 @@ export async function purchaseHistory(customerId: string, limit = 20) {
       tipCents: r.tipCents,
       totalCents: r.totalCents,
       shop: { name: r.shopName, slug: r.shopSlug },
+      barberFirstName: r.barberFirstName?.trim().split(/\s+/)[0] || null,
       settlement: settlementFromLedger(salePayments, saleTransfers),
       items: items.filter((i) => i.saleId === r.id).map((i) => ({ name: i.name, kind: i.kind, qty: i.qty, netCents: i.netCents })),
       refunds: saleRefunds.map((f, i) => ({
@@ -167,6 +170,7 @@ export async function receiptForCustomer(customerId: string, saleId: string) {
     taxCents: sale.taxCents,
     tipCents: sale.tipCents,
     totalCents: sale.totalCents,
+    barberFirstName: sale.barberFirstName,
     settlement: sale.settlement,
     refunds: sale.refunds.flatMap((r) => (r.createdAt ? [{ ...r, createdAt: r.createdAt }] : [])),
   };

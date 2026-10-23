@@ -24,21 +24,30 @@ export interface ReceiptSale {
   taxCents: number;
   tipCents: number;
   totalCents: number;
+  /** Barber first name only. Never a surname. */
+  barberFirstName?: string | null;
   settlement?: SettlementView | null;
   refunds: ReceiptRefund[];
 }
 
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
-/** Shop and tip lines from the ledger. Omitted when the ticket has no Connect settlement. */
-export function settlementLines(ticketTipCents: number, settlement: SettlementView | null | undefined): string[] {
+/** First token only, so a display label cannot add a surname. */
+export function barberFirst(name: string | null | undefined): string {
+  const first = name?.trim().split(/\s+/)[0];
+  return first || "your barber";
+}
+
+/** Shop amount, and a tip line that names where the tip went. Omitted when there is no Connect settlement. */
+export function settlementLines(ticketTipCents: number, settlement: SettlementView | null | undefined, barberFirstName?: string | null): string[] {
   if (!settlement) return [];
-  const lines = [`Shop ${dollars(settlement.shopCents)}`];
-  if (settlement.tipStatus === "with_shop" && ticketTipCents > 0) {
-    lines.push(`Tip ${dollars(ticketTipCents)} stays with the shop for iSolved.`);
-  } else if (settlement.tipCents > 0 && (settlement.tipStatus === "executed" || settlement.tipStatus === "reversed" || settlement.tipStatus === "planned")) {
-    lines.push(`Tip to the barber ${dollars(settlement.tipCents)}`);
+  const lines: string[] = [];
+  if (settlement.tipCents > 0 && (settlement.tipStatus === "executed" || settlement.tipStatus === "reversed" || settlement.tipStatus === "planned")) {
+    lines.push(`Tip ${dollars(settlement.tipCents)} paid to ${barberFirst(barberFirstName)}.`);
+  } else if (settlement.tipStatus === "with_shop" && ticketTipCents > 0) {
+    lines.push(`Tip ${dollars(ticketTipCents)} stayed with the shop.`);
   }
+  lines.push(`Shop ${dollars(settlement.shopCents)}`);
   return lines;
 }
 
@@ -62,8 +71,11 @@ export async function renderReceiptText(sale: ReceiptSale): Promise<string> {
     `Services ${dollars(sale.serviceCents)}`,
     `Products ${dollars(sale.productCents)}`,
     `Tax ${dollars(sale.taxCents)}`,
-    `Tip ${dollars(sale.tipCents)}`,
-    ...settlementLines(sale.tipCents, sale.settlement),
+    ...(() => {
+      const extra = settlementLines(sale.tipCents, sale.settlement, sale.barberFirstName);
+      const tipCovered = extra.some((line) => line.startsWith("Tip "));
+      return [...(tipCovered ? [] : [`Tip ${dollars(sale.tipCents)}`]), ...extra];
+    })(),
     `Total ${dollars(sale.totalCents)}`,
   ];
   for (const r of sale.refunds) {

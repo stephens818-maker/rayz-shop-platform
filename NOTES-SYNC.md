@@ -110,7 +110,7 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Mobile API workstream (bc-645fbcc0)
 
-Branch: `cursor/i10-receipt-split-a9e1` (stacked on `cursor/pilot-rollout-a9e1`). PRs into `cursor/rayz-barbershop-v1-8f0b`. Journal order after the payroll merge: `core_0022_payroll` idx 22, `mobile_customer_app` idx 23, `mobile_launch_at` idx 24, `mobile_shop_launch` idx 25, `mobile_closed_shop_copy` idx 26. SQL filenames are unchanged. No new migration for the receipt split.
+Branch: `cursor/tip-to-barber-a9e1` (stacked on `cursor/i10-receipt-split-a9e1`). PRs into `cursor/rayz-barbershop-v1-8f0b`. Journal order after the payroll merge: `core_0022_payroll` idx 22, then mobile idx 23–27. `mobile_tip_to_barber` is idx 27. SQL filenames are unchanged.
 
 ### Launch (option B: one pilot shop, then the rest)
 
@@ -151,7 +151,7 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 
 `GET /api/v1/me/purchases` returns `paidAt` (ISO UTC) and `serviceCents`, `productCents`, `taxCents`, `tipCents` unreduced by refunds. Refunds are a separate array with their own `createdAt`. `GET /api/v1/me/purchases/receipt` returns the same split as text, or a PDF with `format=pdf`. Payroll calc is untouched.
 
-When a card charge has a Connect settlement, each purchase adds `settlement`: `shopCents`, `tipCents`, `tipStatus` (`executed`, `planned`, `reversed`, `failed`, `skipped`, or `with_shop`), and `transferGroup`. `with_shop` means the tip stayed inside the shop amount (the flag is off, so it still goes to iSolved). A separate tip transfer shows that tip amount and `executed`. Each refund adds `shopPortionCents`, `tipPortionCents`, and `from` (`shop`, `tip`, or `shop_and_tip`) when that settlement exists. A card refund with no tip reversal is `from: "shop"` even if the ticket's own `tipCents` was refunded. Cash, and any ticket with no Connect rows, leaves `settlement` and the portion fields null. The receipt text says "from the shop" only when the ledger recorded that.
+When a card charge has a Connect settlement, each purchase adds `settlement`: `shopCents`, `tipCents`, `tipStatus` (`executed`, `planned`, `reversed`, `failed`, `skipped`, or `with_shop`), and `transferGroup`, plus `barberFirstName` (first name only). A separate tip transfer shows that tip amount. The receipt line is `Tip $X.XX paid to Makenna.` or `Tip $X.XX paid to your barber.` `with_shop` means the shop switch is off and the tip stayed inside the shop amount: `Tip $X.XX stayed with the shop.` Each refund adds `shopPortionCents`, `tipPortionCents`, and `from`. Mobile refunds do not reverse a tip transfer, so a card refund is `from: "shop"`. Cash, and any ticket with no Connect rows, leaves `settlement` and the portion fields null.
 
 ### Import
 
@@ -160,15 +160,15 @@ When a card charge has a Connect settlement, each purchase adds `settlement`: `s
 
 ### Connect and tips
 
-Charles approved I10 as separate charges and transfers. The sale amount goes to the shop's connected account. The tip goes to the barber's Express account with `source_transaction` and `transfer_group`. That tip transfer stays behind `FEATURE_TIP_TO_BARBER` until the CPA weighs in. The flag stays off. Tips are exported to iSolved either way. Refunds and disputes come out of the shop's portion only. Do not claw a tip back.
+The CPA approved paying card tips to barbers through Stripe, the way Squire does today. That is the launch default. `shops.tip_to_barber` is the per-shop kill switch (default `true`). Mobile reads that column and does not read `FEATURE_TIP_TO_BARBER`. Core had not added the column yet, so `mobile_tip_to_barber` adds it. Please treat that column as yours.
 
-- PaymentIntents are created only in core's `chargeCard`. `executeChargePlan` calls it. Mobile does not add a second charge path for this approval. Receipts and purchase history read the split. They do not create a PaymentIntent or a transfer.
-- The read is `connect_transfers` joined on `payments.stripe_payment_intent_id`. Please write, from inside `chargeCard`, one `shop_net` row (shop account, sale amount, `transfer_group`) and one `tip` row (barber Express account, tip amount, same `transfer_group`, `source_transaction` = the charge id). While the flag is off, the tip row is `skipped` and the shop row's note can say the tip is included in the shop amount. On a refund or a dispute, increase `reversed_cents` on the shop row only. Leave the tip row's `reversed_cents` at 0.
-- Until those rows exist, a payment with `stripe_account_id` is shown as one shop amount (charge minus `application_fee_cents`) and `tipStatus: "with_shop"`. `payments.stripe_transfer_id` is a single id, so it cannot show the shop and the tip separately.
-- **Tip-to-barber stays OFF.** The label is unchanged: not for W-2 employees, pending CPA. Employee tips go through iSolved. The flag is not in `src/lib/flags.ts`. The iSolved column stays `E_Cash Tips Recd_Dollars`. Payroll calc was not edited.
-- **What is on core today:** `chargeCard` still destination-charges the whole ticket (`on_behalf_of` + `transfer_data.destination`), tip included. `refundCard(..., { reverseTransfer: true })` reverses that one transfer. Disputes are an audit row (`stripe.charge.dispute.created`) and do not record a shop-only portion. Mobile displays the ledger as stored, including a tip clawback if `reversed_cents` is set on the tip row.
+- The sale amount goes to the shop's connected account. The tip goes to the barber's Express account with `source_transaction` and `transfer_group`. Tips still export to iSolved as `E_Cash Tips Recd_Dollars` (memo). Payroll calc was not edited.
+- PaymentIntents are created only in core's `chargeCard`. `executeChargePlan` calls it. When the shop switch is on and the barber has an Express account, the same function then creates the shop and tip transfers. Please move those transfers inside `chargeCard` so there is one implementation. When the switch is off, or the barber has no Express account, the whole ticket including the tip uses the destination charge and the tip row is `skipped`.
+- Refunds come from the shop portion only. `reverseChargePlan` does not reverse a tip transfer and does not increase the tip row's `reversed_cents`. Please do the same in `refundCard` and for disputes: do not claw a tip. A dispute is still only an audit row (`stripe.charge.dispute.created`).
+- Receipts say `Tip paid to Makenna.` (first name only) or `Tip paid to your barber.` The old "not for W-2 employees, pending CPA" note is gone.
+- `GET /api/v1/staff/connect` returns the signed-in barber's Express status, recent tip transfers, and payout schedule. `POST /api/v1/staff/connect/onboard` returns a Stripe-hosted onboarding link. Both are gated on the shop switch. The request body does not accept bank details or a tax id. Stripe test mode only (`assertStripeTestMode`). A customer token gets an empty status, not another barber's payouts.
 - `payments_not_ready` will be shown as "This shop isn't taking cards in the app yet" when app checkout lands. Not a card decline.
-- `staff.stripe_account_id` is an optional barber Express account. It is unused while the tip flag is off.
+- **What is on core today:** `chargeCard` still destination-charges the whole ticket (`on_behalf_of` + `transfer_data.destination`), tip included. `payments.stripe_transfer_id` is one id. `refundCard(..., { reverseTransfer: true })` reverses that one transfer, which today includes the tip. There is no per-shop tip switch on the core branch.
 
 ### Consent and other /api/v1 notes
 
@@ -185,7 +185,7 @@ Charles approved I10 as separate charges and transfers. The sale amount goes to 
 - (mobile → core) Time clock and kiosk pairing are not in `/api/v1`. Core's `time_entries` is the punch table (completed shifts, `source` clock / import / manual). Mobile will not add a second one. An in-progress clock-in cannot be stored while `ends_at` is required and must be after `starts_at`. There is still no kiosk-pairing table. Staff schedule, sales, and tips views for the staff app are not started.
 - (mobile → core) Reuse `formatDateTime` / `formatForHumans` for any new receipt, SMS, or push copy. `brand_settings.time_format` defaults to `12h`.
 - (mobile → core) Default the web booking SMS checkbox to off (`wizard.tsx` `smsOptIn: true`).
-- (mobile → core) Charles approved separate charges and transfers for I10. Sale amount to the shop's connected account. Tip to the barber's Express account through `source_transaction` and `transfer_group`, behind `FEATURE_TIP_TO_BARBER` (leave it off). Tips still export to iSolved. Refunds and disputes come from the shop portion only. Do not claw the tip. Please do that inside `chargeCard`. Write one `shop_net` row and one `tip` row on `connect_transfers` (same `transfer_group`). Mobile reads those rows and does not create a second PaymentIntent. `payments.stripe_transfer_id` cannot represent both portions. `chargeCard` on this branch is still a destination charge of the whole ticket.
+- (mobile → core) The CPA approved tips to barbers. `shops.tip_to_barber` (default true) is the per-shop kill switch. Mobile added the column because it was not on the core branch, and mobile no longer reads `FEATURE_TIP_TO_BARBER`. Please own that column. Move the shop and tip transfers (`source_transaction`, `transfer_group`) inside `chargeCard`. Refunds and disputes come from the shop portion only: do not claw a tip. `refundCard` still sets `reverse_transfer` on the destination charge, and that charge still includes the tip. Tips stay on iSolved `E_Cash Tips Recd_Dollars`.
 
 ## Open questions
 
@@ -194,6 +194,13 @@ Charles approved I10 as separate charges and transfers. The sale amount goes to 
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 
 ## Log
+
+### 2026-10-23: mobile tip-to-barber (bc-645fbcc0)
+
+- The CPA approved paying card tips to barbers. `shops.tip_to_barber` defaults on and is the per-shop kill switch. `FEATURE_TIP_TO_BARBER` is not read.
+- Receipts say the tip was paid to the barber's first name. The pending-CPA note is gone. A refund reverses the shop transfer only.
+- `GET /api/v1/staff/connect` and `POST /api/v1/staff/connect/onboard` are Stripe-hosted Express status and onboarding, gated on the shop switch. No bank details or tax id are collected here. Stripe stays in test mode.
+- Core has not added the column or the separate transfers. `chargeCard` is still a destination charge of the whole ticket. `refundCard` still reverses that one transfer.
 
 ### 2026-10-23: mobile receipt split (bc-645fbcc0)
 

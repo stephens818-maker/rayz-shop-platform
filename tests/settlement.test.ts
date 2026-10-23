@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { refundPortionPhrase, settlementLines } from "@/server/mobile/receipt";
 import { portionsForRefunds, settlementFromLedger, type LedgerPayment, type LedgerTransfer } from "@/server/mobile/settlement";
@@ -46,7 +47,7 @@ describe("settlementFromLedger", () => {
   it("keeps a skipped tip inside the shop amount", () => {
     const view = settlementFromLedger(
       [],
-      [shop({ amountCents: 2400, note: "destination charge. Includes the tip." }), tip({ status: "skipped", note: "not for W-2 employees, pending CPA" })],
+      [shop({ amountCents: 2400, note: "destination charge. Includes the tip." }), tip({ status: "skipped", note: "Tip stayed with the shop. Exported to iSolved as Cash Tips Recd." })],
     );
     expect(view).toEqual({ shopCents: 2400, tipCents: 0, tipStatus: "with_shop", transferGroup: "tg_1" });
   });
@@ -108,18 +109,35 @@ describe("portionsForRefunds", () => {
 
 describe("receipt settlement copy", () => {
   it("names the shop amount, the barber tip, and the refund portion", () => {
-    expect(settlementLines(500, { shopCents: 2000, tipCents: 500, tipStatus: "executed", transferGroup: "tg_1" })).toEqual([
+    expect(settlementLines(500, { shopCents: 2000, tipCents: 500, tipStatus: "executed", transferGroup: "tg_1" }, "Makenna")).toEqual([
+      "Tip $5.00 paid to Makenna.",
       "Shop $20.00",
-      "Tip to the barber $5.00",
+    ]);
+    expect(settlementLines(500, { shopCents: 2000, tipCents: 500, tipStatus: "executed", transferGroup: "tg_1" }, "Makenna Lee")).toEqual([
+      "Tip $5.00 paid to Makenna.",
+      "Shop $20.00",
+    ]);
+    expect(settlementLines(500, { shopCents: 2000, tipCents: 500, tipStatus: "executed", transferGroup: "tg_1" })).toEqual([
+      "Tip $5.00 paid to your barber.",
+      "Shop $20.00",
     ]);
     expect(settlementLines(500, { shopCents: 2400, tipCents: 0, tipStatus: "with_shop", transferGroup: null })).toEqual([
+      "Tip $5.00 stayed with the shop.",
       "Shop $24.00",
-      "Tip $5.00 stays with the shop for iSolved.",
     ]);
     expect(refundPortionPhrase({ from: "shop", shopPortionCents: 400, tipPortionCents: 0 })).toBe(" from the shop");
     expect(refundPortionPhrase({ from: "shop_and_tip", shopPortionCents: 200, tipPortionCents: 500 })).toBe(" from the shop $2.00 and the tip $5.00");
     expect(refundPortionPhrase({ from: null, shopPortionCents: null, tipPortionCents: null })).toBe("");
     const copy = settlementLines(500, { shopCents: 2400, tipCents: 0, tipStatus: "with_shop", transferGroup: null }).join(" ");
     expect(copy.toLowerCase()).not.toMatch(/rating|stars|client_rating/);
+  });
+
+  it("does not keep a mobile env flag for tip routing", () => {
+    const charge = readFileSync("src/server/payments/charge-plan.ts", "utf8");
+    const routing = readFileSync("src/server/payments/tip-routing.ts", "utf8");
+    expect(charge).not.toContain("process.env.FEATURE_TIP_TO_BARBER");
+    expect(routing).not.toContain("process.env.FEATURE_TIP_TO_BARBER");
+    expect(charge).not.toContain("pending CPA");
+    expect(readFileSync("src/server/mobile/receipt.ts", "utf8")).not.toContain("pending CPA");
   });
 });

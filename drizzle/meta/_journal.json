@@ -190,6 +190,13 @@
       "when": 1793300000000,
       "tag": "mobile_closed_shop_copy",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793400000000,
+      "tag": "mobile_tip_to_barber",
+      "breakpoints": true
     }
   ]
 }

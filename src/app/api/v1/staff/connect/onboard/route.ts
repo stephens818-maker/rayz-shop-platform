@@ -1,0 +1,23 @@
+import { z } from "zod";
+import { json, options, route } from "@/server/api";
+import { AppError } from "@/server/errors";
+import { barberFromBearer, staffOnboardingLink } from "@/server/mobile/staff-connect";
+
+/** Stripe-hosted Express onboarding. No bank details or tax id are accepted here. */
+export const OPTIONS = options;
+export const POST = route(async (req) => {
+  const barber = await barberFromBearer(req);
+  if (barber === "invalid" || !barber) throw new AppError("unauthorized", "Sign in required");
+  let shop: string | undefined;
+  const text = await req.text();
+  if (text.trim()) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      throw new AppError("bad_request", "Body must be JSON");
+    }
+    shop = z.object({ shop: z.string().min(1).optional() }).parse(raw).shop;
+  }
+  return json(await staffOnboardingLink(barber.id, shop));
+});

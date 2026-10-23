@@ -6,9 +6,8 @@ import { notFound } from "@/server/errors";
 import { assertStripeTestMode, stripe } from "./processor";
 
 /**
- * Optional Express onboarding for a barber. Not required.
- * Tip transfers stay off (not for W-2 employees, pending CPA) until FEATURE_TIP_TO_BARBER is set.
- * Employee tips go through iSolved payroll.
+ * Stripe-hosted Express onboarding for a barber. The link is the only place bank details and tax id are collected.
+ * This server stores the account id and never asks for those fields.
  */
 export async function createBarberConnectOnboardingLink(staffRef: string) {
   assertStripeTestMode();
