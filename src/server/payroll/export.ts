@@ -60,8 +60,13 @@ function apply(cell: ExcelJS.Cell, s: Style | undefined) {
 }
 
 export async function renderIsolvedTab(f: ExportFile): Promise<Buffer> {
-  const t = tabTemplate(f.tab);
   const wb = new ExcelJS.Workbook();
+  addIsolvedSheet(wb, f);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+export function addIsolvedSheet(wb: ExcelJS.Workbook, f: ExportFile): ExcelJS.Worksheet {
+  const t = tabTemplate(f.tab);
   const ws = wb.addWorksheet(f.tab, { views: [{ zoomScale: t.zoom, zoomScaleNormal: t.zoom }] });
   t.widths.forEach((w, i) => {
     if (w) ws.getColumn(i + 1).width = w;
@@ -87,7 +92,7 @@ export async function renderIsolvedTab(f: ExportFile): Promise<Buffer> {
     const row = ws.getRow(f.rows.length + 2 + n);
     styles.forEach((s, i) => apply(row.getCell(i + 1), s));
   });
-  return Buffer.from(await wb.xlsx.writeBuffer());
+  return ws;
 }
 
 export const isolvedTimecardExporter: PayrollExporter = {

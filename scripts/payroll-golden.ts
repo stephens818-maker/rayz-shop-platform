@@ -8,10 +8,17 @@
  *    and compared with Excel's cached results for B, D, F, H, I, L, M, N and O.
  * 2. Every shop tab is regenerated from those rows and diffed cell by cell with the workbook's:
  *    value, cell type, number format, font, fill, alignment and border.
+ *
+ * `--totals` adds each shop's shown totals next to the sum of its rows. `--write <dir>` (outside the
+ * repo) regenerates the golden files: expected_isolved_export.xlsx with every tab's own formatting,
+ * and golden_locations_calc.csv with feed_hours read from the feed (blank when the person isn't in
+ * it), manual_* flags for every typed cell, and blanks instead of #DIV/0!.
  */
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import ExcelJS from "exceljs";
 import { DEFAULT_PAYROLL_SETTINGS, computeLine, exportRows, type LineInput, type Overrides } from "../src/domain/payroll/calc";
-import { renderIsolvedTab, TEMPLATE_TABS } from "../src/server/payroll/export";
+import { addIsolvedSheet, renderIsolvedTab, TEMPLATE_TABS } from "../src/server/payroll/export";
 
 const num = (c: ExcelJS.Cell): number | null => {
   const v = c.value as unknown;
@@ -35,6 +42,14 @@ async function main() {
   await wb.xlsx.readFile(file);
   const loc = wb.getWorksheet("Locations")!;
 
+  const feed = wb.getWorksheet("Copy&Paste - From Isolved")!;
+  const feedHours = (name: string): number | null => {
+    for (let r = 2; r <= feed.rowCount; r++) {
+      if (String(feed.getCell(r, 1).value ?? "").trim() === name.trim()) return num(feed.getCell(r, 2));
+    }
+    return null;
+  };
+  const manual = new Map<number, Set<string>>();
   const lines = new Map<number, ReturnType<typeof computeLine>>();
   let rowsChecked = 0;
   let cellsChecked = 0;
@@ -57,6 +72,7 @@ async function main() {
   for (const r of blocks.flatMap((b) => b.rows)) {
     const b = loc.getCell(r, 2);
     if (!isFormula(b) && num(b) !== null) typed.push(`B${r}`);
+    manual.set(r, new Set([2, 4, 5, 8, 9, 12, 13, 14, 18].filter((c) => !isFormula(loc.getCell(r, c)) && num(loc.getCell(r, c)) !== null).map((c) => loc.getColumn(c).letter)));
     const q = num(loc.getCell(r, 17)) ?? 0;
     const overrides: Overrides = {};
     for (const col of [8, 9, 12, 14]) {
@@ -145,6 +161,12 @@ async function main() {
     for (let r = 68; r <= 76; r++) console.log(`SUMMARY r${r}`, [3, 5, 7].map((c) => num(loc.getCell(r, c))?.toFixed(2)).join(" | "));
   }
 
+  const w = process.argv.indexOf("--write");
+  const writeTo = w > 0 ? process.argv[w + 1] : null;
+  if (writeTo && resolve(writeTo).startsWith(resolve(__dirname, ".."))) throw new Error("--write must point outside the repo: the files hold real names and amounts.");
+  if (writeTo) mkdirSync(writeTo, { recursive: true });
+  const expected = new ExcelJS.Workbook();
+
   const props = ["numFmt", "font", "fill", "alignment", "border"] as const;
   for (const tab of TEMPLATE_TABS) {
     const ws = wb.getWorksheet(tab)!;
@@ -181,8 +203,29 @@ async function main() {
     }
     for (let c = 1; c <= 8; c++) if (ws.getColumn(c).width !== gen.getColumn(c).width) diffs.push(`col ${c} width`);
     console.log(`${tab}: ${rows.length} rows, ${diffs.length} differences${diffs.length ? ": " + diffs.join(", ") : ""}${valueNotes.length ? " — " + valueNotes.join("; ") : ""}`);
+    if (writeTo) addIsolvedSheet(expected, { tab, payGroup: tab, periodNumber: 23, periodStart: "", periodEnd: "", rows });
+  }
+
+  if (writeTo) {
+    // Real names and amounts: this goes to a local folder only, never into the repo.
+    await expected.xlsx.writeFile(join(writeTo, "expected_isolved_export.xlsx"));
+    const cell = (v: number | string | null) => (v === null ? "" : typeof v === "number" ? String(v) : `"${v.replaceAll('"', '""')}"`);
+    const cols = ["shop", "sheet_row", "name", "feed_hours", "total_hours", "regular_hours", "ot_hours", "wage", "hourly_total", "service_dollars", "gross_per_hour", "service_pct", "commission", "service_total", "product_dollars", "product_pct", "product_total", "net_comm", "total_wages", "pct_of_gross", "pto_hours", "tips", "training_hours", "ot_pay", "training_pay", "labor_cost", ...MANUAL.map(([, n]) => `manual_${n}`)];
+    const out = [cols.join(",")];
+    for (const b of blocks) {
+      for (const r of b.rows) {
+        const l = lines.get(r)!;
+        const name = String(loc.getCell(r, 1).value ?? "");
+        const m = manual.get(r)!;
+        out.push([b.shop, r, name, feedHours(name), l.hours + l.otHours, l.hours, l.otHours, num(loc.getCell(r, 3)), l.hourlyTotal, l.service, l.grossPerHour, l.servicePct, l.commission, l.serviceTotal, l.product, l.productPct, l.productTotal, l.netComm, l.totalWages, l.pctOfGross, l.ptoHours, l.tips, l.trainingHours, l.otPay, l.trainingPay, l.laborCost, ...MANUAL.map(([c]) => (m.has(c) ? "true" : "false"))].map(cell).join(","));
+      }
+    }
+    writeFileSync(join(writeTo, "golden_locations_calc.csv"), out.join("\n") + "\n");
+    console.log(`Wrote expected_isolved_export.xlsx and golden_locations_calc.csv to ${writeTo}`);
   }
 }
+
+const MANUAL = [["B", "hours"], ["D", "hourly_total"], ["E", "service"], ["H", "commission"], ["I", "service_total"], ["L", "product_total"], ["M", "net_comm"], ["N", "total_wages"], ["R", "tips"]] as const;
 
 main().catch((e) => {
   console.error(e);
