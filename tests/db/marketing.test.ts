@@ -262,6 +262,30 @@ describe("coupons at checkout", () => {
     expect(await m.db.db.select().from(s().appointmentCoupons).where(eq(s().appointmentCoupons.appointmentId, appt.id))).toHaveLength(0);
     await expect(CO.holdBookingCoupon(appt.code, p.code, new Date(now.getTime() + HOUR))).rejects.toThrow();
   });
+
+  it("the coupon editor saves every rule, keeps a used code as it is, and keeps locations to their own coupons", async () => {
+    const A = await import("@/app/admin/promos/actions");
+    await signInAs(fx.owner);
+    const code = `FREEBEARD${++seq}`;
+    const base = { code, type: "free_item", value: 0, freeItemKind: "addon", freeItemId: fx.addon, shopIds: [fx.cv], minSpendCents: 2000, maxPerCustomer: 1, codeMode: "unique", validDays: 14, firstVisitOnly: false, stackable: true };
+    expect(await A.saveCouponAction(null, base)).toEqual({ ok: true, data: null });
+    const p = (await m.db.db.query.promoCodes.findFirst({ where: eq(s().promoCodes.code, code) }))!;
+    expect(p).toMatchObject({ type: "free_item", freeItemKind: "addon", freeItemId: fx.addon, shopIds: [fx.cv], shopId: fx.cv, minSpendCents: 2000, maxPerCustomer: 1, codeMode: "unique", validDays: 14, stackable: true, autoApply: false });
+    expect(await A.saveCouponAction(null, { ...base, code })).toMatchObject({ ok: false, error: /already exists/ });
+    expect(await A.saveCouponAction(null, { ...base, code: `${code}B`, freeItemKind: "product", freeItemId: fx.addon })).toMatchObject({ ok: false, error: /not found/i });
+    expect(await A.saveCouponAction(p.id, { ...base, minSpendCents: null, endsOn: "2028-12-31" })).toMatchObject({ ok: true });
+    await m.db.db.insert(s().couponCodes).values({ promoId: p.id, code: `${code}-ABC123` });
+    expect(await A.saveCouponAction(p.id, { ...base, code: `${code}X` })).toMatchObject({ ok: false, error: /stay as they are/ });
+    expect(await A.saveCouponAction(p.id, { ...base, maxPerCustomer: 2 })).toMatchObject({ ok: true });
+
+    await signInAs(fx.michelle);
+    expect(await A.saveCouponAction(null, { ...base, code: `${code}ALL`, shopIds: [] })).toMatchObject({ ok: false, error: /every shop/ });
+    expect(await A.saveCouponAction(null, { ...base, code: `${code}OTHER`, shopIds: [fx.other] })).toMatchObject({ ok: false });
+    expect(await A.saveCouponAction(p.id, { ...base, maxPerCustomer: 3 })).toMatchObject({ ok: true });
+    const everywhere = await promo({ code: `EVERY${++seq}` });
+    expect(await A.togglePromoAction(everywhere.id, false)).toMatchObject({ ok: false, error: /outside your access/ });
+    await m.db.db.update(s().promoCodes).set({ active: false }).where(eq(s().promoCodes.id, everywhere.id));
+  });
 });
 
 describe("the marketing engine", () => {
@@ -459,6 +483,31 @@ describe("automated campaigns' audiences", () => {
     expect(send.dedupeKey).toContain(`abandoned:${d.id}`);
     expect(send.bookPath).toMatch(/service=/);
     expect(await sendsFor(done.id)).toHaveLength(0);
+  });
+
+  it("the booking page's draft finds the client by the phone they type, and finishing the booking closes it", async () => {
+    const D = await import("@/server/booking-drafts");
+    const c = await client({ sms: true });
+    const token = `tok-${crypto.randomUUID()}`;
+    const t0 = new Date(NOW.getTime() - 3 * HOUR);
+    await D.saveBookingDraft({ token, shopSlug: fx.cvSlug, serviceId: fx.cut, barberSlug: "any" }, null, t0);
+    let [d] = await m.db.db.select().from(s().bookingDrafts).where(eq(s().bookingDrafts.token, token));
+    expect(d).toMatchObject({ shopId: fx.cv, serviceId: fx.cut, staffId: null, customerId: null });
+    await D.saveBookingDraft({ token, shopSlug: fx.cvSlug, serviceId: fx.cut, barberSlug: "any", phone: `(${c.phone!.slice(2, 5)}) ${c.phone!.slice(5, 8)}-${c.phone!.slice(8)}` }, null, t0);
+    [d] = await m.db.db.select().from(s().bookingDrafts).where(eq(s().bookingDrafts.token, token));
+    expect(d.customerId).toBe(c.id);
+    await D.saveBookingDraft({ token, shopSlug: fx.cvSlug, serviceId: fx.cut, barberSlug: "any", phone: "(000) 000-0000" }, null, t0);
+    [d] = await m.db.db.select().from(s().bookingDrafts).where(eq(s().bookingDrafts.token, token));
+    expect(d.customerId).toBe(c.id);
+    await expect(D.saveBookingDraft({ token: "short", shopSlug: fx.cvSlug }, null)).rejects.toThrow();
+
+    const appt = await visit(c.id, new Date(NOW.getTime() + 2 * DAY), { status: "booked", createdAt: NOW });
+    await D.finishBookingDraft(token, appt.code);
+    [d] = await m.db.db.select().from(s().bookingDrafts).where(eq(s().bookingDrafts.token, token));
+    expect(d.appointmentId).toBe(appt.id);
+    await D.saveBookingDraft({ token, shopSlug: fx.cvSlug, serviceId: null }, null);
+    [d] = await m.db.db.select().from(s().bookingDrafts).where(eq(s().bookingDrafts.token, token));
+    expect(d.serviceId).toBe(fx.cut);
   });
 
   it("announces a new location to clients of nearby locations and a new barber to the location's clients", async () => {
