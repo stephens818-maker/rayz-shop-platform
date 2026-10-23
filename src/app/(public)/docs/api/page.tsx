@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { appBaseUrl } from "@/lib/deployment";
 import { openApiDocument } from "@/server/openapi";
 
 export const metadata: Metadata = { title: "API v1" };
@@ -10,7 +11,7 @@ const METHOD_TONE: Record<string, string> = {
 };
 
 export default function ApiDocs() {
-  const doc = openApiDocument(process.env.APP_BASE_URL ?? "http://localhost:3000");
+  const doc = openApiDocument(appBaseUrl());
   type Op = { tags?: string[]; summary?: string; description?: string; security?: unknown[] };
   const ops = Object.entries(doc.paths).flatMap(([path, methods]) =>
     Object.entries(methods as Record<string, Op>).map(([method, op]) => ({ path, method, op })),

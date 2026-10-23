@@ -1,4 +1,5 @@
 import type { EmailAttachment } from "@/db/schema";
+import { demoMode } from "@/lib/deployment";
 
 /**
  * Pluggable SMS / email providers. v1 ships with `disabled` (default) and `console`.
@@ -89,6 +90,7 @@ class ResendEmailStub implements EmailProvider {
 }
 
 export function smsProvider(): SmsProvider {
+  if (demoMode()) return new DisabledProvider();
   switch ((process.env.NOTIFICATIONS_SMS_PROVIDER ?? "disabled").toLowerCase()) {
     case "console":
       return new ConsoleProvider();
@@ -100,6 +102,7 @@ export function smsProvider(): SmsProvider {
 }
 
 export function emailProvider(): EmailProvider {
+  if (demoMode()) return new DisabledProvider();
   switch ((process.env.NOTIFICATIONS_EMAIL_PROVIDER ?? "disabled").toLowerCase()) {
     case "console":
       return new ConsoleProvider();
@@ -111,6 +114,7 @@ export function emailProvider(): EmailProvider {
 }
 
 export function voiceProvider(): VoiceProvider {
+  if (demoMode()) return new DisabledProvider();
   switch ((process.env.NOTIFICATIONS_VOICE_PROVIDER ?? "disabled").toLowerCase()) {
     case "console":
       return new ConsoleProvider();

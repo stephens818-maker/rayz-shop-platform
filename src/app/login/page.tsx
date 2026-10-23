@@ -1,15 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/ui";
-import { LoginForm } from "./form";
+import { demoMode } from "@/lib/deployment";
+import { DemoLogin, LoginForm } from "./form";
 
 export const metadata: Metadata = { title: "Staff sign in" };
 
+const DEMO_LOGINS: DemoLogin[] = [
+  { email: "owner@rayz.test", who: "Brand owner", sees: "every shop, every report and setting" },
+  { email: "coralville@rayz.test", who: "Coralville shop login", sees: "the front desk for one shop" },
+  { email: "michelle@rayz.test", who: "Michelle, shop manager", sees: "Coralville's tools and reports" },
+  { email: "makenna@rayz.test", who: "Makenna, barber", sees: "her own column, clients and sales" },
+];
+
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
   const { next } = await searchParams;
-  const demo = process.env.NODE_ENV !== "production" || process.env.SHOW_DEMO_LOGINS === "true";
+  const showDemo = demoMode() || process.env.NODE_ENV !== "production" || process.env.SHOW_DEMO_LOGINS === "true";
   return (
-    <div className="grid min-h-dvh place-items-center bg-ink-900 px-4">
+    <div className="grid min-h-dvh place-items-center bg-ink-900 px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex justify-center">
           <Link href="/">
@@ -19,16 +27,8 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
         <div className="rounded-2xl bg-white p-6 shadow-xl">
           <h1 className="text-lg font-semibold">Staff sign in</h1>
           <p className="mt-1 text-sm text-zinc-500">Owners, managers and barbers.</p>
-          <LoginForm next={next ?? ""} />
+          <LoginForm next={next ?? ""} demo={showDemo ? { password: process.env.SEED_PASSWORD ? null : "rayz2026!", logins: DEMO_LOGINS } : undefined} />
         </div>
-        {demo && (
-          <div className="mt-4 rounded-xl bg-white/5 p-4 text-xs text-zinc-300 ring-1 ring-white/10">
-            <div className="mb-1 font-semibold text-white">Demo logins (password rayz2026!)</div>
-            <div>owner@rayz.test: brand admin, all shops</div>
-            <div>michelle@rayz.test: Coralville shop manager</div>
-            <div>makenna@rayz.test: barber</div>
-          </div>
-        )}
       </div>
     </div>
   );

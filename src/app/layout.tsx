@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { demoMode } from "@/lib/deployment";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -11,7 +12,14 @@ export const viewport: Viewport = { width: "device-width", initialScale: 1, them
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {demoMode() && (
+          <div role="note" className="bg-amber-300 px-4 py-1 text-center text-xs font-medium text-amber-950">
+            Demo preview on sample data. Cards aren&apos;t charged, and no texts or emails are sent; see them under Notifications.
+          </div>
+        )}
+        {children}
+      </body>
     </html>
   );
 }

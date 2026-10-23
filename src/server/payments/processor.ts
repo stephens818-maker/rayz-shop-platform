@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import type { CardFunding } from "@/domain/checkout";
+import { demoMode } from "@/lib/deployment";
 import { AppError } from "@/server/errors";
 
 /**
@@ -12,7 +13,9 @@ let stripeClient: Stripe | null | undefined;
 export function stripe(): Stripe | null {
   if (stripeClient !== undefined) return stripeClient;
   const key = process.env.STRIPE_SECRET_KEY;
-  stripeClient = key ? new Stripe(key) : null;
+  // A demo never charges a real card, whatever key it was given.
+  const usable = key && (!demoMode() || key.startsWith("sk_test_"));
+  stripeClient = usable ? new Stripe(key) : null;
   return stripeClient;
 }
 

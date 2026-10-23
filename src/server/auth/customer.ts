@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { db } from "@/db";
 import { customers, otpCodes, refreshTokens } from "@/db/schema";
+import { demoMode } from "@/lib/deployment";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { findOrCreateCustomer, lockIdentity, matchCustomer } from "@/server/customers";
 import { AppError } from "@/server/errors";
@@ -22,9 +23,9 @@ export function normalizeIdentifier(input: { phone?: string | null; email?: stri
   throw new AppError("bad_request", "Provide a valid US phone number or email");
 }
 
-/** Never in a production build, whatever the env flag says. */
+/** Never in a production build, whatever the env flag says, except a demo, which sends nothing and so has to show the code. */
 export function devCodesEnabled() {
-  return process.env.NODE_ENV !== "production" && process.env.AUTH_DEV_CODES === "true";
+  return demoMode() || (process.env.NODE_ENV !== "production" && process.env.AUTH_DEV_CODES === "true");
 }
 
 export async function startOtp(input: { phone?: string | null; email?: string | null }) {

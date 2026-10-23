@@ -26,6 +26,7 @@ import {
 } from "@/domain/client-privacy";
 import { OWNER_ROLE_KEY } from "@/domain/permissions";
 import type { RatingSummary } from "@/domain/ratings";
+import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
 import type { StaffContext } from "./auth/staff";
 import { AppError } from "./errors";
@@ -349,7 +350,7 @@ async function raiseAlert(ctx: StaffContext, kind: "unusual" | "paused", counts:
     .values({ staffId: ctx.staff.id, actorLabel: ctx.actor.label, kind, profiles: counts.profiles, searches: counts.searches, windowMinutes: limits.windowMinutes });
   const who = ctx.staff.displayLabel;
   const what = `${counts.profiles} client profile${counts.profiles === 1 ? "" : "s"} and ${counts.searches} search${counts.searches === 1 ? "" : "es"} in ${limits.windowMinutes} minutes`;
-  const body = `${kind === "paused" ? `Client lookups for ${who} were paused` : `Unusual client lookups by ${who}`}: ${what}. See who viewed what: ${process.env.APP_BASE_URL ?? "http://localhost:3000"}/admin/client-data/access`;
+  const body = `${kind === "paused" ? `Client lookups for ${who} were paused` : `Unusual client lookups by ${who}`}: ${what}. See who viewed what: ${appBaseUrl()}/admin/client-data/access`;
   const to = (await alertRecipients(ctx.staff.id)).map((r) => r.email!);
   if (to.length)
     await db

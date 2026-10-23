@@ -1,6 +1,7 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { EmailAttachment, notificationJobs } from "@/db/schema";
+import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
 import { emailProvider, smsProvider, voiceProvider } from "./providers";
 
@@ -34,7 +35,7 @@ export interface AppointmentMessageContext {
   emailOptIn: boolean;
 }
 
-const baseUrl = () => process.env.APP_BASE_URL ?? "http://localhost:3000";
+const baseUrl = appBaseUrl;
 
 export function renderMessage(kind: NotificationKind, c: AppointmentMessageContext): { subject: string; body: string } {
   const when = formatDateTime(c.startsAt);
