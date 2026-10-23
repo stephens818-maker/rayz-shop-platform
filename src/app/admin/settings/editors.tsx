@@ -485,7 +485,7 @@ export function ReviewRulesEditor({ initial }: { initial: ReviewRules }) {
         </Field>
         <p className="text-xs text-zinc-500 sm:col-span-2">
           {valid
-            ? `${minVisits <= 1 ? "Every client" : `Clients from their ${ordinal(minVisits)} visit on`} see the button${snoozeDays > 0 ? `, then not again at that location for ${snoozeDays} days after they tap it` : ""}. `
+            ? `${minVisits <= 1 ? "Every client sees" : `Clients from their ${ordinal(minVisits)} visit on see`} the button${snoozeDays > 0 ? `, then not again at that location for ${snoozeDays} days after they tap it` : ""}. `
             : ""}
           Only the visit count decides: never a rating, tip, refund or complaint, since asking only happy clients is against Google&apos;s policy. We can&apos;t see whether
           someone actually posted a review, so a tap on the link counts.
