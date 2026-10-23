@@ -8,6 +8,11 @@ process.env.LAUNCH_AT ??= "2000-01-01T00:00:00.000Z";
 export async function loadModules() {
   const env = { ...process.env, DATABASE_URL: TEST_DB, MIGRATE_DATABASE_URL: TEST_DB, SEED_HISTORY_DAYS: "3" };
   execSync("npx tsx scripts/migrate.ts && npx tsx scripts/seed.ts", { env, stdio: "pipe" });
+  const db = await import("@/db");
+  const { sql } = await import("drizzle-orm");
+  // The per-shop gate is required. Seed leaves it null (still on Squire). Suites that book online
+  // need every shop open unless a test closes one on purpose.
+  await db.db.execute(sql`update shops set launch_at = '2000-01-01T00:00:00.000Z'`);
   return {
     db: await import("@/db"),
     schema: await import("@/db/schema"),

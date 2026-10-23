@@ -27,6 +27,7 @@ export function statLines(kind: string, s: Partial<ImportStats>): [string, strin
     ["Gift card balances", $(n("giftCardBalanceCents")), kind === "gift_cards" || (all && n("giftCardBalanceCents") > 0)],
     ["Former barbers added (inactive)", n("formerBarbersCreated"), n("formerBarbersCreated") > 0],
     ["Already imported (no change)", n("alreadyImported"), n("alreadyImported") > 0],
+    ["Left on Rayz (shop already live)", n("liveShopSkipped"), n("liveShopSkipped") > 0],
   ];
   return lines.filter(([, , show]) => show).map(([l, v]) => [l, String(v)]);
 }

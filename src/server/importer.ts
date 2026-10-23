@@ -34,6 +34,7 @@ import { Customer, matchCustomer, mergeNotes } from "./customers";
 import { recordConsent, recordImportedConsent, retainOptOut } from "./mobile/consent";
 import { isDoubleBookingError } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
+import { effectiveLaunch, launchState, type LaunchState } from "./launch";
 import { messageContext } from "./booking";
 import { scheduleAppointmentNotifications } from "./notifications/queue";
 
@@ -196,6 +197,8 @@ export interface ImportStats {
   giftCardBalanceCents: number;
   formerBarbersCreated: number;
   alreadyImported: number;
+  /** Rows left untouched because that shop is already live on Rayz. */
+  liveShopSkipped: number;
 }
 
 const ZERO_STATS: ImportStats = {
@@ -219,6 +222,7 @@ const ZERO_STATS: ImportStats = {
   giftCardBalanceCents: 0,
   formerBarbersCreated: 0,
   alreadyImported: 0,
+  liveShopSkipped: 0,
 };
 
 export interface ImportResult {
@@ -259,6 +263,8 @@ interface Run {
   kind: ImportKind;
   get: (r: Record<string, string>, f: string) => string | undefined;
   findShop: (name?: string) => typeof shops.$inferSelect | null;
+  shops: (typeof shops.$inferSelect)[];
+  brandLaunch: LaunchState;
   now: Date;
   dryRun: boolean;
   /** Bulk and delta imports stay silent unless the caller passes notifyClients. */
@@ -350,6 +356,7 @@ export async function runImport(
   const get = (r: Record<string, string>, f: string) => (headerMap[f] ? r[headerMap[f]]?.trim() || undefined : undefined);
 
   const allShops = await db.select().from(shops);
+  const brandLaunch = await launchState(opts.now ?? new Date());
   const findShop = (name?: string) => {
     if (!name) return null;
     const n = name.toLowerCase().replace(/ray'?z|barber ?shop|[^a-z ]/g, "").trim();
@@ -360,6 +367,8 @@ export async function runImport(
     kind,
     get,
     findShop,
+    shops: allShops,
+    brandLaunch,
     now: opts.now ?? new Date(),
     dryRun: opts.dryRun,
     notifyClients: opts.notifyClients === true,
@@ -382,7 +391,10 @@ export async function runImport(
       c.after.forEach((f) => f());
       for (const [k, v] of Object.entries(c.stats)) result.stats[k as keyof ImportStats] += v;
       result[outcome]++;
-      if (outcome === "skipped") result.skippedByReason["Already imported"] = (result.skippedByReason["Already imported"] ?? 0) + 1;
+      if (outcome === "skipped") {
+        const reason = (c.stats.liveShopSkipped ?? 0) > 0 ? "Live shop" : "Already imported";
+        result.skippedByReason[reason] = (result.skippedByReason[reason] ?? 0) + 1;
+      }
     } catch (e) {
       const reason = e instanceof RowError ? e.reason : isDoubleBookingError(e) ? "Double booking" : "Other";
       const message = isDoubleBookingError(e) ? "Overlaps another booking for this barber" : (e as Error).message;
@@ -461,6 +473,24 @@ function contactOf(c: Row, r: Record<string, string>) {
 async function attachSquireId(c: Row, customerId: string, squireId: string | undefined, shopId: string | null) {
   if (!squireId) return;
   await c.tx.insert(customerSquireIds).values({ squireId, customerId, shopId }).onConflictDoNothing();
+}
+
+/** A shop is on Rayz only when its own launch instant has passed. Brand LAUNCH_AT does not count. */
+function shopIsLive(c: Row, shop: { launchAt: Date | null } | null | undefined) {
+  if (!shop) return false;
+  return effectiveLaunch(shop.launchAt, c.brandLaunch, c.now).launched;
+}
+
+function skipLiveShop(c: Row): Outcome {
+  bump(c, "liveShopSkipped");
+  return "skipped";
+}
+
+/** True when this person already has an appointment or a sale at a shop that is live on Rayz. */
+async function identityLocked(c: Row, customerId: string) {
+  const visits = await c.tx.select({ shopId: appointments.shopId }).from(appointments).where(eq(appointments.customerId, customerId));
+  const tickets = await c.tx.select({ shopId: sales.shopId }).from(sales).where(eq(sales.customerId, customerId));
+  return [...visits, ...tickets].some((row) => shopIsLive(c, c.shops.find((s) => s.id === row.shopId)));
 }
 
 /** The client an appointment or transaction row belongs to; created when the row has an ID or contact. */
@@ -656,6 +686,7 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
   const { phone, email, notes: contactNotes } = contactOf(c, r);
   const squireId = c.get(r, "squireId");
   const shop = c.findShop(c.get(r, "shop"));
+  if (shop && shopIsLive(c, shop)) return skipLiveShop(c);
   const barberName = c.get(r, "preferredBarber") ?? c.get(r, "barber");
   const preferredStaffId = barberName ? await resolveBarber(c, barberName, shop?.id ?? null, { createFormer: false, required: false }) : null;
   const notes = mergeNotes(
@@ -669,6 +700,7 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
   const m = await matchCustomer(c.tx, { squireIds: squireId ? [squireId] : [], firstName: n.first, lastName: n.last, phone, email }, c.previewCustomers);
   let customerId: string;
   let outcome: Outcome;
+  const locked = m ? await identityLocked(c, m.customer.id) : false;
   if (!m) {
     const [row] = await c.tx
       .insert(customers)
@@ -696,9 +728,12 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
     const ex = m.customer;
     customerId = ex.id;
     const firstTouch = !c.touched.has(ex.id);
-    const patch: Partial<typeof customers.$inferInsert> = { notes: mergeNotes(ex.notes, notes) };
-    if (!ex.importedFrom) patch.importedFrom = "squire";
-    if (m.via === "squire_id" && firstTouch) {
+    const patch: Partial<typeof customers.$inferInsert> = {};
+    if (!locked) patch.notes = mergeNotes(ex.notes, notes);
+    if (!locked && !ex.importedFrom) patch.importedFrom = "squire";
+    if (locked) {
+      // This client already has records at a live shop. Link the Squire id and keep the Rayz profile.
+    } else if (m.via === "squire_id" && firstTouch) {
       // The same Squire record again: Squire's current values win, so a corrected phone lands.
       Object.assign(patch, {
         firstName: n.first,
@@ -724,8 +759,8 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
     const nextMail = retainOptOut(ex.emailOptIn, mail);
     if (nextSms !== ex.smsOptIn) patch.smsOptIn = nextSms;
     if (nextMail !== ex.emailOptIn) patch.emailOptIn = nextMail;
-    if (since && since < ex.createdAt) patch.createdAt = since;
-    if (await customerVisible(c.tx, ex.id)) {
+    if (!locked && since && since < ex.createdAt) patch.createdAt = since;
+    if (Object.keys(patch).length && (await customerVisible(c.tx, ex.id))) {
       await c.tx.update(customers).set(patch).where(eq(customers.id, ex.id));
       if (patch.smsOptIn === false) {
         await recordConsent({ customerId: ex.id, phone: phone ?? ex.phone, channel: "sms_transactional", action: "revoked", source: "import", textVersion: "squire-import" }, c.tx);
@@ -743,7 +778,7 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
   if (previewRow && squireId && !previewRow.squireIds.includes(squireId)) previewRow.squireIds.push(squireId);
   c.after.push(() => c.touched.add(customerId));
 
-  if ((c.get(r, "progress") !== undefined || c.get(r, "rewards") !== undefined) && (await customerVisible(c.tx, customerId))) {
+  if (!locked && (c.get(r, "progress") !== undefined || c.get(r, "rewards") !== undefined) && (await customerVisible(c.tx, customerId))) {
     await applyLoyalty(c, customerId, money(c.get(r, "progress")) ?? 0, Number(c.get(r, "rewards") ?? 0) || 0);
   }
   return outcome;
@@ -755,6 +790,7 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
   const squireApptId = c.get(r, "appointmentId");
   const shop = c.findShop(c.get(r, "shop"));
   if (!shop) throw new RowError("Unknown shop", `Unknown shop "${c.get(r, "shop") ?? ""}"`);
+  if (shopIsLive(c, shop)) return skipLiveShop(c);
   const startsAt = parseSquireDateTime(c.get(r, "date"), c.get(r, "time"), c.get(r, "start"));
   if (!startsAt) throw new RowError("Bad date", "Couldn't read the date/time");
   const isFuture = startsAt > c.now;
@@ -804,6 +840,7 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
         where: and(eq(appointments.source, "import"), eq(appointments.staffId, staffId), eq(appointments.startsAt, startsAt), customer ? eq(appointments.customerId, customer.id) : isNull(appointments.customerId)),
       });
   let apptId: string;
+  if (existing && shopIsLive(c, c.shops.find((s) => s.id === existing.shopId))) return skipLiveShop(c);
   if (existing) {
     const [sold] = await c.tx.select({ id: sales.id }).from(sales).where(and(eq(sales.appointmentId, existing.id), ne(sales.status, "voided"))).limit(1);
     const handledHere = existing.source !== "import" || !!sold || ["checked_in", "in_service"].includes(existing.status);
@@ -841,6 +878,7 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
 async function importTransaction(c: Row, r: Record<string, string>): Promise<Outcome> {
   const shop = c.findShop(c.get(r, "shop"));
   if (!shop) throw new RowError("Unknown shop", `Unknown shop "${c.get(r, "shop") ?? ""}"`);
+  if (shopIsLive(c, shop)) return skipLiveShop(c);
   const at = parseSquireDateTime(c.get(r, "date"), c.get(r, "time"), c.get(r, "start"));
   if (!at) throw new RowError("Bad date", "Couldn't read the date/time");
   let service = money(c.get(r, "serviceTotal"));

@@ -8,10 +8,10 @@ import { badgeFor, localeFromHeader, message } from "@/server/mobile/rules";
 import { getAppointmentByCode, getAvailability } from "./booking";
 import { getShop, shopBarbers, shopCatalog } from "./catalog";
 import { notFound } from "./errors";
-import { effectiveLaunch, launchState, LaunchState } from "./launch";
+import { closedShopCopy, effectiveLaunch, launchState, LaunchState } from "./launch";
 
 export async function publicShops(locale: "en" | "es" = "en") {
-  const brandLaunch = await launchState();
+  const [brandLaunch, copy] = await Promise.all([launchState(), closedShopCopy()]);
   const [rows, hours, counts, closures] = await Promise.all([
     db.select().from(shops).where(eq(shops.active, true)).orderBy(asc(shops.name)),
     db.select().from(shopHours).orderBy(asc(shopHours.weekday)),
@@ -27,7 +27,7 @@ export async function publicShops(locale: "en" | "es" = "en") {
       const c = closures.filter((x) => x.shopId === s.id).map((x) => ({ date: x.date, reason: x.reason }));
       const launch = effectiveLaunch(s.launchAt, brandLaunch);
       const nextSlot = launch.launched ? await nextOpenSlot(s.id, s.bookingMode, s.bookingEnabled) : null;
-      return serializeShop(s, h, counts.find((n) => n.shopId === s.id)?.n ?? 0, { closures: c, locale, openNow: shopIsOpen(h, c), nextSlot, launch });
+      return serializeShop(s, h, counts.find((n) => n.shopId === s.id)?.n ?? 0, { closures: c, locale, openNow: shopIsOpen(h, c), nextSlot, launch, closedCopy: copy });
     }),
   );
 }
@@ -42,6 +42,7 @@ export function serializeShop(
     openNow?: boolean;
     nextSlot?: { startsAt: string; serviceId: string } | null;
     launch?: LaunchState;
+    closedCopy?: string;
   },
 ) {
   const lat = s.lat == null ? null : Number(s.lat);
@@ -84,6 +85,7 @@ export function serializeShop(
     googleReviewUrl: s.googleReviewUrl,
     launched: extras?.launch?.launched ?? false,
     launchAt: extras?.launch?.launchAt ?? null,
+    closedCopy: extras?.launch?.launched ? null : (extras?.closedCopy ?? null),
     openNow: extras?.openNow ?? false,
     closures: extras?.closures ?? [],
     tipPresets: s.tipPresets,
@@ -134,12 +136,13 @@ function shopIsOpen(hours: (typeof shopHours.$inferSelect)[], closures: { date: 
 export async function publicShop(ref: string, locale: "en" | "es" = "en") {
   const s = await getShop(ref);
   if (!s.active) throw notFound("Shop");
-  const launch = effectiveLaunch(s.launchAt, await launchState());
+  const [brandLaunch, copy] = await Promise.all([launchState(), closedShopCopy()]);
+  const launch = effectiveLaunch(s.launchAt, brandLaunch);
   const hours = await db.select().from(shopHours).where(eq(shopHours.shopId, s.id)).orderBy(asc(shopHours.weekday));
   const closures = await db.select({ date: shopClosures.date, reason: shopClosures.reason }).from(shopClosures).where(eq(shopClosures.shopId, s.id));
   const barbers = await shopBarbers(s.id, { onlineOnly: true });
   const nextSlot = launch.launched ? await nextOpenSlot(s.id, s.bookingMode, s.bookingEnabled) : null;
-  return serializeShop(s, hours, barbers.length, { closures, locale, openNow: shopIsOpen(hours, closures), nextSlot, launch });
+  return serializeShop(s, hours, barbers.length, { closures, locale, openNow: shopIsOpen(hours, closures), nextSlot, launch, closedCopy: copy });
 }
 
 export async function publicServices(ref: string, locale: "en" | "es" = "en") {

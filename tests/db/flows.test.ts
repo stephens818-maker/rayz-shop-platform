@@ -244,6 +244,8 @@ describe("checkout → reports → loyalty", () => {
 
 describe("Squire importer", () => {
   it("dry-runs without writing, then imports clients, history, loyalty, and gift cards", async () => {
+    await m.db.db.execute(m.drizzle.sql`update shops set launch_at = null`);
+    try {
     const read = (f: string) => readFileSync(`samples/squire/${f}`, "utf8");
     const dry = await m.importer.runImport("clients", read("clients.csv"), { dryRun: true, actor });
     // Every client carries over; one with no first name keeps the last name and a note.
@@ -270,5 +272,8 @@ describe("Squire importer", () => {
     const gc = await m.importer.runImport("gift_cards", read("gift_cards.csv"), { dryRun: false, actor });
     expect(gc.inserted).toBe(3);
     expect((await m.checkout.lookupGiftCard("SQGC-0001")).balanceCents).toBe(4860);
+    } finally {
+      await m.db.db.execute(m.drizzle.sql`update shops set launch_at = '2000-01-01T00:00:00.000Z'`);
+    }
   });
 });

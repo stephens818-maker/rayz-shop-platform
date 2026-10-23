@@ -21,6 +21,16 @@ afterAll(async () => {
 
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 
+/** Bulk and delta imports run only for shops still on Squire. */
+async function onSquire<T>(fn: () => Promise<T>): Promise<T> {
+  await m.db.db.execute(m.drizzle.sql`update shops set launch_at = null`);
+  try {
+    return await fn();
+  } finally {
+    await m.db.db.execute(m.drizzle.sql`update shops set launch_at = '2000-01-01T00:00:00.000Z'`);
+  }
+}
+
 async function openSlot(offset = 4) {
   const svc = (await m.public.publicServices("coralville")).services[0];
   for (let i = offset; i < 24; i++) {
@@ -74,6 +84,7 @@ describe("consent sticks once opted out", () => {
   });
 
   it("a Squire re-import cannot turn an opt-out back on, and a non-id match updates changed fields", async () => {
+    await onSquire(async () => {
     const header = "Client ID,First Name,Last Name,Phone,Email,Location,SMS Opt In";
     const created = await m.importer.runImport(
       "clients",
@@ -90,10 +101,12 @@ describe("consent sticks once opted out", () => {
     expect((await m.customers.customerBySquireId(m.db.db, "SQ-M100"))!.smsOptIn).toBe(false);
     await m.importer.runImport("clients", `${header}\nSQ-M100,Ann,Lee,(319) 555-0172,ann@lee.test,Coralville,Yes\n`, { dryRun: false, actor });
     expect((await m.customers.customerBySquireId(m.db.db, "SQ-M100"))!.smsOptIn).toBe(false);
+    });
   });
 
   it("a dry-run of more than one batch rolls back and still matches in-file duplicates", async () => {
     process.env.IMPORT_BATCH_ROWS = "2";
+    await onSquire(async () => {
     try {
       const header = "Client ID,First Name,Last Name,Phone,Email,Location,SMS Opt In";
       const csv = [
@@ -110,6 +123,7 @@ describe("consent sticks once opted out", () => {
     } finally {
       delete process.env.IMPORT_BATCH_ROWS;
     }
+    });
   });
 });
 
@@ -253,7 +267,8 @@ describe("customer app endpoints", () => {
     expect(coralville.nextSlot === null || typeof coralville.nextSlot.startsAt === "string").toBe(true);
   }, 60_000);
 
-  it("does not text or email an imported appointment unless notifyClients is set, and keeps imported sales marked", async () => {
+  it("does not text or email an imported appointment for a shop still on Squire, and keeps imported sales marked", async () => {
+    await onSquire(async () => {
     const now = new Date("2026-10-23T15:00:00Z");
     const clients = "Client ID,First Name,Last Name,Phone,Email,Location,SMS Opt In,Email Marketing";
     await m.importer.runImport(
@@ -283,9 +298,8 @@ describe("customer app endpoints", () => {
       { dryRun: false, actor, now, notifyClients: true },
     );
     expect(loud.inserted).toBe(2);
-    const optedIn = await jobsFor("AP-N2");
-    expect(optedIn.map((j) => j.kind).sort()).toEqual(["reminder_24h", "reminder_2h"]);
-    expect(optedIn.every((j) => j.channel === "sms")).toBe(true);
+    // Squire still reminds for a shop that is not live, so Rayz stays quiet even when notifyClients is set.
+    expect(await jobsFor("AP-N2")).toEqual([]);
     expect(await jobsFor("AP-N3")).toEqual([]);
 
     await m.importer.runImport(
@@ -297,6 +311,7 @@ describe("customer app endpoints", () => {
     expect(sale.isImported).toBe(true);
     const [pay] = await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, sale.id));
     expect(pay.processor).toBe("squire_import");
+    });
   });
 
   it("keeps tip-to-barber off and settles the whole ticket, tip included, to the shop", async () => {
@@ -375,7 +390,7 @@ describe("launch gate", () => {
   });
 
   it("keeps customer booking, payments, and push closed until LAUNCH_AT, and leaves staff booking open", async () => {
-    const { COMING_SOON_MESSAGE } = await import("@/server/launch");
+    const { DEFAULT_CLOSED_SHOP_COPY } = await import("@/server/launch");
     const { svc, first, second } = await twoSlots();
     const booked = await m.booking.createAppointment({
       shopRef: "coralville",
@@ -387,6 +402,7 @@ describe("launch gate", () => {
       actor,
     });
 
+    await m.db.db.execute(m.drizzle.sql`update shops set launch_at = null`);
     process.env.LAUNCH_AT = future;
     const config = await import("@/app/api/v1/app/config/route");
     const closed = await (await config.GET(new Request("http://localhost/api/v1/app/config"), { params: Promise.resolve({}) })).json();
@@ -394,6 +410,8 @@ describe("launch gate", () => {
     expect(closed.launchAt).toBe(future);
     expect(closed.pilot).toBe(false);
     expect(closed.pilotShops).toEqual([]);
+    expect(closed.closedShopCopy).toBe(DEFAULT_CLOSED_SHOP_COPY);
+    expect(closed.shops.find((s: { slug: string }) => s.slug === "coralville")).toMatchObject({ launched: false, launchAt: null, closedCopy: DEFAULT_CLOSED_SHOP_COPY });
     expect(closed.timeFormat).toBe("12h");
     expect(closed.minVersion).toEqual({ ios: closed.minIos, android: closed.minAndroid });
     expect(closed.forceUpdateBelow).toEqual(closed.minVersion);
@@ -418,7 +436,11 @@ describe("launch gate", () => {
         source: "api",
         actor,
       }),
-    ).rejects.toMatchObject({ code: "forbidden", message: COMING_SOON_MESSAGE, details: { reason: "not_launched", surface: "booking", launchAt: future } });
+    ).rejects.toMatchObject({
+      code: "forbidden",
+      message: DEFAULT_CLOSED_SHOP_COPY,
+      details: { reason: "not_launched", surface: "booking", launchAt: null, scope: "shop", closedCopy: DEFAULT_CLOSED_SHOP_COPY },
+    });
 
     const staffBooked = await m.booking.createAppointment({
       shopRef: "coralville",
@@ -495,14 +517,15 @@ describe("launch gate", () => {
   });
 
   it("lets one shop pilot before the brand instant, and hold a shop back after it", async () => {
-    const { COMING_SOON_MESSAGE, effectiveLaunch } = await import("@/server/launch");
+    const { DEFAULT_CLOSED_SHOP_COPY, effectiveLaunch } = await import("@/server/launch");
     expect(effectiveLaunch(new Date("2020-01-01T00:00:00.000Z"), { launched: false, launchAt: future, scope: "brand" }, new Date("2026-01-01T00:00:00.000Z")).launched).toBe(true);
-    expect(effectiveLaunch(null, { launched: false, launchAt: future, scope: "brand" }).launched).toBe(false);
+    expect(effectiveLaunch(null, { launched: true, launchAt: past, scope: "brand" }).launched).toBe(false);
 
     process.env.LAUNCH_AT = future;
     const coralville = await m.catalog.getShop("coralville");
     const moline = await m.catalog.getShop("moline");
     const pilotAt = new Date("2020-01-01T00:00:00.000Z");
+    await m.db.db.execute(m.drizzle.sql`update shops set launch_at = null`);
     await m.db.db.update(m.schema.shops).set({ launchAt: pilotAt }).where(eq(m.schema.shops.id, coralville.id));
     try {
       const { svc, slot } = await openSlot(8);
@@ -534,7 +557,7 @@ describe("launch gate", () => {
           source: "api",
           actor,
         }),
-      ).rejects.toMatchObject({ message: COMING_SOON_MESSAGE, details: { reason: "not_launched", scope: "brand", shopId: moline.id } });
+      ).rejects.toMatchObject({ message: DEFAULT_CLOSED_SHOP_COPY, details: { reason: "not_launched", scope: "shop", shopId: moline.id, closedCopy: DEFAULT_CLOSED_SHOP_COPY } });
 
       const config = await import("@/app/api/v1/app/config/route");
       const cfg = await (await config.GET(new Request("http://localhost/api/v1/app/config"), { params: Promise.resolve({}) })).json();
@@ -545,8 +568,10 @@ describe("launch gate", () => {
 
       const shops = await import("@/app/api/v1/shops/route");
       const list = await (await shops.GET(new Request("http://localhost/api/v1/shops"), { params: Promise.resolve({}) })).json();
-      expect(list.shops.find((s: { slug: string }) => s.slug === "coralville")).toMatchObject({ launched: true, launchAt: pilotAt.toISOString() });
-      expect(list.shops.find((s: { slug: string }) => s.slug === "moline")).toMatchObject({ launched: false, launchAt: future });
+      expect(list.shops.find((s: { slug: string }) => s.slug === "coralville")).toMatchObject({ launched: true, launchAt: pilotAt.toISOString(), closedCopy: null });
+      expect(list.shops.find((s: { slug: string }) => s.slug === "moline")).toMatchObject({ launched: false, launchAt: null, closedCopy: DEFAULT_CLOSED_SHOP_COPY });
+      expect(cfg.shops.find((s: { slug: string }) => s.slug === "coralville")).toMatchObject({ launched: true });
+      expect(cfg.shops.find((s: { slug: string }) => s.slug === "moline")).toMatchObject({ launched: false, closedCopy: DEFAULT_CLOSED_SHOP_COPY });
 
       const { executeChargePlan } = await import("@/server/payments/charge-plan");
       const paid = await executeChargePlan({
@@ -584,7 +609,146 @@ describe("launch gate", () => {
       ).rejects.toMatchObject({ details: { reason: "not_launched", scope: "shop" } });
     } finally {
       process.env.LAUNCH_AT = past;
-      await m.db.db.update(m.schema.shops).set({ launchAt: null }).where(eq(m.schema.shops.id, coralville.id));
+      delete process.env.CLOSED_SHOP_COPY;
+      await m.db.db.execute(m.drizzle.sql`update shops set launch_at = '2000-01-01T00:00:00.000Z'`);
     }
   });
+});
+
+describe("option B rollout", () => {
+  const past = new Date("2000-01-01T00:00:00.000Z");
+
+  afterAll(async () => {
+    process.env.LAUNCH_AT = "2000-01-01T00:00:00.000Z";
+    delete process.env.CLOSED_SHOP_COPY;
+    await m.db.db.execute(m.drizzle.sql`update shops set launch_at = '2000-01-01T00:00:00.000Z'`);
+  });
+
+  it("keeps one account, imports only shops still on Squire, and rolls a shop back without deleting rows", async () => {
+    const { DEFAULT_CLOSED_SHOP_COPY } = await import("@/server/launch");
+    const { closeShopGate, openShopGate } = await import("@/server/shop-gate");
+    const phone = "+13195550210";
+    await m.db.db.execute(m.drizzle.sql`update shops set launch_at = null`);
+    await m.db.db.update(m.schema.shops).set({ launchAt: past }).where(eq(m.schema.shops.slug, "coralville"));
+    process.env.CLOSED_SHOP_COPY = "Book at the front desk for now.";
+
+    const { svc, slot } = await openSlot(10);
+    const native = await m.booking.createAppointment({
+      shopRef: "coralville",
+      serviceId: svc.id,
+      barberRef: "any",
+      startsAt: slot.startsAt,
+      customer: { firstName: "Pilot", lastName: "Pam", phone, smsOptIn: true },
+      notes: "PILOT-KEEP",
+      source: "online",
+      actor,
+    });
+    const nativeRow = await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.code, native.code) });
+    expect(nativeRow?.notes).toBe("PILOT-KEEP");
+    const pendingBefore = (await m.db.db.execute(m.drizzle.sql`
+      select count(*)::int as n from notification_jobs where appointment_id = ${nativeRow!.id} and status = 'pending'
+    `)) as unknown as { n: number }[];
+    expect(Number(pendingBefore[0].n)).toBeGreaterThan(0);
+
+    const now = new Date("2026-10-23T15:00:00Z");
+    const header = "Appointment ID,Date,Time,Location,Barber,Client ID,Client Name,Phone,Email,Services,Price,Duration,Status";
+    const liveDelta = await m.importer.runImport(
+      "appointments",
+      `${header}\nAP-LIVE,8/18/2027,9:00 AM,Coralville,Makenna,SQ-PAM,Squire Pam,(319) 555-0210,pam@pilot.test,Haircut,35,30,booked\n`,
+      { dryRun: false, actor, now, notifyClients: true },
+    );
+    expect(liveDelta.skipped).toBe(1);
+    expect(liveDelta.stats.liveShopSkipped).toBe(1);
+    expect(liveDelta.inserted).toBe(0);
+    const still = await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.id, nativeRow!.id) });
+    expect(still).toMatchObject({ notes: "PILOT-KEEP", startsAt: nativeRow!.startsAt, source: "online" });
+
+    const clients = "Client ID,First Name,Last Name,Phone,Email,Location,SMS Opt In";
+    const shared = await m.importer.runImport(
+      "clients",
+      `${clients}\nSQ-MOL,Pilot,Pam,(319) 555-0210,sam@squire.test,Moline,Yes\n`,
+      { dryRun: false, actor, now },
+    );
+    expect(shared.inserted).toBe(0);
+    const people = await m.db.db.select().from(m.schema.customers).where(eq(m.schema.customers.phone, phone));
+    expect(people).toHaveLength(1);
+    expect(people[0]).toMatchObject({ firstName: "Pilot", lastName: "Pam", email: null });
+    expect(await m.customers.customerBySquireId(m.db.db, "SQ-MOL")).toMatchObject({ id: people[0].id });
+
+    const molineHeader = header;
+    const molineImport = await m.importer.runImport(
+      "appointments",
+      `${molineHeader}\nAP-MOL,8/19/2027,10:00 AM,Moline,Jamie,SQ-MOL,Pilot Pam,(319) 555-0210,sam@squire.test,Haircut,35,30,booked\n`,
+      { dryRun: false, actor, now, notifyClients: true },
+    );
+    expect(molineImport.inserted).toBe(1);
+    const molineJobs = (await m.db.db.execute(m.drizzle.sql`
+      select j.id from notification_jobs j
+      join appointments a on a.id = j.appointment_id
+      where a.squire_id = 'AP-MOL' and j.status = 'pending'
+    `)) as unknown as { id: string }[];
+    expect(molineJobs).toEqual([]);
+
+    const again = await m.importer.runImport(
+      "appointments",
+      `${molineHeader}\nAP-MOL,8/19/2027,10:00 AM,Moline,Jamie,SQ-MOL,Pilot Pam,(319) 555-0210,sam@squire.test,Haircut,35,30,booked\n`,
+      { dryRun: false, actor, now },
+    );
+    expect(again.inserted).toBe(0);
+    const molineRows = (await m.db.db.execute(m.drizzle.sql`select id from appointments where squire_id = 'AP-MOL'`)) as unknown as { id: string }[];
+    expect(molineRows).toHaveLength(1);
+
+    const beforeClose = await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.id, nativeRow!.id) });
+    const closed = await closeShopGate("coralville", actor, now);
+    expect(closed.launched).toBe(false);
+    const afterClose = await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.id, nativeRow!.id) });
+    expect(afterClose).toMatchObject({ notes: "PILOT-KEEP", startsAt: beforeClose!.startsAt, source: "online", customerId: beforeClose!.customerId });
+    const stillPending = (await m.db.db.execute(m.drizzle.sql`
+      select count(*)::int as n from notification_jobs where appointment_id = ${nativeRow!.id} and status = 'pending'
+    `)) as unknown as { n: number }[];
+    expect(Number(stillPending[0].n)).toBe(0);
+    const kept = (await m.db.db.execute(m.drizzle.sql`
+      select count(*)::int as n from notification_jobs where appointment_id = ${nativeRow!.id}
+    `)) as unknown as { n: number }[];
+    expect(Number(kept[0].n)).toBeGreaterThan(0);
+
+    const resumed = await m.importer.runImport(
+      "appointments",
+      `${header}\nAP-BACK,8/20/2027,11:00 AM,Coralville,Makenna,SQ-PAM,Pilot Pam,(319) 555-0210,pam@pilot.test,Haircut,35,30,booked\n`,
+      { dryRun: false, actor, now },
+    );
+    expect(resumed.inserted).toBe(1);
+    const resumedAgain = await m.importer.runImport(
+      "appointments",
+      `${header}\nAP-BACK,8/20/2027,11:00 AM,Coralville,Makenna,SQ-PAM,Pilot Pam,(319) 555-0210,pam@pilot.test,Haircut,35,30,booked\n`,
+      { dryRun: false, actor, now },
+    );
+    expect(resumedAgain.inserted).toBe(0);
+    const backRows = (await m.db.db.execute(m.drizzle.sql`select id from appointments where squire_id = 'AP-BACK'`)) as unknown as { id: string }[];
+    expect(backRows).toHaveLength(1);
+    const nativeAfterDelta = await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.id, nativeRow!.id) });
+    expect(nativeAfterDelta).toMatchObject({ notes: "PILOT-KEEP", source: "online", startsAt: nativeRow!.startsAt });
+
+    await expect(
+      m.booking.createAppointment({
+        shopRef: "coralville",
+        serviceId: svc.id,
+        barberRef: "any",
+        startsAt: slot.startsAt,
+        customer: { firstName: "Late", phone: "+13195550211" },
+        source: "online",
+        actor,
+      }),
+    ).rejects.toMatchObject({ message: "Book at the front desk for now.", details: { reason: "not_launched", closedCopy: "Book at the front desk for now." } });
+
+    const reopened = await openShopGate("coralville", past, actor, now);
+    expect(reopened.launched).toBe(true);
+    const nativeStill = await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.id, nativeRow!.id) });
+    expect(nativeStill).toMatchObject({ notes: "PILOT-KEEP", source: "online" });
+    const reminded = (await m.db.db.execute(m.drizzle.sql`
+      select count(*)::int as n from notification_jobs where appointment_id = ${nativeRow!.id} and status = 'pending' and kind in ('reminder_24h', 'reminder_2h')
+    `)) as unknown as { n: number }[];
+    expect(Number(reminded[0].n)).toBeGreaterThan(0);
+    expect(DEFAULT_CLOSED_SHOP_COPY).toMatch(/usual way/);
+  }, 60_000);
 });

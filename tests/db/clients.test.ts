@@ -17,6 +17,8 @@ const first: Partial<Record<Kind, Result>> = {};
 
 beforeAll(async () => {
   m = await loadModules();
+  // This file is the pre-launch bulk import. Shops are still on Squire, so the gate is open for deltas.
+  await m.db.db.execute(m.drizzle.sql`update shops set launch_at = null`);
   // Export "today", so upcoming Squire bookings land 30-75 days out, past the seeded calendar.
   fx = makeSquireFixture({ exportDate: m.time.todayLocal() });
 }, 120_000);

@@ -16,7 +16,10 @@ export interface PushPayload {
 
 export function pushConfigured(provider: "apns" | "fcm" | "expo"): boolean {
   if (demoMode()) return false;
-  if (provider === "apns") return Boolean(process.env.APNS_KEY_ID && process.env.APNS_TEAM_ID && process.env.APNS_PRIVATE_KEY && process.env.APNS_BUNDLE_ID);
+  if (provider === "apns") {
+    const apns = apnsMaterial();
+    return Boolean(apns.keyId && apns.teamId && apns.privateKey && apns.bundleId);
+  }
   if (provider === "fcm") return Boolean(process.env.FCM_PROJECT_ID && (process.env.FCM_ACCESS_TOKEN || process.env.FCM_SERVICE_ACCOUNT_JSON));
   return Boolean(process.env.EXPO_ACCESS_TOKEN);
 }
@@ -90,25 +93,42 @@ async function fcmAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-let apnsJwt: { token: string; exp: number } | null = null;
+let apnsJwt: { token: string; exp: number; material: string } | null = null;
+
+/** Key id, team id, bundle, and the .p8 body. Read on every send so a new key does not need a code deploy. */
+export function apnsMaterial(): { keyId: string; teamId: string; privateKey: string; bundleId: string; production: boolean } {
+  return {
+    keyId: process.env.APNS_KEY_ID?.trim() ?? "",
+    teamId: process.env.APNS_TEAM_ID?.trim() ?? "",
+    privateKey: (process.env.APNS_PRIVATE_KEY ?? "").replace(/\\n/g, "\n"),
+    bundleId: process.env.APNS_BUNDLE_ID?.trim() ?? "",
+    production: process.env.APNS_PRODUCTION === "true",
+  };
+}
+
+function apnsMaterialKey(m = apnsMaterial()) {
+  return `${m.keyId}\0${m.teamId}\0${m.bundleId}\0${m.production ? "1" : "0"}\0${m.privateKey}`;
+}
 
 async function sendApns(deviceToken: string, payload: PushPayload) {
   const now = Math.floor(Date.now() / 1000);
-  if (!apnsJwt || apnsJwt.exp < now + 60) {
-    const key = await importPKCS8(process.env.APNS_PRIVATE_KEY!.replace(/\\n/g, "\n"), "ES256");
+  const material = apnsMaterial();
+  const materialKey = apnsMaterialKey(material);
+  if (!apnsJwt || apnsJwt.material !== materialKey || apnsJwt.exp < now + 60) {
+    const key = await importPKCS8(material.privateKey, "ES256");
     const token = await new SignJWT({})
-      .setProtectedHeader({ alg: "ES256", kid: process.env.APNS_KEY_ID! })
-      .setIssuer(process.env.APNS_TEAM_ID!)
+      .setProtectedHeader({ alg: "ES256", kid: material.keyId })
+      .setIssuer(material.teamId)
       .setIssuedAt(now)
       .sign(key);
-    apnsJwt = { token, exp: now + 50 * 60 };
+    apnsJwt = { token, exp: now + 50 * 60, material: materialKey };
   }
-  const host = process.env.APNS_PRODUCTION === "true" ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com";
+  const host = material.production ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com";
   const res = await fetch(`${host}/3/device/${deviceToken}`, {
     method: "POST",
     headers: {
       authorization: `bearer ${apnsJwt.token}`,
-      "apns-topic": process.env.APNS_BUNDLE_ID!,
+      "apns-topic": material.bundleId,
       "apns-push-type": "alert",
     },
     body: JSON.stringify({ aps: { alert: { title: payload.title, body: payload.body } }, ...payload }),

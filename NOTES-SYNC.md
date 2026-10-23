@@ -110,23 +110,36 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Mobile API workstream (bc-645fbcc0)
 
-Branch: `cursor/launch-gate-a9e1` (follow-up to `cursor/mobile-api-auth-a9e1`). PRs into `cursor/rayz-barbershop-v1-8f0b`. `mobile_customer_app` is journal idx 22, after `core_0021_service_times`. `mobile_launch_at` is idx 23. The SQL filenames stay `mobile_customer_app.sql` and `mobile_launch_at.sql`.
+Branch: `cursor/pilot-rollout-a9e1`. PRs into `cursor/rayz-barbershop-v1-8f0b`. Journal order after the payroll merge: `core_0022_payroll` idx 22, `mobile_customer_app` idx 23, `mobile_launch_at` idx 24, `mobile_shop_launch` idx 25, `mobile_closed_shop_copy` idx 26. SQL filenames are unchanged.
 
-### Launch (one day, one time)
+### Launch (option B: one pilot shop, then the rest)
 
-Charles: the website, the iOS and Android customer apps, and the staff app go live together, and only after each one is complete and sandbox-tested.
+Charles confirmed option B. Everything is finished and sandbox-tested first. Then one pilot shop goes live while Squire stays the backup. The other shops switch after one clean pay period. The store apps ship once. A per-shop gate opens them one by one.
 
-`src/server/launch.ts` is the gate. Please call `launchState()` and `assertLaunched()` from any public web path that does not already book through `createAppointment`. The public wizard posts to `POST /api/v1/appointments`, and that path is gated.
+`src/server/launch.ts` is the gate. Please call `shopLaunchState()` / `assertLaunched(surface, now, shopId)` from any public web path that does not already book through `createAppointment`. The public wizard posts to `POST /api/v1/appointments`, and that path is gated per shop.
 
-- `LAUNCH_AT` is an ISO-8601 UTC timestamp. It overrides `brand_settings.launch_at` (migration `mobile_launch_at`). If both are empty, customer-facing surfaces stay closed. That is the safe default.
-- `launched` is true only when that instant is set and `now >= launchAt`.
-- A shop may set `shops.launch_at` (migration `mobile_shop_launch`, journal idx 24). That instant replaces the brand instant for that shop only. Null follows the brand. Set it earlier to pilot one shop, or later to hold a shop back after the brand is open. `GET /api/v1/app/config` then returns `pilot: true` and `pilotShops` (slugs), and `launched: true` so a store build leaves the full-screen coming-soon state. Each shop on `GET /shops` returns its own `launched` and `launchAt`. Customer booking, customer payments, and push for that shop follow the shop instant. Staff tools stay open.
-- Gated: online and API booking, customer reschedule, `executeChargePlan({ customerFacing: true })`, and `sendPush`.
-- Not gated, so a shop can be sandbox-tested before launch day: staff calendar bookings, walk-ins, checkout rebooks, the importer, and staff POS (`executeChargePlan` without `customerFacing`). App payment routes must pass `customerFacing: true` or call `assertLaunched("payments")`.
-- A closed surface throws `forbidden` with `details.reason = "not_launched"`, `details.launchAt`, and the message `Ray'z isn't open in the app yet. Coming soon.` The error code stays `forbidden` so a shipped client that only knows the 1.0.0 codes still has a branch for it.
-- `GET /api/v1/app/config` adds `launched`, `launchAt` (ISO UTC or null), `minVersion: { ios, android }`, and `forceUpdateBelow` (the same floor). Older keys stay: `minIos`, `minAndroid`, `latestIos`, `latestAndroid`, store URLs, `flags`, `timezone`, `timeFormat`. A build below the floor still gets `426 upgrade_required`, now with `details.forceUpdate: true`. Store builds can show "coming soon" from `launched` without an app update.
-- After launch, `/api/v1` is additive only. Document version stays `1.0.0`. Do not rename or remove paths, fields, or error codes. `tests/api-contract.test.ts` locks the shipped paths and codes.
-- `pnpm smoke:v1` (`scripts/smoke-v1.ts`) is the release checklist. It refuses `sk_live_` / `rk_live_` / `pk_live_`. With `sk_test_` it confirms a $0.50 PaymentIntent on `pm_card_visa` and refunds it. With no key it uses the simulator through `chargeCard`. Twilio is a GET of the Verify service when `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_VERIFY_SERVICE_SID` are set. A send happens only if `TWILIO_SMOKE_TO=+15005550006` (Twilio's magic test number).
+- `LAUNCH_AT` (or `brand_settings.launch_at`) is when the apps leave the full-screen coming-soon state. It does **not** open a shop. Unset means the apps are not released.
+- `shops.launch_at` is required for that shop to take Rayz bookings and customer payments. Null means the shop is still on Squire. Set it to open the shop. `closeShopGate` / `openShopGate` in `src/server/shop-gate.ts` are the rollback and the open. Closing sets the instant to `9999-12-31T00:00:00.000Z` and does not delete appointments, sales, clients, or payments.
+- `GET /api/v1/app/config` returns brand `launched` and `launchAt`, plus `shops[]` with each shop's `launched`, `launchAt`, and `closedCopy`. `GET /shops` returns the same per shop. `closedCopy` is null when the shop is live. Otherwise it is `CLOSED_SHOP_COPY`, or `brand_settings.closed_shop_copy`, or `Book with us at this shop the usual way.` Apps show that sentence and must not offer booking or payment.
+- A closed shop's booking or payment throws `forbidden` with `details.reason = "not_launched"` and `details.closedCopy`. The error code stays `forbidden`. The brand-level coming-soon sentence is only used when `assertLaunched` is called with no shop.
+- Gated per shop: online and API booking, customer reschedule, `executeChargePlan({ customerFacing: true })`, `sendPush` when given a shop, and customer SMS/email reminders (`scheduleAppointmentNotifications` and the queue).
+- Not gated, so a shop can be sandbox-tested before its gate opens: staff calendar bookings, walk-ins, checkout rebooks, and staff POS. Those staff bookings do not text the client while the shop is still on Squire.
+- While shops are mixed, keep running the Squire delta importer. A row whose shop is live is skipped (`liveShopSkipped` / "Live shop") and does not insert or update. The same file run twice does not create a second appointment. A client of a live shop and a Squire shop is one customer. A Squire row for a shop still on Squire may link that client, and it does not replace the name, phone, email, or the live shop's appointments and sales. Loyalty on that shared client is not replaced from Squire while they have a live-shop record.
+- Reminders are per shop. A shop still on Squire does not get Rayz confirmations or reminders, including when `notifyClients` is set, so Squire and Rayz do not both text the same appointment. Opening the gate schedules reminders for future bookings that do not already have one. Closing the gate cancels pending Rayz reminders and leaves the sent rows in the outbox. Turn Squire's own reminders back on for that shop when you roll it back, and off when you open it. This repo cannot call Squire.
+- After the apps ship, `/api/v1` is additive only. Document version stays `1.0.0`. `tests/api-contract.test.ts` locks the shipped paths and codes.
+- `pnpm smoke:v1` (`scripts/smoke-v1.ts`) is the release checklist. It refuses live Stripe keys. With `sk_test_` it confirms a $0.50 PaymentIntent and refunds it. Twilio is a GET of the Verify service when the three Twilio vars are set. A send happens only if `TWILIO_SMOKE_TO=+15005550006`.
+
+### APNs
+
+Team `9LVG9R4Z5J` is Rayz's Apple Developer team. A new Rayz-owned APNs Auth Key (.p8) is required. Do not reuse another app's key. Nothing is compiled in. `sendPush` reads these on every send and drops its cached JWT when any of them change, so they can be swapped without a code deploy:
+
+- `APNS_KEY_ID` — Key ID of the new .p8
+- `APNS_TEAM_ID` — `9LVG9R4Z5J`
+- `APNS_PRIVATE_KEY` — the .p8 body (`\n` for newlines)
+- `APNS_BUNDLE_ID` — the customer app bundle id
+- `APNS_PRODUCTION` — `true` for production APNs, otherwise sandbox
+
+Push for a shop still on Squire is not sent. Pass the appointment's shop into `sendPush`.
 
 ### Clock
 
@@ -161,8 +174,9 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
 - (core → mobile) An app checkout or prepayment for a shop that isn't onboarded fails with `payment_failed` and `details.reason = "payments_not_ready"`. Please show that as "This shop isn't taking cards in the app yet" instead of as a card decline.
-- (mobile → core) Use `launchState` / `shopLaunchState` / `assertLaunched` in `src/server/launch.ts` for the website. One `LAUNCH_AT` (or `brand_settings.launch_at`) is the brand instant. `shops.launch_at` pilots one shop or holds one shop back. Staff calendar and POS stay open before that instant. `GET /api/v1/app/config` returns `launched`, `launchAt`, `pilot`, and `pilotShops`.
-- (mobile → core) Time clock and kiosk pairing are not in `/api/v1`. Core owns that data (the kiosk is still outstanding). Mobile will not add a second punch table. Staff schedule, sales, and tips views for the staff app are not started; the web admin already has the domain functions.
+- (mobile → core) Use `shopLaunchState` / `assertLaunched(surface, now, shopId)` for the website. `LAUNCH_AT` only releases the apps. `shops.launch_at` opens one shop. Null keeps that shop on Squire. `closedCopy` is the sentence for a shop that is not live. `closeShopGate` rolls a shop back without deleting rows.
+- (mobile → core) Keep the Squire delta import running for shops that are not live. Do not point it at a shop whose `launch_at` has passed. Clients are one account across all 8 shops. Rayz reminders fire only for a live shop, so Squire can keep reminding the others.
+- (mobile → core) Time clock and kiosk pairing are not in `/api/v1`. Core's `time_entries` is the punch table (completed shifts, `source` clock / import / manual). Mobile will not add a second one. An in-progress clock-in cannot be stored while `ends_at` is required and must be after `starts_at`. There is still no kiosk-pairing table. Staff schedule, sales, and tips views for the staff app are not started.
 - (mobile → core) Reuse `formatDateTime` / `formatForHumans` for any new receipt, SMS, or push copy. `brand_settings.time_format` defaults to `12h`.
 - (mobile → core) Default the web booking SMS checkbox to off (`wizard.tsx` `smsOptIn: true`).
 - (mobile → core) Leave tip-to-barber off. Employee tips go through iSolved. Destination charges cannot pay a barber account.
@@ -174,6 +188,15 @@ Shop hour strings `open` / `close` stay `HH:MM` because the public site parses t
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 
 ## Log
+
+### 2026-10-23: mobile option B rollout (bc-645fbcc0)
+
+- Per-shop gate is required. `LAUNCH_AT` releases the apps and does not open a shop. `shops.launch_at` null means that shop stays on Squire.
+- `GET /api/v1/app/config` and `GET /shops` return each shop's `launched` and `closedCopy` (`Book with us at this shop the usual way.`, or `CLOSED_SHOP_COPY` / `brand_settings.closed_shop_copy`).
+- Squire deltas skip a live shop and do not overwrite that shop's appointments, sales, or the shared client's name, phone, or email. The same delta twice does not insert a second row. Closing the gate keeps every row and lets the importer resume.
+- Reminders and push are per shop. A shop on Squire does not get a Rayz reminder.
+- APNs key id, team id (`9LVG9R4Z5J`), and .p8 are env-only.
+- Core payroll stays at journal idx 22. Mobile migrations are idx 23–26. Payroll math was not edited. `time_entries` is core's punch table; an open shift does not fit the current `ends_at` check.
 
 ### 2026-10-23: mobile launch gate (bc-645fbcc0)
 

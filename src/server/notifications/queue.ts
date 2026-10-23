@@ -4,7 +4,11 @@ import { EmailAttachment, notificationJobs } from "@/db/schema";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime, type TimeFormat } from "@/lib/time";
 import { brandTimeFormat } from "@/server/brand-time";
+import { shopLaunchState } from "@/server/launch";
 import { emailProvider, smsProvider, voiceProvider } from "./providers";
+
+/** Customer appointment messages. Squire sends these until the shop's own gate is open. */
+export const SHOP_GATED_NOTIFICATION_KINDS = ["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "waitlist_ready"] as const;
 
 export type NotificationKind =
   | "confirmation"
@@ -80,6 +84,12 @@ export async function scheduleAppointmentNotifications(
   tx: DBorTx = db,
   now: Date = new Date(),
 ) {
+  const shop = await shopLaunchState(c.shopId, now);
+  if (!shop.launched) {
+    // This shop is still on Squire. Cancelling here also drops reminders queued before a rollback.
+    await cancelPendingReminders(c.appointmentId, tx);
+    return 0;
+  }
   await cancelPendingReminders(c.appointmentId, tx);
   const timeFormat = await brandTimeFormat();
   const jobs: { kind: NotificationKind; runAt: Date }[] = [];
@@ -195,6 +205,19 @@ export async function processDueJobs(
       .for("update", { skipLocked: true });
 
     for (const job of due) {
+      if (job.shopId && (SHOP_GATED_NOTIFICATION_KINDS as readonly string[]).includes(job.kind)) {
+        let open = false;
+        try {
+          open = (await shopLaunchState(job.shopId, now)).launched;
+        } catch {
+          open = false;
+        }
+        if (!open) {
+          await tx.update(notificationJobs).set({ status: "cancelled", lastError: "shop not launched" }).where(eq(notificationJobs.id, job.id));
+          stats.suppressed++;
+          continue;
+        }
+      }
       const provider = job.channel === "sms" ? sms : job.channel === "voice" ? voice : email;
       if (!provider.enabled) {
         await tx
