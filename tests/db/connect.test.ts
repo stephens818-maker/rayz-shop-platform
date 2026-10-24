@@ -241,14 +241,14 @@ describe("location setup", () => {
     expect(audits.map((a) => a.action)).toEqual(expect.arrayContaining(["shop.create", "payments.account_created", "payments.onboarding_simulated"]));
   });
 
-  it("a franchisee owner groups its shops in the P&L report; only the brand edits owners", async () => {
+  it("an owner entity groups its shops in the P&L report; only the brand edits owners", async () => {
     const setup = await import("@/app/admin/setup/actions");
     await signInAs(await staffId("owner@rayz.test"));
-    expect(await setup.saveOwnerEntityAction(null, { name: "x", legalName: null, kind: "franchisee", contactEmail: null })).toMatchObject({
+    expect(await setup.saveOwnerEntityAction(null, { name: "x", legalName: null, contactEmail: null })).toMatchObject({
       ok: false,
       error: expect.stringMatching(/name/),
     });
-    const made = await setup.saveOwnerEntityAction(null, { name: "Quad Cities Cuts LLC", legalName: null, kind: "franchisee", contactEmail: "qc@example.test" });
+    const made = await setup.saveOwnerEntityAction(null, { name: "Quad Cities Cuts LLC", legalName: null, contactEmail: "qc@example.test" });
     expect(made.ok).toBe(true);
     const ownerId = (made as { data: { id: string } }).data.id;
     const [moline, silvis] = [await shop("moline"), await shop("silvis")];
@@ -258,14 +258,14 @@ describe("location setup", () => {
     const today = m.time.todayLocal();
     const all = (await m.db.db.select({ id: m.schema.shops.id }).from(m.schema.shops)).map((s) => s.id);
     const rows = await accountReport.shopAccountRows({ shopIds: all, from: m.time.addDays(today, -3), to: today });
-    const franchise = rows.filter((r) => r.ownerId === ownerId);
-    expect(franchise.map((r) => r.shopName).sort()).toEqual(["Moline", "Silvis"]);
+    const owned = rows.filter((r) => r.ownerId === ownerId);
+    expect(owned.map((r) => r.shopName).sort()).toEqual(["Moline", "Silvis"]);
     expect(rows[0].ownerKind).toBe("brand");
     const at = rows.findIndex((r) => r.ownerId === ownerId);
     expect(rows.slice(at, at + 2).every((r) => r.ownerId === ownerId)).toBe(true);
 
     await signInAs(await staffId("manager.moline@rayz.test"));
-    expect(await setup.saveOwnerEntityAction(ownerId, { name: "Taken over", legalName: null, kind: "franchisee", contactEmail: null })).toMatchObject({ ok: false });
+    expect(await setup.saveOwnerEntityAction(ownerId, { name: "Taken over", legalName: null, contactEmail: null })).toMatchObject({ ok: false });
     expect((await m.db.db.query.ownerEntities.findFirst({ where: eq(m.schema.ownerEntities.id, ownerId) }))!.name).toBe("Quad Cities Cuts LLC");
   });
 });

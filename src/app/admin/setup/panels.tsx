@@ -8,7 +8,6 @@ import { useAction } from "@/components/use-action";
 import {
   ACCOUNT_STATE_LABEL,
   AccountState,
-  OWNER_KIND_LABEL,
   PAYMENTS_MODES,
   PAYMENTS_MODE_HINT,
   PAYMENTS_MODE_LABEL,
@@ -24,12 +23,15 @@ import {
   goLiveAction,
   reopenLocationAction,
   completeSimulatedOnboardingAction,
+  deleteRegionAction,
   expressDashboardAction,
   refreshPaymentsAccountAction,
   saveOwnerEntityAction,
+  saveRegionAction,
   saveStatementDescriptorAction,
   setPaymentsModeAction,
   setShopOwnerAction,
+  setShopRegionAction,
   startPaymentsOnboardingAction,
 } from "./actions";
 
@@ -54,7 +56,7 @@ function Problem({ error }: { error: string | null }) {
   ) : null;
 }
 
-export function OwnerPicker({ shopId, ownerId, owners }: { shopId: string; ownerId: string | null; owners: { id: string; name: string; kind: string }[] }) {
+export function OwnerPicker({ shopId, ownerId, owners }: { shopId: string; ownerId: string | null; owners: { id: string; name: string }[] }) {
   const { pending, error, run } = useAction();
   const [shown, setShown] = useState(ownerId ?? "");
   return (
@@ -80,13 +82,120 @@ export function OwnerPicker({ shopId, ownerId, owners }: { shopId: string; owner
         {!ownerId && <option value="">Choose an owner…</option>}
         {owners.map((o) => (
           <option key={o.id} value={o.id}>
-            {o.name} · {OWNER_KIND_LABEL[o.kind as keyof typeof OWNER_KIND_LABEL] ?? o.kind}
+            {o.name}
           </option>
         ))}
       </Select>
       {pending && <span className="text-xs text-zinc-400">Saving…</span>}
       <Problem error={error} />
     </div>
+  );
+}
+
+export function RegionPicker({ shopId, shopName, regionId, regions }: { shopId: string; shopName: string; regionId: string | null; regions: { id: string; name: string }[] }) {
+  const { pending, error, run } = useAction();
+  const [shown, setShown] = useState(regionId ?? "");
+  return (
+    <div>
+      <Select
+        aria-label={`Region for ${shopName}`}
+        className="w-40"
+        value={shown}
+        disabled={pending}
+        onChange={(e) => {
+          const prev = shown;
+          setShown(e.target.value);
+          run(async () => {
+            const r = await setShopRegionAction(shopId, e.target.value || null);
+            if (!r.ok) setShown(prev);
+            return r;
+          });
+        }}
+      >
+        <option value="">No region</option>
+        {regions.map((r) => (
+          <option key={r.id} value={r.id}>
+            {r.name}
+          </option>
+        ))}
+      </Select>
+      <Problem error={error} />
+    </div>
+  );
+}
+
+export function RegionsEditor({ regions, canEdit }: { regions: { id: string; name: string; shops: { id: string; name: string }[] }[]; canEdit: boolean }) {
+  const { pending, error, run } = useAction();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const open = (id: string, current: string) => {
+    setEditing(id);
+    setName(current);
+  };
+  const form = (id: string | null) => (
+    <div className="flex flex-wrap items-center gap-2">
+      <Input aria-label="Region name" className="w-56" maxLength={60} value={name} placeholder="Quad Cities" onChange={(e) => setName(e.target.value)} />
+      <Button size="sm" disabled={pending || !name.trim()} onClick={() => run(() => saveRegionAction(id, name), () => setEditing(null))}>
+        {pending ? "Saving…" : "Save"}
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
+        Cancel
+      </Button>
+    </div>
+  );
+  return (
+    <Card>
+      <CardHeader
+        title="Regions"
+        subtitle="Optional groups of locations for the Location comparison report, e.g. a metro area or a district manager's patch. Pick each location's region in the table above."
+        action={canEdit && editing !== "new" && (
+          <Button size="sm" variant="secondary" onClick={() => open("new", "")}>
+            Add a region
+          </Button>
+        )}
+      />
+      <ul className="divide-y divide-zinc-100">
+        {editing === "new" && <li className="px-4 py-3">{form(null)}</li>}
+        {regions.map((r) => (
+          <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+            {editing === r.id ? (
+              form(r.id)
+            ) : (
+              <>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-zinc-900">{r.name}</div>
+                  <div className="mt-0.5 text-sm text-zinc-500">{r.shops.length ? r.shops.map((s) => s.name).join(", ") : "No locations yet"}</div>
+                </div>
+                {canEdit && (
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => open(r.id, r.name)}>
+                      Rename
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-700"
+                      disabled={pending}
+                      onClick={() => {
+                        if (window.confirm(`Delete ${r.name}? Its ${r.shops.length} location${r.shops.length === 1 ? "" : "s"} will have no region.`)) run(() => deleteRegionAction(r.id));
+                      }}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </li>
+        ))}
+        {regions.length === 0 && editing !== "new" && <li className="px-4 py-6 text-center text-sm text-zinc-500">No regions. Every location is compared on its own.</li>}
+      </ul>
+      {error && (
+        <div className="px-4 pb-3">
+          <Problem error={error} />
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -337,7 +446,6 @@ export function OwnerEditor({
   const [v, setV] = useState({
     name: owner?.name ?? "",
     legalName: owner?.legalName ?? "",
-    kind: (owner?.kind ?? "franchisee") as "brand" | "franchisee",
     contactEmail: owner?.contactEmail ?? "",
   });
   if (!canEdit) return null;
@@ -350,16 +458,10 @@ export function OwnerEditor({
   return (
     <div className={cx("grid w-full gap-2 rounded-lg bg-zinc-50 p-3 sm:grid-cols-2", owner && "mt-2")}>
       <Field label="Name">
-        <Input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} placeholder="Quad Cities Cuts LLC" />
+        <Input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} placeholder="Ray'z Moline LLC" />
       </Field>
       <Field label="Legal name" hint="As registered, if different">
         <Input value={v.legalName} onChange={(e) => setV({ ...v, legalName: e.target.value })} />
-      </Field>
-      <Field label="Kind">
-        <Select value={v.kind} onChange={(e) => setV({ ...v, kind: e.target.value as "brand" | "franchisee" })}>
-          <option value="brand">{OWNER_KIND_LABEL.brand}</option>
-          <option value="franchisee">{OWNER_KIND_LABEL.franchisee}</option>
-        </Select>
       </Field>
       <Field label="Contact email">
         <Input type="email" value={v.contactEmail} onChange={(e) => setV({ ...v, contactEmail: e.target.value })} />

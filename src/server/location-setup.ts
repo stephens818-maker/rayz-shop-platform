@@ -96,7 +96,7 @@ export async function locationSetup(shopId: string) {
       key: "owner",
       title: "Owner",
       done: !!owner,
-      detail: owner ? `${owner.name}${owner.kind === "franchisee" ? " (franchisee)" : ""}` : "Choose who owns this location's business.",
+      detail: owner ? owner.name : "Choose which Rayz business entity owns this location.",
     },
     { key: "hours", title: "Opening hours", done: hours.n > 0, detail: hours.n ? `${hours.n} days a week` : "Set the weekday hours.", href: settings },
     {
@@ -164,7 +164,7 @@ export async function locationSetup(shopId: string) {
 export async function setupOverview(shopIds: string[]) {
   if (!shopIds.length) return [];
   const rows = await db
-    .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, ownerName: ownerEntities.name, ownerKind: ownerEntities.kind, account: shopPaymentAccounts })
+    .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, regionId: shops.regionId, ownerName: ownerEntities.name, ownerKind: ownerEntities.kind, account: shopPaymentAccounts })
     .from(shops)
     .leftJoin(ownerEntities, eq(ownerEntities.id, shops.ownerEntityId))
     .leftJoin(shopPaymentAccounts, eq(shopPaymentAccounts.shopId, shops.id))
@@ -178,6 +178,7 @@ export async function setupOverview(shopIds: string[]) {
       name: r.name,
       status: r.status,
       closedUntil: r.closedUntil,
+      regionId: r.regionId,
       blockers: details[i]!.blockers.length,
       ownerName: r.ownerName,
       ownerKind: r.ownerKind,

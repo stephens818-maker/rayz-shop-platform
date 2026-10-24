@@ -258,11 +258,8 @@ export function requirementLabel(field: string): string {
   return tail.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
-export const OWNER_KIND_LABEL = { brand: "Brand-owned", franchisee: "Franchisee" } as const;
-
-export function ownerEntityProblem(v: { name: string; kind: string; contactEmail?: string | null }): string | null {
+export function ownerEntityProblem(v: { name: string; contactEmail?: string | null }): string | null {
   if (v.name.trim().length < 2) return "Give the owner a name";
-  if (v.kind !== "brand" && v.kind !== "franchisee") return "Pick brand-owned or franchisee";
   if (v.contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.contactEmail)) return "That email doesn't look right";
   return null;
 }

@@ -82,7 +82,7 @@ export function LocationWizard({
     phone: "",
     email: "",
     timezone: SUPPORTED_TIMEZONE as string,
-    ownerEntityId: options.owners.find((o) => o.kind === "brand")?.id ?? "",
+    ownerEntityId: options.owners[0]?.id ?? "",
     groups: [] as string[],
   });
   const [hours, setHours] = useState<Hours[]>(
@@ -204,7 +204,6 @@ export function LocationWizard({
 
   const index = STEPS.findIndex((s) => s.key === step);
   const go = (d: number) => setStep(STEPS[Math.min(STEPS.length - 1, Math.max(0, index + d))].key);
-  const owner = options.owners.find((o) => o.id === basics.ownerEntityId);
   const descriptorIssue = pay.descriptor.trim() ? statementDescriptorProblem(pay.descriptor.trim().toUpperCase()) : null;
   const sameState = options.shops.filter((s) => basics.state && s.state.toUpperCase() === basics.state.toUpperCase());
 
@@ -359,7 +358,6 @@ export function LocationWizard({
                   {options.owners.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.name}
-                      {o.kind === "franchisee" ? " (franchisee)" : ""}
                     </option>
                   ))}
                 </Select>
@@ -498,9 +496,6 @@ export function LocationWizard({
                     </span>
                   </label>
                 ))}
-                {owner?.kind === "franchisee" && pay.mode === "brand" && (
-                  <Notice tone="amber">{owner.name} is a franchisee. Its card money would land in the brand&apos;s bank; a separate business usually takes its own account.</Notice>
-                )}
                 {pay.mode === "connected" && (
                   <p className="text-sm text-zinc-500">
                     After you create the location, Stripe&apos;s own pages collect the legal entity, EIN, owner identity and bank account. Ray&apos;z stores only the Stripe

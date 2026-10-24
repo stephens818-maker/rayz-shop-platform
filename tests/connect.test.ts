@@ -81,9 +81,8 @@ describe("labels and owner checks", () => {
   });
 
   it("checks an owner entity", () => {
-    expect(ownerEntityProblem({ name: "Quad Cities Cuts LLC", kind: "franchisee", contactEmail: "q@example.test" })).toBeNull();
-    expect(ownerEntityProblem({ name: " ", kind: "brand" })).toMatch(/name/);
-    expect(ownerEntityProblem({ name: "Someone", kind: "partner" })).toMatch(/brand-owned or franchisee/);
-    expect(ownerEntityProblem({ name: "Someone", kind: "brand", contactEmail: "nope" })).toMatch(/email/);
+    expect(ownerEntityProblem({ name: "Ray'z Moline LLC", contactEmail: "q@example.test" })).toBeNull();
+    expect(ownerEntityProblem({ name: " " })).toMatch(/name/);
+    expect(ownerEntityProblem({ name: "Someone", contactEmail: "nope" })).toMatch(/email/);
   });
 });

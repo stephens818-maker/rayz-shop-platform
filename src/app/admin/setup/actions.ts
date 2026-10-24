@@ -14,6 +14,7 @@ import { StaffContext, assertShopAccess, authorize, staffGrantor } from "@/serve
 import { LocationAdmin, archiveLocation, checkSlug, closeTemporarily, createLocation, goLive, reopen } from "@/server/location-admin";
 import type { LocationDraftInput } from "@/domain/location-draft";
 import { AppError, forbidden, notFound } from "@/server/errors";
+import { deleteRegion, saveRegion, setShopRegion } from "@/server/regions";
 import { completeSimulatedOnboarding, expressDashboardUrl, onboardingUrl, refreshAccount, registerReader, setPaymentsMode, setStatementDescriptor } from "@/server/payments/connect";
 
 const BANKING = "Only the Brand Owner, or someone they've given the banking permission, can connect or change a shop's Stripe account and bank";
@@ -134,7 +135,7 @@ export async function setShopOwnerAction(shopId: string, ownerEntityId: string) 
   });
 }
 
-const Owner = z.object({ name: z.string().trim(), legalName: z.string().trim().nullable(), kind: z.enum(["brand", "franchisee"]), contactEmail: z.string().trim().nullable() });
+const Owner = z.object({ name: z.string().trim(), legalName: z.string().trim().nullable(), contactEmail: z.string().trim().nullable() });
 
 export async function saveOwnerEntityAction(id: string | null, raw: z.input<typeof Owner>) {
   return safe(async () => {
@@ -143,7 +144,7 @@ export async function saveOwnerEntityAction(id: string | null, raw: z.input<type
     const v = Owner.parse(raw);
     const problem = ownerEntityProblem(v);
     if (problem) throw new AppError("bad_request", problem);
-    const values = { name: v.name, legalName: v.legalName || null, kind: v.kind, contactEmail: v.contactEmail || null };
+    const values = { name: v.name, legalName: v.legalName || null, contactEmail: v.contactEmail || null };
     if (id) {
       const [row] = await db
         .update(ownerEntities)
@@ -159,6 +160,44 @@ export async function saveOwnerEntityAction(id: string | null, raw: z.input<type
     await audit(ctx.actor, "owner_entity.create", "owner_entity", row.id, values, null);
     refresh();
     return { id: row.id };
+  });
+}
+
+const REGIONS = "Regions group every location, so changing them needs access to all shops";
+
+async function regionAdmin() {
+  const ctx = await authorize("locations.setup", "Only the Brand Owner or a Brand Admin can change regions");
+  if (!ctx.brandWide) throw forbidden(REGIONS);
+  return ctx;
+}
+
+export async function saveRegionAction(id: string | null, name: string) {
+  return safe(async () => {
+    const ctx = await regionAdmin();
+    const row = await saveRegion(ctx.actor, id, z.string().parse(name));
+    refresh();
+    revalidatePath("/admin/reports/rollup");
+    return { id: row.id };
+  });
+}
+
+export async function deleteRegionAction(id: string) {
+  return safe(async () => {
+    const ctx = await regionAdmin();
+    await deleteRegion(ctx.actor, z.string().uuid().parse(id));
+    refresh();
+    revalidatePath("/admin/reports/rollup");
+    return null;
+  });
+}
+
+export async function setShopRegionAction(shopId: string, regionId: string | null) {
+  return safe(async () => {
+    const ctx = await regionAdmin();
+    await setShopRegion(ctx.actor, z.string().uuid().parse(shopId), regionId ? z.string().uuid().parse(regionId) : null);
+    refresh(shopId);
+    revalidatePath("/admin/reports/rollup");
+    return null;
   });
 }
 
