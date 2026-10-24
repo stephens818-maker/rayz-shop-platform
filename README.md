@@ -952,6 +952,12 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 - **The engine** (`src/server/report-builder/engine.ts`) builds one query from a fixed SQL fragment per whitelisted field. A saved definition holds field keys only; unknown keys are refused, and every value (ids, dates, custom field ids) is a bound parameter. Totals and group subtotals are computed in the database over every matching row, then the page is cut. Masking is applied after the query with the viewer's Client data policy, and hidden details are never selected. Only the facts a report uses are joined in. Migration `core_0047_report_builder` adds indexes on sales and appointments by client and on clients by created date and preferred barber. Looking at a page only goes in the client data access log (and counts toward the lookup limits) when it shows protected details.
 - Tests: `tests/report-builder.test.ts` (fields and the totals they allow, field use per Client data level, definitions and their problems, dates, cell formatting, the flat table for exports, schedules, the blast filter) and `tests/db/report-builder.test.ts` (totals against SQL, dates, locations, barbers and reach, masking and hidden fields, money fields, filters against the client list's, groups and summaries, whitelisting, sharing, duplicating, templates, scope cut-down, exports and their permissions and logs, scheduled sends once per day with each person's access, the outbox, the Morning Dashboard section, pages per person). `tests/db/tenant.test.ts` checks that another shop's manager can't open a private report.
 
+<img alt="Custom reports: your reports, shared, templates, schedules" src="docs/screenshots/custom-reports-list.png" width="800" />
+
+<img alt="The builder: field picker, columns with renamed headers and totals, dates, locations, grouping and sort" src="docs/screenshots/custom-reports-builder-top.png" width="800" /> <img alt="Grouped by home location with subtotals" src="docs/screenshots/custom-reports-builder-results.png" width="800" />
+
+<img alt="A Coralville manager opening a brand template: read-only, Coralville only, contact details masked" src="docs/screenshots/custom-reports-manager-template.png" width="400" />
+
 ### Reports across locations
 
 Every report, plus payroll, client ratings, and the audit log, runs over **one shop, any set of shops, or all shops**, picked from the **Locations** menu on the report:
