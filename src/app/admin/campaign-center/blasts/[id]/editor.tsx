@@ -52,8 +52,10 @@ export function BlastEditor(p: {
   shops: Option[];
   options: FilterOptions;
   sees: PanelSees;
-  /** A new blast from a client list search: its filters. */
+  /** A new blast from a client list search or a custom report: its filters. */
   initialSegment?: Segment;
+  /** A new blast from a custom report: its locations. */
+  initialShopIds?: string[];
   coupons: { id: string; code: string; summary: string; unique: boolean }[];
   address: string;
 }) {
@@ -63,7 +65,7 @@ export function BlastEditor(p: {
   const [done, setDone] = useState<string | null>(null);
   const [id, setId] = useState(p.blast?.id ?? null);
   const [name, setName] = useState(p.blast?.name ?? "");
-  const [shopIds, setShopIds] = useState<string[]>(p.blast?.shopIds ?? (p.everyLocation ? [] : p.shops.map((x) => x.id)));
+  const [shopIds, setShopIds] = useState<string[]>(p.blast?.shopIds ?? (p.initialShopIds?.length ? p.initialShopIds : p.everyLocation ? [] : p.shops.map((x) => x.id)));
   const [channels, setChannels] = useState<Channel[]>(p.blast?.channels ?? ["sms", "email", "push"]);
   const [templates, setTemplates] = useState<Templates>(p.blast?.templates ?? { ...NEW_TEMPLATES, sms: `${NEW_TEMPLATES.sms} Book: {book_link} ${STOP_LINE}` });
   const [promoId, setPromoId] = useState(p.blast?.promoId ?? null);

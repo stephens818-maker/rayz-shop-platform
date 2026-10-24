@@ -15,7 +15,7 @@ import { BlastEditor } from "./editor";
 export const metadata: Metadata = { title: "Blast" };
 export const dynamic = "force-dynamic";
 
-export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string }> }) {
+export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string; shops?: string }> }) {
   const ctx = await guardPage("/admin/campaign-center/blasts/[id]");
   const { id } = await params;
   const sp = await searchParams;
@@ -27,6 +27,7 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
   const policy = await clientPolicy(ctx);
   const [settings, coupons, options] = await Promise.all([loadMarketingSettings(), couponOptions(todayLocal()), filterOptions(ctx, policy)]);
   const initial = id === "new" && sp.f ? decodeFilter(sp.f) : undefined;
+  const initialShops = id === "new" && sp.shops ? sp.shops.split(",").filter((s) => shops.some((x) => x.id === s)) : undefined;
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
@@ -64,6 +65,7 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
         options={options}
         sees={panelSees(ctx, policy)}
         initialSegment={initial}
+        initialShopIds={initialShops}
         coupons={coupons}
         address={settings.address}
       />
