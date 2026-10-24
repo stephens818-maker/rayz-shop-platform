@@ -1,10 +1,12 @@
 import "server-only";
 import { z } from "zod";
 import { db } from "@/db";
-import { assistantActions } from "@/db/schema";
+import { inArray } from "drizzle-orm";
+import { assistantActions, customers } from "@/db/schema";
 import { ASSISTANT_REPORTS, CONTACT_COLUMN, PRESET_IDS, type AssistantCard, type AssistantSettings } from "@/domain/assistant";
 import { helpFor } from "@/domain/assistant-help";
 import { encodeFilter } from "@/domain/client-filters";
+import { NOTE_KINDS, NOTE_KIND_LABEL, type NoteKind, detailsLine, notesMode } from "@/domain/client-notes";
 import { CHANNEL_LABEL, STOP_LINE, SegmentSchema, templatesProblem, type Segment } from "@/domain/marketing";
 import { reportView, type ReportKey } from "@/domain/permissions";
 import { CUSTOMER_FIELDS, ReportDefinition, cellText, encodeDefinition, fieldUse, segmentFromReport, totalHeader, totalType, type FieldDef } from "@/domain/report-builder";
@@ -17,6 +19,8 @@ import { resolveScope, selfOnly } from "@/app/admin/reports/scope";
 import { can, reasonViewer, type StaffContext } from "../auth/staff";
 import { barbersAt } from "../barbers";
 import { panelSees } from "../client-filters";
+import { listNotes, noteViewer, reachesClient } from "../client-notes";
+import { findClients } from "../client-search";
 import { clientPolicy, recordClientAccess } from "../client-privacy";
 import { AppError } from "../errors";
 import { suggestionsFor } from "../inventory/purchasing";
@@ -337,6 +341,87 @@ function helpTool(): AssistantTool {
   };
 }
 
+// ───────────────────────────── Client notes ─────────────────────────────
+
+/** A client's notes, found by name or client number, as the person could read them on the profile. */
+function clientNotesTool(): AssistantTool {
+  const args = z.object({
+    client: z.string().trim().min(2).max(80).describe("The client's name or client number"),
+    kind: z.enum(["any", ...NOTE_KINDS]).optional().describe("profile, visit (cut and formula notes) or private; any by default"),
+  });
+  return {
+    name: "client_notes",
+    args,
+    spec: spec(
+      "client_notes",
+      "A client's notes from every location: pinned profile notes, cut and formula notes (guard numbers, style, products) and, for managers, private notes. Never contact details.",
+      args,
+    ),
+    async run({ ctx }, raw) {
+      const a = args.parse(raw);
+      const policy = await clientPolicy(ctx);
+      if (!notesMode(noteViewer(ctx, policy))) return fail("Client notes aren't shown to them.");
+      const { ranked } = await findClients(ctx, policy, a.client, { via: "assistant", limit: 5, ownClientsOf: can(ctx, "clients.view_all") ? undefined : ctx.staff.id });
+      const reached = [];
+      for (const r of ranked) if (await reachesClient(ctx, r.id)) reached.push(r.id);
+      if (!reached.length) return fail(`No client they can see matches "${a.client}".`);
+      const named = await db.select({ id: customers.id, firstName: customers.firstName, lastName: customers.lastName, number: customers.number }).from(customers).where(inArray(customers.id, reached));
+      const nameOf = (id: string) => {
+        const c = named.find((x) => x.id === id)!;
+        return { label: `${c.firstName} ${c.lastName ?? ""}`.trim(), number: c.number };
+      };
+      const id = reached[0];
+      const who = nameOf(id);
+      try {
+        await recordClientAccess(ctx, { kind: "view", customerId: id, detail: { assistant: true, notes: true } });
+      } catch (e) {
+        if (e instanceof AppError) return fail(e.message);
+        throw e;
+      }
+      const list = await listNotes(ctx, id);
+      const others = reached.slice(1).map((x) => `${nameOf(x).label} (#${nameOf(x).number})`);
+      const also = others.length ? `\nOTHER MATCHES: ${others.join(", ")}` : "";
+      const links = [{ label: `${who.label}'s profile`, href: `/admin/customers/${id}` }];
+      if (list.mode === "count") {
+        return {
+          content: `SUMMARY: ${who.label} (#${who.number}) has ${list.count} note${list.count === 1 ? "" : "s"} on file; client notes are masked for them, so only the count shows.${also}`,
+          cards: [{ kind: "report", title: `Notes: ${who.label}`, subtitle: "Client notes are masked for you", stats: [{ label: "Notes on file", value: String(list.count) }], table: null, links }],
+        };
+      }
+      const notes = list.notes.filter((n) => !a.kind || a.kind === "any" || n.kind === a.kind);
+      const line = (n: (typeof notes)[number]) => scrubText([detailsLine(n.details), n.body].filter(Boolean).join(" · "));
+      const count = (k: NoteKind) => list.notes.filter((n) => n.kind === k).length;
+      return {
+        content: [
+          `SUMMARY: ${who.label} (#${who.number}) has ${notes.length} ${a.kind && a.kind !== "any" ? NOTE_KIND_LABEL[a.kind].toLowerCase() : "note"}${notes.length === 1 ? "" : "s"}${notes.some((n) => n.pinned) ? ", pinned first" : ""}.`,
+          ...notes.slice(0, ROWS_FOR_MODEL).map((n) => `${n.pinned ? "PINNED " : ""}${NOTE_KIND_LABEL[n.kind]} (${n.credit}): ${line(n)}`),
+        ].join("\n") + also,
+        cards: [
+          {
+            kind: "report",
+            title: `Notes: ${who.label}`,
+            subtitle: "From every location, pinned first",
+            stats: [
+              { label: "Profile", value: String(count("profile")) },
+              { label: "Cut notes", value: String(count("visit")) },
+              ...(list.notes.some((n) => n.kind === "private") ? [{ label: "Private", value: String(count("private")) }] : []),
+            ],
+            table: notes.length
+              ? {
+                  title: "Notes",
+                  headers: ["", "Kind", "Note", "By"],
+                  rows: notes.slice(0, ROWS_ON_CARD).map((n) => [n.pinned ? "Pinned" : "", NOTE_KIND_LABEL[n.kind], line(n), n.credit]),
+                  more: Math.max(0, notes.length - ROWS_ON_CARD),
+                }
+              : null,
+            links,
+          },
+        ],
+      };
+    },
+  };
+}
+
 // ───────────────────────────── Drafts ─────────────────────────────
 
 async function pendingAction(env: ToolEnv, kind: "draft_blast" | "draft_po", params: Record<string, unknown>, title: string, lines: string[]): Promise<ToolResult> {
@@ -453,7 +538,7 @@ function draftBlastTool(): AssistantTool {
 
 /** The tools this person may use: a report only if they may view it, drafts only with the permission to make them. */
 export async function toolsFor(ctx: StaffContext, settings: AssistantSettings): Promise<AssistantTool[]> {
-  const out: (AssistantTool | null)[] = [runReportTool(ctx), await customerReportTool(ctx), helpTool()];
+  const out: (AssistantTool | null)[] = [runReportTool(ctx), await customerReportTool(ctx), helpTool(), can(ctx, "notes.view") ? clientNotesTool() : null];
   if (settings.actions && can(ctx, "po.create")) out.push(draftPoTool());
   if (settings.actions && can(ctx, "campaign_center.create")) out.push(draftBlastTool());
   return out.filter((t): t is AssistantTool => !!t);

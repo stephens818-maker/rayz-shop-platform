@@ -23,6 +23,8 @@ import { reasonShower } from "./block-reasons";
 import { staffingFor } from "./staff-time";
 import { guardian, householdContact } from "./household-contact";
 import { groupsForCalendar } from "./booking-groups";
+import type { NoteViewer } from "@/domain/client-notes";
+import { type NoteBrief, noteBriefs } from "./client-notes";
 
 export interface CalAppt {
   id: string;
@@ -63,6 +65,8 @@ export interface CalAppt {
   groupId: string | null;
   /** Sent to checkout (finished, waiting in the checkout queue). */
   readyAt: string | null;
+  /** The client's pinned notes and latest cut note, for people who see notes. */
+  clientNotes: NoteBrief | null;
 }
 
 /** A family booking group on the day: everyone in it, wherever they sit, and its deposit. */
@@ -162,6 +166,7 @@ const clampDay = (d: Date, date: LocalDate) => {
  * `viewer` is the workspace looking: barbers' time at shops outside it shows without the shop's name.
  * `privacy` is what they may see of clients: phones and ratings come back already masked or dropped.
  * `reasons` is who is looking at block and time off reasons: private ones come back as "Blocked".
+ * `notes` is who is looking at client notes (noteViewer); without it no notes come back.
  */
 export async function loadDayCalendar(
   shopId: string,
@@ -170,6 +175,7 @@ export async function loadDayCalendar(
   viewer: Pick<Tenant, "shopIds" | "brandWide">,
   privacy: Pick<ClientPolicy, "show" | "stars"> & Partial<Pick<ClientPolicy, "badges" | "level" | "customBadges">>,
   reasons: ReasonViewer,
+  notes: NoteViewer | null = null,
 ): Promise<DayCalendarData> {
   const shopLabel = (id: string, name: string) => (viewer.brandWide || hasShop(viewer, id) ? name : null);
   const dayStart = startOfLocalDay(date);
@@ -217,7 +223,7 @@ export async function loadDayCalendar(
   const now = new Date();
   if (date === todayLocal(now)) await refreshClockBlocks(now, [shopId]);
 
-  const [blocks, elsewhere, items, ratings, punchTimes, badges] = await Promise.all([
+  const [blocks, elsewhere, items, ratings, punchTimes, badges, briefs] = await Promise.all([
     ids.length
       ? db
           .select()
@@ -255,6 +261,7 @@ export async function loadDayCalendar(
           apptRows.map((r) => r.a.customerId),
         )
       : new Map<string, ShownBadge[]>(),
+    notes ? noteBriefs(notes, apptRows.map((r) => r.a.customerId)) : new Map<string, NoteBrief>(),
   ]);
   const punchAt = new Map(punchTimes.map((p) => [p.id, p.at]));
   const times = await timesFor(apptRows.map((r) => r.a.id));
@@ -375,6 +382,7 @@ export async function loadDayCalendar(
           clockHold: held.get(r.a.id) ?? null,
           groupId: r.a.groupId,
           readyAt: r.a.checkoutReadyAt?.toISOString() ?? null,
+          clientNotes: (r.a.customerId && briefs.get(r.a.customerId)) || null,
         })),
       clock: live?.days.get(c.id) ? calClock(live.days.get(c.id)!) : null,
     };

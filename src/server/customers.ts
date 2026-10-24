@@ -197,6 +197,8 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     await tx.execute(sql`delete from customer_tags d where d.customer_id = ${dropId} and exists (select 1 from customer_tags k where k.customer_id = ${keepId} and k.tag = d.tag)`);
     await tx.execute(sql`delete from client_photos where customer_id = ${dropId} and exists (select 1 from client_photos where customer_id = ${keepId})`);
     await tx.execute(sql`update customers set referred_by_id = ${keepId} where referred_by_id = ${dropId} and id <> ${keepId}`);
+    // Its notes field is folded into the kept record's below, which brings the kept record note along; its other notes move.
+    await tx.execute(sql`delete from client_notes where customer_id = ${dropId} and source = 'record'`);
     // Everything else that points at a client, found in the catalog so a table added later (the
     // customer app's too) moves with the merge instead of being deleted with the dropped record.
     // A new table with a unique key on the client fails the merge rather than losing rows.

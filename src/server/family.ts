@@ -16,6 +16,7 @@ import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import type { CustomerBadge } from "@/domain/customer-badges";
 import { localDateOf, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
+import { stampRecordNote } from "./record-note";
 import { lockIdentity, matchCustomer } from "./customers";
 import { AppError, notFound } from "./errors";
 
@@ -146,6 +147,7 @@ export async function addChild(guardianId: string, raw: unknown, actor: Actor, o
       })
       .returning();
     if (allowed(opts, "photo")) await setPhoto(tx, row.id, input.photo ?? undefined, actor.staffId ?? null);
+    await stampRecordNote(tx, row.id, actor.staffId, g.homeShopId);
     await audit(actor, "customer.child_add", "customer", row.id, { guardianId, firstName: row.firstName }, null, tx);
     return row;
   };
@@ -175,6 +177,7 @@ export async function updateChild(childId: string, raw: unknown, actor: Actor, o
     }
     const [row] = Object.keys(patch).length ? await tx.update(customers).set(patch).where(eq(customers.id, childId)).returning() : [before];
     if (allowed(opts, "photo")) await setPhoto(tx, childId, input.photo, actor.staffId ?? null);
+    if (patch.notes !== undefined) await stampRecordNote(tx, childId, actor.staffId, null);
     const changed = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, { from: before[k as keyof typeof before] ?? null, to: v ?? null }]));
     if (input.photo !== undefined && allowed(opts, "photo")) changed.photo = { from: null, to: input.photo ? "updated" : "removed" };
     await audit(actor, "customer.child_update", "customer", childId, changed, null, tx);

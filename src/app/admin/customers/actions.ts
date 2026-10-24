@@ -15,6 +15,7 @@ import { contactClient } from "@/server/client-contact";
 import { searchClients } from "@/server/client-search";
 import { deleteSearch, saveSearch } from "@/server/saved-searches";
 import { ClientPolicy, clientPolicy, displayFull, entered, recordClientAccess, shownField } from "@/server/client-privacy";
+import { stampRecordNote } from "@/server/record-note";
 import { customerAccess, dismissDuplicate, findOrCreateCustomer, matchCustomer, mergeCustomers, mergeDuplicatePairs } from "@/server/customers";
 import { AppError, forbidden } from "@/server/errors";
 import { getLoyaltyConfig } from "@/server/loyalty";
@@ -119,7 +120,10 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
       homeShopId: p.homeShopId,
       preferredStaffId,
     };
-    await db.update(customers).set(values).where(eq(customers.id, id));
+    await db.transaction(async (tx) => {
+      await tx.update(customers).set(values).where(eq(customers.id, id));
+      await stampRecordNote(tx, id, ctx.staff.id, ctx.currentShopId);
+    });
     const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
     const changed = Object.fromEntries(
       Object.entries(values)
@@ -145,7 +149,10 @@ export async function updateNotesAction(id: string, notes: string) {
     if (!before) throw new AppError("not_found", "Client not found");
     const policy = await clientPolicy(ctx);
     const value = entered(policy, "notes", before.notes, notes.trim().slice(0, 2000));
-    await db.update(customers).set({ notes: value }).where(eq(customers.id, id));
+    await db.transaction(async (tx) => {
+      await tx.update(customers).set({ notes: value }).where(eq(customers.id, id));
+      await stampRecordNote(tx, id, ctx.staff.id, ctx.currentShopId);
+    });
     await audit(ctx.actor, "customer.notes", "customer", id, { notes: value }, ctx.currentShopId);
     revalidatePath(`/admin/customers/${id}`);
     return { notes: shownField(policy, "notes", value) };
@@ -191,6 +198,7 @@ export async function createCustomerAction(raw: z.input<typeof Profile>) {
         .update(customers)
         .set({ notes: fields.notes, preferredStaffId: fields.preferredStaffId, address: fields.address, birthday: fields.birthday, customFields })
         .where(eq(customers.id, row.id));
+      await stampRecordNote(tx, row.id, ctx.staff.id, ctx.currentShopId);
       return row;
     });
     await audit(ctx.actor, "customer.create", "customer", created.id, { firstName: p.firstName }, ctx.currentShopId);
