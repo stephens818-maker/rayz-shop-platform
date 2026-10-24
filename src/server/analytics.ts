@@ -2,7 +2,16 @@ import "server-only";
 import { and, asc, eq, gt, gte, lte, sql } from "drizzle-orm";
 import postgres from "postgres";
 import { db, type DBorTx } from "@/db";
-import { analyticsEvents, analyticsExports, appointments, brandSettings, sales, shops, staff, visitSatisfaction } from "@/db/schema";
+import {
+  analyticsEvents,
+  analyticsExports,
+  appointments,
+  brandSettings,
+  sales,
+  shops,
+  staff,
+  visitSatisfaction,
+} from "@/db/schema";
 import {
   type AnalyticsSettings,
   BACKFILL_TABLES,
@@ -73,28 +82,51 @@ export async function recordEvent(e: EventInput, tx: DBorTx = db) {
     reason: e.reason,
     props: e.props,
   };
-  await tx.execute(sql`select analytics_emit(${JSON.stringify(payload)}::jsonb)`);
+  await tx.execute(
+    sql`select analytics_emit(${JSON.stringify(payload)}::jsonb)`,
+  );
 }
 
 // ───────────────────────────── Settings ─────────────────────────────
 
-export async function loadAnalyticsSettings(tx: DBorTx = db): Promise<AnalyticsSettings> {
-  const [b] = await tx.select({ a: brandSettings.analytics }).from(brandSettings).where(eq(brandSettings.id, 1));
+export async function loadAnalyticsSettings(
+  tx: DBorTx = db,
+): Promise<AnalyticsSettings> {
+  const [b] = await tx
+    .select({ a: brandSettings.analytics })
+    .from(brandSettings)
+    .where(eq(brandSettings.id, 1));
   return analyticsSettings(b?.a);
 }
 
-export async function saveAnalyticsSettings(input: { satisfaction: boolean; warehouse: boolean }, actor: Actor) {
+export async function saveAnalyticsSettings(
+  input: { satisfaction: boolean; warehouse: boolean },
+  actor: Actor,
+) {
   const before = await loadAnalyticsSettings();
-  const after = { ...before, satisfaction: input.satisfaction, warehouse: input.warehouse };
+  const after = {
+    ...before,
+    satisfaction: input.satisfaction,
+    warehouse: input.warehouse,
+  };
   await db
     .update(brandSettings)
-    .set({ analytics: sql`${brandSettings.analytics} || ${JSON.stringify({ satisfaction: after.satisfaction, warehouse: after.warehouse })}::jsonb`, updatedAt: new Date() })
+    .set({
+      analytics: sql`${brandSettings.analytics} || ${JSON.stringify({ satisfaction: after.satisfaction, warehouse: after.warehouse })}::jsonb`,
+      updatedAt: new Date(),
+    })
     .where(eq(brandSettings.id, 1));
-  await audit(actor, "analytics.settings", "brand_settings", "1", { before: { satisfaction: before.satisfaction, warehouse: before.warehouse }, after: input });
+  await audit(actor, "analytics.settings", "brand_settings", "1", {
+    before: { satisfaction: before.satisfaction, warehouse: before.warehouse },
+    after: input,
+  });
   return after;
 }
 
 // ───────────────────────────── Booking funnel ─────────────────────────────
+
+const isUuid = (s: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 
 /** Steps one visitor may log; past this their beacon is ignored. */
 const FUNNEL_MAX_EVENTS = 40;
@@ -104,19 +136,64 @@ const FUNNEL_MAX_EVENTS = 40;
  * random id the page makes, so steps tie together without knowing who the visitor is; the booked
  * step names the appointment, which ties the funnel to the client.
  */
-export async function recordFunnelStep(b: FunnelBeacon, userAgent: string | null, now = new Date()) {
-  const [shop] = await db.select({ id: shops.id }).from(shops).where(and(eq(shops.id, b.shop), eq(shops.active, true)));
+export async function recordFunnelStep(
+  b: FunnelBeacon,
+  userAgent: string | null,
+  now = new Date(),
+) {
+  const [shop] = await db
+    .select({ id: shops.id })
+    .from(shops)
+    .where(
+      and(
+        isUuid(b.shop) ? eq(shops.id, b.shop) : eq(shops.slug, b.shop),
+        eq(shops.active, true),
+      ),
+    );
   if (!shop) throw notFound("Shop");
-  const [{ n }] = (await db.execute(sql`select count(*)::int n from analytics_events where entity = 'funnel' and entity_id = ${b.funnel}`)) as unknown as { n: number }[];
+  const [{ n }] = (await db.execute(
+    sql`select count(*)::int n from analytics_events where entity = 'funnel' and entity_id = ${b.funnel}`,
+  )) as unknown as { n: number }[];
   if (n >= FUNNEL_MAX_EVENTS) return { logged: false };
-  const staffId = b.staff ? ((await db.select({ id: staff.id }).from(staff).where(eq(staff.id, b.staff)))[0]?.id ?? null) : null;
-  let appt: { id: string; staffId: string; customerId: string | null; source: string } | undefined;
+  const staffId =
+    b.staff && b.staff !== "any"
+      ? ((
+          await db
+            .select({ id: staff.id })
+            .from(staff)
+            .where(
+              isUuid(b.staff)
+                ? eq(staff.id, b.staff)
+                : eq(staff.publicSlug, b.staff),
+            )
+        )[0]?.id ?? null)
+      : null;
+  let appt:
+    | { id: string; staffId: string; customerId: string | null; source: string }
+    | undefined;
   if (b.step === "booked") {
-    if (!b.appointment) throw new AppError("bad_request", "The booked step needs the appointment");
+    if (!b.appointment)
+      throw new AppError(
+        "bad_request",
+        "The booked step needs the appointment",
+      );
     [appt] = await db
-      .select({ id: appointments.id, staffId: appointments.staffId, customerId: appointments.customerId, source: appointments.source })
+      .select({
+        id: appointments.id,
+        staffId: appointments.staffId,
+        customerId: appointments.customerId,
+        source: appointments.source,
+      })
       .from(appointments)
-      .where(and(eq(appointments.id, b.appointment), eq(appointments.shopId, b.shop), gte(appointments.createdAt, new Date(now.getTime() - 30 * 60_000))));
+      .where(
+        and(
+          isUuid(b.appointment)
+            ? eq(appointments.id, b.appointment)
+            : eq(appointments.code, b.appointment),
+          eq(appointments.shopId, shop.id),
+          gte(appointments.createdAt, new Date(now.getTime() - 30 * 60_000)),
+        ),
+      );
     if (!appt) throw notFound("Appointment");
   }
   const startsAt = b.startsAt ? new Date(b.startsAt) : null;
@@ -134,7 +211,7 @@ export async function recordFunnelStep(b: FunnelBeacon, userAgent: string | null
     event: `funnel.${b.step}` as EventName,
     key: `funnel:${b.funnel}:${b.step}:${pick}`,
     at: now,
-    shop: b.shop,
+    shop: shop.id,
     staff: appt?.staffId ?? staffId,
     customer: appt?.customerId ?? null,
     actorKind: "client",
@@ -144,9 +221,16 @@ export async function recordFunnelStep(b: FunnelBeacon, userAgent: string | null
     entityId: b.funnel,
     appointment: appt?.id ?? null,
     quantity: b.step === "service_picked" ? (b.services?.length ?? 0) : null,
-    minutes: b.step === "time_picked" && startsAt ? (startsAt.getTime() - now.getTime()) / 60_000 : null,
-    subtype: b.step === "barber_picked" ? (staffId ? "barber" : "any_barber") : null,
-    props: { services: b.step === "service_picked" ? (b.services ?? []) : null, booked_via: appt?.source ?? null },
+    minutes:
+      b.step === "time_picked" && startsAt
+        ? (startsAt.getTime() - now.getTime()) / 60_000
+        : null,
+    subtype:
+      b.step === "barber_picked" ? (staffId ? "barber" : "any_barber") : null,
+    props: {
+      services: b.step === "service_picked" ? (b.services ?? []) : null,
+      booked_via: appt?.source ?? null,
+    },
   });
   return { logged: true };
 }
@@ -154,7 +238,9 @@ export async function recordFunnelStep(b: FunnelBeacon, userAgent: string | null
 /** Funnels whose last step was over an hour ago and that never booked: one funnel.abandoned each, at its last step. */
 export async function sweepAbandonedFunnels(now = new Date(), days = 3) {
   const cutoff = new Date(now.getTime() - FUNNEL_ABANDON_MINUTES * 60_000);
-  const since = new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10);
+  const since = new Date(now.getTime() - days * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
   const left = (await db.execute(sql`
     with f as (
       select entity_id funnel, (array_agg(shop_id order by id))[1] shop_id, (array_agg(device order by id))[1] device, (array_agg(channel order by id))[1] channel,
@@ -198,19 +284,33 @@ export async function sweepAbandonedFunnels(now = new Date(), days = 3) {
  * Logs the history already on file, one source table at a time, until the time budget runs out.
  * Tables done are remembered, so the nightly job picks up where it stopped and then stops running.
  */
-export async function runBackfill(opts: { tables?: readonly string[]; budgetMs?: number; force?: boolean } = {}) {
+export async function runBackfill(
+  opts: { tables?: readonly string[]; budgetMs?: number; force?: boolean } = {},
+) {
   const started = Date.now();
   const s = await loadAnalyticsSettings();
-  const todo = BACKFILL_TABLES.filter((t) => (opts.force || !s.backfilled.includes(t)) && (!opts.tables || opts.tables.includes(t)));
+  const todo = BACKFILL_TABLES.filter(
+    (t) =>
+      (opts.force || !s.backfilled.includes(t)) &&
+      (!opts.tables || opts.tables.includes(t)),
+  );
   const done: Record<string, number> = {};
   for (const t of todo) {
-    if (opts.budgetMs !== undefined && Date.now() - started > opts.budgetMs) break;
-    const [r] = (await db.execute(sql`select analytics_backfill(${t})::int n`)) as unknown as { n: number }[];
+    if (opts.budgetMs !== undefined && Date.now() - started > opts.budgetMs)
+      break;
+    const [r] = (await db.execute(
+      sql`select analytics_backfill(${t})::int n`,
+    )) as unknown as { n: number }[];
     done[t] = r.n;
     await db.execute(sql`update brand_settings set analytics = jsonb_set(analytics, '{backfilled}', coalesce(analytics->'backfilled', '[]'::jsonb) || to_jsonb(${t}::text))
       where id = 1 and not coalesce(analytics->'backfilled', '[]'::jsonb) ? ${t}`);
   }
-  return { done, remaining: BACKFILL_TABLES.filter((t) => !(t in done) && !s.backfilled.includes(t)) };
+  return {
+    done,
+    remaining: BACKFILL_TABLES.filter(
+      (t) => !(t in done) && !s.backfilled.includes(t),
+    ),
+  };
 }
 
 // ───────────────────────────── Raw export ─────────────────────────────
@@ -236,7 +336,9 @@ async function* eventBatches(f: RawExportFilter) {
           gte(analyticsEvents.businessDate, f.from),
           lte(analyticsEvents.businessDate, f.to),
           f.category ? eq(analyticsEvents.category, f.category) : undefined,
-          f.shopIds?.length ? sql`${analyticsEvents.shopId} in ${f.shopIds}` : undefined,
+          f.shopIds?.length
+            ? sql`${analyticsEvents.shopId} in ${f.shopIds}`
+            : undefined,
         ),
       )
       .orderBy(asc(analyticsEvents.id))
@@ -295,7 +397,9 @@ export function rawEventsCsv(f: RawExportFilter): ReadableStream<Uint8Array> {
         headers,
         next.value.map((r) => headers.map((h) => CELL[h](r))),
       );
-      controller.enqueue(enc.encode(first ? csv : csv.slice(csv.indexOf("\n") + 1)));
+      controller.enqueue(
+        enc.encode(first ? csv : csv.slice(csv.indexOf("\n") + 1)),
+      );
       first = false;
     },
   });
@@ -324,22 +428,35 @@ export const safeFailure = (e: unknown) =>
  * read replica, or a database BigQuery or a BI tool reads from), in id order, then applies client
  * merges and erasures there. Safe to repeat: rows already there are skipped.
  */
-export async function exportToWarehouse(opts: { url?: string; budgetMs?: number } = {}) {
+export async function exportToWarehouse(
+  opts: { url?: string; budgetMs?: number } = {},
+) {
   const url = opts.url ?? process.env.ANALYTICS_WAREHOUSE_URL;
-  if (!(await loadAnalyticsSettings()).warehouse) return { skipped: "off" as const };
+  if (!(await loadAnalyticsSettings()).warehouse)
+    return { skipped: "off" as const };
   if (!url) return { skipped: "no_address" as const };
   const started = Date.now();
   const budget = opts.budgetMs ?? 240_000;
-  const [last] = (await db.execute(sql`select coalesce(max(to_id), 0)::bigint last from analytics_exports where target = 'postgres' and status = 'done'`)) as unknown as { last: string }[];
+  const [last] = (await db.execute(
+    sql`select coalesce(max(to_id), 0)::bigint last from analytics_exports where target = 'postgres' and status = 'done'`,
+  )) as unknown as { last: string }[];
   const from = Number(last.last);
-  const [run] = await db.insert(analyticsExports).values({ target: "postgres", fromId: from, toId: from }).returning({ id: analyticsExports.id });
+  const [run] = await db
+    .insert(analyticsExports)
+    .values({ target: "postgres", fromId: from, toId: from })
+    .returning({ id: analyticsExports.id });
   const wh = postgres(url, { max: 1, onnotice: () => {}, connect_timeout: 15 });
   let cursor = from;
   let rows = 0;
   try {
     await wh.unsafe(WAREHOUSE_DDL);
     while (Date.now() - started < budget) {
-      const batch = await db.select().from(analyticsEvents).where(gt(analyticsEvents.id, cursor)).orderBy(asc(analyticsEvents.id)).limit(BATCH);
+      const batch = await db
+        .select()
+        .from(analyticsEvents)
+        .where(gt(analyticsEvents.id, cursor))
+        .orderBy(asc(analyticsEvents.id))
+        .limit(BATCH);
       if (!batch.length) break;
       const values = batch.map((r) => ({
         id: r.id,
@@ -371,16 +488,39 @@ export async function exportToWarehouse(opts: { url?: string; budgetMs?: number 
       await wh`insert into ${wh(WAREHOUSE_TABLE)} ${wh(values)} on conflict (id) do nothing`;
       cursor = batch[batch.length - 1].id;
       rows += batch.length;
-      await db.update(analyticsExports).set({ toId: cursor, rows }).where(eq(analyticsExports.id, run.id));
+      await db
+        .update(analyticsExports)
+        .set({ toId: cursor, rows })
+        .where(eq(analyticsExports.id, run.id));
       if (batch.length < BATCH) break;
     }
-    const moves = (await db.execute(sql`select id, from_customer, to_customer from analytics_customer_moves order by id`)) as unknown as { id: number; from_customer: string; to_customer: string | null }[];
-    for (const m of moves) await wh`update ${wh(WAREHOUSE_TABLE)} set customer_id = ${m.to_customer} where customer_id = ${m.from_customer}`;
-    if (moves.length) await db.execute(sql`delete from analytics_customer_moves where id <= ${moves[moves.length - 1].id}`);
-    await db.update(analyticsExports).set({ status: "done", toId: cursor, rows, finishedAt: new Date() }).where(eq(analyticsExports.id, run.id));
+    const moves = (await db.execute(
+      sql`select id, from_customer, to_customer from analytics_customer_moves order by id`,
+    )) as unknown as {
+      id: number;
+      from_customer: string;
+      to_customer: string | null;
+    }[];
+    for (const m of moves)
+      await wh`update ${wh(WAREHOUSE_TABLE)} set customer_id = ${m.to_customer} where customer_id = ${m.from_customer}`;
+    if (moves.length)
+      await db.execute(
+        sql`delete from analytics_customer_moves where id <= ${moves[moves.length - 1].id}`,
+      );
+    await db
+      .update(analyticsExports)
+      .set({ status: "done", toId: cursor, rows, finishedAt: new Date() })
+      .where(eq(analyticsExports.id, run.id));
     return { rows, toId: cursor, moves: moves.length };
   } catch (e) {
-    await db.update(analyticsExports).set({ status: "failed", failure: safeFailure(e), finishedAt: new Date() }).where(eq(analyticsExports.id, run.id));
+    await db
+      .update(analyticsExports)
+      .set({
+        status: "failed",
+        failure: safeFailure(e),
+        finishedAt: new Date(),
+      })
+      .where(eq(analyticsExports.id, run.id));
     return { failed: true as const, rows };
   } finally {
     await wh.end({ timeout: 5 });
@@ -393,7 +533,11 @@ export async function dropCustomerMoves() {
 }
 
 export async function warehouseRuns(limit = 10) {
-  return db.select().from(analyticsExports).orderBy(sql`${analyticsExports.startedAt} desc`).limit(limit);
+  return db
+    .select()
+    .from(analyticsExports)
+    .orderBy(sql`${analyticsExports.startedAt} desc`)
+    .limit(limit);
 }
 
 // ───────────────────────────── Post-visit satisfaction ─────────────────────────────
@@ -401,22 +545,49 @@ export async function warehouseRuns(limit = 10) {
 /** The receipt's "How was your visit?", when the brand asks it and this ticket was paid. */
 export async function receiptSatisfaction(saleId: string) {
   if (!(await loadAnalyticsSettings()).satisfaction) return null;
-  const [s] = await db.select({ status: sales.status, paidAt: sales.paidAt }).from(sales).where(eq(sales.id, saleId));
+  const [s] = await db
+    .select({ status: sales.status, paidAt: sales.paidAt })
+    .from(sales)
+    .where(eq(sales.id, saleId));
   if (!s || !s.paidAt || s.status === "voided") return null;
-  const [v] = await db.select({ stars: visitSatisfaction.stars }).from(visitSatisfaction).where(eq(visitSatisfaction.saleId, saleId));
+  const [v] = await db
+    .select({ stars: visitSatisfaction.stars })
+    .from(visitSatisfaction)
+    .where(eq(visitSatisfaction.saleId, saleId));
   return { stars: v?.stars ?? null };
 }
 
 /** The client's 1-5 from their receipt. One per visit: the first answer stands. */
 export async function rateVisit(token: string, stars: number) {
-  if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new AppError("bad_request", "Pick 1 to 5 stars");
+  if (!Number.isInteger(stars) || stars < 1 || stars > 5)
+    throw new AppError("bad_request", "Pick 1 to 5 stars");
   const r = await resolveReceipt(token);
   if (r.state !== "ok") throw notFound("Receipt");
   const open = await receiptSatisfaction(r.delivery.saleId);
   if (!open) throw new AppError("conflict", "This visit can't be rated");
   if (open.stars) return { stars: open.stars };
-  const [s] = await db.select({ shopId: sales.shopId, staffId: sales.staffId, customerId: sales.customerId }).from(sales).where(eq(sales.id, r.delivery.saleId));
-  await db.insert(visitSatisfaction).values({ saleId: r.delivery.saleId, shopId: s.shopId, staffId: s.staffId, customerId: s.customerId, stars, channel: "receipt" }).onConflictDoNothing();
-  const [v] = await db.select({ stars: visitSatisfaction.stars }).from(visitSatisfaction).where(eq(visitSatisfaction.saleId, r.delivery.saleId));
+  const [s] = await db
+    .select({
+      shopId: sales.shopId,
+      staffId: sales.staffId,
+      customerId: sales.customerId,
+    })
+    .from(sales)
+    .where(eq(sales.id, r.delivery.saleId));
+  await db
+    .insert(visitSatisfaction)
+    .values({
+      saleId: r.delivery.saleId,
+      shopId: s.shopId,
+      staffId: s.staffId,
+      customerId: s.customerId,
+      stars,
+      channel: "receipt",
+    })
+    .onConflictDoNothing();
+  const [v] = await db
+    .select({ stars: visitSatisfaction.stars })
+    .from(visitSatisfaction)
+    .where(eq(visitSatisfaction.saleId, r.delivery.saleId));
   return { stars: v.stars };
 }

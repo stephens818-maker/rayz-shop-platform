@@ -3,11 +3,23 @@
 import { useState, useTransition } from "react";
 import { stopEmailsAction } from "./actions";
 
-export function StopEmails({ token, stopped }: { token: string; stopped: boolean }) {
+export function StopEmails({
+  token,
+  stopped,
+}: {
+  token: string;
+  stopped: boolean;
+}) {
   const [done, setDone] = useState(stopped);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  if (done) return <p data-testid="emails-stopped">Receipt and review emails to this address are off. Ask the shop for a text receipt instead.</p>;
+  if (done)
+    return (
+      <p data-testid="emails-stopped">
+        Receipt and review emails to this address are off. Ask the shop for a
+        text receipt instead.
+      </p>
+    );
   return (
     <p>
       <button
