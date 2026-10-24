@@ -685,8 +685,12 @@ BEGIN
 	RETURN n;
 END $$;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "analytics_customer_removed"() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+	n integer := "analytics_forget"(OLD."id");
 BEGIN
-	PERFORM "analytics_forget"(OLD."id");
+	IF n > 0 THEN
+		PERFORM "analytics_emit"(jsonb_build_object('event', 'client.removed', 'shop', OLD."home_shop_id", 'entity', 'client', 'quantity', n));
+	END IF;
 	RETURN NULL;
 END $$;--> statement-breakpoint
 DROP TRIGGER IF EXISTS "customers_analytics_forget" ON "customers";--> statement-breakpoint

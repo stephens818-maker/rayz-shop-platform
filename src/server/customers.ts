@@ -252,6 +252,8 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
       referredById: [keep.referredById, drop.referredById].find((r) => r && r !== keepId && r !== dropId) ?? null,
       createdAt: keep.createdAt < drop.createdAt ? keep.createdAt : drop.createdAt,
     };
+    // The event log has no foreign keys; deleting the dropped record would otherwise make its events anonymous.
+    await tx.execute(sql`update analytics_events set customer_id = ${keepId} where customer_id = ${dropId}`);
     await tx.delete(customers).where(eq(customers.id, dropId));
     await tx.update(customers).set(patch).where(eq(customers.id, keepId));
     await audit(actor, "customer.merge", "customer", keepId, { merged: drop, moved, rewardsIssued }, null, tx);

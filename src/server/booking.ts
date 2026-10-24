@@ -550,7 +550,7 @@ export async function cancelAppointment(
   await db.transaction(async (tx) => {
     await tx
       .update(appointments)
-      .set({ status: "cancelled", cancelledAt: now, cancelledBy: opts.byCustomer ? "customer" : "staff" })
+      .set({ status: "cancelled", cancelledAt: now, cancelledBy: opts.byCustomer ? "customer" : "staff", cancelReason: opts.reason?.trim().slice(0, 200) || null })
       .where(eq(appointments.id, a.id));
     await audit(opts.actor, "appointment.cancel", "appointment", a.id, { reason: opts.reason ?? null, byCustomer: opts.byCustomer }, a.shopId, tx);
     if (a.customerId) await scheduleAppointmentNotifications("cancelled", await messageContext(a.id, tx), tx, now);

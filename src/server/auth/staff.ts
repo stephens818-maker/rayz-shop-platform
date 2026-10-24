@@ -5,6 +5,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { db } from "@/db";
+import { setEventActor } from "@/db/event-context";
 import { roles, staff } from "@/db/schema";
 import type { ReasonViewer } from "@/domain/block-reasons";
 import { AdminPage, PAGE_ACCESS } from "@/domain/navigation";
@@ -158,6 +159,7 @@ export async function authorize(perms: Permission | readonly Permission[], messa
   const list = typeof perms === "string" ? [perms] : perms;
   if (!canAny(ctx, list) && list.some((p) => ctx.access.needsAllShops.includes(p))) throw forbidden("That changes records every shop shares, so it needs access to all shops");
   assertCan(ctx, perms, message);
+  setEventActor(ctx.staff.id);
   return ctx;
 }
 

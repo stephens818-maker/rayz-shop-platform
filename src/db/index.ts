@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import { drizzle, PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { eventContextJson } from "./event-context";
 import * as schema from "./schema";
 
 export type DB = PostgresJsDatabase<typeof schema>;
@@ -24,10 +26,19 @@ function create(): DB {
   return drizzle(client, { schema });
 }
 
+/** A transaction started inside an event context tells the event triggers who is acting (see ./event-context). */
+const transaction: DB["transaction"] = (fn, config) =>
+  globalForDb.__rayzDb!.transaction(async (tx) => {
+    const ctx = eventContextJson();
+    if (ctx) await tx.execute(sql`select set_config('rayz.event_ctx', ${ctx}, true)`);
+    return fn(tx);
+  }, config);
+
 export const db: DB = new Proxy({} as DB, {
   get(_t, prop) {
     if (!globalForDb.__rayzDb) globalForDb.__rayzDb = create();
     const real = globalForDb.__rayzDb;
+    if (prop === "transaction") return transaction;
     const value = Reflect.get(real, prop);
     return typeof value === "function" ? value.bind(real) : value;
   },
