@@ -222,6 +222,30 @@ Card payments stay at PCI SAQ A: card details only ever pass through Stripe's fr
 - Only Central time is supported: a shop in another zone can be saved but can't go live (the checklist explains why).
 - Test: `tests/db/locations.test.ts` creates a location through the wizard, takes it live and checks that it appears in booking, the calendar, POS, reports (CSV, all shops and by group), permissions and location groups. It then archives the location (refused while an appointment is booked) and checks that its history is kept. The same file covers offboarding, client messages and picklists.
 
+### Location profiles, public locations and the booking widget
+
+- **Where it's edited.** Settings has a **Location profile** card for anyone with the shop's details permission, and the Add Location wizard asks for the same things (the address on its first step, socials, directions and amenities under Branding and location page, and the jurisdiction under Sales tax). The profile holds:
+  - the street address with autocomplete, a suite or unit line, city, state and ZIP, and the map pin (shown on a map, editable by hand);
+  - the main phone (saved as E.164, shown with tap-to-call) and the text-enabled Twilio number (set under Shop & online booking);
+  - the email, Google Place ID ("Use for reviews" turns it into the review link), social links (Instagram, Facebook, TikTok, X, YouTube, Yelp and a website; handles or links, rebuilt without tracking), parking and directions notes, and amenities;
+  - the sales-tax jurisdiction (county, city, special district and code). Only people who set taxes and card fees can change it, and it's never public. The sales-tax report lists it.
+- **Other parts of the profile.** Hours, holiday closures (Sunday closed by default), the time zone and the booking link (`/book/<slug>`) keep their own cards. Changing the review link also needs the checkout permission, as on the receipt card, and clearing it turns the review follow-up off. Every save is audited as `shop.location_profile`.
+- **Address lookup.** With `GOOGLE_MAPS_API_KEY` set (an environment secret only, never stored or sent to the browser), suggestions and the pin come from Google Places (New) and the Geocoding API, and picking an address fills in the Place ID and, if empty, the phone. With `GEOCODER=census`, the free US Census geocoder matches whole addresses. With neither, a typed address is pinned at its ZIP's centre and marked approximate. A pin moved by hand stays where it was put.
+- **Photos and logo.** Up to 12 photos (resized in the browser to 1280 px; the first is the page's header) and an uploaded logo, which replaces the logo web address. Staff see them at `/admin/settings/photos/<id>`; the public sees live and temporarily closed shops' at `/locations/<slug>/photos/<id>`.
+- **Public pages.** `/locations` lists every location with open now, its hours and "Near me" (the browser's location, or a ZIP), sorted by distance. `/locations/<slug>` shows the photos, logo, open status, Book and Call buttons, the map and directions, hours, closures, contact links, socials, the review link and amenities. It carries schema.org `HairSalon` JSON-LD with the address, pin, opening hours, closures, socials, amenities and a reserve action, escaped so no shop text can close the script tag. `/locations/<slug>/directions` sends phones to their maps app. The checklist has a recommended (not required) **Location page** step for an exact pin, the Google listing and photos.
+- **Public API.** `GET /api/locations` (with `near=lat,lng` or `zip=`, and an optional `radius` and `serviceId`) and `GET /api/locations/<slug>` give the address, pin, distance, phone and text number, email, hours, closures, open now, the next open slot, the links, socials, photos and amenities. They need no sign-in and are cached for a minute. The OpenAPI document is at `/api/locations/openapi.json`, and the same handlers are ready to mount under `/api/v1/locations` for the app (see NOTES-SYNC).
+- **Deep links.** `https://<site>/book/<slug>?service=<service slug or id>&barber=<barber slug>&start=<ISO time>&coupon=<code>` opens booking at the right step. The app takes the same link as `rayz://book/<slug>?…`, and the frame as `/embed/book/<slug>?…`. Settings → Booking widget and links builds them for each location.
+- **Booking widget.** Paste this on any website:
+
+  ```html
+  <div data-rayz-booking data-location="le-claire"></div>
+  <script src="https://<site>/widget.js" async></script>
+  ```
+
+  Use `<button data-rayz-book data-location="le-claire">Book now</button>` instead to open booking over the page. Leave out `data-location` to let the client pick; add `data-service`, `data-barber`, `data-start` or `data-coupon` to pre-fill. The frame resizes itself and sends the page a `rayz:booked` event with the location only (`window.addEventListener("rayz:booked", …)`), never the client's details. `window.RayzBooking.open({ location })` opens it from code. Only `/embed/*` may be framed by other sites (`frame-ancestors *`), and bookings from it are counted under the `widget` channel.
+- **Everywhere else.** Confirmations, reminders and reschedules say where (`{address}`, plus the new `{full_address}`, `{map_link}` and `{calendar_link}` fields), and their emails end with the address, phone, parking notes and a directions link. Confirmation and reschedule emails attach a calendar invite. Invites are also at `/a/<code>/calendar.ics` and `/g/<code>/calendar.ics`, with the full address as LOCATION, the pin as GEO and a one-hour alarm. Emailed and online receipts show the full address, phone and directions, and the manage pages link the address to the map and the phone to tap-to-call.
+- Tests: `tests/location-profile.test.ts` (social links, the form, open now across daylight saving, JSON-LD escaping, deep links, invite folding, message fields) and `tests/db/location-profile.test.ts` (saving and its permissions, pins, photos, the API near a ZIP, invites, the widget, messages and receipts, the wizard and the checklist).
+
 <a id="today"></a>
 ### Today
 
@@ -2426,6 +2450,7 @@ samples/squire/      example Squire CSV exports for the importer
 - `DEMO_MODE=true` keeps a hosted demo safe: the payment simulator or Stripe test keys only, no texts, emails, or calls (they show in the outbox), customer sign-in codes on screen, one-click demo logins, and a banner on every page.
 - `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes and `/api/cron/campaign-center` every 15. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
 - Keep separate demo, staging, and production databases, and turn on Neon point-in-time restore or Supabase daily backups.
+- Address lookup is optional: set `GOOGLE_MAPS_API_KEY` (Places API (New) and Geocoding API, restricted to the server) or `GEOCODER=census`. Without either, typed addresses are pinned at the ZIP's centre.
 
 ## Cutover plan
 
