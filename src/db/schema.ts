@@ -120,6 +120,8 @@ export const shops = pgTable("shops", {
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   address: text("address").notNull().default(""),
+  /** Suite or unit. */
+  address2: text("address2").notNull().default(""),
   city: text("city").notNull().default(""),
   state: text("state").notNull().default(""),
   zip: text("zip").notNull().default(""),
@@ -188,6 +190,15 @@ export const shops = pgTable("shops", {
   drawerOpeningCents: integer("drawer_opening_cents").notNull().default(30_000),
   /** How the phone operator answers this shop's number (PhoneOperator in src/domain/phone-operator.ts); missing keys use the defaults. */
   phoneOperator: jsonb("phone_operator").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** The public profile (src/domain/location-profile.ts): Google Place ID, social links (SocialLinks), parking and directions, amenity keys, and the sales-tax jurisdiction (never public). */
+  googlePlaceId: text("google_place_id"),
+  social: jsonb("social").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  directions: text("directions"),
+  amenities: jsonb("amenities").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  taxJurisdiction: jsonb("tax_jurisdiction").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Where latitude/longitude came from: an address lookup (google, census), the ZIP centre (approximate), or placed by hand. */
+  geocodeSource: text("geocode_source").$type<GeocodeSource>(),
+  geocodedAt: ts("geocoded_at"),
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
@@ -196,6 +207,31 @@ export const shops = pgTable("shops", {
 export type PaymentsMode = "brand" | "connected" | "cash_only";
 export type NegativeStockPolicy = "block" | "warn";
 export type ShopStatus = "setup" | "live" | "closed" | "archived";
+export type GeocodeSource = "google" | "census" | "zip" | "manual";
+
+/** A location's photos and uploaded logo (one per shop), as data URLs like client_photos; served from /locations/<slug>/photos/<id>. */
+export const shopPhotos = pgTable(
+  "shop_photos",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<"photo" | "logo">().notNull().default("photo"),
+    dataUrl: text("data_url").notNull(),
+    alt: text("alt"),
+    sortOrder: integer("sort_order").notNull().default(100),
+    createdBy: uuid("created_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("shop_photos_shop_idx").on(t.shopId, t.kind, t.sortOrder),
+    uniqueIndex("shop_photos_one_logo")
+      .on(t.shopId)
+      .where(sql`${t.kind} = 'logo'`),
+    check("shop_photos_kind", sql`${t.kind} in ('photo', 'logo')`),
+  ],
+);
 
 /** Stripe Terminal card readers at a shop. Without a Stripe reader ID it's a placeholder until the reader is registered. */
 export const terminalReaders = pgTable(

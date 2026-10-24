@@ -421,6 +421,13 @@
       "when": 1794268800000,
       "tag": "core_0059_analytics",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1794272400000,
+      "tag": "core_0060_location_profile",
+      "breakpoints": true
     }
   ]
 }
