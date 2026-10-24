@@ -1,4 +1,3 @@
-import "server-only";
 import { and, asc, eq, gte, inArray, lt, ne, notInArray, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
 import { appointmentItems, appointments, customers, saleAppointments, saleItems, sales, staff } from "@/db/schema";

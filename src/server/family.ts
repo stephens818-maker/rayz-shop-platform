@@ -1,4 +1,3 @@
-import "server-only";
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
 import { appointments, brandSettings, clientPhotos, customers, refreshTokens, shops, staff } from "@/db/schema";
@@ -19,7 +18,6 @@ import { localDateOf, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { lockIdentity, matchCustomer } from "./customers";
 import { AppError, notFound } from "./errors";
-import { cadenceFor } from "./visit-cadence";
 
 export async function loadFamilySettings(tx: DBorTx = db): Promise<FamilySettings> {
   const [b] = await tx.select({ f: brandSettings.family }).from(brandSettings).where(eq(brandSettings.id, 1));
@@ -305,8 +303,9 @@ export async function familyView(guardianId: string, now = new Date(), tx: DBorT
   const ids = kids.map((k) => k.id);
   if (!ids.length) return { settings, children: [] };
   const barberIds = [...new Set(kids.map((k) => k.preferredStaffId).filter((x): x is string => !!x))];
-  // Loaded here, not at the top: the badge modules reach back into client records.
-  const { customerBadges } = await import("./customer-badges");
+  // Loaded here, not at the top: checkout and refunds import this module outside Next (the worker,
+  // scripts), and the badge and cadence modules are server-only and reach back into client records.
+  const [{ customerBadges }, { cadenceFor }] = await Promise.all([import("./customer-badges"), import("./visit-cadence")]);
   const [cadence, photos, barbers, stats, upcoming, badges] = await Promise.all([
     cadenceFor(ids, now, tx),
     tx.select({ id: clientPhotos.customerId, url: clientPhotos.dataUrl }).from(clientPhotos).where(inArray(clientPhotos.customerId, ids)),
