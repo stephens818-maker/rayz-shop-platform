@@ -26,7 +26,7 @@ Neither agent edits the other's files. If you need a change in the other side's 
 
 ## Rules both sides follow
 
-- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts`, `core_0039_google_reviews`, `core_0040_review_visits`, `core_0041_marketing` and `core_0042_campaign_center`.
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts`, `core_0039_google_reviews`, `core_0040_review_visits`, `core_0041_marketing`, `core_0042_campaign_center` and `core_0043_lapsed_campaigns`.
 - `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
 - Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
 - Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
@@ -277,8 +277,8 @@ Called "Marketing / Engage" at first. The UI, routes, permissions and report now
 
 - **Code:**
   - Pure: `src/domain/coupons.ts` (`couponDiscount`, `couponProblem`, `stackProblem`, `couponSummary`, `uniqueCode`, `issuedExpiry`) and `src/domain/marketing.ts` (`TRIGGERS`, `render`/`fill`, `templatesProblem`, `inQuiet`, `nextSendAt`, `capProblem`, `pickChannel`, `SegmentSchema`, `dedupeKey`, `roi`).
-  - Server: `src/server/coupons.ts`, `src/server/booking-drafts.ts`, and `src/server/marketing/` (`consent`, `audiences`, `engine`, `campaigns`, `links`, `report`, `settings`).
-  - Routes: `/admin/campaign-center` (campaigns, blasts, settings, `/export`), `/admin/reports/campaign-center`, `/api/cron/campaign-center`, and `/m/{token}` and `/m/{token}/unsubscribe` (unchanged, since they're in messages already sent).
+  - Server: `src/server/coupons.ts`, `src/server/booking-drafts.ts`, and `src/server/marketing/` (`consent`, `audiences`, `engine`, `campaigns`, `sequences`, `my-clients`, `links`, `report`, `lapsed-report`, `settings`).
+  - Routes: `/admin/campaign-center` (campaigns, blasts, `sequences/{id}`, `my-clients`, settings, `/export`), `/admin/reports/campaign-center`, `/admin/reports/lapsed-clients`, `/api/cron/campaign-center`, and `/m/{token}` and `/m/{token}/unsubscribe` (unchanged, since they're in messages already sent).
   - Shared report helpers moved out of `reports.ts` into `report-sql.ts` and `available-minutes.ts`; `reports.ts` re-exports them.
 - **Schema** (`drizzle/core_0041_marketing.sql`):
   - `promo_codes` gains `free_item_kind`/`free_item_id` (type `free_item`), `service_ids`, `product_ids`, `shop_ids` (jsonb, empty means all), `min_spend_cents`, `max_per_customer`, `code_mode` (`shared|unique`), `valid_days`, `first_visit_only`, `stackable` (default true) and `auto_apply`. Existing codes are unchanged shared codes.
@@ -293,6 +293,8 @@ Called "Marketing / Engage" at first. The UI, routes, permissions and report now
   - `customer_tags`.
   - `brand_settings.marketing`: quiet hours, caps, postal address, HELP text, attribution days and costs.
   - Permissions, renamed by `drizzle/core_0042_campaign_center.sql` in `roles.permissions` and `staff.permission_overrides`: `campaign_center.view`, `.create`, `.send` and `.export` (labels "Campaign Center: view/create/send/export"), and `report.campaign_center.view`/`.export`. The old `marketing.location` and `marketing.manage` each became create plus send; `marketing.*` keys no longer exist.
+  - Lapsed sequences (`drizzle/core_0043_lapsed_campaigns.sql`): `marketing_campaigns.kind` gains `sequence` (its audience in `segment` as `{ staffIds, barberMatch }`, `settings.stopAfterDays`) and an `enabled` column; `marketing_steps` (`campaign_id`, `position`, `after_days` 7–365, `templates`, `promo_id`); `marketing_sends.step_id`. Occasions are `seq:{last visit day}:{step id}` for sequences and `barber:{last visit day}` for From your barber (trigger key `barber_outreach`, sent by hand, never by the cron).
+  - Also added by core_0043: `campaign_center.own_clients` ("Campaign Center: own lapsed clients") for Brand Admin, Regional Manager and Shop Manager roles that have `campaign_center.view`, and `report.lapsed_clients.view`/`.export` for those with `report.campaign_center.view`. The Barber template doesn't have it.
 - **Consent (read-only for core):**
   - Marketing reach per channel reads the columns below. `consentColumns()` checks which exist once a minute; until they do, nobody qualifies.
     - `customers.sms_marketing_opt_in`
@@ -308,6 +310,7 @@ Called "Marketing / Engage" at first. The UI, routes, permissions and report now
 - **Audit actions:**
   - Campaigns: `campaign_center.automation_saved`, `campaign_center.automation_on`/`_off`, `campaign_center.test_sent`.
   - Blasts: `campaign_center.blast_created`, `_saved`, `_scheduled`, `_sent`, `_cancelled`.
+  - Sequences: `campaign_center.sequence_created`, `_saved`, `_on`, `_off`, `_deleted`; a barber's send: `campaign_center.own_clients_sent`.
   - Other: `campaign_center.export`, `brand.campaign_center_settings`, `promo.create`/`.update`, `customer.tags`. Rows written before the rename keep their `marketing.*` and `brand.marketing_rules` names.
 - **If the app takes coupons or bookings:**
   - **Bookings:** check and hold a code with `checkBookingCoupon(shopSlug, code)` and `holdBookingCoupon(appointmentCode, code)` right after booking, so the POS picks it up.
@@ -375,6 +378,16 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-23: core (lapsed clients in the Campaign Center)
+
+- **Segment builder:** last visit more than 2 / 3 / 4 / 5 / 6 / 8 / 12 weeks ago, between two points (weeks or days) or custom days, "nothing booked since", and barbers by the client's primary barber (preferred, else last), most recent barber or any visit. The opted-in count updates live.
+- **Lapsed sequences:** several steps per campaign (2 weeks reminder, 3 weeks with the booking link, 4 weeks coupon, 6+ weeks bigger coupon by default), each with its own wording and coupon. A client gets the step for how long it's been, once per lapse, and leaves on booking. Per location and barber, each message signed by the client's barber with a link to book with them. "We miss you" and win-back skip clients a sequence already wrote to.
+- **My lapsed clients:** with **Campaign Center: own lapsed clients**, a barber sees their own lapsed clients (first name and last initial, never phone or email) and sends **From your barber** through the engine. Per-location switch, daily limit, audited.
+- **Report:** **Lapsed clients by barber** (`report.lapsed_clients`): week buckets, lapsed messages, clients messaged, rebooked and rebook rate, by barber and by campaign and step.
+- Migration `core_0043_lapsed_campaigns` (see "Campaign Center"). If the app ever sends a booking link from a sequence, `?barber={slug}` on `/book/{shop}` picks the barber, as before.
+- Tests: `tests/marketing.test.ts`, `tests/db/marketing.test.ts`, `tests/db/tenant.test.ts` (another shop's sequence page and actions).
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written or migrated.
 
 ### 2026-10-23: core (Marketing renamed to the Campaign Center)
 

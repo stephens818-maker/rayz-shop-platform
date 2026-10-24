@@ -406,7 +406,7 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 Called "Marketing / Engage" in the first request; renamed to the Campaign Center everywhere it shows.
 
 **Name and permissions:**
-- [x] Nav section **Campaign Center** (Campaigns, Blasts, Settings), pages under `/admin/campaign-center`, the report **Campaign Center** at `/admin/reports/campaign-center`, the cron at `/api/cron/campaign-center`.
+- [x] Nav section **Campaign Center** (Campaigns, Blasts, My lapsed clients, Settings), pages under `/admin/campaign-center`, the report **Campaign Center** at `/admin/reports/campaign-center`, the cron at `/api/cron/campaign-center`.
 - [x] Permissions **Campaign Center: view / create / send / export** (`campaign_center.*`), a **Campaign Center** group in the role editor, and the report permissions `report.campaign_center.view` and `.export`.
 - [x] Create and send are separate: create writes wording, coupons and blast drafts (with access to all shops, also the brand's version and Settings); send switches campaigns on or off and sends, schedules or cancels blasts.
 - [x] Migration `core_0042_campaign_center` renames the old keys in roles and per-person overrides, keeping what each person could do.
@@ -456,6 +456,18 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
   - opted-in channel.
 - [x] Client tags on the client page (audited).
 
+**Lapsed clients:**
+- [x] Segment builder quick filters "last visit more than 2 / 3 / 4 / 5 / 6 / 8 / 12 weeks ago", custom days, and a between range in weeks or days (e.g. 3 to 4 weeks), with "nothing booked since" (cancelled and missed bookings don't count).
+- [x] Combined with barber (the client's primary barber, most recent barber, or any visit with them), location and services or products. Primary is offered only when preferred barbers aren't hidden from the person.
+- [x] A live count of matching opted-in clients before sending.
+- [x] Lapsed sequences: up to six steps in one campaign (default 2 weeks reminder, 3 weeks with the booking link, 4 weeks coupon, 6+ weeks bigger coupon), each with its own wording and optional coupon, a per-step test send and live counts per step. Created off; create writes, send switches.
+- [x] A client gets the step for how long it's been, once per lapse, and leaves the sequence once they book. A cancelled booking puts them back. "Stop after" (default 120 days) keeps old clients out.
+- [x] Scoped per location and barber; each message signed with the client's barber's first name and a link to book with that barber (when they're bookable online there).
+- [x] "We miss you" and win-back skip clients a sequence already wrote to since their last visit.
+- [x] **Campaign Center: own lapsed clients** (off for barbers unless granted): a barber's own lapsed list by week bucket, first name and last initial only, and a send of **From your barber** through the engine (consent, quiet hours, caps, once per lapse), with a per-location switch and a daily limit (25 by default). Audited.
+- [x] Report **Lapsed clients by barber**: lapsed clients by week bucket, lapsed messages sent, clients messaged, rebooked and the rebook rate, by barber and by campaign and step. Barbers with the report see only their own row.
+- [x] Migration `core_0043_lapsed_campaigns`. Tests in `tests/marketing.test.ts`, `tests/db/marketing.test.ts` and `tests/db/tenant.test.ts`.
+
 **Compliance and consent:**
 - [x] Marketing consent is separate from appointment messages. It's read from PR #8's columns; nothing goes out until they exist.
 - [x] Texts:
@@ -494,6 +506,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] "Nearby" for announcements uses the shops' coordinates (clients of locations within the radius), since client addresses aren't used. The seeded coordinates are approximate.
 - [ ] "Finish your booking" only knows about the website's booking flow. App bookings would need to call `saveBookingDraft` (NOTES-SYNC).
 - [ ] Which campaigns to switch on, their wording and coupons per location.
+- [ ] Whether barbers should get **Campaign Center: own lapsed clients** by default, and the lapsed sequences' steps, coupons and "stop after" per location.
 
 ## Deferred by decision
 

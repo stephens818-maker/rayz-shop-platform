@@ -1062,7 +1062,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 86 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 87 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -1267,9 +1267,9 @@ Who can edit details already on file, and the front desk's view of a client whos
 
 ### Campaign Center
 
-Brand-level campaigns and coupons, switched on and worded per location, at `/admin/campaign-center`. Nav: **Campaign Center → Campaigns, Blasts, Settings**; coupons are under **Promos & gift cards**; the report is **Reports → Campaign Center** (`/admin/reports/campaign-center`).
+Brand-level campaigns and coupons, switched on and worded per location, at `/admin/campaign-center`. Nav: **Campaign Center → Campaigns, Blasts, My lapsed clients, Settings**; coupons are under **Promos & gift cards**; the reports are **Reports → Campaign Center** (`/admin/reports/campaign-center`) and **Reports → Lapsed clients by barber** (`/admin/reports/lapsed-clients`).
 
-**Who can do what.** Four permissions in the role editor's **Campaign Center** group. Migration `core_0041_marketing` gave them to roles under their first names; `core_0042_campaign_center` renames them in every role and per-person override and keeps what each person could do.
+**Who can do what.** Five permissions in the role editor's **Campaign Center** group. Migration `core_0041_marketing` gave the first four to roles under their first names; `core_0042_campaign_center` renames them in every role and per-person override and keeps what each person could do; `core_0043_lapsed_campaigns` adds the fifth.
 
 | Permission | What it allows | Who has it |
 |---|---|---|
@@ -1277,6 +1277,7 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 | **Campaign Center: create** (`campaign_center.create`) | Write their shops' own wording and settings, pick coupons, draft blasts to their shops and send tests. With access to all shops: also the brand's version of each campaign, blasts to every location, and **Settings** | Brand Admin, Regional Manager, Shop Manager |
 | **Campaign Center: send** (`campaign_center.send`) | Switch campaigns on or off at their shops, and send, schedule or cancel blasts | Brand Admin, Regional Manager, Shop Manager |
 | **Campaign Center: export** (`campaign_center.export`, all shops only) | Download contact lists | Brand Owner only, unless granted |
+| **Campaign Center: own lapsed clients** (`campaign_center.own_clients`) | See their own lapsed clients (first name and last initial, never phone or email) and send them "From your barber" | Brand Admin, Regional Manager, Shop Manager. Barbers only when a manager turns it on for the role or the person |
 
 - Create and send are separate. Someone with only create can write a blast but not send it. Someone with only send can send a draft or switch a campaign on but can't change its wording. Discarding a draft needs create; cancelling a scheduled blast needs send.
 - A manager's blast can only target their own shops, and a blast that includes other shops is read-only for them ("This blast goes to shops outside yours").
@@ -1304,7 +1305,7 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 - **Loyalty:** coupons lower net service spend, so loyalty is earned on what the client actually paid for services.
 - **Online booking:** `/book/{shop}` has a coupon box, filled in from a campaign link (`?coupon=`). The coupon is checked and shown as "Free Beard Trim", "$5 off" and so on, held on the appointment, and applied when the ticket is opened. A coupon that no longer works by then is shown on the ticket with the reason. Checks are limited to 20 per 10 minutes per client IP (the trusted-proxy IP, see `TRUSTED_PROXY_HOPS`).
 
-**Automated campaigns** (Campaign Center → Campaigns): ten campaigns, each switched on per location, off by default.
+**Automated campaigns** (Campaign Center → Campaigns): ten campaigns, each switched on per location, off by default, plus **From your barber**, which barbers send by hand (below).
 
 | Campaign | Who gets it | Default |
 |---|---|---|
@@ -1328,17 +1329,38 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 
 **Blasts** (Campaign Center → Blasts): one-off text, email or push.
 - **Segment builder:**
-  - locations and barbers;
-  - last visit (from and to days ago), visit count and spend (min and max);
+  - locations;
+  - **last visit:** quick filters "more than 2 / 3 / 4 / 5 / 6 / 8 / 12 weeks ago", **Between…** a range in weeks or days (e.g. 3 to 4 weeks ago), or custom days. The quick filters also tick **Nothing booked since their last visit**, so it's clients who really lapsed; a cancelled or missed booking doesn't count as booked;
+  - **barbers**, matched by the client's **primary barber** (the preferred barber on their profile, or the barber of their last visit when none is set), their **most recent barber**, or **any visit** with the barber. Primary is offered only to people whose client-data settings show preferred barbers;
+  - visit count and spend (min and max);
   - services or products bought;
   - birthday months and rating, each only for those whose client-data settings show them;
   - loyalty balance and tags (set on the client page, `clients.edit`);
   - the channel they agreed to.
 - **Preview and send:**
-  - **Count clients** shows how many match, how many can be reached on each channel, and a few first names.
+  - The count updates as the filters change: how many opted-in clients would get it, how many match, how many can be reached on each channel, and a few first names.
   - **Test send**, **Save draft**, **Schedule** for a date and time, or **Send now** after a confirmation.
   - A scheduled blast can be cancelled until it goes out.
 - **Results:** a sent blast shows queued and skipped counts with the reasons ("No marketing consent", "Weekly limit reached", …).
+
+**Lapsed sequences** (Campaign Center → Campaigns → **Lapsed sequences**, `/admin/campaign-center/sequences/{id}`; create writes them, send switches them on or off):
+- **Several steps in one campaign**, each at its own point after the last visit with its own text, email and push and an optional coupon. A new sequence starts with four: 2 weeks, a friendly reminder with no coupon or link; 3 weeks, a reminder with the booking link; 4 weeks, a coupon; 6 weeks and on, a bigger coupon. Up to six steps, at least a week apart.
+- **Each client gets the step for how long it's been**, once per lapse. A client 30 days out gets the 4-week step, not all three before it. The last step lasts until **Stop after** (default 120 days), so switching one on doesn't text every client who left years ago.
+- **A client leaves the sequence as soon as they book** (any booking after their last visit, not cancelled and not a no-show). If they cancel, they're back in. When they come back and lapse again, they start over.
+- **Per barber and per location:** pick locations and, optionally, barbers, matched by primary or most recent barber. Every message is signed with the client's barber's first name (`{barber}`), and the link books with that barber when they're bookable online at that location; otherwise it's signed "your barber" and the link opens the location's booking page.
+- **No double messages:** "We miss you" and win-back skip clients a sequence already wrote to since their last visit.
+- **Live preview:** opted-in and lapsed clients at each step right now, and how many are due on the next run.
+- **Same rules as everything else:** consent, quiet hours, caps, single-use codes, test sends per step, and a location manager only for their own locations.
+
+**My lapsed clients** (`/admin/campaign-center/my-clients`; Campaign Center: own lapsed clients):
+- A barber's own lapsed clients: those whose primary barber they are (most recent barber if preferred barbers are hidden from them), 2 weeks to a year since the last visit with nothing booked since, at their locations, grouped by week bucket.
+- Each row shows the first name and last initial, location, last visit, weeks since, visits, and how they'd get the message (text, email or push), never the phone number or email.
+- **Send** sends the brand's **From your barber** message (Campaign Center → Campaigns), signed with the barber's first name and booking with them, to the clients picked. It goes through the system like any campaign: only to clients who agreed, outside quiet hours, within the caps, once per lapse.
+- A location turns it on with the campaign's switch there. The brand sets the minimum days since the last visit (default 14) and how many clients a barber can message a day (default 25). Every send is audited.
+
+**Lapsed clients by barber** (Reports; `report.lapsed_clients.view`, CSV with `.export`; a barber sees only their own row):
+- Each barber's lapsed clients by week bucket (2–3, 3–4, 4–5, 5–6, 6–8, 8–12 and 12+ weeks) as of the end of the period, by primary barber and the location of the last visit.
+- Lapsed messages sent in the period (sequences, "We miss you", win-back and From your barber), clients messaged, how many rebooked within the attribution window, and the rebook rate. Also by campaign and step.
 
 **Consent and compliance** (Campaign Center → Settings; Campaign Center: create, with access to all shops):
 - **Marketing consent is separate from appointment texts and emails.** It's read from the customer app's columns (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing` and `customer_devices`, PR #8). Core never writes them. Until they exist nobody qualifies, so nothing goes out.
@@ -1372,14 +1394,18 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 
 **Tests:**
 - `tests/coupons.test.ts`: discounts, free items, stacking and rules.
-- `tests/marketing.test.ts`: templates, merge fields, every trigger's timing, quiet hours, caps, channels and segments.
+- `tests/marketing.test.ts`: templates, merge fields, every trigger's timing, quiet hours, caps, channels and segments, the weeks filters, sequence steps and the report's buckets.
 - `tests/db/marketing.test.ts`:
   - coupons at checkout and booking, limits under concurrency, refunds, loyalty;
   - consent, idempotency, quiet hours, caps;
   - STOP, START and HELP, unsubscribe and clicks;
   - every campaign's audience, blasts and scope, the coupon editor and booking drafts;
   - create and send kept apart, brand-wide create for the brand's version and Settings;
-  - the report, the export, and the rename migration on roles and overrides.
+  - the report, the export, and the rename migration on roles and overrides;
+  - barber matching (primary, most recent, any) and nothing booked since;
+  - lapsed sequences: the step by weeks since, once per lapse, leaving on booking and coming back on a cancel, the barber's signature and link, no overlap with "We miss you", create and send kept apart;
+  - My lapsed clients without contact details, only their own clients, the location switch and the daily limit;
+  - the lapsed report's buckets and rebook rate, and the migration's grants.
 
 <img alt="Campaign Center: campaigns with per-location switches" src="docs/screenshots/campaign-center-campaigns.png" width="800" />
 
@@ -1396,6 +1422,16 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 <img alt="A Coralville manager sees only Coralville" src="docs/screenshots/campaign-center-manager.png" width="800" /> <img alt="Settings are read-only for a manager" src="docs/screenshots/campaign-center-manager-settings.png" width="800" />
 
 <img alt="The role editor's Campaign Center permissions: view, create, send, export" src="docs/screenshots/campaign-center-permissions.png" width="800" />
+
+<img alt="Segment builder: last visit 3 to 4 weeks ago, nothing booked since, Michelle as primary barber, live opted-in count" src="docs/screenshots/lapsed-segment-builder.png" width="800" />
+
+<img alt="A lapsed sequence: locations, barbers, live counts per step" src="docs/screenshots/lapsed-sequence-editor-top.png" width="800" /> <img alt="The whole sequence: four steps with their wording and coupons" src="docs/screenshots/lapsed-sequence-editor.png" width="400" />
+
+<img alt="Lapsed sequences on the Campaign Center page" src="docs/screenshots/lapsed-sequences-card.png" width="800" />
+
+<img alt="A barber's own lapsed clients, no contact details" src="docs/screenshots/my-lapsed-clients.png" width="800" /> <img alt="After sending From your barber" src="docs/screenshots/my-lapsed-clients-sent.png" width="800" />
+
+<img alt="Lapsed clients by barber: week buckets, lapsed messages, rebook rate" src="docs/screenshots/lapsed-clients-report.png" width="800" />
 
 <img alt="Coupons with their rules" src="docs/screenshots/coupons.png" width="800" /> <img alt="A campaign's free add-on applied in online booking" src="docs/screenshots/booking-coupon.png" width="400" />
 
