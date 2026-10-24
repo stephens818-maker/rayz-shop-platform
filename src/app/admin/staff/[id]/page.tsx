@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { roles, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
+import { seesStaffContact, staffContact } from "@/domain/staff-contact";
 import { formatDateTime } from "@/lib/time";
 import { accessState, loadStaffAccess } from "@/server/auth/access";
 import { can, guardPage, reasonViewer, staffGrantor } from "@/server/auth/staff";
@@ -48,6 +49,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
   const roleChoices = isNew
     ? assignableRoles(staffGrantor(ctx), await db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name))).filter((r) => r.defaultScope !== "all" || ctx.brandWide)
     : [];
+  const contact = person ? staffContact(seesStaffContact({ permissions: ctx.permissions, staffId: ctx.staff.id }, person.id), person) : null;
   const canSchedule = can(ctx, "schedules.edit");
   const timing = person && person.kind === "person" && can(ctx, "scheduling.timing") ? (await barberIntervalRows(ctx, person.id))[0] : undefined;
   const [show, offReasons] = await Promise.all([reasonShower(reasonViewer(ctx)), pickerReasons("time_off")]);
@@ -83,6 +85,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
       {editDenied && <Notice tone="blue">{editDenied}</Notice>}
       <ProfileForm
         readOnly={!!editDenied}
+        contactMasked={!!contact?.masked}
         shops={editableShops}
         allShops={allShops}
         roles={roleChoices.map((r) => ({ id: r.id, name: r.name, description: r.description, defaultScope: r.defaultScope }))}
@@ -93,8 +96,8 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
                 firstName: person.firstName,
                 lastName: person.lastName ?? "",
                 displayLabel: person.displayLabel,
-                email: person.email ?? "",
-                phone: person.phone ?? "",
+                email: contact?.email ?? "",
+                phone: contact?.phone ?? "",
                 color: person.color,
                 roleId: person.roleId,
                 isBookable: person.isBookable,

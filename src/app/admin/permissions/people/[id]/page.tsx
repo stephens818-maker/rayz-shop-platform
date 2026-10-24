@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { roles, shops } from "@/db/schema";
 import { PageHeader } from "@/components/ui";
 import { cleanOverrides, staffEditDenied } from "@/domain/permissions";
+import { seesStaffContact, staffContact } from "@/domain/staff-contact";
 import { accessState, loadStaffAccess, workShopIds } from "@/server/auth/access";
 import { guardPage, staffGrantor } from "@/server/auth/staff";
 import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
@@ -46,7 +47,7 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
             <Link className="underline" href={`/admin/staff/${id}`}>
               Staff profile
             </Link>{" "}
-            · {person.email ?? "no login"}
+            · {staffContact(seesStaffContact({ permissions: ctx.permissions, staffId: ctx.staff.id }, id), person).email ?? "no login"}
           </>
         }
       />

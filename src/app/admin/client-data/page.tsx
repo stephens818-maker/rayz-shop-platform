@@ -27,8 +27,8 @@ import {
 } from "@/domain/client-privacy";
 import { OWNER_ROLE_KEY } from "@/domain/permissions";
 import { guardPage } from "@/server/auth/staff";
-import { lookupLimits } from "@/server/client-privacy";
-import { CustomFields, LimitsForm, PersonRuleForm, RemoveRule, RuleCell } from "./editor";
+import { lookupLimits, shopLoginCap } from "@/server/client-privacy";
+import { CustomFields, LimitsForm, PersonRuleForm, RemoveRule, RuleCell, ShopLoginCapForm } from "./editor";
 
 export const metadata: Metadata = { title: "Client data protection" };
 
@@ -44,8 +44,8 @@ const entryText = (add: boolean, edit: boolean) => (add && edit ? "can add and e
 
 export default async function ClientDataPage({ searchParams }: { searchParams: Promise<{ shop?: string; who?: string; setting?: string }> }) {
   const sp = await searchParams;
-  await guardPage("/admin/client-data");
-  const [roleRows, shopRows, fieldRows, ruleRows, people, limits] = await Promise.all([
+  const ctx = await guardPage("/admin/client-data");
+  const [roleRows, shopRows, fieldRows, ruleRows, people, limits, loginCap] = await Promise.all([
     db.select({ id: roles.id, name: roles.name, key: roles.key }).from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)),
     db.select({ id: shops.id, name: shops.name }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name)),
     db.select().from(clientFields).orderBy(asc(clientFields.sortOrder), asc(clientFields.label)),
@@ -57,6 +57,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
       .where(and(eq(staff.active, true), eq(staff.kind, "person"), ne(roles.key, OWNER_ROLE_KEY)))
       .orderBy(asc(staff.displayLabel)),
     lookupLimits(),
+    shopLoginCap(),
   ]);
   const shopId = shopRows.some((s) => s.id === sp.shop) ? sp.shop! : null;
   const setting = isSetting(sp.setting) ? sp.setting : "view";
@@ -290,6 +291,14 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
             </tbody>
           </Table>
         )}
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Shop logins"
+          subtitle="A shop login is shared by everyone at the desk, so on top of its role's rules it sees client contact details masked at most. Whatever its role or overrides say, it never reveals a masked detail, exports or downloads clients, merges duplicates or sees staff phone numbers and emails."
+        />
+        <ShopLoginCapForm initial={loginCap} canLift={ctx.isOwner} />
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">

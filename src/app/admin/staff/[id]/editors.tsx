@@ -63,12 +63,14 @@ export function ProfileForm({
   allShops,
   roles,
   readOnly,
+  contactMasked = false,
 }: {
   initial: Profile | null;
   shops: { id: string; name: string }[];
   allShops: { id: string; name: string }[];
   roles: RoleChoice[];
   readOnly: boolean;
+  contactMasked?: boolean;
 }) {
   const { pending, error, ok, run, router } = useRun();
   const [p, setP] = useState<Profile>(
@@ -114,11 +116,11 @@ export function ProfileForm({
             )}
           </div>
         </Field>
-        <Field label="Email (login)">
-          <Input type="email" value={p.email} onChange={(e) => set({ email: e.target.value })} />
+        <Field label="Email (login)" hint={contactMasked ? "Masked. You need “See staff phone numbers and email addresses” to see or change it." : undefined}>
+          <Input type={contactMasked ? "text" : "email"} value={p.email} disabled={contactMasked} onChange={(e) => set({ email: e.target.value })} />
         </Field>
-        <Field label="Phone">
-          <Input value={p.phone} onChange={(e) => set({ phone: e.target.value })} />
+        <Field label="Phone" hint={contactMasked ? "Masked." : undefined}>
+          <Input value={p.phone} disabled={contactMasked} onChange={(e) => set({ phone: e.target.value })} />
         </Field>
         <Field label="Calendar color">
           <Input type="color" className="h-[38px] p-1" value={p.color} onChange={(e) => set({ color: e.target.value })} />
@@ -181,7 +183,7 @@ export function ProfileForm({
           disabled={pending}
           onClick={() =>
             run(
-              () => saveProfileAction({ ...p, id: p.id || null, password }),
+              () => saveProfileAction({ ...p, ...(contactMasked ? { email: "", phone: "" } : {}), id: p.id || null, password }),
               "Saved",
               (d) => {
                 setPassword("");

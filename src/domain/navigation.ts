@@ -59,7 +59,7 @@ export const PAGE_ACCESS = {
   "/admin/purchase-orders/[id]/receive": ["po.receive"],
   "/admin/catalog": ["catalog.manage", "inventory.manage"],
   "/admin/promos": ["promos.manage", "giftcards.issue", "giftcards.void"],
-  "/admin/settings": ["settings.shop", "settings.taxes", "settings.brand"],
+  "/admin/settings": ["settings.shop", "settings.shop_details", "settings.shop_hours", "settings.shop_booking", "settings.shop_checkout", "settings.shop_phone", "settings.taxes", "settings.brand"],
   "/admin/booking-times": ["scheduling.timing"],
   "/admin/block-reasons": ["blocks.reasons"],
   "/admin/lists": ["settings.lists"],

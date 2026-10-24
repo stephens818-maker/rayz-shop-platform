@@ -13,6 +13,7 @@ import {
   cleanOverrides,
   effectiveAccess,
   sameAccess,
+  sharedLoginAccess,
   unionAccess,
 } from "@/domain/permissions";
 
@@ -60,13 +61,17 @@ export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DB
           .orderBy(asc(shops.name));
   const otherIds = [...new Set(shopRows.map((r) => r.roleId).filter((id): id is string => !!id && id !== role.id))];
   const others = new Map((otherIds.length ? await tx.select().from(roles).where(inArray(roles.id, otherIds)) : []).map((r) => [r.id, r]));
-  const { byShop, union, uniform } = accessByShop(
+  const computed = accessByShop(
     role,
     shopRows.map((r) => ({ shopId: r.id, role: (r.roleId && others.get(r.roleId)) || null })),
     overrides,
     s.maxDiscountPct,
     scope,
   );
+  const { byShop, union, uniform } =
+    s.kind === "shop"
+      ? { byShop: new Map([...computed.byShop].map(([id, a]) => [id, sharedLoginAccess(a)] as const)), union: sharedLoginAccess(computed.union), uniform: computed.uniform }
+      : computed;
   const shopRoles = Object.fromEntries([...byShop].filter(([, a]) => a.role.id !== role.id).map(([id, a]) => [id, a.role.id]));
   const needsAllShops =
     scope === "all" ? [] : [...unionAccess([role, ...others.values()].map((r) => effectiveAccess(r, overrides, s.maxDiscountPct))).permissions].filter((p) => BRAND_ONLY.has(p));

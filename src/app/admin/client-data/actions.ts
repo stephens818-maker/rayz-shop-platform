@@ -17,13 +17,14 @@ import {
   fieldLabel,
   fieldRuleChangeDenied,
   isBuiltinField,
+  isShopLoginCap,
   resolveEntry,
   resolveLevel,
 } from "@/domain/client-privacy";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, authorize } from "@/server/auth/staff";
-import { rulesFor } from "@/server/client-privacy";
+import { rulesFor, saveShopLoginCap } from "@/server/client-privacy";
 import { AppError, forbidden, notFound } from "@/server/errors";
 
 function revalidate() {
@@ -170,6 +171,18 @@ export async function saveLookupLimitsAction(raw: z.input<typeof LimitsSchema>) 
       .set({ clientLookupLimits: { ...limits } as Record<string, number> })
       .where(eq(brandSettings.id, 1));
     await audit(ctx.actor, "client_data.limits", "brand_settings", "1", { from: cleanLimits(before?.l), to: limits }, null);
+    revalidate();
+    return null;
+  });
+}
+
+/** How much contact detail shared shop logins see. Lifting the cap to the role's rules is the Brand Owner's call. */
+export async function saveShopLoginCapAction(cap: string) {
+  return safe(async () => {
+    const ctx = await authorize("clients.privacy", "You can't change client data protection");
+    if (!isShopLoginCap(cap)) throw new AppError("bad_request", "Pick how much shop logins see");
+    if (cap === "role" && !ctx.isOwner) throw forbidden("Only the Brand Owner can let shop logins see more than masked contact details");
+    await saveShopLoginCap(cap, ctx.actor);
     revalidate();
     return null;
   });

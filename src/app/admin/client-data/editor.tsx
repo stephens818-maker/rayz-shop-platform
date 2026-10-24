@@ -3,8 +3,20 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Field, Input, Select, cx } from "@/components/ui";
-import { RULE_VALUE_LABEL, SETTINGS, SETTING_LABEL, type Entry, type Level, type LookupLimits, type Setting, ruleValues } from "@/domain/client-privacy";
-import { acknowledgeAlertAction, saveCustomFieldAction, saveLookupLimitsAction, setFieldRuleAction } from "./actions";
+import {
+  RULE_VALUE_LABEL,
+  SETTINGS,
+  SETTING_LABEL,
+  SHOP_LOGIN_CAPS,
+  SHOP_LOGIN_CAP_LABEL,
+  type Entry,
+  type Level,
+  type LookupLimits,
+  type Setting,
+  type ShopLoginCap,
+  ruleValues,
+} from "@/domain/client-privacy";
+import { acknowledgeAlertAction, saveCustomFieldAction, saveLookupLimitsAction, saveShopLoginCapAction, setFieldRuleAction } from "./actions";
 
 type Rule = { field: string; setting: Setting; roleId: string | null; staffId: string | null; shopId: string | null };
 type Value = Level | Entry;
@@ -196,6 +208,40 @@ export function LimitsForm({ initial }: { initial: LookupLimits }) {
           }
         >
           Save limits
+        </Button>
+        {saved && <span className="text-sm text-zinc-600">Saved</span>}
+        {error && <span className="text-sm text-red-600">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
+export function ShopLoginCapForm({ initial, canLift }: { initial: ShopLoginCap; canLift: boolean }) {
+  const { pending, error, run } = useRun();
+  const [v, setV] = useState(initial);
+  const [saved, setSaved] = useState(false);
+  return (
+    <div className="space-y-3 p-4">
+      <Field label="Client phone, email, address and birthday" hint={canLift ? undefined : "Only the Brand Owner can choose “As the login's role allows”."}>
+        <Select value={v} onChange={(e) => (setSaved(false), setV(e.target.value as ShopLoginCap))} data-testid="shop-login-cap">
+          {SHOP_LOGIN_CAPS.map((c) => (
+            <option key={c} value={c} disabled={c === "role" && !canLift && initial !== "role"}>
+              {SHOP_LOGIN_CAP_LABEL[c]}
+            </option>
+          ))}
+        </Select>
+      </Field>
+      <div className="flex items-center gap-3">
+        <Button
+          disabled={pending || v === initial}
+          onClick={() =>
+            run(
+              () => saveShopLoginCapAction(v),
+              () => setSaved(true),
+            )
+          }
+        >
+          Save
         </Button>
         {saved && <span className="text-sm text-zinc-600">Saved</span>}
         {error && <span className="text-sm text-red-600">{error}</span>}

@@ -58,8 +58,27 @@ export const ROLE_FIELD_DEFAULTS: Record<RoleTemplateKey, Defaults> = {
   regional_manager: MANAGER,
   shop_manager: MANAGER,
   front_desk: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
+  shop_login: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
   barber: { ...FULL, phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
 };
+
+/** Contact details a shared shop login sees at most, whatever its role's rules say. */
+export const SHOP_LOGIN_CONTACT_FIELDS = ["phone", "email", "address", "birthday"] as const satisfies readonly BuiltinField[];
+export const SHOP_LOGIN_CAPS = ["masked", "hidden", "role"] as const;
+export type ShopLoginCap = (typeof SHOP_LOGIN_CAPS)[number];
+export const SHOP_LOGIN_CAP_LABEL: Record<ShopLoginCap, string> = {
+  masked: "Masked at most (recommended)",
+  hidden: "Hidden",
+  role: "As the login's role allows",
+};
+export const isShopLoginCap = (v: unknown): v is ShopLoginCap => typeof v === "string" && (SHOP_LOGIN_CAPS as readonly string[]).includes(v);
+export const cleanShopLoginCap = (v: unknown): ShopLoginCap => (isShopLoginCap(v) ? v : "masked");
+
+/** A shop login's level for a field: its role's level, capped for contact details. */
+export function shopLoginLevel(cap: ShopLoginCap, field: FieldKey, level: Level): Level {
+  if (cap === "role" || !(SHOP_LOGIN_CONTACT_FIELDS as readonly string[]).includes(field)) return level;
+  return minLevel(level, cap);
+}
 /** Custom roles start as locked down as a barber's contact details, with masked email. */
 export const CUSTOM_ROLE_DEFAULTS: Defaults = { ...ROLE_FIELD_DEFAULTS.barber, email: "masked" };
 
@@ -115,6 +134,8 @@ export const ROLE_ENTRY_DEFAULTS: Record<RoleTemplateKey, EntryDefaults> = {
   regional_manager: DESK,
   shop_manager: DESK,
   front_desk: DESK,
+  // A shared login can take down new details but not replace the phone or email a client signs in with.
+  shop_login: { add: ANY, edit: { ...ANY, phone: false, email: false } },
   barber: { add: ANY, edit: NOTES_ONLY },
 };
 export const CUSTOM_ROLE_ENTRY_DEFAULTS: EntryDefaults = ROLE_ENTRY_DEFAULTS.barber;

@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { roles, shops, staff, staffAccessShops } from "@/db/schema";
 import { Badge, Card, CardHeader, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
 import { OWNER_ROLE_KEY, SCOPE_LABEL, cleanOverrides, effectiveAccess } from "@/domain/permissions";
+import { seesStaffContact, staffContact } from "@/domain/staff-contact";
 import { guardPage } from "@/server/auth/staff";
 import { OTHER_SHOP, hasShop } from "@/server/tenant";
 
@@ -22,6 +23,7 @@ export default async function PermissionsPage() {
       .orderBy(asc(roles.sortOrder), asc(staff.displayLabel)),
     db.select({ staffId: staffAccessShops.staffId, name: shops.name, shopId: shops.id, roleId: staffAccessShops.roleId }).from(staffAccessShops).innerJoin(shops, eq(shops.id, staffAccessShops.shopId)),
   ]);
+  const viewer = { permissions: ctx.permissions, staffId: ctx.staff.id };
   const shopsOf = (id: string) => access.filter((a) => a.staffId === id);
   const visible = people.filter(({ s, role }) => ctx.brandWide || (s.shopScope !== "all" && role.key !== OWNER_ROLE_KEY && shopsOf(s.id).some((a) => ctx.shopIds.includes(a.shopId))));
 
@@ -101,7 +103,7 @@ export default async function PermissionsPage() {
                 <tr key={s.id}>
                   <Td>
                     <div className="font-medium">{s.displayLabel}</div>
-                    <div className="text-xs text-zinc-500">{s.email ?? "no login"}</div>
+                    <div className="text-xs text-zinc-500">{staffContact(seesStaffContact(viewer, s.id), s).email ?? "no login"}</div>
                   </Td>
                   <Td>
                     {role.name} {s.kind === "shop" && <Badge tone="violet">shop login</Badge>}

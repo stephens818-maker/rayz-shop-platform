@@ -86,8 +86,19 @@ export const FEATURE_PERMISSIONS = [
     hint: "With their own time clock PIN. Locations that accept any staff PIN don't need it.",
   },
   { key: "sales.view", group: "Point of sale", label: "See every ticket at their shops" },
-  { key: "sales.refund", group: "Point of sale", label: "Refund and void tickets" },
-  { key: "drawer.manage", group: "Point of sale", label: "Open and close the cash drawer" },
+  {
+    key: "sales.refund",
+    group: "Point of sale",
+    label: "Refund and void tickets",
+    hint: "Without it, a manager who has it approves each refund or void with their time clock PIN. Shop logins always need a manager's PIN.",
+  },
+  {
+    key: "sales.reassign",
+    group: "Point of sale",
+    label: "Reassign a paid ticket to another barber",
+    hint: "Moves the ticket's sales and tips to the other barber, with a reason. Without it, a manager approves with their PIN. Not once that pay period is locked.",
+  },
+  { key: "drawer.manage", group: "Point of sale", label: "Open, count and close the cash drawer, and record cash paid in and out" },
   { key: "promos.manage", group: "Point of sale", label: "Create and turn off promo codes", hint: "The Campaign Center's coupons. Brand only unless granted." },
   { key: "giftcards.issue", group: "Point of sale", label: "Issue comp gift cards" },
   { key: "giftcards.void", group: "Point of sale", label: "Void gift cards" },
@@ -178,6 +189,12 @@ export const FEATURE_PERMISSIONS = [
   { key: "po.send", group: "Catalog and inventory", label: "Send purchase orders to vendors" },
   { key: "po.receive", group: "Catalog and inventory", label: "Receive deliveries against purchase orders" },
   { key: "staff.manage", group: "Staff", label: "Add and edit staff profiles" },
+  {
+    key: "staff.contact",
+    group: "Staff",
+    label: "See staff phone numbers and email addresses",
+    hint: "Without it they're masked on staff profiles and lists. People always see their own. Never on shop logins.",
+  },
   { key: "permissions.manage", group: "Staff", label: "Manage roles, permissions and shop access" },
   { key: "logins.manage", group: "Staff", label: "Create and disable shop logins and reset their passwords", hint: "For the shops in their access." },
   {
@@ -261,7 +278,27 @@ export const FEATURE_PERMISSIONS = [
     label: "Custom reports: export to CSV, Excel and PDF",
     hint: "Also what a scheduled email attaches. Customer reports also need \"Export the client list\". Every export is logged.",
   },
-  { key: "settings.shop", group: "Settings and data", label: "Edit shop info, weekday hours, closures and booking rules" },
+  {
+    key: "settings.shop",
+    group: "Settings and data",
+    label: "Edit every shop setting: details, hours and closures, booking rules, checkout and the phone line",
+    hint: "Or grant the parts one at a time with the shop settings permissions below.",
+  },
+  { key: "settings.shop_details", group: "Settings and data", label: "Shop settings: name, address, phone, email and description" },
+  { key: "settings.shop_hours", group: "Settings and data", label: "Shop settings: weekday hours and closures" },
+  {
+    key: "settings.shop_booking",
+    group: "Settings and data",
+    label: "Shop settings: booking rules",
+    hint: "Online booking on or off, the cancellation cutoff, how soon and how far ahead clients can book, and the gap between appointments.",
+  },
+  {
+    key: "settings.shop_checkout",
+    group: "Settings and data",
+    label: "Shop settings: checkout",
+    hint: "The customer screen, card readers, receipts and the cash drawer's opening balance.",
+  },
+  { key: "settings.shop_phone", group: "Settings and data", label: "Shop settings: the phone line and the phone operator", hint: "The shop's Twilio number and how the phone operator answers." },
   { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
   {
     key: "scheduling.timing",
@@ -331,10 +368,28 @@ export type FeaturePermission = (typeof FEATURE_PERMISSIONS)[number]["key"];
 export const REPORTS = [
   { key: "my_sales", label: "My sales and tips", href: "/admin/reports/my-sales", hint: "The signed-in person's own tickets only." },
   { key: "sales_summary", label: "Sales summary", href: "/admin/reports/sales" },
+  {
+    key: "end_of_day",
+    label: "End of day",
+    href: "/admin/reports/end-of-day",
+    hint: "One day's close in one place: sales, tax, tips, how it was paid, refunds, the cash drawer and each barber's tickets.",
+  },
   { key: "sales_by_barber", label: "Barber performance", href: "/admin/reports/barbers" },
+  {
+    key: "leaderboard",
+    label: "Leaderboard",
+    href: "/admin/reports/leaderboard",
+    hint: "Barbers ranked on service and product sales, productivity, average ticket, new clients and tickets with retail, with the top services and products.",
+  },
   { key: "services_vs_products", label: "Services vs products", href: "/admin/reports/services-products" },
   { key: "tips_payroll", label: "Tips and payroll export", href: "/admin/payroll" },
   { key: "card_vs_cash", label: "Card vs cash", href: "/admin/reports/tender" },
+  {
+    key: "sales_tax",
+    label: "Sales tax by state",
+    href: "/admin/reports/sales-tax",
+    hint: "Taxable sales and tax collected per state, location and month or quarter, after refunds, for each state's filing.",
+  },
   { key: "shop_accounts", label: "Shop P&L by Stripe account", href: "/admin/reports/shop-accounts", hint: "Each shop's card sales, fees, refunds, tips and payouts through its own connected account, grouped by owner." },
   { key: "discounts_refunds", label: "Discounts and refunds", href: "/admin/reports/discounts-refunds" },
   { key: "inventory", label: "Inventory valuation", href: "/admin/reports/inventory" },
@@ -346,6 +401,18 @@ export const REPORTS = [
   { key: "loyalty", label: "Loyalty", href: "/admin/reports/loyalty" },
   { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },
   { key: "kpis", label: "Retention and rebook KPIs", href: "/admin/reports/kpis" },
+  {
+    key: "retention",
+    label: "Client retention",
+    href: "/admin/reports/retention",
+    hint: "Of the clients with 1, 2 or 3+ visits in the prior period, how many new and existing clients came back, and how many saw another barber instead.",
+  },
+  {
+    key: "acquisition",
+    label: "Acquisition channels",
+    href: "/admin/reports/acquisition",
+    hint: "New clients by how they found us and how they first booked, with how many came back for a second visit.",
+  },
   { key: "heatmap", label: "Busiest times heatmap", href: "/admin/reports/heatmap" },
   {
     key: "service_times",
@@ -355,6 +422,12 @@ export const REPORTS = [
   },
   { key: "staffing", label: "Who's working, off and blocked", href: "/admin/reports/staffing", hint: "Per day, shop and barber: scheduled hours, time off, blocked time and bookings." },
   { key: "call_ins", label: "Call-ins and client outreach", href: "/admin/reports/call-ins", hint: "Call-ins by shop and barber, the appointments they hit, and how many clients were moved, rebooked, declined or never answered." },
+  {
+    key: "phone_operator",
+    label: "Phone operator",
+    href: "/admin/reports/phone-operator",
+    hint: "Calls to each shop's number: answered by staff or by the phone operator, booking links texted, the bookings and dollars that followed, the book rate and staff minutes saved.",
+  },
   {
     key: "google_reviews",
     label: "Google review links",
@@ -480,7 +553,8 @@ export function scopeProblem(scope: ShopScope, shopIds: string[]): string | null
 export const OWNER_ROLE_KEY = "brand_owner";
 export const BRAND_ADMIN_ROLE_KEY = "brand_admin";
 
-export const ROLE_TEMPLATE_KEYS = ["brand_owner", "brand_admin", "regional_manager", "shop_manager", "front_desk", "barber"] as const;
+export const ROLE_TEMPLATE_KEYS = ["brand_owner", "brand_admin", "regional_manager", "shop_manager", "front_desk", "shop_login", "barber"] as const;
+export const SHOP_LOGIN_ROLE_KEY = "shop_login";
 export type RoleTemplateKey = (typeof ROLE_TEMPLATE_KEYS)[number];
 
 export interface RoleDef {
@@ -505,6 +579,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "handoff.unlock",
   "sales.view",
   "sales.refund",
+  "sales.reassign",
   "drawer.manage",
   "giftcards.issue",
   "clients.view_all",
@@ -524,6 +599,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "po.send",
   "po.receive",
   "staff.manage",
+  "staff.contact",
   "settings.shop",
   "scheduling.timing",
   "calendar.squeeze_in",
@@ -627,7 +703,55 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       "timesheet.own",
       "tips.own",
       "campaign_center.openings",
-      ...reports(["card_vs_cash", "cash_drawer", "staffing", "openings"], false),
+      ...reports(["card_vs_cash", "cash_drawer", "end_of_day", "staffing", "openings"], false),
+    ],
+    maxDiscountPct: 10,
+  },
+  {
+    key: "shop_login",
+    name: "Shop Login",
+    description:
+      "The shared front-desk login for one shop: the calendar, waitlist, checkout, the drawer, clients with masked contact details, the front-desk clock and the shop's reports. Refunds, voids and reassigning tickets need a manager's PIN; no exports.",
+    defaultScope: "one",
+    permissions: [
+      "calendar.manage",
+      "walkins.manage",
+      "blocks.others",
+      "checkout.any",
+      "pos.discount",
+      "sales.view",
+      "drawer.manage",
+      "clients.view_all",
+      "clients.message",
+      "clients.edit",
+      "clients.filters",
+      "reports.all_staff",
+      "callins.outreach",
+      "inbox.view",
+      "timeclock.kiosk",
+      "campaign_center.openings",
+      ...reports(
+        [
+          "sales_summary",
+          "end_of_day",
+          "sales_by_barber",
+          "leaderboard",
+          "services_vs_products",
+          "tips_payroll",
+          "card_vs_cash",
+          "sales_tax",
+          "discounts_refunds",
+          "gift_cards",
+          "kpis",
+          "retention",
+          "acquisition",
+          "staffing",
+          "phone_operator",
+          "attendance",
+          "cash_drawer",
+        ],
+        false,
+      ),
     ],
     maxDiscountPct: 10,
   },
@@ -693,6 +817,78 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
   if (!perms.has("report_builder.view") && !perms.has("report_builder.build")) perms.delete("report_builder.export");
   const maxDiscountPct = perms.has("pos.discount") ? clampPct(maxDiscountOverride ?? role.maxDiscountPct) : 0;
   return { isOwner: false, permissions: perms, maxDiscountPct };
+}
+
+// ───────────────────────────── Shop logins ─────────────────────────────
+
+/**
+ * A shop login is shared by everyone at the desk, so nothing it does can be traced to one person.
+ * Whatever its role or overrides say, it never refunds, voids or reassigns a ticket on its own (a
+ * manager's PIN approves those), never reveals or exports client details, never sees staff contact
+ * details, and never manages people, pay or sign-in.
+ */
+export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
+  "sales.refund",
+  "sales.reassign",
+  "clients.reveal",
+  "clients.export",
+  "clients.merge",
+  "campaign_center.export",
+  "report_builder.export",
+  "staff.contact",
+  "staff.manage",
+  "permissions.manage",
+  "logins.manage",
+  "devices.approve",
+  "access.remote",
+  "payroll.rates",
+  "payroll.export",
+  "payments.banking",
+  "timesheet.edit",
+  "timesheet.approve",
+  "tips.approve",
+]);
+
+export const sharedLoginAccess = <A extends Access>(a: A): A => ({ ...a, isOwner: false, permissions: new Set([...a.permissions].filter((p) => !SHOP_LOGIN_NEVER.has(p))) });
+
+// ───────────────────────────── Shop settings, part by part ─────────────────────────────
+
+export const SHOP_SETTING_PARTS = ["details", "hours", "booking", "checkout", "phone"] as const;
+export type ShopSettingPart = (typeof SHOP_SETTING_PARTS)[number];
+export const SHOP_PART_PERMISSION: Record<ShopSettingPart, Permission> = {
+  details: "settings.shop_details",
+  hours: "settings.shop_hours",
+  booking: "settings.shop_booking",
+  checkout: "settings.shop_checkout",
+  phone: "settings.shop_phone",
+};
+
+/** Each shop setting and the part that gates it. "Edit every shop setting" covers them all. */
+export const SHOP_SETTING_FIELDS = {
+  name: "details",
+  address: "details",
+  city: "details",
+  state: "details",
+  zip: "details",
+  phone: "details",
+  email: "details",
+  description: "details",
+  twilioNumber: "phone",
+  bookingEnabled: "booking",
+  cancelCutoffMinutes: "booking",
+  minLeadMinutes: "booking",
+  bookingWindowDays: "booking",
+  bufferMinutes: "booking",
+  drawerOpeningCents: "checkout",
+} as const satisfies Record<string, ShopSettingPart>;
+export type ShopSettingField = keyof typeof SHOP_SETTING_FIELDS;
+
+export const canEditShopPart = (perms: ReadonlySet<Permission>, part: ShopSettingPart) => perms.has("settings.shop") || perms.has(SHOP_PART_PERMISSION[part]);
+export const editableShopParts = (perms: ReadonlySet<Permission>) => SHOP_SETTING_PARTS.filter((p) => canEditShopPart(perms, p));
+
+/** The changed fields this person may not edit; empty when the change is allowed. */
+export function shopSettingsDenied(perms: ReadonlySet<Permission>, before: Partial<Record<ShopSettingField, unknown>>, after: Partial<Record<ShopSettingField, unknown>>): ShopSettingField[] {
+  return (Object.keys(after) as ShopSettingField[]).filter((f) => f in SHOP_SETTING_FIELDS && (after[f] ?? null) !== (before[f] ?? null) && !canEditShopPart(perms, SHOP_SETTING_FIELDS[f]));
 }
 
 // ───────────────────────────── Per-shop roles ─────────────────────────────

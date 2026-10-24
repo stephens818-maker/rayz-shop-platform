@@ -83,6 +83,10 @@ export const brandSettings = pgTable("brand_settings", {
   marketing: jsonb("marketing").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Rayz Assistant (AssistantSettings in src/domain/assistant.ts): on or off per role, the limits, drafting; missing keys use the defaults. */
   assistant: jsonb("assistant").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Shop logins: `clientContact` caps the client contact details they see (ShopLoginCap in src/domain/client-privacy.ts). */
+  shopLogin: jsonb("shop_login").$type<{ clientContact?: unknown }>().notNull().default(sql`'{}'::jsonb`),
+  /** How often each state's sales tax is filed, by state code: "monthly" or "quarterly" (src/domain/sales-tax.ts). */
+  taxFiling: jsonb("tax_filing").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -171,6 +175,10 @@ export const shops = pgTable("shops", {
   networkAccess: jsonb("network_access").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** The customer screen at checkout (ShopHandoff in src/domain/handoff.ts): tip presets, tips on the reader, signature, unlock PIN; missing keys use the defaults. */
   handoff: jsonb("handoff").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** What the cash drawer opens with unless the person opening it counts something else. */
+  drawerOpeningCents: integer("drawer_opening_cents").notNull().default(30_000),
+  /** How the phone operator answers this shop's number (PhoneOperator in src/domain/phone-operator.ts); missing keys use the defaults. */
+  phoneOperator: jsonb("phone_operator").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
@@ -1435,6 +1443,8 @@ export const sales = pgTable(
     paidAt: ts("paid_at"),
     voidedAt: ts("voided_at"),
     voidReason: text("void_reason"),
+    /** The manager whose PIN approved the void, when the person voiding couldn't on their own. */
+    voidApprovedBy: uuid("void_approved_by"),
     isImported: boolean("is_imported").notNull().default(false),
     /** Squire transaction ID (or a content hash when the export has none), so re-imports don't duplicate. */
     squireRef: text("squire_ref").unique(),
@@ -1692,6 +1702,8 @@ export const refunds = pgTable(
     items: jsonb("items"),
     stripeRefundId: text("stripe_refund_id"),
     createdBy: uuid("created_by"),
+    /** The manager whose PIN approved it, when the person issuing it couldn't on their own. */
+    approvedBy: uuid("approved_by"),
     createdAt: createdAt(),
   },
   (t) => [index("refunds_shop_date_idx").on(t.shopId, t.businessDate), index("refunds_sale_idx").on(t.saleId)],
@@ -1713,10 +1725,54 @@ export const cashDrawers = pgTable(
     countedCents: integer("counted_cents"),
     varianceCents: integer("variance_cents"),
     notes: text("notes"),
+    openedBy: uuid("opened_by"),
+    openedAt: ts("opened_at"),
     closedBy: uuid("closed_by"),
     closedAt: ts("closed_at"),
   },
   (t) => [uniqueIndex("cash_drawers_uq").on(t.shopId, t.businessDate)],
+);
+
+/** Cash put into or taken out of a shop's drawer during the day, other than sales, refunds and tip payouts. */
+export const cashDrawerMoves = pgTable(
+  "cash_drawer_moves",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    businessDate: date("business_date").notNull(),
+    kind: text("kind").$type<"paid_in" | "paid_out">().notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    reason: text("reason").notNull(),
+    staffId: uuid("staff_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("cash_drawer_moves_kind", sql`${t.kind} in ('paid_in', 'paid_out')`),
+    check("cash_drawer_moves_amount", sql`${t.amountCents} > 0`),
+    index("cash_drawer_moves_shop_date_idx").on(t.shopId, t.businessDate),
+  ],
+);
+
+/** A paid ticket moved from one barber to another: its sales, lines and tips go with it. */
+export const saleReassignments = pgTable(
+  "sale_reassignments",
+  {
+    id: id(),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    fromStaffId: uuid("from_staff_id").references(() => staff.id),
+    toStaffId: uuid("to_staff_id")
+      .notNull()
+      .references(() => staff.id),
+    reason: text("reason").notNull(),
+    tipCents: integer("tip_cents").notNull().default(0),
+    createdBy: uuid("created_by"),
+    approvedBy: uuid("approved_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("sale_reassignments_sale_idx").on(t.saleId), index("sale_reassignments_shop_idx").on(t.shopId, t.createdAt)],
 );
 
 // ───────────────────────────── Tip payouts ─────────────────────────────
@@ -2612,6 +2668,10 @@ export const callLogs = pgTable(
     /** The key pressed on an automated call. */
     digits: text("digits"),
     autoTextSent: boolean("auto_text_sent").notNull().default(false),
+    /** The phone operator answered: after hours, nobody picked up, or the shop has it answer first. */
+    operator: boolean("operator").notNull().default(false),
+    /** What the caller chose from the operator's menu (OperatorChoice in src/domain/phone-operator.ts). */
+    operatorChoice: text("operator_choice"),
     createdAt: createdAt(),
     endedAt: ts("ended_at"),
   },

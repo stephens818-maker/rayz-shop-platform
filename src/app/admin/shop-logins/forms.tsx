@@ -27,7 +27,7 @@ export function NewShopLoginForm({
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [made, setMade] = useState<{ who: string; password: string } | null>(null);
-  const desk = roles.find((r) => r.key === "front_desk") ?? roles[0];
+  const desk = roles.find((r) => r.key === "shop_login") ?? roles.find((r) => r.key === "front_desk") ?? roles[0];
   const [v, setV] = useState({ label: `${shop.name} desk`.slice(0, 24), email: `${shop.slug}.desk@`, roleId: desk?.id ?? "" });
 
   if (!roles.length) return <div className="border-t border-zinc-100 px-4 py-3 text-sm text-zinc-500">You can&apos;t give any role to a shop login.</div>;

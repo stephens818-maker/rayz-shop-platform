@@ -12,9 +12,13 @@ import {
   FieldRule,
   Level,
   LookupLimits,
+  ShopLoginCap,
   ShownField,
   cleanLimits,
+  cleanShopLoginCap,
   customFieldKey,
+  isShopLoginCap,
+  shopLoginLevel,
   entryDenied,
   fieldLabel,
   formatBirthday,
@@ -28,6 +32,7 @@ import { OWNER_ROLE_KEY } from "@/domain/permissions";
 import type { RatingSummary } from "@/domain/ratings";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
+import { Actor, audit } from "./audit";
 import type { StaffContext } from "./auth/staff";
 import { AppError } from "./errors";
 
@@ -154,12 +159,17 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
       const fields: FieldKey[] = [...BUILTIN_FIELDS.map((f) => f.key), ...custom.map((c) => customFieldKey(c.id))];
       const working = workingAs(ctx);
       const rules = ctx.isOwner ? [] : await rulesFor(ctx.staff.id, [...new Set(working.map((w) => w.roleId))]);
+      let levels = levelsFor(rules, ctx.staff.id, working, fields);
+      if (ctx.staff.kind === "shop") {
+        const cap = await shopLoginCap();
+        levels = new Map([...levels].map(([f, l]) => [f, shopLoginLevel(cap, f, l)]));
+      }
       return makePolicy({
         staffId: ctx.staff.id,
         isOwner: ctx.isOwner,
         canReveal: ctx.permissions.has("clients.reveal"),
         custom,
-        levels: levelsFor(rules, ctx.staff.id, working, fields),
+        levels,
         entries: entriesFor(rules, ctx.staff.id, working, fields),
       });
     })();
@@ -309,6 +319,22 @@ export function redactImportErrors<E extends { data?: Record<string, string> }>(
 export const searchesClientDetails = (p: ClientPolicy) => p.isOwner || (["phone", "email", "address", "birthday", "notes"] as const).every((f) => p.level(f) === "full");
 
 // ───────────────────────────── Access log, limits and alerts ─────────────────────────────
+
+/** How much of a client's contact details shop logins see: masked at most unless the brand says otherwise. */
+export async function shopLoginCap(): Promise<ShopLoginCap> {
+  const [row] = await db.select({ r: brandSettings.shopLogin }).from(brandSettings).where(eq(brandSettings.id, 1));
+  return cleanShopLoginCap(row?.r?.clientContact);
+}
+
+export async function saveShopLoginCap(cap: ShopLoginCap, actor: Actor) {
+  if (!isShopLoginCap(cap)) throw new AppError("bad_request", "Pick how much shop logins see");
+  const before = await shopLoginCap();
+  await db
+    .update(brandSettings)
+    .set({ shopLogin: sql`${brandSettings.shopLogin} || ${JSON.stringify({ clientContact: cap })}::jsonb`, updatedAt: new Date() })
+    .where(eq(brandSettings.id, 1));
+  await audit(actor, "client_privacy.shop_login_cap", "brand_settings", "1", { before, after: cap });
+}
 
 export async function lookupLimits(): Promise<LookupLimits> {
   const [row] = await db.select({ l: brandSettings.clientLookupLimits }).from(brandSettings).where(eq(brandSettings.id, 1));

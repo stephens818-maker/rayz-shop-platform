@@ -98,7 +98,7 @@ export function LocationWizard({
   const [vendorPicks, setVendorPicks] = useState<Record<string, string | null>>({});
   const [team, setTeam] = useState<TeamRow[]>([]);
   const [payFrom, setPayFrom] = useState("");
-  const [login, setLogin] = useState({ on: true, label: "", email: "", roleId: options.loginRoles.find((r) => r.key === "front_desk")?.id ?? options.loginRoles[0]?.id ?? "" });
+  const [login, setLogin] = useState({ on: true, label: "", email: "", roleId: (options.loginRoles.find((r) => r.key === "shop_login") ?? options.loginRoles.find((r) => r.key === "front_desk"))?.id ?? options.loginRoles[0]?.id ?? "" });
   const [line, setLine] = useState("");
   const [readers, setReaders] = useState<{ label: string; serialNumber: string; registrationCode: string }[]>([]);
   const [pay, setPay] = useState({ mode: "connected" as PaymentsMode, descriptor: "" });

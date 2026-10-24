@@ -8,6 +8,7 @@ import { db } from "@/db";
 import { roles, shops, staff, staffAccessShops, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import { findScheduleConflicts } from "@/domain/availability";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
+import { seesStaffContact } from "@/domain/staff-contact";
 import { labelContainsSurname, staffPublicSlug } from "@/lib/ids";
 import { WEEKDAYS, addDays, minutesToLabel, startOfLocalDay } from "@/lib/time";
 import { staffWallTime } from "@/server/booking";
@@ -90,8 +91,7 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
       firstName: p.firstName,
       lastName: p.lastName || null,
       displayLabel: p.displayLabel,
-      email: p.email ? p.email.toLowerCase() : null,
-      phone: p.phone || null,
+      ...(p.id && !seesStaffContact({ permissions: ctx.permissions, staffId: ctx.staff.id }, p.id) ? {} : { email: p.email ? p.email.toLowerCase() : null, phone: p.phone || null }),
       color: p.color,
       isBookable: p.isBookable,
       active: p.active,

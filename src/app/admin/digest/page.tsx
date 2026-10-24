@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { morningDashboardSends, roles, staff, staffAccessShops } from "@/db/schema";
 import { hasContent, versionPlans } from "@/domain/morning-dashboard";
 import { renderMorningHtml } from "@/domain/morning-render";
+import { seesStaffContact, staffContact } from "@/domain/staff-contact";
 import { formatDate, todayLocal } from "@/lib/time";
 import { loadStaffAccess } from "@/server/auth/access";
 import { guardPage } from "@/server/auth/staff";
@@ -34,7 +35,7 @@ export default async function MorningEmailPage() {
     return {
       id: p.id,
       label: p.label,
-      email: p.email,
+      email: staffContact(seesStaffContact({ permissions: ctx.permissions, staffId: ctx.staff.id }, p.id), p).email,
       hasPhone: !!p.phone,
       role: p.role,
       roleKeys: [p.roleKey, ...shopRoles.filter((r) => r.staffId === p.id).map((r) => r.key)].filter((k): k is string => !!k),

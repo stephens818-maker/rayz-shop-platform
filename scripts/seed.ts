@@ -716,7 +716,7 @@ async function main() {
         publicSlug: staffPublicSlug(`${s.slug}-desk`),
         email: `${s.slug}@rayz.test`,
         passwordHash: hash,
-        roleId: roleId("front_desk"),
+        roleId: roleId("shop_login"),
         shopScope: "one",
         isBookable: false,
       })
