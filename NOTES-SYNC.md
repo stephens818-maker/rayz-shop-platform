@@ -387,6 +387,29 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-24: core (combined checkout), FYI and REQUEST for mobile
+
+- **What changed (web and server only).** Linked and family appointments check out on one combined ticket (see README, "Combined checkout"). Server: `src/server/combined-checkout.ts` (`sendToCheckout`, `sendGroupToCheckout`, `mergeTickets`, `splitOffTicket`, `splitTicketApart`, `openTickets`). `finalizeSale` in `checkout.ts` takes three new optional inputs:
+  - `tenders`: split payment, each `{ method, amountCents, payerCustomerId?, payerLabel?, ... }`;
+  - `tipByStaff`: per-barber tips;
+  - `ticketPeople`: the appointment ids the screen showed. When it's given and someone was combined in or split off since, it fails with `conflict`.
+
+  Existing callers are unaffected; `/api/v1` doesn't call any of these today.
+- **Migration `core_0056_combined_checkout`:**
+  - `appointments.checkout_ready_at` and `checkout_ready_by`;
+  - `sales.merged_into_sale_id`: a ticket combined away is `voided` with it set;
+  - `payments.payer_customer_id` and `payer_label` (40 characters, cleaned of anything like a card number);
+  - `checkout_handoffs.tip_by_staff`;
+  - the `sale_line_moves` view.
+
+  If the app reads sales, please treat a voided sale with `merged_into_sale_id` as "moved to ticket #N" and not as a cancelled visit. Anything summing a barber's services from `sales.staff_id` should add `sale_line_moves`, the way `tip_split_moves` is added for tips.
+- **Request (optional, when the app shows these):**
+  - A barber's **Send to checkout** in the staff app: `POST /api/v1/staff/appointments/{id}/send-to-checkout` → `sendToCheckout(id, actor)`, returning `{ saleId, joined, ready, total, all }`. Permission: their own appointment, or `checkout.any`.
+  - `checkoutReadyAt` on the staff appointment payloads, from `appointments.checkout_ready_at`.
+  - On the client's receipt or visit history, `people` from `receiptData(saleId)` (lines grouped by person and barber, with `refundedQty`), and the payer in each tender's label (already in `receiptData`).
+  - No new response field may carry a card or bank number: payer labels are names only, and `findSensitive` should keep passing.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
 ### 2026-10-24: core (family booking groups), REQUEST for mobile
 
 - **Please mount seven more family routes under `/api/v1/me/family`**, each a one-line re-export from `@/server/family-api` plus `OPTIONS`, like the web routes under `src/app/api/account/family/booking-options` and `booking-groups/**`:

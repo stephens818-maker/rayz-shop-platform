@@ -1461,7 +1461,7 @@ A parent or guardian's profile can have child profiles, up to the brand's limit 
   - **Online** (`/book`), the guest confirms their phone with a texted code (`/api/v1/auth/otp/*`) before anything about the account shows, so typing someone else's number reveals nothing. A shared phone asks who's booking; a new number asks for a name and consents. Then the family list shows with Add a child. **Not you?** signs out. **Book without a code** stays just for the guest and never shows the family.
   - It's all or nothing: when someone can't be seated, nothing is booked and nothing is sent. Booking also works through the API.
   - With the `clients.family` permission staff can add or edit children at booking or check-in, and switch which family member is in the chair.
-- **Checkout:** one family ticket. The POS offers the household's other appointments at the shop today; adding one brings its services, tagged to that appointment and its barber. The parent pays once, and the tip splits per barber by their services. Every visit on the ticket closes, and a void or refund reopens them and reverses each person's loyalty.
+- **Checkout:** one family ticket. The POS offers the household's other appointments at the shop today; adding one brings its services, tagged to that appointment and its barber. The parent pays once, and the tip splits per barber by their services. Every visit on the ticket closes, and a void or refund reopens them and reverses each person's loyalty. See [Combined checkout](#combined-checkout-linked-and-family-appointments) for sending to checkout, combining any tickets, split payment and tips per barber.
 - **Reports and search:**
   - The KPIs gain **Kids' cuts** and **Kids seen**. A child who later got their own account still counts as a kid for the visits before that.
   - The client filters gain **Has kids** and **Is a child**; the report builder gains Is a child, Parent and Kids.
@@ -1520,6 +1520,38 @@ A parent online or in the app, or the desk, books the parent and up to 6 childre
   - the deposit held and applied, the no-show forfeit, and waived or due back;
   - walk-in linking;
   - the endpoints.
+
+### Combined checkout (linked and family appointments)
+
+One ticket for several people and barbers. Domain (pure): `src/domain/combined-checkout.ts`. Server: `src/server/combined-checkout.ts`, with paying in `checkout.ts`.
+
+- **Sending to checkout.**
+  - **Send to checkout** on the appointment panel and on Up next (a barber for their own client, anyone with `checkout.any` for any). A visit in a booking group joins the group's one open ticket, opened for the parent when nobody's there yet. Otherwise it gets its own ticket. The service's finish is recorded then, so the average cut time is the barber's and not the family's wait for payment. Two barbers sending two children at the same moment land on one ticket (the group row is locked).
+  - **Send group to checkout** on the family booking box puts everyone still booked on one ticket, combining any tickets the group already had into it, paid by the parent.
+  - **Sales → Checkout queue** lists today's open tickets with who's on each and how many are ready, ready tickets first. The panel shows "Sent to checkout · 2 of 3 on the ticket ready".
+- **Combining at checkout.** The POS **People on this ticket** card shows each person, their barber and whether they're ready.
+  - **Add ticket** searches today's open tickets at the shop by number or by any client's name on them, family or not (walk-in siblings, friends), and **Combine** brings their people and lines over, each line still tagged to its person and barber (coupons held on their bookings come along). A ticket combined away is voided with "Combined into ticket #N" and links to it. The household's other appointments today are still offered as **Add to ticket**.
+  - **Own ticket** splits one person back off with their lines, and **Split everyone** gives everyone their own ticket again.
+  - A ticket that's handed off to the customer screen, has taken a payment, is a group deposit's, or is at another shop can't be combined. Two combines over the same tickets: one wins and the other is told. A screen opened before someone was combined in or split off can't pay the ticket ("Review it again").
+- **The combined ticket.**
+  - Lines are grouped by person, then barber; each line has a **For** picker.
+  - **One payment, or Split payment:** up to 6 payments in cash or card, each with who paid (anyone on the ticket, or a short name like "Grandma"). **Split evenly** and **Rest** fill the amounts. The tip goes on as few payments as it can, largest first, and each credit card carries its own surcharge. Cards are charged one by one; if one is declined, those already charged are refunded and the ticket stays open.
+  - **Tips:** one total split by each barber's services (as before), split evenly, or **Each barber** with a line per barber. The customer screen offers the same, and a tip typed per barber goes to that barber to the cent.
+  - **One digital receipt** itemized by person and barber, with who paid each tender. The sale page and the refund form are grouped the same way.
+  - **Coupons and loyalty** apply to the whole ticket: a coupon held by anyone's booking on it, and a reward owned by anyone on it, are offered.
+  - **Refunds per line item.** A refunded line comes back off the barber who did it.
+- **Attribution.** Each line keeps its person (`sale_items.appointment_id`) and barber (`sale_items.staff_id`). Reports and payroll credit service lines to their own barber through the `sale_line_moves` view (barber totals, service counts, average ticket, commission, item mix), the same way tips use `tip_split_moves`. Every visit on the ticket closes, and each child's cut counts on its own.
+- **Migration:** `core_0056_combined_checkout`. It adds `appointments.checkout_ready_at` and `checkout_ready_by`, `sales.merged_into_sale_id`, `payments.payer_customer_id` and `payer_label` (40 characters, cleaned of anything like a card number), `checkout_handoffs.tip_by_staff`, and the `sale_line_moves` view.
+- **Tests:** `tests/combined-checkout.test.ts` covers the split-tender plan, even splits, payer labels, per-barber tips, grouping by person, readiness and the combine rules. `tests/db/combined-checkout.test.ts` covers:
+  - two barbers sending a group's children at once, and each cut's time;
+  - the desk sending the whole group, and a group ticket started from a child's;
+  - combining and splitting walk-in tickets from different households;
+  - racing combines, and a stale screen refused;
+  - cash and two cards by different payers, exact per-barber tips, reports and payroll per barber, the receipt by person, and a line refunded off its own barber;
+  - a declined second card undone;
+  - a child's coupon and someone else's reward on the combined ticket.
+
+  `tests/db/handoff.test.ts` covers tipping each barber on the customer screen.
 
 ### Client search, filters and saved searches
 
