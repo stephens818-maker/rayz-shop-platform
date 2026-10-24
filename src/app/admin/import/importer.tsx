@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Notice, Table, Td, Th, cx } from "@/components/ui";
@@ -7,10 +8,11 @@ import { errorsCsv } from "@/lib/import-errors";
 import { statLines } from "@/lib/import-stats";
 import type { FamilyImportResult } from "@/server/family-import";
 import type { ImportKind, ImportResult } from "@/server/importer";
+import type { SquireReconcileResult } from "@/server/squire-reconcile";
 import { importAction } from "./actions";
 
 const KINDS: { id: ImportKind; label: string; hint: string }[] = [
-  { id: "clients", label: "1. Clients", hint: "Client list: names, contact, notes, consent, home shop, preferred barber. Import first." },
+  { id: "clients", label: "1. Clients", hint: "Client list: names, contact, birthday, notes, consent, home shop, preferred barber. One profile per client across every shop. Import first." },
   { id: "appointments", label: "2. Appointments", hint: "Every past visit (incl. no-shows and cancellations) and upcoming bookings, with services, add-ons, and prices." },
   { id: "transactions", label: "3. Transactions", hint: "Tickets: service and product totals, tips, tax, payment method. Linked to the matching visit." },
   { id: "loyalty", label: "4. Loyalty", hint: "Progress toward the next reward and available rewards. Re-running replaces, never adds." },
@@ -61,7 +63,7 @@ export function Importer() {
   const router = useRouter();
   const [kind, setKind] = useState<ImportKind>("clients");
   const [file, setFile] = useState<{ name: string; text: string } | null>(null);
-  const [result, setResult] = useState<(ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null }) | null>(null);
+  const [result, setResult] = useState<(ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null; reconcile?: SquireReconcileResult | null }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -141,7 +143,7 @@ function download(name: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
-function ResultView({ result }: { result: ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null } }) {
+function ResultView({ result }: { result: ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null; reconcile?: SquireReconcileResult | null } }) {
   const mapped = Object.entries(result.headerMap);
   const reasons = Object.entries(result.skippedByReason).sort((a, b) => b[1] - a[1]);
   return (
@@ -203,6 +205,7 @@ function ResultView({ result }: { result: ImportResult & { errorsTruncated: numb
         </div>
       </div>
       {result.family && <FamilyView family={result.family} dryRun={result.dryRun} />}
+      {result.reconcile && <ReconcileView r={result.reconcile} dryRun={result.dryRun} />}
       {result.errors.length > 0 && (
         <div>
           <div className="mb-1 text-sm font-medium text-zinc-700">Rows {result.dryRun ? "that will be" : ""} skipped</div>
@@ -253,6 +256,44 @@ function FamilyView({ family, dryRun }: { family: FamilyImportResult; dryRun: bo
         )}
         <div className="text-xs text-zinc-500">
           Families the file doesn&apos;t spell out (a kid sharing a parent&apos;s phone) show on the duplicates page under &quot;Shared phone or email&quot;, with a button to put the child on the parent&apos;s account.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReconcileView({ r, dryRun }: { r: SquireReconcileResult; dryRun: boolean }) {
+  const s = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+  return (
+    <div className="rounded-lg ring-1 ring-zinc-200">
+      <div className="border-b border-zinc-100 px-3 py-2 text-sm font-medium">One profile per client</div>
+      <div className="space-y-1 px-3 py-2 text-sm">
+        <div>
+          {dryRun
+            ? `${s(r.withBirthday, "row")} with a birthday. ${s(r.inFile, "person", "people")} appear${r.inFile === 1 ? "s" : ""} more than once under different Squire IDs with the same name and birthday; on import they become one profile unless a phone or email disagrees.`
+            : `${s(r.birthdaysFilled, "birthday")} filled in. ${s(r.merged, "record")} with the same name and birthday merged into one profile.`}
+        </div>
+        {!dryRun && r.review > 0 && (
+          <div>
+            {s(r.review, "pair")} with the same name and birthday but a different phone or email to review:{" "}
+            <Link className="underline" href="/admin/customers/duplicates?from=squire">
+              Squire duplicates
+            </Link>
+            .
+          </div>
+        )}
+        {r.problems.length > 0 && (
+          <ul className="list-disc pl-5 text-xs text-zinc-600">
+            {r.problems.slice(0, 50).map((p, i) => (
+              <li key={`${p.line ?? "x"}-${i}`}>
+                {p.line ? `Row ${p.line}: ` : ""}
+                {p.message}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="text-xs text-zinc-500">
+          The same client found at several Squire shops by Squire ID, email, or phone with a matching name is already one profile. Less certain matches (a similar name, a shared number) wait on the duplicates page.
         </div>
       </div>
     </div>

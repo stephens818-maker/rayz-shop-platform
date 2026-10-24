@@ -33,6 +33,16 @@ async function main() {
     writeFileSync(out, errorsCsv(r.errors));
     console.log(`Skipped rows written to ${out}`);
   }
+  if (kind === "clients") {
+    const { reconcileSquireClients } = await import("@/server/squire-reconcile");
+    const rc = await reconcileSquireClients(csv, { dryRun: !commit, actor: { label: "cli-import" }, now });
+    if (rc)
+      console.log(
+        commit
+          ? `One profile per client: ${rc.birthdaysFilled} birthdays filled, ${rc.merged} same name + birthday records merged, ${rc.review} pairs to review on /admin/customers/duplicates?from=squire`
+          : `One profile per client: ${rc.inFile} people appear under several Squire IDs with the same name and birthday`,
+      );
+  }
   await closeDb();
 }
 
