@@ -5,6 +5,7 @@
  * shop-local. Off until the brand turns it on, and with it off nothing else in the app changes.
  * Nothing here holds bank, card, SSN or tax ID data: that stays with Stripe and iSolved.
  */
+import { formatCents } from "@/lib/money";
 import { findSensitive, isForbiddenKey } from "@/lib/sensitive";
 import { addDays, diffDays, isValidLocalDate, type LocalDate } from "@/lib/time";
 import { roundHalfUp2 } from "./payroll/calc";
@@ -505,23 +506,22 @@ export function formatFieldValue(f: Pick<FieldDef, "kind">, value: string | null
 // ───────────────────────────── Describing a plan ─────────────────────────────
 
 const pctText = (f: number) => `${Math.round(f * 10000) / 100}%`;
-const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /** A version in plain words, one line per part, for the staff tab and My pay. Blank parts say what applies instead. */
 export function describePlan(v: CompVersion, names: { shop: (id: string) => string; service: (id: string) => string; tipMethod: (m: TipMethod) => string }): { label: string; value: string }[] {
   const out: { label: string; value: string }[] = [];
-  out.push({ label: "Hourly", value: v.hourlyRateCents === null ? "Payroll setup's rate" : `${dollars(v.hourlyRateCents)}/h` });
-  for (const r of v.shopHourlyRates) out.push({ label: `Hourly at ${names.shop(r.shopId)}`, value: `${dollars(r.cents)}/h` });
+  out.push({ label: "Hourly", value: v.hourlyRateCents === null ? "Payroll setup's rate" : `${formatCents(v.hourlyRateCents)}/h` });
+  for (const r of v.shopHourlyRates) out.push({ label: `Hourly at ${names.shop(r.shopId)}`, value: `${formatCents(r.cents)}/h` });
   out.push({ label: "Service commission", value: v.servicePct === null ? "Payroll setup's %" : pctText(v.servicePct) });
   for (const o of v.serviceOverrides) out.push({ label: o.kind === "service" ? names.service(o.ref) : `${o.ref} (category)`, value: pctText(o.pct) });
   if (v.serviceTiers.length)
     out.push({
       label: `Tiers (${v.tierMode === "step" ? "whole month at the tier reached" : "sliding"})`,
-      value: v.serviceTiers.map((t) => `${pctText(t.pct)} from ${dollars(t.fromCents)}`).join(", "),
+      value: v.serviceTiers.map((t) => `${pctText(t.pct)} from ${formatCents(t.fromCents)}`).join(", "),
     });
   out.push({ label: "Product commission", value: v.productPct === null ? "Payroll setup's %" : pctText(v.productPct) });
-  if (v.boothRentCents !== null && v.boothRentFrequency) out.push({ label: "Booth rent", value: `${dollars(v.boothRentCents)} ${RENT_LABEL[v.boothRentFrequency]}` });
-  if (v.guaranteeCents !== null && v.guaranteePer) out.push({ label: "Guaranteed minimum", value: `${dollars(v.guaranteeCents)} ${GUARANTEE_LABEL[v.guaranteePer]}` });
+  if (v.boothRentCents !== null && v.boothRentFrequency) out.push({ label: "Booth rent", value: `${formatCents(v.boothRentCents)} ${RENT_LABEL[v.boothRentFrequency]}` });
+  if (v.guaranteeCents !== null && v.guaranteePer) out.push({ label: "Guaranteed minimum", value: `${formatCents(v.guaranteeCents)} ${GUARANTEE_LABEL[v.guaranteePer]}` });
   if (v.tipMethod) out.push({ label: "Tips paid by", value: names.tipMethod(v.tipMethod) });
   if (v.tipCardFeeNetting !== null) out.push({ label: "Card fee on card tips", value: v.tipCardFeeNetting ? "Taken out" : "Not taken out" });
   return out;

@@ -5,6 +5,7 @@ import {
   boothRentForDays,
   commissionBetween,
   compensationSettings,
+  describePlan,
   exportExtras,
   fieldProblem,
   fieldValue,
@@ -344,5 +345,47 @@ describe("custom employee fields", () => {
     expect(fieldValue({ kind: "dropdown", options: ["Small", "Large"] }, "XL")).toEqual({ error: "Pick one of the choices" });
     expect(fieldValue({ kind: "text", options: [] }, "123-45-6789")).toMatchObject({ error: expect.stringMatching(/Stripe and iSolved/) });
     expect(fieldValue({ kind: "number", options: [] }, "4242424242424242")).toMatchObject({ error: expect.stringMatching(/Stripe and iSolved/) });
+  });
+});
+
+describe("describing a plan", () => {
+  it("says what each part is, and what applies where the plan is blank", () => {
+    const names = { shop: () => "Moline", service: () => "Cut", tipMethod: (m: string) => m.toUpperCase() };
+    expect(describePlan(version(), names)).toEqual([
+      { label: "Hourly", value: "Payroll setup's rate" },
+      { label: "Service commission", value: "Payroll setup's %" },
+      { label: "Product commission", value: "Payroll setup's %" },
+    ]);
+    const full = version({
+      hourlyRateCents: 1550,
+      shopHourlyRates: [{ shopId: A, cents: 1600 }],
+      servicePct: 0.45,
+      serviceOverrides: [
+        { kind: "service", ref: CUT, pct: 0.5 },
+        { kind: "category", ref: "Beard", pct: 0.4 },
+      ],
+      serviceTiers: [{ fromCents: 500000, pct: 0.5 }],
+      tierMode: "marginal",
+      productPct: 0.125,
+      boothRentCents: 25000,
+      boothRentFrequency: "weekly",
+      guaranteeCents: 100000,
+      guaranteePer: "pay_period",
+      tipMethod: "payroll",
+      tipCardFeeNetting: false,
+    });
+    expect(describePlan(full, names).map((l) => `${l.label}: ${l.value}`)).toEqual([
+      "Hourly: $15.50/h",
+      "Hourly at Moline: $16.00/h",
+      "Service commission: 45%",
+      "Cut: 50%",
+      "Beard (category): 40%",
+      "Tiers (sliding): 50% from $5,000.00",
+      "Product commission: 12.5%",
+      "Booth rent: $250.00 a week",
+      "Guaranteed minimum: $1,000.00 a pay period",
+      "Tips paid by: PAYROLL",
+      "Card fee on card tips: Not taken out",
+    ]);
   });
 });
