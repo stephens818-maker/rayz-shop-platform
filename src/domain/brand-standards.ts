@@ -110,6 +110,8 @@ export const CONTENT_POLICIES = {
   coupons: "Coupons and promotions",
 } as const;
 export type ContentPolicy = keyof typeof CONTENT_POLICIES;
+/** Today's behavior: locations already make coupons for their own shops; the rest is the brand's. */
+const CONTENT_DEFAULT: Record<ContentPolicy, "brand" | "local"> = { marketingTemplates: "brand", messageTemplates: "brand", badges: "brand", coupons: "local" };
 
 export type Toggle = "local" | "brand";
 export type ContentRule = "brand" | "local";
@@ -136,7 +138,7 @@ export function brandStandards(raw: unknown): BrandStandards {
   const content: Record<string, unknown> = {};
   for (const k of Object.keys(CONTENT_POLICIES)) {
     const v = (part("content") as Record<string, unknown>)[k];
-    content[k] = v === "local" ? "local" : "brand";
+    content[k] = v === "local" || v === "brand" ? v : CONTENT_DEFAULT[k as ContentPolicy];
   }
   return { shop, toggles, content } as unknown as BrandStandards;
 }

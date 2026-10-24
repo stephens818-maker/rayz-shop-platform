@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { products, services, shopProducts } from "@/db/schema";
+import { LOCAL_PRICES, priceStandardProblem } from "@/domain/brand-standards";
 import { Permission } from "@/domain/permissions";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
@@ -12,6 +13,7 @@ import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { AppError, forbidden } from "@/server/errors";
 import { AdjustInput, BrandLevelsInput, ShopInventorySettings, ShopLevelsInput, adjustStock, saveBrandLevels, savePoApprovalThreshold, saveShopInventorySettings, saveShopLevels, sendLowStockAlerts } from "@/server/inventory/adjust";
 import { whoOf } from "@/server/inventory/ledger";
+import { assertLocalProductPrice } from "@/server/standards";
 
 async function staffFor(perms: Permission | Permission[], shopId?: string) {
   const ctx = await authorize(perms);
@@ -32,12 +34,32 @@ export async function saveShopProductAction(shopId: string, productId: string, r
     const { ctx } = await staffFor(["catalog.prices", "catalog.manage"], shopId);
     const v = ShopProduct.parse(raw);
     const before = await db.query.shopProducts.findFirst({ where: and(eq(shopProducts.shopId, shopId), eq(shopProducts.productId, productId)) });
+    if (v.priceCents !== before?.priceCents) await assertLocalProductPrice(ctx, productId, v.priceCents);
     await db
       .insert(shopProducts)
       .values({ shopId, productId, ...v })
       .onConflictDoUpdate({ target: [shopProducts.shopId, shopProducts.productId], set: v });
     await audit(ctx.actor, before ? "inventory.update" : "inventory.carry", "product", productId, { ...v, ...(before ? { from: { costCents: before.costCents, priceCents: before.priceCents, active: before.active } } : {}) }, shopId);
     refresh();
+    return null;
+  });
+}
+
+const Standard = z.object({ localPrice: z.enum(LOCAL_PRICES), priceFloorCents: z.number().int().min(0).nullable(), priceCeilingCents: z.number().int().min(0).nullable() });
+
+/** The brand's standard for what locations may charge for a product. */
+export async function saveProductStandardAction(productId: string, raw: z.input<typeof Standard>) {
+  return safe(async () => {
+    const ctx = await authorize("catalog.manage");
+    const v = Standard.parse(raw);
+    const p = await db.query.products.findFirst({ where: eq(products.id, productId), columns: { priceCents: true } });
+    if (!p) throw new AppError("not_found", "Product not found");
+    const values = { localPrice: v.localPrice, priceFloorCents: v.localPrice === "range" ? v.priceFloorCents : null, priceCeilingCents: v.localPrice === "range" ? v.priceCeilingCents : null };
+    const problem = priceStandardProblem({ brandPriceCents: p.priceCents, ...values });
+    if (problem) throw new AppError("bad_request", problem);
+    await db.update(products).set(values).where(eq(products.id, productId));
+    await audit(ctx.actor, "product.standard", "product", productId, values, null);
+    revalidatePath(`/admin/inventory/${productId}`);
     return null;
   });
 }

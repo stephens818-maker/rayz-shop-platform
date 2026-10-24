@@ -1,16 +1,18 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { services, shopServices } from "@/db/schema";
+import { LOCAL_PRICES, priceStandardProblem } from "@/domain/brand-standards";
 import { durationProblem } from "@/domain/timing";
 import { slugify } from "@/lib/ids";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
+import { assertLocalService } from "@/server/standards";
 
 const Override = z.object({
   enabled: z.boolean(),
@@ -25,6 +27,12 @@ export async function saveShopServiceAction(shopId: string, serviceId: string, r
     const ctx = await authorize(["catalog.prices", "catalog.manage"]);
     assertShopAccess(ctx, shopId);
     const o = Override.parse(raw);
+    const before = await db.query.shopServices.findFirst({ where: and(eq(shopServices.shopId, shopId), eq(shopServices.serviceId, serviceId)) });
+    await assertLocalService(ctx, serviceId, {
+      priceCents: o.priceCents !== (before?.priceCents ?? null) ? o.priceCents : null,
+      nameOverride: (o.nameOverride || null) !== (before?.nameOverride ?? null) ? o.nameOverride || null : null,
+      durationMin: o.durationMin !== (before?.durationMin ?? null) ? o.durationMin : null,
+    });
     if (o.durationMin !== null) {
       const svc = await db.query.services.findFirst({ where: eq(services.id, serviceId), columns: { durationStepMin: true } });
       const problem = durationProblem(o.durationMin, svc?.durationStepMin ?? 5);
@@ -51,6 +59,11 @@ const Master = z.object({
   defaultDurationMin: z.number().int().min(5).max(480),
   active: z.boolean(),
   sortOrder: z.number().int(),
+  localPrice: z.enum(LOCAL_PRICES).default("open"),
+  priceFloorCents: z.number().int().min(0).nullable().default(null),
+  priceCeilingCents: z.number().int().min(0).nullable().default(null),
+  localName: z.boolean().default(true),
+  localDuration: z.boolean().default(true),
 });
 
 export async function saveMasterServiceAction(raw: z.input<typeof Master>) {
@@ -58,6 +71,8 @@ export async function saveMasterServiceAction(raw: z.input<typeof Master>) {
     const ctx = await authorize("catalog.manage");
     const m = Master.parse(raw);
     const { id, ...values } = m;
+    const standard = priceStandardProblem({ brandPriceCents: m.defaultPriceCents, localPrice: m.localPrice, priceFloorCents: m.priceFloorCents, priceCeilingCents: m.priceCeilingCents });
+    if (standard) throw new AppError("bad_request", standard);
     const step = id ? (await db.query.services.findFirst({ where: eq(services.id, id), columns: { durationStepMin: true } }))?.durationStepMin : 5;
     const problem = durationProblem(m.defaultDurationMin, step ?? 5);
     if (problem) throw new AppError("bad_request", problem);
