@@ -11,12 +11,16 @@ import {
   customKey,
   deriveBadges,
   showBadges,
+  progressFacts,
+  thresholdsProblem,
   type BadgeFacts,
+  type BadgeProgressFacts,
   type BadgeSettings,
   type CustomBadge,
   type ShownBadge,
   type StoredBadge,
 } from "@/domain/badges";
+import { notifies, type BadgeChange } from "@/domain/customer-badges";
 import { segmentProblem } from "@/domain/marketing";
 import { SHOP_TZ, todayLocal, type LocalDate } from "@/lib/time";
 import { audit } from "./audit";
@@ -49,6 +53,8 @@ export async function saveBadgeSettings(ctx: StaffContext, raw: unknown): Promis
   if (!can(ctx, "badges.settings")) throw forbidden("You can't change client badges");
   const parsed = BadgeSettingsSchema.safeParse(raw);
   if (!parsed.success) throw new AppError("bad_request", parsed.error.issues[0]?.message ?? "Check the badge settings");
+  const order = thresholdsProblem(parsed.data.thresholds);
+  if (order) throw new AppError("bad_request", order);
   const before = await loadBadgeSettings();
   await db.update(brandSettings).set({ badges: parsed.data, updatedAt: new Date() });
   // Thresholds decide who has which badge; on, off and roles only decide who sees them.
@@ -150,7 +156,7 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
   const today = todayLocal(now);
   const nowIso = now.toISOString();
   const yearAgo = new Date(now.getTime() - 365 * DAY).toISOString();
-  const [people, visits, appts, spend, products, rewards, cards, coupons, clicks, outs, stars] = await Promise.all([
+  const [people, visits, appts, spend, products, rewards, cards, coupons, clicks, outs, stars, streaks] = await Promise.all([
     rowsOf<{
       id: string;
       created_on: string;
@@ -214,6 +220,16 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
     rowsOf<{ customer_id: string; avg: number; n: number }>(
       tx.execute(sql`select customer_id, avg(stars)::float8 avg, count(*)::int n from client_ratings where customer_id = any(${these}) group by 1`),
     ),
+    // Kept on time: completed, and arrived within the grace (or no arrival stamped). A no-show, a late cancel or a late arrival ends the run.
+    rowsOf<{ customer_id: string; n: number }>(
+      tx.execute(sql`select customer_id, (coalesce(min(rn) filter (where not ok), max(rn) + 1) - 1)::int n from (
+          select a.customer_id, row_number() over (partition by a.customer_id order by a.starts_at desc) rn,
+            (a.status = 'completed' and (t.arrived_at is null or t.arrived_at <= a.starts_at + make_interval(mins => ${t.streakLateMinutes}::int))) ok
+          from appointments a left join appointment_times t on t.appointment_id = a.id
+          where a.customer_id = any(${these}) and a.starts_at < ${nowIso}
+            and (a.status in ('completed', 'no_show') or (a.status = 'cancelled' and a.cancelled_at is not null and a.cancelled_at > a.starts_at - make_interval(hours => ${t.lateCancelHours}::int)))
+        ) x group by 1`),
+    ),
   ]);
 
   const staffIds = new Set<string>();
@@ -235,6 +251,7 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
   const couponBy = by(coupons);
   const clickBy = by(clicks);
   const starsBy = by(stars);
+  const streakBy = by(streaks);
   const visitsBy = new Map<string, BadgeFacts["visits"]>();
   for (const v of visits) {
     const list = visitsBy.get(v.customer_id) ?? [];
@@ -271,6 +288,7 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
       source: p.source,
       referredBy: p.referred_by,
       referrals: Number(p.referrals),
+      streak: Number(streakBy.get(p.id)?.n ?? 0),
     });
   }
   return out;
@@ -306,39 +324,70 @@ export async function badgeRun(now: Date, o: { allMembers?: boolean } = {}, tx: 
   return { settings, custom, vip, members: o.allMembers && custom.length ? await customMembers(custom, now, null, tx) : undefined };
 }
 
-/** Every badge these clients earn (built-in and custom), whoever may see them. */
-export async function computeBadges(ids: readonly string[], now: Date, run: BadgeRun, tx: DBorTx = db): Promise<Map<string, StoredBadge[]>> {
-  const out = new Map<string, StoredBadge[]>();
+export interface Computed {
+  badges: StoredBadge[];
+  progress: BadgeProgressFacts;
+}
+
+/** Every badge these clients earn (built-in and custom), whoever may see them, and what progress meters read. */
+export async function computeBadges(ids: readonly string[], now: Date, run: BadgeRun, tx: DBorTx = db): Promise<Map<string, Computed>> {
+  const out = new Map<string, Computed>();
   if (!ids.length) return out;
   const [facts, members] = await Promise.all([badgeFacts(ids, now, run.settings.thresholds, tx), run.members ?? (run.custom.length ? customMembers(run.custom, now, ids, tx) : new Map())]);
   const today = todayLocal(now);
   for (const [id, f] of facts) {
     const list = deriveBadges(f, { today, t: run.settings.thresholds, vipCutoffCents: run.vip });
     for (const c of run.custom) if (members.get(c.id)?.has(id)) list.push({ k: customKey(c.id) });
-    out.set(id, list);
+    out.set(id, { badges: list, progress: progressFacts(f) });
   }
   return out;
 }
 
-const hashOf = (b: readonly StoredBadge[]) => createHash("sha256").update(JSON.stringify(b)).digest("hex").slice(0, 32);
+const hashOf = (b: readonly StoredBadge[], p: BadgeProgressFacts) => createHash("sha256").update(JSON.stringify([b, p])).digest("hex").slice(0, 32);
+
+/** The day a badge was earned when we first see it: the day it became true if the rule knows it, otherwise today. */
+function earnedHint(b: StoredBadge, today: LocalDate): LocalDate {
+  const at = b.k === "anniversary" ? b.d?.on : b.d?.at;
+  return typeof at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(at) && at <= today ? at : today;
+}
 
 /**
  * Recomputes these clients and caches the result. Only rows whose badges changed are rewritten;
- * the rest just get today's date. Returns how many changed.
+ * the rest just get today's date. Each badge keeps the day it was earned. A badge a customer sees
+ * that came or went since the last run is noted for Badge news (never on a client's first run, so
+ * the first fill messages nobody). Returns how many changed.
  */
 export async function refreshBadges(ids: readonly string[], now: Date, run?: BadgeRun, tx: DBorTx = db): Promise<number> {
   const clean = [...new Set(ids.filter((i) => UUID.test(i)))];
   if (!clean.length) return 0;
   const r = run ?? (await badgeRun(now, {}, tx));
-  const computed = await computeBadges(clean, now, r, tx);
+  const [computed, before] = await Promise.all([
+    computeBadges(clean, now, r, tx),
+    rowsOf<{ customer_id: string; keys: string[]; since: Record<string, string> }>(
+      tx.execute(sql`select customer_id, keys, since from client_badges where customer_id = any(${idArray(clean)})`),
+    ),
+  ]);
   if (!computed.size) return 0;
   const today = todayLocal(now);
-  const rows = [...computed].map(([id, b]) => ({ id, keys: b.map((x) => x.k), badges: b, hash: hashOf(b) }));
+  const old = new Map(before.map((b) => [b.customer_id, b]));
+  const notices: { id: string; key: string; change: BadgeChange }[] = [];
+  const custom = new Map(r.custom.map((c) => [customKey(c.id), c]));
+  const rows = [...computed].map(([id, c]) => {
+    const was = old.get(id);
+    const since: Record<string, string> = {};
+    for (const b of c.badges) since[b.k] = was?.keys.includes(b.k) && was.since?.[b.k] ? was.since[b.k] : earnedHint(b, today);
+    if (was) {
+      const has = new Set(c.badges.map((b) => b.k));
+      const changes = [...[...has].filter((k) => !was.keys.includes(k)).map((k) => [k, "earned"] as const), ...was.keys.filter((k) => !has.has(k)).map((k) => [k, "lost"] as const)];
+      for (const [key, change] of changes) if (notifies(r.settings, key, change, custom.get(key))) notices.push({ id, key, change });
+    }
+    return { id, keys: c.badges.map((x) => x.k), badges: c.badges, progress: c.progress, since, hash: hashOf(c.badges, c.progress) };
+  });
   const changed = await rowsOf<{ customer_id: string }>(
-    tx.execute(sql`insert into client_badges (customer_id, keys, badges, hash, computed_on, computed_at, changed_at)
-      select (x->>'id')::uuid, array(select jsonb_array_elements_text(x->'keys')), x->'badges', x->>'hash', ${today}::date, now(), now()
+    tx.execute(sql`insert into client_badges (customer_id, keys, badges, progress, since, hash, computed_on, computed_at, changed_at)
+      select (x->>'id')::uuid, array(select jsonb_array_elements_text(x->'keys')), x->'badges', x->'progress', x->'since', x->>'hash', ${today}::date, now(), now()
       from jsonb_array_elements(${JSON.stringify(rows)}::jsonb) x
-      on conflict (customer_id) do update set keys = excluded.keys, badges = excluded.badges, hash = excluded.hash,
+      on conflict (customer_id) do update set keys = excluded.keys, badges = excluded.badges, progress = excluded.progress, since = excluded.since, hash = excluded.hash,
         computed_on = excluded.computed_on, computed_at = excluded.computed_at, changed_at = excluded.changed_at
       where client_badges.hash <> excluded.hash
       returning customer_id`),
@@ -346,6 +395,10 @@ export async function refreshBadges(ids: readonly string[], now: Date, run?: Bad
   const changedIds = new Set(changed.map((c) => c.customer_id));
   const same = rows.map((x) => x.id).filter((id) => !changedIds.has(id));
   if (same.length) await tx.execute(sql`update client_badges set computed_on = ${today}::date, computed_at = now() where customer_id = any(${idArray(same)})`);
+  if (notices.length)
+    await tx.execute(sql`insert into client_badge_notices (customer_id, badge_key, change, occurred_on)
+      select (x->>'id')::uuid, x->>'key', x->>'change', ${today}::date from jsonb_array_elements(${JSON.stringify(notices)}::jsonb) x
+      on conflict (customer_id, badge_key, change, occurred_on) do nothing`);
   return changedIds.size;
 }
 

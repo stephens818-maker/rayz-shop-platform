@@ -87,7 +87,7 @@ export function AutomationEditor({
           <Field label="Channels, in the order they're tried">
             <ChannelOrder value={v.channels} disabled={!mayBrand} onChange={(channels) => edit({ channels })} />
           </Field>
-          <TemplateFields value={v.templates} channels={v.channels} disabled={!mayBrand} address={address} onChange={(templates) => edit({ templates })} />
+          <TemplateFields value={v.templates} channels={v.channels} disabled={!mayBrand} address={address} extraFields={def.fields} onChange={(templates) => edit({ templates })} />
           {error && <Notice tone="red">{error}</Notice>}
           {saved && <Notice tone="green">Saved. Locations that use the brand&apos;s wording send this from now on.</Notice>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-3">
@@ -179,7 +179,7 @@ function LocationRow({ automation, location, address, mayWrite, maySwitch }: { a
       )}
       {ownWording && (
         <>
-          <TemplateFields value={templates} channels={automation.channels} disabled={disabled} address={address} onChange={(t) => (changed(), setTemplates(t))} />
+          <TemplateFields value={templates} channels={automation.channels} disabled={disabled} address={address} extraFields={def.fields} onChange={(t) => (changed(), setTemplates(t))} />
           {!disabled && <TestSend campaignId={automation.id} channels={automation.channels} shops={[{ id: location.shopId, name: location.shopName }]} templates={templates} />}
         </>
       )}

@@ -368,7 +368,19 @@ export async function createAppointment(input: CreateAppointmentInput) {
     }
     throw new AppError("slot_unavailable", "That time was just taken — please pick another");
   });
+  await refreshClientBadges(created.customerId, now);
   return getAppointmentByCode(created.code);
+}
+
+/**
+ * Booking clears We miss you; a cancellation or no-show can bring it (or a lost streak) back.
+ * Loaded here, not at the top: the badge engine is staff-only, and the client API books too.
+ */
+async function refreshClientBadges(customerId: string | null | undefined, now: Date) {
+  if (!customerId) return;
+  await import("./badges")
+    .then((b) => b.refreshBadges([customerId], now))
+    .catch((e: Error) => console.error("badge refresh after booking change failed", e.message));
 }
 
 export async function messageContext(appointmentId: string, tx: DBorTx = db): Promise<AppointmentMessageContext> {
@@ -494,6 +506,7 @@ export async function cancelAppointment(
     await audit(opts.actor, "appointment.cancel", "appointment", a.id, { reason: opts.reason ?? null, byCustomer: opts.byCustomer }, a.shopId, tx);
     if (a.customerId) await scheduleAppointmentNotifications("cancelled", await messageContext(a.id, tx), tx, now);
   });
+  await refreshClientBadges(a.customerId, now);
   return getAppointmentByCode(code, now);
 }
 
@@ -630,6 +643,7 @@ export async function setAppointmentStatus(id: string, status: keyof typeof TRAN
     if (isDoubleBookingError(e)) throw new AppError("slot_unavailable", "Can't restore: the barber is booked at that time now");
     throw e;
   }
+  if (status === "cancelled" || status === "no_show" || status === "booked") await refreshClientBadges(a.customerId, now);
 }
 
 // ───────────────────────────── Walk-ins & waitlist ─────────────────────────────

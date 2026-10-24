@@ -7,7 +7,7 @@
  */
 import { z } from "zod";
 import { formatCents } from "@/lib/money";
-import { diffDays, formatDate, type LocalDate } from "@/lib/time";
+import { addDays, diffDays, formatDate, type LocalDate } from "@/lib/time";
 import { upcomingBirthdayKeys } from "./client-filters";
 import type { FieldKey, Level } from "./client-privacy";
 import { SegmentSchema, segmentProblem, type Segment } from "./marketing";
@@ -16,9 +16,9 @@ import { CADENCE_GAPS, cadenceFromDays, cadenceLabel, median } from "./visit-cad
 
 // ───────────────────────────── Catalog ─────────────────────────────
 
-export const BADGE_TONES = ["gray", "green", "blue", "amber", "red", "violet"] as const;
+export const BADGE_TONES = ["gray", "green", "blue", "amber", "orange", "red", "violet"] as const;
 export type BadgeTone = (typeof BADGE_TONES)[number];
-export const BADGE_TONE_LABEL: Record<BadgeTone, string> = { gray: "Gray", green: "Green", blue: "Blue", amber: "Amber", red: "Red", violet: "Violet" };
+export const BADGE_TONE_LABEL: Record<BadgeTone, string> = { gray: "Gray", green: "Green", blue: "Blue", amber: "Amber", orange: "Orange", red: "Red", violet: "Violet" };
 
 export const BADGE_ICONS = [
   "check",
@@ -48,12 +48,17 @@ export const BADGE_ICONS = [
   "bell_off",
   "users",
   "tag",
+  "medal",
+  "flame",
+  "frown",
+  "trophy",
 ] as const;
 export type BadgeIcon = (typeof BADGE_ICONS)[number];
 
-export const BADGE_GROUPS = ["timing", "new", "value", "celebrations", "booking", "barber", "feedback", "profile", "custom"] as const;
+export const BADGE_GROUPS = ["rewards", "timing", "new", "value", "celebrations", "booking", "barber", "feedback", "profile", "custom"] as const;
 export type BadgeGroup = (typeof BADGE_GROUPS)[number];
 export const BADGE_GROUP_LABEL: Record<BadgeGroup, string> = {
+  rewards: "Customer rewards",
   timing: "Visit timing",
   new: "New and returning",
   value: "Value",
@@ -83,11 +88,27 @@ interface BadgeDef {
   action?: boolean;
   /** The Morning Dashboard's line for today's booked clients. */
   today?: (n: number) => string;
+  /** Customers see it in their account and the app: "default" starts shown to them, "never" can't be (it's a staff judgment). Otherwise the brand may turn it on. */
+  customer?: "default" | "never";
 }
 
 const clients = (n: number, before: string, after = "") => `${n} ${before}${before ? " " : ""}client${n === 1 ? "" : "s"}${after ? ` ${after}` : ""}`;
 
 export const BADGES = [
+  { key: "gold", group: "rewards", label: "Gold", icon: "medal", tone: "amber", hint: "Great client: at least the Gold visits below, with no more no-shows in 12 months than allowed.", customer: "default" },
+  { key: "silver", group: "rewards", label: "Silver", icon: "medal", tone: "gray", hint: "At least the Silver visits below, with no more no-shows in 12 months than allowed.", customer: "default" },
+  { key: "bronze", group: "rewards", label: "Bronze", icon: "medal", tone: "orange", hint: "At least the Bronze visits below, with no more no-shows in 12 months than allowed.", customer: "default" },
+  {
+    key: "miss_you",
+    group: "rewards",
+    label: "We miss you",
+    icon: "frown",
+    tone: "red",
+    hint: "No haircut in the weeks below and nothing booked. Clears as soon as they book.",
+    customer: "default",
+  },
+  { key: "streak", group: "rewards", label: "Streak", icon: "flame", tone: "orange", hint: "Kept their last appointments in a row, on time: the number below.", customer: "default" },
+  { key: "referral_champion", group: "rewards", label: "Referral champion", icon: "trophy", tone: "violet", hint: "Referred at least the number of clients below.", customer: "default" },
   { key: "on_track", group: "timing", label: "On track", icon: "check", tone: "green", hint: "Booked, or not yet due against their usual time between visits." },
   { key: "due", group: "timing", label: "Due", icon: "clock", tone: "amber", hint: "Within a few days of their usual time between visits, with nothing booked." },
   { key: "overdue", group: "timing", label: "Overdue", icon: "alert", tone: "red", hint: "Past their usual time between visits by a week or more, with nothing booked." },
@@ -116,7 +137,17 @@ export const BADGES = [
   { key: "win_back", group: "new", label: "Win-back", icon: "return", tone: "green", hint: "Back, or booked again, after lapsing.", today: (n) => `${clients(n, "")} coming back after a lapse` },
   { key: "vip", group: "value", label: "VIP", icon: "crown", tone: "violet", hint: "Top spenders over the last 12 months.", money: true, sensitive: true, today: (n) => clients(n, "VIP") },
   { key: "loyal", group: "value", label: "Loyal regular", icon: "heart", tone: "green", hint: "At least the number of visits below." },
-  { key: "reward", group: "value", label: "Reward ready", icon: "gift", tone: "violet", hint: "A loyalty reward is waiting to be used.", action: true, today: (n) => `${clients(n, "")} with a reward to use` },
+  {
+    key: "reward",
+    group: "value",
+    label: "Reward ready",
+    icon: "gift",
+    tone: "violet",
+    hint: "A loyalty reward is waiting to be used.",
+    action: true,
+    today: (n) => `${clients(n, "")} with a reward to use`,
+    customer: "default",
+  },
   { key: "gift_card", group: "value", label: "Gift card", icon: "card", tone: "blue", hint: "Money left on a gift card.", money: true },
   { key: "coupon", group: "value", label: "Coupon", icon: "ticket", tone: "blue", hint: "An unused coupon code sent to them." },
   {
@@ -129,6 +160,7 @@ export const BADGES = [
     reads: [["birthday", "full"]],
     action: true,
     today: (n) => `${clients(n, "")} with a birthday this week`,
+    customer: "default",
   },
   {
     key: "birthday_month",
@@ -139,8 +171,9 @@ export const BADGES = [
     hint: "Birthday this calendar month. Shows to people who see the birthday's month.",
     reads: [["birthday", "masked"]],
     action: true,
+    customer: "default",
   },
-  { key: "anniversary", group: "celebrations", label: "Anniversary", icon: "calendar", tone: "violet", hint: "A year (or more) since their first visit, this week." },
+  { key: "anniversary", group: "celebrations", label: "Anniversary", icon: "calendar", tone: "violet", hint: "A year (or more) since their first visit, this week.", customer: "default" },
   {
     key: "no_show_risk",
     group: "booking",
@@ -172,10 +205,10 @@ export const BADGES = [
     reads: [["preferred_barber", "masked"]],
     today: (n) => `${clients(n, "")} whose barber left`,
   },
-  { key: "low_rating", group: "feedback", label: "Low rating", icon: "thumbs_down", tone: "red", hint: "Staff rate them below the stars below on average.", reads: [["ratings", "masked"]] },
-  { key: "review_clicked", group: "feedback", label: "Review clicked", icon: "star", tone: "green", hint: "Opened the location's Google review link." },
+  { key: "low_rating", group: "feedback", label: "Low rating", icon: "thumbs_down", tone: "red", hint: "Staff rate them below the stars below on average.", reads: [["ratings", "masked"]], customer: "never" },
+  { key: "review_clicked", group: "feedback", label: "Review clicked", icon: "star", tone: "green", hint: "Opened the location's Google review link.", customer: "default" },
   { key: "product_buyer", group: "feedback", label: "Product buyer", icon: "bag", tone: "green", hint: "Bought products in the last 12 months: suggest what goes with them." },
-  { key: "no_product", group: "feedback", label: "Never bought product", icon: "bag", tone: "gray", hint: "Two or more visits and no product yet." },
+  { key: "no_product", group: "feedback", label: "Never bought product", icon: "bag", tone: "gray", hint: "Two or more visits and no product yet.", customer: "never" },
   {
     key: "missing_info",
     group: "profile",
@@ -189,7 +222,7 @@ export const BADGES = [
     ],
   },
   { key: "opted_out", group: "profile", label: "Opted out", icon: "bell_off", tone: "gray", hint: "Unsubscribed from marketing texts, emails or app notifications." },
-  { key: "referral_source", group: "profile", label: "Referral source", icon: "users", tone: "gray", hint: "How they found us, or referred by another client." },
+  { key: "referral_source", group: "profile", label: "Referral source", icon: "users", tone: "gray", hint: "How they found us, or referred by another client.", customer: "never" },
   { key: "referrer", group: "profile", label: "Referrer", icon: "users", tone: "green", hint: "Referred other clients." },
 ] as const satisfies readonly BadgeDef[];
 
@@ -230,6 +263,14 @@ export const BadgeThresholdsSchema = z.object({
   switchedDays: z.number().int().min(14, "Switched within at least 14 days").max(365, "Switched within up to 365 days").default(90),
   winBackDays: z.number().int().min(7, "Win-back lasts at least 7 days").max(180, "Win-back lasts up to 180 days").default(60),
   lowRatingBelow: z.number().min(1.5, "Low rating is below at least 1.5 stars").max(5, "Low rating is below at most 5 stars").default(3),
+  bronzeVisits: z.number().int().min(1, "Bronze needs at least 1 visit").max(500, "Bronze up to 500 visits").default(3),
+  silverVisits: z.number().int().min(2, "Silver needs at least 2 visits").max(500, "Silver up to 500 visits").default(6),
+  goldVisits: z.number().int().min(3, "Gold needs at least 3 visits").max(500, "Gold up to 500 visits").default(10),
+  tierNoShows: z.number().int().min(0, "No-shows allowed can't be negative").max(10, "Up to 10 no-shows allowed").default(0),
+  missYouWeeks: z.number().int().min(2, "We miss you starts at 2 weeks or more").max(52, "We miss you starts by 52 weeks").default(8),
+  streakVisits: z.number().int().min(2, "A streak is at least 2 appointments").max(50, "A streak is up to 50 appointments").default(5),
+  streakLateMinutes: z.number().int().min(0, "Late can't be negative").max(60, "Late is up to 60 minutes").default(10),
+  championReferrals: z.number().int().min(2, "Referral champion needs at least 2 referrals").max(100, "Referral champion up to 100 referrals").default(3),
 });
 export type BadgeThresholds = z.output<typeof BadgeThresholdsSchema>;
 export const DEFAULT_THRESHOLDS: BadgeThresholds = BadgeThresholdsSchema.parse({});
@@ -247,7 +288,21 @@ export const THRESHOLD_LABEL: Record<keyof BadgeThresholds, { label: string; uni
   switchedDays: { label: "Switched barbers within", unit: "days", badge: "switched_barber" },
   winBackDays: { label: "Win-back shows for", unit: "days after they're back", badge: "win_back" },
   lowRatingBelow: { label: "Low rating below", unit: "stars", badge: "low_rating" },
+  bronzeVisits: { label: "Bronze from", unit: "visits", badge: "bronze" },
+  silverVisits: { label: "Silver from", unit: "visits", badge: "silver" },
+  goldVisits: { label: "Gold from", unit: "visits", badge: "gold" },
+  tierNoShows: { label: "Gold, Silver and Bronze allow", unit: "no-shows in 12 months", badge: "gold" },
+  missYouWeeks: { label: "We miss you after", unit: "weeks without a haircut", badge: "miss_you" },
+  streakVisits: { label: "Streak from", unit: "kept appointments in a row", badge: "streak" },
+  streakLateMinutes: { label: "On time means arriving within", unit: "minutes of the start", badge: "streak" },
+  championReferrals: { label: "Referral champion from", unit: "referrals", badge: "referral_champion" },
 };
+
+/** Why these thresholds don't hang together, or null. */
+export function thresholdsProblem(t: BadgeThresholds): string | null {
+  if (!(t.bronzeVisits < t.silverVisits && t.silverVisits < t.goldVisits)) return "Bronze needs fewer visits than Silver, and Silver fewer than Gold";
+  return null;
+}
 
 export const BadgeSettingsSchema = z.object({
   enabled: z.boolean().default(true),
@@ -256,6 +311,10 @@ export const BadgeSettingsSchema = z.object({
   /** Badge key to role id to shown or not. Missing: shown, except sensitive badges, which start shown to brand-level roles only. */
   roles: z.record(z.string(), z.record(z.string(), z.boolean())).default({}),
   thresholds: BadgeThresholdsSchema.default(DEFAULT_THRESHOLDS),
+  /** Badge key to shown to customers or not. Missing: the catalog's default (custom badges start staff-only). */
+  customer: z.record(z.string(), z.boolean()).default({}),
+  /** Badge key to whether customers get a message when they earn or lose it. Missing: NOTIFY_DEFAULT. */
+  notify: z.record(z.string(), z.object({ earned: z.boolean().default(false), lost: z.boolean().default(false) })).default({}),
 });
 export type BadgeSettings = z.output<typeof BadgeSettingsSchema>;
 export const DEFAULT_BADGE_SETTINGS: BadgeSettings = BadgeSettingsSchema.parse({});
@@ -266,7 +325,7 @@ export function badgeSettings(raw: unknown): BadgeSettings {
   if (r.success) return r.data;
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const out: BadgeSettings = { ...DEFAULT_BADGE_SETTINGS, thresholds: { ...DEFAULT_THRESHOLDS } };
-  for (const k of ["enabled", "off", "roles"] as const) {
+  for (const k of ["enabled", "off", "roles", "customer", "notify"] as const) {
     const v = BadgeSettingsSchema.shape[k].safeParse(o[k]);
     if (v.success) (out as Record<string, unknown>)[k] = v.data;
   }
@@ -394,6 +453,8 @@ export interface BadgeFacts {
   source: string | null;
   referredBy: boolean;
   referrals: number;
+  /** Appointments kept on time in a row, most recent back (a no-show, late cancel or late arrival ends it). */
+  streak: number;
 }
 
 export interface DeriveContext {
@@ -512,8 +573,26 @@ export function deriveBadges(f: BadgeFacts, c: DeriveContext): StoredBadge[] {
   if (source) add("referral_source", { src: source });
   else if (f.referredBy) add("referral_source", { by: 1 });
   if (f.referrals > 0) add("referrer", { n: f.referrals });
+
+  const tierVisits = { gold: t.goldVisits, silver: t.silverVisits, bronze: t.bronzeVisits } as const;
+  if (y.noShows <= t.tierNoShows) {
+    const tier = (["gold", "silver", "bronze"] as const).find((k) => n >= tierVisits[k]);
+    if (tier) add(tier, { visits: n, at: days[tierVisits[tier] - 1] });
+  }
+  if (n > 0 && !booked && since! >= t.missYouWeeks * 7) add("miss_you", { weeks: Math.floor(since! / 7), last: last!, at: addDays(last!, t.missYouWeeks * 7) });
+  if (f.streak >= t.streakVisits) add("streak", { n: f.streak });
+  if (f.referrals >= t.championReferrals) add("referral_champion", { n: f.referrals });
   return out;
 }
+
+/** What progress meters read, cached next to the badges. */
+export interface BadgeProgressFacts {
+  visits: number;
+  noShows: number;
+  streak: number;
+  referrals: number;
+}
+export const progressFacts = (f: BadgeFacts): BadgeProgressFacts => ({ visits: new Set(f.visits.map((v) => v.day)).size, noShows: f.year.noShows, streak: f.streak, referrals: f.referrals });
 
 // ───────────────────────────── Showing them ─────────────────────────────
 
@@ -548,6 +627,16 @@ function describe(key: BadgeKey, d: Record<string, string | number>, level: (f: 
   const num = (k: string) => Number(d[k] ?? 0);
   const barberShown = level("preferred_barber") === "full";
   switch (key) {
+    case "gold":
+    case "silver":
+    case "bronze":
+      return { tip: `${plural(num("visits"), "visit")}, and keeps their appointments.` };
+    case "miss_you":
+      return { tip: `No haircut in ${plural(num("weeks"), "week")} (last on ${day(d.last)}) and nothing booked. Clears when they book.` };
+    case "streak":
+      return { tip: `Kept their last ${num("n")} appointments in a row, on time.` };
+    case "referral_champion":
+      return { tip: `Referred ${plural(num("n"), "client")}.` };
     case "on_track":
       return { tip: `Usually ${every(num("every"))}; last visit ${ago(num("since"))}.${d.next ? ` Next visit booked for ${day(d.next)}.` : d.due ? ` Next expected around ${day(d.due)}.` : ""}` };
     case "due":

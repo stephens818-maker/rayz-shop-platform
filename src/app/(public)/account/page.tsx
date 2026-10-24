@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { MyBadges } from "@/components/my-badges";
 import { Button, Field, Input, StatusBadge } from "@/components/ui";
 import { VISIT_STATUS_LABEL, cadenceByBarber, cadenceOf } from "@/domain/visit-cadence";
 import { api, dollars, fmtDay, fmtTime, getTokens, setTokens } from "@/lib/api-client";
@@ -195,6 +196,7 @@ export default function AccountPage() {
           </p>
         </div>
       )}
+      <MyBadges />
       {appts && <Rhythm upcoming={appts.upcoming} past={appts.past} />}
       <List title="Upcoming" list={appts?.upcoming ?? []} empty={<Link href="/" className="text-brand-600 underline">Book a cut</Link>} />
       <List title="Past visits" list={appts?.past ?? []} />

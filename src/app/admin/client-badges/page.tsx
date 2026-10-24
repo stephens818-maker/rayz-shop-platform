@@ -54,6 +54,10 @@ export default async function ClientBadgesPage() {
               <li>VIP and Gift card show spend, so they also need &quot;Look up any client in the brand&quot;. VIP starts shown to brand-level roles only.</li>
               <li>Birthday this week needs the whole birthday; Birthday this month needs at least its month. Barber badges need preferred barbers, Low rating needs ratings, and Missing info needs phone and email, at least masked. Barber names show only to people who see preferred barbers in full.</li>
               <li>A custom badge shows only to people who could run its filter themselves.</li>
+              <li>
+                Customers see only the badges ticked under &quot;Customers see&quot;, in their own wording, with the day they earned each and progress toward the next (&quot;2 more visits to Gold&quot;), in their
+                account, on the booking site and in the app. Low rating, How they found us, No product yet and custom badges built on ratings are staff-only always.
+              </li>
             </ul>
           </Card>
         </div>

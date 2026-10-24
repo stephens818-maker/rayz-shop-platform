@@ -24,11 +24,12 @@ import {
   type BadgeTone,
   type CustomBadge,
 } from "@/domain/badges";
+import { NOTIFY_DEFAULT, canNotify, customerMayShow, customerSetting, type BadgeChange } from "@/domain/customer-badges";
 import { EMPTY_SEGMENT, type Segment } from "@/domain/marketing";
 import { deleteCustomBadgeAction, recomputeBadgesAction, saveBadgeSettingsAction, saveCustomBadgeAction } from "./actions";
 
 type Role = BadgeRole & { name: string };
-type Row = { key: string; label: string; icon: BadgeIcon; tone: BadgeTone; hint: string; sensitive?: boolean; money?: boolean };
+type Row = { key: string; label: string; icon: BadgeIcon; tone: BadgeTone; hint: string; sensitive?: boolean; money?: boolean; filter?: Segment };
 
 export function BadgeSettingsEditor({ initial, roles, custom }: { initial: BadgeSettings; roles: Role[]; custom: CustomBadge[] }) {
   const { pending, error, run } = useAction();
@@ -38,18 +39,26 @@ export function BadgeSettingsEditor({ initial, roles, custom }: { initial: Badge
   const on = (key: string) => !(s.off as string[]).includes(key);
   const setOn = (key: string, v: boolean) => setS((x) => ({ ...x, off: v ? x.off.filter((k) => k !== key) : ([...x.off, key] as BadgeSettings["off"]) }));
   const setRole = (key: string, roleId: string, v: boolean) => setS((x) => ({ ...x, roles: { ...x.roles, [key]: { ...x.roles[key], [roleId]: v } } }));
+  const custom_ = (b: Row) => (b.filter ? { filter: b.filter } : null);
+  const setCustomer = (key: string, v: boolean) => setS((x) => ({ ...x, customer: { ...x.customer, [key]: v } }));
+  const notifyOn = (key: string, c: BadgeChange) => s.notify[key]?.[c] ?? (c === "earned" && NOTIFY_DEFAULT.has(key));
+  const setNotify = (key: string, c: BadgeChange, v: boolean) =>
+    setS((x) => ({ ...x, notify: { ...x.notify, [key]: { earned: notifyOn(key, "earned"), lost: notifyOn(key, "lost"), [c]: v } } }));
   const setT = (k: keyof BadgeThresholds, v: string) => setS((x) => ({ ...x, thresholds: { ...x.thresholds, [k]: Number(v) } }));
   const groups = BADGE_GROUPS.map((g) => ({
     g,
     rows:
       g === "custom"
-        ? custom.map((c): Row => ({ key: customKey(c.id), label: c.label, icon: c.icon, tone: c.tone, hint: c.tooltip || "Custom badge" }))
+        ? custom.map((c): Row => ({ key: customKey(c.id), label: c.label, icon: c.icon, tone: c.tone, hint: c.tooltip || "Custom badge", filter: c.filter }))
         : (BADGES as readonly (Row & { group: string })[]).filter((b) => b.group === g),
   })).filter((x) => x.rows.length);
 
   return (
     <Card>
-      <CardHeader title="Badges" subtitle="Which badges show, and to which roles. Spend badges start shown to brand-level roles only." />
+      <CardHeader
+        title="Badges"
+        subtitle="Which badges show, to which roles, and which customers see in their account and the app. Spend badges start shown to brand-level roles only; staff judgments like Low rating never show to customers."
+      />
       <div className="space-y-4 px-4 py-3">
         <label className="flex items-center gap-2 text-sm font-medium text-zinc-900">
           <input type="checkbox" checked={s.enabled} onChange={(e) => setS({ ...s, enabled: e.target.checked })} data-testid="badges-enabled" />
@@ -62,6 +71,10 @@ export function BadgeSettingsEditor({ initial, roles, custom }: { initial: Badge
                 <tr className="text-left text-xs text-zinc-500">
                   <th className="py-1 pr-2 font-medium">Badge</th>
                   <th className="px-1 py-1 text-center font-medium">On</th>
+                  <th className="px-1 py-1 text-center font-medium whitespace-nowrap">Customers see</th>
+                  <th className="px-1 py-1 text-center font-medium whitespace-nowrap" title="A Badge news message when a customer earns or loses it">
+                    Message
+                  </th>
                   {roles.map((r) => (
                     <th key={r.id} className="px-1 py-1 text-center font-medium whitespace-nowrap">
                       {r.name}
@@ -73,7 +86,7 @@ export function BadgeSettingsEditor({ initial, roles, custom }: { initial: Badge
                 {groups.map(({ g, rows }) => (
                   <Fragment key={g}>
                     <tr>
-                      <td colSpan={roles.length + 2} className="pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
+                      <td colSpan={roles.length + 4} className="pt-3 pb-1 text-xs font-semibold tracking-wide text-zinc-500 uppercase">
                         {BADGE_GROUP_LABEL[g]}
                       </td>
                     </tr>
@@ -92,6 +105,38 @@ export function BadgeSettingsEditor({ initial, roles, custom }: { initial: Badge
                             <span className="text-xs text-zinc-400">below</span>
                           ) : (
                             <input type="checkbox" aria-label={`${b.label} on`} checked={on(b.key)} onChange={(e) => setOn(b.key, e.target.checked)} />
+                          )}
+                        </td>
+                        <td className="px-1 py-1.5 text-center">
+                          {customerMayShow(b.key, custom_(b)) ? (
+                            <input
+                              type="checkbox"
+                              aria-label={`${b.label} for customers`}
+                              disabled={!on(b.key)}
+                              checked={customerSetting(s, b.key, custom_(b))}
+                              onChange={(e) => setCustomer(b.key, e.target.checked)}
+                              data-testid={`customer-${b.key}`}
+                            />
+                          ) : (
+                            <span className="text-xs text-zinc-400" title="A staff judgment, or built on staff ratings: never shown to customers">
+                              Staff only
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-1 py-1.5 text-center whitespace-nowrap">
+                          {on(b.key) && customerSetting(s, b.key, custom_(b)) ? (
+                            <span className="inline-flex gap-2 text-xs text-zinc-600">
+                              {(["earned", "lost"] as const)
+                                .filter((c) => canNotify(b.key, c))
+                                .map((c) => (
+                                  <label key={c} className="inline-flex items-center gap-1">
+                                    <input type="checkbox" aria-label={`Message when ${b.label} is ${c}`} checked={notifyOn(b.key, c)} onChange={(e) => setNotify(b.key, c, e.target.checked)} />
+                                    {c === "earned" ? "Earned" : "Lost"}
+                                  </label>
+                                ))}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-zinc-300">—</span>
                           )}
                         </td>
                         {roles.map((r) => (
@@ -113,6 +158,10 @@ export function BadgeSettingsEditor({ initial, roles, custom }: { initial: Badge
             </table>
           </div>
         </fieldset>
+        <p className="text-xs text-zinc-500">
+          Messages go out as the Campaign Center&apos;s <a className="underline" href="/admin/campaign-center">Badge news</a> automation, once each location turns it on: only to customers who agreed to marketing on
+          that channel, within the brand&apos;s weekly and monthly caps and the automation&apos;s own one-per-N-days, never in quiet hours.
+        </p>
         <div>
           <h3 className="mb-2 text-xs font-semibold tracking-wide text-zinc-500 uppercase">Thresholds</h3>
           <div className="grid gap-3 sm:grid-cols-2">

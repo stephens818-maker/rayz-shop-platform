@@ -42,11 +42,11 @@ export function ChannelOrder({ value, onChange, disabled }: { value: Channel[]; 
   );
 }
 
-export function MergeFields() {
+export function MergeFields({ extra }: { extra?: Record<string, string> }) {
   return (
     <p className="text-xs text-zinc-500">
       Merge fields:{" "}
-      {Object.entries(MARKETING_FIELDS).map(([k, v], i) => (
+      {Object.entries({ ...MARKETING_FIELDS, ...extra }).map(([k, v], i) => (
         <span key={k} title={v}>
           {i ? ", " : ""}
           <code className="rounded bg-zinc-100 px-1">{`{${k}}`}</code>
@@ -58,13 +58,27 @@ export function MergeFields() {
 }
 
 /** The wording for each channel the campaign uses, with a preview filled in with sample values. */
-export function TemplateFields({ value, onChange, channels, disabled, address }: { value: Templates; onChange: (t: Templates) => void; channels: Channel[]; disabled?: boolean; address: string }) {
+export function TemplateFields({
+  value,
+  onChange,
+  channels,
+  disabled,
+  address,
+  extraFields,
+}: {
+  value: Templates;
+  onChange: (t: Templates) => void;
+  channels: Channel[];
+  disabled?: boolean;
+  address: string;
+  extraFields?: Record<string, string>;
+}) {
   const set = (k: keyof Templates, v: string) => onChange({ ...value, [k]: v });
   const preview = render(value, SAMPLE_VALUES, { brand: "Ray'z Barber Shop", address: address || "(the brand's postal address)", unsubscribeUrl: "https://rayz.example/m/…/unsubscribe" });
   const smsLen = fill(value.sms, SAMPLE_VALUES).length;
   return (
     <div className="space-y-4">
-      <MergeFields />
+      <MergeFields extra={extraFields} />
       {channels.includes("sms") && (
         <div className="grid gap-3 lg:grid-cols-2">
           <Field label="Text" hint={<span className={cx(smsLen > MARKETING_SMS_MAX && "text-red-600")}>{`${smsLen} of ${MARKETING_SMS_MAX} characters with the sample filled in. Must say how to opt out (Reply STOP to opt out).`}</span>}>

@@ -1408,7 +1408,7 @@ Small coloured pills that tell staff something about a client at a glance, each 
   - The Morning Dashboard's Today section opens with the same counts for the recipient's locations ("2 at-risk clients booked today"), in the email, PDF and text.
 - **Engine and cache:**
   - Each client's badges are cached in `client_badges` (keys, the facts each tooltip needs, a hash, the day computed).
-  - A Vercel Cron (`/api/cron/badges`, 6–8 AM, every 30 minutes, `CRON_SECRET`) recomputes missing or stale rows in batches of 500, within a 4-minute budget. Each run carries on where the last stopped. Rows whose badges didn't change are only re-dated.
+  - A Vercel Cron (`/api/cron/badges`, every 30 minutes from 06:10 to 08:40 UTC, which is overnight in Iowa, `CRON_SECRET`) recomputes missing or stale rows in batches of 500, within a 4-minute budget. Each run carries on where the last stopped. Rows whose badges didn't change are only re-dated.
   - Checkout recomputes the client straight after the sale.
   - A page that finds missing or stale rows works out up to 200 while it waits.
   - Changing a threshold or a custom badge marks every row stale. Turning badges on or off, or changing who sees them, needs no recompute.

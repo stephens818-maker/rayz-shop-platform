@@ -123,6 +123,7 @@ export async function triggerTargets(i: TriggerInput): Promise<Target[]> {
     case "fill_slow_day":
       return slowDays(shop, s, clients, now);
     case "barber_outreach":
+    case "badge_news":
       return [];
   }
 }

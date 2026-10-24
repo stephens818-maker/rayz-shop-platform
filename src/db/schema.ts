@@ -3185,7 +3185,7 @@ export const customBadges = pgTable(
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [check("custom_badges_tone", sql`${t.tone} in ('gray', 'green', 'blue', 'amber', 'red', 'violet')`)],
+  (t) => [check("custom_badges_tone", sql`${t.tone} in ('gray', 'green', 'blue', 'amber', 'orange', 'red', 'violet')`)],
 );
 
 /**
@@ -3201,10 +3201,34 @@ export const clientBadges = pgTable(
       .references(() => customers.id, { onDelete: "cascade" }),
     keys: text("keys").array().notNull().default(sql`'{}'::text[]`),
     badges: jsonb("badges").$type<{ k: string; d?: Record<string, string | number> }[]>().notNull().default(sql`'[]'::jsonb`),
+    /** Badge key to the day (shop time) it was earned. */
+    since: jsonb("since").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+    /** Visits, no-shows, streak and referrals, for progress meters. */
+    progress: jsonb("progress").$type<{ visits: number; noShows: number; streak: number; referrals: number } | Record<string, never>>().notNull().default(sql`'{}'::jsonb`),
     hash: text("hash").notNull().default(""),
     computedOn: date("computed_on").notNull(),
     computedAt: ts("computed_at").notNull().defaultNow(),
     changedAt: ts("changed_at").notNull().defaultNow(),
   },
   (t) => [index("client_badges_keys_idx").using("gin", t.keys), index("client_badges_computed_idx").on(t.computedOn)],
+);
+
+/** A customer-visible badge a client earned or lost, waiting for (or done with) its Badge news message. */
+export const clientBadgeNotices = pgTable(
+  "client_badge_notices",
+  {
+    id: id(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    badgeKey: text("badge_key").notNull(),
+    change: text("change").$type<"earned" | "lost">().notNull(),
+    occurredOn: date("occurred_on").notNull(),
+    status: text("status").$type<"pending" | "queued" | "skipped">().notNull().default("pending"),
+    reason: text("reason"),
+    sendId: uuid("send_id").references(() => marketingSends.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    handledAt: ts("handled_at"),
+  },
+  (t) => [uniqueIndex("client_badge_notices_uq").on(t.customerId, t.badgeKey, t.change, t.occurredOn), index("client_badge_notices_pending_idx").on(t.status, t.createdAt)],
 );

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { MyBadges } from "@/components/my-badges";
 import { Slot, SlotPicker } from "@/components/slot-picker";
 import { Button, Field, Input, cx } from "@/components/ui";
 import { ApiError, api, dollars, fmtDay, fmtTime, getTokens } from "@/lib/api-client";
@@ -199,6 +200,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
             </p>
           </div>
         </div>
+        {signedIn && <MyBadges compact />}
 
         <Section n={1} title="Service" done={!!service && step !== "service"} summary={service ? `${service.name}${addons.length ? ` + ${addons.map((a) => a.name).join(", ")}` : ""}` : undefined} onEdit={() => setStep("service")}>
           {!catalog && <div className="h-40 animate-pulse rounded-lg bg-zinc-100" />}

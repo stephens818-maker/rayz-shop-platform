@@ -5,8 +5,9 @@ import { processDueJobs } from "@/server/notifications/queue";
 import { extendSeries } from "@/server/block-series";
 import { runFollowUps } from "@/server/call-ins";
 import { runMarketing } from "@/server/marketing/engine";
+import { sendBadgeNotices } from "@/server/customer-badges";
 
-/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, runs marketing campaigns, and drains the notification queue every 30 seconds. `--once` for a single pass. */
+/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, runs marketing campaigns and Badge news, and drains the notification queue every 30 seconds. `--once` for a single pass. */
 async function main() {
   installLogScrubbing();
   const once = process.argv.includes("--once");
@@ -17,6 +18,8 @@ async function main() {
     if (followUps.retried || followUps.flagged || followUps.closed) console.log(new Date().toISOString(), { followUps });
     const marketing = await runMarketing();
     if (marketing.triggers.queued || marketing.blasts.queued || marketing.triggers.failed || marketing.blasts.failed) console.log(new Date().toISOString(), { marketing });
+    const badgeNews = await sendBadgeNotices();
+    if (badgeNews.queued) console.log(new Date().toISOString(), { badgeNews });
     const stats = await processDueJobs();
     if (stats.sent || stats.suppressed || stats.failed) console.log(new Date().toISOString(), stats);
     if (once) break;

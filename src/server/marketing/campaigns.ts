@@ -118,7 +118,7 @@ export async function saveAutomation(ctx: StaffContext, id: string, input: unkno
   if (c.kind !== "trigger" || !isTriggerKey(c.trigger)) throw new AppError("bad_request", "That isn't an automated campaign");
   const v = parse(AutomationInput, input);
   const promo = await promoOk(v.promoId);
-  const problem = templatesProblem(v.templates, v.channels, { hasCoupon: !!promo });
+  const problem = templatesProblem(v.templates, v.channels, { hasCoupon: !!promo, extraFields: Object.keys(TRIGGERS[c.trigger].fields ?? {}) });
   if (problem) throw new AppError("bad_request", problem);
   const settings = triggerSettings(c.trigger, v.settings);
   await db
@@ -146,7 +146,7 @@ export async function setLocationAutomation(ctx: StaffContext, input: unknown) {
   if (c.kind !== "trigger" || !isTriggerKey(c.trigger)) throw new AppError("bad_request", "That isn't an automated campaign");
   const templates = v.templates ? Object.fromEntries(Object.entries(v.templates).filter(([, x]) => typeof x === "string" && x.trim())) : null;
   const merged = templatesOf(c.templates, templates);
-  const problem = templatesProblem(merged, channelsOf(c.channels), { hasCoupon: !!c.promoId });
+  const problem = templatesProblem(merged, channelsOf(c.channels), { hasCoupon: !!c.promoId, extraFields: Object.keys(TRIGGERS[c.trigger].fields ?? {}) });
   if (problem) throw new AppError("bad_request", problem);
   const settings = v.settings ? triggerSettings(c.trigger, v.settings) : null;
   const row = { enabled: v.enabled, templates: templates && Object.keys(templates).length ? (templates as Record<string, string>) : null, settings, updatedBy: ctx.staff.id, updatedAt: new Date() };

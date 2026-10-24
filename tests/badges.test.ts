@@ -34,6 +34,7 @@ const facts = (o: Partial<BadgeFacts> = {}): BadgeFacts => ({
   nextBooked: null,
   year: { appointments: 0, noShows: 0, lateCancels: 0, bookings: 0, online: 0 },
   createdOn: "2025-01-01",
+  streak: 0,
   birthday: null,
   preferredStaffId: null,
   barbers: { A: { name: "Ray", active: true }, B: { name: "Makenna", active: true } },

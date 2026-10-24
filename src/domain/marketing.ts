@@ -24,8 +24,8 @@ export const MARKETING_FIELDS = {
   expiry: "When the coupon stops working, e.g. Nov 30",
 } as const;
 export type MarketingField = keyof typeof MARKETING_FIELDS;
-/** `day` is We have openings' own field (OPENINGS_FIELDS in src/domain/openings.ts). */
-export type MarketingValues = Partial<Record<MarketingField | "day", string>>;
+/** `day` is We have openings' own field (OPENINGS_FIELDS in src/domain/openings.ts); `badge` and `badge_message` are Badge news' (TRIGGERS.badge_news.fields). */
+export type MarketingValues = Partial<Record<MarketingField | "day" | "badge" | "badge_message", string>>;
 
 export interface Templates {
   sms: string;
@@ -86,6 +86,8 @@ export const SAMPLE_VALUES: MarketingValues = {
   book_link: "https://rayz.example/m/Xy12abCD",
   coupon_code: "MISSYOU-7K2Q9D",
   expiry: "Nov 30",
+  badge: "Gold",
+  badge_message: "you've earned Gold! Great client: 10 visits and you keep your appointments. Thank you!",
 };
 
 /** The footer every marketing email carries (CAN-SPAM): who it's from, the brand's postal address and a working unsubscribe link. */
@@ -127,11 +129,13 @@ export interface TriggerDef {
   when: (s: Record<string, number>) => string;
   settings: TriggerSetting[];
   templates: Templates;
+  /** Merge fields only this campaign has. */
+  fields?: Record<string, string>;
 }
 
 const tpl = (sms: string, emailSubject: string, emailBody: string, pushTitle: string, pushBody: string): Templates => ({ sms, emailSubject, emailBody, pushTitle, pushBody });
 
-export const TRIGGER_KEYS = ["birthday", "lapsed", "win_back", "first_visit", "milestone", "no_show", "rebook", "announcement", "fill_slow_day", "abandoned_booking", "barber_outreach"] as const;
+export const TRIGGER_KEYS = ["birthday", "lapsed", "win_back", "first_visit", "milestone", "no_show", "rebook", "announcement", "fill_slow_day", "abandoned_booking", "barber_outreach", "badge_news"] as const;
 export type TriggerKey = (typeof TRIGGER_KEYS)[number];
 export const isTriggerKey = (k: unknown): k is TriggerKey => typeof k === "string" && (TRIGGER_KEYS as readonly string[]).includes(k);
 
@@ -288,10 +292,24 @@ export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
       "It's been a minute, {first_name}. Book your next cut with {barber}.",
     ),
   },
+  badge_news: {
+    key: "badge_news",
+    label: "Badge news",
+    when: (s) => `When a client earns or loses a badge they can see (which ones: Setup → Client badges), at most once every ${s.capDays} days`,
+    settings: [{ key: "capDays", label: "At most one badge message per client every", min: 1, max: 60, default: 7, unit: "days" }],
+    templates: tpl(
+      `{shop}: {first_name}, {badge_message} {book_link} ${STOP_LINE}`,
+      "{badge} at {shop}",
+      "Hi {first_name},\n\n{badge_message}\n\nSee your badges and book your next cut: {book_link}",
+      "{badge}",
+      "{first_name}, {badge_message}",
+    ),
+    fields: { badge: "The badge's name, e.g. Gold", badge_message: "What happened, e.g. you've earned Gold! 10 visits and you keep your appointments." },
+  },
 };
 
 /** Campaigns that only go out when someone sends them, never from the scheduled run. */
-export const MANUAL_TRIGGERS: ReadonlySet<TriggerKey> = new Set(["barber_outreach"]);
+export const MANUAL_TRIGGERS: ReadonlySet<TriggerKey> = new Set(["barber_outreach", "badge_news"]);
 
 /** The coupon-dependent default only makes sense with a coupon; without one the line is dropped. */
 export function defaultTemplates(key: TriggerKey, hasCoupon: boolean): Templates {

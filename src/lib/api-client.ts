@@ -48,7 +48,8 @@ async function refreshIfNeeded(): Promise<string | null> {
   return n.accessToken;
 }
 
-export async function api<T>(path: string, init: RequestInit & { auth?: boolean } = {}): Promise<T> {
+/** `base` "/api" reaches the web's own customer routes (e.g. /api/account/badges) with the same sign-in. */
+export async function api<T>(path: string, init: RequestInit & { auth?: boolean; base?: string } = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("x-client", "web");
   if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
@@ -56,7 +57,7 @@ export async function api<T>(path: string, init: RequestInit & { auth?: boolean 
     const token = await refreshIfNeeded();
     if (token) headers.set("Authorization", `Bearer ${token}`);
   }
-  const res = await fetch(`/api/v1${path}`, { ...init, headers });
+  const res = await fetch(`${init.base ?? "/api/v1"}${path}`, { ...init, headers });
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? "error", data?.error?.message ?? "Request failed");
