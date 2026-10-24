@@ -56,7 +56,8 @@ export async function reassignSale(input: { saleId: string; toStaffId: string; r
       const total = sql<number>`coalesce(sum(${tipLedger.amountCents}), 0)::int`;
       const [unpaid] = await tx.select({ c: total }).from(tipLedger).where(and(mine, isNull(tipLedger.payoutId)));
       const [paid] = await tx.select({ c: total }).from(tipLedger).where(and(mine, isNotNull(tipLedger.payoutId)));
-      await tx.update(tipLedger).set({ staffId: input.toStaffId }).where(and(mine, isNull(tipLedger.payoutId)));
+      // Ledger entries never change; unpaid ones are dropped and written again for the new barber by the sync below.
+      await tx.delete(tipLedger).where(and(mine, isNull(tipLedger.payoutId)));
       if (paid.c !== 0) {
         await tx.insert(tipLedger).values({
           shopId: sale.shopId,
