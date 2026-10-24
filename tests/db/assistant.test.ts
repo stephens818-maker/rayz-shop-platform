@@ -84,8 +84,8 @@ describe("tools follow the person's permissions", () => {
   it("offers a manager client lists and purchase orders but not blasts, and the brand admin everything", async () => {
     const s = await assistant.loadAssistantSettings();
     expect((await tools.toolsFor(await ctxOf("michelle"), s)).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "draft_po", "help", "run_report"]);
-    expect((await tools.toolsFor(await ctxOf("admin"), s)).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "draft_blast", "draft_po", "help", "run_report"]);
-    expect((await tools.toolsFor(await ctxOf("admin"), { ...s, actions: false })).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "help", "run_report"]);
+    expect((await tools.toolsFor(await ctxOf("admin"), s)).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "draft_blast", "draft_po", "event_report", "help", "run_report"]);
+    expect((await tools.toolsFor(await ctxOf("admin"), { ...s, actions: false })).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "event_report", "help", "run_report"]);
   });
 
   it("never offers the audit log, client ratings or reports the person can't view", async () => {

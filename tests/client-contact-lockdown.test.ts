@@ -34,8 +34,8 @@ const owner = grantor("brand_owner", "owner");
 const admin = grantor("brand_admin", "admin");
 
 describe("brand-level permissions", () => {
-  it("are the client list exports, the Squire import and Client data settings", () => {
-    expect([...BRAND_LEVEL_ONLY].sort()).toEqual(["campaign_center.export", "clients.export", "clients.privacy", "import.run", "report.client_ratings.export"]);
+  it("are the client list exports, the raw event log, the Squire import and Client data settings", () => {
+    expect([...BRAND_LEVEL_ONLY].sort()).toEqual(["analytics.export", "campaign_center.export", "clients.export", "clients.privacy", "import.run", "report.client_ratings.export"]);
     for (const p of BRAND_LEVEL_ONLY) expect(SHOP_LOGIN_NEVER.has(p), p).toBe(true);
   });
 

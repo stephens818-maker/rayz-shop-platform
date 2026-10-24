@@ -155,6 +155,15 @@ describe("permission catalog and templates", () => {
         remove: m[2] ? [m[2]] : [],
         rename: [] as [string, string][],
         keys: [...(m[3] ?? m[4]).matchAll(/'(\w+)'/g)].map((k) => k[1]),
+        holding: null as string | null,
+      })),
+      ...[...later.matchAll(/UPDATE "roles" SET "permissions" = "permissions" \|\| '(\[.*?\])'::jsonb WHERE "permissions" \? '([\w.]+)'/g)].map((m) => ({
+        at: m.index,
+        add: JSON.parse(m[1]) as string[],
+        remove: [] as string[],
+        rename: [] as [string, string][],
+        keys: [] as string[],
+        holding: m[2] as string | null,
       })),
       ...[...later.matchAll(/UPDATE "roles" r SET "permissions" = \([\s\S]*?LEFT JOIN \(VALUES([\s\S]*?)\) m\(k, n\)/g)].map((m) => ({
         at: m.index,
@@ -162,6 +171,7 @@ describe("permission catalog and templates", () => {
         remove: [] as string[],
         rename: [...m[1].matchAll(/\('([\w.]+)', '([\w.]+)'\)/g)].map((p) => [p[1], p[2]] as [string, string]),
         keys: [...ALL_KEYS],
+        holding: null as string | null,
       })),
     ].sort((a, b) => a.at - b.at);
     const reworded = [...later.matchAll(/UPDATE "roles" SET "description" = '((?:[^']|'')*)' WHERE "key" = '(\w+)' AND "description" = '((?:[^']|'')*)'/g)].map((m) => ({
@@ -195,7 +205,8 @@ describe("permission catalog and templates", () => {
     const all = [...rows.map((r) => ({ ...r, at: -1 })), ...inserted].map((r) => resorted.filter((s) => s.key === r.key).reduce<typeof r>((x, s) => ({ ...x, sortOrder: s.sortOrder }), r));
     const seeded = all.sort((a, b) => a.sortOrder - b.sortOrder).map(({ at, ...r }) => {
       const perms = new Set<string>(r.permissions);
-      for (const c of changes.filter((c) => c.at > at && c.keys.includes(r.key))) {
+      for (const c of changes.filter((c) => c.at > at)) {
+        if (!c.keys.includes(r.key) && !(c.holding && perms.has(c.holding))) continue;
         c.add.forEach((p) => perms.add(p));
         c.remove.forEach((p) => perms.delete(p));
         const renamed = c.rename.filter(([from]) => perms.has(from));
