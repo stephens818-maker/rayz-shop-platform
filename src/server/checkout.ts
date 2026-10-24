@@ -47,7 +47,8 @@ import { heldCoupons, redeemCoupons, resolveCoupon } from "./coupons";
 import { AppError, forbidden, notFound } from "./errors";
 import { postMovements } from "./inventory/ledger";
 import { stockLevels } from "./inventory/stock";
-import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, markRewardRedeemed } from "./loyalty";
+import { familyTicket, familyTicketFor, ticketAppointmentIds } from "./family-ticket";
+import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, loyaltyShares, markRewardRedeemed } from "./loyalty";
 import { assertReaderAt, chargeRoute } from "./payments/connect";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
 import { recordCheckout } from "./service-times";
@@ -77,6 +78,8 @@ export async function openSaleForAppointment(appointmentId: string, actor: Actor
     where: and(eq(sales.appointmentId, appointmentId), inArray(sales.status, ["open", "paid", "partially_refunded", "refunded"])),
   });
   if (existing) return existing;
+  const shared = await familyTicketFor(appointmentId, db);
+  if (shared) return (await db.query.sales.findFirst({ where: eq(sales.id, shared) }))!;
   if (["cancelled", "no_show"].includes(appt.status)) throw new AppError("conflict", `Appointment is ${appt.status}`);
   await assertOpenForSales(appt.shopId);
   const [sale] = await db
@@ -97,7 +100,7 @@ export async function openSaleForAppointment(appointmentId: string, actor: Actor
     await db.insert(saleItems).values(
       items.map((i) => {
         const price = menu.find((s) => s.id === i.serviceId)?.priceCents ?? i.priceCents;
-        return { saleId: sale.id, kind: i.kind as LineKind, refId: i.serviceId, name: i.name, staffId: appt.staffId, qty: 1, unitPriceCents: price, grossCents: price, netCents: price };
+        return { saleId: sale.id, appointmentId, kind: i.kind as LineKind, refId: i.serviceId, name: i.name, staffId: appt.staffId, qty: 1, unitPriceCents: price, grossCents: price, netCents: price };
       }),
     );
   }
@@ -144,7 +147,9 @@ export async function loadCheckoutContext(saleId: string) {
     const l = levels.find((x) => x.productId === r.productId);
     return { ...r, available: r.stock - Math.max(0, (l?.committed ?? 0) - (own.get(r.productId) ?? 0)) };
   });
-  return { sale, shop, items, customer, appointment: appt, retail: withAvailable, barber, config: pricingConfig(shop), negativeStock: shop.negativeStock };
+  const family = await familyTicket(sale);
+  if (sale.status !== "open") family.candidates = [];
+  return { sale, shop, items, customer, appointment: appt, retail: withAvailable, barber, family, config: pricingConfig(shop), negativeStock: shop.negativeStock };
 }
 
 /** A coupon code checked for this shop, before a client is known. */
@@ -171,6 +176,8 @@ export interface CheckoutLineInput {
   priceOverride?: { unitPriceCents: number; reason: string } | null;
   /** Services and add-ons: the barber who did it, when it isn't the ticket's barber. Splits the tip. */
   staffId?: string | null;
+  /** Family tickets: whose appointment the line is for. Defaults to the ticket's own appointment. */
+  appointmentId?: string | null;
 }
 
 export type TenderInput =
@@ -233,6 +240,7 @@ async function buildDiscounts(input: Omit<FinalizeInput, "actor">, sale: { id: s
     });
   }
   let rewardId: string | null = null;
+  let rewardOwnerId: string | null = null;
   if (input.loyaltyRewardId) {
     if (!sale.customerId) throw new AppError("bad_request", "Attach a client to use a loyalty reward");
     const cfg = await getLoyaltyConfig();
@@ -240,13 +248,15 @@ async function buildDiscounts(input: Omit<FinalizeInput, "actor">, sale: { id: s
     const r = await loadRedeemableReward(db, sale.customerId, input.loyaltyRewardId);
     discounts.push({ source: "loyalty", label: "Loyalty reward", type: "amount", value: r.amountCents, appliesTo: cfg.redeemableOn === "services" ? "services" : "all", refId: r.id });
     rewardId = r.id;
+    rewardOwnerId = r.customerId;
   }
-  return { discounts, coupons, rewardId };
+  return { discounts, coupons, rewardId, rewardOwnerId };
 }
 
 export interface PricedLineMeta {
   catalogPriceCents: number | null;
   overrideReason: string | null;
+  appointmentId: string | null;
 }
 
 /**
@@ -267,6 +277,11 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
         .where(and(eq(shopProducts.shopId, ctx.shop.id), eq(shopProducts.active, true), inArray(shopProducts.productId, productIds)))
     : [];
   const staffId = input.staffId ?? ctx.sale.staffId;
+  const onTicket = new Map<string, string | null>(ctx.family.members.map((m) => [m.appointmentId, m.staffId]));
+  for (const l of input.lines) {
+    if (l.appointmentId && l.appointmentId !== ctx.sale.appointmentId && !onTicket.has(l.appointmentId)) throw new AppError("bad_request", "A line is for an appointment that isn't on this ticket");
+  }
+  const lineStaff = (l: CheckoutLineInput) => l.staffId ?? (l.appointmentId && onTicket.get(l.appointmentId)) ?? staffId;
   for (const id of new Set(input.lines.filter((l) => l.kind !== "product" && l.kind !== "gift_card" && l.staffId && l.staffId !== staffId).map((l) => l.staffId!))) {
     await assertStaffAtShop(id, ctx.shop.id);
   }
@@ -294,7 +309,7 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
         throw new AppError("bad_request", `Gift cards are sold from ${formatCents(GIFT_CARD_MIN_CENTS)} to ${formatCents(GIFT_CARD_MAX_CENTS)}`);
       }
       if (l.priceOverride) throw new AppError("bad_request", "A gift card's price is its value");
-      meta.push({ catalogPriceCents: null, overrideReason: null });
+      meta.push({ catalogPriceCents: null, overrideReason: null, appointmentId: null });
       return { key: String(i), kind: l.kind, name: `Gift card ${formatCents(face)}`, unitPriceCents: face, qty: l.qty, refId: null };
     }
     let unit = catalog;
@@ -307,12 +322,12 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
       unit = o.unitPriceCents;
       reason = o.reason.trim();
     }
-    meta.push({ catalogPriceCents: catalog, overrideReason: reason });
-    return { key: String(i), kind: l.kind, name, unitPriceCents: unit, qty: l.qty, refId: l.refId ?? null, staffId: l.kind === "product" ? null : (l.staffId ?? staffId), taxCategory };
+    meta.push({ catalogPriceCents: catalog, overrideReason: reason, appointmentId: l.appointmentId ?? (l.kind === "product" ? null : ctx.sale.appointmentId) });
+    return { key: String(i), kind: l.kind, name, unitPriceCents: unit, qty: l.qty, refId: l.refId ?? null, staffId: l.kind === "product" ? null : lineStaff(l), taxCategory };
   });
   const problem = manualDiscountProblem(input.manualDiscount ?? null, lines, input.maxManualDiscountPct ?? 100);
   if (problem) throw forbidden(problem);
-  const { discounts, coupons, rewardId } = await buildDiscounts(input, ctx.sale, lines);
+  const { discounts, coupons, rewardId, rewardOwnerId } = await buildDiscounts(input, ctx.sale, lines);
 
   const totals = computeCheckout({
     lines,
@@ -330,7 +345,7 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
   const used = coupons.map((rule) => ({ rule, discountCents: totals.discountBreakdown.find((d) => d.source === "promo" && d.refId === rule.promoId)?.cents ?? 0 }));
   const idle = used.find((u) => u.discountCents <= 0);
   if (idle) throw new AppError("bad_request", `${idle.rule.code} doesn't take anything off this ticket`);
-  return { ctx, totals, promoId: coupons[0]?.promoId ?? null, coupons: used, rewardId, gift, inv, meta };
+  return { ctx, totals, promoId: coupons[0]?.promoId ?? null, coupons: used, rewardId, rewardOwnerId, gift, inv, meta };
 }
 
 export async function finalizeSale(input: FinalizeInput) {
@@ -344,7 +359,10 @@ export async function finalizeSale(input: FinalizeInput) {
 
   let card: Awaited<ReturnType<typeof inspectPaymentMethod>> | null = null;
   if (input.tender.method === "card") card = await inspectPaymentMethod(input.tender.paymentMethodId);
-  const { ctx, totals, promoId, coupons, rewardId, gift, meta } = await priceCart(input, card?.funding ?? null);
+  const { ctx, totals, promoId, coupons, rewardId, rewardOwnerId, gift, meta } = await priceCart(input, card?.funding ?? null);
+  const people = new Map<string, string>(ctx.family.members.map((m) => [m.appointmentId, m.customerId]));
+  if (ctx.appointment?.customerId) people.set(ctx.appointment.id, ctx.appointment.customerId);
+  const personOf = (appointmentId: string | null) => (appointmentId && people.get(appointmentId)) || ctx.sale.customerId!;
 
   if (input.expectedTotalCents != null && input.expectedTotalCents !== totals.totalCents) {
     throw new AppError("conflict", "Totals changed — please review the ticket again", { totalCents: totals.totalCents });
@@ -401,6 +419,7 @@ export async function finalizeSale(input: FinalizeInput) {
             taxCents: l.taxCents,
             catalogPriceCents: meta[i].catalogPriceCents,
             overrideReason: meta[i].overrideReason,
+            appointmentId: meta[i].appointmentId,
           })),
         )
         .returning({ id: saleItems.id });
@@ -456,9 +475,15 @@ export async function finalizeSale(input: FinalizeInput) {
       stockWarnings.push(...stock.warnings);
 
       if (coupons.length) await redeemCoupons(tx, coupons, { ...ctx.sale, staffId }, now);
-      if (rewardId && ctx.sale.customerId) await markRewardRedeemed(tx, rewardId, ctx.sale.id, ctx.sale.customerId, rewardCents, now);
+      if (rewardId && rewardOwnerId) await markRewardRedeemed(tx, rewardId, ctx.sale.id, rewardOwnerId, rewardCents, now);
       if (ctx.sale.customerId && totals.loyaltyEligibleCents > 0) {
-        rewardsIssued = await accrueForSale(tx, ctx.sale.customerId, ctx.sale.id, totals.loyaltyEligibleCents, now);
+        const shares = await loyaltyShares(
+          tx,
+          ctx.sale.customerId,
+          totals.loyaltyEligibleCents,
+          totals.lines.flatMap((l, i) => (l.kind === "service" || l.kind === "addon" ? [{ customerId: personOf(meta[i].appointmentId), netCents: l.netCents }] : [])),
+        );
+        for (const sh of shares) rewardsIssued += await accrueForSale(tx, sh.customerId, ctx.sale.id, sh.cents, now);
       }
 
       // Everything that can fail on our side has run. Charge last, while still holding the lock.
@@ -538,9 +563,10 @@ export async function finalizeSale(input: FinalizeInput) {
         })
         .where(eq(sales.id, ctx.sale.id));
 
-      if (ctx.sale.appointmentId) {
-        await tx.update(appointments).set({ status: "completed", completedAt: now }).where(eq(appointments.id, ctx.sale.appointmentId));
-        await recordCheckout(ctx.sale.appointmentId, input.actor, tx, now);
+      for (const appointmentId of [ctx.sale.appointmentId, ...(await ticketAppointmentIds(ctx.sale.id, tx))]) {
+        if (!appointmentId) continue;
+        await tx.update(appointments).set({ status: "completed", completedAt: now }).where(eq(appointments.id, appointmentId));
+        await recordCheckout(appointmentId, input.actor, tx, now);
       }
       await audit(
         input.actor,
@@ -570,7 +596,7 @@ export async function finalizeSale(input: FinalizeInput) {
   // Loaded here, not at the top: the badge engine is staff-only, and the client API checks out too.
   if (ctx.sale.customerId)
     await import("./badges")
-      .then((b) => b.refreshBadges([ctx.sale.customerId!], now))
+      .then((b) => b.refreshBadges([...new Set([ctx.sale.customerId!, ...people.values()])], now))
       .catch((e: Error) => console.error("badge refresh after checkout failed", e.message));
   const c = charge as Awaited<ReturnType<typeof chargeCard>> | null;
   return { saleId: ctx.sale.id, totals, issuedGiftCards, rewardsIssued, rebooked, card: c?.card ?? null, stockWarnings };

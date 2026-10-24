@@ -15,6 +15,8 @@ import { resolveCoupon } from "@/server/coupons";
 import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
 import { findOrCreateCustomer } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
+import { sameHousehold } from "@/server/family";
+import { addAppointmentToTicket, removeAppointmentFromTicket, ticketAppointmentIds } from "@/server/family-ticket";
 import { HandoffDraftInput, endHandoffFromCounter, startHandoff } from "@/server/handoff";
 import { holdRetail } from "@/server/inventory/stock";
 import { requireInTenant } from "@/server/tenant";
@@ -72,6 +74,9 @@ export async function attachCustomerAction(saleId: string, customerId: string | 
     const ctx = await requireStaff();
     const sale = await loadSale(ctx, saleId);
     if (sale.status !== "open") throw new AppError("conflict", "Ticket is closed");
+    if ((await ticketAppointmentIds(saleId)).length && !(customerId && sale.customerId && (await sameHousehold(customerId, sale.customerId)))) {
+      throw new AppError("conflict", "Take the family members off this ticket before changing who's paying");
+    }
     await db.update(sales).set({ customerId }).where(and(eq(sales.id, saleId), eq(sales.status, "open")));
     revalidatePath(`/admin/checkout/${saleId}`);
     return null;
@@ -92,6 +97,30 @@ export async function newClientAtCheckoutAction(saleId: string, input: { firstNa
     });
     revalidatePath(`/admin/checkout/${saleId}`);
     return { id: c.id };
+  });
+}
+
+/** Another household member's appointment today joins this ticket, so the parent pays once for everyone. */
+export async function addFamilyToTicketAction(saleId: string, appointmentId: string) {
+  return safe(async () => {
+    const ctx = await authorize("checkout.any");
+    await loadSale(ctx, saleId);
+    await requireInTenant(ctx, "appointment", appointmentId);
+    await addAppointmentToTicket(saleId, appointmentId, ctx.actor);
+    revalidatePath(`/admin/checkout/${saleId}`);
+    revalidatePath("/admin/calendar");
+    return null;
+  });
+}
+
+export async function removeFamilyFromTicketAction(saleId: string, appointmentId: string) {
+  return safe(async () => {
+    const ctx = await authorize("checkout.any");
+    await loadSale(ctx, saleId);
+    await removeAppointmentFromTicket(saleId, appointmentId, ctx.actor);
+    revalidatePath(`/admin/checkout/${saleId}`);
+    revalidatePath("/admin/calendar");
+    return null;
   });
 }
 

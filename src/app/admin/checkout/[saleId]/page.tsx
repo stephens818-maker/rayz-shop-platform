@@ -65,11 +65,24 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
       feeNotice={feeDisclosure(c.config.cardFee)}
       initialLines={c.items.map((i) => {
         const menu = i.kind === "product" ? c.retail.find((p) => p.productId === i.refId)?.priceCents : catalog.find((s) => s.id === i.refId)?.priceCents;
-        return { kind: i.kind, refId: i.refId, name: i.name, unitPriceCents: menu ?? i.unitPriceCents, qty: i.qty, staffId: i.staffId && i.staffId !== c.sale.staffId ? i.staffId : null };
+        const family = !!i.appointmentId && i.appointmentId !== c.sale.appointmentId;
+        return {
+          kind: i.kind,
+          refId: i.refId,
+          name: i.name,
+          unitPriceCents: menu ?? i.unitPriceCents,
+          qty: i.qty,
+          staffId: i.staffId && (family || i.staffId !== c.sale.staffId) ? i.staffId : null,
+          appointmentId: i.appointmentId,
+        };
       })}
       handoff={{ signature: handoff.shop.signature, unlock: handoff.shop.unlock }}
       withClient={withClient ? { by: withClient.by, startedAt: withClient.startedAt.toISOString() } : null}
       coupons={coupons}
+      family={{
+        members: c.family.members.map((m) => ({ ...m, startsAt: m.startsAt.toISOString() })),
+        candidates: c.family.candidates.map((m) => ({ ...m, startsAt: m.startsAt.toISOString() })),
+      }}
       resume={
         resume && !withClient
           ? {
@@ -82,6 +95,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
                 qty: l.qty,
                 override: l.priceOverride ?? null,
                 staffId: l.staffId ?? null,
+                appointmentId: l.appointmentId ?? null,
               })),
             }
           : null

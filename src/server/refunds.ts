@@ -21,7 +21,8 @@ import { localDateOf } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "./audit";
 import { AppError, notFound } from "./errors";
 import { Movement, postMovements } from "./inventory/ledger";
-import { restoreRewardsForSale, reverseForSale } from "./loyalty";
+import { restoreRewardsForSale, reverseSaleLoyalty } from "./loyalty";
+import { ticketAppointmentIds } from "./family-ticket";
 import { refundCard } from "./payments/processor";
 import { sendUpdatedReceipt } from "./receipts";
 import { syncTipLedger } from "./tips/ledger";
@@ -98,7 +99,8 @@ export async function voidSale(saleId: string, reason: string, actor: Actor, now
     const sale = await lockSale(tx, saleId);
     if (sale.status === "open") {
       await tx.update(sales).set({ status: "voided", voidedAt: now, voidReason: reason, voidApprovedBy: actor.approvedBy?.staffId ?? null }).where(eq(sales.id, saleId));
-      if (sale.appointmentId) await tx.update(appointments).set({ status: "checked_in" }).where(eq(appointments.id, sale.appointmentId));
+      const booked = [sale.appointmentId, ...(await ticketAppointmentIds(saleId, tx))].filter((x): x is string => !!x);
+      if (booked.length) await tx.update(appointments).set({ status: "checked_in" }).where(inArray(appointments.id, booked));
       await audit(actor, "sale.void_open", "sale", saleId, { reason }, sale.shopId, tx);
       return;
     }
@@ -317,7 +319,7 @@ async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "r
   const full = kind === "void" || refunded >= sale.totalCents;
   let loyalty = null;
   if (sale.customerId && sale.loyaltyEarnedCents > 0 && components.serviceNetCents > 0) {
-    loyalty = await reverseForSale(tx, sale.customerId, sale.id, Math.min(components.serviceNetCents, sale.loyaltyEarnedCents), now);
+    loyalty = await reverseSaleLoyalty(tx, sale.id, sale.customerId, Math.min(components.serviceNetCents, sale.loyaltyEarnedCents), now);
   }
   if (full) {
     // The client didn't get the reward's value as cash, so a full reversal gives the reward back.
@@ -325,7 +327,8 @@ async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "r
     // Tickets from before coupon redemptions were recorded only have the one promo code.
     if (!(await reverseCoupons(tx, sale.id, now)) && sale.promoCodeId) await tx.update(promoCodes).set({ redemptions: sql`greatest(${promoCodes.redemptions} - 1, 0)` }).where(eq(promoCodes.id, sale.promoCodeId));
   }
-  if (kind === "void" && sale.appointmentId) await tx.update(appointments).set({ status: "in_service", completedAt: null }).where(eq(appointments.id, sale.appointmentId));
+  const booked = kind === "void" ? [sale.appointmentId, ...(await ticketAppointmentIds(sale.id, tx))].filter((x): x is string => !!x) : [];
+  if (booked.length) await tx.update(appointments).set({ status: "in_service", completedAt: null }).where(inArray(appointments.id, booked));
   const status = kind === "void" ? "voided" : full ? "refunded" : "partially_refunded";
   await tx
     .update(sales)

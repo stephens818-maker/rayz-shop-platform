@@ -112,6 +112,7 @@ export const HandoffDraftInput = z.object({
         unitPriceCents: z.number().int().min(0).optional(),
         priceOverride: z.object({ unitPriceCents: z.number().int().min(0), reason: z.string().max(200) }).nullable().optional(),
         staffId: z.uuid().nullable().optional(),
+        appointmentId: z.uuid().nullable().optional(),
       }),
     )
     .min(1, "Add at least one item")

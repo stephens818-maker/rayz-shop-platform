@@ -15,6 +15,7 @@ import { formatMinutes, type TimesView } from "@/domain/service-times";
 import { searchCustomersAction } from "../../calendar/actions";
 import { ServiceTimer } from "../../calendar/service-times-panel";
 import {
+  addFamilyToTicketAction,
   attachCustomerAction,
   endHandoffAction,
   finalizeAction,
@@ -24,6 +25,7 @@ import {
   inspectCardAction,
   newClientAtCheckoutAction,
   promoAction,
+  removeFamilyFromTicketAction,
   setBarberAction,
   terminalCollectAction,
 } from "../actions";
@@ -39,7 +41,10 @@ type Line = {
   override?: { unitPriceCents: number; reason: string } | null;
   /** A service done by someone other than the ticket's barber; they share the tip. */
   staffId?: string | null;
+  /** Family tickets: whose appointment the line is for. */
+  appointmentId?: string | null;
 };
+type FamilyMember = { appointmentId: string; customerId: string; name: string; isChild: boolean; staffId: string | null; staffName: string | null; startsAt: string; status: string };
 type Resume = {
   lines: Omit<Line, "key">[];
   promoCode: string | null;
@@ -97,6 +102,8 @@ export function Pos(props: {
   resume: Resume | null;
   /** The coupon held from the online booking, and coupons that apply automatically for this client. */
   coupons: { held: { rule: CouponRule | null; code: string; problem: string | null } | null; auto: CouponRule[] };
+  /** Other household members' appointments on this ticket, and today's that could join it. */
+  family: { members: FamilyMember[]; candidates: FamilyMember[] };
 }) {
   const router = useRouter();
   const r0 = props.resume;
@@ -128,6 +135,19 @@ export function Pos(props: {
   const [giftSale, setGiftSale] = useState("");
   const [editing, setEditing] = useState<{ key: string; price: string; reason: string } | null>(null);
   const priceOf = (l: Line) => l.override?.unitPriceCents ?? l.unitPriceCents;
+  const familyKey = props.family.members.map((m) => m.appointmentId).join(",");
+  // Family members added or taken off on the server bring their services with them.
+  useEffect(() => {
+    const on = new Set([props.timer?.appointmentId, ...props.family.members.map((m) => m.appointmentId)].filter(Boolean));
+    setLines((cur) => {
+      const have = new Set(cur.map((l) => l.appointmentId).filter(Boolean));
+      const kept = cur.filter((l) => !l.appointmentId || on.has(l.appointmentId));
+      const added = props.initialLines.filter((l) => l.appointmentId && on.has(l.appointmentId) && !have.has(l.appointmentId)).map((l) => ({ ...l, key: key() }));
+      return kept.length === cur.length && !added.length ? cur : [...kept, ...added];
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [familyKey]);
+  const whoFor = (l: Line) => props.family.members.find((m) => m.appointmentId === l.appointmentId) ?? null;
 
   const reward = props.loyalty?.rewards.find((r) => r.id === rewardId) ?? null;
   const barberOf = (l: Line) => (l.kind === "service" || l.kind === "addon" ? (l.staffId ?? props.sale.staffId) : null);
@@ -211,7 +231,7 @@ export function Pos(props: {
       () =>
         finalizeAction({
           saleId: props.sale.id,
-          lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override, staffId }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null, staffId: staffId ?? null })),
+          lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override, staffId, appointmentId }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null, staffId: staffId ?? null, appointmentId: appointmentId ?? null })),
           promoCode: coupons[0]?.code ?? null,
           promoCodes: coupons.slice(1).map((c) => c.code),
           manualDiscount: manual.value ? { type: manual.type, value: manual.type === "percent" ? Number(manual.value) || 0 : toCents(manual.value), reason: manual.reason } : null,
@@ -242,7 +262,7 @@ export function Pos(props: {
     act(
       () =>
         handToCustomerAction(props.sale.id, {
-          lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override, staffId }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null, staffId: staffId ?? null })),
+          lines: lines.map(({ kind, refId, name, unitPriceCents, qty, override, staffId, appointmentId }) => ({ kind, refId, name, unitPriceCents, qty, priceOverride: override ?? null, staffId: staffId ?? null, appointmentId: appointmentId ?? null })),
           promoCode: coupons[0]?.code ?? null,
           promoCodes: coupons.slice(1).map((c) => c.code),
           manualDiscount: manual.value ? { type: manual.type, value: manualValue, reason: manual.reason } : null,
@@ -337,6 +357,10 @@ export function Pos(props: {
             </div>
           </Card>
 
+          {(props.family.members.length > 0 || props.family.candidates.length > 0) && (
+            <FamilyTicket saleId={props.sale.id} family={props.family} pending={pending} onAct={(fn) => act(fn, () => router.refresh())} />
+          )}
+
           <Card>
             <CardHeader title="Items" />
             <ul className="divide-y divide-zinc-100">
@@ -347,6 +371,7 @@ export function Pos(props: {
                     <div className="truncate text-sm font-medium">{l.name}</div>
                     <div className="text-xs capitalize text-zinc-500">
                       {l.kind.replace("_", " ")}
+                      {whoFor(l) && <span className="normal-case text-violet-700"> · for {whoFor(l)!.name}</span>}
                       {l.override && <span className="normal-case text-amber-700"> · price changed: {l.override.reason}</span>}
                     </div>
                     {(l.kind === "service" || l.kind === "addon") && props.perms.reassign && props.barbers.length > 1 && (
@@ -990,5 +1015,43 @@ function CustomerBox({
         </>
       )}
     </div>
+  );
+}
+
+function FamilyTicket(props: { saleId: string; family: { members: FamilyMember[]; candidates: FamilyMember[] }; pending: boolean; onAct: (fn: () => Promise<{ ok: true; data: null } | { ok: false; error: string }>) => void }) {
+  const at = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const row = (m: FamilyMember, on: boolean) => (
+    <li key={m.appointmentId} className="flex items-center gap-3 px-4 py-2">
+      <div className="min-w-0 flex-1 text-sm">
+        <span className="font-medium">{m.name}</span>
+        {m.isChild && (
+          <Badge tone="violet" className="ml-1.5">
+            Kid
+          </Badge>
+        )}
+        <div className="text-xs text-zinc-500">
+          {at(m.startsAt)}
+          {m.staffName ? ` with ${m.staffName}` : ""}
+        </div>
+      </div>
+      {on ? (
+        <button className="text-xs text-zinc-400 hover:text-red-600" disabled={props.pending} onClick={() => props.onAct(() => removeFamilyFromTicketAction(props.saleId, m.appointmentId))}>
+          Take off ticket
+        </button>
+      ) : (
+        <Button size="sm" variant="secondary" disabled={props.pending} onClick={() => props.onAct(() => addFamilyToTicketAction(props.saleId, m.appointmentId))}>
+          Add to ticket
+        </Button>
+      )}
+    </li>
+  );
+  return (
+    <Card>
+      <CardHeader title="Family ticket" subtitle="One ticket for the household, paid by the parent. Each barber's tip share follows their services." />
+      <ul className="divide-y divide-zinc-100">
+        {props.family.members.map((m) => row(m, true))}
+        {props.family.candidates.map((m) => row(m, false))}
+      </ul>
+    </Card>
   );
 }

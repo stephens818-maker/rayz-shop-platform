@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, loyaltyAccounts, loyaltyLedger, loyaltyRewards } from "@/db/schema";
+import { brandSettings, customers, loyaltyAccounts, loyaltyLedger, loyaltyRewards } from "@/db/schema";
+import { FamilyLoyalty, familySettings } from "@/domain/family";
 import { DEFAULT_LOYALTY, LoyaltyConfig, accrue, progressExpired, reverseAccrual, rewardExpiry, usableRewards } from "@/domain/loyalty";
 import { AppError } from "./errors";
 
@@ -16,19 +17,74 @@ export async function saveLoyaltyConfig(cfg: LoyaltyConfig) {
     .onConflictDoUpdate({ target: brandSettings.id, set: { loyalty: cfg, updatedAt: new Date() } });
 }
 
+async function familyLoyalty(tx: DBorTx): Promise<FamilyLoyalty> {
+  const [b] = await tx.select({ f: brandSettings.family }).from(brandSettings).where(eq(brandSettings.id, 1));
+  return familySettings(b?.f).loyalty;
+}
+
+/**
+ * Whose card a client's visits earn on and whose rewards they spend: their own, or for a child
+ * their parent's when the brand counts loyalty per household (the default).
+ */
+export async function loyaltyOwner(customerId: string, tx: DBorTx = db): Promise<string> {
+  const [c] = await tx.select({ g: customers.guardianId }).from(customers).where(eq(customers.id, customerId));
+  if (!c?.g) return customerId;
+  return (await familyLoyalty(tx)) === "household" ? c.g : customerId;
+}
+
+/**
+ * Who earns what on a paid ticket. Household loyalty: everything on the payer's household card.
+ * Individual: each person's share of the eligible spend by their services' net (a family ticket
+ * covering a parent and two children earns on three cards), the remainder to the ticket's client.
+ */
+export async function loyaltyShares(
+  tx: DBorTx,
+  saleCustomerId: string,
+  eligibleCents: number,
+  servicesByPerson: { customerId: string; netCents: number }[],
+): Promise<{ customerId: string; cents: number }[]> {
+  if (eligibleCents <= 0) return [];
+  const mode = await familyLoyalty(tx);
+  const people = [...new Set(servicesByPerson.map((x) => x.customerId))];
+  if (mode === "household" || people.length <= 1) return [{ customerId: await loyaltyOwner(people.length === 1 ? people[0] : saleCustomerId, tx), cents: eligibleCents }];
+  const weight = new Map<string, number>();
+  for (const x of servicesByPerson) weight.set(x.customerId, (weight.get(x.customerId) ?? 0) + Math.max(0, x.netCents));
+  const total = [...weight.values()].reduce((a, b) => a + b, 0);
+  if (total <= 0) return [{ customerId: saleCustomerId, cents: eligibleCents }];
+  const out = [...weight].map(([customerId, w]) => ({ customerId, cents: Math.floor((eligibleCents * w) / total) }));
+  const rest = eligibleCents - out.reduce((a, x) => a + x.cents, 0);
+  const payer = out.find((x) => x.customerId === saleCustomerId) ?? out[0];
+  payer.cents += rest;
+  return out.filter((x) => x.cents > 0);
+}
+
+/** The household's cards a ticket for this client may spend a reward from. */
+export async function rewardOwners(customerId: string, tx: DBorTx = db): Promise<string[]> {
+  const owner = await loyaltyOwner(customerId, tx);
+  if (owner !== customerId) return [owner];
+  const [c] = await tx.select({ g: customers.guardianId }).from(customers).where(eq(customers.id, customerId));
+  const head = c?.g ?? customerId;
+  const kids = await tx.select({ id: customers.id }).from(customers).where(eq(customers.guardianId, head));
+  return [...new Set([customerId, head, ...kids.map((k) => k.id)])];
+}
+
 export async function loyaltyBalance(customerId: string, now = new Date(), tx: DBorTx = db) {
   const cfg = await getLoyaltyConfig(tx);
-  const acct = await tx.query.loyaltyAccounts.findFirst({ where: eq(loyaltyAccounts.customerId, customerId) });
+  const owner = await loyaltyOwner(customerId, tx);
+  const acct = await tx.query.loyaltyAccounts.findFirst({ where: eq(loyaltyAccounts.customerId, owner) });
   const rewards = await tx
     .select()
     .from(loyaltyRewards)
-    .where(and(eq(loyaltyRewards.customerId, customerId), isNull(loyaltyRewards.redeemedAt)))
+    .where(and(eq(loyaltyRewards.customerId, owner), isNull(loyaltyRewards.redeemedAt)))
     .orderBy(asc(loyaltyRewards.issuedAt));
   const usable = usableRewards(rewards, now);
   const expired = progressExpired(acct?.lastEarnAt ?? null, now, cfg);
   const progressCents = expired ? 0 : (acct?.progressCents ?? 0);
   return {
     enabled: cfg.enabled,
+    /** A child on the household card: the balance is their parent's. */
+    household: owner !== customerId,
+    ownerId: owner,
     thresholdCents: cfg.thresholdCents,
     rewardCents: cfg.rewardCents,
     progressCents,
@@ -83,7 +139,7 @@ export async function reverseForSale(tx: DBorTx, customerId: string, saleId: str
   const revocable = await tx
     .select()
     .from(loyaltyRewards)
-    .where(and(eq(loyaltyRewards.sourceSaleId, saleId), isNull(loyaltyRewards.redeemedAt)))
+    .where(and(eq(loyaltyRewards.sourceSaleId, saleId), eq(loyaltyRewards.customerId, customerId), isNull(loyaltyRewards.redeemedAt)))
     .orderBy(desc(loyaltyRewards.issuedAt))
     .for("update");
   const r = reverseAccrual(acct.progressCents, reverseCents, revocable.length, cfg);
@@ -99,8 +155,37 @@ export async function reverseForSale(tx: DBorTx, customerId: string, saleId: str
   return { rewardsRevoked: r.rewardsRevoked, unrecoveredCents: r.unrecoveredCents };
 }
 
+/**
+ * Take back earned spend after a refund or void from whoever earned on the ticket (one card, or each
+ * family member's), in proportion to what each still has from it. Tickets with no earn entries
+ * reverse on `fallbackCustomerId`.
+ */
+export async function reverseSaleLoyalty(tx: DBorTx, saleId: string, fallbackCustomerId: string, reverseCents: number, now = new Date()) {
+  if (reverseCents <= 0) return { rewardsRevoked: 0, unrecoveredCents: 0 };
+  const rows = await tx
+    .select({ customerId: loyaltyLedger.customerId, cents: sql<number>`coalesce(sum(${loyaltyLedger.progressDeltaCents}), 0)::int` })
+    .from(loyaltyLedger)
+    .where(and(eq(loyaltyLedger.saleId, saleId), inArray(loyaltyLedger.kind, ["earn", "reverse"])))
+    .groupBy(loyaltyLedger.customerId);
+  const left = rows.filter((r) => Number(r.cents) > 0).map((r) => ({ customerId: r.customerId, cents: Number(r.cents) }));
+  if (!left.length) return reverseForSale(tx, fallbackCustomerId, saleId, reverseCents, now);
+  const total = left.reduce((a, r) => a + r.cents, 0);
+  const take = Math.min(reverseCents, total);
+  const shares = left.map((r) => ({ ...r, take: Math.floor((take * r.cents) / total) }));
+  shares[0].take += take - shares.reduce((a, r) => a + r.take, 0);
+  const out = { rewardsRevoked: 0, unrecoveredCents: reverseCents - take };
+  for (const r of shares) {
+    if (r.take <= 0) continue;
+    const x = await reverseForSale(tx, r.customerId, saleId, r.take, now);
+    out.rewardsRevoked += x.rewardsRevoked;
+    out.unrecoveredCents += x.unrecoveredCents;
+  }
+  return out;
+}
+
 export async function loadRedeemableReward(tx: DBorTx, customerId: string, rewardId: string, now = new Date()) {
-  const r = await tx.query.loyaltyRewards.findFirst({ where: and(eq(loyaltyRewards.id, rewardId), eq(loyaltyRewards.customerId, customerId)) });
+  const owners = await rewardOwners(customerId, tx);
+  const r = await tx.query.loyaltyRewards.findFirst({ where: and(eq(loyaltyRewards.id, rewardId), inArray(loyaltyRewards.customerId, owners)) });
   if (!r || r.redeemedAt || (r.expiresAt && r.expiresAt < now)) throw new AppError("bad_request", "That reward isn't available");
   return r;
 }
