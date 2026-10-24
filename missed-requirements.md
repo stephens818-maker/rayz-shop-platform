@@ -711,11 +711,33 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 
 - [x] Shop logins and every shop or staff role (Regional Manager, Shop Manager, Front Desk, Shop Login, Barber, custom roles that aren't brand-level) never see a client's full phone, email or address: masked at most (last 4 of the phone), whatever a rule, an override or a reveal says. The brand can still hide them.
 - [x] They never export or download a client list: client CSV, Campaign Center contacts, client ratings CSV, customer custom reports (download and email attachment), import skipped rows, the data-access log. Their audit log CSV leaves out client entries.
-- [x] Not grantable: full contact rules and the client-list permissions are refused for shop and staff roles and their people, even from the Brand Owner, and stripped at runtime if they're in the database. The shop login cap has no "as the role allows" any more.
+- [x] Not grantable: full contact rules and the client-list permissions are refused for shop and staff roles and their people, even from the Brand Owner, and stripped at runtime if they're in the database. The shop login cap has no "as the role allows" any more. (Revised by the owner: the brand can now make exceptions with contact access grants, section 29.)
 - [x] Only brand-level people see full contact details or export: Brand Owner, Brand Admins, and people in a brand-level role the Brand Owner creates (**Brand-level role** on a custom role), with access to all shops, never a shop login.
 - [x] Exact phone or email search still finds the client without revealing anything; calls, texts, reminders and openings blasts go through the system.
 - [x] Enforced on the server: `contactCeiling` in every client policy, `clientListDenied` on every client-list download, `BRAND_LEVEL_ONLY` in `effectiveAccess`, `SHOP_LOGIN_NEVER` and the grant checks. Migration `core_0050_brand_level`.
 - [x] Tests: `tests/db/client-contact-lockdown.test.ts` (every non-brand login given everything in the database, every download, reveal, search, the shop line, every grant path, and the brand-level side) and `tests/client-contact-lockdown.test.ts`.
+
+## 29. Contact access grants (owner's revised rule)
+
+- [x] By default shop logins and staff still can't see full client contact details or export client lists (section 28 unchanged for them).
+- [x] Brand management grants it per location or per person, from **Setup → Client data protection → Contact access**, with separate grants for full contact details and for exports, an optional end date and a note.
+- [x] Grants can be revoked at any time; revoked and expired ones stay listed with who gave and ended them. Every grant and revoke is audit-logged, and every export is in the client data access log and listed on the same page for the brand.
+- [x] Only brand-level people with **Client data protection** can grant, and only what they hold themselves. A grant never counts as the holder's own when they give access to someone else.
+- [x] Enforced on the server (`accessFor`, `seesFullContact`, `clientListDenied`). Tests: `tests/contact-grants.test.ts`, `tests/db/contact-grants.test.ts` (default and granted cases, per person and per location, revoke, expiry, who may grant), and the lockdown tests for the default.
+
+## 30. Self-serve brand portal users
+
+- [x] **Setup → Users**: invite (email with a single-use 7-day sign-up link, stored hashed), add, edit, deactivate, reactivate and remove brand and management users; resend or cancel an invite.
+- [x] Optional two-step sign-in requirement per user (authenticator app, RFC 6238), with set-up at sign-up or the next sign-in, reset, replay protection and a lockout after 5 wrong codes.
+- [x] A role or custom permissions per user: role templates across every module plus per-person permissions on top; location scope all or selected. Role templates (Brand Owner, Regional Manager, Shop Manager, Front Desk and custom ones) are edited and created by the owner.
+- [x] Remote access (exempt from the shop sign-in restriction) is a per-user switch.
+- [x] Can't be locked out: the last Brand Owner who can sign in can't be deactivated, removed or demoted; nobody changes their own account or gives permissions they don't hold; someone with upcoming appointments isn't deactivated or removed until they're moved.
+- [x] Every change is audit-logged (`user.*`, plus the existing role and access entries), with each user's account history on their page.
+- [x] Tests: `tests/users.test.ts`, `tests/db/users.test.ts`. Migration `core_0051_user_admin`.
+
+**Still open:**
+- [ ] Email providers are still stubs, so until one is wired the invite link is shown to the inviter to pass on (DEPLOY.md step 20).
+- [ ] Changing `AUTH_SECRET` makes stored authenticator keys unreadable; those users need their two-step reset.
 
 ## Deferred by decision
 

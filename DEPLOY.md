@@ -211,8 +211,13 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
 19. Client contact lockdown (migration `core_0050_brand_level`; see [Contact details stay in the system](README.md#contact-lockdown)):
    - The migration adds **Brand-level role** to roles and takes the client ratings export off Regional Manager and Shop Manager, and every client-list permission off custom roles. From now on shop logins and every shop or staff role see client phone, email and address masked at most and can't download client lists; nobody can grant either back.
    - Anyone at shop level who used to reveal phone numbers now calls and texts through the shop line instead. If someone outside the Brand Owner and Brand Admins needs full contact details or exports (a bookkeeper, say), the Brand Owner creates a custom role, ticks **Brand-level role**, gives it all shops and the permissions, and sets its **Client data** levels.
-20. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-21. Add the custom domain under **Settings → Domains**.
+20. Contact access grants and brand portal users (migration `core_0051_user_admin`; see [Contact access grants](README.md#contact-access) and [Users](README.md#users)):
+   - The migration adds the contact access grants table, invites, two-step sign-in and removal columns on staff, and lets invite emails sit in the outbox without a shop. It changes no one's access: shop logins and staff stay masked with no exports until the brand gives a grant under **Setup → Client data protection → Contact access**. A bookkeeper who used to need a brand-level role can now get a grant instead.
+   - **Invites are emailed**, and the Postmark and Resend providers are still stubs (see the email notes above). Until one is wired, the invite link is shown once to whoever sent it; pass it on privately. The outbox never keeps the link. Don't set `NOTIFICATIONS_EMAIL_PROVIDER=console` in production: it counts as sent, so the link only reaches the server log.
+   - **`AUTH_SECRET` also encrypts authenticator keys.** Changing it signs everyone out, as before, and now also breaks every two-step sign-in set up so far: reset two-step for those users under **Setup → Users** afterwards, and they set it up again at their next sign-in.
+   - Before go-live, check **Setup → Users**: turn on **Require two-step sign-in** for the Brand Owner and Brand Admins, and check who has **Remote access**.
+21. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+22. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 
