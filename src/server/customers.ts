@@ -359,49 +359,18 @@ export function visitedScope(opts: { shopIds?: string[]; staffId?: string }): SQ
   return sql`exists (select 1 from appointments v where ${sql.join(conds, sql` and `)})`;
 }
 
-export interface SearchScope {
-  /**
-   * A shop workspace: partial matches only among these shops' clients (home shop or a visit here);
-   * anyone else in the brand only on an exact phone, email or full name, to book them.
-   */
-  shops?: readonly string[];
-}
-
-/** Clients of these shops: their home shop is one of them or they've had an appointment at one. */
+/**
+ * Clients of these shops: their home shop is one of them or they've had an appointment at one. For
+ * reports, exports and photo reach only: every client is the brand's, and lookups reach them all.
+ */
 export function shopClientsScope(shopIds: readonly string[]): SQL {
   if (!shopIds.length) return sql`false`;
   return or(inArray(customers.homeShopId, [...shopIds]), visitedScope({ shopIds: [...shopIds] }))!;
 }
 
-/** An exact phone number, email or full name. Partial terms (some digits, part of a name) match nothing. */
-export function customerExactWhere(term: string): SQL | undefined {
-  const t = term.trim();
-  if (!t) return undefined;
-  const phone = normalizePhone(t);
-  if (phone) return eq(customers.phone, phone);
-  if (t.includes("@")) {
-    const email = normalizeEmail(t);
-    return email ? eq(customers.email, email) : undefined;
-  }
-  if (/\d/.test(t)) return undefined;
-  const name = t.toLowerCase().replace(/\s+/g, " ");
-  return or(sql`${fullNameExpr} = ${name}`, sql`${fullNameExpr} = ${`${name} `}`);
-}
-
-/** The whole book for brand-wide staff who may see every client; everyone else searches as their shops. */
-export const clientSearchScope = (ctx: { brandWide: boolean; shopIds: readonly string[] }, viewAll: boolean): SearchScope => (ctx.brandWide && viewAll ? {} : { shops: ctx.shopIds });
-
-/** The search condition for a scope: see `SearchScope` and `SearchReach`. */
-export function scopedSearchWhere(term: string, scope: SearchScope, reach: SearchReach = FULL_REACH): SQL | undefined {
-  const partial = customerSearchWhere(term, reach);
-  if (!partial || !scope.shops) return partial;
-  const exact = customerExactWhere(term);
-  return exact ? or(and(partial, shopClientsScope(scope.shops)), exact) : and(partial, shopClientsScope(scope.shops));
-}
-
-/** Raw rows for the server only: pass them through showClient before they go anywhere. */
-export async function searchCustomers(term: string, scope: SearchScope = {}, limit = 8, reach: SearchReach = FULL_REACH) {
-  const where = scopedSearchWhere(term, scope, reach);
+/** Raw rows for the server only, from the whole brand: pass them through showClient before they go anywhere. */
+export async function searchCustomers(term: string, limit = 8, reach: SearchReach = FULL_REACH) {
+  const where = customerSearchWhere(term, reach);
   if (!where) return [];
   const t = likeEscape(term.trim().toLowerCase());
   return db

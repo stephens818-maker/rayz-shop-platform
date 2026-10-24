@@ -22,7 +22,7 @@ export interface SearchOptions {
   limit?: number;
   /** Only clients this barber has served: the client list for people without "every client". */
   ownClientsOf?: string;
-  /** Search the whole book whatever the searcher's shops (the merge tool, which needs access to all shops). */
+  /** Ticket and appointment numbers from every shop too, whatever the searcher's shops (the merge tool, which needs access to all shops). */
   brandWide?: boolean;
   /** Skip logging when the caller logs the look itself (the client list logs its page view). */
   record?: boolean;
@@ -45,10 +45,15 @@ interface Scope {
   shops?: readonly string[];
 }
 
+/**
+ * Clients are the brand's, not a shop's: staff at any shop look up and book any client by any part
+ * of their name or details (what they then see is the client policy's call). Only a barber's own
+ * client list is limited to the people they've cut, and ticket and appointment numbers still find
+ * only the searcher's shops' tickets.
+ */
 function scopeFor(ctx: StaffContext, o: SearchOptions): Scope {
-  if (o.ownClientsOf) return { clients: visitedScope({ staffId: o.ownClientsOf }), shops: ctx.brandWide ? undefined : ctx.shopIds };
-  if (o.brandWide || (ctx.brandWide && can(ctx, "clients.view_all"))) return {};
-  return { clients: shopClientsScope(ctx.shopIds), shops: ctx.brandWide ? undefined : ctx.shopIds };
+  const shops = o.brandWide || ctx.brandWide ? undefined : ctx.shopIds;
+  return o.ownClientsOf ? { clients: visitedScope({ staffId: o.ownClientsOf }), shops } : { shops };
 }
 
 async function ids(q: Promise<{ id: string | null; score?: number }[]>, base: number): Promise<Found[]> {

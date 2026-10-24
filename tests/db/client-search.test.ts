@@ -174,10 +174,9 @@ describe("hidden and masked details", () => {
     expect(ids(await search("frontdesk", "7311"))).toContain(c.dom.id);
   });
 
-  it("partial terms reach only the searcher's own clients; a whole identifier reaches anyone, a ticket only at their shops", async () => {
-    expect(ids(await search("frontdesk", "Farnsworth"))).not.toContain(c.moline.id);
-    expect(ids(await search("frontdesk", "Quincy Farnsworth"))).toContain(c.moline.id);
-    expect(ids(await search("frontdesk", "(309) 555-7313"))).toEqual([c.moline.id]);
+  it("clients are the brand's: partial terms reach every shop's clients; a ticket number only the searcher's shops' tickets", async () => {
+    for (const q of ["Farnsworth", "Farnswo", "Quincy Farnsworth", "(309) 555-7313", "7313"]) expect(ids(await search("frontdesk", q)), q).toContain(c.moline.id);
+    for (const q of ["Farnsworth", "quincy"]) expect(ids(await search("makenna", q)), q).toContain(c.moline.id);
     expect(await search("frontdesk", `#${codes.ticket}`)).toEqual([]);
     expect(ids(await search("regional", `#${codes.ticket}`))).toEqual([c.moline.id]);
   });

@@ -487,16 +487,12 @@ describe("profiles, search, and access", () => {
     expect(after.lifetimeSpendCents).toBe(0);
   });
 
-  it("barbers search only clients seen at their shops and open only their own clients (review P1#13)", async () => {
+  it("the search reaches clients from every shop; barbers open only their own clients (review P1#13)", async () => {
     const c = await m.customers.findOrCreateCustomer({ firstName: "Ximena", lastName: "Searchable", phone: nextPhone() }, null);
     await visit({ customerId: c.id, shop: "coralville", barber: "Makenna", at: new Date(Date.now() - 10 * 86_400_000) });
-    const coralville = await shopNamed("coralville");
-    const kimberly = await shopNamed("kimberly");
-    expect((await m.customers.searchCustomers("ximena", { shops: [coralville.id] })).map((x) => x.id)).toContain(c.id);
-    expect((await m.customers.searchCustomers("ximena", { shops: [kimberly.id] })).map((x) => x.id)).not.toContain(c.id);
-    expect((await m.customers.searchCustomers("ximena searchable", { shops: [kimberly.id] })).map((x) => x.id)).toContain(c.id);
-    expect((await m.customers.searchCustomers(c.phone!.slice(-4), {})).map((x) => x.id)).toContain(c.id);
-    expect((await m.customers.searchCustomers("searchab", {})).map((x) => x.id)).toContain(c.id);
+    expect((await m.customers.searchCustomers("ximena")).map((x) => x.id)).toContain(c.id);
+    expect((await m.customers.searchCustomers(c.phone!.slice(-4))).map((x) => x.id)).toContain(c.id);
+    expect((await m.customers.searchCustomers("searchab")).map((x) => x.id)).toContain(c.id);
 
     const makenna = await staffNamed("Makenna");
     const beth = await staffNamed("Beth");

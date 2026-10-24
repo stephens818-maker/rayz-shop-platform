@@ -195,6 +195,8 @@ async function fieldSql(f: FieldDef, policy: ClientPolicy): Promise<Piece> {
       return raw("round(rt.avg::numeric, 1)::float8", ["rt"]);
     case "home_location":
       return raw("(select hs.name from shops hs where hs.id = c.home_shop_id)");
+    case "locations_visited":
+      return raw("array(select distinct vs.name from appointments vx join shops vs on vs.id = vx.shop_id where vx.customer_id = c.id and vx.status = 'completed' order by vs.name)");
     case "primary_barber":
       return raw("(select pb.display_label from staff pb where pb.id = coalesce(c.preferred_staff_id, lb.staff_id))", ["lb"]);
     case "source":

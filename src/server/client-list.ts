@@ -21,12 +21,17 @@ export interface ClientListQuery {
 }
 
 /**
- * Which clients the list (and its export) shows. Barbers: clients they've cut. Otherwise a shop's
- * own clients (home shop or any visit there); when searching, whoever the search reaches (see
- * searchClients). Filters need "Use advanced client filters" and are refused when they'd read a
- * hidden detail.
+ * Which clients the list shows. Barbers: clients they've cut. Everyone with "every client": the
+ * whole brand, one profile per person whichever shops they visit; home shop and shops visited are
+ * filters, not walls. An export is a report, so it keeps to the exporter's shops' clients (home
+ * shop or a visit there) unless they work brand-wide. Filters need "Use advanced client filters"
+ * and are refused when they'd read a hidden detail.
  */
-export async function clientListQuery(ctx: StaffContext, policy: ClientPolicy, input: { q: string; f?: string | null; now?: Date }): Promise<ClientListQuery> {
+export async function clientListQuery(
+  ctx: StaffContext,
+  policy: ClientPolicy,
+  input: { q: string; f?: string | null; now?: Date; purpose?: "list" | "export" },
+): Promise<ClientListQuery> {
   const full = can(ctx, "clients.view_all");
   let seg = can(ctx, "clients.filters") ? decodeFilter(input.f) : EMPTY_SEGMENT;
   const outside = !ctx.brandWide && segmentShopIds(seg).some((s) => !ctx.shopIds.includes(s));
@@ -35,15 +40,7 @@ export async function clientListQuery(ctx: StaffContext, policy: ClientPolicy, i
   const found = input.q ? await findClients(ctx, policy, input.q, { via: "clients", limit: 500, ownClientsOf: full ? undefined : ctx.staff.id, record: false }) : null;
   const ids = found?.ranked.map((r) => r.id) ?? [];
   const search = found ? (ids.length ? inArray(customers.id, ids) : sql`false`) : undefined;
-  const scope = !full
-    ? visitedScope({ staffId: ctx.staff.id })
-    : search
-      ? undefined
-      : ctx.currentShopId
-        ? shopClientsScope([ctx.currentShopId])
-        : !ctx.brandWide
-          ? shopClientsScope(ctx.shopIds)
-          : undefined;
+  const scope = !full ? visitedScope({ staffId: ctx.staff.id }) : input.purpose === "export" && !ctx.brandWide ? shopClientsScope(ctx.shopIds) : undefined;
   const filtered = await filteredClientIds(seg, input.now ?? new Date());
   const relevance = ids.length ? sql`array_position(array[${sql.join(
     ids.map((i) => sql`${i}::uuid`),

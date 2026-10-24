@@ -5,10 +5,10 @@
  * shop login, Moline's manager, the regional manager (Moline and Rock Island) and Kat (a barber at
  * Moline and Silvis who manages Rock Island) open every admin page, by direct URL and with
  * Coralville in the query string, download every export, call the API, and aim every server action
- * at those records. No canary may appear anywhere except the client's own visit history, which
- * follows the client to every shop; every action must be refused as "not found" or "outside your
- * access", and nothing may change. The brand owner sees every canary, so their absence means
- * something.
+ * at those records. No canary may appear anywhere except the client themselves, who is the brand's
+ * (their name and home shop on the client list, their profile and visit history at every shop);
+ * every action must be refused as "not found" or "outside your access", and nothing may change.
+ * The brand owner sees every canary, so their absence means something.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PAGE_ACCESS } from "@/domain/navigation";
@@ -87,6 +87,9 @@ const SECRETS = [
 const VISIT_HISTORY = [CANARY.barber, CANARY.item];
 /** What a shop user may not see even on a brand client's profile: other shops' notes, ratings, tickets and operations. */
 const OTHER_SHOP_DETAIL = SECRETS.filter((s) => ![CANARY.last, CANARY.email, "555-7731", "5557731", ...VISIT_HISTORY].includes(s));
+/** The client list is the brand's one client book: every shop's clients by name, with contact masked, home shop and shops visited. */
+const CLIENT_LIST = "/admin/customers";
+const ON_CLIENT_LIST = SECRETS.filter((s) => s !== CANARY.last);
 
 const shop: Record<string, string> = {};
 const people: Record<string, string> = {};
@@ -419,7 +422,7 @@ describe("shop workspaces never show another shop's records", () => {
           const r = await open(page, {}, sp);
           if (r.kind !== "ok") continue;
           opened++;
-          const hits = found(r.text, [...(NAMES_LISTED.has(page) ? SECRETS : [...SECRETS, "Coralville"]), ...notTheirs(o)]);
+          const hits = found(r.text, [...(page === CLIENT_LIST ? ON_CLIENT_LIST : NAMES_LISTED.has(page) ? SECRETS : [...SECRETS, "Coralville"]), ...notTheirs(o)]);
           if (hits.length) leaks.push(`${page}?${new URLSearchParams(sp)}: ${hits.join(", ")}`);
         }
       expect(leaks).toEqual([]);
@@ -507,7 +510,13 @@ describe("direct URLs to another shop's records", () => {
       expect(profile.kind).toBe("ok");
       const text = profile.text!;
       expect(text).toContain(CLIENT_NAME);
-      for (const s of ["Coralville", CANARY.barber, CANARY.item, "$23.00", "at every Ray'z shop", "Loyalty progress", "★ 2.0"]) expect(text, s).toContain(s);
+      for (const s of ["Coralville", CANARY.barber, CANARY.item, "at every Ray'z shop", "Loyalty progress", "★ 2.0"]) expect(text, s).toContain(s);
+      // A shared shop login sees when, where and what at other shops, but not what it cost.
+      if (o.login === "moline") {
+        expect(text).not.toContain("$23.00");
+        expect(text).toContain("Prices show for this shop's visits only");
+        expect(text).toContain("Spend at Moline");
+      } else expect(text).toContain("$23.00");
       expect(found(text, OTHER_SHOP_DETAIL)).toEqual([]);
       expect(text).not.toContain(`/admin/sales/${ids.sale}`);
       expect(text).not.toContain("Another Ray'z shop");
@@ -528,25 +537,28 @@ describe("direct URLs to another shop's records", () => {
 // ───────────── Clients across shops ─────────────
 
 describe("finding a brand client to book them", () => {
-  it("exact phone, email or full name finds them; partial search and browsing don't", async () => {
+  it("any shop finds the client by any part of their name or a whole identifier, with contact still masked", async () => {
     const { searchCustomersAction } = await import("@/app/admin/calendar/actions");
-    const { findClientsAction } = await import("@/app/admin/customers/actions");
+    const { quickFindClientsAction } = await import("@/app/admin/customers/actions");
     for (const login of MOLINE_SIDE) {
       await as(login);
-      for (const term of [CANARY.phone, "(319) 555-7731", CANARY.email, CLIENT_NAME, CLIENT_NAME.toLowerCase()]) {
+      for (const term of [CANARY.phone, "(319) 555-7731", CANARY.email, CLIENT_NAME, CLIENT_NAME.toLowerCase(), CANARY.last, CANARY.first, "Quillon Canary", "7731"]) {
         const r = await searchCustomersAction(term);
         expect(r.ok && r.data.some((c) => c.id === ids.client), `${login} ${term}`).toBe(true);
+        expect(found(JSON.stringify(r), [CANARY.email, "555-7731", "5557731"]), `${login} ${term}`).toEqual([]);
       }
-      for (const term of [CANARY.last, CANARY.first, "5557731", "7731", "quillon.canary", "Quillon Canary"]) {
+      // Partial digits and email letters need the full detail, which nobody below brand level sees.
+      for (const term of ["5557731", "email:quillon.canary"]) {
         const r = await searchCustomersAction(term);
         expect(r.ok && r.data.some((c) => c.id === ids.client), `${login} ${term}`).toBe(false);
-        const f = await findClientsAction(term);
-        expect(f.ok && JSON.stringify(f.data).includes(ids.client), `${login} find ${term}`).toBe(false);
       }
-      const exact = await open("/admin/customers", {}, { q: CANARY.phone });
-      expect(exact.text).toContain(`/admin/customers/${ids.client}`);
-      expect(exact.text).toContain(CLIENT_NAME);
-      for (const q of [CANARY.last, "555773", ""]) expect((await open("/admin/customers", {}, { q })).text, `${login} ${q}`).not.toContain(`/admin/customers/${ids.client}`);
+      const header = await quickFindClientsAction(CANARY.last);
+      expect(header.ok && header.data.some((c) => c.id === ids.client), `${login} header`).toBe(true);
+      for (const q of [CANARY.phone, CANARY.last, ""]) {
+        const list = await open("/admin/customers", {}, { q });
+        expect(list.text, `${login} ${q}`).toContain(`/admin/customers/${ids.client}`);
+        expect(found(list.text!, ON_CLIENT_LIST), `${login} ${q}`).toEqual([]);
+      }
     }
     await as("owner");
     const r = await searchCustomersAction(CANARY.last);

@@ -163,9 +163,9 @@ export async function sendToCheckoutAction(appointmentId: string) {
 }
 
 /**
- * The client search for booking, the POS and walk-ins: see searchClients. Brand-wide staff with
- * "every client" search the shared book; everyone else their shops' clients, and anyone else in
- * the brand only by a value that identifies one person (a whole phone, email, full name, card).
+ * The client search for booking, the POS and walk-ins: see searchClients. Everyone searches the
+ * brand's one client book, so a client from any shop can be booked anywhere; what each hit shows
+ * is the searcher's client policy.
  */
 export async function searchCustomersAction(q: string, via: "booking" | "pos" | "walk_in" = "booking") {
   return safe(async () => {

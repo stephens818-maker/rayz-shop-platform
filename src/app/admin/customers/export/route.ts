@@ -14,7 +14,8 @@ import { VISIT_STATUS_LABEL } from "@/domain/visit-cadence";
 
 /**
  * The client list as a CSV, for people with "export the client list" (the Brand Owner, unless they
- * give it to someone): all of it, or the clients a search and filters on the list found (`q`, `f`). Each detail is exported as the exporter sees it: hidden ones are left out and
+ * give it to someone): all of it, or the clients a search and filters on the list found (`q`, `f`),
+ * kept to the exporter's shops' clients unless they work brand-wide. Each detail is exported as the exporter sees it: hidden ones are left out and
  * masked ones stay masked. Every export is audited with the clients and fields it contained.
  */
 export async function GET(req: Request) {
@@ -25,7 +26,7 @@ export async function GET(req: Request) {
   const policy = await clientPolicy(ctx);
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 120);
-  const list = await clientListQuery(ctx, policy, { q, f: url.searchParams.get("f") });
+  const list = await clientListQuery(ctx, policy, { q, f: url.searchParams.get("f"), purpose: "export" });
   if (list.problem) return new Response(list.problem, { status: 403 });
   const rows = await db
     .select({

@@ -30,7 +30,6 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const full = can(ctx, "clients.view_all");
   const q = (sp.q ?? "").trim().slice(0, 120);
   const page = Math.max(1, Number(sp.page) || 1);
-  const scoped = !ctx.brandWide;
   const policy = await clientPolicy(ctx);
   const filters = can(ctx, "clients.filters");
   let paused = false;
@@ -72,6 +71,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
           progress: loyaltyAccounts.progressCents,
           lastVisit: sql<string | null>`(select max(starts_at) from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
           visits: sql<number>`(select count(*)::int from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
+          visited: sql<string[]>`array(select distinct vs.name from appointments a join shops vs on vs.id = a.shop_id where a.customer_id = ${customers.id} and a.status = 'completed' order by vs.name)`,
           ratingAvg: r.avg,
           ratingCount: r.count,
         })
@@ -106,19 +106,9 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
       .get(id)
       ?.filter((m) => m !== "Name")
       .join(", ") || null;
-  const shopName = ctx.shops.find((s) => s.id === ctx.currentShopId)?.name;
-  const yours = shopName ?? (ctx.shops.length === 1 ? ctx.shops[0].name : "Your shops'");
   const subtitle = !full
     ? "Clients you've had in your chair."
-    : scoped
-      ? q
-        ? `${yours} clients matching your search, plus any Ray'z client whose exact phone, email, full name, card or code you entered. Visits count every Ray'z shop.`
-        : `${yours} clients (home shop or a visit here). To book a client from another Ray'z shop, search their exact phone, email or full name.`
-      : q
-        ? "Searching every Ray'z shop. Clients and loyalty are shared across shops."
-        : shopName
-          ? `${shopName} clients (home shop or a visit here). Search to find anyone at any shop.`
-          : "All Ray'z clients.";
+    : `${q ? "Searching every Ray'z client" : "Every Ray'z client"}: one profile per person across all shops, with their visits, loyalty and gift cards from every shop. Filter by home shop or shops visited to narrow it.`;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -166,6 +156,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   {showPhone && <Th>Phone</Th>}
                   {showEmail && <Th>Email</Th>}
                   <Th>Home shop</Th>
+                  <Th>Shops visited</Th>
                   <Th right>Visits</Th>
                   <Th>Last visit</Th>
                   <Th>Comes in</Th>
@@ -174,7 +165,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ c, shop, progress, lastVisit, visits, ratingAvg, ratingCount }) => (
+                {rows.map(({ c, shop, progress, lastVisit, visits, visited, ratingAvg, ratingCount }) => (
                   <tr key={c.id} className="hover:bg-zinc-50">
                     <Td>
                       <Link className="font-medium hover:underline" href={`/admin/customers/${c.id}`}>
@@ -188,6 +179,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                     {showPhone && <Td className="whitespace-nowrap">{policy.show("phone", c.phone) ?? "—"}</Td>}
                     {showEmail && <Td className="text-zinc-600">{policy.show("email", c.email) ?? "—"}</Td>}
                     <Td>{shop ?? "—"}</Td>
+                    <Td className="text-zinc-600">{visited.length ? visited.join(", ") : "—"}</Td>
                     <Td right>{visits}</Td>
                     <Td>{lastVisit ? formatDate(new Date(lastVisit), "MMM d, yyyy") : "—"}</Td>
                     <Td className="whitespace-nowrap">
