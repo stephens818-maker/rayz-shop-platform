@@ -29,6 +29,7 @@ import { normalizePhone } from "@/lib/phone";
 import { Actor, audit } from "./audit";
 import { loadStaffAccess, staffWithAccessTo } from "./auth/access";
 import { CheckoutLineInput, TenderInput, finalizeSale, priceCart } from "./checkout";
+import { assertPromptsAnswered } from "./checkout-prompts";
 import { AppError, forbidden, notFound } from "./errors";
 import { shopAccount } from "./payments/connect";
 import { TEST_CARDS, inspectPaymentMethod, paymentsMode, stripe, terminal } from "./payments/processor";
@@ -171,6 +172,7 @@ export async function startHandoff(saleId: string, raw: HandoffDraftInput, by: H
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
   if (!sale) throw notFound("Sale");
   if (sale.status !== "open") throw new AppError("conflict", `This ticket is already ${sale.status}`);
+  await assertPromptsAnswered(saleId);
   await priceCart({ saleId, ...finalizeFields(draft), tipCents: 0, tender: { method: "none" } }, null);
   const row = await db.transaction(async (tx) => {
     await tx.select({ id: sales.id }).from(sales).where(eq(sales.id, saleId)).for("update");

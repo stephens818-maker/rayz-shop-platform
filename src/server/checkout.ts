@@ -53,6 +53,7 @@ import { appointmentLines, familyTicket, familyTicketFor, ticketAppointmentIds }
 import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, loyaltyShares, markRewardRedeemed } from "./loyalty";
 import { assertReaderAt, chargeRoute } from "./payments/connect";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
+import { assertPromptsAnswered, settlePrompts } from "./checkout-prompts";
 import { recordCheckout } from "./service-times";
 import { syncTipLedger } from "./tips/ledger";
 import { cashAwaiting, cashTipPayoutsCents } from "./tips/payouts";
@@ -386,6 +387,8 @@ export async function finalizeSale(input: FinalizeInput) {
   if (staffId && staffId !== pre.sale.staffId) await assertStaffAtShop(staffId, pre.shop.id);
   const split = input.tenders?.length ? input.tenders : null;
   if (split && input.handoffId) throw new AppError("bad_request", "Split payments are taken at the counter");
+  // The customer screen was only handed over once they were answered.
+  if (!input.handoffId) await assertPromptsAnswered(pre.sale.id, now);
 
   let card: Awaited<ReturnType<typeof inspectPaymentMethod>> | null = null;
   if (!split && input.tender.method === "card") card = await inspectPaymentMethod(input.tender.paymentMethodId);
@@ -672,6 +675,7 @@ export async function finalizeSale(input: FinalizeInput) {
     throw e;
   }
 
+  await settlePrompts(ctx.sale.id, input.actor, now).catch((e: Error) => console.error("settling checkout prompts failed", e.message));
   let rebooked = null;
   if (input.rebookInWeeks && ctx.appointment) {
     rebooked = await oneTapRebook(ctx.appointment.id, input.rebookInWeeks, input.actor).catch((e: Error) => ({ error: e.message }));

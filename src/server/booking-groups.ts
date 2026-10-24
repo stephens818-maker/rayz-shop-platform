@@ -179,7 +179,7 @@ async function present(results: PlanResult[], dayReason: string | null, people: 
   };
 }
 
-async function optionsFor(
+export async function optionsFor(
   shopRef: string,
   date: LocalDate,
   people: readonly GroupPerson[],
@@ -223,6 +223,8 @@ export async function bookGroup(
     idempotencyKey?: string | null;
     /** Staff with "Squeeze in" (checked by the caller): these people may be booked off the grid. */
     squeeze?: string[];
+    /** Rebooked at checkout: each person's new appointment points at the visit it follows. */
+    rebookedFrom?: Record<string, string | null>;
   },
 ): Promise<GroupView> {
   if (o.squeeze?.length && o.source !== "staff") throw new AppError("forbidden", "Only staff can squeeze in a booking");
@@ -261,7 +263,7 @@ export async function bookGroup(
         for (const p of req.people) {
           const s = seats.find((x) => x.customerId === p.customerId)!;
           await bookInTx(
-            { shopRef: shop.id, serviceId: p.serviceId, addonIds: p.addonIds, barberRef: s.staffId, startsAt: s.startsAt, customerId: p.customerId, source: o.source, notes: p.notes ?? null, actor: o.actor, now, silent: true, groupId: g.id, squeezeIn: !!o.squeeze?.includes(p.customerId) },
+            { shopRef: shop.id, serviceId: p.serviceId, addonIds: p.addonIds, barberRef: s.staffId, startsAt: s.startsAt, customerId: p.customerId, source: o.source, notes: p.notes ?? null, actor: o.actor, now, silent: true, groupId: g.id, squeezeIn: !!o.squeeze?.includes(p.customerId), rebookedFromId: o.rebookedFrom?.[p.customerId] ?? null },
             tx,
           );
         }
