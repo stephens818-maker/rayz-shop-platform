@@ -366,6 +366,8 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 - (core → mobile) If the app shows hours or adds a clock-in, please read and write through `src/server/time-clock.ts` (see "Time clock"). Never return `clock_pin_hash`, punch photos or other people's punches from `/api/v1`.
 
+- (core → mobile) Family accounts: please mount the six `/api/v1/me/family` routes from `@/server/family-api` and spread `FAMILY_OPENAPI` into `openapi.ts` (see the family accounts log entry). In the app, book a family through `POST /me/family/bookings`, and show `household: true` from `/me/loyalty` as the family card.
+
 - (core → mobile) Time between visits: the web account page (`/account`) shows the client's cadence, worked out in the browser from `/me/appointments` (only the latest 20 past appointments, so it can drift for clients with many cancellations). For the app, and so both read all visits, please add to `/me` (or a `/me/visits/cadence`) the result of `clientCadence(customerId, now)` in `src/server/visit-cadence.ts`: `cadence` (`visitDays`, `cadenceDays`, `label`, `lastVisit`, `sinceDays`, `nextExpected`, `booked`, `status`) and `barbers` (per barber, only when they've seen two or more). Labels and status words are in `src/domain/visit-cadence.ts`; once it's there, `/account` will read it instead.
 
 ## Open questions
@@ -381,6 +383,30 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-24: core (family accounts), REQUEST for mobile
+
+- **Please mount the family endpoints under `/api/v1/me/family`.** Each is a one-line route file re-exporting from `@/server/family-api`, the same as the core web routes under `src/app/api/account/family/`:
+  - `GET /me/family` → `getFamily`;
+  - `POST /me/family/children` → `postChild` (201);
+  - `PATCH /me/family/children/{id}` → `patchChild`;
+  - `POST /me/family/children/{id}/remove` → `removeChild`;
+  - `POST /me/family/children/{id}/split` → `splitChildAccount`;
+  - `POST /me/family/bookings` → `postFamilyBooking` (201, `{ appointments }`; source `api` unless the request sends `x-client: web`).
+  - Every file also exports `OPTIONS`. The handlers call `requireCustomer`, and a child's token gets 403: the parent manages children.
+- **And document them in `openapi.ts`:** `import { FAMILY_OPENAPI } from "@/domain/family"`. Spread `.components` (`Family`, `FamilyMember`, `ChildInput`, `FamilyBookingRequest`, `FamilySplitRequest`) and `.paths`. The fragment uses your `bearerAuth` and `Error` names.
+- **Until then**, the web account page reads `/api/account/family/...` with the same bearer token. The app can use those paths too.
+- **Children have no login or contact details.** A child is a `customers` row with `guardian_id` set (one level only). The `customers_family_guard` trigger clears a child's phone, email and opt-ins on every write, so please don't offer sign-in, OTP or consent capture for a child. Messages for a child go to the parent through `src/server/household-contact.ts` (`contactFor`, `householdContact`).
+- **`loyaltyBalance(customerId)`** now resolves the household card: for a child in household mode (the default), it returns the parent's balance with `household: true` and `ownerId`. Consider showing "Family card" when `household` is true.
+- **`/me/appointments`** is unchanged and lists only the signed-in person's own appointments. The children's upcoming appointments are in `GET /me/family` (`children[].upcoming`).
+- **Squire import:** family links are a post-step in `src/server/family-import.ts` (`importFamilies`), called from the core import action after a clients file. It reads `mapHeaders` and `parseSquireDateTime` from `importer.ts` read-only. `importer.ts` isn't changed.
+- **Migration `core_0054_family_accounts`:**
+  - `customers.guardian_id`, `birth_year`, `former_guardian_id`, `own_account_at`;
+  - the `sale_appointments` table and `sale_items.appointment_id`;
+  - `brand_settings.family` jsonb (`maxChildren` 6, `loyalty` `household`/`individual`, `splitAge` 13);
+  - the `clients.family` permission.
+- **Server-only:** `src/server/family.ts` and `family-ticket.ts` don't import `server-only`, because checkout and refunds load them outside Next (the worker, scripts). They load the badge and cadence modules lazily.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
 
 ### 2026-10-24: core (customer badges), REQUEST for mobile
 

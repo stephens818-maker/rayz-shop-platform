@@ -1445,6 +1445,33 @@ Customers see some badges too: in their account (`/account`), on the booking sit
 - **Migration:** `core_0053_customer_badges`. It adds `client_badges.since` (the earned day per badge) and `.progress`, the `client_badge_notices` table, and widens the custom badge tone check for orange.
 - **Tests:** `tests/customer-badges.test.ts` covers the visibility rules, the customer view (no staff-only badges or wording), progress meters, the rules, the message settings, the Badge news automation and the OpenAPI schema. `tests/db/customer-badges.test.ts` covers the endpoint, earned dates, the brand's settings, booking and cancelling, and Badge news with consent, caps, locations and staff-only badges.
 
+### Family accounts
+
+A parent or guardian's profile can have child profiles, up to the brand's limit (6 by default). Domain: `src/domain/family.ts`. Server: `src/server/family.ts`, `family-booking.ts`, `family-ticket.ts`, `family-import.ts` and `family-api.ts`.
+
+- **Brand settings** (Setup → Shop settings → Family accounts, `brand_settings.family`):
+  - the most children per account (0 turns family accounts off);
+  - loyalty per **household** (a child's visits earn on the parent's card, the default) or **individual** (each person's own card);
+  - the age a child can get their own account (13 by default).
+- **A child profile** has a first name, an optional last name (the parent's by default), a birthday or an age, a photo, notes (sensory needs, style preferences) and a preferred barber. Each child keeps their own visit history, time between visits, badges, rating, and cut notes and photos.
+- **No login or contact details for children.** The `customers_family_guard` trigger clears a child's phone, email and consent on every write, and refuses a child of a child. Reminders, receipts, review asks, call-in outreach and marketing for a child go to the parent, under the parent's consent, and still greet the child by name (`src/server/household-contact.ts`). Marketing caps and blasts count per household.
+- **Booking:**
+  - The parent books themselves and any children in one go, at `/book` or through the API. Each next person sits at the same time with another barber, or right after the person before them. It's all or nothing: when someone can't be seated, nothing is booked and nothing is sent.
+  - Staff can do the same from the calendar and walk-ins. With the `clients.family` permission they can also add or edit children at booking or check-in, and switch which family member is in the chair.
+- **Checkout:** one family ticket. The POS offers the household's other appointments at the shop today; adding one brings its services, tagged to that appointment and its barber. The parent pays once, and the tip splits per barber by their services. Every visit on the ticket closes, and a void or refund reopens them and reverses each person's loyalty.
+- **Reports and search:**
+  - The KPIs gain **Kids' cuts** and **Kids seen**. A child who later got their own account still counts as a kid for the visits before that.
+  - The client filters gain **Has kids** and **Is a child**; the report builder gains Is a child, Parent and Kids.
+  - Searching a child's name finds the parent too, right after the child.
+- **Badges:** **Family** on a parent (customer-visible by default), and **Kid** on a child (staff-only). The parent sees each child's customer-visible badges in their account.
+- **The parent's account:** `/account` has a My family section to add, edit or remove a child, see their visits, cadence, badges and upcoming appointments, book for the family, and give a child aged 13 or over their own account.
+- **Staff:** the client profile has a family card: the parent's link, the children, add, edit, take off the account, attach an existing client, and own account.
+- **Own account at 13+:** the same record, so every visit, badge, rating, note and photo stays. It gets its own phone or email and consent and leaves the parent's account; loyalty earned on the household card stays with the parent.
+- **Squire:** after a clients import, kid rows are linked to their parent when the file says who the parent is (a parent client ID, a parent phone, or a family ID with a child column). Anything the file can't settle is listed, and **Clients → Duplicates** can attach a shared-phone record as the other's child. Merges refuse a parent and their own child.
+- **API:** `GET /me/family`, `POST /me/family/children`, `PATCH /me/family/children/{id}`, `POST …/{id}/remove`, `POST …/{id}/split` and `POST /me/family/bookings` (bearer, parent only). The OpenAPI fragment is `FAMILY_OPENAPI`. The web account page calls them at `/api/account/family/...`; the app's `/api/v1/me/family` routes are the mobile agent's to mount (see NOTES-SYNC).
+- **Migration:** `core_0054_family_accounts`.
+- **Tests:** `tests/family.test.ts` covers the settings, ages, seating, the Squire family plan, badges, filters, report fields and the OpenAPI paths. `tests/db/family.test.ts` covers the limit and the contact guard, the parent's contact, family booking, the family ticket and tip split, both loyalty modes with a void, the kids KPI, the has-kids filter, child-name search, Squire links, attach and merge guards, own account, badges and the endpoints.
+
 ### Client search, filters and saved searches
 
 - **One search everywhere:** the client list, the **Find a client** box at the top of the brand portal sidebar (press `/`), booking on the calendar, the POS, and walk-in check-in. A returning walk-in is picked from the results instead of being created again. Results show the first name and last initial, nickname, photo, rating, client number, masked phone, the last visit (date and shop), the usual barber, and what matched.
