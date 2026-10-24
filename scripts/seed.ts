@@ -13,9 +13,10 @@ import { DEFAULT_BLOCK_REASONS } from "@/domain/block-reasons";
 import { offSchedule } from "@/domain/time-clock";
 import { rederive } from "@/server/time-clock";
 import { recordOpeningTips, syncTipLedger } from "@/server/tips/ledger";
+import { computeDailyStats } from "@/server/rollups";
 import { DEFAULT_STAFF_TIME_RULES, SERIES_HORIZON_DAYS, seriesOccurrences, timeOffSpan } from "@/domain/staff-time";
 import { LocalDate, addDays, diffDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
-import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
+import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, REGIONS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "rayz2026!";
 const HISTORY_DAYS = Number(process.env.SEED_HISTORY_DAYS ?? 56);
@@ -52,7 +53,7 @@ async function main() {
     inventory_ledger, po_receipt_lines, po_receipts, purchase_order_lines, purchase_orders, vendor_products, vendors,
     stock_transfer_lines, stock_transfers, stock_count_lines, stock_counts, shop_products, products, shop_services, services, time_blocks, time_block_series, time_off_requests, block_reasons,
     location_group_shops, location_groups, staff_group_members, staff_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours,
-    shop_payouts, shop_payment_accounts, shops, owner_entities, brand_settings
+    job_tasks, location_daily_stats, shop_payouts, shop_payment_accounts, shops, regions, owner_entities, brand_settings
     RESTART IDENTITY CASCADE`);
 
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
@@ -65,7 +66,7 @@ async function main() {
     return { reasonId: r.id, reason: r.label };
   };
 
-  // ── Shops, all owned by the brand for now (a franchisee would be a second owner entity) ──
+  // ── Shops, all owned by Rayz corporate ──
   const [brandOwner] = await db.insert(t.ownerEntities).values({ name: "Ray'z Barber Shop", legalName: "Ray'z Barber Shop LLC", kind: "brand", contactEmail: "owner@rayz.test" }).returning();
   const shopRows = await db
     .insert(t.shops)
@@ -99,6 +100,11 @@ async function main() {
     await db
       .insert(t.payGroups)
       .values({ shopId: dubuque.id, label: dubuque.name, exportTab: dubuque.name, anchorStart: "2026-10-04", anchorNumber: 1, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true });
+  }
+  for (const g of REGIONS) {
+    const [region] = await db.insert(t.regions).values({ name: g.name, slug: slugify(g.name) }).returning();
+    const ids = g.shops.map((slug) => shopBySlug.get(slug)?.id).filter((id): id is string => !!id);
+    if (ids.length) await db.update(t.shops).set({ regionId: region.id }).where(inArray(t.shops.id, ids));
   }
   for (const g of LOCATION_GROUPS) {
     const [row] = await db.insert(t.locationGroups).values({ name: g.name }).returning();
@@ -728,6 +734,7 @@ async function main() {
   await seedServiceTimes({ now, appts, items, staffByKey });
   await seedStaffTime({ now, staffByKey, shopBySlug, scheduleRows, appts });
   await seedTips({ today, staffByKey, shopBySlug });
+  for (const shop of shopRows) for (let d = addDays(today, -HISTORY_DAYS); d < today; d = addDays(d, 1)) await computeDailyStats(shop.id, d);
 
   console.log("Seed complete.");
   console.log(`  Logins (password: ${DEMO_PASSWORD}):`);

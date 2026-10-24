@@ -48,6 +48,12 @@ export const SHOPS: ShopSeed[] = [
   { slug: "utica", name: "Utica", address: "5262 Utica Ridge Road", city: "Davenport", state: "IA", zip: "52807", phone: null, email: "Rayzbsutica@outlook.com", hours: std, ...IA_TAX },
 ];
 
+/** Regions for the location comparison report. A shop is in one region at most. */
+export const REGIONS: { name: string; shops: string[] }[] = [
+  { name: "Quad Cities", shops: ["kimberly", "utica", "le-claire", "moline", "rock-island", "silvis"] },
+  { name: "Eastern Iowa", shops: ["coralville", "dubuque"] },
+];
+
 /** Saved report filters the brand admin can edit under Setup → Location groups. */
 export const LOCATION_GROUPS: { name: string; shops: string[] }[] = [
   { name: "Quad Cities", shops: ["kimberly", "utica", "le-claire", "moline", "rock-island", "silvis"] },
