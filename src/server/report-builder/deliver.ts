@@ -49,8 +49,8 @@ export async function exportReport(
 }
 
 /** The report's totals in words, for the email body and the Morning Dashboard: never a client's row. */
-export function totalsSummary(result: Pick<ReportResult, "columns" | "totals" | "total">, summary: boolean): string[] {
-  const out = [`${result.total.toLocaleString("en-US")} ${summary ? "group" : "client"}${result.total === 1 ? "" : "s"}`];
+export function totalsSummary(result: Pick<ReportResult, "columns" | "totals" | "total" | "noun">, summary: boolean): string[] {
+  const out = [`${result.total.toLocaleString("en-US")} ${summary ? "group" : (result.noun ?? "client")}${result.total === 1 ? "" : "s"}`];
   if (result.totals) result.columns.forEach((c, i) => c.agg !== "none" && out.push(`${totalHeader(c)}: ${cellText(totalType(c), result.totals!.cells[i]) || "—"}`));
   return out;
 }

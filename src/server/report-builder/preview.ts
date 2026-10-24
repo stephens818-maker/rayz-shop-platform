@@ -62,7 +62,7 @@ export async function previewReport(ctx: StaffContext, req: RunRequest, now: Dat
   const r = await resolveRun(ctx, req);
   const policy = await clientPolicy(ctx);
   const { scope, customerIds, ...result } = await runReport(ctx, policy, r.definition, { page: req.page, own: r.own, now });
-  const details = result.columns.some((c) => fieldDef(c.key, policy.custom)?.reads);
+  const details = result.columns.some((c) => fieldDef(c.key, policy.custom, r.definition.source)?.reads);
   if (customerIds.length && details)
     await recordClientAccess(ctx, { kind: "list", detail: { report: r.id, name: r.name, page: result.page, clients: customerIds.length, fields: result.columns.map((c) => `${c.key}${c.masked ? ":masked" : ""}`) } });
   let blast: Preview["blast"] = null;
