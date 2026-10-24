@@ -66,6 +66,8 @@ import { lapsedReportData } from "./marketing/lapsed-report";
 import { openingsReportData } from "./marketing/openings-report";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
+import { morningReportData } from "./morning-dashboard";
+import type { StaffAccess } from "./auth/access";
 
 /**
  * Every a la carte report is one loader returning stats and tables. The report page renders them
@@ -100,7 +102,7 @@ export interface ReportInput {
   /** Combined, by location, by barber or by location and barber, over the selected shops and barbers. */
   loc: ViewCtx;
   /** The viewer's access: brand-level rows (no shop) are only for people with every shop. */
-  viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[]; permissions?: ReadonlySet<Permission> };
+  viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[]; permissions?: ReadonlySet<Permission>; access?: StaffAccess };
   /** What the viewer may see of client records; without it, client details in the audit log are hidden. */
   client?: ClientPolicy;
   /** Who is looking at block and time off reasons; without it, private reasons are hidden. */
@@ -1236,6 +1238,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         }),
       ],
     };
+  },
+
+  async morning_dashboard({ scope, viewer }) {
+    return viewer.access ? morningReportData(viewer.access, scope) : { stats: [], tables: [] };
   },
 
   async audit_log({ viewer, loc, params, client, reasons }) {

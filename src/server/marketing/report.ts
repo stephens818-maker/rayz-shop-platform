@@ -32,9 +32,10 @@ const derive = (c: Cell[]): Cell[] => {
   return [...c.slice(0, 8), roi(n(6), n(7)), n(9), n(1) ? n(9) / n(1) : null];
 };
 
-interface SendRow {
+export interface SendRow {
   id: string;
   campaign_id: string;
+  campaign_kind: string;
   shop_id: string | null;
   staff_id: string | null;
   cost_cents: number;
@@ -48,17 +49,15 @@ interface SendRow {
 }
 
 /**
- * What each campaign's messages did, by campaign, location and barber. The period picks messages
- * by when they were sent; what came of them is credited to them. A booking, a paid ticket or a
- * coupon used within the attribution window after a message counts toward the latest message the
- * client got before it (last touch), so nothing counts twice.
+ * Marketing messages queued at these shops in the period, each with what came of it. A booking, a
+ * paid ticket or a coupon used within the attribution window after a message counts toward the
+ * latest message the client got before it (last touch), so nothing counts twice.
  */
-export async function marketingReportData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
-  if (!scope.shopIds.length) return { stats: [], tables: [] };
+export async function attributedSends(scope: ReportScope, days?: number): Promise<SendRow[]> {
+  if (!scope.shopIds.length) return [];
+  days ??= (await loadMarketingSettings()).attributionDays;
   const from = startOfLocalDay(scope.from).toISOString();
   const to = endOfLocalDay(scope.to).toISOString();
-  const settings = await loadMarketingSettings();
-  const days = settings.attributionDays;
   const sel = staffSelection(scope);
   const inShops = sql.join(
     scope.shopIds.map((s) => sql`${s}::uuid`),
@@ -69,7 +68,7 @@ export async function marketingReportData(scope: ReportScope, loc: ViewCtx): Pro
   const lastTouch = (customer: ReturnType<typeof sql.raw>, at: ReturnType<typeof sql.raw>, extra = sql``) => sql`(
     select x.id from marketing_sends x where x.customer_id = ${customer} and x.status = 'queued' and x.created_at <= ${at}
       and x.created_at > ${at} - make_interval(days => ${days}) ${extra} order by x.created_at desc limit 1)`;
-  const rows = (await db.execute(sql`
+  return (await db.execute(sql`
     with s as (
       select ms.* from marketing_sends ms
       where ms.status = 'queued' and ms.shop_id in (${inShops}) and ms.created_at >= ${from} and ms.created_at <= ${to} ${bySel}
@@ -89,7 +88,7 @@ export async function marketingReportData(scope: ReportScope, loc: ViewCtx): Pro
       ) send_id, r.discount_cents from coupon_redemptions r
       where r.campaign_id is not null and r.reversed_at is null and r.created_at >= ${from}
     )
-    select s.id, s.campaign_id, s.shop_id, s.staff_id, s.cost_cents, s.clicks,
+    select s.id, s.campaign_id, (select c.kind from marketing_campaigns c where c.id = s.campaign_id) campaign_kind, s.shop_id, s.staff_id, s.cost_cents, s.clicks,
       coalesce(j.status = 'sent' and (s.channel <> 'sms' or j.delivered_at is not null or j.provider <> 'twilio'), false) delivered,
       (select count(*)::int from bk where bk.send_id = s.id) bookings,
       (select coalesce(sum(cents), 0)::int from rv where rv.send_id = s.id) revenue,
@@ -97,6 +96,16 @@ export async function marketingReportData(scope: ReportScope, loc: ViewCtx): Pro
       (select coalesce(sum(discount_cents), 0)::int from rd where rd.send_id = s.id) discount,
       (select count(*)::int from marketing_unsubscribes u where u.send_id = s.id) unsubs
     from s left join notification_jobs j on j.id = s.job_id`)) as unknown as SendRow[];
+}
+
+/**
+ * What each campaign's messages did, by campaign, location and barber. The period picks messages
+ * by when they were sent; what came of them is credited to them (last touch, see attributedSends).
+ */
+export async function marketingReportData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+  if (!scope.shopIds.length) return { stats: [], tables: [] };
+  const days = (await loadMarketingSettings()).attributionDays;
+  const rows = await attributedSends(scope, days);
 
   const campaignIds = [...new Set(rows.map((r) => r.campaign_id))];
   const staffIds = [...new Set(rows.map((r) => r.staff_id).filter((x): x is string => !!x))];
