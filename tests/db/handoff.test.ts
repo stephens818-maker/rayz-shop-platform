@@ -408,6 +408,29 @@ describe("split tips", () => {
     expect(mk.tipRefundsCents).toBeGreaterThanOrEqual(refundShares.get(fx.makenna)!);
   });
 
+  it("lets the client tip each barber separately, and each barber gets exactly what was typed", async () => {
+    const lines = [
+      { kind: "service" as const, refId: fx.cut.id, qty: 1 },
+      { kind: "service" as const, refId: fx.beard.id, qty: 1, staffId: fx.makenna },
+    ];
+    const { saleId, id } = await handedOver(lines, "services");
+    let v = await H.handoffView(id);
+    expect(v.tipBarbers.map((b) => b.staffId).sort()).toEqual([fx.makenna, fx.michelle].sort());
+    await expect(H.chooseTip(id, "per_barber", 0, [{ staffId: fx.delaney, cents: 300 }])).rejects.toThrow(/isn't on this ticket/);
+    v = await H.chooseTip(id, "per_barber", 0, [
+      { staffId: fx.michelle, cents: 777 },
+      { staffId: fx.makenna, cents: 223 },
+    ]);
+    expect(v.tip).toMatchObject({ cents: 1000, choice: "per_barber" });
+    expect(v.tip.byStaff).toHaveLength(2);
+    await H.chooseReceipt(id, { channel: "none", onFile: false });
+    await H.payHandoff(id, keyed(), v.totalCents);
+    const ledger = await m.db.db.select().from(s().tipLedger).where(eq(s().tipLedger.saleId, saleId));
+    const tipOf = (staffId: string) => ledger.filter((e) => e.staffId === staffId).reduce((a, e) => a + e.amountCents, 0);
+    expect([tipOf(fx.michelle), tipOf(fx.makenna)]).toEqual([777, 223]);
+    expect((await saleRow(saleId)).pricing).toMatchObject({ tipByStaff: [{ staffId: fx.michelle, cents: 777 }, { staffId: fx.makenna, cents: 223 }] });
+  });
+
   it("splits evenly when asked, and from the counter too", async () => {
     const sale = await m.checkout.openBlankSale(fx.shopId, actor, fx.delaney);
     await m.checkout.finalizeSale({
