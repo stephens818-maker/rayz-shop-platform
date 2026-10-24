@@ -739,6 +739,20 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] Email providers are still stubs, so until one is wired the invite link is shown to the inviter to pass on (DEPLOY.md step 20).
 - [ ] Changing `AUTH_SECRET` makes stored authenticator keys unreadable; those users need their two-step reset.
 
+## 31. Time between visits
+
+- [x] On the staff client profile (any shop or brand login) and the customer's own account page: the average time between visits as "Every 3.5 weeks" (days under two weeks), from completed visits, shown from the second visit.
+- [x] Robust to one-off long gaps: the median of the last 10 gaps between visit days; two appointments on one day count once.
+- [x] Last visit, days since, next expected visit (last plus the average) and a status badge: on track, due (from 3 days before), overdue (a week, or a quarter of the gap, after). Booked clients are on track.
+- [x] Per barber on the profile and the account page when they've seen more than one.
+- [x] Client list column (and CSV export), filters on the client list, Campaign Center segments and the report builder (usual days between visits; on track, due, overdue), report builder fields (average, comes in, days since, next expected, status), scoped to the report's barbers.
+- [x] Rebook reminders at the average less the campaign's lead days (3 by default); Today's rebook and open-chair lists use the same average.
+- [x] In the assistant's queryable fields, with status and days-between-visits filters.
+- [x] Tests: `tests/visit-cadence.test.ts`, `tests/db/visit-cadence.test.ts`.
+
+**Still open:**
+- [ ] The account page reads only the latest 20 past appointments, because `/api/v1` belongs to the mobile agent; the request to return the full cadence from `/me` is in NOTES-SYNC.
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.

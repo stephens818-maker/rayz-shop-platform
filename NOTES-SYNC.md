@@ -366,6 +366,8 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 - (core → mobile) If the app shows hours or adds a clock-in, please read and write through `src/server/time-clock.ts` (see "Time clock"). Never return `clock_pin_hash`, punch photos or other people's punches from `/api/v1`.
 
+- (core → mobile) Time between visits: the web account page (`/account`) shows the client's cadence, worked out in the browser from `/me/appointments` (only the latest 20 past appointments, so it can drift for clients with many cancellations). For the app, and so both read all visits, please add to `/me` (or a `/me/visits/cadence`) the result of `clientCadence(customerId, now)` in `src/server/visit-cadence.ts`: `cadence` (`visitDays`, `cadenceDays`, `label`, `lastVisit`, `sinceDays`, `nextExpected`, `booked`, `status`) and `barbers` (per barber, only when they've seen two or more). Labels and status words are in `src/domain/visit-cadence.ts`; once it's there, `/account` will read it instead.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -379,6 +381,14 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-24: core (time between visits)
+
+- **Cadence:** `src/domain/visit-cadence.ts` (pure, client-safe) and `src/server/visit-cadence.ts`. Visit days are distinct America/Chicago dates of completed appointments; the cadence is the median of the last 10 gaps (`CADENCE_GAPS`), null under two visit days. Status: `on_track` (booked, or more than `DUE_LEAD_DAYS` = 3 before the next expected visit), `due` (until `max(7, 25%)` past it), `overdue`. `cadenceCtes(name, cond, now)` is the SQL twin (`percentile_cont(0.5)`, `round(numeric)` for the next day); `cadenceFor(ids, now)` takes one `uuid[]` parameter; `clientCadence(customerId, now)` gives the profile's card and per-barber rows.
+- **Where:** profile card, `/account` (from `/me/appointments`), client list column and CSV export, `SegmentSchema.visitStatus` (new) with `minAvgGapDays`/`maxAvgGapDays` now reading the median, report builder fields `cadence_label`, `days_since_visit`, `next_visit_due`, `visit_status` (`avg_gap_days` now the median; CTE `cd` scoped like `va`), assistant `customer_report` args `visitStatus`, `minDaysBetweenVisits`, `maxDaysBetweenVisits`.
+- **Rebook:** `rebookReminderDue` now takes the cadence and two visit days (was three and the plain average); the Campaign Center reminder fires at cadence less `leadDays`. `rebookDue`/`dueForCut` take an optional `cadenceDays`, which Today's lists pass.
+- No migration. Tests: `tests/visit-cadence.test.ts`, `tests/db/visit-cadence.test.ts`; `tests/marketing.test.ts` now expects two visits to be enough.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`. See the request above for `/me`.
 
 ### 2026-10-24: core (contact access grants and brand portal users)
 
