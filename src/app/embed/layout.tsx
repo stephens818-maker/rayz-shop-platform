@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { EmbedFrame } from "./frame";
 
 export const metadata: Metadata = { robots: { index: false } };
@@ -11,9 +12,9 @@ export default function EmbedLayout({ children }: { children: React.ReactNode })
       {children}
       <p className="mt-6 text-center text-[11px] text-zinc-400">
         Booking by{" "}
-        <a href="/" target="_top" className="underline">
+        <Link href="/" target="_top" className="underline">
           Ray&apos;z Barber Shop
-        </a>
+        </Link>
       </p>
     </div>
   );
