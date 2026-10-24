@@ -693,7 +693,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [x] Brand-only, as in Squire: inventory setup, marketing, payouts, location switching, adding barbers.
 
 **2. Better than Squire:**
-- [x] Client phone and email masked at most at the shop login, with no export, reveal or merge; the brand can hide them, and only the Brand Owner can lift the cap.
+- [x] Client phone and email masked at most at the shop login, with no export, reveal or merge; the brand can hide them, and nobody can lift the cap (section 28).
 - [x] Staff contact masked without `staff.contact`, including on save.
 - [x] Refunds, voids and reassigning need a manager's PIN at the shop login, recorded on the record and in the audit log.
 - [x] Shop settings gated per part, on the page and on the server.
@@ -706,6 +706,16 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] The phone operator is a keypad menu (book link, hours, ring the shop), not a conversational voice AI like Squire's Operator. It doesn't take bookings by voice.
 - [ ] Existing shop logins have to be moved to the Shop Login role by hand (DEPLOY.md step 18).
 - [ ] `tests/db/flows.test.ts` "books, then refuses the same barber/time again" fails when run during SMS quiet hours (the confirmation waits instead of being suppressed). It fails the same way on the previous commit; it depends on the time of day, not on this work.
+
+## 28. Client contact details stay in the system (owner's hard rule)
+
+- [x] Shop logins and every shop or staff role (Regional Manager, Shop Manager, Front Desk, Shop Login, Barber, custom roles that aren't brand-level) never see a client's full phone, email or address: masked at most (last 4 of the phone), whatever a rule, an override or a reveal says. The brand can still hide them.
+- [x] They never export or download a client list: client CSV, Campaign Center contacts, client ratings CSV, customer custom reports (download and email attachment), import skipped rows, the data-access log. Their audit log CSV leaves out client entries.
+- [x] Not grantable: full contact rules and the client-list permissions are refused for shop and staff roles and their people, even from the Brand Owner, and stripped at runtime if they're in the database. The shop login cap has no "as the role allows" any more.
+- [x] Only brand-level people see full contact details or export: Brand Owner, Brand Admins, and people in a brand-level role the Brand Owner creates (**Brand-level role** on a custom role), with access to all shops, never a shop login.
+- [x] Exact phone or email search still finds the client without revealing anything; calls, texts, reminders and openings blasts go through the system.
+- [x] Enforced on the server: `contactCeiling` in every client policy, `clientListDenied` on every client-list download, `BRAND_LEVEL_ONLY` in `effectiveAccess`, `SHOP_LOGIN_NEVER` and the grant checks. Migration `core_0050_brand_level`.
+- [x] Tests: `tests/db/client-contact-lockdown.test.ts` (every non-brand login given everything in the database, every download, reveal, search, the shop line, every grant path, and the brand-level side) and `tests/client-contact-lockdown.test.ts`.
 
 ## Deferred by decision
 

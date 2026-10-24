@@ -380,9 +380,19 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-24: core (client contact lockdown)
+
+- **Brand-level roles:** `roles.brand_level` (custom roles only, set by the Brand Owner). `isBrandLevelRole` (Brand Owner, Brand Admin, or a custom role with `brand_level`; built-in shop and staff templates never) and `isBrandLevelPerson` (a person, not a shop login, in one with scope "all") in `src/domain/permissions.ts`.
+- **`BRAND_LEVEL_ONLY`:** `clients.export`, `campaign_center.export`, `import.run`, `clients.privacy` and `report.client_ratings.export` (`CLIENT_LIST_REPORTS`). Stripped by `effectiveAccess` for roles that aren't brand-level, part of `BRAND_ONLY` and `SHOP_LOGIN_NEVER`, taken off the shop and staff templates, and refused by `roleChangeDenied` and `userAccessChangeDenied` (which takes `next.brandLevel`).
+- **Contact ceiling:** `CONTACT_FIELDS` and `contactCeiling` in `src/domain/client-privacy.ts`; `makePolicy({ fullContact })` caps phone, email and address at masked, and `ClientPolicy` gains `fullContact` and `mayReveal(f)`. `seesFullContact(ctx)` and `clientListDenied(ctx)` in `src/server/client-privacy.ts`. `fieldRuleChangeDenied` takes `rule.fullContact`. `SHOP_LOGIN_CAPS` is `masked` | `hidden`; a stored `role` reads as `masked`.
+- **Guarded:** `revealClientFieldAction` (contact fields), the customers, Campaign Center, ratings, import skipped-rows and access-log downloads, `exportDenied` for customer custom reports (page, download, scheduled attachment), and the audit log CSV (client entries dropped).
+- Fixed: `saveRoleAction` dropped `clients.export` (and any `.export` without a `.view` twin); the view-before-export filter now applies to report permissions only.
+- Migration `core_0050_brand_level` (column, and the data updates taking the client-list permissions off shop and staff roles). Tests: `tests/client-contact-lockdown.test.ts`, `tests/db/client-contact-lockdown.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read. No new `ErrorCode`.
+
 ### 2026-10-24: core (shop login parity with Squire)
 
-- **Shop Login role** (`shop_login` in `ROLE_TEMPLATES`) for new shop logins, and hard caps for every `staff.kind = 'shop'` login: `SHOP_LOGIN_NEVER` / `sharedLoginAccess` in `src/domain/permissions.ts`, applied in `accessFor` (`src/server/auth/access.ts`). Client contact for shop logins is capped by `brand_settings.shop_login.clientContact` (`masked` | `hidden` | `role`, default `masked`) in `clientPolicy`; `saveShopLoginCapAction` on Client data protection (`role` is Brand Owner only).
+- **Shop Login role** (`shop_login` in `ROLE_TEMPLATES`) for new shop logins, and hard caps for every `staff.kind = 'shop'` login: `SHOP_LOGIN_NEVER` / `sharedLoginAccess` in `src/domain/permissions.ts`, applied in `accessFor` (`src/server/auth/access.ts`). Client contact for shop logins is capped by `brand_settings.shop_login.clientContact` (`masked` | `hidden`, default `masked`; `role` was removed by the client contact lockdown) in `clientPolicy`; `saveShopLoginCapAction` on Client data protection.
 - **Staff contact:** permission `staff.contact`; `seesStaffContact` / `staffContact` in `src/domain/staff-contact.ts`. `saveProfileAction` keeps email and phone when the editor can't see them.
 - **Manager approval:** `src/server/manager-approval.ts` (`needsManager`, `approvers`, `approvedActor`, using the time clock PIN and its lockout). `Actor.approvedBy` is written to `refunds.approved_by`, `sales.void_approved_by`, `sale_reassignments.approved_by` and the audit details. Sales actions take an optional `approval`.
 - **Reassign:** `reassignSale` in `src/server/reassign.ts`, permission `sales.reassign`. Unpaid `tip_ledger` rows are deleted and re-synced for the new barber (the ledger guard allows deleting unpaid rows and nothing else); paid ones get an `adjust` row.
