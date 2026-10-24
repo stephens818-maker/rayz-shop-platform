@@ -641,6 +641,34 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] Sales, appointments, staff, inventory, tips and campaigns sources: listed as coming next; each needs its fields and their SQL.
 - [ ] Scheduled emails need a real email provider (Resend or Postmark are still stubs).
 
+## 26. Rayz Assistant
+
+**1. What it does:**
+- [x] A chat panel (**Ask Rayz**) on every staff page: brand portal, shop logins and the staff portal, including on phones.
+- [x] Answers questions about sales by location or barber, comparisons, trends, utilization, lapsed clients, stock and purchase orders, tips, payroll hours and campaigns, plus "how do I…" help for 26 topics.
+- [x] Tool calls over the report loaders and the report builder's engine, never raw SQL. Each answer shows the numbers with a link to the report.
+- [x] A client list turns into a saved report (the builder opens with it filled in) or a Campaign Center blast segment.
+- [x] Drafting a purchase order or a blast needs **Confirm** and the matching permission, checked again on confirm. A blast is only ever saved as a draft.
+
+**2. Security:**
+- [x] Runs with the asking person's permissions and location scope: tools, reports, locations and barbers are cut to theirs, and anything else is refused.
+- [x] Fields Client data hides are never offered or included. Contact details, birthday, notes and custom fields never reach the model.
+- [x] No card, bank or identity data is sent: questions and report text are scrubbed, and the app holds none anyway.
+- [x] Every question, tool call, limit refusal and draft decision is audited. Limits are per person, per minute and per day.
+
+**3. Provider:**
+- [x] OpenAI or Anthropic by API key in the environment, or a keyword stub in development that runs without a key.
+- [x] Brand Admin turns it on or off for each role (`assistant.settings`).
+- [x] OpenAI requests use `store: false`. Zero data retention is requested per organization from OpenAI and Anthropic (DEPLOY.md step 17).
+
+**4. Tests:**
+- [x] `tests/db/assistant.test.ts` (permission and location scoping, hidden fields, drafts, audit, limits) and `tests/assistant.test.ts`.
+
+**Still open:**
+- [ ] Zero data retention has to be agreed with OpenAI or Anthropic for the brand's organization; the app can't turn it on.
+- [ ] The tools cover the existing reports and the customer source. Questions about appointment-level or sale-level detail outside a report wait for the report builder's next sources.
+- [ ] Answers aren't streamed; the panel waits for the whole reply.
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.

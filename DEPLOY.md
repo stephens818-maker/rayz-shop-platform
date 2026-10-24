@@ -104,6 +104,9 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    | `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM` | optional fallbacks for shops without their own Twilio number |
    | `TWILIO_ADVANCED_OPT_OUT` | optional: `1` if the Messaging Service's Advanced Opt-Out answers HELP (put the brand's HELP text there too); otherwise the app answers HELP with the text from **Campaign Center → Settings** |
    | `NOTIFICATIONS_PUSH_PROVIDER` | app push for the Campaign Center: `disabled` (default), `console`, `simulator`, or `expo` (a stub until the app's push credentials exist) |
+   | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` | optional: the language model behind Rayz Assistant (step 17). Without either, production has no assistant. |
+   | `ASSISTANT_PROVIDER` | optional: `openai`, `anthropic`, `stub` (the keyword demo) or `off`. Unset, it uses whichever key is set, OpenAI first. |
+   | `ASSISTANT_MODEL` | optional: the model name (defaults `gpt-4.1-mini` for OpenAI, `claude-sonnet-4-5` for Anthropic) |
 
    Don't set `DEMO_MODE`. Without it the build only ever applies migrations. It never seeds.
 3. Deploy. The build applies migrations. To run them yourself instead, set `SKIP_DB_MIGRATE=true` and run `DATABASE_URL_UNPOOLED=… pnpm db:migrate`.
@@ -189,8 +192,17 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - The migration adds saved reports and their send log, and indexes on sales and appointments by client and on clients by created date and preferred barber. The indexes are built without `CONCURRENTLY`, so on a large database run it at a quiet time.
    - It gives Brand Admin, Regional Manager and Shop Manager all three **Custom reports** permissions (open, build, export). Exporting a customer report also needs **Export the client list**, which stays with the Brand Owner until granted.
    - Scheduled reports go out from the notifications cron (every 5 minutes), so nothing new goes in `vercel.json`. They need a real email provider like the Morning Dashboard; with none, they're queued in the outbox and not sent.
-17. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-18. Add the custom domain under **Settings → Domains**.
+17. Rayz Assistant (migration `core_0048_assistant`; see [Rayz Assistant](README.md#rayz-assistant)):
+   - The migration adds the assistant's settings, conversations, messages and drafts, and gives Brand Admin **Turn Rayz Assistant on or off for each role** (`assistant.settings`). The assistant starts on for every role but only appears once a provider is set. In production that means a key: the keyword demo runs there only with `ASSISTANT_PROVIDER=stub`.
+   - Put `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in the Vercel project's environment variables, never in the repo. Use a key for its own project or workspace with a spending limit.
+   - **Data retention:**
+     - OpenAI requests are sent with `store: false`. Ask OpenAI to turn on zero data retention for the key's organization as well, which also stops the 30-day abuse-monitoring logs.
+     - Anthropic has no per-request switch and doesn't train on API inputs. Zero data retention is an agreement on the organization; ask Anthropic for it.
+     - **Setup → Rayz Assistant** shows which provider and model are in use, never the key.
+   - The model only receives scrubbed report text: no client phone, email, address, birthday, notes or custom fields, and nothing the person's **Client data** level hides.
+   - Before go-live, check **Setup → Rayz Assistant**: the roles that get it, the per-person limits (6 a minute, 100 a day), and whether it may draft blasts and purchase orders. Every question and tool call goes in the audit log.
+18. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+19. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

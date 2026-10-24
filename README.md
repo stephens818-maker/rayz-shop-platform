@@ -183,6 +183,8 @@ The same step sets the **statement descriptor** (what clients see on their card 
 
 **Custom reports:** **Reports → Custom reports** builds a client report from a field picker (columns, filters, grouping, totals, dates, locations and barbers), saves it for you, your roles or the whole brand, emails it on a schedule, adds its totals to the Morning Dashboard, and turns it into a Campaign Center blast. Grant the three **Custom reports** permissions per role or person. See [Custom reports](#custom-reports).
 
+**Rayz Assistant:** **Ask Rayz**, at the bottom right of every staff page, answers questions about the business and how to use the app from the reports the person can open, under their own permissions and locations. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` on the server for real answers; without one, a built-in demo answers by keyword outside production. **Setup → Rayz Assistant** (`assistant.settings`, brand-only) turns it on or off per role and sets the limits. See [Rayz Assistant](#rayz-assistant).
+
 <a id="what-we-store"></a>
 ## What we store and what Stripe stores
 
@@ -958,6 +960,55 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 
 <img alt="A Coralville manager opening a brand template: read-only, Coralville only, contact details masked" src="docs/screenshots/custom-reports-manager-template.png" width="400" />
 
+<a id="rayz-assistant"></a>
+### Rayz Assistant
+
+**Ask Rayz** opens a chat panel on every staff page: the brand portal, shop logins and each person's own login. It answers questions about the business (sales by location or barber, comparisons and trends, utilization, lapsed clients, stock and purchase orders, tips, payroll hours, campaigns) and "how do I…" questions about the app.
+
+- **Answers come from the reports, never from SQL.** The model gets tools, not the database:
+  - `run_report` runs any report the person can view through the same loaders as the report pages and CSVs (`REPORT_LOADERS`), over dates, locations, barbers and the by-location or by-barber view.
+  - `customer_report` builds a client list with the report builder's engine (filters such as last visit, visit counts, spend and not booked, plus columns, grouping and totals).
+  - `help` gives the steps for one of 26 how-to topics.
+  - `draft_po` and `draft_blast` prepare a purchase order or a Campaign Center blast.
+  - Each answer shows the numbers in a card with a link to the report it came from. A client list adds **Open in the report builder to save it** (the builder opens with the definition filled in, ready to save, share or schedule) and **Message these clients** (a new blast with its segment).
+- **Same permissions as the person:**
+  - The model is only offered tools and reports the person has. The audit log and client ratings are never offered.
+  - Locations and barbers it names are checked against the person's own. Anything else is refused ("Moline isn't one of your locations"), and "all" means all of theirs.
+  - A barber gets only their own numbers. A shop login is held to its shop. Client lists need **Custom reports: build**, and spend and tips need **Look up any client in the brand**, as in the builder.
+  - Fields **Client data** hides from the person are left out of the tool's choices altogether. Phone, email, address, birthday, notes and custom fields are never offered, even to the owner, and contact columns are dropped from report text before the model sees it.
+  - Everything sent to the model (the question, report text, history) goes through `scrub()`, so card numbers or bank details typed into a question never reach the model, the database or the audit log. The app holds no card, bank or identity data in any case.
+  - The system prompt names the person, role and locations, never an id.
+- **Drafts wait for Confirm:** a purchase order or blast is only drafted. The card lists what it will do, and nothing is created until the person presses **Confirm**. Confirm checks the permission (**Purchase orders: create** or **Campaign Center: create**), the role toggle and the brand's **May draft** setting again, and works for an hour. A confirmed blast is saved as a draft and never sent. Only the person who asked sees or confirms their drafts.
+- **Audit and limits:** every question (`assistant.question`), tool call with its arguments and outcome (`assistant.tool`), refusal for the limit (`assistant.rate_limited`) and draft decision (`assistant.action_confirmed`, `cancelled`, `failed`) is in the audit log. Each person gets 6 questions a minute and 100 a day by default. Conversations are kept per person and are private to them.
+- **Provider** (`src/server/assistant/providers.ts`):
+  - `ASSISTANT_PROVIDER` is `openai`, `anthropic`, `stub` or `off`. Unset, it uses whichever key is set (`OPENAI_API_KEY`, then `ANTHROPIC_API_KEY`), and the built-in demo outside production. `ASSISTANT_MODEL` overrides the model (defaults `gpt-4.1-mini` and `claude-sonnet-4-5`).
+  - OpenAI calls send `store: false`. For zero data retention, ask OpenAI and Anthropic to turn it on for the key's organization (see [DEPLOY.md](DEPLOY.md)).
+  - No user ids are sent. Provider errors are logged by status only.
+  - The demo routes questions to tools by keyword and runs them for real, so scoping, cards, drafts and the audit log all work without a key.
+- **Settings:** **Setup → Rayz Assistant** (`assistant.settings`, brand-only; Brand Admin has it):
+  - switch it on or off for everyone and per role (new roles start on);
+  - set the per-minute and per-day limits;
+  - choose whether it may draft blasts and purchase orders.
+  - The page shows the provider and model (never the key), its retention setting, and the last 7 days' questions and tool calls.
+- **Code:** `src/domain/assistant.ts` (settings, cards, system prompt, the demo's router), `src/domain/assistant-help.ts` (how-to topics, limited to pages the person can open), `src/server/assistant/` (providers, tools, the audited run loop and drafts), `src/app/admin/assistant/` (the panel and settings page). Migration `core_0048_assistant` adds `brand_settings.assistant`, the conversations, messages and drafts tables (scrubbed by trigger), and `assistant.settings` for Brand Admin.
+- Tests: `tests/assistant.test.ts` (settings, the demo's routing, help, the system prompt, the OpenAI and Anthropic request bodies, provider choice) and `tests/db/assistant.test.ts` (permission scoping). The DB tests cover:
+  - tools per role, and reports the person can't view;
+  - another location refused;
+  - barbers outside the person's locations;
+  - a barber held to their own numbers, and a shop login to its shop;
+  - no contact details or hidden fields in model context, and card numbers scrubbed;
+  - drafts confirmed only by their owner, with the permission checked again;
+  - blasts saved as drafts;
+  - audit entries;
+  - help limited to the person's pages;
+  - toggles, limits and private conversations.
+
+<img alt="The owner comparing sales by location this month" src="docs/screenshots/assistant-sales-by-location.png" width="800" /> <img alt="Lapsed clients, with links to the report builder and a blast" src="docs/screenshots/assistant-lapsed-clients.png" width="800" />
+
+<img alt="A Coralville manager's purchase order waiting for Confirm" src="docs/screenshots/assistant-draft-po.png" width="800" /> <img alt="After Confirm, and Moline refused because it isn't one of her locations" src="docs/screenshots/assistant-manager-scope.png" width="800" />
+
+<img alt="Setup → Rayz Assistant: per-role toggles, limits, drafts and the provider" src="docs/screenshots/assistant-settings.png" width="800" /> <img alt="A shop login on a phone asking how to open the cash drawer" src="docs/screenshots/assistant-shop-login-phone.png" width="300" />
+
 ### Reports across locations
 
 Every report, plus payroll, client ratings, and the audit log, runs over **one shop, any set of shops, or all shops**, picked from the **Locations** menu on the report:
@@ -1111,7 +1162,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 93 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, custom reports, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 94 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, custom reports, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -1637,6 +1688,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 - **Stripe Terminal.** The card reader flow is simulated. You pick a test card where a reader would read one, and on the customer screen with tips on the reader, the tip where the reader would ask for it. Real hardware needs a Terminal location, a connection token endpoint, and a reader pairing screen. The reader's tip buttons are already pushed to the shop's Terminal configuration when Stripe keys are set.
 - **3-D Secure.** The keyed-card flow doesn't handle `requires_action` yet. That's fine for in-person keyed entry, but it's needed before taking any card-not-present payment.
 - **Tax rates.** The seeded rates are placeholders (IA 7%; IL 0% on services and 8.75% on products) and every shop is marked "unverified". The accountant must confirm each shop's rates before go-live.
+- **Rayz Assistant without a key.** With no `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` (and not in production), a built-in demo stands in for the language model. It picks a tool by keyword and runs it for real, so answers are report summaries rather than written replies. See [Rayz Assistant](#rayz-assistant).
 - **OTP abuse protection.** One-time codes expire after 10 minutes and are single-use, but per-number rate limiting isn't built yet.
 
 ## Data caveats

@@ -380,6 +380,18 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-24: core (Rayz Assistant)
+
+- **Rayz Assistant:** a chat panel (`src/app/admin/assistant/panel.tsx`) in the admin layout for anyone whose role has it on, plus a settings page at `/admin/assistant/settings` (Setup). Server actions are in `src/app/admin/assistant/actions.ts`; the run loop, drafts, limits and settings are in `src/server/assistant/index.ts`.
+- **Tools** (`src/server/assistant/tools.ts`): `run_report` (over `REPORT_LOADERS` via `resolveScope`; the enum is the person's viewable reports minus `audit_log`, `client_ratings` and `morning_dashboard`), `customer_report` (the report builder's `runReport`; fields limited to `fieldUse` "full" and never contact, birthday or custom fields), `help` (`src/domain/assistant-help.ts`, filtered by `pageAllowed`), `draft_po` (`suggestionsFor`, then `createPos` on confirm) and `draft_blast` (`saveBlast` on confirm, draft only). Location and barber names are matched only against the person's shops, location groups and `barbersAt(ctx.shopIds)`.
+- **Providers** (`src/server/assistant/providers.ts`): OpenAI chat completions (`store: false`), Anthropic messages, and a keyword stub. Chosen by `ASSISTANT_PROVIDER`, else whichever key is set, else the stub outside production. `ASSISTANT_MODEL` overrides the model. No user id is sent, and errors log the status only.
+- **Builder links:** `encodeDefinition` / `decodeDefinition` in `src/domain/report-builder.ts`; `/admin/reports/custom/new?d=<definition>` opens the builder with it.
+- Permission `assistant.settings` (Settings and data, brand-only). Settings live in `brand_settings.assistant`: `enabled`, `roles` (role id → false to turn off; missing means on), `perMinute`, `perDay`, `actions`. Audit actions `assistant.question`, `assistant.tool`, `assistant.rate_limited`, `assistant.action_confirmed`, `assistant.action_cancelled`, `assistant.action_failed`, `settings.assistant`.
+- Migration `core_0048_assistant`: `brand_settings.assistant`, `assistant_conversations`, `assistant_messages`, `assistant_actions` (with `scrub_sensitive_row` triggers on their free text), and the permission for Brand Admin.
+- Tests: `tests/assistant.test.ts`, `tests/db/assistant.test.ts`.
+- Also: the Today page's **Up next** table scrolls inside its card instead of widening the page on phones.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read.
+
 ### 2026-10-24: core (custom report builder)
 
 - **Custom reports** under Reports (`/admin/reports/custom`, `/new`, `/[id]`): a builder over a whitelisted field list (`src/domain/report-builder.ts`), run by `src/server/report-builder/engine.ts`, which puts the query together from one SQL fragment per field with every value bound. Customers is the only source built; sales, appointments, staff, inventory, tips and campaigns are listed in `REPORT_SOURCES` and allowed by the table's check, so adding one needs no migration.
