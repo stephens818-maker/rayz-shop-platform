@@ -151,6 +151,7 @@ describe("answers", () => {
     ];
     expect(unansweredRequired(rows, { booked: false })).toEqual(["rebook", "product"]);
     expect(unansweredRequired(rows, { booked: true })).toEqual(["product"]);
+    expect(unansweredRequired([...rows].reverse(), { booked: false })).toEqual(["rebook", "product"]);
     expect(unansweredRequired([{ prompt: "rebook", required: true, outcome: "declined" }], { booked: false })).toEqual([]);
     expect(requiredMessage(["rebook", "product"])).toBe("Answer the rebook prompt and the product suggestions before taking payment.");
   });

@@ -275,7 +275,8 @@ export type PromptOutcome = "accepted" | "declined";
 
 /** A required prompt still waiting for an answer. A rebook counts as answered once the client has a next visit, however it was booked. */
 export function unansweredRequired(prompts: readonly { prompt: PromptKind; required: boolean; outcome: PromptOutcome | null }[], o: { booked: boolean }): PromptKind[] {
-  return prompts.filter((p) => p.required && !p.outcome && !(p.prompt === "rebook" && o.booked)).map((p) => p.prompt);
+  const waiting = new Set(prompts.filter((p) => p.required && !p.outcome && !(p.prompt === "rebook" && o.booked)).map((p) => p.prompt));
+  return PROMPT_KINDS.filter((k) => waiting.has(k));
 }
 
 export function requiredMessage(kinds: readonly PromptKind[]): string {

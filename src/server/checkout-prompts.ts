@@ -660,7 +660,7 @@ export async function addPromptProduct(saleId: string, promptId: string, product
         answeredBy: sql`case when ${checkoutPrompts.outcome} = 'accepted' then ${checkoutPrompts.answeredBy} else ${actor.staffId ?? null}::uuid end`,
       })
       .where(eq(checkoutPrompts.id, row.id));
-    await event(row, "prompt.accepted", actor, now, { quantity: 1, amount: p.priceCents, props: { product: productId } }, tx);
+    await event(row, "prompt.accepted", actor, now, { key: `prompt:${row.id}:accepted:${productId}`, quantity: 1, amount: p.priceCents, props: { product: productId } }, tx);
   });
 }
 
