@@ -47,6 +47,7 @@ import {
   unansweredRequired,
 } from "@/domain/checkout-prompts";
 import { fill, templateFor } from "@/domain/message-templates";
+import type { ProductHistory } from "@/domain/product-history";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
 import { type LocalDate, addDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, zonedWallTime } from "@/lib/time";
@@ -58,6 +59,7 @@ import { ticketAppointmentIds, ticketPeople } from "./family-ticket";
 import { contactFor } from "./household-contact";
 import { stockLevels } from "./inventory/stock";
 import { savedTemplates } from "./notifications/queue";
+import { clientProductHistory } from "./product-history";
 
 /**
  * Checkout prompts (src/domain/checkout-prompts.ts): the brand's settings and overrides, the
@@ -237,6 +239,8 @@ export interface TicketPrompts {
   waiting: PromptKind[];
   /** Whether each prompt is on for this ticket and whoever has it open. */
   enabled: Record<PromptKind, boolean>;
+  /** What the ticket's client has bought (every location), for the product prompt's last purchase and buy again. */
+  history: ProductHistory | null;
 }
 
 /** Clients' next visits booked after today, apart from what's on this ticket. */
@@ -395,7 +399,7 @@ async function rebookSuggestion(sale: Sale, settings: CheckoutPromptSettings, no
   };
 }
 
-async function productSuggestion(sale: Sale, settings: CheckoutPromptSettings): Promise<ProductSuggested | null> {
+async function productSuggestion(sale: Sale, settings: CheckoutPromptSettings, history: ProductHistory | null): Promise<ProductSuggested | null> {
   const onTicket = [sale.appointmentId, ...(await ticketAppointmentIds(sale.id))].filter((x): x is string => !!x);
   const [used, lines, apptItems, levels, people] = await Promise.all([
     db.select({ productId: saleUsedProducts.productId }).from(saleUsedProducts).where(eq(saleUsedProducts.saleId, sale.id)).orderBy(asc(saleUsedProducts.createdAt)),
@@ -420,12 +424,20 @@ async function productSuggestion(sale: Sale, settings: CheckoutPromptSettings): 
   const carried = levels.filter((l) => l.active);
   const own = new Map<string, number>();
   for (const l of lines) if (l.kind === "product" && l.refId) own.set(l.refId, (own.get(l.refId) ?? 0) + l.qty);
-  const picks = rankProducts({ used: used.map((u) => u.productId), mapped, past, carried: new Set(carried.map((c) => c.productId)), max: settings.product.max });
+  const refill = new Map((history?.refills ?? []).map((r) => [r.productId, r]));
+  const picks = rankProducts({
+    used: used.map((u) => u.productId),
+    mapped,
+    past: past.map((x) => ({ ...x, refill: refill.get(x.productId)?.status ?? null })),
+    carried: new Set(carried.map((c) => c.productId)),
+    max: settings.product.max,
+  });
   if (!picks.length) return null;
   const list: ProductSuggestion[] = picks.map((p) => {
     const l = carried.find((c) => c.productId === p.productId)!;
     const available = l.available + (own.get(p.productId) ?? 0);
-    return { ...p, name: l.name, brand: l.brand, priceCents: l.priceCents, available, stock: stockStatus(available, l.levels.reorderPoint) };
+    const r = refill.get(p.productId);
+    return { ...p, name: l.name, brand: l.brand, priceCents: l.priceCents, available, stock: stockStatus(available, l.levels.reorderPoint), refill: r?.status && r.due ? { status: r.status, due: r.due } : null };
   });
   return { kind: "product", products: list };
 }
@@ -518,9 +530,10 @@ export async function promptsForTicket(saleId: string, who: { roleId: string | n
     nextVisits = r.nextVisits;
     if (r.suggested) rebookRow = await upsertShown(sale, "rebook", r.suggested, settings.rebook.mode === "acknowledge", r.suggested.people[0].customerId, who.actor, now, r.suggested.options.length);
   }
+  const history = sale.customerId ? await clientProductHistory(sale.customerId, now) : null;
   let productRow = has("product");
   if (sale.status === "open" && (on.product || productRow)) {
-    const s = await productSuggestion(sale, settings);
+    const s = await productSuggestion(sale, settings, history);
     if (s) productRow = await upsertShown(sale, "product", s, settings.product.mode === "acknowledge", sale.customerId, who.actor, now, s.products.length);
   }
   const [rebook, product, used] = await Promise.all([
@@ -538,6 +551,7 @@ export async function promptsForTicket(saleId: string, who: { roleId: string | n
     reminders: settings.rebook.reminders,
     waiting: unansweredRequired([rebook, product].filter((x): x is NonNullable<typeof x> => !!x), { booked }),
     enabled: on,
+    history,
   };
 }
 

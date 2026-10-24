@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Badge, Button, Card, CardHeader, Notice, Select, cx } from "@/components/ui";
 import { INTERVAL_SOURCE_LABEL, PRODUCT_SOURCE_LABEL, STOCK_LABEL, type ProductSuggested, type RebookSuggested } from "@/domain/checkout-prompts";
+import { REFILL_STATUS_LABEL, REFILL_STATUS_TONE, refillHint, type ProductHistory } from "@/domain/product-history";
 import { formatDate, formatTime } from "@/lib/time";
 import { acceptRebookAction, addPromptProductAction, declinePromptAction, tagUsedProductAction } from "../actions";
 
@@ -27,6 +28,7 @@ export interface PromptsProps {
   reminders: boolean;
   waiting: ("rebook" | "product")[];
   enabled: { rebook: boolean; product: boolean };
+  history: ProductHistory | null;
 }
 type Retail = { productId: string; name: string; brand: string; priceCents: number; stock: number; available: number };
 type Act = <T>(fn: () => Promise<{ ok: true; data: T } | { ok: false; error: string }>, ok: (d: T) => void) => void;
@@ -40,14 +42,14 @@ export function CheckoutPrompts(props: {
   prompts: PromptsProps;
   retail: Retail[];
   onTicket: (productId: string) => number;
-  addProduct: (p: Retail) => void;
+  addProduct: (p: Retail, qty?: number) => void;
   negativeStock: "block" | "warn";
   pending: boolean;
   act: Act;
   onChanged: () => void;
 }) {
   const { prompts: p } = props;
-  const showProducts = p.enabled.product || !!p.product;
+  const showProducts = p.enabled.product || !!p.product || (p.history?.total ?? 0) > 0;
   if (!p.rebook && !p.nextVisits.length && !showProducts) return null;
   return (
     <div className="space-y-4" data-testid="checkout-prompts">
@@ -183,18 +185,21 @@ function ProductCard(props: Parameters<typeof CheckoutPrompts>[0] & { view: View
   const v = props.view;
   const [tag, setTag] = useState("");
   const used = new Set(props.prompts.used.map((u) => u.productId));
-  const add = (productId: string) => {
+  const prompting = props.prompts.enabled.product || !!v;
+  // On the ticket from here; a suggested product also counts as sold by the prompt.
+  const add = (productId: string, qty = 1) => {
     const r = props.retail.find((x) => x.productId === productId);
-    if (!r || !v) return;
-    props.addProduct(r);
-    props.act(() => addPromptProductAction(props.saleId, v.id, productId), () => props.onChanged());
+    if (!r) return;
+    props.addProduct(r, qty);
+    if (v && v.suggested.products.some((x) => x.productId === productId)) props.act(() => addPromptProductAction(props.saleId, v.id, productId), () => props.onChanged());
   };
   return (
     <Card>
-      <CardHeader title="Suggested products" subtitle="Used in the service, made for these services, or bought before" />
+      <CardHeader title={prompting ? "Suggested products" : "Products they buy"} subtitle={prompting ? "Used in the service, made for these services, or bought before" : "Their last purchases, at every location"} />
       <div className="space-y-3 p-4" data-testid="product-prompt">
         <RequiredBadge on={props.prompts.waiting.includes("product")} />
-        {v ? (
+        {props.prompts.history && props.prompts.history.total > 0 && <HistoryPanel {...props} history={props.prompts.history} add={add} />}
+        {!prompting ? null : v ? (
           <ul className="space-y-2">
             {v.suggested.products.map((x) => {
               const left = x.available - props.onTicket(x.productId);
@@ -215,6 +220,7 @@ function ProductCard(props: Parameters<typeof CheckoutPrompts>[0] & { view: View
                       <Badge tone={x.stock === "out" ? "red" : x.stock === "low" ? "amber" : "green"}>
                         {x.stock === "out" ? STOCK_LABEL.out : `${Math.max(0, left)} left`}
                       </Badge>
+                      {x.refill && x.refill.status !== "stocked" && <Badge tone={REFILL_STATUS_TONE[x.refill.status]}>{REFILL_STATUS_LABEL[x.refill.status]}</Badge>}
                     </div>
                   </div>
                   {added ? (
@@ -237,7 +243,7 @@ function ProductCard(props: Parameters<typeof CheckoutPrompts>[0] & { view: View
           </Button>
         )}
         {v?.outcome === "declined" && <p className="text-xs text-zinc-500">Client said no thanks.</p>}
-        <div className="border-t border-zinc-100 pt-3">
+        {prompting && <div className="border-t border-zinc-100 pt-3">
           <div className="mb-1 text-xs font-medium text-zinc-700">Used in the service</div>
           {props.prompts.used.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1">
@@ -268,8 +274,68 @@ function ProductCard(props: Parameters<typeof CheckoutPrompts>[0] & { view: View
               Tag
             </Button>
           </div>
-        </div>
+        </div>}
       </div>
     </Card>
+  );
+}
+
+/** The last product they bought, a few before it, and what they're likely running out of, each to buy again in one tap. */
+function HistoryPanel(props: Parameters<typeof CheckoutPrompts>[0] & { history: ProductHistory; add: (productId: string, qty: number) => void }) {
+  const h = props.history;
+  const refill = new Map(h.refills.map((r) => [r.productId, r]));
+  const recent = new Set(h.recent.map((b) => b.productId));
+  const due = h.refills.filter((r) => r.status === "running_out" && !recent.has(r.productId)).slice(0, 3);
+  const again = (productId: string | null, qty: number, testId: string) => {
+    const r = productId ? props.retail.find((x) => x.productId === productId) : undefined;
+    const blocked = !!r && props.negativeStock === "block" && r.available - props.onTicket(r.productId) < qty;
+    return (
+      <Button size="sm" variant="secondary" disabled={!r || blocked || props.pending} title={!productId ? "Not in the catalog" : !r ? "Not stocked here" : blocked ? "Not enough in stock" : undefined} onClick={() => props.add(productId!, qty)} data-testid={testId}>
+        Buy again
+      </Button>
+    );
+  };
+  const hint = (productId: string | null) => {
+    const r = productId ? refill.get(productId) : undefined;
+    return r?.status && r.due ? <Badge tone={REFILL_STATUS_TONE[r.status]}>{refillHint(r, (d) => formatDate(d, "MMM d"))}</Badge> : null;
+  };
+  const last = h.last!;
+  return (
+    <div className="space-y-2 rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200" data-testid="product-history">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-xs font-medium text-zinc-700">Last bought</div>
+          <div className="truncate text-sm font-medium" data-testid="last-product">
+            {last.name} <span className="font-normal text-zinc-500">× {last.qty}</span>
+          </div>
+          <div className="text-xs text-zinc-500">
+            {formatDate(last.date, "MMM d, yyyy")} · {last.shop}
+          </div>
+          <div className="mt-0.5">{hint(last.productId)}</div>
+        </div>
+        {again(last.productId, last.qty, "buy-again-last")}
+      </div>
+      {h.recent.length > 1 && (
+        <ul className="space-y-1 border-t border-zinc-200 pt-2">
+          {h.recent.slice(1).map((b) => (
+            <li key={`${b.saleId}:${b.productId ?? b.name}`} className="flex items-center justify-between gap-2 text-xs">
+              <span className="min-w-0 truncate">
+                <span className="text-zinc-500">{formatDate(b.date, "MMM d")} · {b.shop} · </span>
+                {b.name} × {b.qty}
+              </span>
+              {again(b.productId, b.qty, "buy-again")}
+            </li>
+          ))}
+        </ul>
+      )}
+      {due.map((r) => (
+        <div key={r.productId} className="flex items-center justify-between gap-2 border-t border-zinc-200 pt-2 text-xs">
+          <span className="min-w-0 truncate">
+            {r.name} <Badge tone="amber">{refillHint(r, (d) => formatDate(d, "MMM d"))}</Badge>
+          </span>
+          {again(r.productId, r.lastQty, "buy-again")}
+        </div>
+      ))}
+    </div>
   );
 }

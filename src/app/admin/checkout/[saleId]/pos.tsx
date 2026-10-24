@@ -244,11 +244,11 @@ export function Pos(props: {
   useEffect(() => setCashTendered(null), [totals.primaryChargeCents]);
 
   const setLineQty = (k: string, qty: number) => setLines((ls) => (qty <= 0 ? ls.filter((l) => l.key !== k) : ls.map((l) => (l.key === k ? { ...l, qty } : l))));
-  const addProduct = (p: (typeof props.retail)[number]) =>
+  const addProduct = (p: (typeof props.retail)[number], qty = 1) =>
     setLines((ls) => {
       const ex = ls.find((l) => l.kind === "product" && l.refId === p.productId);
-      if (ex) return ls.map((l) => (l === ex ? { ...l, qty: l.qty + 1 } : l));
-      return [...ls, { key: key(), kind: "product", refId: p.productId, name: `${p.brand} ${p.name}`, unitPriceCents: p.priceCents, qty: 1 }];
+      if (ex) return ls.map((l) => (l === ex ? { ...l, qty: l.qty + qty } : l));
+      return [...ls, { key: key(), kind: "product", refId: p.productId, name: `${p.brand} ${p.name}`, unitPriceCents: p.priceCents, qty }];
     });
 
   const addFree = (f: NonNullable<CouponRule["freeItem"]>) => {

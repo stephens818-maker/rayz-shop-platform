@@ -5,7 +5,8 @@
  *   service's, or the brand's), as 2-3 times to book in one tap; a family on one ticket is booked
  *   together. A "no" can carry a reason and a reminder to book.
  * - product: what the barber used in the service, the brand's products for the services on the
- *   ticket, and what the client bought before, with stock, to add in one tap.
+ *   ticket, and what the client bought before (what they're likely running out of first), with
+ *   stock, to add in one tap. Their last purchases show with it, each to buy again in one tap.
  *
  * The brand sets each prompt on or off and skippable or required to answer; a location, a role (of
  * whoever is signed in at checkout) or a barber (the ticket's) can turn it on or off, most specific
@@ -13,6 +14,7 @@
  */
 import { z } from "zod";
 import { type LocalDate, addDays, diffDays } from "@/lib/time";
+import type { RefillStatus } from "./product-history";
 
 export const PROMPT_KINDS = ["rebook", "product"] as const;
 export type PromptKind = (typeof PROMPT_KINDS)[number];
@@ -226,16 +228,18 @@ export interface ProductPick {
 
 /**
  * What to suggest, best first: what the barber used, then the brand's products for the services
- * (in their order), then past purchases (most often bought, then most recent). Each product once,
- * with every reason it's there; products the shop doesn't carry are left out.
+ * (in their order), then past purchases (likely running out first, then ran out, then most often
+ * bought, then most recent). Each product once, with every reason it's there; products the shop
+ * doesn't carry are left out.
  */
 export function rankProducts(o: {
   used: readonly string[];
   mapped: readonly { productId: string; sortOrder: number }[];
-  past: readonly { productId: string; times: number; lastAt: Date | string }[];
+  past: readonly { productId: string; times: number; lastAt: Date | string; refill?: RefillStatus | null }[];
   carried: ReadonlySet<string>;
   max: number;
 }): ProductPick[] {
+  const due = (r: RefillStatus | null | undefined) => (r === "running_out" ? 0 : r === "ran_out" ? 1 : 2);
   const out = new Map<string, ProductPick>();
   const put = (id: string, s: ProductSource) => {
     if (!o.carried.has(id)) return;
@@ -246,7 +250,7 @@ export function rankProducts(o: {
   };
   for (const id of o.used) put(id, "used");
   for (const m of [...o.mapped].sort((a, b) => a.sortOrder - b.sortOrder)) put(m.productId, "service");
-  for (const p of [...o.past].sort((a, b) => b.times - a.times || new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime())) put(p.productId, "past");
+  for (const p of [...o.past].sort((a, b) => due(a.refill) - due(b.refill) || b.times - a.times || new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime())) put(p.productId, "past");
   return [...out.values()].slice(0, o.max);
 }
 
@@ -263,6 +267,8 @@ export interface ProductSuggestion extends ProductPick {
   priceCents: number;
   available: number;
   stock: StockStatus;
+  /** For a product the client buys: whether they're likely running out, and when it's due. */
+  refill?: { status: RefillStatus; due: LocalDate } | null;
 }
 export interface ProductSuggested {
   kind: "product";
