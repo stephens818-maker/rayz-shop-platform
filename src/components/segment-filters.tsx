@@ -16,6 +16,7 @@ import {
   type Segment,
   type Tri,
 } from "@/domain/marketing";
+import { DUE_LEAD_DAYS, VISIT_STATUSES, VISIT_STATUS_LABEL, type VisitStatus } from "@/domain/visit-cadence";
 import { BarberFilter, LastVisitFilter } from "@/app/admin/campaign-center/segment-fields";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -146,6 +147,7 @@ export function SegmentFilters({
           seg.maxCancellations,
           seg.minAvgGapDays,
           seg.maxAvgGapDays,
+          seg.visitStatus,
           seg.upcoming,
         )}
       >
@@ -159,9 +161,17 @@ export function SegmentFilters({
           <Range label="Visits" lo={seg.minVisits} hi={seg.maxVisits} disabled={ro} onLo={(minVisits) => s({ minVisits })} onHi={(maxVisits) => s({ maxVisits })} />
           <Range label="No-shows" lo={seg.minNoShows} hi={seg.maxNoShows} disabled={ro} onLo={(minNoShows) => s({ minNoShows })} onHi={(maxNoShows) => s({ maxNoShows })} />
           <Range label="Cancellations" lo={seg.minCancellations} hi={seg.maxCancellations} disabled={ro} onLo={(minCancellations) => s({ minCancellations })} onHi={(maxCancellations) => s({ maxCancellations })} />
-          <Range label="Average days between visits" lo={seg.minAvgGapDays} hi={seg.maxAvgGapDays} disabled={ro} onLo={(minAvgGapDays) => s({ minAvgGapDays })} onHi={(maxAvgGapDays) => s({ maxAvgGapDays })} />
+          <Range label="Usual days between visits" lo={seg.minAvgGapDays} hi={seg.maxAvgGapDays} disabled={ro} onLo={(minAvgGapDays) => s({ minAvgGapDays })} onHi={(maxAvgGapDays) => s({ maxAvgGapDays })} />
           <TriSelect label="Upcoming appointment" value={seg.upcoming} disabled={ro} yes="Has one booked" no="Nothing booked" onChange={(upcoming) => s({ upcoming })} />
         </div>
+        <Field label="Next visit" hint={`Against their usual time between visits: due from ${DUE_LEAD_DAYS} days before, overdue a week (or a quarter of their gap) after. Booked clients are on track.`}>
+          <Chips
+            disabled={ro}
+            options={VISIT_STATUSES.map((v) => ({ id: v, name: VISIT_STATUS_LABEL[v] }))}
+            selected={seg.visitStatus}
+            onToggle={(x) => s({ visitStatus: toggle(seg.visitStatus, x as VisitStatus) })}
+          />
+        </Field>
       </Section>
 
       <Section title="Barbers and locations" count={set(seg.staffIds, seg.homeShopIds, seg.visitedShopIds)}>

@@ -83,11 +83,13 @@ describe("automated campaigns", () => {
     expect(daysToBirthday("2000-02-29", "2027-02-27")).toEqual({ days: 1, year: 2027 });
   });
 
-  it("rebook reminders for regulars a few days before their usual gap, for two weeks", () => {
+  it("rebook reminders a few days before their usual gap, from two visits, for two weeks", () => {
     expect(rebookReminderDue({ visits: 3, usualDays: 21, sinceDays: 18 }, 3)).toBe(true);
     expect(rebookReminderDue({ visits: 3, usualDays: 21, sinceDays: 17 }, 3)).toBe(false);
     expect(rebookReminderDue({ visits: 3, usualDays: 21, sinceDays: 32 }, 3)).toBe(false);
-    expect(rebookReminderDue({ visits: 2, usualDays: 21, sinceDays: 20 }, 3)).toBe(false);
+    expect(rebookReminderDue({ visits: 2, usualDays: 21, sinceDays: 20 }, 3)).toBe(true);
+    expect(rebookReminderDue({ visits: 1, usualDays: 21, sinceDays: 20 }, 3)).toBe(false);
+    expect(rebookReminderDue({ visits: 4, usualDays: 5, sinceDays: 4 }, 3)).toBe(false);
     expect(rebookReminderDue({ visits: 5, usualDays: 200, sinceDays: 200 }, 3)).toBe(false);
   });
 

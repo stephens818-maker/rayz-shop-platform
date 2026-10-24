@@ -132,20 +132,29 @@ export function noShowRisk(h: { noShows: number; lateCancels: number; total: num
   return null;
 }
 
+/** Visits, first and last visit, and the cadence (domain/visit-cadence.ts) when known; without it the usual gap is the plain average. */
+export interface VisitHistory {
+  visits: number;
+  firstVisit: number;
+  lastVisit: number;
+  cadenceDays?: number | null;
+}
+
 /**
  * Whether a regular is overdue: at least three visits, and more than 1.5× their usual gap (and at
  * least four weeks) since the last one, but not so long ago that they've likely moved on.
  */
-export function rebookDue(h: { visits: number; firstVisit: number; lastVisit: number }, now: number): { due: boolean; usualDays: number; sinceDays: number } {
+export function rebookDue(h: VisitHistory, now: number): { due: boolean; usualDays: number; sinceDays: number } {
   const day = 86_400_000;
   const sinceDays = Math.floor((now - h.lastVisit) / day);
-  const usualDays = h.visits >= 2 ? Math.round((h.lastVisit - h.firstVisit) / day / (h.visits - 1)) : 0;
+  const usualDays =
+    h.cadenceDays != null ? Math.round(h.cadenceDays) : h.visits >= 2 ? Math.round((h.lastVisit - h.firstVisit) / day / (h.visits - 1)) : 0;
   const due = h.visits >= 3 && usualDays > 0 && sinceDays > Math.max(28, usualDays * 1.5) && sinceDays <= 180;
   return { due, usualDays, sinceDays };
 }
 
 /** Due for a cut: at or past their usual gap (three weeks for clients without one yet). Used to pick who hears about an open chair. */
-export function dueForCut(h: { visits: number; firstVisit: number; lastVisit: number }, now: number) {
+export function dueForCut(h: VisitHistory, now: number) {
   const { usualDays, sinceDays } = rebookDue(h, now);
   return sinceDays >= (usualDays >= 7 ? Math.round(usualDays * 0.9) : 21) && sinceDays <= 120;
 }

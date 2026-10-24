@@ -16,6 +16,7 @@ import { Actor, audit } from "./audit";
 import { messageContext } from "./booking";
 import { AppError, notFound } from "./errors";
 import { processDueJobs, queueAppointmentMessage, savedTemplates } from "./notifications/queue";
+import { cadenceFor } from "./visit-cadence";
 
 /** At most one marketing text per client per week. */
 const NUDGE_DAYS = 7;
@@ -82,17 +83,18 @@ async function history(shopId: string, now: Date) {
   if (!rows.length) return [];
   const ids = rows.map((r) => r.customer_id);
   const phones = rows.map((r) => r.phone).filter((p): p is string => !!p);
-  const [nudged, stopped] = await Promise.all([
+  const [nudged, stopped, cadence] = await Promise.all([
     db
       .selectDistinct({ id: clientNudges.customerId })
       .from(clientNudges)
       .where(and(inArray(clientNudges.customerId, ids), inArray(clientNudges.kind, ["fill", "rebook"]), gte(clientNudges.createdAt, new Date(now.getTime() - NUDGE_DAYS * 86_400_000)))),
     phones.length ? db.select({ phone: contactOptOuts.phone }).from(contactOptOuts).where(and(inArray(contactOptOuts.phone, phones), eq(contactOptOuts.channel, "sms"))) : Promise.resolve([]),
+    cadenceFor(ids, now),
   ]);
   const recent = new Set(nudged.map((r) => r.id));
   const stop = new Set(stopped.map((r) => r.phone));
   return rows.map((r) => {
-    const h = { visits: r.n, firstVisit: new Date(r.first_at).getTime(), lastVisit: new Date(r.last_at).getTime() };
+    const h = { visits: r.n, firstVisit: new Date(r.first_at).getTime(), lastVisit: new Date(r.last_at).getTime(), cadenceDays: cadence.get(r.customer_id)?.cadenceDays ?? null };
     return { r, h, canText: !!r.marketing && !!r.phone && !stop.has(r.phone) && !recent.has(r.customer_id) };
   });
 }

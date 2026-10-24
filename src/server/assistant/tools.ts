@@ -9,6 +9,7 @@ import { CHANNEL_LABEL, STOP_LINE, SegmentSchema, templatesProblem, type Segment
 import { reportView, type ReportKey } from "@/domain/permissions";
 import { CUSTOMER_FIELDS, ReportDefinition, cellText, encodeDefinition, fieldUse, segmentFromReport, totalHeader, totalType, type FieldDef } from "@/domain/report-builder";
 import { csvTable, type ReportTable } from "@/domain/report-views";
+import { VISIT_STATUSES } from "@/domain/visit-cadence";
 import { formatCents } from "@/lib/money";
 import { scrub, scrubText } from "@/lib/sensitive";
 import { formatDate, todayLocal } from "@/lib/time";
@@ -198,7 +199,8 @@ export function assistantFields(sees: ReturnType<typeof panelSees>): FieldDef[] 
   return CUSTOMER_FIELDS.filter((f) => fieldUse(f, sees).use === "full" && !["phone", "email", "address", "birthday"].includes(f.key));
 }
 
-const aggOf = (f: FieldDef) => (f.type === "int" || f.type === "money" ? "sum" : f.type === "number" || f.type === "stars" ? "avg" : "none");
+const aggOf = (f: FieldDef) =>
+  f.key === "days_since_visit" ? "avg" : f.type === "int" || f.type === "money" ? "sum" : f.type === "number" || f.type === "stars" ? "avg" : "none";
 
 async function customerReportTool(ctx: StaffContext): Promise<AssistantTool | null> {
   if (!can(ctx, "report_builder.build")) return null;
@@ -222,6 +224,13 @@ async function customerReportTool(ctx: StaffContext): Promise<AssistantTool | nu
     maxVisits: z.number().int().min(0).max(10000).optional(),
     minSpendDollars: z.number().min(0).max(1_000_000).optional(),
     notBooked: z.boolean().optional().describe("Nothing booked since their last visit"),
+    visitStatus: z
+      .array(z.enum(VISIT_STATUSES))
+      .max(3)
+      .optional()
+      .describe("Against their usual time between visits: on_track, due (from 3 days before their next expected visit) or overdue. Booked clients are on track."),
+    minDaysBetweenVisits: z.number().int().min(1).max(3650).optional().describe("Usual days between visits (median of recent gaps), at least"),
+    maxDaysBetweenVisits: z.number().int().min(1).max(3650).optional(),
   });
   return {
     name: "customer_report",
@@ -249,6 +258,9 @@ async function customerReportTool(ctx: StaffContext): Promise<AssistantTool | nu
         maxVisits: a.maxVisits ?? null,
         minSpendCents: a.minSpendDollars !== undefined ? Math.round(a.minSpendDollars * 100) : null,
         notBooked: a.notBooked ?? false,
+        visitStatus: a.visitStatus ?? [],
+        minAvgGapDays: a.minDaysBetweenVisits ?? null,
+        maxAvgGapDays: a.maxDaysBetweenVisits ?? null,
       });
       const byKey = new Map(fields.map((f) => [f.key, f]));
       const def = ReportDefinition.parse({

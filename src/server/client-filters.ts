@@ -11,6 +11,7 @@ import { can, openShops, type StaffContext } from "./auth/staff";
 import type { ClientPolicy } from "./client-privacy";
 import { lookups } from "./lookups";
 import { consentColumns } from "./marketing/consent";
+import { cadenceCtes } from "./visit-cadence";
 
 const DAY = 86_400_000;
 const uuids = (xs: readonly string[]) => sql`(${sql.join(xs.length ? xs.map((i) => sql`${i}::uuid`) : [sql`null::uuid`], sql`, `)})`;
@@ -112,9 +113,13 @@ export async function segmentConditions(seg: Segment, now: Date): Promise<SQL[]>
   if (seg.maxNoShows !== null) add(sql`coalesce(v.no_shows, 0) <= ${seg.maxNoShows}`);
   if (seg.minCancellations !== null) add(sql`coalesce(v.cancels, 0) >= ${seg.minCancellations}`);
   if (seg.maxCancellations !== null) add(sql`coalesce(v.cancels, 0) <= ${seg.maxCancellations}`);
-  const gap = sql`(case when v.n >= 2 then extract(epoch from (v.last_at - v.first_at)) / 86400.0 / (v.n - 1) end)`;
-  if (seg.minAvgGapDays !== null) add(sql`${gap} >= ${seg.minAvgGapDays}`);
-  if (seg.maxAvgGapDays !== null) add(sql`${gap} <= ${seg.maxAvgGapDays}`);
+  if (seg.minAvgGapDays !== null || seg.maxAvgGapDays !== null || seg.visitStatus.length) {
+    const cd: SQL[] = [];
+    if (seg.minAvgGapDays !== null) cd.push(sql`cd.cadence >= ${seg.minAvgGapDays}`);
+    if (seg.maxAvgGapDays !== null) cd.push(sql`cd.cadence <= ${seg.maxAvgGapDays}`);
+    if (seg.visitStatus.length) cd.push(sql`cd.status in ${texts(seg.visitStatus)}`);
+    add(sql`c.id in (with ${cadenceCtes("cd", sql``, now)} select cd.customer_id from cd where ${sql.join(cd, sql` and `)})`);
+  }
   add(tri(seg.upcoming, sql`coalesce(v.upcoming, false)`));
 
   if (seg.homeShopIds.length) add(sql`c.home_shop_id in ${uuids(seg.homeShopIds)}`);

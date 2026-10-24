@@ -201,6 +201,12 @@ export function stubPlan(question: string, o: { tools: string[]; reports: string
   if (has(q, /how (do|can|should) i|how to|where (do|can|is)|what does|help me|can i\b/) && offered("help")) return { name: "help", args: { question } };
   if (has(q, /(list|which|who are|show me|top \d+|top) .*clients|clients who/) && offered("customer_report")) {
     const weeks = q.match(/(\d+)\s*weeks?/);
+    const status = weeks ? null : has(q, /overdue/) ? "overdue" : has(q, /\bdue\b/) ? "due" : null;
+    if (status)
+      return {
+        name: "customer_report",
+        args: { columns: ["name", "last_visit", "cadence_label", "next_visit_due", "visit_status"], visitStatus: [status], sort: "next_visit_due" },
+      };
     const lapsed = has(q, /lapsed|haven'?t been back|not been back|overdue/);
     return {
       name: "customer_report",

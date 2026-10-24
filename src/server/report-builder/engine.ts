@@ -28,6 +28,7 @@ import {
   type ResultColumn,
   type ResultLine,
 } from "@/domain/report-builder";
+import { VISIT_STATUSES, VISIT_STATUS_LABEL } from "@/domain/visit-cadence";
 import { SHOP_TZ, endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { can, type StaffContext } from "../auth/staff";
 import { CLIENT_FACTS, panelSees, segmentConditions } from "../client-filters";
@@ -35,6 +36,7 @@ import type { ClientPolicy } from "../client-privacy";
 import { forbidden, AppError } from "../errors";
 import { reportLocations } from "../locations";
 import { consentColumns } from "../marketing/consent";
+import { cadenceCtes } from "../visit-cadence";
 
 export const PAGE_SIZE = 50;
 export const MAX_PAGE_SIZE = 200;
@@ -151,7 +153,7 @@ export async function resolveReportScope(ctx: StaffContext, def: ReportDefinitio
 
 // ───────────────────────────── Field SQL ─────────────────────────────
 
-type Cte = "va" | "sa" | "ra" | "si" | "cr" | "ms" | "rc" | "lr" | "gc" | "tg" | "rt" | "lb";
+type Cte = "va" | "cd" | "sa" | "ra" | "si" | "cr" | "ms" | "rc" | "lr" | "gc" | "tg" | "rt" | "lb";
 
 interface Piece {
   expr: SQL;
@@ -205,7 +207,18 @@ async function fieldSql(f: FieldDef): Promise<Piece> {
     case "visits":
       return raw("coalesce(va.n, 0)", ["va"]);
     case "avg_gap_days":
-      return raw("(case when va.n >= 2 then round((extract(epoch from (va.last_at - va.first_at)) / 86400.0 / (va.n - 1))::numeric, 1)::float8 end)", ["va"]);
+      return raw("round(cd.cadence::numeric, 1)::float8", ["cd"]);
+    case "cadence_label":
+      return raw(
+        "(case when cd.cadence is null then null when cd.cadence < 13.5 then (case when round(cd.cadence::numeric) <= 1 then 'Every day' else 'Every ' || round(cd.cadence::numeric) || ' days' end) else 'Every ' || (round((cd.cadence / 7 * 2)::numeric) / 2)::float8 || ' weeks' end)",
+        ["cd"],
+      );
+    case "days_since_visit":
+      return raw("cd.since_days", ["cd"]);
+    case "next_visit_due":
+      return raw("to_char(cd.next_day, 'YYYY-MM-DD')", ["cd"]);
+    case "visit_status":
+      return raw(`(case cd.status ${VISIT_STATUSES.map((s) => `when '${s}' then '${VISIT_STATUS_LABEL[s]}'`).join(" ")} end)`, ["cd"]);
     case "no_shows":
       return raw("coalesce(va.no_shows, 0)", ["va"]);
     case "cancellations":
@@ -268,6 +281,7 @@ function ctes(s: ReportScope, now: Date): Record<Cte, SQL> {
     va: sql`va as (select a.customer_id, (count(*) filter (where a.status = 'completed'))::int n, min(a.starts_at) filter (where a.status = 'completed') first_at, max(a.starts_at) filter (where a.status = 'completed') last_at,
       (count(*) filter (where a.status = 'no_show'))::int no_shows, (count(*) filter (where a.status = 'cancelled'))::int cancels
       from appointments a where a.customer_id is not null${scoped(s, { shop: "a.shop_id", staff: "a.staff_id", at: "a.starts_at" })} group by a.customer_id)`,
+    cd: cadenceCtes("cd", scoped(s, { shop: "a.shop_id", staff: "a.staff_id", at: "a.starts_at" }), now),
     sa: sql`sa as (select s.customer_id, sum(s.service_net_cents + s.product_net_cents)::bigint cents, sum(s.tip_cents)::bigint tips, count(*)::int tickets
       from sales s where s.status in ${PAID} and s.customer_id is not null${scoped(s, { shop: "s.shop_id", staff: "s.staff_id", date: "s.business_date" })} group by s.customer_id)`,
     ra: sql`ra as (select s.customer_id, sum(r.service_net_cents + r.product_net_cents)::bigint cents, sum(r.tip_cents)::bigint tips
@@ -287,7 +301,7 @@ function ctes(s: ReportScope, now: Date): Record<Cte, SQL> {
   };
 }
 
-const ORDER: Cte[] = ["va", "sa", "ra", "si", "cr", "ms", "rc", "lr", "gc", "tg", "rt", "lb"];
+const ORDER: Cte[] = ["va", "cd", "sa", "ra", "si", "cr", "ms", "rc", "lr", "gc", "tg", "rt", "lb"];
 
 // ───────────────────────────── The query ─────────────────────────────
 

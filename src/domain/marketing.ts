@@ -7,6 +7,7 @@
 import { DateTime } from "luxon";
 import { z } from "zod";
 import type { BuiltinField, FieldKey, Level } from "./client-privacy";
+import { VISIT_STATUSES } from "./visit-cadence";
 
 export const CHANNELS = ["sms", "email", "push"] as const;
 export type Channel = (typeof CHANNELS)[number];
@@ -216,7 +217,7 @@ export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
   rebook: {
     key: "rebook",
     label: "Rebook reminder",
-    when: (s) => `${s.leadDays ? `${s.leadDays} days before` : "When"} a regular is due, from their usual time between cuts`,
+    when: (s) => `${s.leadDays ? `${s.leadDays} days before` : "On"} a client's next expected visit: their last visit plus their usual time between cuts`,
     settings: [{ key: "leadDays", label: "Days before they're due", min: 0, max: 14, default: 3, unit: "days" }],
     templates: tpl(
       `{shop}: {first_name}, you're about due for a cut with {barber}. Book: {book_link} ${STOP_LINE}`,
@@ -331,9 +332,12 @@ export function daysToBirthday(birthday: string, today: string): { days: number;
   return { days: Math.round(next.diff(t.startOf("day"), "days").days), year: next.year };
 }
 
-/** Due a rebook reminder: a regular (3+ visits) with a usual gap of a week to four months, within the reminder window. */
+/**
+ * Due a rebook reminder: `leadDays` before their usual time between visits is up (the cadence, so
+ * two visit days are enough), for a usual gap of a week to four months, within the reminder window.
+ */
 export function rebookReminderDue(h: { visits: number; usualDays: number; sinceDays: number }, leadDays: number): boolean {
-  if (h.visits < 3 || h.usualDays < 7 || h.usualDays > 120) return false;
+  if (h.visits < 2 || h.usualDays < 7 || h.usualDays > 120) return false;
   const from = h.usualDays - leadDays;
   return h.sinceDays >= from && h.sinceDays < from + CATCH_UP_DAYS;
 }
@@ -537,9 +541,11 @@ export const SegmentSchema = z.object({
   maxNoShows: optInt(1000),
   minCancellations: optInt(1000),
   maxCancellations: optInt(1000),
-  /** Average days between completed visits; needs two visits. */
+  /** Usual days between visits (the median of the recent gaps, domain/visit-cadence.ts); needs two visit days. */
   minAvgGapDays: optInt(3650),
   maxAvgGapDays: optInt(3650),
+  /** On track, due or overdue against their usual time between visits. */
+  visitStatus: z.array(z.enum(VISIT_STATUSES)).max(3).default([]),
   /** Has a booked appointment coming up. */
   upcoming: tri,
 
@@ -685,7 +691,7 @@ export function segmentProblem(s: Segment, sees: FilterSees): string | null {
   const nums: [number | null, number | null, string][] = [
     [s.minNoShows, s.maxNoShows, "no-shows"],
     [s.minCancellations, s.maxCancellations, "cancellations"],
-    [s.minAvgGapDays, s.maxAvgGapDays, "days between visits"],
+    [s.minAvgGapDays, s.maxAvgGapDays, "usual days between visits"],
     [s.minAvgTicketCents, s.maxAvgTicketCents, "average ticket"],
     [s.minTipsCents, s.maxTipsCents, "tips"],
     [s.minLoyaltyCents, s.maxLoyaltyCents, "loyalty balance"],

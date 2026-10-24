@@ -9,10 +9,10 @@ import { db } from "@/db";
 import { appointments, bookingDrafts, services, shops, staff, staffShops } from "@/db/schema";
 import { CATCH_UP_DAYS, Segment, TriggerKey, daysToBirthday, milesBetween, rebookReminderDue, type MarketingValues } from "@/domain/marketing";
 import { segKey } from "@/domain/report-views";
-import { rebookDue } from "@/domain/today";
 import { addDays, endOfLocalDay, localMinutesOf, startOfLocalDay, todayLocal } from "@/lib/time";
 import { availableMinutesAt } from "../available-minutes";
 import { CLIENT_FACTS, PRIMARY_BARBER, segmentConditions } from "../client-filters";
+import { cadenceCtes } from "../visit-cadence";
 import { consentColumns } from "./consent";
 
 const DAY = 86_400_000;
@@ -40,6 +40,10 @@ interface ClientRow {
   staff_id: string | null;
   birthday: string | null;
   future: boolean;
+  /** Usual days between visits (domain/visit-cadence.ts), null under two visit days. */
+  cadence: number | null;
+  visit_days: number;
+  since_days: number | null;
 }
 
 const uuids = (xs: readonly string[]) => sql`(${sql.join(xs.length ? xs.map((i) => sql`${i}::uuid`) : [sql`null::uuid`], sql`, `)})`;
@@ -56,20 +60,18 @@ export async function clientsOf(shopIds: readonly string[], now: Date): Promise<
         (array_agg(a.staff_id order by a.starts_at desc))[1] last_staff
       from appointments a where a.status = 'completed' and a.customer_id is not null
       group by a.customer_id
-    )
+    ), ${cadenceCtes("cd", sql``, now)}
     select c.id customer_id, coalesce(v.n, 0) n, v.first_at, v.last_at, coalesce(v.last_staff, c.preferred_staff_id) staff_id, c.birthday::text birthday,
       coalesce(v.last_shop, c.home_shop_id) shop_id,
-      exists (select 1 from appointments f where f.customer_id = c.id and f.starts_at > ${now.toISOString()} and f.status in ('booked', 'confirmed', 'checked_in', 'in_service')) future
-    from customers c left join v on v.customer_id = c.id
+      exists (select 1 from appointments f where f.customer_id = c.id and f.starts_at > ${now.toISOString()} and f.status in ('booked', 'confirmed', 'checked_in', 'in_service')) future,
+      cd.cadence, coalesce(cd.visit_days, 0) visit_days, cd.since_days
+    from customers c left join v on v.customer_id = c.id left join cd on cd.customer_id = c.id
     where coalesce(v.last_shop, c.home_shop_id) in ${uuids(shopIds)} ${cols.deleted ? sql`and c.deleted_at is null` : sql``}`)) as unknown as (ClientRow & { shop_id: string })[];
   for (const r of rows) out.get(r.shop_id)?.push(r);
   return out;
 }
 
 const ms = (d: string | Date | null) => (d ? new Date(d).getTime() : 0);
-
-/** The client's history as Today reads it: visits, first and last visit. */
-const hist = (r: ClientRow) => ({ visits: r.n, firstVisit: ms(r.first_at), lastVisit: ms(r.last_at) });
 
 export interface TriggerInput {
   key: TriggerKey;
@@ -104,11 +106,13 @@ export async function triggerTargets(i: TriggerInput): Promise<Target[]> {
       return clients.filter((r) => r.n === s.visits && t - ms(r.last_at) >= HOUR && t - ms(r.last_at) < 7 * DAY).map((r) => mk(r, `milestone:${s.visits}`));
     case "rebook":
       return clients
-        .filter((r) => !r.future && r.n >= 3)
-        .filter((r) => {
-          const d = rebookDue(hist(r), t);
-          return rebookReminderDue({ visits: r.n, usualDays: d.usualDays, sinceDays: d.sinceDays }, s.leadDays);
-        })
+        .filter(
+          (r) =>
+            !r.future &&
+            r.cadence !== null &&
+            r.since_days !== null &&
+            rebookReminderDue({ visits: Number(r.visit_days), usualDays: Math.round(Number(r.cadence)), sinceDays: Number(r.since_days) }, s.leadDays),
+        )
         .map((r) => mk(r, `rebook:${lastDay(r)}`));
     case "no_show":
       return noShows(shop.id, s.delayHours, now);
