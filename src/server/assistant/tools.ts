@@ -116,9 +116,10 @@ export function tableText(t: ReportTable): string {
 function cardTable(t: ReportTable): NonNullable<Extract<AssistantCard, { kind: "report" }>["table"]> {
   const c = csvTable(t);
   const keep = c.headers.map((h, i) => (CONTACT_COLUMN.test(h) ? -1 : i)).filter((i) => i >= 0);
-  const kinds = t.rowKinds && t.totalColumn ? null : t.columns.map((x) => x.kind);
-  const show = (v: string | number | null, i: number) => (v === null ? "" : kinds?.[i] === "money" && typeof v === "string" && /^-?\d+\.\d\d$/.test(v) ? formatCents(Math.round(Number(v) * 100)) : String(v));
-  return { title: t.title, headers: keep.map((i) => c.headers[i]), rows: c.rows.slice(0, ROWS_ON_CARD).map((r) => keep.map((i) => show(r[i], i))), more: Math.max(0, c.rows.length - ROWS_ON_CARD) };
+  const transposed = !!(t.rowKinds && t.totalColumn);
+  const kind = (j: number, i: number) => (transposed ? (i > 0 ? t.rowKinds![i - 1] : undefined) : t.rowKinds?.[j] && i > 0 ? t.rowKinds[j] : t.columns[i]?.kind);
+  const show = (v: string | number | null, j: number, i: number) => (v === null ? "" : kind(j, i) === "money" && typeof v === "string" && /^-?\d+\.\d\d$/.test(v) ? formatCents(Math.round(Number(v) * 100)) : String(v));
+  return { title: t.title, headers: keep.map((i) => c.headers[i]), rows: c.rows.slice(0, ROWS_ON_CARD).map((r, j) => keep.map((i) => show(r[i], j, i))), more: Math.max(0, c.rows.length - ROWS_ON_CARD) };
 }
 
 const rangeText = (from: string, to: string) => (from === to ? formatDate(from, "MMM d, yyyy") : `${formatDate(from, "MMM d")} – ${formatDate(to, "MMM d, yyyy")}`);
