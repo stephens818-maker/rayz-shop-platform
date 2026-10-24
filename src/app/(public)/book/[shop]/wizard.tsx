@@ -4,13 +4,15 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MyBadges } from "@/components/my-badges";
-import { FamilyParty, PartyMember, partySummary } from "@/components/family-party";
+import { AddChildInline, FamilyParty, PartyMember, partySummary } from "@/components/family-party";
 import { Slot, SlotPicker } from "@/components/slot-picker";
 import { Button, Field, Input, cx } from "@/components/ui";
-import { ApiError, api, dollars, fmtDay, fmtTime, getTokens } from "@/lib/api-client";
+import { ApiError, api, dollars, fmtDay, fmtTime, getTokens, setTokens } from "@/lib/api-client";
+import { togglePartyMember } from "@/domain/family";
 import { EMAIL_CONSENT_TEXT, SMS_CONSENT_TEXT, consentFields, initialBookingForm } from "@/domain/booking-consent";
 import type { BookingCouponView } from "@/server/coupons";
 import { checkCouponAction, finishDraftAction, holdCouponAction, saveDraftAction } from "./actions";
+import { VerifyPhone, type SignedIn } from "./verify-phone";
 
 interface Service {
   id: string;
@@ -43,6 +45,7 @@ interface ShopInfo {
 }
 
 type Step = "service" | "barber" | "time" | "details";
+type Kid = { id: string; firstName: string; age: number | null; preferredStaffId: string | null };
 
 export function BookingWizard({ shop }: { shop: ShopInfo }) {
   const router = useRouter();
@@ -56,7 +59,10 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
   const [step, setStep] = useState<Step>("service");
   const [form, setForm] = useState(initialBookingForm);
   const [signedIn, setSignedIn] = useState<{ id: string; firstName: string } | null>(null);
-  const [kids, setKids] = useState<{ id: string; firstName: string; age: number | null; preferredStaffId: string | null }[]>([]);
+  const [kids, setKids] = useState<Kid[]>([]);
+  const [maxChildren, setMaxChildren] = useState(0);
+  /** Booking without confirming the phone: just for themselves, and nothing about the account shows. */
+  const [guest, setGuest] = useState(false);
   const [firstWho, setFirstWho] = useState<string | null>(null);
   const [party, setParty] = useState<PartyMember[]>([]);
   const [busy, setBusy] = useState(false);
@@ -118,19 +124,53 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
         if (params.get("coupon")) applyCoupon(params.get("coupon")!, c);
       })
       .catch((e) => setError(e.message));
-    if (getTokens()) {
-      api<{ id: string; firstName: string }>("/me")
-        .then((me) => {
-          setSignedIn(me);
-          setFirstWho(me.id);
-        })
-        .catch(() => {});
-      api<{ children: { id: string; firstName: string; age: number | null; preferredStaffId: string | null }[] }>("/account/family", { base: "/api" })
-        .then((f) => setKids(f.children))
-        .catch(() => {});
-    }
+    if (getTokens()) loadAccount();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop.slug]);
+
+  async function loadAccount() {
+    const [me, family] = await Promise.all([
+      api<{ id: string; firstName: string }>("/me").catch(() => null),
+      api<{ settings: { maxChildren: number }; children: Kid[] }>("/account/family", { base: "/api" }).catch(() => null),
+    ]);
+    if (!me) return;
+    setSignedIn(me);
+    setFirstWho(me.id);
+    setParty([]);
+    setKids(family?.children ?? []);
+    setMaxChildren(family?.settings.maxChildren ?? 0);
+  }
+
+  async function verified(t: SignedIn) {
+    setTokens(t);
+    if (t.isNew) {
+      const email = form.email.trim();
+      await api("/me", { method: "PATCH", body: JSON.stringify({ ...(email ? { email } : {}), ...consentFields(form) }) }).catch(() => {});
+    }
+    await loadAccount();
+  }
+
+  async function notMe() {
+    const t = getTokens();
+    if (t) await api("/auth/logout", { method: "POST", auth: false, body: JSON.stringify({ refreshToken: t.refreshToken }) }).catch(() => {});
+    setTokens(null);
+    setSignedIn(null);
+    setKids([]);
+    setFirstWho(null);
+    setParty([]);
+    setForm(initialBookingForm());
+  }
+
+  async function addChild(input: { firstName: string; age: number | null }) {
+    try {
+      const kid = await api<Kid>("/account/family/children", { base: "/api", method: "POST", body: JSON.stringify(input) });
+      setKids((k) => [...k, kid]);
+      if (signedIn && service) setParty(togglePartyMember({ firstWho: firstWho ?? signedIn.id, party }, kid.id, { serviceId: service.id, staffId: kid.preferredStaffId }).party);
+      return null;
+    } catch (e) {
+      return (e as Error).message;
+    }
+  }
 
   // Keep the URL shareable. Only slugs go in the URL — never names.
   useEffect(() => {
@@ -169,7 +209,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
       body: JSON.stringify({
         shopId: shop.slug,
         people: [
-          { customerId: firstWho, serviceId: service.id, staffId: barberObj?.id ?? null, startsAt: slot.startsAt },
+          { customerId: firstWho, serviceId: service.id, addonIds, staffId: barberObj?.id ?? null, startsAt: slot.startsAt },
           ...party.map((m) => ({ customerId: m.customerId, serviceId: m.serviceId, staffId: m.staffId, timing: m.timing })),
         ],
       }),
@@ -230,7 +270,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
   if (!shop.bookingEnabled) return <Closed shop={shop} msg="Online booking is paused for this shop. Please call us." />;
   if (shop.barberCount === 0) return <Closed shop={shop} msg="This shop is opening soon — no barbers are taking bookings yet." />;
 
-  const canDetails = signedIn || (form.firstName.trim() && form.phone.replace(/\D/g, "").length >= 10);
+  const canDetails = signedIn || (guest && form.firstName.trim() && form.phone.replace(/\D/g, "").length >= 10);
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_300px]">
@@ -353,23 +393,40 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
 
         <Section n={4} title="Your details" active={step === "details"} locked={step !== "details"}>
           {signedIn ? (
-            kids.length ? (
-              <FamilyParty
-                me={signedIn}
-                kids={kids}
-                services={catalog?.services ?? []}
-                barbers={barbers ?? []}
-                firstServiceId={service?.id ?? null}
-                firstWho={firstWho ?? signedIn.id}
-                onFirstWho={setFirstWho}
-                party={party}
-                onParty={setParty}
-              />
-            ) : (
-              <p className="mb-3 text-sm text-zinc-600">Booking as {signedIn.firstName} (signed in).</p>
-            )
+            <>
+              <p className="mb-3 text-sm text-zinc-600">
+                Booking as {signedIn.firstName}.{" "}
+                <button type="button" className="underline" onClick={notMe}>
+                  Not you?
+                </button>
+              </p>
+              {kids.length > 0 || maxChildren > 0 ? (
+                <FamilyParty
+                  me={signedIn}
+                  kids={kids}
+                  services={catalog?.services ?? []}
+                  barbers={barbers ?? []}
+                  firstServiceId={service?.id ?? null}
+                  firstWho={firstWho ?? signedIn.id}
+                  onFirstWho={setFirstWho}
+                  party={party}
+                  onParty={setParty}
+                >
+                  {kids.length < maxChildren && <AddChildInline onAdd={addChild} />}
+                </FamilyParty>
+              ) : null}
+            </>
+          ) : !guest ? (
+            <VerifyPhone form={form} setForm={setForm} onSignedIn={verified} onSkip={() => setGuest(true)} />
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
+              <p className="text-sm text-zinc-600 sm:col-span-2">
+                Booking just for you.{" "}
+                <button type="button" className="underline" onClick={() => setGuest(false)}>
+                  Confirm your number by text
+                </button>{" "}
+                to book for your kids too.
+              </p>
               <Field label="First name">
                 <Input autoComplete="given-name" value={form.firstName} onChange={(e) => setForm({ ...form, firstName: e.target.value })} />
               </Field>
@@ -414,7 +471,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
             <Row k="Barber" v={barber === "any" ? (assigned ? `Any (${assigned.displayName})` : "Any barber") : (barberObj?.displayName ?? "—")} />
             <Row k="When" v={slot ? `${fmtDay(slot.startsAt)}, ${fmtTime(slot.startsAt)}` : "—"} />
             <Row k="Length" v={minutes ? `${minutes} min` : "—"} />
-            {signedIn && kids.length > 0 && <Row k="For" v={partySummary(signedIn, kids, firstWho ?? signedIn.id, party)} />}
+            {signedIn && (kids.length > 0 || party.length > 0) && <Row k="For" v={partySummary(signedIn, kids, firstWho ?? signedIn.id, party)} />}
           </div>
           <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-3">
             <span className="text-sm text-zinc-500">Est. price</span>
