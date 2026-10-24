@@ -508,6 +508,56 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] Which campaigns to switch on, their wording and coupons per location.
 - [ ] Whether barbers should get **Campaign Center: own lapsed clients** by default, and the lapsed sequences' steps, coupons and "stop after" per location.
 
+## 22. Client search and segment filters
+
+**1. Global client search** (client list, sidebar **Find a client**, calendar booking, POS, walk-in check-in):
+- [x] Fuzzy names with typos on first, last, nickname and full name, in any order (pg_trgm word similarity).
+- [x] Phone in any format or its last 4, email, client ID and number, loyalty QR card.
+- [x] Birthday, address, city and zip, gift card, coupon code, ticket and appointment numbers, Squire ID, notes and tags.
+- [x] Results show first name and last initial, nickname, last visit date and location, usual barber, photo, rating, masked phone, client number and what matched.
+- [x] A returning walk-in is attached to the client found instead of creating a new record.
+
+**2. Permission-aware search:**
+- [x] A hidden detail is searchable only by its exact whole value, through a normalized SHA-256 lookup hash. Results never show it, and partial or prefix matches aren't offered.
+- [x] A masked detail is searchable only by what the mask shows: phone last 4, zip and town, birthday month.
+- [x] Every search is logged (where from, which kinds matched, how many, never the term). It counts toward the unusual-lookup alert and pause, which apply to everyone but the Brand Owner.
+- [x] Partial terms reach only the searcher's clients. Whole identifiers reach any Ray'z client. Tickets and appointments are found only at the searcher's shops.
+
+**3. Advanced filters** (the client list and Campaign Center segments share one set):
+- [x] Visit history: last and first visit dates, ranges or days ago; visit count; no-shows; cancellations; average days between visits; upcoming appointment.
+- [x] People and places: primary, recent or any barber; home and visited locations.
+- [x] Spend: services and products bought, total and average spend, tips.
+- [x] Loyalty and gift cards: loyalty balance, gift card status, coupons redeemed.
+- [x] Profile: rating, tags (any, all, none), birthday month or upcoming, age range, zip, city, distance from a location, source, referral, created date.
+- [x] Messaging: opt-in and marketing consent per channel, review link clicked, campaigns received and clicked.
+- [x] Any field filled in or empty.
+- [x] A filter that would read a detail the person can't see is refused with the reason.
+
+**4. Saved searches and exports:**
+- [x] Saved searches and segments: private, for a location, or for the brand (brand-wide staff only).
+- [x] **Message these clients** opens a blast with the same filters.
+- [x] **Export these** exports exactly what the search and filters list, for people with **Export the client list** (the Brand Owner unless granted). Audited with the search and filters.
+
+**5. Duplicates:**
+- [x] Detect-and-merge for imported Squire clients:
+  - scored pairs, with conflicts kept apart;
+  - an **Imported from Squire** filter;
+  - **Not the same person**;
+  - bulk merge that keeps the record with more visits, then the older one.
+- [x] A merge moves every record that points at the client, including coupons, sends, unsubscribes, tags, the photo and referrals.
+
+**6. Campaign Center and reports:**
+- [x] In the brand portal. Brand Admins always have full access: every client detail at full and every location, plus the client-list, Campaign Center and report permissions. Shops and staff get what's granted per role and location.
+
+**Profile additions:** client number, nickname, photo, source, referred-by, loyalty QR card.
+
+**Still open:**
+- [ ] Load the Census zip centers in production (DEPLOY step 14); the seed only has the demo shops' zips.
+- [ ] Whether Brand Admins should get **Export the client list** by default. It stays Owner-granted for now.
+- [ ] Photos are stored in the database (up to about 300 KB each, resized to 256 px in the browser). Move them to object storage if the book grows large.
+- [ ] The customer app showing the loyalty card (NOTES-SYNC has the format).
+- [ ] Scoring weights for duplicates are first guesses; tune them on the real Squire import.
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.
