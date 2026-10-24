@@ -36,7 +36,7 @@ const without = (c: Ctx, perms: string[]): Ctx => ({ ...c, permissions: new Set(
 const withPerms = (c: Ctx, perms: string[]): Ctx => ({ ...c, permissions: new Set([...c.permissions, ...perms]) as Ctx["permissions"] });
 const def = (x: Record<string, unknown>) => rb.ReportDefinition.parse({ columns: [{ field: "name" }], ...x });
 const policyOf = (c: Ctx, levels: Record<string, "full" | "masked" | "hidden">) =>
-  privacy.makePolicy({ staffId: c.staff.id, isOwner: false, canReveal: false, custom: [{ id: customField, label: "Beard style" }], levels: new Map(Object.entries(levels) as [never, never][]) });
+  privacy.makePolicy({ staffId: c.staff.id, isOwner: false, fullContact: true, canReveal: false, custom: [{ id: customField, label: "Beard style" }], levels: new Map(Object.entries(levels) as [never, never][]) });
 const FULL = (): Record<string, "full" | "masked" | "hidden"> => ({ phone: "full", email: "full", address: "full", birthday: "full", preferred_barber: "full", ratings: "full", notes: "full", [`custom:${customField}`]: "full" });
 
 beforeAll(async () => {
@@ -329,7 +329,7 @@ describe("scheduled emails and the Morning Dashboard", () => {
       expect(j.body).toMatch(/Sum of Visits/);
     }
     // Michelle may not export client lists, so her copy has no file; the owner's had one.
-    expect(mine.find((j) => j.to === "michelle@rayz.test")!.body).toMatch(/No file is attached: exporting a customer report also needs/);
+    expect(mine.find((j) => j.to === "michelle@rayz.test")!.body).toMatch(/No file is attached: client lists can only be downloaded by brand-level roles/);
     const sends = await m.db.db.select().from(m.schema.savedReportSends).where(m.drizzle.eq(m.schema.savedReportSends.reportId, id));
     expect(sends.map((s) => s.status)).toEqual(["queued", "queued"]);
     // Even with a file still on it, the outbox won't hand out a scheduled report's attachment.
@@ -379,6 +379,7 @@ describe("pages", () => {
     const policy = await privacy.clientPolicy(michelle);
     for (const k of ["phone", "email", "birthday"] as const) expect(f(k).use.use).toBe(policy.level(k) === "hidden" ? "none" : policy.level(k));
     expect(o.may).toMatchObject({ build: true, template: false });
-    expect(o.may.export).toMatch(/Export the client list/);
+    expect(o.may.export).toMatch(/only be downloaded by brand-level roles/);
+    expect((await builderOptions(withPerms(michelle, ["clients.export"]))).may.export).toMatch(/only be downloaded by brand-level roles/);
   });
 });

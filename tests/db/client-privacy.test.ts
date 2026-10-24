@@ -111,12 +111,13 @@ beforeAll(async () => {
   for (const s of await m.db.db.select().from(m.schema.shops)) shop[s.slug] = s.id;
   for (const l of LOGINS) people[l] = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, `${l}@rayz.test`) }))!.id;
   // Brand Admins always see every client detail, so the restricted brand-wide person here is the
-  // same login under a copy of the Brand Admin role that isn't the Brand Admin role.
+  // same login under a copy of the Brand Admin role that isn't the Brand Admin role: a brand-level
+  // custom role, so only its per-person rules hold it back.
   const admin = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "brand_admin") }))!;
   brandAdminRoleId = admin.id;
   const [copy] = await m.db.db
     .insert(m.schema.roles)
-    .values({ key: "brand_auditor", name: "Brand auditor", permissions: admin.permissions, maxDiscountPct: admin.maxDiscountPct, defaultScope: "all" })
+    .values({ key: "brand_auditor", name: "Brand auditor", permissions: admin.permissions, maxDiscountPct: admin.maxDiscountPct, defaultScope: "all", brandLevel: true })
     .returning();
   await m.db.db.update(m.schema.staff).set({ roleId: copy.id }).where(eq(m.schema.staff.id, people.admin));
   ids.instagram = (await m.db.db.query.clientFields.findFirst({ where: eq(m.schema.clientFields.label, "Instagram") }))!.id;
@@ -352,18 +353,33 @@ describe("staff still do their job", () => {
 describe("reveal with a reason", () => {
   it("shows one masked detail to a manager, logged with who, when, which client, which field and why", async () => {
     const { revealClientFieldAction } = await import("@/app/admin/customers/actions");
+    await as("owner");
+    expect(await rule("birthday", "masked", { staff: "michelle" })).toMatchObject({ ok: true });
     await as("michelle", shop.coralville);
-    expect(await revealClientFieldAction({ customerId: ids.client, field: "phone", reason: "no" })).toMatchObject({ ok: false });
+    expect(await revealClientFieldAction({ customerId: ids.client, field: "birthday", reason: "no" })).toMatchObject({ ok: false });
     expect(await revealClientFieldAction({ customerId: ids.client, field: "ratings", reason: "Need the detail" })).toMatchObject({ ok: false });
-    const r = await revealClientFieldAction({ customerId: ids.client, field: "phone", reason: "Client asked us to confirm her number" });
-    expect(r).toEqual({ ok: true, data: { value: "(319) 555-9876" } });
+    const r = await revealClientFieldAction({ customerId: ids.client, field: "birthday", reason: "Client asked us to confirm her birthday" });
+    expect(r).toEqual({ ok: true, data: { value: "Nov 23, 1987" } });
     const [log] = await accessOf("reveal", "michelle");
-    expect(log).toMatchObject({ customerId: ids.client, field: "phone", reason: "Client asked us to confirm her number", shopId: shop.coralville });
+    expect(log).toMatchObject({ customerId: ids.client, field: "birthday", reason: "Client asked us to confirm her birthday", shopId: shop.coralville });
     expect(log.at.getTime()).toBeGreaterThan(Date.now() - 60_000);
     expect((await auditOf("client.reveal")).find((a) => a.entityId === ids.client)).toMatchObject({
       actorStaffId: people.michelle,
-      details: { field: "phone", reason: "Client asked us to confirm her number" },
+      details: { field: "birthday", reason: "Client asked us to confirm her birthday" },
     });
+    await as("owner");
+    expect(await rule("birthday", null, { staff: "michelle" })).toMatchObject({ ok: true });
+  });
+
+  it("never reveals phone, email or address at shop level, however good the reason", async () => {
+    const { revealClientFieldAction } = await import("@/app/admin/customers/actions");
+    await as("michelle", shop.coralville);
+    for (const field of ["phone", "email", "address"]) {
+      const r = await revealClientFieldAction({ customerId: ids.client, field, reason: "Client asked us to confirm it" });
+      expect(r, field).toMatchObject({ ok: false, error: expect.stringMatching(/never shown in full at shop level/) });
+      expect(found(JSON.stringify(r), [...PHONE, ...EMAIL, ...ADDRESS]), field).toEqual([]);
+    }
+    expect((await accessOf("reveal", "michelle")).filter((l) => l.field !== "birthday")).toEqual([]);
   });
 
   it("is refused without the permission, and for a hidden detail", async () => {
@@ -488,7 +504,8 @@ describe("the brand portal", () => {
     await as("admin");
     expect(await rule("phone", "full", { staff: "admin" })).toMatchObject({ ok: false, error: expect.stringMatching(/what you see yourself/) });
     expect(await rule("phone", "full", { roleKey: "brand_admin" })).toMatchObject({ ok: false });
-    expect(await rule("phone", "full", { roleKey: "front_desk" })).toMatchObject({ ok: false, error: expect.stringMatching(/more than you see/) });
+    expect(await rule("phone", "full", { roleKey: "front_desk" })).toMatchObject({ ok: false, error: expect.stringMatching(/never shown in full/) });
+    expect(await rule("birthday", "full", { roleKey: "front_desk" })).toMatchObject({ ok: false, error: expect.stringMatching(/more than you see/) });
     expect(await rule("phone", "hidden", { roleKey: "front_desk", shopId: shop.moline })).toMatchObject({ ok: true });
     expect(await rule("phone", null, { roleKey: "front_desk", shopId: shop.moline })).toMatchObject({ ok: true });
     const logged = (await auditOf("client_data.rule")).filter((a) => a.actorStaffId === people.admin);
@@ -509,8 +526,8 @@ describe("the brand portal", () => {
     await as("owner");
     const page = await open("/admin/client-data/access", {}, { days: "1" });
     expect(page.kind).toBe("ok");
-    expect(page.text).toContain("Revealed phone");
-    expect(page.text).toContain("Client asked us to confirm her number");
+    expect(page.text).toContain("Revealed birthday");
+    expect(page.text).toContain("Client asked us to confirm her birthday");
     expect(page.text).toContain("Michelle");
     const byClient = await open("/admin/client-data/access", {}, { days: "1", client: ids.client });
     expect(byClient.text).toContain(`${P.first} ${P.last}`);
@@ -518,7 +535,7 @@ describe("the brand portal", () => {
     const route = await import("@/app/admin/client-data/access/export/route");
     const csv = await get(route.GET as never, `/admin/client-data/access/export?days=1&kind=reveal`);
     expect(csv.text.split("\n")[0]).toBe("When,Who,What,Field,Client,Client ID,Reason,Shop");
-    expect(csv.text).toContain("Client asked us to confirm her number");
+    expect(csv.text).toContain("Client asked us to confirm her birthday");
     expect((await auditOf("client_data.access_export")).length).toBe(1);
     const settings = await open("/admin/client-data", {}, { shop: shop.coralville, who: people.makenna });
     expect(settings.kind).toBe("ok");

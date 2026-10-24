@@ -59,8 +59,8 @@ const job = async (id: string | null) => (await m.db.db.select().from(s().notifi
 const tokenIn = (body: string) => body.match(/\/receipt\/([A-Za-z0-9_-]{43})/)![1];
 const staffActor = () => ({ staffId: fx.michelle, label: "Michelle" });
 
-function policy(levels: Record<string, "full" | "masked" | "hidden">) {
-  return privacy.makePolicy({ staffId: fx.michelle, isOwner: false, canReveal: false, custom: [], levels: new Map(Object.entries(levels)) as never });
+function policy(levels: Record<string, "full" | "masked" | "hidden">, fullContact = false) {
+  return privacy.makePolicy({ staffId: fx.michelle, isOwner: false, fullContact, canReveal: false, custom: [], levels: new Map(Object.entries(levels)) as never });
 }
 
 describe("digital receipts", () => {
@@ -76,7 +76,8 @@ describe("digital receipts", () => {
     expect(st.onFile.phone).toBe(`***-***-${customer.phone!.slice(-4)}`);
     expect(st.onFile.email).toMatch(/^r\*\*\*@example\.com$/);
     expect(JSON.stringify(st)).not.toContain(customer.phone!.slice(2, 8));
-    expect((await R.saleReceiptState(saleId, policy({ phone: "full", email: "full" }))).onFile.email).toBe(customer.email);
+    expect((await R.saleReceiptState(saleId, policy({ phone: "full", email: "full" }))).onFile.email).toMatch(/^r\*\*\*@example\.com$/);
+    expect((await R.saleReceiptState(saleId, policy({ phone: "full", email: "full" }, true))).onFile.email).toBe(customer.email);
 
     const sent = await R.sendReceiptFromStaff(saleId, { channel: "sms", onFile: true, atCheckout: true }, staffActor());
     expect(sent).toEqual({ status: "queued", masked: `***-***-${customer.phone!.slice(-4)}` });

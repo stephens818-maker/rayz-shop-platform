@@ -58,7 +58,7 @@ export async function saveRoleAction(raw: z.input<typeof RoleSchema>) {
     if (denied) throw forbidden(denied);
     const dup = await db.query.roles.findFirst({ where: and(sql`lower(${roles.name}) = lower(${p.name})`, p.id ? ne(roles.id, p.id) : undefined) });
     if (dup) throw new AppError("conflict", `There's already a role called "${dup.name}"`);
-    const permissions = p.permissions.filter((x) => !x.endsWith(".export") || (p.permissions as string[]).includes(x.replace(/\.export$/, ".view")));
+    const permissions = p.permissions.filter((x) => !/^report\..+\.export$/.test(x) || (p.permissions as string[]).includes(x.replace(/\.export$/, ".view")));
     const values = { name: p.name, description: p.description, permissions, maxDiscountPct: p.maxDiscountPct, defaultScope: p.defaultScope, brandLevel, updatedAt: new Date() };
     const id = await db.transaction(async (tx) => {
       let id = p.id;

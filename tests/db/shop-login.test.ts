@@ -143,7 +143,7 @@ describe("the shop login's caps", () => {
     await m.db.db.update(m.schema.staff).set({ permissionOverrides: {} }).where(eq(m.schema.staff.id, desk.id));
   });
 
-  it("client contact details are masked at most, and only the Brand Owner lifts the cap", async () => {
+  it("client contact details are masked at most, and nobody can lift the cap, not even the Brand Owner", async () => {
     const privacy = await import("@/server/client-privacy");
     const auth = await import("@/server/auth/staff");
     const actions = await import("@/app/admin/client-data/actions");
@@ -151,12 +151,19 @@ describe("the shop login's caps", () => {
     await as("coralville@rayz.test");
     const policy = await privacy.clientPolicy(await auth.requireStaff());
     expect(policy.show("phone", "+13195551234")).not.toContain("555-1234");
+    for (const who of ["admin@rayz.test", "owner@rayz.test"]) {
+      await as(who);
+      expect(await actions.saveShopLoginCapAction("role"), who).toMatchObject({ ok: false, error: expect.stringMatching(/never in full/) });
+    }
     await as("admin@rayz.test");
-    expect(await actions.saveShopLoginCapAction("role")).toMatchObject({ ok: false, error: expect.stringMatching(/Brand Owner/) });
     ok(await actions.saveShopLoginCapAction("hidden"));
     expect(await privacy.shopLoginCap()).toBe("hidden");
     await as("owner@rayz.test");
     ok(await actions.saveShopLoginCapAction("masked"));
+    const stored = (v: string) => m.db.db.update(m.schema.brandSettings).set({ shopLogin: m.drizzle.sql`${m.schema.brandSettings.shopLogin} || ${JSON.stringify({ clientContact: v })}::jsonb` });
+    await stored("role");
+    expect(await privacy.shopLoginCap()).toBe("masked");
+    await stored("masked");
   });
 
   it("staff contact is masked for people without the permission, and a save keeps it", async () => {

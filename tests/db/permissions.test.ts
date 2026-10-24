@@ -166,13 +166,14 @@ describe("a la carte reports", () => {
     await refresh("frontdesk");
   }, 60_000);
 
-  it("client ratings export follows the same rule", async () => {
+  it("client ratings export lists clients, so it's for brand-level people only", async () => {
     const ratings = (await import("@/app/admin/reports/ratings/export/route")).GET;
-    await as("frontdesk");
-    expect((await get(ratings, "/admin/reports/ratings/export")).status).toBe(403);
-    await as("michelle");
+    for (const who of ["frontdesk", "michelle"] as const) {
+      await as(who);
+      expect((await get(ratings, "/admin/reports/ratings/export")).status, who).toBe(403);
+    }
+    await as("admin");
     expect((await get(ratings, "/admin/reports/ratings/export")).status).toBe(200);
-    expect((await get(ratings, `/admin/reports/ratings/export?shop=${shopId.moline}`)).status).toBe(403);
   });
 });
 
