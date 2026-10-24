@@ -52,6 +52,7 @@ import { stockLevels } from "./inventory/stock";
 import { appointmentLines, familyTicket, familyTicketFor, ticketAppointmentIds } from "./family-ticket";
 import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, loyaltyShares, markRewardRedeemed } from "./loyalty";
 import { assertReaderAt, chargeRoute } from "./payments/connect";
+import { legBase } from "@/domain/franchise";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
 import { assertPromptsAnswered, settlePrompts } from "./checkout-prompts";
 import { recordCheckout } from "./service-times";
@@ -437,9 +438,19 @@ export async function finalizeSale(input: FinalizeInput) {
     if (problem) throw new AppError("bad_request", problem);
   }
   // Card charges settle where the shop's payments mode says: the brand's account or the shop's own. A cash-only shop, or one not set up yet, takes cash or gift cards.
+  // The owner group's royalty base (services and products after discounts) is shared across the
+  // payments in proportion to their amounts; card legs carry their part into the application fee.
+  const royaltyBaseCents = totals.lines.filter((x) => x.kind !== "gift_card").reduce((a, x) => a + x.netCents, 0);
+  const saleTotalCents = totals.giftCardAppliedCents + legs.reduce((a, x) => a + x.chargeCents, 0);
+  let paidBefore = totals.giftCardAppliedCents;
+  let allocated = legBase({ baseCents: royaltyBaseCents, saleTotalCents, legCents: totals.giftCardAppliedCents, paidBeforeCents: 0, allocatedCents: 0 });
+  const day = localDateOf(now);
   for (const l of legs) {
+    const base = legBase({ baseCents: royaltyBaseCents, saleTotalCents, legCents: l.chargeCents, paidBeforeCents: paidBefore, allocatedCents: allocated });
+    paidBefore += l.chargeCents;
+    allocated += base;
     if (l.tender.method !== "card") continue;
-    l.route = await chargeRoute(ctx.shop, l.chargeCents, l.tender.entryMode === "terminal" ? "terminal" : "keyed");
+    l.route = await chargeRoute(ctx.shop, l.chargeCents, l.tender.entryMode === "terminal" ? "terminal" : "keyed", db, { baseCents: base, day });
     l.reader = l.tender.entryMode === "terminal" && l.tender.readerId ? await assertReaderAt(ctx.shop.id, l.tender.readerId) : null;
   }
   const ticketPeopleThen = (input.ticketPeople ?? [ctx.sale.appointmentId, ...ctx.family.members.map((m) => m.appointmentId)])
@@ -601,6 +612,8 @@ export async function finalizeSale(input: FinalizeInput) {
           entryMode: l.tender.method === "card" ? l.tender.entryMode : null,
           stripeAccountId: c?.destination?.accountId ?? null,
           applicationFeeCents: c?.destination?.applicationFeeCents ?? 0,
+          royaltyCents: c?.destination && l.route ? l.route.royaltyCents : 0,
+          adFundCents: c?.destination && l.route ? l.route.adFundCents : 0,
           processorFeeCents: c ? (c.processorFeeCents ?? (l.route?.settlement === "platform" ? l.route.estimatedFeeCents : null)) : null,
           stripeChargeId: c?.chargeId ?? null,
           stripeTransferId: c?.transferId ?? null,

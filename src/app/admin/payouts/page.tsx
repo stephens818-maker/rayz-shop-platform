@@ -14,7 +14,7 @@ export const metadata: Metadata = { title: "Payouts" };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const STATUS_TONE = { paid: "green", in_transit: "blue", pending: "amber", failed: "red", canceled: "gray" } as const;
-const NOW = { brand: "Now on the brand's account", cash_only: "Now cash only", connected: "" } as const;
+const NOW = { brand: "Now on the brand's account", cash_only: "Now cash only", entity: "Settles to its owner group's account", connected: "" } as const;
 const $ = (c: number | null) => (c == null ? "—" : formatCents(c));
 
 export default async function PayoutsPage({ searchParams }: { searchParams: Promise<{ shop?: string; from?: string; to?: string }> }) {

@@ -1,8 +1,8 @@
 import type Stripe from "stripe";
 import { randomBytes } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { ownerEntities, shopPaymentAccounts, shopPayouts, shops, terminalReaders, type PaymentsMode, type PayoutSchedule } from "@/db/schema";
+import { entityFeeTerms, entityPaymentAccounts, ownerEntities, shopPaymentAccounts, shopPayouts, shops, terminalReaders, type PaymentsMode, type PayoutSchedule } from "@/db/schema";
 import {
   AccountFlags,
   DEFAULT_PROCESSING_FEES,
@@ -19,6 +19,7 @@ import {
   statementDescriptorProblem,
   summarizePayout,
 } from "@/domain/connect";
+import { applicationFee, royaltyDue } from "@/domain/franchise";
 import { todayLocal } from "@/lib/time";
 import { Actor, audit } from "@/server/audit";
 import { AppError, notFound } from "@/server/errors";
@@ -51,41 +52,111 @@ export async function shopAccount(shopId: string, tx: DBorTx = db): Promise<Shop
   return (await tx.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.shopId, shopId) })) ?? null;
 }
 
-const notReady = (shopName: string, a: ShopPaymentAccount | null) =>
+export type EntityPaymentAccount = typeof entityPaymentAccounts.$inferSelect;
+
+export async function entityAccount(entityId: string, tx: DBorTx = db): Promise<EntityPaymentAccount | null> {
+  return (await tx.query.entityPaymentAccounts.findFirst({ where: eq(entityPaymentAccounts.ownerEntityId, entityId) })) ?? null;
+}
+
+/** Who holds a connected account: one shop, or an owner group for every shop of theirs in payments mode "entity". */
+export type AccountHolder = { kind: "shop"; id: string } | { kind: "entity"; id: string };
+
+/** The account a shop's card money settles to under its payments mode: its own, its owner group's, or none (brand, cash only). */
+export async function settlementAccount(shop: { id: string; paymentsMode: PaymentsMode; ownerEntityId: string | null }, tx: DBorTx = db): Promise<ShopPaymentAccount | EntityPaymentAccount | null> {
+  if (shop.paymentsMode === "connected") return shopAccount(shop.id, tx);
+  if (shop.paymentsMode === "entity") return shop.ownerEntityId ? entityAccount(shop.ownerEntityId, tx) : null;
+  return null;
+}
+
+/** settlementAccount for many shops at once, keyed by shop. */
+export async function settlementAccounts(rows: readonly { id: string; paymentsMode: PaymentsMode; ownerEntityId: string | null }[], tx: DBorTx = db) {
+  const shopIds = rows.filter((r) => r.paymentsMode === "connected").map((r) => r.id);
+  const entityIds = [...new Set(rows.filter((r) => r.paymentsMode === "entity" && r.ownerEntityId).map((r) => r.ownerEntityId!))];
+  const [own, owners] = await Promise.all([
+    shopIds.length ? tx.select().from(shopPaymentAccounts).where(inArray(shopPaymentAccounts.shopId, shopIds)) : [],
+    entityIds.length ? tx.select().from(entityPaymentAccounts).where(inArray(entityPaymentAccounts.ownerEntityId, entityIds)) : [],
+  ]);
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      (r.paymentsMode === "connected" ? own.find((a) => a.shopId === r.id) : r.paymentsMode === "entity" ? owners.find((a) => a.ownerEntityId === r.ownerEntityId) : null) ?? null,
+    ]),
+  );
+}
+
+/** The royalty and ad fund terms in force for an owner group on a business date. */
+export async function feeTermsOn(entityId: string, day: string, tx: DBorTx = db) {
+  const [t] = await tx
+    .select()
+    .from(entityFeeTerms)
+    .where(and(eq(entityFeeTerms.ownerEntityId, entityId), lte(entityFeeTerms.effectiveFrom, day)))
+    .orderBy(desc(entityFeeTerms.effectiveFrom))
+    .limit(1);
+  return t ?? null;
+}
+
+const notReady = (shopName: string, a: ShopPaymentAccount | EntityPaymentAccount | null, owner = false) =>
   new AppError(
     "payment_failed",
     a?.deauthorizedAt
-      ? `${shopName}'s Stripe account was disconnected. Take cash or a gift card, and reconnect it in Location setup.`
-      : `${shopName} can't take cards until its Stripe account is set up and approved. Take cash or a gift card for now, and finish Payments in Location setup.`,
+      ? `${shopName}'s ${owner ? "owner group's " : ""}Stripe account was disconnected. Take cash or a gift card, and reconnect it in ${owner ? "Franchising" : "Location setup"}.`
+      : `${shopName} can't take cards until its ${owner ? "owner group's " : ""}Stripe account is set up and approved. Take cash or a gift card for now, and finish Payments in ${owner ? "Franchising" : "Location setup"}.`,
     { reason: "payments_not_ready", state: accountState(a) },
   );
 
-/** Where a card charge at a shop goes, by its payments mode. */
+/** Where a card charge at a shop goes, by its payments mode, with the royalty and ad fund its application fee takes. */
 export type ChargeRoute =
-  | { settlement: "platform"; destination: null; estimatedFeeCents: number; descriptorSuffix: string | null }
-  | { settlement: "connected"; destination: Destination; estimatedFeeCents: number; descriptorSuffix: null };
+  | { settlement: "platform"; destination: null; estimatedFeeCents: number; descriptorSuffix: string | null; royaltyCents: 0; adFundCents: 0 }
+  | { settlement: "connected"; destination: Destination; estimatedFeeCents: number; descriptorSuffix: null; royaltyCents: number; adFundCents: number };
+
+/** This charge's share of the sale's royalty base (services and products after discounts), on the sale's business date. */
+export interface RoyaltyShare {
+  baseCents: number;
+  day: string;
+}
 
 /**
- * Every card charge at a shop is routed here: to the brand's own account, to the shop's own
- * connected account (refused until Stripe enables charges on it), or refused for a cash-only shop.
+ * Every card charge at a shop is routed here: to the brand's own account, to the shop's own or its
+ * owner group's connected account (refused until Stripe enables charges on it), or refused for a
+ * cash-only shop. On a connected account the application fee is the processing fee plus, when the
+ * owner group's terms collect them that way, the royalty and ad fund on the charge's share.
  */
-export async function chargeRoute(shop: { id: string; name: string }, amountCents: number, entryMode: EntryMode, tx: DBorTx = db): Promise<ChargeRoute> {
-  const row = await tx.query.shops.findFirst({ where: eq(shops.id, shop.id), columns: { paymentsMode: true, statementDescriptor: true } });
+export async function chargeRoute(shop: { id: string; name: string }, amountCents: number, entryMode: EntryMode, tx: DBorTx = db, royalty?: RoyaltyShare): Promise<ChargeRoute> {
+  const row = await tx.query.shops.findFirst({ where: eq(shops.id, shop.id), columns: { paymentsMode: true, statementDescriptor: true, ownerEntityId: true } });
   if (!row) throw notFound("Shop");
   const estimatedFeeCents = processingFeeCents(amountCents, feeSchedule()[entryMode]);
   if (row.paymentsMode === "cash_only")
     throw new AppError("payment_failed", `${shop.name} takes cash and gift cards only. Choose a Stripe account for it in Location setup to take cards.`, { reason: "cash_only", state: "cash_only" });
-  if (row.paymentsMode === "brand") return { settlement: "platform", destination: null, estimatedFeeCents, descriptorSuffix: descriptorSuffix(row.statementDescriptor, brandDescriptorPrefix()) };
-  const destination = await chargeDestination(shop, amountCents, entryMode, tx);
-  return { settlement: "connected", destination, estimatedFeeCents: destination.applicationFeeCents, descriptorSuffix: null };
+  if (row.paymentsMode === "brand")
+    return { settlement: "platform", destination: null, estimatedFeeCents, descriptorSuffix: descriptorSuffix(row.statementDescriptor, brandDescriptorPrefix()), royaltyCents: 0, adFundCents: 0 };
+  const destination = await chargeDestination({ ...shop, paymentsMode: row.paymentsMode, ownerEntityId: row.ownerEntityId }, amountCents, entryMode, tx, royalty);
+  return {
+    settlement: "connected",
+    destination,
+    estimatedFeeCents: destination.processingFeeCents ?? destination.applicationFeeCents,
+    descriptorSuffix: null,
+    royaltyCents: destination.royaltyCents ?? 0,
+    adFundCents: destination.adFundCents ?? 0,
+  };
 }
 
-/** Where a card charge at a shop with its own account goes, with the platform's application fee. Refuses shops whose account can't take charges. */
-export async function chargeDestination(shop: { id: string; name: string }, amountCents: number, entryMode: EntryMode, tx: DBorTx = db): Promise<Destination> {
-  const a = await shopAccount(shop.id, tx);
-  if (!canCharge(a)) throw notReady(shop.name, a);
-  if (connectMode() === "stripe" && a!.simulated) throw notReady(shop.name, null);
-  return { accountId: a!.stripeAccountId, applicationFeeCents: processingFeeCents(amountCents, feeSchedule()[entryMode]) };
+/** Where a card charge to a connected account goes, with the platform's application fee. Refuses accounts that can't take charges. */
+export async function chargeDestination(
+  shop: { id: string; name: string; paymentsMode?: PaymentsMode; ownerEntityId?: string | null },
+  amountCents: number,
+  entryMode: EntryMode,
+  tx: DBorTx = db,
+  royalty?: RoyaltyShare,
+): Promise<Destination & { royaltyCents?: number; adFundCents?: number }> {
+  const owner = shop.paymentsMode === "entity";
+  const a = owner ? (shop.ownerEntityId ? await entityAccount(shop.ownerEntityId, tx) : null) : await shopAccount(shop.id, tx);
+  if (!canCharge(a)) throw notReady(shop.name, a, owner);
+  if (connectMode() === "stripe" && a!.simulated) throw notReady(shop.name, null, owner);
+  const processing = processingFeeCents(amountCents, feeSchedule()[entryMode]);
+  const terms = royalty && shop.ownerEntityId ? await feeTermsOn(shop.ownerEntityId, royalty.day, tx) : null;
+  const due = terms?.collect === "application_fee" ? royaltyDue(royalty!.baseCents, terms) : { royaltyCents: 0, adFundCents: 0 };
+  const fee = applicationFee({ chargeCents: amountCents, processingCents: processing, ...due });
+  return { accountId: a!.stripeAccountId, applicationFeeCents: fee.applicationFeeCents, processingFeeCents: fee.processingCents, royaltyCents: fee.royaltyCents, adFundCents: fee.adFundCents };
 }
 
 type SavedFlags = Omit<AccountFlags, "deauthorizedAt"> & { payoutSchedule?: PayoutSchedule | null };
@@ -185,6 +256,23 @@ async function saveFlags(shopId: string, flags: SavedFlags, tx: DBorTx = db) {
   return row;
 }
 
+async function saveEntityFlags(entityId: string, flags: SavedFlags, tx: DBorTx = db) {
+  const [row] = await tx
+    .update(entityPaymentAccounts)
+    .set({ ...flags, updatedAt: new Date() })
+    .where(eq(entityPaymentAccounts.ownerEntityId, entityId))
+    .returning();
+  return row;
+}
+
+/** Which shop or owner group holds a connected account. */
+export async function accountHolder(accountId: string, tx: DBorTx = db): Promise<AccountHolder | null> {
+  const shop = await tx.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.stripeAccountId, accountId), columns: { shopId: true } });
+  if (shop) return { kind: "shop", id: shop.shopId };
+  const entity = await tx.query.entityPaymentAccounts.findFirst({ where: eq(entityPaymentAccounts.stripeAccountId, accountId), columns: { ownerEntityId: true } });
+  return entity ? { kind: "entity", id: entity.ownerEntityId } : null;
+}
+
 /** Re-reads the account from Stripe (after onboarding returns, or on "Refresh"). */
 export async function refreshAccount(shopId: string): Promise<ShopPaymentAccount | null> {
   const a = await shopAccount(shopId);
@@ -199,7 +287,14 @@ export async function refreshAccount(shopId: string): Promise<ShopPaymentAccount
 /** account.updated from the Connect webhook. */
 export async function applyAccountUpdate(acct: Stripe.Account) {
   const a = await db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.stripeAccountId, acct.id) });
-  if (!a) return null;
+  if (!a) {
+    const e = await db.query.entityPaymentAccounts.findFirst({ where: eq(entityPaymentAccounts.stripeAccountId, acct.id) });
+    if (!e) return null;
+    const row = await saveEntityFlags(e.ownerEntityId, flagsOf(acct));
+    if (accountState(e) !== accountState(row))
+      await audit({ staffId: null, label: "stripe" }, "payments.account_state", "owner_entity", e.ownerEntityId, { stripeAccountId: acct.id, from: accountState(e), to: accountState(row) }, null);
+    return row;
+  }
   const before = accountState(a);
   const row = await saveFlags(a.shopId, flagsOf(acct));
   const after = accountState(row);
@@ -209,13 +304,15 @@ export async function applyAccountUpdate(acct: Stripe.Account) {
 }
 
 export async function markDeauthorized(accountId: string) {
-  const [row] = await db
-    .update(shopPaymentAccounts)
-    .set({ deauthorizedAt: new Date(), chargesEnabled: false, payoutsEnabled: false, updatedAt: new Date() })
-    .where(eq(shopPaymentAccounts.stripeAccountId, accountId))
-    .returning();
-  if (row) await audit({ staffId: null, label: "stripe" }, "payments.account_disconnected", "shop", row.shopId, { stripeAccountId: accountId }, row.shopId);
-  return row ?? null;
+  const off = { deauthorizedAt: new Date(), chargesEnabled: false, payoutsEnabled: false, updatedAt: new Date() };
+  const [row] = await db.update(shopPaymentAccounts).set(off).where(eq(shopPaymentAccounts.stripeAccountId, accountId)).returning();
+  if (row) {
+    await audit({ staffId: null, label: "stripe" }, "payments.account_disconnected", "shop", row.shopId, { stripeAccountId: accountId }, row.shopId);
+    return row;
+  }
+  const [e] = await db.update(entityPaymentAccounts).set(off).where(eq(entityPaymentAccounts.stripeAccountId, accountId)).returning();
+  if (e) await audit({ staffId: null, label: "stripe" }, "payments.account_disconnected", "owner_entity", e.ownerEntityId, { stripeAccountId: accountId }, null);
+  return e ?? null;
 }
 
 /** The simulator's stand-in for finishing Stripe's hosted onboarding. */
@@ -244,6 +341,99 @@ export async function expressDashboardUrl(shopId: string): Promise<string | null
   return link?.url ?? null;
 }
 
+// ───────────────────────────── Owner group accounts ─────────────────────────────
+
+/**
+ * Creates the owner group's connected account if it has none: one Stripe account (legal entity,
+ * EIN, owners and bank, all kept by Stripe) for every shop of theirs in payments mode "entity".
+ */
+export async function ensureEntityAccount(entityId: string, actor: Actor): Promise<EntityPaymentAccount> {
+  const existing = await entityAccount(entityId);
+  if (existing && !existing.deauthorizedAt && (connectMode() === "simulator" || !existing.simulated)) return existing;
+  const owner = await db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, entityId) });
+  if (!owner) throw notFound("Owner group");
+  const s = stripe();
+  let accountId: string;
+  if (s) {
+    const acct = await s.accounts
+      .create(
+        {
+          country: "US",
+          email: owner.contactEmail ?? undefined,
+          business_type: "company",
+          controller: { stripe_dashboard: { type: "express" }, fees: { payer: "application" }, losses: { payments: "application" }, requirement_collection: "stripe" },
+          capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
+          business_profile: { name: owner.legalName ?? owner.name, mcc: MCC_BARBER },
+          metadata: { ownerEntityId: owner.id, ownerKind: owner.kind },
+        },
+        { idempotencyKey: `connect-entity-${owner.id}-${existing?.stripeAccountId ?? "new"}` },
+      )
+      .catch((e: Stripe.errors.StripeError) => {
+        throw new AppError("payment_failed", `Stripe didn't create the account: ${e.message}`);
+      });
+    accountId = acct.id;
+  } else {
+    accountId = `sim_eacct_${owner.id.slice(0, 8)}_${Date.now().toString(36)}`;
+  }
+  const values = { stripeAccountId: accountId, simulated: !s, chargesEnabled: false, payoutsEnabled: false, detailsSubmitted: false, requirementsDue: [], disabledReason: null, deauthorizedAt: null, updatedAt: new Date() };
+  const [row] = await db
+    .insert(entityPaymentAccounts)
+    .values({ ownerEntityId: entityId, ...values })
+    .onConflictDoUpdate({ target: entityPaymentAccounts.ownerEntityId, set: values })
+    .returning();
+  await audit(actor, "payments.account_created", "owner_entity", entityId, { stripeAccountId: accountId, simulated: !s, replaced: existing?.stripeAccountId ?? null }, null);
+  return row;
+}
+
+/** Stripe-hosted onboarding for the owner group's account (or the simulator's stand-in). */
+export async function entityOnboardingUrl(entityId: string, actor: Actor, origin: string): Promise<string> {
+  const a = await ensureEntityAccount(entityId, actor);
+  const back = `${origin}/admin/franchise?entity=${entityId}`;
+  const s = stripe();
+  if (!s || a.simulated) return `/admin/setup/simulated-onboarding?entity=${entityId}`;
+  const link = await s.accountLinks
+    .create({ account: a.stripeAccountId, type: "account_onboarding", collection_options: { fields: "eventually_due" }, refresh_url: `${back}&stripe=refresh`, return_url: `${back}&stripe=return` })
+    .catch((e: Stripe.errors.StripeError) => {
+      throw new AppError("payment_failed", `Stripe didn't start onboarding: ${e.message}`);
+    });
+  await audit(actor, "payments.onboarding_started", "owner_entity", entityId, { stripeAccountId: a.stripeAccountId }, null);
+  return link.url;
+}
+
+export async function refreshEntityAccount(entityId: string): Promise<EntityPaymentAccount | null> {
+  const a = await entityAccount(entityId);
+  const s = stripe();
+  if (!a || !s || a.simulated) return a;
+  const acct = await s.accounts.retrieve(a.stripeAccountId).catch((e: Stripe.errors.StripeError) => {
+    throw new AppError("payment_failed", `Couldn't reach Stripe: ${e.message}`);
+  });
+  return saveEntityFlags(entityId, flagsOf(acct));
+}
+
+export async function completeSimulatedEntityOnboarding(entityId: string, actor: Actor, o: { withBank: boolean }) {
+  const a = await entityAccount(entityId);
+  if (!a) throw new AppError("bad_request", "Start payments setup first");
+  if (!a.simulated || connectMode() === "stripe") throw new AppError("bad_request", "This account is set up through Stripe, not the simulator");
+  const row = await saveEntityFlags(entityId, {
+    chargesEnabled: true,
+    payoutsEnabled: o.withBank,
+    detailsSubmitted: true,
+    requirementsDue: o.withBank ? [] : ["external_account"],
+    disabledReason: null,
+    payoutSchedule: SIMULATED_PAYOUT_SCHEDULE,
+  });
+  await audit(actor, "payments.onboarding_simulated", "owner_entity", entityId, { stripeAccountId: a.stripeAccountId, withBank: o.withBank }, null);
+  return row;
+}
+
+export async function entityDashboardUrl(entityId: string): Promise<string | null> {
+  const a = await entityAccount(entityId);
+  const s = stripe();
+  if (!a || !s || a.simulated || !a.detailsSubmitted) return null;
+  const link = await s.accounts.createLoginLink(a.stripeAccountId).catch(() => null);
+  return link?.url ?? null;
+}
+
 /**
  * payout.* events: bank deposits from a shop's own account (the Connect webhook) or from the brand's
  * account (the platform webhook, PLATFORM_ACCOUNT), kept for the payouts page and the P&L report.
@@ -251,15 +441,18 @@ export async function expressDashboardUrl(shopId: string): Promise<string | null
  */
 export async function recordPayout(accountId: string, p: Pick<Stripe.Payout, "id" | "amount" | "status" | "arrival_date" | "failure_message">) {
   let shopId: string | null = null;
+  let ownerEntityId: string | null = null;
   if (accountId !== PLATFORM_ACCOUNT) {
-    const a = await db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.stripeAccountId, accountId) });
-    if (!a) return null;
-    shopId = a.shopId;
+    const holder = await accountHolder(accountId);
+    if (!holder) return null;
+    if (holder.kind === "shop") shopId = holder.id;
+    else ownerEntityId = holder.id;
   }
   const arrivalDate = todayLocal(new Date(p.arrival_date * 1000));
   const items = p.status === "paid" ? await itemizePayout(accountId, p.id).catch(() => null) : null;
   const values = {
     shopId,
+    ownerEntityId,
     stripeAccountId: accountId,
     stripePayoutId: p.id,
     amountCents: p.amount,
@@ -323,7 +516,7 @@ export async function setPaymentsMode(shopId: string, mode: PaymentsMode, actor:
   if (shop.status === "archived") throw new AppError("conflict", "This location is archived");
   if (shop.paymentsMode === mode) return shop;
   await db.update(shops).set({ paymentsMode: mode }).where(eq(shops.id, shopId));
-  const a = await shopAccount(shopId);
+  const a = mode === "entity" ? await entityAccountOfShop(shopId) : await shopAccount(shopId);
   await audit(
     actor,
     "payments.mode",
@@ -333,6 +526,11 @@ export async function setPaymentsMode(shopId: string, mode: PaymentsMode, actor:
     shopId,
   );
   return { ...shop, paymentsMode: mode };
+}
+
+async function entityAccountOfShop(shopId: string) {
+  const sh = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { ownerEntityId: true } });
+  return sh?.ownerEntityId ? entityAccount(sh.ownerEntityId) : null;
 }
 
 /** The shop's statement descriptor. On its own Stripe account it's saved to the account in Stripe too. */
@@ -476,11 +674,29 @@ export async function simulatePayouts(tx: DBorTx = db) {
         select p.shop_id, p.business_date as day, sum(p.amount_cents)::int gross, sum(p.application_fee_cents)::int fee, count(*)::int n,
                coalesce((select sum(r.amount_cents) from refunds r join payments rp on rp.id = r.payment_id
                  where r.shop_id = p.shop_id and r.business_date = p.business_date and r.method = 'card' and rp.stripe_account_id like 'sim_acct_%'), 0)::int as refund
-        from payments p
+        from payments p join shop_payment_accounts pa on pa.stripe_account_id = p.stripe_account_id
         where p.method = 'card' and p.stripe_account_id like 'sim_acct_%' and p.status not in ('pending', 'failed')
         group by p.shop_id, p.business_date
       ) d
       join shop_payment_accounts a on a.shop_id = d.shop_id and a.simulated
+      where d.gross - d.fee - d.refund > 0 and d.day <= ${today}::date
+      on conflict (stripe_payout_id) do nothing`,
+  );
+  // An owner group's account pays out once a day for all its shops.
+  await tx.execute(
+    sql`
+      insert into shop_payouts (owner_entity_id, stripe_account_id, stripe_payout_id, amount_cents, status, arrival_date, gross_cents, fee_cents, refund_cents, item_count)
+      select a.owner_entity_id, a.stripe_account_id, 'sim_po_e_' || substr(md5(a.owner_entity_id::text || d.day::text), 1, 18),
+             d.gross - d.fee - d.refund, case when d.day + 2 <= ${today}::date then 'paid' else 'in_transit' end, d.day + 2, d.gross, d.fee, d.refund, d.n
+      from (
+        select p.stripe_account_id acct, p.business_date as day, sum(p.amount_cents)::int gross, sum(p.application_fee_cents)::int fee, count(*)::int n,
+               coalesce((select sum(r.amount_cents) from refunds r join payments rp on rp.id = r.payment_id
+                 where rp.stripe_account_id = p.stripe_account_id and r.business_date = p.business_date and r.method = 'card'), 0)::int as refund
+        from payments p
+        where p.method = 'card' and p.stripe_account_id like 'sim_eacct_%' and p.status not in ('pending', 'failed')
+        group by p.stripe_account_id, p.business_date
+      ) d
+      join entity_payment_accounts a on a.stripe_account_id = d.acct and a.simulated
       where d.gross - d.fee - d.refund > 0 and d.day <= ${today}::date
       on conflict (stripe_payout_id) do nothing`,
   );

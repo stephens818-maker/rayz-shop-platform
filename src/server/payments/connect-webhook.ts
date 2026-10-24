@@ -1,15 +1,12 @@
 import Stripe from "stripe";
-import { eq } from "drizzle-orm";
-import { db } from "@/db";
-import { shopPaymentAccounts } from "@/db/schema";
 import { applyStaffAccountUpdate, applyStaffExternalAccount, refreshStaffAccount, staffAccountByStripeId } from "@/server/tips/accounts";
 import { applyStaffPayoutEvent } from "@/server/tips/payouts";
-import { applyAccountUpdate, markDeauthorized, recordPayout, refreshAccount } from "./connect";
+import { accountHolder, applyAccountUpdate, markDeauthorized, recordPayout, refreshAccount, refreshEntityAccount } from "./connect";
 
 /**
  * Events from the shops' connected accounts (a Connect webhook endpoint, its own signing secret):
  * onboarding and verification status, disconnects, and payouts to each shop's bank. Each event
- * names its account, which maps to exactly one shop, or to one employee's tip payout account;
+ * names its account, which maps to exactly one shop, one owner group, or one employee's tip payout account;
  * events for accounts that aren't ours are acknowledged and ignored.
  */
 export async function handleConnectWebhook(rawBody: string, signature: string, secret: string | undefined) {
@@ -22,8 +19,8 @@ export async function handleConnectWebhook(rawBody: string, signature: string, s
   }
   const account = event.account;
   if (account && (await staffAccountByStripeId(account))) return staffEvent(event, account);
-  if (account && !(await db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.stripeAccountId, account), columns: { shopId: true } })))
-    return { status: 200, body: "ignored" };
+  const holder = account ? await accountHolder(account) : null;
+  if (account && !holder) return { status: 200, body: "ignored" };
   switch (event.type) {
     case "account.updated":
       await applyAccountUpdate(event.data.object as Stripe.Account);
@@ -32,8 +29,8 @@ export async function handleConnectWebhook(rawBody: string, signature: string, s
     case "account.external_account.created":
     case "account.external_account.updated":
     case "account.external_account.deleted": {
-      const a = account ? await db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.stripeAccountId, account) }) : null;
-      if (a) await refreshAccount(a.shopId).catch(() => null);
+      if (holder?.kind === "shop") await refreshAccount(holder.id).catch(() => null);
+      if (holder?.kind === "entity") await refreshEntityAccount(holder.id).catch(() => null);
       break;
     }
     case "account.application.deauthorized":

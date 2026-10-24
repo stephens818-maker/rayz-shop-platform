@@ -40,7 +40,7 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
     insert into tip_ledger (shop_id, staff_id, sale_id, payment_id, kind, method, amount_cents, fee_cents, business_date)
     select p.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, p.id, 'tip', p.method::text, coalesce(sh.tip_cents, p.tip_cents),
       case when p.method = 'card' and p.amount_cents > 0
-        then round(coalesce(nullif(p.processor_fee_cents, 0), p.application_fee_cents, 0)::numeric * coalesce(sh.tip_cents, p.tip_cents) / p.amount_cents)::int else 0 end,
+        then round(coalesce(nullif(p.processor_fee_cents, 0), p.application_fee_cents - p.royalty_cents - p.ad_fund_cents, 0)::numeric * coalesce(sh.tip_cents, p.tip_cents) / p.amount_cents)::int else 0 end,
       s.business_date
     from payments p join sales s on s.id = p.sale_id
     left join tip_split_shares sh on sh.source = 'payment' and sh.source_id = p.id
