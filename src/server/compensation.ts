@@ -95,9 +95,11 @@ export const toVersion = (r: VersionRow): CompVersion & { id: string; staffId: s
   note: r.note,
 });
 
+export type StoredVersion = ReturnType<typeof toVersion>;
+
 /** Every version per employee, newest first (sortVersions). */
-export async function versionsFor(staffIds: readonly string[], tx: DBorTx = db): Promise<Map<string, CompVersion[]>> {
-  const out = new Map<string, CompVersion[]>();
+export async function versionsFor(staffIds: readonly string[], tx: DBorTx = db): Promise<Map<string, StoredVersion[]>> {
+  const out = new Map<string, StoredVersion[]>();
   if (!staffIds.length) return out;
   const list = await tx.select().from(staffCompensation).where(inArray(staffCompensation.staffId, [...staffIds]));
   for (const r of list) out.set(r.staffId, [...(out.get(r.staffId) ?? []), toVersion(r)]);

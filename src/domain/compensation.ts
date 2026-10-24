@@ -501,3 +501,28 @@ export function formatFieldValue(f: Pick<FieldDef, "kind">, value: string | null
   if (value === null) return "";
   return f.kind === "percent" ? `${value}%` : value;
 }
+
+// ───────────────────────────── Describing a plan ─────────────────────────────
+
+const pctText = (f: number) => `${Math.round(f * 10000) / 100}%`;
+const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+/** A version in plain words, one line per part, for the staff tab and My pay. Blank parts say what applies instead. */
+export function describePlan(v: CompVersion, names: { shop: (id: string) => string; service: (id: string) => string; tipMethod: (m: TipMethod) => string }): { label: string; value: string }[] {
+  const out: { label: string; value: string }[] = [];
+  out.push({ label: "Hourly", value: v.hourlyRateCents === null ? "Payroll setup's rate" : `${dollars(v.hourlyRateCents)}/h` });
+  for (const r of v.shopHourlyRates) out.push({ label: `Hourly at ${names.shop(r.shopId)}`, value: `${dollars(r.cents)}/h` });
+  out.push({ label: "Service commission", value: v.servicePct === null ? "Payroll setup's %" : pctText(v.servicePct) });
+  for (const o of v.serviceOverrides) out.push({ label: o.kind === "service" ? names.service(o.ref) : `${o.ref} (category)`, value: pctText(o.pct) });
+  if (v.serviceTiers.length)
+    out.push({
+      label: `Tiers (${v.tierMode === "step" ? "whole month at the tier reached" : "sliding"})`,
+      value: v.serviceTiers.map((t) => `${pctText(t.pct)} from ${dollars(t.fromCents)}`).join(", "),
+    });
+  out.push({ label: "Product commission", value: v.productPct === null ? "Payroll setup's %" : pctText(v.productPct) });
+  if (v.boothRentCents !== null && v.boothRentFrequency) out.push({ label: "Booth rent", value: `${dollars(v.boothRentCents)} ${RENT_LABEL[v.boothRentFrequency]}` });
+  if (v.guaranteeCents !== null && v.guaranteePer) out.push({ label: "Guaranteed minimum", value: `${dollars(v.guaranteeCents)} ${GUARANTEE_LABEL[v.guaranteePer]}` });
+  if (v.tipMethod) out.push({ label: "Tips paid by", value: names.tipMethod(v.tipMethod) });
+  if (v.tipCardFeeNetting !== null) out.push({ label: "Card fee on card tips", value: v.tipCardFeeNetting ? "Taken out" : "Not taken out" });
+  return out;
+}

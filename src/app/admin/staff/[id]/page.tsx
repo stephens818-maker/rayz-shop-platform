@@ -11,6 +11,7 @@ import { formatDateTime } from "@/lib/time";
 import { accessState, loadStaffAccess } from "@/server/auth/access";
 import { can, guardPage, reasonViewer, staffGrantor } from "@/server/auth/staff";
 import { pickerReasons, reasonShower } from "@/server/block-reasons";
+import { compensationAccess, loadCompensationSettings } from "@/server/compensation";
 import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
 import { barberIntervalRows } from "@/server/timing";
 import { StaffTimingCard } from "../../booking-times/editors";
@@ -54,6 +55,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
   const timing = person && person.kind === "person" && can(ctx, "scheduling.timing") ? (await barberIntervalRows(ctx, person.id))[0] : undefined;
   const [show, offReasons] = await Promise.all([reasonShower(reasonViewer(ctx)), pickerReasons("time_off")]);
   const canOffboard = !!person && person.active && person.id !== ctx.staff.id && !editDenied && !target?.isOwner;
+  const seesPay = !!person && (await loadCompensationSettings()).enabled && (await compensationAccess(ctx, person.id)).view;
   const ahead = person && !person.active && can(ctx, "timeoff.approve") ? (await futureBookings(person.id)).filter((a) => hasShop(ctx, a.shopId)) : [];
 
   return (
@@ -71,6 +73,11 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         }
         actions={
           <div className="flex gap-3 text-sm">
+            {person && seesPay && (
+              <Link className="underline" href={`/admin/staff/${person.id}/compensation`}>
+                Compensation
+              </Link>
+            )}
             {person && can(ctx, "permissions.manage") && (
               <Link className="underline" href={`/admin/permissions/people/${person.id}`}>
                 Role & permissions
