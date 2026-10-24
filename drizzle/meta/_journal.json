@@ -379,6 +379,13 @@
       "when": 1794247200000,
       "tag": "core_0053_customer_badges",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1794250800000,
+      "tag": "core_0054_family_accounts",
+      "breakpoints": true
     }
   ]
 }

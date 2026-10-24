@@ -89,6 +89,8 @@ export const brandSettings = pgTable("brand_settings", {
   taxFiling: jsonb("tax_filing").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Client badges (BadgeSettings in src/domain/badges.ts): which are on, the thresholds, which roles see which. */
   badges: jsonb("badges").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Family accounts (FamilySettings in src/domain/family.ts): children per parent, household or individual loyalty, the age a child can get their own account. */
+  family: jsonb("family").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -1060,6 +1062,16 @@ export const customers = pgTable(
     emailHash: text("email_hash"),
     birthdayHash: text("birthday_hash"),
     addressHash: text("address_hash"),
+    /**
+     * Set on a child profile: the parent or guardian whose account it sits under. A child has no
+     * phone, email or consent of their own (a trigger clears them); messages go to the guardian.
+     */
+    guardianId: uuid("guardian_id").references((): AnyPgColumn => customers.id, { onDelete: "set null" }),
+    /** A child's age when the full birthday isn't known. */
+    birthYear: integer("birth_year"),
+    /** The guardian a child profile sat under before it became its own account. */
+    formerGuardianId: uuid("former_guardian_id").references((): AnyPgColumn => customers.id, { onDelete: "set null" }),
+    ownAccountAt: ts("own_account_at"),
   },
   (t) => [
     // Not unique: Squire data has families sharing one phone number.
@@ -1543,8 +1555,26 @@ export const saleItems = pgTable(
     catalogPriceCents: integer("catalog_price_cents"),
     overrideReason: text("override_reason"),
     refundedQty: integer("refunded_qty").notNull().default(0),
+    /** On a family ticket, the appointment (and so the family member) the line was for. */
+    appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "set null" }),
   },
   (t) => [index("sale_items_sale_idx").on(t.saleId)],
+);
+
+/** Family ticket: further appointments paid on one sale besides sales.appointment_id. */
+export const saleAppointments = pgTable(
+  "sale_appointments",
+  {
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    appointmentId: uuid("appointment_id")
+      .notNull()
+      .references(() => appointments.id, { onDelete: "cascade" }),
+    addedBy: uuid("added_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.saleId, t.appointmentId] }), index("sale_appointments_appointment_idx").on(t.appointmentId)],
 );
 
 export const payments = pgTable(
