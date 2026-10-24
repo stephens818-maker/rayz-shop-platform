@@ -120,12 +120,13 @@ describe("permission catalog and templates", () => {
     expect(pageAllowed(access("shop_manager").permissions, "/admin/campaign-center/blasts/[id]")).toBe(false);
   });
 
-  it("Barber gets their own sales and service times; Front Desk gets four reports, view only, and a 10% discount cap", () => {
+  it("Barber gets their own sales and service times; Front Desk gets five reports, view only, and a 10% discount cap", () => {
     expect(reportsFor(access("barber").permissions).map((r) => [r.key, r.canExport])).toEqual([
       ["my_sales", true],
       ["service_times", true],
     ]);
     expect(reportsFor(access("front_desk").permissions).map((r) => [r.key, r.canExport])).toEqual([
+      ["end_of_day", false],
       ["card_vs_cash", false],
       ["staffing", false],
       ["openings", false],
@@ -177,9 +178,23 @@ describe("permission catalog and templates", () => {
       defaultScope: m[6],
       sortOrder: Number(m[7]),
     }));
-    const seeded = rows.map((r) => {
+    const inserted = [
+      ...later.matchAll(/INSERT INTO "roles" \([^)]*\)\s*SELECT '(\w+)', '((?:[^']|'')*)',\s*'((?:[^']|'')*)',\s*'(\[.*?\])'::jsonb,\s*(\d+), '(\w+)', (\d+)/g),
+    ].map((m) => ({
+      at: m.index,
+      key: m[1],
+      name: m[2],
+      description: m[3].replace(/''/g, "'"),
+      permissions: JSON.parse(m[4]),
+      maxDiscountPct: Number(m[5]),
+      defaultScope: m[6],
+      sortOrder: Number(m[7]),
+    }));
+    const resorted = [...later.matchAll(/UPDATE "roles" SET "sort_order" = (\d+) WHERE "key" = '(\w+)'/g)].map((m) => ({ key: m[2], sortOrder: Number(m[1]) }));
+    const all = [...rows.map((r) => ({ ...r, at: -1 })), ...inserted].map((r) => resorted.filter((s) => s.key === r.key).reduce<typeof r>((x, s) => ({ ...x, sortOrder: s.sortOrder }), r));
+    const seeded = all.sort((a, b) => a.sortOrder - b.sortOrder).map(({ at, ...r }) => {
       const perms = new Set<string>(r.permissions);
-      for (const c of changes.filter((c) => c.keys.includes(r.key))) {
+      for (const c of changes.filter((c) => c.at > at && c.keys.includes(r.key))) {
         c.add.forEach((p) => perms.add(p));
         c.remove.forEach((p) => perms.delete(p));
         const renamed = c.rename.filter(([from]) => perms.has(from));
@@ -342,7 +357,7 @@ describe("granting: people", () => {
 
   it("new hires can be given only roles within the caller's own access", () => {
     const roles = ROLE_TEMPLATES.map((t, i) => ({ ...t, id: String(i) }));
-    expect(assignableRoles(manager, roles).map((r) => r.key)).toEqual(["shop_manager", "front_desk", "barber"]);
+    expect(assignableRoles(manager, roles).map((r) => r.key)).toEqual(["shop_manager", "front_desk", "shop_login", "barber"]);
     expect(assignableRoles(admin, roles).map((r) => r.key)).not.toContain("brand_owner");
     expect(assignableRoles(owner, roles)).toHaveLength(roles.length);
   });

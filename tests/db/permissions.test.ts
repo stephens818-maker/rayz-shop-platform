@@ -185,7 +185,7 @@ describe("server actions", () => {
     await as("makenna");
     expect(await sales.voidAction(sale.id, "test")).toMatchObject({ ok: false, error: expect.stringMatching(/permission/) });
     await as("frontdesk");
-    expect(await sales.refundAction({ saleId: sale.id, items: [], tipCents: 0, reason: "x" } as never)).toMatchObject({ ok: false, error: expect.stringMatching(/permission/) });
+    expect(await sales.refundAction({ saleId: sale.id, items: [], tipCents: 0, reason: "x" } as never)).toMatchObject({ ok: false, error: expect.stringMatching(/manager.s PIN/) });
     expect(await perms.saveRoleAction({ id: null, name: "Sneaky", permissions: ["sales.refund"], maxDiscountPct: 0, defaultScope: "one" })).toMatchObject({ ok: false });
     await as("regional");
     expect(await perms.saveUserAccessAction({ staffId: people.makenna.id, roleId: (await m.db.db.select().from(m.schema.roles))[0].id, overrides: {}, maxDiscountPct: null, scope: "selected", shopIds: [shopId.moline] })).toMatchObject({ ok: false, error: expect.stringMatching(/permission/) });

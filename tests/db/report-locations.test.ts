@@ -335,6 +335,12 @@ describe("report tables in both views", () => {
       "heatmap",
       "cash_drawer",
       "audit_log",
+      "end_of_day",
+      "leaderboard",
+      "sales_tax",
+      "retention",
+      "acquisition",
+      "phone_operator",
     ];
     for (const k of keys)
       for (const slugs of [THREE, "all"] as const)
