@@ -41,6 +41,7 @@ export const PAGE_ACCESS = {
   "/admin/staff/[id]": ["staff.manage", "schedules.edit"],
   "/admin/staff/[id]/compensation": ["compensation.view", "compensation.edit"],
   "/admin/compensation": ["compensation.settings"],
+  "/admin/analytics": ["analytics.settings", "analytics.export"],
   "/admin/users": ["permissions.manage"],
   "/admin/users/[id]": ["permissions.manage"],
   "/admin/permissions": ["permissions.manage"],
@@ -170,6 +171,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/morning", label: "Morning Dashboard" },
       { href: "/admin/reports", label: "Reports" },
       { href: "/admin/payouts", label: "Payouts" },
+      { href: "/admin/analytics", label: "Event log" },
     ],
   },
   {

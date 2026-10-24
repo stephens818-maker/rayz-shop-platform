@@ -61,6 +61,7 @@ import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-
 import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
+import { operationsData } from "./operations-report";
 import { reviewReportData } from "./review-report";
 import { marketingReportData } from "./marketing/report";
 import { lapsedReportData } from "./marketing/lapsed-report";
@@ -1237,6 +1238,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         }),
       ],
     };
+  },
+
+  async operations({ scope, loc }) {
+    return operationsData(scope, loc);
   },
 
   async heatmap({ scope, loc }) {
