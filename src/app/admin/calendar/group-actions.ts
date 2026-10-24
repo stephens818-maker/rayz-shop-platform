@@ -19,6 +19,7 @@ import {
   startGroupDeposit,
 } from "@/server/booking-groups";
 import { staffWallTime } from "@/server/booking";
+import { sendGroupToCheckout } from "@/server/combined-checkout";
 import { customerAccess } from "@/server/customers";
 import { isValidLocalDate } from "@/lib/time";
 import { AppError, notFound } from "@/server/errors";
@@ -89,6 +90,17 @@ export async function groupTicketAction(groupId: string) {
   return safe(async () => {
     const { ctx, g } = await loadGroup(groupId, "checkout.any");
     return { saleId: await openGroupTicket(g.id, ctx.actor) };
+  });
+}
+
+/** Everyone in the group finished: one combined ticket, all of them ready in the checkout queue. */
+export async function groupSendToCheckoutAction(groupId: string) {
+  return safe(async () => {
+    const { ctx, g } = await loadGroup(groupId, "checkout.any");
+    const saleId = await sendGroupToCheckout(g.id, ctx.actor);
+    touch();
+    revalidatePath("/admin/sales");
+    return { saleId };
   });
 }
 

@@ -14,6 +14,7 @@ import { addBlock, removeBlock, rulesFor } from "@/server/staff-time";
 import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
 import { clockPulse } from "@/server/clock-live";
+import { sendToCheckout } from "@/server/combined-checkout";
 import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
 import { searchClients } from "@/server/client-search";
 import { usableReason } from "@/server/block-reasons";
@@ -142,6 +143,22 @@ export async function startCheckoutAction(appointmentId: string) {
     await loadAppt(ctx, appointmentId, "checkout.any");
     const sale = await openSaleForAppointment(appointmentId, ctx.actor);
     return { saleId: sale.id, status: sale.status };
+  });
+}
+
+/**
+ * The barber's "Send to checkout": the service is done, the visit goes onto its group's ticket (or its
+ * own) and waits in the checkout queue, and the barber goes back to the next client.
+ */
+export async function sendToCheckoutAction(appointmentId: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadAppt(ctx, appointmentId, "checkout.any");
+    const r = await sendToCheckout(appointmentId, ctx.actor);
+    revalidatePath("/admin/calendar");
+    revalidatePath("/admin");
+    revalidatePath("/admin/sales");
+    return r;
   });
 }
 

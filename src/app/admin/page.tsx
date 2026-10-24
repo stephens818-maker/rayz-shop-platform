@@ -19,6 +19,7 @@ import { liveClock } from "@/server/clock-live";
 import { LiveRefresh } from "@/components/live-refresh";
 import { timesFor } from "@/server/service-times";
 import { ServiceTimer } from "./calendar/service-times-panel";
+import { SendToCheckoutButton } from "./checkout/send-to-checkout";
 import { TodayAlerts } from "./today/alerts";
 import { byShop, salesSummary } from "@/server/reports";
 
@@ -59,6 +60,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         first: customers.firstName,
         last: customers.lastName,
         notes: appointments.notes,
+        readyAt: appointments.checkoutReadyAt,
         shop: shops.name,
         services: sql<string>`(select string_agg(${appointmentItems.name}, ' + ') from ${appointmentItems} where ${appointmentItems.appointmentId} = ${appointments.id})`,
       })
@@ -123,6 +125,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const soon = new Date(now.getTime() + 30 * 60_000);
   const runsTimer = (a: { staffId: string; status: string; startsAt: Date }) =>
     (a.staffId === ctx.staff.id || can(ctx, "calendar.manage")) && (a.status === "checked_in" || a.status === "in_service" || a.startsAt <= soon);
+  const sends = (a: { staffId: string; status: string }) => (a.staffId === ctx.staff.id || can(ctx, "checkout.any")) && (a.status === "checked_in" || a.status === "in_service");
   const count = (s: string[]) => statusCounts.filter((c) => s.includes(c.status)).reduce((a, c) => a + c.n, 0);
   const delta = (a: number, b: number) => (b ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs last ${formatDate(today, "EEEE")}` : undefined);
   const notificationsOff = (process.env.NOTIFICATIONS_SMS_PROVIDER ?? "disabled") === "disabled" && (process.env.NOTIFICATIONS_EMAIL_PROVIDER ?? "disabled") === "disabled";
@@ -201,6 +204,11 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                     </Td>
                     <Td right className="w-36">
                       {runsTimer(a) && <ServiceTimer appointmentId={a.id} status={a.status} times={times.get(a.id) ?? null} />}
+                      {sends(a) && (
+                        <div className="mt-1">
+                          <SendToCheckoutButton appointmentId={a.id} readyAt={a.readyAt?.toISOString() ?? null} />
+                        </div>
+                      )}
                     </Td>
                   </tr>
                 ))}

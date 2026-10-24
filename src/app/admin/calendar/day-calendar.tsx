@@ -65,6 +65,7 @@ import {
   moveAppointmentAction,
   searchCustomersAction,
   setStatusAction,
+  sendToCheckoutAction,
   staffOpeningsAction,
   startCheckoutAction,
 } from "./actions";
@@ -73,6 +74,7 @@ import {
   checkInGroupAction,
   groupDepositAction,
   groupNoShowAction,
+  groupSendToCheckoutAction,
   groupSplitTicketsAction,
   groupTicketAction,
   staffBookGroupAction,
@@ -1392,6 +1394,16 @@ function GroupBox({
           <Button
             size="sm"
             variant="secondary"
+            className="col-span-2"
+            disabled={pending}
+            data-testid="group-send-to-checkout"
+            onClick={() => run(() => groupSendToCheckoutAction(groupId), onDone)}
+          >
+            Send group to checkout
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
             disabled={pending}
             onClick={() =>
               run(
@@ -1542,6 +1554,7 @@ function ApptPanel({
   onDone: () => void;
 }) {
   const { pending, error, run, router } = useAction();
+  const [sent, setSent] = useState<{ ready: number; total: number } | null>(null);
   const s = appt.status;
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
   const checkout = () =>
@@ -1683,6 +1696,32 @@ function ApptPanel({
           >
             Check out
           </Button>
+          {(s === "checked_in" || s === "in_service") &&
+            (appt.readyAt || sent ? (
+              <Notice tone="green">
+                <span data-testid="sent-to-checkout">
+                  Sent to checkout
+                  {sent && sent.total > 1
+                    ? ` · ${sent.ready} of ${sent.total} on the ticket ready`
+                    : ""}
+                </span>
+              </Notice>
+            ) : (
+              <Button
+                variant="secondary"
+                className="w-full"
+                disabled={pending}
+                data-testid="send-to-checkout"
+                onClick={() =>
+                  run(
+                    () => sendToCheckoutAction(appt.id),
+                    (d) => setSent(d as { ready: number; total: number }),
+                  )
+                }
+              >
+                Send to checkout
+              </Button>
+            ))}
           <div className="grid grid-cols-2 gap-2">
             {s === "booked" && (
               <Button

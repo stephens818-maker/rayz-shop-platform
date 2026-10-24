@@ -61,6 +61,8 @@ export interface CalAppt {
   clockHold: { kind: ClockBlockKind; blockId: string } | null;
   /** Booked with family members as one group: key into DayCalendarData.groups. */
   groupId: string | null;
+  /** Sent to checkout (finished, waiting in the checkout queue). */
+  readyAt: string | null;
 }
 
 /** A family booking group on the day: everyone in it, wherever they sit, and its deposit. */
@@ -372,6 +374,7 @@ export async function loadDayCalendar(
           times: times.get(r.a.id) ?? null,
           clockHold: held.get(r.a.id) ?? null,
           groupId: r.a.groupId,
+          readyAt: r.a.checkoutReadyAt?.toISOString() ?? null,
         })),
       clock: live?.days.get(c.id) ? calClock(live.days.get(c.id)!) : null,
     };
