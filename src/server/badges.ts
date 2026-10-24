@@ -402,7 +402,7 @@ export async function storedBadges(ids: readonly (string | null | undefined)[], 
 }
 
 /** The badges each client shows to this person, in catalog order. */
-export async function shownBadges(policy: ClientPolicy, ids: readonly (string | null | undefined)[], now = new Date()): Promise<Map<string, ShownBadge[]>> {
+export async function shownBadges(policy: Pick<ClientPolicy, "badges" | "level" | "customBadges">, ids: readonly (string | null | undefined)[], now = new Date()): Promise<Map<string, ShownBadge[]>> {
   const out = new Map<string, ShownBadge[]>();
   if (!policy.badges.size) return out;
   const stored = await storedBadges(ids, now);
@@ -415,17 +415,23 @@ export async function shownBadges(policy: ClientPolicy, ids: readonly (string | 
  * Today's booked clients at these locations, counted by badge: "3 at-risk clients booked today".
  * Only the badges in `keys`, in MORNING_BADGES order, and only those with someone.
  */
-export async function badgeCounts(shopIds: readonly string[], day: LocalDate, keys: readonly string[], now = new Date()): Promise<{ key: string; count: number }[]> {
+export async function badgeCounts(
+  shopIds: readonly string[],
+  day: LocalDate,
+  keys: readonly string[],
+  o: { now?: Date; staffId?: string | null } = {},
+): Promise<{ key: string; count: number }[]> {
   const want = MORNING_BADGES.filter((k) => keys.includes(k));
   if (!shopIds.length || !want.length) return [];
+  const mine = o.staffId && UUID.test(o.staffId) ? sql` and a.staff_id = ${o.staffId}::uuid` : sql``;
   const ids = (
     await rowsOf<{ id: string }>(
       db.execute(sql`select distinct a.customer_id id from appointments a where a.shop_id = any(${idArray([...shopIds])}) and a.customer_id is not null
-        and a.status not in ('cancelled', 'no_show') and (a.starts_at at time zone ${TZ})::date = ${day}::date`),
+        and a.status not in ('cancelled', 'no_show') and (a.starts_at at time zone ${TZ})::date = ${day}::date${mine}`),
     )
   ).map((r) => r.id);
   if (!ids.length) return [];
-  const stored = await storedBadges(ids, now);
+  const stored = await storedBadges(ids, o.now);
   const n = new Map<string, number>();
   for (const b of stored.values()) for (const s of b) if (want.includes(s.k as (typeof want)[number])) n.set(s.k, (n.get(s.k) ?? 0) + 1);
   return want.filter((k) => n.get(k)).map((k) => ({ key: k, count: n.get(k)! }));

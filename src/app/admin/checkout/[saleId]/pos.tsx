@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } from "react";
+import { ClientBadges } from "@/components/client-badges";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, Suggestions, cx } from "@/components/ui";
+import type { ShownBadge } from "@/domain/badges";
 import type { RatingSummary } from "@/domain/ratings";
 import { ClientHitRow } from "@/components/client-hit";
 import type { ClientHit } from "@/domain/client-search";
@@ -68,7 +70,7 @@ export function Pos(props: {
   config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[] };
   feeNotice: string | null;
   initialLines: Omit<Line, "key">[];
-  customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null } | null;
+  customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null; badges: ShownBadge[] } | null;
   barber: { id: string; label: string } | null;
   barbers: { id: string; label: string }[];
   services: { id: string; name: string; kind: "service" | "addon"; priceCents: number }[];
@@ -900,7 +902,7 @@ function CustomerBox({
   onError,
 }: {
   saleId: string;
-  customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null } | null;
+  customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null; badges: ShownBadge[] } | null;
   canAdd: { phone: boolean; email: boolean };
   onError: (e: string) => void;
 }) {
@@ -948,6 +950,7 @@ function CustomerBox({
               Remove
             </button>
           </div>
+          <ClientBadges badges={customer.badges} strongActions className="mt-1 flex" />
           {customer.notes && <p className="mt-1 whitespace-pre-line rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">{customer.notes}</p>}
         </>
       ) : adding ? (

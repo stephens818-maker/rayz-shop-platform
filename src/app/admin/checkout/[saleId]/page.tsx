@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { feeDisclosure } from "@/domain/checkout";
 import { can, guardPage } from "@/server/auth/staff";
+import { shownBadges } from "@/server/badges";
 import { clientPolicy } from "@/server/client-privacy";
 import { inTenant } from "@/server/tenant";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
@@ -33,7 +34,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
   if (c.sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any")) redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
   const policy = await clientPolicy(ctx);
-  const [catalog, barbers, loyalty, loyaltyCfg, ratings, times, lists, account, readers, handoff, withClient, resume] = await Promise.all([
+  const [catalog, barbers, loyalty, loyaltyCfg, ratings, times, lists, account, readers, handoff, withClient, resume, badges] = await Promise.all([
     shopCatalog(c.shop.id),
     shopBarbers(c.shop.id),
     c.customer ? loyaltyBalance(c.customer.id) : null,
@@ -50,6 +51,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
     shopHandoffConfig(c.shop.id),
     activeHandoffFor(saleId),
     resumeId && UUID.test(resumeId) ? resumeDraft(saleId, resumeId) : null,
+    shownBadges(policy, [c.customer?.id]),
   ]);
   const coupons = await ticketCoupons(c.sale);
   const cards = takesCards(c.shop.paymentsMode, account);
@@ -84,7 +86,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
             }
           : null
       }
-      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: policy.show("phone", c.customer.phone), notes: policy.show("notes", c.customer.notes), rating: policy.stars(ratings.get(c.customer.id)) } : null}
+      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: policy.show("phone", c.customer.phone), notes: policy.show("notes", c.customer.notes), rating: policy.stars(ratings.get(c.customer.id)), badges: badges.get(c.customer.id) ?? [] } : null}
       barber={c.barber ? { id: c.barber.id, label: c.barber.displayLabel } : null}
       barbers={barbers.map((b) => ({ id: b.id, label: b.displayName }))}
       services={catalog.map((s) => ({ id: s.id, name: s.name, kind: s.kind, priceCents: s.priceCents }))}

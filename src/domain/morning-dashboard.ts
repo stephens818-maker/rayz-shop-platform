@@ -297,6 +297,8 @@ export interface TodayShop {
 export interface TodayBlock {
   date: LocalDate;
   shops: TodayShop[];
+  /** Today's booked clients by the badges the recipient sees: "3 at-risk clients". Left out when there are none. */
+  clients?: { key: string; label: string; count: number }[];
 }
 
 export const EXCEPTION_CATEGORIES = ["punches", "overtime", "stock", "purchasing", "tips", "approvals", "payouts"] as const;

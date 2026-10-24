@@ -6,6 +6,7 @@ import { appointments, couponCodes, couponRedemptions, customerSquireIds, custom
 import { maskPhone } from "@/domain/client-privacy";
 import { PROBE_RULES, Probe, ProbeKind, allowedProbes, matchLabel, parseSearch, shortName, type ClientHit } from "@/domain/client-search";
 import { can, type StaffContext } from "./auth/staff";
+import { shownBadges } from "./badges";
 import { ClientPolicy, clientPolicy, recordClientAccess } from "./client-privacy";
 import { shopClientsScope, visitedScope } from "./customers";
 import { loyaltyCardValid } from "./loyalty-card";
@@ -197,7 +198,7 @@ export async function clientHits(ctx: StaffContext, policy: ClientPolicy, ranked
     has_photo: boolean;
   }[];
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const ratings = await ratingSummaries(rows.map((r) => r.id));
+  const [ratings, badges] = await Promise.all([ratingSummaries(rows.map((r) => r.id)), shownBadges(policy, rows.map((r) => r.id))]);
   return ranked.flatMap(({ id, matched }) => {
     const r = byId.get(id);
     if (!r) return [];
@@ -216,6 +217,7 @@ export async function clientHits(ctx: StaffContext, policy: ClientPolicy, ranked
         barber: policy.show("preferred_barber", r.barber),
         photo: r.has_photo && policy.level("photo") === "full",
         rating: policy.stars(ratings.get(id)),
+        badges: badges.get(id) ?? [],
         matched: [...matched],
       },
     ];

@@ -158,6 +158,7 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
 
   if (d.today) {
     const blocks: Block[] = [];
+    if (d.today.clients?.length) blocks.push({ kind: "list", title: "Clients booked today", items: d.today.clients.map((x) => ({ title: `${x.label} booked today` })) });
     for (const sh of d.today.shops) {
       if (!sh.open) {
         blocks.push({ kind: "note", text: `${sh.shop.name}: ${sh.hours}.` });
@@ -378,6 +379,8 @@ export function renderMorningSms(d: MorningDashboard): string {
     const working = d.today.shops.reduce((a, s) => a + s.barbers.length, 0);
     const open = d.today.shops.reduce((a, s) => a + s.openMin, 0);
     parts.push(`today ${plural(working, "barber")}, ${hoursLabel(open)} open`);
+    const first = d.today.clients?.[0];
+    if (first) parts.push(`${first.label} booked`);
   }
   const n = handleCount(d);
   if (n) {

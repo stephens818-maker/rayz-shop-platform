@@ -6,12 +6,14 @@ import type { ReasonViewer, ShownReason } from "@/domain/block-reasons";
 import { type ClockBlockKind, clockKindOf, effectiveEnd } from "@/domain/clock-blocks";
 import { type LiveDay, type LiveStatus, MISSED_LABEL, affectedBy } from "@/domain/clock-live";
 import { payPeriodFor } from "@/domain/payroll";
+import type { ShownBadge } from "@/domain/badges";
 import type { RatingSummary } from "@/domain/ratings";
 import type { TimesView } from "@/domain/service-times";
 import type { IntervalSource } from "@/domain/timing";
 import { LocalDate, addDays, endOfLocalDay, localMinutesOf, localDateOf, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
 import { refreshClockBlocks } from "./clock-blocks";
 import { liveClock } from "./clock-live";
+import { shownBadges } from "./badges";
 import type { ClientPolicy } from "./client-privacy";
 import { Tenant, hasShop } from "./tenant";
 import { staffIntervals } from "./timing";
@@ -39,6 +41,8 @@ export interface CalAppt {
   notes: string | null;
   /** Staff-only star average for the client. */
   rating: RatingSummary | null;
+  /** Client badges the viewer sees. */
+  badges: ShownBadge[];
   anyBarber: boolean;
   saleId: string | null;
   saleStatus: string | null;
@@ -147,7 +151,7 @@ export async function loadDayCalendar(
   date: LocalDate,
   onlyStaffId: string | null,
   viewer: Pick<Tenant, "shopIds" | "brandWide">,
-  privacy: Pick<ClientPolicy, "show" | "stars">,
+  privacy: Pick<ClientPolicy, "show" | "stars"> & Partial<Pick<ClientPolicy, "badges" | "level" | "customBadges">>,
   reasons: ReasonViewer,
 ): Promise<DayCalendarData> {
   const shopLabel = (id: string, name: string) => (viewer.brandWide || hasShop(viewer, id) ? name : null);
@@ -192,7 +196,7 @@ export async function loadDayCalendar(
   const now = new Date();
   if (date === todayLocal(now)) await refreshClockBlocks(now, [shopId]);
 
-  const [blocks, elsewhere, items, ratings, punchTimes] = await Promise.all([
+  const [blocks, elsewhere, items, ratings, punchTimes, badges] = await Promise.all([
     ids.length
       ? db
           .select()
@@ -224,6 +228,12 @@ export async function loadDayCalendar(
           .from(timePunches)
           .where(and(inArray(timePunches.staffId, ids), gt(timePunches.at, new Date(dayStart.getTime() - 86_400_000)), lt(timePunches.at, dayEnd)))
       : [],
+    privacy.badges?.size && privacy.level && privacy.customBadges
+      ? shownBadges(
+          { badges: privacy.badges, level: privacy.level, customBadges: privacy.customBadges },
+          apptRows.map((r) => r.a.customerId),
+        )
+      : new Map<string, ShownBadge[]>(),
   ]);
   const punchAt = new Map(punchTimes.map((p) => [p.id, p.at]));
   const times = await timesFor(apptRows.map((r) => r.a.id));
@@ -332,6 +342,7 @@ export async function loadDayCalendar(
           estimateCents: r.a.estimateCents,
           notes: r.a.notes,
           rating: r.a.customerId ? privacy.stars(ratings.get(r.a.customerId)) : null,
+          badges: (r.a.customerId && badges.get(r.a.customerId)) || [],
           anyBarber: r.a.anyBarber,
           saleId: r.saleId,
           saleStatus: r.saleStatus,

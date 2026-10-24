@@ -6,11 +6,15 @@ import { appointmentItems, appointments, customers, shops, staff, waitlistEntrie
 import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { addDays, endOfLocalDay, formatDate, formatTime, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
+import { ACTION_BADGES, todayLine } from "@/domain/badges";
 import { reportsFor } from "@/domain/navigation";
 import { STATUS_LABEL } from "@/domain/staff-time";
 import { listRequests, staffingFor } from "@/server/staff-time";
 import { can, canAny, guardPage, reasonViewer, reportShopIds } from "@/server/auth/staff";
 import { todayAlerts, viewerOf } from "@/server/today";
+import { badgeCounts, shownBadges } from "@/server/badges";
+import { clientPolicy } from "@/server/client-privacy";
+import { ClientBadges } from "@/components/client-badges";
 import { liveClock } from "@/server/clock-live";
 import { LiveRefresh } from "@/components/live-refresh";
 import { timesFor } from "@/server/service-times";
@@ -50,6 +54,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         startsAt: appointments.startsAt,
         status: appointments.status,
         staffId: appointments.staffId,
+        customerId: appointments.customerId,
         barber: staff.displayLabel,
         first: customers.firstName,
         last: customers.lastName,
@@ -71,7 +76,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     todayAlerts(viewerOf(ctx), now),
   ]);
   const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
-  const [times, staffing, myDecisions] = await Promise.all([
+  const policy = await clientPolicy(ctx);
+  const [times, staffing, myDecisions, badges, badgeTally] = await Promise.all([
     timesFor(upcoming.map((a) => a.id), now),
     staffingFor(shopIds, today, today, reasonViewer(ctx), seesTeam ? null : [ctx.staff.id]),
     can(ctx, "timeoff.request")
@@ -79,6 +85,12 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           rs.filter((r) => r.decidedAt && new Date(r.decidedAt).getTime() > now.getTime() - 7 * 86_400_000 && r.decidedVia !== "auto"),
         )
       : Promise.resolve([]),
+    shownBadges(
+      policy,
+      upcoming.map((a) => a.customerId),
+      now,
+    ),
+    badgeCounts(shopIds, today, [...policy.badges], { now, staffId }),
   ]);
   const whosIn = shopIds
     .map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "", rows: staffing.filter((r) => r.shopId === id) }))
@@ -178,6 +190,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                         {a.first ? `${a.first} ${a.last ?? ""}` : (a.notes?.replace("Walk-in: ", "") ?? "Walk-in")}
                       </Link>
                       <div className="text-xs text-zinc-500">{a.services}</div>
+                      <ClientBadges badges={a.customerId ? badges.get(a.customerId) : undefined} only={ACTION_BADGES} strongActions className="mt-0.5 flex" />
                     </Td>
                     <Td>
                       {a.barber}
@@ -196,6 +209,19 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           )}
         </Card>
         <div className="space-y-4">
+          {badgeTally.length > 0 && (
+            <Card data-testid="today-badges">
+              <CardHeader title={ownBook ? "Your clients today" : "Today's clients"} subtitle="Booked today, by badge." />
+              <ul className="space-y-1 px-4 py-3 text-sm">
+                {badgeTally.map((b) => (
+                  <li key={b.key} className="flex items-center gap-2">
+                    <span className="w-6 text-right font-semibold tabular">{b.count}</span>
+                    <span className="text-zinc-700">{todayLine(b.key, b.count).replace(/^\d+ /, "")}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
           {whosIn.length > 0 && (
             <Card>
               <CardHeader

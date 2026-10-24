@@ -3,6 +3,7 @@ import Link from "next/link";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { clientRatings, customers, loyaltyAccounts, shops } from "@/db/schema";
+import { ClientBadges } from "@/components/client-badges";
 import { Badge, Card, Empty, LinkButton, Notice, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
 import { EMPTY_SEGMENT } from "@/domain/marketing";
 import { parseClientSort, parseRatingFilter } from "@/domain/ratings";
@@ -10,6 +11,7 @@ import { VISIT_STATUS_LABEL, VISIT_STATUS_TONE, cadenceLabel } from "@/domain/vi
 import { formatCents } from "@/lib/money";
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
+import { shownBadges } from "@/server/badges";
 import { filterOptions, panelSees } from "@/server/client-filters";
 import { clientListQuery } from "@/server/client-list";
 import { PAUSED_MESSAGE, clientListDenied, clientPolicy, isPaused, recordClientAccess } from "@/server/client-privacy";
@@ -81,10 +83,16 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         .orderBy(...order)
         .limit(PAGE)
         .offset((page - 1) * PAGE);
-  const cadence = await cadenceFor(
-    rows.map((r) => r.c.id),
-    new Date(),
-  );
+  const [cadence, badges] = await Promise.all([
+    cadenceFor(
+      rows.map((r) => r.c.id),
+      new Date(),
+    ),
+    shownBadges(
+      policy,
+      rows.map((r) => r.c.id),
+    ),
+  ]);
   const pageHref = (n: number) => {
     const qs = new URLSearchParams({ page: String(n) });
     if (q) qs.set("q", q);
@@ -175,6 +183,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                       {c.nickname && <span className="ml-1.5 text-zinc-500">&ldquo;{c.nickname}&rdquo;</span>}
                       <span className="ml-1.5 font-mono text-[11px] text-zinc-400">C{c.number}</span>
                       {matched(c.id) && <div className="text-[11px] text-brand-700">Matched {matched(c.id)}</div>}
+                      <ClientBadges badges={badges.get(c.id)} max={4} className="mt-0.5 flex" />
                     </Td>
                     {showPhone && <Td className="whitespace-nowrap">{policy.show("phone", c.phone) ?? "—"}</Td>}
                     {showEmail && <Td className="text-zinc-600">{policy.show("email", c.email) ?? "—"}</Td>}

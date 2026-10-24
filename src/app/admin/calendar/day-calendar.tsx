@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { ClientBadges } from "@/components/client-badges";
+import { actionFirst } from "@/domain/badges";
 import { Badge, Button, Field, Input, LinkButton, Notice, Select, StarBadge, StatusBadge, Textarea, cx } from "@/components/ui";
 import { ConflictConfirm } from "@/components/conflict-confirm";
 import { ClientHitRow } from "@/components/client-hit";
@@ -642,6 +644,7 @@ function Column({
               <div className="flex items-center gap-1 font-semibold">
                 <span className="truncate">{a.customerName}</span>
                 <StarBadge rating={a.rating} showCount={false} />
+                <ClientBadges badges={actionFirst(a.badges)} iconOnly max={4} className="shrink-0 flex-nowrap" />
                 {a.source === "walk_in" && <span className="shrink-0 font-normal opacity-70">(walk-in)</span>}
                 {a.squeezed && (
                   <span className="shrink-0 rounded bg-white/70 px-1 text-[10px] font-semibold uppercase tracking-wide opacity-80" title="Squeezed in off the grid or into buffer time">
@@ -837,6 +840,7 @@ function ApptPanel({
           {label(appt.startMin)}–{label(appt.endMin)} with {col.label}
           {appt.anyBarber && " (any barber)"}
         </div>
+        <ClientBadges badges={appt.badges} strongActions className="mt-1.5 flex" />
       </div>
       <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-sm">
         <dt className="text-zinc-500">Services</dt>

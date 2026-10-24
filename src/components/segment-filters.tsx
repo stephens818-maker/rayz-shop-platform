@@ -106,6 +106,7 @@ export function SegmentFilters({
   sees,
   disabled,
   campaign,
+  noBadges,
 }: {
   seg: Segment;
   onChange: (x: Partial<Segment>) => void;
@@ -114,6 +115,8 @@ export function SegmentFilters({
   disabled?: boolean;
   /** In a blast: the "agreed to" channel filter; locations are picked separately. */
   campaign?: boolean;
+  /** A custom badge's own filter: badges can't be built from badges. */
+  noBadges?: boolean;
 }) {
   const at = (f: string, want: keyof typeof RANK) => RANK[sees.levels[f] ?? "hidden"] >= RANK[want];
   const s = onChange;
@@ -126,6 +129,13 @@ export function SegmentFilters({
   const fieldName = (f: string) => (f.startsWith("custom:") ? (options.customFields.find((c) => `custom:${c.id}` === f)?.name ?? "Custom field") : FILTER_FIELDS[f as keyof typeof FILTER_FIELDS].label);
   return (
     <div className="space-y-3" data-testid="segment-filters">
+      {!noBadges && options.badges.length > 0 && (
+        <Section title="Badges" count={seg.badges.length}>
+          <Field label="Has any of these badges" hint="As of the last nightly run, or the client's last checkout.">
+            <Chips disabled={ro} options={options.badges} selected={seg.badges} onToggle={(x) => s({ badges: toggle(seg.badges, x) })} />
+          </Field>
+        </Section>
+      )}
       <Section
         title="Visit history"
         open

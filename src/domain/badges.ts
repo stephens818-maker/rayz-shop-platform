@@ -649,3 +649,6 @@ export function badgeLabel(key: string, custom: ReadonlyMap<string, { label: str
 export function badgeOptions(keys: readonly string[], custom: ReadonlyMap<string, { label: string }>): { id: string; name: string }[] {
   return [...keys].sort((a, b) => (ORDER.get(a) ?? 999) - (ORDER.get(b) ?? 999)).map((k) => ({ id: k, name: badgeLabel(k, custom) }));
 }
+
+/** Badges to act on first, then the rest, each in catalog order: for tight spaces like a calendar block. */
+export const actionFirst = (b: readonly ShownBadge[]): ShownBadge[] => [...b].sort((x, y) => Number(y.action) - Number(x.action));

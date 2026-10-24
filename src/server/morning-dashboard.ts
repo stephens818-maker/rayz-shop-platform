@@ -1,7 +1,9 @@
 import { and, asc, eq, inArray, isNull, lte, gte, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { brandSettings, callIns, morningDashboardSends, notificationJobs, roles, shopClosures, shopHours, shops, staff, staffAccessShops, staffSchedules, staffShops } from "@/db/schema";
+import { todayLine, visibleBadges } from "@/domain/badges";
 import { NO_BARBER } from "@/domain/barbers";
+import type { FieldKey } from "@/domain/client-privacy";
 import {
   BarberSales,
   BarberTime,
@@ -42,6 +44,9 @@ import { appBaseUrl } from "@/lib/deployment";
 import { LocalDate, addDays, endOfLocalDay, formatDate, formatTime, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { StaffAccess, loadStaffAccess } from "./auth/access";
+import { loadBadgeSettings } from "./badge-settings";
+import { badgeCounts } from "./badges";
+import { levelsFor, makePolicy, rulesFor } from "./client-privacy";
 import { AppError } from "./errors";
 import { attributedSends } from "./marketing/report";
 import { loadMarketingSettings } from "./marketing/settings";
@@ -481,7 +486,26 @@ async function todayBlock(c: Ctx): Promise<TodayBlock | null> {
       openMin: barbers.reduce((a, b) => a + b.openMin, 0),
     });
   }
-  return { date: today, shops: out };
+  const clients = await todayClients(c, shops);
+  return { date: today, shops: out, ...(clients.length ? { clients } : {}) };
+}
+
+const BADGE_FIELDS: FieldKey[] = ["birthday", "preferred_barber", "ratings", "phone", "email"];
+
+/** Today's booked clients counted by the badges this recipient would see in the app, under their role at each of these shops. */
+async function todayClients(c: Ctx, shops: ShopRef[]): Promise<NonNullable<TodayBlock["clients"]>> {
+  const a = c.access;
+  const working = shops.map((s) => {
+    const r = a.byShop.get(s.id)?.role ?? a.role;
+    return { shopId: s.id, roleId: r.id, roleKey: r.key, brandLevel: !!r.brandLevel };
+  });
+  const [settings, rules] = await Promise.all([c.memo.get("badgeSettings", () => loadBadgeSettings()), a.isOwner ? [] : rulesFor(a.staffId, [...new Set(working.map((w) => w.roleId))])]);
+  const level = makePolicy({ staffId: a.staffId, isOwner: a.isOwner, canReveal: false, custom: [], levels: levelsFor(rules, a.staffId, working, BADGE_FIELDS) }).level;
+  const keys = visibleBadges(settings, [], { isOwner: a.isOwner, roles: working.map((w) => ({ id: w.roleId, key: w.roleKey, brandLevel: w.brandLevel })), money: a.permissions.has("clients.view_all"), level });
+  if (!keys.length) return [];
+  const ids = idsOf(shops);
+  const counts = await c.memo.get(key("badgeCounts", ids, c.p.today, keys), () => badgeCounts(ids, c.p.today, keys, { now: c.now }));
+  return counts.map((x) => ({ ...x, label: todayLine(x.key, x.count) }));
 }
 
 // ───────────────────────────── Exceptions ─────────────────────────────

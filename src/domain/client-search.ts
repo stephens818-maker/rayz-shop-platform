@@ -10,6 +10,7 @@
  * to read a hidden value one character at a time.
  */
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
+import type { ShownBadge } from "./badges";
 import type { BuiltinField, Level } from "./client-privacy";
 
 export type Probe =
@@ -306,6 +307,8 @@ export interface ClientHit {
   /** A photo is on file and the searcher sees photos: /admin/customers/{id}/photo. */
   photo: boolean;
   rating: { avg: number; count: number } | null;
+  /** Client badges the searcher sees. */
+  badges?: ShownBadge[];
   /** How it matched: "Name", "Ticket #1234", "Gift card"... */
   matched: string[];
 }

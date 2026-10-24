@@ -1,4 +1,5 @@
 import type { ClientHit } from "@/domain/client-search";
+import { ClientBadges } from "./client-badges";
 import { StarBadge, cx } from "./ui";
 
 const visitDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -35,6 +36,7 @@ export function ClientHitRow({ hit, className }: { hit: ClientHit; className?: s
           <span className="ml-auto shrink-0 font-mono text-[11px] text-zinc-400">C{hit.number}</span>
         </span>
         <span className="block truncate text-xs text-zinc-500">{sub.join(" · ")}</span>
+        <ClientBadges badges={hit.badges} max={3} className="mt-0.5" />
         {how.length > 0 && <span className="block truncate text-[11px] text-brand-700">Matched {how.join(", ")}</span>}
       </span>
     </span>

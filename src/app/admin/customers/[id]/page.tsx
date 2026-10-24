@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, clientPhotos, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, sales, shops, staff } from "@/db/schema";
+import { ClientBadges } from "@/components/client-badges";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { type FieldKey, RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
@@ -22,6 +23,7 @@ import { latestReceipts, receiptOnFile } from "@/server/receipts";
 import { CALL_KIND_LABEL, CALL_STATUS_LABEL, callsWith, optOutKeys } from "@/server/messaging";
 import { hasShop, inShops } from "@/server/tenant";
 import { clientCadence } from "@/server/visit-cadence";
+import { shownBadges } from "@/server/badges";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
 import { ResendReceipt } from "../../sales/[id]/receipt-panel";
@@ -182,7 +184,11 @@ export default async function CustomerPage({
     ].flatMap(([k, v]) => (isFull(k) ? [[k, v ?? ""]] : [])),
   );
   const canMessage = can(ctx, "clients.message");
-  const [receiptFile, receipts] = await Promise.all([receiptOnFile(policy, { phone: c.phone, email: c.email }), latestReceipts(saleRows.map((r) => r.s.id))]);
+  const [receiptFile, receipts, badges] = await Promise.all([
+    receiptOnFile(policy, { phone: c.phone, email: c.email }),
+    latestReceipts(saleRows.map((r) => r.s.id)),
+    shownBadges(policy, [c.id]),
+  ]);
   const receiptLabel = (r: { channel: string; masked: string | null } | undefined) => (!r ? null : r.channel === "none" ? "No receipt" : `${r.channel === "sms" ? "Texted" : "Emailed"} ${r.masked}`);
   const pager = (key: "v" | "s", pageNo: number, total: number, size: number) =>
     total > size && (
@@ -210,6 +216,7 @@ export default async function CustomerPage({
             Client #{c.number} · since {formatDate(c.createdAt, "MMM d, yyyy")}
             {homeShopName && ` · Home shop ${homeShopName}`}
             {squireIds.length > 0 && ` · Squire ID${squireIds.length > 1 ? "s" : ""} ${squireIds.map((s) => s.squireId).join(", ")}`}
+            <ClientBadges badges={badges.get(c.id)} className="mt-1.5 flex" />
           </>
         }
         actions={
