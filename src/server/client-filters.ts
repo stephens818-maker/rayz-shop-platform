@@ -195,6 +195,10 @@ export async function segmentConditions(seg: Segment, now: Date): Promise<SQL[]>
 export async function filterOptions(ctx: StaffContext, policy: ClientPolicy): Promise<FilterOptions> {
   const shopList = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
   const shopIds = shopList.map((s) => s.id);
+  // Outside a brand-wide workspace, only what exists at the person's shops: another shop's
+  // services, products, promo codes and blasts are that shop's business.
+  const mine = (cond: SQL) => (ctx.brandWide ? undefined : cond);
+  const atMine = (col: SQL) => sql`exists (select 1 from jsonb_array_elements_text(${col}) s where s::uuid in ${uuids(shopIds)})`;
   const [barbers, serviceRows, productRows, tagRows, promos, campaigns, lists] = await Promise.all([
     shopIds.length
       ? db
@@ -204,8 +208,17 @@ export async function filterOptions(ctx: StaffContext, policy: ClientPolicy): Pr
           .where(and(eq(staff.active, true), inArray(staffShops.shopId, shopIds)))
           .orderBy(asc(staff.displayLabel))
       : [],
-    db.select({ id: services.id, name: services.name }).from(services).where(eq(services.active, true)).orderBy(asc(services.name)),
-    db.select({ id: products.id, name: products.name, brand: products.brand }).from(products).where(eq(products.active, true)).orderBy(asc(products.brand), asc(products.name)).limit(300),
+    db
+      .select({ id: services.id, name: services.name })
+      .from(services)
+      .where(and(eq(services.active, true), mine(sql`exists (select 1 from shop_services x where x.service_id = ${services.id} and x.enabled and x.shop_id in ${uuids(shopIds)})`)))
+      .orderBy(asc(services.name)),
+    db
+      .select({ id: products.id, name: products.name, brand: products.brand })
+      .from(products)
+      .where(and(eq(products.active, true), mine(sql`exists (select 1 from shop_products x where x.product_id = ${products.id} and x.active and x.shop_id in ${uuids(shopIds)})`)))
+      .orderBy(asc(products.brand), asc(products.name))
+      .limit(300),
     db.execute(
       ctx.brandWide
         ? sql`select distinct tag from customer_tags order by tag limit 200`
@@ -213,8 +226,22 @@ export async function filterOptions(ctx: StaffContext, policy: ClientPolicy): Pr
           ? sql`select distinct t.tag from customer_tags t join customers c on c.id = t.customer_id where c.home_shop_id in ${uuids(shopIds)} order by t.tag limit 200`
           : sql`select null::text tag where false`,
     ) as unknown as Promise<{ tag: string }[]>,
-    db.select({ id: promoCodes.id, name: promoCodes.code }).from(promoCodes).orderBy(asc(promoCodes.code)).limit(300),
-    db.select({ id: marketingCampaigns.id, name: marketingCampaigns.name }).from(marketingCampaigns).orderBy(desc(marketingCampaigns.createdAt)).limit(200),
+    db
+      .select({ id: promoCodes.id, name: promoCodes.code })
+      .from(promoCodes)
+      .where(
+        mine(
+          sql`((${promoCodes.shopId} is null and ${promoCodes.shopIds} = '[]'::jsonb) or ${promoCodes.shopId} in ${uuids(shopIds)} or ${atMine(sql`${promoCodes.shopIds}`)})`,
+        ),
+      )
+      .orderBy(asc(promoCodes.code))
+      .limit(300),
+    db
+      .select({ id: marketingCampaigns.id, name: marketingCampaigns.name })
+      .from(marketingCampaigns)
+      .where(mine(sql`(${marketingCampaigns.shopIds} = '[]'::jsonb or ${atMine(sql`${marketingCampaigns.shopIds}`)})`))
+      .orderBy(desc(marketingCampaigns.createdAt))
+      .limit(200),
     lookups(),
   ]);
   return {
