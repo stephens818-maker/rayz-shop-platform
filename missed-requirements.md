@@ -669,6 +669,44 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] The tools cover the existing reports and the customer source. Questions about appointment-level or sale-level detail outside a report wait for the report builder's next sources.
 - [ ] Answers aren't streamed; the panel waits for the whole reply.
 
+## 27. Shop login parity with Squire, tighter
+
+**1. Squire shop-login features and ours:**
+- [x] Appointments side by side and week, block time, add appointment: the calendar's day and week views, blocks, quick walk-in.
+- [ ] Appointments **list view**: not built; the day calendar and Today's Up next cover it for now.
+- [x] Waiting list: Walk-ins & waitlist.
+- [x] Clients list; locate duplicates (brand-only here, as merging changes every shop's records).
+- [x] Retention report (quarter; visits to qualify 1/2/3; existing and new retention; lost to another barber or shop): **Client retention**.
+- [x] Acquisition channels: **Acquisition channels**.
+- [x] Staff list with clock in and out: the front-desk clock.
+- [x] Services list.
+- [x] Leaderboard (service and product sales, productivity, average ticket, new clients, tickets with product, top services, products and barbers): **Leaderboard**.
+- [x] Gross, sales by service, product and barber, barber summary, commission, appointments, deposits, time track: the existing reports.
+- [x] Saved reports: End of day, Tips, Iowa monthly and quarterly sales tax (one per state, on its schedule), gross and net, employee summary, total collected.
+- [x] Register; cash drawer open and close with a $300 default and balance history.
+- [x] Daily summary with reassign, receipt and refund.
+- [ ] **Custom charge** (an open-amount line): not built; a price override on a line covers some of it.
+- [x] Gift cards.
+- [x] Shop details, per-barber booking settings, waiting list.
+- [x] Phone operator per shop with dollars booked, calls answered, book rate and minutes saved.
+- [x] Customer handoff toggle.
+- [x] Brand-only, as in Squire: inventory setup, marketing, payouts, location switching, adding barbers.
+
+**2. Better than Squire:**
+- [x] Client phone and email masked at most at the shop login, with no export, reveal or merge; the brand can hide them, and only the Brand Owner can lift the cap.
+- [x] Staff contact masked without `staff.contact`, including on save.
+- [x] Refunds, voids and reassigning need a manager's PIN at the shop login, recorded on the record and in the audit log.
+- [x] Shop settings gated per part, on the page and on the server.
+- [x] A barber filter on every report with a barber in it.
+
+**3. Tests:**
+- [x] `tests/shop-login.test.ts` and `tests/db/shop-login.test.ts`; the new reports are in the report-total tests.
+
+**Still open:**
+- [ ] The phone operator is a keypad menu (book link, hours, ring the shop), not a conversational voice AI like Squire's Operator. It doesn't take bookings by voice.
+- [ ] Existing shop logins have to be moved to the Shop Login role by hand (DEPLOY.md step 18).
+- [ ] `tests/db/flows.test.ts` "books, then refuses the same barber/time again" fails when run during SMS quiet hours (the confirmation waits instead of being suppressed). It fails the same way on the previous commit; it depends on the time of day, not on this work.
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.

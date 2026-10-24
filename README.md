@@ -1157,12 +1157,79 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 
 <img alt="A role per assigned shop" src="docs/screenshots/per-shop-roles.png" width="800" />
 
+<a id="shop-login"></a>
+### The shop login, against Squire's
+
+Squire's single-shop (kiosk) login does the day's work at one shop. Ours covers the same ground and is tighter wherever a shared login could leak data or money.
+
+| Squire shop login | Here |
+| --- | --- |
+| Appointments: side by side, week, block time, add | Calendar day and week views, blocks with reasons, quick walk-in |
+| Waiting list | **Walk-ins & waitlist** (`/admin/walk-ins`) |
+| Clients, locate duplicates | Clients with masked contact details; duplicates and merge stay brand-only |
+| Retention report, acquisition channels | **Client retention** and **Acquisition channels** reports |
+| Staff list with clock in/out | **Front-desk clock** (`/admin/clock/kiosk`) with personal PINs; no staff contact details |
+| Services list | Services, read-only at the shop |
+| Leaderboard, sales by service/product/barber, commission, appointments, deposits, time track | **Leaderboard**, Sales summary, Barber performance, Services vs products, Tips and payroll, Labor hours, Attendance and the rest |
+| Saved End of Day, TIPS, Iowa monthly tax, quarterly taxes, gross/net, employee summary, total collected | **Saved reports** on the reports hub, with a sales tax shortcut for each state the brand has shops in |
+| Register, cash drawer with a $300 default and balance history | Checkout; the drawer opens with a counted balance (each shop's default, $300 to start), records cash paid in and out, and shows the **balance history** through the day |
+| Daily summary with reassign, receipt, refund | Sales for the day; tickets can be **reassigned**, receipts resent, refunded or voided (refunds, voids and reassigning need a manager's PIN) |
+| Custom charge, gift cards | Gift cards; price override on a line (no open-amount custom charge yet) |
+| Shop details and per-barber booking settings | Shop settings, **gated part by part**; per-barber booking intervals under Booking times |
+| AI phone agent ("Operator") with dollars booked, calls answered, book rate, minutes saved | The **phone operator** on the Twilio line and its report (a keypad menu, not a conversational AI) |
+| Customer handoff toggle | The customer screen at checkout, per shop |
+
+**Tighter than Squire.**
+
+- **Client contact is masked, with no export.** Squire's shop login shows each client's full phone and email and has a Download all clients button. A shop login here sees client phone, email, address and birthday **masked at most**, whatever its role's Client data rules say; the brand can hide them completely under **Client data protection → Shop logins**, and only the Brand Owner can lift the cap. A shop login can never reveal a masked detail, export or download clients, merge duplicates, or export a report, even if its role or an override says it may (`SHOP_LOGIN_NEVER` in `src/domain/permissions.ts`, applied when access is loaded).
+- **Staff contact is masked.** Staff phone numbers and emails need **See staff phone numbers and email addresses** (`staff.contact`, managers and up). Everyone else sees them masked (`m***@rayz.test`, `***-***-4321`) on staff profiles, the permissions pages and the Morning Dashboard list, and can't change them. People always see their own. Shop logins never get it.
+- **Refunds, voids and reassigning need a manager's PIN.** At a shop login, or for anyone without the permission, the ticket asks for a manager and their time clock PIN. The server checks that the manager may refund (or reassign) at that shop; wrong PINs count toward the manager's clock lockout. The refund, void or reassignment records who approved it, and the audit log names both people.
+- **Shop settings are gated per part.** Details, hours and closures, booking rules, checkout (card readers, receipts, customer screen, drawer opening balance) and the phone line each have their own permission. "Edit every shop setting" still covers them all. The page locks the parts someone can't change, and the server refuses any changed field outside their parts, naming it.
+- **A barber filter on every report** that has a barber in it, including the new ones, the gift card and cash drawer reports (cash and gift cards taken on each barber's tickets) and staffing. Reports about the shop itself (stock, purchasing, shop accounts, loyalty, the audit log) say so.
+
+**The new Shop Login role.** New shop logins get **Shop Login** by default: the calendar, waitlist, checkout and the drawer, clients with masked contact details, the front-desk clock, Inbox, We have openings and view-only reports for its shop, with a 10% discount cap. Existing shop logins keep their role until it's changed (DEPLOY.md step 18).
+
+**Cash drawer.** **Open the drawer** with what was counted into it; it defaults to the shop's opening balance (set under Shop settings → Cash drawer). During the day, record **paid in** and **paid out** with what each was for. **Balance history** lists the opening, every cash sale, cash refund, cash tip payout and paid in or out with the running balance, and the close with its over or short. A drawer opened with a count keeps that opening at close, and paid in and out are taken into account. Moves after the close are refused.
+
+**Reassigning a ticket.** A paid ticket moves to another barber with a reason: the ticket, the lines the old barber was on, their tip share and their tips. Unpaid tips move as they are. Tips already paid out stay on the old barber's history with an adjustment taking them back, and the new barber gets them on the next payout. Not once the pay period is locked, and not for imported Squire tickets.
+
+**New reports** (each with the location and barber filters, the four views and CSV):
+
+- **End of day:** sales, tax, tips and tenders by location, each barber, refunds with who approved them, and each day's drawer (for ranges up to a week).
+- **Leaderboard:** barbers ranked by service sales, product sales, productivity, average ticket, new clients or tickets with retail; the leader and runner-up on each; top services and products with who sold the most.
+- **Sales tax by state:** taxable and non-taxable sales and tax by state and month or quarter, with refunds taken off in the period they happened. Each state's filing schedule is set under Shop settings → Sales tax filing, by people who edit tax rates with access to every shop (Iowa monthly to start, others quarterly).
+- **Client retention:** clients with 1, 2 or 3+ visits in the period before (the quarter before, for a quarter) who came back, split into existing and new clients, with those who went to another barber or shop.
+- **Acquisition channels:** new clients by how they found us, how they first booked, and how many came back for a second visit.
+- **Phone operator:** calls in, answered by staff or by the operator, what callers pressed, booking links texted, bookings and dollars booked within 7 days, book rate and staff minutes saved.
+
+**Saved reports** on the reports hub open a report with its range and options set: End of day, Yesterday's close, Tips, Gross and net sales, Employee summary, Total collected, Leaderboard, Quarterly retention, and one sales tax shortcut per state on that state's schedule ("Iowa monthly sales tax"). Each shows only to people who may open the report. Quarter presets (This quarter, Last quarter) are on every report.
+
+**Phone operator.** Turned on per shop under Shop settings → Phone operator (it needs the shop's Twilio number). It answers when the shop is closed or nobody picks up, or first on every call. The caller hears a menu: **1** texts them a booking link, **2** reads the hours, **3** rings the shop while it's open; pressing nothing texts the link as before. STOP still wins. A booking by the same number at the same shop within 7 days counts toward the call. Try it in the call simulator. It's a keypad menu, not a voice AI: nothing the caller says is recorded or sent anywhere.
+
+<img alt="Drawer balance history" src="docs/screenshots/shop-login-drawer-balance-history.png" width="800" />
+
+<img alt="A refund at the shop login asks for a manager's PIN" src="docs/screenshots/shop-login-refund-needs-manager-pin.png" width="800" />
+
+<img alt="Saved reports" src="docs/screenshots/reports-saved-reports.png" width="800" />
+
+<img alt="Leaderboard" src="docs/screenshots/report-leaderboard.png" width="800" />
+
+<img alt="Client retention" src="docs/screenshots/report-retention.png" width="800" />
+
+<img alt="Phone operator report" src="docs/screenshots/report-phone-operator.png" width="800" />
+
+<img alt="Staff contact masked" src="docs/screenshots/staff-contact-masked.png" width="800" />
+
+<img alt="Client data protection: shop logins" src="docs/screenshots/client-data-shop-login-cap.png" width="800" />
+
+**Tested:** `tests/shop-login.test.ts` (the caps, staff contact, settings parts, drawer timeline, phone operator script and metrics, sales tax periods, quarter presets, saved reports) and `tests/db/shop-login.test.ts` (drawer open, moves, close and history; refund and reassign with and without a manager's PIN, and the tips moving; shop-login caps and the client cap; staff contact masked and kept on save; per-part settings; the phone operator flow and report; the new reports at the shop login). The report-total tests cover the six new reports.
+
 ### Roles and permissions
 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
-- **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 94 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, custom reports, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+- **Roles.** Seven editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, Shop Login, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
+  - The role editor groups the 101 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, custom reports, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.

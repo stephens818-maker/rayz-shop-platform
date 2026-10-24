@@ -380,6 +380,19 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-24: core (shop login parity with Squire)
+
+- **Shop Login role** (`shop_login` in `ROLE_TEMPLATES`) for new shop logins, and hard caps for every `staff.kind = 'shop'` login: `SHOP_LOGIN_NEVER` / `sharedLoginAccess` in `src/domain/permissions.ts`, applied in `accessFor` (`src/server/auth/access.ts`). Client contact for shop logins is capped by `brand_settings.shop_login.clientContact` (`masked` | `hidden` | `role`, default `masked`) in `clientPolicy`; `saveShopLoginCapAction` on Client data protection (`role` is Brand Owner only).
+- **Staff contact:** permission `staff.contact`; `seesStaffContact` / `staffContact` in `src/domain/staff-contact.ts`. `saveProfileAction` keeps email and phone when the editor can't see them.
+- **Manager approval:** `src/server/manager-approval.ts` (`needsManager`, `approvers`, `approvedActor`, using the time clock PIN and its lockout). `Actor.approvedBy` is written to `refunds.approved_by`, `sales.void_approved_by`, `sale_reassignments.approved_by` and the audit details. Sales actions take an optional `approval`.
+- **Reassign:** `reassignSale` in `src/server/reassign.ts`, permission `sales.reassign`. Unpaid `tip_ledger` rows are deleted and re-synced for the new barber (the ledger guard allows deleting unpaid rows and nothing else); paid ones get an `adjust` row.
+- **Drawer:** `shops.drawer_opening_cents`, `cash_drawers.opened_by/opened_at`, `cash_drawer_moves` (`paid_in` | `paid_out`). `src/domain/drawer.ts` (`drawerTimeline`) and `src/server/drawer.ts`. `closeDrawer` uses the counted opening and adds the moves.
+- **Shop settings per part:** `settings.shop_details`, `_hours`, `_booking`, `_checkout`, `_phone`; `SHOP_SETTING_FIELDS`, `shopSettingsDenied`, `editableShopParts`. `settings.shop` still means every part.
+- **Phone operator:** `shops.phone_operator` (jsonb), `call_logs.operator` and `operator_choice`; `src/domain/phone-operator.ts`, `handleOperatorChoice` in `src/server/shop-line.ts`, route `/api/twilio/voice/operator`. Attribution: first booking by the same phone at the same shop within 7 days.
+- **Reports:** `end_of_day`, `leaderboard`, `sales_tax`, `retention`, `acquisition`, `phone_operator` in `src/server/shop-reports.ts`; `ReportData.options` (chip rows carried in links and CSV); `grainsFor` moved to `report-sql.ts`; presets `quarter` and `lastquarter`; `priorPeriod`; saved shortcuts in `src/domain/report-shortcuts.ts`; `brand_settings.tax_filing` with `src/domain/sales-tax.ts`. `NO_BARBER_REPORTS` in `src/app/admin/reports/scope.ts` lists the reports without a barber filter.
+- Migration `core_0049_shop_login`. Tests: `tests/shop-login.test.ts`, `tests/db/shop-login.test.ts`; the migration-seed test now reads roles inserted by later migrations.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read. No new `ErrorCode`.
+
 ### 2026-10-24: core (Rayz Assistant)
 
 - **Rayz Assistant:** a chat panel (`src/app/admin/assistant/panel.tsx`) in the admin layout for anyone whose role has it on, plus a settings page at `/admin/assistant/settings` (Setup). Server actions are in `src/app/admin/assistant/actions.ts`; the run loop, drafts, limits and settings are in `src/server/assistant/index.ts`.

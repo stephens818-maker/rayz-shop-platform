@@ -201,8 +201,15 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
      - **Setup → Rayz Assistant** shows which provider and model are in use, never the key.
    - The model only receives scrubbed report text: no client phone, email, address, birthday, notes or custom fields, and nothing the person's **Client data** level hides.
    - Before go-live, check **Setup → Rayz Assistant**: the roles that get it, the per-person limits (6 a minute, 100 a day), and whether it may draft blasts and purchase orders. Every question and tool call goes in the audit log.
-18. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-19. Add the custom domain under **Settings → Domains**.
+18. The shop login (migration `core_0049_shop_login`; see [The shop login, against Squire's](README.md#shop-login)):
+   - The migration adds the drawer's opening balance per shop ($300 to start) and its paid in and out, ticket reassignments, the approving manager on refunds and voids, the phone operator settings and call fields, the shop-login cap on client contact details (masked to start) and each state's sales tax schedule. It adds the **Shop Login** role and gives Brand Admin, Regional Manager and Shop Manager **Reassign a paid ticket**, **See staff phone numbers and email addresses** and the six new reports; Brand Admin also gets the five per-part shop settings permissions. Front Desk gets the End of day report.
+   - **Existing shop logins keep their role.** Under **Permissions**, change each shop login to **Shop Login** (or set the role when resetting it under **Setup → Shop logins**). Whatever its role, a shop login now never refunds, voids or reassigns without a manager's PIN, reveals or exports clients, or sees staff contact details.
+   - **Refunds at the desk need a manager's PIN.** Each manager who approves refunds sets a time clock PIN (**Payroll → Time clock setup**, or **My time**). Without one they aren't offered as an approver.
+   - **Front Desk loses staff contact details.** Front Desk and Barber never had **See staff phone numbers and email addresses**, so staff phones and emails now show masked to them. Grant it per person if someone at the desk needs it.
+   - Set each state's sales tax schedule under **Shop settings → Sales tax filing** (Iowa monthly, others quarterly to start). The saved sales tax report for each state follows it.
+   - The phone operator is off at every shop until turned on under **Shop settings → Phone operator**; it needs the shop's Twilio number and adds the webhook `https://<your domain>/api/twilio/voice/operator`, which the app sets itself in the call flow (nothing to configure in Twilio). Try it first in the call simulator.
+19. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+20. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 
