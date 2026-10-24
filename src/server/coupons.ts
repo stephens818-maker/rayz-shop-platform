@@ -6,7 +6,7 @@
  */
 import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db, DBorTx, Tx } from "@/db";
-import { appointmentCoupons, appointments, couponCodes, couponRedemptions, marketingCampaigns, marketingSends, products, promoCodes, services, shops } from "@/db/schema";
+import { appointmentCoupons, appointments, couponCodes, couponRedemptions, marketingCampaigns, marketingSends, products, promoCodes, saleAppointments, services, shops } from "@/db/schema";
 import { CouponRule, couponProblem, couponSummary, type CodeMode, type CouponType, type FreeItemKind } from "@/domain/coupons";
 import type { DiscountTarget } from "@/domain/checkout";
 import { formatDate, todayLocal } from "@/lib/time";
@@ -123,12 +123,19 @@ export async function autoCoupons(w: CouponWhere & { customerId: string }, tx: D
   return out;
 }
 
-/** What a ticket starts with: the coupon held from its online booking, and the ones that apply automatically. Problems with the held one are shown, not thrown. */
+/**
+ * What a ticket starts with: the coupon held from an online booking of anyone on it (the ticket's own
+ * appointment first), and the ones that apply automatically. Problems with the held one are shown, not thrown.
+ */
 export async function ticketCoupons(sale: { id: string; shopId: string; customerId: string | null; appointmentId: string | null }, tx: DBorTx = db) {
   const w: CouponWhere = { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId };
   let held: { rule: CouponRule | null; code: string; problem: string | null } | null = null;
-  if (sale.appointmentId) {
-    const [h] = await tx.select().from(appointmentCoupons).where(eq(appointmentCoupons.appointmentId, sale.appointmentId));
+  const onTicket = [sale.appointmentId, ...(await tx.select({ id: saleAppointments.appointmentId }).from(saleAppointments).where(eq(saleAppointments.saleId, sale.id)).orderBy(saleAppointments.createdAt)).map((r) => r.id)].filter(
+    (x): x is string => !!x,
+  );
+  if (onTicket.length) {
+    const rows = await tx.select().from(appointmentCoupons).where(inArray(appointmentCoupons.appointmentId, onTicket));
+    const h = onTicket.map((id) => rows.find((r) => r.appointmentId === id)).find(Boolean);
     if (h) {
       try {
         held = { rule: await resolveCoupon(h.code, w, "booking", tx), code: h.code, problem: null };

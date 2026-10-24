@@ -114,7 +114,8 @@ export async function sendGroupToCheckout(groupId: string, actor: Actor, o: { re
     }
     const others = [...new Set([...open.values()].filter((id) => id !== saleId))];
     if (others.length) await mergeInTx(tx, saleId, others, actor, now);
-    const target = await lockOpenSale(tx, saleId);
+    let target = await lockOpenSale(tx, saleId);
+    if (target.customerId !== g.guardianId) [target] = await tx.update(sales).set({ customerId: g.guardianId }).where(eq(sales.id, target.id)).returning();
     for (const m of live) {
       if (open.has(m.id) || (await familyTicketFor(m.id, tx))) continue;
       await putOnTicket(tx, target, await lockAppointment(tx, m.id), actor, "sale.group_join");

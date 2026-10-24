@@ -25,9 +25,14 @@ export interface FamilyTicketMember {
   readyAt: Date | null;
 }
 
-/** The household's other appointments on one family ticket, oldest booking first. */
+/** The other appointments on one combined ticket, in the order they joined it (people added together by start time). */
 export async function ticketAppointmentIds(saleId: string, tx: DBorTx = db): Promise<string[]> {
-  const rows = await tx.select({ id: saleAppointments.appointmentId }).from(saleAppointments).where(eq(saleAppointments.saleId, saleId)).orderBy(asc(saleAppointments.createdAt));
+  const rows = await tx
+    .select({ id: saleAppointments.appointmentId })
+    .from(saleAppointments)
+    .innerJoin(appointments, eq(appointments.id, saleAppointments.appointmentId))
+    .where(eq(saleAppointments.saleId, saleId))
+    .orderBy(asc(saleAppointments.createdAt), asc(appointments.startsAt), asc(appointments.id));
   return rows.map((r) => r.id);
 }
 

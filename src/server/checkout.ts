@@ -207,6 +207,8 @@ export interface FinalizeInput {
   tipByStaff?: StaffTip[] | null;
   /** Total the UI showed; refuse to charge if the server computes something different. */
   expectedTotalCents?: number | null;
+  /** The appointments the UI showed on the ticket; refuse to charge if people were combined in or split off since. */
+  ticketPeople?: string[] | null;
   rebookInWeeks?: number | null;
   /** With more than one barber on the services: split the tip by their services (the default) or evenly. */
   tipSplit?: TipSplitMode | null;
@@ -437,7 +439,10 @@ export async function finalizeSale(input: FinalizeInput) {
     l.route = await chargeRoute(ctx.shop, l.chargeCents, l.tender.entryMode === "terminal" ? "terminal" : "keyed");
     l.reader = l.tender.entryMode === "terminal" && l.tender.readerId ? await assertReaderAt(ctx.shop.id, l.tender.readerId) : null;
   }
-  const ticketPeopleThen = [ctx.sale.appointmentId, ...ctx.family.members.map((m) => m.appointmentId)].filter((x): x is string => !!x).sort().join(",");
+  const ticketPeopleThen = (input.ticketPeople ?? [ctx.sale.appointmentId, ...ctx.family.members.map((m) => m.appointmentId)])
+    .filter((x): x is string => !!x)
+    .sort()
+    .join(",");
 
   const businessDate = localDateOf(now);
   const issuedGiftCards: { code: string; amountCents: number }[] = [];
