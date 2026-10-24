@@ -52,6 +52,8 @@ export interface FilterOptions {
   shops: Option[];
   barbers: Option[];
   items: Option[];
+  /** The catalog products alone, for the refill filter. */
+  products: Option[];
   tags: string[];
   promos: Option[];
   campaigns: Option[];

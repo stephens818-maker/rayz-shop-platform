@@ -323,6 +323,15 @@ export function stubPlan(
     offered("customer_report")
   ) {
     const weeks = q.match(/(\d+)\s*weeks?/);
+    if (has(q, /running (low|out)|run out|ran out|restock|refill/))
+      return {
+        name: "customer_report",
+        args: {
+          columns: ["name", "products_running_out", "last_product", "last_product_date", "next_refill_due"],
+          refillStatus: [has(q, /ran out|have run out|already out/) ? "ran_out" : "running_out"],
+          sort: "next_refill_due",
+        },
+      };
     const status = weeks
       ? null
       : has(q, /overdue/)

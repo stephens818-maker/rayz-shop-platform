@@ -12,6 +12,7 @@ import { can, openShops, type StaffContext } from "./auth/staff";
 import type { ClientPolicy } from "./client-privacy";
 import { lookups } from "./lookups";
 import { consentColumns } from "./marketing/consent";
+import { refillCtes } from "./product-history";
 import { cadenceCtes } from "./visit-cadence";
 
 const DAY = 86_400_000;
@@ -137,6 +138,10 @@ export async function segmentConditions(seg: Segment, now: Date): Promise<SQL[]>
     add(
       sql`exists (select 1 from sale_items si join sales s on s.id = si.sale_id where s.customer_id = c.id and s.status in ('paid', 'partially_refunded', 'refunded') and si.ref_id in ${uuids(seg.serviceIds)})`,
     );
+  if (seg.refillStatus.length)
+    add(
+      sql`c.id in (with ${refillCtes("rf", sql``, now)} select rf.customer_id from rf where rf.status in ${texts(seg.refillStatus)}${seg.refillProductIds.length ? sql` and rf.product_id in ${uuids(seg.refillProductIds)}` : sql``})`,
+    );
 
   const loyalty = sql`(select coalesce(sum(lr.amount_cents), 0) from loyalty_rewards lr where lr.customer_id = c.id and lr.redeemed_at is null and (lr.expires_at is null or lr.expires_at > ${now.toISOString()}))`;
   if (seg.minLoyaltyCents !== null) add(sql`${loyalty} >= ${seg.minLoyaltyCents}`);
@@ -257,6 +262,7 @@ export async function filterOptions(ctx: StaffContext, policy: ClientPolicy): Pr
     shops: shopList,
     barbers,
     items: [...serviceRows, ...productRows.map((p) => ({ id: p.id, name: `${p.brand} ${p.name}` }))],
+    products: productRows.map((p) => ({ id: p.id, name: `${p.brand} ${p.name}` })),
     tags: tagRows.map((t) => t.tag),
     promos,
     campaigns,

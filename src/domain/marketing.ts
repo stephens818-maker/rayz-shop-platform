@@ -7,6 +7,7 @@
 import { DateTime } from "luxon";
 import { z } from "zod";
 import type { BuiltinField, FieldKey, Level } from "./client-privacy";
+import { REFILL_STATUSES } from "./product-history";
 import { VISIT_STATUSES } from "./visit-cadence";
 
 export const CHANNELS = ["sms", "email", "push"] as const;
@@ -580,6 +581,12 @@ export const SegmentSchema = z.object({
   minTipsCents: optInt(10_000_000),
   maxTipsCents: optInt(10_000_000),
 
+  // Products
+  /** Likely running out of, or ran out of, a product they buy (domain/product-history.ts). */
+  refillStatus: z.array(z.enum(REFILL_STATUSES)).max(3).default([]),
+  /** With refillStatus: of one of these products (empty: any product). */
+  refillProductIds: ids,
+
   // Loyalty, gift cards, coupons
   maxLoyaltyCents: optInt(10_000_000),
   giftCard: z.enum(GIFT_CARD_FILTERS).default("any"),
@@ -737,6 +744,7 @@ export function segmentProblem(s: Segment, sees: FilterSees): string | null {
   if (s.minVisits !== null && s.maxVisits !== null && s.minVisits > s.maxVisits) return "The fewest visits is more than the most";
   if (s.minSpendCents !== null && s.maxSpendCents !== null && s.minSpendCents > s.maxSpendCents) return "The lowest spend is more than the highest";
   if (s.minRating !== null && s.maxRating !== null && s.minRating > s.maxRating) return "The lowest rating is more than the highest";
+  if (s.refillProductIds.length && !s.refillStatus.length) return "Pick likely running out or ran out for those products";
   return null;
 }
 

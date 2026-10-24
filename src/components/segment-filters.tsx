@@ -17,6 +17,7 @@ import {
   type Tri,
 } from "@/domain/marketing";
 import { DUE_LEAD_DAYS, VISIT_STATUSES, VISIT_STATUS_LABEL, type VisitStatus } from "@/domain/visit-cadence";
+import { REFILL_LEAD_DAYS, REFILL_STATUSES, REFILL_STATUS_LABEL, type RefillStatus } from "@/domain/product-history";
 import { BarberFilter, LastVisitFilter } from "@/app/admin/campaign-center/segment-fields";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -213,6 +214,28 @@ export function SegmentFilters({
           </div>
         ) : (
           <p className="text-xs text-zinc-500">Spend and tip filters need access to every client.</p>
+        )}
+      </Section>
+
+      <Section title="Products" count={set(seg.refillStatus, seg.refillProductIds)}>
+        <Field
+          label="Product refill"
+          hint={`Likely running out from ${REFILL_LEAD_DAYS} days before what they last bought should be used up, by how long one lasts them (or lasts clients in general, when they bought it once).`}
+        >
+          <Chips
+            disabled={ro}
+            options={REFILL_STATUSES.map((v) => ({ id: v, name: REFILL_STATUS_LABEL[v] }))}
+            selected={seg.refillStatus}
+            onToggle={(x) => {
+              const refillStatus = toggle(seg.refillStatus, x as RefillStatus);
+              s({ refillStatus, ...(refillStatus.length ? {} : { refillProductIds: [] }) });
+            }}
+          />
+        </Field>
+        {seg.refillStatus.length > 0 && options.products.length > 0 && (
+          <Field label="Of these products (none picked: any product)">
+            <ItemPicker disabled={ro} placeholder="Search products" options={options.products} selected={seg.refillProductIds} onChange={(refillProductIds) => s({ refillProductIds })} />
+          </Field>
         )}
       </Section>
 

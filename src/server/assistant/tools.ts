@@ -42,6 +42,7 @@ import {
   type FieldDef,
 } from "@/domain/report-builder";
 import { csvTable, type ReportTable } from "@/domain/report-views";
+import { REFILL_STATUSES } from "@/domain/product-history";
 import { VISIT_STATUSES } from "@/domain/visit-cadence";
 import { formatCents } from "@/lib/money";
 import { scrub, scrubText } from "@/lib/sensitive";
@@ -457,6 +458,13 @@ async function customerReportTool(
       .optional()
       .describe("Usual days between visits (median of recent gaps), at least"),
     maxDaysBetweenVisits: z.number().int().min(1).max(3650).optional(),
+    refillStatus: z
+      .array(z.enum(REFILL_STATUSES))
+      .max(3)
+      .optional()
+      .describe(
+        "Products they buy: running_out (from a week before what they last bought should be used up), ran_out, or stocked",
+      ),
   });
   return {
     name: "customer_report",
@@ -490,6 +498,7 @@ async function customerReportTool(
         visitStatus: a.visitStatus ?? [],
         minAvgGapDays: a.minDaysBetweenVisits ?? null,
         maxAvgGapDays: a.maxDaysBetweenVisits ?? null,
+        refillStatus: a.refillStatus ?? [],
       });
       const byKey = new Map(fields.map((f) => [f.key, f]));
       const def = ReportDefinition.parse({
