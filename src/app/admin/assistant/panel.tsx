@@ -32,7 +32,9 @@ export function AssistantPanel({ firstName }: { firstName: string }) {
       }
     });
   }, [open, loaded]);
-  useEffect(() => end.current?.scrollIntoView({ block: "end" }), [messages, pending]);
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "end" });
+  }, [messages, pending]);
   useEffect(() => {
     if (open) box.current?.focus();
   }, [open]);
