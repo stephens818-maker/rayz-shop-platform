@@ -16,7 +16,7 @@ Both run on **Vercel** (the app) and **Neon** (Postgres). Supabase works in plac
 | Two random secrets | Run `openssl rand -base64 48` twice | Both |
 | Stripe test keys (optional) | [dashboard.stripe.com/test/apikeys](https://dashboard.stripe.com/test/apikeys) | Only to try real Stripe test mode; without them the built-in simulator runs |
 
-**Vercel plan.** The reminder queue runs every 5 minutes on Vercel Cron, which needs **Vercel Pro**. Pro is also what Vercel's terms require for a business. On the free Hobby plan, a deploy with a cron more frequent than daily is rejected. To try the demo on Hobby anyway, change both schedules in `vercel.json` (notifications every 5 minutes, Campaign Center every 15) to `"0 12 * * *"` (once a day). The demo doesn't send anything, so nothing is lost.
+**Vercel plan.** The reminder queue runs every 5 minutes on Vercel Cron, which needs **Vercel Pro**. Pro is also what Vercel's terms require for a business. On the free Hobby plan, a deploy with a cron more frequent than daily is rejected. To try the demo on Hobby anyway, change the three schedules in `vercel.json` (notifications every 5 minutes, Campaign Center every 15, the Morning Dashboard every minute from 4 AM to noon Central) to `"0 12 * * *"` (once a day). The demo doesn't send anything, so nothing is lost.
 
 ## Demo preview, step by step
 
@@ -179,8 +179,14 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Load zip centers for "within N miles": download the Census ZCTA gazetteer (`2024_Gaz_zcta_national.zip` from census.gov), unzip it, and run `MIGRATE_DATABASE_URL=<unpooled URL> pnpm tsx scripts/load-zip-points.ts 2024_Gaz_zcta_national.txt`. Re-running updates it. Without it, distance filters match nobody unless the shop has coordinates and the client's zip is loaded.
    - Set `AUTH_SECRET` before printing or texting loyalty cards: the card's signature is made with it, so changing it invalidates every card.
    - After the Squire import, clean up under **Clients → Duplicates → Imported from Squire**.
-15. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-16. Add the custom domain under **Settings → Domains**.
+15. The Morning Dashboard email (migration `core_0046_morning_dashboard`; see [Morning Dashboard](README.md#morning-dashboard)):
+   - The migration adds the **Morning Dashboard** report (view and export) to Brand Admin, Regional Manager and Shop Manager, an HTML part for queued emails (scrubbed like the text part), and `morning_dashboard_sends`, which records each person, version and channel sent each morning so it never goes twice.
+   - `vercel.json` runs `/api/cron/morning-dashboard` every minute from 09:00 to 17:59 UTC, which is 4 AM to noon Central in summer and winter, with `CRON_SECRET`. The notifications cron also tries it every 5 minutes as a fallback. If you change the schedule, keep it running through the brand's send time; nothing goes out after noon.
+   - It goes out at 7:02 AM by default to Brand Owner, Brand Admin, Regional Manager and Shop Manager. Check **Setup → Morning Dashboard email** before the first morning: who gets it, the all-locations or single-shop versions per person, the sections, and the PDF and text options (both off).
+   - Email needs Postmark or Resend wired with HTML parts (both providers are stubs today; see the README's Next steps). With no provider set, the emails are queued and shown in the outbox but not sent; `NOTIFICATIONS_EMAIL_PROVIDER=console` logs them instead. The text summary uses the transactional SMS sender, so make sure the A2P 10DLC campaign covers staff notifications.
+   - Set `APP_BASE_URL` to the public domain: every link in the email is built from it.
+16. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+17. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

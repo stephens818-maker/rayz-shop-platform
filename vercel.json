@@ -4,6 +4,6 @@
   "crons": [
     { "path": "/api/cron/notifications", "schedule": "*/5 * * * *" },
     { "path": "/api/cron/campaign-center", "schedule": "*/15 * * * *" },
-    { "path": "/api/cron/morning-dashboard", "schedule": "* * * * *" }
+    { "path": "/api/cron/morning-dashboard", "schedule": "* 9-17 * * *" }
   ]
 }

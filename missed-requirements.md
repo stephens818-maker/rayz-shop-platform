@@ -201,7 +201,7 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
   - sales against the same day last week, by shop;
   - failed messages, with a retry.
 - [x] Extras: booked with a barber who's off, waitlist while chairs are open, drafts waiting to send, late deliveries, tickets left open, drawers never closed, a shop that can't take cards, and unread client texts.
-- [x] Morning digest by email to the owner and managers, configurable at **Setup → Morning digest** (time, roles, people, sections), with a preview and a test send. It covers yesterday's sales by shop, today's team (working, off, blocked) and the alerts, each copy scoped to that person's shops and permissions. It's sent once per person per day.
+- [x] Morning digest by email to the owner and managers. Replaced by the Morning Dashboard (section 24).
 - [x] Tests: `tests/today.test.ts` and `tests/db/today.test.ts`.
 - [ ] Marketing texts (open chair, rebook) wait on the marketing consent columns from PR #8. Until then the alerts say to call through the shop line. They now count toward the brand's marketing limits (section 21).
 
@@ -580,6 +580,37 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] Whether managers at this brand should get any of the Campaign Center back (DEPLOY step 13).
 - [ ] The waitlist text goes to everyone who asked, by text only, without marketing consent (they asked for it). Confirm that's the wanted reading for A2P.
 - [ ] Open times are for the barber's most booked service; a client wanting a longer service may find the time too short and is sent back to pick another.
+
+## 24. Morning Dashboard (email and page)
+
+**1. Schedule:**
+- [x] 7:02 AM Central by default, any minute from 4 to 11 AM under **Setup → Morning Dashboard email**; caught up until noon, never sent later.
+- [x] No email on days every shop is closed (Sundays). Monday's covers Saturday, against the Saturday before (can be turned off to always cover yesterday).
+
+**2. Recipients:**
+- [x] Managed in the brand portal: by role (main role or a role at one shop), plus always or never per person.
+- [x] Owner and brand team get the all-locations version; each shop manager gets their shop. Per person, the brand can switch to one email per shop, or both, and pick the shops.
+- [x] À la carte: the new **Morning Dashboard** report decides who gets one at all, and each section needs its own report at each shop (sales, KPIs, barber performance, service times, loyalty, gift cards, Campaign Center or openings, Google reviews, staffing, attendance, labor, low stock, purchasing, tip payouts, shop accounts). Without "every barber's numbers", barber tables show only your own row.
+
+**3. Content:**
+- [x] Prior day with week to date and the same day last week: gross and net, services and products, tips, card fees, refunds and voids, by location and by barber.
+- [x] Tickets, average ticket, new and returning clients, bookings made (online, walk-in, front desk), cancellations and no-shows.
+- [x] Utilization per barber, and average cut time against booked.
+- [x] Loyalty and gift cards; Campaign Center sends, clicks, bookings, redemptions and revenue; review link clicks.
+- [x] Today: each shop's hours, who's working, open time per barber, time off and call-ins.
+- [x] Exceptions: missed clock-ins and clock-outs, overtime risk (over 40, or a part-timer over 32), low stock, late and draft purchase orders, pending and failed tip payouts, approvals (time off, We have openings blasts, over-limit purchase orders), and Stripe payouts (failed, on the way, deposited).
+
+**4. Format and delivery:**
+- [x] Mobile-friendly HTML email with bar charts and links into the app, plus a plain-text part; the same dashboard in the app (`/admin/morning`) with PDF and CSV downloads.
+- [x] Optional PDF attachment and optional one-line text, both off by default.
+- [x] Idempotent: claimed per person, version and channel before it's built; overlapping runs and retries don't double-send.
+- [x] Dev: with no email provider it's queued in the outbox and not sent; `NOTIFICATIONS_EMAIL_PROVIDER=console` logs it.
+- [x] Tests: `tests/morning-dashboard.test.ts` and `tests/db/morning-dashboard.test.ts`.
+
+**Still open:**
+- [ ] Resend and Postmark are still stubs; wiring them must send the HTML part and the PDF.
+- [ ] "Bookings made" counts appointments created that day by source; phone bookings entered at the desk count as front desk, since the app doesn't record a phone source.
+- [ ] As in the KPI report, a client is new for a period when their first visit at those shops falls in it, so the week to date can show fewer returning clients than one day of it. With a short history (like the seed's) most of the week shows as new.
 
 ## Deferred by decision
 

@@ -113,7 +113,7 @@ npx tsx scripts/make-squire-fixture.ts   # regenerate samples/squire/realistic (
 
 ## Owner's guide: running it without a developer
 
-Everything below happens in the portal. Nothing in the code names a shop, a barber, a service or a list item, so new ones show up everywhere on their own: booking, the public site, the calendar, POS, every report and filter, permission scopes, location groups, Today and the digest.
+Everything below happens in the portal. Nothing in the code names a shop, a barber, a service or a list item, so new ones show up everywhere on their own: booking, the public site, the calendar, POS, every report and filter, permission scopes, location groups, Today and the Morning Dashboard.
 
 **Add a location** (Brand Owner or Brand Admin, `locations.setup`): **Setup → Location setup → Add a location**. The wizard has 12 steps and saves the shop hidden from clients ("Setting up"):
 
@@ -179,7 +179,7 @@ The same step sets the **statement descriptor** (what clients see on their card 
 
 **Campaign Center:** before anything goes out, set the brand's postal address, quiet hours and weekly and monthly limits under **Campaign Center → Settings**. Then, under **Campaign Center → Campaigns**, give each campaign its wording and coupon and switch it on at the locations that want it. Locations (shop logins, front desk and managers) get only **We have openings** by default. The rest of the Campaign Center (coupons, campaigns, segments, blasts, exports and the marketing reports) is the brand's, unless the brand grants it in the role editor or per person. Coupons are under **Promos & gift cards**. See [Campaign Center](#campaign-center).
 
-**Morning digest:** **Setup → Morning digest** sets the send time, who gets it (by role, plus always or never per person), and which sections go in. The page shows a preview of your own copy, and **Email me a test** sends it to you now.
+**Morning Dashboard:** **Insights → Morning Dashboard** shows yesterday's numbers, today's schedule and what needs attention. **Setup → Morning Dashboard email** (`settings.lists`) sets the send time (7:02 AM by default, any minute from 4 to 11 AM), who gets it (by role, plus always or never per person), whether someone with several shops gets one email for all of them, one per shop, or both, which sections go in, and whether to attach a PDF and text a one-line summary. The page previews your own copy, and **Email me a test** sends it to you now. See [Morning Dashboard](#morning-dashboard).
 
 <a id="what-we-store"></a>
 ## What we store and what Stripe stores
@@ -214,7 +214,8 @@ Card payments stay at PCI SAQ A: card details only ever pass through Stripe's fr
 - Only Central time is supported: a shop in another zone can be saved but can't go live (the checklist explains why).
 - Test: `tests/db/locations.test.ts` creates a location through the wizard, takes it live and checks that it appears in booking, the calendar, POS, reports (CSV, all shops and by group), permissions and location groups. It then archives the location (refused while an appointment is booked) and checks that its history is kept. The same file covers offboarding, client messages and picklists.
 
-### Today and the morning digest
+<a id="today"></a>
+### Today
 
 - **Needs attention** on the Today page, for the shop you're in or all your shops. Each person sees only their shops and only the alerts their permissions cover. Urgent alerts come first. Brand-wide, the same alert at three or more shops folds into one line.
 - Most alerts have a one-click fix with a confirm step. The server works the alert out again before acting, so the browser can only name it.
@@ -245,13 +246,35 @@ Card payments stay at PCI SAQ A: card details only ever pass through Stripe's fr
   - They go only to clients who agreed to marketing texts and haven't replied STOP.
   - They're sent between 9 AM and 8 PM (open-chair texts until 7 PM), at most one per client per week and 40 per send. They also count toward the brand's marketing limits (see [Campaign Center](#campaign-center)).
   - Until the consent columns from PR #8 exist, nobody qualifies, and the alert says to call clients through the shop line instead.
-- **Morning digest:** one email per person, sent within five minutes of the set time (7 AM by default) and never after noon. It covers:
-  - yesterday's sales by shop against the same day the week before;
-  - today's team at each shop: working, off (with the reason and hours) and blocked (lunches left out);
-  - the same alerts as Today, scoped to that person's shops and permissions.
+- Tests: `tests/today.test.ts` (open-time math, no-show risk, rebook timing) and `tests/db/today.test.ts`. The DB test fixes the clock at 10 AM on a working day and covers each alert's cause, the reminder and running-late texts (sent once), drafting the PO, the retry, dismissal and shop scoping. It also covers the open-chair texts with consent (once a week, not after 7 PM).
 
-  It goes once per person per day, and skips days when every shop is closed. The notifications cron sends it.
-- Tests: `tests/today.test.ts` (open-time math, no-show risk, rebook timing, digest text) and `tests/db/today.test.ts`. The DB test fixes the clock at 10 AM on a working day and covers each alert's cause, the reminder and running-late texts (sent once), drafting the PO, the retry, dismissal and shop scoping. It also covers the open-chair texts with consent (once a week, not after 7 PM), digest recipients and content per person, send-once timing, and the settings page.
+<a id="morning-dashboard"></a>
+### Morning Dashboard
+
+The last open day's numbers with week to date and the same day last week, today's schedule, and the exceptions to handle. It's a page in the app (**Insights → Morning Dashboard**, `/admin/morning`) and an email each morning, built from the same data (`src/server/morning-dashboard.ts`) and laid out once (`src/domain/morning-render.ts`) for the page, the HTML and text email, the PDF and the text message.
+
+- **When:** 7:02 AM Central by default, any minute from 4 to 11 AM (**Setup → Morning Dashboard email**). The job runs every minute during the morning and catches up until noon; after that the day is skipped rather than sent late. Days every shop is closed (Sundays) get no email. With **Cover the last day the shops were open** (on by default), Monday's covers Saturday, against the Saturday before, and says that Sunday was closed.
+- **Who:** by role, a person's main role or their role at one shop (Brand Owner, Brand Admin, Regional Manager and Shop Manager by default), plus **Always** or **Never** per person. Nobody gets it without the **Morning Dashboard** report (`report.morning_dashboard.view`) at one or more of their live or temporarily closed shops. One shop is that shop's version. Several shops (the owner, the brand team, a regional manager) is the all-locations version by default; the brand can switch a person to one email per shop, or both, and pick which shops.
+- **What's in it, each section only where the person's own reports allow it:**
+
+| Section | Needs | Shows |
+| --- | --- | --- |
+| Sales | Sales summary | Gross and net, services and products, tips, card fees, refunds, tickets, average ticket; net by day this week against last, and by location. Voids need Discounts & refunds. The barber table needs Barber performance, and without **See every barber's numbers** shows only your own row |
+| Clients and bookings | KPIs | New and returning clients, bookings made (online, walk-in, front desk), appointments, cancellations, no-shows |
+| Barber utilization | Barber performance | Booked against available hours, overall and per barber, day and week to date. Average cut against booked time needs Service times |
+| Loyalty and gift cards | Loyalty / Gift cards | Rewards earned and redeemed; gift cards sold and redeemed, and what's still owed |
+| Campaign Center | Campaign Center (or We have openings) | Sends, clicks, bookings, coupon redemptions and attributed revenue for messages sent that day |
+| Google review links | Google reviews | Review link clicks and follow-ups sent, by location |
+| Today | Staffing | Each shop's hours, who's working and when, appointments, open time left per barber (with the stretches), time off and call-ins |
+| Needs attention | Each kind's report | Missed clock-ins and clock-outs (Attendance); anyone on track for over 40 hours this week, or a part-timer over 32 (Labor); low stock (Low stock); late and draft purchase orders (Purchasing); pending and failed tip payouts (Tip payouts); failed, pending and paid Stripe payouts (Shop accounts); time off, We have openings blasts and over-limit purchase orders waiting for approval (whoever can approve them) |
+
+  Each row compares the day with the same weekday last week and the week to date (Sunday through the day) with the same days last week; percentages compare in points. A section covering fewer shops than the email says so. Card fees, refunds, voids, cancellations and no-shows going up show red.
+- **The email** is HTML that fits a phone (one column under 480 px, the main columns of wide tables), with bar charts, a link into each report for the same day and shops, a link per exception, and **Open the dashboard**. It has a plain-text part too. It lists the top 15 barbers and the first 5 of each kind to handle; the page and the PDF list everything. The subject carries the headline: `Morning Dashboard Mon Oct 26 · Coralville: $1,138 net, down 1% · 2 urgent`.
+- **Options:** attach the PDF; text a one-line summary (net sales, tickets, week to date, no-shows, today's open time, what's to handle, the link) to recipients with a mobile number, one text a day for their broadest version. Both are off by default.
+- **The page** picks the shops (all of yours, or one) and the morning, with the previous and next day. **PDF** and **CSV** need `report.morning_dashboard.export` and are audited like other exports.
+- **Sending once:** each person, version and channel is claimed in `morning_dashboard_sends` before it's built, so overlapping runs, a retry or both crons never send twice. A claim left by a run that died is taken over after 10 minutes. A version with nothing the person may see is marked skipped. The email goes through the notification queue (kind `digest`), so it shows in the outbox and follows the provider settings: with no provider it's queued and not sent, and `NOTIFICATIONS_EMAIL_PROVIDER=console` logs it with the size of the HTML part.
+- Settings live in `brand_settings.digest`; settings saved by the earlier morning digest carry over.
+- Tests: `tests/morning-dashboard.test.ts` (settings and their limits, Monday covering Saturday, versions, change labels and tones, partial coverage, the email's escaping, charts, links and phone layout, the text part, the text message, the PDF) and `tests/db/morning-dashboard.test.ts` (recipients and versions per seeded person, each section against its report permission, partial shop coverage, the numbers against the sales and KPI reports, the send window, overlapping runs and a stale claim, closed days and off, the PDF and text options, scrubbing of the HTML part, the settings page and actions, the page per person, and the PDF and CSV downloads).
 
 ### Other efficiency wins
 
@@ -283,7 +306,7 @@ These came with the Today work, beyond what was asked for:
 - **Walk-ins and waitlist:**
   - Quick-add a walk-in with a name, optional phone, service chip, and barber chip, then either **Seat now** (it books the first free barber immediately) or add them to the waitlist.
   - The waitlist shows time waited against the quoted wait, with **Seat**, **Text "you're up"**, and **Left** actions.
-- **Today dashboard:** a **Needs attention** list that finds problems on its own (see [Today and the morning digest](#today-and-the-morning-digest)), today's numbers against the same day last week, who's up next, who's in, and per-shop totals in brand view.
+- **Today dashboard:** a **Needs attention** list that finds problems on its own (see [Today](#today)), today's numbers against the same day last week, who's up next, who's in, and per-shop totals in brand view.
 
 ### Schedules and staff
 
@@ -1679,7 +1702,7 @@ samples/squire/      example Squire CSV exports for the importer
 
 - Real Stripe Terminal readers: a location, connection tokens, reader pairing, and reading the tip back from the reader's PaymentIntent (the tip buttons are already synced to the reader's configuration).
 - Marketing consent: the open-chair and rebook texts on Today and every Campaign Center campaign and blast are built, but wait on the marketing consent columns from PR #8 (`sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing`, `customer_devices`).
-- Real email and push providers for the Campaign Center (Postmark broadcast stream or Resend, Expo push).
+- Real email and push providers for the Campaign Center and the Morning Dashboard (Postmark or Resend, sending the HTML part and the PDF; Expo push).
 - Shops outside Central time: today a shop in another zone can be saved but not opened.
 - Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training flag stays off; merging PR #8; `DEMO_MODE` in production (it would break the Vercel demo).
 - Customer card-on-file and deposits or no-show fees, if the shop wants them (Squire had none). This requires 3DS.
