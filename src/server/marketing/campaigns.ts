@@ -441,6 +441,7 @@ export async function sendTest(ctx: StaffContext, o: { campaignId: string; shopI
   if (!mayCreate(ctx) && !maySend(ctx)) throw forbidden("You can't use the Campaign Center");
   assertShopAccess(ctx, o.shopId);
   const c = await campaignById(o.campaignId);
+  if (c.kind === "openings") throw new AppError("bad_request", "Test sends are for automated campaigns, blasts and sequences");
   if (c.kind !== "trigger") assertMayEdit(ctx, c, c.kind);
   const templates = o.templates ? parse(TemplatesSchema, o.templates) : templatesOf(c.templates);
   const promo = o.promoId === undefined ? undefined : await promoOk(o.promoId);

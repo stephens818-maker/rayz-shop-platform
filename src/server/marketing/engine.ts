@@ -103,7 +103,27 @@ export interface DeliverInput {
   recordSkips: boolean;
   /** Lapsed sequences: the step it is. */
   stepId?: string | null;
+  /** We have openings: no client gets a second openings message within this many days. */
+  openingsCapDays?: number;
   now: Date;
+}
+
+/** This client got a We have openings message in the last `days` days. */
+async function hadOpenings(customerId: string, days: number, now: Date, tx: DBorTx): Promise<boolean> {
+  const [r] = await tx
+    .select({ id: marketingSends.id })
+    .from(marketingSends)
+    .innerJoin(marketingCampaigns, eq(marketingCampaigns.id, marketingSends.campaignId))
+    .where(
+      and(
+        eq(marketingSends.customerId, customerId),
+        eq(marketingSends.status, "queued"),
+        eq(marketingCampaigns.kind, "openings"),
+        gte(marketingSends.createdAt, new Date(now.getTime() - days * DAY)),
+      ),
+    )
+    .limit(1);
+  return !!r;
 }
 
 /** One message to one client, idempotently. */
@@ -128,6 +148,7 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
     if (!channel) return skip("no_consent");
     const cap = capProblem(await recentSends(t.customerId, now, tx), now, s);
     if (cap) return skip(cap);
+    if (i.openingsCapDays && (await hadOpenings(t.customerId, i.openingsCapDays, now, tx))) return skip("openings_cap");
     const today = todayLocal(now);
     const promoBad = promoProblem(i.promo, today);
     if (promoBad) return skip(promoBad);
@@ -198,7 +219,7 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
         jobId: job.id,
         couponCodeId,
         token,
-        bookPath: bookPathFor(shop.slug, { ...t.link, coupon: code }),
+        bookPath: t.path ?? bookPathFor(shop.slug, { ...t.link, coupon: code }),
         costCents: costCents(channel, s),
         stepId: i.stepId ?? null,
         createdAt: now,

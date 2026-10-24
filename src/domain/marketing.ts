@@ -23,7 +23,8 @@ export const MARKETING_FIELDS = {
   expiry: "When the coupon stops working, e.g. Nov 30",
 } as const;
 export type MarketingField = keyof typeof MARKETING_FIELDS;
-export type MarketingValues = Partial<Record<MarketingField, string>>;
+/** `day` is We have openings' own field (OPENINGS_FIELDS in src/domain/openings.ts). */
+export type MarketingValues = Partial<Record<MarketingField | "day", string>>;
 
 export interface Templates {
   sms: string;
@@ -47,7 +48,8 @@ export const MARKETING_SMS_MAX = 320;
 export const STOP_LINE = "Reply STOP to opt out.";
 
 /** What's wrong with a campaign's wording, or null. */
-export function templatesProblem(t: Templates, channels: readonly Channel[], o: { hasCoupon: boolean }): string | null {
+export function templatesProblem(t: Templates, channels: readonly Channel[], o: { hasCoupon: boolean; extraFields?: readonly string[] }): string | null {
+  const known = [...Object.keys(MARKETING_FIELDS), ...(o.extraFields ?? [])];
   const parts: [string, string, Channel][] = [
     ["Text", t.sms, "sms"],
     ["Email subject", t.emailSubject, "email"],
@@ -57,7 +59,7 @@ export function templatesProblem(t: Templates, channels: readonly Channel[], o: 
   ];
   for (const [label, text] of parts) {
     for (const [, f] of text.matchAll(FIELD_RE)) {
-      if (!(f in MARKETING_FIELDS)) return `${label}: {${f}} isn't a merge field. Use ${Object.keys(MARKETING_FIELDS).map((x) => `{${x}}`).join(", ")}.`;
+      if (!known.includes(f)) return `${label}: {${f}} isn't a merge field. Use ${known.map((x) => `{${x}}`).join(", ")}.`;
       if ((f === "coupon_code" || f === "expiry") && !o.hasCoupon) return `${label}: pick a coupon to use {${f}}`;
     }
     if (/\{[^}]*$|^[^{]*\}/.test(text)) return `${label}: a { or } isn't closed`;
@@ -70,7 +72,7 @@ export function templatesProblem(t: Templates, channels: readonly Channel[], o: 
 
 export function fill(text: string, values: MarketingValues): string {
   return text
-    .replace(FIELD_RE, (_, f: string) => values[f as MarketingField] ?? "")
+    .replace(FIELD_RE, (_, f: string) => values[f as keyof MarketingValues] ?? "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/ ([.,!?])/g, "$1")
     .trim();
@@ -431,6 +433,7 @@ export const SKIP_LABEL: Record<string, string> = {
   cap_week: "Weekly limit reached",
   cap_month: "Monthly limit reached",
   no_coupon: "No coupon codes left",
+  openings_cap: "Got a We have openings message recently",
 };
 
 // ───────────────────────────── Segments ─────────────────────────────

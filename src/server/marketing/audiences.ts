@@ -28,6 +28,8 @@ export interface Target {
   values?: MarketingValues;
   /** Booking page query: the barber's and service's slugs. */
   link?: { barber?: string | null; service?: string | null };
+  /** Where the tracked link goes instead of the booking page, e.g. an openings blast's live times. */
+  path?: string;
 }
 
 interface ClientRow {
