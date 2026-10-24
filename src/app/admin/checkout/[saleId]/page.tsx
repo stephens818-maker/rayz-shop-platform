@@ -19,6 +19,7 @@ import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { terminalReaders } from "@/db/schema";
 import { activeHandoffFor, resumeDraft, shopHandoffConfig } from "@/server/handoff";
+import { ticketPeople } from "@/server/family-ticket";
 import { Pos } from "./pos";
 
 export const metadata: Metadata = { title: "Checkout" };
@@ -53,6 +54,21 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
     resumeId && UUID.test(resumeId) ? resumeDraft(saleId, resumeId) : null,
     shownBadges(policy, [c.customer?.id]),
   ]);
+  const people = await ticketPeople(c.sale);
+  // Rewards of anyone else on a combined ticket can pay for it too (a household shares one balance).
+  const others = [...new Set(people.map((p) => p.customerId).filter((x): x is string => !!x && x !== c.customer?.id))];
+  const otherBalances = loyalty?.enabled ? await Promise.all(others.map(async (id) => ({ id, b: await loyaltyBalance(id) }))) : [];
+  const owners = new Set([loyalty?.ownerId].filter(Boolean));
+  const otherRewards = otherBalances.flatMap(({ id, b }) => {
+    if (!b.enabled || owners.has(b.ownerId)) return [];
+    owners.add(b.ownerId);
+    const who = people.find((p) => p.customerId === id)?.name.split(" ")[0] ?? "Guest";
+    return b.rewards.map((r) => ({ ...r, owner: who }));
+  });
+  const payers = [
+    ...(c.customer ? [{ customerId: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim() }] : []),
+    ...people.flatMap((p) => (p.customerId && p.customerId !== c.customer?.id ? [{ customerId: p.customerId, name: p.name }] : [])),
+  ].filter((p, i, a) => a.findIndex((x) => x.customerId === p.customerId) === i);
   const coupons = await ticketCoupons(c.sale);
   const cards = takesCards(c.shop.paymentsMode, account);
   return (
@@ -80,6 +96,9 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
       withClient={withClient ? { by: withClient.by, startedAt: withClient.startedAt.toISOString() } : null}
       coupons={coupons}
       groupDeposit={c.groupDeposit}
+      people={people.map((p) => ({ appointmentId: p.appointmentId, name: p.name, isChild: p.isChild, staffId: p.staffId, staffName: p.staffName, readyAt: p.readyAt?.toISOString() ?? null }))}
+      payers={payers}
+      canCombine={can(ctx, "checkout.any")}
       family={{
         members: c.family.members.map((m) => ({ ...m, startsAt: m.startsAt.toISOString(), readyAt: m.readyAt?.toISOString() ?? null })),
         candidates: c.family.candidates.map((m) => ({ ...m, startsAt: m.startsAt.toISOString(), readyAt: m.readyAt?.toISOString() ?? null })),
@@ -109,7 +128,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
       negativeStock={c.negativeStock}
       loyalty={
         loyalty && loyalty.enabled
-          ? { rewards: loyalty.rewards, progressCents: loyalty.progressCents, thresholdCents: loyalty.thresholdCents, redeemableOn: loyaltyCfg.redeemableOn }
+          ? { rewards: [...loyalty.rewards, ...otherRewards], progressCents: loyalty.progressCents, thresholdCents: loyalty.thresholdCents, redeemableOn: loyaltyCfg.redeemableOn }
           : null
       }
       payments={{

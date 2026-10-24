@@ -10,17 +10,19 @@ import { safe } from "@/server/action";
 import { HANDOFF_COOKIE } from "@/server/auth/cookies";
 import { HANDOFF_TTL, handoffToken } from "@/server/auth/handoff-lock";
 import { StaffContext, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
-import { CheckoutLineInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale } from "@/server/checkout";
+import { CheckoutLineInput, SplitTenderInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale } from "@/server/checkout";
+import { mergeTickets, openTickets, splitOffTicket, splitTicketApart } from "@/server/combined-checkout";
 import { resolveCoupon } from "@/server/coupons";
 import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
 import { findOrCreateCustomer } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { sameHousehold } from "@/server/family";
-import { addAppointmentToTicket, removeAppointmentFromTicket, ticketAppointmentIds } from "@/server/family-ticket";
+import { addAppointmentToTicket, removeAppointmentFromTicket, ticketAppointmentIds, ticketPeople } from "@/server/family-ticket";
 import { HandoffDraftInput, endHandoffFromCounter, startHandoff } from "@/server/handoff";
 import { holdRetail } from "@/server/inventory/stock";
 import { requireInTenant } from "@/server/tenant";
 import { inspectPaymentMethod, terminal } from "@/server/payments/processor";
+import type { StaffTip } from "@/domain/combined-checkout";
 import type { TipSplitMode } from "@/domain/handoff";
 
 async function loadSale(ctx: StaffContext, saleId: string) {
@@ -74,8 +76,12 @@ export async function attachCustomerAction(saleId: string, customerId: string | 
     const ctx = await requireStaff();
     const sale = await loadSale(ctx, saleId);
     if (sale.status !== "open") throw new AppError("conflict", "Ticket is closed");
-    if ((await ticketAppointmentIds(saleId)).length && !(customerId && sale.customerId && (await sameHousehold(customerId, sale.customerId)))) {
-      throw new AppError("conflict", "Take the family members off this ticket before changing who's paying");
+    if ((await ticketAppointmentIds(saleId)).length) {
+      // A combined ticket's payer is someone on it, or someone in the payer's household.
+      const onTicket = (await ticketPeople(sale)).some((p) => p.customerId === customerId);
+      if (!(customerId && (onTicket || (sale.customerId && (await sameHousehold(customerId, sale.customerId)))))) {
+        throw new AppError("conflict", "On a combined ticket, the payer is one of the people on it. Split the others off first to change that.");
+      }
     }
     await db.update(sales).set({ customerId }).where(and(eq(sales.id, saleId), eq(sales.status, "open")));
     revalidatePath(`/admin/checkout/${saleId}`);
@@ -124,6 +130,57 @@ export async function removeFamilyFromTicketAction(saleId: string, appointmentId
   });
 }
 
+const touchTickets = (...saleIds: string[]) => {
+  for (const id of saleIds) revalidatePath(`/admin/checkout/${id}`);
+  revalidatePath("/admin/sales");
+  revalidatePath("/admin/calendar");
+};
+
+/** The "add ticket" picker: other open tickets at this ticket's shop, by number or anyone's name on them. */
+export async function searchTicketsAction(saleId: string, q: string) {
+  return safe(async () => {
+    const ctx = await authorize("checkout.any");
+    const sale = await loadSale(ctx, saleId);
+    const found = await openTickets([sale.shopId], { excludeSaleId: sale.id, q: q.slice(0, 60), limit: 100 });
+    return found.slice(0, 12).map((t) => ({ ...t, createdAt: t.createdAt.toISOString(), people: t.people.map((p) => ({ ...p, readyAt: p.readyAt?.toISOString() ?? null })) }));
+  });
+}
+
+/** Combine other open tickets into this one (siblings who walked in apart, a friend paying for both). */
+export async function mergeTicketsAction(saleId: string, sourceIds: string[]) {
+  return safe(async () => {
+    const ctx = await authorize("checkout.any");
+    await loadSale(ctx, saleId);
+    const ids = [...new Set(sourceIds)].slice(0, 12);
+    for (const id of ids) await requireInTenant(ctx, "sale", id);
+    await mergeTickets(saleId, ids, ctx.actor);
+    touchTickets(saleId, ...ids);
+    return null;
+  });
+}
+
+/** One person on a combined ticket gets their own ticket again, with their lines. */
+export async function splitOffAction(saleId: string, appointmentId: string) {
+  return safe(async () => {
+    const ctx = await authorize("checkout.any");
+    await loadSale(ctx, saleId);
+    const own = await splitOffTicket(saleId, appointmentId, ctx.actor);
+    touchTickets(saleId, own);
+    return { saleId: own };
+  });
+}
+
+/** Everyone on a combined ticket gets their own. */
+export async function splitApartAction(saleId: string) {
+  return safe(async () => {
+    const ctx = await authorize("checkout.any");
+    await loadSale(ctx, saleId);
+    const made = await splitTicketApart(saleId, ctx.actor);
+    touchTickets(saleId, ...made);
+    return { saleIds: made };
+  });
+}
+
 export async function setBarberAction(saleId: string, staffId: string | null) {
   return safe(async () => {
     const ctx = await authorize("checkout.any");
@@ -148,6 +205,9 @@ export async function finalizeAction(input: {
   expectedTotalCents: number;
   rebookInWeeks: number | null;
   tipSplit?: TipSplitMode | null;
+  tipByStaff?: StaffTip[] | null;
+  tenders?: SplitTenderInput[] | null;
+  ticketPeople?: string[] | null;
 }) {
   return safe(async () => {
     const ctx = await requireStaff();
@@ -159,6 +219,7 @@ export async function finalizeAction(input: {
     const r = await finalizeSale({ ...input, canOverridePrice: can(ctx, "pos.price_override"), maxManualDiscountPct: ctx.maxDiscountPct, actor: ctx.actor });
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
+    revalidatePath("/admin/sales");
     const rebook = r.rebooked && "code" in r.rebooked ? { code: r.rebooked.code, startsAt: r.rebooked.startsAt } : r.rebooked && "error" in r.rebooked ? { error: r.rebooked.error } : null;
     return { saleId: r.saleId, rewardsIssued: r.rewardsIssued, giftCards: r.issuedGiftCards, rebook, stockWarnings: r.stockWarnings };
   });

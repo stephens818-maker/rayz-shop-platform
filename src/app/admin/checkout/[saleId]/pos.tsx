@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } from "react";
+import { type ChangeEvent, type FormEvent, Fragment, useEffect, useRef, useState, useTransition } from "react";
 import { ClientBadges } from "@/components/client-badges";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, Suggestions, cx } from "@/components/ui";
 import type { ShownBadge } from "@/domain/badges";
@@ -11,6 +11,7 @@ import type { ClientHit } from "@/domain/client-search";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
 import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
 import { type TipSplitMode, splitBarbers, splitCents, tipWeights } from "@/domain/handoff";
+import { MAX_SPLIT_TENDERS, PAYER_LABEL_MAX, evenSplit, groupByPerson, planSplitTenders, readiness, splitTenderProblem } from "@/domain/combined-checkout";
 import { formatMinutes, type TimesView } from "@/domain/service-times";
 import { searchCustomersAction } from "../../calendar/actions";
 import { ServiceTimer } from "../../calendar/service-times-panel";
@@ -23,10 +24,14 @@ import {
   handToCustomerAction,
   holdRetailAction,
   inspectCardAction,
+  mergeTicketsAction,
   newClientAtCheckoutAction,
   promoAction,
   removeFamilyFromTicketAction,
+  searchTicketsAction,
   setBarberAction,
+  splitApartAction,
+  splitOffAction,
   terminalCollectAction,
 } from "../actions";
 import { StripeCardEntry } from "./stripe-card";
@@ -54,10 +59,16 @@ type Resume = {
   giftCard: { code: string; amountCents: number } | null;
   rebookInWeeks: number | null;
   tipSplit: TipSplitMode | null;
+  tipByStaff?: { staffId: string; cents: number }[] | null;
   tipCents: number | null;
   cash: boolean;
 };
 type Card4 = { paymentMethodId: string; funding: CardFunding; brand: string; last4: string };
+/** Everyone on the ticket, its own appointment first. */
+type Person = { appointmentId: string; name: string; isChild: boolean; staffId: string | null; staffName: string | null; readyAt: string | null };
+/** One payment of a split: cash or a card, its amount (tip included, before any surcharge) and who paid. */
+type Part = { key: string; method: "cash" | "card"; amount: string; payer: string; label: string; card: Card4 | null; cardMode: "terminal" | "keyed" };
+type Act = <T>(fn: () => Promise<{ ok: true; data: T } | { ok: false; error: string }>, ok: (d: T) => void) => void;
 
 const $ = (c: number) => `${c < 0 ? "-" : ""}$${(Math.abs(c) / 100).toFixed(2)}`;
 const $short = (c: number) => `$${(c / 100).toFixed(c % 100 ? 2 : 0)}`;
@@ -81,7 +92,8 @@ export function Pos(props: {
   services: { id: string; name: string; kind: "service" | "addon"; priceCents: number }[];
   retail: { productId: string; name: string; brand: string; priceCents: number; stock: number; available: number }[];
   negativeStock: "block" | "warn";
-  loyalty: { rewards: { id: string; amountCents: number; expiresAt: string | null }[]; progressCents: number; thresholdCents: number; redeemableOn: "services" | "all" } | null;
+  /** Rewards with an owner are someone else's on this combined ticket. */
+  loyalty: { rewards: { id: string; amountCents: number; expiresAt: string | null; owner?: string }[]; progressCents: number; thresholdCents: number; redeemableOn: "services" | "all" } | null;
   payments: {
     mode: "stripe" | "simulator";
     publishableKey: string | null;
@@ -104,6 +116,11 @@ export function Pos(props: {
   coupons: { held: { rule: CouponRule | null; code: string; problem: string | null } | null; auto: CouponRule[] };
   /** Other household members' appointments on this ticket, and today's that could join it. */
   family: { members: FamilyMember[]; candidates: FamilyMember[] };
+  people: Person[];
+  /** Who can pay a split payment: the ticket's client and the people on it. */
+  payers: { customerId: string; name: string }[];
+  /** Combine other open tickets into this one, and split people off. */
+  canCombine: boolean;
   /** A family booking's deposit held as credit, for the ticket of anyone in the group. */
   groupDeposit?: { groupCode: string; code: string; balanceCents: number } | null;
 }) {
@@ -122,6 +139,9 @@ export function Pos(props: {
   const [tipMode, setTipMode] = useState<string>(r0?.tipCents ? "custom" : "none");
   const [customTip, setCustomTip] = useState(r0?.tipCents ? (r0.tipCents / 100).toFixed(2) : "");
   const [tipSplit, setTipSplit] = useState<TipSplitMode>(r0?.tipSplit ?? "services");
+  const [tipEach, setTipEach] = useState<Record<string, string>>(() => Object.fromEntries((r0?.tipByStaff ?? []).map((t) => [t.staffId, (t.cents / 100).toFixed(2)])));
+  const [splitPay, setSplitPay] = useState(false);
+  const [parts, setParts] = useState<Part[]>([]);
   const [giftInput, setGiftInput] = useState(r0?.giftCard?.code ?? "");
   const [gift, setGift] = useState<{ code: string; balanceCents: number } | null>(null);
   const [tender, setTender] = useState<"cash" | "card" | null>(r0?.cash ? "cash" : null);
@@ -137,19 +157,23 @@ export function Pos(props: {
   const [giftSale, setGiftSale] = useState("");
   const [editing, setEditing] = useState<{ key: string; price: string; reason: string } | null>(null);
   const priceOf = (l: Line) => l.override?.unitPriceCents ?? l.unitPriceCents;
-  const familyKey = props.family.members.map((m) => m.appointmentId).join(",");
-  // Family members added or taken off on the server bring their services with them.
+  const familyKey = props.people.map((m) => m.appointmentId).join(",");
+  const seenKey = useRef(familyKey);
+  // People combined in or split off on the server bring their lines with them (and take them away).
   useEffect(() => {
-    const on = new Set([props.timer?.appointmentId, ...props.family.members.map((m) => m.appointmentId)].filter(Boolean));
+    if (seenKey.current === familyKey) return;
+    seenKey.current = familyKey;
+    const on = new Set(props.people.map((m) => m.appointmentId));
     setLines((cur) => {
       const have = new Set(cur.map((l) => l.appointmentId).filter(Boolean));
       const kept = cur.filter((l) => !l.appointmentId || on.has(l.appointmentId));
       const added = props.initialLines.filter((l) => l.appointmentId && on.has(l.appointmentId) && !have.has(l.appointmentId)).map((l) => ({ ...l, key: key() }));
-      return kept.length === cur.length && !added.length ? cur : [...kept, ...added];
+      const retail = props.initialLines.filter((l) => !l.appointmentId && l.kind === "product" && !cur.some((c) => c.kind === "product" && c.refId === l.refId)).map((l) => ({ ...l, key: key() }));
+      return kept.length === cur.length && !added.length && !retail.length ? cur : [...kept, ...added, ...retail];
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [familyKey]);
-  const whoFor = (l: Line) => props.family.members.find((m) => m.appointmentId === l.appointmentId) ?? null;
+  const whoFor = (l: Line) => (props.people.length > 1 ? (props.people.find((m) => m.appointmentId === l.appointmentId) ?? null) : null);
 
   const reward = props.loyalty?.rewards.find((r) => r.id === rewardId) ?? null;
   const barberOf = (l: Line) => (l.kind === "service" || l.kind === "addon" ? (l.staffId ?? props.sale.staffId) : null);
@@ -176,12 +200,30 @@ export function Pos(props: {
       tender: { method, cardFunding: funding, giftCardCents: gift?.balanceCents ?? 0, giftCardBalanceCents: gift?.balanceCents ?? 0 },
     });
   const base = preview("none", null);
-  const method: "cash" | "card" | "none" = base.primaryBaseCents === 0 ? "none" : (tender ?? "none");
-  const totals = preview(method, method === "card" ? (card?.funding ?? null) : null);
+  const split = splitPay && base.primaryBaseCents > 0;
+  const method: "cash" | "card" | "none" = base.primaryBaseCents === 0 || split ? "none" : (tender ?? "none");
+  const single = preview(method, method === "card" ? (card?.funding ?? null) : null);
   const creditPreview = preview("card", "credit");
   const tips = tipSuggestions(base.serviceGrossCents, props.config.tipPresets);
   const splitIds = splitBarbers(priced, props.sale.staffId);
-  const shares = splitIds.length ? splitCents(tipCents, tipWeights(base.lines, tipSplit).map((w) => ({ id: w.staffId, weight: w.weight }))) : null;
+  const perBarber = tipSplit === "per_barber" && splitIds.length > 0;
+  const eachCents = splitIds.map((id) => ({ staffId: id, cents: toCents(tipEach[id] ?? "") }));
+  const shares = splitIds.length ? splitCents(tipCents, tipWeights(base.lines, perBarber ? "per_barber" : tipSplit === "per_barber" ? "services" : tipSplit, perBarber ? eachCents : undefined).map((w) => ({ id: w.staffId, weight: w.weight }))) : null;
+
+  // Split payment: each part's surcharge on its own credit card, the tip on as few parts as it fits.
+  const partsIn = parts.map((p) => ({ key: p.key, method: p.method, amountCents: toCents(p.amount), funding: p.card?.funding ?? null }));
+  const splitProblem = split ? splitTenderProblem(base.primaryBaseCents, partsIn) : null;
+  const plan = split ? planSplitTenders({ tipCents: Math.min(tipCents, base.primaryBaseCents), cardFee: props.config.cardFee, tenders: partsIn }) : null;
+  const totals = split && plan ? { ...base, cardFeeCents: plan.cardFeeCents, cardFeeRate: creditPreview.cardFeeRate, primaryChargeCents: plan.chargeCents, totalCents: base.preFeeTotalCents + plan.cardFeeCents } : single;
+  const newPart = (cents: number, payer: string): Part => ({ key: key(), method: "cash", amount: (cents / 100).toFixed(2), payer, label: "", card: null, cardMode: "terminal" });
+  const startSplit = () => {
+    const amounts = evenSplit(base.primaryBaseCents, 2);
+    setParts(amounts.map((c, i) => newPart(c, props.payers[i]?.customerId ?? props.payers[0]?.customerId ?? "")));
+    setSplitPay(true);
+  };
+  const splitEvenly = () => setParts((ps) => ps.map((p, i) => ({ ...p, amount: (evenSplit(base.primaryBaseCents, ps.length)[i] / 100).toFixed(2) })));
+  const setPart = (k: string, patch: Partial<Part>) => setParts((ps) => ps.map((p) => (p.key === k ? { ...p, ...patch } : p)));
+  const restTo = (k: string) => setPart(k, { amount: (Math.max(0, base.primaryBaseCents - partsIn.filter((p) => p.key !== k).reduce((a, p) => a + p.amountCents, 0)) / 100).toFixed(2) });
   const barberName = (id: string) => props.barbers.find((b) => b.id === id)?.label ?? (props.barber?.id === id ? props.barber.label : "Barber");
 
   // Picking a returned ticket back up: re-check the promo and gift card it was handed over with.
@@ -226,6 +268,19 @@ export function Pos(props: {
   const pickTip = (mode: string, cents: number) => {
     setTipMode(mode);
     setTipCents(cents);
+    if (tipSplit === "per_barber") setTipSplit("services");
+  };
+  const eachBarber = () => {
+    setTipEach(Object.fromEntries(splitIds.map((id) => [id, ((shares?.get(id) ?? 0) / 100).toFixed(2)])));
+    setTipSplit("per_barber");
+  };
+  const setEach = (id: string, v: string) => {
+    const next = { ...tipEach, [id]: v };
+    setTipEach(next);
+    const sum = splitIds.reduce((a, x) => a + toCents(next[x] ?? ""), 0);
+    setTipMode("custom");
+    setCustomTip((sum / 100).toFixed(2));
+    setTipCents(sum);
   };
 
   const charge = () =>
@@ -240,15 +295,28 @@ export function Pos(props: {
           loyaltyRewardId: rewardId,
           tipCents,
           giftCard: gift ? { code: gift.code, amountCents: gift.balanceCents } : null,
-          tender:
-            method === "cash"
+          tender: split
+            ? { method: "cash", cashTenderedCents: null }
+            : method === "cash"
               ? { method: "cash", cashTenderedCents: cashTendered }
               : method === "card"
                 ? { method: "card", paymentMethodId: card!.paymentMethodId, entryMode: cardMode, readerId: cardMode === "terminal" ? readerId : null }
                 : { method: "none" },
+          tenders: split
+            ? parts.map((p) => ({
+                ...(p.method === "cash"
+                  ? { method: "cash" as const, cashTenderedCents: null }
+                  : { method: "card" as const, paymentMethodId: p.card!.paymentMethodId, entryMode: p.cardMode, readerId: p.cardMode === "terminal" ? readerId : null }),
+                amountCents: toCents(p.amount),
+                payerCustomerId: p.payer && p.payer !== "other" ? p.payer : null,
+                payerLabel: p.payer === "other" ? p.label : null,
+              }))
+            : null,
           expectedTotalCents: totals.totalCents,
           rebookInWeeks: rebookWeeks,
-          tipSplit: splitIds.length ? tipSplit : null,
+          tipSplit: splitIds.length ? (perBarber ? "per_barber" : tipSplit === "per_barber" ? "services" : tipSplit) : null,
+          tipByStaff: perBarber ? eachCents : null,
+          ticketPeople: props.people.map((p) => p.appointmentId),
         }),
       (d) => {
         const q = new URLSearchParams({ done: "1" });
@@ -271,12 +339,17 @@ export function Pos(props: {
           loyaltyRewardId: rewardId,
           giftCard: gift ? { code: gift.code, amountCents: gift.balanceCents } : null,
           rebookInWeeks: rebookWeeks,
-          tipSplit: splitIds.length ? tipSplit : null,
+          tipSplit: splitIds.length ? (tipSplit === "per_barber" ? "services" : tipSplit) : null,
         }),
       (d) => window.location.replace(`/handoff/${d.id}`),
     );
 
-  const ready = !props.withClient && lines.length > 0 && ((method === "none" && base.primaryBaseCents === 0) || method === "cash" || (method === "card" && !!card));
+  const ready =
+    !props.withClient &&
+    lines.length > 0 &&
+    (split
+      ? !splitProblem && parts.every((p) => p.method === "cash" || !!p.card)
+      : (method === "none" && base.primaryBaseCents === 0) || method === "cash" || (method === "card" && !!card));
   const change = cashTendered != null ? cashTendered - totals.primaryChargeCents : 0;
   // Retail on the ticket is held (counts as committed) while the ticket is open.
   const held = lines
@@ -295,6 +368,15 @@ export function Pos(props: {
   }, [held, savedHold, props.sale.id]);
   const onTicket = (productId: string) => lines.filter((l) => l.kind === "product" && l.refId === productId).reduce((a, l) => a + l.qty, 0);
   const short = props.retail.filter((p) => onTicket(p.productId) > p.available);
+  const grouped =
+    props.people.length > 1
+      ? groupByPerson(
+          priced.map((l, i) => ({ ...l, line: lines[i] })),
+          props.people.map((p) => ({ appointmentId: p.appointmentId, name: p.name })),
+          { leadAppointmentId: props.people[0].appointmentId, otherLabel: "Retail and other" },
+        )
+      : null;
+  const ticketBarberLabel = props.barber?.label ?? "Ticket barber";
   const filteredRetail = props.retail.filter((p) => !productQ || `${p.brand} ${p.name}`.toLowerCase().includes(productQ.toLowerCase())).slice(0, 12);
 
   return (
@@ -359,15 +441,27 @@ export function Pos(props: {
             </div>
           </Card>
 
-          {(props.family.members.length > 0 || props.family.candidates.length > 0) && (
-            <FamilyTicket saleId={props.sale.id} family={props.family} pending={pending} onAct={(fn) => act(fn, () => router.refresh())} />
+          {(props.people.length > 1 || props.family.candidates.length > 0 || (props.canCombine && !props.withClient)) && (
+            <PeopleCard saleId={props.sale.id} people={props.people} family={props.family} canCombine={props.canCombine && !props.withClient} pending={pending} act={act} onChanged={() => router.refresh()} />
           )}
 
           <Card>
             <CardHeader title="Items" />
             <ul className="divide-y divide-zinc-100">
               {lines.length === 0 && <li className="px-4 py-6 text-center text-sm text-zinc-500">Add a service, product or gift card below.</li>}
-              {lines.map((l) => (
+              {(grouped ?? [{ appointmentId: null, name: "", barbers: [], lines: lines.map((l) => ({ line: l })) }]).map((g) => (
+                <Fragment key={g.appointmentId ?? "other"}>
+                  {grouped && (
+                    <li className="flex items-baseline justify-between gap-2 bg-zinc-50 px-4 py-1.5 text-xs" data-testid="pos-person">
+                      <span>
+                        <span className="font-semibold text-zinc-900">{g.name}</span>
+                        {g.barbers.length > 0 && <span className="text-zinc-500"> · with {[...new Set(g.barbers.map((b) => (b.staffId ? barberName(b.staffId) : ticketBarberLabel)))].join(" & ")}</span>}
+                        {g.appointmentId && props.people.find((p) => p.appointmentId === g.appointmentId)?.readyAt && <span className="ml-1.5 font-medium text-emerald-700">ready</span>}
+                      </span>
+                      <span className="tabular font-medium">{$(g.lines.reduce((a, x) => a + priceOf(x.line) * x.line.qty, 0))}</span>
+                    </li>
+                  )}
+              {g.lines.map(({ line: l }) => (
                 <li key={l.key} className="flex items-center gap-3 px-4 py-2.5">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{l.name}</div>
@@ -391,6 +485,23 @@ export function Pos(props: {
                               {b.label}
                             </option>
                           ))}
+                      </select>
+                    )}
+                    {grouped && (l.kind === "service" || l.kind === "addon") && (
+                      <select
+                        aria-label={`Who ${l.name} is for`}
+                        className="ml-1 mt-1 max-w-full rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-xs text-zinc-700"
+                        value={l.appointmentId ?? props.people[0].appointmentId}
+                        onChange={(e) => {
+                          const who = props.people.find((p) => p.appointmentId === e.target.value);
+                          setLines((ls) => ls.map((x) => (x.key === l.key ? { ...x, appointmentId: e.target.value, staffId: who?.staffId && who.staffId !== props.sale.staffId ? who.staffId : null } : x)));
+                        }}
+                      >
+                        {props.people.map((p) => (
+                          <option key={p.appointmentId} value={p.appointmentId}>
+                            For {p.name}
+                          </option>
+                        ))}
                       </select>
                     )}
                   </div>
@@ -421,6 +532,8 @@ export function Pos(props: {
                     <div className="w-20 text-right text-sm tabular">{$(priceOf(l) * l.qty)}</div>
                   )}
                 </li>
+              ))}
+                </Fragment>
               ))}
               {editing && (
                 <li className="space-y-2 bg-amber-50 px-4 py-3">
@@ -578,7 +691,7 @@ export function Pos(props: {
                           onClick={() => setRewardId(rewardId === r.id ? null : r.id)}
                           className={cx("rounded-full px-3 py-1 text-sm ring-1", rewardId === r.id ? "bg-emerald-600 text-white ring-emerald-600" : "bg-white ring-emerald-300 text-emerald-800")}
                         >
-                          {rewardId === r.id ? "✓ " : ""}Use {$short(r.amountCents)} reward
+                          {rewardId === r.id ? "✓ " : ""}Use {$short(r.amountCents)} reward{r.owner ? ` (${r.owner}'s)` : ""}
                         </button>
                       ))}
                     </div>
@@ -625,6 +738,7 @@ export function Pos(props: {
                   placeholder="Custom $"
                   inputMode="decimal"
                   value={customTip}
+                  readOnly={perBarber}
                   onFocus={() => setTipMode("custom")}
                   onChange={(e) => {
                     setCustomTip(e.target.value);
@@ -638,21 +752,41 @@ export function Pos(props: {
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <span className="font-medium">Split the tip</span>
                     <div className="flex rounded-md bg-zinc-200/70 p-0.5 text-xs">
-                      {(["services", "even"] as const).map((m) => (
-                        <button key={m} onClick={() => setTipSplit(m)} className={cx("rounded px-2 py-1 font-medium", tipSplit === m ? "bg-white shadow-sm" : "text-zinc-600")}>
-                          {m === "services" ? "By services" : "Evenly"}
+                      {(["services", "even", "per_barber"] as const).map((m) => (
+                        <button
+                          key={m}
+                          onClick={() => (m === "per_barber" ? eachBarber() : setTipSplit(m))}
+                          className={cx("rounded px-2 py-1 font-medium", tipSplit === m ? "bg-white shadow-sm" : "text-zinc-600")}
+                          data-testid={`tip-split-${m}`}
+                        >
+                          {m === "services" ? "By services" : m === "even" ? "Evenly" : "Each barber"}
                         </button>
                       ))}
                     </div>
                   </div>
-                  <ul className="space-y-0.5 tabular">
-                    {splitIds.map((id) => (
-                      <li key={id} className="flex justify-between">
-                        <span>{barberName(id)}</span>
-                        <span>{$(shares.get(id) ?? 0)}</span>
+                  {perBarber ? (
+                    <ul className="space-y-1.5 tabular">
+                      {splitIds.map((id) => (
+                        <li key={id} className="flex items-center justify-between gap-2">
+                          <span>{barberName(id)}</span>
+                          <Input className="w-24 py-1 text-right" inputMode="decimal" placeholder="0.00" aria-label={`Tip for ${barberName(id)}`} value={tipEach[id] ?? ""} onChange={(e) => setEach(id, e.target.value)} />
+                        </li>
+                      ))}
+                      <li className="flex justify-between border-t border-zinc-200 pt-1 font-medium">
+                        <span>Tip</span>
+                        <span>{$(tipCents)}</span>
                       </li>
-                    ))}
-                  </ul>
+                    </ul>
+                  ) : (
+                    <ul className="space-y-0.5 tabular">
+                      {splitIds.map((id) => (
+                        <li key={id} className="flex justify-between">
+                          <span>{barberName(id)}</span>
+                          <span>{$(shares.get(id) ?? 0)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
             </div>
@@ -699,6 +833,133 @@ export function Pos(props: {
               )}
 
               {base.primaryBaseCents > 0 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-zinc-500">{split ? `${parts.length} payments, ${$(base.primaryBaseCents)} before any surcharge` : "One payment"}</span>
+                  <button className="font-medium underline" onClick={() => (split ? setSplitPay(false) : startSplit())} data-testid="split-pay-toggle">
+                    {split ? "One payment" : "Split payment"}
+                  </button>
+                </div>
+              )}
+              {split && plan && (
+                <div className="space-y-2" data-testid="split-pay">
+                  {parts.map((pt, i) => {
+                    const pp = plan.parts[i];
+                    return (
+                      <div key={pt.key} className="space-y-2 rounded-lg p-2.5 ring-1 ring-zinc-200" data-testid="split-part">
+                        <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
+                          <div className="flex rounded-md bg-zinc-100 p-0.5 text-xs">
+                            {(["cash", "card"] as const).map((m) => (
+                              <button
+                                key={m}
+                                disabled={m === "card" && !props.payments.cards}
+                                onClick={() => setPart(pt.key, { method: m, card: m === "cash" ? null : pt.card })}
+                                className={cx("rounded px-2 py-1 font-medium capitalize disabled:opacity-40", pt.method === m ? "bg-white shadow-sm" : "text-zinc-600")}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
+                          <Input className="py-1 text-right" inputMode="decimal" aria-label={`Payment ${i + 1} amount`} value={pt.amount} onChange={(e) => setPart(pt.key, { amount: e.target.value })} />
+                          <button className="text-xs text-zinc-400 hover:text-zinc-700" onClick={() => restTo(pt.key)} title="The rest of what's due">
+                            Rest
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                          <select
+                            aria-label={`Who pays payment ${i + 1}`}
+                            className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs"
+                            value={pt.payer}
+                            onChange={(e) => setPart(pt.key, { payer: e.target.value })}
+                          >
+                            <option value="">Paid by…</option>
+                            {props.payers.map((p) => (
+                              <option key={p.customerId} value={p.customerId}>
+                                {p.name}
+                              </option>
+                            ))}
+                            <option value="other">Someone else</option>
+                          </select>
+                          {parts.length > 2 && (
+                            <button className="text-xs text-zinc-400 hover:text-red-600" onClick={() => setParts((ps) => ps.filter((x) => x.key !== pt.key))}>
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        {pt.payer === "other" && (
+                          <Input className="py-1 text-xs" maxLength={PAYER_LABEL_MAX} placeholder="Name (e.g. Grandma)" value={pt.label} onChange={(e) => setPart(pt.key, { label: e.target.value })} />
+                        )}
+                        {pt.method === "card" &&
+                          (pt.card ? (
+                            <div className="flex items-center justify-between text-xs">
+                              <span>
+                                <span className="font-medium capitalize">{pt.card.brand}</span> •••• {pt.card.last4} <Badge tone={pt.card.funding === "credit" ? "amber" : "green"}>{pt.card.funding}</Badge>
+                              </span>
+                              <button className="underline" onClick={() => setPart(pt.key, { card: null })}>
+                                Change
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              <div className="flex gap-1 text-[11px]">
+                                {(["terminal", "keyed"] as const).map((m) => (
+                                  <button key={m} onClick={() => setPart(pt.key, { cardMode: m })} className={cx("rounded px-1.5 py-0.5", pt.cardMode === m ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600")}>
+                                    {m === "terminal" ? "Reader" : "Key in"}
+                                  </button>
+                                ))}
+                              </div>
+                              {pt.cardMode === "keyed" && props.payments.publishableKey ? (
+                                <StripeCardEntry
+                                  publishableKey={props.payments.publishableKey}
+                                  amountCents={pp?.chargeCents ?? 0}
+                                  onPaymentMethod={(id) => act(() => inspectCardAction(id), (c) => setPart(pt.key, { card: { paymentMethodId: id, ...c } }))}
+                                />
+                              ) : (
+                                <div className="grid grid-cols-2 gap-1">
+                                  {props.payments.testCards.map((tc) => (
+                                    <button
+                                      key={tc.id}
+                                      disabled={pending}
+                                      className="rounded px-1.5 py-1 text-left text-[11px] ring-1 ring-zinc-200 hover:bg-zinc-50"
+                                      onClick={() =>
+                                        act(
+                                          () => (pt.cardMode === "terminal" ? terminalCollectAction(tc.id) : inspectCardAction(tc.id).then((r) => (r.ok ? { ok: true as const, data: { paymentMethodId: tc.id, card: r.data } } : r))),
+                                          (d) => setPart(pt.key, { card: { paymentMethodId: d.paymentMethodId, ...d.card } }),
+                                        )
+                                      }
+                                    >
+                                      {tc.label}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        {pp && (pp.tipCents > 0 || pp.feeCents > 0) && (
+                          <div className="text-[11px] text-zinc-500">
+                            {pp.tipCents > 0 && `Includes the ${$(pp.tipCents)} tip. `}
+                            {pp.feeCents > 0 && `Charged ${$(pp.chargeCents)} with the ${$(pp.feeCents)} surcharge.`}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="flex gap-3">
+                      <button className="font-medium underline" onClick={splitEvenly}>
+                        Split evenly
+                      </button>
+                      {parts.length < MAX_SPLIT_TENDERS && (
+                        <button className="font-medium underline" onClick={() => setParts((ps) => [...ps, newPart(0, "")])}>
+                          Add a payment
+                        </button>
+                      )}
+                    </span>
+                    {splitProblem && <span className="text-right text-amber-700">{splitProblem}</span>}
+                  </div>
+                  {props.config.cardFee.enabled && <p className="text-[11px] text-zinc-500">{props.feeNotice ?? "Credit cards carry the surcharge on their own part."}</p>}
+                </div>
+              )}
+              {base.primaryBaseCents > 0 && !split && (
                 <div className="grid grid-cols-2 gap-2">
                   <TenderBtn on={tender === "cash"} onClick={() => setTender("cash")} title="Cash" sub={$(preview("cash", null).primaryChargeCents)} />
                   <TenderBtn
@@ -879,7 +1140,9 @@ export function Pos(props: {
               <Button size="lg" className="h-14 w-full text-lg" disabled={!ready || pending} onClick={() => (setMsg(null), charge())}>
                 {pending
                   ? "Processing…"
-                  : method === "none"
+                  : split
+                    ? (splitProblem ?? (parts.every((p) => p.method === "cash" || p.card) ? `Take ${$(totals.primaryChargeCents)} in ${parts.length} payments` : "Read each card first"))
+                    : method === "none"
                     ? !lines.length
                       ? "Add items"
                       : base.primaryBaseCents > 0
@@ -1035,40 +1298,140 @@ function CustomerBox({
   );
 }
 
-function FamilyTicket(props: { saleId: string; family: { members: FamilyMember[]; candidates: FamilyMember[] }; pending: boolean; onAct: (fn: () => Promise<{ ok: true; data: null } | { ok: false; error: string }>) => void }) {
+function PeopleCard(props: {
+  saleId: string;
+  people: Person[];
+  family: { members: FamilyMember[]; candidates: FamilyMember[] };
+  canCombine: boolean;
+  pending: boolean;
+  act: Act;
+  onChanged: () => void;
+}) {
   const at = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const row = (m: FamilyMember, on: boolean) => (
-    <li key={m.appointmentId} className="flex items-center gap-3 px-4 py-2">
-      <div className="min-w-0 flex-1 text-sm">
-        <span className="font-medium">{m.name}</span>
-        {m.isChild && (
-          <Badge tone="violet" className="ml-1.5">
-            Kid
-          </Badge>
-        )}
-        <div className="text-xs text-zinc-500">
-          {at(m.startsAt)}
-          {m.staffName ? ` with ${m.staffName}` : ""}
-        </div>
-      </div>
-      {on ? (
-        <button className="text-xs text-zinc-400 hover:text-red-600" disabled={props.pending} onClick={() => props.onAct(() => removeFamilyFromTicketAction(props.saleId, m.appointmentId))}>
-          Take off ticket
-        </button>
-      ) : (
-        <Button size="sm" variant="secondary" disabled={props.pending} onClick={() => props.onAct(() => addFamilyToTicketAction(props.saleId, m.appointmentId))}>
-          Add to ticket
-        </Button>
-      )}
-    </li>
-  );
+  const [picking, setPicking] = useState(false);
+  const [q, setQ] = useState("");
+  const [found, setFound] = useState<Awaited<ReturnType<typeof searchTicketsAction>> | null>(null);
+  const r = readiness(props.people);
+  const lead = props.people[0]?.appointmentId;
+  const isFamily = (id: string) => props.family.members.some((m) => m.appointmentId === id);
+  const search = (text: string) => searchTicketsAction(props.saleId, text).then(setFound);
+  useEffect(() => {
+    if (!picking) return;
+    const t = setTimeout(() => search(q), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picking, q]);
+  const done = () => {
+    setFound(null);
+    props.onChanged();
+  };
   return (
-    <Card>
-      <CardHeader title="Family ticket" subtitle="One ticket for the household, paid by the parent. Each barber's tip share follows their services." />
-      <ul className="divide-y divide-zinc-100">
-        {props.family.members.map((m) => row(m, true))}
-        {props.family.candidates.map((m) => row(m, false))}
-      </ul>
+    <Card data-testid="ticket-people">
+      <CardHeader
+        title={props.people.length > 1 ? `${props.people.length} people on this ticket` : "Combine tickets"}
+        subtitle={
+          props.people.length > 1
+            ? `${r.ready} of ${r.total} sent to checkout. Each line stays with its person and barber; one payment or split.`
+            : "Pay for someone else's visit too: siblings who walked in apart, a friend's cut."
+        }
+      />
+      {props.people.length > 1 && (
+        <ul className="divide-y divide-zinc-100">
+          {props.people.map((m) => (
+            <li key={m.appointmentId} className="flex items-center gap-3 px-4 py-2" data-testid="ticket-person">
+              <span className={cx("h-2.5 w-2.5 shrink-0 rounded-full", m.readyAt ? "bg-emerald-500" : "bg-zinc-300")} title={m.readyAt ? "Sent to checkout" : "Not sent yet"} />
+              <div className="min-w-0 flex-1 text-sm">
+                <span className="font-medium">{m.name}</span>
+                {m.isChild && (
+                  <Badge tone="violet" className="ml-1.5">
+                    Kid
+                  </Badge>
+                )}
+                {m.appointmentId === lead && <span className="ml-1.5 text-xs text-zinc-500">ticket&apos;s own visit</span>}
+                <div className="text-xs text-zinc-500">
+                  {m.staffName ? `with ${m.staffName}` : "No barber"}
+                  {m.readyAt ? ` · ready ${at(m.readyAt)}` : ""}
+                </div>
+              </div>
+              {props.canCombine && (
+                <Button size="sm" variant="ghost" disabled={props.pending} onClick={() => props.act(() => splitOffAction(props.saleId, m.appointmentId), done)} data-testid="split-off">
+                  Own ticket
+                </Button>
+              )}
+              {isFamily(m.appointmentId) && (
+                <button className="text-xs text-zinc-400 hover:text-red-600" disabled={props.pending} onClick={() => props.act(() => removeFamilyFromTicketAction(props.saleId, m.appointmentId), done)}>
+                  Take off
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {props.family.candidates.length > 0 && (
+        <ul className="divide-y divide-zinc-100 border-t border-zinc-100">
+          {props.family.candidates.map((m) => (
+            <li key={m.appointmentId} className="flex items-center gap-3 px-4 py-2">
+              <div className="min-w-0 flex-1 text-sm">
+                <span className="font-medium">{m.name}</span>
+                {m.isChild && (
+                  <Badge tone="violet" className="ml-1.5">
+                    Kid
+                  </Badge>
+                )}
+                <div className="text-xs text-zinc-500">
+                  Family · {at(m.startsAt)}
+                  {m.staffName ? ` with ${m.staffName}` : ""}
+                </div>
+              </div>
+              <Button size="sm" variant="secondary" disabled={props.pending} onClick={() => props.act(() => addFamilyToTicketAction(props.saleId, m.appointmentId), done)}>
+                Add to ticket
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {props.canCombine && (
+        <div className="space-y-2 border-t border-zinc-100 p-3">
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={() => setPicking((v) => !v)} data-testid="add-ticket">
+              {picking ? "Done adding" : "Add ticket"}
+            </Button>
+            {props.people.length > 1 && (
+              <Button size="sm" variant="ghost" disabled={props.pending} onClick={() => confirm("Give everyone their own ticket?") && props.act(() => splitApartAction(props.saleId), done)}>
+                Split everyone
+              </Button>
+            )}
+          </div>
+          {picking && (
+            <div className="space-y-2">
+              <Input autoFocus placeholder="Ticket # or anyone's name" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Find an open ticket" />
+              {found && !found.ok && <p className="text-xs text-red-700">{found.error}</p>}
+              {found?.ok && found.data.length === 0 && <p className="text-xs text-zinc-500">No other open tickets{q ? " match" : " at this shop"}.</p>}
+              {found?.ok && found.data.length > 0 && (
+                <ul className="max-h-64 divide-y divide-zinc-100 overflow-y-auto rounded-lg ring-1 ring-zinc-200">
+                  {found.data.map((t) => (
+                    <li key={t.id} className="flex items-center gap-2 px-3 py-2 text-sm" data-testid="ticket-hit">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium">
+                          #{t.number} · {t.client ?? "Walk-in"}
+                          {t.groupCode && <span className="ml-1 font-mono text-xs text-zinc-500">{t.groupCode}</span>}
+                        </div>
+                        <div className="truncate text-xs text-zinc-500">
+                          {t.people.length ? t.people.map((p) => `${p.name}${p.staffName ? ` (${p.staffName})` : ""}`).join(", ") : (t.barber ?? "No barber")}
+                          {t.total > 0 && ` · ${t.ready} of ${t.total} ready`} · {$(t.grossCents)}
+                        </div>
+                      </div>
+                      <Button size="sm" disabled={props.pending} onClick={() => props.act(() => mergeTicketsAction(props.saleId, [t.id]), done)}>
+                        Combine
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
