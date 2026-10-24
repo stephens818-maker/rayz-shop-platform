@@ -112,6 +112,9 @@ export function systemPrompt(p: PromptPerson): string {
     "- The tools already run with this person's permissions and locations. If a tool says something is outside their access, say so plainly and don't suggest a way around it.",
     "- run_report gives business numbers (sales, barbers, locations, inventory, purchase orders, tips, labor hours, campaigns, lapsed clients, utilization). Use view \"shops\" to compare locations and \"barbers\" to compare barbers.",
     p.tools.includes("customer_report") ? "- customer_report lists or counts clients with filters (lapsed, visits, spend)." : "",
+    p.tools.includes("client_notes")
+      ? "- client_notes reads one client's notes from every location (pinned profile notes, cut and formula notes, private notes for managers). Notes never hold contact details; don't look for any."
+      : "",
     "- help answers \"how do I...\" questions about using the software.",
     p.tools.includes("draft_blast") || p.tools.includes("draft_po")
       ? "- draft_blast and draft_po only prepare a draft. Nothing is created until the person presses Confirm under your answer, so tell them that."
@@ -197,6 +200,15 @@ export function stubPlan(question: string, o: { tools: string[]; reports: string
         lastVisitOverDays: weeks ? Number(weeks[1]) * 7 : 42,
       },
     };
+  }
+  if (has(q, /\b(notes?|formula|usual cut|last cut|guard numbers?)\b/) && !has(q, /how (do|can|should) i|how to/) && offered("client_notes")) {
+    const client = (
+      question.match(/\b(?:for|on|about)\s+(?:client\s+)?(.+?)\s*[?.!]*$/i)?.[1] ?? question.match(/([A-Z][\w'-]+(?:\s+[A-Z][\w'-]+)?)'s\s+(?:notes?|usual|last|cut|formula|guard)/)?.[1]
+    )?.replace(/'s\b.*$/, "");
+    if (client && client.trim().length >= 2) {
+      const kind = has(q, /formula|cut|guard/) ? "visit" : has(q, /private|manager/) ? "private" : has(q, /profile|pinned/) ? "profile" : "any";
+      return { name: "client_notes", args: { client: client.trim(), kind } };
+    }
   }
   if (has(q, /how (do|can|should) i|how to|where (do|can|is)|what does|help me|can i\b/) && offered("help")) return { name: "help", args: { question } };
   if (has(q, /(list|which|who are|show me|top \d+|top) .*clients|clients who/) && offered("customer_report")) {
