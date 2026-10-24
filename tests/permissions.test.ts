@@ -5,6 +5,7 @@ import { CartLine, computeCheckout, manualDiscountProblem } from "@/domain/check
 import { PAGE_ACCESS, navFor, pageAllowed, reportsFor } from "@/domain/navigation";
 import {
   ALL_PERMISSIONS,
+  BRAND_CAMPAIGN_CENTER,
   FEATURE_PERMISSIONS,
   Grantor,
   OWNER_GRANTS,
@@ -99,7 +100,27 @@ describe("permission catalog and templates", () => {
     for (const k of ["front_desk", "barber", "shop_manager"]) expect(access(k).permissions.has("clients.message"), k).toBe(true);
   });
 
-  it("Barber gets their own sales and service times; Front Desk gets three reports, view only, and a 10% discount cap", () => {
+  it("the Campaign Center is the brand's: location roles get only We have openings and its report unless the brand grants more", () => {
+    for (const k of ["regional_manager", "shop_manager", "front_desk"]) {
+      const p = access(k).permissions;
+      expect(p.has("campaign_center.openings"), k).toBe(true);
+      expect(p.has("report.openings.view"), k).toBe(true);
+      for (const b of BRAND_CAMPAIGN_CENTER) expect(p.has(b), `${k} ${b}`).toBe(false);
+      expect(navFor(p).find((s) => s.title === "Campaign Center")?.items.map((i) => i.href), k).toEqual(["/admin/campaign-center/openings"]);
+    }
+    expect(access("barber").permissions.has("campaign_center.openings")).toBe(false);
+    for (const k of ["brand_owner", "brand_admin"]) {
+      expect(access(k).permissions.has("campaign_center.openings"), k).toBe(true);
+      expect(access(k).permissions.has("campaign_center.send"), k).toBe(true);
+    }
+    expect(access("front_desk").permissions.has("report.openings.export")).toBe(false);
+    expect(effectiveAccess(role("shop_manager"), { "campaign_center.send": true, "campaign_center.view": true }).permissions.has("campaign_center.send")).toBe(true);
+    expect(pageAllowed(access("front_desk").permissions, "/admin/campaign-center/openings")).toBe(true);
+    expect(pageAllowed(access("front_desk").permissions, "/admin/campaign-center")).toBe(false);
+    expect(pageAllowed(access("shop_manager").permissions, "/admin/campaign-center/blasts/[id]")).toBe(false);
+  });
+
+  it("Barber gets their own sales and service times; Front Desk gets four reports, view only, and a 10% discount cap", () => {
     expect(reportsFor(access("barber").permissions).map((r) => [r.key, r.canExport])).toEqual([
       ["my_sales", true],
       ["service_times", true],
@@ -107,6 +128,7 @@ describe("permission catalog and templates", () => {
     expect(reportsFor(access("front_desk").permissions).map((r) => [r.key, r.canExport])).toEqual([
       ["card_vs_cash", false],
       ["staffing", false],
+      ["openings", false],
       ["cash_drawer", false],
     ]);
     expect(access("front_desk").maxDiscountPct).toBe(10);
@@ -116,7 +138,8 @@ describe("permission catalog and templates", () => {
   it("the migrations seed exactly the templates in code", () => {
     const sql = readFileSync(join(process.cwd(), "drizzle/0009_permissions_and_catalog.sql"), "utf8");
     // Later migrations grant permissions to templates (|| '[...]'), take them away (- 'key') or rename
-    // them in every role (a VALUES list of old and new names), in file order.
+    // them in every role (a VALUES list of old and new names), in file order. Descriptions are
+    // reworded only where they're still the old default.
     const later = readdirSync(join(process.cwd(), "drizzle"))
       .filter((f) => f.endsWith(".sql") && f > "0009")
       .sort()
@@ -139,6 +162,11 @@ describe("permission catalog and templates", () => {
         keys: [...ALL_KEYS],
       })),
     ].sort((a, b) => a.at - b.at);
+    const reworded = [...later.matchAll(/UPDATE "roles" SET "description" = '((?:[^']|'')*)' WHERE "key" = '(\w+)' AND "description" = '((?:[^']|'')*)'/g)].map((m) => ({
+      key: m[2],
+      to: m[1].replace(/''/g, "'"),
+      from: m[3].replace(/''/g, "'"),
+    }));
     const grants = changes.filter((c) => c.add.length);
     const rows = [...sql.matchAll(/^\s*\('(\w+)', '((?:[^']|'')*)', '((?:[^']|'')*)', '(\[.*?\])'::jsonb, (\d+), '(\w+)', (\d+)\)/gm)].map((m) => ({
       key: m[1],
@@ -158,7 +186,8 @@ describe("permission catalog and templates", () => {
         renamed.forEach(([from]) => perms.delete(from));
         renamed.forEach(([, to]) => perms.add(to));
       }
-      return { ...r, permissions: [...perms].sort() };
+      const description = reworded.filter((w) => w.key === r.key).reduce((d, w) => (d === w.from ? w.to : d), r.description);
+      return { ...r, description, permissions: [...perms].sort() };
     });
     expect(grants.length).toBeGreaterThan(0);
     expect(seeded).toEqual(ROLE_TEMPLATES.map(templateRow).map((t) => ({ ...t, permissions: [...t.permissions].sort() })));

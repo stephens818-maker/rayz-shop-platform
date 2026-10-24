@@ -21,9 +21,17 @@ CREATE UNIQUE INDEX "openings_waitlist_phone_uq" ON "openings_waitlist" ("campai
 CREATE INDEX "openings_waitlist_shop_idx" ON "openings_waitlist" ("shop_id", "status", "created_at");--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["campaign_center.openings","report.openings.view","report.openings.export"]'::jsonb WHERE "key" = 'brand_admin' AND NOT ("permissions" ? 'campaign_center.openings');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["campaign_center.openings","report.openings.view"]'::jsonb WHERE "key" = 'front_desk' AND NOT ("permissions" ? 'campaign_center.openings');--> statement-breakpoint
-UPDATE "roles" SET "permissions" = (
-	SELECT coalesce(jsonb_agg(p), '[]'::jsonb) FROM jsonb_array_elements_text("permissions") p
-	WHERE p NOT IN ('promos.manage', 'campaign_center.view', 'campaign_center.create', 'campaign_center.send', 'campaign_center.export', 'campaign_center.own_clients',
-		'report.campaign_center.view', 'report.campaign_center.export', 'report.lapsed_clients.view', 'report.lapsed_clients.export',
-		'campaign_center.openings', 'report.openings.view', 'report.openings.export')
-) || '["campaign_center.openings","report.openings.view","report.openings.export"]'::jsonb WHERE "key" IN ('regional_manager', 'shop_manager');
+UPDATE "roles" SET "permissions" = "permissions" - 'promos.manage' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'campaign_center.view' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'campaign_center.create' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'campaign_center.send' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'campaign_center.export' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'campaign_center.own_clients' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'report.campaign_center.view' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'report.campaign_center.export' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'report.lapsed_clients.view' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'report.lapsed_clients.export' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["campaign_center.openings","report.openings.view","report.openings.export"]'::jsonb WHERE "key" IN ('regional_manager', 'shop_manager') AND NOT ("permissions" ? 'campaign_center.openings');--> statement-breakpoint
+UPDATE "roles" SET "description" = 'Manages several shops: front desk, POS, clients, staff and shop settings, the Campaign Center''s We have openings, with every report for those shops but the brand''s marketing reports.' WHERE "key" = 'regional_manager' AND "description" = 'Manages several shops: front desk, POS, clients, staff and shop settings, with every report for those shops.';--> statement-breakpoint
+UPDATE "roles" SET "description" = 'Manages one shop: front desk, POS, clients, staff and shop settings, the Campaign Center''s We have openings, with that shop''s reports but the brand''s marketing reports.' WHERE "key" = 'shop_manager' AND "description" = 'Manages one shop: front desk, POS, clients, staff and shop settings, with that shop''s reports.';--> statement-breakpoint
+UPDATE "roles" SET "description" = 'Books and checks out every barber''s clients, runs walk-ins and the drawer, and sends We have openings. Small discounts only.' WHERE "key" = 'front_desk' AND "description" = 'Books and checks out every barber''s clients, runs walk-ins and the drawer. Small discounts only.';
