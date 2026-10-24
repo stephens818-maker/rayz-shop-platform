@@ -65,9 +65,10 @@ export function namesMatch(a: DuplicateSide, b: DuplicateSide): boolean {
 }
 
 /**
- * How sure we are two records are one person. Contact matches count most; a birthday that differs
- * on both records, or first names that can't be the same person, keep the pair out of "likely"
- * (often a parent and child sharing a number), however much else matches.
+ * How sure we are two records are one person. Contact matches count most; the same full name and
+ * birthday is "likely" too (the same client booked at two Squire shops under different numbers). A
+ * birthday that differs on both records, or first names that can't be the same person, keep the
+ * pair out of "likely" (often a parent and child sharing a number), however much else matches.
  */
 export function scoreDuplicate(a: DuplicateSide, b: DuplicateSide): DuplicateScore {
   const signals: DuplicateSignal[] = [];
@@ -108,9 +109,11 @@ export function scoreDuplicate(a: DuplicateSide, b: DuplicateSide): DuplicateSco
     ? nameOk && !conflicts.includes("birthday")
       ? "likely"
       : "shared_contact"
-    : exact || compatible
-      ? "same_name"
-      : "similar_name";
+    : exact && signals.includes("birthday")
+      ? "likely"
+      : exact || compatible
+        ? "same_name"
+        : "similar_name";
   return { kind, score: Math.max(0, Math.min(100, score)), signals, conflicts };
 }
 

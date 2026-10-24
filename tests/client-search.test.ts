@@ -177,6 +177,10 @@ describe("duplicates", () => {
     const sameName = scoreDuplicate(side({ zip: "52241", phone: "+15635554444" }), side({ zip: "52241", phone: "+13195554444" }));
     expect(sameName).toMatchObject({ kind: "same_name", signals: ["same_name", "zip", "phone_last4"] });
     expect(likely.score).toBeGreaterThan(sameName.score);
+    const twoShops = scoreDuplicate(side({ phone: "+15635551111", birthday: "1988-06-02" }), side({ email: "x@y.test", birthday: "1988-06-02" }));
+    expect(twoShops).toMatchObject({ kind: "likely", signals: ["same_name", "birthday"], conflicts: [] });
+    const nicknameOnly = scoreDuplicate(side({ firstName: "Mike", birthday: "1988-06-02" }), side({ firstName: "Michael", birthday: "1988-06-02" }));
+    expect(nicknameOnly.kind).toBe("same_name");
   });
 
   it("a bulk merge keeps more visits, then the older record, and chains pairs that share a client", () => {
