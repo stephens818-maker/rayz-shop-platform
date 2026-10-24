@@ -26,7 +26,6 @@ import { CLIENT_FACTS, segmentConditions } from "./client-filters";
 import { clientPolicy, type ClientPolicy } from "./client-privacy";
 import { consentColumns } from "./marketing/consent";
 import { AppError, forbidden, notFound } from "./errors";
-import { ratingSummaries } from "./ratings";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY = 86_400_000;
@@ -151,7 +150,7 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
   const today = todayLocal(now);
   const nowIso = now.toISOString();
   const yearAgo = new Date(now.getTime() - 365 * DAY).toISOString();
-  const [people, visits, appts, spend, products, rewards, cards, coupons, clicks, outs, ratings] = await Promise.all([
+  const [people, visits, appts, spend, products, rewards, cards, coupons, clicks, outs, stars] = await Promise.all([
     rowsOf<{
       id: string;
       created_on: string;
@@ -212,7 +211,9 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
         where c.id = any(${these})
         union select c.id, 'sms' from customers c join contact_opt_outs o on o.phone = c.phone and o.channel = 'sms' where c.id = any(${these})`),
     ),
-    ratingSummaries([...ids], tx),
+    rowsOf<{ customer_id: string; avg: number; n: number }>(
+      tx.execute(sql`select customer_id, avg(stars)::float8 avg, count(*)::int n from client_ratings where customer_id = any(${these}) group by 1`),
+    ),
   ]);
 
   const staffIds = new Set<string>();
@@ -233,6 +234,7 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
   const cardBy = by(cards);
   const couponBy = by(coupons);
   const clickBy = by(clicks);
+  const starsBy = by(stars);
   const visitsBy = new Map<string, BadgeFacts["visits"]>();
   for (const v of visits) {
     const list = visitsBy.get(v.customer_id) ?? [];
@@ -260,7 +262,7 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
       rewardCents: Number(rewardBy.get(p.id)?.cents ?? 0),
       giftCardCents: Number(cardBy.get(p.id)?.cents ?? 0),
       coupons: Number(couponBy.get(p.id)?.n ?? 0),
-      rating: ratings.get(p.id) ?? null,
+      rating: starsBy.has(p.id) ? { avg: Number(starsBy.get(p.id)!.avg), count: Number(starsBy.get(p.id)!.n) } : null,
       reviewClicks: Number(clickBy.get(p.id)?.n ?? 0),
       hasPhone: p.has_phone,
       hasEmail: p.has_email,

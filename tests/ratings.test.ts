@@ -167,7 +167,11 @@ describe("client ratings never reach customers", () => {
 
   it("the ratings table is only mentioned where it's defined and where a merge moves it", () => {
     const mentions = [...files].filter((f) => /clientRatings|client_ratings/.test(readFileSync(f, "utf8"))).map(rel).sort();
-    expect(mentions.filter((f) => f !== "src/domain/permissions.ts")).toEqual(["src/db/schema.ts", "src/server/client-filters.ts", "src/server/customers.ts", "src/server/report-builder/engine.ts"]);
+    expect(mentions.filter((f) => f !== "src/domain/permissions.ts")).toEqual(["src/db/schema.ts", "src/server/badges.ts", "src/server/client-filters.ts", "src/server/customers.ts", "src/server/report-builder/engine.ts"]);
+    // Client badges (worked out by their cron and after checkout) read each client's average and count for "Low rating"; the badge
+    // shows only to staff who see ratings, and the stars themselves are never selected.
+    const badges = readFileSync(join(SRC, "server", "badges.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
+    expect(badges).toEqual(["      tx.execute(sql`select customer_id, avg(stars)::float8 avg, count(*)::int n from client_ratings where customer_id = any(${these}) group by 1`),"]);
     // Client list filters and marketing segments (run by the marketing cron) filter on a client's average rating; the stars are never selected.
     const segment = readFileSync(join(SRC, "server", "client-filters.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
     expect(segment).toEqual(["    const avg = sql`(select avg(r.stars) from client_ratings r where r.customer_id = c.id)`;"]);

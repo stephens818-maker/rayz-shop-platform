@@ -49,8 +49,8 @@ export default async function ClientBadgesPage() {
           <Card>
             <CardHeader title="Who sees what" />
             <ul className="list-disc space-y-1 px-8 py-3 text-xs text-zinc-600">
-              <li>The Brand Owner sees every badge that's on.</li>
-              <li>Someone working across several locations sees a badge only if every role they're working under does.</li>
+              <li>The Brand Owner sees every badge that&apos;s on.</li>
+              <li>Someone working across several locations sees a badge only if every role they&apos;re working under does.</li>
               <li>VIP and Gift card show spend, so they also need &quot;Look up any client in the brand&quot;. VIP starts shown to brand-level roles only.</li>
               <li>Birthday this week needs the whole birthday; Birthday this month needs at least its month. Barber badges need preferred barbers, Low rating needs ratings, and Missing info needs phone and email, at least masked. Barber names show only to people who see preferred barbers in full.</li>
               <li>A custom badge shows only to people who could run its filter themselves.</li>
