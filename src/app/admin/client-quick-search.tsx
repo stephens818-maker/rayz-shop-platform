@@ -28,7 +28,9 @@ export function ClientQuickSearch() {
     if (q.trim().length < 2) return setHits([]);
     const t = setTimeout(async () => {
       const r = await quickFindClientsAction(q);
-      if (r.ok) (setHits(r.data), setActive(0));
+      if (!r.ok) return;
+      setHits(r.data);
+      setActive(0);
     }, 250);
     return () => clearTimeout(t);
   }, [q]);
@@ -44,10 +46,16 @@ export function ClientQuickSearch() {
         value={q}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "ArrowDown") (e.preventDefault(), setActive((a) => Math.min(a + 1, hits.length - 1)));
-          else if (e.key === "ArrowUp") (e.preventDefault(), setActive((a) => Math.max(a - 1, 0)));
-          else if (e.key === "Escape") (setQ(""), setHits([]));
-          else if (e.key === "Enter") {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActive((a) => Math.min(a + 1, hits.length - 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActive((a) => Math.max(a - 1, 0));
+          } else if (e.key === "Escape") {
+            setQ("");
+            setHits([]);
+          } else if (e.key === "Enter") {
             e.preventDefault();
             if (hits[active]) open(hits[active].id);
             else if (q.trim()) router.push(`/admin/customers?q=${encodeURIComponent(q.trim())}`);
