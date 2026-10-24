@@ -44,15 +44,16 @@ const FIELD_LABEL: Record<keyof typeof SHOP_SETTING_FIELDS, string> = {
   drawerOpeningCents: "drawer opening balance",
 };
 
+/** The address, phone and email are saved with the location profile; older callers may still send them here. */
 const Info = z.object({
   name: z.string().trim().min(1),
-  address: z.string().trim(),
-  city: z.string().trim(),
-  state: z.string().trim().length(2).toUpperCase(),
-  zip: z.string().trim(),
-  phone: z.string().trim(),
+  address: z.string().trim().optional(),
+  city: z.string().trim().optional(),
+  state: z.string().trim().length(2).toUpperCase().optional(),
+  zip: z.string().trim().optional(),
+  phone: z.string().trim().optional(),
   twilioNumber: z.string().trim().optional(),
-  email: z.string().trim(),
+  email: z.string().trim().optional(),
   description: z.string().trim(),
   bookingEnabled: z.boolean(),
   cancelCutoffMinutes: z.number().int().min(0).max(1440),
@@ -71,13 +72,15 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
     if (twilioNumber && !line) throw new AppError("bad_request", "The Twilio number doesn't look like a US number");
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
     if (!before) throw new AppError("not_found", "Shop not found");
-    const denied = shopSettingsDenied(ctx.permissions, before, { ...v, phone: v.phone || null, email: v.email || null, description: v.description || null, ...(line === undefined ? {} : { twilioNumber: line }) });
+    const values = Object.fromEntries(
+      Object.entries({ ...v, phone: v.phone === undefined ? undefined : v.phone || null, email: v.email === undefined ? undefined : v.email || null, description: v.description || null, twilioNumber: line }).filter(([, x]) => x !== undefined),
+    ) as Partial<typeof shops.$inferInsert>;
+    const denied = shopSettingsDenied(ctx.permissions, before, values as Partial<Record<keyof typeof SHOP_SETTING_FIELDS, unknown>>);
     if (denied.length) throw new AppError("forbidden", `You can't change the shop's ${denied.map((f) => FIELD_LABEL[f]).join(", ")}`);
     if (line) {
       const other = await db.query.shops.findFirst({ where: and(eq(shops.twilioNumber, line), ne(shops.id, shopId)), columns: { name: true } });
       if (other) throw new AppError("conflict", `${other.name} already uses that Twilio number`);
     }
-    const values = { ...v, phone: v.phone || null, email: v.email || null, description: v.description || null, ...(line === undefined ? {} : { twilioNumber: line }) };
     await db.update(shops).set(values).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.update", "shop", shopId, values, shopId);
     revalidatePath("/admin/settings");

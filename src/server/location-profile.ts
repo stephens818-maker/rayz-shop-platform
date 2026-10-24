@@ -183,6 +183,12 @@ export async function moveShopPhoto(ctx: StaffContext, photoId: string, dir: -1 
   return { ok: true };
 }
 
+/** A photo or logo for Settings, at any status, for staff of its shop. */
+export async function staffShopPhoto(photoId: string): Promise<string | null> {
+  const [p] = await db.select({ dataUrl: shopPhotos.dataUrl }).from(shopPhotos).where(eq(shopPhotos.id, photoId));
+  return p?.dataUrl ?? null;
+}
+
 /** A photo for the public page, by its shop's slug: only for shops clients can see. */
 export async function publicShopPhoto(slug: string, photoId: string): Promise<string | null> {
   if (!/^[0-9a-f-]{36}$/i.test(photoId)) return null;

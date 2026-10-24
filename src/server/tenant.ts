@@ -11,6 +11,7 @@ import {
   promoCodes,
   purchaseOrders,
   sales,
+  shopPhotos,
   staff,
   staffAccessShops,
   staffShops,
@@ -76,7 +77,8 @@ export type TenantRecord =
   | "message_thread"
   | "tip_payout_batch"
   | "tip_payout"
-  | "marketing_campaign";
+  | "marketing_campaign"
+  | "shop_photo";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -115,6 +117,8 @@ export async function recordShops(kind: TenantRecord, id: string, tx: DBorTx = d
       const [c] = await tx.select({ shopIds: marketingCampaigns.shopIds }).from(marketingCampaigns).where(eq(marketingCampaigns.id, id));
       return c ? c.shopIds : null;
     }
+    case "shop_photo":
+      return one(tx.select({ s: shopPhotos.shopId }).from(shopPhotos).where(eq(shopPhotos.id, id)));
     case "message_thread":
       return one(tx.select({ s: messageThreads.shopId }).from(messageThreads).where(eq(messageThreads.id, id)));
     case "tip_payout_batch":

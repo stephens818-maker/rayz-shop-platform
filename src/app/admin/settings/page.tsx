@@ -23,6 +23,11 @@ import { DrawerOpeningEditor, PhoneOperatorEditor, TaxFilingEditor } from "./par
 import { editableShopParts } from "@/domain/permissions";
 import { cleanOperator } from "@/domain/phone-operator";
 import { cleanTaxFiling, filingFor, stateCode } from "@/domain/sales-tax";
+import { taxJurisdiction } from "@/domain/location-profile";
+import { appBaseUrl } from "@/lib/deployment";
+import { shopBarbers, shopCatalog } from "@/server/catalog";
+import { loadLocationProfile } from "@/server/location-profile";
+import { BookingWidgetCard, LocationPhotosEditor, LocationProfileEditor } from "./location-profile-editor";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -47,6 +52,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     loadFamilySettings(),
   ]);
   const taxStates = filing ? await taxFilingStates() : [];
+  const [profile, catalog, barbers] = part("details") ? await Promise.all([loadLocationProfile(shopId), shopCatalog(shopId, { onlineOnly: true }), shopBarbers(shopId, { onlineOnly: true })]) : [null, [], []];
   if (!shop) return <Empty title="Shop not found" />;
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -58,13 +64,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         editable={parts}
         initial={{
           name: shop.name,
-          address: shop.address,
-          city: shop.city,
-          state: shop.state,
-          zip: shop.zip,
-          phone: shop.phone ?? "",
           twilioNumber: shop.twilioNumber ?? "",
-          email: shop.email ?? "",
           description: shop.description ?? "",
           bookingEnabled: shop.bookingEnabled,
           cancelCutoffMinutes: shop.cancelCutoffMinutes,
@@ -73,6 +73,40 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           bufferMinutes: shop.bufferMinutes,
         }}
       />
+      )}
+      {profile && (
+        <LocationProfileEditor
+          key={`${profile.form.reviewUrl}|${profile.form.latitude}|${profile.form.longitude}`}
+          shopId={shop.id}
+          geocoder={profile.geocoder}
+          textNumber={profile.textNumber}
+          canReview={can(ctx, "settings.shop") || part("checkout")}
+          canTaxes={can(ctx, "settings.taxes")}
+          initial={{
+            ...profile.form,
+            address2: profile.form.address2 ?? "",
+            latitude: profile.form.latitude ?? null,
+            longitude: profile.form.longitude ?? null,
+            geocodeSource: profile.form.geocodeSource ?? null,
+            phone: profile.form.phone ?? "",
+            email: profile.form.email ?? "",
+            googlePlaceId: profile.form.googlePlaceId ?? "",
+            reviewUrl: profile.form.reviewUrl ?? "",
+            social: profile.form.social ?? {},
+            directions: profile.form.directions ?? "",
+            amenities: profile.form.amenities ?? [],
+            taxJurisdiction: taxJurisdiction(profile.form.taxJurisdiction),
+          }}
+        />
+      )}
+      {profile && <LocationPhotosEditor shopId={shop.id} photos={profile.photos} logo={profile.logo} />}
+      {profile && (
+        <BookingWidgetCard
+          base={appBaseUrl()}
+          slug={profile.slug}
+          services={catalog.filter((x) => x.kind === "service").map((x) => ({ slug: x.slug, name: x.name }))}
+          barbers={barbers.map((b) => ({ slug: b.slug, name: b.displayName }))}
+        />
       )}
       {part("details") && (
         <ProfileEditor
@@ -116,7 +150,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         />
       )}
       {part("phone") && <PhoneOperatorEditor shopId={shop.id} initial={cleanOperator(shop.phoneOperator)} hasLine={!!shop.twilioNumber} />}
-      {part("checkout") && <ReceiptEditor shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} brandReviews={reviewRules} />}
+      {part("checkout") && <ReceiptEditor key={receiptBranding(shop.receipt).reviewUrl ?? ""} shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} brandReviews={reviewRules} />}
       {can(ctx, "network.settings") && (
         <Card>
           <CardHeader

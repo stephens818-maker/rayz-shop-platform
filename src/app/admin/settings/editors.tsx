@@ -57,13 +57,7 @@ export function SaveBar({ pending, msg, onClick, label = "Save", disabled }: { p
 
 type Info = {
   name: string;
-  address: string;
-  city: string;
-  state: string;
-  zip: string;
-  phone: string;
   twilioNumber: string;
-  email: string;
   description: string;
   bookingEnabled: boolean;
   cancelCutoffMinutes: number;
@@ -90,32 +84,12 @@ export function ShopInfoEditor({ shopId, initial, editable }: { shopId: string; 
         <Field label="Name">
           <Input disabled={!details} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
         </Field>
-        <Field label="Phone">
-          <Input disabled={!details} value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />
-        </Field>
-        <Field label="Twilio number" hint="Clients text and call this; calls forward to the phone above">
+        <Field label="Twilio number" hint="The text-enabled number: clients text and call it, and calls forward to the main phone in the location profile">
           <Input disabled={!phone} value={v.twilioNumber} placeholder="Not set up" onChange={(e) => setV({ ...v, twilioNumber: e.target.value })} />
-        </Field>
-        <Field label="Email">
-          <Input disabled={!details} value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />
         </Field>
         <label className="flex items-center gap-2 self-end pb-2 text-sm">
           <input type="checkbox" disabled={!booking} checked={v.bookingEnabled} onChange={(e) => setV({ ...v, bookingEnabled: e.target.checked })} /> Online booking on
         </label>
-        <Field label="Address" className="sm:col-span-2">
-          <Input disabled={!details} value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />
-        </Field>
-        <Field label="City">
-          <Input disabled={!details} value={v.city} onChange={(e) => setV({ ...v, city: e.target.value })} />
-        </Field>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="State">
-            <Input disabled={!details} maxLength={2} value={v.state} onChange={(e) => setV({ ...v, state: e.target.value.toUpperCase() })} />
-          </Field>
-          <Field label="ZIP">
-            <Input disabled={!details} value={v.zip} onChange={(e) => setV({ ...v, zip: e.target.value })} />
-          </Field>
-        </div>
         <Field label="Description" className="sm:col-span-2 lg:col-span-4">
           <Textarea disabled={!details} rows={2} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
         </Field>
