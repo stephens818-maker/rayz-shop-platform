@@ -969,13 +969,14 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
   - `run_report` runs any report the person can view through the same loaders as the report pages and CSVs (`REPORT_LOADERS`), over dates, locations, barbers and the by-location or by-barber view.
   - `customer_report` builds a client list with the report builder's engine (filters such as last visit, visit counts, spend and not booked, plus columns, grouping and totals).
   - `help` gives the steps for one of 26 how-to topics.
+  - `client_notes` reads one client's notes ("What's Marcus's usual cut?"), exactly as the person could read them on the profile: only clients they reach, masked notes as a count, private notes only with **See and write private manager notes**. Each look is logged as a client view.
   - `draft_po` and `draft_blast` prepare a purchase order or a Campaign Center blast.
   - Each answer shows the numbers in a card with a link to the report it came from. A client list adds **Open in the report builder to save it** (the builder opens with the definition filled in, ready to save, share or schedule) and **Message these clients** (a new blast with its segment).
 - **Same permissions as the person:**
   - The model is only offered tools and reports the person has. The audit log and client ratings are never offered.
   - Locations and barbers it names are checked against the person's own. Anything else is refused ("Moline isn't one of your locations"), and "all" means all of theirs.
   - A barber gets only their own numbers. A shop login is held to its shop. Client lists need **Custom reports: build**, and spend and tips need **Look up any client in the brand**, as in the builder.
-  - Fields **Client data** hides from the person are left out of the tool's choices altogether. Phone, email, address, birthday, notes and custom fields are never offered, even to the owner, and contact columns are dropped from report text before the model sees it.
+  - Fields **Client data** hides from the person are left out of the tool's choices altogether. Phone, email, address, birthday, notes and custom fields are never offered as client-list columns, even to the owner, and contact columns are dropped from report text before the model sees it. Client notes reach the model only through `client_notes`, and never hold contact details.
   - Everything sent to the model (the question, report text, history) goes through `scrub()`, so card numbers or bank details typed into a question never reach the model, the database or the audit log. The app holds no card, bank or identity data in any case.
   - The system prompt names the person, role and locations, never an id.
 - **Drafts wait for Confirm:** a purchase order or blast is only drafted. The card lists what it will do, and nothing is created until the person presses **Confirm**. Confirm checks the permission (**Purchase orders: create** or **Campaign Center: create**), the role toggle and the brand's **May draft** setting again, and works for an hour. A confirmed blast is saved as a draft and never sent. Only the person who asked sees or confirms their drafts.
@@ -1553,6 +1554,33 @@ One ticket for several people and barbers. Domain (pure): `src/domain/combined-c
 
   `tests/db/handoff.test.ts` covers tipping each barber on the customer screen.
 
+### Client notes (brand-wide)
+
+Notes follow the client to every location. Whoever sees the client, at any shop they visit, sees their notes, as far as their permissions and **Client data protection** allow.
+
+- **Three kinds,** on the client's profile (and a child's profile) under **Client notes**:
+  - **Profile notes**, which can be pinned. Pinned notes show on the appointment block and panel on the calendar, the barber's **Up next** on Today, walk-in check-in and checkout. The profile's notes field is the client's main pinned profile note, so it keeps its entry rules.
+  - **Cut notes** per visit: guard numbers, style and products used, with up to 4 before and after photos, optionally tied to the visit. The latest one shows wherever pinned notes do, and checkout offers **Add cut note for this visit**.
+  - **Private manager notes**, only for people with **See and write private manager notes** (managers by default, never a shop login).
+- **Who wrote it:** each note shows the author's first name, the location and the date ("Makenna · Coralville · Oct 24, 2026"), and "edited by" when someone else changed it. Imported notes say "Squire".
+- **Permissions** (Roles → Clients): **See client notes** and **Write client notes**, which also edits or removes their own (every role starts with both; custom roles too, since they saw the profile's notes field before), **Edit, pin or remove anyone's client notes** (at their shops; managers) and **See and write private manager notes**. A barber reaches the notes of clients they've served or who are booked in their column; managers and the desk reach any client. Client data protection's **Client notes** level still applies: masked shows only how many notes are on file, hidden shows none.
+- **No contact details in notes.** Typing something that looks like a phone number or email shows a warning, and it's replaced with "[phone removed]" or "[email removed]" when saved. The database does the same for every writer (the importer, the API, the profile), and the migration cleaned existing notes.
+- **Squire importer:** client notes become the pinned profile note and appointment notes become that visit's cut note, dated the visit. Re-importing doesn't duplicate them.
+- **API and assistant:** `GET`/`POST /api/staff/clients/{id}/notes`, `PATCH /api/staff/notes/{id}` and `POST /api/staff/notes/{id}/remove` with a staff session, ready for the staff app (`CLIENT_NOTES_OPENAPI`). The assistant's `client_notes` tool answers "What's his usual cut?" with the same scoping.
+- **Merging** two clients keeps every note and one profile record note.
+- **Code:** `src/domain/client-notes.ts` (kinds, contact patterns, visibility and edit rules), `src/server/client-notes.ts`, `src/server/client-notes-api.ts`, `src/app/admin/customers/[id]/notes-card.tsx`, `src/components/client-notes-brief.tsx`. Migration `core_0057_client_notes`.
+- **Tests:** `tests/client-notes.test.ts` (redaction, cut details, visibility and edit rules, credit, the assistant's routing) and `tests/db/client-notes.test.ts`, which covers:
+  - the record note and redaction by trigger;
+  - cut, pinned and private notes, and who may write each;
+  - a Moline barber seeing Coralville notes once the client is in her column, and the Moline manager seeing the private note;
+  - editing, pinning and removing, and the record note's entry rules;
+  - photos and the photo route;
+  - masked and hidden notes;
+  - the staff API;
+  - the Squire importer;
+  - the calendar, checkout and the profile;
+  - the assistant, and merging.
+
 ### Client search, filters and saved searches
 
 - **One search everywhere:** the client list, the **Find a client** box at the top of the brand portal sidebar (press `/`), booking on the calendar, the POS, and walk-in check-in. A returning walk-in is picked from the results instead of being created again. Results show the first name and last initial, nickname, photo, rating, client number, masked phone, the last visit (date and shop), the usual barber, and what matched.
@@ -1906,8 +1934,8 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 ### Squire importer
 
 - **Admin → Import**, or the `pnpm import:squire` CLI. Import the five Squire exports in this order: clients, appointments, transactions, loyalty, gift cards.
-  - **Clients:** name, phone (any format), email, notes, Squire ID, client-since, home shop, preferred barber, SMS and email opt-in.
-  - **Appointments:** past visits with shop, barber, services, add-ons, prices, and status (completed, no-show, cancelled), plus upcoming bookings. Barbers who've left are created as inactive staff so their history keeps its name. Walk-ins with no client stay unlinked.
+  - **Clients:** name, phone (any format), email, notes (they become the client's pinned profile note, credited "Squire", with any phone number or email taken out), Squire ID, client-since, home shop, preferred barber, SMS and email opt-in.
+  - **Appointments:** past visits with shop, barber, services, add-ons, prices, and status (completed, no-show, cancelled), plus upcoming bookings. A visit's notes become its cut note, dated the visit. Barbers who've left are created as inactive staff so their history keeps its name. Walk-ins with no client stay unlinked.
   - **Transactions:** purchases, tips, tax, and totals, linked to their visit. Voided tickets are kept as voided.
   - **Loyalty** progress and rewards, and **gift card** balances (with where the card was used).
 - Every file gets a **dry run** first: rows are validated inside transactions that are rolled back. Real runs commit in batches of 500 rows.

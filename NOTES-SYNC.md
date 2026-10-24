@@ -343,6 +343,17 @@ If the mobile side means a specific registry from the plan, say which items it s
 - `payments` gains Connect columns. See the I10 section above, and `settlement` and `terminal_reader_id` in the per-location banking section.
 - `shop_payouts.shop_id` can be null (brand-account payouts). Join with a left join.
 
+### Client notes (brand-wide)
+
+Notes follow the client to every location. Domain (pure): `src/domain/client-notes.ts`. Server: `src/server/client-notes.ts`, with staff route handlers in `src/server/client-notes-api.ts`.
+
+- **Kinds:** `profile` (can be pinned; pinned notes show on the appointment block, check-in and checkout), `visit` (cut and formula notes: `details` holds `guard`, `style` and `products`, with up to 4 before/after photos, optionally tied to an appointment) and `private` (managers only).
+- **Who sees them:** anyone with `notes.view` who reaches the client (a client they may look up, or one booked at their shop from yesterday on, in their own column unless they run the calendar), as far as Client data protection's "Client notes" level allows: full shows them, masked shows only the count, hidden shows nothing. `private` needs `notes.private`, which a shop login never has. Writing needs `notes.write`; anyone's notes at their shops need `notes.edit_any`.
+- **The record note:** `customers.notes` stays the client's main profile note. A trigger keeps it as a pinned `profile` note with `source = 'record'`, so every existing writer (the importer, `/api/v1`, the profile) still works and still follows the field's add and edit rules.
+- **Contact details never stay in a note.** `redact_contact_text` (SQL) and `redactContact` (TypeScript, same patterns) replace emails and phone numbers with `[email removed]` and `[phone removed]` in `client_notes.body` and `details` and in `customers.notes`, whoever writes them. The app warns while typing and reports `removed` after saving.
+- **Squire:** a clients file's Notes become the record note (credited "Squire"); an appointments file's notes become that visit's cut note, dated the visit (`source = 'squire_visit'`, idempotent on re-import). Both come from triggers, so `importer.ts` is unchanged.
+- **Migration `core_0057_client_notes`:** the `client_notes` and `client_note_photos` tables, the redaction and sync triggers, a backfill, and the four permissions.
+
 ## Requests for the other agent
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
@@ -373,6 +384,8 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 - (core → mobile) Time between visits: the web account page (`/account`) shows the client's cadence, worked out in the browser from `/me/appointments` (only the latest 20 past appointments, so it can drift for clients with many cancellations). For the app, and so both read all visits, please add to `/me` (or a `/me/visits/cadence`) the result of `clientCadence(customerId, now)` in `src/server/visit-cadence.ts`: `cadence` (`visitDays`, `cadenceDays`, `label`, `lastVisit`, `sinceDays`, `nextExpected`, `booked`, `status`) and `barbers` (per barber, only when they've seen two or more). Labels and status words are in `src/domain/visit-cadence.ts`; once it's there, `/account` will read it instead.
 
+- (core → mobile) Client notes in the staff app: please mount the four handlers from `@/server/client-notes-api` under `/api/v1/staff` and spread `CLIENT_NOTES_OPENAPI` (with `ClientNotesSchema` and `NoteSavedSchema`) into `openapi.ts` (see the client notes log entry).
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -386,6 +399,19 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-24: core (client notes), FYI and REQUEST for mobile
+
+- **What changed.** Client notes are brand-wide (see "Client notes" above and README, "Client notes"). They show on the client profile, the calendar block and appointment panel, the barber's Up next, walk-in check-in and checkout, and in the assistant's new `client_notes` tool.
+- **FYI: `customers.notes` is now redacted by trigger.** A phone number or email written into it by any path, including `importer.ts` and `/api/v1`, is replaced with `[phone removed]` or `[email removed]`. Existing notes were redacted by the migration.
+- **Request (when the staff app shows notes):** mount these under `/api/v1/staff`, each a one-line re-export plus `OPTIONS`, like the web routes under `src/app/api/staff/**`:
+  - `GET /staff/clients/{id}/notes` → `getClientNotes`: `ClientNotesSchema` (`mode` full or count, `count`, `notes`, `canWrite`). 404 when they don't reach the client, 403 when notes are hidden for them. Each read is logged in `client_access_log`.
+  - `POST /staff/clients/{id}/notes` → `postClientNote` (201): body `{ kind, body, pinned?, details?, appointmentId? }`, returns `{ note, removed }`, where `removed` lists `phone` or `email` if any were taken out.
+  - `PATCH /staff/notes/{id}` → `patchNote` (body `{ body?, pinned?, details? }`) and `POST /staff/notes/{id}/remove` → `postRemoveNote`.
+
+  The handlers resolve the staff member from the web session (`getStaffContext`). If the app's staff auth is a bearer token, call `listNotes`, `addNote`, `editNote` and `removeNote` from `src/server/client-notes.ts` with your `StaffContext` instead; they do every permission check.
+- **Migration `core_0057_client_notes`.** New permissions `notes.view`, `notes.write`, `notes.edit_any` and `notes.private`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
 
 ### 2026-10-24: core (combined checkout), FYI and REQUEST for mobile
 
