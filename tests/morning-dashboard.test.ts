@@ -12,7 +12,7 @@ import {
   urgentCount,
   versionPlans,
 } from "@/domain/morning-dashboard";
-import { EMAIL_BARBER_ROWS, morningDoc, renderMorningHtml, renderMorningPdf, renderMorningSms, renderMorningText } from "@/domain/morning-render";
+import { EMAIL_BARBER_ROWS, EMAIL_EXCEPTION_ROWS, morningDoc, renderMorningHtml, renderMorningPdf, renderMorningSms, renderMorningText } from "@/domain/morning-render";
 import { weekdayOf } from "@/lib/time";
 
 const MONDAY = "2026-10-26";
@@ -47,6 +47,7 @@ function dash(o: Partial<MorningDashboard> = {}): MorningDashboard {
       byBarber: barbers,
       ownOnly: false,
       daily: [
+        { date: "2026-10-18", net: 0, prior: 0 },
         { date: "2026-10-19", net: 90_000, prior: 80_000 },
         { date: "2026-10-24", net: 120_000, prior: 100_000 },
       ],
@@ -226,6 +227,23 @@ describe("Morning Dashboard layout", () => {
     expect((table(EMAIL_BARBER_ROWS) as { rows: unknown[] }).rows).toHaveLength(EMAIL_BARBER_ROWS);
     expect((table() as { rows: unknown[] }).rows).toHaveLength(20);
   });
+
+  it("leaves closed days out of the daily chart", () => {
+    const bars = morningDoc(dash()).sections.find((s) => s.key === "sales")!.blocks.find((b) => b.kind === "bars" && b.title.startsWith("Net sales by day"));
+    expect(bars).toMatchObject({ rows: [{ label: "Mon" }, { label: "Sat" }] });
+  });
+
+  it("lists the first few of each kind to handle in the email and all of them on the page", () => {
+    const base = dash();
+    const many = Array.from({ length: 8 }, (_, i) => ({ category: "overtime" as const, severity: "high" as const, shop: "Moline", title: `Barber ${i} is on track for 44h`, href: "/admin/timesheets" }));
+    const d = dash({ exceptions: { ...base.exceptions!, items: [...base.exceptions!.items, ...many] } });
+    const lists = (o?: { exceptionRows: number }) => morningDoc(d, o).sections[0].blocks;
+    const overtime = (bs: ReturnType<typeof lists>) => bs.find((b) => b.kind === "list" && b.title === "Overtime risk") as { items: unknown[] };
+    expect(overtime(lists({ exceptionRows: EMAIL_EXCEPTION_ROWS })).items).toHaveLength(EMAIL_EXCEPTION_ROWS);
+    expect(lists({ exceptionRows: EMAIL_EXCEPTION_ROWS })).toContainEqual({ kind: "note", text: "And 4 more on the dashboard." });
+    expect(overtime(lists()).items).toHaveLength(9);
+    expect(renderMorningHtml(d)).toContain("And 4 more on the dashboard.");
+  });
 });
 
 describe("Morning Dashboard renderers", () => {
@@ -242,6 +260,10 @@ describe("Morning Dashboard renderers", () => {
     expect(html).toContain(`href="https://rayz.test/admin/morning?date=${MONDAY}&amp;shop=${CORAL.id}&amp;shop=${ROCK.id}"`);
     expect(html).toContain('href="https://rayz.test/admin/time-clock"');
     expect(html).toContain("And 5 more on the dashboard.");
+    // Seven-column barber tables keep their key columns on a phone.
+    expect(html).toContain(".m-hide{display:none!important}");
+    expect(html).toContain('<td class="m-hide" align="right" style="padding:4px 4px;color:#a1a1aa;font-size:11px;border-bottom:1px solid #e4e4e7">Services</td>');
+    expect(html).not.toMatch(/<td class="m-hide"[^>]*>Net<\/td>/);
     expect(html).toContain("Delaney called in (sick, all day); Jessica off (vacation)");
     expect(html).toContain("Rock &amp; Roll &lt;Island&gt;: Closed for the remodel.");
   });

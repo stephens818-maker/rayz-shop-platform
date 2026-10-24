@@ -26,32 +26,34 @@ function BlockView({ b }: { b: Block }) {
   switch (b.kind) {
     case "metrics":
       return (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[11px] text-zinc-400">
-              <th className="py-1 text-left font-normal" />
-              <th className="px-2 py-1 text-right font-normal">Day</th>
-              <th />
-              <th className="px-2 py-1 text-right font-normal">Week to date</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {b.rows.map((r) => (
-              <tr key={r.label} className="border-t border-zinc-100">
-                <td className={cx("py-1.5", r.label.startsWith(" ") ? "pl-3 text-zinc-500" : "text-zinc-900")}>{r.label.trim()}</td>
-                <td className="whitespace-nowrap px-2 py-1.5 text-right font-semibold tabular-nums">{r.day}</td>
-                <td className="py-1.5 text-right">
-                  <Chip text={r.dayChange} tone={r.dayTone} />
-                </td>
-                <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-zinc-700">{r.wtd}</td>
-                <td className="py-1.5 text-right">
-                  <Chip text={r.wtdChange} tone={r.wtdTone} />
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs sm:text-sm">
+            <thead>
+              <tr className="text-[11px] text-zinc-400">
+                <th className="py-1 text-left font-normal" />
+                <th className="px-2 py-1 text-right font-normal">Day</th>
+                <th />
+                <th className="px-2 py-1 text-right font-normal">Week to date</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {b.rows.map((r) => (
+                <tr key={r.label} className="border-t border-zinc-100">
+                  <td className={cx("py-1.5", r.label.startsWith(" ") ? "pl-3 text-zinc-500" : "text-zinc-900")}>{r.label.trim()}</td>
+                  <td className="whitespace-nowrap px-1 py-1.5 text-right font-semibold tabular-nums sm:px-2">{r.day}</td>
+                  <td className="py-1.5 text-right">
+                    <Chip text={r.dayChange} tone={r.dayTone} />
+                  </td>
+                  <td className="whitespace-nowrap px-1 py-1.5 text-right tabular-nums text-zinc-700 sm:px-2">{r.wtd}</td>
+                  <td className="py-1.5 text-right">
+                    <Chip text={r.wtdChange} tone={r.wtdTone} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     case "table":
       return (
@@ -99,7 +101,7 @@ function BlockView({ b }: { b: Block }) {
           </div>
           <div className="space-y-1.5" role="list">
             {b.rows.map((r) => (
-              <div key={r.label} role="listitem" className="grid grid-cols-[7rem_1fr_auto] items-center gap-2 text-xs">
+              <div key={r.label} role="listitem" className="grid grid-cols-[5.5rem_1fr_auto] items-center gap-2 text-xs sm:grid-cols-[7rem_1fr_auto]">
                 <span className="truncate text-zinc-600">{r.label}</span>
                 <span className="space-y-0.5">
                   <span className="block h-2 rounded-sm bg-zinc-900" style={{ width: w(r.value) }} />
@@ -142,7 +144,7 @@ function BlockView({ b }: { b: Block }) {
 
 function SectionCard({ s }: { s: DocSection }) {
   return (
-    <Card className="p-4" id={s.key}>
+    <Card className="min-w-0 p-4" id={s.key}>
       <div className="flex items-start justify-between gap-3">
         <h2 className="text-base font-semibold text-zinc-900">{s.title}</h2>
         {s.link && (

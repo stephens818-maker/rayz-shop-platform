@@ -47,7 +47,8 @@ export interface MetricRow {
 
 export type Block =
   | { kind: "metrics"; rows: MetricRow[] }
-  | { kind: "table"; title?: string; columns: string[]; rows: string[][]; numeric: boolean[] }
+  /** `narrow`: the columns a phone-width email keeps; every column otherwise. */
+  | { kind: "table"; title?: string; columns: string[]; rows: string[][]; numeric: boolean[]; narrow?: number[] }
   | { kind: "bars"; title: string; legend?: [string, string]; rows: { label: string; value: number; valueLabel: string; prior?: number }[] }
   | { kind: "list"; title?: string; items: { title: string; detail?: string; severity?: "high" | "medium" | "low"; href?: string }[] }
   | { kind: "note"; text: string };
@@ -116,10 +117,11 @@ function partial(d: MorningDashboard, shops: readonly ShopRef[]): Block[] {
   return shops.length < d.version.shops.length ? [{ kind: "note", text: `Covers ${shopNames(shops)}: the shops where you can see this report.` }] : [];
 }
 
-/** Emails list the top barbers; the page lists everyone. */
+/** Emails list the top barbers and the first few items of each kind to handle; the page and PDF list everything. */
 export const EMAIL_BARBER_ROWS = 15;
+export const EMAIL_EXCEPTION_ROWS = 5;
 
-export function morningDoc(d: MorningDashboard, o: { barberRows?: number } = {}): MorningDoc {
+export function morningDoc(d: MorningDashboard, o: { barberRows?: number; exceptionRows?: number } = {}): MorningDoc {
   const cap = <T,>(xs: T[]): { rows: T[]; more: Block[] } =>
     o.barberRows && xs.length > o.barberRows ? { rows: xs.slice(0, o.barberRows), more: [{ kind: "note", text: `And ${xs.length - o.barberRows} more on the dashboard.` }] } : { rows: xs, more: [] };
   const L = periodLabels(d.periods);
@@ -144,7 +146,10 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number } = {})
     const blocks: Block[] = [];
     for (const c of EXCEPTION_CATEGORIES) {
       const mine = items.filter((i) => i.category === c);
-      if (mine.length) blocks.push({ kind: "list", title: EXCEPTION_LABEL[c], items: mine.map((i) => ({ title: `${i.shop ? `${i.shop}: ` : ""}${i.title}`, detail: i.detail, severity: i.severity, href: appLink(d, i.href) })) });
+      if (!mine.length) continue;
+      const shown = o.exceptionRows ? mine.slice(0, o.exceptionRows) : mine;
+      blocks.push({ kind: "list", title: EXCEPTION_LABEL[c], items: shown.map((i) => ({ title: `${i.shop ? `${i.shop}: ` : ""}${i.title}`, detail: i.detail, severity: i.severity, href: appLink(d, i.href) })) });
+      if (shown.length < mine.length) blocks.push({ kind: "note", text: `And ${mine.length - shown.length} more on the dashboard.` });
     }
     const clear = ex.categories.filter((c) => !items.some((i) => i.category === c));
     if (clear.length) blocks.push({ kind: "note", text: `All clear: ${clear.map((c) => EXCEPTION_LABEL[c].toLowerCase()).join(", ")}.` });
@@ -191,12 +196,13 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number } = {})
         ],
       },
     ];
-    if (s.daily.length > 1)
+    const days = s.daily.filter((x) => x.net || x.prior);
+    if (days.length > 1)
       blocks.push({
         kind: "bars",
         title: "Net sales by day, this week against last",
         legend: ["This week", "Last week"],
-        rows: s.daily.map((x) => ({ label: formatDate(x.date, "EEE"), value: x.net, valueLabel: dollars(x.net), prior: x.prior })),
+        rows: days.map((x) => ({ label: formatDate(x.date, "EEE"), value: x.net, valueLabel: dollars(x.net), prior: x.prior })),
       });
     if (s.byShop.length > 1)
       blocks.push({
@@ -211,6 +217,7 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number } = {})
         title: s.ownOnly ? "Your sales" : "By barber",
         columns: ["Barber", "Net", "Services", "Products", "Tips", "Tickets", "WTD net"],
         numeric: [false, true, true, true, true, true, true],
+        narrow: [0, 1, 4, 5, 6],
         rows: c.rows.map((b) => [b.label, money(b.net), money(b.services), money(b.products), money(b.tips), String(b.tickets), money(b.netWtd)]),
       });
       blocks.push(...c.more);
@@ -252,6 +259,7 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number } = {})
         title: u.ownOnly ? "Your time" : "By barber",
         columns: u.cutTimes ? ["Barber", "Booked", "Available", "Utilization", "WTD", "Avg cut", "Booked for"] : ["Barber", "Booked", "Available", "Utilization", "WTD"],
         numeric: [false, true, true, true, true, true, true],
+        narrow: u.cutTimes ? [0, 3, 4, 5, 6] : [0, 1, 3, 4],
         rows: c.rows.map((b) => [
           b.label,
           hoursLabel(b.bookedMin),
@@ -317,7 +325,7 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number } = {})
 // ───────────────────────────── Plain text ─────────────────────────────
 
 export function renderMorningText(d: MorningDashboard): { subject: string; body: string } {
-  const doc = morningDoc(d, { barberRows: EMAIL_BARBER_ROWS });
+  const doc = morningDoc(d, { barberRows: EMAIL_BARBER_ROWS, exceptionRows: EMAIL_EXCEPTION_ROWS });
   const lines: string[] = [`${doc.title},`, "", `${doc.dateLabel} · ${doc.versionLabel}`, doc.coverage];
   if (doc.tiles.length) {
     lines.push("");
@@ -388,6 +396,8 @@ function bar(value: number, max: number, color: string, height = 8) {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse"><tr><td width="${w}%" style="background:${color};height:${height}px;line-height:${height}px;font-size:0;border-radius:2px">&nbsp;</td>${w < 100 ? `<td style="font-size:0">&nbsp;</td>` : ""}</tr></table>`;
 }
 
+const hide = (b: Extract<Block, { kind: "table" }>, i: number) => (b.narrow && !b.narrow.includes(i) ? ' class="m-hide"' : "");
+
 function htmlBlock(b: Block): string {
   switch (b.kind) {
     case "metrics":
@@ -402,8 +412,8 @@ ${b.rows
 </table>`;
     case "table":
       return `${b.title ? `<div style="margin:14px 0 6px;font-size:13px;font-weight:600;color:${C.ink}">${esc(b.title)}</div>` : ""}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:12px">
-<tr>${b.columns.map((c, i) => `<td${b.numeric[i] ? ' align="right"' : ""} style="padding:4px 4px;color:${C.faint};font-size:11px;border-bottom:1px solid ${C.line}">${esc(c)}</td>`).join("")}</tr>
-${b.rows.map((r) => `<tr>${r.map((c, i) => `<td${b.numeric[i] ? ' align="right"' : ""} style="padding:5px 4px;border-bottom:1px solid ${C.line};color:${i === 0 ? C.ink : C.sub};${b.numeric[i] ? "white-space:nowrap;" : ""}">${esc(c)}</td>`).join("")}</tr>`).join("\n")}
+<tr>${b.columns.map((c, i) => `<td${hide(b, i)}${b.numeric[i] ? ' align="right"' : ""} style="padding:4px 4px;color:${C.faint};font-size:11px;border-bottom:1px solid ${C.line}">${esc(c)}</td>`).join("")}</tr>
+${b.rows.map((r) => `<tr>${r.map((c, i) => `<td${hide(b, i)}${b.numeric[i] ? ' align="right"' : ""} style="padding:5px 4px;border-bottom:1px solid ${C.line};color:${i === 0 ? C.ink : C.sub};${b.numeric[i] ? "white-space:nowrap;" : ""}">${esc(c)}</td>`).join("")}</tr>`).join("\n")}
 </table>`;
     case "bars": {
       const max = Math.max(1, ...b.rows.map((r) => Math.max(r.value, r.prior ?? 0)));
@@ -440,7 +450,7 @@ function htmlTile(t: Tile) {
 }
 
 export function renderMorningHtml(d: MorningDashboard): string {
-  const doc = morningDoc(d, { barberRows: EMAIL_BARBER_ROWS });
+  const doc = morningDoc(d, { barberRows: EMAIL_BARBER_ROWS, exceptionRows: EMAIL_EXCEPTION_ROWS });
   const tileRows: string[] = [];
   for (let i = 0; i < doc.tiles.length; i += 2) tileRows.push(`<tr>${htmlTile(doc.tiles[i])}${doc.tiles[i + 1] ? htmlTile(doc.tiles[i + 1]) : '<td width="50%"></td>'}</tr>`);
   const sections = doc.sections
@@ -454,7 +464,7 @@ ${s.blocks.map(htmlBlock).join("\n")}
     .join("\n");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="x-apple-disable-message-reformatting"><title>${esc(doc.subject)}</title>
-<style>@media (max-width:480px){.wrap{width:100%!important}.tiles td{display:block!important;width:100%!important}}</style></head>
+<style>@media (max-width:480px){.wrap{width:100%!important}.tiles td{display:block!important;width:100%!important;box-sizing:border-box}.m-hide{display:none!important}}</style></head>
 <body style="margin:0;padding:0;background:${C.bg};font-family:${FONT};color:${C.ink}">
 <div style="display:none;max-height:0;overflow:hidden;color:${C.bg}">${esc(doc.coverage)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.bg}"><tr><td align="center" style="padding:16px 8px">
