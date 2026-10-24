@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { appointments, brandSettings, checkoutHandoffs, customers, saleTipShares, sales, shops, staff, terminalReaders } from "@/db/schema";
 import { feeDisclosure, feeLabel } from "@/domain/checkout";
+import { perBarberTipProblem } from "@/domain/combined-checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding, takesCards } from "@/domain/connect";
 import {
@@ -234,9 +235,11 @@ export interface HandoffView {
   feeLabel: string | null;
   feeNotice: string | null;
   tips: { choices: { key: string; label: string; detail: string | null; cents: number }[]; allowCustom: boolean; allowNoTip: boolean };
-  tip: { cents: number | null; choice: string | null; source: "screen" | "reader" | null };
+  tip: { cents: number | null; choice: string | null; source: "screen" | "reader" | null; byStaff: { staffId: string; cents: number }[] | null };
   /** Each barber's part of the tip when the ticket has more than one. */
   split: { label: string; cents: number }[];
+  /** With more than one barber the client can tip each on their own line instead of one total. */
+  tipBarbers: { staffId: string; label: string; servicesCents: number }[];
   config: Pick<ShopHandoff, "tipEntry" | "signature" | "unlock" | "afterPayment" | "thankYouSeconds">;
   steps: ReturnType<typeof handoffSteps>;
   signed: boolean;
@@ -283,7 +286,8 @@ export async function handoffView(id: string): Promise<HandoffView> {
   const names = new Map(barberIds.length ? (await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, barberIds))).map((x) => [x.id, x.label]) : []);
   const serviceLines = (t?.lines ?? []).filter((l) => l.kind === "service" || l.kind === "addon");
   const splitIds = [...new Set(serviceLines.map((l) => l.staffId).filter((x): x is string => !!x))];
-  const weights = splitIds.length > 1 || (splitIds.length === 1 && splitIds[0] !== sale.staffId) ? tipWeights(t!.lines, d.tipSplit ?? "services") : [];
+  const byStaff = r.tipByStaff ?? null;
+  const weights = splitIds.length > 1 || (splitIds.length === 1 && splitIds[0] !== sale.staffId) ? tipWeights(t!.lines, byStaff ? "per_barber" : (d.tipSplit ?? "services"), byStaff) : [];
   const shares = weights.length ? splitCents(tipCents, weights.map((w) => ({ id: w.staffId, weight: w.weight }))) : new Map<string, number>();
   const [paidItems, paidShares] = paid
     ? await Promise.all([
@@ -324,8 +328,12 @@ export async function handoffView(id: string): Promise<HandoffView> {
     feeLabel: credit && credit.totals.cardFeeCents > 0 ? feeLabel({ rate: credit.totals.cardFeeRate }) : paid && sale.cardFeeCents > 0 ? feeLabel({ rate: pricing.cardFee?.rate ?? Number(shop.cardFeeRate) }) : null,
     feeNotice: cards ? feeDisclosure({ enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate) }) : null,
     tips: { choices: tipChoices(cfg.tips, t?.serviceGrossCents ?? 0), allowCustom: cfg.tips.allowCustom, allowNoTip: cfg.tips.allowNoTip },
-    tip: { cents: r.tipCents, choice: r.tipChoice, source: r.tipSource },
+    tip: { cents: r.tipCents, choice: r.tipChoice, source: r.tipSource, byStaff },
     split: paid ? paidShares.map((x) => ({ label: x.label, cents: paidSplit.get(x.staffId) ?? 0 })) : weights.map((w) => ({ label: names.get(w.staffId) ?? "Barber", cents: shares.get(w.staffId) ?? 0 })),
+    tipBarbers:
+      !paid && splitIds.length > 1
+        ? [...splitIds].sort().map((id) => ({ staffId: id, label: names.get(id) ?? "Barber", servicesCents: serviceLines.filter((l) => l.staffId === id).reduce((a, l) => a + l.grossCents, 0) }))
+        : [],
     config: { tipEntry: cfg.shop.tipEntry, signature: cfg.shop.signature, unlock: cfg.shop.unlock, afterPayment: cfg.shop.afterPayment, thankYouSeconds: cfg.shop.thankYouSeconds },
     steps: handoffSteps(cfg.shop, { readerTips }),
     signed: !!r.signature,
@@ -347,10 +355,19 @@ export async function handoffView(id: string): Promise<HandoffView> {
 
 // ───────────────────────────── The client's steps ─────────────────────────────
 
-export async function chooseTip(id: string, choice: string, cents: number) {
+export async function chooseTip(id: string, choice: string, cents: number, byStaff?: { staffId: string; cents: number }[] | null) {
   const r = await activeRow(id);
   const v = await handoffView(id);
-  if (choice === "none") {
+  let lines: { staffId: string; cents: number }[] | null = null;
+  if (choice === "per_barber") {
+    // A line per barber is a custom amount for each, so it follows the custom tip setting.
+    if (!v.tips.allowCustom || v.tipBarbers.length < 2) throw new AppError("bad_request", "Choose one of the tips");
+    lines = (byStaff ?? []).map((x) => ({ staffId: x.staffId, cents: x.cents }));
+    cents = lines.reduce((a, x) => a + (Number.isInteger(x.cents) ? x.cents : 0), 0);
+    const problem = perBarberTipProblem(lines, v.tipBarbers.map((b) => b.staffId), cents);
+    if (problem) throw new AppError("bad_request", problem);
+    if (cents === 0 && !v.tips.allowNoTip) throw new AppError("bad_request", "Choose a tip");
+  } else if (choice === "none") {
     if (!v.tips.allowNoTip) throw new AppError("bad_request", "Choose a tip");
     cents = 0;
   } else if (choice === "custom") {
@@ -366,7 +383,7 @@ export async function chooseTip(id: string, choice: string, cents: number) {
   const resign = r.signature && r.tipCents !== cents ? { signature: null, signedAt: null } : {};
   await db
     .update(checkoutHandoffs)
-    .set({ tipCents: cents, tipChoice: choice, tipSource: "screen", ...resign })
+    .set({ tipCents: cents, tipChoice: choice, tipSource: "screen", tipByStaff: lines, ...resign })
     .where(and(eq(checkoutHandoffs.id, r.id), eq(checkoutHandoffs.status, "active")));
   return handoffView(id);
 }
@@ -428,7 +445,7 @@ export async function collectOnReader(id: string, o: { testCard: string; readerI
     if (!preset) throw new AppError("bad_request", "Choose one of the tips on the reader");
     const problem = screenTipProblem(preset.cents);
     if (problem) throw new AppError("bad_request", problem);
-    await db.update(checkoutHandoffs).set({ tipCents: preset.cents, tipChoice: o.tip.choice, tipSource: "reader" }).where(eq(checkoutHandoffs.id, r.id));
+    await db.update(checkoutHandoffs).set({ tipCents: preset.cents, tipChoice: o.tip.choice, tipSource: "reader", tipByStaff: null }).where(eq(checkoutHandoffs.id, r.id));
   }
   const card = await terminal.collectPaymentMethod(o.testCard);
   return { card: { paymentMethodId: card.paymentMethodId, ...card.card }, view: await handoffView(id) };
@@ -459,6 +476,7 @@ export async function payHandoff(id: string, tender: HandoffTender, expectedTota
   const result = await finalizeSale({
     saleId: r.saleId,
     ...finalizeFields(d),
+    ...(r.tipByStaff ? { tipSplit: "per_barber" as const, tipByStaff: r.tipByStaff } : {}),
     tipCents: r.tipCents ?? 0,
     tender: tender as TenderInput,
     expectedTotalCents,
@@ -583,7 +601,8 @@ export async function resumeDraft(saleId: string, handoffId: string) {
     loyaltyRewardId: d.loyaltyRewardId,
     giftCard: d.giftCard,
     rebookInWeeks: d.rebookInWeeks,
-    tipSplit: d.tipSplit,
+    tipSplit: r.tipByStaff ? ("per_barber" as const) : d.tipSplit,
+    tipByStaff: r.tipByStaff ?? null,
     tipCents: r.tipCents,
     tipChoice: r.tipChoice,
     cash: r.cashRequested,

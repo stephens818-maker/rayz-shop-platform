@@ -106,7 +106,7 @@ describe("handing a ticket to the client", () => {
 
     await expect(H.payHandoff(id, keyed(), v.totalCents)).rejects.toThrow(/tip first/);
     v = await H.chooseTip(id, "p20", 1);
-    expect(v.tip).toEqual({ cents: Math.round(fx.cut.priceCents * 0.2), choice: "p20", source: "screen" });
+    expect(v.tip).toEqual({ cents: Math.round(fx.cut.priceCents * 0.2), choice: "p20", source: "screen", byStaff: null });
     await expect(H.chooseTip(id, "p19", 0)).rejects.toThrow(/one of the tips/);
     await expect(H.chooseTip(id, "custom", 60_000)).rejects.toThrow(/entered at the counter/);
     await expect(H.payHandoff(id, keyed(), v.totalCents)).rejects.toThrow(/receipt/);
@@ -330,7 +330,7 @@ describe("tips on the reader", () => {
     const got = await H.collectOnReader(id, { testCard: "pm_card_visa_debit", readerId: reader.id, tip: { choice: "p25", cents: 0 } });
     v = got.view;
     expect(got.card).toMatchObject({ funding: "debit", last4: "5556" });
-    expect(v.tip).toEqual({ cents: Math.round(fx.cut.priceCents * 0.25), choice: "p25", source: "reader" });
+    expect(v.tip).toEqual({ cents: Math.round(fx.cut.priceCents * 0.25), choice: "p25", source: "reader", byStaff: null });
     await H.payHandoff(id, terminal, v.totalCents);
     expect((await saleRow(saleId)).tipCents).toBe(v.tipCents);
     expect((await H.handoffOnSale(saleId)).screen?.tipSource).toBe("reader");

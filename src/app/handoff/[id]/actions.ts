@@ -34,8 +34,8 @@ export async function viewAction(id: string) {
   return safe(async () => (await onThisDevice(id), handoffView(id)));
 }
 
-export async function tipAction(id: string, choice: string, cents: number) {
-  return safe(async () => (await onThisDevice(id), chooseTip(id, choice, cents)));
+export async function tipAction(id: string, choice: string, cents: number, byStaff?: { staffId: string; cents: number }[] | null) {
+  return safe(async () => (await onThisDevice(id), chooseTip(id, choice, cents, byStaff)));
 }
 
 export async function signAction(id: string, path: string) {

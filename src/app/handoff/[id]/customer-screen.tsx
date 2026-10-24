@@ -114,7 +114,9 @@ export function CustomerScreen({ initial }: { initial: HandoffView }) {
           </div>
         )}
         <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col">
-          {step === "tip" && <TipStep v={v} pending={pending} editing={editing === "tip"} onKeep={() => setEditing(null)} onPick={(choice, cents) => run(() => tipAction(v.id, choice, cents), show)} />}
+          {step === "tip" && (
+            <TipStep v={v} pending={pending} editing={editing === "tip"} onKeep={() => setEditing(null)} onPick={(choice, cents, byStaff) => run(() => tipAction(v.id, choice, cents, byStaff), show)} />
+          )}
           {step === "signature" && <SignStep v={v} pending={pending} onSign={(path) => run(() => signAction(v.id, path), show)} />}
           {step === "receipt" && <ReceiptStep v={v} pending={pending} onChoose={(input) => run(() => receiptAction(v.id, input), show)} />}
           {step === "pay" && <PayStep v={v} card={card} setCard={setCard} pending={pending} run={run} show={show} />}
@@ -243,12 +245,28 @@ const bigBtn = (on: boolean) =>
 const primary = "min-h-16 w-full rounded-3xl bg-ink-900 px-6 text-xl font-semibold text-white transition active:scale-[0.99] disabled:opacity-40";
 const quiet = "min-h-14 w-full rounded-3xl px-6 text-lg font-medium text-zinc-700 ring-2 ring-zinc-200 active:bg-zinc-50 disabled:opacity-40";
 
-function TipStep({ v, pending, editing, onKeep, onPick }: { v: HandoffView; pending: boolean; editing: boolean; onKeep: () => void; onPick: (choice: string, cents: number) => void }) {
+type StaffTip = { staffId: string; cents: number };
+
+function TipStep({
+  v,
+  pending,
+  editing,
+  onKeep,
+  onPick,
+}: {
+  v: HandoffView;
+  pending: boolean;
+  editing: boolean;
+  onKeep: () => void;
+  onPick: (choice: string, cents: number, byStaff?: StaffTip[] | null) => void;
+}) {
   const [custom, setCustom] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<{ choice: string; cents: number } | null>(null);
-  const pick = (choice: string, cents: number) => (bigTip(cents, v.servicesCents) ? setConfirm({ choice, cents }) : onPick(choice, cents));
+  const [each, setEach] = useState(v.tip.choice === "per_barber");
+  const [confirm, setConfirm] = useState<{ choice: string; cents: number; byStaff?: StaffTip[] } | null>(null);
+  const pick = (choice: string, cents: number, byStaff?: StaffTip[]) => (bigTip(cents, v.servicesCents) ? setConfirm({ choice, cents, byStaff }) : onPick(choice, cents, byStaff));
   const n = v.tips.choices.length;
   const who = v.barbers.length ? v.barbers.join(" & ") : null;
+  const canEach = v.tips.allowCustom && v.tipBarbers.length > 1;
 
   if (confirm) {
     return (
@@ -258,13 +276,15 @@ function TipStep({ v, pending, editing, onKeep, onPick }: { v: HandoffView; pend
           <button type="button" className={quiet} onClick={() => setConfirm(null)}>
             Change it
           </button>
-          <button type="button" className={primary} disabled={pending} onClick={() => (onPick(confirm.choice, confirm.cents), setConfirm(null))}>
+          <button type="button" className={primary} disabled={pending} onClick={() => (onPick(confirm.choice, confirm.cents, confirm.byStaff), setConfirm(null))}>
             Yes, tip {$(confirm.cents)}
           </button>
         </div>
       </div>
     );
   }
+
+  if (each && canEach) return <EachBarberTip v={v} pending={pending} onBack={() => setEach(false)} onDone={(byStaff) => pick("per_barber", byStaff.reduce((a, x) => a + x.cents, 0), byStaff)} />;
 
   if (custom != null) {
     const cents = Number(custom || "0");
@@ -325,12 +345,88 @@ function TipStep({ v, pending, editing, onKeep, onPick }: { v: HandoffView; pend
           </button>
         )}
       </div>
+      {canEach && (
+        <button type="button" disabled={pending} onClick={() => setEach(true)} className={cx(quiet, "mt-3 sm:mt-4")} data-testid="tip-each">
+          Tip each barber separately
+        </button>
+      )}
       {editing && (
         <button type="button" className={cx(quiet, "mt-4")} onClick={onKeep}>
           Keep {$(v.tipCents)}
         </button>
       )}
       {v.feeNotice && <p className="mt-auto pt-6 text-sm text-zinc-500">{v.feeNotice}</p>}
+    </div>
+  );
+}
+
+/** A line per barber: their own preset buttons (percents of their services) or an amount typed for them. */
+function EachBarberTip({ v, pending, onBack, onDone }: { v: HandoffView; pending: boolean; onBack: () => void; onDone: (byStaff: StaffTip[]) => void }) {
+  const [typed, setTyped] = useState<Record<string, string>>(() =>
+    Object.fromEntries(v.tipBarbers.map((b) => [b.staffId, ((v.tip.byStaff?.find((x) => x.staffId === b.staffId)?.cents ?? 0) / 100 || "").toString()])),
+  );
+  const centsOf = (id: string) => Math.max(0, Math.round(Number(typed[id] || "0") * 100) || 0);
+  const lines = v.tipBarbers.map((b) => ({ staffId: b.staffId, cents: centsOf(b.staffId) }));
+  const total = lines.reduce((a, x) => a + x.cents, 0);
+  const problem = total > 0 ? screenTipProblem(total) : null;
+  const presets = (servicesCents: number) =>
+    v.tips.choices
+      .map((c) => ({ key: c.key, label: c.label, cents: c.key.startsWith("p") ? Math.round((servicesCents * Number(c.key.slice(1))) / 100) : c.cents }))
+      .filter((c) => c.cents > 0);
+  return (
+    <div className="flex flex-1 flex-col">
+      <Heading title="Tip each barber" detail="Pick or type a tip for each. They each get exactly what you choose." />
+      <div className="space-y-4">
+        {v.tipBarbers.map((b) => (
+          <div key={b.staffId} className="rounded-3xl p-4 ring-2 ring-zinc-200" data-testid={`tip-barber-${b.staffId}`}>
+            <div className="flex items-baseline justify-between gap-3">
+              <div className="text-xl font-semibold">{b.label}</div>
+              <div className="text-sm text-zinc-500">services {$(b.servicesCents)}</div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {presets(b.servicesCents).map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  disabled={pending}
+                  onClick={() => setTyped((t) => ({ ...t, [b.staffId]: (p.cents / 100).toFixed(2) }))}
+                  className={cx("min-h-12 rounded-2xl px-4 text-lg font-medium ring-2", centsOf(b.staffId) === p.cents ? "bg-ink-900 text-white ring-ink-900" : "ring-zinc-200")}
+                >
+                  {p.label} <span className="text-sm opacity-70">{$(p.cents)}</span>
+                </button>
+              ))}
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setTyped((t) => ({ ...t, [b.staffId]: "" }))}
+                className={cx("min-h-12 rounded-2xl px-4 text-lg font-medium ring-2", centsOf(b.staffId) === 0 ? "bg-ink-900 text-white ring-ink-900" : "ring-zinc-200")}
+              >
+                $0
+              </button>
+              <label className="flex min-h-12 items-center gap-1 rounded-2xl px-3 text-lg ring-2 ring-zinc-200">
+                <span className="text-zinc-500">$</span>
+                <input
+                  inputMode="decimal"
+                  aria-label={`Tip for ${b.label}`}
+                  className="w-24 bg-transparent tabular outline-none"
+                  value={typed[b.staffId] ?? ""}
+                  placeholder="Other"
+                  onChange={(e) => setTyped((t) => ({ ...t, [b.staffId]: e.target.value.replace(/[^\d.]/g, "").slice(0, 7) }))}
+                />
+              </label>
+            </div>
+          </div>
+        ))}
+      </div>
+      {problem && <p className="mt-3 text-center text-base text-red-700">{problem}</p>}
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        <button type="button" className={quiet} onClick={onBack}>
+          One tip for everyone
+        </button>
+        <button type="button" className={primary} disabled={pending || !!problem} onClick={() => onDone(lines)} data-testid="tip-each-done">
+          {total > 0 ? `Add ${$(total)} in tips` : "No tip"}
+        </button>
+      </div>
     </div>
   );
 }
