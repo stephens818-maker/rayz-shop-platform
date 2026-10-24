@@ -60,6 +60,7 @@ Handy demo data:
 - The promo code `WELCOME5` takes $5 off services.
 - Client "Jordan" (phone `319-555-0100`) has $290 of loyalty progress, so their next $33 haircut earns a $15 reward.
 - Families share one phone: the Hayes family at Coralville (`319-555-0201`), the Nguyens at Moline (`309-555-0202`), and the Carters at Kimberly (`563-555-0203`), each booked back to back with one barber in the coming days. They show up on **Clients → Duplicates** as a shared phone, and signing in at `/account` with that phone asks which of them it is.
+- Squire-import duplicates at Kimberly fill **Clients → Duplicates → Imported from Squire**: Jonathon / Jonathan Reyes (a typo, same birthday), Mike / Michael Kowalski (a nickname, same phone), and two Darnell Prices on one phone with different birthdays (a father and son, so they're kept apart).
 
 ### Try the full flow
 
@@ -1062,7 +1063,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 87 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 89 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -1147,12 +1148,64 @@ Migration `core_0036_network_access` adds the rules (off for every shop), the de
   A compatible first name is the same name, a common nickname (Mike/Michael), or a prefix of at least three letters; last names must not contradict. A contact with no name to compare only matches when exactly one client has it. A database lock serializes find-or-create, so two bookings at the same moment can't create two records.
 
 - Families sharing a phone stay separate people. Signing in by code on a shared phone asks which profile you are instead of picking one.
-- **Duplicates and merge** (**Clients → Duplicates**, needs the merge permission): candidates share a phone or email. Merging moves appointments, tickets, gift cards, rewards, staff ratings, and Squire IDs onto the kept record and combines loyalty progress (issuing a reward if the total crosses $300). It joins the notes and fills blank contact fields; consent stays yes only if both records said yes. Every merge is audited.
+- **Duplicates and merge** (**Clients → Duplicates**, needs the merge permission), built for cleaning up after a Squire import. Candidates share a phone or email, or have the same or a typo-close name (Jonathon / Jonathan) backed by a birthday, zip, phone last 4, or a record with no contact at all. Each pair gets a score and the signals behind it. Pairs whose birthdays or first names differ are kept apart as "something differs" (often a parent and child on one phone). The page groups pairs (likely, same name, close spelling, shared contact), marks the side that came from Squire, and has an **Imported from Squire** filter. You can:
+  - merge a pair either way;
+  - mark it **Not the same person**, so it isn't offered again;
+  - tick several pairs and **Merge selected**. Each keeps the record with more visits, then the older one, and pairs that share a client chain together.
+
+  Merging moves everything that points at the client onto the kept record: appointments, tickets, gift cards, rewards, staff ratings, Squire IDs, coupons, marketing sends and unsubscribes, message threads, tags (once), the photo, and referrals. Tables are found from the database catalog, so later tables move too. Loyalty progress is combined (issuing a reward if the total crosses $300). Notes are joined and blank fields are filled; consent stays yes only if both records said yes. Every merge and dismissal is audited.
 - **Profile:** visit count, no-shows, cancellations, last visit, and lifetime spend come from SQL over the client's whole history, net of refunds. They cover every Ray'z shop, in a shop workspace too. Lifetime spend includes Squire visits that have no imported ticket. The profile also shows the full visit history at every shop with shop, barber, services, and prices, plus purchases, home shop, preferred barber, loyalty, notes, and consent. Staff ratings and their notes show for the viewer's own shops; the average covers every shop.
-- **Search** by name, phone (any format or the last 4+ digits), or email uses trigram indexes. Brand-wide staff who can look up any client search the whole brand. In a shop workspace, search covers that shop's clients (home shop or a visit there), plus any brand client by an **exact** phone, email, or full name, so the desk can book them; partial searches and the client list never show other shops' clients. Without "look up any client", people can open the full profile only of a client they've served. How much of each detail they see (phone, email, address, and so on) is set under [Client data protection](#client-data-protection).
+- **Search**: see [Client search, filters and saved searches](#client-search-filters-and-saved-searches). Without "look up any client", people can open the full profile only of a client they've served. How much of each detail they see (phone, email, address, and so on) is set under [Client data protection](#client-data-protection).
+- **Identity:** every client has a client number (C10001 and up), an optional nickname, a photo, where they heard about Ray'z (a picklist under Lookups), and who referred them (with the list of clients they referred). **Show loyalty card** on the profile shows a QR code, `RAYZ1-<number>-<signature>`. The desk scans it into any search box to find the client at any shop. The signature is an HMAC, so a card can't be made up for a number. Photos are only served to people who see photos and can reach the client.
 - Client notes show on the calendar panel and the POS ticket.
 - **Consent:** SMS and email opt-in default to no. Each booking sends an explicit choice, an explicit no always sticks, and a missing answer keeps what's on file. Reminder texts and the waitlist "you're up" text are only sent to clients who opted in.
 - Every walk-in becomes a client, even without a phone.
+
+### Client search, filters and saved searches
+
+- **One search everywhere:** the client list, the **Find a client** box at the top of the brand portal sidebar (press `/`), booking on the calendar, the POS, and walk-in check-in. A returning walk-in is picked from the results instead of being created again. Results show the first name and last initial, nickname, photo, rating, client number, masked phone, the last visit (date and shop), the usual barber, and what matched.
+- **What it matches:**
+  - names (first, last, nickname) in any order, with typos ("Dominque Fairwether");
+  - a phone number in any format, or its last 4, alone or after a name ("jordan 4321");
+  - an email, the client ID or number, or a scanned loyalty card;
+  - a gift card, coupon code, ticket number (`#1234`), appointment code, or Squire ID;
+  - a birthday, an address or part of it, a zip or town, notes, and tags.
+
+  A prefix picks one reading: `zip:`, `town:`, `tag:`, `note:`, `phone:`, `email:`, `gift:`, `coupon:`, `squire:`, `client:`, `ticket:`, `birthday:`.
+- **Search follows what you can see.**
+  - A detail you see in full can be searched by any part.
+  - A masked one only by what the mask shows: the last 4 of a phone, the zip and town of an address, the month of a birthday.
+  - A hidden one only by the exact whole value, matched on a SHA-256 lookup hash kept by a database trigger. Results never show it, and there's no partial or prefix match to walk it out letter by letter.
+- **Who it reaches:**
+  - Partial terms find the searcher's own clients (their shops', or for barbers the clients they've cut).
+  - A whole identifier (phone, email, card, gift card, coupon, Squire ID) finds any Ray'z client, so they can be booked anywhere.
+  - Tickets and appointments are found only at the searcher's shops.
+
+  Every search is in the data-access log: where it came from, what kinds matched and how many, never the term. It counts toward the unusual-lookup alert and pause, which apply to everyone but the Brand Owner (Brand Admins too).
+- **Advanced filters** on the client list and in Campaign Center segments: one set of filters for both, needing "Use advanced client filters".
+  - **Visit history:** last or first visit date range or days ago, visit count, no-shows, cancellations, average days between visits, upcoming appointment.
+  - **People and places:** primary, recent or any barber; home and visited locations.
+  - **Spend:** services and products bought, total and average spend, tips.
+  - **Loyalty and gift cards:** loyalty balance, gift card, coupons redeemed (any or specific promos).
+  - **Profile:** rating, tags (any, all, none), birthday month or within N days, age range, zip, city, within N miles of a location, source, referred, created date.
+  - **Messaging:** SMS and email opt-in, marketing consent per channel, review link clicked, campaigns received or clicked.
+  - **Filled in or empty:** any field.
+
+  Filters follow the same visibility rules: age needs the whole birthday, zip and city need at least a masked address, and money needs every client. A refused filter says why instead of quietly applying. The panel's filters travel in the URL. **Message these clients** opens a new blast with the same filters, and **Export these** exports exactly what's listed.
+- **Distance:** "within N miles" uses the shop's coordinates, or its zip center, and the client's zip center. Load zip centers with `pnpm tsx scripts/load-zip-points.ts <Census ZCTA gazetteer .txt>` (see DEPLOY.md). The seed loads the demo shops' zips.
+- **Saved searches** ("Save client searches and share them"): private, for one location, or for the whole brand (brand-wide staff only). Only the owner can delete one, or a brand-wide manager who sees every client can delete a shared one.
+- **Exports** stay with the Brand Owner unless they grant "Export the client list"; it isn't part of the Brand Admin floor.
+- **Brand Admins always see everything:** every client detail at full, at every location, and the client-list, Campaign Center and report permissions. Rules can't lower that, by role or by person. Shops and staff get the subsets the brand grants per role and location.
+
+**Tests:**
+- `tests/client-search.test.ts`: every reading of a term, what masked and hidden details allow, signed loyalty cards, filter refusals and contradictions, upcoming birthdays across the year end and Feb 29, the URL form, duplicate scoring and bulk merge plans.
+- `tests/db/client-search.test.ts`:
+  - typo-tolerant names in any order, nicknames, a name plus last 4, phones in any format, and every identifier and code;
+  - a hidden phone found only whole and never shown, masked emails and hidden addresses, reach by shop, and access-log entries without the term;
+  - the client list's filters, a refused filter, the filtered export;
+  - saved searches by visibility, the photo route, a walk-in attached to a returning client;
+  - a merge that keeps unsubscribes, coupons, tags, the photo and referrals, and the Squire duplicates: grouping, dismissal, and bulk merge keeping the record with more visits.
+- `tests/db/client-privacy.test.ts`: Brand Admins always see every detail; rules on them are refused.
 
 ### Client ratings (staff only)
 
