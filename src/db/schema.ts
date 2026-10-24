@@ -993,7 +993,8 @@ export const customers = pgTable(
     index("customers_email_idx").on(t.email),
     index("customers_name_idx").on(t.firstName, t.lastName),
     index("customers_home_shop_idx").on(t.homeShopId),
-    // Trigram, hash, zip and city indexes live in drizzle/0006_client_search.sql and core_0044_client_search.sql.
+    // Trigram, hash, zip and city indexes live in drizzle/0006_client_search.sql and core_0044_client_search.sql;
+    // the created-at and preferred-barber ones for custom reports in core_0047_report_builder.sql.
   ],
 );
 
@@ -1208,6 +1209,7 @@ export const appointments = pgTable(
     index("appointments_shop_time_idx").on(t.shopId, t.startsAt),
     index("appointments_staff_time_idx").on(t.staffId, t.startsAt),
     index("appointments_customer_idx").on(t.customerId, t.startsAt),
+    // appointments_customer_status_idx (custom reports) lives in core_0047_report_builder.sql.
   ],
 );
 
@@ -1441,6 +1443,7 @@ export const sales = pgTable(
     index("sales_staff_date_idx").on(t.staffId, t.businessDate),
     index("sales_date_idx").on(t.businessDate),
     index("sales_customer_idx").on(t.customerId),
+    // sales_customer_date_idx (custom reports) lives in core_0047_report_builder.sql.
     uniqueIndex("sales_appointment_open_uq").on(t.appointmentId).where(sql`status <> 'voided'`),
   ],
 );
@@ -2687,6 +2690,66 @@ export const morningDashboardSends = pgTable(
     primaryKey({ columns: [t.date, t.staffId, t.scope, t.channel] }),
     check("morning_dashboard_sends_channel", sql`${t.channel} in ('email', 'sms')`),
     check("morning_dashboard_sends_status", sql`${t.status} in ('building', 'queued', 'skipped')`),
+  ],
+);
+
+// ───────────────────────────── Custom reports ─────────────────────────────
+
+/**
+ * A report built in the report builder: its data source and definition (ReportDefinition in
+ * src/domain/report-builder.ts). Private to its owner, shared with roles, or a brand template
+ * everyone with "open saved reports" sees. Whoever opens it gets it under their own access: their
+ * locations, their barbers, client details as they see them.
+ */
+export const savedReports = pgTable(
+  "saved_reports",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    description: text("description"),
+    source: text("source").notNull().default("customers"),
+    definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    visibility: text("visibility").$type<"private" | "roles" | "template">().notNull().default("private"),
+    /** Roles it's shared with, when visibility is "roles". */
+    roleIds: jsonb("role_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** ReportSchedule in src/domain/report-builder.ts, or null for none. */
+    schedule: jsonb("schedule").$type<Record<string, unknown>>(),
+    /** Listed in the owner's (and the recipients') Morning Dashboard. */
+    morning: boolean("morning").notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("saved_reports_owner_idx").on(t.ownerId),
+    check("saved_reports_visibility", sql`${t.visibility} in ('private', 'roles', 'template')`),
+    check("saved_reports_source", sql`${t.source} in ('customers', 'sales', 'appointments', 'staff', 'inventory', 'tips', 'campaigns')`),
+  ],
+);
+
+/** One row per scheduled report, recipient and period, so a send goes out once even when the cron reruns. */
+export const savedReportSends = pgTable(
+  "saved_report_sends",
+  {
+    reportId: uuid("report_id")
+      .notNull()
+      .references(() => savedReports.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    /** The day it's due, YYYY-MM-DD. */
+    period: date("period").notNull(),
+    status: text("status").$type<"building" | "queued" | "skipped">().notNull().default("building"),
+    rows: integer("rows"),
+    jobId: uuid("job_id"),
+    claimedAt: ts("claimed_at").notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.reportId, t.staffId, t.period] }),
+    check("saved_report_sends_status", sql`${t.status} in ('building', 'queued', 'skipped')`),
   ],
 );
 

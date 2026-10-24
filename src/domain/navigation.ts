@@ -6,6 +6,7 @@ const PURCHASING: Permission[] = ["po.create", "po.approve", "po.send", "po.rece
 const CALL_INS: Permission[] = ["callins.mark", "callins.mark_own", "callins.outreach", "callins.voice"];
 const TIMESHEETS: Permission[] = ["timesheet.own", "timesheet.edit", "timesheet.approve", "payroll.export"];
 const CAMPAIGN_CENTER: Permission[] = ["campaign_center.view", "campaign_center.create", "campaign_center.send"];
+const CUSTOM_REPORTS: Permission[] = ["report_builder.view", "report_builder.build"];
 
 /**
  * What each admin page needs: any one of the listed permissions, or null for any signed-in staff
@@ -91,7 +92,10 @@ export const PAGE_ACCESS = {
   "/admin/campaign-center/sequences/[id]": CAMPAIGN_CENTER,
   "/admin/campaign-center/my-clients": ["campaign_center.own_clients"],
   "/admin/campaign-center/openings": ["campaign_center.openings", "campaign_center.send"],
-  "/admin/reports": REPORTS.map((r) => reportView(r.key)),
+  "/admin/reports": [...REPORTS.map((r) => reportView(r.key)), ...CUSTOM_REPORTS],
+  "/admin/reports/custom": CUSTOM_REPORTS,
+  "/admin/reports/custom/new": ["report_builder.build"],
+  "/admin/reports/custom/[id]": CUSTOM_REPORTS,
   ...(Object.fromEntries(REPORTS.map((r) => [r.href, [reportView(r.key)]])) as Record<(typeof REPORTS)[number]["href"], Permission[]>),
 } satisfies Record<string, readonly Permission[] | null>;
 

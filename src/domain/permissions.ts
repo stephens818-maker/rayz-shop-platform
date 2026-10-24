@@ -3,7 +3,7 @@
  * permissions are worked out, and who may grant what. Server code loads the rows and calls these.
  */
 
-export const PERMISSION_GROUPS = ["Front desk", "Point of sale", "Clients", "Campaign Center", "Catalog and inventory", "Staff", "Settings and data"] as const;
+export const PERMISSION_GROUPS = ["Front desk", "Point of sale", "Clients", "Campaign Center", "Catalog and inventory", "Staff", "Custom reports", "Settings and data"] as const;
 export type PermissionGroup = (typeof PERMISSION_GROUPS)[number];
 
 interface PermissionDef {
@@ -243,6 +243,24 @@ export const FEATURE_PERMISSIONS = [
     hint: "Each shop's payout schedule, card settlement delay, default method and card fee netting, and the brand's allowed methods.",
     brandOnly: true,
   },
+  {
+    key: "report_builder.view",
+    group: "Custom reports",
+    label: "Custom reports: open saved reports",
+    hint: "Their own reports, reports shared with their role and the brand's templates. Each runs on their own locations and barbers, with client details as Client data lets them see them.",
+  },
+  {
+    key: "report_builder.build",
+    group: "Custom reports",
+    label: "Custom reports: build, save, share and schedule reports",
+    hint: "Pick the columns, filters, grouping and totals, save the report for themselves or share it with roles, and email it on a schedule. With access to all shops, also the brand's templates.",
+  },
+  {
+    key: "report_builder.export",
+    group: "Custom reports",
+    label: "Custom reports: export to CSV, Excel and PDF",
+    hint: "Also what a scheduled email attaches. Customer reports also need \"Export the client list\". Every export is logged.",
+  },
   { key: "settings.shop", group: "Settings and data", label: "Edit shop info, weekday hours, closures and booking rules" },
   { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
   {
@@ -404,6 +422,8 @@ export const BRAND_ADMIN_ALWAYS = new Set<Permission>([
   "campaign_center.create",
   "campaign_center.send",
   "campaign_center.own_clients",
+  "report_builder.view",
+  "report_builder.build",
   ...REPORTS.map((r) => reportView(r.key)),
 ]);
 
@@ -523,6 +543,9 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "tips.own",
   "tips.approve",
   "devices.approve",
+  "report_builder.view",
+  "report_builder.build",
+  "report_builder.export",
 ];
 /** Regional managers also approve big orders and run the shop logins for their shops. */
 const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "logins.manage", "po.approve"];
@@ -660,6 +683,7 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
   if (scope !== "all") for (const p of BRAND_ONLY) perms.delete(p);
   if (role.key === BRAND_ADMIN_ROLE_KEY && scope === "all") for (const p of BRAND_ADMIN_ALWAYS) perms.add(p);
   for (const r of REPORTS) if (!perms.has(reportView(r.key))) perms.delete(reportExport(r.key));
+  if (!perms.has("report_builder.view") && !perms.has("report_builder.build")) perms.delete("report_builder.export");
   const maxDiscountPct = perms.has("pos.discount") ? clampPct(maxDiscountOverride ?? role.maxDiscountPct) : 0;
   return { isOwner: false, permissions: perms, maxDiscountPct };
 }
