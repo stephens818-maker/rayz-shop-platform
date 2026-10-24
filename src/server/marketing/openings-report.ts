@@ -84,8 +84,9 @@ export async function openingsReportData(scope: ReportScope, loc: ViewCtx): Prom
   const sent = sum((r) => Number(r.cells[OPEN + 1]) || 0);
   const clicked = sum((r) => Number(r.cells[OPEN + 2]) || 0);
   const booked = sum((r) => Number(r.cells[OPEN + 4]) || 0);
-  const open = sum((r) => Number(r.cells[OPEN]) || 0);
-  const went = rows.filter((c) => c.status === "sent").length;
+  const sentRows = rows.filter((c) => c.status === "sent");
+  const open = sentRows.reduce((a, c) => a + (Number(c.settings?.openSlots) || 0), 0);
+  const went = sentRows.length;
   return {
     stats: [
       { label: "Openings blasts", value: String(went), hint: rows.length > went ? `${rows.length - went} waiting, turned down or expired` : undefined },
