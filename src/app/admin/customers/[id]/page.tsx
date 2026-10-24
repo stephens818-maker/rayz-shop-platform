@@ -72,15 +72,20 @@ export default async function CustomerPage({
   }
   const policy = await clientPolicy(ctx);
   const preferredFull = policy.level("preferred_barber") === "full";
-  // The client's history follows them: every shop sees their visits, purchases and notes at every shop.
-  // Staff ratings stay with the shop they were written at; tickets open only at their own shop.
+  // One profile per client, brand-wide: every shop sees their visits and notes at every shop.
+  // Staff ratings stay with the shop they were written at; tickets open only at their own shop. A
+  // shared shop login sees when, where and what at other shops, but no prices, tickets or spend there.
   const scoped = !ctx.brandWide;
   const mine = scoped ? ctx.shopIds : undefined;
+  const moneyShops = ctx.staff.kind === "shop" ? ctx.shopIds : undefined;
+  const ownMoney = (shopId: string) => !moneyShops || moneyShops.includes(shopId);
+  const salesHere = moneyShops ? inShops(ctx, sales.shopId) : undefined;
   const vPage = Math.max(1, Number(sp.v) || 1);
   const sPage = Math.max(1, Number(sp.s) || 1);
 
-  const [stats, visits, [{ visitCount }], saleRows, [{ saleCount }], loyalty, ledger, squireIds, dupes, barberOptions, cadence] = await Promise.all([
+  const [stats, money, visits, [{ visitCount }], saleRows, [{ saleCount }], loyalty, ledger, squireIds, dupes, barberOptions, cadence] = await Promise.all([
     customerStats(id, db, new Date()),
+    moneyShops ? customerStats(id, db, new Date(), moneyShops) : null,
     db
       .select({
         a: appointments,
@@ -109,7 +114,7 @@ export default async function CustomerPage({
           })
           .from(sales)
           .innerJoin(shops, eq(shops.id, sales.shopId))
-          .where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`))
+          .where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`, salesHere))
           .orderBy(desc(sales.businessDate), desc(sales.createdAt))
           .limit(SALES_PAGE)
           .offset((sPage - 1) * SALES_PAGE)
@@ -118,7 +123,7 @@ export default async function CustomerPage({
       ? db
           .select({ saleCount: sql<number>`count(*)::int` })
           .from(sales)
-          .where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`))
+          .where(and(eq(sales.customerId, id), sql`${sales.status} <> 'open'`, salesHere))
       : [{ saleCount: 0 }],
     loyaltyBalance(id),
     db.select().from(loyaltyLedger).where(eq(loyaltyLedger.customerId, id)).orderBy(desc(loyaltyLedger.createdAt)).limit(20),
@@ -142,6 +147,7 @@ export default async function CustomerPage({
       : [],
     clientCadence(id, new Date()),
   ]);
+  const spend = money ?? stats;
   const [tags, knownTags] = full
     ? await Promise.all([
         db.select({ tag: customerTags.tag }).from(customerTags).where(eq(customerTags.customerId, id)).orderBy(asc(customerTags.tag)),
@@ -286,9 +292,9 @@ export default async function CustomerPage({
         />
         {full && (
           <Stat
-            label="Lifetime spend"
-            value={formatCents(stats.lifetimeSpendCents)}
-            hint={`tips ${formatCents(stats.tipsCents)}${stats.squireVisitSpendCents ? ` · ${formatCents(stats.squireVisitSpendCents)} from Squire visit prices` : ""}`}
+            label={moneyShops ? `Spend at ${ctx.shops.length === 1 ? ctx.shops[0].name : "your shop"}` : "Lifetime spend"}
+            value={formatCents(spend.lifetimeSpendCents)}
+            hint={`tips ${formatCents(spend.tipsCents)}${spend.squireVisitSpendCents ? ` · ${formatCents(spend.squireVisitSpendCents)} from Squire visit prices` : ""}`}
           />
         )}
         <Stat
@@ -498,7 +504,10 @@ export default async function CustomerPage({
           )}
           <CadenceCard {...cadence} />
           <Card>
-            <CardHeader title="Visit history" subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history`} />
+            <CardHeader
+              title="Visit history"
+              subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history${moneyShops ? ". Prices show for this shop's visits only." : ""}`}
+            />
             <Table>
               <thead>
                 <tr>
@@ -521,7 +530,7 @@ export default async function CustomerPage({
                       {v.items}
                       {v.a.source === "import" && <span className="ml-1 text-xs text-zinc-400">Squire</span>}
                     </Td>
-                    <Td right>{formatCents(v.paid ?? v.a.estimateCents)}</Td>
+                    <Td right>{ownMoney(v.a.shopId) ? formatCents(v.paid ?? v.a.estimateCents) : <span className="text-zinc-400">—</span>}</Td>
                     <Td>
                       <StatusBadge status={v.a.status} />
                     </Td>
@@ -534,7 +543,10 @@ export default async function CustomerPage({
           </Card>
           {full && (
             <Card>
-              <CardHeader title="Purchases" subtitle={`${saleCount} ticket${saleCount === 1 ? "" : "s"} · lifetime ${formatCents(stats.ticketSpendCents)} after refunds`} />
+              <CardHeader
+                title="Purchases"
+                subtitle={`${saleCount} ticket${saleCount === 1 ? "" : "s"}${moneyShops ? " at this shop" : ""} · ${moneyShops ? "" : "lifetime "}${formatCents(spend.ticketSpendCents)} after refunds`}
+              />
               <Table>
                 <thead>
                   <tr>
