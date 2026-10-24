@@ -871,7 +871,10 @@ describe("server actions aimed at another shop's records", () => {
         else (errors[name] ??= []).push(`${o.name}: ${r.error}`);
       }
     }
-    for (const [name, list] of Object.entries(errors)) if (!list.some((e) => TENANT.test(e))) wrong.push(`${name}: ${list.join(" | ")}`);
+    const brandOnly = new Set(["shop owner", "owner entity edit", "owner entity create"]);
+    for (const [name, list] of Object.entries(errors)) {
+      if (!list.some((e) => TENANT.test(e) || (brandOnly.has(name) && /Only the brand can/.test(e)))) wrong.push(`${name}: ${list.join(" | ")}`);
+    }
     await m.db.db.update(m.schema.staff).set({ permissionOverrides: manager.permissionOverrides }).where(eq(m.schema.staff.id, manager.id));
     expect(wrong).toEqual([]);
     expect(await coralvilleState()).toBe(before);

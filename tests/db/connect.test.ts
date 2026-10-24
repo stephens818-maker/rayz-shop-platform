@@ -75,7 +75,7 @@ describe("destination charges", () => {
     expect(pay.applicationFeeCents).toBe(fee);
     expect(pay.stripeTransferId).toMatch(/^sim_tr_/);
     const intent = m.processor.simulatorLedger().intents.find((i) => i.id === pay.stripePaymentIntentId)!;
-    expect(intent.destination).toEqual({ accountId: a.stripeAccountId, applicationFeeCents: fee });
+    expect(intent.destination).toEqual({ accountId: a.stripeAccountId, applicationFeeCents: fee, processingFeeCents: fee, royaltyCents: 0, adFundCents: 0 });
   });
 
   it("the card reader uses the in-person rate", async () => {

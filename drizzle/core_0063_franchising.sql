@@ -72,6 +72,7 @@ CREATE TABLE "entity_payment_accounts" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "entity_payment_accounts_stripe_account_id_unique" UNIQUE("stripe_account_id")
 );--> statement-breakpoint
+CREATE TRIGGER "entity_payment_accounts_scrub_sensitive" BEFORE INSERT OR UPDATE OF "disabled_reason" ON "entity_payment_accounts" FOR EACH ROW EXECUTE FUNCTION "scrub_sensitive_row"('disabled_reason');--> statement-breakpoint
 ALTER TABLE "shops" DROP CONSTRAINT "shops_payments_mode";--> statement-breakpoint
 ALTER TABLE "shops" ADD CONSTRAINT "shops_payments_mode" CHECK ("payments_mode" IN ('brand', 'connected', 'entity', 'cash_only'));--> statement-breakpoint
 ALTER TABLE "shop_payouts" ADD COLUMN "owner_entity_id" uuid REFERENCES "owner_entities"("id");--> statement-breakpoint
