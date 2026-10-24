@@ -167,10 +167,14 @@ describe("client ratings never reach customers", () => {
 
   it("the ratings table is only mentioned where it's defined and where a merge moves it", () => {
     const mentions = [...files].filter((f) => /clientRatings|client_ratings/.test(readFileSync(f, "utf8"))).map(rel).sort();
-    expect(mentions.filter((f) => f !== "src/domain/permissions.ts")).toEqual(["src/db/schema.ts", "src/server/client-filters.ts", "src/server/customers.ts"]);
+    expect(mentions.filter((f) => f !== "src/domain/permissions.ts")).toEqual(["src/db/schema.ts", "src/server/client-filters.ts", "src/server/customers.ts", "src/server/report-builder/engine.ts"]);
     // Client list filters and marketing segments (run by the marketing cron) filter on a client's average rating; the stars are never selected.
     const segment = readFileSync(join(SRC, "server", "client-filters.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
     expect(segment).toEqual(["    const avg = sql`(select avg(r.stars) from client_ratings r where r.customer_id = c.id)`;"]);
+    // Custom reports (emailed by the notifications cron) run under a staff member's Client data policy: the average
+    // rating is a column only when that policy shows ratings, and it never goes to a client.
+    const reports = readFileSync(join(SRC, "server", "report-builder", "engine.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
+    expect(reports).toEqual(["    rt: sql`rt as (select customer_id, avg(stars)::float8 avg from client_ratings group by customer_id)`,"]);
     // The permission catalog (reached by the cron's Morning Dashboard) names the ratings report, not the table.
     const catalog = readFileSync(join(SRC, "domain", "permissions.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
     expect(catalog).toEqual([`  { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },`]);

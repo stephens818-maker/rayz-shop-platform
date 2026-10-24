@@ -123,6 +123,7 @@ const ids = {} as {
   blast: string;
   sequence: string;
   campaign: string;
+  savedReport: string;
   marks: Record<keyof typeof MARK, { appt: string; promo: string; sale: string }>;
 };
 let today: string;
@@ -290,6 +291,8 @@ async function seedCanaries() {
   ids.tipBatch = (await m.db.db.insert(m.schema.tipPayoutBatches).values({ shopId: cv, kind: "manual", cutoffDate: today, notes: CANARY.apptNote }).returning())[0].id;
   ids.blast = (await m.db.db.insert(m.schema.marketingCampaigns).values({ kind: "blast", name: `Coralville blast ${CANARY.apptNote}`, shopIds: [cv], channels: ["sms"] }).returning())[0].id;
   ids.sequence = (await m.db.db.insert(m.schema.marketingCampaigns).values({ kind: "sequence", name: `Coralville sequence ${CANARY.apptNote}`, shopIds: [cv], channels: ["sms"] }).returning())[0].id;
+  const ownerId = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, "owner@rayz.test") }))!.id;
+  ids.savedReport = (await m.db.db.insert(m.schema.savedReports).values({ name: `Coralville report ${CANARY.apptNote}`, ownerId, definition: { columns: [{ field: "name" }], shops: cv } }).returning())[0].id;
   await m.db.db.insert(m.schema.marketingSteps).values({ campaignId: ids.sequence, position: 0, afterDays: 14, templates: { sms: "{shop}: hi {first_name}. Reply STOP to opt out." } });
   await (await import("@/server/marketing/campaigns")).ensureTriggerCampaigns();
   ids.campaign = (await m.db.db.query.marketingCampaigns.findFirst({ where: eq(m.schema.marketingCampaigns.trigger, "lapsed") }))!.id;
@@ -468,6 +471,7 @@ function dynamicPages(): [string, Record<string, string>][] {
     ["/admin/tips/[id]", { id: ids.tipBatch }],
     ["/admin/campaign-center/blasts/[id]", { id: ids.blast }],
     ["/admin/campaign-center/sequences/[id]", { id: ids.sequence }],
+    ["/admin/reports/custom/[id]", { id: ids.savedReport }],
   ];
 }
 

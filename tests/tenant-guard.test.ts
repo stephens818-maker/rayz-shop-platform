@@ -22,6 +22,8 @@ const BRAND_LEVEL: Record<string, string> = {
   "campaign-center/automations/[id]/page.tsx": "Automated campaigns are the brand's; the page shows and switches only the viewer's own locations, and rewording the brand's version needs Campaign Center: create with access to all shops",
   "inventory/[id]/page.tsx": "A product is brand catalog; stock, ledger and orders on the page are filtered to the viewer's shops",
   "permissions/roles/[id]/page.tsx": "Roles are brand-level templates; editing needs roles.manage",
+  "reports/custom/[id]/page.tsx":
+    "Saved reports belong to their owner, not a shop: openSavedReport finds only the viewer's own reports, ones shared with their role and the brand's templates (anything else is not found), and every run is cut down to the viewer's locations",
   "vendors/[id]/page.tsx": "Vendors are brand-level; the page needs vendors.manage, which only all-shops access keeps",
 };
 
