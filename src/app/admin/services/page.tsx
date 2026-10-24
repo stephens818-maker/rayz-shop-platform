@@ -103,11 +103,6 @@ export default async function ServicesPage() {
             defaultDurationMin: m.defaultDurationMin,
             active: m.active,
             sortOrder: m.sortOrder,
-            localPrice: m.localPrice,
-            priceFloorCents: m.priceFloorCents,
-            priceCeilingCents: m.priceCeilingCents,
-            localName: m.localName,
-            localDuration: m.localDuration,
           }))}
         />
       )}

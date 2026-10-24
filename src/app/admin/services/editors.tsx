@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Select, Suggestions, cx } from "@/components/ui";
-import { LOCAL_PRICES, type LocalPrice } from "@/domain/brand-standards";
 import { saveMasterServiceAction, saveShopServiceAction } from "./actions";
 
 const dollars = (c: number | null) => (c == null ? "" : (c / 100).toFixed(2));
@@ -124,46 +123,13 @@ function OverrideRow({ shopId, r }: { shopId: string; r: OvRow }) {
   );
 }
 
-type MRow = {
-  id: string;
-  name: string;
-  kind: "service" | "addon";
-  category: string;
-  description: string | null;
-  defaultPriceCents: number;
-  defaultDurationMin: number;
-  active: boolean;
-  sortOrder: number;
-  localPrice: LocalPrice;
-  priceFloorCents: number | null;
-  priceCeilingCents: number | null;
-  localName: boolean;
-  localDuration: boolean;
-};
+type MRow = { id: string; name: string; kind: "service" | "addon"; category: string; description: string | null; defaultPriceCents: number; defaultDurationMin: number; active: boolean; sortOrder: number };
 
 export function MasterEditor({ rows, categories }: { rows: MRow[]; categories: string[] }) {
-  const blank: MRow = {
-    id: "",
-    name: "",
-    kind: "service",
-    category: categories[0] ?? "Haircuts",
-    description: null,
-    defaultPriceCents: 3000,
-    defaultDurationMin: 30,
-    active: true,
-    sortOrder: 100,
-    localPrice: "open",
-    priceFloorCents: null,
-    priceCeilingCents: null,
-    localName: true,
-    localDuration: true,
-  };
+  const blank: MRow = { id: "", name: "", kind: "service", category: categories[0] ?? "Haircuts", description: null, defaultPriceCents: 3000, defaultDurationMin: 30, active: true, sortOrder: 100 };
   return (
     <Card>
-      <CardHeader
-        title="Brand master catalog"
-        subtitle="Brand admins only. New services start turned off at every shop; enable them per shop above. Locations price within each item's standard: their own price, within the floor and ceiling, or the brand price everywhere."
-      />
+      <CardHeader title="Brand master catalog" subtitle="Brand admins only. New services start turned off at every shop; enable them per shop above." />
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead>
@@ -172,10 +138,6 @@ export function MasterEditor({ rows, categories }: { rows: MRow[]; categories: s
               <th className="px-3 py-2">Type</th>
               <th className="px-3 py-2">Category</th>
               <th className="px-3 py-2">Price</th>
-              <th className="px-3 py-2">Locations price</th>
-              <th className="px-3 py-2">Floor</th>
-              <th className="px-3 py-2">Ceiling</th>
-              <th className="px-3 py-2">Locations may change</th>
               <th className="px-3 py-2">Min</th>
               <th className="px-3 py-2">Sort</th>
               <th className="px-3 py-2">Active</th>
@@ -197,8 +159,7 @@ export function MasterEditor({ rows, categories }: { rows: MRow[]; categories: s
 function MasterRow({ r }: { r: MRow }) {
   const router = useRouter();
   const [pending, start] = useTransition();
-  const fresh = (x: MRow) => ({ ...x, price: dollars(x.defaultPriceCents), floor: x.priceFloorCents == null ? "" : dollars(x.priceFloorCents), ceiling: x.priceCeilingCents == null ? "" : dollars(x.priceCeilingCents) });
-  const [s, setS] = useState(fresh(r));
+  const [s, setS] = useState({ ...r, price: dollars(r.defaultPriceCents) });
   const [msg, setMsg] = useState<string | null>(null);
   const isNew = !r.id;
   return (
@@ -217,29 +178,6 @@ function MasterRow({ r }: { r: MRow }) {
       </td>
       <td className="px-3 py-1.5">
         <Input className="w-24 py-1" inputMode="decimal" value={s.price} onChange={(e) => setS({ ...s, price: e.target.value })} />
-      </td>
-      <td className="px-3 py-1.5">
-        <Select aria-label="How locations price it" className="w-36 py-1" value={s.localPrice} onChange={(e) => setS({ ...s, localPrice: e.target.value as LocalPrice })}>
-          {LOCAL_PRICES.map((k) => (
-            <option key={k} value={k}>
-              {{ open: "Their own", range: "Within limits", locked: "Brand price" }[k]}
-            </option>
-          ))}
-        </Select>
-      </td>
-      <td className="px-3 py-1.5">
-        <Input aria-label="Price floor" className="w-20 py-1" inputMode="decimal" disabled={s.localPrice !== "range"} value={s.floor} onChange={(e) => setS({ ...s, floor: e.target.value })} />
-      </td>
-      <td className="px-3 py-1.5">
-        <Input aria-label="Price ceiling" className="w-20 py-1" inputMode="decimal" disabled={s.localPrice !== "range"} value={s.ceiling} onChange={(e) => setS({ ...s, ceiling: e.target.value })} />
-      </td>
-      <td className="px-3 py-1.5 text-xs">
-        <label className="mr-2 inline-flex items-center gap-1">
-          <input type="checkbox" checked={s.localName} onChange={(e) => setS({ ...s, localName: e.target.checked })} /> Name
-        </label>
-        <label className="inline-flex items-center gap-1">
-          <input type="checkbox" checked={s.localDuration} onChange={(e) => setS({ ...s, localDuration: e.target.checked })} /> Length
-        </label>
       </td>
       <td className="px-3 py-1.5">
         <Input className="w-16 py-1" inputMode="numeric" value={s.defaultDurationMin} onChange={(e) => setS({ ...s, defaultDurationMin: Number(e.target.value) || 0 })} />
@@ -267,14 +205,9 @@ function MasterRow({ r }: { r: MRow }) {
                 defaultDurationMin: s.defaultDurationMin,
                 active: s.active,
                 sortOrder: s.sortOrder,
-                localPrice: s.localPrice,
-                priceFloorCents: s.localPrice === "range" ? toCents(s.floor) : null,
-                priceCeilingCents: s.localPrice === "range" ? toCents(s.ceiling) : null,
-                localName: s.localName,
-                localDuration: s.localDuration,
               });
               setMsg(res.ok ? "Saved" : res.error);
-              if (res.ok && isNew) setS(fresh(r));
+              if (res.ok && isNew) setS({ ...r, price: dollars(r.defaultPriceCents) });
               router.refresh();
             })
           }

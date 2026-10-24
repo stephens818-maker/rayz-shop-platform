@@ -15,9 +15,6 @@ import { DEFAULT_HOURS, SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/locati
 import { slugify } from "@/lib/ids";
 import { WEEKDAYS, hhmmToMinutes, minutesToHHMM, minutesToLabel } from "@/lib/time";
 import { checkSlugAction, createLocationAction, startPaymentsOnboardingAction } from "../actions";
-import { startEntityOnboardingAction } from "../../franchise/actions";
-
-const NEW_OWNER = "__new";
 import { AddressLookup, type GeocodeSource } from "../../settings/address-lookup";
 import { AMENITIES, SOCIAL, SOCIAL_KEYS, e164, fullAddress, socialLink, type TaxJurisdiction } from "@/domain/location-profile";
 
@@ -52,7 +49,6 @@ export function LocationWizard({
   options,
   brandIntervalMinutes,
   canBank,
-  canOwners = false,
   network,
   geocoder,
 }: {
@@ -60,8 +56,6 @@ export function LocationWizard({
   geocoder: "google" | "census" | "zip";
   brandIntervalMinutes: number;
   canBank: boolean;
-  /** May create a franchisee owner group here (entities.manage). */
-  canOwners?: boolean;
   /** Set when they may limit where staff sign in from. */
   network: { myIp: string | null; exempt: boolean } | null;
 }) {
@@ -70,15 +64,7 @@ export function LocationWizard({
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [slugNote, setSlugNote] = useState<string | null>(null);
-  const [done, setDone] = useState<{
-    id: string;
-    slug: string;
-    paymentsMode: PaymentsMode;
-    ownerEntityId: string | null;
-    readerProblems: string[];
-    login: { email: string; password: string } | null;
-  } | null>(null);
-  const [newOwner, setNewOwner] = useState({ name: "", legalName: "", contactEmail: "", payrollCompanyCode: "" });
+  const [done, setDone] = useState<{ id: string; slug: string; paymentsMode: PaymentsMode; readerProblems: string[]; login: { email: string; password: string } | null } | null>(null);
 
   const [basics, setBasics] = useState({
     name: "",
@@ -97,7 +83,6 @@ export function LocationWizard({
     email: "",
     timezone: SUPPORTED_TIMEZONE as string,
     ownerEntityId: options.owners.find((o) => o.kind === "brand")?.id ?? "",
-    regionId: "",
     groups: [] as string[],
   });
   const [hours, setHours] = useState<Hours[]>(
@@ -181,17 +166,7 @@ export function LocationWizard({
       amenities: profile.amenities,
       taxJurisdiction: jurisdiction,
       timezone: basics.timezone,
-      ownerEntityId: basics.ownerEntityId && basics.ownerEntityId !== NEW_OWNER ? basics.ownerEntityId : null,
-      newOwner:
-        basics.ownerEntityId === NEW_OWNER
-          ? {
-              name: newOwner.name.trim(),
-              legalName: newOwner.legalName.trim() || null,
-              contactEmail: newOwner.contactEmail.trim() || null,
-              payrollCompanyCode: newOwner.payrollCompanyCode.trim() || null,
-            }
-          : null,
-      regionId: basics.regionId || null,
+      ownerEntityId: basics.ownerEntityId || null,
       description: brand.description.trim() || null,
       hours: hours.filter((h) => h.open).map(({ weekday, openMin, closeMin }) => ({ weekday, openMin, closeMin })),
       holidays: holidays.filter((h) => h.date).map((h) => ({ date: h.date, reason: h.reason.trim() || null })),
@@ -224,13 +199,12 @@ export function LocationWizard({
       logoUrl: brand.logo.trim() || null,
       networkAccess: network ? ruleFromDraft(signIn) : DEFAULT_NETWORK_RULE,
     }),
-    [basics, hours, holidays, money, screen, options.brandTips, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank, network, signIn, profile, jurisdiction, newOwner],
+    [basics, hours, holidays, money, screen, options.brandTips, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank, network, signIn, profile, jurisdiction],
   );
 
   const index = STEPS.findIndex((s) => s.key === step);
   const go = (d: number) => setStep(STEPS[Math.min(STEPS.length - 1, Math.max(0, index + d))].key);
-  const owner = basics.ownerEntityId === NEW_OWNER ? { id: NEW_OWNER, name: newOwner.name || "The new owner group", kind: "franchisee" as const } : options.owners.find((o) => o.id === basics.ownerEntityId);
-  const regionChoices = options.regions.filter((r) => !r.ownerEntityId || r.ownerEntityId === basics.ownerEntityId);
+  const owner = options.owners.find((o) => o.id === basics.ownerEntityId);
   const descriptorIssue = pay.descriptor.trim() ? statementDescriptorProblem(pay.descriptor.trim().toUpperCase()) : null;
   const sameState = options.shops.filter((s) => basics.state && s.state.toUpperCase() === basics.state.toUpperCase());
 
@@ -254,7 +228,7 @@ export function LocationWizard({
   function onboard(id: string) {
     setError(null);
     start(async () => {
-      const r = done?.paymentsMode === "entity" && done.ownerEntityId ? await startEntityOnboardingAction(done.ownerEntityId) : await startPaymentsOnboardingAction(id);
+      const r = await startPaymentsOnboardingAction(id);
       if (!r.ok) return setError(r.error);
       window.location.href = r.data.url;
     });
@@ -277,12 +251,6 @@ export function LocationWizard({
             Some card readers weren&apos;t registered: {done.readerProblems.join("; ")}. Register them from Shop settings with the code each reader shows.
           </Notice>
         )}
-        {done.paymentsMode === "entity" && (
-          <Notice tone="blue">
-            {basics.name} settles to {owner?.name ?? "its owner group"}&apos;s Stripe account.{" "}
-            {done.ownerEntityId ? "Next: Stripe collects the new owner group's legal entity, EIN, owners and bank account on its own pages." : "Cards work once that account is approved."}
-          </Notice>
-        )}
         {done.paymentsMode === "connected" && (
           <Notice tone="blue">
             Next: Stripe collects {basics.name}&apos;s legal entity, EIN, owner identity and bank account on its own secure pages. Ray&apos;z never sees or stores the bank or
@@ -295,7 +263,7 @@ export function LocationWizard({
           </p>
         )}
         <div className="flex flex-wrap gap-2">
-          {(done.paymentsMode === "connected" || (done.paymentsMode === "entity" && done.ownerEntityId)) && canBank && (
+          {done.paymentsMode === "connected" && canBank && (
             <Button disabled={pending} onClick={() => onboard(done.id)}>
               {pending ? "Opening Stripe…" : "Continue to Stripe onboarding"}
             </Button>
@@ -303,7 +271,7 @@ export function LocationWizard({
           <Link
             className={cx(
               "rounded-lg px-4 py-2 text-sm font-medium",
-              (done.paymentsMode === "connected" || (done.paymentsMode === "entity" && done.ownerEntityId)) && canBank ? "border border-zinc-200 text-zinc-700 hover:bg-zinc-50" : "bg-brand-600 text-white hover:bg-brand-700",
+              done.paymentsMode === "connected" && canBank ? "border border-zinc-200 text-zinc-700 hover:bg-zinc-50" : "bg-brand-600 text-white hover:bg-brand-700",
             )}
             href={`/admin/setup?shop=${done.id}`}
           >
@@ -386,53 +354,16 @@ export function LocationWizard({
                   ))}
                 </Select>
               </Field>
-              <Field label="Owner group" hint="The legal business it belongs to: Rayz corporate or a franchisee. Its P&L, Stripe account and royalties follow.">
-                <Select
-                  value={basics.ownerEntityId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    const keep = options.regions.find((r) => r.id === basics.regionId);
-                    setBasics({ ...basics, ownerEntityId: id, regionId: keep && keep.ownerEntityId && keep.ownerEntityId !== id ? "" : basics.regionId });
-                  }}
-                >
+              <Field label="Owner" hint="Whose P&L the shop rolls up to.">
+                <Select value={basics.ownerEntityId} onChange={(e) => setBasics({ ...basics, ownerEntityId: e.target.value })}>
                   {options.owners.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.name}
-                      {o.kind === "franchisee" ? " (franchisee)" : " (Rayz corporate)"}
+                      {o.kind === "franchisee" ? " (franchisee)" : ""}
                     </option>
                   ))}
-                  {canOwners && <option value={NEW_OWNER}>+ New franchisee owner group…</option>}
                 </Select>
               </Field>
-              {basics.ownerEntityId === NEW_OWNER && (
-                <div className="grid gap-3 rounded-lg bg-zinc-50 p-3 sm:col-span-2 sm:grid-cols-2">
-                  <Field label="Owner group name">
-                    <Input value={newOwner.name} onChange={(e) => setNewOwner({ ...newOwner, name: e.target.value })} placeholder="e.g. Hawkeye Cuts" />
-                  </Field>
-                  <Field label="Legal name" hint="As registered with the state. The EIN and bank go to Stripe, not here.">
-                    <Input value={newOwner.legalName} onChange={(e) => setNewOwner({ ...newOwner, legalName: e.target.value })} placeholder="Hawkeye Cuts LLC" />
-                  </Field>
-                  <Field label="Contact email">
-                    <Input type="email" value={newOwner.contactEmail} onChange={(e) => setNewOwner({ ...newOwner, contactEmail: e.target.value })} />
-                  </Field>
-                  <Field label="Payroll company code" hint="Its iSolved company code, if it has one.">
-                    <Input value={newOwner.payrollCompanyCode} onChange={(e) => setNewOwner({ ...newOwner, payrollCompanyCode: e.target.value })} />
-                  </Field>
-                </div>
-              )}
-              {regionChoices.length > 0 && (
-                <Field label="Region or market" hint="Optional. For regional managers and the location comparison report.">
-                  <Select value={basics.regionId} onChange={(e) => setBasics({ ...basics, regionId: e.target.value })}>
-                    <option value="">No region</option>
-                    {regionChoices.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                        {r.ownerEntityId ? " (owner group's)" : ""}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              )}
               {options.groups.length > 0 && (
                 <fieldset className="sm:col-span-2">
                   <legend className="mb-1 text-sm font-medium text-zinc-700">Location groups</legend>

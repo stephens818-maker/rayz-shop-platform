@@ -94,20 +94,7 @@ export const LocationDraft = z.object({
   /** Needs "Taxes and card fees", like the rates. */
   taxJurisdiction: TaxJurisdictionSchema.default({ county: null, city: null, district: null, code: null }),
   timezone: z.string().default(SUPPORTED_TIMEZONE),
-  /** The owner group (legal business) it opens under; null is Rayz corporate. */
   ownerEntityId: z.uuid().nullable(),
-  /** A new franchisee owner group to create for it instead (needs entities.manage); its Stripe onboarding follows. */
-  newOwner: z
-    .object({
-      name: z.string().trim().min(2, "Give the owner group a name").max(120),
-      legalName: z.string().trim().max(160).nullable().default(null),
-      contactEmail: z.string().trim().toLowerCase().email("That email doesn't look right").nullable().default(null),
-      payrollCompanyCode: z.string().trim().max(32).nullable().default(null),
-    })
-    .nullable()
-    .default(null),
-  /** Its region or market, if any: a brand market, or one of its owner group's own regions. */
-  regionId: z.uuid().nullable().default(null),
   description: z.string().trim().max(400).nullable(),
 
   hours: z.array(DraftHours).max(14).default(DEFAULT_HOURS),
@@ -124,7 +111,7 @@ export const LocationDraft = z.object({
   /** The customer screen at checkout: tip presets (null uses the brand's), tips on the reader, signature, and whose PIN takes the device back. */
   handoff: ShopHandoffSchema.default(DEFAULT_SHOP_HANDOFF),
   /** Where card money settles. Anything but the default needs the banking permission. */
-  paymentsMode: z.enum(["connected", "entity", "brand", "cash_only"]).default("connected"),
+  paymentsMode: z.enum(["connected", "brand", "cash_only"]).default("connected"),
   statementDescriptor: z
     .string()
     .trim()
@@ -218,8 +205,6 @@ export function draftDefaults(over: Partial<LocationDraftInput> & Pick<LocationD
     taxJurisdiction: { county: null, city: null, district: null, code: null },
     timezone: SUPPORTED_TIMEZONE,
     ownerEntityId: null,
-    newOwner: null,
-    regionId: null,
     description: null,
     hours: DEFAULT_HOURS,
     holidays: [],

@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { clientContactGrants, regions, roles, shops, staff, staffAccessShops, staffShops, type ShopStatus } from "@/db/schema";
+import { clientContactGrants, roles, shops, staff, staffAccessShops, staffShops, type ShopStatus } from "@/db/schema";
 import { ContactGrant, HeldGrants, heldGrants, kindsAt, withGrantKinds } from "@/domain/contact-grants";
 import {
   Access,
@@ -26,10 +26,6 @@ export interface StaffAccess extends Access {
   /** Their main role. */
   role: Role;
   scope: ShopScope;
-  /** The owner group or region an entity or region scope covers, and the owner group that region belongs to. */
-  scopeEntityId: string | null;
-  scopeRegionId: string | null;
-  regionEntityId: string | null;
   /** Shops this person may see and act on. */
   shopIds: string[];
   /** Archived shops stay in here, so reports and permissions still cover their history; operational lists use openShops. */
@@ -78,9 +74,6 @@ export async function loadStaffAccess(staffId: string, tx: DBorTx = db): Promise
 
 export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DBorTx = db): Promise<StaffAccess> {
   const scope: ShopScope = role.key === OWNER_ROLE_KEY ? "all" : s.shopScope;
-  const scopeEntityId = scope === "entity" ? s.scopeEntityId : null;
-  const scopeRegionId = scope === "region" ? s.scopeRegionId : null;
-  const regionEntityId = scopeRegionId ? ((await tx.query.regions.findFirst({ where: eq(regions.id, scopeRegionId), columns: { ownerEntityId: true } }))?.ownerEntityId ?? null) : null;
   const overrides = cleanOverrides(s.permissionOverrides);
   const cols = { id: shops.id, name: shops.name, slug: shops.slug, address: shops.address, city: shops.city, status: shops.status };
   const shopRows: (StaffAccess["shops"][number] & { roleId: string | null })[] =
@@ -111,7 +104,7 @@ export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DB
   const shopRoles = Object.fromEntries([...byShop].filter(([, a]) => a.role.id !== role.id).map(([id, a]) => [id, a.role.id]));
   const needsAllShops =
     scope === "all" ? [] : [...unionAccess([role, ...others.values()].map((r) => effectiveAccess(r, overrides, s.maxDiscountPct))).permissions].filter((p) => BRAND_ONLY.has(p));
-  return { ...union, staffId: s.id, role, scope, scopeEntityId, scopeRegionId, regionEntityId, shopIds: shopRows.map((x) => x.id), shops: shopRows.map(({ roleId: _, ...x }) => x), byShop, shopRoles, uniform, needsAllShops, grants, granted };
+  return { ...union, staffId: s.id, role, scope, shopIds: shopRows.map((x) => x.id), shops: shopRows.map(({ roleId: _, ...x }) => x), byShop, shopRoles, uniform, needsAllShops, grants, granted };
 }
 
 /** The same person working in one of their shops: that shop's role and nothing else. */
@@ -123,8 +116,7 @@ export function atShop(a: StaffAccess, shopId: string): StaffAccess {
 
 /**
  * The same person with some of their shops out of reach (a location's sign-in restriction). Brand-only
- * permissions work on records every shop shares, so losing any shop takes them away too; an owner
- * group or region scope no longer covers the whole, so it's chosen shops for this request.
+ * permissions work on records every shop shares, so losing any shop takes them away too.
  */
 export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAccess {
   if (!drop.size || !a.shopIds.some((id) => drop.has(id))) return a;
@@ -137,10 +129,7 @@ export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAc
   return {
     ...a,
     ...union,
-    scope: a.scope === "all" || a.scope === "entity" || a.scope === "region" ? "selected" : a.scope,
-    scopeEntityId: null,
-    scopeRegionId: null,
-    regionEntityId: null,
+    scope: a.scope === "all" ? "selected" : a.scope,
     shopIds: a.shopIds.filter((id) => !drop.has(id)),
     shops: a.shops.filter((s) => !drop.has(s.id)),
     byShop,
@@ -151,18 +140,13 @@ export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAc
 }
 
 /** What they may give others: never what only a contact access grant gives them. */
-export const grantor = (
-  a: Pick<StaffAccess, "staffId" | "isOwner" | "permissions" | "maxDiscountPct" | "scope" | "shopIds"> &
-    Partial<Pick<StaffAccess, "scopeEntityId" | "scopeRegionId">> & { granted?: ReadonlySet<Permission> },
-): Grantor => ({
+export const grantor = (a: Pick<StaffAccess, "staffId" | "isOwner" | "permissions" | "maxDiscountPct" | "scope" | "shopIds"> & { granted?: ReadonlySet<Permission> }): Grantor => ({
   staffId: a.staffId,
   isOwner: a.isOwner,
   permissions: a.granted?.size ? new Set([...a.permissions].filter((p) => !a.granted!.has(p))) : a.permissions,
   maxDiscountPct: a.maxDiscountPct,
   scope: a.scope,
   shopIds: a.shopIds,
-  scopeEntityId: a.scopeEntityId ?? null,
-  scopeRegionId: a.scopeRegionId ?? null,
 });
 
 /** What their role and overrides give, without contact access grants (those are managed apart). */
@@ -173,9 +157,6 @@ export const accessState = (a: StaffAccess): UserAccessState => ({
   maxDiscountPct: a.maxDiscountPct,
   scope: a.scope,
   shopIds: a.shopIds,
-  scopeEntityId: a.scopeEntityId,
-  scopeRegionId: a.scopeRegionId,
-  regionEntityId: a.regionEntityId,
 });
 
 export async function workShopIds(staffId: string, tx: DBorTx = db) {
@@ -198,7 +179,7 @@ export async function activeOwnerCount(tx: DBorTx = db) {
   return rows.length;
 }
 
-/** Staff whose access includes one of these shops (or every shop). Owner-group and region people are in staff_access_shops like everyone else. */
+/** Staff whose access includes one of these shops (or every shop). */
 export async function staffWithAccessTo(shopIds: string[], tx: DBorTx = db) {
   if (!shopIds.length) return [];
   const viaShop = await tx.selectDistinct({ id: staffAccessShops.staffId }).from(staffAccessShops).where(inArray(staffAccessShops.shopId, shopIds));

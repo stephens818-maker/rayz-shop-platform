@@ -8,10 +8,9 @@ import { Badge, Card, CardHeader, Empty, PageHeader, Table, Td, Th, cx } from "@
 import { ADJUST_REASON_LABEL, LEDGER_KIND_LABEL } from "@/domain/inventory";
 import { formatCents } from "@/lib/money";
 import { formatDateTime, todayLocal } from "@/lib/time";
-import { can, guardPage } from "@/server/auth/staff";
+import { guardPage } from "@/server/auth/staff";
 import { ledgerEntries } from "@/server/inventory/reports";
 import { stockLevels } from "@/server/inventory/stock";
-import { ProductStandardForm } from "./standard-form";
 
 export const metadata: Metadata = { title: "Stock history" };
 
@@ -34,12 +33,6 @@ export default async function ProductStockPage({ params, searchParams }: { param
           </>
         }
       />
-      {can(ctx, "catalog.manage") && (
-        <Card>
-          <CardHeader title="Brand price standard" subtitle={`Brand price ${formatCents(p.priceCents)}. What locations may charge; people with every shop aren't held to it.`} />
-          <ProductStandardForm productId={p.id} localPrice={p.localPrice} floor={p.priceFloorCents} ceiling={p.priceCeilingCents} />
-        </Card>
-      )}
       <Card>
         <CardHeader title="Where it is" subtitle="On hand is the sum of the ledger below, at every shop." />
         <Table>

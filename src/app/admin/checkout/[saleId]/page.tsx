@@ -15,7 +15,7 @@ import { getLoyaltyConfig, loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries } from "@/server/ratings";
 import { timesFor } from "@/server/service-times";
 import { TEST_CARDS, paymentsMode, terminal } from "@/server/payments/processor";
-import { settlementAccount } from "@/server/payments/connect";
+import { shopAccount } from "@/server/payments/connect";
 import { takesCards } from "@/domain/connect";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
@@ -46,7 +46,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
     ratingSummaries([c.customer?.id]),
     timesFor(c.appointment ? [c.appointment.id] : []),
     lookups(),
-    settlementAccount(c.shop),
+    shopAccount(c.shop.id),
     db
       .select({ id: terminalReaders.id, label: terminalReaders.label })
       .from(terminalReaders)

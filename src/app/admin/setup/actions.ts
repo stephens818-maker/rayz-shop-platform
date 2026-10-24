@@ -11,14 +11,13 @@ import { appBaseUrl } from "@/lib/deployment";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, assertShopAccess, authorize, staffGrantor } from "@/server/auth/staff";
-import { moveShop } from "@/server/franchise-admin";
 import { LocationAdmin, archiveLocation, checkSlug, closeTemporarily, createLocation, goLive, reopen } from "@/server/location-admin";
 import type { LocationDraftInput } from "@/domain/location-draft";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { completeSimulatedOnboarding, expressDashboardUrl, onboardingUrl, refreshAccount, registerReader, setPaymentsMode, setStatementDescriptor } from "@/server/payments/connect";
 
 const BANKING = "Only the Brand Owner, or someone they've given the banking permission, can connect or change a shop's Stripe account and bank";
-const BRAND_RECORD = "Only the brand can change owner groups or move a location to another owner";
+const BRAND_RECORD = "Owner entities are records every shop shares, so changing them needs access to all shops";
 
 function refresh(shopId?: string) {
   revalidatePath("/admin/setup");
@@ -121,15 +120,17 @@ export async function registerReaderAction(shopId: string, v: { label: string; r
   });
 }
 
-/** A resale or regrouping moves the shop's access and royalties with it, so only the brand does it. */
 export async function setShopOwnerAction(shopId: string, ownerEntityId: string) {
   return safe(async () => {
-    const ctx = await authorize("entities.manage", BRAND_RECORD);
-    await shopFor(ctx, shopId);
-    const r = await moveShop(ctx.actor, shopId, { ownerEntityId });
+    const ctx = await authorize("payments.accounts");
+    const shop = await shopFor(ctx, shopId);
+    const owner = await db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, ownerEntityId) });
+    if (!owner) throw notFound("Owner");
+    const [before] = await db.select({ id: shops.ownerEntityId }).from(shops).where(eq(shops.id, shopId));
+    await db.update(shops).set({ ownerEntityId }).where(eq(shops.id, shopId));
+    await audit(ctx.actor, "shop.owner", "shop", shopId, { shop: shop.name, from: before?.id ?? null, to: ownerEntityId, owner: owner.name }, shopId);
     refresh();
-    revalidatePath("/admin/franchise");
-    return r;
+    return null;
   });
 }
 
@@ -137,7 +138,7 @@ const Owner = z.object({ name: z.string().trim(), legalName: z.string().trim().n
 
 export async function saveOwnerEntityAction(id: string | null, raw: z.input<typeof Owner>) {
   return safe(async () => {
-    const ctx = await authorize("entities.manage", BRAND_RECORD);
+    const ctx = await authorize("payments.accounts");
     if (!ctx.brandWide) throw forbidden(BRAND_RECORD);
     const v = Owner.parse(raw);
     const problem = ownerEntityProblem(v);

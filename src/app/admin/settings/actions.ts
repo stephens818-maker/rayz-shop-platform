@@ -16,14 +16,13 @@ import { audit } from "@/server/audit";
 import { assertShopAccess, authorize, can } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import { saveLoyaltyConfig } from "@/server/loyalty";
-import { ShopHandoffSchema, TipScreenSchema, shopHandoff } from "@/domain/handoff";
+import { ShopHandoffSchema, TipScreenSchema } from "@/domain/handoff";
 import { saveBrandHandoff, saveShopHandoff } from "@/server/handoff";
 import { saveReviewRules } from "@/server/review-rules";
 import { Permission, SHOP_PART_PERMISSION, SHOP_SETTING_FIELDS, ShopSettingPart, shopSettingsDenied } from "@/domain/permissions";
 import { cleanOperator, operatorProblem } from "@/domain/phone-operator";
 import { FilingFrequency, cleanTaxFiling, stateName } from "@/domain/sales-tax";
 import { saveDrawerOpening } from "@/server/drawer";
-import { assertShopPolicies } from "@/server/standards";
 
 /** "Edit every shop setting", or the permission for this part of them. */
 const partPerms = (...parts: ShopSettingPart[]): Permission[] => ["settings.shop", ...parts.map((p) => SHOP_PART_PERMISSION[p])];
@@ -78,7 +77,6 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
     ) as Partial<typeof shops.$inferInsert>;
     const denied = shopSettingsDenied(ctx.permissions, before, values as Partial<Record<keyof typeof SHOP_SETTING_FIELDS, unknown>>);
     if (denied.length) throw new AppError("forbidden", `You can't change the shop's ${denied.map((f) => FIELD_LABEL[f]).join(", ")}`);
-    await assertShopPolicies(ctx, before, values);
     if (line) {
       const other = await db.query.shops.findFirst({ where: and(eq(shops.twilioNumber, line), ne(shops.id, shopId)), columns: { name: true } });
       if (other) throw new AppError("conflict", `${other.name} already uses that Twilio number`);
@@ -106,7 +104,6 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
     assertShopAccess(ctx, shopId);
     const v = Money.parse(raw);
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
-    if (before) await assertShopPolicies(ctx, { cardFeeEnabled: before.cardFeeEnabled, cardFeeRate: Number(before.cardFeeRate), cardFeeAppliesToTip: before.cardFeeAppliesToTip }, v);
     await db
       .update(shops)
       .set({ ...v, serviceTaxRate: v.serviceTaxRate.toFixed(5), productTaxRate: v.productTaxRate.toFixed(5), cardFeeRate: v.cardFeeRate.toFixed(5) })
@@ -215,7 +212,6 @@ export async function saveShopProfileAction(shopId: string, raw: z.input<typeof 
       if (problem) throw new AppError("bad_request", problem);
     }
     const values = { slug: v.slug, timezone: v.timezone, accentColor: v.accentColor || null, logoUrl: v.logoUrl || null };
-    await assertShopPolicies(ctx, { accentColor: before.accentColor, logoUrl: before.logoUrl }, { accentColor: values.accentColor, logoUrl: values.logoUrl });
     await db.update(shops).set(values).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.profile", "shop", shopId, { ...values, previousSlug: v.slug !== before.slug ? before.slug : undefined }, shopId);
     revalidatePath("/admin/settings");
@@ -264,8 +260,6 @@ export async function saveReceiptAction(shopId: string, raw: z.input<typeof Rece
     const v = ReceiptBrandingSchema.parse(raw);
     const values = { ...v, headline: v.headline?.trim() || null, footer: v.footer?.trim() || null, reviewFollowUp: { ...v.reviewFollowUp, enabled: v.reviewFollowUp.enabled && !!v.reviewUrl } };
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { receipt: true } });
-    const was = before ? receiptBranding(before.receipt) : null;
-    await assertShopPolicies(ctx, { receipt: was && { headline: was.headline, footer: was.footer } }, { receipt: { headline: values.headline, footer: values.footer } });
     await db.update(shops).set({ receipt: values }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.receipt", "shop", shopId, { before: before ? receiptBranding(before.receipt) : null, after: values }, shopId);
     revalidatePath("/admin/settings");
@@ -288,10 +282,7 @@ export async function saveShopHandoffAction(shopId: string, raw: z.input<typeof 
   return safe(async () => {
     const ctx = await authorize(partPerms("checkout"));
     assertShopAccess(ctx, shopId);
-    const v = ShopHandoffSchema.parse(raw);
-    const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { handoff: true } });
-    await assertShopPolicies(ctx, { tipPresets: shopHandoff(before?.handoff).tips }, { tipPresets: v.tips });
-    const r = await saveShopHandoff(shopId, v, ctx.actor);
+    const r = await saveShopHandoff(shopId, ShopHandoffSchema.parse(raw), ctx.actor);
     revalidatePath("/admin/settings");
     return r.reader;
   });

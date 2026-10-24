@@ -55,8 +55,6 @@ const MANAGER: Defaults = { ...FULL, phone: "masked", email: "masked", address: 
 export const ROLE_FIELD_DEFAULTS: Record<RoleTemplateKey, Defaults> = {
   brand_owner: FULL,
   brand_admin: FULL,
-  franchisee_owner: MANAGER,
-  franchisee_manager: MANAGER,
   regional_manager: MANAGER,
   shop_manager: MANAGER,
   front_desk: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
@@ -143,8 +141,6 @@ const DESK: EntryDefaults = { add: ANY, edit: ANY };
 export const ROLE_ENTRY_DEFAULTS: Record<RoleTemplateKey, EntryDefaults> = {
   brand_owner: DESK,
   brand_admin: DESK,
-  franchisee_owner: DESK,
-  franchisee_manager: DESK,
   regional_manager: DESK,
   shop_manager: DESK,
   front_desk: DESK,

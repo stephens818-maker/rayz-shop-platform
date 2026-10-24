@@ -31,7 +31,7 @@ import { loadStaffAccess, staffWithAccessTo } from "./auth/access";
 import { CheckoutLineInput, TenderInput, finalizeSale, priceCart } from "./checkout";
 import { assertPromptsAnswered } from "./checkout-prompts";
 import { AppError, forbidden, notFound } from "./errors";
-import { settlementAccount } from "./payments/connect";
+import { shopAccount } from "./payments/connect";
 import { TEST_CARDS, inspectPaymentMethod, paymentsMode, stripe, terminal } from "./payments/processor";
 import { deliverReceipt, isOptedOut } from "./receipts";
 import { checkPin } from "./time-clock";
@@ -268,7 +268,7 @@ export async function handoffView(id: string): Promise<HandoffView> {
   if (!sale || !shop) throw notFound("Sale");
   const [customer, account, readers] = await Promise.all([
     sale.customerId ? db.query.customers.findFirst({ where: eq(customers.id, sale.customerId) }) : null,
-    settlementAccount(shop),
+    shopAccount(shop.id),
     db
       .select({ id: terminalReaders.id, label: terminalReaders.label })
       .from(terminalReaders)

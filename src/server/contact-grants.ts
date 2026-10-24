@@ -8,8 +8,6 @@ import { audit } from "./audit";
 import { StaffContext, can } from "./auth/staff";
 import { clientListDenied, isBrandLevelViewer, seesFullContact } from "./client-privacy";
 import { AppError, forbidden, notFound } from "./errors";
-import { loadFranchiseData } from "./franchise-admin";
-import { isFranchiseeReach } from "./hierarchy";
 
 export const grantCaller = (ctx: StaffContext): GrantCaller => ({
   managesPrivacy: can(ctx, "clients.privacy") && isBrandLevelViewer(ctx),
@@ -48,8 +46,6 @@ export async function giveContactGrant(ctx: StaffContext, p: GrantInput) {
   if (p.staffId && (!person || person.removedAt)) throw notFound("Person");
   const shop = p.shopId ? await db.query.shops.findFirst({ where: eq(shops.id, p.shopId), columns: { id: true, name: true } }) : null;
   if (p.shopId && !shop) throw notFound("Location");
-  if (p.kind === "export" && (await loadFranchiseData()).data.franchiseeExport === "never" && (await isFranchiseeReach(p.staffId ? { staffId: p.staffId } : { shopIds: [p.shopId!] })))
-    throw forbidden("The brand's client data settings don't let franchisee people export client lists (Franchise & owner groups → Client data and franchise agreements)");
   const now = new Date();
   const same = await db.query.clientContactGrants.findFirst({
     where: and(

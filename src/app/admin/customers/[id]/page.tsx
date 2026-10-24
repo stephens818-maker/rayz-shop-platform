@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, clientPhotos, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, products as productsTable, sales, shopProducts, shops, staff } from "@/db/schema";
 import { ClientBadges } from "@/components/client-badges";
@@ -22,8 +22,6 @@ import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
 import { latestReceipts, receiptOnFile } from "@/server/receipts";
 import { CALL_KIND_LABEL, CALL_STATUS_LABEL, callsWith, optOutKeys } from "@/server/messaging";
 import { hasShop, inShops } from "@/server/tenant";
-import { loadFranchiseData } from "@/server/franchise-admin";
-import { isFranchiseeReach, sameOwnerShops } from "@/server/hierarchy";
 import { clientCadence } from "@/server/visit-cadence";
 import { clientProductHistory } from "@/server/product-history";
 import { REFILL_SOURCE_LABEL, REFILL_STATUS_LABEL, REFILL_STATUS_TONE, lastsLabel, refillHint, type ProductHistory } from "@/domain/product-history";
@@ -84,15 +82,12 @@ export default async function CustomerPage({
   const mine = scoped ? ctx.shopIds : undefined;
   const moneyShops = ctx.staff.kind === "shop" ? ctx.shopIds : undefined;
   const ownMoney = (shopId: string) => !moneyShops || moneyShops.includes(shopId);
-  // The brand can keep franchisee staff to visits at their own owner group's locations (Franchise & owner groups).
-  const ownerShops = scoped && (await loadFranchiseData()).data.crossOwnerHistory === "own_owner_only" && (await isFranchiseeReach({ staffId: ctx.staff.id })) ? await sameOwnerShops(ctx.shopIds) : null;
-  const visitsHere = ownerShops ? (ownerShops.length ? inArray(appointments.shopId, ownerShops) : sql`false`) : undefined;
-  const salesHere = moneyShops ? inShops(ctx, sales.shopId) : ownerShops ? (ownerShops.length ? inArray(sales.shopId, ownerShops) : sql`false`) : undefined;
+  const salesHere = moneyShops ? inShops(ctx, sales.shopId) : undefined;
   const vPage = Math.max(1, Number(sp.v) || 1);
   const sPage = Math.max(1, Number(sp.s) || 1);
 
   const [stats, money, visits, [{ visitCount }], saleRows, [{ saleCount }], loyalty, ledger, squireIds, dupes, barberOptions, cadence] = await Promise.all([
-    customerStats(id, db, new Date(), ownerShops ?? undefined),
+    customerStats(id, db, new Date()),
     moneyShops ? customerStats(id, db, new Date(), moneyShops) : null,
     db
       .select({
@@ -105,14 +100,14 @@ export default async function CustomerPage({
       .from(appointments)
       .innerJoin(shops, eq(shops.id, appointments.shopId))
       .innerJoin(staff, eq(staff.id, appointments.staffId))
-      .where(and(eq(appointments.customerId, id), visitsHere))
+      .where(eq(appointments.customerId, id))
       .orderBy(desc(appointments.startsAt))
       .limit(VISITS_PAGE)
       .offset((vPage - 1) * VISITS_PAGE),
     db
       .select({ visitCount: sql<number>`count(*)::int` })
       .from(appointments)
-      .where(and(eq(appointments.customerId, id), visitsHere)),
+      .where(eq(appointments.customerId, id)),
     full
       ? db
           .select({
@@ -531,7 +526,7 @@ export default async function CustomerPage({
           <Card>
             <CardHeader
               title="Visit history"
-              subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} ${ownerShops ? "at your owner group's shops" : "at every Ray'z shop"}, including Squire history${moneyShops ? ". Prices show for this shop's visits only." : ""}`}
+              subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history${moneyShops ? ". Prices show for this shop's visits only." : ""}`}
             />
             <Table>
               <thead>

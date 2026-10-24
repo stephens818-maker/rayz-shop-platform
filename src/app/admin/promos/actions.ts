@@ -10,7 +10,6 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, assertShopAccess, authorize } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
-import { assertLocalContent } from "@/server/standards";
 import { scopeOf } from "./coupon-input";
 
 type Promo = typeof promoCodes.$inferSelect;
@@ -29,7 +28,6 @@ export async function saveCouponAction(id: string | null, raw: unknown) {
     const c = r.data;
     if (!c.shopIds.length && !ctx.brandWide) throw forbidden("A coupon for every shop needs access to every shop. Pick your shops.");
     for (const s of c.shopIds) assertShopAccess(ctx, s);
-    await assertLocalContent(ctx, "coupons", "Coupons and promotions");
     const before = id ? await db.query.promoCodes.findFirst({ where: eq(promoCodes.id, id) }) : null;
     if (id && !before) throw notFound("Promo");
     if (before) assertMayManage(ctx, before);

@@ -442,13 +442,6 @@
       "when": 1794362400000,
       "tag": "core_0062_checkout_prompts",
       "breakpoints": true
-    },
-    {
-      "idx": 63,
-      "version": "7",
-      "when": 1794448800000,
-      "tag": "core_0063_franchising",
-      "breakpoints": true
     }
   ]
 }

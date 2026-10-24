@@ -28,7 +28,6 @@ export default async function NewLocationPage() {
         options={options}
         brandIntervalMinutes={interval}
         canBank={can(ctx, "payments.banking")}
-        canOwners={can(ctx, "entities.manage")}
         geocoder={geocoderName()}
         network={can(ctx, "network.settings") ? { myIp: clientIp(await headers()), exempt: ctx.isOwner || can(ctx, "access.remote") } : null}
       />

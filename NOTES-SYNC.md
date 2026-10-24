@@ -454,21 +454,6 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
-### 2026-10-24: core (franchising and scale), FYI for mobile
-
-- **What changed.** The hierarchy is Brand > owner group (`owner_entities`: Rayz corporate or a franchisee) > region (`regions`, optional) > location. People are scoped at any level, and the new templates are Franchisee Owner, Franchisee Manager and Regional Manager (region scope). Each owner group can have its own Stripe Connect account, with royalty and ad fund rates taken in the application fee. The brand sets standards (price floors and ceilings, locked names and durations, shop policies) that every location is held to, and client-data rules for franchisees. The royalty statement, owner group P&L and location comparison reports are new. Background work runs as `job_tasks` per location or client slice. See [Scaling and franchising](README.md#scaling-and-franchising).
-- **FYI, core API:**
-  - `PaymentsMode` gains `'entity'`: the location's card money settles on its owner group's account (`entity_payment_accounts`). `chargeRoute` and `chargeDestination` handle it. If anything in the app's payment flow switches on the mode, treat `entity` like `connected`; `Destination` gains optional `processingFeeCents`, `royaltyCents` and `adFundCents`.
-  - `payments` gains `royalty_cents` and `ad_fund_cents` (both default 0). `application_fee_cents` is now processing plus royalty plus ad fund on franchisee charges.
-  - `ShopScope` gains `'entity'` and `'region'`. `staff` gains `scope_entity_id` and `scope_region_id`, and their `staff_access_shops` rows are kept by triggers, so `shopIds` stays the thing to check. `StaffContext` and `StaffAccess` gain `scopeEntityId` and `scopeRegionId`.
-  - `runMarketing(now, { triggers: false })` skips the automated campaign triggers, which now run per location as `triggers` job tasks from the campaign-center cron. Call it without options for the old behavior. `runBadgeJob` takes an optional `bucket: { k, of }`.
-  - New cron: `/api/cron/jobs` (07:15–09:15 UTC, rollups and pruning).
-  - The new free-text column `entity_payment_accounts.disabled_reason` is scrubbed by a trigger.
-- **Migration `core_0063_franchising`.** The next free number is `core_0064`.
-- **No request.** Client profiles stay brand-wide, so the app's customer side is unchanged. A location's owner group isn't exposed through `/api/v1`, and nothing there needs it.
-- **Tests:** `tests/franchise.test.ts`, `tests/db/franchise.test.ts`, and `tests/perf/scale.test.ts` (`pnpm test:perf`, which needs its own `*perf*` database). `pnpm test` now excludes `tests/perf`.
-- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
-
 ### 2026-10-24: core (product history and refills), FYI for mobile
 
 - **What changed.** The checkout product prompt and the client profile show the client's last product (name, date, location, quantity), their last 5 purchases, and a refill hint per product: has some left, likely running out (a week before it's due) or likely ran out. The hint comes from how long one unit lasts them (the median gap between purchase days divided by what they bought), or the product's typical interval when they bought it once. **Buy again** adds it in one tap at checkout. On the profile it puts it on the client's open ticket today, or a new retail ticket. The report builder gains a Products group (last product, date, location, quantity, refill status, products likely running out, next refill due). Segments gain `refillStatus` and `refillProductIds`.

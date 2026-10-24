@@ -32,7 +32,6 @@ import {
   setShopOwnerAction,
   startPaymentsOnboardingAction,
 } from "./actions";
-import { completeSimulatedEntityOnboardingAction } from "../franchise/actions";
 
 export const STATE_TONE: Record<AccountState, "gray" | "amber" | "blue" | "red" | "green"> = {
   not_started: "gray",
@@ -290,15 +289,14 @@ export function PaymentsPanel({
   );
 }
 
-export function SimulatedOnboardingForm({ shopId, entityId, shopName }: { shopId?: string; entityId?: string; shopName: string }) {
+export function SimulatedOnboardingForm({ shopId, shopName }: { shopId: string; shopName: string }) {
   const router = useRouter();
   const { pending, error, run } = useAction();
   const [bank, setBank] = useState(true);
-  const back = entityId ? `/admin/franchise?entity=${entityId}` : `/admin/setup?shop=${shopId}&step=payments`;
   const submit = () =>
     run(
-      () => (entityId ? completeSimulatedEntityOnboardingAction(entityId, bank) : completeSimulatedOnboardingAction(shopId!, bank)),
-      () => router.push(`${back}&stripe=return`),
+      () => completeSimulatedOnboardingAction(shopId, bank),
+      () => router.push(`/admin/setup?shop=${shopId}&step=payments&stripe=return`),
     );
   return (
     <Card>
@@ -318,7 +316,7 @@ export function SimulatedOnboardingForm({ shopId, entityId, shopName }: { shopId
         <Button disabled={pending} onClick={submit}>
           {pending ? "Submitting…" : "Submit"}
         </Button>
-        <Button variant="ghost" onClick={() => router.push(back)}>
+        <Button variant="ghost" onClick={() => router.push(`/admin/setup?shop=${shopId}&step=payments`)}>
           Back without finishing
         </Button>
         <Problem error={error} />

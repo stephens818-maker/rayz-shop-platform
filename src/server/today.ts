@@ -11,6 +11,7 @@ import {
   purchaseOrders,
   refunds,
   sales,
+  shopPaymentAccounts,
   shopPayouts,
   shops,
   staff,
@@ -21,7 +22,6 @@ import {
 } from "@/db/schema";
 import type { PaymentsMode, ShopStatus } from "@/db/schema";
 import { takesCards } from "@/domain/connect";
-import { settlementAccounts } from "./payments/connect";
 import type { ReasonViewer } from "@/domain/block-reasons";
 import { closedOn } from "@/domain/location-lifecycle";
 import { type Permission, reportView } from "@/domain/permissions";
@@ -67,7 +67,7 @@ export interface TodayViewer {
   reasons: ReasonViewer;
 }
 
-type ShopRow = { id: string; name: string; status: ShopStatus; closedUntil: string | null; taxRatesVerified: boolean; slug: string; paymentsMode: PaymentsMode; ownerEntityId: string | null };
+type ShopRow = { id: string; name: string; status: ShopStatus; closedUntil: string | null; taxRatesVerified: boolean; slug: string; paymentsMode: PaymentsMode };
 
 const NONE = ["00000000-0000-0000-0000-000000000000"];
 const ids = (xs: readonly string[]) => (xs.length ? [...xs] : NONE);
@@ -78,7 +78,7 @@ export async function todayAlerts(v: TodayViewer, now: Date = new Date()): Promi
   const today = todayLocal(now);
   const shopRows: ShopRow[] = v.shopIds.length
     ? await db
-        .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, taxRatesVerified: shops.taxRatesVerified, slug: shops.slug, paymentsMode: shops.paymentsMode, ownerEntityId: shops.ownerEntityId })
+        .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, taxRatesVerified: shops.taxRatesVerified, slug: shops.slug, paymentsMode: shops.paymentsMode })
         .from(shops)
         .where(and(inArray(shops.id, v.shopIds), ne(shops.status, "archived")))
         .orderBy(asc(shops.name))
@@ -795,8 +795,8 @@ async function setupAlerts(c: Ctx): Promise<Alert[]> {
     }
     if (c.has("payments.accounts")) {
       const live = c.shops.filter((s) => s.status === "live");
-      const accounts = await settlementAccounts(live);
-      const notReady = live.filter((s) => s.paymentsMode !== "cash_only" && !takesCards(s.paymentsMode, accounts.get(s.id)));
+      const accounts = live.length ? await db.select().from(shopPaymentAccounts).where(inArray(shopPaymentAccounts.shopId, live.map((s) => s.id))) : [];
+      const notReady = live.filter((s) => s.paymentsMode !== "cash_only" && !takesCards(s.paymentsMode, accounts.find((a) => a.shopId === s.id)));
       for (const s of notReady)
         out.push({
           key: `not_taking_cards:${s.id}:${c.today}`,

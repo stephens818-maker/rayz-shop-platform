@@ -77,8 +77,6 @@ export interface ChargeResult {
 export interface Destination {
   accountId: string;
   applicationFeeCents: number;
-  /** The processing part of the application fee; the rest is the owner group's royalty and ad fund. */
-  processingFeeCents?: number;
 }
 
 /**
@@ -154,7 +152,7 @@ export async function chargeCard(opts: {
       destination: pi.destination,
       chargeId: `sim_ch_${suffix}`,
       transferId: pi.destination ? `sim_tr_${suffix}` : null,
-      processorFeeCents: pi.destination ? (pi.destination.processingFeeCents ?? pi.destination.applicationFeeCents) : null,
+      processorFeeCents: pi.destination?.applicationFeeCents ?? null,
     };
   }
   if (dest?.accountId.startsWith("sim_")) throw new AppError("payment_failed", "This shop's account is from the simulator. Set it up with Stripe before taking cards.", { reason: "payments_not_ready" });

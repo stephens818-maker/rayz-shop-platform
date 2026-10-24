@@ -30,31 +30,13 @@ import {
 import { saveUserAccessAction } from "../../actions";
 
 type RoleOption = RoleDef & { id: string; defaultScope: ShopScope };
-type State = {
-  roleId: string;
-  overrides: Overrides;
-  maxDiscountPct: number | null;
-  scope: ShopScope;
-  scopeEntityId: string | null;
-  scopeRegionId: string | null;
-  shopIds: string[];
-  shopRoles: Record<string, string>;
-};
-type ShopOption = { id: string; name: string; ownerEntityId: string | null; regionId: string | null };
-
-/** The shops a scope covers: chosen ones, or every shop of the owner group or region. */
-function scopeShopIds(s: State, shops: ShopOption[]) {
-  if (s.scope === "entity") return shops.filter((x) => x.ownerEntityId === s.scopeEntityId).map((x) => x.id);
-  if (s.scope === "region") return shops.filter((x) => x.regionId === s.scopeRegionId).map((x) => x.id);
-  return s.shopIds;
-}
-const multiShop = (sc: ShopScope) => sc === "selected" || sc === "entity" || sc === "region";
+type State = { roleId: string; overrides: Overrides; maxDiscountPct: number | null; scope: ShopScope; shopIds: string[]; shopRoles: Record<string, string> };
 
 /** Everything they could do at one of their shops, under each shop's role. */
-function accessOf(roles: RoleOption[], s: State, all: ShopOption[]) {
+function accessOf(roles: RoleOption[], s: State) {
   const main = roles.find((r) => r.id === s.roleId)!;
   const owner = main.key === OWNER_ROLE_KEY;
-  const shops = multiShop(s.scope) ? scopeShopIds(s, all).map((shopId) => ({ shopId, role: roles.find((r) => r.id === s.shopRoles[shopId]) ?? null })) : [];
+  const shops = s.scope === "selected" ? s.shopIds.map((shopId) => ({ shopId, role: roles.find((r) => r.id === s.shopRoles[shopId]) ?? null })) : [];
   return accessByShop(main, shops, owner ? {} : s.overrides, owner ? null : s.maxDiscountPct, owner ? "all" : s.scope);
 }
 
@@ -68,8 +50,6 @@ export function PersonAccessEditor({
   initial,
   roles,
   shops,
-  entities = [],
-  regions = [],
   worksAt,
   mine,
   myMaxDiscount,
@@ -81,10 +61,7 @@ export function PersonAccessEditor({
   staffId: string;
   initial: State;
   roles: RoleOption[];
-  shops: ShopOption[];
-  /** Owner groups and regions the editor may scope people to. */
-  entities?: { id: string; name: string }[];
-  regions?: { id: string; name: string }[];
+  shops: { id: string; name: string }[];
   worksAt: string[];
   mine: string[];
   myMaxDiscount: number;
@@ -106,14 +83,11 @@ export function PersonAccessEditor({
   const has = useMemo(() => new Set(mine), [mine]);
   const role = roles.find((r) => r.id === s.roleId)!;
   const isOwnerRole = role.key === OWNER_ROLE_KEY;
-  const before = useMemo(() => accessOf(roles, initial, shops).union, [roles, initial, shops]);
+  const before = useMemo(() => accessOf(roles, initial).union, [roles, initial]);
   const fromRole = effectiveAccess(role);
-  const { union: after, uniform } = accessOf(roles, s, shops);
+  const { union: after, uniform } = accessOf(roles, s);
   const shopRoleOptions = roles.filter((r) => r.key !== OWNER_ROLE_KEY);
-  const covered = scopeShopIds(s, shops);
-  const hierarchy = s.scope === "entity" || s.scope === "region";
-  const perShop = multiShop(s.scope) && !isOwnerRole && covered.length > 1;
-  const scopes = SHOP_SCOPES.filter((sc) => (sc !== "entity" || entities.length || s.scope === sc) && (sc !== "region" || regions.length || s.scope === sc));
+  const perShop = s.scope === "selected" && !isOwnerRole && s.shopIds.length > 1;
   const diff = diffPermissions(before.permissions, after.permissions);
   const locked = !!readOnly;
   const brandLevel = isBrandLevelPerson({ kind, scope: isOwnerRole ? "all" : s.scope, role });
@@ -135,7 +109,7 @@ export function PersonAccessEditor({
     start(async () => {
       setError(null);
       const overrides = Object.fromEntries(Object.entries(s.overrides).filter(([p, v]) => brandLevel || !v || !BRAND_LEVEL_ONLY.has(p as Permission)));
-      const r = await saveUserAccessAction({ staffId, ...s, shopIds: covered, overrides: overrides as Record<string, boolean> });
+      const r = await saveUserAccessAction({ staffId, ...s, overrides: overrides as Record<string, boolean> });
       if (!r.ok) return setError(r.error);
       setSaved(true);
       router.refresh();
@@ -171,19 +145,12 @@ export function PersonAccessEditor({
           />
           <fieldset disabled={locked || isOwnerRole} className="space-y-3 p-4">
             <div className="flex flex-wrap gap-1.5">
-              {scopes.map((sc) => (
+              {SHOP_SCOPES.map((sc) => (
                 <button
                   key={sc}
                   type="button"
                   disabled={sc === "all" && !iAmBrandWide}
-                  onClick={() =>
-                    set({
-                      scope: sc,
-                      shopIds: sc === "one" ? s.shopIds.slice(0, 1) : s.shopIds,
-                      scopeEntityId: sc === "entity" ? (s.scopeEntityId ?? entities[0]?.id ?? null) : null,
-                      scopeRegionId: sc === "region" ? (s.scopeRegionId ?? regions[0]?.id ?? null) : null,
-                    })
-                  }
+                  onClick={() => set({ scope: sc, shopIds: sc === "one" ? s.shopIds.slice(0, 1) : s.shopIds })}
                   className={cx(
                     "rounded-full px-3 py-1 text-sm ring-1 disabled:opacity-40",
                     (isOwnerRole ? "all" : s.scope) === sc ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50",
@@ -193,41 +160,21 @@ export function PersonAccessEditor({
                 </button>
               ))}
             </div>
-            {hierarchy && !isOwnerRole && (
-              <div className="space-y-1">
-                <Select
-                  aria-label={s.scope === "entity" ? "Owner group" : "Region"}
-                  value={(s.scope === "entity" ? s.scopeEntityId : s.scopeRegionId) ?? ""}
-                  onChange={(e) => set(s.scope === "entity" ? { scopeEntityId: e.target.value || null } : { scopeRegionId: e.target.value || null })}
-                >
-                  {(s.scope === "entity" ? entities : regions).map((x) => (
-                    <option key={x.id} value={x.id}>
-                      {x.name}
-                    </option>
-                  ))}
-                </Select>
-                <p className="text-xs text-zinc-500">
-                  Every location of this {s.scope === "entity" ? "owner group" : "region"}, including locations added to it later.{" "}
-                  {covered.length ? `Now: ${covered.length} location${covered.length === 1 ? "" : "s"}.` : "It has no locations yet."}
-                </p>
-              </div>
-            )}
             {s.scope !== "all" && !isOwnerRole && (
               <div className={cx("grid gap-1.5", !perShop && "sm:grid-cols-2")}>
-                {(hierarchy ? shops.filter((x) => covered.includes(x.id)) : shops).map((shop) => (
+                {shops.map((shop) => (
                   <div key={shop.id} className="flex min-h-8 items-center justify-between gap-2 text-sm">
                     <label className="flex min-w-0 items-center gap-2">
                       <input
                         type={s.scope === "one" ? "radio" : "checkbox"}
                         name="shop"
                         className="h-4 w-4 accent-ink-900"
-                        checked={covered.includes(shop.id)}
-                        disabled={hierarchy}
+                        checked={s.shopIds.includes(shop.id)}
                         onChange={() => toggleShop(shop.id)}
                       />
                       {shop.name}
                     </label>
-                    {perShop && covered.includes(shop.id) && (
+                    {perShop && s.shopIds.includes(shop.id) && (
                       <Select
                         aria-label={`Role at ${shop.name}`}
                         className="h-8 w-48 py-1 text-xs"
@@ -248,7 +195,7 @@ export function PersonAccessEditor({
                 ))}
               </div>
             )}
-            {multiShop(s.scope) && !isOwnerRole && !uniform && (
+            {s.scope === "selected" && !isOwnerRole && !uniform && (
               <p className="text-xs text-zinc-500">A different role at some shops: they work in one shop at a time, with that shop&apos;s role, and switch between only these shops.</p>
             )}
             {(s.scope === "all" || isOwnerRole) && <p className="text-xs text-zinc-500">Every shop, including shops added later, and brand-level records.</p>}
