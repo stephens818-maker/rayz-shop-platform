@@ -53,6 +53,7 @@ import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/process
 import { recordCheckout } from "./service-times";
 import { syncTipLedger } from "./tips/ledger";
 import { cashAwaiting, cashTipPayoutsCents } from "./tips/payouts";
+import { defaultOpening, movesOutCents } from "./drawer";
 
 export { refundEverything, refundSale, refundableState, voidSale } from "./refunds";
 
@@ -646,12 +647,17 @@ export async function drawerSummary(shopId: string, date: string) {
     .from(payments)
     .where(and(eq(payments.shopId, shopId), eq(payments.businessDate, date), eq(payments.method, "card"), sql`${payments.status} <> 'voided'`, sql`${payments.processor} is distinct from 'squire_import'`));
   const drawer = await db.query.cashDrawers.findFirst({ where: and(eq(cashDrawers.shopId, shopId), eq(cashDrawers.businessDate, date)) });
-  const opening = drawer?.openingFloatCents ?? 15_000;
-  const payouts = drawer?.payoutsCents ?? 0;
+  const opening = drawer && (drawer.openedAt || drawer.closedAt) ? drawer.openingFloatCents : await defaultOpening(shopId);
+  const moved = await movesOutCents(shopId, date);
+  const payouts = drawer?.closedAt ? drawer.payoutsCents : moved;
   const tipPayouts = drawer?.closedAt ? drawer.tipPayoutsCents : await cashTipPayoutsCents(shopId, date);
   return {
     date,
     drawer,
+    /** Opened today with a counted balance; until then the opening is the shop's default. */
+    opened: !!drawer?.openedAt,
+    /** Paid-outs less paid-ins recorded during the day. */
+    movesOutCents: moved,
     openingFloatCents: opening,
     cashSalesCents: cash.cents,
     cashTipsCents: cash.tips,
@@ -681,14 +687,17 @@ export async function closeDrawer(input: {
   if (waiting.length)
     throw new AppError("conflict", `${waiting.length === 1 ? "A cash tip payout is" : `${waiting.length} cash tip payouts are`} still waiting to be paid: pay, hold or remove ${waiting.length === 1 ? "it" : "them"} first.`);
   const s = await drawerSummary(input.shopId, input.date);
-  const expected = input.openingFloatCents + s.cashSalesCents - s.cashRefundsCents - input.payoutsCents - s.tipPayoutsCents;
+  // A drawer opened with a count keeps that opening; the paid-ins and outs recorded during the day add to what's typed at close.
+  const opening = s.opened ? s.openingFloatCents : input.openingFloatCents;
+  const payouts = s.movesOutCents + input.payoutsCents;
+  const expected = opening + s.cashSalesCents - s.cashRefundsCents - payouts - s.tipPayoutsCents;
   const values = {
     shopId: input.shopId,
     businessDate: input.date,
-    openingFloatCents: input.openingFloatCents,
+    openingFloatCents: opening,
     cashSalesCents: s.cashSalesCents,
     cashRefundsCents: s.cashRefundsCents,
-    payoutsCents: input.payoutsCents,
+    payoutsCents: payouts,
     tipPayoutsCents: s.tipPayoutsCents,
     expectedCents: expected,
     countedCents: input.countedCents,

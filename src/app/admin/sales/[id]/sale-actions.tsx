@@ -2,10 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Button, Card, CardHeader, Field, Input, Notice, Suggestions } from "@/components/ui";
+import { Button, Card, CardHeader, Field, Input, Notice, Select, Suggestions } from "@/components/ui";
 import { unitsShare } from "@/domain/refunds";
 import { formatCents } from "@/lib/money";
-import { refundAction, voidAction } from "../actions";
+import { reassignAction, refundAction, voidAction } from "../actions";
+import { ApprovalValue, ManagerPin, approvalReady } from "./manager-pin";
 
 export function PrintButton() {
   return (
@@ -35,8 +36,13 @@ export function SaleActions({
   cardFeeRemainingCents,
   imported,
   reasons = [],
+  needsPin = false,
+  approvers = [],
 }: {
   reasons?: string[];
+  /** Refunds and voids here need a manager's PIN: a shop login, or someone without the refund permission. */
+  needsPin?: boolean;
+  approvers?: { id: string; label: string }[];
   saleId: string;
   status: string;
   items: RefundableItem[];
@@ -52,6 +58,9 @@ export function SaleActions({
   const [tip, setTip] = useState("");
   const [fee, setFee] = useState(false);
   const [restock, setRestock] = useState(true);
+  const [approval, setApproval] = useState<ApprovalValue>({ staffId: "", pin: "" });
+  const pinOk = approvalReady(needsPin, approval);
+  const given = needsPin ? approval : null;
   if (!["paid", "partially_refunded"].includes(status)) return null;
   if (imported) {
     return (
@@ -74,6 +83,7 @@ export function SaleActions({
     start(async () => {
       setError(null);
       const r = await fn();
+      setApproval((a) => ({ ...a, pin: "" }));
       if (!r.ok) setError(r.error ?? "Failed");
       else {
         setQty({});
@@ -138,24 +148,101 @@ export function SaleActions({
           <Input list="refund-reasons" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Rang up wrong service" />
           <Suggestions id="refund-reasons" items={reasons} />
         </Field>
+        {needsPin && <ManagerPin approvers={approvers} value={approval} onChange={setApproval} what="refunds and voids" />}
         {error && <Notice tone="red">{error}</Notice>}
         <div className="grid grid-cols-2 gap-2">
           {status === "paid" && (
-            <Button variant="danger" disabled={pending || !reason} onClick={() => confirm("Void this whole ticket?") && run(() => voidAction(saleId, reason))}>
+            <Button variant="danger" disabled={pending || !reason || !pinOk} onClick={() => confirm("Void this whole ticket?") && run(() => voidAction(saleId, reason, given))}>
               Void ticket
             </Button>
           )}
           <Button
             variant="secondary"
-            disabled={pending || !reason || total <= 0}
+            disabled={pending || !reason || total <= 0 || !pinOk}
             onClick={() =>
               run(() =>
-                refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee, reason, restock }),
+                refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee, reason, restock }, given),
               )
             }
             className={status !== "paid" ? "col-span-2" : ""}
           >
             Refund {total > 0 ? formatCents(total) : ""}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/** Moves a paid ticket, with its sales and tips, to the barber who actually did it. */
+export function ReassignPanel({
+  saleId,
+  current,
+  barbers,
+  needsPin,
+  approvers,
+}: {
+  saleId: string;
+  current: string | null;
+  barbers: { id: string; label: string }[];
+  needsPin: boolean;
+  approvers: { id: string; label: string }[];
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [to, setTo] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [approval, setApproval] = useState<ApprovalValue>({ staffId: "", pin: "" });
+  const options = barbers.filter((b) => b.id !== current);
+  if (!options.length) return null;
+  if (!open)
+    return (
+      <Button variant="secondary" className="w-full" onClick={() => setOpen(true)}>
+        Reassign to another barber
+      </Button>
+    );
+  return (
+    <Card>
+      <CardHeader title="Reassign ticket" subtitle="The ticket's sales and tips move to the barber you pick. Tips already paid out are taken back from the first barber's next payout." />
+      <div className="space-y-3 p-4">
+        <Field label="Barber">
+          <Select value={to} onChange={(e) => setTo(e.target.value)} aria-label="New barber">
+            <option value="">Pick a barber…</option>
+            {options.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Reason (required)">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Rung up under the wrong barber" />
+        </Field>
+        {needsPin && <ManagerPin approvers={approvers} value={approval} onChange={setApproval} what="reassigning tickets" />}
+        {error && <Notice tone="red">{error}</Notice>}
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="secondary" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={pending || !to || reason.trim().length < 3 || !approvalReady(needsPin, approval)}
+            onClick={() =>
+              start(async () => {
+                setError(null);
+                const r = await reassignAction({ saleId, toStaffId: to, reason }, needsPin ? approval : null);
+                setApproval((a) => ({ ...a, pin: "" }));
+                if (!r.ok) setError(r.error ?? "Failed");
+                else {
+                  setOpen(false);
+                  setReason("");
+                  router.refresh();
+                }
+              })
+            }
+          >
+            Reassign
           </Button>
         </div>
       </div>

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, payments, sales, shops, staff } from "@/db/schema";
+import { customers, payments, saleReassignments, sales, shops, staff } from "@/db/schema";
 import { Badge, Button, Card, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatTime, isValidLocalDate, todayLocal } from "@/lib/time";
@@ -33,6 +33,7 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
       firstName: customers.firstName,
       lastName: customers.lastName,
       methods: sql<string>`(select string_agg(distinct ${payments.method}::text, ' + ') from ${payments} where ${payments.saleId} = ${sales.id})`,
+      reassigned: sql<boolean>`exists (select 1 from ${saleReassignments} where ${saleReassignments.saleId} = ${sales.id})`,
     })
     .from(sales)
     .innerJoin(shops, eq(shops.id, sales.shopId))
@@ -44,6 +45,13 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
   const open = rows.filter((r) => r.status === "open");
   const closed = rows.filter((r) => r.status !== "open");
   const paidTotal = closed.filter((r) => r.status !== "voided").reduce((a, r) => a + r.totalCents, 0);
+  const perBarber = [...closed.filter((r) => r.status !== "voided").reduce((m, r) => {
+    const k = r.barber ?? "No barber";
+    const x = m.get(k) ?? { tickets: 0, cents: 0, tips: 0 };
+    m.set(k, { tickets: x.tickets + 1, cents: x.cents + r.totalCents, tips: x.tips + r.tipCents });
+    return m;
+  }, new Map<string, { tickets: number; cents: number; tips: number }>())].sort((a, b) => b[1].cents - a[1].cents);
+  const eod = can(ctx, "report.end_of_day.view");
   return (
     <div className="mx-auto max-w-6xl">
       <PageHeader
@@ -57,6 +65,11 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
             <Link className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/sales?date=${addDays(date, 1)}`}>
               Next ›
             </Link>
+            {eod && (
+              <Link className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/reports/end-of-day?from=${date}&to=${date}`}>
+                End of day
+              </Link>
+            )}
             {ctx.currentShopId && can(ctx, "checkout.any") && (
               <form action={newSaleAction}>
                 <Button>New sale (retail / gift card)</Button>
@@ -77,6 +90,21 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
           </div>
         </Card>
       )}
+      {perBarber.length > 0 && (
+        <Card className="mb-4">
+          <div className="border-b border-zinc-100 px-4 py-3 text-sm font-semibold">Daily summary by barber</div>
+          <div className="grid grid-cols-2 gap-px bg-zinc-100 sm:grid-cols-3 lg:grid-cols-4" data-testid="daily-summary">
+            {perBarber.map(([name, x]) => (
+              <div key={name} className="bg-white px-4 py-3 text-sm">
+                <div className="font-medium">{name}</div>
+                <div className="tabular text-zinc-600">
+                  {x.tickets} ticket{x.tickets === 1 ? "" : "s"} · {formatCents(x.cents)} · tips {formatCents(x.tips)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       {closed.length === 0 ? (
         <Empty title="No completed sales on this day" />
       ) : (
@@ -93,6 +121,7 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
                 <Th right>Tip</Th>
                 <Th right>Total</Th>
                 <Th>Status</Th>
+                <Th />
               </tr>
             </thead>
             <tbody>
@@ -106,7 +135,10 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
                   <Td>{formatTime(r.paidAt ?? r.createdAt)}</Td>
                   {ctx.currentShopId === null && <Td>{r.shop}</Td>}
                   <Td>{r.firstName ? `${r.firstName} ${r.lastName ?? ""}` : <span className="text-zinc-400">Walk-in</span>}</Td>
-                  <Td>{r.barber ?? "—"}</Td>
+                  <Td>
+                    {r.barber ?? "—"}
+                    {r.reassigned && <span className="ml-1 text-xs text-zinc-500">(reassigned)</span>}
+                  </Td>
                   <Td className="capitalize">
                     {r.methods?.replace("_", " ") ?? "—"}
                     {r.cardFeeCents > 0 && <span className="ml-1 text-xs text-amber-700">+fee</span>}
@@ -115,6 +147,11 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
                   <Td right>{formatCents(r.totalCents)}</Td>
                   <Td>
                     <Badge tone={TONE[r.status]}>{r.status.replace("_", " ")}</Badge>
+                  </Td>
+                  <Td right>
+                    <Link className="text-xs underline" href={`/admin/sales/${r.id}`}>
+                      Receipt, refund, reassign
+                    </Link>
                   </Td>
                 </tr>
               ))}

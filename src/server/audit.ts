@@ -6,6 +6,8 @@ import { scrub } from "@/lib/sensitive";
 export interface Actor {
   staffId?: string | null;
   label: string;
+  /** The manager whose PIN approved this, when the person acting couldn't on their own. */
+  approvedBy?: { staffId: string; label: string } | null;
 }
 
 export const SYSTEM: Actor = { staffId: null, label: "system" };
@@ -27,7 +29,7 @@ export async function audit(
     action,
     entity,
     entityId,
-    details: scrub(details),
+    details: scrub(actor.approvedBy ? { ...details, approvedBy: actor.approvedBy.label, approvedById: actor.approvedBy.staffId } : details),
   });
 }
 

@@ -1,10 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { receiptBranding } from "@/domain/connect";
-import { appointments, customers, payments, refunds, saleItems, sales, shops, staff } from "@/db/schema";
+import { appointments, customers, payments, refunds, saleItems, sales, shops, staff, staffShops } from "@/db/schema";
 import { Badge, Card, LinkButton, Notice, StarBadge } from "@/components/ui";
 import { formatCents, formatRate } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
@@ -22,7 +22,9 @@ import { ratingSummaries, visitForSale } from "@/server/ratings";
 import { saleReceiptState } from "@/server/receipts";
 import { QuickRate } from "../../customers/ratings";
 import { ReceiptPanel } from "./receipt-panel";
-import { PrintButton, SaleActions } from "./sale-actions";
+import { approvers, needsManager } from "@/server/manager-approval";
+import { reassignments } from "@/server/reassign";
+import { PrintButton, ReassignPanel, SaleActions } from "./sale-actions";
 
 export const metadata: Metadata = { title: "Receipt" };
 
@@ -56,8 +58,25 @@ export default async function SalePage({ params, searchParams }: { params: Promi
   const tipShares = screen.shares.length ? splitCents(sale.tipCents, screen.shares.map((x) => ({ id: x.staffId, weight: x.weight }))) : null;
   const splitName = new Map(screen.shares.map((x) => [x.staffId, x.label]));
   const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { rate: number } };
-  const manager = can(ctx, "sales.refund");
-  const refundable = manager && ["paid", "partially_refunded"].includes(sale.status) ? await refundableState(id) : null;
+  const worksTickets = can(ctx, "sales.view") || can(ctx, "checkout.any");
+  const manager = can(ctx, "sales.refund") || worksTickets;
+  const refundPin = needsManager(ctx, "sales.refund");
+  const reassignPin = needsManager(ctx, "sales.reassign");
+  const mayReassign = !sale.isImported && ["paid", "partially_refunded", "refunded"].includes(sale.status) && (can(ctx, "sales.reassign") || worksTickets);
+  const [refundable, refundApprovers, reassignApprovers, shopBarbers, moves] = await Promise.all([
+    manager && ["paid", "partially_refunded"].includes(sale.status) ? refundableState(id) : null,
+    manager && refundPin ? approvers(sale.shopId, "sales.refund", ctx.staff.id) : [],
+    mayReassign && reassignPin ? approvers(sale.shopId, "sales.reassign", ctx.staff.id) : [],
+    mayReassign
+      ? db
+          .select({ id: staff.id, label: staff.displayLabel })
+          .from(staffShops)
+          .innerJoin(staff, eq(staff.id, staffShops.staffId))
+          .where(and(eq(staffShops.shopId, sale.shopId), eq(staff.active, true), eq(staff.kind, "person"), eq(staff.isBookable, true)))
+          .orderBy(asc(staff.displayLabel))
+      : [],
+    reassignments(id),
+  ]);
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -182,6 +201,13 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                   <td className="text-right">{formatCents(p.amountCents)}</td>
                 </tr>
               ))}
+              {moves.map(({ r, toLabel }) => (
+                <tr key={r.id} className="text-xs text-zinc-500" data-testid="reassigned">
+                  <td colSpan={2}>
+                    Reassigned to {toLabel} {formatDateTime(r.createdAt)}: {r.reason}
+                  </td>
+                </tr>
+              ))}
               {refs.map((r) => (
                 <tr key={r.id} className="text-red-700">
                   <td>
@@ -229,9 +255,12 @@ export default async function SalePage({ params, searchParams }: { params: Promi
             </div>
           )}
           {customer && rateable && <QuickRate customerId={customer.id} firstName={customer.firstName} appointmentId={rateable.appointmentId} saleId={id} myRating={rateable.myRating} />}
+          {mayReassign && <ReassignPanel saleId={sale.id} current={sale.staffId} barbers={shopBarbers} needsPin={reassignPin} approvers={reassignApprovers} />}
           {manager && refundable && (
             <SaleActions
               reasons={(await lookups()).refundReasons}
+              needsPin={refundPin}
+              approvers={refundApprovers}
               saleId={sale.id}
               status={sale.status}
               imported={sale.isImported}

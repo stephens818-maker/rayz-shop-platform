@@ -97,7 +97,7 @@ export async function voidSale(saleId: string, reason: string, actor: Actor, now
   await db.transaction(async (tx) => {
     const sale = await lockSale(tx, saleId);
     if (sale.status === "open") {
-      await tx.update(sales).set({ status: "voided", voidedAt: now, voidReason: reason }).where(eq(sales.id, saleId));
+      await tx.update(sales).set({ status: "voided", voidedAt: now, voidReason: reason, voidApprovedBy: actor.approvedBy?.staffId ?? null }).where(eq(sales.id, saleId));
       if (sale.appointmentId) await tx.update(appointments).set({ status: "checked_in" }).where(eq(appointments.id, sale.appointmentId));
       await audit(actor, "sale.void_open", "sale", saleId, { reason }, sale.shopId, tx);
       return;
@@ -120,6 +120,7 @@ export async function voidSale(saleId: string, reason: string, actor: Actor, now
       now,
       strictGiftCards: true,
     });
+    if (actor.approvedBy) await tx.update(sales).set({ voidApprovedBy: actor.approvedBy.staffId }).where(eq(sales.id, saleId));
   });
 }
 
@@ -296,6 +297,7 @@ async function recordSteps(
       items: i === 0 ? o.items : null,
       stripeRefundId: o.stripeIds.get(p.id) ?? null,
       createdBy: o.actor.staffId ?? null,
+      approvedBy: o.actor.approvedBy?.staffId ?? null,
     });
     const refunded = p.refundedCents + step.amountCents;
     await tx

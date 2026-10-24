@@ -16,6 +16,8 @@ export function CloseDrawerForm({
   cashRefundsCents,
   tipPayoutsCents,
   defaultFloatCents,
+  opened = false,
+  movesOutCents = 0,
 }: {
   shopId: string;
   date: string;
@@ -23,6 +25,10 @@ export function CloseDrawerForm({
   cashRefundsCents: number;
   tipPayoutsCents: number;
   defaultFloatCents: number;
+  /** Opened with a counted balance, which then can't change at close. */
+  opened?: boolean;
+  /** Paid-outs less paid-ins recorded during the day. */
+  movesOutCents?: number;
 }) {
   const router = useRouter();
   const [counts, setCounts] = useState<Record<number, string>>({});
@@ -32,15 +38,15 @@ export function CloseDrawerForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const counted = DENOMS.reduce((a, d) => a + d * (Number(counts[d]) || 0), 0);
-  const expected = cents(float) + cashSalesCents - cashRefundsCents - cents(payouts) - tipPayoutsCents;
+  const expected = cents(float) + cashSalesCents - cashRefundsCents - movesOutCents - cents(payouts) - tipPayoutsCents;
   const variance = counted - expected;
   return (
     <div className="space-y-4 p-4">
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Opening float">
-          <Input inputMode="decimal" value={float} onChange={(e) => setFloat(e.target.value)} />
+        <Field label={opened ? "Opening balance (counted at open)" : "Opening balance"}>
+          <Input inputMode="decimal" value={float} disabled={opened} onChange={(e) => setFloat(e.target.value)} />
         </Field>
-        <Field label="Payouts (paid out of drawer)">
+        <Field label={movesOutCents ? "Other payouts not recorded yet" : "Payouts (paid out of drawer)"}>
           <Input inputMode="decimal" value={payouts} onChange={(e) => setPayouts(e.target.value)} />
         </Field>
       </div>
@@ -60,6 +66,12 @@ export function CloseDrawerForm({
           <span>Counted</span>
           <span className="font-semibold">{$(counted)}</span>
         </div>
+        {movesOutCents !== 0 && (
+          <div className="flex justify-between text-zinc-600">
+            <span>Paid out less paid in</span>
+            <span>{movesOutCents > 0 ? "−" : "+"}{$(Math.abs(movesOutCents))}</span>
+          </div>
+        )}
         {tipPayoutsCents > 0 && (
           <div className="flex justify-between text-zinc-600">
             <span>Cash tip payouts</span>
