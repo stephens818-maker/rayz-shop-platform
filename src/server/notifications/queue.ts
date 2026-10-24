@@ -2,6 +2,7 @@ import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { EmailAttachment, brandSettings, contactOptOuts, notificationJobs, shops } from "@/db/schema";
 import { MergeValues, SavedTemplates, cutoffText, fill, isTemplateKind, templateFor } from "@/domain/message-templates";
+import { icsCalendar, locationDescription } from "@/domain/ics";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
 import { emailProvider, pushProvider, smsProvider, voiceProvider } from "./providers";
@@ -79,6 +80,12 @@ export interface AppointmentMessageContext {
   shopSlug?: string;
   shopPhone?: string | null;
   cancelCutoffMinutes?: number;
+  /** For the email's location footer and calendar invite. */
+  endsAt?: Date;
+  shopFullAddress?: string;
+  shopGeo?: { lat: number; lng: number } | null;
+  shopDirections?: string | null;
+  services?: string[];
 }
 
 const baseUrl = appBaseUrl;
@@ -90,6 +97,9 @@ export function mergeValues(c: AppointmentMessageContext, extra: MergeValues = {
     barber: c.barberName,
     when: formatDateTime(c.startsAt),
     address: c.shopAddress,
+    full_address: c.shopFullAddress ?? c.shopAddress,
+    map_link: c.shopSlug ? `${baseUrl()}/locations/${c.shopSlug}/directions` : "",
+    calendar_link: `${baseUrl()}/a/${c.code}/calendar.ics`,
     link: `${baseUrl()}/a/${c.code}`,
     book_link: c.shopSlug ? `${baseUrl()}/book/${c.shopSlug}` : `${baseUrl()}/book`,
     cutoff: cutoffText(c.cancelCutoffMinutes ?? 30),
@@ -109,6 +119,49 @@ export function renderMessage(kind: NotificationKind, c: AppointmentMessageConte
   if (!isTemplateKind(kind)) return { subject: values.shop!, body: values.shop! };
   const t = templateFor(kind, saved);
   return { subject: fill(t.subject, values), body: fill(t.body, values) };
+}
+
+/** Emails about an appointment end with where the shop is: its full address, phone, directions and the calendar link. */
+export function locationFooter(c: AppointmentMessageContext, values: MergeValues): string {
+  if (!c.shopFullAddress) return "";
+  return [
+    "",
+    "—",
+    `Ray'z ${c.shopName}`,
+    c.shopFullAddress,
+    c.shopPhone ? `Call ${c.shopPhone}` : null,
+    c.shopDirections ? `Parking: ${c.shopDirections}` : null,
+    values.map_link ? `Directions: ${values.map_link}` : null,
+    `Add to calendar: ${values.calendar_link}`,
+  ]
+    .filter((l) => l !== null)
+    .join("\n");
+}
+
+const INVITE_KINDS = new Set<NotificationKind>(["confirmation", "reschedule"]);
+
+/** The calendar invite on a confirmation or move email, for one appointment (not a family's one message). */
+export function inviteAttachment(kind: NotificationKind, c: AppointmentMessageContext, extra: MergeValues | undefined, now: Date): EmailAttachment[] | null {
+  if (!INVITE_KINDS.has(kind) || !c.endsAt || extra?.link) return null;
+  const manageUrl = `${baseUrl()}/a/${c.code}`;
+  const ics = icsCalendar(
+    [
+      {
+        uid: `${c.code}@rayzbs.com`,
+        start: c.startsAt,
+        end: c.endsAt,
+        summary: `Ray'z ${c.shopName}: ${c.services?.[0] ?? "Haircut"} with ${c.barberName}`,
+        description: locationDescription({ phone: c.shopPhone ?? null, directions: c.shopDirections ?? null, manageUrl, mapUrl: c.shopSlug ? `${baseUrl()}/locations/${c.shopSlug}/directions` : null }),
+        location: `Ray'z ${c.shopName}, ${c.shopFullAddress ?? c.shopAddress}`,
+        geo: c.shopGeo ?? null,
+        url: manageUrl,
+        sequence: Math.max(0, Math.floor(now.getTime() / 1000) - 1_790_000_000),
+        now,
+      },
+    ],
+    { method: "PUBLISH", name: `Ray'z ${c.shopName}` },
+  );
+  return [{ filename: `rayz-${c.code}.ics`, contentType: "text/calendar; charset=utf-8; method=PUBLISH", content: Buffer.from(ics, "utf8").toString("base64") }];
 }
 
 function recipients(c: AppointmentMessageContext) {
@@ -142,7 +195,7 @@ export async function scheduleAppointmentNotifications(
     if (event !== "imported" && event !== "reminders") jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
     jobs.push(...reminderJobs(c.startsAt, now));
   }
-  return insertJobs(jobs, c, tx, extra);
+  return insertJobs(jobs, c, tx, extra, now);
 }
 
 const REMINDER_KINDS = ["reminder_24h", "reminder_2h"] as const;
@@ -166,12 +219,13 @@ export async function moveReminders(appointmentIds: string[], c: AppointmentMess
       .update(notificationJobs)
       .set({ status: "cancelled" })
       .where(and(inArray(notificationJobs.appointmentId, appointmentIds), eq(notificationJobs.status, "pending"), inArray(notificationJobs.kind, [...REMINDER_KINDS])));
-  return c ? insertJobs(reminderJobs(c.startsAt, now), c, tx, extra) : 0;
+  return c ? insertJobs(reminderJobs(c.startsAt, now), c, tx, extra, now) : 0;
 }
 
-async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: AppointmentMessageContext, tx: DBorTx, extra?: MergeValues) {
+async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: AppointmentMessageContext, tx: DBorTx, extra?: MergeValues, now: Date = new Date()) {
   const to = recipients(c);
   const saved = jobs.length && to.length ? await savedTemplates(tx) : {};
+  const footer = locationFooter(c, mergeValues(c, extra));
   const rows = jobs.flatMap((j) =>
     to.map((r) => {
       const m = renderMessage(j.kind, c, saved, extra);
@@ -183,7 +237,8 @@ async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: Ap
         channel: r.channel,
         to: r.to,
         subject: r.channel === "email" ? m.subject : null,
-        body: m.body,
+        body: r.channel === "email" && isTemplateKind(j.kind) && footer ? `${m.body}\n${footer}` : m.body,
+        attachments: r.channel === "email" ? inviteAttachment(j.kind, c, extra, now) : null,
         runAt: j.runAt,
       };
     }),
@@ -202,6 +257,7 @@ export async function queueAppointmentMessage(kind: NotificationKind, c: Appoint
   const to = recipients(c);
   if (!to.length) return [];
   const m = renderMessage(kind, c, await savedTemplates(tx), extra);
+  const footer = locationFooter(c, mergeValues(c, extra));
   const rows = to.map((r) => ({
     appointmentId: c.appointmentId,
     customerId: c.customerId,
@@ -210,7 +266,8 @@ export async function queueAppointmentMessage(kind: NotificationKind, c: Appoint
     channel: r.channel,
     to: r.to,
     subject: r.channel === "email" ? m.subject : null,
-    body: m.body,
+    body: r.channel === "email" && isTemplateKind(kind) && footer ? `${m.body}\n${footer}` : m.body,
+    attachments: r.channel === "email" ? inviteAttachment(kind, c, extra, now) : null,
     runAt: now,
   }));
   if (!rows.length) return [];

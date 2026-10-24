@@ -68,7 +68,20 @@ export default async function ReceiptPage({
           )}
           <h1 className="text-lg font-bold leading-tight">{d.shop.title}</h1>
           {d.shop.address && (
-            <p className="mt-1 text-sm text-zinc-500">{d.shop.address}</p>
+            <p className="mt-1 text-sm text-zinc-500">
+              {d.shop.mapUrl ? (
+                <a
+                  href={d.shop.mapUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline decoration-zinc-300"
+                >
+                  {d.shop.address}
+                </a>
+              ) : (
+                d.shop.address
+              )}
+            </p>
           )}
           {d.shop.phone && (
             <a

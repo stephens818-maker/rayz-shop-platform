@@ -38,29 +38,8 @@ function depositLine(d: Group["deposit"]) {
   }
 }
 
-function icsFor(g: Group, address: string) {
-  const f = (iso: string) => iso.replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-  const who = g.members.filter((m) => ["booked", "confirmed"].includes(m.status)).map((m) => `${m.firstName ?? "Guest"} ${fmtTime(m.startsAt)} with ${m.barber.displayName}`);
-  const body = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Rayz//Booking//EN",
-    "BEGIN:VEVENT",
-    `UID:group-${g.code}@rayzbs.com`,
-    `DTSTAMP:${f(new Date().toISOString())}`,
-    `DTSTART:${f(g.startsAt)}`,
-    `DTEND:${f(g.endsAt)}`,
-    `SUMMARY:Ray'z ${g.shop.name}: family haircuts`,
-    `DESCRIPTION:${who.join("\\n")}`,
-    `LOCATION:${address.replace(/,/g, "\\,")}`,
-    `URL:${location.origin}/g/${g.code}`,
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ].join("\r\n");
-  return `data:text/calendar;charset=utf-8,${encodeURIComponent(body)}`;
-}
-
-export function ManageGroup({ group, shop, isNew }: { group: Group; shop: { address: string; phone: string | null }; isNew: boolean }) {
+/** `basePath` is "/embed" inside the booking widget, so its links stay in the frame. */
+export function ManageGroup({ group, shop, isNew, basePath = "" }: { group: Group; shop: { address: string; phone: string | null; mapsUrl?: string | null }; isNew: boolean; basePath?: string }) {
   const [g, setG] = useState(group);
   const [mode, setMode] = useState<"view" | "reschedule" | "cancel">("view");
   const [date, setDate] = useState<string | null>(null);
@@ -146,7 +125,7 @@ export function ManageGroup({ group, shop, isNew }: { group: Group; shop: { addr
               <div className="flex flex-col items-end gap-1">
                 <StatusBadge status={m.status} />
                 {m.canChange && (
-                  <Link href={`/a/${m.appointmentCode}`} className="text-xs text-zinc-600 underline">
+                  <Link href={`${basePath}/a/${m.appointmentCode}`} className="text-xs text-zinc-600 underline">
                     Change just {m.firstName ?? "this one"}
                   </Link>
                 )}
@@ -157,8 +136,22 @@ export function ManageGroup({ group, shop, isNew }: { group: Group; shop: { addr
         <div className="space-y-1 border-t border-zinc-100 px-5 py-3 text-sm text-zinc-500">
           {depositText && <p className="text-zinc-700">{depositText}</p>}
           <p>
-            {shop.address}
-            {shop.phone && <> · {shop.phone.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3")}</>}
+            {shop.mapsUrl ? (
+              <a href={shop.mapsUrl} target="_blank" rel="noopener noreferrer" className="underline decoration-zinc-300">
+                {shop.address}
+              </a>
+            ) : (
+              shop.address
+            )}
+            {shop.phone && (
+              <>
+                {" "}
+                ·{" "}
+                <a href={`tel:${shop.phone}`} className="underline decoration-zinc-300">
+                  {shop.phone.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3")}
+                </a>
+              </>
+            )}
           </p>
           <p className="text-xs text-zinc-400">Reference {g.code}</p>
         </div>
@@ -175,7 +168,7 @@ export function ManageGroup({ group, shop, isNew }: { group: Group; shop: { addr
               </Button>
             )}
             {live && (
-              <a className="inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-100" href={icsFor(g, shop.address)} download={`rayz-${g.code}.ics`}>
+              <a className="inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-100" href={`/g/${g.code}/calendar.ics`} download={`rayz-${g.code}.ics`}>
                 Add to calendar
               </a>
             )}
@@ -185,7 +178,7 @@ export function ManageGroup({ group, shop, isNew }: { group: Group; shop: { addr
               </p>
             )}
             {!live && (
-              <Link href={`/book/${g.shop.slug}`} className="inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 text-sm font-medium text-white">
+              <Link href={`${basePath}/book/${g.shop.slug}`} className="inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 text-sm font-medium text-white">
                 Book again
               </Link>
             )}

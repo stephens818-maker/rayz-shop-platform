@@ -14,5 +14,5 @@ export default async function Page({ params, searchParams }: { params: Promise<{
     if (e instanceof AppError && e.code === "not_found") notFound();
     throw e;
   });
-  return <ManageGroup group={publicGroup(view)} shop={{ address: view.shop.address, phone: view.shop.phone }} isNew={isNew === "1"} />;
+  return <ManageGroup group={publicGroup(view)} shop={{ address: view.shop.address, phone: view.shop.phone, mapsUrl: view.shop.mapsUrl }} isNew={isNew === "1"} />;
 }

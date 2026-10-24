@@ -126,6 +126,10 @@ export interface ReceiptEmailInput {
   footer: string;
   url: string;
   update?: ReceiptUpdate;
+  /** Where the shop is, when its receipts show the address and phone. */
+  address?: string | null;
+  phone?: string | null;
+  mapUrl?: string | null;
 }
 
 export interface ReceiptPerson {
@@ -166,6 +170,7 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
     ...(o.loyalty ? ["", o.loyalty] : []),
     "",
     `See your receipt or rebook: ${o.url}`,
+    ...(o.address || o.phone ? ["", ...[o.address, o.phone && `Call ${o.phone}`, o.mapUrl && `Directions: ${o.mapUrl}`].filter((x): x is string => !!x)] : []),
     "",
     o.footer,
   ];

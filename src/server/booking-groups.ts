@@ -16,6 +16,7 @@ import {
   sameTimesOption,
 } from "@/domain/booking-group";
 import type { FamilySettings } from "@/domain/family";
+import { fullAddress, mapsUrl } from "@/domain/location-profile";
 import { appBaseUrl } from "@/lib/deployment";
 import { appointmentCode } from "@/lib/ids";
 import { LocalDate, formatDateTime, formatTime, localDateOf } from "@/lib/time";
@@ -333,6 +334,7 @@ async function mergeFor(g: { code: string; guardianId: string }, people: GroupMe
     barber: joinAnd([...byBarber].map(([b, names]) => `${b} (${names.join(", ")})`)),
     when: cancelled ? `${formatDateTime(span.start)} family` : `${formatDateTime(span.start)} (everyone done by ${formatTime(span.end)})`,
     link: `${appBaseUrl()}/g/${g.code}`,
+    calendar_link: `${appBaseUrl()}/g/${g.code}/calendar.ics`,
   };
 }
 
@@ -382,7 +384,7 @@ export async function groupView(code: string, now: Date = new Date()) {
     guardianId: g.guardianId,
     code: g.code,
     plan: g.plan,
-    shop: { id: shop.id, slug: shop.slug, name: shop.name, phone: shop.phone, address: [shop.address, shop.city, [shop.state, shop.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ") },
+    shop: { id: shop.id, slug: shop.slug, name: shop.name, phone: shop.phone, address: fullAddress(shop), mapsUrl: mapsUrl(shop) },
     startsAt: new Date(span.start).toISOString(),
     endsAt: new Date(span.end).toISOString(),
     minutes: span.minutes,

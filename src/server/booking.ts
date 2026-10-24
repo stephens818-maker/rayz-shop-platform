@@ -30,6 +30,8 @@ import {
 } from "@/domain/availability";
 import type { Opening } from "@/domain/booking-group";
 import { closedOn, takesOnlineBookings } from "@/domain/location-lifecycle";
+import { fullAddress, mapsUrl, validLatLng } from "@/domain/location-profile";
+import { appBaseUrl } from "@/lib/deployment";
 import { effectiveEnd } from "@/domain/clock-blocks";
 import { shopClockSettings } from "@/domain/time-clock";
 import { trailingBuffer } from "@/domain/timing";
@@ -442,8 +444,16 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
       startsAt: appointments.startsAt,
       shopId: shops.id,
       shopName: shops.name,
+      endsAt: appointments.endsAt,
       shopAddress: shops.address,
+      shopAddress2: shops.address2,
       shopCity: shops.city,
+      shopState: shops.state,
+      shopZip: shops.zip,
+      shopLat: shops.latitude,
+      shopLng: shops.longitude,
+      geocodeSource: shops.geocodeSource,
+      shopDirections: shops.directions,
       shopSlug: shops.slug,
       shopPhone: shops.phone,
       cutoff: shops.cancelCutoffMinutes,
@@ -475,6 +485,11 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
     shopSlug: row.shopSlug,
     shopPhone: row.shopPhone ? formatPhone(row.shopPhone) : null,
     cancelCutoffMinutes: row.cutoff,
+    endsAt: row.endsAt,
+    shopFullAddress: fullAddress({ address: row.shopAddress, address2: row.shopAddress2, city: row.shopCity, state: row.shopState, zip: row.shopZip }),
+    shopGeo: row.geocodeSource !== "zip" && validLatLng({ lat: row.shopLat, lng: row.shopLng }) ? { lat: row.shopLat!, lng: row.shopLng! } : null,
+    shopDirections: row.shopDirections,
+    services: (await tx.select({ name: appointmentItems.name, kind: appointmentItems.kind }).from(appointmentItems).where(eq(appointmentItems.appointmentId, row.id)).orderBy(asc(appointmentItems.kind))).map((i) => i.name),
   };
 }
 
@@ -507,7 +522,16 @@ export async function getAppointmentByCode(code: string, now: Date = new Date())
     source: row.a.source,
     startsAt: row.a.startsAt.toISOString(),
     endsAt: row.a.endsAt.toISOString(),
-    shop: { id: row.shop.id, slug: row.shop.slug, name: row.shop.name, address: `${row.shop.address}, ${row.shop.city}, ${row.shop.state} ${row.shop.zip}`, phone: row.shop.phone },
+    shop: {
+      id: row.shop.id,
+      slug: row.shop.slug,
+      name: row.shop.name,
+      address: fullAddress(row.shop),
+      phone: row.shop.phone,
+      textNumber: row.shop.twilioNumber,
+      mapsUrl: mapsUrl(row.shop),
+      locationUrl: `${appBaseUrl()}/locations/${row.shop.slug}`,
+    },
     barber: { id: row.a.staffId, slug: row.barberSlug, displayName: row.barberName },
     anyBarber: row.a.anyBarber,
     customer: row.customer ? { id: row.customer.id, firstName: row.customer.firstName } : null,

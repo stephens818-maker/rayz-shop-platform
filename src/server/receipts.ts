@@ -6,6 +6,7 @@ import { groupByPerson } from "@/domain/combined-checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding } from "@/domain/connect";
 import { takesOnlineBookings } from "@/domain/location-lifecycle";
+import { fullAddress, mapsUrl } from "@/domain/location-profile";
 import {
   DEFAULT_RECEIPT_FOOTER,
   REQUEST_LIMIT,
@@ -92,7 +93,7 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
   const payerNames = new Map(payerIds.length ? (await tx.select({ id: customers.id, first: customers.firstName }).from(customers).where(inArray(customers.id, payerIds))).map((c) => [c.id, c.first]) : []);
   const payerOf = (p: (typeof pays)[number]) => (p.payerCustomerId ? payerNames.get(p.payerCustomerId) : null) ?? p.payerLabel ?? null;
   const labelOf = (p: (typeof pays)[number]) => `${tenderLabel(p)}${payerOf(p) ? ` (${payerOf(p)})` : ""}`;
-  const shopLine = [brand.showAddress && shop.address && `${shop.address}, ${shop.city}, ${shop.state} ${shop.zip}`].filter(Boolean)[0] || null;
+  const shopLine = (brand.showAddress && shop.address && fullAddress(shop)) || null;
   return {
     sale: { id: sale.id, number: sale.number, status: sale.status, paidAt: sale.paidAt, createdAt: sale.createdAt, voidedAt: sale.voidedAt, isImported: sale.isImported },
     shop: {
@@ -101,6 +102,8 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
       logoUrl: brand.showLogo ? shop.logoUrl : null,
       accentColor: shop.accentColor,
       address: shopLine,
+      mapUrl: shopLine ? mapsUrl(shop) : null,
+      directionsUrl: shopLine ? `${appBaseUrl()}/locations/${shop.slug}/directions` : null,
       phone: brand.showPhone && shop.phone ? shop.phone : null,
       footer: brand.footer ?? DEFAULT_RECEIPT_FOOTER,
     },
@@ -193,6 +196,9 @@ export async function composeReceipt(saleId: string, channel: ReceiptSendChannel
     footer: d.shop.footer,
     url,
     update,
+    address: d.shop.address,
+    phone: d.shop.phone ? formatPhone(d.shop.phone) || d.shop.phone : null,
+    mapUrl: d.shop.directionsUrl,
   });
 }
 

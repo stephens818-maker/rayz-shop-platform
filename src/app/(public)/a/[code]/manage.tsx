@@ -12,7 +12,7 @@ interface Appt {
   status: string;
   startsAt: string;
   endsAt: string;
-  shop: { slug: string; name: string; address: string; phone: string | null };
+  shop: { slug: string; name: string; address: string; phone: string | null; mapsUrl?: string | null };
   barber: { slug: string; displayName: string };
   anyBarber: boolean;
   customer: { firstName: string } | null;
@@ -23,27 +23,8 @@ interface Appt {
   canReschedule: boolean;
 }
 
-function icsFor(a: Appt) {
-  const f = (iso: string) => iso.replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-  const body = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Rayz//Booking//EN",
-    "BEGIN:VEVENT",
-    `UID:${a.code}@rayzbs.com`,
-    `DTSTAMP:${f(new Date().toISOString())}`,
-    `DTSTART:${f(a.startsAt)}`,
-    `DTEND:${f(a.endsAt)}`,
-    `SUMMARY:Ray'z ${a.shop.name} with ${a.barber.displayName}`,
-    `LOCATION:${a.shop.address.replace(/,/g, "\\,")}`,
-    `URL:${location.origin}/a/${a.code}`,
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ].join("\r\n");
-  return `data:text/calendar;charset=utf-8,${encodeURIComponent(body)}`;
-}
-
-export function ManageAppointment({ code, groupCode = null }: { code: string; groupCode?: string | null }) {
+/** `basePath` is "/embed" inside the booking widget, so its links stay in the frame. */
+export function ManageAppointment({ code, groupCode = null, basePath = "" }: { code: string; groupCode?: string | null; basePath?: string }) {
   const params = useSearchParams();
   const isNew = params.get("new") === "1";
   const [a, setA] = useState<Appt | null>(null);
@@ -100,7 +81,7 @@ export function ManageAppointment({ code, groupCode = null }: { code: string; gr
         </div>
       )}
       {groupCode && (
-        <Link href={`/g/${groupCode}`} className="flex items-center justify-between rounded-xl bg-sky-50 px-5 py-3 text-sm text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100">
+        <Link href={`${basePath}/g/${groupCode}`} className="flex items-center justify-between rounded-xl bg-sky-50 px-5 py-3 text-sm text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100">
           <span>Part of a family booking. Changes here are for this person only.</span>
           <span className="font-medium underline">Manage everyone</span>
         </Link>
@@ -136,8 +117,22 @@ export function ManageAppointment({ code, groupCode = null }: { code: string; gr
             <span className="tabular font-semibold">{dollars(a.estimateCents)} + tax</span>
           </div>
           <div className="pt-1 text-zinc-500">
-            {a.shop.address}
-            {a.shop.phone && <> · {a.shop.phone.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3")}</>}
+            {a.shop.mapsUrl ? (
+              <a href={a.shop.mapsUrl} target="_blank" rel="noopener noreferrer" className="underline decoration-zinc-300">
+                {a.shop.address}
+              </a>
+            ) : (
+              a.shop.address
+            )}
+            {a.shop.phone && (
+              <>
+                {" "}
+                ·{" "}
+                <a href={`tel:${a.shop.phone}`} className="underline decoration-zinc-300">
+                  {a.shop.phone.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3")}
+                </a>
+              </>
+            )}
           </div>
           <div className="text-xs text-zinc-400">Reference {a.code}</div>
         </div>
@@ -154,7 +149,7 @@ export function ManageAppointment({ code, groupCode = null }: { code: string; gr
               </Button>
             )}
             {["booked", "confirmed"].includes(a.status) && (
-              <a className="inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-100" href={icsFor(a)} download={`rayz-${a.code}.ics`}>
+              <a className="inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-100" href={`/a/${a.code}/calendar.ics`} download={`rayz-${a.code}.ics`}>
                 Add to calendar
               </a>
             )}
@@ -162,7 +157,7 @@ export function ManageAppointment({ code, groupCode = null }: { code: string; gr
               <p className="w-full text-sm text-zinc-500">Online changes close 30 minutes before your appointment — please call the shop.</p>
             )}
             {a.status === "cancelled" && (
-              <Link href={`/book/${a.shop.slug}`} className="inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 text-sm font-medium text-white">
+              <Link href={`${basePath}/book/${a.shop.slug}`} className="inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 text-sm font-medium text-white">
                 Book again
               </Link>
             )}
