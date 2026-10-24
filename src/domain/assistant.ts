@@ -132,6 +132,8 @@ export interface StubCall {
 }
 
 const has = (q: string, re: RegExp) => re.test(q);
+/** "Coralville" in a question names "Ray'z Coralville". */
+const mentions = (q: string, shop: string) => q.includes(shop.toLowerCase().replace(/^ray'?z\s+/, ""));
 
 const REPORT_WORDS: [RegExp, ReportKey][] = [
   [/lapsed|haven'?t been back|not been back|overdue|win.?back/, "lapsed_clients"],
@@ -180,7 +182,7 @@ export function stubPlan(question: string, o: { tools: string[]; reports: string
   const offered = (t: string) => o.tools.includes(t);
   const drafting = has(q, /\b(draft|create|make|start|write|set up)\b/);
   if (drafting && has(q, /purchase order|\bpo\b|reorder/) && offered("draft_po")) {
-    const shop = o.shops.find((s) => q.includes(s.toLowerCase()));
+    const shop = o.shops.find((s) => mentions(q, s));
     return { name: "draft_po", args: shop ? { location: shop } : {} };
   }
   if (drafting && has(q, /blast|campaign|text|email/) && offered("draft_blast")) {
@@ -215,7 +217,7 @@ export function stubPlan(question: string, o: { tools: string[]; reports: string
       REPORT_WORDS.find(([re, k]) => has(q, re) && o.reports.includes(k))?.[1] ?? (o.reports.includes("sales_summary") ? "sales_summary" : o.reports.includes("my_sales") ? "my_sales" : null);
     if (report) {
       const args: Record<string, unknown> = { report, preset: PRESET_WORDS.find(([re]) => has(q, re))?.[1] ?? "7d" };
-      const shops = o.shops.filter((s) => q.includes(s.toLowerCase().replace(/^ray'?z\s+/, "")));
+      const shops = o.shops.filter((s) => mentions(q, s));
       if (shops.length) args.locations = shops;
       else if (has(q, /all (locations|shops)|every (location|shop)|each location|by location|per location|compare/)) args.locations = ["all"];
       const barbers = o.barbers.filter((b) => new RegExp(`\\b${b.toLowerCase().split(" ")[0].replace(/[^a-z]/g, "")}\\b`).test(q));

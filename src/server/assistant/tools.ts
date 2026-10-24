@@ -42,6 +42,8 @@ export interface ToolResult {
   /** For the model. The first line is a one-sentence summary. */
   content: string;
   cards: AssistantCard[];
+  /** Turned down (outside their access, a filter they can't use...), with the reason in `content`. */
+  refused?: boolean;
 }
 export interface AssistantTool {
   name: string;
@@ -64,7 +66,7 @@ const spec = (name: string, description: string, schema: z.ZodType): ToolSpec =>
   const { $schema: _s, ...parameters } = z.toJSONSchema(schema, { io: "input" }) as Record<string, unknown>;
   return { name, description, parameters };
 };
-const fail = (message: string): ToolResult => ({ content: `SUMMARY: ${message}`, cards: [] });
+const fail = (message: string): ToolResult => ({ content: `SUMMARY: ${message}`, cards: [], refused: true });
 
 // ───────────────────────────── Locations and barbers by name ─────────────────────────────
 
@@ -205,7 +207,7 @@ async function customerReportTool(ctx: StaffContext): Promise<AssistantTool | nu
   const keys = fields.map((f) => f.key) as [string, ...string[]];
   const args = z.object({
     columns: z.array(z.enum(keys)).min(1).max(8).describe("Fields to show, e.g. name, last_visit, visits, total_spend"),
-    groupBy: z.enum(keys).optional().describe("Group by one field, e.g. home_location or primary_barber"),
+    groupBy: z.enum(keys).optional().describe("Group by one field, e.g. home_location"),
     summary: z.boolean().optional().describe("One row per group with its totals, instead of every client"),
     sort: z.enum(keys).optional(),
     descending: z.boolean().optional(),

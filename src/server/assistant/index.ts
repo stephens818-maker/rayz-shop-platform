@@ -216,6 +216,10 @@ async function runTool(
         const r = await tool.run({ ctx, settings: o.settings, conversationId: o.conversationId, now: o.now }, parsed.data);
         content = r.content;
         o.cards.push(...r.cards);
+        if (r.refused) {
+          ok = false;
+          error = r.content.replace(/^SUMMARY:\s*/, "").split("\n")[0];
+        }
       } catch (e) {
         ok = false;
         if (!(e instanceof AppError)) console.error(e);
