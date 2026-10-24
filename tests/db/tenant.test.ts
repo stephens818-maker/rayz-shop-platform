@@ -557,7 +557,8 @@ describe("finding a brand client to book them", () => {
       for (const q of [CANARY.phone, CANARY.last, ""]) {
         const list = await open("/admin/customers", {}, { q });
         expect(list.text, `${login} ${q}`).toContain(`/admin/customers/${ids.client}`);
-        expect(found(list.text!, ON_CLIENT_LIST), `${login} ${q}`).toEqual([]);
+        const shown = q ? list.text!.replaceAll(q, "") : list.text!;
+        expect(found(shown, ON_CLIENT_LIST), `${login} ${q} (search box echo aside)`).toEqual([]);
       }
     }
     await as("owner");
