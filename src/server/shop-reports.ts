@@ -5,6 +5,7 @@ import { shops as shopsTable } from "@/db/schema";
 import { NO_BARBER } from "@/domain/barbers";
 import { ATTRIBUTION_DAYS, OPERATOR_CHOICE_LABEL, OperatorChoice, cleanOperator, operatorMetrics } from "@/domain/phone-operator";
 import { Cell, Column, ColumnKind, ListRow, Metric, ReportTable, TOTAL, ViewCtx, listTable, metricTable, parseSegKey, segKey, staffName, viewOf } from "@/domain/report-views";
+import { priorPeriod } from "@/domain/report-range";
 import { FILING_LABEL, PERIOD_OF, TaxPeriod, cleanTaxFiling, filingFor, parsePeriod, periodKey, periodLabel, stateCode, stateName } from "@/domain/sales-tax";
 import { formatCents } from "@/lib/money";
 import { addDays, diffDays, endOfLocalDay, formatDate, formatTime, startOfLocalDay } from "@/lib/time";
@@ -421,10 +422,9 @@ export async function salesTaxData(scope0: ReportScope, loc0: ViewCtx, params: R
 
 type Ret = { newN: number; newBack: number; oldN: number; oldBack: number; elsewhere: number; switched: number };
 
-async function retentionBy(s: ReportScope, visits: number, o: Grain): Promise<Map<string, Ret>> {
+async function retentionBy(s: ReportScope, prior: { from: string }, visits: number, o: Grain): Promise<Map<string, Ret>> {
   const { start, end } = span(s);
-  const len = diffDays(s.to, s.from) + 1;
-  const prevStart = startOfLocalDay(addDays(s.from, -len)).toISOString();
+  const prevStart = startOfLocalDay(prior.from).toISOString();
   const g = grp(o, sql`a.shop_id`);
   const gs = sgrp(o, sql`a.staff_id`);
   const r = await rows<{ shop_id: string | null; staff_id: string | null } & Ret>(sql`
@@ -455,18 +455,17 @@ async function retentionBy(s: ReportScope, visits: number, o: Grain): Promise<Ma
 }
 
 /**
- * Clients who had 1, 2 or 3+ completed visits in the period before (the same length, just before
- * the range) and came back in the range, split into new clients (first visit here was in that
+ * Clients who had 1, 2 or 3+ completed visits in the period before (the quarter or month before
+ * for a quarter or month, otherwise the same length just before) and came back in the range, split into new clients (first visit here was in that
  * period) and existing ones. "Went elsewhere": didn't come back here but saw another Ray'z barber
  * or shop. "Switched barbers": came back here, but not to a barber they'd seen before.
  */
 export async function retentionData(scope: ReportScope, loc: ViewCtx, params: Record<string, string | undefined>): Promise<ReportData> {
   const visits = params.visits === "2" ? 2 : params.visits === "3" ? 3 : 1;
   const grains = grainsFor(loc);
-  const maps = await Promise.all(grains.map((g) => retentionBy(scope, visits, g)));
+  const prior = priorPeriod(scope.from, scope.to, params.preset);
+  const maps = await Promise.all(grains.map((g) => retentionBy(scope, prior, visits, g)));
   const at: Record<string, Ret> = Object.fromEntries(maps.flatMap((x) => [...x]));
-  const len = diffDays(scope.to, scope.from) + 1;
-  const prior = { from: addDays(scope.from, -len), to: addDays(scope.from, -1) };
   const t = at[TOTAL] ?? { newN: 0, newBack: 0, oldN: 0, oldBack: 0, elsewhere: 0, switched: 0 };
   const all = (r: Ret) => r.newN + r.oldN;
   const lost = (r: Ret) => all(r) - r.newBack - r.oldBack;

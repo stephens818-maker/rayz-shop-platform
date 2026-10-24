@@ -22,6 +22,32 @@ export function quarterStart(date: LocalDate): LocalDate {
   return `${y}-${String(Math.floor((m - 1) / 3) * 3 + 1).padStart(2, "0")}-01`;
 }
 
+const monthStart = (date: LocalDate) => `${date.slice(0, 7)}-01`;
+const quarterEnd = (date: LocalDate) => addDays(quarterStart(addDays(quarterStart(date), 95)), -1);
+const monthEnd = (date: LocalDate) => addDays(monthStart(addDays(monthStart(date), 32)), -1);
+
+/**
+ * The period a range is compared against: the whole quarter or month before for the quarter and
+ * month presets or an exact calendar quarter or month, otherwise the same number of days just before.
+ */
+export function priorPeriod(from: LocalDate, to: LocalDate, preset?: string | null): { from: LocalDate; to: LocalDate } {
+  const unit =
+    preset === "quarter" || preset === "lastquarter"
+      ? "quarter"
+      : preset === "month" || preset === "lastmonth"
+        ? "month"
+        : from === quarterStart(from) && to === quarterEnd(from)
+          ? "quarter"
+          : from === monthStart(from) && to === monthEnd(from)
+            ? "month"
+            : null;
+  const end = addDays(from, -1);
+  if (unit === "quarter") return { from: quarterStart(end), to: end };
+  if (unit === "month") return { from: monthStart(end), to: end };
+  const len = Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000) + 1;
+  return { from: addDays(from, -len), to: end };
+}
+
 export function presetRange(id: string, today: LocalDate = todayLocal()): { from: LocalDate; to: LocalDate } {
   const [y, m] = today.split("-").map(Number);
   const monthStart = `${y}-${String(m).padStart(2, "0")}-01`;

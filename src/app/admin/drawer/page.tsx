@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { cashDrawers, staff, tipPayouts } from "@/db/schema";
 import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
@@ -32,7 +32,7 @@ export default async function DrawerPage({ searchParams }: { searchParams: Promi
       .select({ d: cashDrawers, by: staff.displayLabel })
       .from(cashDrawers)
       .leftJoin(staff, eq(staff.id, cashDrawers.closedBy))
-      .where(and(eq(cashDrawers.shopId, shopId)))
+      .where(and(eq(cashDrawers.shopId, shopId), isNotNull(cashDrawers.closedAt)))
       .orderBy(desc(cashDrawers.businessDate))
       .limit(14),
     shopTipConfig(shopId),

@@ -23,7 +23,7 @@ import {
   spokenHours,
   strongerChoice,
 } from "@/domain/phone-operator";
-import { PRESETS, presetRange, quarterStart } from "@/domain/report-range";
+import { PRESETS, presetRange, priorPeriod, quarterStart } from "@/domain/report-range";
 import { REPORT_SHORTCUTS, shortcutsFor } from "@/domain/report-shortcuts";
 import { cleanTaxFiling, filingFor, parsePeriod, periodKey, periodLabel, stateCode, stateName, taxShortcuts } from "@/domain/sales-tax";
 import { seesStaffContact, staffContact } from "@/domain/staff-contact";
@@ -246,6 +246,15 @@ describe("report ranges and saved reports", () => {
     expect(presetRange("quarter", "2026-11-03")).toEqual({ from: "2026-10-01", to: "2026-11-03" });
     expect(presetRange("lastquarter", "2026-11-03")).toEqual({ from: "2026-07-01", to: "2026-09-30" });
     expect(presetRange("lastquarter", "2026-02-10")).toEqual({ from: "2025-10-01", to: "2025-12-31" });
+  });
+
+  it("a quarter or month compares with the whole one before; other ranges with the same length", () => {
+    expect(priorPeriod("2026-07-01", "2026-09-30")).toEqual({ from: "2026-04-01", to: "2026-06-30" });
+    expect(priorPeriod("2026-10-01", "2026-10-24", "quarter")).toEqual({ from: "2026-07-01", to: "2026-09-30" });
+    expect(priorPeriod("2026-10-01", "2026-10-24", "month")).toEqual({ from: "2026-09-01", to: "2026-09-30" });
+    expect(priorPeriod("2026-10-01", "2026-10-24")).toEqual({ from: "2026-09-07", to: "2026-09-30" });
+    expect(priorPeriod("2026-02-01", "2026-02-28")).toEqual({ from: "2026-01-01", to: "2026-01-31" });
+    expect(priorPeriod("2026-09-25", "2026-10-24")).toEqual({ from: "2026-08-26", to: "2026-09-24" });
   });
 
   it("saved reports add one sales tax shortcut per state", () => {
