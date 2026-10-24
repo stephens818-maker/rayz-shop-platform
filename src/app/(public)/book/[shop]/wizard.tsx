@@ -558,7 +558,11 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
             {addons.map((a) => (
               <Row key={a.id} k="Add-on" v={a.name} />
             ))}
-            <Row k="Barber" v={barber === "any" ? (assigned ? `Any (${assigned.displayName})` : "Any barber") : (barberObj?.displayName ?? "—")} />
+            {groupPick ? (
+              <Row k={groupPick.barbers === 1 ? "Barber" : "Barbers"} v={[...new Set(groupPick.seats.map((x) => x.barber))].join(", ")} />
+            ) : (
+              <Row k="Barber" v={barber === "any" ? (assigned ? `Any (${assigned.displayName})` : "Any barber") : (barberObj?.displayName ?? "—")} />
+            )}
             {groupPick ? (
               <>
                 <Row k="When" v={`${fmtDay(groupPick.startsAt)}, ${fmtTime(groupPick.startsAt)} – ${fmtTime(groupPick.endsAt)}`} />

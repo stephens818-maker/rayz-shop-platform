@@ -382,7 +382,7 @@ export async function groupView(code: string, now: Date = new Date()) {
     guardianId: g.guardianId,
     code: g.code,
     plan: g.plan,
-    shop: { id: shop.id, slug: shop.slug, name: shop.name, phone: shop.phone, address: shop.address },
+    shop: { id: shop.id, slug: shop.slug, name: shop.name, phone: shop.phone, address: [shop.address, shop.city, [shop.state, shop.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ") },
     startsAt: new Date(span.start).toISOString(),
     endsAt: new Date(span.end).toISOString(),
     minutes: span.minutes,
