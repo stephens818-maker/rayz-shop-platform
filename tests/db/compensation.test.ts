@@ -249,6 +249,7 @@ describe("commission and payroll", () => {
     await signInAs(ids.admin);
     const r = await commissionReport();
     const t = r.tables.find((x) => x.id === "barbers")!;
+    for (const table of r.tables) expect(table.columns.filter((x) => x.label === "Barber"), table.id).toHaveLength(1);
     const a = rowOf(t, fx.aLabel);
     const b = rowOf(t, fx.bLabel);
     const c = (row: (typeof t.rows)[number], label: string) => Number(row[col(t, label)]);

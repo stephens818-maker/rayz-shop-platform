@@ -97,6 +97,9 @@ export async function commissionPayoutData(scope: ReportScope, loc: ViewCtx): Pr
     : [[], [], await setupRates([])];
   const name = new Map(names.map((n) => [n.id, n.label]));
   const inScope = new Set(scope.shopIds);
+  // By barber, the barber is the row group, so the Barber column would repeat it.
+  const named = !loc.byBarber;
+  const who = (label: string): Cell[] => (named ? [label] : []);
 
   type Row = { shopId: string; staffId: string; key: string; cells: Cell[] };
   const barberRows: Row[] = [];
@@ -120,7 +123,7 @@ export async function commissionPayoutData(scope: ReportScope, loc: ViewCtx): Pr
       svcTotal += Number(cells[4]);
       prodTotal += Number(cells[10]);
       rentTotal += r;
-      barberRows.push({ shopId, staffId, key: staffId, cells: [label, ...cells] });
+      barberRows.push({ shopId, staffId, key: staffId, cells: [...who(label), ...cells] });
     }
     for (const m of monthsBetween(scope.from, scope.to)) {
       const month = commissionBetween(mine, vs, fb, m.start, m.end);
@@ -128,7 +131,7 @@ export async function commissionPayoutData(scope: ReportScope, loc: ViewCtx): Pr
       if (monthRent && rentShop && !month.has(rentShop)) month.set(rentShop, zeroTotals());
       for (const [shopId, t] of month) {
         if (!inScope.has(shopId)) continue;
-        monthRows.push({ shopId, staffId, key: `${m.start.slice(0, 7)}|${staffId}`, cells: [formatDate(m.start, "yyyy-MM (MMM)"), label, ...figures(t, shopId === rentShop ? monthRent : 0)] });
+        monthRows.push({ shopId, staffId, key: `${m.start.slice(0, 7)}|${staffId}`, cells: [formatDate(m.start, "yyyy-MM (MMM)"), ...who(label), ...figures(t, shopId === rentShop ? monthRent : 0)] });
       }
     }
   }
@@ -141,8 +144,8 @@ export async function commissionPayoutData(scope: ReportScope, loc: ViewCtx): Pr
       ...(rentTotal ? [{ label: "Booth rent due", value: formatCents(rentTotal), hint: "for the days in the range" }] : []),
     ],
     tables: [
-      listTable(loc, { id: "barbers", title: "By barber", columns: [text("Barber"), ...COLUMNS], rows: barberRows, merge: true, derive: derive(1), sort: byName }),
-      listTable(loc, { id: "months", title: "By month", columns: [text("Month"), text("Barber"), ...COLUMNS], rows: monthRows, merge: true, derive: derive(2), sort: byMonth }),
+      listTable(loc, { id: "barbers", title: "By barber", columns: [...(named ? [text("Barber")] : []), ...COLUMNS], rows: barberRows, merge: true, derive: derive(named ? 1 : 0), sort: named ? byName : undefined }),
+      listTable(loc, { id: "months", title: "By month", columns: [text("Month"), ...(named ? [text("Barber")] : []), ...COLUMNS], rows: monthRows, merge: true, derive: derive(named ? 2 : 1), sort: byMonth }),
     ],
     notes: [
       "Rates come from each barber's compensation plan in effect on the day of the sale; whatever a plan leaves blank (and anyone without a plan) uses Payroll setup's rates.",
