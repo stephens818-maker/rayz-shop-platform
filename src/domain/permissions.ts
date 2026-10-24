@@ -316,6 +316,13 @@ export const FEATURE_PERMISSIONS = [
     hint: "Turn each location's sign-in restriction on or off, edit its allowed IPs, approve or remove devices at any shop, and set the blocked sign-in alert.",
     brandOnly: true,
   },
+  {
+    key: "assistant.settings",
+    group: "Settings and data",
+    label: "Turn Rayz Assistant on or off for each role and set its limits",
+    hint: "Which roles get the assistant, how many questions a person may ask a minute and a day, and whether it may draft blasts and purchase orders. The assistant only ever answers with what the person asking could open themselves.",
+    brandOnly: true,
+  },
 ] as const satisfies readonly PermissionDef[];
 
 export type FeaturePermission = (typeof FEATURE_PERMISSIONS)[number]["key"];

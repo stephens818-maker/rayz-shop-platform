@@ -81,6 +81,8 @@ export const brandSettings = pgTable("brand_settings", {
   reviews: jsonb("reviews").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Campaign Center settings (MarketingSettings in src/domain/marketing.ts): quiet hours, frequency caps, the postal address, attribution, costs. */
   marketing: jsonb("marketing").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Rayz Assistant (AssistantSettings in src/domain/assistant.ts): on or off per role, the limits, drafting; missing keys use the defaults. */
+  assistant: jsonb("assistant").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -2750,6 +2752,82 @@ export const savedReportSends = pgTable(
   (t) => [
     primaryKey({ columns: [t.reportId, t.staffId, t.period] }),
     check("saved_report_sends_status", sql`${t.status} in ('building', 'queued', 'skipped')`),
+  ],
+);
+
+// ───────────────────────────── Rayz Assistant ─────────────────────────────
+
+/** One person's chat with the assistant. Only they can open it. */
+export const assistantConversations = pgTable(
+  "assistant_conversations",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("assistant_conversations_staff_idx").on(t.staffId, t.updatedAt)],
+);
+
+/**
+ * A question or an answer. Answers keep what was shown (the text, the cards with their numbers and
+ * links, the tools called) but not the tool results the model read. Questions are counted for the limits.
+ */
+export const assistantMessages = pgTable(
+  "assistant_messages",
+  {
+    id: id(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => assistantConversations.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    role: text("role").$type<"user" | "assistant">().notNull(),
+    body: text("body").notNull(),
+    /** AssistantCard[] in src/domain/assistant.ts. */
+    cards: jsonb("cards").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    /** The tools called for this answer: name, arguments, whether they worked. */
+    tools: jsonb("tools").$type<unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("assistant_messages_conversation_idx").on(t.conversationId, t.createdAt),
+    index("assistant_messages_staff_idx").on(t.staffId, t.createdAt),
+    check("assistant_messages_role", sql`${t.role} in ('user', 'assistant')`),
+  ],
+);
+
+export type AssistantActionKind = "draft_blast" | "draft_po";
+export type AssistantActionStatus = "pending" | "confirmed" | "cancelled" | "failed";
+
+/** A blast or purchase order the assistant drafted. Nothing is created until the person confirms it, with their permissions checked again then. */
+export const assistantActions = pgTable(
+  "assistant_actions",
+  {
+    id: id(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => assistantConversations.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<AssistantActionKind>().notNull(),
+    params: jsonb("params").$type<Record<string, unknown>>().notNull(),
+    summary: text("summary").notNull(),
+    status: text("status").$type<AssistantActionStatus>().notNull().default("pending"),
+    /** What confirming made: the blast or the purchase orders, with links. */
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+    decidedAt: ts("decided_at"),
+  },
+  (t) => [
+    index("assistant_actions_staff_idx").on(t.staffId, t.createdAt),
+    check("assistant_actions_kind", sql`${t.kind} in ('draft_blast', 'draft_po')`),
+    check("assistant_actions_status", sql`${t.status} in ('pending', 'confirmed', 'cancelled', 'failed')`),
   ],
 );
 
