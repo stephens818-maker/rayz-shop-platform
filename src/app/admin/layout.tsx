@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/ui";
 import { navFor } from "@/domain/navigation";
+import { assistantAccess } from "@/server/assistant";
 import { requireStaff } from "@/server/auth/staff";
 import { logout } from "../login/actions";
+import { AssistantPanel } from "./assistant/panel";
 import { BfcacheGuard } from "./bfcache-guard";
 import { ClientQuickSearch } from "./client-quick-search";
 import { AdminNav, BackToBrand, ShopSwitcher } from "./nav";
@@ -12,6 +14,7 @@ export const metadata: Metadata = { title: { default: "Admin", template: "%s · 
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireStaff();
+  const assistant = await assistantAccess(ctx);
   const here = ctx.shops.find((s) => s.id === ctx.currentShopId) ?? null;
   const address = here ? [here.address, here.city].filter(Boolean).join(", ") : "";
   return (
@@ -48,6 +51,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         </div>
       </aside>
       <main className="min-w-0 flex-1 px-3 py-4 sm:px-6 sm:py-6">{children}</main>
+      {assistant.on && <AssistantPanel firstName={ctx.staff.kind === "shop" ? ctx.staff.displayLabel : ctx.staff.firstName} />}
     </div>
   );
 }
