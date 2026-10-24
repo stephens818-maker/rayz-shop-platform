@@ -1720,6 +1720,7 @@ These were built in response to the owner's request: "mimic Squire, but make it 
 - One brand-wide client record with a duplicates screen and merge, and a profile with the whole Squire history, lifetime spend, and loyalty in one place.
 - Private staff ratings per visit, with a star badge wherever the client's name appears at the front desk and a lowest- and highest-rated report by shop. Each rating is tied to a visit and an author, and every change is audited. Tests prove ratings never reach the customer API.
 - Booking URLs never contain surnames. Squire's personal booking links do.
+- A shop login is tighter than Squire's ([details](#shop-login)): client phone and email stay masked or hidden as the brand sets, with no client download at the shop; staff contact details are masked; refunds and moving a ticket to another barber need a manager's PIN; each part of Shop settings has its own permission; and every report has a barber filter.
 - Duplicate first names get unique IDs and admin-set labels instead of guesswork.
 - An API-first booking backend is ready for a mobile app.
 
