@@ -1,9 +1,10 @@
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { ownerEntities, shopHours, shopPhotos, shopPaymentAccounts, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
+import { ownerEntities, shopHours, shopPhotos, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
 import { AccountState, PAYMENTS_STEP_TITLE, accountState, paymentsStep, receiptBranding } from "@/domain/connect";
 import { REQUIRED_FOR_LIVE, SUPPORTED_TIMEZONE, US_TIMEZONES, goLiveBlockers, slugProblem } from "@/domain/location-lifecycle";
-import { connectMode, feeSchedule } from "./payments/connect";
+import { type EntityViewer, entityReach } from "./hierarchy";
+import { connectMode, feeSchedule, settlementAccount } from "./payments/connect";
 
 export type SetupStepKey = "details" | "profile" | "timezone" | "slug" | "owner" | "hours" | "taxes" | "menu" | "team" | "payments" | "booking" | "line" | "readers" | "login" | "retail";
 
@@ -25,7 +26,7 @@ export async function locationSetup(shopId: string) {
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
   if (!shop) return null;
   const [account, owner, [hours], [menu], scheduled, [readers], [logins], [retail], surnames, [photos]] = await Promise.all([
-    db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.shopId, shopId) }),
+    settlementAccount(shop),
     shop.ownerEntityId ? db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, shop.ownerEntityId) }) : Promise.resolve(undefined),
     db.select({ n: count() }).from(shopHours).where(eq(shopHours.shopId, shopId)),
     db
@@ -164,10 +165,9 @@ export async function locationSetup(shopId: string) {
 export async function setupOverview(shopIds: string[]) {
   if (!shopIds.length) return [];
   const rows = await db
-    .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, ownerName: ownerEntities.name, ownerKind: ownerEntities.kind, account: shopPaymentAccounts })
+    .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, ownerName: ownerEntities.name, ownerKind: ownerEntities.kind })
     .from(shops)
     .leftJoin(ownerEntities, eq(ownerEntities.id, shops.ownerEntityId))
-    .leftJoin(shopPaymentAccounts, eq(shopPaymentAccounts.shopId, shops.id))
     .where(inArray(shops.id, shopIds))
     .orderBy(asc(shops.name));
   const details = await Promise.all(rows.map((r) => locationSetup(r.id)));
@@ -181,8 +181,8 @@ export async function setupOverview(shopIds: string[]) {
       blockers: details[i]!.blockers.length,
       ownerName: r.ownerName,
       ownerKind: r.ownerKind,
-      stripeAccountId: r.account?.stripeAccountId ?? null,
-      state: accountState(r.account),
+      stripeAccountId: details[i]!.account?.stripeAccountId ?? null,
+      state: details[i]!.state,
       paymentsMode: details[i]!.shop.paymentsMode,
       done: steps.filter((s) => s.done && s.required).length,
       total: steps.filter((s) => s.required).length,
@@ -190,8 +190,15 @@ export async function setupOverview(shopIds: string[]) {
   });
 }
 
-export async function ownerEntityList() {
-  const owners = await db.select().from(ownerEntities).orderBy(asc(ownerEntities.kind), asc(ownerEntities.name));
-  const shopRows = await db.select({ id: shops.id, name: shops.name, ownerEntityId: shops.ownerEntityId }).from(shops).orderBy(asc(shops.name));
+/** Owner groups the viewer may see (all for the brand; otherwise those that own their shops), with only their shops listed. */
+export async function ownerEntityList(v: EntityViewer) {
+  const all = await db.select().from(ownerEntities).orderBy(asc(ownerEntities.kind), asc(ownerEntities.name));
+  const shopRows = await db
+    .select({ id: shops.id, name: shops.name, ownerEntityId: shops.ownerEntityId })
+    .from(shops)
+    .where(v.brandWide ? undefined : v.shopIds.length ? inArray(shops.id, [...v.shopIds]) : sql`false`)
+    .orderBy(asc(shops.name));
+  const reach = entityReach(v);
+  const owners = reach === null ? all : all.filter((o) => reach.includes(o.id) || shopRows.some((s) => s.ownerEntityId === o.id));
   return owners.map((o) => ({ ...o, shops: shopRows.filter((s) => s.ownerEntityId === o.id).map((s) => ({ id: s.id, name: s.name })) }));
 }

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Badge, Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Table, Td, Th, cx } from "@/components/ui";
 import { OWNER_KIND_LABEL, PAYMENTS_MODE_SHORT, formatFeeRate, payoutScheduleLabel } from "@/domain/connect";
 import { SHOP_STATUS_LABEL } from "@/domain/location-lifecycle";
-import { can, guardPage } from "@/server/auth/staff";
+import { type StaffContext, can, guardPage } from "@/server/auth/staff";
 import { SETUP_ORDER, locationSetup, ownerEntityList, setupOverview } from "@/server/location-setup";
 import { brandDescriptorPrefix, brandPayoutSchedule, refreshAccount } from "@/server/payments/connect";
 import { AccountStateBadge, LifecyclePanel, OwnerEditor, OwnerPicker, PaymentsPanel } from "./panels";
@@ -18,10 +18,10 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
   const ctx = await guardPage("/admin/setup");
   const { shop: requested, step, stripe } = await searchParams;
   const shopId = requested && ctx.shopIds.includes(requested) ? requested : null;
-  if (!shopId) return <Overview shopIds={ctx.shopIds} canEditOwners={ctx.brandWide} canAdd={can(ctx, "locations.setup")} />;
+  if (!shopId) return <Overview ctx={ctx} canEditOwners={can(ctx, "entities.manage")} canAdd={can(ctx, "locations.setup")} />;
 
   if (stripe === "return") await refreshAccount(shopId).catch(() => null);
-  const [setup, owners] = await Promise.all([locationSetup(shopId), ownerEntityList()]);
+  const [setup, owners] = await Promise.all([locationSetup(shopId), ownerEntityList(ctx)]);
   if (!setup) return <Empty title="That shop wasn't found" />;
   const { shop, owner, account, state, steps, blockers, mode, fees } = setup;
   const payments = steps.find((s) => s.key === "payments")!;
@@ -100,7 +100,12 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
                     ) : (
                       <p className="text-sm text-zinc-600">{s.detail}</p>
                     )}
-                    {key === "owner" && <OwnerPicker shopId={shop.id} ownerId={owner?.id ?? null} owners={owners.map((o) => ({ id: o.id, name: o.name, kind: o.kind }))} />}
+                    {key === "owner" &&
+                      (can(ctx, "entities.manage") ? (
+                        <OwnerPicker shopId={shop.id} ownerId={owner?.id ?? null} owners={owners.filter((o) => o.status !== "exited" || o.id === owner?.id).map((o) => ({ id: o.id, name: o.name, kind: o.kind }))} />
+                      ) : (
+                        <p className="text-sm font-medium text-zinc-900">{owner?.name ?? "Not set"}</p>
+                      ))}
                     {key === "payments" && (
                       <PaymentsPanel
                         shopId={shop.id}
@@ -139,8 +144,8 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
   );
 }
 
-async function Overview({ shopIds, canEditOwners, canAdd }: { shopIds: string[]; canEditOwners: boolean; canAdd: boolean }) {
-  const [rows, owners] = await Promise.all([setupOverview(shopIds), ownerEntityList()]);
+async function Overview({ ctx, canEditOwners, canAdd }: { ctx: StaffContext; canEditOwners: boolean; canAdd: boolean }) {
+  const [rows, owners] = await Promise.all([setupOverview(ctx.shopIds), ownerEntityList(ctx)]);
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
@@ -176,7 +181,7 @@ async function Overview({ shopIds, canEditOwners, canAdd }: { shopIds: string[];
                   </Td>
                   <Td>{r.ownerName ? `${r.ownerName}${r.ownerKind === "franchisee" ? " (franchisee)" : ""}` : <span className="text-zinc-400">Not set</span>}</Td>
                   <Td className="text-zinc-600">{PAYMENTS_MODE_SHORT[r.paymentsMode]}</Td>
-                  <Td>{r.paymentsMode === "connected" ? <AccountStateBadge state={r.state} /> : <span className="text-zinc-400">—</span>}</Td>
+                  <Td>{r.paymentsMode === "connected" || r.paymentsMode === "entity" ? <AccountStateBadge state={r.state} /> : <span className="text-zinc-400">—</span>}</Td>
                   <Td>{r.paymentsMode === "brand" ? <span className="text-zinc-400">—</span> : r.stripeAccountId ? <code className="text-xs text-zinc-600">{r.stripeAccountId}</code> : <span className="text-zinc-400">None yet</span>}</Td>
                   <Td right>
                     {r.done}/{r.total}

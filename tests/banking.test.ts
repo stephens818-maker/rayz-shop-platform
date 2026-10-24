@@ -64,7 +64,7 @@ describe("payments mode", () => {
     expect(d.paymentsMode).toBe("connected");
     expect(d.statementDescriptor).toBeNull();
     expect(d.receipt).toEqual({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true, reviewUrl: null, allowPrint: false, reviewFollowUp: { enabled: false, delayHours: 3, repeatDays: 90 }, reviewMinVisits: null, reviewSnoozeDays: null });
-    expect(PAYMENTS_MODES).toEqual(["connected", "brand", "cash_only"]);
+    expect(PAYMENTS_MODES).toEqual(["entity", "connected", "brand", "cash_only"]);
   });
 });
 
@@ -168,7 +168,7 @@ describe("banking permission", () => {
   });
 
   it("guards Stripe's stand-in onboarding page; payouts need the Shop P&L report", () => {
-    expect(PAGE_ACCESS["/admin/setup/simulated-onboarding"]).toEqual(["payments.banking"]);
+    expect(PAGE_ACCESS["/admin/setup/simulated-onboarding"]).toEqual(["payments.banking", "entity.banking"]);
     expect(PAGE_ACCESS["/admin/payouts"]).toEqual(["report.shop_accounts.view"]);
   });
 });

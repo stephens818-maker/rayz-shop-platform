@@ -7,6 +7,7 @@ import {
   locationGroups,
   notificationJobs,
   ownerEntities,
+  regions,
   payGroups,
   products,
   roles,
@@ -30,6 +31,7 @@ import { findScheduleConflicts } from "@/domain/availability";
 import { LocationDraft, type LocationDraftInput } from "@/domain/location-draft";
 import { canMove, goLiveBlockers, operational, slugProblem } from "@/domain/location-lifecycle";
 import { Grantor } from "@/domain/permissions";
+import { entityProblem, regionFitProblem } from "@/domain/franchise";
 import { endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { AppError, forbidden, notFound } from "./errors";
@@ -82,7 +84,11 @@ export async function wizardOptions(g: Grantor) {
     db.select({ staffId: staffShops.staffId, shopId: staffShops.shopId }).from(staffShops),
     db.select({ staffId: staffSchedules.staffId, shopId: staffSchedules.shopId, weekday: staffSchedules.weekday, startMin: staffSchedules.startMin, endMin: staffSchedules.endMin }).from(staffSchedules),
     db.select({ id: locationGroups.id, name: locationGroups.name }).from(locationGroups).orderBy(asc(locationGroups.name)),
-    db.select({ id: ownerEntities.id, name: ownerEntities.name, kind: ownerEntities.kind }).from(ownerEntities).orderBy(asc(ownerEntities.kind), asc(ownerEntities.name)),
+    db
+      .select({ id: ownerEntities.id, name: ownerEntities.name, kind: ownerEntities.kind })
+      .from(ownerEntities)
+      .where(ne(ownerEntities.status, "exited"))
+      .orderBy(asc(ownerEntities.kind), asc(ownerEntities.name)),
     db.select().from(roles).orderBy(asc(roles.sortOrder)),
     db.select({ shopId: payGroups.shopId, anchorStart: payGroups.anchorStart, anchorNumber: payGroups.anchorNumber, periodDays: payGroups.periodDays }).from(payGroups),
   ]);
@@ -101,6 +107,7 @@ export async function wizardOptions(g: Grantor) {
     })),
     groups,
     owners,
+    regions: await db.select({ id: regions.id, name: regions.name, ownerEntityId: regions.ownerEntityId }).from(regions).orderBy(asc(regions.name)),
     loginRoles: shopLoginRoles(g, roleRows).map((r) => ({ id: r.id, name: r.name, key: r.key })),
     payCalendars: cal.map((c) => ({ ...c, shop: name(c.shopId) })).filter((c) => c.shop),
     brandTips: (await brandHandoffConfig()).tips,
@@ -168,9 +175,28 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         ? { latitude: looked.lat, longitude: looked.lng, geocodeSource: looked.source, geocodedAt: new Date() }
         : {};
 
+  if (d.newOwner && !m.grantor.permissions.has("entities.manage")) throw forbidden("Creating a franchisee owner group needs \u201cManage owner groups\u201d");
+  if (d.newOwner) {
+    const problem = entityProblem({ ...d.newOwner, kind: "franchisee" });
+    if (problem) throw new AppError("bad_request", problem);
+  }
+  const region = d.regionId ? await db.query.regions.findFirst({ where: eq(regions.id, d.regionId) }) : null;
+  if (d.regionId && !region) throw notFound("Region");
+
+  let newOwnerId: string | null = null;
   const id = await db.transaction(async (tx) => {
+    if (d.newOwner) {
+      const [e] = await tx.insert(ownerEntities).values({ ...d.newOwner, kind: "franchisee", status: "onboarding" }).returning({ id: ownerEntities.id });
+      newOwnerId = e.id;
+      await audit(m.actor, "entity.create", "owner_entity", e.id, { name: d.newOwner.name, kind: "franchisee", via: "location_wizard" }, null, tx);
+    }
     const owner =
-      d.ownerEntityId ?? (await tx.query.ownerEntities.findFirst({ where: eq(ownerEntities.kind, "brand"), orderBy: asc(ownerEntities.createdAt), columns: { id: true } }))?.id ?? null;
+      newOwnerId ??
+      d.ownerEntityId ??
+      (await tx.query.ownerEntities.findFirst({ where: eq(ownerEntities.kind, "brand"), orderBy: asc(ownerEntities.createdAt), columns: { id: true } }))?.id ??
+      null;
+    const misfit = regionFitProblem(region ?? null, owner);
+    if (misfit) throw new AppError("bad_request", misfit);
     const [s] = await tx
       .insert(shops)
       .values({
@@ -191,6 +217,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         email: d.email || null,
         timezone: d.timezone,
         ownerEntityId: owner,
+        regionId: d.regionId,
         description: d.description || null,
         status: "setup",
         active: true,
@@ -277,7 +304,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
       readerProblems.push(`${r.label}: ${e instanceof Error ? e.message : String(e)}`);
     });
   const login = d.login ? await createShopLogin({ shopIds: [...m.shopIds, id], brandWide: m.brandWide, actor: m.actor, grantor: { ...m.grantor, shopIds: [...m.grantor.shopIds, id] } }, { shopId: id, ...d.login }) : null;
-  return { id, slug: d.slug, paymentsMode: d.paymentsMode, readerProblems, login: login ? { email: d.login!.email, password: login.password } : null };
+  return { id, slug: d.slug, paymentsMode: d.paymentsMode, ownerEntityId: newOwnerId, readerProblems, login: login ? { email: d.login!.email, password: login.password } : null };
 }
 
 async function loadShop(id: string) {
