@@ -57,6 +57,8 @@ export interface FilterOptions {
   campaigns: Option[];
   sources: string[];
   customFields: Option[];
+  /** The badges they see, by key. */
+  badges: Option[];
 }
 
 type Option = { id: string; name: string };
@@ -66,6 +68,8 @@ export interface PanelSees {
   levels: Record<string, Level>;
   /** Spend, tips and gift cards: people with every client. */
   money: boolean;
+  /** Badge keys they see. */
+  badges?: string[];
 }
 
 /** segmentProblem's view of a person. */
@@ -75,5 +79,6 @@ export const filterSees = (s: PanelSees): FilterSees => ({
   preferredBarber: s.levels.preferred_barber !== "hidden",
   level: (f) => s.levels[f] ?? "hidden",
   money: s.money,
+  badges: s.badges,
 });
 

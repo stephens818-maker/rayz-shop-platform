@@ -597,6 +597,13 @@ export const SegmentSchema = z.object({
   campaignClicked: tri,
   campaignIds: ids,
 
+  // Badges
+  /** Has any of these badges (domain/badges.ts) as last computed: built-in keys, or `custom:<id>`. */
+  badges: z
+    .array(z.string().regex(/^([a-z_]{2,30}|custom:[0-9a-f-]{36})$/, "Unknown badge"))
+    .max(20)
+    .default([]),
+
   // Empty or not
   fieldsSet: z.array(z.string().refine(isFilterField, "Unknown field")).max(20).default([]),
   fieldsEmpty: z.array(z.string().refine(isFilterField, "Unknown field")).max(20).default([]),
@@ -655,6 +662,8 @@ export interface FilterSees {
   level?: (f: FieldKey) => Level;
   /** Spend, tips and gift card filters: people who see every client's money (not a barber's own list). */
   money?: boolean;
+  /** The badges they see (visibleBadges); a badge filter needs each one it names. */
+  badges?: readonly string[];
 }
 
 const RANK: Record<Level, number> = { hidden: 0, masked: 1, full: 2 };
@@ -680,6 +689,7 @@ export function segmentProblem(s: Segment, sees: FilterSees): string | null {
     (s.minSpendCents !== null || s.maxSpendCents !== null || s.minAvgTicketCents !== null || s.maxAvgTicketCents !== null || s.minTipsCents !== null || s.maxTipsCents !== null || s.giftCard !== "any")
   )
     return "Spend, tip and gift card filters need access to every client";
+  if (s.badges.some((b) => !sees.badges?.includes(b))) return "You can't filter by a badge that's hidden from you";
   for (const f of [...s.fieldsSet, ...s.fieldsEmpty]) {
     const reads = filterFieldReads(f as FilterField);
     if (reads && !atLeast(sees, reads, "masked")) return `You can't filter on whether "${FILTER_FIELDS[f as keyof typeof FILTER_FIELDS]?.label ?? "that field"}" is filled in because it's hidden from you`;

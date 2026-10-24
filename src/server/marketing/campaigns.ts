@@ -287,6 +287,7 @@ export async function segmentSees(ctx: StaffContext) {
     ratings: policy.level("ratings") !== "hidden",
     preferredBarber: policy.level("preferred_barber") !== "hidden",
     level: (f: FieldKey) => policy.level(f),
+    badges: [...policy.badges],
   };
 }
 

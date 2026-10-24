@@ -134,6 +134,13 @@ export const FEATURE_PERMISSIONS = [
   },
   { key: "clients.message", group: "Clients", label: "Call and text clients through the shop line", hint: "The number stays hidden; calls and texts go through the system." },
   {
+    key: "badges.settings",
+    group: "Clients",
+    label: "Set up client badges: which show, their thresholds, custom badges and which roles see each",
+    hint: "Spend and other sensitive badges start shown to brand-level roles only. A badge never shows a client detail the person can't see.",
+    brandOnly: true,
+  },
+  {
     key: "clients.contact_full",
     group: "Clients",
     label: "See client phone, email and address in full",

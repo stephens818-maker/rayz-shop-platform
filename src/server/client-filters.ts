@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { marketingCampaigns, products, promoCodes, services, staff, staffShops } from "@/db/schema";
+import { badgeOptions } from "@/domain/badges";
 import { BUILTIN_FIELDS, type FieldKey, type Level } from "@/domain/client-privacy";
 import { EMPTY_SEGMENT, FILTER_FIELDS, type FilterField, type Segment } from "@/domain/marketing";
 import { upcomingBirthdayKeys, type FilterOptions, type PanelSees } from "@/domain/client-filters";
@@ -193,6 +194,7 @@ export async function segmentConditions(seg: Segment, now: Date): Promise<SQL[]>
 
   for (const f of seg.fieldsSet) add(fieldSet(f as FilterField));
   for (const f of seg.fieldsEmpty) add(sql`not (${fieldSet(f as FilterField)})`);
+  if (seg.badges.length) add(sql`exists (select 1 from client_badges cb where cb.customer_id = c.id and cb.keys && ${`{${seg.badges.join(",")}}`}::text[])`);
   return where;
 }
 
@@ -258,6 +260,7 @@ export async function filterOptions(ctx: StaffContext, policy: ClientPolicy): Pr
     campaigns,
     sources: [...lists.clientSources],
     customFields: policy.custom.filter((f) => policy.level(`custom:${f.id}` as FieldKey) !== "hidden").map((f) => ({ id: f.id, name: f.label })),
+    badges: badgeOptions([...policy.badges], policy.customBadges),
   };
 }
 
@@ -265,7 +268,7 @@ export function panelSees(ctx: StaffContext, policy: ClientPolicy): PanelSees {
   const levels: Record<string, Level> = {};
   for (const f of BUILTIN_FIELDS) levels[f.key] = policy.level(f.key);
   for (const f of policy.custom) levels[`custom:${f.id}`] = policy.level(`custom:${f.id}` as FieldKey);
-  return { levels, money: can(ctx, "clients.view_all") };
+  return { levels, money: can(ctx, "clients.view_all"), badges: [...policy.badges] };
 }
 
 /** Does the segment filter anything beyond its locations? */

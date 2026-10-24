@@ -163,6 +163,12 @@ export const HELP_TOPICS: HelpTopic[] = [
     words: ["assistant", "ai", "rayz assistant", "turn off"],
     steps: ["Open Rayz Assistant under Setup.", "Switch it on or off for each role, set the question limits, and choose whether it may draft blasts and purchase orders."],
   },
+  {
+    title: "Set up client badges",
+    page: "/admin/client-badges",
+    words: ["badge", "badges", "at risk", "vip", "lapsed", "custom badge"],
+    steps: ["Open Client badges under Setup.", "Turn badges on or off, edit thresholds like lapsed weeks or the VIP top percent, choose which roles see each, or build a custom badge from any client filter."],
+  },
 ];
 
 const tokens = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s-]/g, " ");

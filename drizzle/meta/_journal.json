@@ -365,6 +365,13 @@
       "when": 1794074400000,
       "tag": "core_0051_user_admin",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1794160800000,
+      "tag": "core_0052_client_badges",
+      "breakpoints": true
     }
   ]
 }

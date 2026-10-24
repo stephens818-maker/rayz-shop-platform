@@ -41,6 +41,7 @@ import { formatCents } from "@/lib/money";
 import { localDateOf, toZoned, todayLocal } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "./audit";
 import { staffAtShopDenied } from "./auth/policy";
+import { refreshBadges } from "./badges";
 import { createAppointment, getAvailability } from "./booking";
 import { getShop, shopCatalog } from "./catalog";
 import { heldCoupons, redeemCoupons, resolveCoupon } from "./coupons";
@@ -566,6 +567,8 @@ export async function finalizeSale(input: FinalizeInput) {
   if (input.rebookInWeeks && ctx.appointment) {
     rebooked = await oneTapRebook(ctx.appointment.id, input.rebookInWeeks, input.actor).catch((e: Error) => ({ error: e.message }));
   }
+  // A paid ticket changes visits, spend, rewards and gift cards; a failure here never fails the sale.
+  if (ctx.sale.customerId) await refreshBadges([ctx.sale.customerId], now).catch((e: Error) => console.error("badge refresh after checkout failed", e.message));
   const c = charge as Awaited<ReturnType<typeof chargeCard>> | null;
   return { saleId: ctx.sale.id, totals, issuedGiftCards, rewardsIssued, rebooked, card: c?.card ?? null, stockWarnings };
 }

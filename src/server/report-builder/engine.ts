@@ -28,6 +28,7 @@ import {
   type ResultColumn,
   type ResultLine,
 } from "@/domain/report-builder";
+import { badgeOptions } from "@/domain/badges";
 import { VISIT_STATUSES, VISIT_STATUS_LABEL } from "@/domain/visit-cadence";
 import { SHOP_TZ, endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { can, type StaffContext } from "../auth/staff";
@@ -153,7 +154,7 @@ export async function resolveReportScope(ctx: StaffContext, def: ReportDefinitio
 
 // ───────────────────────────── Field SQL ─────────────────────────────
 
-type Cte = "va" | "cd" | "sa" | "ra" | "si" | "cr" | "ms" | "rc" | "lr" | "gc" | "tg" | "rt" | "lb";
+type Cte = "va" | "cd" | "sa" | "ra" | "si" | "cr" | "ms" | "rc" | "lr" | "gc" | "tg" | "rt" | "lb" | "bd";
 
 interface Piece {
   expr: SQL;
@@ -163,7 +164,7 @@ interface Piece {
 const raw = (s: string, needs: Cte[] = []): Piece => ({ expr: sql.raw(s), needs });
 
 /** Each field's SQL over `customers c` and the CTEs it names. Nothing else is ever selected. */
-async function fieldSql(f: FieldDef): Promise<Piece> {
+async function fieldSql(f: FieldDef, policy: ClientPolicy): Promise<Piece> {
   if (f.key.startsWith("custom:")) return { expr: sql`nullif(btrim(c.custom_fields ->> ${f.key.slice(7)}), '')`, needs: [] };
   switch (f.key) {
     case "name":
@@ -259,6 +260,16 @@ async function fieldSql(f: FieldDef): Promise<Piece> {
       return raw("coalesce(ms.clicked, 0)", ["ms"]);
     case "review_clicks":
       return raw("coalesce(rc.n, 0)", ["rc"]);
+    case "badges": {
+      // Only the badges this person sees, by name, in catalog order.
+      const opts = badgeOptions([...policy.badges], policy.customBadges);
+      if (!opts.length) return raw("array[]::text[]");
+      const labels = sql.join(
+        opts.map((o, i) => sql`(${o.id}::text, ${o.name}::text, ${i}::int)`),
+        sql`, `,
+      );
+      return { expr: sql`array(select l.label from unnest(bd.keys) k join (values ${labels}) l(key, label, ord) on l.key = k order by l.ord)`, needs: ["bd"] };
+    }
   }
   throw new AppError("bad_request", `Unknown field ${f.key}`);
 }
@@ -298,10 +309,11 @@ function ctes(s: ReportScope, now: Date): Record<Cte, SQL> {
     tg: sql`tg as (select customer_id, array_agg(tag order by lower(tag)) tags from customer_tags group by customer_id)`,
     rt: sql`rt as (select customer_id, avg(stars)::float8 avg from client_ratings group by customer_id)`,
     lb: sql`lb as (select distinct on (customer_id) customer_id, staff_id from appointments where status = 'completed' and customer_id is not null order by customer_id, starts_at desc)`,
+    bd: sql`bd as (select customer_id, keys from client_badges)`,
   };
 }
 
-const ORDER: Cte[] = ["va", "cd", "sa", "ra", "si", "cr", "ms", "rc", "lr", "gc", "tg", "rt", "lb"];
+const ORDER: Cte[] = ["va", "cd", "sa", "ra", "si", "cr", "ms", "rc", "lr", "gc", "tg", "rt", "lb", "bd"];
 
 // ───────────────────────────── The query ─────────────────────────────
 
@@ -327,10 +339,10 @@ async function build(def: ReportDefinition, scope: ReportScope, policy: ClientPo
   const need = new Set<Cte>();
   const select: SQL[] = [sql`c.id`];
   const columns: Built["columns"] = [];
-  const sees = { levels: Object.fromEntries(allFields(custom).flatMap((f) => (f.reads ? [[f.reads, policy.level(f.reads)]] : []))), money: true };
+  const sees = { levels: Object.fromEntries(allFields(custom).flatMap((f) => (f.reads ? [[f.reads, policy.level(f.reads)]] : []))), money: true, badges: [...policy.badges] };
   for (const [i, c] of def.columns.entries()) {
     const f = fieldDef(c.field, custom)!;
-    const p = await fieldSql(f);
+    const p = await fieldSql(f, policy);
     p.needs.forEach((n) => need.add(n));
     select.push(sql`${p.expr} as ${sql.raw(`c${i}`)}`);
     columns.push({ key: f.key, label: columnLabel(c, f), type: f.type, agg: aggsFor(f.type).includes(c.agg) ? c.agg : "none", masked: fieldUse(f, sees).use === "masked", def: f, reads: f.reads });
@@ -338,7 +350,7 @@ async function build(def: ReportDefinition, scope: ReportScope, policy: ClientPo
   const groups: Built["groups"] = [];
   for (const [i, key] of def.groupBy.entries()) {
     const f = fieldDef(key, custom)!;
-    const p = await fieldSql(f);
+    const p = await fieldSql(f, policy);
     p.needs.forEach((n) => need.add(n));
     select.push(sql`${p.expr} as ${sql.raw(`g${i}`)}`);
     groups.push({ key: f.key, label: f.label, type: f.type });
@@ -346,7 +358,7 @@ async function build(def: ReportDefinition, scope: ReportScope, policy: ClientPo
   const sorts: SQL[] = [];
   for (const [i, s] of def.sort.entries()) {
     const f = fieldDef(s.field, custom)!;
-    const p = await fieldSql(f);
+    const p = await fieldSql(f, policy);
     p.needs.forEach((n) => need.add(n));
     select.push(sql`${p.expr} as ${sql.raw(`s${i}`)}`);
     sorts.push(sql.raw(`s${i} ${s.dir === "desc" ? "desc" : "asc"} nulls last`));

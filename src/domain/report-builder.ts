@@ -78,6 +78,7 @@ export const CUSTOMER_FIELDS: FieldDef[] = [
   { key: "zip", label: "Zip", group: "Contact", type: "text", reads: "address", maskedShows: true },
   { key: "birthday", label: "Birthday", group: "Contact", type: "date", reads: "birthday" },
   { key: "tags", label: "Tags", group: "Profile", type: "list" },
+  { key: "badges", label: "Badges", group: "Profile", type: "list", hint: "The client's badges as of the last nightly run (or their last checkout): only the ones you see." },
   { key: "rating", label: "Staff rating", group: "Profile", type: "stars", reads: "ratings", maskedShows: true, hint: "The average of every staff rating." },
   { key: "home_location", label: "Home location", group: "Profile", type: "text" },
   { key: "primary_barber", label: "Primary barber", group: "Profile", type: "text", reads: "preferred_barber", hint: "The preferred barber on their profile, or who cut them last." },
@@ -147,6 +148,7 @@ export type FieldUse = { use: "full" } | { use: "masked" } | { use: "none"; why:
 
 export function fieldUse(f: FieldDef, sees: PanelSees): FieldUse {
   if (f.money && !sees.money) return { use: "none", why: "Spend, tips and gift cards need access to every client" };
+  if (f.key === "badges" && !sees.badges?.length) return { use: "none", why: "No client badges are shown to you" };
   if (!f.reads) return { use: "full" };
   const level: Level = sees.levels[f.reads] ?? "hidden";
   const name = f.reads.startsWith("custom:") ? f.label : (BUILTIN_FIELDS.find((b) => b.key === f.reads)?.label ?? f.label);

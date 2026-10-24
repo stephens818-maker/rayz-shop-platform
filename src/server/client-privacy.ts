@@ -31,12 +31,14 @@ import {
   resolveLevel,
   validRule,
 } from "@/domain/client-privacy";
+import { type CustomBadge, visibleBadges } from "@/domain/badges";
 import { OWNER_ROLE_KEY, isBrandLevelPerson } from "@/domain/permissions";
 import type { RatingSummary } from "@/domain/ratings";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
 import { Actor, audit } from "./audit";
 import type { StaffContext } from "./auth/staff";
+import { listCustomBadges, loadBadgeSettings } from "./badge-settings";
 import { AppError } from "./errors";
 
 /**
@@ -67,18 +69,25 @@ export interface ClientPolicy {
   stars<R extends RatingSummary>(r: R | null | undefined): R | null;
   /** Individual ratings and notes, not just the average. */
   ratingDetail: boolean;
+  /** Client badges this person may see (visibleBadges in src/domain/badges.ts). */
+  badges: ReadonlySet<string>;
+  /** Custom badges' names and looks, by id. */
+  customBadges: ReadonlyMap<string, Pick<CustomBadge, "label" | "tooltip" | "icon" | "tone">>;
 }
 
-type Working = { shopId: string | null; roleId: string; roleKey: string | null };
+type Working = { shopId: string | null; roleId: string; roleKey: string | null; brandLevel: boolean };
 
 /** Whose role applies where: the shop they're in, every shop they're working across, or brand-wide. */
 function workingAs(ctx: StaffContext): Working[] {
   const main = ctx.access.role;
-  if (ctx.currentShopId) return [{ shopId: ctx.currentShopId, roleId: ctx.staff.roleId, roleKey: ctx.staff.roleKey }];
-  if (ctx.brandWide || !ctx.shopIds.length) return [{ shopId: null, roleId: main.id, roleKey: main.key }];
+  if (ctx.currentShopId) {
+    const r = ctx.access.byShop.get(ctx.currentShopId)?.role ?? main;
+    return [{ shopId: ctx.currentShopId, roleId: ctx.staff.roleId, roleKey: ctx.staff.roleKey, brandLevel: !!r.brandLevel }];
+  }
+  if (ctx.brandWide || !ctx.shopIds.length) return [{ shopId: null, roleId: main.id, roleKey: main.key, brandLevel: !!main.brandLevel }];
   return ctx.shopIds.map((s) => {
     const r = ctx.access.byShop.get(s)?.role ?? main;
-    return { shopId: s, roleId: r.id, roleKey: r.key };
+    return { shopId: s, roleId: r.id, roleKey: r.key, brandLevel: !!r.brandLevel };
   });
 }
 
@@ -133,6 +142,8 @@ export function makePolicy(o: {
   custom: { id: string; label: string }[];
   levels: Map<FieldKey, Level>;
   entries?: Map<string, boolean>;
+  badges?: Iterable<string>;
+  customBadges?: readonly Pick<CustomBadge, "id" | "label" | "tooltip" | "icon" | "tone">[];
 }): ClientPolicy {
   const fullContact = o.isOwner || !!o.fullContact || !!o.grantedContact;
   const level = (f: FieldKey): Level => (o.isOwner || (o.grantedContact && isContactField(f)) ? "full" : contactCeiling(f, o.levels.get(f) ?? "hidden", fullContact));
@@ -157,6 +168,8 @@ export function makePolicy(o: {
     },
     stars: (r) => (level("ratings") === "hidden" ? null : (r ?? null)),
     ratingDetail: level("ratings") === "full",
+    badges: new Set(o.badges ?? []),
+    customBadges: new Map((o.customBadges ?? []).map((c) => [c.id, { label: c.label, tooltip: c.tooltip, icon: c.icon, tone: c.tone }])),
   };
 }
 
@@ -206,7 +219,7 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
         const cap = await shopLoginCap();
         levels = new Map([...levels].map(([f, l]) => [f, shopLoginLevel(cap, f, l)]));
       }
-      return makePolicy({
+      const o = {
         staffId: ctx.staff.id,
         isOwner: ctx.isOwner,
         fullContact: isBrandLevelViewer(ctx),
@@ -215,7 +228,15 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
         custom,
         levels,
         entries: entriesFor(rules, ctx.staff.id, working, fields),
+      };
+      const [settings, customBadges] = await Promise.all([loadBadgeSettings(), listCustomBadges({ active: true })]);
+      const badges = visibleBadges(settings, customBadges, {
+        isOwner: ctx.isOwner,
+        roles: working.map((w) => ({ id: w.roleId, key: w.roleKey, brandLevel: w.brandLevel })),
+        money: ctx.permissions.has("clients.view_all"),
+        level: makePolicy(o).level,
       });
+      return makePolicy({ ...o, badges, customBadges });
     })();
     policies.set(ctx, p);
   }

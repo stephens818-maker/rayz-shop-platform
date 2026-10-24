@@ -87,6 +87,8 @@ export const brandSettings = pgTable("brand_settings", {
   shopLogin: jsonb("shop_login").$type<{ clientContact?: unknown }>().notNull().default(sql`'{}'::jsonb`),
   /** How often each state's sales tax is filed, by state code: "monthly" or "quarterly" (src/domain/sales-tax.ts). */
   taxFiling: jsonb("tax_filing").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Client badges (BadgeSettings in src/domain/badges.ts): which are on, the thresholds, which roles see which. */
+  badges: jsonb("badges").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -3164,4 +3166,45 @@ export const customerTags = pgTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.customerId, t.tag] }), index("customer_tags_tag_idx").on(t.tag)],
+);
+
+/** Badges the brand builds from a client filter (CustomBadge in src/domain/badges.ts). */
+export const customBadges = pgTable(
+  "custom_badges",
+  {
+    id: id(),
+    label: text("label").notNull(),
+    tooltip: text("tooltip").notNull().default(""),
+    icon: text("icon").notNull().default("tag"),
+    tone: text("tone").notNull().default("blue"),
+    /** A Segment (src/domain/marketing.ts). */
+    filter: jsonb("filter").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [check("custom_badges_tone", sql`${t.tone} in ('gray', 'green', 'blue', 'amber', 'red', 'violet')`)],
+);
+
+/**
+ * Each client's badges as last computed (StoredBadge[] in src/domain/badges.ts), every one the
+ * rules earn; who sees which is decided when they're read. Refreshed nightly and after checkout;
+ * computed_on before today means stale.
+ */
+export const clientBadges = pgTable(
+  "client_badges",
+  {
+    customerId: uuid("customer_id")
+      .primaryKey()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    keys: text("keys").array().notNull().default(sql`'{}'::text[]`),
+    badges: jsonb("badges").$type<{ k: string; d?: Record<string, string | number> }[]>().notNull().default(sql`'[]'::jsonb`),
+    hash: text("hash").notNull().default(""),
+    computedOn: date("computed_on").notNull(),
+    computedAt: ts("computed_at").notNull().defaultNow(),
+    changedAt: ts("changed_at").notNull().defaultNow(),
+  },
+  (t) => [index("client_badges_keys_idx").using("gin", t.keys), index("client_badges_computed_idx").on(t.computedOn)],
 );
