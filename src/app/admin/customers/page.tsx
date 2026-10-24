@@ -3,9 +3,10 @@ import Link from "next/link";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { clientRatings, customers, loyaltyAccounts, shops } from "@/db/schema";
-import { Card, Empty, LinkButton, Notice, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
+import { Badge, Card, Empty, LinkButton, Notice, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
 import { EMPTY_SEGMENT } from "@/domain/marketing";
 import { parseClientSort, parseRatingFilter } from "@/domain/ratings";
+import { VISIT_STATUS_LABEL, VISIT_STATUS_TONE, cadenceLabel } from "@/domain/visit-cadence";
 import { formatCents } from "@/lib/money";
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
@@ -13,6 +14,7 @@ import { filterOptions, panelSees } from "@/server/client-filters";
 import { clientListQuery } from "@/server/client-list";
 import { PAUSED_MESSAGE, clientListDenied, clientPolicy, isPaused, recordClientAccess } from "@/server/client-privacy";
 import { listSavedSearches } from "@/server/saved-searches";
+import { cadenceFor } from "@/server/visit-cadence";
 import { ClientListControls } from "./list-controls";
 import { NoCopy } from "./privacy";
 
@@ -79,6 +81,10 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         .orderBy(...order)
         .limit(PAGE)
         .offset((page - 1) * PAGE);
+  const cadence = await cadenceFor(
+    rows.map((r) => r.c.id),
+    new Date(),
+  );
   const pageHref = (n: number) => {
     const qs = new URLSearchParams({ page: String(n) });
     if (q) qs.set("q", q);
@@ -154,6 +160,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   <Th>Home shop</Th>
                   <Th right>Visits</Th>
                   <Th>Last visit</Th>
+                  <Th>Comes in</Th>
                   <Th right>Loyalty progress</Th>
                   {showRating && <Th>Rating</Th>}
                 </tr>
@@ -174,6 +181,9 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                     <Td>{shop ?? "—"}</Td>
                     <Td right>{visits}</Td>
                     <Td>{lastVisit ? formatDate(new Date(lastVisit), "MMM d, yyyy") : "—"}</Td>
+                    <Td className="whitespace-nowrap">
+                      <CadenceCell c={cadence.get(c.id)} />
+                    </Td>
                     <Td right>{formatCents(progress ?? 0)}</Td>
                     {showRating && <Td>{ratingCount ? <StarBadge rating={{ avg: ratingAvg, count: ratingCount }} /> : <span className="text-xs text-zinc-400">—</span>}</Td>}
                   </tr>
@@ -188,5 +198,14 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         </NoCopy>
       )}
     </div>
+  );
+}
+
+function CadenceCell({ c }: { c: { cadenceDays: number | null; status: keyof typeof VISIT_STATUS_LABEL | null; nextExpected: string | null } | undefined }) {
+  if (!c || c.cadenceDays === null || !c.status) return <span className="text-xs text-zinc-400">—</span>;
+  return (
+    <span title={c.nextExpected ? `Next expected ${formatDate(c.nextExpected, "MMM d, yyyy")}` : undefined}>
+      {cadenceLabel(c.cadenceDays)} <Badge tone={VISIT_STATUS_TONE[c.status]}>{VISIT_STATUS_LABEL[c.status]}</Badge>
+    </span>
   );
 }

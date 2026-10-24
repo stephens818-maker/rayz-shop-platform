@@ -9,6 +9,8 @@ import { clientListDenied, clientPolicy, recordClientAccess } from "@/server/cli
 import { clientListQuery } from "@/server/client-list";
 import { ratingSummaries } from "@/server/ratings";
 import { toCsv } from "@/server/reports";
+import { cadenceFor } from "@/server/visit-cadence";
+import { VISIT_STATUS_LABEL } from "@/domain/visit-cadence";
 
 /**
  * The client list as a CSV, for people with "export the client list" (the Brand Owner, unless they
@@ -44,7 +46,13 @@ export async function GET(req: Request) {
   const builtins = BUILTIN_FIELDS.filter((f) => f.key !== "ratings" && f.key !== "photo" && policy.level(f.key) !== "hidden");
   const custom = policy.custom.filter((f) => policy.level(customFieldKey(f.id)) !== "hidden");
   const withRatings = policy.level("ratings") !== "hidden";
-  const ratings = withRatings ? await ratingSummaries(rows.map((r) => r.c.id)) : new Map();
+  const [ratings, cadence] = await Promise.all([
+    withRatings ? ratingSummaries(rows.map((r) => r.c.id)) : new Map(),
+    cadenceFor(
+      rows.map((r) => r.c.id),
+      new Date(),
+    ),
+  ]);
   const raw = (r: (typeof rows)[number], key: string) =>
     ({ phone: r.c.phone, email: r.c.email, address: r.c.address, birthday: r.c.birthday, notes: r.c.notes, preferred_barber: r.preferred })[key] ?? null;
 
@@ -62,10 +70,14 @@ export async function GET(req: Request) {
     "Emails",
     "Visits",
     "Last visit",
+    "Days between visits",
+    "Next expected visit",
+    "Visit status",
     ...(withRatings ? ["Staff rating", "Ratings"] : []),
   ];
   const data = rows.map((r) => {
     const rating = withRatings ? policy.stars(ratings.get(r.c.id)) : null;
+    const cd = cadence.get(r.c.id);
     return [
       r.c.number,
       r.c.firstName,
@@ -80,6 +92,9 @@ export async function GET(req: Request) {
       r.c.emailOptIn ? "yes" : "no",
       r.visits,
       r.lastVisit,
+      cd?.cadenceDays == null ? "" : Math.round(cd.cadenceDays * 10) / 10,
+      cd?.nextExpected ?? "",
+      cd?.status ? VISIT_STATUS_LABEL[cd.status] : "",
       ...(withRatings ? [rating?.count ? rating.avg.toFixed(1) : "", rating?.count ?? 0] : []),
     ];
   });

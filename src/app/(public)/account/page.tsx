@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button, Field, Input, StatusBadge } from "@/components/ui";
+import { VISIT_STATUS_LABEL, cadenceByBarber, cadenceOf } from "@/domain/visit-cadence";
 import { api, dollars, fmtDay, fmtTime, getTokens, setTokens } from "@/lib/api-client";
+import { formatDate, todayLocal } from "@/lib/time";
 
 interface Me {
   firstName: string;
@@ -193,8 +195,67 @@ export default function AccountPage() {
           </p>
         </div>
       )}
+      {appts && <Rhythm upcoming={appts.upcoming} past={appts.past} />}
       <List title="Upcoming" list={appts?.upcoming ?? []} empty={<Link href="/" className="text-brand-600 underline">Book a cut</Link>} />
       <List title="Past visits" list={appts?.past ?? []} />
+    </div>
+  );
+}
+
+const STATUS_CLASS = { on_track: "bg-emerald-50 text-emerald-700", due: "bg-amber-50 text-amber-800", overdue: "bg-red-50 text-red-700" } as const;
+
+/** How often they come in, from the completed visits the visit list returns (the latest 20 past appointments). */
+function Rhythm({ upcoming, past }: { upcoming: Appt[]; past: Appt[] }) {
+  const done = past.filter((a) => a.status === "completed");
+  const c = cadenceOf(
+    done.map((a) => a.startsAt),
+    todayLocal(),
+    upcoming.length > 0,
+  );
+  if (!c.lastVisit) return null;
+  const barbers = cadenceByBarber(done.map((a) => ({ at: a.startsAt, staffId: a.barber.displayName, name: a.barber.displayName })));
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200" data-testid="visit-rhythm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">Your cut rhythm</div>
+          <div className="mt-0.5 text-lg font-bold">{c.label ?? "Shows after your second visit"}</div>
+        </div>
+        {c.status && <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_CLASS[c.status]}`}>{c.booked ? "Booked" : VISIT_STATUS_LABEL[c.status]}</span>}
+      </div>
+      <dl className="mt-3 grid grid-cols-3 gap-2 text-sm">
+        <div>
+          <dt className="text-xs text-zinc-500">Last visit</dt>
+          <dd className="font-medium">{formatDate(c.lastVisit, "MMM d")}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-zinc-500">Days since</dt>
+          <dd className="font-medium">{c.sinceDays}</dd>
+        </div>
+        {c.nextExpected && (
+          <div>
+            <dt className="text-xs text-zinc-500">Next cut due</dt>
+            <dd className="font-medium">{formatDate(c.nextExpected, "MMM d")}</dd>
+          </div>
+        )}
+      </dl>
+      {barbers.some((b) => b.label) && (
+        <ul className="mt-3 space-y-0.5 border-t border-zinc-100 pt-2 text-xs text-zinc-600">
+          {barbers.map((b) => (
+            <li key={b.staffId}>
+              With {b.name}: {b.label?.toLowerCase() ?? `${b.visitDays} visit`}
+            </li>
+          ))}
+        </ul>
+      )}
+      {c.status && c.status !== "on_track" && !c.booked && (
+        <p className="mt-3 text-sm">
+          {c.status === "due" ? `Your next cut is due around ${formatDate(c.nextExpected!, "MMM d")}. ` : "It's been a while. "}
+          <Link href="/" className="font-medium text-brand-600 underline">
+            Book a cut
+          </Link>
+        </p>
+      )}
     </div>
   );
 }

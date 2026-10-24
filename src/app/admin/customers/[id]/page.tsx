@@ -7,6 +7,7 @@ import { appointments, clientPhotos, customerSquireIds, customerTags, customers,
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { type FieldKey, RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
+import { CADENCE_GAPS, DUE_LEAD_DAYS, VISIT_STATUS_LABEL, VISIT_STATUS_TONE, type BarberCadence, type Cadence } from "@/domain/visit-cadence";
 import { formatPhone } from "@/lib/phone";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
@@ -20,6 +21,7 @@ import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
 import { latestReceipts, receiptOnFile } from "@/server/receipts";
 import { CALL_KIND_LABEL, CALL_STATUS_LABEL, callsWith, optOutKeys } from "@/server/messaging";
 import { hasShop, inShops } from "@/server/tenant";
+import { clientCadence } from "@/server/visit-cadence";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
 import { ResendReceipt } from "../../sales/[id]/receipt-panel";
@@ -68,7 +70,7 @@ export default async function CustomerPage({
   const vPage = Math.max(1, Number(sp.v) || 1);
   const sPage = Math.max(1, Number(sp.s) || 1);
 
-  const [stats, visits, [{ visitCount }], saleRows, [{ saleCount }], loyalty, ledger, squireIds, dupes, barberOptions] = await Promise.all([
+  const [stats, visits, [{ visitCount }], saleRows, [{ saleCount }], loyalty, ledger, squireIds, dupes, barberOptions, cadence] = await Promise.all([
     customerStats(id, db, new Date()),
     db
       .select({
@@ -129,6 +131,7 @@ export default async function CustomerPage({
           )
           .orderBy(asc(staff.displayLabel))
       : [],
+    clientCadence(id, new Date()),
   ]);
   const [tags, knownTags] = full
     ? await Promise.all([
@@ -431,6 +434,7 @@ export default async function CustomerPage({
               />
             </Card>
           )}
+          <CadenceCard {...cadence} />
           <Card>
             <CardHeader title="Visit history" subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history`} />
             <Table>
@@ -587,6 +591,70 @@ async function CallsAndTexts({ customerId, shopIds, canInbox }: { customerId: st
             </li>
           ))}
         </ul>
+      )}
+    </Card>
+  );
+}
+
+const daysAgo = (n: number) => (n === 0 ? "today" : n === 1 ? "yesterday" : `${n} days ago`);
+
+/** Their usual time between visits, from completed visits at every shop (like the visit history). */
+function CadenceCard({ cadence: c, barbers }: { cadence: Cadence; barbers: BarberCadence[] }) {
+  return (
+    <Card data-testid="visit-cadence">
+      <CardHeader
+        title="Time between visits"
+        subtitle={`The median of the last ${CADENCE_GAPS} gaps between visit days, so one long break doesn't skew it.`}
+        action={c.status && <Badge tone={VISIT_STATUS_TONE[c.status]}>{VISIT_STATUS_LABEL[c.status]}</Badge>}
+      />
+      {c.cadenceDays === null ? (
+        <p className="p-4 text-sm text-zinc-500">{c.visitDays ? "Shows after their second visit." : "No completed visits yet."}</p>
+      ) : (
+        <div className="space-y-3 p-4">
+          <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+            <div>
+              <dt className="text-xs text-zinc-500">Comes in</dt>
+              <dd className="font-semibold text-zinc-900">{c.label}</dd>
+              <dd className="text-xs text-zinc-500">about {Math.round(c.cadenceDays)} days</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-zinc-500">Last visit</dt>
+              <dd className="font-medium">{formatDate(c.lastVisit!, "MMM d, yyyy")}</dd>
+              <dd className="text-xs text-zinc-500">{daysAgo(c.sinceDays!)}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-zinc-500">Next expected</dt>
+              <dd className="font-medium">{formatDate(c.nextExpected!, "MMM d, yyyy")}</dd>
+              <dd className="text-xs text-zinc-500">{c.booked ? "Booked" : `due from ${DUE_LEAD_DAYS} days before`}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-zinc-500">Visits counted</dt>
+              <dd className="font-medium">{c.visitDays}</dd>
+            </div>
+          </dl>
+          {barbers.length > 0 && (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>With</Th>
+                  <Th right>Visits</Th>
+                  <Th>Comes in</Th>
+                  <Th>Last visit</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {barbers.map((b) => (
+                  <tr key={b.staffId}>
+                    <Td>{b.name}</Td>
+                    <Td right>{b.visitDays}</Td>
+                    <Td>{b.label ?? <span className="text-xs text-zinc-400">after a second visit</span>}</Td>
+                    <Td>{formatDate(b.lastVisit, "MMM d, yyyy")}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+        </div>
       )}
     </Card>
   );
