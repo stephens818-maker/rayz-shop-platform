@@ -1364,6 +1364,61 @@ How often a client comes in, everywhere it's useful: their profile, their own ac
 - **Assistant:** the five report fields are queryable, and `customer_report` takes `visitStatus` and a min/max days between visits, so "Which clients are overdue for a cut?" lists overdue clients with their rhythm and next expected visit.
 - Tests: `tests/visit-cadence.test.ts` (median, same-day visits, the 10-gap window, labels, status edges, per barber) and `tests/db/visit-cadence.test.ts` (SQL against TypeScript, the list column and filters, the profile card, report fields scoped to a barber, rebook timing, Today's rebook list, the assistant's fields).
 
+### Client badges
+
+Small coloured pills that tell staff something about a client at a glance, each with an icon and a tooltip that says why ("At risk: Visits are stretching: their last gap was 5.5 weeks against their usual 3 weeks."). The catalog, rules and who-sees-what are pure code in `src/domain/badges.ts`. The engine and cache are in `src/server/badges.ts`.
+
+- **Built-in badges (29):**
+  - **Visit timing:** On track, Due, Overdue (from the time between visits above), Lapsed (no visit in 16 weeks and nothing booked), At risk (their last gap is 150% or more of their usual one, and at least a week longer).
+  - **New and returning:** New client (no visits yet, or the first one is today), 2nd visit, Win-back (booked or back after lapsing).
+  - **Value:** VIP (top 10% of 12-month net spend), Loyal regular (10+ visits), Reward ready, Gift card (balance left), Coupon (an unused code).
+  - **Celebrations:** Birthday this week, Birthday this month, Anniversary (a year or more since their first visit, this week).
+  - **Booking behavior:** No-show risk (2 in 12 months, or a third of their appointments), Late cancels (2 within 24 hours), Always books with {barber} (80% of the last 10 visits), Switched barbers (recently, after being a regular with another), Books online (75% of bookings).
+  - **Barber change:** Barber left (their usual barber is no longer active).
+  - **Feedback and products:** Low rating (staff rate them under 3 stars), Review clicked, Product buyer, Never bought product.
+  - **Profile and marketing:** Missing info (no phone, email or agreement to appointment messages), Opted out (of marketing texts, emails or app notifications), Referral source, Referrer.
+- **Where they show:**
+  - client profile (header);
+  - day calendar (icons on the block, action badges first; full badges in the drawer);
+  - checkout/POS (under the client);
+  - client list (under the name);
+  - search results (header search, booking, POS, walk-ins).
+- **Brand portal (Setup → Client badges, permission `badges.settings`, brand-level only, Brand Admin by default):**
+  - a master switch;
+  - each badge on or off;
+  - every threshold above;
+  - a matrix of which roles see which badge;
+  - custom badges;
+  - the cache's state, with a **Recompute** button.
+- **Who sees which:**
+  - A badge shows only if the brand has it on and every role the person is working under allows it.
+  - Sensitive badges (VIP) start on for brand-level roles only; the brand turns them on for other roles.
+  - Money badges (VIP, Gift card) also need "every client" (`clients.view_all`), like the spend filters.
+  - Badges never give away a detail hidden from the person:
+    - Birthday this week needs the full birthday; Birthday this month, the month.
+    - Always books with, Switched barbers and Barber left need the preferred barber at least masked. The barber is named only for people who see it in full.
+    - Low rating needs ratings.
+    - Missing info needs phone and email at least masked.
+  - Tooltips carry no contact details at all.
+- **Custom badges:** a name, icon, colour and explanation, built from any client filter the segment builder has (spend, visits, services, tags, loyalty, birthday month, cadence…), up to 30. The filter must be one the person saving it could run, and a badge shows only to people who could run its filter themselves. A custom badge can't be built from other badges.
+- **Filters:** **Has any of these badges** on the client list, in the report builder (plus a **Badges** column) and in Campaign Center segments, so a blast can go to every "At risk" client. Only badges the person sees can be filtered on.
+- **Today and the Morning Dashboard:**
+  - Today's **Up next** shows the action badges (2nd visit, birthdays, at risk, reward ready).
+  - A **Your clients today** / **Today's clients** card counts today's booked clients by badge: "3 at-risk clients", "1 client on their 2nd visit". For a barber, these are their own book.
+  - The Morning Dashboard's Today section opens with the same counts for the recipient's locations ("2 at-risk clients booked today"), in the email, PDF and text.
+- **Engine and cache:**
+  - Each client's badges are cached in `client_badges` (keys, the facts each tooltip needs, a hash, the day computed).
+  - A Vercel Cron (`/api/cron/badges`, 6–8 AM, every 30 minutes, `CRON_SECRET`) recomputes missing or stale rows in batches of 500, within a 4-minute budget. Each run carries on where the last stopped. Rows whose badges didn't change are only re-dated.
+  - Checkout recomputes the client straight after the sale.
+  - A page that finds missing or stale rows works out up to 200 while it waits.
+  - Changing a threshold or a custom badge marks every row stale. Turning badges on or off, or changing who sees them, needs no recompute.
+  - The VIP line (the least a top spender spent) is worked out once per run, and cached for 10 minutes.
+  - Badge filters read the cache, so they're as of the last nightly run or the client's last checkout.
+- **Migration:** `core_0052_client_badges` (`brand_settings.badges`, `custom_badges` with the sensitive-text scrub on its name and explanation, `client_badges` with a GIN index on keys, and `badges.settings` for Brand Admin).
+- **Tests:**
+  - `tests/badges.test.ts`: every rule, visibility by role, money and data level, custom badges, tooltips, settings that tolerate bad values, no sensitive keys in the cache.
+  - `tests/db/badges.test.ts`: the cache and the nightly job's budget, the refresh at checkout, who sees what as settings change, stale marking, the client list and report filters, custom badges end to end, the profile, search, calendar, Today and the Morning Dashboard, and the cron route's secret.
+
 ### Client search, filters and saved searches
 
 - **One search everywhere:** the client list, the **Find a client** box at the top of the brand portal sidebar (press `/`), booking on the calendar, the POS, and walk-in check-in. A returning walk-in is picked from the results instead of being created again. Results show the first name and last initial, nickname, photo, rating, client number, masked phone, the last visit (date and shop), the usual barber, and what matched.

@@ -382,6 +382,20 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-24: core (client badges)
+
+- **Badges:** `src/domain/badges.ts` (pure, client-safe: catalog, `BadgeSettingsSchema`, `deriveBadges`, `visibleBadges`, `showBadges`) and `src/server/badges.ts` (facts, cache, `refreshBadges`, `runBadgeJob`, `shownBadges`, `badgeCounts`). The settings loader is `src/server/badge-settings.ts`.
+- **Migration `core_0052_client_badges`:**
+  - `brand_settings.badges` jsonb;
+  - `custom_badges` (scrub trigger on `label` and `tooltip`);
+  - `client_badges` (`customer_id` PK cascade, `keys text[]` GIN, `badges jsonb`, `hash`, `computed_on`);
+  - grants `badges.settings` to `brand_admin`.
+- **Cron:** `/api/cron/badges` (in `vercel.json`, `CRON_SECRET`).
+- **Checkout:** `finalizeSale` refreshes the client's badges after the sale, loading `./badges` lazily. The client API's import graph is unchanged, and a failure never fails the sale.
+- **Where:** `ClientPolicy` gains `badges` and `customBadges`. Display covers `ClientHit.badges`, `CalAppt.badges`, the POS customer, the profile, the client list, Today and `TodayBlock.clients` in the Morning Dashboard. Filters: `SegmentSchema.badges`, the report builder field `badges`.
+- **For the app (optional):** if you want badges in the staff or customer app, read them through `shownBadges(policy, ids)`, so the brand's on/off, role and data-level rules apply. Never return raw `client_badges` rows. Customers shouldn't see their own badges.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`, and consent columns are only read.
+
 ### 2026-10-24: core (time between visits)
 
 - **Cadence:** `src/domain/visit-cadence.ts` (pure, client-safe) and `src/server/visit-cadence.ts`. Visit days are distinct America/Chicago dates of completed appointments; the cadence is the median of the last 10 gaps (`CADENCE_GAPS`), null under two visit days. Status: `on_track` (booked, or more than `DUE_LEAD_DAYS` = 3 before the next expected visit), `due` (until `max(7, 25%)` past it), `overdue`. `cadenceCtes(name, cond, now)` is the SQL twin (`percentile_cont(0.5)`, `round(numeric)` for the next day); `cadenceFor(ids, now)` takes one `uuid[]` parameter; `clientCadence(customerId, now)` gives the profile's card and per-barber rows.

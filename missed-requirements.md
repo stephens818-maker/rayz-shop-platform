@@ -753,6 +753,27 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 **Still open:**
 - [ ] The account page reads only the latest 20 past appointments, because `/api/v1` belongs to the mobile agent; the request to return the full cadence from `/me` is in NOTES-SYNC.
 
+## 32. Client retention badges
+
+- [x] Shown on the client profile, calendar blocks (and the appointment drawer), checkout/POS, the client list and search results, each with an icon, a colour and a tooltip that says why.
+- [x] Visit timing: on track, due, overdue (from the time between visits), lapsed (over N weeks), at risk (last gap stretching against their norm).
+- [x] New and returning: new client, 2nd visit, win-back.
+- [x] Value: VIP (top X% of spend), loyal regular (N+ visits), reward ready, gift card balance, coupon.
+- [x] Celebrations: birthday this week, birthday this month, anniversary.
+- [x] Booking behavior: no-show risk, late cancels, always books with {barber}, switched barbers, books online.
+- [x] Barber change: barber left.
+- [x] Feedback and products: low rating, review clicked, product buyer, never bought product.
+- [x] Profile and marketing: missing info, opted out, referral source, referrer.
+- [x] Brand portal: on or off per badge and overall, every threshold, custom badges from any segment-builder filter, and which roles see which badge. Sensitive and money badges are brand-controlled.
+- [x] Badges never reveal hidden contact fields or other hidden details; tooltips carry no contact details.
+- [x] Badge filters on the client list, in the report builder (and a column) and in Campaign Center segments.
+- [x] Morning Dashboard counts of today's booked clients by badge; Today highlights action badges (2nd visit, birthday, at risk, reward ready) and counts them.
+- [x] Computed nightly (incrementally, in batches with a time budget) and on checkout, and cached.
+- [x] Tests: `tests/badges.test.ts`, `tests/db/badges.test.ts`.
+
+**Still open:**
+- [ ] Badges in the mobile apps, if wanted: the mobile agent owns `/api/v1`. NOTES-SYNC says how to read them safely.
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.
