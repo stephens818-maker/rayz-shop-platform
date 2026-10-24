@@ -36,4 +36,6 @@ CREATE TABLE IF NOT EXISTS "client_contact_grants" (
 );--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "client_contact_grants_staff_idx" ON "client_contact_grants" USING btree ("staff_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "client_contact_grants_shop_idx" ON "client_contact_grants" USING btree ("shop_id");--> statement-breakpoint
-CREATE TRIGGER "client_contact_grants_scrub_sensitive" BEFORE INSERT OR UPDATE OF "note" ON "client_contact_grants" FOR EACH ROW EXECUTE FUNCTION "scrub_sensitive_row"('note');
+CREATE TRIGGER "client_contact_grants_scrub_sensitive" BEFORE INSERT OR UPDATE OF "note" ON "client_contact_grants" FOR EACH ROW EXECUTE FUNCTION "scrub_sensitive_row"('note');--> statement-breakpoint
+ALTER TABLE "notification_jobs" DROP CONSTRAINT IF EXISTS "notification_jobs_shop_present";--> statement-breakpoint
+ALTER TABLE "notification_jobs" ADD CONSTRAINT "notification_jobs_shop_present" CHECK ("shop_id" IS NOT NULL OR "kind" IN ('otp', 'privacy_alert', 'digest', 'saved_report', 'staff_invite')) NOT VALID;

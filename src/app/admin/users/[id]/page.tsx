@@ -11,6 +11,7 @@ import { formatDateTime } from "@/lib/time";
 import { activeOwnerCount } from "@/server/auth/access";
 import { guardPage, staffGrantor } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
+import { inTenant } from "@/server/tenant";
 import { accountOf } from "@/server/users";
 import { PersonAccessSection } from "../../permissions/people/[id]/access-section";
 import { AccountControls, ProfileForm } from "../editor";
@@ -22,7 +23,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export default async function UserPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await guardPage("/admin/users/[id]");
-  if (!UUID.test(id)) notFound();
+  if (!UUID.test(id) || !(await inTenant(ctx, "staff", id))) notFound();
   const account = await accountOf(ctx, id).catch((e) => {
     if (e instanceof AppError && e.code === "not_found") return null;
     throw e;

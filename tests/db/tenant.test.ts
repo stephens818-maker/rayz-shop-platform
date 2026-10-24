@@ -462,6 +462,7 @@ function dynamicPages(): [string, Record<string, string>][] {
     ["/admin/purchase-orders/[id]/receive", { id: ids.po }],
     ["/admin/staff/[id]", { id: ids.barber }],
     ["/admin/permissions/people/[id]", { id: ids.barber }],
+    ["/admin/users/[id]", { id: ids.barber }],
     ["/admin/customers/[id]", { id: ids.client }],
     ["/admin/inventory/[id]", { id: ids.product }],
     ["/admin/vendors/[id]", { id: ids.vendor }],
