@@ -29,6 +29,7 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public details: unknown = null,
   ) {
     super(message);
   }
@@ -60,7 +61,7 @@ export async function api<T>(path: string, init: RequestInit & { auth?: boolean;
   const res = await fetch(`${init.base ?? "/api/v1"}${path}`, { ...init, headers });
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? "error", data?.error?.message ?? "Request failed");
+  if (!res.ok) throw new ApiError(res.status, data?.error?.code ?? "error", data?.error?.message ?? "Request failed", data?.error?.details ?? null);
   return data as T;
 }
 
@@ -74,7 +75,10 @@ export function fmtDay(isoOrDate: string, opts: Intl.DateTimeFormatOptions = { w
   return d.toLocaleDateString("en-US", { ...opts, timeZone: isoOrDate.length === 10 ? "UTC" : "America/Chicago" });
 }
 export function chicagoToday(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  return chicagoDate(new Date().toISOString());
+}
+export function chicagoDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
 }
 export function addDaysStr(date: string, n: number) {
   const d = new Date(`${date}T12:00:00Z`);

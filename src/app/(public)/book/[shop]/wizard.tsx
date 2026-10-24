@@ -5,9 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MyBadges } from "@/components/my-badges";
 import { AddChildInline, FamilyParty, PartyMember, partySummary } from "@/components/family-party";
+import { GroupOption, GroupOptions, GroupOptionsPicker, optionKey, seatsOf, windowLabel } from "@/components/group-options";
 import { Slot, SlotPicker } from "@/components/slot-picker";
 import { Button, Field, Input, cx } from "@/components/ui";
-import { ApiError, api, dollars, fmtDay, fmtTime, getTokens, setTokens } from "@/lib/api-client";
+import { ApiError, api, chicagoDate, dollars, fmtDay, fmtTime, getTokens, setTokens } from "@/lib/api-client";
 import { togglePartyMember } from "@/domain/family";
 import { EMAIL_CONSENT_TEXT, SMS_CONSENT_TEXT, consentFields, initialBookingForm } from "@/domain/booking-consent";
 import type { BookingCouponView } from "@/server/coupons";
@@ -68,7 +69,11 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const idem = useRef(crypto.randomUUID());
+  const groupIdem = useRef(crypto.randomUUID());
   const draft = useRef(crypto.randomUUID());
+  const [groupOpts, setGroupOpts] = useState<GroupOptions | null>(null);
+  const [groupPick, setGroupPick] = useState<GroupOption | null>(null);
+  const [groupLoading, setGroupLoading] = useState(false);
   const [couponText, setCouponText] = useState(params.get("coupon") ?? "");
   const [coupon, setCoupon] = useState<BookingCouponView | null>(null);
   const [couponMsg, setCouponMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -190,7 +195,10 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
 
   const service = catalog?.services.find((s) => s.id === serviceId) ?? null;
   const addons = useMemo(() => (catalog?.addons ?? []).filter((a) => addonIds.includes(a.id)), [catalog, addonIds]);
-  const total = (service?.priceCents ?? 0) + addons.reduce((a, x) => a + x.priceCents, 0);
+  const total =
+    (service?.priceCents ?? 0) +
+    addons.reduce((a, x) => a + x.priceCents, 0) +
+    (signedIn ? party.reduce((a, m) => a + (catalog?.services.find((s) => s.id === m.serviceId)?.priceCents ?? 0), 0) : 0);
   const minutes = (service?.durationMin ?? 0) + addons.reduce((a, x) => a + x.durationMin, 0);
   const barberObj = barbers?.find((b) => b.slug === barber);
   const assigned = slot && barber === "any" && slot.barberIds.length === 1 ? barbers?.find((b) => b.id === slot.barberIds[0]) : null;
@@ -200,6 +208,64 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
     for (const s of catalog?.services ?? []) g.set(s.category, [...(g.get(s.category) ?? []), s]);
     return [...g.entries()];
   }, [catalog]);
+
+  /** Two or more people: the slot finder seats everyone, from the time picked on that day. */
+  const groupPeople = useMemo(
+    () =>
+      signedIn && service && firstWho && party.length
+        ? [
+            { customerId: firstWho, serviceId: service.id, addonIds, staffId: barberObj?.id ?? null },
+            ...party.map((m) => ({ customerId: m.customerId, serviceId: m.serviceId, addonIds: [], staffId: m.staffId })),
+          ]
+        : null,
+    [signedIn, service, firstWho, party, addonIds, barberObj],
+  );
+  const groupKey = groupPeople && slot ? JSON.stringify([groupPeople, slot.startsAt]) : null;
+  useEffect(() => {
+    setGroupPick(null);
+    setGroupOpts(null);
+    if (!groupPeople || !slot) return;
+    let live = true;
+    setGroupLoading(true);
+    api<GroupOptions>("/account/family/booking-options", {
+      base: "/api",
+      method: "POST",
+      body: JSON.stringify({ shopId: shop.slug, date: chicagoDate(slot.startsAt), people: groupPeople, after: slot.startsAt }),
+    })
+      .then((r) => live && setGroupOpts(r))
+      .catch((e) => live && setError(e.message))
+      .finally(() => live && setGroupLoading(false));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupKey]);
+
+  async function bookGroup() {
+    if (!groupPeople || !groupPick) return;
+    try {
+      const g = await api<{ code: string; members: { appointmentCode: string; startsAt: string }[] }>("/account/family/booking-groups", {
+        base: "/api",
+        method: "POST",
+        headers: { "Idempotency-Key": groupIdem.current },
+        body: JSON.stringify({ shopId: shop.slug, people: groupPeople, plan: groupPick.plan, seats: seatsOf(groupPick) }),
+      });
+      const lead = [...g.members].sort((a, b) => a.startsAt.localeCompare(b.startsAt))[0].appointmentCode;
+      if (coupon) await holdCouponAction(lead, coupon.code);
+      await finishDraftAction(draft.current, lead);
+      router.push(`/g/${g.code}?new=1`);
+    } catch (e) {
+      const err = e as ApiError;
+      setError(err.message);
+      if (err.code === "slot_unavailable") {
+        groupIdem.current = crypto.randomUUID();
+        const alt = (err.details as { alternatives?: GroupOptions } | null)?.alternatives;
+        setGroupPick(null);
+        if (alt) setGroupOpts(alt);
+      }
+      setBusy(false);
+    }
+  }
 
   async function bookFamily() {
     if (!service || !slot || !firstWho) return;
@@ -224,7 +290,8 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
     if (!service || !slot) return;
     setBusy(true);
     setError(null);
-    if (signedIn && (party.length || (firstWho && firstWho !== signedIn.id))) {
+    if (groupPeople) return bookGroup();
+    if (signedIn && firstWho && firstWho !== signedIn.id) {
       try {
         await bookFamily();
       } catch (e) {
@@ -411,10 +478,25 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
                   onFirstWho={setFirstWho}
                   party={party}
                   onParty={setParty}
+                  hideTiming
                 >
                   {kids.length < maxChildren && <AddChildInline onAdd={addChild} />}
                 </FamilyParty>
               ) : null}
+              {groupPeople && slot && (
+                <div className="mb-2 space-y-2" data-testid="group-finder">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <div className="text-sm font-medium text-zinc-700">
+                      Times for everyone, {fmtDay(slot.startsAt)} from {fmtTime(slot.startsAt)}
+                    </div>
+                    <button type="button" className="text-xs text-zinc-500 underline" onClick={() => setStep("time")}>
+                      Another day or time
+                    </button>
+                  </div>
+                  {groupLoading && <div className="h-32 animate-pulse rounded-lg bg-zinc-100" />}
+                  {groupOpts && <GroupOptionsPicker options={groupOpts} selected={groupPick ? optionKey(groupPick) : null} onPick={setGroupPick} />}
+                </div>
+              )}
             </>
           ) : !guest ? (
             <VerifyPhone form={form} setForm={setForm} onSignedIn={verified} onSkip={() => setGuest(true)} />
@@ -453,8 +535,14 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
           )}
           {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
           {(signedIn || guest) && (
-            <Button size="lg" className="mt-4 w-full sm:w-auto" disabled={!canDetails || busy || !slot} onClick={book}>
-              {busy ? "Booking…" : `Book ${slot ? fmtTime(slot.startsAt) : ""}`}
+            <Button size="lg" className="mt-4 w-full sm:w-auto" disabled={!canDetails || busy || !slot || (!!groupPeople && !groupPick)} onClick={book}>
+              {busy
+                ? "Booking…"
+                : groupPeople
+                  ? groupPick
+                    ? `Book all ${groupPeople.length}, ${fmtTime(groupPick.startsAt)} – ${fmtTime(groupPick.endsAt)}`
+                    : "Pick a time for everyone"
+                  : `Book ${slot ? fmtTime(slot.startsAt) : ""}`}
             </Button>
           )}
           <p className="mt-2 text-xs text-zinc-500">No payment needed. Free cancellation up to {shop.cancelCutoffMinutes} minutes before.</p>
@@ -471,8 +559,17 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
               <Row key={a.id} k="Add-on" v={a.name} />
             ))}
             <Row k="Barber" v={barber === "any" ? (assigned ? `Any (${assigned.displayName})` : "Any barber") : (barberObj?.displayName ?? "—")} />
-            <Row k="When" v={slot ? `${fmtDay(slot.startsAt)}, ${fmtTime(slot.startsAt)}` : "—"} />
-            <Row k="Length" v={minutes ? `${minutes} min` : "—"} />
+            {groupPick ? (
+              <>
+                <Row k="When" v={`${fmtDay(groupPick.startsAt)}, ${fmtTime(groupPick.startsAt)} – ${fmtTime(groupPick.endsAt)}`} />
+                <Row k="Everyone done in" v={windowLabel(groupPick.minutes)} />
+              </>
+            ) : (
+              <>
+                <Row k="When" v={slot ? `${fmtDay(slot.startsAt)}, ${fmtTime(slot.startsAt)}` : "—"} />
+                <Row k="Length" v={minutes ? `${minutes} min` : "—"} />
+              </>
+            )}
             {signedIn && (kids.length > 0 || party.length > 0) && <Row k="For" v={partySummary(signedIn, kids, firstWho ?? signedIn.id, party)} />}
           </div>
           <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-3">

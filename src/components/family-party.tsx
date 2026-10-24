@@ -48,9 +48,12 @@ export function FamilyParty({
   onParty,
   meLabel,
   note = "Everyone is booked together or not at all. Reminders and receipts come to you.",
+  hideTiming,
   children,
 }: {
   meLabel?: string;
+  /** The slot finder below picks everyone's times, so each person only picks a service and barber. */
+  hideTiming?: boolean;
   note?: string;
   /** Under the chips: "Add a child". */
   children?: React.ReactNode;
@@ -119,7 +122,9 @@ export function FamilyParty({
         <div className="space-y-2">
           {first && (
             <p className="text-xs text-zinc-500">
-              {label(first)} takes the time and service picked above.
+              {hideTiming
+                ? `${label(first)} has the service and barber picked above.`
+                : `${label(first)} takes the time and service picked above.`}
             </p>
           )}
           {party.map((m) => {
@@ -132,7 +137,12 @@ export function FamilyParty({
                 data-testid="party-member"
               >
                 <div className="text-sm font-medium">{label(p)}</div>
-                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <div
+                  className={cx(
+                    "mt-2 grid gap-2",
+                    hideTiming ? "sm:grid-cols-2" : "sm:grid-cols-3",
+                  )}
+                >
                   <Field label="Service">
                     <Select
                       value={m.serviceId}
@@ -147,21 +157,23 @@ export function FamilyParty({
                       ))}
                     </Select>
                   </Field>
-                  <Field label="When">
-                    <Select
-                      value={m.timing}
-                      onChange={(e) =>
-                        set(p.id, {
-                          timing: e.target.value as FamilyTiming,
-                        })
-                      }
-                    >
-                      <option value="same_time">
-                        Same time, another barber
-                      </option>
-                      <option value="after">Right after</option>
-                    </Select>
-                  </Field>
+                  {!hideTiming && (
+                    <Field label="When">
+                      <Select
+                        value={m.timing}
+                        onChange={(e) =>
+                          set(p.id, {
+                            timing: e.target.value as FamilyTiming,
+                          })
+                        }
+                      >
+                        <option value="same_time">
+                          Same time, another barber
+                        </option>
+                        <option value="after">Right after</option>
+                      </Select>
+                    </Field>
+                  )}
                   <Field label="Barber">
                     <Select
                       value={m.staffId ?? ""}
@@ -170,9 +182,11 @@ export function FamilyParty({
                       }
                     >
                       <option value="">
-                        {m.timing === "after"
-                          ? "Same barber if free, else any"
-                          : "Any free barber"}
+                        {hideTiming
+                          ? "Any barber"
+                          : m.timing === "after"
+                            ? "Same barber if free, else any"
+                            : "Any free barber"}
                       </option>
                       {barbers.map((b) => (
                         <option key={b.id} value={b.id}>
