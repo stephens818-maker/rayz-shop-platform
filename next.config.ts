@@ -23,7 +23,11 @@ const nextConfig: NextConfig = {
   // Development needs eval for hot reload, so the policy applies to production builds only.
   async headers() {
     if (process.env.NODE_ENV !== "production") return [];
-    return [{ source: "/admin/checkout/:path*", headers: [{ key: "Content-Security-Policy", value: CHECKOUT_CSP }] }];
+    return [
+      { source: "/admin/checkout/:path*", headers: [{ key: "Content-Security-Policy", value: CHECKOUT_CSP }] },
+      // The booking widget is framed by the brand's and partners' websites; nothing else here is meant to be.
+      { source: "/embed/:path*", headers: [{ key: "Content-Security-Policy", value: "frame-ancestors *" }] },
+    ];
   },
 };
 

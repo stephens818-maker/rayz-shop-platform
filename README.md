@@ -2132,6 +2132,7 @@ One row per event in `analytics_events` (and the same columns in the warehouse's
 Channels (`channel`):
 
 - `online`: Online booking (website or rebook link)
+- `widget`: Booking widget on another website
 - `app`: Ray'z app
 - `walk_in`: Walk-in
 - `phone`: Phone (booked by staff within 2 hours after the client called)

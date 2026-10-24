@@ -6,7 +6,7 @@ import { LocationCard } from "./location-card";
 import { NearMe } from "./near-me";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Locations and hours · Ray'z Barber Shop", description: "Find the nearest Ray'z Barber Shop: addresses, hours, phone numbers and the next open time." };
+export const metadata: Metadata = { title: "Locations and hours", description: "Find the nearest Ray'z Barber Shop: addresses, hours, phone numbers and the next open time." };
 
 export default async function LocationsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;

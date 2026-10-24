@@ -84,7 +84,14 @@ type Kid = {
   preferredStaffId: string | null;
 };
 
-export function BookingWizard({ shop }: { shop: ShopInfo }) {
+/** `basePath` is "/embed" inside the booking widget, so the confirmation stays in the frame. */
+export function BookingWizard({
+  shop,
+  basePath = "",
+}: {
+  shop: ShopInfo;
+  basePath?: string;
+}) {
   const router = useRouter();
   const params = useSearchParams();
   const [catalog, setCatalog] = useState<{
@@ -121,7 +128,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
         funnel: funnel.current,
         step,
         shop: shop.slug,
-        channel: "online",
+        channel: basePath ? "widget" : "online",
         ...extra,
       });
       if (
@@ -427,7 +434,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
       if (coupon) await holdCouponAction(lead, coupon.code);
       await finishDraftAction(draft.current, lead);
       beacon("booked", { appointment: lead });
-      router.push(`/g/${g.code}?new=1`);
+      router.push(`${basePath}/g/${g.code}?new=1`);
     } catch (e) {
       const err = e as ApiError;
       setError(err.message);
@@ -474,7 +481,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
     await finishDraftAction(draft.current, code);
     beacon("booked", { appointment: code });
     router.push(
-      `/a/${code}?new=1${r.appointments.length > 1 ? `&family=${r.appointments.length}` : ""}`,
+      `${basePath}/a/${code}?new=1${r.appointments.length > 1 ? `&family=${r.appointments.length}` : ""}`,
     );
   }
 
@@ -521,7 +528,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
       if (coupon) await holdCouponAction(r.appointment.code, coupon.code);
       await finishDraftAction(draft.current, r.appointment.code);
       beacon("booked", { appointment: r.appointment.code });
-      router.push(`/a/${r.appointment.code}?new=1`);
+      router.push(`${basePath}/a/${r.appointment.code}?new=1`);
     } catch (e) {
       const err = e as ApiError;
       setError(err.message);

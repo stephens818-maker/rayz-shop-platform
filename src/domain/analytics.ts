@@ -12,6 +12,7 @@ export type ActorKind = (typeof ACTOR_KINDS)[number];
 /** Where an action happened. A booking's channel is how it was made. */
 export const CHANNELS = {
   online: "Online booking (website or rebook link)",
+  widget: "Booking widget on another website",
   app: "Ray'z app",
   walk_in: "Walk-in",
   phone: "Phone (booked by staff within 2 hours after the client called)",
@@ -546,7 +547,7 @@ export const funnelBeacon = z.object({
   startsAt: z.string().datetime({ offset: true }).optional(),
   /** The booked step: the new appointment's id or code. */
   appointment: ref.optional(),
-  channel: z.enum(["online", "app"]).optional(),
+  channel: z.enum(["online", "widget", "app"]).optional(),
 });
 export type FunnelBeacon = z.infer<typeof funnelBeacon>;
 
