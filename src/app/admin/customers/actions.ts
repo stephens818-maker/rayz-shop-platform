@@ -12,8 +12,9 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, authorize, can, requireStaff } from "@/server/auth/staff";
 import { contactClient } from "@/server/client-contact";
-import { ClientPolicy, clientPolicy, displayFull, entered, recordClientAccess, searchReach, shownField, showClient } from "@/server/client-privacy";
-import { customerAccess, findOrCreateCustomer, matchCustomer, mergeCustomers, searchCustomers } from "@/server/customers";
+import { searchClients } from "@/server/client-search";
+import { ClientPolicy, clientPolicy, displayFull, entered, recordClientAccess, shownField } from "@/server/client-privacy";
+import { customerAccess, findOrCreateCustomer, matchCustomer, mergeCustomers } from "@/server/customers";
 import { AppError, forbidden } from "@/server/errors";
 import { getLoyaltyConfig } from "@/server/loyalty";
 import { hasShop, inTenant } from "@/server/tenant";
@@ -211,14 +212,7 @@ export async function mergeCustomersAction(keepId: string, dropId: string) {
 export async function findClientsAction(q: string) {
   return safe(async () => {
     const ctx = await authorize("clients.merge");
-    if (q.trim().length < 2) return [];
-    const policy = await clientPolicy(ctx);
-    const rows = await searchCustomers(q, {}, 8, searchReach(policy));
-    await recordClientAccess(ctx, { kind: "search", detail: { results: rows.length, via: "merge" } });
-    return rows.map((c) => {
-      const s = showClient(policy, c);
-      return { id: c.id, firstName: c.firstName, lastName: c.lastName, phone: s.phone, email: s.email };
-    });
+    return searchClients(ctx, q, { via: "merge", brandWide: true });
   });
 }
 

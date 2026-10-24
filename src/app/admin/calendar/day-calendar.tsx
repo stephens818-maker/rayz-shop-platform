@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Badge, Button, Field, Input, LinkButton, Notice, Select, StarBadge, StatusBadge, Textarea, cx } from "@/components/ui";
 import { ConflictConfirm } from "@/components/conflict-confirm";
-import type { RatingSummary } from "@/domain/ratings";
+import { ClientHitRow } from "@/components/client-hit";
+import type { ClientHit } from "@/domain/client-search";
 import { type PickReason, ReasonDot, ReasonPicker } from "@/components/reason-picker";
 import { reasonText } from "@/domain/block-reasons";
 import type { BookedConflict } from "@/server/staff-time";
@@ -1097,7 +1098,7 @@ function BlockPanel({
   );
 }
 
-type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; email: string | null; notes: string | null; rating: RatingSummary | null };
+type Found = ClientHit;
 
 function NewPanel({
   col,
@@ -1277,12 +1278,8 @@ function NewPanel({
             <div className="mb-1 text-xs font-medium text-zinc-700">Client</div>
             {picked ? (
               <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2 text-sm ring-1 ring-zinc-200">
-                <div>
-                  <div className="flex items-center gap-1.5 font-medium">
-                    {picked.firstName} {picked.lastName}
-                    <StarBadge rating={picked.rating} />
-                  </div>
-                  <div className="text-xs text-zinc-500">{picked.phone ?? picked.email}</div>
+                <div className="min-w-0">
+                  <ClientHitRow hit={picked} />
                   {picked.notes && <div className="mt-1 text-xs text-amber-700">{picked.notes}</div>}
                 </div>
                 <button className="text-xs underline" onClick={() => setPicked(null)}>
@@ -1291,16 +1288,12 @@ function NewPanel({
               </div>
             ) : (
               <>
-                <Input placeholder="Search name or phone" value={q} onChange={(e) => setQ(e.target.value)} />
+                <Input placeholder="Name, phone, email, ticket #, card…" value={q} onChange={(e) => setQ(e.target.value)} />
                 {found.length > 0 && (
                   <div className="mt-1 divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-200">
                     {found.map((f) => (
                       <button key={f.id} onClick={() => setPicked(f)} className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50">
-                        <span className="font-medium">
-                          {f.firstName} {f.lastName}
-                        </span>{" "}
-                        <StarBadge rating={f.rating} />{" "}
-                        <span className="text-zinc-500">{f.phone ?? f.email}</span>
+                        <ClientHitRow hit={f} />
                       </button>
                     ))}
                   </div>

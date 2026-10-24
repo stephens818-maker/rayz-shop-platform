@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Select, Textarea, cx } from "@/components/ui";
+import { ClientHitRow } from "@/components/client-hit";
 import type { ShownField } from "@/domain/client-privacy";
+import type { ClientHit } from "@/domain/client-search";
 import { findClientsAction, grantRewardAction, mergeCustomersAction, updateCustomerAction, updateNotesAction } from "../actions";
 import { Masked } from "../privacy";
 
@@ -315,7 +317,7 @@ export function NotesEditor({
   );
 }
 
-type Found = { id: string; firstName: string; lastName: string | null; phone: string | null; email: string | null };
+type Found = ClientHit;
 
 export function MergeInto({ keepId, keepName, suggestions }: { keepId: string; keepName: string; suggestions: { id: string; label: string }[] }) {
   const router = useRouter();
@@ -353,7 +355,7 @@ export function MergeInto({ keepId, keepName, suggestions }: { keepId: string; k
         const label = `${f.firstName} ${f.lastName ?? ""}`.trim();
         return (
           <button key={f.id} disabled={pending} onClick={() => merge(f.id, label)} className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-zinc-50">
-            {label} <span className="text-zinc-500">{f.phone || f.email}</span>
+            <ClientHitRow hit={f} />
           </button>
         );
       })}

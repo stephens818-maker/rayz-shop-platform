@@ -4,6 +4,8 @@ import { useRouter } from "next/navigation";
 import { type ChangeEvent, type FormEvent, useEffect, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, Suggestions, cx } from "@/components/ui";
 import type { RatingSummary } from "@/domain/ratings";
+import { ClientHitRow } from "@/components/client-hit";
+import type { ClientHit } from "@/domain/client-search";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
 import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
 import { type TipSplitMode, splitBarbers, splitCents, tipWeights } from "@/domain/handoff";
@@ -915,11 +917,11 @@ function CustomerBox({
     setDraft({ firstName: "", lastName: "", phone: "", email: "" });
     router.refresh();
   };
-  const [found, setFound] = useState<{ id: string; firstName: string; lastName: string | null; phone: string | null; rating: RatingSummary | null }[]>([]);
+  const [found, setFound] = useState<ClientHit[]>([]);
   useEffect(() => {
     if (q.trim().length < 2) return setFound([]);
     const t = setTimeout(async () => {
-      const r = await searchCustomersAction(q);
+      const r = await searchCustomersAction(q, "pos");
       if (r.ok) setFound(r.data);
     }, 200);
     return () => clearTimeout(t);
@@ -968,7 +970,7 @@ function CustomerBox({
       ) : (
         <>
           <div className="flex gap-2">
-            <Input placeholder="Search to attach (for loyalty)" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Input placeholder="Name, phone, card, gift card… (for loyalty)" value={q} onChange={(e) => setQ(e.target.value)} />
             <Button type="button" variant="secondary" onClick={() => setAdding(true)}>
               New client
             </Button>
@@ -977,7 +979,7 @@ function CustomerBox({
             <div className="absolute inset-x-0 z-10 mt-1 divide-y divide-zinc-100 rounded-lg bg-white shadow-lg ring-1 ring-zinc-200">
               {found.map((f) => (
                 <button key={f.id} onClick={() => attach(f.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50">
-                  {f.firstName} {f.lastName} <StarBadge rating={f.rating} /> <span className="text-zinc-500">{f.phone}</span>
+                  <ClientHitRow hit={f} />
                 </button>
               ))}
             </div>

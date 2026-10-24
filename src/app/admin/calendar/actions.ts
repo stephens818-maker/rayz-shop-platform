@@ -14,11 +14,10 @@ import { addBlock, removeBlock, rulesFor } from "@/server/staff-time";
 import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
 import { openSaleForAppointment } from "@/server/checkout";
 import { clockPulse } from "@/server/clock-live";
-import { assertCanEnter, clientPolicy, recordClientAccess, searchReach, showClient } from "@/server/client-privacy";
-import { clientSearchScope, searchCustomers } from "@/server/customers";
+import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
+import { searchClients } from "@/server/client-search";
 import { usableReason } from "@/server/block-reasons";
 import { AppError, forbidden, notFound } from "@/server/errors";
-import { ratingSummaries } from "@/server/ratings";
 import { correctServiceTimes, finishService, reviewServiceTime } from "@/server/service-times";
 import { hasShop, requireInTenant } from "@/server/tenant";
 import { isValidLocalDate, localDateOf, localMinutesOf, zonedWallTime } from "@/lib/time";
@@ -147,25 +146,14 @@ export async function startCheckoutAction(appointmentId: string) {
 }
 
 /**
- * Brand-wide staff with "every client" search the shared book. Everyone else finds their shops'
- * clients by any part of a name or number, and clients of other shops only by an exact phone,
- * email or full name. A full phone number finds the client even for someone who sees it masked;
- * results show each detail only as the brand portal allows.
+ * The client search for booking, the POS and walk-ins: see searchClients. Brand-wide staff with
+ * "every client" search the shared book; everyone else their shops' clients, and anyone else in
+ * the brand only by a value that identifies one person (a whole phone, email, full name, card).
  */
-export async function searchCustomersAction(q: string) {
+export async function searchCustomersAction(q: string, via: "booking" | "pos" | "walk_in" = "booking") {
   return safe(async () => {
     const ctx = await requireStaff();
-    const term = q.trim();
-    if (term.length < 2) return [];
-    const full = can(ctx, "clients.view_all");
-    const policy = await clientPolicy(ctx);
-    const rows = await searchCustomers(term, clientSearchScope(ctx, full), 8, searchReach(policy));
-    await recordClientAccess(ctx, { kind: "search", detail: { results: rows.length, via: "booking" } });
-    const ratings = await ratingSummaries(rows.map((r) => r.id));
-    return rows.map((r) => {
-      const s = showClient(policy, r);
-      return { id: r.id, firstName: r.firstName, lastName: r.lastName, phone: s.phone, email: s.email, notes: s.notes, rating: policy.stars(ratings.get(r.id)) };
-    });
+    return searchClients(ctx, q, { via: ["booking", "pos", "walk_in"].includes(via) ? via : "booking" });
   });
 }
 
