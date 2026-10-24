@@ -10,7 +10,7 @@ import { addChildAction } from "@/app/admin/customers/family-actions";
 import type { ClientHit } from "@/domain/client-search";
 import { FAMILY_BOOKING_MAX } from "@/domain/family";
 import { searchCustomersAction, startCheckoutAction } from "../calendar/actions";
-import { notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
+import { linkWalkInsAction, notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
 
 type Barber = { id: string; label: string; color: string; state: "free" | "busy" | "off"; note: string; until: string | null; untilKind: "busy" | "next" | null };
 type Entry = { id: string; name: string; hasPhone: boolean; status: string; service: string; preferredStaffId: string | null; quotedWaitMin: number | null; joinedAt: string };
@@ -105,6 +105,8 @@ export function WalkIns({
                   }
                   done.push({ who: who.length > 1 ? (members.find((m) => m.id === id)?.firstName ?? null) : null, r: r.data });
                 }
+                const seated = done.flatMap((d) => (d.r.seated ? [d.r.appointmentId] : []));
+                if (seated.length > 1) await linkWalkInsAction(seated);
                 setResults(done);
                 if (done.length === who.length) {
                   setName("");

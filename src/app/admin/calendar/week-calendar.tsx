@@ -7,6 +7,7 @@ import { ReasonDot } from "@/components/reason-picker";
 import { Badge, Select, cx } from "@/components/ui";
 import { reasonText } from "@/domain/block-reasons";
 import type { CalBlock, WeekCalendarData, WeekDay } from "@/server/calendar";
+import { GroupLinkIcon } from "@/components/group-options";
 import { ViewToggle, blockLabel, blockTitle } from "./day-calendar";
 
 const PX = 1.1;
@@ -240,7 +241,7 @@ function DayColumn({
             )}
             style={{ top: top(a.startMin), height: h(a.startMin, a.endMin) }}
           >
-            <span className="font-semibold">{label(a.startMin)}</span> {a.customerName}
+            <span className="font-semibold">{label(a.startMin)}</span> {a.grouped && <GroupLinkIcon title="Family booking" className="inline h-3 w-3" />} {a.customerName}
           </Link>
         ))}
         {day.closed === null && day.spans.length === 0 && day.blocks.length === 0 && day.appts.length === 0 && (

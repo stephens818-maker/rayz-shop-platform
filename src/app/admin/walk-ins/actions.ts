@@ -8,6 +8,7 @@ import { shops, waitlistEntries } from "@/db/schema";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { quickWalkIn, seatFromWaitlist, updateWaitlistStatus } from "@/server/booking";
+import { linkWalkIns } from "@/server/booking-groups";
 import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
 import { textingDeclined } from "@/server/customers";
 import { AppError, notFound } from "@/server/errors";
@@ -26,6 +27,18 @@ export async function walkInAction(input: { shopId: string; serviceId: string; n
     return r.seated
       ? { seated: true as const, appointmentId: r.appointment.id, barber: r.appointment.barber.displayName }
       : { seated: false as const, quotedWaitMin: r.entry.quotedWaitMin ?? 0 };
+  });
+}
+
+/** A family walking in together: the ones seated become one group, so they check out together. */
+export async function linkWalkInsAction(appointmentIds: string[]) {
+  return safe(async () => {
+    const ctx = await authorize("walkins.manage");
+    const ids = z.array(z.uuid()).max(7).parse(appointmentIds);
+    for (const id of ids) await requireInTenant(ctx, "appointment", id);
+    const code = await linkWalkIns(ids, ctx.actor);
+    revalidatePath("/admin/calendar");
+    return { code };
   });
 }
 

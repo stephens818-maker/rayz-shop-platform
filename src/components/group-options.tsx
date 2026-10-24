@@ -89,3 +89,25 @@ export function GroupOptionsPicker({
     </div>
   );
 }
+
+/** Marks an appointment booked with family members as one group. */
+export function GroupLinkIcon({ title, className = "h-3.5 w-3.5" }: { title: string; className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      className={cx("shrink-0", className)}
+      role="img"
+      aria-label={title}
+      data-testid="group-link-icon"
+    >
+      <title>{title}</title>
+      <path
+        d="M8.5 11.5a3.5 3.5 0 0 0 5 0l2.5-2.5a3.5 3.5 0 0 0-5-5l-1 1M11.5 8.5a3.5 3.5 0 0 0-5 0L4 11a3.5 3.5 0 0 0 5 5l1-1"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}

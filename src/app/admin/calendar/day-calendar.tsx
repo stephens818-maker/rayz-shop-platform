@@ -46,6 +46,7 @@ import type {
   CalBlock,
   CalClock,
   CalColumn,
+  CalGroup,
   DayCalendarData,
 } from "@/server/calendar";
 import {
@@ -67,6 +68,24 @@ import {
   staffOpeningsAction,
   startCheckoutAction,
 } from "./actions";
+import {
+  cancelGroupStaffAction,
+  checkInGroupAction,
+  groupDepositAction,
+  groupNoShowAction,
+  groupSplitTicketsAction,
+  groupTicketAction,
+  staffBookGroupAction,
+  staffGroupOptionsAction,
+} from "./group-actions";
+import {
+  GroupLinkIcon,
+  GroupOptionsPicker,
+  type GroupOption,
+  type GroupOptions,
+  optionKey,
+  seatsOf,
+} from "@/components/group-options";
 import { ContactClient } from "../customers/privacy";
 import { ServiceTimesBox } from "./service-times-panel";
 
@@ -673,6 +692,7 @@ export function DayCalendar({
             <ApptPanel
               appt={panel.appt}
               col={panel.col}
+              group={panel.appt.groupId ? (data.groups[panel.appt.groupId] ?? null) : null}
               canManage={canManage}
               onDone={() => setPanel(null)}
             />
@@ -986,6 +1006,14 @@ function Column({
               }}
             >
               <div className="flex items-center gap-1 font-semibold">
+                {a.groupId && data.groups[a.groupId] && (
+                  <GroupLinkIcon
+                    title={`Family booking ${data.groups[a.groupId].code}: ${data.groups[a.groupId].members
+                      .filter((m) => m.status !== "cancelled")
+                      .map((m) => m.firstName ?? "Guest")
+                      .join(", ")}`}
+                  />
+                )}
                 <span className="truncate">{a.customerName}</span>
                 <StarBadge rating={a.rating} showCount={false} />
                 <ClientBadges
@@ -1264,6 +1292,182 @@ function ClockMarks({
   );
 }
 
+const DEPOSIT_LABEL: Record<string, string> = {
+  due: "due, not taken yet",
+  held: "held, comes off the bill",
+  applied: "applied to the bill",
+  forfeited: "kept (no-show or late cancel)",
+  refund_due: "to refund",
+  refunded: "refunded",
+  waived: "waived",
+};
+
+/** Everyone booked together: check them in, check them out together or apart, or close the group. */
+function GroupBox({
+  groupId,
+  group,
+  currentId,
+  onDone,
+}: {
+  groupId: string;
+  group: CalGroup;
+  currentId: string;
+  onDone: () => void;
+}) {
+  const { pending, error, run, router } = useAction();
+  const [tickets, setTickets] = useState<
+    { appointmentId: string; firstName: string | null; saleId: string }[] | null
+  >(null);
+  const live = group.members.filter((m) =>
+    ["booked", "confirmed", "checked_in", "in_service"].includes(m.status),
+  );
+  const due = group.members.filter((m) =>
+    ["booked", "confirmed"].includes(m.status),
+  );
+  const toSale = (d: unknown) =>
+    router.push(`/admin/checkout/${(d as { saleId: string }).saleId}`);
+  return (
+    <div
+      className="space-y-2 rounded-lg bg-sky-50 p-3 text-sm ring-1 ring-sky-200"
+      data-testid="group-box"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-1.5 font-semibold text-sky-900">
+          <GroupLinkIcon title="Family booking" />
+          Family booking · {group.members.length} people
+        </span>
+        <a
+          className="font-mono text-xs text-sky-800 underline"
+          href={`/g/${group.code}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {group.code}
+        </a>
+      </div>
+      <ul className="space-y-0.5 text-xs text-zinc-700">
+        {group.members.map((m) => (
+          <li
+            key={m.appointmentId}
+            className={cx(
+              "flex justify-between gap-2",
+              m.appointmentId === currentId && "font-semibold",
+            )}
+          >
+            <span>
+              {m.firstName ?? "Guest"} · {fmtClock(m.startsAt)} with {m.barber}
+            </span>
+            <span className="capitalize text-zinc-500">
+              {m.status.replace("_", " ")}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {group.deposit.cents > 0 && (
+        <div className="text-xs text-zinc-700">
+          Deposit {money(group.deposit.cents)}:{" "}
+          {DEPOSIT_LABEL[group.deposit.status] ?? group.deposit.status}
+        </div>
+      )}
+      {error && <Notice tone="red">{error}</Notice>}
+      {live.length > 0 && (
+        <div className="grid grid-cols-2 gap-1.5">
+          {due.length > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={pending}
+              onClick={() => run(() => checkInGroupAction(groupId))}
+            >
+              Check in all {due.length}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            disabled={pending}
+            onClick={() => run(() => groupTicketAction(groupId), toSale)}
+          >
+            One ticket
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={pending}
+            onClick={() =>
+              run(
+                () => groupSplitTicketsAction(groupId),
+                (d) => setTickets((d as { tickets: typeof tickets }).tickets),
+              )
+            }
+          >
+            A ticket each
+          </Button>
+          {group.deposit.status === "due" && (
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={pending}
+              onClick={() => run(() => groupDepositAction(groupId), toSale)}
+            >
+              Take {money(group.deposit.cents)} deposit
+            </Button>
+          )}
+          {due.length > 0 && (
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={pending}
+              onClick={() => {
+                if (
+                  confirm(
+                    `Mark ${due.map((m) => m.firstName ?? "Guest").join(", ")} as no-shows?`,
+                  )
+                )
+                  run(() => groupNoShowAction(groupId));
+              }}
+            >
+              No-show ({due.length})
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={pending}
+            onClick={() => {
+              if (confirm(`Cancel everyone in family booking ${group.code}?`))
+                run(() => cancelGroupStaffAction(groupId), onDone);
+            }}
+          >
+            Cancel all
+          </Button>
+        </div>
+      )}
+      {tickets && (
+        <ul className="space-y-0.5 text-xs" data-testid="group-tickets">
+          {tickets.map((t) => (
+            <li key={t.appointmentId}>
+              <Link
+                className="underline"
+                href={`/admin/checkout/${t.saleId}`}
+              >
+                {t.firstName ?? "Guest"}&apos;s ticket
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function fmtClock(iso: string) {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/Chicago",
+  });
+}
+
 function SidePanel({
   children,
   onClose,
@@ -1320,11 +1524,13 @@ function useAction() {
 function ApptPanel({
   appt,
   col,
+  group,
   canManage,
   onDone,
 }: {
   appt: CalAppt;
   col: CalColumn;
+  group: CalGroup | null;
   canManage: {
     sales: boolean;
     clients: boolean;
@@ -1396,6 +1602,14 @@ function ApptPanel({
           className="mt-1.5 flex"
         />
       </div>
+      {group && appt.groupId && (
+        <GroupBox
+          groupId={appt.groupId}
+          group={group}
+          currentId={appt.id}
+          onDone={onDone}
+        />
+      )}
       <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-sm">
         <dt className="text-zinc-500">Services</dt>
         <dd className="col-span-2">{appt.services.join(", ")}</dd>
@@ -1857,6 +2071,10 @@ function NewPanel({
     setForWho(memberId ?? f?.id ?? null);
     setParty([]);
   };
+  const [finder, setFinder] = useState<GroupOptions | null>(null);
+  const [finderPick, setFinderPick] = useState<GroupOption | null>(null);
+  const [finderBusy, setFinderBusy] = useState(false);
+  const [finderError, setFinderError] = useState<string | null>(null);
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
   const [phone, setPhone] = useState("");
@@ -1936,6 +2154,68 @@ function NewPanel({
   const dur = loaded?.durationMin ?? menuDur;
   const startMinPicked = fromHHMM(time);
   const isOpen = loaded?.starts.includes(startMinPicked) ?? true;
+
+  const groupPeople =
+    picked && party.length
+      ? [
+          {
+            customerId: forWho ?? picked.id,
+            serviceId,
+            addonIds,
+            staffId: col.id as string | null,
+          },
+          ...party.map((m) => ({
+            customerId: m.customerId,
+            serviceId: m.serviceId,
+            addonIds: [] as string[],
+            staffId: m.staffId,
+          })),
+        ]
+      : null;
+  const groupKey = groupPeople ? JSON.stringify(groupPeople) : null;
+  useEffect(() => {
+    setFinder(null);
+    setFinderPick(null);
+  }, [groupKey]);
+  const findTimes = async () => {
+    if (!picked || !groupPeople) return;
+    setFinderBusy(true);
+    setFinderError(null);
+    const r = await staffGroupOptionsAction(picked.id, {
+      shopId: data.shop.id,
+      date: data.date,
+      people: groupPeople,
+      afterMin: startMinPicked,
+    });
+    setFinderBusy(false);
+    if (!r.ok) return setFinderError(r.error);
+    setFinder(r.data);
+    setFinderPick(null);
+  };
+  const bookPick = () =>
+    run(
+      () =>
+        staffBookGroupAction(picked!.id, {
+          shopId: data.shop.id,
+          people: groupPeople!.map((p, i) => ({
+            ...p,
+            notes: i === 0 && notes ? notes : undefined,
+          })),
+          plan: finderPick!.plan,
+          seats: seatsOf(finderPick!),
+        }),
+      (d) => {
+        const r = d as {
+          code: string | null;
+          message: string | null;
+          alternatives: GroupOptions | null;
+        };
+        if (r.code) return onDone();
+        setFinderError(r.message);
+        setFinderPick(null);
+        if (r.alternatives) setFinder(r.alternatives);
+      },
+    );
 
   return (
     <div className="space-y-4">
@@ -2148,6 +2428,38 @@ function NewPanel({
                         />
                       )}
                     </FamilyParty>
+                    {groupPeople && (
+                      <div className="space-y-2" data-testid="staff-group-finder">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-zinc-600">
+                            {finder
+                              ? `Times for everyone from ${label(startMinPicked)}`
+                              : `Or let the slot finder seat all ${groupPeople.length}`}
+                          </span>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={finderBusy}
+                            onClick={findTimes}
+                          >
+                            {finderBusy ? "Finding…" : finder ? "Refresh" : "Find times"}
+                          </Button>
+                        </div>
+                        {finderError && <Notice tone="amber">{finderError}</Notice>}
+                        {finder && (
+                          <GroupOptionsPicker
+                            options={finder}
+                            compact
+                            selected={finderPick ? optionKey(finderPick) : null}
+                            onPick={(o) =>
+                              setFinderPick(
+                                finderPick && optionKey(finderPick) === optionKey(o) ? null : o,
+                              )
+                            }
+                          />
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -2200,10 +2512,12 @@ function NewPanel({
             className="w-full"
             size="lg"
             disabled={
-              pending || !serviceId || (!!loaded && !isOpen && !squeeze)
+              pending ||
+              !serviceId ||
+              (!finderPick && !!loaded && !isOpen && !squeeze)
             }
             onClick={() =>
-              run(
+              finderPick ? bookPick() : run(
                 () =>
                   picked && party.length
                     ? staffFamilyBookingAction({
@@ -2251,7 +2565,9 @@ function NewPanel({
               )
             }
           >
-            {squeeze && !isOpen ? "Squeeze in" : "Book"} {label(fromHHMM(time))}
+            {finderPick
+              ? `Book all ${finderPick.seats.length}, ${fmtClock(finderPick.startsAt)} – ${fmtClock(finderPick.endsAt)}`
+              : `${squeeze && !isOpen ? "Squeeze in" : "Book"} ${label(fromHHMM(time))}`}
           </Button>
         </div>
       ) : (

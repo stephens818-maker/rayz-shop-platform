@@ -22,6 +22,7 @@ import { timesFor } from "./service-times";
 import { reasonShower } from "./block-reasons";
 import { staffingFor } from "./staff-time";
 import { guardian, householdContact } from "./household-contact";
+import { groupsForCalendar } from "./booking-groups";
 
 export interface CalAppt {
   id: string;
@@ -58,6 +59,16 @@ export interface CalAppt {
   times: TimesView | null;
   /** A clock block (break, early clock-out, not in yet) sits over it: the manager should move or rebook it. */
   clockHold: { kind: ClockBlockKind; blockId: string } | null;
+  /** Booked with family members as one group: key into DayCalendarData.groups. */
+  groupId: string | null;
+}
+
+/** A family booking group on the day: everyone in it, wherever they sit, and its deposit. */
+export interface CalGroup {
+  code: string;
+  plan: string;
+  deposit: { cents: number; status: string; saleId: string | null };
+  members: { appointmentId: string; firstName: string | null; status: string; startsAt: string; barber: string }[];
 }
 
 /** One barber's time clock on the calendar day, in minutes after midnight. Staff only: clients never see it. */
@@ -132,6 +143,7 @@ export interface DayCalendarData {
   columns: CalColumn[];
   /** Barbers here who are off for some or all of the day, or have time off waiting for a manager. */
   off: { staffId: string; label: string; allDay: boolean; spans: { startMin: number; endMin: number; reason: string; color: string }[]; pending: boolean }[];
+  groups: Record<string, CalGroup>;
 }
 
 const NO_ID = "00000000-0000-0000-0000-000000000000";
@@ -359,6 +371,7 @@ export async function loadDayCalendar(
           squeezed: r.a.squeezed,
           times: times.get(r.a.id) ?? null,
           clockHold: held.get(r.a.id) ?? null,
+          groupId: r.a.groupId,
         })),
       clock: live?.days.get(c.id) ? calClock(live.days.get(c.id)!) : null,
     };
@@ -390,6 +403,7 @@ export async function loadDayCalendar(
     rangeEnd: Math.ceil(Math.max(...ends) / 60) * 60,
     columns,
     off,
+    groups: await groupsForCalendar(apptRows.map((r) => r.a.groupId).filter((x): x is string => !!x)),
   };
 }
 
@@ -401,6 +415,8 @@ export interface WeekAppt {
   status: string;
   customerName: string;
   services: string[];
+  /** Part of a family booking group. */
+  grouped: boolean;
 }
 
 export interface WeekDay {
@@ -518,6 +534,7 @@ export async function loadWeekCalendar(shopId: string, weekStart: LocalDate, sta
           status: r.a.status,
           customerName: r.firstName ? `${r.firstName}${r.lastName ? ` ${r.lastName.charAt(0)}.` : ""}` : (r.a.notes?.replace(/^Walk-in: /, "") ?? "Walk-in"),
           services: items.filter((i) => i.appointmentId === r.a.id).map((i) => i.name),
+          grouped: r.a.groupId !== null,
         })),
     };
   });
