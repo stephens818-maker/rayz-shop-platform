@@ -31,7 +31,7 @@ export type NotificationKind =
   /** The shop line: texts after a missed or after-hours call, and replies to a client's text. */
   | "missed_call"
   | "shop_reply"
-  /** Today's suggested actions and the morning digest. */
+  /** Today's suggested actions and the Morning Dashboard. */
   | "fill_offer"
   | "rebook_nudge"
   | "no_show_reminder"
@@ -309,7 +309,7 @@ export async function processDueJobs(
                 : await voice.bridgeCall(job.to, job.subject, { jobId: job.id, callerId: line })
               : job.channel === "push"
                 ? await push.sendPush(job.to, job.subject ?? "Ray'z Barber Shop", job.body)
-                : await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body, job.attachments ?? []);
+                : await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body, job.attachments ?? [], job.htmlBody);
         await tx
           .update(notificationJobs)
           .set({ status: "sent", sentAt: new Date(), provider: provider.name, providerMessageId: r.providerMessageId ?? null, attempts: job.attempts + 1 })

@@ -283,7 +283,7 @@ export const FEATURE_PERMISSIONS = [
     hint: "The Add Location wizard, go-live and archiving. Archived shops keep their history in reports.",
     brandOnly: true,
   },
-  { key: "settings.lists", group: "Settings and data", label: "Edit client message wording, pick lists and the morning digest", brandOnly: true },
+  { key: "settings.lists", group: "Settings and data", label: "Edit client message wording, pick lists and the Morning Dashboard email", brandOnly: true },
   {
     key: "handoff.settings",
     group: "Settings and data",
@@ -367,6 +367,12 @@ export const REPORTS = [
     label: "Tip payouts",
     href: "/admin/reports/tip-payouts",
     hint: "Tips earned, refunded and adjusted per shop and employee, and how they were paid: cash, Stripe or payroll, with what's still pending.",
+  },
+  {
+    key: "morning_dashboard",
+    label: "Morning Dashboard",
+    href: "/admin/morning",
+    hint: "Yesterday's numbers with week to date and the same day last week, today's schedule and the exceptions to handle, in the app and as the morning email. Each section shows only what the person's other reports allow; export is the PDF.",
   },
   { key: "audit_log", label: "Audit log", href: "/admin/audit" },
 ] as const;

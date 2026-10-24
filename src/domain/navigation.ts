@@ -154,6 +154,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
   {
     title: "Insights",
     items: [
+      { href: "/admin/morning", label: "Morning Dashboard" },
       { href: "/admin/reports", label: "Reports" },
       { href: "/admin/payouts", label: "Payouts" },
     ],
@@ -188,7 +189,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/block-reasons", label: "Block reasons" },
       { href: "/admin/lists", label: "Picklists" },
       { href: "/admin/messages", label: "Client messages" },
-      { href: "/admin/digest", label: "Morning digest" },
+      { href: "/admin/digest", label: "Morning Dashboard email" },
       { href: "/admin/location-groups", label: "Location groups" },
       { href: "/admin/barber-groups", label: "Barber groups" },
       { href: "/admin/import", label: "Squire import" },

@@ -67,7 +67,7 @@ export const brandSettings = pgTable("brand_settings", {
   messageTemplates: jsonb("message_templates").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Pick lists staff choose from (src/domain/lookups.ts); missing lists use the defaults. */
   lookups: jsonb("lookups").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
-  /** The morning digest email (DigestSettings in src/domain/digest.ts); missing keys use the defaults. */
+  /** The Morning Dashboard email (MorningSettings in src/domain/morning-dashboard.ts); missing keys use the defaults. */
   digest: jsonb("digest").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Time clock rules for the brand (ClockRules in src/domain/time-clock.ts): breaks, forgotten clock-outs, the export layout. */
   timeClock: jsonb("time_clock").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
@@ -1943,6 +1943,8 @@ export const notificationJobs = pgTable(
     to: text("to").notNull(),
     subject: text("subject"),
     body: text("body").notNull(),
+    /** Emails only: the HTML version, sent alongside the plain text body. */
+    htmlBody: text("html_body"),
     attachments: jsonb("attachments").$type<EmailAttachment[]>(),
     runAt: ts("run_at").notNull(),
     status: notificationStatus("status").notNull().default("pending"),
@@ -2646,7 +2648,7 @@ export const clientNudges = pgTable(
   (t) => [index("client_nudges_customer_idx").on(t.customerId, t.kind, t.createdAt), index("client_nudges_appt_idx").on(t.appointmentId, t.kind)],
 );
 
-/** One row per person per day the morning digest went to, so the cron sends it once. */
+/** One row per person per day the earlier morning digest went to; kept for history, superseded by morning_dashboard_sends. */
 export const digestSends = pgTable(
   "digest_sends",
   {
@@ -2658,6 +2660,34 @@ export const digestSends = pgTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.date, t.staffId] })],
+);
+
+/**
+ * One row per person, day, version and channel of the Morning Dashboard: "all" for the
+ * all-locations email, or a shop id for a single-shop one. A row stuck in "building" (a run that
+ * died before queuing) can be claimed again after a few minutes, so the job is safe to rerun.
+ */
+export const morningDashboardSends = pgTable(
+  "morning_dashboard_sends",
+  {
+    date: date("date").notNull(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    channel: text("channel").$type<"email" | "sms">().notNull(),
+    status: text("status").$type<"building" | "queued" | "skipped">().notNull().default("building"),
+    /** The day the numbers are for: the last day before `date` a shop was open. */
+    reportDate: date("report_date"),
+    jobId: uuid("job_id"),
+    claimedAt: ts("claimed_at").notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.date, t.staffId, t.scope, t.channel] }),
+    check("morning_dashboard_sends_channel", sql`${t.channel} in ('email', 'sms')`),
+    check("morning_dashboard_sends_status", sql`${t.status} in ('building', 'queued', 'skipped')`),
+  ],
 );
 
 // ───────────────────────────── Campaign Center ─────────────────────────────

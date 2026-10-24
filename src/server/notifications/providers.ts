@@ -38,7 +38,8 @@ export interface VoiceProvider {
 export interface EmailProvider {
   name: string;
   enabled: boolean;
-  sendEmail(to: string, subject: string, body: string, attachments?: EmailAttachment[]): Promise<SendResult>;
+  /** `body` is the plain text part; `html`, when given, goes alongside it as the HTML part. */
+  sendEmail(to: string, subject: string, body: string, attachments?: EmailAttachment[], html?: string | null): Promise<SendResult>;
 }
 
 /** App push to one of a client's devices (customer_devices, from the customer app), by the device row's id. */
@@ -87,9 +88,10 @@ class ConsoleProvider implements SmsProvider, EmailProvider, VoiceProvider, Push
     console.log(`[sms → ${to}] ${body}`);
     return { providerMessageId: `console-${Date.now()}` };
   }
-  async sendEmail(to: string, subject: string, body: string, attachments: EmailAttachment[] = []) {
+  async sendEmail(to: string, subject: string, body: string, attachments: EmailAttachment[] = [], html?: string | null) {
     const files = attachments.map((a) => `${a.filename} (${a.contentType}, ${Math.round((a.content.length * 3) / 4 / 1024)} KB)`).join(", ");
-    console.log(`[email → ${to}] ${subject}\n${body}${files ? `\n[attachments: ${files}]` : ""}`);
+    const htmlNote = html ? `\n[html part: ${Math.max(1, Math.round(Buffer.byteLength(html) / 1024))} KB]` : "";
+    console.log(`[email → ${to}] ${subject}\n${body}${htmlNote}${files ? `\n[attachments: ${files}]` : ""}`);
     return { providerMessageId: `console-${Date.now()}` };
   }
 }
@@ -141,7 +143,7 @@ class ResendEmailStub implements EmailProvider {
   enabled = true;
   async sendEmail(): Promise<SendResult> {
     // TODO(go-live): POST https://api.resend.com/emails with RESEND_API_KEY and a verified domain.
-    // Attachments map to Resend's `attachments: [{ filename, content }]` (content is already base64).
+    // Attachments map to Resend's `attachments: [{ filename, content }]` (content is already base64); `html` is Resend's `html`, `body` its `text`.
     throw new Error("Resend provider is a stub in v1");
   }
 }
@@ -150,7 +152,7 @@ class PostmarkEmailStub implements EmailProvider {
   name = "postmark";
   enabled = true;
   async sendEmail(): Promise<SendResult> {
-    // TODO(go-live): POST https://api.postmarkapp.com/email with POSTMARK_SERVER_TOKEN on the "broadcast" message stream for marketing.
+    // TODO(go-live): POST https://api.postmarkapp.com/email with POSTMARK_SERVER_TOKEN on the "broadcast" message stream for marketing; `html` is HtmlBody, `body` TextBody.
     throw new Error("Postmark provider is a stub in v1");
   }
 }
