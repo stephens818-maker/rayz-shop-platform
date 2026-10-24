@@ -81,6 +81,8 @@ export interface DayAvailabilityInput {
   now?: Date | number;
   /** When rescheduling, ignore the appointment being moved. */
   ignoreAppointmentId?: string;
+  /** Moving a family booked together: every appointment in the group. */
+  ignoreAppointmentIds?: readonly string[];
   /** Time a barber opened ahead of a scheduled stretch by clocking in early (src/domain/clock-live.ts). */
   early?: EarlyOpening[];
 }
@@ -199,7 +201,9 @@ export function workSpans(input: DayAvailabilityInput, staffId: string): Span[] 
 }
 
 const isBusy = (input: DayAvailabilityInput, a: BusyAppointment, staffId: string) =>
-  a.staffId === staffId && !(a.id && a.id === input.ignoreAppointmentId) && (BUSY_STATUSES as readonly string[]).includes(a.status);
+  a.staffId === staffId &&
+  !(a.id && (a.id === input.ignoreAppointmentId || input.ignoreAppointmentIds?.includes(a.id))) &&
+  (BUSY_STATUSES as readonly string[]).includes(a.status);
 
 /** Time off and blocks for this barber here (a block with no shop applies everywhere). */
 function blockSpans(input: DayAvailabilityInput, staffId: string): Span[] {

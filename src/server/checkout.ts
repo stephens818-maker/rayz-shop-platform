@@ -149,7 +149,9 @@ export async function loadCheckoutContext(saleId: string) {
   });
   const family = await familyTicket(sale);
   if (sale.status !== "open") family.candidates = [];
-  return { sale, shop, items, customer, appointment: appt, retail: withAvailable, barber, family, config: pricingConfig(shop), negativeStock: shop.negativeStock };
+  const groupDeposit =
+    sale.status === "open" ? await (await import("./booking-groups")).depositForTicket([sale.appointmentId, ...family.members.map((m) => m.appointmentId)].filter((x): x is string => !!x)) : null;
+  return { sale, shop, items, customer, appointment: appt, retail: withAvailable, barber, family, groupDeposit, config: pricingConfig(shop), negativeStock: shop.negativeStock };
 }
 
 /** A coupon code checked for this shop, before a client is known. */
@@ -581,6 +583,7 @@ export async function finalizeSale(input: FinalizeInput) {
         await audit(input.actor, "sale.discount", "sale", ctx.sale.id, input.manualDiscount, ctx.shop.id, tx);
       }
       await syncTipLedger(tx, { saleId: ctx.sale.id });
+      await (await import("./booking-groups")).onSalePaid(ctx.sale.id, tx);
     });
   } catch (e) {
     const own = charge as Awaited<ReturnType<typeof chargeCard>> | null;

@@ -386,6 +386,13 @@
       "when": 1794250800000,
       "tag": "core_0054_family_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1794254400000,
+      "tag": "core_0055_booking_groups",
+      "breakpoints": true
     }
   ]
 }

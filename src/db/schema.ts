@@ -1282,6 +1282,8 @@ export const appointments = pgTable(
     notes: text("notes"),
     idempotencyKey: text("idempotency_key").unique(),
     rebookedFromId: uuid("rebooked_from_id"),
+    /** A family booked together: one link, one confirmation and one set of reminders for the group. */
+    groupId: uuid("group_id").references((): AnyPgColumn => bookingGroups.id, { onDelete: "set null" }),
     squireId: text("squire_id").unique(),
     /** False for Squire rows whose export had no booked-at time; created_at is then a stand-in and rebook KPIs skip them. */
     bookedAtKnown: boolean("booked_at_known").notNull().default(true),
@@ -1295,6 +1297,7 @@ export const appointments = pgTable(
     index("appointments_shop_time_idx").on(t.shopId, t.startsAt),
     index("appointments_staff_time_idx").on(t.staffId, t.startsAt),
     index("appointments_customer_idx").on(t.customerId, t.startsAt),
+    index("appointments_group_idx").on(t.groupId).where(sql`group_id is not null`),
     // appointments_customer_status_idx (custom reports) lives in core_0047_report_builder.sql.
   ],
 );
@@ -1575,6 +1578,32 @@ export const saleAppointments = pgTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.saleId, t.appointmentId] }), index("sale_appointments_appointment_idx").on(t.appointmentId)],
+);
+
+/**
+ * A parent and their children booked together (core_0055_booking_groups.sql). The group's code is
+ * the one cancel/reschedule link; its deposit and no-show rule cover everyone in it. A deposit taken
+ * is held as a gift card with source "deposit" and applied at the group's checkout.
+ */
+export const bookingGroups = pgTable(
+  "booking_groups",
+  {
+    id: id(),
+    code: text("code").notNull().unique(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    guardianId: uuid("guardian_id").notNull().references(() => customers.id),
+    plan: text("plan").$type<"same_barber" | "together" | "earliest_finish" | "custom" | "walk_in">().notNull(),
+    source: appointmentSource("source").notNull(),
+    depositCents: integer("deposit_cents").notNull().default(0),
+    depositStatus: text("deposit_status").$type<"none" | "due" | "held" | "applied" | "forfeited" | "refund_due" | "refunded" | "waived">().notNull().default("none"),
+    depositSaleId: uuid("deposit_sale_id").references(() => sales.id, { onDelete: "set null" }),
+    depositGiftCardId: uuid("deposit_gift_card_id").references(() => giftCards.id, { onDelete: "set null" }),
+    idempotencyKey: text("idempotency_key").unique(),
+    createdBy: uuid("created_by"),
+    cancelledAt: ts("cancelled_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("booking_groups_guardian_idx").on(t.guardianId)],
 );
 
 export const payments = pgTable(

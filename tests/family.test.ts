@@ -28,13 +28,14 @@ const TODAY = "2026-10-24";
 
 describe("family settings", () => {
   it("defaults to 6 children, household loyalty and own accounts from 13", () => {
-    expect(FAMILY_DEFAULT).toEqual({ maxChildren: 6, loyalty: "household", splitAge: 13 });
+    expect(FAMILY_DEFAULT).toEqual({ maxChildren: 6, loyalty: "household", splitAge: 13, groupDepositCents: 0, groupDepositFrom: 3, groupNoShowForfeit: true });
     expect(familySettings(null)).toEqual(FAMILY_DEFAULT);
     expect(familySettings({})).toEqual(FAMILY_DEFAULT);
   });
 
   it("keeps the keys that parse and falls back on the others", () => {
-    expect(familySettings({ maxChildren: 3, loyalty: "nonsense", splitAge: 99 })).toEqual({ maxChildren: 3, loyalty: "household", splitAge: 13 });
+    expect(familySettings({ maxChildren: 3, loyalty: "nonsense", splitAge: 99, groupDepositCents: 99_999 })).toEqual({ ...FAMILY_DEFAULT, maxChildren: 3 });
+    expect(familySettings({ groupDepositCents: 2500, groupDepositFrom: 2, groupNoShowForfeit: false })).toMatchObject({ groupDepositCents: 2500, groupDepositFrom: 2, groupNoShowForfeit: false });
     expect(familySettings({ loyalty: "individual" }).loyalty).toBe("individual");
   });
 

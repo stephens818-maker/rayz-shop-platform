@@ -132,22 +132,49 @@ export async function scheduleAppointmentNotifications(
   c: AppointmentMessageContext,
   tx: DBorTx = db,
   now: Date = new Date(),
+  /** A family booked together: everyone's names, barbers and the group's link in the one set of messages. */
+  extra?: MergeValues,
 ) {
   await cancelPendingReminders(c.appointmentId, tx);
   const jobs: { kind: NotificationKind; runAt: Date }[] = [];
   if (event === "cancelled") jobs.push({ kind: "cancellation", runAt: now });
   else {
     if (event !== "imported" && event !== "reminders") jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
-    const r24 = new Date(c.startsAt.getTime() - 24 * 3_600_000);
-    const r2 = new Date(c.startsAt.getTime() - 2 * 3_600_000);
-    if (r24 > now) jobs.push({ kind: "reminder_24h", runAt: r24 });
-    if (r2 > now) jobs.push({ kind: "reminder_2h", runAt: r2 });
+    jobs.push(...reminderJobs(c.startsAt, now));
   }
+  return insertJobs(jobs, c, tx, extra);
+}
+
+const REMINDER_KINDS = ["reminder_24h", "reminder_2h"] as const;
+
+function reminderJobs(startsAt: Date, now: Date) {
+  const jobs: { kind: NotificationKind; runAt: Date }[] = [];
+  const r24 = new Date(startsAt.getTime() - 24 * 3_600_000);
+  const r2 = new Date(startsAt.getTime() - 2 * 3_600_000);
+  if (r24 > now) jobs.push({ kind: "reminder_24h", runAt: r24 });
+  if (r2 > now) jobs.push({ kind: "reminder_2h", runAt: r2 });
+  return jobs;
+}
+
+/**
+ * A family booked together has one set of reminders, on whoever is first. Drop the reminders still
+ * queued for any of them (other messages stay) and queue a fresh set for `c`, or none when it's null.
+ */
+export async function moveReminders(appointmentIds: string[], c: AppointmentMessageContext | null, tx: DBorTx = db, now: Date = new Date(), extra?: MergeValues) {
+  if (appointmentIds.length)
+    await tx
+      .update(notificationJobs)
+      .set({ status: "cancelled" })
+      .where(and(inArray(notificationJobs.appointmentId, appointmentIds), eq(notificationJobs.status, "pending"), inArray(notificationJobs.kind, [...REMINDER_KINDS])));
+  return c ? insertJobs(reminderJobs(c.startsAt, now), c, tx, extra) : 0;
+}
+
+async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: AppointmentMessageContext, tx: DBorTx, extra?: MergeValues) {
   const to = recipients(c);
   const saved = jobs.length && to.length ? await savedTemplates(tx) : {};
   const rows = jobs.flatMap((j) =>
     to.map((r) => {
-      const m = renderMessage(j.kind, c, saved);
+      const m = renderMessage(j.kind, c, saved, extra);
       return {
         appointmentId: c.appointmentId,
         customerId: c.customerId,

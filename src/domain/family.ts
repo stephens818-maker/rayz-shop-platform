@@ -24,9 +24,15 @@ export const FamilySettingsSchema = z.object({
   loyalty: z.enum(FAMILY_LOYALTY).default("household"),
   /** From this age a child can be split into an account of their own, keeping their history. */
   splitAge: z.number().int().min(FAMILY_LIMITS.minSplitAge, "13 to 21").max(FAMILY_LIMITS.maxSplitAge, "13 to 21").default(13),
+  /** One deposit for a family booked together, not one per person. 0 turns it off. */
+  groupDepositCents: z.number().int().min(0, "$0 to $200").max(20_000, "$0 to $200").default(0),
+  /** The deposit applies to groups of this many people or more. */
+  groupDepositFrom: z.number().int().min(2, "2 to 7 people").max(FAMILY_LIMITS.maxChildren + 1, "2 to 7 people").default(3),
+  /** A group no-show (or a cancel after the cutoff) keeps the deposit. Off: it stays as credit on the account. */
+  groupNoShowForfeit: z.boolean().default(true),
 });
 export type FamilySettings = z.output<typeof FamilySettingsSchema>;
-export const FAMILY_DEFAULT: FamilySettings = { maxChildren: 6, loyalty: "household", splitAge: 13 };
+export const FAMILY_DEFAULT: FamilySettings = { maxChildren: 6, loyalty: "household", splitAge: 13, groupDepositCents: 0, groupDepositFrom: 3, groupNoShowForfeit: true };
 
 /** Stored settings read defensively: a key that doesn't parse falls back to its default, the others stay. */
 export function familySettings(raw: unknown): FamilySettings {
@@ -243,7 +249,14 @@ export const SplitRequestSchema = z.object({
   emailOptIn: z.boolean().default(false),
 });
 export const FamilySchema = z.object({
-  settings: z.object({ maxChildren: z.number().int(), loyalty: z.enum(FAMILY_LOYALTY), splitAge: z.number().int() }),
+  settings: z.object({
+    maxChildren: z.number().int(),
+    loyalty: z.enum(FAMILY_LOYALTY),
+    splitAge: z.number().int(),
+    groupDepositCents: z.number().int().describe("One deposit for a family booked together, from groupDepositFrom people; 0 for none"),
+    groupDepositFrom: z.number().int(),
+    groupNoShowForfeit: z.boolean().describe("A group no-show or late cancel keeps the deposit"),
+  }),
   children: z.array(FamilyMemberSchema),
 });
 export const FamilyBookingRequestSchema = z.object({

@@ -29,7 +29,7 @@ const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 const and = (...a: Parameters<Mods["drizzle"]["and"]>) => m.drizzle.and(...a);
 const s = () => m.schema;
 const cash = { method: "cash" as const, cashTenderedCents: null };
-const DEFAULTS = { maxChildren: 6, loyalty: "household" as const, splitAge: 13 };
+const DEFAULTS = { maxChildren: 6, loyalty: "household" as const, splitAge: 13, groupDepositCents: 0, groupDepositFrom: 3, groupNoShowForfeit: true };
 
 beforeAll(async () => {
   m = await loadModules();
@@ -160,9 +160,14 @@ describe("family booking", () => {
     expect(new Date(c.startsAt).getTime()).toBeGreaterThanOrEqual(new Date(b.endsAt).getTime());
     const rows = await m.db.db.select().from(s().appointments).where(m.drizzle.inArray(s().appointments.id, made.map((x) => x.id)));
     expect(rows.map((r) => r.customerId).sort()).toEqual([p.id, k1.id, k2.id].sort());
-    const jobs = await m.db.db.select().from(s().notificationJobs).where(eq(s().notificationJobs.appointmentId, b.id));
-    expect(jobs.length).toBeGreaterThan(0);
+    expect(new Set(rows.map((r) => r.groupId)).size).toBe(1);
+    expect(rows[0].groupId).not.toBeNull();
+    // One family, one confirmation and one set of reminders, to the parent, naming everyone.
+    const jobs = await m.db.db.select().from(s().notificationJobs).where(m.drizzle.inArray(s().notificationJobs.appointmentId, made.map((x) => x.id)));
+    expect(jobs.filter((j) => j.kind === "confirmation" && j.channel === "sms")).toHaveLength(1);
+    expect(new Set(jobs.map((j) => j.appointmentId))).toEqual(new Set([a.id]));
     for (const j of jobs) expect([p.phone, p.email]).toContain(j.to);
+    expect(jobs.find((j) => j.kind === "confirmation")!.body).toMatch(/Gus/);
   });
 
   it("is all or nothing, and only for people on the account", async () => {

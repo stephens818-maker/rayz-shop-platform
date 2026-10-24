@@ -28,6 +28,7 @@ import {
   squeezeCheck,
   totalDuration,
 } from "@/domain/availability";
+import type { Opening } from "@/domain/booking-group";
 import { closedOn, takesOnlineBookings } from "@/domain/location-lifecycle";
 import { effectiveEnd } from "@/domain/clock-blocks";
 import { shopClockSettings } from "@/domain/time-clock";
@@ -40,7 +41,7 @@ import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers 
 import { CustomerInput, findOrCreateCustomer } from "./customers";
 import { AppError, isDoubleBookingError, notFound } from "./errors";
 import { liveClock } from "./clock-live";
-import { AppointmentMessageContext, cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
+import { AppointmentMessageContext, cancelPendingReminders, queueAppointmentMessage, scheduleAppointmentNotifications } from "./notifications/queue";
 import { guardian, householdContact } from "./household-contact";
 import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
 import { bookingPlans, shopInterval, staffIntervals, toStaffPlans } from "./timing";
@@ -54,6 +55,7 @@ export interface DayContextOptions {
   plans?: Record<string, StaffPlan>;
   now?: Date;
   ignoreAppointmentId?: string;
+  ignoreAppointmentIds?: readonly string[];
   /** Staff-side booking ignores lead time / window limits. */
   staffOverride?: boolean;
 }
@@ -114,6 +116,7 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
     minLeadMin: opts.staffOverride ? 0 : shop.minLeadMinutes,
     now,
     ignoreAppointmentId: opts.ignoreAppointmentId,
+    ignoreAppointmentIds: opts.ignoreAppointmentIds,
     early: clock.early,
   };
 }
@@ -162,15 +165,51 @@ async function resolveBooking(q: Pick<AvailabilityQuery, "shopRef" | "serviceId"
   return { shop, service, addons, items, barbers, staffIds, requestedStaffId, durationMin, timing, plans: toStaffPlans(timing) };
 }
 
+/** Why nothing can be booked on this day, or null. */
+function dayClosedReason(r: Awaited<ReturnType<typeof resolveBooking>>, q: AvailabilityQuery, now: Date): string | null {
+  const today = todayLocal(now);
+  const tooFar = !q.staffOverride && q.date > addDays(today, r.shop.bookingWindowDays);
+  if (closedOn(r.shop, q.date)) return r.shop.status === "archived" ? "This location has closed" : "The shop is closed then";
+  if (!q.staffOverride && !takesOnlineBookings(r.shop, today)) return "Online booking is turned off for this shop";
+  if (r.barbers.length === 0) return "No barbers are taking bookings at this shop yet";
+  if (q.date < today || tooFar) return "Date is outside the booking window";
+  return null;
+}
+
+/**
+ * Each barber's open seats for one person's service on a day, with what each seat holds before
+ * (prep) and after (cleanup and the gap): what a family booked together is planned from.
+ */
+export async function dayOpenings(q: AvailabilityQuery & { ignoreAppointmentIds?: readonly string[] }): Promise<{ openings: Opening[]; reason: string | null; durationMin: number; estimateCents: number }> {
+  const r = await resolveBooking(q);
+  const now = q.now ?? new Date();
+  const s = summary(r);
+  const closed = dayClosedReason(r, q, now);
+  if (closed) return { openings: [], reason: closed, durationMin: s.durationMin, estimateCents: s.estimateCents };
+  const input = await loadDayInput(r.shop, q.date, {
+    durationMin: r.durationMin,
+    staffIds: r.staffIds,
+    plans: r.plans,
+    now,
+    ignoreAppointmentId: q.ignoreAppointmentId,
+    ignoreAppointmentIds: q.ignoreAppointmentIds,
+    staffOverride: q.staffOverride,
+  });
+  const openings = computeDaySlots(input).flatMap((slot) =>
+    slot.staffIds.map((staffId) => {
+      const plan = r.timing.get(staffId)!.plan;
+      const end = slot.ends[staffId];
+      return { staffId, start: slot.start, end, holdStart: slot.start - plan.beforeMin * 60_000, holdEnd: end + trailingBuffer(plan) * 60_000 };
+    }),
+  );
+  return { openings, reason: openings.length ? null : "No openings on this day", durationMin: s.durationMin, estimateCents: s.estimateCents };
+}
+
 export async function getAvailability(q: AvailabilityQuery) {
   const r = await resolveBooking(q);
   const now = q.now ?? new Date();
-  const today = todayLocal(now);
-  const tooFar = !q.staffOverride && q.date > addDays(today, r.shop.bookingWindowDays);
-  if (closedOn(r.shop, q.date)) return { ...summary(r), slots: [], reason: r.shop.status === "archived" ? "This location has closed" : "The shop is closed then" };
-  if (!q.staffOverride && !takesOnlineBookings(r.shop, today)) return { ...summary(r), slots: [], reason: "Online booking is turned off for this shop" };
-  if (r.barbers.length === 0) return { ...summary(r), slots: [], reason: "No barbers are taking bookings at this shop yet" };
-  if (q.date < today || tooFar) return { ...summary(r), slots: [], reason: "Date is outside the booking window" };
+  const closed = dayClosedReason(r, q, now);
+  if (closed) return { ...summary(r), slots: [], reason: closed };
   const input = await loadDayInput(r.shop, q.date, {
     durationMin: r.durationMin,
     staffIds: r.staffIds,
@@ -227,6 +266,8 @@ export interface CreateAppointmentInput {
   notes?: string | null;
   idempotencyKey?: string | null;
   rebookedFromId?: string | null;
+  /** One of a family booked together (src/server/booking-groups.ts). */
+  groupId?: string | null;
   actor: Actor;
   now?: Date;
   /** Skip notifications (walk-ins being served right now). */
@@ -256,12 +297,22 @@ export async function createAppointment(input: CreateAppointmentInput) {
     const prior = await db.query.appointments.findFirst({ where: eq(appointments.idempotencyKey, input.idempotencyKey) });
     if (prior) return getAppointmentByCode(prior.code);
   }
+  const created = await db.transaction((tx) => bookInTx(input, tx));
+  await refreshClientBadges(created.customerId, input.now ?? new Date());
+  return getAppointmentByCode(created.code);
+}
+
+/**
+ * A booking's checks and inserts, inside the caller's transaction. A family booked together runs one
+ * per person in a single transaction, so when any seat is gone nobody is booked.
+ */
+export async function bookInTx(input: CreateAppointmentInput, tx: DBorTx) {
   const staffOverride = input.source === "staff" || input.source === "walk_in" || input.source === "rebook";
   if (input.squeezeIn && (input.source === "online" || input.source === "api")) throw new AppError("forbidden", "Only staff can squeeze in a booking");
   if (input.squeezeIn && (!input.barberRef || input.barberRef === "any")) throw new AppError("bad_request", "Pick the barber to squeeze the booking in with");
   // Walk-ins are seated now, wherever that falls; every other booking starts on the barber's grid.
   const gridExempt = input.source === "walk_in";
-  const r = await resolveBooking({ ...input, staffOverride });
+  const r = await resolveBooking({ ...input, staffOverride }, tx);
   const start = new Date(input.startsAt);
   if (Number.isNaN(start.getTime())) throw new AppError("bad_request", "startsAt must be an ISO timestamp");
   const now = input.now ?? new Date();
@@ -275,7 +326,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
 
   const estimateCents = r.items.reduce((a, i) => a + i.priceCents, 0);
 
-  const created = await db.transaction(async (tx) => {
+  {
     const customer = input.customerId
       ? await tx.query.customers.findFirst({ where: eq(customers.id, input.customerId) })
       : input.customer
@@ -331,6 +382,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
               notes: input.notes ?? null,
               idempotencyKey: input.idempotencyKey ?? null,
               rebookedFromId: input.rebookedFromId ?? null,
+              groupId: input.groupId ?? null,
             })
             .returning();
           await sp.insert(appointmentItems).values(
@@ -368,9 +420,7 @@ export async function createAppointment(input: CreateAppointmentInput) {
       }
     }
     throw new AppError("slot_unavailable", "That time was just taken — please pick another");
-  });
-  await refreshClientBadges(created.customerId, now);
-  return getAppointmentByCode(created.code);
+  }
 }
 
 /**
@@ -504,6 +554,7 @@ export async function cancelAppointment(
       .where(eq(appointments.id, a.id));
     await audit(opts.actor, "appointment.cancel", "appointment", a.id, { reason: opts.reason ?? null, byCustomer: opts.byCustomer }, a.shopId, tx);
     if (a.customerId) await scheduleAppointmentNotifications("cancelled", await messageContext(a.id, tx), tx, now);
+    if (a.groupId) await (await import("./booking-groups")).refreshGroupReminders(a.groupId, tx, now);
   });
   await refreshClientBadges(a.customerId, now);
   return getAppointmentByCode(code, now);
@@ -533,7 +584,29 @@ export async function rescheduleAppointment(
     throw new AppError("cutoff_passed", `Online changes close ${shop.cancelCutoffMinutes} minutes before the appointment. Please call the shop.`);
   }
   if (opts.squeezeIn && opts.byCustomer) throw new AppError("forbidden", "Only staff can squeeze in a booking");
-  const items = await db.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, a.id));
+  await db.transaction(async (tx) => {
+    await moveInTx(a, shop, { ...opts, now }, tx);
+    if (!a.customerId) return;
+    if (!a.groupId) return void (await scheduleAppointmentNotifications(opts.quiet ? "reminders" : "rescheduled", await messageContext(a.id, tx), tx, now));
+    // One of a family booked together: tell them about this move; the group keeps one set of reminders.
+    if (!opts.quiet) await queueAppointmentMessage("reschedule", await messageContext(a.id, tx), tx, now);
+    await (await import("./booking-groups")).refreshGroupReminders(a.groupId, tx, now);
+  });
+  return getAppointmentByCode(code, now);
+}
+
+/**
+ * Move one appointment inside the caller's transaction: the checks (grid, free time, squeeze) and the
+ * update, with no messages. A family moved together runs one per person in a single transaction.
+ */
+export async function moveInTx(
+  a: typeof appointments.$inferSelect,
+  shop: Shop,
+  opts: { startsAt: string | Date; barberRef?: string | null; actor: Actor; byCustomer: boolean; now: Date; squeezeIn?: boolean },
+  tx: DBorTx,
+) {
+  const now = opts.now;
+  const items = await tx.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, a.id));
   const durationMin = totalDuration(items);
   const barberRef = opts.barberRef === undefined ? a.staffId : opts.barberRef;
   const staffOverride = !opts.byCustomer;
@@ -562,7 +635,7 @@ export async function rescheduleAppointment(
     staffIds.map((id) => [id, { durationMin, intervalMin: increment ?? intervals.get(id)!.minutes, beforeMin: a.bufferBeforeMinutes, afterMin: cleanup, gapMin: a.bufferMinutes - cleanup }]),
   );
 
-  await db.transaction(async (tx) => {
+  {
     const day = await loadDayInput(shop, date, { durationMin, staffIds, plans, now, ignoreAppointmentId: a.id, staffOverride }, tx);
     let squeeze: string[] | null = null;
     let free: string[];
@@ -595,9 +668,8 @@ export async function rescheduleAppointment(
       const bent = squeeze.map((b) => SQUEEZE_BYPASS_LABEL[b as keyof typeof SQUEEZE_BYPASS_LABEL]);
       await audit(opts.actor, "appointment.squeeze_in", "appointment", a.id, { staffId, startsAt: start.toISOString(), endsAt: end.toISOString(), bypasses: squeeze, bent, moved: true }, a.shopId, tx);
     }
-    if (a.customerId) await scheduleAppointmentNotifications(opts.quiet ? "reminders" : "rescheduled", await messageContext(a.id, tx), tx, now);
-  });
-  return getAppointmentByCode(code, now);
+    return { staffId, startsAt: start, endsAt: end };
+  }
 }
 
 const TRANSITIONS: Record<string, string[]> = {
@@ -637,6 +709,7 @@ export async function setAppointmentStatus(id: string, status: keyof typeof TRAN
       if (status === "checked_in" && a.status === "in_service") await clearStart(id, tx);
       if (status === "cancelled" || status === "no_show") await cancelPendingReminders(id, tx);
       if (status === "cancelled" && a.customerId) await scheduleAppointmentNotifications("cancelled", await messageContext(id, tx), tx, now);
+      if (a.groupId && (status === "cancelled" || status === "no_show" || status === "booked")) await (await import("./booking-groups")).refreshGroupReminders(a.groupId, tx, now);
     });
   } catch (e) {
     if (isDoubleBookingError(e)) throw new AppError("slot_unavailable", "Can't restore: the barber is booked at that time now");
