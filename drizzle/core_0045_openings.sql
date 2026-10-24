@@ -2,6 +2,7 @@
 ALTER TABLE "marketing_campaigns" ADD COLUMN "reviewed_by" uuid REFERENCES "staff"("id") ON DELETE set null;--> statement-breakpoint
 ALTER TABLE "marketing_campaigns" ADD COLUMN "reviewed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "marketing_campaigns" ADD COLUMN "review_note" text;--> statement-breakpoint
+CREATE TRIGGER "marketing_campaigns_scrub_sensitive" BEFORE INSERT OR UPDATE OF "review_note" ON "marketing_campaigns" FOR EACH ROW EXECUTE FUNCTION "scrub_sensitive_row"('review_note');--> statement-breakpoint
 CREATE INDEX "marketing_campaigns_kind_idx" ON "marketing_campaigns" ("kind", "created_at");--> statement-breakpoint
 CREATE TABLE "openings_waitlist" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,

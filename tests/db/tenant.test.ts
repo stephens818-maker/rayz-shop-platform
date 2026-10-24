@@ -649,6 +649,7 @@ describe("server actions aimed at another shop's records", () => {
     const setup = await import("@/app/admin/setup/actions");
     const tips = await import("@/app/admin/tips/actions");
     const campaignCenter = await import("@/app/admin/campaign-center/actions");
+    const openings = await import("@/app/admin/campaign-center/openings/actions");
     const cv = shop.coralville;
     const coralvilleLogin = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, "coralville@rayz.test") }))!.id;
     const deskRole = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "front_desk") }))!.id;
@@ -819,6 +820,8 @@ describe("server actions aimed at another shop's records", () => {
       ["campaign center sequence on", () => campaignCenter.setSequenceEnabledAction(ids.sequence, true)],
       ["campaign center sequence delete", () => campaignCenter.deleteSequenceAction(ids.sequence)],
       ["campaign center sequence count", () => campaignCenter.previewSequenceAction({ channels: ["push"], shopIds: [cv], steps: [{ afterDays: 14 }] })],
+      ["openings count", () => openings.previewOpeningsAction({ shopId: cv, staffIds: [ids.barber], dates: [today], channels: ["sms"] })],
+      ["openings send", () => openings.sendOpeningsAction({ shopId: cv, staffIds: [ids.barber], dates: [today], channels: ["sms"] })],
     ];
 
     // Each call must be refused for every Moline-side login, and by the tenant check (not just a
@@ -827,7 +830,12 @@ describe("server actions aimed at another shop's records", () => {
     const manager = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, people["manager.moline"]) }))!;
     await m.db.db
       .update(m.schema.staff)
-      .set({ permissionOverrides: { "settings.taxes": true, "giftcards.void": true, "permissions.manage": true, "clients.merge": true, "po.approve": true, "payments.accounts": true, "payments.banking": true } })
+      .set({
+        permissionOverrides: {
+          ...Object.fromEntries(["settings.taxes", "giftcards.void", "permissions.manage", "clients.merge", "po.approve", "payments.accounts", "payments.banking"].map((p) => [p, true])),
+          ...Object.fromEntries(["promos.manage", "campaign_center.view", "campaign_center.create", "campaign_center.send"].map((p) => [p, true])),
+        },
+      })
       .where(eq(m.schema.staff.id, manager.id));
     const before = await coralvilleState();
     const errors: Record<string, string[]> = {};
@@ -869,6 +877,17 @@ describe("staff assigned to several shops (Kat: barber at Moline and Silvis, Sho
     return (await getStaffContext())!;
   };
   const assigned = () => [shop.moline, shop["rock-island"], shop.silvis].sort();
+  // Coupons are the brand's to grant; this brand gives them to its shop managers.
+  const managerRole = async () => (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "shop_manager") }))!;
+  let managerPerms: string[] = [];
+  beforeAll(async () => {
+    const r = await managerRole();
+    managerPerms = r.permissions;
+    await m.db.db.update(m.schema.roles).set({ permissions: [...r.permissions, "promos.manage"] }).where(eq(m.schema.roles.id, r.id));
+  });
+  afterAll(async () => {
+    await m.db.db.update(m.schema.roles).set({ permissions: managerPerms }).where(eq(m.schema.roles.key, "shop_manager"));
+  });
 
   it("works in one assigned shop at a time, under that shop's role", async () => {
     const first = await ctxAt();
@@ -884,7 +903,7 @@ describe("staff assigned to several shops (Kat: barber at Moline and Silvis, Sho
     expect(ri.shopIds).toEqual([shop["rock-island"]]);
     expect(ri.shops.map((s) => s.id)).toEqual([shop["rock-island"]]);
     expect(ri.staff.roleName).toBe("Shop Manager");
-    for (const p of ["sales.view", "staff.manage", "drawer.manage", "promos.manage", "report.sales_summary.view"] as const) expect(ri.permissions.has(p), p).toBe(true);
+    for (const p of ["sales.view", "staff.manage", "drawer.manage", "promos.manage", "report.sales_summary.view", "campaign_center.openings"] as const) expect(ri.permissions.has(p), p).toBe(true);
     for (const p of ["catalog.manage", "permissions.manage", "logins.manage"] as const) expect(ri.permissions.has(p), p).toBe(false);
 
     expect((await ctxAt(shop.silvis)).shopIds).toEqual([shop.silvis]);

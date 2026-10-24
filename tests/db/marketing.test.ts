@@ -9,6 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
+import { BRAND_CAMPAIGN_CENTER } from "@/domain/permissions";
 import { DEFAULT_LAPSED_STEPS, LAPSED_BUCKETS, SKIP_LABEL, TRIGGERS, type TriggerKey, lapsedBetween, lapsedOver } from "@/domain/marketing";
 
 vi.mock("server-only", () => ({}));
@@ -26,7 +27,7 @@ let L: typeof import("@/server/report-data");
 let S: typeof import("@/app/admin/reports/scope");
 let clickRoute: typeof import("@/app/m/[token]/route").GET;
 let exportRoute: typeof import("@/app/admin/campaign-center/export/route").GET;
-const fx = { cv: "", cvSlug: "coralville", cvLine: "", other: "", michelle: "", owner: "", barber: "", cut: "", cutCents: 0, addon: "", addonCents: 0, marketing: {} as Record<string, unknown> };
+const fx = { cv: "", cvSlug: "coralville", cvLine: "", other: "", michelle: "", owner: "", barber: "", cut: "", cutCents: 0, addon: "", addonCents: 0, marketing: {} as Record<string, unknown>, michelleOverrides: {} as Record<string, boolean> };
 let seq = 0;
 
 /** A week the seed never reaches; Chicago is on CST (-06:00) in February. */
@@ -62,6 +63,11 @@ beforeAll(async () => {
   fx.other = shops.find((x) => x.id !== cv.id)!.id;
   fx.michelle = (await m.db.db.query.staff.findFirst({ where: eq(s().staff.displayLabel, "Michelle") }))!.id;
   fx.owner = (await m.db.db.query.staff.findFirst({ where: eq(s().staff.email, "owner@rayz.test") }))!.id;
+  // The Campaign Center is the brand's; this brand grants Michelle, a shop manager, everything but the contact export.
+  const [mi] = await m.db.db.select({ o: s().staff.permissionOverrides }).from(s().staff).where(eq(s().staff.id, fx.michelle));
+  fx.michelleOverrides = mi.o;
+  const grant = [...BRAND_CAMPAIGN_CENTER].filter((p) => p !== "campaign_center.export" && p !== "report.campaign_center.export");
+  await m.db.db.update(s().staff).set({ permissionOverrides: { ...mi.o, ...Object.fromEntries(grant.map((p) => [p, true])) } }).where(eq(s().staff.id, fx.michelle));
   const links = await m.db.db
     .select({ id: s().staffShops.staffId })
     .from(s().staffShops)
@@ -82,6 +88,7 @@ afterAll(async () => {
   if (m) {
     await consent(false);
     await m.db.db.update(s().brandSettings).set({ marketing: fx.marketing });
+    await m.db.db.update(s().staff).set({ permissionOverrides: fx.michelleOverrides }).where(eq(s().staff.id, fx.michelle));
     await m.db.closeDb();
   }
 });
@@ -606,7 +613,7 @@ describe("blasts, location scope and the preview", () => {
   it("create writes and drafts, send switches and sends; neither alone does the other's job", async () => {
     await signInAs(fx.michelle);
     const full = await ctxOf();
-    expect([...full.permissions].filter((p) => p.startsWith("campaign_center."))).toEqual(["campaign_center.view", "campaign_center.create", "campaign_center.send", "campaign_center.own_clients"]);
+    expect([...full.permissions].filter((p) => p.startsWith("campaign_center.")).sort()).toEqual(["campaign_center.create", "campaign_center.openings", "campaign_center.own_clients", "campaign_center.send", "campaign_center.view"]);
     const without = (p: string) => ({ ...full, permissions: new Set([...full.permissions].filter((x) => x !== p)) });
     const writer = without("campaign_center.send");
     const sender = without("campaign_center.create");
@@ -1020,11 +1027,11 @@ describe("lapsed clients: weeks, barbers and sequences", () => {
     await SQ.setSequenceEnabled(ctx, id, false);
   });
 
-  it("the migration gives managers and brand admins the lapsed list and the report; barbers only when someone allows it", async () => {
+  it("brand admins have the lapsed list and the report; managers and barbers only when the brand allows it", async () => {
     const roles = await m.db.db.select().from(s().roles);
     const perms = (k: string) => roles.find((r) => r.key === k)?.permissions ?? [];
-    for (const k of ["brand_admin", "shop_manager"]) expect(perms(k), k).toEqual(expect.arrayContaining(["campaign_center.own_clients", "report.lapsed_clients.view", "report.lapsed_clients.export"]));
-    expect(perms("barber")).not.toContain("campaign_center.own_clients");
+    expect(perms("brand_admin")).toEqual(expect.arrayContaining(["campaign_center.own_clients", "report.lapsed_clients.view", "report.lapsed_clients.export"]));
+    for (const k of ["shop_manager", "regional_manager", "barber"]) for (const p of ["campaign_center.own_clients", "report.lapsed_clients.view"]) expect(perms(k), `${k} ${p}`).not.toContain(p);
   });
 });
 
