@@ -79,6 +79,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
       handoff={{ signature: handoff.shop.signature, unlock: handoff.shop.unlock }}
       withClient={withClient ? { by: withClient.by, startedAt: withClient.startedAt.toISOString() } : null}
       coupons={coupons}
+      groupDeposit={c.groupDeposit}
       family={{
         members: c.family.members.map((m) => ({ ...m, startsAt: m.startsAt.toISOString() })),
         candidates: c.family.candidates.map((m) => ({ ...m, startsAt: m.startsAt.toISOString() })),

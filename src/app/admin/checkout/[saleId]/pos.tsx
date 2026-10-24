@@ -104,6 +104,8 @@ export function Pos(props: {
   coupons: { held: { rule: CouponRule | null; code: string; problem: string | null } | null; auto: CouponRule[] };
   /** Other household members' appointments on this ticket, and today's that could join it. */
   family: { members: FamilyMember[]; candidates: FamilyMember[] };
+  /** A family booking's deposit held as credit, for the ticket of anyone in the group. */
+  groupDeposit?: { groupCode: string; code: string; balanceCents: number } | null;
 }) {
   const router = useRouter();
   const r0 = props.resume;
@@ -674,6 +676,25 @@ export function Pos(props: {
               {gift && (
                 <div className="text-xs text-zinc-600">
                   Gift card {gift.code}: balance {$(gift.balanceCents)}, applying {$(totals.giftCardAppliedCents)}
+                </div>
+              )}
+              {props.groupDeposit && !gift && (
+                <div className="flex items-center justify-between gap-2 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-900 ring-1 ring-sky-200" data-testid="group-deposit">
+                  <span>
+                    Family booking {props.groupDeposit.groupCode}: {$(props.groupDeposit.balanceCents)} deposit held
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={pending}
+                    onClick={() => {
+                      const code = props.groupDeposit!.code;
+                      setGiftInput(code);
+                      act(() => giftCardAction(code), (g) => setGift({ code: g.code, balanceCents: g.balanceCents }));
+                    }}
+                  >
+                    Apply deposit
+                  </Button>
                 </div>
               )}
 

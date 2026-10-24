@@ -30,6 +30,7 @@ interface Family {
   settings: { maxChildren: number; loyalty: "household" | "individual"; splitAge: number };
   children: Child[];
 }
+type Group = { code: string; startsAt: string; endsAt: string; status: string; shop: { name: string }; members: { firstName: string | null; status: string }[] };
 type Draft = { firstName: string; lastName: string; birthday: string; age: string; notes: string; photo: string | null | undefined };
 
 const BASE = { base: "/api" } as const;
@@ -57,11 +58,17 @@ export function MyFamily({ parentName }: { parentName: string }) {
   const [split, setSplit] = useState({ phone: "", email: "", smsOptIn: false });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [groups, setGroups] = useState<Group[]>([]);
 
   const load = () =>
-    api<Family>("/account/family", BASE)
-      .then(setFamily)
-      .catch(() => setFamily(null));
+    Promise.all([
+      api<Family>("/account/family", BASE)
+        .then(setFamily)
+        .catch(() => setFamily(null)),
+      api<{ groups: Group[] }>("/account/family/booking-groups", BASE)
+        .then((r) => setGroups(r.groups))
+        .catch(() => setGroups([])),
+    ]);
   useEffect(() => {
     if (getTokens()) load();
   }, []);
@@ -144,6 +151,29 @@ export function MyFamily({ parentName }: { parentName: string }) {
         )}
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
+      {groups.length > 0 && (
+        <ul className="space-y-1.5" data-testid="family-groups">
+          {groups.map((g) => (
+            <li key={g.code}>
+              <Link href={`/g/${g.code}`} className="flex items-center justify-between gap-2 rounded-lg bg-sky-50 px-3 py-2 text-sm ring-1 ring-sky-200 hover:bg-sky-100">
+                <span>
+                  <span className="font-medium">
+                    {fmtDay(g.startsAt)}, {fmtTime(g.startsAt)} – {fmtTime(g.endsAt)}
+                  </span>{" "}
+                  <span className="text-zinc-600">
+                    at {g.shop.name}:{" "}
+                    {g.members
+                      .filter((m) => m.status !== "cancelled")
+                      .map((m) => m.firstName ?? "Guest")
+                      .join(", ")}
+                  </span>
+                </span>
+                <span className="shrink-0 text-xs font-medium underline">Manage</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
       <ul className="space-y-3">
         {family.children.map((c) => (
           <li key={c.id} className="rounded-lg p-3 ring-1 ring-zinc-200" data-testid="family-child">
