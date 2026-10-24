@@ -181,8 +181,8 @@ export function handoffSteps(cfg: Pick<ShopHandoff, "tipEntry" | "signature">, o
 
 // ───────────────────────────── Split tips ─────────────────────────────
 
-export const TIP_SPLIT_MODES = ["services", "even"] as const;
-/** services: in proportion to each barber's services on the ticket. even: the same for each. */
+export const TIP_SPLIT_MODES = ["services", "even", "per_barber"] as const;
+/** services: in proportion to each barber's services on the ticket. even: the same for each. per_barber: an amount typed for each. */
 export type TipSplitMode = (typeof TIP_SPLIT_MODES)[number];
 
 /**
@@ -203,11 +203,23 @@ export function splitCents(total: number, weights: readonly { id: string; weight
   return out;
 }
 
-/** Each barber's weight for a split ticket: their services' net, or one each. All zero falls back to even. */
-export function tipWeights(lines: readonly { kind: string; staffId?: string | null; netCents: number }[], mode: TipSplitMode): { staffId: string; weight: number }[] {
+/**
+ * Each barber's weight for a split ticket: their services' net, one each, or (per_barber) the cents
+ * typed for them, so the split gives each exactly that. All zero falls back to even.
+ */
+export function tipWeights(
+  lines: readonly { kind: string; staffId?: string | null; netCents: number }[],
+  mode: TipSplitMode,
+  byStaff?: readonly { staffId: string; cents: number }[] | null,
+): { staffId: string; weight: number }[] {
   const by = new Map<string, number>();
   for (const l of lines) if ((l.kind === "service" || l.kind === "addon") && l.staffId) by.set(l.staffId, (by.get(l.staffId) ?? 0) + Math.max(0, l.netCents));
   const ids = [...by.keys()].sort();
+  if (mode === "per_barber") {
+    const typed = (byStaff ?? []).filter((t) => by.has(t.staffId) && t.cents > 0);
+    if (typed.length) return typed.map((t) => ({ staffId: t.staffId, weight: t.cents })).sort((a, b) => (a.staffId < b.staffId ? -1 : 1));
+    mode = "services";
+  }
   const even = mode === "even" || ids.every((id) => by.get(id) === 0);
   return ids.map((staffId) => ({ staffId, weight: even ? 1 : by.get(staffId)! }));
 }
