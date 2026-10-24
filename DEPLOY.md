@@ -170,8 +170,14 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - **Email:** use Postmark's broadcast stream or Resend with a verified domain. Both providers are stubs today, so they need wiring before go-live (see the README's Next steps).
    - **Coupon checks** on online booking are limited per client IP. On Vercel that's `x-real-ip`; self-hosted, set `TRUSTED_PROXY_HOPS` (see step 9), or the limiter is skipped because the IP is unknown.
    - Tracked links and unsubscribe links are built from `APP_BASE_URL` and never expire, so set it to the public domain first and don't change it without a redirect.
-14. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-15. Add the custom domain under **Settings → Domains**.
+14. Client search and filters (migration `core_0044_client_search`; see [Client search, filters and saved searches](README.md#client-search-filters-and-saved-searches)):
+   - The migration adds client numbers (from 10001), nickname, source, referred-by, photos, saved searches, duplicate dismissals, zip points, the fuzzy-search name and the zip and town read from the address. It also adds SHA-256 lookup hashes of phone, email, birthday and address, kept by a trigger. It fills the hashes by touching every client row once, so run it at a quiet time on a large book.
+   - It gives Brand Admin, Regional Manager, Shop Manager and Front Desk **Use advanced client filters** and **Save client searches and share them**. **Export the client list** stays with the Brand Owner until granted.
+   - Load zip centers for "within N miles": download the Census ZCTA gazetteer (`2024_Gaz_zcta_national.zip` from census.gov), unzip it, and run `MIGRATE_DATABASE_URL=<unpooled URL> pnpm tsx scripts/load-zip-points.ts 2024_Gaz_zcta_national.txt`. Re-running updates it. Without it, distance filters match nobody unless the shop has coordinates and the client's zip is loaded.
+   - Set `AUTH_SECRET` before printing or texting loyalty cards: the card's signature is made with it, so changing it invalidates every card.
+   - After the Squire import, clean up under **Clients → Duplicates → Imported from Squire**.
+15. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+16. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

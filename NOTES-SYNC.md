@@ -379,6 +379,17 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-24: core (client search, filters and duplicates)
+
+- **Search** everywhere in the brand portal (client list, sidebar **Find a client**, calendar, POS, walk-ins): names in any order with typos and nicknames, phone in any format or last 4, email, client ID or number, loyalty card, gift card, coupon, ticket, appointment code, Squire ID, birthday, address, zip, town, notes and tags. A hidden detail is matched only on its exact whole value through a SHA-256 lookup hash (`customers.phone_hash`, `email_hash`, `birthday_hash`, `address_hash`, kept by a trigger).
+- **Loyalty card for the app:** `RAYZ1-<customers.number>-<10 base32 characters>`. The signature is HMAC-SHA256 with `AUTH_SECRET` over `loyalty-card:<customer id>:<number>`, first 50 bits in RFC 4648 base32. `src/server/loyalty-card.ts` has `loyaltyCardValue`. **Request to the mobile agent:** if the app shows a card, show this value as a QR (error correction M), and don't invent another format, since the desk's scanner types it into the search. An endpoint that returns it would need `/api/v1`, which core doesn't touch.
+- **Filters** (one `SegmentSchema` for the client list and Campaign Center): visit history, barbers and locations, spend and tips, loyalty, gift cards and coupons, profile (rating, tags, birthday, age, zip, city, distance, source, referral, created), messaging (consent per channel, review clicks, campaigns received and clicked) and filled-in or empty checks. Marketing consent is read through `consentColumns()` as before; missing columns mean nobody matches.
+- **Duplicates** for Squire imports: scored pairs, "not the same person" (`customer_duplicate_dismissals`), bulk merge. Merges now repoint every foreign key to `customers` found in `pg_constraint`, so a customer-app table that references a client moves with a merge instead of cascading away. A new table with a unique key on `customer_id` makes merges fail until it's handled in `mergeCustomers`.
+- **Brand Admins always see every client detail** at full; field rules for them are refused.
+- New columns on `customers`: `number`, `nickname`, `source`, `referred_by_id`, and generated `search_name`, `address_zip`, `address_city`. Tables `client_photos`, `saved_client_searches`, `customer_duplicate_dismissals`, `zip_points`. Permissions `clients.filters`, `clients.saved_searches`. Migration `core_0044_client_search`.
+- Tests: `tests/client-search.test.ts`, `tests/db/client-search.test.ts`, `tests/db/client-privacy.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written or migrated.
+
 ### 2026-10-23: core (lapsed clients in the Campaign Center)
 
 - **Segment builder:** last visit more than 2 / 3 / 4 / 5 / 6 / 8 / 12 weeks ago, between two points (weeks or days) or custom days, "nothing booked since", and barbers by the client's primary barber (preferred, else last), most recent barber or any visit. The opted-in count updates live.
