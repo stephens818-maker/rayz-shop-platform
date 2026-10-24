@@ -43,7 +43,6 @@ import {
   loyaltyByShop,
   monthlyTotals,
   payrollTips,
-  ratingsGivenAt,
   refundLog,
   refundTotals,
   salesTotalsAt,
@@ -54,7 +53,9 @@ import { ledgerEntries, movement, poHistory, sellThrough, valuation, vendorSpend
 import { stockLevels } from "./inventory/stock";
 import { suggestionsFor } from "./inventory/purchasing";
 import { ADJUST_REASON_LABEL, LEDGER_KIND_LABEL, PO_STATUS_LABEL, poNumber } from "@/domain/inventory";
-import { diffDays, formatDate, formatDateTime } from "@/lib/time";
+import { addDays, diffDays, formatDate, formatDateTime } from "@/lib/time";
+import { EXCEPTION_LABEL } from "@/domain/morning-dashboard";
+import { morningDoc } from "@/domain/morning-render";
 import { ACCOUNT_STATE_LABEL, PAYMENTS_MODE_LABEL } from "@/domain/connect";
 import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-report";
 import { serviceTimesData } from "./service-times-report";
@@ -66,7 +67,8 @@ import { lapsedReportData } from "./marketing/lapsed-report";
 import { openingsReportData } from "./marketing/openings-report";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
-import { morningReportData } from "./morning-dashboard";
+import { morningDashboardFor } from "./morning-dashboard";
+import { ratingsGivenAt } from "./ratings-report";
 import type { StaffAccess } from "./auth/access";
 
 /**
@@ -643,6 +645,33 @@ async function purchasingData(scope: ReportScope, loc: ViewCtx): Promise<ReportD
         })),
         keepShop: multi(loc),
       }),
+    ],
+  };
+}
+
+/**
+ * The dashboard as report tables, for CSV: every metric for the morning after the range's last
+ * day, and the exceptions. Numbers come formatted, as on the page.
+ */
+async function morningReportData(access: StaffAccess, scope: ReportScope): Promise<ReportData> {
+  const d = await morningDashboardFor(access, "", scope.shopIds, addDays(scope.to, 1));
+  if (!d) return { stats: [], tables: [] };
+  const doc = morningDoc(d);
+  const text = (label: string) => ({ label });
+  const metrics = doc.sections.flatMap((s) =>
+    s.blocks.flatMap((b) => (b.kind === "metrics" ? b.rows.map((r) => [s.title, r.label.trim(), r.day, r.dayChange, r.wtd, r.wtdChange]) : [])),
+  );
+  const items = (d.exceptions?.items ?? []).map((i) => [EXCEPTION_LABEL[i.category], i.severity, i.shop, i.title, i.detail ?? null]);
+  return {
+    stats: doc.tiles.map((t) => ({ label: t.label, value: t.value, hint: t.sub })),
+    tables: [
+      {
+        id: "metrics",
+        title: `Morning Dashboard: ${doc.coverage}`,
+        columns: [text("Section"), text("Metric"), text(formatDate(d.periods.reportDay, "EEE MMM d")), text(`vs ${formatDate(d.periods.compareDay, "EEE MMM d")}`), text("Week to date"), text("vs the same days last week")],
+        rows: metrics,
+      },
+      { id: "exceptions", title: "Needs attention", columns: [text("Kind"), text("Severity"), text("Location"), text("Item"), text("Detail")], rows: items },
     ],
   };
 }

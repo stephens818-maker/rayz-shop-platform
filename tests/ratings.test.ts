@@ -139,7 +139,8 @@ function reachable(entries: string[]): Set<string> {
     const f = queue.pop()!;
     if (seen.has(f)) continue;
     seen.add(f);
-    const text = readFileSync(f, "utf8");
+    // `import type` and `export type … from` are erased when compiled, so they load nothing.
+    const text = readFileSync(f, "utf8").replace(/^\s*(?:import|export)\s+type\s[^;]*?from\s+["'][^"']+["'];?/gm, "");
     for (const m of text.matchAll(/(?:from\s+|import\s*\(\s*|import\s+)["']([^"']+)["']/g)) {
       const r = resolveImport(f, m[1]);
       if (r) queue.push(r);

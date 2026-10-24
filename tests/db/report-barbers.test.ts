@@ -196,7 +196,7 @@ async function reconciles(scope: Scope) {
     ["tender", R.tenderAt],
     ["kpis", R.kpisAt],
     ["available", R.availableMinutesAt],
-    ["ratings", R.ratingsGivenAt],
+    ["ratings", (await import("@/server/ratings-report")).ratingsGivenAt],
   ];
   const out: Record<string, Record<string, Record<string, number>>> = {};
   for (const [name, f] of sets) {

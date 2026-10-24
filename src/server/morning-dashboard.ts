@@ -6,7 +6,6 @@ import {
   BarberSales,
   BarberTime,
   CMP_KEYS,
-  EXCEPTION_LABEL,
   ExceptionCategory,
   ExceptionItem,
   ExceptionsBlock,
@@ -35,7 +34,7 @@ import {
   ratioCmp,
   versionPlans,
 } from "@/domain/morning-dashboard";
-import { morningDoc, renderMorningHtml, renderMorningPdf, renderMorningSms, renderMorningText } from "@/domain/morning-render";
+import { renderMorningHtml, renderMorningPdf, renderMorningSms, renderMorningText } from "@/domain/morning-render";
 import { weekStartOf } from "@/domain/payroll/overtime";
 import { type Permission, reportView } from "@/domain/permissions";
 import { TOTAL, segKey } from "@/domain/report-views";
@@ -47,9 +46,8 @@ import { AppError } from "./errors";
 import { attributedSends } from "./marketing/report";
 import { loadMarketingSettings } from "./marketing/settings";
 import { processDueJobs } from "./notifications/queue";
-import type { ReportData } from "./report-data";
 import { loadSettings as loadPayrollSettings } from "./payroll/groups";
-import { ReportScope, ZERO_SALES, availableMinutesAt, dailyTotals, giftCardTotalsByShop, kpisAt, loyaltyActivity, refundTotals, salesTotalsAt } from "./reports";
+import { ZERO_SALES, availableMinutesAt, dailyTotals, giftCardTotalsByShop, kpisAt, loyaltyActivity, refundTotals, salesTotalsAt } from "./reports";
 import { stockLevels } from "./inventory/stock";
 import { rows as sqlRows, uuids } from "./report-sql";
 import { timedAppointments } from "./service-times-report";
@@ -769,33 +767,6 @@ export async function buildMorningDashboard(input: BuildInput, cals?: Map<string
 export async function morningDashboardFor(access: StaffAccess, firstName: string, shopIds: string[] | null, today: LocalDate, now = new Date()) {
   const ids = shopIds ?? morningShops(access);
   return buildMorningDashboard({ access, firstName, shopIds: ids, today, now, allSections: true });
-}
-
-/**
- * The dashboard as report tables, for CSV: every metric for the morning after the range's last
- * day, and the exceptions. Numbers come formatted, as on the page.
- */
-export async function morningReportData(access: StaffAccess, scope: ReportScope): Promise<ReportData> {
-  const d = await morningDashboardFor(access, "", scope.shopIds, addDays(scope.to, 1));
-  if (!d) return { stats: [], tables: [] };
-  const doc = morningDoc(d);
-  const text = (label: string) => ({ label });
-  const metrics = doc.sections.flatMap((s) =>
-    s.blocks.flatMap((b) => (b.kind === "metrics" ? b.rows.map((r) => [s.title, r.label.trim(), r.day, r.dayChange, r.wtd, r.wtdChange]) : [])),
-  );
-  const items = (d.exceptions?.items ?? []).map((i) => [EXCEPTION_LABEL[i.category], i.severity, i.shop, i.title, i.detail ?? null]);
-  return {
-    stats: doc.tiles.map((t) => ({ label: t.label, value: t.value, hint: t.sub })),
-    tables: [
-      {
-        id: "metrics",
-        title: `Morning Dashboard: ${doc.coverage}`,
-        columns: [text("Section"), text("Metric"), text(formatDate(d.periods.reportDay, "EEE MMM d")), text(`vs ${formatDate(d.periods.compareDay, "EEE MMM d")}`), text("Week to date"), text("vs the same days last week")],
-        rows: metrics,
-      },
-      { id: "exceptions", title: "Needs attention", columns: [text("Kind"), text("Severity"), text("Location"), text("Item"), text("Detail")], rows: items },
-    ],
-  };
 }
 
 // ───────────────────────────── Sending ─────────────────────────────
