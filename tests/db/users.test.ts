@@ -272,7 +272,9 @@ describe("deactivating and removing", () => {
 
   it("people with upcoming appointments are offboarded first", async () => {
     const { setUserActiveAction } = await actions();
-    const at = new Date(Date.now() + 3 * 86_400_000);
+    // Just after midnight in Iowa, clear of the seeded appointments whatever time the test runs.
+    const day = new Date(Date.now() + 3 * 86_400_000);
+    const at = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 6, 5));
     const [c] = await m.db.db.insert(m.schema.customers).values({ firstName: "Booked", lastName: "Client", homeShopId: ids.coralville }).returning();
     await m.db.db.insert(m.schema.appointments).values({ code: `U${crypto.randomUUID().slice(0, 7).toUpperCase()}`, shopId: ids.coralville, staffId: people.makenna, customerId: c.id, startsAt: at, endsAt: new Date(at.getTime() + 30 * 60_000), status: "booked", source: "staff", estimateCents: 2300 });
     await as("owner");

@@ -231,6 +231,12 @@ describe("family filters, reports and API", () => {
   it("documents every family endpoint, with no sensitive fields", () => {
     expect(Object.keys(FAMILY_OPENAPI.paths).sort()).toEqual([
       "/me/family",
+      "/me/family/booking-groups",
+      "/me/family/booking-groups/{code}",
+      "/me/family/booking-groups/{code}/cancel",
+      "/me/family/booking-groups/{code}/options",
+      "/me/family/booking-groups/{code}/reschedule",
+      "/me/family/booking-options",
       "/me/family/bookings",
       "/me/family/children",
       "/me/family/children/{id}",

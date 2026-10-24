@@ -136,23 +136,29 @@ describe("family booking", () => {
     const p = await parent();
     const k1 = await fam.addChild(p.id, { firstName: "Gus" }, actor);
     const k2 = await fam.addChild(p.id, { firstName: "Hal" }, actor);
-    let open: { startsAt: string; barberIds: string[] } | undefined;
-    for (let i = 3; i < 25 && !open; i++) {
+    // A slot late in the day can leave no room for the third person right after; failures book nothing, so try the next.
+    let made: Awaited<ReturnType<typeof booking.bookFamily>> | null = null;
+    for (let i = 3; i < 25 && !made; i++) {
       const av = await m.booking.getAvailability({ shopRef: "coralville", date: m.time.addDays(today, i), serviceId: fx.cut, barberRef: "any" });
-      open = av.slots.find((x) => x.barberIds.length >= 2);
+      for (const open of av.slots.filter((x) => x.barberIds.length >= 2).slice(0, 6)) {
+        made = await booking
+          .bookFamily(
+            {
+              shopId: "coralville",
+              people: [
+                { customerId: p.id, serviceId: fx.cut, staffId: open.barberIds[0], startsAt: open.startsAt },
+                { customerId: k1.id, serviceId: fx.cut, timing: "same_time" },
+                { customerId: k2.id, serviceId: fx.cut, timing: "after" },
+              ],
+            },
+            { guardianId: p.id, source: "staff", actor },
+          )
+          .catch(() => null);
+        if (made) break;
+      }
     }
-    expect(open).toBeDefined();
-    const made = await booking.bookFamily(
-      {
-        shopId: "coralville",
-        people: [
-          { customerId: p.id, serviceId: fx.cut, staffId: open!.barberIds[0], startsAt: open!.startsAt },
-          { customerId: k1.id, serviceId: fx.cut, timing: "same_time" },
-          { customerId: k2.id, serviceId: fx.cut, timing: "after" },
-        ],
-      },
-      { guardianId: p.id, source: "staff", actor },
-    );
+    expect(made).not.toBeNull();
+    if (!made) return;
     expect(made).toHaveLength(3);
     const [a, b, c] = made;
     expect(b.startsAt).toBe(a.startsAt);

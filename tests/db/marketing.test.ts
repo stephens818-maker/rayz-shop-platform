@@ -259,7 +259,9 @@ describe("coupons at checkout", () => {
     expect((await CO.checkBookingCoupon(fx.cvSlug, p.code)).summary).toMatch(/\$4/);
     const c = await client();
     const now = new Date();
-    const appt = await visit(c.id, new Date(now.getTime() + 2 * DAY), { status: "booked", createdAt: now });
+    // Just after midnight in Iowa, clear of the seeded appointments whatever time the test runs.
+    const day = new Date(now.getTime() + 2 * DAY);
+    const appt = await visit(c.id, new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 6, 5)), { status: "booked", createdAt: now });
     await CO.holdBookingCoupon(appt.code, p.code, now);
     const sale = await m.checkout.openSaleForAppointment(appt.id, actor);
     const t = await CO.ticketCoupons({ id: sale.id, shopId: fx.cv, customerId: c.id, appointmentId: appt.id });
