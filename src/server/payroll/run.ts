@@ -6,6 +6,7 @@ import {
   OVERRIDABLE,
   anomalies,
   assemble,
+  computeLine,
   ftStatus,
   payrollSettings,
   reconcile,
@@ -23,6 +24,8 @@ import {
 import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
 import { addDays, endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
+import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
+import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
 import { payrollSalesBetween } from "@/server/reports";
 import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
@@ -97,13 +100,14 @@ interface Snapshot {
   block: ShopBlock;
 }
 
-/** Periods locked before tips were split by how they're paid had every tip paid separately. */
+/** Periods locked before tips were split by how they're paid had every tip paid separately; before guaranteed minimums, nobody had a top-up. */
 function upgradeBlock(b: ShopBlock): ShopBlock {
-  const tipCols = <T extends { tips: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number }>(x: T): T => ({
+  const tipCols = <T extends { tips: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number; guaranteeTopUp?: number }>(x: T): T => ({
     ...x,
     tipsInPayroll: x.tipsInPayroll ?? 0,
     tipsOutside: x.tipsOutside ?? x.tips,
     tipsPaidOut: x.tipsPaidOut ?? 0,
+    guaranteeTopUp: x.guaranteeTopUp ?? 0,
   });
   return { ...b, lines: b.lines.map(tipCols), totals: tipCols(b.totals) };
 }
@@ -179,6 +183,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   const person = new Map(people.map((p) => [p.id, p]));
   const profile = new Map(profiles.map((p) => [p.staffId, p]));
   const rateOf = (staffId: string, shopId: string) => rates.find((r) => r.staffId === staffId && r.shopId === shopId) ?? rates.find((r) => r.staffId === staffId && r.shopId === null);
+  const comp = await loadCompensationSettings();
+  const plans = comp.enabled && comp.payrollUsesPlans && staffIds.length ? await payrollPlans({ staffIds, start, end, days, fallbackOf: await setupRates(staffIds) }) : null;
 
   const inputsByShop = new Map<string, LineInput[]>();
   for (const k of keys) {
@@ -187,6 +193,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     const p = person.get(staffId);
     const pr = profile.get(staffId);
     const r = rateOf(staffId, shopId);
+    const plan = plans?.rateFor(staffId, shopId) ?? null;
     const h = hours.get(k) ?? { worked: 0, training: 0, pto: 0, ot: 0 };
     const s = salesOf.get(k);
     const ov: Overrides = {};
@@ -199,9 +206,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       employeeNumber: pr?.employeeNumber ?? null,
       keyIsText: pr?.keyIsText ?? false,
       isolvedName: pr?.isolvedName ?? [p?.last, p?.first].filter(Boolean).join(", ").toUpperCase(),
-      hourlyRate: r?.hourlyRate ?? 0,
-      servicePct: r?.servicePct ?? 0,
-      productPct: r?.productPct ?? 0,
+      hourlyRate: plan?.hourlyRate ?? r?.hourlyRate ?? 0,
+      servicePct: plan?.servicePct ?? r?.servicePct ?? 0,
+      productPct: plan?.productPct ?? r?.productPct ?? 0,
       trainingRate: r?.trainingRate ?? null,
       workedHours: centi(h.worked),
       otHours: centi(h.ot),
@@ -216,12 +223,21 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     };
     inputsByShop.set(shopId, [...(inputsByShop.get(shopId) ?? []), input]);
   }
+  if (plans) {
+    const probe = [...inputsByShop.values()].flat().map((i) => {
+      const l = computeLine(i, settings);
+      return { staffId: i.staffId, shopId: i.shopId, earned: l.totalWages + l.otPay + l.trainingPay, hours: l.hours + l.otHours };
+    });
+    const topUps = guaranteeTopUps(probe, (id) => plans.guaranteeOf(id));
+    for (const list of inputsByShop.values()) for (const i of list) if (topUps.has(`${i.staffId}|${i.shopId}`)) i.guaranteeTopUp = topUps.get(`${i.staffId}|${i.shopId}`);
+  }
   const order = (a: LineInput, b: LineInput) =>
     (profile.get(a.staffId)?.exportPosition ?? 1e9) - (profile.get(b.staffId)?.exportPosition ?? 1e9) || a.name.localeCompare(b.name);
 
   const live = assemble(
     inRun.map(({ g }) => ({ shopId: g.shopId, shop: g.shop, inputs: (inputsByShop.get(g.shopId) ?? []).sort(order) })),
     settings,
+    { extras: exportExtras(comp), guaranteeHeader: comp.guaranteeHeader },
   );
   const lockedBy = new Map((runs.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, runs.map((r) => r.lockedBy).filter((x): x is string => !!x))) : []).map((s) => [s.id, s.label]));
   const blocks: BlockView[] = inRun.map(({ g, p }, i) => {
@@ -324,7 +340,7 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
   return db.transaction(async (tx) => {
     let n = 0;
     for (const b of view.blocks) {
-      const snapshot: Snapshot = { block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders } };
+      const snapshot: Snapshot = { block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders, exportFrom: b.exportFrom } };
       const [run] = await tx
         .insert(payrollRuns)
         .values({ payGroupId: b.payGroupId, periodStart: start, periodEnd: end, periodNumber: b.period.number, checkDate: b.period.checkDate, settings, snapshot, lockedBy: actor.staffId ?? null })

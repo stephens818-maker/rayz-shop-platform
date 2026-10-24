@@ -14,7 +14,7 @@ const pct = (x: number | null) => (x === null ? "—" : `${(x * 100).toLocaleStr
 const ratio = (x: number | null) => (x === null ? "—" : hrs(x));
 const cell = (k: string, v: number) => (HOUR_COLUMNS.has(k) ? hrs(v) : fmtMoney(v));
 
-type Col = { key: keyof Line & string; label: string; fmt: (l: Line) => string; total?: (t: Totals) => string; extra?: boolean };
+type Col = { key: keyof Line & string; label: string; fmt: (l: Line) => string; total?: (t: Totals) => string; extra?: boolean; onlyIf?: (b: BlockView) => boolean };
 const COLS: Col[] = [
   { key: "hours", label: COLUMN_LABEL.hours, fmt: (l) => hrs(l.hours), total: (t) => hrs(t.hours) },
   { key: "wage", label: COLUMN_LABEL.wage, fmt: (l) => fmtMoney(l.wage) },
@@ -36,11 +36,20 @@ const COLS: Col[] = [
   { key: "trainingHours", label: COLUMN_LABEL.trainingHours, fmt: (l) => hrs(l.trainingHours), total: (t) => hrs(t.trainingHours) },
   { key: "otPay", label: COLUMN_LABEL.otPay, fmt: (l) => fmtMoney(l.otPay), total: (t) => fmtMoney(t.otPay), extra: true },
   { key: "trainingPay", label: COLUMN_LABEL.trainingPay, fmt: (l) => fmtMoney(l.trainingPay), total: (t) => fmtMoney(t.trainingPay), extra: true },
+  {
+    key: "guaranteeTopUp",
+    label: COLUMN_LABEL.guaranteeTopUp,
+    fmt: (l) => fmtMoney(l.guaranteeTopUp),
+    total: (t) => fmtMoney(t.guaranteeTopUp),
+    extra: true,
+    onlyIf: (b) => b.lines.some((l) => l.guaranteeTopUp),
+  },
   { key: "laborCost", label: COLUMN_LABEL.laborCost, fmt: (l) => fmtMoney(l.laborCost), total: (t) => fmtMoney(t.laborCost), extra: true },
   { key: "tipsOutside", label: COLUMN_LABEL.tipsOutside, fmt: (l) => fmtMoney(l.tipsOutside), total: (t) => fmtMoney(t.tipsOutside), extra: true },
   { key: "tipsInPayroll", label: COLUMN_LABEL.tipsInPayroll, fmt: (l) => fmtMoney(l.tipsInPayroll), total: (t) => fmtMoney(t.tipsInPayroll), extra: true },
   { key: "tipsPaidOut", label: COLUMN_LABEL.tipsPaidOut, fmt: (l) => fmtMoney(l.tipsPaidOut), total: (t) => fmtMoney(t.tipsPaidOut), extra: true },
 ];
+const colsFor = (b: BlockView) => COLS.filter((c) => !c.onlyIf || c.onlyIf(b));
 
 export default async function PayrollReportPage({ searchParams }: { searchParams: Promise<{ period?: string }> }) {
   const sp = await searchParams;
@@ -252,7 +261,7 @@ function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; c
               <thead className="bg-zinc-50 text-left text-[11px] text-zinc-500">
                 <tr>
                   <th className="sticky left-0 bg-zinc-50 px-2 py-2">Employee Name</th>
-                  {COLS.map((c) => (
+                  {colsFor(b).map((c) => (
                     <th key={c.key} className={cx("px-2 py-2 text-right", c.extra && "bg-sky-50 text-sky-800")}>
                       {c.label}
                     </th>
@@ -268,7 +277,7 @@ function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; c
                       </a>
                       {l.overridden.length > 0 && <span title="Has typed-over values"> ✎</span>}
                     </td>
-                    {COLS.map((c) => (
+                    {colsFor(b).map((c) => (
                       <td key={c.key} className={cx("px-2 py-1.5 text-right tabular-nums", c.extra && "bg-sky-50/40", l.overridden.includes(c.key as never) && "bg-amber-50")}>
                         {c.fmt(l)}
                       </td>
@@ -277,7 +286,7 @@ function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; c
                 ))}
                 <tr className="border-t-2 border-zinc-300 bg-zinc-50 font-semibold">
                   <td className="sticky left-0 bg-zinc-50 px-2 py-1.5">Total</td>
-                  {COLS.map((c) => (
+                  {colsFor(b).map((c) => (
                     <td key={c.key} className="px-2 py-1.5 text-right tabular-nums">
                       {c.total?.(b.totals) ?? ""}
                     </td>
@@ -285,7 +294,7 @@ function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; c
                 </tr>
                 <tr className="bg-zinc-50">
                   <td className="sticky left-0 bg-zinc-50 px-2 py-1.5">Gross Profit</td>
-                  <td colSpan={COLS.length} className="px-2 py-1.5 text-left tabular-nums">
+                  <td colSpan={colsFor(b).length} className="px-2 py-1.5 text-left tabular-nums">
                     {fmtMoney(b.totals.service)} service − {fmtMoney(b.totals.laborCost)} labor cost = <strong>{fmtMoney(b.totals.grossProfit)}</strong>
                   </td>
                 </tr>
@@ -400,9 +409,9 @@ function ExportPreview({ b }: { b: BlockView }) {
             <tr className="bg-zinc-100">
               <th className="px-2 py-1 text-left">Key</th>
               <th className="px-2 py-1 text-left" />
-              {EXPORT_COLUMNS.map((c) => (
-                <th key={c.header} className="px-2 py-1 text-right">
-                  {c.header}
+              {(b.exportHeaders ?? EXPORT_COLUMNS.map((c) => c.header)).map((h) => (
+                <th key={h} className="px-2 py-1 text-right">
+                  {h}
                 </th>
               ))}
             </tr>
@@ -423,11 +432,14 @@ function ExportPreview({ b }: { b: BlockView }) {
               <td className="px-2 py-0.5" colSpan={2}>
                 Adds up to (not in the file)
               </td>
-              {EXPORT_COLUMNS.map((c, i) => (
-                <td key={c.header} className="px-2 py-0.5 text-right">
-                  {cell(c.from, b.exportRows.reduce((a, r) => a + r.values[i], 0))}
-                </td>
-              ))}
+              {(b.exportHeaders ?? EXPORT_COLUMNS.map((c) => c.header)).map((h, i) => {
+                const from = i < EXPORT_COLUMNS.length ? EXPORT_COLUMNS[i].from : b.exportFrom?.[i - EXPORT_COLUMNS.length];
+                return (
+                  <td key={h} className="px-2 py-0.5 text-right">
+                    {from === "wage" ? "" : cell(from ?? "", b.exportRows.reduce((a, r) => a + (r.values[i] ?? 0), 0))}
+                  </td>
+                );
+              })}
             </tr>
           </tbody>
         </table>

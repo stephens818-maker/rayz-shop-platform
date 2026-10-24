@@ -11,6 +11,7 @@ export const PERMISSION_GROUPS = [
   "Catalog and inventory",
   "Staff",
   "Payroll and time clock",
+  "Compensation",
   "Tip payouts",
   "Users and sign-in",
   "Custom reports",
@@ -306,6 +307,30 @@ export const FEATURE_PERMISSIONS = [
   },
   { key: "payroll.rates", group: "Payroll and time clock", label: "See pay rates and labor cost", hint: "Hourly rates, labor cost and labor % of sales in reports. Without it, reports show hours only." },
   { key: "payroll.export", group: "Payroll and time clock", label: "Download the payroll export (CSV and the iSolved layout)", hint: "Per pay period, per employee and shop. Every download is logged." },
+  {
+    key: "compensation.view",
+    group: "Compensation",
+    label: "See employees' compensation: pay plans, their history and the brand's employee fields",
+    hint: "Off unless the brand turns compensation fields on. People at their shops only, never their own. Brand Owner and Brand Admin to start.",
+  },
+  {
+    key: "compensation.edit",
+    group: "Compensation",
+    label: "Change employees' compensation and employee fields",
+    hint: "A change is a new version from a date after the last locked pay period; past payroll never changes. Never their own, and only people who work at none of the shops outside theirs.",
+  },
+  {
+    key: "compensation.settings",
+    group: "Compensation",
+    label: "Turn compensation fields on or off, choose what payroll and the iSolved file use, and add employee fields",
+    brandOnly: true,
+  },
+  {
+    key: "compensation.own",
+    group: "Compensation",
+    label: "See their own pay: commission earned and (where the brand shows it) this period's pay estimate",
+    hint: "Only their own, never anyone else's. In no role to start.",
+  },
   { key: "tips.own", group: "Tip payouts", label: "See their own tips and payouts, and choose how they're paid", hint: "Tips today, pending, paid out and history; Stripe payout setup where the brand allows it." },
   {
     key: "tips.approve",
@@ -520,6 +545,12 @@ export const REPORTS = [
     href: "/admin/reports/labor",
     hint: "Clocked hours per shop and barber, sales per labor hour, and (with pay rates) labor cost and labor % of sales.",
   },
+  {
+    key: "commission_payout",
+    label: "Commission payout",
+    href: "/admin/reports/commission-payout",
+    hint: "Service and product commission per barber and location from each one's pay plan, net of discounts and refunds, by month, with booth rent due. Only while compensation fields are on.",
+  },
   { key: "attendance", label: "Attendance", href: "/admin/reports/attendance", hint: "Late clock-ins, early clock-outs, missed punches and forgotten clock-outs against the schedule." },
   { key: "cash_drawer", label: "Cash drawer", href: "/admin/reports/cash-drawer" },
   {
@@ -664,7 +695,9 @@ const grantOnlyDenied = (p: Permission) => `"${permissionLabel(p)}" isn't part o
 
 const reports = (keys: ReportKey[], exportToo = true): ReportPermission[] => keys.flatMap((k) => (exportToo ? [reportView(k), reportExport(k)] : [reportView(k)]));
 const ALL_REPORTS = REPORTS.map((r) => r.key);
-const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)));
+/** Pay that's the brand's to show: no location role has these reports to start. */
+const BRAND_PAY_REPORTS: readonly ReportKey[] = ["commission_payout"];
+const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)) && !BRAND_PAY_REPORTS.includes(k));
 const MANAGER_FEATURES: FeaturePermission[] = [
   "calendar.manage",
   "walkins.manage",
@@ -956,6 +989,12 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   "access.remote",
   "payroll.rates",
   "payroll.export",
+  "compensation.view",
+  "compensation.edit",
+  "compensation.settings",
+  "compensation.own",
+  "report.commission_payout.view",
+  "report.commission_payout.export",
   "payments.banking",
   "timesheet.edit",
   "timesheet.approve",

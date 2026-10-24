@@ -67,6 +67,7 @@ import { lapsedReportData } from "./marketing/lapsed-report";
 import { openingsReportData } from "./marketing/openings-report";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
+import { commissionPayoutData } from "./commission-report";
 import { acquisitionData, endOfDayData, leaderboardData, phoneOperatorData, retentionData, salesTaxData } from "./shop-reports";
 import { morningDashboardFor } from "./morning-dashboard";
 import { ratingsGivenAt } from "./ratings-report";
@@ -723,6 +724,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async labor({ scope, loc, viewer }) {
     return laborData(scope, loc, viewer.permissions);
+  },
+
+  async commission_payout({ scope, loc }) {
+    return commissionPayoutData(scope, loc);
   },
 
   async attendance({ scope, loc }) {

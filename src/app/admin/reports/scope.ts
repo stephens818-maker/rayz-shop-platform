@@ -65,6 +65,7 @@ export const BARBER_REPORTS: ReadonlySet<ReportKey> = new Set([
   "client_ratings",
   "service_times",
   "labor",
+  "commission_payout",
   "attendance",
   "google_reviews",
   "campaign_center",
