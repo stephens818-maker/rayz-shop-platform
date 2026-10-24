@@ -1,11 +1,12 @@
 import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointments, customers, shopHours, shops, staffSchedules } from "@/db/schema";
+import { appointments, customers, shopHours, shopPhotos, shops, staffSchedules } from "@/db/schema";
 import { listedPublicly, takesOnlineBookings } from "@/domain/location-lifecycle";
 import { minutesToHHMM, todayLocal } from "@/lib/time";
 import { getAppointmentByCode } from "./booking";
 import { getShop, shopBarbers, shopCatalog } from "./catalog";
 import { notFound } from "./errors";
+import { shopPhotoUrl } from "./public-locations";
 
 export async function publicShops() {
   const [rows, hours, counts] = await Promise.all([
@@ -25,6 +26,7 @@ export function serializeShop(s: typeof shops.$inferSelect, hours: (typeof shopH
     slug: s.slug,
     name: s.name,
     address: s.address,
+    address2: s.address2,
     city: s.city,
     state: s.state,
     zip: s.zip,
@@ -50,7 +52,14 @@ export async function publicShop(ref: string) {
 export async function publicShopPage(ref: string) {
   const s = await getShop(ref);
   const shop = await publicShop(ref);
-  return { ...shop, closedNote: s.status === "closed" && !shop.bookingEnabled ? (s.closedNote ?? "This shop is temporarily closed.") : null, closedUntil: s.closedUntil, accentColor: s.accentColor, logoUrl: s.logoUrl };
+  const logo = await db.query.shopPhotos.findFirst({ where: and(eq(shopPhotos.shopId, s.id), eq(shopPhotos.kind, "logo")), columns: { id: true } });
+  return {
+    ...shop,
+    closedNote: s.status === "closed" && !shop.bookingEnabled ? (s.closedNote ?? "This shop is temporarily closed.") : null,
+    closedUntil: s.closedUntil,
+    accentColor: s.accentColor,
+    logoUrl: logo ? shopPhotoUrl("", s.slug, logo.id) : s.logoUrl,
+  };
 }
 
 export async function publicServices(ref: string) {

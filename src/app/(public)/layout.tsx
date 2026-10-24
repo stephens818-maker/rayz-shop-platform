@@ -10,6 +10,9 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
             <Logo dark />
           </Link>
           <nav className="flex items-center gap-1 text-sm">
+            <Link href="/locations" className="rounded-md px-3 py-1.5 text-zinc-300 hover:bg-white/10 hover:text-white">
+              Locations
+            </Link>
             <Link href="/account" className="rounded-md px-3 py-1.5 text-zinc-300 hover:bg-white/10 hover:text-white">
               My visits
             </Link>
