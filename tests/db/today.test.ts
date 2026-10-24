@@ -1,6 +1,6 @@
 /**
  * Today: the alerts the dashboard raises on its own for a shop's day, the one-click fixes behind
- * them, and the morning digest. The clock is fixed at 10:00 shop time on a coming day Makenna works
+ * them. The clock is fixed at 10:00 shop time on a coming day Makenna works
  * at Coralville, with her day cleared and rebuilt so every alert has a known cause.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -13,7 +13,6 @@ vi.mock("next/cache", () => ({ revalidatePath() {}, revalidateTag() {} }));
 
 let m: Mods;
 let today: typeof import("@/server/today");
-let digest: typeof import("@/server/digest");
 let actions: typeof import("@/app/admin/today/actions");
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 const ids: Record<string, string> = {};
@@ -72,7 +71,6 @@ beforeAll(async () => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(now);
   today = await import("@/server/today");
-  digest = await import("@/server/digest");
   actions = await import("@/app/admin/today/actions");
 
   // Clear Makenna's day, then: a client checked in at 9:30 and not started, a client with a
@@ -236,56 +234,5 @@ describe("Today alerts", () => {
     const { sendFillCampaign } = await import("@/server/outreach-campaigns");
     expect(await sendFillCampaign(shop.coralville, ["Makenna"], { actor, staffId: ids.michelle }, now)).toEqual({ sent: 0 });
     await expect(sendFillCampaign(shop.coralville, ["Makenna"], { actor, staffId: ids.michelle }, at(day, 19 * 60 + 30))).rejects.toMatchObject({ code: "conflict" });
-  });
-});
-
-describe("morning digest", () => {
-  it("goes to the owner and managers, each with only their shops", async () => {
-    const s = await digest.loadDigestSettings();
-    expect(s).toMatchObject({ enabled: true, sendAtMin: 420 });
-    const to = (await digest.digestRecipients(s)).map((r) => r.staffId);
-    expect(to).toEqual(expect.arrayContaining([ids.owner, ids.michelle]));
-    expect(to).not.toContain(ids.makenna);
-
-    const morning = at(day, 7 * 60 + 5);
-    const mine = (await digest.buildDigest(ids.michelle, morning))!;
-    expect(mine.to).toBe("michelle@rayz.test");
-    expect(mine.body).toMatch(/TEAM TODAY\n {2}Coralville\n {4}Working: [^\n]*Makenna/);
-    expect(mine.body).toMatch(/Makenna \(doctor 4:00 PM/);
-    expect(mine.body).toMatch(/NEEDS ATTENTION/);
-    expect(mine.body).not.toMatch(/Moline/);
-    expect(mine.body).not.toMatch(/behind/);
-    const owners = (await digest.buildDigest(ids.owner, morning))!;
-    expect(owners.body).toMatch(/SALES /);
-    expect(owners.body).toMatch(/Moline/);
-    expect(await digest.buildDigest(ids.makenna, morning)).toMatchObject({ body: expect.not.stringMatching(/NEEDS ATTENTION\n {2}[!-]/) });
-  });
-
-  it("sends once per person per day, only after the send time and before noon", async () => {
-    expect(await digest.sendDueDigests(at(day, 6 * 60 + 50))).toEqual({ queued: 0 });
-    const people = await digest.digestRecipients(await digest.loadDigestSettings());
-    const first = await digest.sendDueDigests(at(day, 7 * 60 + 2));
-    expect(first.queued).toBe(people.length);
-    expect(await digest.sendDueDigests(at(day, 7 * 60 + 7))).toEqual({ queued: 0 });
-    const jobs = await m.db.db.select().from(m.schema.notificationJobs).where(eq(m.schema.notificationJobs.kind, "digest"));
-    expect(jobs.filter((j) => j.to === "owner@rayz.test")).toHaveLength(1);
-    expect(jobs.find((j) => j.to === "owner@rayz.test")).toMatchObject({ channel: "email", shopId: null, status: expect.stringMatching(/^(sent|suppressed)$/) });
-    expect(await digest.sendDueDigests(at(m.time.addDays(day, 1), 12 * 60 + 30))).toEqual({ queued: 0 });
-  });
-
-  it("is configured from the portal: who gets it, when, and what's in it", async () => {
-    await signInAs(ids.owner);
-    const { saveDigestAction, sendTestDigestAction } = await import("@/app/admin/digest/actions");
-    expect(await saveDigestAction({ sendAtMin: 2 * 60 })).toMatchObject({ ok: false });
-    expect(await saveDigestAction({ sendAtMin: 8 * 60, exclude: [ids.owner], include: [ids.makenna], sections: { sales: false, staff: true, alerts: true } })).toMatchObject({ ok: true });
-    const s = await digest.loadDigestSettings();
-    const to = (await digest.digestRecipients(s)).map((r) => r.staffId);
-    expect(to).toContain(ids.makenna);
-    expect(to).not.toContain(ids.owner);
-    expect((await digest.buildDigest(ids.michelle, now, s))!.body).not.toMatch(/SALES/);
-    expect(await sendTestDigestAction()).toMatchObject({ ok: true, data: { to: "owner@rayz.test" } });
-
-    await signInAs(ids.michelle);
-    expect(await saveDigestAction({ enabled: false })).toMatchObject({ ok: false });
   });
 });

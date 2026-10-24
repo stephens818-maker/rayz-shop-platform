@@ -3,20 +3,20 @@
 import { revalidatePath } from "next/cache";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
-import { saveDigestSettings, sendTestDigest } from "@/server/digest";
+import { saveMorningSettings, sendTestMorningDashboard } from "@/server/morning-dashboard";
 
-export async function saveDigestAction(settings: unknown) {
+export async function saveMorningSettingsAction(settings: unknown) {
   return safe(async () => {
-    const ctx = await authorize("settings.lists", "You can't change the morning digest");
-    const r = await saveDigestSettings(settings, ctx.actor);
+    const ctx = await authorize("settings.lists", "You can't change the Morning Dashboard email");
+    const r = await saveMorningSettings(settings, ctx.actor);
     revalidatePath("/admin/digest");
     return r;
   });
 }
 
-export async function sendTestDigestAction() {
+export async function sendTestMorningAction() {
   return safe(async () => {
-    const ctx = await authorize("settings.lists", "You can't change the morning digest");
-    return sendTestDigest(ctx.staff.id);
+    const ctx = await authorize("settings.lists", "You can't change the Morning Dashboard email");
+    return sendTestMorningDashboard(ctx.staff.id);
   });
 }

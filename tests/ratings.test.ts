@@ -170,7 +170,7 @@ describe("client ratings never reach customers", () => {
     // Client list filters and marketing segments (run by the marketing cron) filter on a client's average rating; the stars are never selected.
     const segment = readFileSync(join(SRC, "server", "client-filters.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
     expect(segment).toEqual(["    const avg = sql`(select avg(r.stars) from client_ratings r where r.customer_id = c.id)`;"]);
-    // The permission catalog (reached by the cron's morning digest) names the ratings report, not the table.
+    // The permission catalog (reached by the cron's Morning Dashboard) names the ratings report, not the table.
     const catalog = readFileSync(join(SRC, "domain", "permissions.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
     expect(catalog).toEqual([`  { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },`]);
     const customers = readFileSync(join(SRC, "server", "customers.ts"), "utf8");

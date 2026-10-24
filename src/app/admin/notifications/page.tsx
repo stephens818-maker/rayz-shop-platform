@@ -45,7 +45,7 @@ const KIND_LABEL: Record<string, string> = {
   rebook_nudge: "Today: due to rebook",
   no_show_reminder: "Today: extra reminder",
   running_late: "Today: running late",
-  digest: "Morning digest",
+  digest: "Morning Dashboard",
   receipt: "Receipt",
   review_request: "Google review request",
   marketing: "Campaign Center",
