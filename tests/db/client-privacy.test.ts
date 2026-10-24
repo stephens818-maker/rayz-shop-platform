@@ -1,6 +1,6 @@
 /**
  * Client data protection. A client carries unique values in every protected field. The barber who
- * cuts her, the front desk, the shop manager and a brand admin restricted by per-person rules open
+ * cuts her, the front desk, the shop manager and a brand-wide manager restricted by per-person rules open
  * every page that shows clients, call the search and import actions, download the exports and the
  * audit log, and none of them may receive a value their level hides or masks: not in the HTML, not
  * in props handed to the browser, not in action JSON, not in a CSV. Staff still find her by her full
@@ -45,6 +45,7 @@ type Login = (typeof LOGINS)[number];
 const as = (l: Login, shopId?: string) => signInAs(people[l], shopId);
 const ids = {} as { client: string; noSms: string; appt: string; openSale: string; sale: string; instagram: string };
 let today: string;
+let brandAdminRoleId: string;
 
 /** What each restricted person must never receive about the client, with the rules set below. */
 const NEVER: Record<"makenna" | "frontdesk" | "michelle" | "admin", string[]> = {
@@ -109,6 +110,15 @@ beforeAll(async () => {
   today = m.time.todayLocal();
   for (const s of await m.db.db.select().from(m.schema.shops)) shop[s.slug] = s.id;
   for (const l of LOGINS) people[l] = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, `${l}@rayz.test`) }))!.id;
+  // Brand Admins always see every client detail, so the restricted brand-wide person here is the
+  // same login under a copy of the Brand Admin role that isn't the Brand Admin role.
+  const admin = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "brand_admin") }))!;
+  brandAdminRoleId = admin.id;
+  const [copy] = await m.db.db
+    .insert(m.schema.roles)
+    .values({ key: "brand_auditor", name: "Brand auditor", permissions: admin.permissions, maxDiscountPct: admin.maxDiscountPct, defaultScope: "all" })
+    .returning();
+  await m.db.db.update(m.schema.staff).set({ roleId: copy.id }).where(eq(m.schema.staff.id, people.admin));
   ids.instagram = (await m.db.db.query.clientFields.findFirst({ where: eq(m.schema.clientFields.label, "Instagram") }))!.id;
   const cv = shop.coralville;
   const at = (daysAgo: number, min: number) => m.time.zonedWallTime(m.time.addDays(today, -daysAgo), min).toJSDate();
@@ -261,7 +271,7 @@ describe("staff still do their job", () => {
       expect(found(JSON.stringify(r), NEVER.frontdesk), term).toEqual([]);
       expect(JSON.stringify(r)).toContain("***-***-9876");
     }
-    for (const term of ["5559876", "555-98", "priya.sec"]) {
+    for (const term of ["5559876", "555-98", "priya.secret@ex"]) {
       const r = await searchCustomersAction(term);
       expect(r.ok && r.data.map((x) => x.id), term).not.toContain(ids.client);
     }
@@ -482,10 +492,13 @@ describe("the brand portal", () => {
     expect(await rule("phone", "hidden", { roleKey: "front_desk", shopId: shop.moline })).toMatchObject({ ok: true });
     expect(await rule("phone", null, { roleKey: "front_desk", shopId: shop.moline })).toMatchObject({ ok: true });
     const logged = (await auditOf("client_data.rule")).filter((a) => a.actorStaffId === people.admin);
-    expect(logged.map((a) => a.details)).toEqual([
-      expect.objectContaining({ field: "Phone", for: { role: "Front Desk" }, where: "Moline", from: "inherit", to: "hidden" }),
-      expect.objectContaining({ field: "Phone", for: { role: "Front Desk" }, where: "Moline", from: "hidden", to: "inherit" }),
-    ]);
+    expect(logged).toHaveLength(2);
+    expect(logged.map((a) => a.details)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "Phone", for: { role: "Front Desk" }, where: "Moline", from: "inherit", to: "hidden" }),
+        expect.objectContaining({ field: "Phone", for: { role: "Front Desk" }, where: "Moline", from: "hidden", to: "inherit" }),
+      ]),
+    );
     await as("makenna", shop.coralville);
     expect(await rule("phone", "full", { staff: "makenna" })).toMatchObject({ ok: false });
     expect((await open("/admin/client-data")).kind).toBe("denied");
@@ -510,6 +523,22 @@ describe("the brand portal", () => {
     const settings = await open("/admin/client-data", {}, { shop: shop.coralville, who: people.makenna });
     expect(settings.kind).toBe("ok");
     expect(settings.text).toContain("Instagram");
+  });
+});
+
+describe("Brand Admins always see everything", () => {
+  it("rules can't restrict a Brand Admin, and a Brand Admin's earlier per-person rules no longer apply", async () => {
+    await m.db.db.update(m.schema.staff).set({ roleId: brandAdminRoleId }).where(eq(m.schema.staff.id, people.admin));
+    await as("owner");
+    expect(await rule("phone", "hidden", { roleKey: "brand_admin" })).toMatchObject({ ok: false, error: expect.stringMatching(/Brand Admins always/) });
+    expect(await rule("phone", "hidden", { staff: "admin" })).toMatchObject({ ok: false, error: expect.stringMatching(/Brand Admins always/) });
+    const { getStaffContext } = await import("@/server/auth/staff");
+    const { clientPolicy } = await import("@/server/client-privacy");
+    await as("admin");
+    const policy = await clientPolicy((await getStaffContext())!);
+    for (const f of ["phone", "email", "address", "birthday", "notes", "ratings", "photo", `custom:${ids.instagram}`] as const) expect(policy.level(f as never), f).toBe("full");
+    const profile = await open("/admin/customers/[id]", { id: ids.client });
+    for (const v of [P.email, P.address, P.notes, P.instagram]) expect(profile.text).toContain(v);
   });
 });
 

@@ -4,29 +4,37 @@ import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm
 import { db } from "@/db";
 import { clientRatings, customers, loyaltyAccounts, shops } from "@/db/schema";
 import { Card, Empty, LinkButton, Notice, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
-import { CLIENT_SORTS, RATING_FILTERS, parseClientSort, parseRatingFilter } from "@/domain/ratings";
+import { EMPTY_SEGMENT } from "@/domain/marketing";
+import { parseClientSort, parseRatingFilter } from "@/domain/ratings";
 import { formatCents } from "@/lib/money";
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
-import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, searchReach } from "@/server/client-privacy";
-import { clientSearchScope, scopedSearchWhere, shopClientsScope, visitedScope } from "@/server/customers";
+import { filterOptions, panelSees } from "@/server/client-filters";
+import { clientListQuery } from "@/server/client-list";
+import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess } from "@/server/client-privacy";
+import { listSavedSearches } from "@/server/saved-searches";
+import { ClientListControls } from "./list-controls";
 import { NoCopy } from "./privacy";
 
 export const metadata: Metadata = { title: "Clients" };
 
 const PAGE = 50;
 
-export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string; rating?: string; sort?: string }> }) {
+export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; f?: string; page?: string; rating?: string; sort?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/customers");
   const full = can(ctx, "clients.view_all");
-  const q = (sp.q ?? "").trim();
+  const q = (sp.q ?? "").trim().slice(0, 120);
   const page = Math.max(1, Number(sp.page) || 1);
   const scoped = !ctx.brandWide;
   const policy = await clientPolicy(ctx);
+  const filters = can(ctx, "clients.filters");
   let paused = false;
   try {
-    await recordClientAccess(ctx, { kind: q ? "search" : "list", detail: { page, ...(q ? { q: q.replace(/\d/g, "#").replace(/@.*/, "@…") } : {}) } });
+    await recordClientAccess(ctx, {
+      kind: q ? "search" : "list",
+      detail: { page, via: "clients", ...(q ? { q: q.replace(/\d/g, "#").replace(/@.*/, "@…") } : {}), ...(sp.f && filters ? { filtered: true } : {}) },
+    });
   } catch (e) {
     if (!isPaused(e)) throw e;
     paused = true;
@@ -34,7 +42,10 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
   const showEmail = policy.level("email") !== "hidden";
   const showPhone = policy.level("phone") !== "hidden";
   const showRating = policy.level("ratings") !== "hidden";
-  const search = scopedSearchWhere(q, clientSearchScope(ctx, full), searchReach(policy));
+  const list = paused ? null : await clientListQuery(ctx, policy, { q, f: sp.f });
+  const seg = list?.seg ?? EMPTY_SEGMENT;
+  const sees = panelSees(ctx, policy);
+  const [options, saved] = await Promise.all([filters ? filterOptions(ctx, policy) : null, can(ctx, "clients.saved_searches") || filters ? listSavedSearches(ctx) : []]);
   const ratingFilter = parseRatingFilter(sp.rating);
   const sort = parseClientSort(sp.sort);
   const r = db
@@ -44,22 +55,11 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
     .as("r");
   const byRating = { rated: isNotNull(r.count), low: lt(r.avg, 3), high: gte(r.avg, 4), unrated: isNull(r.count) };
   const order = {
-    recent: [desc(customers.createdAt)],
+    recent: list?.relevance ? [sql`${list.relevance} asc nulls last`, desc(customers.createdAt)] : [desc(customers.createdAt)],
     rating_desc: [sql`${r.avg} desc nulls last`, desc(r.count), desc(customers.createdAt)],
     rating_asc: [sql`${r.avg} asc nulls last`, desc(r.count), asc(customers.createdAt)],
   }[sort];
-  // Barbers: clients they've cut. Otherwise a shop's own clients (home shop or any visit there),
-  // and when searching, anyone the search reaches: see clientSearchScope.
-  const scope = !full
-    ? visitedScope({ staffId: ctx.staff.id })
-    : search
-      ? undefined
-      : ctx.currentShopId
-        ? shopClientsScope([ctx.currentShopId])
-        : scoped
-          ? shopClientsScope(ctx.shopIds)
-          : undefined;
-  const rows = paused
+  const rows = !list
     ? []
     : await db
         .select({
@@ -75,24 +75,30 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         .leftJoin(shops, eq(shops.id, customers.homeShopId))
         .leftJoin(loyaltyAccounts, eq(loyaltyAccounts.customerId, customers.id))
         .leftJoin(r, eq(r.customerId, customers.id))
-        .where(and(search, scope, ratingFilter ? byRating[ratingFilter] : undefined))
+        .where(and(list.where, ratingFilter ? byRating[ratingFilter] : undefined))
         .orderBy(...order)
         .limit(PAGE)
         .offset((page - 1) * PAGE);
   const pageHref = (n: number) => {
     const qs = new URLSearchParams({ page: String(n) });
     if (q) qs.set("q", q);
+    if (sp.f && seg !== EMPTY_SEGMENT) qs.set("f", sp.f);
     if (ratingFilter) qs.set("rating", ratingFilter);
     if (sort !== "recent") qs.set("sort", sort);
     return `/admin/customers?${qs}`;
   };
+  const matched = (id: string) =>
+    list?.matched
+      .get(id)
+      ?.filter((m) => m !== "Name")
+      .join(", ") || null;
   const shopName = ctx.shops.find((s) => s.id === ctx.currentShopId)?.name;
   const yours = shopName ?? (ctx.shops.length === 1 ? ctx.shops[0].name : "Your shops'");
   const subtitle = !full
     ? "Clients you've had in your chair."
     : scoped
       ? q
-        ? `${yours} clients matching your search, plus any Ray'z client whose exact phone, email or full name you entered. Visits count every Ray'z shop.`
+        ? `${yours} clients matching your search, plus any Ray'z client whose exact phone, email, full name, card or code you entered. Visits count every Ray'z shop.`
         : `${yours} clients (home shop or a visit here). To book a client from another Ray'z shop, search their exact phone, email or full name.`
       : q
         ? "Searching every Ray'z shop. Clients and loyalty are shared across shops."
@@ -113,35 +119,25 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   Duplicates
                 </LinkButton>
               )}
-              {can(ctx, "clients.export") && (
-                <LinkButton variant="secondary" href="/admin/customers/export">
-                  Export
-                </LinkButton>
-              )}
               {can(ctx, "clients.edit") && <LinkButton href="/admin/customers/new">New client</LinkButton>}
             </div>
           )
         }
       />
-      <form className="mb-4 flex flex-wrap gap-2" action="/admin/customers">
-        <input name="q" defaultValue={q} placeholder="Search name, phone or email" className="h-10 w-full max-w-md rounded-lg px-3 text-sm ring-1 ring-zinc-300" autoFocus />
-        <select name="rating" defaultValue={ratingFilter ?? ""} aria-label="Filter by staff rating" className="h-10 rounded-lg px-2 text-sm ring-1 ring-zinc-300">
-          <option value="">Any rating</option>
-          {Object.entries(RATING_FILTERS).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v}
-            </option>
-          ))}
-        </select>
-        <select name="sort" defaultValue={sort} aria-label="Sort" className="h-10 rounded-lg px-2 text-sm ring-1 ring-zinc-300">
-          {Object.entries(CLIENT_SORTS).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v}
-            </option>
-          ))}
-        </select>
-        <button className="h-10 rounded-lg bg-ink-900 px-4 text-sm font-medium text-white">Search</button>
-      </form>
+      <ClientListControls
+        q={q}
+        seg={seg}
+        rating={ratingFilter}
+        sort={sort}
+        options={options}
+        sees={sees}
+        saved={saved}
+        maySave={can(ctx, "clients.saved_searches")}
+        share={{ shop: !!(ctx.currentShopId ?? (ctx.shopIds.length === 1 ? ctx.shopIds[0] : null)), brand: ctx.brandWide }}
+        mayExport={full && can(ctx, "clients.export")}
+        mayBlast={can(ctx, "campaign_center.create")}
+      />
+      {list?.problem && <Notice tone="amber">{list.problem}. Showing the list without filters.</Notice>}
       {paused ? (
         <Notice>{PAUSED_MESSAGE}</Notice>
       ) : rows.length === 0 ? (
@@ -169,6 +165,9 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                       <Link className="font-medium hover:underline" href={`/admin/customers/${c.id}`}>
                         {c.firstName} {c.lastName}
                       </Link>
+                      {c.nickname && <span className="ml-1.5 text-zinc-500">&ldquo;{c.nickname}&rdquo;</span>}
+                      <span className="ml-1.5 font-mono text-[11px] text-zinc-400">C{c.number}</span>
+                      {matched(c.id) && <div className="text-[11px] text-brand-700">Matched {matched(c.id)}</div>}
                     </Td>
                     {showPhone && <Td className="whitespace-nowrap">{policy.show("phone", c.phone) ?? "—"}</Td>}
                     {showEmail && <Td className="text-zinc-600">{policy.show("email", c.email) ?? "—"}</Td>}

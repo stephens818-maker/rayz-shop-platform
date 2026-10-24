@@ -3,7 +3,8 @@
  * finding clients and for messaging them. These are the pure helpers around them.
  */
 import { DateTime } from "luxon";
-import { EMPTY_SEGMENT, SegmentSchema, type Segment } from "./marketing";
+import type { Level } from "./client-privacy";
+import { EMPTY_SEGMENT, SegmentSchema, type FilterSees, type Segment } from "./marketing";
 
 /** "MM-DD" of every day from today through `days` days out; Feb 29 birthdays count on Feb 28 in other years. */
 export function upcomingBirthdayKeys(today: string, days: number): string[] {
@@ -46,3 +47,33 @@ export function decodeFilter(raw: string | null | undefined): Segment {
     return EMPTY_SEGMENT;
   }
 }
+
+export interface FilterOptions {
+  shops: Option[];
+  barbers: Option[];
+  items: Option[];
+  tags: string[];
+  promos: Option[];
+  campaigns: Option[];
+  sources: string[];
+  customFields: Option[];
+}
+
+type Option = { id: string; name: string };
+
+/** What the filter panel may offer, from the person's levels: see segmentProblem. */
+export interface PanelSees {
+  levels: Record<string, Level>;
+  /** Spend, tips and gift cards: people with every client. */
+  money: boolean;
+}
+
+/** segmentProblem's view of a person. */
+export const filterSees = (s: PanelSees): FilterSees => ({
+  birthday: s.levels.birthday !== "hidden",
+  ratings: s.levels.ratings !== "hidden",
+  preferredBarber: s.levels.preferred_barber !== "hidden",
+  level: (f) => s.levels[f] ?? "hidden",
+  money: s.money,
+});
+

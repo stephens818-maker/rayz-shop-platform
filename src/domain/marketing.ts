@@ -595,6 +595,9 @@ export const SegmentSchema = z.object({
 export type Segment = z.infer<typeof SegmentSchema>;
 export const EMPTY_SEGMENT: Segment = SegmentSchema.parse({});
 
+/** Every location a segment names, for the tenant check. */
+export const segmentShopIds = (s: Segment): string[] => [...new Set([...s.shopIds, ...s.homeShopIds, ...s.visitedShopIds, ...(s.near ? [s.near.shopId] : [])])];
+
 /** How many filters are set: the "Filters (3)" badge. */
 export function filterCount(s: Segment): number {
   let n = 0;

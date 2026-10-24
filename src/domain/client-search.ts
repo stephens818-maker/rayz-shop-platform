@@ -204,8 +204,8 @@ const PREFIXES: Record<string, (v: string) => Probe[]> = {
   bday: (v) => dateProbes(v),
 };
 
-function dateProbes(t: string): Probe[] {
-  const iso = parseDate(t);
+function dateProbes(t: string, today = new Date()): Probe[] {
+  const iso = parseDate(t, today);
   if (iso) return [{ kind: "birthday", iso }];
   const md = /^(\d{1,2})[/.-](\d{1,2})$/.exec(t.trim());
   if (md) {
@@ -247,7 +247,7 @@ export function parseSearch(raw: string, today = new Date()): Probe[] {
     out.push({ kind: "email_part", text: t.toLowerCase() });
     return out;
   }
-  const dates = dateProbes(t);
+  const dates = dateProbes(t, today);
   if (dates.length) return dates;
 
   if (/^[\d\s().+-]+$/.test(t)) {

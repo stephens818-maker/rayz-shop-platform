@@ -2,12 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { Chips, ItemPicker, toggle } from "@/components/chips";
+import { Chips, toggle } from "@/components/chips";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, cx } from "@/components/ui";
 import { CHANNELS, CHANNEL_LABEL, Channel, EMPTY_SEGMENT, STOP_LINE, Segment, Templates } from "@/domain/marketing";
 import { formatDateTime } from "@/lib/time";
 import { cancelBlastAction, previewBlastAction, saveBlastAction, scheduleBlastAction } from "../../actions";
-import { BarberFilter, LastVisitFilter } from "../../segment-fields";
+import { SegmentFilters } from "@/components/segment-filters";
+import type { FilterOptions, PanelSees } from "@/domain/client-filters";
 import { ChannelOrder, TemplateFields } from "../../template-fields";
 import { TestSend } from "../../test-send";
 
@@ -34,12 +35,6 @@ const NEW_TEMPLATES: Templates = {
   pushTitle: "{shop}",
   pushBody: "",
 };
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-const num = (s: string) => (s.trim() === "" || !Number.isFinite(Number(s)) ? null : Math.max(0, Math.round(Number(s))));
-const cents = (s: string) => (s.trim() === "" || !Number.isFinite(Number(s)) ? null : Math.max(0, Math.round(Number(s) * 100)));
-const dollars = (c: number | null) => (c === null ? "" : String(c / 100));
-const str = (n: number | null) => (n === null ? "" : String(n));
 const localInput = (iso: string | null) => {
   const d = iso ? new Date(iso) : new Date(Date.now() + 3_600_000);
   return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
@@ -55,10 +50,10 @@ export function BlastEditor(p: {
   maySend: boolean;
   everyLocation: boolean;
   shops: Option[];
-  barbers: Option[];
-  items: Option[];
-  tags: string[];
-  sees: { birthday: boolean; ratings: boolean; preferredBarber: boolean };
+  options: FilterOptions;
+  sees: PanelSees;
+  /** A new blast from a client list search: its filters. */
+  initialSegment?: Segment;
   coupons: { id: string; code: string; summary: string; unique: boolean }[];
   address: string;
 }) {
@@ -72,7 +67,7 @@ export function BlastEditor(p: {
   const [channels, setChannels] = useState<Channel[]>(p.blast?.channels ?? ["sms", "email", "push"]);
   const [templates, setTemplates] = useState<Templates>(p.blast?.templates ?? { ...NEW_TEMPLATES, sms: `${NEW_TEMPLATES.sms} Book: {book_link} ${STOP_LINE}` });
   const [promoId, setPromoId] = useState(p.blast?.promoId ?? null);
-  const [seg, setSeg] = useState<Segment>(p.blast?.segment ?? EMPTY_SEGMENT);
+  const [seg, setSeg] = useState<Segment>(p.blast?.segment ?? p.initialSegment ?? EMPTY_SEGMENT);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [counting, setCounting] = useState(false);
   const asked = useRef(0);
@@ -180,63 +175,7 @@ export function BlastEditor(p: {
               onToggle={(x) => setShopIds(x === "" ? [] : toggle(shopIds, x))}
             />
           </Field>
-          <LastVisitFilter seg={seg} disabled={ro} onChange={s} />
-          <BarberFilter seg={seg} barbers={p.barbers} disabled={ro} seesPreferred={p.sees.preferredBarber} onChange={s} />
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Visits, at least">
-              <Input inputMode="numeric" disabled={ro} value={str(seg.minVisits)} onChange={(e) => s({ minVisits: num(e.target.value) })} />
-            </Field>
-            <Field label="Visits, at most">
-              <Input inputMode="numeric" disabled={ro} value={str(seg.maxVisits)} onChange={(e) => s({ maxVisits: num(e.target.value) })} />
-            </Field>
-            <Field label="Spent, at least ($)">
-              <Input inputMode="decimal" disabled={ro} value={dollars(seg.minSpendCents)} onChange={(e) => s({ minSpendCents: cents(e.target.value) })} />
-            </Field>
-            <Field label="Spent, at most ($)">
-              <Input inputMode="decimal" disabled={ro} value={dollars(seg.maxSpendCents)} onChange={(e) => s({ maxSpendCents: cents(e.target.value) })} />
-            </Field>
-            <Field label="Loyalty rewards, at least ($)">
-              <Input inputMode="decimal" disabled={ro} value={dollars(seg.minLoyaltyCents)} onChange={(e) => s({ minLoyaltyCents: cents(e.target.value) })} />
-            </Field>
-            <Field label="Agreed to">
-              <Select disabled={ro} value={seg.channel} onChange={(e) => s({ channel: e.target.value as Segment["channel"] })}>
-                <option value="any">Any channel</option>
-                {CHANNELS.map((c) => (
-                  <option key={c} value={c}>
-                    {CHANNEL_LABEL[c]} only
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {p.sees.ratings && (
-              <>
-                <Field label="Rating, at least (1–5)">
-                  <Input inputMode="decimal" disabled={ro} value={seg.minRating ?? ""} onChange={(e) => s({ minRating: e.target.value ? Math.min(5, Math.max(1, Number(e.target.value))) : null })} />
-                </Field>
-                <Field label="Rating, at most (1–5)">
-                  <Input inputMode="decimal" disabled={ro} value={seg.maxRating ?? ""} onChange={(e) => s({ maxRating: e.target.value ? Math.min(5, Math.max(1, Number(e.target.value))) : null })} />
-                </Field>
-              </>
-            )}
-          </div>
-          {p.sees.birthday && (
-            <Field label="Birthday in">
-              <Chips
-                disabled={ro}
-                options={MONTHS.map((m, i) => ({ id: String(i + 1), name: m }))}
-                selected={seg.birthdayMonths.map(String)}
-                onToggle={(x) => s({ birthdayMonths: toggle(seg.birthdayMonths, Number(x)).sort((a, b) => a - b) })}
-              />
-            </Field>
-          )}
-          <Field label="Had any of these services or products">
-            <ItemPicker disabled={ro} placeholder="Search services and products" options={p.items} selected={seg.serviceIds} onChange={(serviceIds) => s({ serviceIds })} />
-          </Field>
-          {p.tags.length > 0 && (
-            <Field label="Tagged">
-              <Chips disabled={ro} options={p.tags.map((t) => ({ id: t, name: t }))} selected={seg.tags} onToggle={(x) => s({ tags: toggle(seg.tags, x) })} />
-            </Field>
-          )}
+          <SegmentFilters seg={seg} onChange={s} options={p.options} sees={p.sees} disabled={ro} campaign />
           <div className="flex flex-wrap items-center gap-3 rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200" data-testid="blast-preview" aria-live="polite">
             {!canCount ? (
               <span className="text-sm text-zinc-500">Counts only, for people who create or send. Contact details never show here.</span>

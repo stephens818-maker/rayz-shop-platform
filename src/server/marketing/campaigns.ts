@@ -21,6 +21,7 @@ import {
   isTriggerKey,
   pickChannel,
   segmentProblem,
+  segmentShopIds,
   templatesProblem,
   triggerSettings,
 } from "@/domain/marketing";
@@ -292,7 +293,7 @@ export async function segmentSees(ctx: StaffContext) {
 export async function checkSegment(ctx: StaffContext, seg: Segment) {
   const problem = segmentProblem(seg, await segmentSees(ctx));
   if (problem) throw new AppError("bad_request", problem);
-  for (const s of seg.shopIds) if (!ctx.brandWide) assertShopAccess(ctx, s);
+  for (const s of segmentShopIds(seg)) if (!ctx.brandWide) assertShopAccess(ctx, s);
 }
 
 export async function saveBlast(ctx: StaffContext, input: unknown): Promise<string> {

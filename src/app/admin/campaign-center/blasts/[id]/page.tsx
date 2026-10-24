@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { products, services, staff, staffShops } from "@/db/schema";
 import { PageHeader } from "@/components/ui";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
+import { decodeFilter } from "@/domain/client-filters";
 import { clientPolicy } from "@/server/client-privacy";
+import { filterOptions, panelSees } from "@/server/client-filters";
 import { couponOptions, listBlasts } from "@/server/marketing/campaigns";
 import { loadMarketingSettings } from "@/server/marketing/settings";
 import { inTenant } from "@/server/tenant";
@@ -16,40 +15,18 @@ import { BlastEditor } from "./editor";
 export const metadata: Metadata = { title: "Blast" };
 export const dynamic = "force-dynamic";
 
-export default async function BlastPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string }> }) {
   const ctx = await guardPage("/admin/campaign-center/blasts/[id]");
   const { id } = await params;
+  const sp = await searchParams;
   const mayCreate = can(ctx, "campaign_center.create");
   const maySend = can(ctx, "campaign_center.send");
   const blast = id === "new" || !(await inTenant(ctx, "marketing_campaign", id)) ? null : ((await listBlasts(ctx)).find((b) => b.id === id) ?? null);
   if (id === "new" ? !mayCreate : !blast) notFound();
   const shops = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
-  const shopIds = shops.map((s) => s.id);
-  const [policy, settings, coupons, barbers, serviceRows, productRows, tagRows] = await Promise.all([
-    clientPolicy(ctx),
-    loadMarketingSettings(),
-    couponOptions(todayLocal()),
-    shopIds.length
-      ? db
-          .selectDistinct({ id: staff.id, name: staff.displayLabel })
-          .from(staff)
-          .innerJoin(staffShops, eq(staffShops.staffId, staff.id))
-          .where(and(eq(staff.active, true), inArray(staffShops.shopId, shopIds)))
-          .orderBy(asc(staff.displayLabel))
-      : [],
-    db.select({ id: services.id, name: services.name }).from(services).where(eq(services.active, true)).orderBy(asc(services.name)),
-    db.select({ id: products.id, name: products.name, brand: products.brand }).from(products).where(eq(products.active, true)).orderBy(asc(products.brand), asc(products.name)).limit(300),
-    db.execute(
-      ctx.brandWide
-        ? sql`select distinct tag from customer_tags order by tag limit 200`
-        : shopIds.length
-          ? sql`select distinct t.tag from customer_tags t join customers c on c.id = t.customer_id where c.home_shop_id in (${sql.join(
-              shopIds.map((s) => sql`${s}::uuid`),
-              sql`, `,
-            )}) order by t.tag limit 200`
-          : sql`select null::text tag where false`,
-    ) as unknown as Promise<{ tag: string }[]>,
-  ]);
+  const policy = await clientPolicy(ctx);
+  const [settings, coupons, options] = await Promise.all([loadMarketingSettings(), couponOptions(todayLocal()), filterOptions(ctx, policy)]);
+  const initial = id === "new" && sp.f ? decodeFilter(sp.f) : undefined;
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
@@ -84,10 +61,9 @@ export default async function BlastPage({ params }: { params: Promise<{ id: stri
         maySend={maySend}
         everyLocation={ctx.brandWide && mayCreate}
         shops={shops}
-        barbers={barbers}
-        items={[...serviceRows.map((s) => ({ id: s.id, name: s.name })), ...productRows.map((p) => ({ id: p.id, name: `${p.brand} ${p.name}` }))]}
-        tags={tagRows.map((t) => t.tag)}
-        sees={{ birthday: policy.level("birthday") !== "hidden", ratings: policy.level("ratings") !== "hidden", preferredBarber: policy.level("preferred_barber") !== "hidden" }}
+        options={options}
+        sees={panelSees(ctx, policy)}
+        initialSegment={initial}
         coupons={coupons}
         address={settings.address}
       />

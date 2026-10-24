@@ -13,6 +13,7 @@ import { audit } from "@/server/audit";
 import { StaffContext, authorize, can, requireStaff } from "@/server/auth/staff";
 import { contactClient } from "@/server/client-contact";
 import { searchClients } from "@/server/client-search";
+import { deleteSearch, saveSearch } from "@/server/saved-searches";
 import { ClientPolicy, clientPolicy, displayFull, entered, recordClientAccess, shownField } from "@/server/client-privacy";
 import { customerAccess, findOrCreateCustomer, matchCustomer, mergeCustomers } from "@/server/customers";
 import { AppError, forbidden } from "@/server/errors";
@@ -294,5 +295,22 @@ export async function setClientTagsAction(customerId: string, raw: string[]) {
     });
     revalidatePath(`/admin/customers/${customerId}`);
     return null;
+  });
+}
+
+export async function saveClientSearchAction(input: unknown) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    const id = await saveSearch(ctx, input);
+    revalidatePath("/admin/customers");
+    return { id };
+  });
+}
+
+export async function deleteClientSearchAction(id: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await deleteSearch(ctx, z.uuid().parse(id));
+    revalidatePath("/admin/customers");
   });
 }

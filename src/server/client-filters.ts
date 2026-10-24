@@ -1,9 +1,15 @@
 import "server-only";
 import { DateTime } from "luxon";
-import { sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { db } from "@/db";
+import { marketingCampaigns, products, promoCodes, services, staff, staffShops } from "@/db/schema";
+import { BUILTIN_FIELDS, type FieldKey, type Level } from "@/domain/client-privacy";
 import { EMPTY_SEGMENT, FILTER_FIELDS, type FilterField, type Segment } from "@/domain/marketing";
-import { upcomingBirthdayKeys } from "@/domain/client-filters";
+import { upcomingBirthdayKeys, type FilterOptions, type PanelSees } from "@/domain/client-filters";
 import { SHOP_TZ, endOfLocalDay, startOfLocalDay, todayLocal } from "@/lib/time";
+import { can, openShops, type StaffContext } from "./auth/staff";
+import type { ClientPolicy } from "./client-privacy";
+import { lookups } from "./lookups";
 import { consentColumns } from "./marketing/consent";
 
 const DAY = 86_400_000;
@@ -183,6 +189,51 @@ export async function segmentConditions(seg: Segment, now: Date): Promise<SQL[]>
   for (const f of seg.fieldsSet) add(fieldSet(f as FilterField));
   for (const f of seg.fieldsEmpty) add(sql`not (${fieldSet(f as FilterField)})`);
   return where;
+}
+
+/** What the filter panel offers this person: their locations, barbers, tags, and the brand's catalog, coupons and campaigns. */
+export async function filterOptions(ctx: StaffContext, policy: ClientPolicy): Promise<FilterOptions> {
+  const shopList = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
+  const shopIds = shopList.map((s) => s.id);
+  const [barbers, serviceRows, productRows, tagRows, promos, campaigns, lists] = await Promise.all([
+    shopIds.length
+      ? db
+          .selectDistinct({ id: staff.id, name: staff.displayLabel })
+          .from(staff)
+          .innerJoin(staffShops, eq(staffShops.staffId, staff.id))
+          .where(and(eq(staff.active, true), inArray(staffShops.shopId, shopIds)))
+          .orderBy(asc(staff.displayLabel))
+      : [],
+    db.select({ id: services.id, name: services.name }).from(services).where(eq(services.active, true)).orderBy(asc(services.name)),
+    db.select({ id: products.id, name: products.name, brand: products.brand }).from(products).where(eq(products.active, true)).orderBy(asc(products.brand), asc(products.name)).limit(300),
+    db.execute(
+      ctx.brandWide
+        ? sql`select distinct tag from customer_tags order by tag limit 200`
+        : shopIds.length
+          ? sql`select distinct t.tag from customer_tags t join customers c on c.id = t.customer_id where c.home_shop_id in ${uuids(shopIds)} order by t.tag limit 200`
+          : sql`select null::text tag where false`,
+    ) as unknown as Promise<{ tag: string }[]>,
+    db.select({ id: promoCodes.id, name: promoCodes.code }).from(promoCodes).orderBy(asc(promoCodes.code)).limit(300),
+    db.select({ id: marketingCampaigns.id, name: marketingCampaigns.name }).from(marketingCampaigns).orderBy(desc(marketingCampaigns.createdAt)).limit(200),
+    lookups(),
+  ]);
+  return {
+    shops: shopList,
+    barbers,
+    items: [...serviceRows, ...productRows.map((p) => ({ id: p.id, name: `${p.brand} ${p.name}` }))],
+    tags: tagRows.map((t) => t.tag),
+    promos,
+    campaigns,
+    sources: [...lists.clientSources],
+    customFields: policy.custom.filter((f) => policy.level(`custom:${f.id}` as FieldKey) !== "hidden").map((f) => ({ id: f.id, name: f.label })),
+  };
+}
+
+export function panelSees(ctx: StaffContext, policy: ClientPolicy): PanelSees {
+  const levels: Record<string, Level> = {};
+  for (const f of BUILTIN_FIELDS) levels[f.key] = policy.level(f.key);
+  for (const f of policy.custom) levels[`custom:${f.id}`] = policy.level(`custom:${f.id}` as FieldKey);
+  return { levels, money: can(ctx, "clients.view_all") };
 }
 
 /** Does the segment filter anything beyond its locations? */
