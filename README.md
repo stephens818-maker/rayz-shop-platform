@@ -1475,6 +1475,52 @@ A parent or guardian's profile can have child profiles, up to the brand's limit 
 - **Migration:** `core_0054_family_accounts`.
 - **Tests:** `tests/family.test.ts` covers the settings, ages, seating, who-it's-for selection, grouping search results into families, the Squire family plan, badges, filters, report fields and the OpenAPI paths. `tests/db/family.test.ts` covers the limit and the contact guard, the parent's contact, family booking, the family ticket and tip split, both loyalty modes with a void, the kids KPI, the has-kids filter, child-name search, a phone lookup listing the kids under the masked phone, Squire links, attach and merge guards, own account, badges and the endpoints.
 
+### Family booking groups
+
+A parent online or in the app, or the desk, books the parent and up to 6 children in one booking. Each person has their own service and add-ons and, optionally, a barber they asked for. Domain (pure): `src/domain/booking-group.ts`. Server: `src/server/booking-groups.ts`.
+
+- **The slot finder** (`groupOptions`) offers three plans for the day, up to 3 options each, and says why when a plan has none:
+  - **Back to back, same barber:** one barber takes everyone in turn, with no more than 30 minutes idle between people.
+  - **At the same time, several barbers:** everyone starts together, or within 15 minutes when barbers' grids differ. Each barber takes one person (a bipartite matching).
+  - **Mixed, everyone done soonest:** any combination that finishes the whole group first.
+
+  Every option shows the total window, from the first start to the last finish, and who sits where. A barber's seats never touch each other's prep, cleanup and gap, the same rule the database's exclusion constraints enforce. Seven people with seven barbers plan in a few milliseconds.
+- **Where it shows:**
+  - **Online** (`/book`), picking two or more people replaces "same time or right after" with the finder for the chosen day, from the time picked.
+  - **On the calendar**, the new-booking panel's **Find times** button does the same for the desk, with the desk's view of openings.
+  - **The app** uses `POST /me/family/booking-options`.
+- **One booking group, all or nothing.** Everyone is created in one transaction, linked by `appointments.group_id` to a `booking_groups` row. When a seat is taken mid-checkout nobody is booked. A named plan is retried once at the same times with another barber for anyone who didn't ask for one. Otherwise the answer is a 409 with the day's `alternatives`, which the wizard, the calendar and the app show in place. Two families racing for the same seats: exactly one gets them, the other has nothing. The same request sent twice with one `Idempotency-Key` books once.
+- **One set of messages.** There's one confirmation, one 24h and 2h reminder pair and one cancel or reschedule text for the group. They go to the parent and name everyone ("Ray (Dana, Milo) and Jess (Ava)", "everyone done by 4:45"). They sit on the first person's appointment and move to the next one if that person is cancelled alone.
+- **One link: `/g/{code}`.** It shows everyone's times, barbers and services, the total window and the deposit. **Move everyone** picks a day and an option from the finder, and the move happens in one go. Seats inside the group's own time count as free, so people can swap. **Cancel everyone** closes at the shop's cutoff before the first person's time. Each person keeps their `/a/{code}` link to change just themselves, and that page links back to the group. The parent's account lists upcoming family bookings.
+- **At the shop.** The calendar marks grouped appointments with a link icon, in both the day and week views. The appointment panel has a family booking box:
+  - **Check in all** for everyone at once;
+  - **One ticket**, the parent's, with each person's services tagged to their barber so the tip splits per barber;
+  - **A ticket each**;
+  - **No-show** for everyone not yet arrived;
+  - **Cancel all**;
+  - **Take deposit**.
+
+  Family walk-ins seated together are linked into a group too.
+- **Deposits and no-shows, per group** (Shop settings → Family accounts):
+  - A deposit for groups of at least N people, 0 for none.
+  - Whether a whole-group no-show or a late cancel keeps it.
+
+  The desk takes it on a ticket, and it's held as credit: a gift card with source `deposit`. Checkout for anyone in the group offers **Apply deposit**. A whole-group no-show, or a late cancel when the brand keeps deposits, forfeits it once for the group. Cancelling in time leaves it due back, and a deposit never taken is waived. Taking a deposit online waits on the app's saved-card flow.
+- **Reports** count each child's cut on its own (Kids' cuts, Kids seen), whether they paid on one ticket or apart.
+- **API:** `POST /me/family/booking-options`, `POST|GET /me/family/booking-groups`, `GET …/{code}`, `POST …/{code}/cancel`, `POST …/{code}/options` and `POST …/{code}/reschedule`, all in `FAMILY_OPENAPI`. The web uses them at `/api/account/family/...`; the app's `/api/v1` routes are the mobile agent's to mount (see NOTES-SYNC).
+- **Migration:** `core_0055_booking_groups`.
+- **Tests:** `tests/booking-group.test.ts` covers the three planners, holds and gaps, `after`, overlapping starts, the 7-person performance, reasons, the window, same-times retry, the deposit rule and the schemas. `tests/db/booking-groups.test.ts` covers:
+  - options, and one confirmation set;
+  - a taken seat booking nobody, with alternatives, and the same-times retry;
+  - two families racing, and an idempotent double send;
+  - reminders moving when the first person is cancelled;
+  - group cancel (cutoff, parent only) and group move with a seat swap;
+  - check-in, the combined ticket with the per-barber tip split, and each child's cut counted;
+  - split tickets;
+  - the deposit held and applied, the no-show forfeit, and waived or due back;
+  - walk-in linking;
+  - the endpoints.
+
 ### Client search, filters and saved searches
 
 - **One search everywhere:** the client list, the **Find a client** box at the top of the brand portal sidebar (press `/`), booking on the calendar, the POS, and walk-in check-in. A returning walk-in is picked from the results instead of being created again. Results show the first name and last initial, nickname, photo, rating, client number, masked phone, the last visit (date and shop), the usual barber, and what matched.

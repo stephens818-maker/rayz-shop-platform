@@ -369,6 +369,7 @@ If the mobile side means a specific registry from the plan, say which items it s
 - (core → mobile) Family accounts: please mount the six `/api/v1/me/family` routes from `@/server/family-api` and spread `FAMILY_OPENAPI` into `openapi.ts` (see the family accounts log entry). In the app, book a family through `POST /me/family/bookings`, and show `household: true` from `/me/loyalty` as the family card.
 
 - (core → mobile) Family booking in the app: verify the phone by code before listing the family, then multi-select who it's for, with an inline Add a child (see the family booking flow log entry).
+- (core → mobile) Family booking groups: please mount the seven `/api/v1/me/family/booking-options` and `booking-groups/...` routes, show the slot finder's three plans with the total window, and show the 409 `alternatives` (see the family booking groups log entry).
 
 - (core → mobile) Time between visits: the web account page (`/account`) shows the client's cadence, worked out in the browser from `/me/appointments` (only the latest 20 past appointments, so it can drift for clients with many cancellations). For the app, and so both read all visits, please add to `/me` (or a `/me/visits/cadence`) the result of `clientCadence(customerId, now)` in `src/server/visit-cadence.ts`: `cadence` (`visitDays`, `cadenceDays`, `label`, `lastVisit`, `sinceDays`, `nextExpected`, `booked`, `status`) and `barbers` (per barber, only when they've seen two or more). Labels and status words are in `src/domain/visit-cadence.ts`; once it's there, `/account` will read it instead.
 
@@ -385,6 +386,21 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-24: core (family booking groups), REQUEST for mobile
+
+- **Please mount seven more family routes under `/api/v1/me/family`**, each a one-line re-export from `@/server/family-api` plus `OPTIONS`, like the web routes under `src/app/api/account/family/booking-options` and `booking-groups/**`:
+  - `POST /me/family/booking-options` → `postGroupOptions`: the slot finder for one day. Body `{ shopId, date, people: [{ customerId, serviceId, addonIds?, staffId? }], after? }`, with 2 to 7 people (the parent and up to 6 children). Returns `{ plans: [{ plan, label, options, reason }], depositCents }`. The plans are `same_barber` (back to back), `together` (same time or overlapping, several barbers) and `earliest_finish` (mixed). Each option has `startsAt`, `endsAt`, `minutes` (the total window), `barbers` and `seats`.
+  - `POST /me/family/booking-groups` → `postBookingGroup` (201): books the option picked, all or nothing. Body `{ shopId, people, plan, seats: [{ customerId, staffId, startsAt }] }`. It honors `Idempotency-Key`. When a seat was taken mid-checkout nothing is booked. For a named plan (not `custom`) the server first retries the same times with another barber for anyone who didn't ask for one. Otherwise it answers 409 `slot_unavailable` with `error.details.alternatives` (the same shape as booking-options). Please show those alternatives instead of a dead end.
+  - `GET /me/family/booking-groups` → `listBookingGroups` (`{ groups }`, upcoming) and `GET /me/family/booking-groups/{code}` → `getBookingGroup`.
+  - `POST /me/family/booking-groups/{code}/cancel` → `cancelBookingGroup`: everyone still booked, closing at the shop's cutoff before the first person's time.
+  - `POST /me/family/booking-groups/{code}/options` → `postGroupRescheduleOptions` (body `{ date, after? }`) and `POST /me/family/booking-groups/{code}/reschedule` → `rescheduleBookingGroup` (body `{ plan, seats }`, all or nothing, 409 with alternatives).
+  - `FAMILY_OPENAPI` in `src/domain/family.ts` already has the paths and the schemas (`GroupOptionsRequest`, `GroupOptions`, `GroupBookingRequest`, `GroupRescheduleRequest`, `BookingGroup`). If you spread it into `openapi.ts` they appear.
+- **One set of messages for the group.** It gets one confirmation, one 24h and 2h reminder pair and one cancel or reschedule message. They go to the parent and sit on the first person's appointment, with the link `/g/{code}`. When that person is cancelled alone, the reminders move to the next one. Each member's `/a/{code}` still changes just that person. A group member's `appointments.group_id` is set, and `/api/v1/appointments/{code}` doesn't show it yet. Optional: add `groupCode` there (from `groupCodeOf` in `src/server/booking-groups.ts`) so the app can link to the group.
+- **Deposits are taken at the desk for now.** When the brand sets `groupDepositCents`, a group of at least `groupDepositFrom` people is created with deposit `due`. Staff take it on a ticket, and it's held as credit (a gift card with source `deposit`). It's applied at checkout and kept on a whole-group no-show or late cancel when `groupNoShowForfeit` is on. Taking it online needs your saved-card flow. When that exists, tell us and we'll add a hook that marks it `held` from a PaymentIntent.
+- **`POST /me/family/bookings` is unchanged for callers.** It now books through a group (plan `custom`) for two or more people, so those bookings also get one confirmation and a `/g/{code}` link.
+- **Migration `core_0055_booking_groups`:** the `booking_groups` table and `appointments.group_id`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`. `src/lib/api-client.ts` (web) now keeps `error.details` on `ApiError`.
 
 ### 2026-10-24: core (family booking flow), FYI and REQUEST for mobile
 
