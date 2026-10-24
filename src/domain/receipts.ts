@@ -113,6 +113,8 @@ export interface ReceiptEmailInput {
   when: string;
   barber: string | null;
   lines: { name: string; qty: number; cents: number; refunded?: boolean }[];
+  /** A combined ticket: the same lines by person, each with their barbers. Replaces the flat list. */
+  people?: ReceiptPerson[] | null;
   discounts: { label: string; cents: number }[];
   taxCents: number;
   tipCents: number;
@@ -126,6 +128,16 @@ export interface ReceiptEmailInput {
   update?: ReceiptUpdate;
 }
 
+export interface ReceiptPerson {
+  name: string;
+  barbers: string[];
+  cents: number;
+  lines: { id?: string; name: string; qty: number; cents: number; refunded?: boolean; refundedQty?: number; barber?: string | null }[];
+}
+
+/** "Leo · with Marcus & Tia": a person's heading on a combined ticket's receipt. */
+export const personHeading = (p: Pick<ReceiptPerson, "name" | "barbers">) => `${p.name}${p.barbers.length ? ` · with ${p.barbers.join(" & ")}` : ""}`;
+
 export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: string } {
   const subject = o.update ? `Updated receipt from ${o.title}` : `Your receipt from ${o.title}`;
   const row = (l: string, c: number, neg = false) => `${l}  ${neg ? "-" : ""}${formatCents(c)}`;
@@ -135,7 +147,14 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
     ...(o.update?.kind === "void" ? ["", "This ticket was voided. Everything you paid goes back to how you paid."] : []),
     ...(o.update?.kind === "refund" ? ["", `${formatCents(o.update.refundedCents)} was refunded. Your updated receipt is below.`] : []),
     "",
-    ...o.lines.map((l) => `${l.name}${l.qty > 1 ? ` × ${l.qty}` : ""}  ${formatCents(l.cents)}${l.refunded ? " (refunded)" : ""}`),
+    ...(o.people?.length
+      ? o.people.flatMap((p, i) => [
+          ...(i ? [""] : []),
+          `${personHeading(p)}  ${formatCents(p.cents)}`,
+          ...p.lines.map((l) => `  ${l.name}${l.qty > 1 ? ` × ${l.qty}` : ""}  ${formatCents(l.cents)}${l.refunded ? " (refunded)" : ""}`),
+        ])
+      : o.lines.map((l) => `${l.name}${l.qty > 1 ? ` × ${l.qty}` : ""}  ${formatCents(l.cents)}${l.refunded ? " (refunded)" : ""}`)),
+    ...(o.people?.length ? [""] : []),
     ...o.discounts.map((d) => row(d.label, d.cents, true)),
     row("Tax", o.taxCents),
     row("Tip", o.tipCents),

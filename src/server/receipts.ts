@@ -1,13 +1,15 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db, DBorTx, Tx } from "@/db";
-import { contactOptOuts, customers, notificationJobs, payments, receiptDeliveries, receiptOptOuts, refunds, saleItems, sales, shops, staff } from "@/db/schema";
+import { appointments, contactOptOuts, customers, notificationJobs, payments, receiptDeliveries, receiptOptOuts, refunds, saleItems, sales, shops, staff } from "@/db/schema";
 import { feeLabel } from "@/domain/checkout";
+import { groupByPerson } from "@/domain/combined-checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding } from "@/domain/connect";
 import { takesOnlineBookings } from "@/domain/location-lifecycle";
 import {
   DEFAULT_RECEIPT_FOOTER,
   REQUEST_LIMIT,
+  ReceiptPerson,
   ReceiptPurpose,
   ReceiptSendChannel,
   ReceiptUpdate,
@@ -26,6 +28,7 @@ import { formatCents } from "@/lib/money";
 import { formatPhone, normalizeEmail, normalizePhone } from "@/lib/phone";
 import { formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { Actor, audit, customerActor } from "./audit";
+import { ticketAppointmentIds } from "./family-ticket";
 import { contactFor, householdsByContact } from "./household-contact";
 import type { ClientPolicy } from "./client-privacy";
 import { AppError, notFound } from "./errors";
@@ -84,6 +87,11 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
     : null;
   const review = brand.reviewUrl ? await reviewTiming(saleId, now, tx) : null;
   const refundedCents = refs.reduce((a, r) => a + r.amountCents, 0);
+  const people = await receiptPeople(sale, items, tx);
+  const payerIds = [...new Set(pays.map((p) => p.payerCustomerId).filter((x): x is string => !!x))];
+  const payerNames = new Map(payerIds.length ? (await tx.select({ id: customers.id, first: customers.firstName }).from(customers).where(inArray(customers.id, payerIds))).map((c) => [c.id, c.first]) : []);
+  const payerOf = (p: (typeof pays)[number]) => (p.payerCustomerId ? payerNames.get(p.payerCustomerId) : null) ?? p.payerLabel ?? null;
+  const labelOf = (p: (typeof pays)[number]) => `${tenderLabel(p)}${payerOf(p) ? ` (${payerOf(p)})` : ""}`;
   const shopLine = [brand.showAddress && shop.address && `${shop.address}, ${shop.city}, ${shop.state} ${shop.zip}`].filter(Boolean)[0] || null;
   return {
     sale: { id: sale.id, number: sale.number, status: sale.status, paidAt: sale.paidAt, createdAt: sale.createdAt, voidedAt: sale.voidedAt, isImported: sale.isImported },
@@ -99,16 +107,18 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
     firstName: customer?.firstName ?? null,
     barber: barberFirstName(barber),
     lines: items.map((i) => ({ id: i.id, kind: i.kind, name: i.name, qty: i.qty, cents: i.grossCents, refundedQty: i.refundedQty })),
+    /** A ticket for more than one person (or barber): the lines by person, then barber. Null on an ordinary ticket. */
+    people,
     discounts: pricing.discounts ?? [],
     subtotalCents: items.reduce((a, i) => a + i.grossCents, 0),
     taxCents: sale.serviceTaxCents + sale.productTaxCents,
     tipCents: sale.tipCents,
     fee: sale.cardFeeCents > 0 ? { label: pricing.cardFee ? feeLabel(pricing.cardFee) : "Credit card surcharge", cents: sale.cardFeeCents } : null,
     totalCents: sale.totalCents,
-    tenders: pays.map((p) => ({ label: tenderLabel(p), cents: p.amountCents })),
+    tenders: pays.map((p) => ({ label: labelOf(p), cents: p.amountCents })),
     refunds: refs.map((r) => {
       const p = pays.find((x) => x.id === r.paymentId);
-      const to = p ? tenderLabel(p) : r.method.replace("_", " ");
+      const to = p ? labelOf(p) : r.method.replace("_", " ");
       return { label: r.kind === "void" ? `Voided, back to ${to}` : `Refunded to ${to}`, cents: r.amountCents, at: r.createdAt };
     }),
     refundedCents,
@@ -130,6 +140,37 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
 }
 export type ReceiptData = Awaited<ReturnType<typeof receiptData>>;
 
+/**
+ * A combined ticket's lines by person (first names only), each with their barbers' first names.
+ * Null when the ticket is one person with one barber, so ordinary receipts stay as they are.
+ */
+async function receiptPeople(sale: { id: string; appointmentId: string | null }, items: (typeof saleItems.$inferSelect)[], tx: DBorTx): Promise<ReceiptPerson[] | null> {
+  const ids = [sale.appointmentId, ...(await ticketAppointmentIds(sale.id, tx)), ...items.map((i) => i.appointmentId)].filter((x, i, a): x is string => !!x && a.indexOf(x) === i);
+  const barberIds = [...new Set(items.map((i) => i.staffId).filter((x): x is string => !!x))];
+  if (ids.length < 2 && barberIds.length < 2) return null;
+  const [who, barbers] = await Promise.all([
+    ids.length
+      ? tx.select({ id: appointments.id, first: customers.firstName }).from(appointments).leftJoin(customers, eq(customers.id, appointments.customerId)).where(inArray(appointments.id, ids))
+      : [],
+    barberIds.length ? tx.query.staff.findMany({ where: inArray(staff.id, barberIds), columns: { id: true, firstName: true, displayLabel: true } }) : [],
+  ]);
+  const barberName = (id: string | null) => {
+    const b = id ? barbers.find((x) => x.id === id) : null;
+    return b ? barberFirstName(b) : null;
+  };
+  const groups = groupByPerson(
+    items,
+    ids.map((id) => ({ appointmentId: id, name: who.find((w) => w.id === id)?.first ?? "Guest" })),
+    { leadAppointmentId: sale.appointmentId, otherLabel: "Retail and other" },
+  );
+  return groups.map((g) => ({
+    name: g.name,
+    barbers: [...new Set(g.barbers.map((b) => barberName(b.staffId)).filter((x): x is string => !!x))],
+    cents: g.lines.reduce((a, l) => a + l.grossCents, 0),
+    lines: g.lines.map((l) => ({ id: l.id, name: l.name, qty: l.qty, cents: l.grossCents, refunded: l.refundedQty > 0, refundedQty: l.refundedQty, barber: barberName(l.staffId) })),
+  }));
+}
+
 /** The text or email for one ticket. */
 export async function composeReceipt(saleId: string, channel: ReceiptSendChannel, url: string, update: ReceiptUpdate = null, tx: DBorTx = db) {
   const d = await receiptData(saleId, tx);
@@ -138,8 +179,9 @@ export async function composeReceipt(saleId: string, channel: ReceiptSendChannel
     title: d.shop.title,
     number: d.sale.number,
     when: formatDateTime(d.sale.paidAt ?? d.sale.createdAt),
-    barber: d.barber,
+    barber: d.people ? null : d.barber,
     lines: d.lines.map((l) => ({ name: l.name, qty: l.qty, cents: l.cents, refunded: l.refundedQty > 0 })),
+    people: d.people,
     discounts: d.discounts,
     taxCents: d.taxCents,
     tipCents: d.tipCents,

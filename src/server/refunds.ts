@@ -207,7 +207,7 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
     }
   }
 
-  const itemsJson = lines.map((l) => ({ saleItemId: l.itemId, name: l.name, qty: l.qty, cents: l.netCents + l.taxCents }));
+  const itemsJson = lines.map((l) => ({ saleItemId: l.itemId, name: l.name, kind: l.kind, qty: l.qty, cents: l.netCents + l.taxCents, netCents: l.netCents }));
   await recordSteps(tx, sale, pays, plan, { kind: o.kind, source: o.source, reason: o.reason, actor: o.actor, now: o.now, items: itemsJson, stripeIds });
   await syncTipLedger(tx, { saleId: sale.id });
 

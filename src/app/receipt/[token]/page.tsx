@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { personHeading } from "@/domain/receipts";
 import { formatCents } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
 import { formatDate, formatDateTime } from "@/lib/time";
@@ -64,23 +65,24 @@ export default async function ReceiptPage({ params }: { params: Promise<{ token:
             <p>
               Ticket #{d.sale.number} · {formatDateTime(d.sale.paidAt ?? d.sale.createdAt)}
             </p>
-            {d.barber && <p>Your barber: {d.barber}</p>}
+            {d.barber && !d.people && <p>Your barber: {d.barber}</p>}
           </div>
 
-          <table className="w-full text-[15px] tabular">
-            <tbody>
-              {d.lines.map((l) => (
-                <tr key={l.id} className="align-top">
-                  <td className="py-1.5 pr-3">
-                    {l.name}
-                    {l.qty > 1 && <span className="text-zinc-500"> × {l.qty}</span>}
-                    {l.refundedQty > 0 && <span className="block text-xs text-red-700">{l.refundedQty === l.qty ? "Refunded" : `${l.refundedQty} refunded`}</span>}
-                  </td>
-                  <td className="py-1.5 text-right">{formatCents(l.cents)}</td>
-                </tr>
+          {d.people ? (
+            <div className="space-y-4">
+              {d.people.map((p, k) => (
+                <section key={k} data-testid="receipt-person">
+                  <div className="flex items-baseline justify-between border-b border-zinc-100 pb-1 text-sm font-semibold">
+                    <span>{personHeading(p)}</span>
+                    <span className="tabular">{formatCents(p.cents)}</span>
+                  </div>
+                  <LineTable lines={p.lines.map((l, j) => ({ id: l.id ?? `${k}-${j}`, name: l.name, qty: l.qty, cents: l.cents, refundedQty: l.refundedQty ?? 0, barber: p.barbers.length > 1 ? l.barber : null }))} />
+                </section>
               ))}
-            </tbody>
-          </table>
+            </div>
+          ) : (
+            <LineTable lines={d.lines} />
+          )}
 
           <table className="w-full border-t border-zinc-100 text-sm tabular">
             <tbody className="[&_td]:py-1">
@@ -192,6 +194,26 @@ export default async function ReceiptPage({ params }: { params: Promise<{ token:
         </p>
       </footer>
     </Shell>
+  );
+}
+
+function LineTable({ lines }: { lines: { id: string; name: string; qty: number; cents: number; refundedQty: number; barber?: string | null }[] }) {
+  return (
+    <table className="w-full text-[15px] tabular">
+      <tbody>
+        {lines.map((l) => (
+          <tr key={l.id} className="align-top">
+            <td className="py-1.5 pr-3">
+              {l.name}
+              {l.qty > 1 && <span className="text-zinc-500"> × {l.qty}</span>}
+              {l.barber && <span className="text-zinc-500"> · {l.barber}</span>}
+              {l.refundedQty > 0 && <span className="block text-xs text-red-700">{l.refundedQty === l.qty ? "Refunded" : `${l.refundedQty} refunded`}</span>}
+            </td>
+            <td className="py-1.5 text-right">{formatCents(l.cents)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
