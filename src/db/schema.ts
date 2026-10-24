@@ -1094,6 +1094,72 @@ export const clientPhotos = pgTable("client_photos", {
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
+/**
+ * Notes on a client, seen at every location they visit (src/server/client-notes.ts). The one with
+ * source "record" is customers.notes, kept in step by trigger; "squire_visit" ones come from imported
+ * appointments. Contact details are removed by trigger, whoever writes the row. See core_0057_client_notes.sql.
+ */
+export const clientNotes = pgTable(
+  "client_notes",
+  {
+    id: id(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<"profile" | "visit" | "private">().notNull(),
+    pinned: boolean("pinned").notNull().default(false),
+    body: text("body").notNull().default(""),
+    /** Cut notes: guard numbers, style and products used. */
+    details: jsonb("details").$type<{ guard?: string; style?: string; products?: string[] }>(),
+    appointmentId: uuid("appointment_id").references((): AnyPgColumn => appointments.id, { onDelete: "set null" }),
+    /** Where it was written. */
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "set null" }),
+    authorStaffId: uuid("author_staff_id").references(() => staff.id, { onDelete: "set null" }),
+    /** For notes no staff member wrote, e.g. "Squire". */
+    authorLabel: text("author_label"),
+    source: text("source").$type<"staff" | "record" | "squire_visit">().notNull().default("staff"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+    updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+    deletedAt: ts("deleted_at"),
+    deletedBy: uuid("deleted_by").references(() => staff.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("client_notes_customer_idx")
+      .on(t.customerId, t.createdAt.desc())
+      .where(sql`${t.deletedAt} is null`),
+    index("client_notes_appointment_idx")
+      .on(t.appointmentId)
+      .where(sql`${t.appointmentId} is not null`),
+    uniqueIndex("client_notes_one_record")
+      .on(t.customerId)
+      .where(sql`${t.source} = 'record'`),
+    uniqueIndex("client_notes_one_squire_visit")
+      .on(t.appointmentId)
+      .where(sql`${t.source} = 'squire_visit'`),
+    check("client_notes_kind", sql`${t.kind} in ('profile', 'visit', 'private')`),
+    check("client_notes_source", sql`${t.source} in ('staff', 'record', 'squire_visit')`),
+    check("client_notes_record_is_profile", sql`${t.source} <> 'record' or ${t.kind} = 'profile'`),
+    check("client_notes_author_label", sql`${t.authorLabel} is null or char_length(${t.authorLabel}) <= 40`),
+  ],
+);
+
+/** Before and after photos on a cut note, as data URLs like client_photos. */
+export const clientNotePhotos = pgTable(
+  "client_note_photos",
+  {
+    id: id(),
+    noteId: uuid("note_id")
+      .notNull()
+      .references(() => clientNotes.id, { onDelete: "cascade" }),
+    kind: text("kind").$type<"before" | "after">().notNull(),
+    dataUrl: text("data_url").notNull(),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("client_note_photos_note_idx").on(t.noteId), check("client_note_photos_kind", sql`${t.kind} in ('before', 'after')`)],
+);
+
 /** A client list search and its filters, kept by one person, shared with a location, or with the brand. */
 export const savedClientSearches = pgTable(
   "saved_client_searches",

@@ -178,6 +178,15 @@ export const FEATURE_PERMISSIONS = [
   { key: "clients.rate", group: "Clients", label: "Rate clients" },
   { key: "clients.ratings_all", group: "Clients", label: "See every rating and note, and rate any visit at their shops", hint: "Without it, people see their own ratings and rate only visits they served." },
   { key: "clients.ratings_moderate", group: "Clients", label: "Remove anyone's rating" },
+  {
+    key: "notes.view",
+    group: "Clients",
+    label: "See client notes",
+    hint: "Profile and cut notes, written at any location, on the profile, the calendar, Today and checkout. Only where Client data protection shows them client notes in full.",
+  },
+  { key: "notes.write", group: "Clients", label: "Write client notes, and edit or remove their own", hint: "Profile notes, pinned notes and cut notes with before and after photos." },
+  { key: "notes.edit_any", group: "Clients", label: "Edit, pin or remove anyone's client notes", hint: "Notes written at their shops, and the client's record note." },
+  { key: "notes.private", group: "Clients", label: "See and write private manager notes", hint: "Never on a shop login. Shown only to people with this permission." },
   { key: "loyalty.grant", group: "Clients", label: "Grant courtesy loyalty rewards" },
   {
     key: "clients.campaigns",
@@ -678,6 +687,10 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "clients.ratings_all",
   "clients.filters",
   "clients.saved_searches",
+  "notes.view",
+  "notes.write",
+  "notes.edit_any",
+  "notes.private",
   "catalog.prices",
   "inventory.manage",
   "inventory.adjust",
@@ -778,6 +791,8 @@ const TEMPLATES: RoleTemplate[] = [
       "clients.family",
       "clients.filters",
       "clients.saved_searches",
+      "notes.view",
+      "notes.write",
       "reports.all_staff",
       "po.receive",
       "inventory.stocktake",
@@ -814,6 +829,8 @@ const TEMPLATES: RoleTemplate[] = [
       "clients.edit",
       "clients.family",
       "clients.filters",
+      "notes.view",
+      "notes.write",
       "reports.all_staff",
       "callins.outreach",
       "inbox.view",
@@ -849,7 +866,7 @@ const TEMPLATES: RoleTemplate[] = [
     name: "Barber",
     description: "Their own column, their own clients and their own sales.",
     defaultScope: "selected",
-    permissions: ["clients.rate", "clients.message", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", ...reports(["my_sales", "service_times"])],
+    permissions: ["clients.rate", "clients.message", "notes.view", "notes.write", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", ...reports(["my_sales", "service_times"])],
     maxDiscountPct: 0,
   },
 ];
@@ -943,6 +960,8 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   "timesheet.edit",
   "timesheet.approve",
   "tips.approve",
+  "notes.private",
+  "notes.edit_any",
 ]);
 
 export const sharedLoginAccess = <A extends Access>(a: A): A => ({ ...a, isOwner: false, permissions: new Set([...a.permissions].filter((p) => !SHOP_LOGIN_NEVER.has(p))) });
