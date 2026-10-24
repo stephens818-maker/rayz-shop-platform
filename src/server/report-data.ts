@@ -1083,6 +1083,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async gift_cards({ scope, loc }) {
     const bv: ViewCtx = { ...loc, byBarber: true };
+    const sv: ViewCtx = { ...loc, byBarber: false };
     const [perShop, issued, bx, btender] = await Promise.all([giftCardTotalsByShop(scope), giftCardsIssued(scope), salesTotalsAt(scope, grainsFor(bv)), tenderAt(scope, grainsFor(bv))]);
     const total = {
       issuedN: sum(perShop, (v) => v.issuedN),
@@ -1099,7 +1100,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         { label: "Outstanding", value: formatCents(total.outstandingCents), hint: `${total.outstandingN} cards issued at these shops` },
       ],
       tables: [
-        metricTable(loc, {
+        metricTable(sv, {
           id: "totals",
           title: "Gift cards by location",
           exportOnly: loc.view !== "shops",
@@ -1111,7 +1112,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
             m("Outstanding", "money", x, (v) => v.outstandingCents),
           ],
         }),
-        listTable(loc, {
+        listTable(sv, {
           id: "issued",
           title: "Cards issued",
           columns: [text("Code"), text("Source"), money("Initial"), money("Balance"), text("Status"), text("Issued")],

@@ -233,11 +233,19 @@ export async function leaderboardData(scope: ReportScope, loc: ViewCtx, params: 
   ];
   const out: Cell[][] = [];
   const styles: ("total" | undefined)[] = [];
-  for (const g of groups)
+  const unassigned = Object.keys(x)
+    .map((key) => ({ key, ...parseSegKey(key) }))
+    .filter((p) => p.staffId === NO_BARBER && (byShop ? p.shopId : !p.shopId) && (x[p.key]?.tickets ?? 0) > 0);
+  for (const [gi, g] of groups.entries()) {
     [...g].sort(rank).forEach((p, i) => {
       out.push([i + 1, ...(byShop ? [shopName.get(p.shopId!) ?? ""] : []), name(p.staffId!), ...line(board(p.key))]);
       styles.push(undefined);
     });
+    for (const p of unassigned.filter((u) => !byShop || u.shopId === loc.shops[gi].id)) {
+      out.push([null, ...(byShop ? [shopName.get(p.shopId!) ?? ""] : []), "No barber", ...line(board(p.key))]);
+      styles.push(undefined);
+    }
+  }
   out.push([null, ...(byShop ? [null] : []), loc.totalLabel, ...line(board(TOTAL))]);
   styles.push("total");
 
@@ -610,7 +618,7 @@ export async function phoneOperatorData(scope: ReportScope, loc: ViewCtx): Promi
   const { start, end } = span(scope);
   const [calls, shopRows] = await Promise.all([
     rows<CallRow>(sql`
-      select c.shop_id "shopId", to_char((c.created_at at time zone sh.timezone)::date, 'YYYY-MM-DD') day, c.operator, c.status,
+      select c.shop_id "shopId", to_char((c.created_at at time zone sh.timezone)::date, 'YYYY-MM-DD') "day", c.operator, c.status,
         c.auto_text_sent "autoTextSent", c.operator_choice choice, b.staff_id "staffId", b.estimate_cents "bookedCents",
         to_char((b.starts_at at time zone sh.timezone)::date, 'YYYY-MM-DD') "bookedFor"
       from call_logs c join shops sh on sh.id = c.shop_id
