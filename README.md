@@ -181,6 +181,8 @@ The same step sets the **statement descriptor** (what clients see on their card 
 
 **Morning Dashboard:** **Insights → Morning Dashboard** shows yesterday's numbers, today's schedule and what needs attention. **Setup → Morning Dashboard email** (`settings.lists`) sets the send time (7:02 AM by default, any minute from 4 to 11 AM), who gets it (by role, plus always or never per person), whether someone with several shops gets one email for all of them, one per shop, or both, which sections go in, and whether to attach a PDF and text a one-line summary. The page previews your own copy, and **Email me a test** sends it to you now. See [Morning Dashboard](#morning-dashboard).
 
+**Event log:** **Insights → Event log** shows what's being logged. Switch on the post-visit rating and the nightly warehouse copy there, and the owner downloads the raw CSV. Grant **Use the event log in custom reports and Rayz Assistant** to whoever should report on it. **Reports → Operations KPIs** has utilization, rebooking, retention cohorts, lifetime value, ticket, chair-hour, wait and on-time numbers. See [Event log and operations KPIs](#event-log).
+
 **Custom reports:** **Reports → Custom reports** builds a client report from a field picker (columns, filters, grouping, totals, dates, locations and barbers), saves it for you, your roles or the whole brand, emails it on a schedule, adds its totals to the Morning Dashboard, and turns it into a Campaign Center blast. Grant the three **Custom reports** permissions per role or person. See [Custom reports](#custom-reports).
 
 **Rayz Assistant:** **Ask Rayz**, at the bottom right of every staff page, answers questions about the business and how to use the app from the reports the person can open, under their own permissions and locations. Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` on the server for real answers; without one, a built-in demo answers by keyword outside production. **Setup → Rayz Assistant** (`assistant.settings`, brand-only) turns it on or off per role and sets the limits. See [Rayz Assistant](#rayz-assistant).
@@ -203,6 +205,8 @@ Rules for staff:
 - Never write a card, bank or Social Security number in a note, a message, a spreadsheet or on paper. Cards go in the card field or on the reader, nowhere else.
 - If a client or coworker offers those details, don't take them. Employees set up their payouts themselves under **My banking**, on Stripe's page.
 - Ray'z and Stripe never ask for these numbers by text, email or phone. Treat any such request as a scam.
+
+The [event log](#event-log) keeps ids, counts, amounts and short codes only: no names, contact details, message text, card numbers or bank details. Erasing a client clears their id from it.
 
 Card payments stay at PCI SAQ A: card details only ever pass through Stripe's frame or reader. Stripe shows which questionnaire applies under **Dashboard → Settings → Compliance**.
 
@@ -1040,6 +1044,72 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 <img alt="A Coralville manager's purchase order waiting for Confirm" src="docs/screenshots/assistant-draft-po.png" width="800" /> <img alt="After Confirm, and Moline refused because it isn't one of her locations" src="docs/screenshots/assistant-manager-scope.png" width="800" />
 
 <img alt="Setup → Rayz Assistant: per-role toggles, limits, drafts and the provider" src="docs/screenshots/assistant-settings.png" width="800" /> <img alt="A shop login on a phone asking how to open the cash drawer" src="docs/screenshots/assistant-shop-login-phone.png" width="300" />
+
+<a id="event-log"></a>
+### Event log and operations KPIs
+
+Every meaningful thing that happens is logged once in `analytics_events`, an append-only table of ids, numbers and short codes. Any metric can be worked out later from that history, by location and by barber. The full list of columns and events is in [Event log schema](#event-log-schema).
+
+- **Captured by the database, not the screens:** triggers on the tables the app already writes turn each change into its events, so every write path is covered: staff screens, shop logins, the customer app's `/api/v1`, Squire imports and crons. A new screen can't forget to log. Each row records:
+  - when it happened and the location's business day;
+  - the location, and the barber or employee it's about;
+  - who did it: `staff` (with their id), `client` or `system`;
+  - the channel (online, app, walk-in, phone, staff screens, kiosk, import, text, email, voice and so on) and the device (phone, tablet, computer, kiosk, card reader) when known;
+  - the appointment, ticket and record ids, plus up to four measures (money, quantity, minutes, value), a subtype code and the reason given.
+- **Who and what device:** server actions open an event context, signing in fills in the staff member, and the device class comes from the user agent. Every transaction hands that context to the triggers as `rayz.event_ctx` (`src/db/event-context.ts`). Writes without a context are logged as the client or the system, whichever the row implies.
+- **What's logged:**
+  - Bookings: made, moved and cancelled, with lead time, booked minutes, the estimate, late or not, and the reason. The booking source is online, app, walk-in, phone (staff booking within 2 hours of the client's call), staff or import.
+  - The online booking funnel: page opened, service, barber and time picked, details, booked, and abandoned after an hour.
+  - Appointment flow: arrived, started and finished, with actual against booked minutes, the wait from arrival to start, and late starts and arrivals. Also no-shows and completions.
+  - Money: tickets opened, paid, edited (price overrides, discounts), voided and merged; payments, refunds and voids with their reason; tips with percent and method; coupons. Card brand and debit or credit are kept, never a number or last four.
+  - Retail: each line sold, so product attach rate follows, and every stock movement (sold, received, transferred, counted and so on) with units, cost and its reason.
+  - Staff: clock in and out, breaks, edited or voided punches (only whether there was a photo and which check let it in, never a location, IP or photo), block-outs with their reason, time off and call-ins.
+  - Messages and campaigns: sent, delivered, failed, clicked and booked from.
+  - Clients: new clients with how they found us and who referred them, badges earned and lost, review clicks, merges and erasures. Also which assistant tools were used.
+  - The phone line: calls in and out, answered, missed and ended, and bookings after a call.
+  - The walk-in list: joined, told they're next, in the chair, done or left.
+  - The post-visit rating.
+- **Never logged:** names, phone numbers, emails, addresses, birthdays, message text, notes, card or bank details, SSNs, IP addresses or GPS. The reason column goes through the same `scrub_sensitive_row` trigger as notes, and so does an appointment's cancel reason. A block-out whose reason is marked private is logged without its label. A "how they found us" that looks like contact details is logged as "Other". `tests/analytics.test.ts` fails if a column key ever looks like contact data.
+- **History is never rewritten:** updates and deletes are refused by trigger. The only change allowed is the client id:
+  - Merging two clients moves the dropped record's events to the kept one.
+  - Erasing a client (deleting the row, or `select analytics_forget(id)`) clears their id from every event and logs `client.removed`. The counts stay, but who it was is gone.
+- **History from before the event log:** the same trigger functions replay what's already on file, flagged as backfilled, one table at a time. The nightly job (`/api/cron/analytics`, 09:20 UTC) keeps going until every table is done, or run `npm run analytics:backfill [tables] [--force]`. It's safe to run again, since every event has a fixed dedupe key. **Insights → Event log** shows progress and has **Log history now**.
+- **Post-visit rating:** **Insights → Event log** (`analytics.settings`, brand-only; Brand Admin has it) can switch on **Ask "How was your visit?" on receipts**: 1 to 5 stars on the digital receipt. It's asked of every client alike, one answer per paid visit, and it never decides who is asked for a Google review. The app can store a rating as well (channel `app`).
+- **In the report builder:** **Event log** is a data source in [Custom reports](#custom-reports). Pick event types (whole categories or single events) and get columns for the event and its code, category, subtype, reason, booking source, channel, device and who did it. There are also columns for when (time, business day, hour, weekday, month), location, barber, client number and record, and the measures (events, amount, quantity, minutes, value). Group, total, save, share, schedule and export the report like any other. It needs **Use the event log in custom reports and Rayz Assistant** (`analytics.events`) and stays on the person's own locations and barbers. Client number only shows clients the person reaches, and amounts need the same money access as the client reports. Rows are events, not clients, so they don't go in the client data access log.
+- **In Rayz Assistant:** the `event_report` tool counts and totals any events by up to two groups. Ask "How many late cancellations last month?", "Where are people dropping off in the booking funnel?" or "Average wait by barber". It uses the same permission and scoping as the builder, and its card links to the builder.
+- **Operations KPIs** (**Reports → Operations KPIs**, `/admin/reports/operations`): worked out from the records themselves, so any past range works, including history from before the event log. Shown by location and by barber:
+  - **Utilization:** booked minutes over scheduled minutes.
+  - **Rebooked at checkout:** completed visits whose client booked their next visit between the start of this one and 15 minutes after checkout.
+  - **Average ticket:** net sales (before refunds) over paid tickets.
+  - **Retail per service ticket:** product sales on tickets with a service, and the attach rate.
+  - **Revenue per chair hour:** net sales over scheduled hours.
+  - **Wait and on-time:** the average wait from arrival to start, and on-time starts (within 5 minutes of the booked time, walk-ins left out).
+  - **Client lifetime value:** net spend to date of the clients seen, per client, with their visits.
+  - **Post-visit rating.**
+  - **Retention cohorts:** new clients by first-visit month, and how many came back within 1, 3, 6 and 12 months. A window that hasn't ended yet is left blank rather than undercounted.
+- **Raw data export (CSV):** **Insights → Event log → Download CSV** streams every column of every event for a date range, optionally one category or location. It needs **Download the raw event log** (`analytics.export`), which is brand-level and only the Brand Owner can grant. Every download is in the audit log.
+- **Nightly warehouse copy:** set `ANALYTICS_WAREHOUSE_URL` to a Postgres database (a read replica, or one that BigQuery, Looker Studio, Metabase or Power BI reads from), then switch on **Copy new events to the warehouse every night**. The nightly job creates `rayz_analytics_events` with the same columns. It copies new events in id order, skipping any already there, and applies client merges and erasures. Each run (rows, id range, done or failed) is listed on the page. The address is an environment secret: it is never stored, and an error is saved without it.
+- **Code:** `drizzle/core_0059_analytics.sql` (the table, triggers, backfill, erasure, `visit_satisfaction`, `analytics_exports`), `src/domain/analytics.ts` (the event catalog and columns), `src/db/event-context.ts`, `src/server/analytics.ts` (funnel, backfill, raw CSV, warehouse, rating), `src/server/operations-report.ts`, `src/app/admin/analytics/`, `src/app/api/events/funnel/` and `src/app/api/cron/analytics/`.
+- **Tests:** `tests/analytics.test.ts` covers:
+  - the catalog matching the migration;
+  - this README listing every column and event;
+  - no contact-like columns;
+  - device classes, funnel beacons and settings;
+  - cohort windows;
+  - the builder's event source and the assistant's routing.
+
+  `tests/db/analytics.test.ts` covers:
+  - trigger counts against the source tables;
+  - actor and device stamping through a real server action;
+  - append-only, with no phone or email in any event;
+  - erasure and merges;
+  - backfill with the triggers off, then idempotent;
+  - funnels and the abandoned sweep;
+  - the CSV for the owner only, with its audit;
+  - the warehouse copy into a real second database, with merges, erasures and a failed run storing no password;
+  - receipt ratings;
+  - the pages per person;
+  - builder and assistant scoping.
 
 ### Reports across locations
 
@@ -2023,6 +2093,250 @@ These were built in response to the owner's request: "mimic Squire, but make it 
 - A shop login is tighter than Squire's ([details](#shop-login)): client phone, email and address aren't shown in full at shop level, for shop logins or any shop or staff role, and there's no client download at the shop, unless the brand grants it to a person or location ([details](#contact-lockdown)); staff contact details are masked; refunds and moving a ticket to another barber need a manager's PIN; each part of Shop settings has its own permission; and every report has a barber filter.
 - Duplicate first names get unique IDs and admin-set labels instead of guesswork.
 - An API-first booking backend is ready for a mobile app.
+
+---
+
+<a id="event-log-schema"></a>
+## Event log schema
+
+One row per event in `analytics_events` (and the same columns in the warehouse's `rayz_analytics_events` and the raw CSV). Times are UTC; `business_date` is the location's local day. Money is in cents. Ids are UUIDs except `id` and `entity_id`, which is text. Measures a given event doesn't use are blank. `props` holds extra ids and codes only. See [Event log and operations KPIs](#event-log) for how it's captured and who can see it.
+
+| Column | Meaning |
+| --- | --- |
+| `id` | Increasing number; the warehouse copy resumes from the last one sent. |
+| `occurred_at` | When it happened (UTC). |
+| `recorded_at` | When it was logged (later than When for backfilled history). |
+| `business_date` | The location's local date. |
+| `event` | category.action, from the list below. |
+| `category` | The part before the dot. |
+| `shop_id` | Where it happened. |
+| `actor_kind` | staff, client or system. |
+| `actor_staff_id` | The staff member who did it, when it was staff. |
+| `staff_id` | The barber or employee it's about. |
+| `customer_id` | The client it's about (cleared if the client is erased). |
+| `channel` | Where it happened: online, app, walk_in, phone, staff, kiosk, import, sms, email and so on. |
+| `device` | phone, tablet, desktop, kiosk or reader, when known. |
+| `source` | Booking source on appointment events; how they found us on client events. |
+| `entity` | appointment, ticket, payment, client, campaign and so on. |
+| `entity_id` | That record's id. |
+| `appointment_id` | The appointment, when there is one. |
+| `sale_id` | The ticket, when there is one. |
+| `amount_cents` | The money measure (see each event). |
+| `quantity` | A count (see each event). |
+| `minutes` | A duration (see each event). |
+| `value` | Another measure: a percent, a rating, a count of minutes (see each event). |
+| `subtype` | A short code that splits the event (see each event). |
+| `reason` | The reason given, for cancellations, voids, refunds, price changes, stock and block-outs. |
+| `props` | More ids, numbers and codes, as JSON. |
+
+Channels (`channel`):
+
+- `online`: Online booking (website or rebook link)
+- `app`: Ray'z app
+- `walk_in`: Walk-in
+- `phone`: Phone (booked by staff within 2 hours after the client called)
+- `staff`: Staff screens
+- `staff_app`: Staff's own phone or computer (time clock)
+- `kiosk`: Shop kiosk
+- `import`: Squire import
+- `sms`: Text message
+- `email`: Email
+- `voice`: Voice call
+- `push`: App notification
+- `receipt`: Receipt
+- `follow_up`: Review follow-up
+- `assistant`: Rayz Assistant
+
+Devices (`device`, from the browser or app user agent):
+
+- `phone`: Phone
+- `tablet`: Tablet
+- `desktop`: Computer
+- `kiosk`: Shop kiosk
+- `reader`: Card reader
+
+**Bookings** (`booking`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `booking.created` | Booking made | minutes: lead time: minutes from booking to the appointment (blank for imports without a booked-at time); value: booked minutes; amount_cents: estimate; subtype: barber, any_barber, rebook or group |
+| `booking.rescheduled` | Booking moved | minutes: lead time to the new time; value: minutes moved (negative is earlier); amount_cents: estimate; subtype: time, barber or time_and_barber |
+| `booking.confirmed` | Booking confirmed | minutes: minutes before the appointment |
+| `booking.cancelled` | Booking cancelled | minutes: lead time: minutes before the appointment; amount_cents: estimate; subtype: in_time, late (inside the shop's cutoff) or after_start; reason: the reason given |
+| `booking.restored` | Cancellation or no-show undone | subtype: what it was |
+
+**Online booking funnel** (`funnel`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `funnel.viewed` | Booking page opened | — |
+| `funnel.service_picked` | Service picked | quantity: services picked |
+| `funnel.barber_picked` | Barber picked | subtype: barber or any_barber |
+| `funnel.time_picked` | Time picked | minutes: lead time to the picked slot |
+| `funnel.details` | Details step reached | — |
+| `funnel.booked` | Booked from the funnel | — |
+| `funnel.abandoned` | Left without booking | subtype: the last step reached |
+
+**Appointment flow** (`appointment`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `appointment.arrived` | Client arrived | minutes: minutes after the booked start (negative is early); subtype: early, on_time, late or walk_in |
+| `appointment.started` | Service started | minutes: wait: minutes from arrival to start; value: minutes after the booked start; subtype: on_time, late or walk_in |
+| `appointment.finished` | Service finished | minutes: actual minutes in the chair; value: booked minutes; subtype: on_pace, over or under (5-minute tolerance) |
+| `appointment.times_corrected` | Service times corrected | minutes: actual minutes after the correction; value: booked minutes; subtype: include or exclude |
+| `appointment.completed` | Appointment completed | value: booked minutes; amount_cents: estimate |
+| `appointment.no_show` | No-show | value: booked minutes; amount_cents: estimate |
+
+**Tickets** (`ticket`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `ticket.opened` | Ticket opened | — |
+| `ticket.discount_changed` | Discount changed on an open ticket | value: change in cents; amount_cents: discount now |
+| `ticket.reassigned` | Ticket moved to another barber | — |
+| `ticket.paid` | Ticket paid | value: tip as a percent of net sales; amount_cents: net sales (services and products after discounts, before tax and tip); quantity: lines; subtype: service_only, service_and_retail, retail_only or other |
+| `ticket.line` | Line sold | value: unit price; amount_cents: line net; quantity: quantity; subtype: service, addon, product or gift_card |
+| `ticket.price_override` | Price changed at checkout | value: catalog price; amount_cents: price charged; quantity: quantity; reason: the reason given |
+| `ticket.voided` | Ticket voided | amount_cents: net sales; subtype: its status before; reason: the reason given |
+| `ticket.merged` | Ticket combined into another | amount_cents: net sales |
+| `ticket.refunded` | Refund | amount_cents: refunded; subtype: card, cash or gift_card; reason: the reason given |
+
+**Payments** (`payment`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `payment.taken` | Payment taken | amount_cents: amount; subtype: card, cash or gift_card |
+| `payment.failed` | Payment failed | amount_cents: amount; subtype: card, cash or gift_card |
+| `payment.voided` | Payment reversed by a void | amount_cents: amount; subtype: card, cash or gift_card; reason: the reason given |
+
+**Tips** (`tip`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `tip.recorded` | Tip | value: tip as a percent of the ticket's net sales; amount_cents: tip; subtype: card, cash or gift_card |
+
+**Coupons** (`discount`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `discount.coupon_redeemed` | Coupon used | amount_cents: discount; subtype: how it was applied |
+| `discount.coupon_reversed` | Coupon use reversed | amount_cents: discount |
+
+**Retail stock** (`inventory`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `inventory.moved` | Stock moved | value: on hand after; amount_cents: cost of the units moved; quantity: units (negative out); subtype: sale, receive, transfer, count and so on; reason: the reason given |
+
+**Time clock** (`clock`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `clock.in` | Clocked in | minutes: planned minutes; value: minutes off schedule; subtype: how it was checked (gps, network or device) |
+| `clock.out` | Clocked out | minutes: planned minutes; value: minutes off schedule; subtype: how it was checked |
+| `clock.break_start` | Break started | minutes: planned minutes; value: minutes off schedule; subtype: how it was checked |
+| `clock.break_end` | Break ended | value: minutes off schedule; subtype: how it was checked |
+| `clock.edited` | Punch edited | value: minutes moved from the original time |
+| `clock.voided` | Punch voided | — |
+
+**Block-outs** (`block`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `block.added` | Time blocked out | minutes: length; value: notice: minutes from adding it to its start; subtype: lunch, time_off, other or day_off; reason: the block-out reason (blank when the reason is private) |
+| `block.removed` | Block-out removed | minutes: length; value: minutes before it would have started; subtype: lunch, time_off, other or day_off |
+
+**Time off** (`time_off`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `time_off.requested` | Time off requested | minutes: length; value: notice in days; reason: the reason (blank when private) |
+| `time_off.approved` | Time off approved | minutes: length; value: hours to decide; subtype: manager or auto |
+| `time_off.denied` | Time off denied | minutes: length; value: hours to decide; subtype: manager or auto |
+| `time_off.cancelled` | Time off withdrawn | minutes: length |
+
+**Call-ins** (`staff`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `staff.called_in` | Call-in | minutes: length; value: notice: minutes from the call-in to its start; subtype: kind; reason: the reason (blank when private) |
+| `staff.call_in_cancelled` | Call-in withdrawn | minutes: length |
+
+**Messages** (`message`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `message.queued` | Message queued | value: minutes until it's due; subtype: kind (reminder_24h and so on) |
+| `message.sent` | Message sent | quantity: attempts; subtype: kind |
+| `message.delivered` | Message delivered | minutes: minutes from sent to delivered; subtype: kind |
+| `message.failed` | Message failed | quantity: attempts; subtype: kind |
+| `message.suppressed` | Message not sent (opted out or quiet hours) | subtype: kind |
+| `message.cancelled` | Message cancelled | subtype: kind |
+
+**Campaigns** (`campaign`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `campaign.sent` | Campaign message sent | amount_cents: cost |
+| `campaign.skipped` | Campaign message skipped | subtype: why |
+| `campaign.clicked` | Campaign link clicked | minutes: minutes from send to first click; quantity: clicks so far |
+| `campaign.booked` | Booking after a campaign message | amount_cents: estimate; subtype: clicked or sent (inside the attribution window) |
+
+**Reviews** (`review`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `review.clicked` | Google review link clicked | subtype: receipt or follow_up |
+
+**Client badges** (`badge`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `badge.earned` | Badge earned | subtype: badge |
+| `badge.lost` | Badge lost | subtype: badge |
+
+**Clients** (`client`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `client.created` | New client | subtype: referred or dependent |
+| `client.source_set` | How they found us changed | subtype: referred |
+| `client.removed` | Client record erased | quantity: events made anonymous |
+
+**Satisfaction** (`visit`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `visit.satisfaction` | Post-visit rating | value: 1 to 5; subtype: receipt or app |
+
+**Rayz Assistant** (`assistant`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `assistant.asked` | Assistant question | value: characters |
+| `assistant.answered` | Assistant answer | value: characters; quantity: tools used |
+
+**Phone calls** (`call`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `call.received` | Call to the shop | subtype: kind |
+| `call.placed` | Call from the shop | subtype: kind |
+| `call.answered` | Call answered | minutes: minutes to answer; subtype: kind |
+| `call.completed` | Call ended | minutes: call length; subtype: kind |
+| `call.missed` | Call not answered | minutes: call length; subtype: missed, after_hours, voicemail, no_answer, busy or failed |
+| `call.booked` | Booking after a call | amount_cents: estimate |
+
+**Walk-in list** (`walkin`)
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `walkin.joined` | Joined the walk-in list | value: quoted wait |
+| `walkin.notified` | Walk-in told they're next | minutes: minutes waited; value: quoted wait |
+| `walkin.serving` | Walk-in in the chair | minutes: minutes waited; value: quoted wait |
+| `walkin.done` | Walk-in done | minutes: minutes from joining; value: quoted wait |
+| `walkin.left` | Walk-in left | minutes: minutes waited; value: quoted wait |
 
 ---
 
