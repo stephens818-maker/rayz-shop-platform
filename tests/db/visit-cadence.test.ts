@@ -120,8 +120,8 @@ describe("time between visits", () => {
   it("shows on the client list, and filters it by status and by usual days between visits", async () => {
     const all = await listed({});
     expect(all.text).toMatch(/Comes in/);
-    expect(all.text).toMatch(/Ava Cadencetest.{0,600}Every 3 weeks.{0,200}Due/);
-    expect(all.text).toMatch(/Ben Cadencetest.{0,600}Every 4 weeks.{0,200}Overdue/);
+    expect(all.text).toMatch(/Ava Cadencetest.{0,4000}Every 3 weeks.{0,200}Due/);
+    expect(all.text).toMatch(/Ben Cadencetest.{0,4000}Every 4 weeks.{0,200}Overdue/);
     expect((await listed({ visitStatus: ["overdue"] })).names).toEqual(["ben"]);
     expect((await listed({ visitStatus: ["due", "overdue"] })).names).toEqual(["ava", "ben"]);
     expect((await listed({ visitStatus: ["on_track"] })).names).toEqual(["cal", "dee", "finn"]);

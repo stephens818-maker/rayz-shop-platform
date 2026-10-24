@@ -549,13 +549,13 @@ function describe(key: BadgeKey, d: Record<string, string | number>, level: (f: 
   const barberShown = level("preferred_barber") === "full";
   switch (key) {
     case "on_track":
-      return { tip: `Usually ${every(num("every"))}; last in ${ago(num("since"))}.${d.next ? ` Next visit booked for ${day(d.next)}.` : d.due ? ` Next expected around ${day(d.due)}.` : ""}` };
+      return { tip: `Usually ${every(num("every"))}; last visit ${ago(num("since"))}.${d.next ? ` Next visit booked for ${day(d.next)}.` : d.due ? ` Next expected around ${day(d.due)}.` : ""}` };
     case "due":
-      return { tip: `Due around ${day(d.due)}: usually ${every(num("every"))}, last in ${ago(num("since"))}, nothing booked yet.` };
+      return { tip: `Due around ${day(d.due)}: usually ${every(num("every"))}, last visit ${ago(num("since"))}, nothing booked yet.` };
     case "overdue":
-      return { tip: `Expected around ${day(d.due)}: usually ${every(num("every"))}, last in ${ago(num("since"))}, nothing booked.` };
+      return { tip: `Expected around ${day(d.due)}: usually ${every(num("every"))}, last visit ${ago(num("since"))}, nothing booked.` };
     case "lapsed":
-      return { tip: `No visit in ${span(num("since"))} (last in ${day(d.last)}) and nothing booked: past the ${num("w")}-week lapsed mark.` };
+      return { tip: `No visit in ${span(num("since"))} (last on ${day(d.last)}) and nothing booked: past the ${num("w")}-week lapsed mark.` };
     case "at_risk":
       return { tip: `Visits are stretching: their last gap was ${span(num("gap"))} against their usual ${span(num("every"))}.` };
     case "new_client":
@@ -567,7 +567,7 @@ function describe(key: BadgeKey, d: Record<string, string | number>, level: (f: 
           : `One visit so far (${day(d.first)}). The 2nd visit is when a new client becomes a regular: get them rebooked.`,
       };
     case "win_back":
-      return { tip: d.next ? `Booked for ${day(d.next)} after ${span(num("away"))} away (last in ${day(d.last)}).` : `Came back on ${day(d.back)} after ${span(num("away"))} away.` };
+      return { tip: d.next ? `Booked for ${day(d.next)} after ${span(num("away"))} away (last visit ${day(d.last)}).` : `Came back on ${day(d.back)} after ${span(num("away"))} away.` };
     case "vip":
       return { tip: `Top ${num("pct")}% of spenders over the last 12 months (${formatCents(num("cents"))}).` };
     case "loyal":
