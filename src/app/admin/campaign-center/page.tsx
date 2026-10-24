@@ -79,8 +79,8 @@ export default async function CampaignCenterPage() {
           subtitle="Several messages to the same lapsed client: say a friendly reminder at 2 weeks, a booking link at 3, a coupon at 4 and a bigger one from 6. Each signed by the client's barber with a link to book with them; a client leaves the sequence once they book."
           action={
             mayCreate && (
-              <LinkButton size="sm" variant="secondary" href="/admin/campaign-center/sequences/new">
-                New lapsed sequence
+              <LinkButton size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" href="/admin/campaign-center/sequences/new">
+                New sequence
               </LinkButton>
             )
           }
