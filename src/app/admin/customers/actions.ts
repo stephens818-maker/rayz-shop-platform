@@ -15,7 +15,7 @@ import { contactClient } from "@/server/client-contact";
 import { searchClients } from "@/server/client-search";
 import { deleteSearch, saveSearch } from "@/server/saved-searches";
 import { ClientPolicy, clientPolicy, displayFull, entered, recordClientAccess, shownField } from "@/server/client-privacy";
-import { customerAccess, findOrCreateCustomer, matchCustomer, mergeCustomers } from "@/server/customers";
+import { customerAccess, dismissDuplicate, findOrCreateCustomer, matchCustomer, mergeCustomers, mergeDuplicatePairs } from "@/server/customers";
 import { AppError, forbidden } from "@/server/errors";
 import { getLoyaltyConfig } from "@/server/loyalty";
 import { hasShop, inTenant } from "@/server/tenant";
@@ -206,6 +206,28 @@ export async function mergeCustomersAction(keepId: string, dropId: string) {
     revalidatePath("/admin/customers");
     revalidatePath("/admin/customers/duplicates");
     revalidatePath(`/admin/customers/${keepId}`);
+    return r;
+  });
+}
+
+const Pair = z.object({ a: z.uuid(), b: z.uuid() });
+
+export async function dismissDuplicateAction(a: string, b: string) {
+  return safe(async () => {
+    const ctx = await authorize("clients.merge");
+    const p = Pair.parse({ a, b });
+    await dismissDuplicate(p.a, p.b, ctx.actor);
+    revalidatePath("/admin/customers/duplicates");
+  });
+}
+
+export async function mergeDuplicatesAction(pairs: { a: string; b: string }[]) {
+  return safe(async () => {
+    const ctx = await authorize("clients.merge");
+    const list = z.array(Pair).min(1).max(200).parse(pairs);
+    const r = await mergeDuplicatePairs(list, ctx.actor);
+    revalidatePath("/admin/customers");
+    revalidatePath("/admin/customers/duplicates");
     return r;
   });
 }

@@ -4,6 +4,7 @@ import {
   appointments,
   clientAccessLog,
   clientRatings,
+  customerDuplicateDismissals,
   customerSquireIds,
   customers,
   giftCards,
@@ -15,7 +16,8 @@ import {
   sales,
   waitlistEntries,
 } from "@/db/schema";
-import { MatchVia, pickMatch, samePerson } from "@/domain/customers";
+import { MatchVia, pickMatch } from "@/domain/customers";
+import { DuplicateKind, DuplicateScore, planMerges, scoreDuplicate } from "@/domain/duplicates";
 import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { Actor, audit } from "./audit";
@@ -434,39 +436,59 @@ export async function textingDeclined(customerId: string | null, phone: string) 
 
 // ───────────────────────────── Duplicates ─────────────────────────────
 
-export type DuplicateKind = "likely" | "shared_contact" | "same_name";
+export type { DuplicateKind };
 
-export interface DuplicatePair {
-  a: Customer;
-  b: Customer;
-  kind: DuplicateKind;
+export type DuplicateClient = Customer & { squire: boolean; visits: number };
+
+export interface DuplicatePair extends DuplicateScore {
+  a: DuplicateClient;
+  b: DuplicateClient;
   samePhone: boolean;
   sameEmail: boolean;
 }
 
 /**
- * Candidate pairs: same phone or email (labelled "likely" when the names are compatible, otherwise
- * "shared contact", e.g. a family), plus same full name where one side has no contact at all
- * (walk-ins). Nothing here merges automatically.
+ * Candidate pairs, scored by scoreDuplicate: same phone or email; the same or a typo-close name
+ * (trigram) backed by a birthday, zip, phone last 4, or one record with no contact at all (Squire
+ * imports and walk-ins). Pairs someone marked "not the same person" are left out. Nothing here
+ * merges automatically.
  */
-export async function duplicatePairs(opts: { forId?: string; limit?: number } = {}): Promise<DuplicatePair[]> {
+export async function duplicatePairs(opts: { forId?: string; limit?: number; squireOnly?: boolean } = {}): Promise<DuplicatePair[]> {
   const limit = opts.limit ?? 150;
   const only = opts.forId ? sql`and ${opts.forId}::uuid in (a.id, b.id)` : sql``;
-  const pairs = (await db.execute(sql`
-    select a_id, b_id from (
-      select a.id a_id, b.id b_id from customers a join customers b on a.id < b.id and a.phone = b.phone where a.phone is not null ${only}
-      union
-      select a.id, b.id from customers a join customers b on a.id < b.id and a.email = b.email where a.email is not null ${only}
-      union
-      select a.id, b.id from customers a join customers b on a.id < b.id
-        and lower(a.first_name) = lower(b.first_name) and lower(coalesce(a.last_name, '')) = lower(coalesce(b.last_name, ''))
-        where coalesce(a.last_name, '') <> '' and ((a.phone is null and a.email is null) or (b.phone is null and b.email is null)) ${only}
-    ) p limit ${limit * 3}
-  `)) as unknown as { a_id: string; b_id: string }[];
+  const squire = (col: string) => sql.raw(`exists (select 1 from customer_squire_ids s where s.customer_id = ${col})`);
+  const backed = sql`(a.birthday = b.birthday or a.address_zip = b.address_zip or right(a.phone, 4) = right(b.phone, 4)
+    or (a.phone is null and a.email is null) or (b.phone is null and b.email is null))`;
+  const pairs = await db.transaction(async (tx) => {
+    // Loose on purpose: this only proposes typo-close names; scoreDuplicate decides what they are.
+    await tx.execute(sql`select set_config('pg_trgm.similarity_threshold', '0.5', true)`);
+    return (await tx.execute(sql`
+      select a_id, b_id from (
+        select a.id a_id, b.id b_id from customers a join customers b on a.id < b.id and a.phone = b.phone where a.phone is not null ${only}
+        union
+        select a.id, b.id from customers a join customers b on a.id < b.id and a.email = b.email where a.email is not null ${only}
+        union
+        select a.id, b.id from customers a join customers b on a.id < b.id and lower(a.first_name || ' ' || coalesce(a.last_name, '')) % lower(b.first_name || ' ' || coalesce(b.last_name, ''))
+          where coalesce(a.last_name, '') <> '' and coalesce(b.last_name, '') <> '' and ${backed} ${only}
+      ) p
+      where not exists (select 1 from customer_duplicate_dismissals d where d.a_id = p.a_id and d.b_id = p.b_id)
+        ${opts.squireOnly ? sql`and (${squire("p.a_id")} or ${squire("p.b_id")})` : sql``}
+      limit ${limit * 3}
+    `)) as unknown as { a_id: string; b_id: string }[];
+  });
   if (!pairs.length) return [];
   const ids = [...new Set(pairs.flatMap((p) => [p.a_id, p.b_id]))];
-  const rows = await db.select().from(customers).where(inArray(customers.id, ids));
-  const byId = new Map(rows.map((r) => [r.id, r]));
+  const [rows, extra] = await Promise.all([
+    db.select().from(customers).where(inArray(customers.id, ids)),
+    db.execute(sql`
+      select c.id, ${squire("c.id")} squire, c.address_zip zip,
+        (select count(*) from appointments a where a.customer_id = c.id and a.status = 'completed')::int visits
+      from customers c where c.id in ${sql`(${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)})`}
+    `) as unknown as Promise<{ id: string; squire: boolean; zip: string | null; visits: number }[]>,
+  ]);
+  const more = new Map(extra.map((e) => [e.id, e]));
+  const byId = new Map(rows.map((r) => [r.id, { ...r, squire: !!more.get(r.id)?.squire, visits: more.get(r.id)?.visits ?? 0 }]));
+  const side = (c: DuplicateClient) => ({ ...c, zip: more.get(c.id)?.zip ?? null });
   const out: DuplicatePair[] = [];
   for (const p of pairs) {
     const a = byId.get(p.a_id);
@@ -474,9 +496,48 @@ export async function duplicatePairs(opts: { forId?: string; limit?: number } = 
     if (!a || !b) continue;
     const samePhone = !!a.phone && a.phone === b.phone;
     const sameEmail = !!a.email && a.email === b.email;
-    const kind: DuplicateKind = samePhone || sameEmail ? (samePerson(a, b) ? "likely" : "shared_contact") : "same_name";
-    out.push({ a, b, kind, samePhone, sameEmail });
+    const s = scoreDuplicate(side(a), side(b));
+    if (!samePhone && !sameEmail && s.conflicts.includes("first_name")) continue;
+    out.push({ a, b, ...s, samePhone, sameEmail });
   }
-  const order: Record<DuplicateKind, number> = { likely: 0, same_name: 1, shared_contact: 2 };
-  return out.sort((x, y) => order[x.kind] - order[y.kind]).slice(0, limit);
+  const order: Record<DuplicateKind, number> = { likely: 0, same_name: 1, similar_name: 2, shared_contact: 3 };
+  return out.sort((x, y) => order[x.kind] - order[y.kind] || y.score - x.score).slice(0, limit);
+}
+
+/** "Not the same person": the pair stops being offered. Either order; stored low id first. */
+export async function dismissDuplicate(aId: string, bId: string, actor: Actor) {
+  if (aId === bId) throw new AppError("bad_request", "Pick two different clients");
+  const found = await db.select({ id: customers.id }).from(customers).where(inArray(customers.id, [aId, bId]));
+  if (found.length !== 2) throw notFound("Client");
+  const [lo, hi] = aId < bId ? [aId, bId] : [bId, aId];
+  await db.insert(customerDuplicateDismissals).values({ aId: lo, bId: hi, dismissedBy: actor.staffId ?? null }).onConflictDoNothing();
+  await audit(actor, "client.duplicate_dismiss", "customer", lo, { other: hi });
+}
+
+/**
+ * Merge several checked pairs, keeping the record with more visits (then the older one) each
+ * time. Pairs that share a record chain together. Each merge is its own transaction and audit
+ * entry; one that fails (a record merged away by someone else meanwhile) is reported and skipped.
+ */
+export async function mergeDuplicatePairs(pairs: { a: string; b: string }[], actor: Actor) {
+  const ids = [...new Set(pairs.flatMap((p) => [p.a, p.b]))];
+  if (!ids.length) return { merged: 0, failed: [] as string[] };
+  const facts = (await db.execute(sql`
+    select c.id, c.created_at "createdAt", (select count(*) from appointments a where a.customer_id = c.id and a.status = 'completed')::int visits
+    from customers c where c.id in ${sql`(${sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)})`}
+  `)) as unknown as { id: string; createdAt: Date | string; visits: number }[];
+  type Fact = { id: string; visits: number; createdAt: Date };
+  const byId = new Map<string, Fact>(facts.map((f) => [f.id, { ...f, createdAt: new Date(f.createdAt) }]));
+  const usable = pairs.filter((p) => p.a !== p.b && byId.has(p.a) && byId.has(p.b)).map((p): [Fact, Fact] => [byId.get(p.a)!, byId.get(p.b)!]);
+  let merged = 0;
+  const failed: string[] = [];
+  for (const step of planMerges(usable)) {
+    try {
+      await mergeCustomers(step.keep, step.drop, actor);
+      merged++;
+    } catch {
+      failed.push(step.drop);
+    }
+  }
+  return { merged, failed };
 }

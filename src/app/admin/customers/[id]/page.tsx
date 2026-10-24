@@ -354,7 +354,9 @@ export default async function CustomerPage({
                         <Link className="truncate underline" href={`/admin/customers/${other.id}`}>
                           {other.firstName} {other.lastName}
                         </Link>
-                        <Badge tone={d.kind === "likely" ? "amber" : "gray"}>{d.kind === "likely" ? "likely same" : d.kind === "same_name" ? "same name" : "shares contact"}</Badge>
+                        <Badge tone={d.kind === "likely" ? "amber" : "gray"}>
+                          {{ likely: "likely same", same_name: "same name", similar_name: "similar name", shared_contact: "shares contact" }[d.kind]}
+                        </Badge>
                       </li>
                     );
                   })}
