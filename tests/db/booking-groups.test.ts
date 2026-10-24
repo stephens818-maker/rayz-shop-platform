@@ -366,6 +366,73 @@ describe("one deposit and one no-show rule for the group", () => {
   });
 });
 
+describe("the parent's endpoints (web account and the app's /v1/me/family)", () => {
+  it("options, book once per Idempotency-Key, 409 with alternatives, list, view, move options and cancel; another parent sees nothing", async () => {
+    const f = await family(["Ari"]);
+    const token = (await m.auth.issueTokens(f.p.id, null)).accessToken;
+    const api = await import("@/server/family-api");
+    type Handler = (req: Request, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>;
+    const call = (fn: Handler, method: string, body?: object, params: Record<string, string> = {}, headers: Record<string, string> = {}, bearer = token) =>
+      fn(
+        new Request("http://test/api/v1/me/family/booking-groups", {
+          method,
+          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", ...headers },
+          ...(body ? { body: JSON.stringify(body) } : {}),
+        }),
+        { params: Promise.resolve(params) },
+      );
+    const { date } = await findDay(f.ids, "together");
+    const opts = await call(api.postGroupOptions as never, "POST", { shopId: "coralville", date, people: people(f.ids) });
+    expect(opts.status).toBe(200);
+    const body = (await opts.json()) as Options;
+    expect(body.plans.map((p) => p.plan)).toEqual(["same_barber", "together", "earliest_finish"]);
+    const option = body.plans.flatMap((p) => p.options)[0];
+    expect(option.minutes).toBeGreaterThan(0);
+
+    const req = { shopId: "coralville", people: people(f.ids), plan: option.plan, seats: seatsOf(option) };
+    const key = { "idempotency-key": `grp-${Date.now()}-${seq}` };
+    const made = await call(api.postBookingGroup as never, "POST", req, {}, key);
+    expect(made.status).toBe(201);
+    const g = (await made.json()) as { code: string; members: { appointmentCode: string; appointmentId?: string }[]; status: string };
+    expect(g.status).toBe("booked");
+    expect(g.members).toHaveLength(2);
+    expect(g.members[0]).not.toHaveProperty("appointmentId");
+    expect(g).not.toHaveProperty("guardianId");
+    const again = await call(api.postBookingGroup as never, "POST", req, {}, key);
+    expect(((await again.json()) as { code: string }).code).toBe(g.code);
+
+    const other = await family(["Bo"], "Lee");
+    const taken = await call(
+      api.postBookingGroup as never,
+      "POST",
+      { shopId: "coralville", people: people(other.ids), plan: "custom", seats: option.seats.map((x, i) => ({ customerId: other.ids[i], staffId: x.staffId, startsAt: x.startsAt })) },
+      {},
+      {},
+      (await m.auth.issueTokens(other.p.id, null)).accessToken,
+    );
+    expect(taken.status).toBe(409);
+    const err = (await taken.json()) as { error: { code: string; details: { alternatives: Options } } };
+    expect(err.error.code).toBe("slot_unavailable");
+    expect(err.error.details.alternatives.plans).toHaveLength(3);
+    expect(await m.db.db.select().from(s().appointments).where(inArray(s().appointments.customerId, other.ids))).toHaveLength(0);
+
+    const list = (await (await call(api.listBookingGroups as never, "GET")).json()) as { groups: { code: string }[] };
+    expect(list.groups.map((x) => x.code)).toContain(g.code);
+    expect((await call(api.getBookingGroup as never, "GET", undefined, { code: g.code })).status).toBe(200);
+    const stranger = (await m.auth.issueTokens(other.p.id, null)).accessToken;
+    expect((await call(api.getBookingGroup as never, "GET", undefined, { code: g.code }, {}, stranger)).status).toBe(404);
+    expect((await call(api.cancelBookingGroup as never, "POST", {}, { code: g.code }, {}, stranger)).status).toBe(404);
+
+    const moveOpts = await call(api.postGroupRescheduleOptions as never, "POST", { date }, { code: g.code });
+    expect(moveOpts.status).toBe(200);
+    expect(await groups.groupCodeOf(g.members[0].appointmentCode)).toBe(g.code);
+
+    const cancelled = await call(api.cancelBookingGroup as never, "POST", {}, { code: g.code });
+    expect(cancelled.status).toBe(200);
+    expect(((await cancelled.json()) as { status: string }).status).toBe("cancelled");
+  });
+});
+
 describe("walk-ins and the old family booking", () => {
   it("links one family's walk-ins into a group", async () => {
     const f = await family(["Yul"]);
