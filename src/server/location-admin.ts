@@ -183,7 +183,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
   const region = d.regionId ? await db.query.regions.findFirst({ where: eq(regions.id, d.regionId) }) : null;
   if (d.regionId && !region) throw notFound("Region");
 
-  let newOwnerId: string | null = null;
+  let newOwnerId = null as string | null;
   const id = await db.transaction(async (tx) => {
     if (d.newOwner) {
       const [e] = await tx.insert(ownerEntities).values({ ...d.newOwner, kind: "franchisee", status: "onboarding" }).returning({ id: ownerEntities.id });
