@@ -91,6 +91,8 @@ export const brandSettings = pgTable("brand_settings", {
   badges: jsonb("badges").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Family accounts (FamilySettings in src/domain/family.ts): children per parent, household or individual loyalty, the age a child can get their own account. */
   family: jsonb("family").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Compensation fields (CompensationSettings in src/domain/compensation.ts): off by default; payroll, the export and My pay use them only when turned on. */
+  compensation: jsonb("compensation").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -2383,6 +2385,72 @@ export const payrollRates = pgTable(
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (t) => [unique("payroll_rates_uq").on(t.staffId, t.shopId).nullsNotDistinct()],
+);
+
+/**
+ * One version of an employee's pay plan (src/domain/compensation.ts), in effect from its date until
+ * the next one. Never edited (a trigger refuses): a change is a new version starting after the last
+ * locked pay period, so past payroll stays as it was. Null amounts and rates fall back to Payroll setup.
+ */
+export const staffCompensation = pgTable(
+  "staff_compensation",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    effectiveFrom: date("effective_from", { mode: "string" }).notNull(),
+    hourlyRateCents: integer("hourly_rate_cents"),
+    /** A different hourly rate at some shops: [{ shopId, cents }]. */
+    shopHourlyRates: jsonb("shop_hourly_rates").$type<{ shopId: string; cents: number }[]>().notNull().default(sql`'[]'::jsonb`),
+    /** Fractions (0.45 = 45%), as Payroll setup keeps them. */
+    servicePct: doublePrecision("service_pct"),
+    serviceOverrides: jsonb("service_overrides").$type<{ kind: "service" | "category"; ref: string; pct: number }[]>().notNull().default(sql`'[]'::jsonb`),
+    serviceTiers: jsonb("service_tiers").$type<{ fromCents: number; pct: number }[]>().notNull().default(sql`'[]'::jsonb`),
+    tierMode: text("tier_mode").$type<"step" | "marginal">().notNull().default("step"),
+    productPct: doublePrecision("product_pct"),
+    boothRentCents: integer("booth_rent_cents"),
+    boothRentFrequency: text("booth_rent_frequency").$type<"weekly" | "biweekly" | "monthly">(),
+    guaranteeCents: integer("guarantee_cents"),
+    guaranteePer: text("guarantee_per").$type<"pay_period" | "week" | "month" | "year">(),
+    /** Null: the shop's (or their own) tip payout method. */
+    tipMethod: text("tip_method").$type<"cash" | "stripe" | "payroll">(),
+    /** Null: the shop's setting for taking the card fee out of card tips. */
+    tipCardFeeNetting: boolean("tip_card_fee_netting"),
+    note: text("note"),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [index("staff_compensation_staff_idx").on(t.staffId, t.effectiveFrom, t.createdAt)],
+);
+
+/** Employee fields the brand adds itself. Labels that look like bank, card, SSN or tax ID fields are refused (by the app and a check). */
+export const staffCustomFields = pgTable("staff_custom_fields", {
+  id: id(),
+  label: text("label").notNull(),
+  kind: text("kind").$type<"text" | "number" | "percent" | "date" | "dropdown">().notNull(),
+  options: jsonb("options").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  position: integer("position").notNull().default(100),
+  active: boolean("active").notNull().default(true),
+  createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+export const staffCustomValues = pgTable(
+  "staff_custom_values",
+  {
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    fieldId: uuid("field_id")
+      .notNull()
+      .references(() => staffCustomFields.id, { onDelete: "cascade" }),
+    value: text("value").notNull(),
+    updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "staff_custom_values_pk", columns: [t.staffId, t.fieldId] })],
 );
 
 export const timeEntryKind = pgEnum("time_entry_kind", ["worked", "training", "pto"]);

@@ -113,6 +113,8 @@ export interface LineInput {
   tipsInPayroll?: number;
   /** Of the tips, those already paid out in cash or by Stripe when the report was built. */
   tipsPaidOut?: number;
+  /** What brings the employee up to their guaranteed minimum (compensation plans, when payroll uses them). */
+  guaranteeTopUp?: number;
   overrides?: Overrides;
 }
 
@@ -169,7 +171,9 @@ export interface Line {
   otPay: number;
   /** U = training rate × S when training pay counts as cost, else 0. */
   trainingPay: number;
-  /** V = N + T + U */
+  /** The guaranteed minimum's top-up: 0 unless compensation plans are on and set one. */
+  guaranteeTopUp: number;
+  /** V = N + T + U (+ the guarantee top-up) */
   laborCost: number;
   overridden: Overridable[];
 }
@@ -195,6 +199,7 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const tips = ov(i, "tips", i.tips);
   const tipsInPayroll = i.tipsInPayroll ?? 0;
   const trainingPay = s.trainingPayInCost ? (i.trainingRate ?? wage) * trainingHours : 0;
+  const guaranteeTopUp = i.guaranteeTopUp ?? 0;
   return {
     input: i,
     staffId: i.staffId,
@@ -224,7 +229,8 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     trainingHours,
     otPay,
     trainingPay,
-    laborCost: totalWages + otPay + trainingPay,
+    guaranteeTopUp,
+    laborCost: totalWages + otPay + trainingPay + guaranteeTopUp,
     overridden: OVERRIDABLE.filter((k) => i.overrides?.[k] !== undefined),
   };
 }
@@ -249,6 +255,7 @@ export const SUMMED = [
   "trainingHours",
   "otPay",
   "trainingPay",
+  "guaranteeTopUp",
   "laborCost",
 ] as const;
 export type Summed = (typeof SUMMED)[number];
@@ -278,6 +285,7 @@ export const COLUMN_LABEL: Record<Summed | "wage" | "grossPerHour" | "servicePct
   trainingHours: "Training Hours",
   otPay: "O.T. Pay",
   trainingPay: "Training Pay",
+  guaranteeTopUp: "Guarantee top-up",
   laborCost: "Labor Cost",
 };
 
@@ -320,19 +328,43 @@ export interface ExportRow {
 
 /** A shop's file gets the tips-in-payroll column only when someone there has tips paid through payroll, so the usual file is unchanged. */
 export const hasPayrollTips = (lines: readonly Pick<Line, "tipsInPayroll">[]) => lines.some((l) => l.tipsInPayroll !== 0);
+const hasGuarantee = (lines: readonly Pick<Line, "guaranteeTopUp">[]) => lines.some((l) => (l.guaranteeTopUp ?? 0) !== 0);
 
-export function exportHeaders(lines: readonly Line[], s: PayrollSettings): string[] {
-  return [...EXPORT_COLUMNS.map((c) => c.header), ...(hasPayrollTips(lines) ? [s.tipsInPayrollHeader] : [])];
+/** What a column after the standard six carries. */
+export type ExtraFrom = "tipsInPayroll" | "guaranteeTopUp" | "commission" | "productTotal" | "wage";
+export interface ExtraColumn {
+  header: string;
+  from: ExtraFrom;
+}
+/** Options from compensation settings (src/domain/compensation.ts); without them the file is the standard one. */
+export interface ExportOptions {
+  /** Columns the brand asked for, after the rest. */
+  extras?: readonly ExtraColumn[];
+  /** The guarantee top-up's header; its column is added only when someone in the file has a top-up. */
+  guaranteeHeader?: string;
 }
 
-export function exportRows(lines: readonly Line[], s: PayrollSettings): ExportRow[] {
-  const extra = hasPayrollTips(lines);
+/** The columns after the standard six: tips in payroll and the guarantee top-up when someone in the file has them, then the brand's. */
+export function exportExtraColumns(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExtraColumn[] {
+  return [
+    ...(hasPayrollTips(lines) ? [{ header: s.tipsInPayrollHeader, from: "tipsInPayroll" as const }] : []),
+    ...(hasGuarantee(lines) ? [{ header: o.guaranteeHeader ?? COLUMN_LABEL.guaranteeTopUp, from: "guaranteeTopUp" as const }] : []),
+    ...(o.extras ?? []),
+  ];
+}
+
+export function exportHeaders(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): string[] {
+  return [...EXPORT_COLUMNS.map((c) => c.header), ...exportExtraColumns(lines, s, o).map((c) => c.header)];
+}
+
+export function exportRows(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExportRow[] {
+  const extra = exportExtraColumns(lines, s, o);
   const out = (x: number) => (s.roundExport2dp ? roundHalfUp2(x) : x);
   return lines.map((l) => ({
     staffId: l.staffId,
     key: l.input.employeeNumber === null ? null : l.input.keyIsText || !/^\d+$/.test(l.input.employeeNumber) ? l.input.employeeNumber : Number(l.input.employeeNumber),
     isolvedName: l.input.isolvedName,
-    values: [...EXPORT_COLUMNS.map((c) => out(l[c.from])), ...(extra ? [out(l.tipsInPayroll)] : [])],
+    values: [...EXPORT_COLUMNS.map((c) => out(l[c.from])), ...extra.map((c) => out(l[c.from] ?? 0))],
   }));
 }
 
@@ -357,7 +389,12 @@ export interface ShopBlock {
   exportRows: ExportRow[];
   /** The file's columns after Key and name; absent in periods locked before tips in payroll existed (the six standard ones). */
   exportHeaders?: string[];
+  /** What each column after the standard six carries; absent in periods locked before there could be more than tips in payroll. */
+  exportFrom?: ExtraFrom[];
 }
+
+/** Locked before exportFrom existed, a seventh column could only be tips paid in payroll. */
+const extraFromOf = (b: ShopBlock): ExtraFrom[] => b.exportFrom ?? ((b.exportHeaders?.length ?? EXPORT_COLUMNS.length) > EXPORT_COLUMNS.length ? ["tipsInPayroll"] : []);
 
 /**
  * The reconciliation gate (spec §5). Approve-and-lock is blocked while this returns anything:
@@ -375,9 +412,22 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       const sum = b.exportRows.reduce((a, r) => a + r.values[i], 0);
       if (!sameToTheCent(b.totals[c.from], sum)) out.push({ shopId: b.shopId, column: c.header, check: "export", report: b.totals[c.from], other: sum, detail: `${b.shop}: export ${c.header} adds up to a different total than the report's ${COLUMN_LABEL[c.from]}` });
     });
-    const payrollTips = b.exportRows.reduce((a, r) => a + (r.values[EXPORT_COLUMNS.length] ?? 0), 0);
+    const from = extraFromOf(b);
+    const exported = (k: ExtraFrom) => {
+      const i = from.indexOf(k);
+      return i < 0 ? 0 : b.exportRows.reduce((a, r) => a + (r.values[EXPORT_COLUMNS.length + i] ?? 0), 0);
+    };
+    const payrollTips = exported("tipsInPayroll");
     if (!sameToTheCent(b.totals.tipsInPayroll, payrollTips))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.tipsInPayroll, check: "export", report: b.totals.tipsInPayroll, other: payrollTips, detail: `${b.shop}: the export's tips paid in payroll add up to a different total than the report's` });
+    const topUps = exported("guaranteeTopUp");
+    if (!sameToTheCent(b.totals.guaranteeTopUp ?? 0, topUps))
+      out.push({ shopId: b.shopId, column: COLUMN_LABEL.guaranteeTopUp, check: "export", report: b.totals.guaranteeTopUp ?? 0, other: topUps, detail: `${b.shop}: the export's guarantee top-ups add up to a different total than the report's` });
+    for (const k of ["commission", "productTotal"] as const) {
+      if (!from.includes(k)) continue;
+      const sum = exported(k);
+      if (!sameToTheCent(b.totals[k], sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "export", report: b.totals[k], other: sum, detail: `${b.shop}: the export's ${COLUMN_LABEL[k]} column adds up to a different total than the report's` });
+    }
     if (!sameToTheCent(b.totals.tipsInPayroll + b.totals.tipsOutside, b.totals.tips))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.tips, check: "rows", report: b.totals.tips, other: b.totals.tipsInPayroll + b.totals.tipsOutside, detail: `${b.shop}: tips paid separately and in payroll don't add up to TIPS` });
     if (b.exportRows.length !== b.lines.length) out.push({ shopId: b.shopId, column: "Rows", check: "export", report: b.lines.length, other: b.exportRows.length, detail: `${b.shop}: the export has a different number of rows` });
@@ -389,10 +439,11 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
   return out;
 }
 
-export function assemble(shops: readonly { shopId: string; shop: string; inputs: readonly LineInput[] }[], s: PayrollSettings) {
+export function assemble(shops: readonly { shopId: string; shop: string; inputs: readonly LineInput[] }[], s: PayrollSettings, o: ExportOptions = {}) {
   const blocks: ShopBlock[] = shops.map((sh) => {
     const lines = sh.inputs.map((i) => computeLine(i, s));
-    return { shopId: sh.shopId, shop: sh.shop, lines, totals: totalsOf(lines), exportRows: exportRows(lines, s), exportHeaders: exportHeaders(lines, s) };
+    const exportFrom = exportExtraColumns(lines, s, o).map((c) => c.from);
+    return { shopId: sh.shopId, shop: sh.shop, lines, totals: totalsOf(lines), exportRows: exportRows(lines, s, o), exportHeaders: exportHeaders(lines, s, o), exportFrom };
   });
   const grand = totalsOf(blocks.map((b) => b.totals));
   return { blocks, grand, mismatches: reconcile(blocks, grand) };
