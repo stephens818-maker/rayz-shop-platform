@@ -185,8 +185,12 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - It goes out at 7:02 AM by default to Brand Owner, Brand Admin, Regional Manager and Shop Manager. Check **Setup → Morning Dashboard email** before the first morning: who gets it, the all-locations or single-shop versions per person, the sections, and the PDF and text options (both off).
    - Email needs Postmark or Resend wired with HTML parts (both providers are stubs today; see the README's Next steps). With no provider set, the emails are queued and shown in the outbox but not sent; `NOTIFICATIONS_EMAIL_PROVIDER=console` logs them instead. The text summary uses the transactional SMS sender, so make sure the A2P 10DLC campaign covers staff notifications.
    - Set `APP_BASE_URL` to the public domain: every link in the email is built from it.
-16. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-17. Add the custom domain under **Settings → Domains**.
+16. Custom reports (migration `core_0047_report_builder`; see [Custom reports](README.md#custom-reports)):
+   - The migration adds saved reports and their send log, and indexes on sales and appointments by client and on clients by created date and preferred barber. The indexes are built without `CONCURRENTLY`, so on a large database run it at a quiet time.
+   - It gives Brand Admin, Regional Manager and Shop Manager all three **Custom reports** permissions (open, build, export). Exporting a customer report also needs **Export the client list**, which stays with the Brand Owner until granted.
+   - Scheduled reports go out from the notifications cron (every 5 minutes), so nothing new goes in `vercel.json`. They need a real email provider like the Morning Dashboard; with none, they're queued in the outbox and not sent.
+17. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+18. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

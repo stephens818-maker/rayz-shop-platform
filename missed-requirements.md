@@ -612,6 +612,35 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] "Bookings made" counts appointments created that day by source; phone bookings entered at the desk count as front desk, since the app doesn't record a phone source.
 - [ ] As in the KPI report, a client is new for a period when their first visit at those shops falls in it, so the week to date can show fewer returning clients than one day of it. With a short history (like the seed's) most of the week shows as new.
 
+## 25. Custom report builder
+
+**1. Building a report:**
+- [x] Under **Reports → Custom reports**: pick a data source, then add or remove columns from a searchable, grouped field picker.
+- [x] Customer fields: name, contact (phone, email, address, birthday; per Client data), city and zip, tags, staff rating, home location, primary barber, first and last visit, visits, average days between visits, total and average spend, paid tickets, services and products bought, tips, no-shows and cancellations, loyalty rewards available, gift cards and their balance, coupons redeemed, opt-ins, Campaign Center messages received and clicked, review clicks, source, client since, and every custom field.
+- [x] Drag (or arrows) to reorder columns, rename headers, filter with the segment builder's filters, sort by up to three fields, group by up to two with subtotals, summary-only view, totals (sum, average, count, lowest, highest).
+- [x] Date presets (or custom dates, or all time) and location and barber pickers, groups included.
+
+**2. Saving and sharing:**
+- [x] Save as a named report: only me, shared with roles, or a brand template (brand-wide builders).
+- [x] Duplicate to edit someone else's report; the owner (or a brand-wide builder, for shared reports and templates) edits and deletes.
+- [x] Scheduled email (daily, weekly, monthly, at a time), each recipient's copy run under their own access, with a CSV, Excel or PDF file when they may export it; once per report, person and day. Or show its totals in the Morning Dashboard.
+- [x] CSV, Excel and PDF export, permission-gated and logged.
+- [x] **Message these clients:** a customer report opens a Campaign Center blast with its filters, locations and barbers.
+
+**3. Permissions:**
+- [x] Hidden contact fields are greyed out in the picker with the reason; masked ones are shown masked and can only be counted.
+- [x] Locations and barbers are cut to the person's access (and someone else's report to the person's locations); a Brand Admin or the owner covers every shop.
+- [x] À la carte: open saved reports, build reports, export. A customer report export also needs **Export the client list**.
+
+**4. Engine:**
+- [x] One query built from a fixed SQL fragment per whitelisted field; definitions hold field keys only, values are bound parameters, no raw SQL. Totals and subtotals in the database, then a page of 50 (exports up to 25,000 rows).
+- [x] Indexes on sales and appointments by client, and on clients by created date and preferred barber (`core_0047_report_builder`).
+- [x] Tests: `tests/report-builder.test.ts` and `tests/db/report-builder.test.ts`.
+
+**Still open:**
+- [ ] Sales, appointments, staff, inventory, tips and campaigns sources: listed as coming next; each needs its fields and their SQL.
+- [ ] Scheduled emails need a real email provider (Resend or Postmark are still stubs).
+
 ## Deferred by decision
 
 - I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.
