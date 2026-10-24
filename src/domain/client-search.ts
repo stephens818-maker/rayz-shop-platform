@@ -271,11 +271,12 @@ export function parseSearch(raw: string, today = new Date()): Probe[] {
     const tokens = nameTokens(trailing ? trailing[1] : t);
     if (tokens.length) out.push({ kind: "name", tokens, text: tokens.join(" "), ...(trailing ? { last4: trailing[2] } : {}) });
     if (single && !/\d/.test(t)) out.push({ kind: "squire_id", id: t });
-    if (/\d/.test(t) && !single) {
+    const addressLike = /\d/.test(t) && !single;
+    if (addressLike) {
       const key = addressKey(t);
       if (key) out.push({ kind: "address", key });
-      out.push({ kind: "address_part", text: t.toLowerCase() });
     }
+    if (addressLike || t.length >= 4) out.push({ kind: "address_part", text: t.toLowerCase() });
     if (!/\d/.test(t)) out.push({ kind: "city", city: t.toLowerCase() });
     out.push({ kind: "tag", text: t.toLowerCase() });
     if (t.length >= 3) out.push({ kind: "notes", text: t.toLowerCase() });
