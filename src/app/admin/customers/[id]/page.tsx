@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointments, clientPhotos, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, sales, shops, staff } from "@/db/schema";
+import { appointments, clientPhotos, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, products as productsTable, sales, shopProducts, shops, staff } from "@/db/schema";
 import { ClientBadges } from "@/components/client-badges";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { type FieldKey, RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
@@ -12,7 +12,7 @@ import { CADENCE_GAPS, DUE_LEAD_DAYS, VISIT_STATUS_LABEL, VISIT_STATUS_TONE, typ
 import { formatPhone } from "@/lib/phone";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
-import { can, guardPage, ratingViewer } from "@/server/auth/staff";
+import { can, guardPage, ratingViewer, workingShopId } from "@/server/auth/staff";
 import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, shownField } from "@/server/client-privacy";
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
@@ -23,6 +23,9 @@ import { latestReceipts, receiptOnFile } from "@/server/receipts";
 import { CALL_KIND_LABEL, CALL_STATUS_LABEL, callsWith, optOutKeys } from "@/server/messaging";
 import { hasShop, inShops } from "@/server/tenant";
 import { clientCadence } from "@/server/visit-cadence";
+import { clientProductHistory } from "@/server/product-history";
+import { REFILL_SOURCE_LABEL, REFILL_STATUS_LABEL, REFILL_STATUS_TONE, lastsLabel, refillHint, type ProductHistory } from "@/domain/product-history";
+import { BuyAgainButton } from "./buy-again";
 import { ageOn, splitProblem } from "@/domain/family";
 import { cadenceLabel } from "@/domain/visit-cadence";
 import { todayLocal } from "@/lib/time";
@@ -146,6 +149,17 @@ export default async function CustomerPage({
           .orderBy(asc(staff.displayLabel))
       : [],
     clientCadence(id, new Date()),
+  ]);
+  const buyShopId = workingShopId(ctx);
+  const [products, carried] = await Promise.all([
+    clientProductHistory(id, new Date()),
+    buyShopId
+      ? db
+          .select({ id: shopProducts.productId })
+          .from(shopProducts)
+          .innerJoin(productsTable, eq(productsTable.id, shopProducts.productId))
+          .where(and(eq(shopProducts.shopId, buyShopId), eq(shopProducts.active, true), eq(productsTable.active, true)))
+      : [],
   ]);
   const spend = money ?? stats;
   const [tags, knownTags] = full
@@ -503,6 +517,12 @@ export default async function CustomerPage({
             </Card>
           )}
           <CadenceCard {...cadence} />
+          <ProductsCard
+            customerId={c.id}
+            history={products}
+            carried={new Set(carried.map((p) => p.id))}
+            shop={buyShopId ? (ctx.shops.find((s) => s.id === buyShopId)?.name ?? null) : null}
+          />
           <Card>
             <CardHeader
               title="Visit history"
@@ -671,6 +691,116 @@ async function CallsAndTexts({ customerId, shopIds, canInbox }: { customerId: st
 }
 
 const daysAgo = (n: number) => (n === 0 ? "today" : n === 1 ? "yesterday" : `${n} days ago`);
+
+/** What they buy off the shelf, at every shop (no prices), with refill timing and buy again at the person's shop. */
+function ProductsCard({ customerId, history: h, carried, shop }: { customerId: string; history: ProductHistory; carried: Set<string>; shop: string | null }) {
+  const fmt = (d: string) => formatDate(d, "MMM d, yyyy");
+  const buy = (productId: string | null, qty: number) =>
+    productId ? (
+      <BuyAgainButton
+        customerId={customerId}
+        productId={productId}
+        qty={qty}
+        disabled={!shop || !carried.has(productId)}
+        title={!shop ? "Pick a shop first" : !carried.has(productId) ? `Not stocked at ${shop}` : `Put ${qty} on their ticket at ${shop}`}
+      />
+    ) : null;
+  const refill = new Map(h.refills.map((r) => [r.productId, r]));
+  const hint = (productId: string | null) => {
+    const r = productId ? refill.get(productId) : undefined;
+    return r?.status ? <Badge tone={REFILL_STATUS_TONE[r.status]}>{refillHint(r, fmt)}</Badge> : null;
+  };
+  const due = h.refills.filter((r) => r.status === "running_out").length;
+  return (
+    <Card data-testid="product-history">
+      <CardHeader
+        title="Products"
+        subtitle={`What they've bought at every Ray'z shop, net of returns${shop ? `. Buy again puts it on their ticket at ${shop}.` : "."}`}
+        action={due > 0 && <Badge tone="amber">{due === 1 ? "Likely running out of 1 product" : `Likely running out of ${due} products`}</Badge>}
+      />
+      {!h.last ? (
+        <p className="p-4 text-sm text-zinc-500">No product purchases yet.</p>
+      ) : (
+        <div className="space-y-3 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xs text-zinc-500">Last bought</div>
+              <div className="font-semibold text-zinc-900" data-testid="last-product">
+                {h.last.name} <span className="font-normal text-zinc-500">× {h.last.qty}</span>
+              </div>
+              <div className="text-xs text-zinc-500">
+                {fmt(h.last.date)} · {h.last.shop}
+              </div>
+              <div className="mt-1">{hint(h.last.productId)}</div>
+            </div>
+            {buy(h.last.productId, h.last.qty)}
+          </div>
+          {h.recent.length > 1 && (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Date</Th>
+                  <Th>Shop</Th>
+                  <Th>Product</Th>
+                  <Th right>Qty</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {h.recent.map((b) => (
+                  <tr key={`${b.saleId}:${b.productId ?? b.name}`}>
+                    <Td className="whitespace-nowrap">{fmt(b.date)}</Td>
+                    <Td>{b.shop}</Td>
+                    <Td>{b.name}</Td>
+                    <Td right>{b.qty}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+          {h.refills.some((r) => r.status) && (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Refills</Th>
+                  <Th>Lasts them</Th>
+                  <Th>Due</Th>
+                  <Th />
+                </tr>
+              </thead>
+              <tbody>
+                {h.refills
+                  .filter((r) => r.status)
+                  .map((r) => (
+                    <tr key={r.productId} data-testid="refill-row">
+                      <Td>
+                        {r.name}
+                        <div className="text-xs text-zinc-500">
+                          bought {r.times} time{r.times === 1 ? "" : "s"}, last {fmt(r.lastDate)} × {r.lastQty}
+                        </div>
+                      </Td>
+                      <Td>
+                        {lastsLabel(r.daysPerUnit!)}
+                        {r.lastQty > 1 ? " each" : ""}
+                        <div className="text-xs text-zinc-500">{REFILL_SOURCE_LABEL[r.source!]}</div>
+                      </Td>
+                      <Td className="whitespace-nowrap">
+                        {fmt(r.due!)}
+                        <div>
+                          <Badge tone={REFILL_STATUS_TONE[r.status!]}>{REFILL_STATUS_LABEL[r.status!]}</Badge>
+                        </div>
+                      </Td>
+                      <Td right>{buy(r.productId, r.lastQty)}</Td>
+                    </tr>
+                  ))}
+              </tbody>
+            </Table>
+          )}
+          {h.total > h.recent.length && <p className="text-xs text-zinc-500">{h.total} product purchases on file.</p>}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 /** Their usual time between visits, from completed visits at every shop (like the visit history). */
 function CadenceCard({ cadence: c, barbers }: { cadence: Cadence; barbers: BarberCadence[] }) {
