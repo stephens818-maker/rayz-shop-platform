@@ -452,9 +452,11 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
             </div>
           )}
           {error && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-          <Button size="lg" className="mt-4 w-full sm:w-auto" disabled={!canDetails || busy || !slot} onClick={book}>
-            {busy ? "Booking…" : `Book ${slot ? fmtTime(slot.startsAt) : ""}`}
-          </Button>
+          {(signedIn || guest) && (
+            <Button size="lg" className="mt-4 w-full sm:w-auto" disabled={!canDetails || busy || !slot} onClick={book}>
+              {busy ? "Booking…" : `Book ${slot ? fmtTime(slot.startsAt) : ""}`}
+            </Button>
+          )}
           <p className="mt-2 text-xs text-zinc-500">No payment needed. Free cancellation up to {shop.cancelCutoffMinutes} minutes before.</p>
         </Section>
       </div>
