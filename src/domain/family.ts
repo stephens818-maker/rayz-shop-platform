@@ -11,6 +11,7 @@
 import { DateTime } from "luxon";
 import { z } from "zod";
 import type { LocalDate } from "@/lib/time";
+import { BookingGroupSchema, GroupBookingRequestSchema, GroupOptionsRequestSchema, GroupOptionsSchema, GroupRescheduleRequestSchema } from "./booking-group";
 
 export const FAMILY_LOYALTY = ["household", "individual"] as const;
 export type FamilyLoyalty = (typeof FAMILY_LOYALTY)[number];
@@ -283,7 +284,18 @@ const ok = (ref: string) => ({ description: "OK", content: { "application/json":
 
 /** For openApiDocument (src/server/openapi.ts): the paths and schemas, in that file's shapes. Served by src/server/family-api.ts. */
 export const FAMILY_OPENAPI = {
-  components: { Family: FamilySchema, FamilyMember: FamilyMemberSchema, ChildInput: ChildInputSchema, FamilyBookingRequest: FamilyBookingRequestSchema, FamilySplitRequest: SplitRequestSchema },
+  components: {
+    Family: FamilySchema,
+    FamilyMember: FamilyMemberSchema,
+    ChildInput: ChildInputSchema,
+    FamilyBookingRequest: FamilyBookingRequestSchema,
+    FamilySplitRequest: SplitRequestSchema,
+    GroupOptionsRequest: GroupOptionsRequestSchema,
+    GroupOptions: GroupOptionsSchema,
+    GroupBookingRequest: GroupBookingRequestSchema,
+    GroupRescheduleRequest: GroupRescheduleRequestSchema,
+    BookingGroup: BookingGroupSchema,
+  },
   paths: {
     "/me/family": {
       get: {
@@ -338,9 +350,73 @@ export const FAMILY_OPENAPI = {
         security: [{ bearerAuth: [] }],
         requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/FamilyBookingRequest" } } } },
         responses: {
-          201: { description: "Booked: one appointment per person, in order" },
+          201: { description: "Booked: one appointment per person, in order. Two or more people are linked as one family group" },
           409: { description: "A slot was taken, or nobody is free for someone; nothing was booked", ...errorRef },
         },
+      },
+    },
+    "/me/family/booking-options": {
+      post: {
+        tags: ["Me"],
+        summary:
+          "Times that seat the whole family on one day: back to back with one barber (same_barber), at the same time with several barbers (together), or the mix that has everyone done soonest (earliest_finish). Each option has the group's total window and each person's barber and time",
+        security: [{ bearerAuth: [] }],
+        requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/GroupOptionsRequest" } } } },
+        responses: { 200: ok("GroupOptions"), 404: { description: "Someone isn't on this account", ...errorRef } },
+      },
+    },
+    "/me/family/booking-groups": {
+      get: {
+        tags: ["Me"],
+        summary: "The family's upcoming group bookings",
+        security: [{ bearerAuth: [] }],
+        responses: { 200: { description: "OK: { groups: BookingGroup[] }" } },
+      },
+      post: {
+        tags: ["Me"],
+        summary:
+          "Book an option from booking-options: everyone in one transaction, linked as one group with one link, one confirmation and one set of reminders. Send Idempotency-Key. If a seat was taken meanwhile nothing is booked; the same times with another barber are tried once, otherwise 409 slot_unavailable with details.alternatives (GroupOptions)",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }],
+        requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/GroupBookingRequest" } } } },
+        responses: { 201: ok("BookingGroup"), 409: { description: "A seat was taken; nothing was booked. details.alternatives has times that still work", ...errorRef } },
+      },
+    },
+    "/me/family/booking-groups/{code}": {
+      get: {
+        tags: ["Me"],
+        summary: "One group booking: everyone's time, barber and status, the total window, the deposit, and each person's own appointment code to change just them",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+        responses: { 200: ok("BookingGroup"), 404: { description: "Not your family's booking", ...errorRef } },
+      },
+    },
+    "/me/family/booking-groups/{code}/cancel": {
+      post: {
+        tags: ["Me"],
+        summary: "Cancel everyone still booked, with one message. Closes at the shop's cutoff before the first appointment",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+        responses: { 200: ok("BookingGroup"), 409: { description: "Nobody is still booked, or someone is already at the shop", ...errorRef }, 422: { description: "Past the cutoff", ...errorRef } },
+      },
+    },
+    "/me/family/booking-groups/{code}/options": {
+      post: {
+        tags: ["Me"],
+        summary: "Times to move everyone still booked to, on another day ({ date, after? }); their current seats count as free",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+        responses: { 200: ok("GroupOptions") },
+      },
+    },
+    "/me/family/booking-groups/{code}/reschedule": {
+      post: {
+        tags: ["Me"],
+        summary: "Move everyone still booked to an option from /options, all or nothing, with one message. 409 with details.alternatives when a seat was taken",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "code", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/GroupRescheduleRequest" } } } },
+        responses: { 200: ok("BookingGroup"), 409: { description: "A seat was taken; nobody moved", ...errorRef }, 422: { description: "Past the cutoff", ...errorRef } },
       },
     },
   },

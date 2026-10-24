@@ -10,6 +10,7 @@ import { AppError } from "./errors";
 import { SplitRequestSchema } from "@/domain/family";
 import { addChild, detachChild, familyView, memberOf, splitChild, updateChild } from "./family";
 import { bookFamily } from "./family-booking";
+import { bookGroup, cancelGroup, groupRescheduleOptions, myGroup, planGroup, publicGroup, rescheduleGroup, upcomingGroups } from "./booking-groups";
 
 /**
  * The family endpoints, shared by the web account page (/api/account/family/...) and the public API
@@ -63,12 +64,62 @@ export const splitChildAccount = route<{ id: string }>(async (req, params) => {
   return json(await familyView(p.id));
 });
 
+const source = (req: Request) => (req.headers.get("x-client") === "web" ? "online" : "api");
+
 /** POST /me/family/bookings */
 export const postFamilyBooking = route(async (req) => {
   const p = await parent(req);
   const raw = await body(req, z.unknown());
-  const made = await bookFamily(raw, { guardianId: p.id, source: req.headers.get("x-client") === "web" ? "online" : "api", actor: p.actor });
+  const made = await bookFamily(raw, { guardianId: p.id, source: source(req), actor: p.actor, idempotencyKey: req.headers.get("idempotency-key") });
   return json({ appointments: made }, 201);
+});
+
+// ───────────────────────────── Booking the family together ─────────────────────────────
+
+const Code = z.object({ code: z.string().trim().min(4).max(20) });
+
+/** POST /me/family/booking-options: the slot finder's plans for one day. */
+export const postGroupOptions = route(async (req) => {
+  const p = await parent(req);
+  return json(await planGroup(await body(req, z.unknown()), { guardianId: p.id }));
+});
+
+/** POST /me/family/booking-groups: book the option picked, all or nothing. */
+export const postBookingGroup = route(async (req) => {
+  const p = await parent(req);
+  const g = await bookGroup(await body(req, z.unknown()), { guardianId: p.id, source: source(req), actor: p.actor, idempotencyKey: req.headers.get("idempotency-key") });
+  return json(publicGroup(g), 201);
+});
+
+/** GET /me/family/booking-groups: the family's upcoming groups. */
+export const listBookingGroups = route(async (req) => {
+  const p = await parent(req);
+  return json({ groups: (await upcomingGroups(p.id)).map(publicGroup) });
+});
+
+/** GET /me/family/booking-groups/{code} */
+export const getBookingGroup = route<{ code: string }>(async (req, params) => {
+  const p = await parent(req);
+  return json(publicGroup(await myGroup(Code.parse(params).code, p.id)));
+});
+
+/** POST /me/family/booking-groups/{code}/cancel: everyone still booked. */
+export const cancelBookingGroup = route<{ code: string }>(async (req, params) => {
+  const p = await parent(req);
+  return json(publicGroup(await cancelGroup(Code.parse(params).code, { actor: p.actor, byCustomer: true, customerId: p.id })));
+});
+
+/** POST /me/family/booking-groups/{code}/options: plans for moving everyone to another day. */
+export const postGroupRescheduleOptions = route<{ code: string }>(async (req, params) => {
+  const p = await parent(req);
+  const b = await body(req, z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"), after: z.string().optional() }));
+  return json(await groupRescheduleOptions(Code.parse(params).code, b.date, { customerId: p.id, staff: false, after: b.after ?? null }));
+});
+
+/** POST /me/family/booking-groups/{code}/reschedule: move everyone to the option picked, all or nothing. */
+export const rescheduleBookingGroup = route<{ code: string }>(async (req, params) => {
+  const p = await parent(req);
+  return json(publicGroup(await rescheduleGroup(Code.parse(params).code, await body(req, z.unknown()), { actor: p.actor, byCustomer: true, customerId: p.id })));
 });
 
 export { options as OPTIONS };
