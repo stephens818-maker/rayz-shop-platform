@@ -454,6 +454,18 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-24: core (checkout prompts), FYI for mobile
+
+- **What changed.** The POS shows a rebook prompt (the next visit with the same barber at the client's interval, 2–3 times, one tap, families together, "Not now" with a reason and an optional reminder) and a product prompt (products tagged as used, the brand's service-product suggestions and past purchases, with stock, one tap to add). The brand switches each on or off per location, role and barber, and makes each skippable or required. **Reports → Checkout prompts** shows rebook rate and attach rate by barber and location. `prompt.shown`, `prompt.accepted` and `prompt.declined` go to the event log.
+- **FYI, core API:**
+  - `finalizeSale` (without a `handoffId`) and `startHandoff` refuse with `bad_request` "Answer the rebook prompt … before taking payment." while a required prompt is unanswered. Nothing in `/api/v1` pays tickets, so nothing changes there.
+  - Appointments booked from the prompt use source `rebook` with `rebookedFromId`; a family's is a booking group with source `staff`.
+  - The new notification kind is `rebook_reminder` (SMS/email only, from `/api/cron/notifications`). If the app lists a client's notifications, show it as "Rebook reminder".
+- **Migration `core_0062_checkout_prompts`.** The next free number is `core_0063`.
+- **No request.** A client-side "you're due" nudge in the app could read the same interval later; nothing is needed now.
+- **Tests:** `tests/checkout-prompts.test.ts` and `tests/db/checkout-prompts.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
 ### 2026-10-24: core (location profiles), FYI and REQUEST for mobile
 
 - **What changed.** Each location has a profile, edited under Settings (Location profile, Photos and logo, Booking widget and links) and in the Add Location wizard: the street address with autocomplete (Google Places with `GOOGLE_MAPS_API_KEY`, the Census geocoder with `GEOCODER=census`, otherwise the ZIP's centre), a second line, the map pin and where it came from, the main phone as E.164, email, Google Place ID and review link, social links, parking and directions, amenities, photos and an uploaded logo, and the sales-tax jurisdiction (never public). Public `/locations` and `/locations/<slug>` pages carry HairSalon JSON-LD. Confirmations, reminders, receipts and calendar invites (`/a/<code>/calendar.ics`, `/g/<code>/calendar.ics`, and attached to confirmation and reschedule emails) now carry the full address and phone. The new merge fields are `{full_address}`, `{map_link}` and `{calendar_link}`.
