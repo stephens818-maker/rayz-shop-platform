@@ -454,6 +454,19 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-24: core (product history and refills), FYI for mobile
+
+- **What changed.** The checkout product prompt and the client profile show the client's last product (name, date, location, quantity), their last 5 purchases, and a refill hint per product: has some left, likely running out (a week before it's due) or likely ran out. The hint comes from how long one unit lasts them (the median gap between purchase days divided by what they bought), or the product's typical interval when they bought it once. **Buy again** adds it in one tap at checkout. On the profile it puts it on the client's open ticket today, or a new retail ticket. The report builder gains a Products group (last product, date, location, quantity, refill status, products likely running out, next refill due). Segments gain `refillStatus` and `refillProductIds`.
+- **FYI, core API:**
+  - `TicketPrompts` gains `history` (`ProductHistory` from `src/domain/product-history.ts`). Each `ProductSuggestion` gains an optional `refill { status, due }`.
+  - `SegmentSchema` gains `refillStatus` (`stocked` | `running_out` | `ran_out`) and `refillProductIds`. Both default to empty, so saved segments and anything the app sends parse as before.
+  - `FilterOptions` gains `products`.
+  - The new audit action is `sale.buy_again`.
+- **No migration.** It reads paid tickets. The next free number is still `core_0063`.
+- **No request.** A "running low?" card in the app could read `clientProductHistory(customerId, now)` from `src/server/product-history.ts` later. Nothing is needed now.
+- **Tests:** `tests/product-history.test.ts` and `tests/db/product-history.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
 ### 2026-10-24: core (checkout prompts), FYI for mobile
 
 - **What changed.** The POS shows a rebook prompt (the next visit with the same barber at the client's interval, 2–3 times, one tap, families together, "Not now" with a reason and an optional reminder) and a product prompt (products tagged as used, the brand's service-product suggestions and past purchases, with stock, one tap to add). The brand switches each on or off per location, role and barber, and makes each skippable or required. **Reports → Checkout prompts** shows rebook rate and attach rate by barber and location. `prompt.shown`, `prompt.accepted` and `prompt.declined` go to the event log.
