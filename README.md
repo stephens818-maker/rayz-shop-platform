@@ -1709,8 +1709,9 @@ Two prompts at the top of the POS **Pay** column, shown before payment. Domain (
   - It lists up to 4 products (1–8, the brand's choice), in this order:
     - products the barber tagged as **Used in the service** on the ticket (the tag doesn't move stock);
     - the brand's **suggested products** for the services on the ticket (Setup → Checkout prompts → Services);
-    - the client's past purchases, most often and most recently bought first (the brand can turn these off).
-  - Each product shows where it came from, its price, and **In stock / Low / Out of stock** at this shop.
+    - the client's past purchases: what they're likely running out of first, then most often and most recently bought (the brand can turn these off).
+  - Each product shows where it came from, its price, **In stock / Low / Out of stock** at this shop, and **Likely running out** or **Likely ran out** when it's one they buy (see [Product history and refills](#product-history)).
+  - Above the list, the client's **last product** and recent purchases, each with **Buy again** (see below).
   - **Add** puts it on the ticket in one tap. It's disabled when out of stock and the shop blocks negative stock.
   - When the ticket is paid, the prompt records which of the products it added were paid for and their net.
 - **Controls.**
@@ -1742,6 +1743,35 @@ Two prompts at the top of the POS **Pay** column, shown before payment. Domain (
     - skipped prompts settled at payment;
     - overrides, the settings actions, the report and the event log.
   - `tests/db/tenant.test.ts` refuses the prompt actions on another shop's ticket.
+
+<a id="product-history"></a>
+### Product history and refills
+
+What a client buys off the shelf, and when they'll want it again. Domain (pure): `src/domain/product-history.ts`. Server: `src/server/product-history.ts`, with a SQL twin (`refillCtes`) that a test holds to the same answers. No migration: it reads paid tickets.
+
+- **Purchases** are product lines on paid tickets (paid, partly or fully refunded), net of returned units, on the ticket's business day, at any Ray'z shop. The client is whoever the ticket is for. Imported lines with no catalog product show in the history but can't be bought again or timed.
+- **Last product** is the most recent line: latest day, then latest paid, then by name. The **recent history** is the last 5 lines (date, location, product, quantity).
+- **Refill interval** (how long one lasts them):
+  - Each gap between two purchase days of a product is divided by what they bought at the start of it: two jars then 60 days means 30 days a jar.
+  - The interval is the median of their last 6 such gaps, so it shows from the second purchase day.
+  - A client who bought it once borrows the product's **typical** interval, the median of every client's recent gaps, once there are at least 3.
+  - The supply is the interval times what they bought last; **due** is the last purchase day plus the supply.
+- **Status:**
+  - **Has some left** until a week before it's due.
+  - **Likely running out** from then until two weeks after it, or half the supply for long ones.
+  - **Likely ran out** after that (they may have bought elsewhere).
+- **Checkout** (the product prompt card; it also shows, as **Products they buy**, when the prompt is off):
+  - Last bought (name, quantity, date, location) with its refill hint, the recent purchases, and anything else likely running out.
+  - **Buy again** puts the same quantity on the ticket in one tap. It's disabled for products this shop doesn't carry, or when there isn't enough stock and the shop blocks negative stock. For a product the prompt also suggested, it counts as the prompt's add (`prompt.accepted`).
+- **Client profile:** a **Products** card, with no prices, so anyone who can open the profile sees it:
+  - the last purchase, the recent history, and how many purchases are on file;
+  - a refill table: times bought, how long one lasts them (their own or typical), due date and status;
+  - a header badge when they're likely running out of something.
+  - **Buy again** puts the product, as many as last time, on the client's open ticket today at the person's working shop (one they may check out), or opens a new retail ticket for them, and goes to checkout. The product must be carried there. A ticket that's with the client on the customer screen is refused. It's audited as `sale.buy_again`.
+  - Barbers without **Check out any barber's clients** can buy again only for clients they've served, onto their own tickets.
+- **Custom reports**, group **Products**: **Last product bought**, **Last product bought on**, **Last product bought at**, **Last product quantity**, **Product refill status** (their most pressing), **Products likely running out** and **Next product refill due**. Like the other activity fields they cover the report's dates, locations and barbers. A product's typical interval always reads every client.
+- **Filters** (client list, Campaign Center segments, report builder, custom badges): **Products → Product refill** (has some left, likely running out, likely ran out), optionally **of these products**. The assistant's `customer_report` takes `refillStatus`, so "Which clients are running out of product?" lists them with what and when.
+- Tests: `tests/product-history.test.ts` (gaps per unit, the 6-gap window, refunds, typical intervals, status edges, ordering, labels, the segment filter, prompt ranking, the assistant) and `tests/db/product-history.test.ts` (history net of returns, own and typical intervals, SQL against TypeScript, the report fields, the segment filter, the checkout prompt, buy again onto an open or new ticket and who may, the profile card).
 
 ### Client notes (brand-wide)
 
