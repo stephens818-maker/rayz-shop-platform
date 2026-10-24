@@ -51,7 +51,6 @@ import { fill, templateFor } from "@/domain/message-templates";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
 import { type LocalDate, addDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, zonedWallTime } from "@/lib/time";
-import { recordEvent } from "./analytics";
 import { type Actor, audit } from "./audit";
 import { createAppointment, dayOpenings } from "./booking";
 import { AppError, notFound } from "./errors";
@@ -67,6 +66,9 @@ import { savedTemplates } from "./notifications/queue";
  * ticket is opened at checkout), their answers, what happens to them when the ticket is paid, and
  * the rebook reminders asked for when a client didn't book.
  */
+
+// analytics.ts is server-only, and checkout.ts loads this module in scripts and tests outside Next too.
+const recordEvent: typeof import("./analytics").recordEvent = async (...a) => (await import("./analytics")).recordEvent(...a);
 
 const PAID_STATUSES = ["paid", "partially_refunded", "refunded"] as const;
 const NEXT_VISIT = ["booked", "confirmed"] as const;
