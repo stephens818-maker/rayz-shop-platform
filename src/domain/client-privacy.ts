@@ -4,7 +4,7 @@
  * are resolved, and how a value is masked. The server loads the rules and applies them before
  * anything is rendered or sent, so a hidden value never reaches the browser.
  */
-import { OWNER_ROLE_KEY, type RoleTemplateKey } from "./permissions";
+import { BRAND_ADMIN_ROLE_KEY, OWNER_ROLE_KEY, type RoleTemplateKey } from "./permissions";
 
 export const LEVELS = ["hidden", "masked", "full"] as const;
 export type Level = (typeof LEVELS)[number];
@@ -19,6 +19,7 @@ export const BUILTIN_FIELDS = [
   { key: "notes", label: "Client notes", revealable: true, example: "On file" },
   { key: "preferred_barber", label: "Preferred barber", revealable: true, example: "T***" },
   { key: "ratings", label: "Ratings", revealable: false, example: "Average only" },
+  { key: "photo", label: "Photo", revealable: false, example: "Photo on file" },
 ] as const;
 export type BuiltinField = (typeof BUILTIN_FIELDS)[number]["key"];
 /** A brand-defined field, by its id. */
@@ -43,7 +44,7 @@ export const RATINGS_MASKED_HINT = "Average stars only, no individual ratings or
 // ───────────────────────────── Built-in brand defaults ─────────────────────────────
 
 type Defaults = Record<BuiltinField | "custom", Level>;
-const FULL: Defaults = { phone: "full", email: "full", address: "full", birthday: "full", notes: "full", preferred_barber: "full", ratings: "full", custom: "full" };
+const FULL: Defaults = { phone: "full", email: "full", address: "full", birthday: "full", notes: "full", preferred_barber: "full", ratings: "full", photo: "full", custom: "full" };
 const MANAGER: Defaults = { ...FULL, phone: "masked", email: "masked", address: "masked" };
 
 /**
@@ -98,9 +99,10 @@ const ANY: Record<BuiltinField | "custom", boolean> = {
   notes: true,
   preferred_barber: true,
   ratings: false,
+  photo: true,
   custom: true,
 };
-const NOTES_ONLY: Record<BuiltinField | "custom", boolean> = { ...ANY, phone: false, email: false, address: false, birthday: false, preferred_barber: false, custom: false };
+const NOTES_ONLY: Record<BuiltinField | "custom", boolean> = { ...ANY, phone: false, email: false, address: false, birthday: false, preferred_barber: false, photo: false, custom: false };
 const DESK: EntryDefaults = { add: ANY, edit: ANY };
 
 /**
@@ -163,10 +165,10 @@ export const atLeast = (l: Level, want: Level) => RANK[l] >= RANK[want];
 /**
  * How visible a field is to a person working at a shop (null: brand-wide, not in any one shop).
  * The most specific rule wins: theirs at this shop, theirs brand-wide, their role's at this shop,
- * their role's brand-wide, then the built-in default. The Brand Owner always sees everything.
+ * their role's brand-wide, then the built-in default. The Brand Owner and Brand Admins always see everything.
  */
 export function resolveLevel(rules: readonly FieldRule[], who: Who, shopId: string | null, field: FieldKey): Level {
-  if (who.roleKey === OWNER_ROLE_KEY) return "full";
+  if (who.roleKey === OWNER_ROLE_KEY || who.roleKey === BRAND_ADMIN_ROLE_KEY) return "full";
   const l = pickRule(rules, who, shopId, field, "view");
   return isLevel(l) ? l : defaultLevel(who.roleKey, field);
 }
@@ -197,6 +199,7 @@ export function fieldRuleChangeDenied(
   const setting = rule.setting ?? "view";
   if (!!rule.roleId === !!rule.staffId) return "Pick a role or a person";
   if (rule.roleKey === OWNER_ROLE_KEY) return "The Brand Owner always sees every client detail";
+  if (rule.roleKey === BRAND_ADMIN_ROLE_KEY && setting === "view") return "Brand Admins always see every client detail";
   if (setting !== "view" && !isEntryField(rule.field)) return "Ratings are entered with the rating tools, not client forms";
   if (rule.level !== null && (setting === "view" ? !isLevel(rule.level) : !isEntry(rule.level))) return "Pick a level";
   if (caller.isOwner) return null;
@@ -301,6 +304,7 @@ export function maskValue(field: FieldKey, raw: string | null | undefined): stri
     case "birthday":
       return maskBirthday(raw);
     case "notes":
+    case "photo":
       return raw?.trim() ? "On file" : null;
     default:
       return maskText(raw);

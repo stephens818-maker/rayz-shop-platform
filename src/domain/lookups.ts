@@ -29,6 +29,11 @@ export const LOOKUP_DEFS = {
     hint: "Quick picks when a line's price is changed at checkout",
     defaults: ["Long or thick hair", "Extra time", "Price match", "Make-good"],
   },
+  clientSources: {
+    label: "Client sources",
+    hint: "How a client found us, on their profile and as a client filter",
+    defaults: ["Walk-in", "Online booking", "Referral", "Google", "Instagram", "Facebook", "Drove by", "Squire import"],
+  },
 } as const;
 
 export type LookupKey = keyof typeof LOOKUP_DEFS;

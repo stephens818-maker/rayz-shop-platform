@@ -968,6 +968,24 @@ export const customers = pgTable(
     /** When their barber calls in, the appointment may be moved to a barber at another shop. */
     allowOtherShop: boolean("allow_other_shop").notNull().default(false),
     createdAt: createdAt(),
+    /** The client number staff read out and the loyalty QR carries, from 10001. */
+    number: integer("number").generatedAlwaysAsIdentity({ startWith: 10001 }),
+    nickname: text("nickname"),
+    /** How they found us, from the "Client sources" picklist (or "Squire import"). */
+    source: text("source"),
+    referredById: uuid("referred_by_id").references((): AnyPgColumn => customers.id, { onDelete: "set null" }),
+    /** First, last and nickname, lowercased: fuzzy search matches its words in any order. */
+    searchName: text("search_name").generatedAlwaysAs(sql`lower(first_name || ' ' || coalesce(last_name, '') || ' ' || coalesce(nickname, ''))`),
+    addressZip: text("address_zip").generatedAlwaysAs(sql`substring(address from '(\\d{5})(?:-\\d{4})?\\s*$')`),
+    addressCity: text("address_city").generatedAlwaysAs(sql`nullif(btrim(lower(substring(address from '([^,]+),[^,]*$'))), '')`),
+    /**
+     * SHA-256 of the normalized detail, set by a trigger (drizzle/core_0044_client_search.sql). Someone
+     * who doesn't see a detail finds a client by the exact value through these, never by part of it.
+     */
+    phoneHash: text("phone_hash"),
+    emailHash: text("email_hash"),
+    birthdayHash: text("birthday_hash"),
+    addressHash: text("address_hash"),
   },
   (t) => [
     // Not unique: Squire data has families sharing one phone number.
@@ -975,9 +993,61 @@ export const customers = pgTable(
     index("customers_email_idx").on(t.email),
     index("customers_name_idx").on(t.firstName, t.lastName),
     index("customers_home_shop_idx").on(t.homeShopId),
-    // Trigram indexes for substring search live in drizzle/0006_client_search.sql.
+    // Trigram, hash, zip and city indexes live in drizzle/0006_client_search.sql and core_0044_client_search.sql.
   ],
 );
+
+/** One photo per client so the desk can tell two Mike S.'s apart. Shown only to people who see "Photo". */
+export const clientPhotos = pgTable("client_photos", {
+  customerId: uuid("customer_id")
+    .primaryKey()
+    .references(() => customers.id, { onDelete: "cascade" }),
+  dataUrl: text("data_url").notNull(),
+  updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** A client list search and its filters, kept by one person, shared with a location, or with the brand. */
+export const savedClientSearches = pgTable(
+  "saved_client_searches",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    visibility: text("visibility").$type<"private" | "shop" | "brand">().notNull().default("private"),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    term: text("term").notNull().default(""),
+    filter: jsonb("filter").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("saved_client_searches_owner_idx").on(t.ownerId)],
+);
+
+/** Pairs someone checked and marked "not the same person", so the duplicates tool stops offering them. a_id < b_id. */
+export const customerDuplicateDismissals = pgTable(
+  "customer_duplicate_dismissals",
+  {
+    aId: uuid("a_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    bId: uuid("b_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    dismissedBy: uuid("dismissed_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.aId, t.bId], name: "customer_duplicate_dismissals_pk" })],
+);
+
+/** Zip code centers, for "within N miles of a location". Loaded from the Census ZCTA gazetteer (scripts/load-zip-points.ts). */
+export const zipPoints = pgTable("zip_points", {
+  zip: text("zip").primaryKey(),
+  lat: doublePrecision("lat").notNull(),
+  lng: doublePrecision("lng").notNull(),
+});
 
 /** Client fields the brand adds, e.g. "Instagram" or "Allergies". Their visibility is set like the built-in ones. */
 export const clientFields = pgTable("client_fields", {

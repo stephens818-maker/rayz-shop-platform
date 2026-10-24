@@ -102,6 +102,18 @@ export const FEATURE_PERMISSIONS = [
   { key: "clients.export", group: "Clients", label: "Export the client list", hint: "Off for everyone but the Brand Owner unless granted. Every export is logged.", brandOnly: true },
   { key: "clients.edit", group: "Clients", label: "Add clients and edit client details", hint: "Which details they can add or edit is set in Client data protection, apart from which they can see." },
   { key: "clients.merge", group: "Clients", label: "Merge duplicate clients", brandOnly: true },
+  {
+    key: "clients.filters",
+    group: "Clients",
+    label: "Use advanced client filters",
+    hint: "Visit history, barbers, locations, spend, loyalty, profile and messaging filters on the client list. A filter on a detail they can't see (birthday, address, rating...) isn't offered.",
+  },
+  {
+    key: "clients.saved_searches",
+    group: "Clients",
+    label: "Save client searches and share them",
+    hint: "Saved searches keep the search and its filters. Shared with their location, or with every location for people with access to all shops.",
+  },
   { key: "clients.rate", group: "Clients", label: "Rate clients" },
   { key: "clients.ratings_all", group: "Clients", label: "See every rating and note, and rate any visit at their shops", hint: "Without it, people see their own ratings and rate only visits they served." },
   { key: "clients.ratings_moderate", group: "Clients", label: "Remove anyone's rating" },
@@ -360,6 +372,21 @@ const KNOWN = new Set<string>(ALL_PERMISSIONS);
 export const OWNER_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "ownerOnly" in p && p.ownerOnly).map((p) => p.key));
 export const BRAND_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "brandOnly" in p && p.brandOnly).map((p) => p.key));
 export const OWNER_GRANTS = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "ownerGrants" in p && p.ownerGrants).map((p) => p.key));
+/**
+ * A Brand Admin with access to all shops always has these: every client, every search field and
+ * filter, the Campaign Center and every report, at every location. Exports stay the Brand Owner's to give.
+ */
+export const BRAND_ADMIN_ALWAYS = new Set<Permission>([
+  "clients.view_all",
+  "clients.filters",
+  "clients.saved_searches",
+  "reports.all_staff",
+  "campaign_center.view",
+  "campaign_center.create",
+  "campaign_center.send",
+  "campaign_center.own_clients",
+  ...REPORTS.map((r) => reportView(r.key)),
+]);
 
 export const isPermission = (s: unknown): s is Permission => typeof s === "string" && KNOWN.has(s);
 
@@ -387,6 +414,7 @@ export function scopeProblem(scope: ShopScope, shopIds: string[]): string | null
 // ───────────────────────────── Roles ─────────────────────────────
 
 export const OWNER_ROLE_KEY = "brand_owner";
+export const BRAND_ADMIN_ROLE_KEY = "brand_admin";
 
 export const ROLE_TEMPLATE_KEYS = ["brand_owner", "brand_admin", "regional_manager", "shop_manager", "front_desk", "barber"] as const;
 export type RoleTemplateKey = (typeof ROLE_TEMPLATE_KEYS)[number];
@@ -421,6 +449,8 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "clients.edit",
   "clients.rate",
   "clients.ratings_all",
+  "clients.filters",
+  "clients.saved_searches",
   "catalog.prices",
   "inventory.manage",
   "inventory.adjust",
@@ -518,6 +548,8 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       "clients.view_all",
       "clients.message",
       "clients.edit",
+      "clients.filters",
+      "clients.saved_searches",
       "reports.all_staff",
       "po.receive",
       "inventory.stocktake",
@@ -591,6 +623,7 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
   }
   for (const p of OWNER_ONLY) perms.delete(p);
   if (scope !== "all") for (const p of BRAND_ONLY) perms.delete(p);
+  if (role.key === BRAND_ADMIN_ROLE_KEY && scope === "all") for (const p of BRAND_ADMIN_ALWAYS) perms.add(p);
   for (const r of REPORTS) if (!perms.has(reportView(r.key))) perms.delete(reportExport(r.key));
   const maxDiscountPct = perms.has("pos.discount") ? clampPct(maxDiscountOverride ?? role.maxDiscountPct) : 0;
   return { isOwner: false, permissions: perms, maxDiscountPct };
@@ -654,6 +687,10 @@ export function roleChangeDenied(caller: Grantor, before: RoleDef | null, after:
   const next = new Set((after?.permissions ?? []).filter(isPermission));
   const owner = [...next].filter((p) => OWNER_ONLY.has(p));
   if (owner.length) return `Only the Brand Owner can ${permissionLabel(owner[0]).replace(/^Change/, "change")}`;
+  if (after?.key === BRAND_ADMIN_ROLE_KEY) {
+    const kept = [...BRAND_ADMIN_ALWAYS].find((p) => !next.has(p));
+    if (kept) return `Brand Admins always have "${permissionLabel(kept)}"`;
+  }
   const prev = new Set((before?.permissions ?? []).filter(isPermission));
   const changed = [...new Set([...next, ...prev])].filter((p) => next.has(p) !== prev.has(p));
   const ownerGrant = changed.find((p) => OWNER_GRANTS.has(p));
