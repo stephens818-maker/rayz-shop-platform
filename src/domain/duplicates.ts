@@ -73,27 +73,34 @@ export function scoreDuplicate(a: DuplicateSide, b: DuplicateSide): DuplicateSco
   const signals: DuplicateSignal[] = [];
   const conflicts: DuplicateConflict[] = [];
   let score = 0;
+  const add = (s: DuplicateSignal, points: number) => {
+    signals.push(s);
+    score += points;
+  };
   const samePhone = !!a.phone && a.phone === b.phone;
   const sameEmail = !!a.email && a.email === b.email;
-  if (samePhone) (signals.push("phone"), (score += 45));
-  if (sameEmail) (signals.push("email"), (score += 45));
+  if (samePhone) add("phone", 45);
+  if (sameEmail) add("email", 45);
 
   const exact = cleanName(fullName(a)) === cleanName(fullName(b)) && !!cleanName(a.lastName) && !!cleanName(b.lastName);
   const compatible = namesMatch(a, b);
   const similar = !exact && !compatible && similarNames(a, b);
-  if (exact) (signals.push("same_name"), (score += 35));
-  else if (compatible) (signals.push("compatible_name"), (score += 25));
-  else if (similar) (signals.push("similar_name"), (score += 15));
+  if (exact) add("same_name", 35);
+  else if (compatible) add("compatible_name", 25);
+  else if (similar) add("similar_name", 15);
   else conflicts.push("first_name");
 
   if (a.birthday && b.birthday) {
-    if (a.birthday === b.birthday) (signals.push("birthday"), (score += 25));
-    else (conflicts.push("birthday"), (score -= 40));
+    if (a.birthday === b.birthday) add("birthday", 25);
+    else {
+      conflicts.push("birthday");
+      score -= 40;
+    }
   }
-  if (a.zip && a.zip === b.zip) (signals.push("zip"), (score += 10));
-  if (!samePhone && a.phone && b.phone && a.phone.slice(-4) === b.phone.slice(-4)) (signals.push("phone_last4"), (score += 10));
+  if (a.zip && a.zip === b.zip) add("zip", 10);
+  if (!samePhone && a.phone && b.phone && a.phone.slice(-4) === b.phone.slice(-4)) add("phone_last4", 10);
   const noContact = (s: DuplicateSide) => !s.phone && !s.email;
-  if (noContact(a) || noContact(b)) (signals.push("no_contact"), (score += 5));
+  if (noContact(a) || noContact(b)) add("no_contact", 5);
 
   const nameOk = exact || compatible || similar;
   const contact = samePhone || sameEmail;
@@ -130,7 +137,10 @@ export function planMerges<T extends { id: string; visits: number; createdAt: Da
   };
   const byId = new Map<string, T>();
   const visits = new Map<string, number>();
-  for (const [a, b] of pairs) for (const c of [a, b]) (byId.set(c.id, c), visits.set(c.id, c.visits));
+  for (const c of pairs.flat()) {
+    byId.set(c.id, c);
+    visits.set(c.id, c.visits);
+  }
   const plan: { keep: string; drop: string }[] = [];
   for (const [a, b] of pairs) {
     const ra = byId.get(root(a.id))!;
