@@ -6,6 +6,7 @@ import { Empty, PageHeader } from "@/components/ui";
 import { localMinutesOf, todayLocal, weekdayOf } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { estimateWait, waitlistForShop } from "@/server/booking";
+import { briefsFor } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { WalkIns } from "./walk-ins";
@@ -59,7 +60,7 @@ export default async function WalkInsPage() {
       };
     })
     .filter((b) => b.state !== "off" || scheds.some((s) => s.staffId === b.id && s.shopId === shopId));
-  const wait = await estimateWait(shopId, board.filter((b) => b.state !== "off").map((b) => b.id), now);
+  const [wait, briefs] = await Promise.all([estimateWait(shopId, board.filter((b) => b.state !== "off").map((b) => b.id), now), briefsFor(ctx, waitlist.map((w) => w.customerId))]);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -82,6 +83,8 @@ export default async function WalkInsPage() {
             preferredStaffId: w.preferredStaffId,
             quotedWaitMin: w.quotedWaitMin,
             joinedAt: w.joinedAt.toISOString(),
+            customerId: w.customerId,
+            notes: (w.customerId && briefs.get(w.customerId)) || null,
           }))}
         />
       )}

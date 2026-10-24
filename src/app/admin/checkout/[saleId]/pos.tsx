@@ -3,6 +3,9 @@
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type FormEvent, Fragment, useEffect, useRef, useState, useTransition } from "react";
 import { ClientBadges } from "@/components/client-badges";
+import { ClientNotesBrief } from "@/components/client-notes-brief";
+import { type NoteBrief, contactPatterns, contactWarning } from "@/domain/client-notes";
+import { addNoteAction } from "../../notes/actions";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, Suggestions, cx } from "@/components/ui";
 import type { ShownBadge } from "@/domain/badges";
 import type { RatingSummary } from "@/domain/ratings";
@@ -86,7 +89,7 @@ export function Pos(props: {
   config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[] };
   feeNotice: string | null;
   initialLines: Omit<Line, "key">[];
-  customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null; badges: ShownBadge[] } | null;
+  customer: PosCustomer | null;
   barber: { id: string; label: string } | null;
   barbers: { id: string; label: string }[];
   services: { id: string; name: string; kind: "service" | "addon"; priceCents: number }[];
@@ -1204,6 +1207,74 @@ function TenderBtn({ on, onClick, title, sub, disabled }: { on: boolean; onClick
   );
 }
 
+type PosCustomer = {
+  id: string;
+  name: string;
+  phone: string | null;
+  rating: RatingSummary | null;
+  badges: ShownBadge[];
+  /** Pinned notes and the last cut, as they may see them. */
+  clientNotes: NoteBrief | null;
+  /** They may write a cut note for this visit. */
+  cutNote: { appointmentId: string | null } | null;
+};
+
+/** Writing down this visit's cut at checkout: guard numbers, style, products and anything else. */
+function QuickCutNote({ customerId, appointmentId, onError }: { customerId: string; appointmentId: string | null; onError: (e: string) => void }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, start] = useTransition();
+  const [d, setD] = useState({ guard: "", style: "", products: "", body: "" });
+  const [done, setDone] = useState<string | null>(null);
+  const warn = contactWarning(contactPatterns([d.guard, d.style, d.products, d.body].join("\n")));
+  if (!open)
+    return (
+      <div className="mt-1 flex items-center gap-2 text-xs">
+        <button type="button" className="underline" onClick={() => (setOpen(true), setDone(null))}>
+          Add cut note for this visit
+        </button>
+        {done && <span className="text-emerald-700">{done}</span>}
+      </div>
+    );
+  const save = () =>
+    start(async () => {
+      const r = await addNoteAction(customerId, {
+        kind: "visit",
+        body: d.body,
+        appointmentId,
+        details: { guard: d.guard, style: d.style, products: d.products.split(",").map((x) => x.trim()).filter(Boolean) },
+      });
+      if (!r.ok) return onError(r.error);
+      setOpen(false);
+      setD({ guard: "", style: "", products: "", body: "" });
+      setDone(r.data.removed.length ? "Saved. Contact details were taken out." : "Cut note saved");
+      router.refresh();
+    });
+  return (
+    <div className="mt-2 space-y-1.5 rounded-lg bg-zinc-50 p-2 text-sm ring-1 ring-zinc-200" data-testid="quick-cut-note">
+      <div className="grid grid-cols-2 gap-1.5">
+        <Input placeholder="Guard numbers" value={d.guard} maxLength={80} onChange={(e) => setD({ ...d, guard: e.target.value })} />
+        <Input placeholder="Style" value={d.style} maxLength={120} onChange={(e) => setD({ ...d, style: e.target.value })} />
+        <Input className="col-span-2" placeholder="Products used, separated by commas" value={d.products} onChange={(e) => setD({ ...d, products: e.target.value })} />
+        <Input className="col-span-2" placeholder="Anything else" value={d.body} maxLength={2000} onChange={(e) => setD({ ...d, body: e.target.value })} />
+      </div>
+      {warn && (
+        <p role="alert" className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+          {warn}
+        </p>
+      )}
+      <div className="flex justify-end gap-2">
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        <Button type="button" size="sm" disabled={pending} onClick={save}>
+          Save cut note
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function CustomerBox({
   saleId,
   customer,
@@ -1211,7 +1282,7 @@ function CustomerBox({
   onError,
 }: {
   saleId: string;
-  customer: { id: string; name: string; phone: string | null; notes: string | null; rating: RatingSummary | null; badges: ShownBadge[] } | null;
+  customer: PosCustomer | null;
   canAdd: { phone: boolean; email: boolean };
   onError: (e: string) => void;
 }) {
@@ -1260,7 +1331,8 @@ function CustomerBox({
             </button>
           </div>
           <ClientBadges badges={customer.badges} strongActions className="mt-1 flex" />
-          {customer.notes && <p className="mt-1 whitespace-pre-line rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">{customer.notes}</p>}
+          <ClientNotesBrief brief={customer.clientNotes} customerId={customer.id} compact className="mt-1 text-xs" />
+          {customer.cutNote && <QuickCutNote customerId={customer.id} appointmentId={customer.cutNote.appointmentId} onError={onError} />}
         </>
       ) : adding ? (
         <form onSubmit={create} className="space-y-2 rounded-lg p-2 ring-1 ring-zinc-200">

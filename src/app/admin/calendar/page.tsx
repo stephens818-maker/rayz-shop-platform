@@ -4,6 +4,7 @@ import { addDays, isValidLocalDate, localMinutesOf, todayLocal, weekdayOf } from
 import { can, guardPage, reasonViewer, workingShopId } from "@/server/auth/staff";
 import { pickerReasons } from "@/server/block-reasons";
 import { loadDayCalendar, loadWeekCalendar } from "@/server/calendar";
+import { noteViewer } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
 import { shopCatalog } from "@/server/catalog";
 import { DayCalendar } from "./day-calendar";
@@ -34,7 +35,7 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
 
   const policy = await clientPolicy(ctx);
   const [data, catalog, reasons] = await Promise.all([
-    loadDayCalendar(shopId, date, manages ? null : ctx.staff.id, ctx, policy, reasonViewer(ctx)),
+    loadDayCalendar(shopId, date, manages ? null : ctx.staff.id, ctx, policy, reasonViewer(ctx), noteViewer(ctx, policy)),
     shopCatalog(shopId),
     pickerReasons("blocks"),
   ]);

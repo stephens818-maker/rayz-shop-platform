@@ -7,13 +7,27 @@ import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/co
 import { ClientHitRow, FamilyPickList } from "@/components/client-hit";
 import { AddChildInline } from "@/components/family-party";
 import { addChildAction } from "@/app/admin/customers/family-actions";
+import { ClientNotesBrief } from "@/components/client-notes-brief";
+import type { NoteBrief } from "@/domain/client-notes";
 import type { ClientHit } from "@/domain/client-search";
+import { noteBriefsAction } from "../notes/actions";
 import { FAMILY_BOOKING_MAX } from "@/domain/family";
 import { searchCustomersAction, startCheckoutAction } from "../calendar/actions";
 import { linkWalkInsAction, notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
 
 type Barber = { id: string; label: string; color: string; state: "free" | "busy" | "off"; note: string; until: string | null; untilKind: "busy" | "next" | null };
-type Entry = { id: string; name: string; hasPhone: boolean; status: string; service: string; preferredStaffId: string | null; quotedWaitMin: number | null; joinedAt: string };
+type Entry = {
+  id: string;
+  name: string;
+  hasPhone: boolean;
+  status: string;
+  service: string;
+  preferredStaffId: string | null;
+  quotedWaitMin: number | null;
+  joinedAt: string;
+  customerId?: string | null;
+  notes?: NoteBrief | null;
+};
 
 const t = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
 
@@ -43,6 +57,16 @@ export function WalkIns({
   const toggleWho = (id: string) =>
     setForWho((w) => (w.includes(id) ? (w.length > 1 ? w.filter((x) => x !== id) : w) : w.length < FAMILY_BOOKING_MAX ? [...w, id] : w));
   const [found, setFound] = useState<ClientHit[]>([]);
+  const [briefs, setBriefs] = useState<Record<string, NoteBrief>>({});
+  const whoKey = forWho.join(",");
+  useEffect(() => {
+    if (!whoKey) return setBriefs({});
+    let live = true;
+    noteBriefsAction(whoKey.split(",")).then((r) => live && r.ok && setBriefs(r.data));
+    return () => {
+      live = false;
+    };
+  }, [whoKey]);
   useEffect(() => {
     if (picked || name.trim().length < 2) return setFound([]);
     const t = setTimeout(async () => {
@@ -134,6 +158,10 @@ export function WalkIns({
                 )}
               </div>
             )}
+            {picked &&
+              forWho.map((id) => (
+                <ClientNotesBrief key={id} brief={briefs[id]} customerId={id} compact className="text-left" />
+              ))}
             {picked && !picked.family?.guardian && ((picked.family?.kids.length ?? 0) > 0 || canFamily) && (
               <div className="text-sm" data-testid="walk-in-family">
                 <span className="text-zinc-500">For (pick one or more): </span>
@@ -287,6 +315,7 @@ function WaitRow({
           {w.service}
           {w.preferredStaffId && ` · wants ${barbers.find((b) => b.id === w.preferredStaffId)?.label ?? "a specific barber"}`}
         </div>
+        <ClientNotesBrief brief={w.notes} customerId={w.customerId} compact className="mt-1" />
       </div>
       <div className={cx("text-right text-xs tabular", over ? "font-semibold text-red-600" : "text-zinc-500")}>
         waited {waited}m

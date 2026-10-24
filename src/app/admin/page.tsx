@@ -13,7 +13,9 @@ import { listRequests, staffingFor } from "@/server/staff-time";
 import { can, canAny, guardPage, reasonViewer, reportShopIds } from "@/server/auth/staff";
 import { todayAlerts, viewerOf } from "@/server/today";
 import { badgeCounts, shownBadges } from "@/server/badges";
+import { noteBriefs, noteViewer } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
+import { ClientNotesBrief } from "@/components/client-notes-brief";
 import { ClientBadges } from "@/components/client-badges";
 import { liveClock } from "@/server/clock-live";
 import { LiveRefresh } from "@/components/live-refresh";
@@ -79,7 +81,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   ]);
   const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
   const policy = await clientPolicy(ctx);
-  const [times, staffing, myDecisions, badges, badgeTally] = await Promise.all([
+  const [times, staffing, myDecisions, badges, badgeTally, noteBriefsFor] = await Promise.all([
     timesFor(upcoming.map((a) => a.id), now),
     staffingFor(shopIds, today, today, reasonViewer(ctx), seesTeam ? null : [ctx.staff.id]),
     can(ctx, "timeoff.request")
@@ -93,6 +95,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       now,
     ),
     badgeCounts(shopIds, today, [...policy.badges], { now, staffId }),
+    noteBriefs(noteViewer(ctx, policy), upcoming.map((a) => a.customerId)),
   ]);
   const whosIn = shopIds
     .map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "", rows: staffing.filter((r) => r.shopId === id) }))
@@ -194,6 +197,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                       </Link>
                       <div className="text-xs text-zinc-500">{a.services}</div>
                       <ClientBadges badges={a.customerId ? badges.get(a.customerId) : undefined} only={ACTION_BADGES} strongActions className="mt-0.5 flex" />
+                      <ClientNotesBrief brief={a.customerId ? noteBriefsFor.get(a.customerId) : null} compact className="mt-1 max-w-md" />
                     </Td>
                     <Td>
                       {a.barber}

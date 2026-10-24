@@ -28,11 +28,13 @@ import { cadenceLabel } from "@/domain/visit-cadence";
 import { todayLocal } from "@/lib/time";
 import { familyView, loadFamilySettings } from "@/server/family";
 import { shownBadges } from "@/server/badges";
+import { listNotes } from "@/server/client-notes";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
 import { ResendReceipt } from "../../sales/[id]/receipt-panel";
 import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
 import { FamilyCard, type FamilyKid } from "./family-card";
+import { NotesCard } from "./notes-card";
 import { ClientIdentity } from "./identity";
 import { ClientTags } from "./tags";
 
@@ -70,8 +72,8 @@ export default async function CustomerPage({
   }
   const policy = await clientPolicy(ctx);
   const preferredFull = policy.level("preferred_barber") === "full";
-  // The client's history follows them: every shop sees their visits and purchases at every shop.
-  // Staff ratings and notes stay with the shop they were written at; tickets open only at their own shop.
+  // The client's history follows them: every shop sees their visits, purchases and notes at every shop.
+  // Staff ratings stay with the shop they were written at; tickets open only at their own shop.
   const scoped = !ctx.brandWide;
   const mine = scoped ? ctx.shopIds : undefined;
   const vPage = Math.max(1, Number(sp.v) || 1);
@@ -194,6 +196,8 @@ export default async function CustomerPage({
     latestReceipts(saleRows.map((r) => r.s.id)),
     shownBadges(policy, [c.id]),
   ]);
+  const notes = await listNotes(ctx, c.id);
+  const noteVisits = visits.filter((v) => v.a.status !== "cancelled" && v.a.status !== "no_show" && v.a.startsAt <= new Date()).map((v) => ({ id: v.a.id, label: `${formatDate(v.a.startsAt, "MMM d, yyyy")} · ${v.barber} · ${v.shop}` }));
   const [familySettings, family, parentRow, formerRow] = await Promise.all([
     loadFamilySettings(),
     c.guardianId ? null : familyView(c.id),
@@ -354,6 +358,7 @@ export default async function CustomerPage({
               usual={usual}
             />
           )}
+          <NotesCard customerId={c.id} firstName={c.firstName} list={notes} visits={noteVisits} />
           {showFamily && (
             <FamilyCard
               customerId={c.id}

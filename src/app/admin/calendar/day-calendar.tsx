@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { ClientNotesBrief } from "@/components/client-notes-brief";
+import { PinIcon } from "@/components/pin-icon";
 import { ClientBadges } from "@/components/client-badges";
 import { actionFirst } from "@/domain/badges";
 import {
@@ -1017,6 +1019,12 @@ function Column({
                   />
                 )}
                 <span className="truncate">{a.customerName}</span>
+                {a.clientNotes?.pinned.length ? (
+                  <PinIcon
+                    className="h-3 w-3 shrink-0 text-amber-600"
+                    title={`Pinned note: ${a.clientNotes.pinned[0].body.slice(0, 120)}`}
+                  />
+                ) : null}
                 <StarBadge rating={a.rating} showCount={false} />
                 <ClientBadges
                   badges={actionFirst(a.badges)}
@@ -1054,6 +1062,11 @@ function Column({
               {hh > 48 && (
                 <div className="truncate text-[11px] opacity-70">
                   {label(a.startMin)}–{label(a.endMin)}
+                </div>
+              )}
+              {hh > 40 && a.clientNotes?.pinned[0] && (
+                <div className="truncate text-[11px] font-medium text-amber-900">
+                  {a.clientNotes.pinned[0].body}
                 </div>
               )}
             </button>
@@ -1642,11 +1655,12 @@ function ApptPanel({
         <dd className="col-span-2 font-mono text-xs">{appt.code}</dd>
         {appt.notes && (
           <>
-            <dt className="text-zinc-500">Notes</dt>
+            <dt className="text-zinc-500">Booking notes</dt>
             <dd className="col-span-2">{appt.notes}</dd>
           </>
         )}
       </dl>
+      <ClientNotesBrief brief={appt.clientNotes} customerId={appt.customerId} />
 
       {appt.customerId && appt.hasPhone && canManage.message && (
         <ContactClient

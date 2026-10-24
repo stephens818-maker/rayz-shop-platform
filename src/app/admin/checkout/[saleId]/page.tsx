@@ -3,7 +3,9 @@ import { notFound, redirect } from "next/navigation";
 import { feeDisclosure } from "@/domain/checkout";
 import { can, guardPage } from "@/server/auth/staff";
 import { shownBadges } from "@/server/badges";
+import { noteBriefs, noteViewer } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
+import { writableKinds } from "@/domain/client-notes";
 import { inTenant } from "@/server/tenant";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { loadCheckoutContext } from "@/server/checkout";
@@ -55,6 +57,8 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
     shownBadges(policy, [c.customer?.id]),
   ]);
   const people = await ticketPeople(c.sale);
+  const notesViewer = noteViewer(ctx, policy);
+  const briefs = await noteBriefs(notesViewer, [c.customer?.id ?? null]);
   // Rewards of anyone else on a combined ticket can pay for it too (a household shares one balance).
   const others = [...new Set(people.map((p) => p.customerId).filter((x): x is string => !!x && x !== c.customer?.id))];
   const otherBalances = loyalty?.enabled ? await Promise.all(others.map(async (id) => ({ id, b: await loyaltyBalance(id) }))) : [];
@@ -120,7 +124,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
             }
           : null
       }
-      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: policy.show("phone", c.customer.phone), notes: policy.show("notes", c.customer.notes), rating: policy.stars(ratings.get(c.customer.id)), badges: badges.get(c.customer.id) ?? [] } : null}
+      customer={c.customer ? { id: c.customer.id, name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(), phone: policy.show("phone", c.customer.phone), rating: policy.stars(ratings.get(c.customer.id)), badges: badges.get(c.customer.id) ?? [], clientNotes: briefs.get(c.customer.id) ?? null, cutNote: writableKinds(notesViewer).includes("visit") ? { appointmentId: c.appointment?.customerId === c.customer.id ? c.appointment.id : null } : null } : null}
       barber={c.barber ? { id: c.barber.id, label: c.barber.displayLabel } : null}
       barbers={barbers.map((b) => ({ id: b.id, label: b.displayName }))}
       services={catalog.map((s) => ({ id: s.id, name: s.name, kind: s.kind, priceCents: s.priceCents }))}

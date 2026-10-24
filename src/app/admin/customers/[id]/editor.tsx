@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Select, Textarea, cx } from "@/components/ui";
 import { ClientHitRow } from "@/components/client-hit";
+import { contactPatterns, contactWarning } from "@/domain/client-notes";
 import type { ShownField } from "@/domain/client-privacy";
 import type { ClientHit } from "@/domain/client-search";
 import { findClientsAction, grantRewardAction, mergeCustomersAction, updateCustomerAction, updateNotesAction } from "../actions";
@@ -233,7 +234,8 @@ export function CustomerEditor({
             <Masked customerId={id} field="preferred_barber" value={preferred.value} level="masked" canReveal={revealable.includes("preferred_barber")} empty="No preference" />
           </div>
         ) : null}
-        {prot.shown.filter((f) => f.key === "notes" && !notHere.includes(f)).map((f) => prot.field({ ...f, label: "Notes (staff only)" }, id, revealable.includes(f.key)))}
+        {prot.shown.filter((f) => f.key === "notes" && !notHere.includes(f)).map((f) => prot.field({ ...f, label: "Profile note (pinned, every location)" }, id, revealable.includes(f.key)))}
+        <ContactWarning text={prot.entries().notes} />
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={p.smsOptIn} onChange={(e) => setP({ ...p, smsOptIn: e.target.checked })} /> Texts
         </label>
@@ -254,7 +256,17 @@ export function CustomerEditor({
   );
 }
 
-/** What someone without "edit clients" sees: the details their role shows, and cut notes as the portal lets them add or edit them. */
+/** Typing a phone number or email into a note: it's removed on save, and they're told so first. */
+function ContactWarning({ text }: { text: string | undefined }) {
+  const warn = contactWarning(contactPatterns(text));
+  return warn ? (
+    <p role="alert" className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
+      {warn}
+    </p>
+  ) : null;
+}
+
+/** What someone without "edit clients" sees: the details their role shows, and the profile note as the portal lets them add or edit it. */
 export function NotesEditor({
   id,
   initial,
@@ -282,7 +294,7 @@ export function NotesEditor({
   const sending = prot.entries().notes;
   return (
     <Card>
-      <CardHeader title="Notes" subtitle={[preferred && `Prefers ${preferred}`, usual && `usually sees ${usual}`].filter(Boolean).join(" · ") || undefined} />
+      <CardHeader title="Details" subtitle={[preferred && `Prefers ${preferred}`, usual && `usually sees ${usual}`].filter(Boolean).join(" · ") || undefined} />
       {shown.length > 0 && (
         <dl className="grid grid-cols-3 gap-x-3 gap-y-2 border-b border-zinc-100 px-4 py-3 text-sm">
           {shown.map((f) => (
@@ -295,7 +307,12 @@ export function NotesEditor({
           ))}
         </dl>
       )}
-      <div className="grid grid-cols-2 p-4">{prot.field({ ...notes, label: "Client notes" }, id, revealable.includes(notes.key))}</div>
+      <div className="grid grid-cols-2 p-4">
+        {prot.field({ ...notes, label: "Profile note (pinned, every location)" }, id, revealable.includes(notes.key))}
+        <div className="col-span-2">
+          <ContactWarning text={sending} />
+        </div>
+      </div>
       {sending !== undefined && (
         <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
           <Button
