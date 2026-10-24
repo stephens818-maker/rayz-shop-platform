@@ -1684,6 +1684,65 @@ One ticket for several people and barbers. Domain (pure): `src/domain/combined-c
 
   `tests/db/handoff.test.ts` covers tipping each barber on the customer screen.
 
+<a id="checkout-prompts"></a>
+### Checkout prompts (rebook and products)
+
+Two prompts at the top of the POS **Pay** column, shown before payment. Domain (pure): `src/domain/checkout-prompts.ts`. Server: `src/server/checkout-prompts.ts`. Settings: **Setup → Checkout prompts** (`/admin/checkout-prompts`). Report: **Reports → Checkout prompts**.
+
+- **Rebook prompt.**
+  - It suggests the next visit with the same barber, around the date the client is due:
+    - The interval is the client's own visit cadence (from **Time between visits**).
+    - Without a cadence, it's the service's **rebook interval**.
+    - Without either, it's the brand's default (28 days).
+    - The interval is kept between 7 and 182 days.
+  - It offers 2 or 3 times (the brand's choice) on different days within a week of that date, near the time of day they came in. Times come from the same openings staff book from on the calendar, so a closed day or a full book just moves on to the next day.
+  - **One tap books it** (source `rebook`, linked to today's visit by `rebooked_from_id`). The prompt is claimed first, so a double tap can't book twice. A time that's no longer on offer is refused with "Review them again".
+  - **Families:** when everyone on the ticket is in one household, the prompt offers times for all of them together, each with their own barber, and one tap books a booking group with the parent as guardian. People on a combined ticket from different households get the prompt for the ticket's client only.
+  - A client whose next visit is already booked isn't asked; the card shows that visit instead.
+  - **Not now** takes an optional reason from the brand's list (default: Will book online, Not sure of their schedule, Traveling, Price, Other). It can also schedule a **rebook reminder** a few days before the due date (the brand sets how many; never earlier than tomorrow), sent at 10am.
+  - The reminder goes out from the notifications cron (`/api/cron/notifications`):
+    - It's sent by SMS and email to whichever the client agreed to, a child's to their parent, with the shop's booking link (template **Rebook reminder**, editable under **Client messages**).
+    - If the client has booked since, it's dropped.
+    - If there's no way to reach them, it's skipped.
+    - Booking from the prompt after all cancels it.
+- **Product recommendation prompt.**
+  - It lists up to 4 products (1–8, the brand's choice), in this order:
+    - products the barber tagged as **Used in the service** on the ticket (the tag doesn't move stock);
+    - the brand's **suggested products** for the services on the ticket (Setup → Checkout prompts → Services);
+    - the client's past purchases, most often and most recently bought first (the brand can turn these off).
+  - Each product shows where it came from, its price, and **In stock / Low / Out of stock** at this shop.
+  - **Add** puts it on the ticket in one tap. It's disabled when out of stock and the shop blocks negative stock.
+  - When the ticket is paid, the prompt records which of the products it added were paid for and their net.
+- **Controls.**
+  - Each prompt is on or off for the brand, with overrides per location, per role (whoever has the ticket open) and per barber (the ticket's barber). The closest one wins: barber, then role, then location, then brand.
+  - Each prompt is **Skippable** or **Required to acknowledge**. A required prompt holds **Charge** and the hand-off to the customer screen until it's answered. A required rebook also counts as answered once the client's next visit is booked some other way.
+  - Once a prompt is on a ticket it stays for whoever opens it next.
+  - The settings need `checkout_prompts.manage` (brand-only; Brand Admin has it).
+  - The old "rebook in N weeks" picker is hidden while the rebook prompt is on.
+- **At payment.** A prompt nobody answered is settled as declined and marked skipped. A rebook that was booked some other way while it was up is settled as booked.
+- **Reporting.** **Reports → Checkout prompts**, by location, barber or both:
+  - Rebook rate at checkout: prompts that booked, over the prompts shown, with declined, skipped and reminders set.
+  - Product attach rate: tickets paid with a product added from the prompt, over the tickets it was shown on, with prompted product sales.
+  - Why clients didn't rebook.
+  - Only prompts on paid tickets count, by the day the ticket was paid. Barbers see their own; shop logins and managers see their shops (`report.checkout_prompts.view`, granted with `report.kpis.view`).
+- **Event log.** `prompt.shown`, `prompt.accepted` and `prompt.declined` (category `prompt`; see [Event log schema](#event-log-schema)). Each product added from the prompt is its own `prompt.accepted`.
+- **Privacy.** Decline reasons come from a fixed list, and the column is scrubbed of anything like a card or account number like other free-text columns. Reminders reach the client only through their opted-in channels.
+- **Migration:** `core_0062_checkout_prompts`. It adds:
+  - `brand_settings.checkout_prompts` and `services.rebook_days`;
+  - the tables `checkout_prompt_rules`, `service_product_suggestions`, `sale_used_products`, `rebook_reminders` and `checkout_prompts` (one row per prompt per ticket, with what it suggested and its answer);
+  - the report permissions, and `checkout_prompts.manage` for Brand Admin.
+- **Tests:**
+  - `tests/checkout-prompts.test.ts` covers settings, override precedence, interval and time picking, product ranking and stock, required answers, and the events, permissions, template and migration.
+  - `tests/db/checkout-prompts.test.ts` covers, against a real database:
+    - rebook times, one-tap booking, and a family booked together;
+    - the service and cadence intervals, and a client already booked;
+    - decline with a reason and a reminder, and the reminder sent, dropped or skipped;
+    - product suggestions with stock, adding products, and what was paid;
+    - required prompts holding payment and the hand-off;
+    - skipped prompts settled at payment;
+    - overrides, the settings actions, the report and the event log.
+  - `tests/db/tenant.test.ts` refuses the prompt actions on another shop's ticket.
+
 ### Client notes (brand-wide)
 
 Notes follow the client to every location. Whoever sees the client, at any shop they visit, sees their notes, as far as their permissions and **Client data protection** allow.
