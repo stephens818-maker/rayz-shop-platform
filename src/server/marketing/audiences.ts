@@ -12,6 +12,7 @@ import { segKey } from "@/domain/report-views";
 import { rebookDue } from "@/domain/today";
 import { addDays, endOfLocalDay, localMinutesOf, startOfLocalDay, todayLocal } from "@/lib/time";
 import { availableMinutesAt } from "../available-minutes";
+import { CLIENT_FACTS, PRIMARY_BARBER, segmentConditions } from "../client-filters";
 import { consentColumns } from "./consent";
 
 const DAY = 86_400_000;
@@ -233,8 +234,7 @@ export interface SegmentMember {
   lastAt: Date | null;
 }
 
-/** The client's primary barber: the preferred barber on their profile, or who cut them last. */
-export const PRIMARY_BARBER = sql.raw("coalesce(c.preferred_staff_id, v.last_staff)");
+export { PRIMARY_BARBER };
 /**
  * Booked since the last visit: an appointment after it that wasn't cancelled and wasn't a no-show.
  * Once a lapsed client books they're out; if they cancel or don't show, they're lapsed again.
@@ -248,47 +248,10 @@ export async function segmentMembers(seg: Segment, shopIds: readonly string[], n
   const scope = seg.shopIds.length ? seg.shopIds.filter((s) => shopIds.includes(s)) : [...shopIds];
   if (!scope.length) return [];
   const cols = await consentColumns();
-  const ago = (days: number) => new Date(now.getTime() - days * DAY).toISOString();
-  const where: SQL[] = [sql`coalesce(v.last_shop, c.home_shop_id) in ${uuids(scope)}`];
+  const where: SQL[] = [sql`coalesce(v.last_shop, c.home_shop_id) in ${uuids(scope)}`, ...(await segmentConditions(seg, now))];
   if (cols.deleted) where.push(sql`c.deleted_at is null`);
-  if (seg.staffIds.length) {
-    if (seg.barberMatch === "primary") where.push(sql`${PRIMARY_BARBER} in ${uuids(seg.staffIds)}`);
-    else if (seg.barberMatch === "recent") where.push(sql`v.last_staff in ${uuids(seg.staffIds)}`);
-    else where.push(sql`exists (select 1 from appointments x where x.customer_id = c.id and x.status = 'completed' and x.staff_id in ${uuids(seg.staffIds)})`);
-  }
-  if (seg.lastVisitWithinDays !== null) where.push(sql`v.last_at >= ${ago(seg.lastVisitWithinDays)}`);
-  if (seg.lastVisitOverDays !== null) where.push(sql`v.last_at < ${ago(seg.lastVisitOverDays)}`);
-  if (seg.notBooked) where.push(sql`not ${BOOKED_SINCE}`);
-  if (seg.minVisits !== null) where.push(sql`coalesce(v.n, 0) >= ${seg.minVisits}`);
-  if (seg.maxVisits !== null) where.push(sql`coalesce(v.n, 0) <= ${seg.maxVisits}`);
-  if (seg.minSpendCents !== null) where.push(sql`coalesce(sp.cents, 0) >= ${seg.minSpendCents}`);
-  if (seg.maxSpendCents !== null) where.push(sql`coalesce(sp.cents, 0) <= ${seg.maxSpendCents}`);
-  if (seg.serviceIds.length)
-    where.push(
-      sql`exists (select 1 from sale_items si join sales s on s.id = si.sale_id where s.customer_id = c.id and s.status in ('paid', 'partially_refunded', 'refunded') and si.ref_id in ${uuids(seg.serviceIds)})`,
-    );
-  if (seg.birthdayMonths.length) where.push(sql`extract(month from c.birthday)::int in (${sql.join(seg.birthdayMonths.map((m) => sql`${m}`), sql`, `)})`);
-  if (seg.minRating !== null || seg.maxRating !== null) {
-    const avg = sql`(select avg(r.stars) from client_ratings r where r.customer_id = c.id)`;
-    if (seg.minRating !== null) where.push(sql`${avg} >= ${seg.minRating}`);
-    if (seg.maxRating !== null) where.push(sql`${avg} <= ${seg.maxRating}`);
-  }
-  if (seg.minLoyaltyCents !== null)
-    where.push(
-      sql`(select coalesce(sum(lr.amount_cents), 0) from loyalty_rewards lr where lr.customer_id = c.id and lr.redeemed_at is null and (lr.expires_at is null or lr.expires_at > ${now.toISOString()})) >= ${seg.minLoyaltyCents}`,
-    );
-  if (seg.tags.length) where.push(sql`exists (select 1 from customer_tags t where t.customer_id = c.id and t.tag in (${sql.join(seg.tags.map((t) => sql`${t}`), sql`, `)}))`);
   const rows = (await db.execute(sql`
-    with v as (
-      select a.customer_id, count(*)::int n, max(a.starts_at) last_at,
-        (array_agg(a.shop_id order by a.starts_at desc))[1] last_shop,
-        (array_agg(a.staff_id order by a.starts_at desc))[1] last_staff
-      from appointments a where a.status = 'completed' and a.customer_id is not null
-      group by a.customer_id
-    ), sp as (
-      select customer_id, sum(service_net_cents + product_net_cents)::int cents from sales
-      where status in ('paid', 'partially_refunded', 'refunded') and customer_id is not null group by customer_id
-    )
+    with ${CLIENT_FACTS}
     select c.id, c.first_name, coalesce(v.last_shop, c.home_shop_id) shop_id, v.last_at,
       ${seg.barberMatch === "primary" ? PRIMARY_BARBER : seg.barberMatch === "recent" ? sql`v.last_staff` : sql`coalesce(v.last_staff, c.preferred_staff_id)`} staff_id
     from customers c left join v on v.customer_id = c.id left join sp on sp.customer_id = c.id

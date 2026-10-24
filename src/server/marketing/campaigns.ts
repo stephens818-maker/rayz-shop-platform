@@ -31,6 +31,7 @@ import { ruleOf } from "../coupons";
 import type { Permission } from "@/domain/permissions";
 import { StaffContext, assertCan, assertShopAccess, can } from "../auth/staff";
 import { clientPolicy } from "../client-privacy";
+import type { FieldKey } from "@/domain/client-privacy";
 import { AppError, forbidden, notFound } from "../errors";
 import { processDueJobs } from "../notifications/queue";
 import { segmentMembers } from "./audiences";
@@ -280,7 +281,12 @@ export function assertMayEdit(ctx: StaffContext, c: Campaign, kind: "blast" | "s
 /** Which client details the person sees, for the segment filters that would reveal them. */
 export async function segmentSees(ctx: StaffContext) {
   const policy = await clientPolicy(ctx);
-  return { birthday: policy.level("birthday") !== "hidden", ratings: policy.level("ratings") !== "hidden", preferredBarber: policy.level("preferred_barber") !== "hidden" };
+  return {
+    birthday: policy.level("birthday") !== "hidden",
+    ratings: policy.level("ratings") !== "hidden",
+    preferredBarber: policy.level("preferred_barber") !== "hidden",
+    level: (f: FieldKey) => policy.level(f),
+  };
 }
 
 export async function checkSegment(ctx: StaffContext, seg: Segment) {

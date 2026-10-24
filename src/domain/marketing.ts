@@ -6,6 +6,7 @@
  */
 import { DateTime } from "luxon";
 import { z } from "zod";
+import type { BuiltinField, FieldKey, Level } from "./client-privacy";
 
 export const CHANNELS = ["sms", "email", "push"] as const;
 export type Channel = (typeof CHANNELS)[number];
@@ -436,6 +437,46 @@ export const SKIP_LABEL: Record<string, string> = {
 
 const ids = z.array(z.uuid()).max(200).default([]);
 const optInt = (max: number) => z.number().int().min(0).max(max).nullable().default(null);
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .nullable()
+  .default(null);
+export const TRI = ["any", "yes", "no"] as const;
+export type Tri = (typeof TRI)[number];
+const tri = z.enum(TRI).default("any");
+
+export const GIFT_CARD_FILTERS = ["any", "has", "has_balance", "none"] as const;
+export const GIFT_CARD_FILTER_LABEL: Record<(typeof GIFT_CARD_FILTERS)[number], string> = {
+  any: "Any",
+  has: "Has a gift card",
+  has_balance: "Has a gift card with money on it",
+  none: "No gift card",
+};
+
+/**
+ * Details a filter can ask "is it filled in?" of, and the client detail each one reads (whose
+ * visibility decides who may ask). Custom fields are `custom:<id>`.
+ */
+export const FILTER_FIELDS = {
+  last_name: { label: "Last name", reads: null },
+  nickname: { label: "Nickname", reads: null },
+  phone: { label: "Phone", reads: "phone" },
+  email: { label: "Email", reads: "email" },
+  address: { label: "Address", reads: "address" },
+  birthday: { label: "Birthday", reads: "birthday" },
+  notes: { label: "Notes", reads: "notes" },
+  preferred_barber: { label: "Preferred barber", reads: "preferred_barber" },
+  home_shop: { label: "Home location", reads: null },
+  photo: { label: "Photo", reads: "photo" },
+  source: { label: "Source", reads: null },
+  referred_by: { label: "Referred by", reads: null },
+  tags: { label: "Tags", reads: null },
+} as const satisfies Record<string, { label: string; reads: BuiltinField | null }>;
+export type FilterField = keyof typeof FILTER_FIELDS | `custom:${string}`;
+export const isFilterField = (f: string): f is FilterField => f in FILTER_FIELDS || /^custom:[0-9a-f-]{36}$/.test(f);
+/** The client detail a filled-in check reads: a built-in field, a custom field's key, or nothing protected. */
+export const filterFieldReads = (f: FilterField): FieldKey | null => (f.startsWith("custom:") ? (f as FieldKey) : FILTER_FIELDS[f as keyof typeof FILTER_FIELDS].reads);
 
 export const BARBER_MATCHES = ["primary", "recent", "any"] as const;
 export type BarberMatch = (typeof BARBER_MATCHES)[number];
@@ -479,9 +520,91 @@ export const SegmentSchema = z.object({
   tags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
   /** Only clients who agreed to marketing on this channel. */
   channel: z.enum(["any", ...CHANNELS]).default("any"),
+
+  // Visit history
+  /** Last visit on or between these dates (YYYY-MM-DD, the shop's calendar). */
+  lastVisitFrom: isoDate,
+  lastVisitTo: isoDate,
+  firstVisitFrom: isoDate,
+  firstVisitTo: isoDate,
+  /** First visit no longer ago than this: new clients. */
+  firstVisitWithinDays: optInt(3650),
+  firstVisitOverDays: optInt(3650),
+  minNoShows: optInt(1000),
+  maxNoShows: optInt(1000),
+  minCancellations: optInt(1000),
+  maxCancellations: optInt(1000),
+  /** Average days between completed visits; needs two visits. */
+  minAvgGapDays: optInt(3650),
+  maxAvgGapDays: optInt(3650),
+  /** Has a booked appointment coming up. */
+  upcoming: tri,
+
+  // People and places
+  homeShopIds: ids,
+  /** Any completed visit at one of these locations. */
+  visitedShopIds: ids,
+
+  // Spend
+  minAvgTicketCents: optInt(10_000_000),
+  maxAvgTicketCents: optInt(10_000_000),
+  /** Tips over all visits, in cents. */
+  minTipsCents: optInt(10_000_000),
+  maxTipsCents: optInt(10_000_000),
+
+  // Loyalty, gift cards, coupons
+  maxLoyaltyCents: optInt(10_000_000),
+  giftCard: z.enum(GIFT_CARD_FILTERS).default("any"),
+  /** Redeemed a coupon (of these promotions when given). */
+  couponRedeemed: tri,
+  promoIds: ids,
+
+  // Profile
+  excludeTags: z.array(z.string().trim().min(1).max(40)).max(20).default([]),
+  /** Birthday in the next this-many days. */
+  birthdayWithinDays: optInt(366),
+  minAge: optInt(120),
+  maxAge: optInt(120),
+  zips: z.array(z.string().regex(/^\d{5}$/)).max(50).default([]),
+  cities: z.array(z.string().trim().toLowerCase().min(1).max(60)).max(30).default([]),
+  /** Lives within this many miles of a location, by zip centroid. */
+  near: z.object({ shopId: z.uuid(), miles: z.number().min(1).max(500) }).nullable().default(null),
+  sources: z.array(z.string().trim().min(1).max(60)).max(30).default([]),
+  referred: tri,
+  createdFrom: isoDate,
+  createdTo: isoDate,
+
+  // Messaging
+  /** Appointment texts and emails (the booking consent), not marketing. */
+  smsOptIn: tri,
+  emailOptIn: tri,
+  /** Marketing consent per channel, from the customer app. */
+  smsMarketing: tri,
+  emailMarketing: tri,
+  pushMarketing: tri,
+  reviewClicked: tri,
+  /** Got (or clicked) a Campaign Center message, from these campaigns when given. */
+  campaignReceived: tri,
+  campaignClicked: tri,
+  campaignIds: ids,
+
+  // Empty or not
+  fieldsSet: z.array(z.string().refine(isFilterField, "Unknown field")).max(20).default([]),
+  fieldsEmpty: z.array(z.string().refine(isFilterField, "Unknown field")).max(20).default([]),
 });
 export type Segment = z.infer<typeof SegmentSchema>;
 export const EMPTY_SEGMENT: Segment = SegmentSchema.parse({});
+
+/** How many filters are set: the "Filters (3)" badge. */
+export function filterCount(s: Segment): number {
+  let n = 0;
+  for (const [k, v] of Object.entries(s) as [keyof Segment, unknown][]) {
+    if (k === "barberMatch") continue;
+    const empty = (EMPTY_SEGMENT as Record<string, unknown>)[k];
+    if (Array.isArray(v) ? v.length > 0 : v !== empty) n++;
+  }
+  return n;
+}
 
 /** The segment builder's quick filters: last visit more than this many weeks ago. */
 export const LAPSED_WEEKS = [2, 3, 4, 5, 6, 8, 12] as const;
@@ -509,12 +632,62 @@ export function lastVisitLabel(s: Pick<Segment, "lastVisitOverDays" | "lastVisit
   return null;
 }
 
-/** A filter on a client detail the person can't see would reveal it, so it's refused. */
-export function segmentProblem(s: Segment, sees: { birthday: boolean; ratings: boolean; preferredBarber?: boolean }): string | null {
-  if (s.birthdayMonths.length && !sees.birthday) return "You can't filter by birthday because client birthdays are hidden from you";
-  if ((s.minRating !== null || s.maxRating !== null) && !sees.ratings) return "You can't filter by rating because client ratings are hidden from you";
-  if (s.staffIds.length && s.barberMatch === "primary" && sees.preferredBarber === false)
+/**
+ * What the person sees, for segmentProblem. `level` (their level of each client detail) is the
+ * whole answer when given; the booleans are the older, coarser form.
+ */
+export interface FilterSees {
+  birthday: boolean;
+  ratings: boolean;
+  preferredBarber?: boolean;
+  level?: (f: FieldKey) => Level;
+  /** Spend, tips and gift card filters: people who see every client's money (not a barber's own list). */
+  money?: boolean;
+}
+
+const RANK: Record<Level, number> = { hidden: 0, masked: 1, full: 2 };
+const atLeast = (sees: FilterSees, f: FieldKey, want: Level) => !sees.level || RANK[sees.level(f)] >= RANK[want];
+
+/**
+ * A filter on a client detail the person can't see would reveal it, so it's refused. A masked
+ * detail allows what the mask shows: a birthday's month, an address's town and zip. Ages and
+ * upcoming birthdays read the whole date.
+ */
+export function segmentProblem(s: Segment, sees: FilterSees): string | null {
+  const birthdayShown = sees.level ? atLeast(sees, "birthday", "masked") : sees.birthday;
+  if (s.birthdayMonths.length && !birthdayShown) return "You can't filter by birthday because client birthdays are hidden from you";
+  if ((s.birthdayWithinDays !== null || s.minAge !== null || s.maxAge !== null) && !(birthdayShown && atLeast(sees, "birthday", "full")))
+    return "You can't filter by age or upcoming birthday because you don't see clients' whole birthdays";
+  if ((s.minRating !== null || s.maxRating !== null) && !(sees.level ? atLeast(sees, "ratings", "masked") : sees.ratings))
+    return "You can't filter by rating because client ratings are hidden from you";
+  if (s.staffIds.length && s.barberMatch === "primary" && (sees.preferredBarber === false || !atLeast(sees, "preferred_barber", "masked")))
     return "You can't filter by primary barber because clients' preferred barbers are hidden from you. Use their most recent barber instead.";
+  if ((s.zips.length || s.cities.length || s.near) && !atLeast(sees, "address", "masked")) return "You can't filter by where clients live because client addresses are hidden from you";
+  if (
+    sees.money === false &&
+    (s.minSpendCents !== null || s.maxSpendCents !== null || s.minAvgTicketCents !== null || s.maxAvgTicketCents !== null || s.minTipsCents !== null || s.maxTipsCents !== null || s.giftCard !== "any")
+  )
+    return "Spend, tip and gift card filters need access to every client";
+  for (const f of [...s.fieldsSet, ...s.fieldsEmpty]) {
+    const reads = filterFieldReads(f as FilterField);
+    if (reads && !atLeast(sees, reads, "masked")) return `You can't filter on whether "${FILTER_FIELDS[f as keyof typeof FILTER_FIELDS]?.label ?? "that field"}" is filled in because it's hidden from you`;
+  }
+  const overlap = s.fieldsSet.find((f) => s.fieldsEmpty.includes(f));
+  if (overlap) return "A field can't be both filled in and empty";
+  const range = (a: string | null, b: string | null) => a !== null && b !== null && a > b;
+  if (range(s.lastVisitFrom, s.lastVisitTo) || range(s.firstVisitFrom, s.firstVisitTo) || range(s.createdFrom, s.createdTo)) return "A date range ends before it starts";
+  const nums: [number | null, number | null, string][] = [
+    [s.minNoShows, s.maxNoShows, "no-shows"],
+    [s.minCancellations, s.maxCancellations, "cancellations"],
+    [s.minAvgGapDays, s.maxAvgGapDays, "days between visits"],
+    [s.minAvgTicketCents, s.maxAvgTicketCents, "average ticket"],
+    [s.minTipsCents, s.maxTipsCents, "tips"],
+    [s.minLoyaltyCents, s.maxLoyaltyCents, "loyalty balance"],
+    [s.minAge, s.maxAge, "age"],
+  ];
+  for (const [lo, hi, what] of nums) if (lo !== null && hi !== null && lo > hi) return `The lowest ${what} is more than the highest`;
+  if (s.firstVisitOverDays !== null && s.firstVisitWithinDays !== null && s.firstVisitWithinDays <= s.firstVisitOverDays)
+    return "The first-visit range is empty: the far end has to be further back than the near end";
   if (s.lastVisitOverDays !== null && s.lastVisitWithinDays !== null && s.lastVisitWithinDays <= s.lastVisitOverDays)
     return "The last-visit range is empty: the far end has to be further back than the near end (e.g. 3 to 4 weeks)";
   if (s.minVisits !== null && s.maxVisits !== null && s.minVisits > s.maxVisits) return "The fewest visits is more than the most";
