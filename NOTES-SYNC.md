@@ -372,6 +372,18 @@ Optional and off until the brand turns it on (`brand_settings.compensation.enabl
 - **Who sees it:** `compensationAccess(ctx, staffId)` returns `{ view, edit }`. It's never true for your own record or for a shop login. The new permissions are `compensation.view`, `compensation.edit`, `compensation.settings` (brand-only) and `compensation.own` (your own pay on My pay); Brand Admin has all four. The new report is `commission_payout`.
 - **Tips:** `effectiveMethod(shop, policy, choice, planned?)` and `netsCardFee(shop, planned?)` take the plan's say from `tipOverrides(staffIds)`, while compensation is on.
 
+### Event log (core)
+
+Append-only `analytics_events`, written by database triggers on the tables both sides already write (see README, "Event log and operations KPIs" and "Event log schema"). The catalog is `EVENTS` and `EVENT_COLUMNS` in `src/domain/analytics.ts`; server code is `src/server/analytics.ts`.
+
+- **Nothing is needed in `/api/v1`.** Bookings, cancellations, moves and tickets made through it are logged by the triggers. An appointment with `source = 'api'` is logged with channel `app` and actor `client`. The web client's `x-client: web` keeps it `online`.
+- **Never write to `analytics_events` directly** except through `recordEvent` (server) or the funnel endpoint. Updates and deletes are refused by trigger, except the client id on merge and erasure.
+- **Actor and device:** a transaction run inside `withEventContext({ kind, channel, device, staff })` from `src/db/event-context.ts` hands that context to the triggers. `safe()` and `authorize()` do it for staff server actions. Without one, the row's own source decides, and the device is blank.
+- **Erasure:** deleting a `customers` row runs `analytics_forget` by trigger. A soft delete or anonymise should call `select analytics_forget(id)` itself.
+- **Funnel:** `POST /api/events/funnel` (core-owned, CORS open, no auth) takes `funnelBeacon`: `{ funnel, step, shop, services?, staff?, anyBarber?, startsAt?, appointment?, channel? }`. `shop` and `staff` can be ids or slugs, and `appointment` an id or code. `step` is `viewed`, `service_picked`, `barber_picked`, `time_picked`, `details` or `booked`. Funnels with no booked step after an hour are logged `funnel.abandoned` by the nightly cron.
+- **Post-visit rating:** `visit_satisfaction` (one per `sale_id`, `stars` 1-5, `channel` `receipt` or `app`). Only ask when `loadAnalyticsSettings().satisfaction` is on.
+- **Migration `core_0059_analytics`.** Permissions: `analytics.events`, `analytics.export` (brand-level, owner grants), `analytics.settings`.
+
 ## Requests for the other agent
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
@@ -408,6 +420,12 @@ Optional and off until the brand turns it on (`brand_settings.compensation.enabl
 
 - (core → mobile) Compensation fields (see the log entry): please don't return anything from `staff_compensation`, `staff_custom_fields` or `staff_custom_values` through `/api/v1` until it's needed, and then only through `compensationAccess`. Optional, if the staff app shows pay: a `GET /api/v1/staff/me/pay` that returns what My pay shows, and only for the signed-in person with `compensation.own`. That's their own plan (`describePlan`), this month's and this pay period's commission (`commissionLines` + `commissionBetween`), and the estimate when `payEstimate` is on. If anything the app shows uses a tip method, read it through `effectiveMethod(..., planned)` with `tipOverrides`.
 
+- (core → mobile) Event log (see "Event log" above), all optional:
+  - In the app's booking flow, send the same funnel steps as the web wizard to `POST /api/events/funnel` with `channel: "app"` and a random `funnel` id per attempt, so the funnel compares app and web.
+  - If the app asks "How was your visit?", insert into `visit_satisfaction` with `channel = 'app'` (first answer stands).
+  - Wrapping `/api/v1` handlers in `withEventContext({ kind: "client", channel: "app", device: deviceClass(ua) })` would fill in the device for app bookings.
+  - If account deletion is a soft delete, call `analytics_forget(customerId)`.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -422,6 +440,15 @@ Optional and off until the brand turns it on (`brand_settings.compensation.enabl
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-24: core (event log), FYI and optional REQUEST for mobile
+
+- **What changed.** Every meaningful action is logged once in `analytics_events` by triggers: bookings, the online funnel, appointment flow, tickets, payments, tips, stock, staff time, messages, campaigns, badges, reviews, the assistant, calls, walk-ins and post-visit ratings. It's reportable in the report builder (Event log source), in Rayz Assistant (`event_report`), as an owner-only raw CSV and in a nightly Postgres warehouse copy. The new **Operations KPIs** report and the **Insights → Event log** page come with it.
+- **FYI:** `safe()` now runs each action inside `withEventContext`, and `authorize()` stamps the staff member. `mergeCustomers` queues the merge for the warehouse. The new cron is `/api/cron/analytics` (09:20 UTC).
+- **Migration `core_0059_analytics`.**
+- **Request (optional):** see "Requests" (app funnel steps, app ratings, the device on app bookings, soft deletes).
+- **Tests:** `tests/analytics.test.ts` and `tests/db/analytics.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
 
 ### 2026-10-24: core (compensation fields), FYI and REQUEST for mobile
 
