@@ -11,6 +11,7 @@ import { HANDOFF_COOKIE } from "@/server/auth/cookies";
 import { HANDOFF_TTL, handoffToken } from "@/server/auth/handoff-lock";
 import { StaffContext, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
 import { CheckoutLineInput, SplitTenderInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale } from "@/server/checkout";
+import { acceptRebook, addPromptProduct, declinePrompt, tagUsedProduct, untagUsedProduct } from "@/server/checkout-prompts";
 import { mergeTickets, openTickets, splitOffTicket, splitTicketApart } from "@/server/combined-checkout";
 import { resolveCoupon } from "@/server/coupons";
 import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
@@ -267,6 +268,51 @@ export async function endHandoffAction(saleId: string) {
     const ctx = await requireStaff();
     await loadSale(ctx, saleId);
     await endHandoffFromCounter(saleId, ctx.actor);
+    revalidatePath(`/admin/checkout/${saleId}`);
+    return null;
+  });
+}
+
+/** The rebook prompt: book the time picked (everyone the prompt covers, for a family). */
+export async function acceptRebookAction(saleId: string, promptId: string, pick: { index: number; startsAt: string }) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadSale(ctx, saleId);
+    const r = await acceptRebook(saleId, promptId, pick, ctx.actor);
+    revalidatePath(`/admin/checkout/${saleId}`);
+    revalidatePath("/admin/calendar");
+    return r;
+  });
+}
+
+/** A prompt answered "not now", with an optional reason and (rebook) an optional reminder to book. */
+export async function declinePromptAction(saleId: string, promptId: string, input: { reason?: string | null; remind?: boolean }) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadSale(ctx, saleId);
+    await declinePrompt(saleId, promptId, input, ctx.actor);
+    revalidatePath(`/admin/checkout/${saleId}`);
+    return null;
+  });
+}
+
+/** A suggested product put on the ticket from the product prompt. */
+export async function addPromptProductAction(saleId: string, promptId: string, productId: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadSale(ctx, saleId);
+    await addPromptProduct(saleId, promptId, productId, ctx.actor);
+    return null;
+  });
+}
+
+/** A product the barber used in the service, tagged (or untagged) on the ticket for the product prompt. */
+export async function tagUsedProductAction(saleId: string, productId: string, used: boolean) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadSale(ctx, saleId);
+    if (used) await tagUsedProduct(saleId, productId, ctx.actor);
+    else await untagUsedProduct(saleId, productId, ctx.actor);
     revalidatePath(`/admin/checkout/${saleId}`);
     return null;
   });

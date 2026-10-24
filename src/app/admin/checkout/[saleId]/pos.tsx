@@ -37,6 +37,7 @@ import {
   splitOffAction,
   terminalCollectAction,
 } from "../actions";
+import { CheckoutPrompts, type PromptsProps } from "./prompts";
 import { StripeCardEntry } from "./stripe-card";
 
 type Line = {
@@ -126,6 +127,8 @@ export function Pos(props: {
   canCombine: boolean;
   /** A family booking's deposit held as credit, for the ticket of anyone in the group. */
   groupDeposit?: { groupCode: string; code: string; balanceCents: number } | null;
+  /** The rebook and product prompts for this ticket. */
+  prompts?: PromptsProps | null;
 }) {
   const router = useRouter();
   const r0 = props.resume;
@@ -347,7 +350,10 @@ export function Pos(props: {
       (d) => window.location.replace(`/handoff/${d.id}`),
     );
 
+  const waiting = props.prompts?.waiting ?? [];
+  const waitingMsg = waiting.length ? `Answer ${waiting.map((k) => (k === "rebook" ? "the rebook prompt" : "the product suggestions")).join(" and ")} before taking payment.` : null;
   const ready =
+    !waiting.length &&
     !props.withClient &&
     lines.length > 0 &&
     (split
@@ -722,6 +728,19 @@ export function Pos(props: {
 
         {/* Pay */}
         <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+          {props.prompts && !props.withClient && (
+            <CheckoutPrompts
+              saleId={props.sale.id}
+              prompts={props.prompts}
+              retail={props.retail}
+              onTicket={onTicket}
+              addProduct={addProduct}
+              negativeStock={props.negativeStock}
+              pending={pending}
+              act={act}
+              onChanged={() => router.refresh()}
+            />
+          )}
           <Card>
             <CardHeader title="Tip" subtitle={`Suggested on ${$short(base.serviceGrossCents)} in services`} />
             <div className="space-y-2 p-4">
@@ -1090,7 +1109,7 @@ export function Pos(props: {
             </Card>
           )}
 
-          {props.sale.hasAppointment && (
+          {props.sale.hasAppointment && !props.prompts?.enabled.rebook && !props.prompts?.rebook && (
             <Card className="p-4">
               <div className="mb-2 text-xs font-medium text-zinc-700">Rebook same barber, same time</div>
               <div className="grid grid-cols-5 gap-2">
@@ -1129,11 +1148,12 @@ export function Pos(props: {
             <div className="space-y-2 border-t border-zinc-100 p-4">
               {error && <Notice tone="red">{error}</Notice>}
               {msg && <Notice tone="green">{msg}</Notice>}
+              {waitingMsg && <Notice tone="amber">{waitingMsg}</Notice>}
               <Button
                 size="lg"
                 variant="secondary"
                 className="h-14 w-full text-lg"
-                disabled={!!props.withClient || lines.length === 0 || pending}
+                disabled={!!props.withClient || lines.length === 0 || pending || waiting.length > 0}
                 onClick={() => (setMsg(null), handToCustomer())}
                 data-testid="hand-to-customer"
               >

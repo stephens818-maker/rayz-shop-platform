@@ -22,6 +22,7 @@ import { db } from "@/db";
 import { terminalReaders } from "@/db/schema";
 import { activeHandoffFor, resumeDraft, shopHandoffConfig } from "@/server/handoff";
 import { ticketPeople } from "@/server/family-ticket";
+import { promptsForTicket } from "@/server/checkout-prompts";
 import { Pos } from "./pos";
 
 export const metadata: Metadata = { title: "Checkout" };
@@ -57,6 +58,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
     shownBadges(policy, [c.customer?.id]),
   ]);
   const people = await ticketPeople(c.sale);
+  const prompts = await promptsForTicket(saleId, { roleId: ctx.staff.roleId, actor: ctx.actor });
   const notesViewer = noteViewer(ctx, policy);
   const briefs = await noteBriefs(notesViewer, [c.customer?.id ?? null]);
   // Rewards of anyone else on a combined ticket can pay for it too (a household shares one balance).
@@ -100,6 +102,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
       withClient={withClient ? { by: withClient.by, startedAt: withClient.startedAt.toISOString() } : null}
       coupons={coupons}
       groupDeposit={c.groupDeposit}
+      prompts={prompts}
       people={people.map((p) => ({ appointmentId: p.appointmentId, name: p.name, isChild: p.isChild, staffId: p.staffId, staffName: p.staffName, readyAt: p.readyAt?.toISOString() ?? null }))}
       payers={payers}
       canCombine={can(ctx, "checkout.any")}
