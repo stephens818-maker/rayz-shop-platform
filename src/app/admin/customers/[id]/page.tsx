@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointments, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, sales, shops, staff } from "@/db/schema";
+import { appointments, clientPhotos, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
 import { RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
@@ -14,6 +14,8 @@ import { can, guardPage, ratingViewer } from "@/server/auth/staff";
 import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, shownField } from "@/server/client-privacy";
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
+import { loyaltyCardSvg, loyaltyCardValue } from "@/server/loyalty-card";
+import { lookups } from "@/server/lookups";
 import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
 import { latestReceipts, receiptOnFile } from "@/server/receipts";
 import { CALL_KIND_LABEL, CALL_STATUS_LABEL, callsWith, optOutKeys } from "@/server/messaging";
@@ -22,6 +24,7 @@ import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
 import { ResendReceipt } from "../../sales/[id]/receipt-panel";
 import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
+import { ClientIdentity } from "./identity";
 import { ClientTags } from "./tags";
 
 export const metadata: Metadata = { title: "Client" };
@@ -149,6 +152,13 @@ export default async function CustomerPage({
     staffLabel(stats.usualBarberId),
     c.homeShopId ? db.query.shops.findFirst({ where: eq(shops.id, c.homeShopId) }) : null,
   ]);
+  const [referrer, [{ referrals }], photoRow, lists] = await Promise.all([
+    c.referredById ? db.query.customers.findFirst({ where: eq(customers.id, c.referredById), columns: { id: true, firstName: true, lastName: true } }) : null,
+    db.select({ referrals: sql<number>`count(*)::int` }).from(customers).where(eq(customers.referredById, c.id)),
+    db.query.clientPhotos.findFirst({ where: eq(clientPhotos.customerId, c.id), columns: { customerId: true } }),
+    lookups(),
+  ]);
+  const hasPhoto = !!photoRow;
   const canSeeSale = (shopId: string) => hasShop(ctx, shopId);
   const homeShopName = homeShop?.name ?? null;
   const shopRows = (await db.select({ id: shops.id, name: shops.name, status: shops.status }).from(shops).orderBy(asc(shops.name))).filter((s) => s.status !== "archived" || s.id === c.homeShopId);
@@ -187,12 +197,13 @@ export default async function CustomerPage({
         title={
           <span className="flex items-center gap-2">
             {`${c.firstName} ${c.lastName ?? ""}`}
+            {c.nickname && <span className="text-base font-normal text-zinc-500">&ldquo;{c.nickname}&rdquo;</span>}
             {rating && <StarBadge rating={rating} />}
           </span>
         }
         subtitle={
           <>
-            Client since {formatDate(c.createdAt, "MMM d, yyyy")}
+            Client #{c.number} · since {formatDate(c.createdAt, "MMM d, yyyy")}
             {homeShopName && ` · Home shop ${homeShopName}`}
             {squireIds.length > 0 && ` · Squire ID${squireIds.length > 1 ? "s" : ""} ${squireIds.map((s) => s.squireId).join(", ")}`}
           </>
@@ -245,6 +256,20 @@ export default async function CustomerPage({
       </div>
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <div className="space-y-4">
+          <ClientIdentity
+            id={c.id}
+            firstName={c.firstName}
+            lastName={c.lastName}
+            number={c.number}
+            nickname={c.nickname}
+            source={c.source}
+            referredBy={referrer ? { id: referrer.id, name: `${referrer.firstName} ${referrer.lastName ?? ""}`.trim() } : null}
+            referrals={referrals}
+            sources={[...lists.clientSources]}
+            photo={{ has: hasPhoto, shown: policy.level("photo") === "full", canAdd: policy.canAdd("photo"), canEdit: policy.canEdit("photo") }}
+            canEdit={full && can(ctx, "clients.edit")}
+            card={{ value: loyaltyCardValue(c), svg: await loyaltyCardSvg(c) }}
+          />
           {full && can(ctx, "clients.edit") ? (
             <CustomerEditor
               id={c.id}

@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { customerTags, customers, loyaltyLedger, loyaltyRewards, shops, staff } from "@/db/schema";
+import { clientPhotos, customerTags, customers, loyaltyLedger, loyaltyRewards, shops, staff } from "@/db/schema";
 import { FieldKey, ShownField, customFieldId, customFieldKey, isBuiltinField, isRevealable } from "@/domain/client-privacy";
 import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
@@ -320,5 +320,55 @@ export async function quickFindClientsAction(q: string) {
   return safe(async () => {
     const ctx = await requireStaff();
     return searchClients(ctx, q, { via: "header", limit: 6, ownClientsOf: can(ctx, "clients.view_all") ? undefined : ctx.staff.id });
+  });
+}
+
+const Identity = z.object({
+  nickname: z.string().trim().max(40),
+  source: z.string().trim().max(60),
+  referredById: z.uuid().nullable(),
+});
+
+/** Nickname, how they found us and who referred them: what search and the filters read besides the protected details. */
+export async function updateClientIdentityAction(id: string, raw: z.input<typeof Identity>) {
+  return safe(async () => {
+    const ctx = await authorize("clients.edit");
+    const p = Identity.parse(raw);
+    const before = await db.query.customers.findFirst({ where: eq(customers.id, id) });
+    if (!before) throw new AppError("not_found", "Client not found");
+    if (p.referredById === id) throw new AppError("bad_request", "A client can't refer themselves");
+    if (p.referredById && p.referredById !== before.referredById && !(await db.query.customers.findFirst({ where: eq(customers.id, p.referredById), columns: { id: true } })))
+      throw new AppError("not_found", "Referring client not found");
+    const values = { nickname: p.nickname || null, source: p.source || null, referredById: p.referredById };
+    await db.update(customers).set(values).where(eq(customers.id, id));
+    const changed = Object.fromEntries(
+      Object.entries(values)
+        .filter(([k, v]) => (before[k as keyof typeof before] ?? null) !== v)
+        .map(([k, v]) => [k, { from: before[k as keyof typeof before] ?? null, to: v }]),
+    );
+    await audit(ctx.actor, "customer.update", "customer", id, changed, ctx.currentShopId);
+    revalidatePath(`/admin/customers/${id}`);
+  });
+}
+
+const PHOTO = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/;
+
+/** A photo so the desk can tell two clients apart. Adding one needs "add" on Photo, replacing or removing one "edit". */
+export async function setClientPhotoAction(id: string, dataUrl: string | null) {
+  return safe(async () => {
+    const ctx = await authorize("clients.edit");
+    if (!(await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { id: true } }))) throw new AppError("not_found", "Client not found");
+    if (dataUrl !== null && (dataUrl.length > 400_000 || !PHOTO.test(dataUrl))) throw new AppError("bad_request", "Use a JPEG, PNG or WebP photo under 300 KB");
+    const policy = await clientPolicy(ctx);
+    const has = !!(await db.query.clientPhotos.findFirst({ where: eq(clientPhotos.customerId, id), columns: { customerId: true } }));
+    if (has ? !policy.canEdit("photo") : !policy.canAdd("photo")) throw forbidden(has ? "You can't change client photos" : "You can't add client photos");
+    if (dataUrl === null) await db.delete(clientPhotos).where(eq(clientPhotos.customerId, id));
+    else
+      await db
+        .insert(clientPhotos)
+        .values({ customerId: id, dataUrl, updatedBy: ctx.staff.id })
+        .onConflictDoUpdate({ target: clientPhotos.customerId, set: { dataUrl, updatedBy: ctx.staff.id, updatedAt: new Date() } });
+    await audit(ctx.actor, dataUrl ? "client.photo" : "client.photo_remove", "customer", id, {}, ctx.currentShopId);
+    revalidatePath(`/admin/customers/${id}`);
   });
 }

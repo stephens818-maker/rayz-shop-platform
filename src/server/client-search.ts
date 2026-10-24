@@ -155,9 +155,17 @@ export async function findClients(ctx: StaffContext, policy: ClientPolicy, term:
   return { ranked: ranked.slice(0, limit), kinds: [...new Set(found.filter((f) => f.rows.length).map((f) => f.p.kind))] };
 }
 
+/**
+ * Whose photos someone may load: anyone's with "every client", otherwise their shops' clients and
+ * clients they've served.
+ */
+export const photoReach = (ctx: StaffContext): SQL | undefined =>
+  can(ctx, "clients.view_all") ? undefined : or(shopClientsScope(ctx.shopIds), visitedScope({ staffId: ctx.staff.id }));
+
 /** The disambiguators for these clients, as the searcher may see them. */
-export async function clientHits(policy: ClientPolicy, ranked: { id: string; matched: Set<string> }[]): Promise<ClientHit[]> {
+export async function clientHits(ctx: StaffContext, policy: ClientPolicy, ranked: { id: string; matched: Set<string> }[]): Promise<ClientHit[]> {
   if (!ranked.length) return [];
+  const reach = photoReach(ctx);
   const list = sql.join(
     ranked.map((r) => sql`${r.id}::uuid`),
     sql`, `,
@@ -165,7 +173,7 @@ export async function clientHits(policy: ClientPolicy, ranked: { id: string; mat
   const rows = (await db.execute(sql`
     select c.id, c.number, c.first_name, c.last_name, c.nickname, c.phone, c.email, c.notes,
       lv.starts_at last_at, ls.name last_shop, coalesce(ps.display_label, ub.display_label) barber,
-      exists (select 1 from client_photos p where p.customer_id = c.id) has_photo
+      exists (select 1 from client_photos p where p.customer_id = c.id) and ${reach ? sql`c.id in (select ${customers.id} from ${customers} where ${reach})` : sql`true`} has_photo
     from customers c
     left join lateral (select a.starts_at, a.shop_id from appointments a where a.customer_id = c.id and a.status = 'completed' order by a.starts_at desc limit 1) lv on true
     left join shops ls on ls.id = lv.shop_id
@@ -224,5 +232,5 @@ export async function searchClients(ctx: StaffContext, term: string, o: SearchOp
   const policy = await clientPolicy(ctx);
   const { ranked, kinds } = await findClients(ctx, policy, term, o);
   if (o.record !== false) await recordClientAccess(ctx, { kind: "search", detail: { via: o.via, results: ranked.length, by: kinds } });
-  return clientHits(policy, ranked);
+  return clientHits(ctx, policy, ranked);
 }
