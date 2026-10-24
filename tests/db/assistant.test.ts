@@ -321,6 +321,14 @@ describe("the dev stub", () => {
     expect(card.links[0].href).toContain("preset=month");
     expect(card.links[0].href).toContain("view=shops");
     expect(r.messages[1].body).toMatch(/Sales summary/);
+    expect(card.table!.rows[0].some((v) => /^\$[\d,]+\.\d\d$/.test(v))).toBe(true);
+  });
+
+  it("refuses a location outside the person's scope instead of quietly answering for their own", async () => {
+    const michelle = await ctxOf("michelle");
+    const r = await assistant.askAssistant(michelle, { question: "Compare Moline and Coralville sales this week" }, { provider: providers.stubProvider() });
+    expect(r.messages[1].cards).toEqual([]);
+    expect(r.messages[1].body).toMatch(/isn't one of your locations/);
   });
 
   it("turns a client list into a builder link and a blast segment", async () => {

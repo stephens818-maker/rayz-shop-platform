@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, count, desc, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
-import { assistantActions, assistantConversations, assistantMessages, brandSettings } from "@/db/schema";
+import { assistantActions, assistantConversations, assistantMessages, brandSettings, shops } from "@/db/schema";
 import {
   ACTION_TTL_MS,
   ASSISTANT_REPORTS,
@@ -162,6 +162,8 @@ export async function askAssistant(ctx: StaffContext, input: AskInput, o: { prov
     tools: tools.map((t) => t.name),
   });
   const barbers = (await barbersAt(ctx.shopIds)).map((b) => b.name);
+  // The stub runs in-process; knowing every location name lets the run_report scope check refuse the ones outside the person's scope, as it would for a real model.
+  const stubShops = provider.id === "stub" ? (await db.select({ name: shops.name }).from(shops).where(eq(shops.active, true))).map((s) => s.name) : [];
   const messages: ChatMessage[] = [...history, { role: "user", content: question }];
   const cards: AssistantCard[] = [];
   const called: { name: string; args: unknown; ok: boolean }[] = [];
@@ -169,7 +171,7 @@ export async function askAssistant(ctx: StaffContext, input: AskInput, o: { prov
 
   for (let round = 0; round < MAX_ROUNDS && text === null; round++) {
     const last = round === MAX_ROUNDS - 1 || called.length >= MAX_TOOL_CALLS;
-    const r = await provider.complete({ system, messages, tools: last ? [] : tools.map((t) => t.spec), stub: { reports, shops: ctx.shops.map((s) => s.name), barbers } });
+    const r = await provider.complete({ system, messages, tools: last ? [] : tools.map((t) => t.spec), stub: { reports, shops: stubShops, barbers } });
     if (!r.toolCalls.length || last) {
       text = r.text?.trim() || null;
       break;
