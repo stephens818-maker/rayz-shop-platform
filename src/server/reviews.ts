@@ -1,6 +1,6 @@
 import { and, asc, eq, gte, isNotNull, isNull, lte, notInArray, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { customers, receiptDeliveries, reviewClicks, sales, shops } from "@/db/schema";
+import { receiptDeliveries, reviewClicks, sales, shops } from "@/db/schema";
 import { receiptBranding } from "@/domain/connect";
 import { inQuietHours } from "@/domain/outreach";
 import type { ReceiptSendChannel, ReceiptSkip } from "@/domain/receipts";
@@ -9,6 +9,7 @@ import { FOLLOW_UP_LOOKBACK_HOURS, ReviewRules, isAutomatedOpen } from "@/domain
 import { localMinutesOf } from "@/lib/time";
 import { SYSTEM, audit } from "./audit";
 import { loadOutreachRules } from "./call-ins";
+import { contactFor } from "./household-contact";
 import { deliverReceipt, isOptedOut } from "./receipts";
 import { loadReviewRules, reviewTiming } from "./review-rules";
 
@@ -69,7 +70,7 @@ export async function askForReview(saleId: string, repeatDays: number, now: Date
     });
     if (recent) return skip("recent");
   }
-  const c = await tx.query.customers.findFirst({ where: eq(customers.id, sale.customerId), columns: { phone: true, email: true, smsOptIn: true, emailOptIn: true } });
+  const c = await contactFor(tx, sale.customerId);
   const options: [ReceiptSendChannel, string | null | undefined, boolean | undefined][] = [
     ["sms", c?.phone, c?.smsOptIn],
     ["email", c?.email?.toLowerCase(), c?.emailOptIn],

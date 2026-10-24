@@ -48,6 +48,8 @@ export const resetConsentCache = () => {
 export interface Contact {
   customerId: string;
   firstName: string;
+  /** The parent's id for a child (whose phone, email, device and consent these are), else the client's own. */
+  householdId: string;
   phone: string | null;
   email: string | null;
   /** The newest device that takes push, by its customer_devices id. */
@@ -55,23 +57,40 @@ export interface Contact {
   reach: Reach;
 }
 
-/** Each client's marketing reach: agreed on the channel, has the number, address or device, and hasn't opted out. */
+/**
+ * Each client's marketing reach: agreed on the channel, has the number, address or device, and hasn't
+ * opted out. A child's is their parent's: the parent's number, email, app and consent.
+ */
 export async function contactsFor(customerIds: readonly string[], tx: DBorTx = db): Promise<Map<string, Contact>> {
   const out = new Map<string, Contact>();
   const ids = [...new Set(customerIds)];
   if (!ids.length) return out;
   const cols = await consentColumns(tx);
-  const flag = (on: boolean, col: string) => (on ? sql.raw(`c.${col}`) : sql`false`);
+  const flag = (on: boolean, col: string) => (on ? sql.raw(`case when g.id is null then c.${col} else g.${col} end`) : sql`false`);
   const device = cols.push
-    ? sql`(select d.id from customer_devices d where d.customer_id = c.id and d.push_enabled and d.revoked_at is null order by d.last_seen_at desc nulls last limit 1)`
+    ? sql`(select d.id from customer_devices d where d.customer_id = coalesce(g.id, c.id) and d.push_enabled and d.revoked_at is null order by d.last_seen_at desc nulls last limit 1)`
     : sql`null::uuid`;
   const rows = (await tx.execute(sql`
-    select c.id, c.first_name, c.phone, c.email, ${flag(cols.sms, "sms_marketing_opt_in")} as sms, ${flag(cols.email, "email_marketing_opt_in")} as em,
-      ${flag(cols.push, "push_marketing")} as push, ${device} as device_id, ${cols.deleted ? sql`c.deleted_at is not null` : sql`false`} as deleted
-    from customers c where c.id in ${sql`(${sql.join(
+    select c.id, coalesce(g.id, c.id) household_id, c.first_name, coalesce(g.phone, c.phone) phone, coalesce(g.email, c.email) email,
+      ${flag(cols.sms, "sms_marketing_opt_in")} as sms, ${flag(cols.email, "email_marketing_opt_in")} as em,
+      ${flag(cols.push, "push_marketing")} as push, ${device} as device_id,
+      ${cols.deleted ? sql`(c.deleted_at is not null or g.deleted_at is not null)` : sql`false`} as deleted
+    from customers c left join customers g on g.id = c.guardian_id where c.id in ${sql`(${sql.join(
       ids.map((i) => sql`${i}::uuid`),
       sql`, `,
-    )})`}`)) as unknown as { id: string; first_name: string; phone: string | null; email: string | null; sms: boolean; em: boolean; push: boolean; device_id: string | null; deleted: boolean }[];
+    )})`}`)) as unknown as {
+    id: string;
+    household_id: string;
+    first_name: string;
+    phone: string | null;
+    email: string | null;
+    sms: boolean;
+    em: boolean;
+    push: boolean;
+    device_id: string | null;
+    deleted: boolean;
+  }[];
+  const heads = [...new Set(rows.map((r) => r.household_id))];
   const phones = rows.map((r) => r.phone).filter((p): p is string => !!p);
   const emails = rows.map((r) => r.email?.toLowerCase()).filter((e): e is string => !!e);
   const [stops, unsubs] = await Promise.all([
@@ -81,7 +100,7 @@ export async function contactsFor(customerIds: readonly string[], tx: DBorTx = d
       .from(marketingUnsubscribes)
       .where(
         or(
-          inArray(marketingUnsubscribes.customerId, ids),
+          inArray(marketingUnsubscribes.customerId, [...new Set([...ids, ...heads])]),
           emails.length ? inArray(sql`lower(${marketingUnsubscribes.email})`, emails) : undefined,
           phones.length ? inArray(marketingUnsubscribes.phone, phones) : undefined,
         ),
@@ -89,11 +108,12 @@ export async function contactsFor(customerIds: readonly string[], tx: DBorTx = d
   ]);
   const stopped = new Set(stops.map((s) => s.phone));
   const off = (ch: Channel, r: (typeof rows)[number]) =>
-    unsubs.some((u) => u.channel === ch && (u.customerId === r.id || (!!u.email && u.email.toLowerCase() === r.email?.toLowerCase()) || (!!u.phone && u.phone === r.phone)));
+    unsubs.some((u) => u.channel === ch && (u.customerId === r.id || u.customerId === r.household_id || (!!u.email && u.email.toLowerCase() === r.email?.toLowerCase()) || (!!u.phone && u.phone === r.phone)));
   for (const r of rows) {
     const live = !r.deleted;
     out.set(r.id, {
       customerId: r.id,
+      householdId: r.household_id,
       firstName: r.first_name,
       phone: r.phone,
       email: r.email,

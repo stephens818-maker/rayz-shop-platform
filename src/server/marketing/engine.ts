@@ -8,7 +8,7 @@
  */
 import { and, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { clientNudges, couponCodes, marketingCampaigns, marketingLocationSettings, marketingSends, marketingSteps, notificationJobs, promoCodes, shops, staff } from "@/db/schema";
+import { clientNudges, couponCodes, customers, marketingCampaigns, marketingLocationSettings, marketingSends, marketingSteps, notificationJobs, promoCodes, shops, staff } from "@/db/schema";
 import { issuedExpiry, uniqueCode } from "@/domain/coupons";
 import {
   Channel,
@@ -67,18 +67,24 @@ export function bookPathFor(shopSlug: string, o: { barber?: string | null; servi
   return `/book/${shopSlug}${q.size ? `?${q}` : ""}`;
 }
 
-/** Marketing this client got in the last 30 days (and Today's fill and rebook texts), for the caps. */
-async function recentSends(customerId: string, now: Date, tx: DBorTx): Promise<Date[]> {
+/** A parent and their children: one phone, one inbox, so one set of caps. */
+async function household(headId: string, tx: DBorTx): Promise<string[]> {
+  const kids = await tx.select({ id: customers.id }).from(customers).where(eq(customers.guardianId, headId));
+  return [headId, ...kids.map((k) => k.id)];
+}
+
+/** Marketing this household got in the last 30 days (and Today's fill and rebook texts), for the caps. */
+async function recentSends(ids: string[], now: Date, tx: DBorTx): Promise<Date[]> {
   const since = new Date(now.getTime() - 30 * DAY);
   const [a, b] = await Promise.all([
     tx
       .select({ at: marketingSends.createdAt })
       .from(marketingSends)
-      .where(and(eq(marketingSends.customerId, customerId), eq(marketingSends.status, "queued"), gte(marketingSends.createdAt, since))),
+      .where(and(inArray(marketingSends.customerId, ids), eq(marketingSends.status, "queued"), gte(marketingSends.createdAt, since))),
     tx
       .select({ at: clientNudges.createdAt })
       .from(clientNudges)
-      .where(and(eq(clientNudges.customerId, customerId), inArray(clientNudges.kind, ["fill", "rebook"]), gte(clientNudges.createdAt, since))),
+      .where(and(inArray(clientNudges.customerId, ids), inArray(clientNudges.kind, ["fill", "rebook"]), gte(clientNudges.createdAt, since))),
   ]);
   return [...a, ...b].map((r) => r.at);
 }
@@ -108,15 +114,15 @@ export interface DeliverInput {
   now: Date;
 }
 
-/** This client got a We have openings message in the last `days` days. */
-async function hadOpenings(customerId: string, days: number, now: Date, tx: DBorTx): Promise<boolean> {
+/** Someone in this household got a We have openings message in the last `days` days. */
+async function hadOpenings(ids: string[], days: number, now: Date, tx: DBorTx): Promise<boolean> {
   const [r] = await tx
     .select({ id: marketingSends.id })
     .from(marketingSends)
     .innerJoin(marketingCampaigns, eq(marketingCampaigns.id, marketingSends.campaignId))
     .where(
       and(
-        eq(marketingSends.customerId, customerId),
+        inArray(marketingSends.customerId, ids),
         eq(marketingSends.status, "queued"),
         eq(marketingCampaigns.kind, "openings"),
         gte(marketingSends.createdAt, new Date(now.getTime() - days * DAY)),
@@ -131,7 +137,7 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
   const { campaign: c, shop, target: t, settings: s, now } = i;
   const key = dedupeKey(c.id, t.customerId, t.occasion);
   return db.transaction(async (tx): Promise<DeliverResult> => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`marketing:${t.customerId}`}))`);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`marketing:${i.contact?.householdId ?? t.customerId}`}))`);
     const [dupe] = await tx.select({ id: marketingSends.id }).from(marketingSends).where(eq(marketingSends.dedupeKey, key)).limit(1);
     if (dupe) return { status: "dupe" } as const;
     const skip = async (reason: string): Promise<DeliverResult> => {
@@ -146,9 +152,18 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
     // CAN-SPAM: no marketing email without the brand's postal address.
     const channel = pickChannel(i.channels, { ...reach, email: reach.email && !!s.address.trim() });
     if (!channel) return skip("no_consent");
-    const cap = capProblem(await recentSends(t.customerId, now, tx), now, s);
+    const members = await household(i.contact?.householdId ?? t.customerId, tx);
+    if (members.length > 1 && (c.kind === "blast" || c.kind === "openings")) {
+      const [sibling] = await tx
+        .select({ id: marketingSends.id })
+        .from(marketingSends)
+        .where(and(eq(marketingSends.campaignId, c.id), eq(marketingSends.status, "queued"), inArray(marketingSends.customerId, members)))
+        .limit(1);
+      if (sibling) return skip("household");
+    }
+    const cap = capProblem(await recentSends(members, now, tx), now, s);
     if (cap) return skip(cap);
-    if (i.openingsCapDays && (await hadOpenings(t.customerId, i.openingsCapDays, now, tx))) return skip("openings_cap");
+    if (i.openingsCapDays && (await hadOpenings(members, i.openingsCapDays, now, tx))) return skip("openings_cap");
     const today = todayLocal(now);
     const promoBad = promoProblem(i.promo, today);
     if (promoBad) return skip(promoBad);

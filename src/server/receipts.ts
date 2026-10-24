@@ -26,6 +26,7 @@ import { formatCents } from "@/lib/money";
 import { formatPhone, normalizeEmail, normalizePhone } from "@/lib/phone";
 import { formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { Actor, audit, customerActor } from "./audit";
+import { contactFor, householdsByContact } from "./household-contact";
 import type { ClientPolicy } from "./client-privacy";
 import { AppError, notFound } from "./errors";
 import { loyaltyBalance } from "./loyalty";
@@ -197,7 +198,7 @@ export async function deliverReceipt(o: DeliverInput, tx: DBorTx = db): Promise<
   const channel = o.channel;
   const to = destinationOf(channel, o.to);
   const masked = maskOf(channel, to);
-  const c = sale.customerId ? await tx.query.customers.findFirst({ where: eq(customers.id, sale.customerId), columns: { phone: true, email: true, smsOptIn: true, emailOptIn: true } }) : null;
+  const c = await contactFor(tx, sale.customerId);
   const onFile = channel === "sms" ? c?.phone === to : !!c?.email && c.email.toLowerCase() === to;
   const chosen = await tx.query.receiptDeliveries.findFirst({
     where: and(eq(receiptDeliveries.saleId, sale.id), eq(receiptDeliveries.destination, to), inArray(receiptDeliveries.purpose, CHOICES), isNull(receiptDeliveries.skipped)),
@@ -291,7 +292,7 @@ export async function sendReceiptFromStaff(saleId: string, input: StaffReceiptIn
   }
   let to: string;
   if (input.onFile) {
-    const c = sale.customerId ? await db.query.customers.findFirst({ where: eq(customers.id, sale.customerId), columns: { phone: true, email: true } }) : null;
+    const c = await contactFor(db, sale.customerId);
     const v = input.channel === "sms" ? c?.phone : c?.email?.toLowerCase();
     if (!v) throw new AppError("bad_request", input.channel === "sms" ? "There's no mobile number on file" : "There's no email on file");
     to = v;
@@ -313,10 +314,7 @@ export async function requestReceiptCopies(contact: string, now = new Date()) {
   const to = channel === "sms" ? normalizePhone(raw) : normalizeEmail(raw);
   if (!to) throw new AppError("bad_request", "Enter the mobile number or email you gave the shop");
   const sent = { channel, masked: maskOf(channel, to) };
-  const people = await db
-    .select({ id: customers.id, firstName: customers.firstName })
-    .from(customers)
-    .where(channel === "sms" ? eq(customers.phone, to) : sql`lower(${customers.email}) = ${to}`);
+  const { people, ids } = await householdsByContact(db, channel === "sms" ? eq(customers.phone, to) : sql`lower(${customers.email}) = ${to}`);
   if (!people.length || (await isOptedOut(channel, to))) return sent;
   const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
   const [{ n }] = await db
@@ -331,10 +329,7 @@ export async function requestReceiptCopies(contact: string, now = new Date()) {
     .from(sales)
     .where(
       and(
-        inArray(
-          sales.customerId,
-          people.map((p) => p.id),
-        ),
+        inArray(sales.customerId, ids),
         ne(sales.status, "open"),
         eq(sales.isImported, false),
         isNotNull(sales.paidAt),

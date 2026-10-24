@@ -48,6 +48,7 @@ import { Actor, SYSTEM, audit, customerActor } from "./audit";
 import { reasonShower, usableReason } from "./block-reasons";
 import { cancelAppointment, createAppointment, getAvailability, messageContext, rescheduleAppointment } from "./booking";
 import { AppError, forbidden, notFound } from "./errors";
+import { guardian, householdContact } from "./household-contact";
 import { logMessage, optOutKeys, queueShopText, sendDue, threadFor } from "./messaging";
 import { cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
 import { closeLinks, finishOutreach as finish, issueLink } from "./rebook-links";
@@ -423,16 +424,17 @@ const currentId = (r: Pick<OutreachRow, "appointmentId" | "newAppointmentId">) =
 
 async function contactOf(customerId: string | null) {
   const c = customerId ? await db.query.customers.findFirst({ where: eq(customers.id, customerId) }) : null;
-  const keys = await optOutKeys(c?.phone ? [c.phone] : []);
+  const to = c?.guardianId ? ((await db.query.customers.findFirst({ where: eq(customers.id, c.guardianId) })) ?? c) : c;
+  const keys = await optOutKeys(to?.phone ? [to.phone] : []);
   const facts = {
-    phone: c?.phone ?? null,
-    email: c?.email ?? null,
-    smsOptIn: c?.smsOptIn ?? false,
-    emailOptIn: c?.emailOptIn ?? false,
-    smsOptedOut: !!c?.phone && keys.has(`sms:${c.phone}`),
-    voiceOptedOut: !!c?.phone && keys.has(`voice:${c.phone}`),
+    phone: to?.phone ?? null,
+    email: to?.email ?? null,
+    smsOptIn: to?.smsOptIn ?? false,
+    emailOptIn: to?.emailOptIn ?? false,
+    smsOptedOut: !!to?.phone && keys.has(`sms:${to.phone}`),
+    voiceOptedOut: !!to?.phone && keys.has(`voice:${to.phone}`),
   };
-  return { customer: c ?? null, channels: channelsFor(facts) };
+  return { customer: c ? { ...c, phone: facts.phone, email: facts.email } : null, channels: channelsFor(facts) };
 }
 
 export interface Who {
@@ -686,10 +688,11 @@ export async function openOutreachFor(phone: string, shopId: string) {
     .select({ o: appointmentOutreach })
     .from(appointmentOutreach)
     .innerJoin(customers, eq(customers.id, appointmentOutreach.customerId))
+    .leftJoin(guardian, eq(guardian.id, customers.guardianId))
     .innerJoin(callIns, eq(callIns.id, appointmentOutreach.callInId))
     .where(
       and(
-        eq(customers.phone, phone),
+        sql`${householdContact.phone} = ${phone}`,
         eq(appointmentOutreach.shopId, shopId),
         inArray(appointmentOutreach.status, ["notified", "delivered", "no_response"]),
         isNotNull(appointmentOutreach.option),
@@ -909,10 +912,11 @@ export async function callInDetail(id: string, viewer: ReasonViewer = NO_PRIVATE
   const [appts, items, jobs, links] = await Promise.all([
     apptIds.length
       ? db
-          .select({ a: appointments, barber: staff.displayLabel, firstName: customers.firstName, lastName: customers.lastName, phone: customers.phone, email: customers.email, smsOptIn: customers.smsOptIn, emailOptIn: customers.emailOptIn, allowOtherShop: customers.allowOtherShop, preferredStaffId: customers.preferredStaffId })
+          .select({ a: appointments, barber: staff.displayLabel, firstName: customers.firstName, lastName: customers.lastName, ...householdContact, allowOtherShop: customers.allowOtherShop, preferredStaffId: customers.preferredStaffId })
           .from(appointments)
           .innerJoin(staff, eq(staff.id, appointments.staffId))
           .leftJoin(customers, eq(customers.id, appointments.customerId))
+          .leftJoin(guardian, eq(guardian.id, customers.guardianId))
           .where(inArray(appointments.id, apptIds))
       : [],
     apptIds.length ? db.select().from(appointmentItems).where(inArray(appointmentItems.appointmentId, apptIds)) : [],

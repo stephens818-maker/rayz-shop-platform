@@ -41,6 +41,7 @@ import { CustomerInput, findOrCreateCustomer } from "./customers";
 import { AppError, isDoubleBookingError, notFound } from "./errors";
 import { liveClock } from "./clock-live";
 import { AppointmentMessageContext, cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
+import { guardian, householdContact } from "./household-contact";
 import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
 import { bookingPlans, shopInterval, staffIntervals, toStaffPlans } from "./timing";
 
@@ -399,15 +400,13 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
       firstName: customers.firstName,
       barberName: staff.displayLabel,
       customerId: customers.id,
-      phone: customers.phone,
-      email: customers.email,
-      smsOptIn: customers.smsOptIn,
-      emailOptIn: customers.emailOptIn,
+      ...householdContact,
     })
     .from(appointments)
     .innerJoin(shops, eq(shops.id, appointments.shopId))
     .innerJoin(staff, eq(staff.id, appointments.staffId))
     .leftJoin(customers, eq(customers.id, appointments.customerId))
+    .leftJoin(guardian, eq(guardian.id, customers.guardianId))
     .where(eq(appointments.id, appointmentId));
   return {
     appointmentId: row.id,

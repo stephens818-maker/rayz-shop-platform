@@ -456,6 +456,7 @@ export const SKIP_LABEL: Record<string, string> = {
   cap_month: "Monthly limit reached",
   no_coupon: "No coupon codes left",
   openings_cap: "Got a We have openings message recently",
+  household: "Someone else in the family already got it (one message per parent's phone and email)",
 };
 
 // ───────────────────────────── Segments ─────────────────────────────

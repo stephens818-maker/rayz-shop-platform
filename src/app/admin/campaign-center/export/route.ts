@@ -4,6 +4,7 @@ import { customers, marketingCampaigns, marketingSends, shops } from "@/db/schem
 import { audit } from "@/server/audit";
 import { routeStaff } from "@/server/auth/staff";
 import { clientListDenied, clientPolicy, recordClientAccess } from "@/server/client-privacy";
+import { guardian, householdContact } from "@/server/household-contact";
 import { contactsFor } from "@/server/marketing/consent";
 import { toCsv } from "@/server/reports";
 
@@ -52,8 +53,9 @@ export async function GET(req: Request) {
   });
   const people = keep.length
     ? await db
-        .select({ id: customers.id, firstName: customers.firstName, lastName: customers.lastName, phone: customers.phone, email: customers.email, shop: shops.name })
+        .select({ id: customers.id, firstName: customers.firstName, lastName: customers.lastName, phone: householdContact.phone, email: householdContact.email, shop: shops.name })
         .from(customers)
+        .leftJoin(guardian, eq(guardian.id, customers.guardianId))
         .leftJoin(shops, eq(shops.id, customers.homeShopId))
         .where(inArray(customers.id, keep))
     : [];

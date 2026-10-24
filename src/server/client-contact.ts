@@ -7,6 +7,7 @@ import { audit } from "./audit";
 import { StaffContext, can } from "./auth/staff";
 import { recordClientAccess } from "./client-privacy";
 import { customerAccess } from "./customers";
+import { contactFor } from "./household-contact";
 import { AppError, notFound } from "./errors";
 import { logCall, optedOut, queueShopText } from "./messaging";
 import { processDueJobs } from "./notifications/queue";
@@ -21,9 +22,12 @@ export const STAFF_TEXT_MAX = 320;
  */
 export async function contactClient(ctx: StaffContext, customerId: string, input: { channel: "sms" | "call"; message?: string }) {
   if (!(await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, customerId))) throw notFound("Client");
-  const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId) });
-  if (!c) throw notFound("Client");
-  if (!c.phone) throw new AppError("bad_request", "There's no phone number on file for this client");
+  const row = await db.query.customers.findFirst({ where: eq(customers.id, customerId) });
+  if (!row) throw notFound("Client");
+  // A child's calls and texts go to their parent.
+  const reach = await contactFor(db, row.id);
+  const c = { ...row, phone: reach?.phone ?? null, smsOptIn: !!reach?.smsOptIn };
+  if (!c.phone) throw new AppError("bad_request", row.guardianId ? "There's no phone number on file for this child's parent" : "There's no phone number on file for this client");
   const shopId = ctx.currentShopId ?? ctx.shopIds[0] ?? null;
   const shop = shopId ? await db.query.shops.findFirst({ where: eq(shops.id, shopId) }) : null;
   const from = `Ray'z ${shop?.name ?? "Barber Shop"}`;

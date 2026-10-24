@@ -7,6 +7,8 @@ import { db } from "@/db";
 import { customers, marketingSends, shops } from "@/db/schema";
 import { CHANNEL_LABEL, Channel } from "@/domain/marketing";
 import { isAutomatedOpen } from "@/domain/reviews";
+import { householdHead } from "../family";
+import { contactFor, guardian, householdContact } from "../household-contact";
 import { unsubscribe } from "./consent";
 
 const TOKEN = /^[0-9A-Za-z]{22}$/;
@@ -48,11 +50,11 @@ export async function unsubscribeByToken(token: string): Promise<boolean> {
   const s = await sendByToken(token);
   if (!s) return false;
   if (!s.customerId || s.status === "test") return true;
-  const [c] = await db.select({ phone: customers.phone, email: customers.email }).from(customers).where(eq(customers.id, s.customerId));
+  const c = await contactFor(db, s.customerId);
   const channel = (s.channel ?? "email") as Channel;
   await unsubscribe({
     channel,
-    customerId: s.customerId,
+    customerId: await householdHead(s.customerId),
     email: channel === "email" ? (c?.email ?? null) : null,
     phone: channel === "sms" ? (c?.phone ?? null) : null,
     source: "link",
@@ -68,7 +70,8 @@ export async function stopFromText(phone: string, customerId: string | null, now
     .select({ id: marketingSends.id, campaignId: marketingSends.campaignId, customerId: marketingSends.customerId })
     .from(marketingSends)
     .innerJoin(customers, eq(customers.id, marketingSends.customerId))
-    .where(and(eq(marketingSends.channel, "sms"), eq(marketingSends.status, "queued"), eq(customers.phone, phone), gte(marketingSends.createdAt, new Date(now.getTime() - 7 * 86_400_000))))
+    .leftJoin(guardian, eq(guardian.id, customers.guardianId))
+    .where(and(eq(marketingSends.channel, "sms"), eq(marketingSends.status, "queued"), sql`${householdContact.phone} = ${phone}`, gte(marketingSends.createdAt, new Date(now.getTime() - 7 * 86_400_000))))
     .orderBy(desc(marketingSends.createdAt))
     .limit(1);
   return unsubscribe({ channel: "sms", customerId: customerId ?? last?.customerId ?? null, phone, source: "stop", campaignId: last?.campaignId ?? null, sendId: last?.id ?? null });

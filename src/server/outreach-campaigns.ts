@@ -56,7 +56,7 @@ export interface Candidate {
 /** Clients whose last visit was at this shop, with no appointment booked, and how their visits run. */
 async function history(shopId: string, now: Date) {
   const consent = await marketingConsent();
-  const marketing = consent.sms ? sql.raw("bool_or(c.sms_marketing_opt_in)") : sql`false`;
+  const marketing = consent.sms ? sql.raw("bool_or(coalesce(g.sms_marketing_opt_in, c.sms_marketing_opt_in))") : sql`false`;
   const rows = (await db.execute(sql`
     with v as (
       select a.customer_id, count(*)::int n, min(a.starts_at) first_at, max(a.starts_at) last_at,
@@ -66,11 +66,11 @@ async function history(shopId: string, now: Date) {
       where a.status = 'completed' and a.customer_id is not null and a.starts_at > ${new Date(now.getTime() - 400 * 86_400_000).toISOString()}
       group by a.customer_id
     )
-    select v.customer_id, v.n, v.first_at, v.last_at, v.last_staff, c.first_name, c.phone, ${marketing} as marketing
-    from v join customers c on c.id = v.customer_id
+    select v.customer_id, v.n, v.first_at, v.last_at, v.last_staff, c.first_name, coalesce(g.phone, c.phone) phone, ${marketing} as marketing
+    from v join customers c on c.id = v.customer_id left join customers g on g.id = c.guardian_id
     where v.last_shop = ${shopId}
       and not exists (select 1 from appointments f where f.customer_id = v.customer_id and f.starts_at > ${now.toISOString()} and f.status in ('booked', 'confirmed', 'checked_in', 'in_service'))
-    group by v.customer_id, v.n, v.first_at, v.last_at, v.last_staff, c.first_name, c.phone`)) as unknown as {
+    group by v.customer_id, v.n, v.first_at, v.last_at, v.last_staff, c.first_name, coalesce(g.phone, c.phone)`)) as unknown as {
     customer_id: string;
     n: number;
     first_at: string | Date;
@@ -132,7 +132,11 @@ async function sendMarketing(kind: "fill" | "rebook", shopId: string, who: { act
   assertSendingHours(now, kind === "fill" ? 19 * 60 : SEND_UNTIL_MIN);
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
   if (!shop || shop.status !== "live") throw notFound("Live shop");
-  const list = (kind === "fill" ? await fillCandidates(shopId, now) : await rebookCandidates(shopId, now)).filter((c) => c.canText).slice(0, MAX_PER_CAMPAIGN);
+  const phones = new Set<string>();
+  // A parent and their children share one number: one text per household.
+  const list = (kind === "fill" ? await fillCandidates(shopId, now) : await rebookCandidates(shopId, now))
+    .filter((c) => c.canText && !phones.has(c.phone!) && !!phones.add(c.phone!))
+    .slice(0, MAX_PER_CAMPAIGN);
   if (!list.length) return { sent: 0 };
   const template = templateFor(kind === "fill" ? "fill_offer" : "rebook_nudge", await savedTemplates());
   const values: MergeValues = { shop: `Ray'z ${shop.name}`, book_link: `${appBaseUrl()}/book/${shop.slug}`, ...extra };

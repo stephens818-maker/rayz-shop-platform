@@ -21,6 +21,7 @@ import { ratingSummaries } from "./ratings";
 import { timesFor } from "./service-times";
 import { reasonShower } from "./block-reasons";
 import { staffingFor } from "./staff-time";
+import { guardian, householdContact } from "./household-contact";
 
 export interface CalAppt {
   id: string;
@@ -175,13 +176,17 @@ export async function loadDayCalendar(
         a: appointments,
         firstName: customers.firstName,
         lastName: customers.lastName,
-        phone: customers.phone,
-        smsOptIn: customers.smsOptIn,
+        phone: householdContact.phone,
+        smsOptIn: householdContact.smsOptIn,
+        guardianId: guardian.id,
+        guardianFirst: guardian.firstName,
+        guardianLast: guardian.lastName,
         saleId: sales.id,
         saleStatus: sales.status,
       })
       .from(appointments)
       .leftJoin(customers, eq(customers.id, appointments.customerId))
+      .leftJoin(guardian, eq(guardian.id, customers.guardianId))
       .leftJoin(sales, and(eq(sales.appointmentId, appointments.id), ne(sales.status, "voided")))
       .where(and(eq(appointments.shopId, shopId), lt(appointments.startsAt, dayEnd), gt(appointments.endsAt, dayStart)))
       .orderBy(asc(appointments.startsAt)),
@@ -338,6 +343,7 @@ export async function loadDayCalendar(
           phone: privacy.show("phone", r.phone),
           hasPhone: !!r.phone,
           smsOptIn: !!r.smsOptIn,
+          guardian: r.guardianId ? { id: r.guardianId, name: [r.guardianFirst, r.guardianLast].filter(Boolean).join(" ") } : null,
           services: items.filter((i) => i.appointmentId === r.a.id).map((i) => i.name),
           estimateCents: r.a.estimateCents,
           notes: r.a.notes,
