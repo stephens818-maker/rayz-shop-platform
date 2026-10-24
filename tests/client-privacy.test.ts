@@ -142,8 +142,8 @@ describe("who may change a rule", () => {
     const owner = { ...admin, isOwner: true };
     for (const field of CONTACT_FIELDS) {
       for (const caller of [admin, owner]) {
-        expect(fieldRuleChangeDenied(caller, { ...base, field }), field).toMatch(/never shown in full/);
-        expect(fieldRuleChangeDenied(caller, { ...base, field, roleId: null, roleKey: "shop_manager", staffId: "michelle" }), field).toMatch(/never shown in full/);
+        expect(fieldRuleChangeDenied(caller, { ...base, field }), field).toMatch(/Give a person or a location contact access/);
+        expect(fieldRuleChangeDenied(caller, { ...base, field, roleId: null, roleKey: "shop_manager", staffId: "michelle" }), field).toMatch(/Give a person or a location contact access/);
         expect(fieldRuleChangeDenied(caller, { ...base, field, level: "masked" }), field).toBeNull();
       }
       expect(fieldRuleChangeDenied(owner, { ...base, field, setting: "edit", level: "allow" }), field).toBeNull();

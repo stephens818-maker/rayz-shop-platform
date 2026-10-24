@@ -1,6 +1,7 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, or } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { roles, shops, staff, staffAccessShops, staffShops, type ShopStatus } from "@/db/schema";
+import { clientContactGrants, roles, shops, staff, staffAccessShops, staffShops, type ShopStatus } from "@/db/schema";
+import { ContactGrant, HeldGrants, heldGrants, kindsAt, withGrantKinds } from "@/domain/contact-grants";
 import {
   Access,
   BRAND_ONLY,
@@ -37,6 +38,31 @@ export interface StaffAccess extends Access {
   uniform: boolean;
   /** Brand-only permissions the role or overrides give, which are off because the scope isn't all shops. */
   needsAllShops: Permission[];
+  /** Contact access grants in force for them; see contact-grants.ts. */
+  grants: HeldGrants;
+  /** Permissions only a contact access grant gives them, left out when comparing what people may grant. */
+  granted: ReadonlySet<Permission>;
+}
+
+async function grantsInForce(staffId: string, shopIds: string[], tx: DBorTx): Promise<ContactGrant[]> {
+  const now = new Date();
+  return tx
+    .select({ id: clientContactGrants.id, kind: clientContactGrants.kind, staffId: clientContactGrants.staffId, shopId: clientContactGrants.shopId, expiresAt: clientContactGrants.expiresAt, revokedAt: clientContactGrants.revokedAt })
+    .from(clientContactGrants)
+    .where(
+      and(
+        isNull(clientContactGrants.revokedAt),
+        or(isNull(clientContactGrants.expiresAt), gt(clientContactGrants.expiresAt, now)),
+        or(eq(clientContactGrants.staffId, staffId), shopIds.length ? inArray(clientContactGrants.shopId, shopIds) : undefined),
+      ),
+    );
+}
+
+/** Each shop's access with the grants held there, and what they can do somewhere. */
+function applyGrants<A extends Access>(byShop: Map<string, A>, union: Access, held: HeldGrants) {
+  const granted = new Map([...byShop].map(([id, a]) => [id, withGrantKinds(a, kindsAt(held, id))] as const));
+  const list = [...granted.values()];
+  return { byShop: granted, union: list.length ? unionAccess(list) : withGrantKinds(union, held.everywhere), uniform: list.every((x) => sameAccess(x, list[0])) };
 }
 
 /** A person's effective permissions and shop scope, straight from the database. */
@@ -68,14 +94,17 @@ export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DB
     s.maxDiscountPct,
     scope,
   );
-  const { byShop, union, uniform } =
+  const base =
     s.kind === "shop"
       ? { byShop: new Map([...computed.byShop].map(([id, a]) => [id, sharedLoginAccess(a)] as const)), union: sharedLoginAccess(computed.union), uniform: computed.uniform }
       : computed;
+  const grants = heldGrants(await grantsInForce(s.id, shopRows.map((r) => r.id), tx), s.id);
+  const { byShop, union, uniform } = applyGrants(base.byShop, base.union, grants);
+  const granted = new Set([...union.permissions].filter((p) => !base.union.permissions.has(p)));
   const shopRoles = Object.fromEntries([...byShop].filter(([, a]) => a.role.id !== role.id).map(([id, a]) => [id, a.role.id]));
   const needsAllShops =
     scope === "all" ? [] : [...unionAccess([role, ...others.values()].map((r) => effectiveAccess(r, overrides, s.maxDiscountPct))).permissions].filter((p) => BRAND_ONLY.has(p));
-  return { ...union, staffId: s.id, role, scope, shopIds: shopRows.map((x) => x.id), shops: shopRows.map(({ roleId: _, ...x }) => x), byShop, shopRoles, uniform, needsAllShops };
+  return { ...union, staffId: s.id, role, scope, shopIds: shopRows.map((x) => x.id), shops: shopRows.map(({ roleId: _, ...x }) => x), byShop, shopRoles, uniform, needsAllShops, grants, granted };
 }
 
 /** The same person working in one of their shops: that shop's role and nothing else. */
@@ -91,8 +120,10 @@ export function atShop(a: StaffAccess, shopId: string): StaffAccess {
  */
 export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAccess {
   if (!drop.size || !a.shopIds.some((id) => drop.has(id))) return a;
-  const narrow = <T extends Access>(x: T): T => (a.scope === "all" ? { ...x, permissions: new Set([...x.permissions].filter((p) => !BRAND_ONLY.has(p))) } : x);
-  const byShop = new Map([...a.byShop].filter(([id]) => !drop.has(id)).map(([id, x]) => [id, narrow(x)] as const));
+  // Grants are re-applied after narrowing: a grant isn't a brand-only permission, so losing a shop doesn't take it away.
+  const narrow = <T extends Access>(x: T, shopId: string): T =>
+    a.scope === "all" ? withGrantKinds({ ...x, permissions: new Set([...x.permissions].filter((p) => !BRAND_ONLY.has(p))) }, kindsAt(a.grants, shopId)) : x;
+  const byShop = new Map([...a.byShop].filter(([id]) => !drop.has(id)).map(([id, x]) => [id, narrow(x, id)] as const));
   const list = [...byShop.values()];
   const union: Access = list.length ? unionAccess(list) : { isOwner: false, permissions: new Set(), maxDiscountPct: 0 };
   return {
@@ -108,19 +139,21 @@ export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAc
   };
 }
 
-export const grantor = (a: Pick<StaffAccess, "staffId" | "isOwner" | "permissions" | "maxDiscountPct" | "scope" | "shopIds">): Grantor => ({
+/** What they may give others: never what only a contact access grant gives them. */
+export const grantor = (a: Pick<StaffAccess, "staffId" | "isOwner" | "permissions" | "maxDiscountPct" | "scope" | "shopIds"> & { granted?: ReadonlySet<Permission> }): Grantor => ({
   staffId: a.staffId,
   isOwner: a.isOwner,
-  permissions: a.permissions,
+  permissions: a.granted?.size ? new Set([...a.permissions].filter((p) => !a.granted!.has(p))) : a.permissions,
   maxDiscountPct: a.maxDiscountPct,
   scope: a.scope,
   shopIds: a.shopIds,
 });
 
+/** What their role and overrides give, without contact access grants (those are managed apart). */
 export const accessState = (a: StaffAccess): UserAccessState => ({
   staffId: a.staffId,
   isOwner: a.isOwner,
-  permissions: a.permissions,
+  permissions: a.granted.size ? new Set([...a.permissions].filter((p) => !a.granted.has(p))) : a.permissions,
   maxDiscountPct: a.maxDiscountPct,
   scope: a.scope,
   shopIds: a.shopIds,

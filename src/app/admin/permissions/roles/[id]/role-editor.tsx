@@ -11,6 +11,7 @@ import {
   FEATURE_PERMISSIONS,
   OWNER_GRANTS,
   OWNER_ONLY,
+  GRANT_ONLY,
   PERMISSION_GROUPS,
   Permission,
   REPORTS,
@@ -193,8 +194,8 @@ export function RoleEditor({
               <span>
                 <span className="font-medium">Brand-level role</span>
                 <span className="block text-xs text-zinc-500">
-                  People in it with access to all shops may be given full client phone, email and address and client list exports. Shop and staff roles and shop logins never
-                  are. {isOwner ? "" : "Only the Brand Owner can change this."}
+                  People in it with access to all shops may be given full client phone, email and address and client list exports by its rules. Shop and staff roles and
+                  shop logins only get them as contact access, given to a person or a location. {isOwner ? "" : "Only the Brand Owner can change this."}
                 </span>
               </span>
             </label>
@@ -206,7 +207,7 @@ export function RoleEditor({
         <Card key={g}>
           <CardHeader title={g} />
           <ul className="divide-y divide-zinc-100">
-            {FEATURE_PERMISSIONS.filter((p) => p.group === g).map((p) => {
+            {FEATURE_PERMISSIONS.filter((p) => p.group === g && !GRANT_ONLY.has(p.key)).map((p) => {
               const why = blocked(p.key);
               return (
                 <li key={p.key} className={cx("flex items-start gap-3 px-4 py-2.5", why && "bg-zinc-50/60")}>

@@ -1,12 +1,13 @@
 /**
- * The owner's hard rule: shop logins and shop and staff roles never see a client's full phone,
- * email or address, and never export or download client lists. It isn't a default: every
+ * The owner's rule: shop logins and shop and staff roles don't see a client's full phone, email or
+ * address, and don't export or download client lists, unless the brand gives a person or a location
+ * contact access (contact-grants.test.ts). Without a grant it isn't just a default: every
  * non-brand-level login here is given full rules and every client-list permission straight in the
  * database, and still gets contact details masked, every download refused and every reveal of them
- * refused, while exact search and calls and texts through the shop line keep working. Nobody,
- * not even the Brand Owner, can grant any of it to a shop or staff role. Only brand-level people
- * (the Brand Owner, Brand Admins and brand-level roles the Brand Owner creates, with every shop)
- * see contact details in full and export.
+ * refused, while exact search and calls and texts through the shop line keep working. No role, rule
+ * or override can give it to a shop or staff role, not even the Brand Owner's. Only brand-level
+ * people (the Brand Owner, Brand Admins and brand-level roles the Brand Owner creates, with every
+ * shop) see contact details in full and export without a grant.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Mods, loadModules } from "./setup";
@@ -74,7 +75,7 @@ beforeAll(async () => {
   ]);
   await m.db.db.insert(m.schema.clientFieldRules).values(rules);
   const grants = Object.fromEntries(
-    ["clients.export", "campaign_center.export", "import.run", "clients.privacy", "clients.reveal", "clients.view_all", "report.client_ratings.view", "report.client_ratings.export"].map((p) => [p, true]),
+    ["clients.contact_full", "clients.export", "campaign_center.export", "import.run", "clients.privacy", "clients.reveal", "clients.view_all", "report.client_ratings.view", "report.client_ratings.export"].map((p) => [p, true]),
   );
   for (const l of SHOP_LEVEL) await m.db.db.update(m.schema.staff).set({ permissionOverrides: grants }).where(eq(m.schema.staff.id, people[l]));
   for (const r of shopRoles) await m.db.db.update(m.schema.roles).set({ permissions: [...new Set([...r.permissions, ...Object.keys(grants)])] }).where(eq(m.schema.roles.id, r.id));
@@ -174,7 +175,7 @@ describe("shop logins and shop and staff roles, given everything in the database
   });
 });
 
-describe("nobody can grant it to a shop or staff role, not even the Brand Owner", () => {
+describe("no role, rule or override gives it to a shop or staff role, not even the Brand Owner's", () => {
   it("full contact rules for a shop or staff role or person are refused", async () => {
     const { setFieldRuleAction } = await import("@/app/admin/client-data/actions");
     const manager = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "shop_manager") }))!;
@@ -182,7 +183,7 @@ describe("nobody can grant it to a shop or staff role, not even the Brand Owner"
       await as(who);
       for (const field of ["phone", "email", "address"]) {
         for (const target of [{ roleId: manager.id, staffId: null }, { roleId: null, staffId: people.michelle }, { roleId: null, staffId: people.coralville }])
-          expect(await setFieldRuleAction({ field, level: "full", shopId: null, ...target }), `${who} ${field}`).toMatchObject({ ok: false, error: expect.stringMatching(/never shown in full/) });
+          expect(await setFieldRuleAction({ field, level: "full", shopId: null, ...target }), `${who} ${field}`).toMatchObject({ ok: false, error: expect.stringMatching(/Give a person or a location contact access/) });
         expect(await setFieldRuleAction({ field, level: "masked", shopId: null, roleId: manager.id, staffId: null })).toMatchObject({ ok: true });
       }
     }
@@ -193,12 +194,12 @@ describe("nobody can grant it to a shop or staff role, not even the Brand Owner"
     const manager = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "shop_manager") }))!;
     const michelle = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, people.michelle) }))!;
     await as("owner");
-    for (const p of ["clients.export", "campaign_center.export", "report.client_ratings.export", "import.run", "clients.privacy"]) {
+    for (const p of ["clients.contact_full", "clients.export", "campaign_center.export", "report.client_ratings.export", "import.run", "clients.privacy"]) {
       const role = { id: manager.id, name: manager.name, description: manager.description, permissions: [...manager.permissions, p, "report.client_ratings.view"], maxDiscountPct: manager.maxDiscountPct, defaultScope: manager.defaultScope };
-      expect(await saveRoleAction(role), p).toMatchObject({ ok: false, error: expect.stringMatching(/only for brand-level roles/) });
+      expect(await saveRoleAction(role), p).toMatchObject({ ok: false, error: expect.stringMatching(/only for brand-level roles|isn't part of a role/) });
       expect(await saveRoleAction({ ...role, permissions: manager.permissions, brandLevel: true })).toMatchObject({ ok: false, error: expect.stringMatching(/Built-in roles can't be made brand-level/) });
       const access = { staffId: michelle.id, roleId: michelle.roleId, maxDiscountPct: null, scope: "one" as const, shopIds: [ids.coralville], overrides: { [p]: true } };
-      expect(await saveUserAccessAction(access), p).toMatchObject({ ok: false, error: expect.stringMatching(/only for brand-level roles/) });
+      expect(await saveUserAccessAction(access), p).toMatchObject({ ok: false, error: expect.stringMatching(/only for brand-level roles|isn't part of a role/) });
     }
     const { saveShopLoginCapAction } = await import("@/app/admin/client-data/actions");
     expect(await saveShopLoginCapAction("role")).toMatchObject({ ok: false });

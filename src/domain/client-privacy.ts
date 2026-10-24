@@ -242,7 +242,7 @@ export function fieldRuleChangeDenied(
   if (rule.roleKey === OWNER_ROLE_KEY) return "The Brand Owner always sees every client detail";
   if (rule.roleKey === BRAND_ADMIN_ROLE_KEY && setting === "view") return "Brand Admins always see every client detail";
   if (setting === "view" && rule.level === "full" && isContactField(rule.field) && !rule.fullContact)
-    return "Phone, email and address are never shown in full to shop logins or shop and staff roles, only to brand-level roles with access to all shops";
+    return "Rules never show phone, email and address in full to shop logins or shop and staff roles. Give a person or a location contact access instead.";
   if (setting !== "view" && !isEntryField(rule.field)) return "Ratings are entered with the rating tools, not client forms";
   if (rule.level !== null && (setting === "view" ? !isLevel(rule.level) : !isEntry(rule.level))) return "Pick a level";
   if (caller.isOwner) return null;

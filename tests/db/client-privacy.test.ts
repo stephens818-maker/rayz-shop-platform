@@ -376,7 +376,7 @@ describe("reveal with a reason", () => {
     await as("michelle", shop.coralville);
     for (const field of ["phone", "email", "address"]) {
       const r = await revealClientFieldAction({ customerId: ids.client, field, reason: "Client asked us to confirm it" });
-      expect(r, field).toMatchObject({ ok: false, error: expect.stringMatching(/never shown in full at shop level/) });
+      expect(r, field).toMatchObject({ ok: false, error: expect.stringMatching(/only with contact access from the brand/) });
       expect(found(JSON.stringify(r), [...PHONE, ...EMAIL, ...ADDRESS]), field).toEqual([]);
     }
     expect((await accessOf("reveal", "michelle")).filter((l) => l.field !== "birthday")).toEqual([]);
@@ -504,7 +504,7 @@ describe("the brand portal", () => {
     await as("admin");
     expect(await rule("phone", "full", { staff: "admin" })).toMatchObject({ ok: false, error: expect.stringMatching(/what you see yourself/) });
     expect(await rule("phone", "full", { roleKey: "brand_admin" })).toMatchObject({ ok: false });
-    expect(await rule("phone", "full", { roleKey: "front_desk" })).toMatchObject({ ok: false, error: expect.stringMatching(/never shown in full/) });
+    expect(await rule("phone", "full", { roleKey: "front_desk" })).toMatchObject({ ok: false, error: expect.stringMatching(/Give a person or a location contact access/) });
     expect(await rule("birthday", "full", { roleKey: "front_desk" })).toMatchObject({ ok: false, error: expect.stringMatching(/more than you see/) });
     expect(await rule("phone", "hidden", { roleKey: "front_desk", shopId: shop.moline })).toMatchObject({ ok: true });
     expect(await rule("phone", null, { roleKey: "front_desk", shopId: shop.moline })).toMatchObject({ ok: true });

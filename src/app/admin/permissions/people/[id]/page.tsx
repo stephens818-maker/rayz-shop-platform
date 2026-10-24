@@ -4,7 +4,8 @@ import { notFound } from "next/navigation";
 import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { roles, shops } from "@/db/schema";
-import { PageHeader } from "@/components/ui";
+import { Notice, PageHeader } from "@/components/ui";
+import { CONTACT_GRANT_LABEL, ContactGrantKind } from "@/domain/contact-grants";
 import { cleanOverrides, staffEditDenied } from "@/domain/permissions";
 import { seesStaffContact, staffContact } from "@/domain/staff-contact";
 import { accessState, loadStaffAccess, workShopIds } from "@/server/auth/access";
@@ -34,6 +35,12 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
       ? "You can't change your own access. Ask another admin."
       : (staffEditDenied(g, { ...accessState(target), workShopIds: works }) ?? (target.isOwner && !ctx.isOwner ? "Only the Brand Owner can change a Brand Owner's access" : null));
 
+  const shopName = (sid: string) => allShops.find((s) => s.id === sid)?.name ?? OTHER_SHOP;
+  const contactAccess = [
+    ...[...target.grants.everywhere].map((k) => ({ k, where: "everywhere" })),
+    ...[...target.grants.byShop].flatMap(([sid, ks]) => [...ks].filter((k) => !target.grants.everywhere.has(k)).map((k) => ({ k, where: `at ${shopName(sid)}` }))),
+  ] as { k: ContactGrantKind; where: string }[];
+
   return (
     <div className="mx-auto max-w-5xl">
       <PageHeader
@@ -51,6 +58,17 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
           </>
         }
       />
+      {contactAccess.length > 0 && (
+        <div className="mb-4">
+          <Notice tone="blue">
+            Contact access from the brand: {contactAccess.map((c) => `${CONTACT_GRANT_LABEL[c.k].toLowerCase()} ${c.where}`).join("; ")}. It&apos;s managed under{" "}
+            <Link className="underline" href="/admin/client-data/contact-access">
+              Contact access
+            </Link>
+            , not here.
+          </Notice>
+        </div>
+      )}
       <PersonAccessEditor
         staffId={id}
         initial={{
@@ -64,7 +82,7 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
         roles={roleRows.map((r) => ({ id: r.id, key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope, brandLevel: r.brandLevel }))}
         shops={ctx.brandWide ? allShops : allShops.filter((s) => hasShop(ctx, s.id))}
         worksAt={[...new Set(allShops.filter((s) => works.includes(s.id)).map((s) => (ctx.brandWide || hasShop(ctx, s.id) ? s.name : OTHER_SHOP)))]}
-        mine={[...ctx.permissions]}
+        mine={[...g.permissions]}
         myMaxDiscount={ctx.maxDiscountPct}
         iAmOwner={ctx.isOwner}
         iAmBrandWide={ctx.brandWide}

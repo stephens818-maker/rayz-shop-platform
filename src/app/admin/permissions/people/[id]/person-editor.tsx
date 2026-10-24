@@ -7,6 +7,7 @@ import {
   BRAND_LEVEL_ONLY,
   BRAND_ONLY,
   FEATURE_PERMISSIONS,
+  GRANT_ONLY,
   OWNER_GRANTS,
   OWNER_ONLY,
   OWNER_ROLE_KEY,
@@ -40,7 +41,7 @@ function accessOf(roles: RoleOption[], s: State) {
 }
 
 const GROUPS: { title: string; perms: Permission[] }[] = [
-  ...PERMISSION_GROUPS.map((g) => ({ title: g, perms: FEATURE_PERMISSIONS.filter((p) => p.group === g && !OWNER_ONLY.has(p.key)).map((p) => p.key as Permission) })),
+  ...PERMISSION_GROUPS.map((g) => ({ title: g, perms: FEATURE_PERMISSIONS.filter((p) => p.group === g && !OWNER_ONLY.has(p.key) && !GRANT_ONLY.has(p.key)).map((p) => p.key as Permission) })),
   { title: "Reports", perms: REPORTS.flatMap((r) => [reportView(r.key), reportExport(r.key)]) },
 ];
 

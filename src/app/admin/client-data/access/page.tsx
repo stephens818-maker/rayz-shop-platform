@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
@@ -25,7 +25,7 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
     accessSummary(f),
     openAlerts(),
     recentAlerts(),
-    db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(eq(staff.kind, "person")).orderBy(asc(staff.displayLabel)),
+    db.select({ id: staff.id, label: staff.displayLabel }).from(staff).orderBy(asc(staff.kind), asc(staff.displayLabel)),
   ]);
   const more = rows.length > PAGE;
   const qs = (over: Record<string, string | null>) => {

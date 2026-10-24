@@ -351,8 +351,68 @@ export const staff = pgTable("staff", {
   clockPinLockedUntil: ts("clock_pin_locked_until"),
   /** They allow clocking in early to open earlier slots that day, where the shop turns that on. */
   clockOpensEarly: boolean("clock_opens_early").notNull().default(false),
+  /** Sign-in needs an authenticator code; without one set up they set it up at their next sign-in. */
+  twoFactorRequired: boolean("two_factor_required").notNull().default(false),
+  /** Their authenticator secret, encrypted with AUTH_SECRET (src/lib/secret-box.ts); null until set up. */
+  totpSecret: text("totp_secret"),
+  totpEnabledAt: ts("totp_enabled_at"),
+  /** The last 30-second step a code was accepted for, so a code works once. */
+  totpLastStep: integer("totp_last_step"),
+  totpFailures: smallint("totp_failures").notNull().default(0),
+  totpLockedUntil: ts("totp_locked_until"),
+  /** Invited by email and not signed up yet while there's no password. */
+  invitedAt: ts("invited_at"),
+  /** Removed from the brand portal: kept for history, never signs in again. */
+  removedAt: ts("removed_at"),
   createdAt: createdAt(),
 });
+
+/** Email invites to the brand portal. Only the token's hash is stored; a link works once, until it expires. */
+export const staffInvites = pgTable(
+  "staff_invites",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: ts("expires_at").notNull(),
+    createdBy: uuid("created_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    usedAt: ts("used_at"),
+    revokedAt: ts("revoked_at"),
+  },
+  (t) => [index("staff_invites_staff_idx").on(t.staffId)],
+);
+
+/**
+ * The brand's explicit exceptions to "shop logins and staff never see full client contact details
+ * or export client lists": to one person, or to everyone working at one location. Revoking keeps
+ * the row, so the history stays.
+ */
+export const clientContactGrants = pgTable(
+  "client_contact_grants",
+  {
+    id: id(),
+    kind: text("kind").$type<"full_contact" | "export">().notNull(),
+    staffId: uuid("staff_id").references((): AnyPgColumn => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    note: text("note"),
+    expiresAt: ts("expires_at"),
+    grantedBy: uuid("granted_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
+    grantedByLabel: text("granted_by_label").notNull(),
+    createdAt: createdAt(),
+    revokedAt: ts("revoked_at"),
+    revokedBy: uuid("revoked_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
+    revokedByLabel: text("revoked_by_label"),
+  },
+  (t) => [
+    index("client_contact_grants_staff_idx").on(t.staffId),
+    index("client_contact_grants_shop_idx").on(t.shopId),
+    check("client_contact_grants_kind", sql`${t.kind} in ('full_contact', 'export')`),
+    check("client_contact_grants_target", sql`(${t.staffId} is null) <> (${t.shopId} is null)`),
+  ],
+);
 
 export const staffShops = pgTable(
   "staff_shops",

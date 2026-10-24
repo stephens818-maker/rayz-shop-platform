@@ -8,6 +8,7 @@ import {
   BRAND_CAMPAIGN_CENTER,
   FEATURE_PERMISSIONS,
   Grantor,
+  GRANT_ONLY,
   OWNER_GRANTS,
   OWNER_ONLY,
   Permission,
@@ -72,7 +73,7 @@ describe("permission catalog and templates", () => {
 
   it("Brand Owner has everything; Brand Admin everything except brand settings, banking and the client and Campaign Center exports", () => {
     expect(access("brand_owner").permissions.size).toBe(ALL_PERMISSIONS.length);
-    expect(access("brand_admin").permissions.size).toBe(ALL_PERMISSIONS.length - OWNER_ONLY.size - OWNER_GRANTS.size - 2);
+    expect(access("brand_admin").permissions.size).toBe(ALL_PERMISSIONS.length - OWNER_ONLY.size - OWNER_GRANTS.size - GRANT_ONLY.size - 2);
     expect(access("brand_admin").permissions.has("clients.export")).toBe(false);
     expect(access("brand_admin").permissions.has("campaign_center.export")).toBe(false);
     expect(access("brand_admin").permissions.has("payments.banking")).toBe(false);

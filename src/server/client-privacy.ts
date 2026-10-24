@@ -125,14 +125,17 @@ export function displayFull(f: FieldKey, raw: string | null | undefined): string
 export function makePolicy(o: {
   staffId: string;
   isOwner: boolean;
+  /** Brand-level: contact details as the rules set them, with no ceiling. */
   fullContact?: boolean;
+  /** A contact access grant: phone, email and address in full, whatever the rules or the shop login cap say. */
+  grantedContact?: boolean;
   canReveal: boolean;
   custom: { id: string; label: string }[];
   levels: Map<FieldKey, Level>;
   entries?: Map<string, boolean>;
 }): ClientPolicy {
-  const fullContact = o.isOwner || !!o.fullContact;
-  const level = (f: FieldKey): Level => (o.isOwner ? "full" : contactCeiling(f, o.levels.get(f) ?? "hidden", fullContact));
+  const fullContact = o.isOwner || !!o.fullContact || !!o.grantedContact;
+  const level = (f: FieldKey): Level => (o.isOwner || (o.grantedContact && isContactField(f)) ? "full" : contactCeiling(f, o.levels.get(f) ?? "hidden", fullContact));
   const may = (s: EntrySetting, f: FieldKey) => f !== "ratings" && (o.isOwner || (o.entries?.get(`${s}:${f}`) ?? false));
   const canAdd = (f: FieldKey) => may("add", f);
   const canEdit = (f: FieldKey) => may("edit", f);
@@ -157,19 +160,32 @@ export function makePolicy(o: {
   };
 }
 
+type Viewer = Pick<StaffContext, "isOwner" | "scope" | "staff" | "access" | "permissions">;
+
+/** The Brand Owner, a Brand Admin or a brand-level custom role, with every shop, and not a shared shop login. */
+export const isBrandLevelViewer = (ctx: Omit<Viewer, "permissions">) => ctx.isOwner || isBrandLevelPerson({ kind: ctx.staff.kind, scope: ctx.scope, role: ctx.access.role });
+
 /**
- * Whether this signed-in person is brand-level (the Brand Owner, a Brand Admin or a brand-level
- * custom role, with every shop, and not a shared shop login). Nobody else ever sees phone, email or
- * address in full, or downloads a client list, whatever their role, overrides or rules say.
+ * A shop login or someone in a shop or staff role whom the brand gave full contact details with a
+ * contact access grant, where they're working now. Nobody else below brand level ever sees phone,
+ * email or address in full, whatever their role, overrides or rules say.
  */
-export const seesFullContact = (ctx: Pick<StaffContext, "isOwner" | "scope" | "staff" | "access">) =>
-  ctx.isOwner || isBrandLevelPerson({ kind: ctx.staff.kind, scope: ctx.scope, role: ctx.access.role });
+export const contactGranted = (ctx: Viewer) => !isBrandLevelViewer(ctx) && ctx.permissions.has("clients.contact_full") && !!ctx.access.granted?.has("clients.contact_full");
 
-export const CLIENT_LIST_REFUSED = "Client lists can only be downloaded by brand-level roles. Shop logins and shop and staff roles never export clients.";
+/** Whether phone, email and address may show in full: brand-level (as the rules set them) or by a grant. */
+export const seesFullContact = (ctx: Viewer) => isBrandLevelViewer(ctx) || contactGranted(ctx);
 
-/** Refuses a client-list download (CSV, PDF, a scheduled attachment) to anyone who isn't brand-level, whatever they've been granted. */
-export function clientListDenied(ctx: Pick<StaffContext, "isOwner" | "scope" | "staff" | "access">): string | null {
-  return seesFullContact(ctx) ? null : CLIENT_LIST_REFUSED;
+export const CLIENT_LIST_REFUSED =
+  "Client lists can only be downloaded by brand-level roles, or by shop logins and staff the brand has given exporting under Client data protection → Contact access.";
+
+/**
+ * Refuses a client-list download (CSV, PDF, a scheduled attachment) to anyone who isn't brand-level,
+ * unless a contact access grant gives them exporting where they're working now. Roles and overrides
+ * can't: only a grant puts "Export the client list" on someone below brand level.
+ */
+export function clientListDenied(ctx: Viewer): string | null {
+  if (isBrandLevelViewer(ctx)) return null;
+  return ctx.permissions.has("clients.export") && ctx.access.granted?.has("clients.export") ? null : CLIENT_LIST_REFUSED;
 }
 
 /** Sees no client details: for code paths that weren't handed the viewer's policy. */
@@ -193,7 +209,8 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
       return makePolicy({
         staffId: ctx.staff.id,
         isOwner: ctx.isOwner,
-        fullContact: seesFullContact(ctx),
+        fullContact: isBrandLevelViewer(ctx),
+        grantedContact: contactGranted(ctx),
         canReveal: ctx.permissions.has("clients.reveal"),
         custom,
         levels,

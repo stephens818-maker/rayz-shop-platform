@@ -3,7 +3,22 @@
  * permissions are worked out, and who may grant what. Server code loads the rows and calls these.
  */
 
-export const PERMISSION_GROUPS = ["Front desk", "Point of sale", "Clients", "Campaign Center", "Catalog and inventory", "Staff", "Custom reports", "Settings and data"] as const;
+export const PERMISSION_GROUPS = [
+  "Front desk",
+  "Point of sale",
+  "Clients",
+  "Campaign Center",
+  "Catalog and inventory",
+  "Staff",
+  "Payroll and time clock",
+  "Tip payouts",
+  "Users and sign-in",
+  "Custom reports",
+  "Settings and data",
+  "Banking and Stripe",
+  "Locations",
+  "Rayz Assistant",
+] as const;
 export type PermissionGroup = (typeof PERMISSION_GROUPS)[number];
 
 interface PermissionDef {
@@ -19,10 +34,12 @@ interface PermissionDef {
   ownerGrants?: boolean;
   /**
    * Takes client lists or full client contact details out of the system, so only brand-level roles
-   * ever hold it, with access to all shops. It can't be put in a shop or staff role or granted to
-   * someone in one, and shop logins never have it.
+   * hold it, with access to all shops. A shop or staff role, a per-person override and a shop login
+   * never carry it; the brand gives it to them only with a contact access grant (contact-grants.ts).
    */
   brandLevel?: boolean;
+  /** Never in a role or an override: it comes only with a contact access grant (or the Brand Owner role). */
+  grantOnly?: boolean;
 }
 
 export const FEATURE_PERMISSIONS = [
@@ -113,14 +130,21 @@ export const FEATURE_PERMISSIONS = [
     key: "clients.reveal",
     group: "Clients",
     label: "Reveal a masked client detail, with a reason",
-    hint: "Which details are masked or hidden is set under Client data. Phone, email and address are revealed only to brand-level roles. Every reveal is logged with the reason.",
+    hint: "Which details are masked or hidden is set under Client data. Phone, email and address are never revealed this way; the brand gives full contact details with a contact access grant. Every reveal is logged with the reason.",
   },
   { key: "clients.message", group: "Clients", label: "Call and text clients through the shop line", hint: "The number stays hidden; calls and texts go through the system." },
+  {
+    key: "clients.contact_full",
+    group: "Clients",
+    label: "See client phone, email and address in full",
+    hint: "Off for shop logins and staff. The brand gives it per location or per person under Client data protection → Contact access, and can revoke it at any time. Brand-level roles see contact details as Client data sets them.",
+    grantOnly: true,
+  },
   {
     key: "clients.export",
     group: "Clients",
     label: "Export the client list",
-    hint: "Brand-level roles only, and off for everyone but the Brand Owner unless granted. Every export is logged.",
+    hint: "Brand-level roles, off for everyone but the Brand Owner unless granted. Shop logins and staff only with a contact access grant, for their locations' clients. Every export is logged.",
     brandOnly: true,
     brandLevel: true,
   },
@@ -209,17 +233,17 @@ export const FEATURE_PERMISSIONS = [
     label: "See staff phone numbers and email addresses",
     hint: "Without it they're masked on staff profiles and lists. People always see their own. Never on shop logins.",
   },
-  { key: "permissions.manage", group: "Staff", label: "Manage roles, permissions and shop access" },
-  { key: "logins.manage", group: "Staff", label: "Create and disable shop logins and reset their passwords", hint: "For the shops in their access." },
+  { key: "permissions.manage", group: "Users and sign-in", label: "Manage roles, permissions and shop access" },
+  { key: "logins.manage", group: "Users and sign-in", label: "Create and disable shop logins and reset their passwords", hint: "For the shops in their access." },
   {
     key: "access.remote",
-    group: "Staff",
+    group: "Users and sign-in",
     label: "Can access remotely: sign in from anywhere, even at locations that only allow sign-in from the shop",
     hint: "Exempt from each location's network and device rule. Only the Brand Admin role has it to start; give it to the managers who work from home.",
   },
   {
     key: "devices.approve",
-    group: "Staff",
+    group: "Users and sign-in",
     label: "Approve trusted devices for signing in at their shops",
     hint: "For locations that accept approved devices. Never a device they asked for themselves.",
   },
@@ -232,44 +256,44 @@ export const FEATURE_PERMISSIONS = [
   { key: "barber_groups.manage", group: "Staff", label: "Create and edit saved barber groups for reports", brandOnly: true },
   {
     key: "payroll.run",
-    group: "Staff",
+    group: "Payroll and time clock",
     label: "Run payroll: hours, pay rates, iSolved numbers, pay groups and calendars, overrides and the iSolved downloads",
     hint: "Sees every barber's pay at every shop. Downloads open once a period is approved and locked.",
     brandOnly: true,
   },
-  { key: "payroll.approve", group: "Staff", label: "Approve and lock a pay period", hint: "Blocked while any total doesn't reconcile.", brandOnly: true },
+  { key: "payroll.approve", group: "Payroll and time clock", label: "Approve and lock a pay period", hint: "Blocked while any total doesn't reconcile.", brandOnly: true },
   {
     key: "timeclock.punch",
-    group: "Staff",
+    group: "Payroll and time clock",
     label: "Clock in and out and take breaks",
     hint: "From their own phone, held to the shop's device, GPS or network rule, or with their PIN on the shop's front-desk clock.",
   },
-  { key: "timeclock.kiosk", group: "Staff", label: "Open the shop's front-desk time clock", hint: "On a registered device, where staff punch with their own PIN." },
-  { key: "timesheet.own", group: "Staff", label: "See and sign off their own timesheet", hint: "Their punches, breaks, scheduled against actual hours and overtime." },
+  { key: "timeclock.kiosk", group: "Payroll and time clock", label: "Open the shop's front-desk time clock", hint: "On a registered device, where staff punch with their own PIN." },
+  { key: "timesheet.own", group: "Payroll and time clock", label: "See and sign off their own timesheet", hint: "Their punches, breaks, scheduled against actual hours and overtime." },
   {
     key: "timesheet.edit",
-    group: "Staff",
+    group: "Payroll and time clock",
     label: "Fix punches at their shops: edit, add or void, with a reason",
     hint: "Never their own. Every change is logged with the before and after, and clears that timesheet's approvals.",
   },
   {
     key: "timesheet.approve",
-    group: "Staff",
+    group: "Payroll and time clock",
     label: "Approve timesheets and lock pay periods at their shops",
     hint: "Never their own. A period locks once every timesheet in it is approved; then nobody can punch into it or edit it.",
   },
-  { key: "payroll.rates", group: "Staff", label: "See pay rates and labor cost", hint: "Hourly rates, labor cost and labor % of sales in reports. Without it, reports show hours only." },
-  { key: "payroll.export", group: "Staff", label: "Download the payroll export (CSV and the iSolved layout)", hint: "Per pay period, per employee and shop. Every download is logged." },
-  { key: "tips.own", group: "Staff", label: "See their own tips and payouts, and choose how they're paid", hint: "Tips today, pending, paid out and history; Stripe payout setup where the brand allows it." },
+  { key: "payroll.rates", group: "Payroll and time clock", label: "See pay rates and labor cost", hint: "Hourly rates, labor cost and labor % of sales in reports. Without it, reports show hours only." },
+  { key: "payroll.export", group: "Payroll and time clock", label: "Download the payroll export (CSV and the iSolved layout)", hint: "Per pay period, per employee and shop. Every download is logged." },
+  { key: "tips.own", group: "Tip payouts", label: "See their own tips and payouts, and choose how they're paid", hint: "Tips today, pending, paid out and history; Stripe payout setup where the brand allows it." },
   {
     key: "tips.approve",
-    group: "Staff",
+    group: "Tip payouts",
     label: "Review and approve tip payouts at their shops",
     hint: "Build and approve batches, hold or adjust a payout with a reason, and pay cash tips from the drawer at close. Every change is logged.",
   },
   {
     key: "tips.settings",
-    group: "Staff",
+    group: "Tip payouts",
     label: "Change tip payout settings",
     hint: "Each shop's payout schedule, card settlement delay, default method and card fee netting, and the brand's allowed methods.",
     brandOnly: true,
@@ -322,14 +346,14 @@ export const FEATURE_PERMISSIONS = [
   },
   {
     key: "payments.accounts",
-    group: "Settings and data",
+    group: "Banking and Stripe",
     label: "Set up each shop's Stripe account for card payments and payouts, and choose who owns each shop",
     hint: "Sees each shop's payment setup and Stripe status, refreshes it, and manages owner entities. Connecting or changing a shop's bank or Stripe account needs the banking permission.",
     brandOnly: true,
   },
   {
     key: "payments.banking",
-    group: "Settings and data",
+    group: "Banking and Stripe",
     label: "Connect or change a shop's banking and Stripe account",
     hint: "Choose the brand account, the shop's own account or cash only; start or redo Stripe onboarding (legal entity, EIN, owner, bank account); open the shop's Stripe dashboard; set the statement descriptor. Only the Brand Owner can grant it.",
     ownerGrants: true,
@@ -346,10 +370,10 @@ export const FEATURE_PERMISSIONS = [
   },
   { key: "notifications.view", group: "Settings and data", label: "See the notification outbox" },
   { key: "notifications.send", group: "Settings and data", label: "Send due notifications now" },
-  { key: "locations.manage", group: "Settings and data", label: "Create and edit saved location groups for reports", brandOnly: true },
+  { key: "locations.manage", group: "Locations", label: "Create and edit saved location groups for reports", brandOnly: true },
   {
     key: "locations.setup",
-    group: "Settings and data",
+    group: "Locations",
     label: "Add, open, temporarily close and archive locations",
     hint: "The Add Location wizard, go-live and archiving. Archived shops keep their history in reports.",
     brandOnly: true,
@@ -364,14 +388,14 @@ export const FEATURE_PERMISSIONS = [
   },
   {
     key: "network.settings",
-    group: "Settings and data",
+    group: "Users and sign-in",
     label: "Set where staff can sign in from: each location's allowed networks and devices",
     hint: "Turn each location's sign-in restriction on or off, edit its allowed IPs, approve or remove devices at any shop, and set the blocked sign-in alert.",
     brandOnly: true,
   },
   {
     key: "assistant.settings",
-    group: "Settings and data",
+    group: "Rayz Assistant",
     label: "Turn Rayz Assistant on or off for each role and set its limits",
     hint: "Which roles get the assistant, how many questions a person may ask a minute and a day, and whether it may draft blasts and purchase orders. The assistant only ever answers with what the person asking could open themselves.",
     brandOnly: true,
@@ -510,6 +534,8 @@ export const BRAND_LEVEL_ONLY = new Set<Permission>([
   ...CLIENT_LIST_REPORTS.map(reportExport),
 ]);
 export const BRAND_ONLY = new Set<Permission>([...FEATURE_PERMISSIONS.filter((p) => "brandOnly" in p && p.brandOnly).map((p) => p.key), ...BRAND_LEVEL_ONLY]);
+/** See PermissionDef.grantOnly. */
+export const GRANT_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "grantOnly" in p && p.grantOnly).map((p) => p.key));
 export const OWNER_GRANTS = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "ownerGrants" in p && p.ownerGrants).map((p) => p.key));
 /**
  * A Brand Admin with access to all shops always has these: every client, every search field and
@@ -609,7 +635,10 @@ export const isBrandLevelPerson = (p: { kind: "person" | "shop"; scope: ShopScop
   p.kind === "person" && p.scope === "all" && isBrandLevelRole(p.role);
 
 const BRAND_LEVEL_LABEL = "brand-level roles (Brand Owner, Brand Admin and the brand-level roles the Brand Owner creates)";
-const notBrandLevel = (p: Permission) => `"${permissionLabel(p)}" is only for ${BRAND_LEVEL_LABEL}, with access to all shops. It can't be given to a shop or staff role.`;
+const CONTACT_ACCESS = "Client data protection → Contact access";
+const notBrandLevel = (p: Permission) =>
+  `"${permissionLabel(p)}" is only for ${BRAND_LEVEL_LABEL}, with access to all shops. For a shop login or someone in a shop or staff role, give it per location or per person under ${CONTACT_ACCESS}.`;
+const grantOnlyDenied = (p: Permission) => `"${permissionLabel(p)}" isn't part of a role or an override. Give it per location or per person under ${CONTACT_ACCESS}.`;
 
 const reports = (keys: ReportKey[], exportToo = true): ReportPermission[] => keys.flatMap((k) => (exportToo ? [reportView(k), reportExport(k)] : [reportView(k)]));
 const ALL_REPORTS = REPORTS.map((r) => r.key);
@@ -698,7 +727,7 @@ const TEMPLATES: RoleTemplate[] = [
     name: "Brand Admin",
     description: "Runs the whole brand day to day. Everything except brand-level settings and granting Brand Owner.",
     defaultScope: "all",
-    permissions: ALL_PERMISSIONS.filter((p) => !OWNER_ONLY.has(p) && !OWNER_GRANTS.has(p) && p !== "clients.export" && p !== "campaign_center.export"),
+    permissions: ALL_PERMISSIONS.filter((p) => !OWNER_ONLY.has(p) && !OWNER_GRANTS.has(p) && !GRANT_ONLY.has(p) && p !== "clients.export" && p !== "campaign_center.export"),
     maxDiscountPct: 100,
   },
   {
@@ -858,6 +887,7 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
     else perms.delete(k as Permission);
   }
   for (const p of OWNER_ONLY) perms.delete(p);
+  for (const p of GRANT_ONLY) perms.delete(p);
   if (scope !== "all") for (const p of BRAND_ONLY) perms.delete(p);
   if (!isBrandLevelRole(role)) for (const p of BRAND_LEVEL_ONLY) perms.delete(p);
   if (role.key === BRAND_ADMIN_ROLE_KEY && scope === "all") for (const p of BRAND_ADMIN_ALWAYS) perms.add(p);
@@ -872,8 +902,9 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
 /**
  * A shop login is shared by everyone at the desk, so nothing it does can be traced to one person.
  * Whatever its role or overrides say, it never refunds, voids or reassigns a ticket on its own (a
- * manager's PIN approves those), never reveals or exports client details, never sees staff contact
- * details, and never manages people, pay or sign-in.
+ * manager's PIN approves those), never reveals client details, never sees staff contact details,
+ * and never manages people, pay or sign-in. Its role can't let it export clients either: only a
+ * contact access grant to it or its location does (contact-grants.ts), added after this list.
  */
 export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   ...BRAND_LEVEL_ONLY,
@@ -1002,6 +1033,8 @@ export function roleChangeDenied(caller: Grantor, before: RoleDef | null, after:
     if (after.key) return "Built-in roles can't be made brand-level or shop-level. Create a custom role.";
     if (!caller.isOwner) return "Only the Brand Owner can make a role brand-level, or stop it being brand-level";
   }
+  const grantOnly = [...next].find((p) => GRANT_ONLY.has(p));
+  if (grantOnly) return grantOnlyDenied(grantOnly);
   const shopLevel = after && !isBrandLevelRole(after) && [...next].find((p) => BRAND_LEVEL_ONLY.has(p));
   if (shopLevel) return notBrandLevel(shopLevel);
   if (after?.key === BRAND_ADMIN_ROLE_KEY) {
@@ -1044,6 +1077,8 @@ export function userAccessChangeDenied(
   if (!caller.isOwner && missing(caller, current.permissions).length) return "This person has access you don't, so ask someone above them";
   const ownerOverride = Object.keys(next.overrides).find((k) => OWNER_ONLY.has(k as Permission) && next.overrides[k as Permission]);
   if (ownerOverride) return "Brand-level settings come only with the Brand Owner role";
+  const grantOnly = (Object.keys(next.overrides) as Permission[]).find((k) => GRANT_ONLY.has(k) && next.overrides[k]);
+  if (grantOnly) return grantOnlyDenied(grantOnly);
   const shopLevel = !next.brandLevel && (Object.keys(next.overrides) as Permission[]).find((k) => BRAND_LEVEL_ONLY.has(k) && next.overrides[k]);
   if (shopLevel) return notBrandLevel(shopLevel);
   const problem = scopeProblem(next.scope, [...next.shopIds]);

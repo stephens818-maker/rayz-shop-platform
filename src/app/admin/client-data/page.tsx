@@ -119,9 +119,14 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
         title="Client data protection"
         subtitle="Choose which client details each role and person sees (hidden, masked or in full) and, separately, which they can add or edit. Masking is applied on the server, so hidden details never reach their browser, exports or the app, even right after they've typed them in. Every change is in the audit log."
         actions={
-          <LinkButton variant="secondary" href="/admin/client-data/access">
-            Who viewed what
-          </LinkButton>
+          <div className="flex gap-2">
+            <LinkButton variant="secondary" href="/admin/client-data/contact-access">
+              Contact access
+            </LinkButton>
+            <LinkButton variant="secondary" href="/admin/client-data/access">
+              Who viewed what
+            </LinkButton>
+          </div>
         }
       />
       <Card>
@@ -205,10 +210,11 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
         <p className="border-t border-zinc-100 px-4 py-3 text-xs text-zinc-500">
           {setting === "view" ? (
             <>
-              Masked phone: ***-***-4321. Masked email: j***@gmail.com. Phone, email and address are shown in full only to brand-level roles (Brand Owner, Brand Admin and
-              the brand-level roles the Brand Owner creates) with access to all shops: for shop logins and every shop or staff role they&apos;re masked at most, and can&apos;t be
-              revealed. Managers with &quot;reveal a masked client detail&quot; can show another masked detail one at a time with a reason, and each reveal is logged. Search
-              still finds a client by their full phone number or email without showing it, and calls and texts go through the shop line.
+              Masked phone: ***-***-4321. Masked email: j***@gmail.com. By default phone, email and address are shown in full only to brand-level roles (Brand Owner, Brand
+              Admin and the brand-level roles the Brand Owner creates) with access to all shops: for shop logins and every shop or staff role they&apos;re masked at most, and
+              can&apos;t be revealed, unless the brand gives a person or a location <Link className="underline" href="/admin/client-data/contact-access">contact access</Link>.
+              Managers with &quot;reveal a masked client detail&quot; can show another masked detail one at a time with a reason, and each reveal is logged. Search still finds a
+              client by their full phone number or email without showing it, and calls and texts go through the shop line.
             </>
           ) : (
             <>
@@ -310,7 +316,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
       <Card>
         <CardHeader
           title="Shop logins"
-          subtitle="A shop login is shared by everyone at the desk, so on top of its role's rules it sees client contact details masked at most. Whatever its role or overrides say, it never reveals a masked detail, exports or downloads clients, merges duplicates or sees staff phone numbers and emails."
+          subtitle="A shop login is shared by everyone at the desk, so on top of its role's rules it sees client contact details masked at most. Whatever its role or overrides say, it never reveals a masked detail, merges duplicates or sees staff phone numbers and emails, and it sees contact details in full or exports clients only with contact access given to it or its location."
         />
         <ShopLoginCapForm initial={loginCap} />
       </Card>

@@ -259,7 +259,7 @@ export async function revealClientFieldAction(raw: z.input<typeof RevealInput>) 
     const level = policy.level(field);
     if (level === "hidden") throw forbidden("That detail is hidden for you, so it can't be revealed");
     if (isContactField(field) && !policy.fullContact)
-      throw forbidden("Phone numbers, emails and addresses are never shown in full at shop level. Call or text the client through the shop line.");
+      throw forbidden("Phone numbers, emails and addresses are shown in full at shop level only with contact access from the brand. Call or text the client through the shop line.");
     const access = await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, p.customerId);
     if (!access) throw new AppError("not_found", "Client not found");
     const c = await db.query.customers.findFirst({ where: eq(customers.id, p.customerId) });
