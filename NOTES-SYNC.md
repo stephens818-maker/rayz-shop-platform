@@ -363,6 +363,15 @@ A client profile is the brand's, never a shop's: one record across every locatio
 - **Squire:** `reconcileSquireClients(csv, { dryRun, actor })` in `src/server/squire-reconcile.ts` runs after a clients import (the admin action and the CLI). It fills empty birthdays from the file's Birthday column, merges same name + birthday pairs where no phone or email disagrees (`mergeDuplicatePairs`), and leaves the rest on the duplicates page's Squire tab. `importer.ts` is unchanged.
 - **Merges:** `mergeCustomers` now keeps one `client_badges` row (marked stale) and drops duplicate `client_badge_notices`, so two records with cached badges merge.
 
+### Compensation fields (core)
+
+Optional and off until the brand turns it on (`brand_settings.compensation.enabled`). Domain (pure): `src/domain/compensation.ts`. Server: `src/server/compensation.ts`; the report is `src/server/commission-report.ts`.
+
+- **Schema (`core_0058_compensation`):** `staff_compensation` (one row per version: `effective_from`, rates in cents and fractions, overrides, tiers, booth rent, guarantee, tip method and card-fee netting, a note). Rows are append-only: a trigger refuses updates, refuses deleting a version that has started, and refuses a version starting on or before the last locked `payroll_runs.period_end`. Also `staff_custom_fields`, `staff_custom_values` and `brand_settings.compensation`. A check refuses field names for bank, card, SSN, tax ID, licence, passport or birth date data. No bank or SSN data anywhere: that stays with Stripe and iSolved.
+- **Reading a plan:** `versionsFor(staffIds)` returns each person's versions, newest first, and `versionOn(sorted, date)` gives the one in effect. A blank part of a plan means Payroll setup's rate, or the shop's tip setting. `commissionLines` plus `commissionBetween` give commission net of discounts and refunds, per shop.
+- **Who sees it:** `compensationAccess(ctx, staffId)` returns `{ view, edit }`. It's never true for your own record or for a shop login. The new permissions are `compensation.view`, `compensation.edit`, `compensation.settings` (brand-only) and `compensation.own` (your own pay on My pay); Brand Admin has all four. The new report is `commission_payout`.
+- **Tips:** `effectiveMethod(shop, policy, choice, planned?)` and `netsCardFee(shop, planned?)` take the plan's say from `tipOverrides(staffIds)`, while compensation is on.
+
 ## Requests for the other agent
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
@@ -397,6 +406,8 @@ A client profile is the brand's, never a shop's: one record across every locatio
 
 - (core → mobile) Company-wide clients (see the log entry): if the staff app or `/api/v1` searches clients for staff, please call `searchClients` (or `findClients` plus `clientHits`) instead of anything shop-scoped, and on any staff client profile show other shops' visits without their prices or tickets to a shop login. Optional, in `importer.ts`: map a clients file's Birthday column (`FAMILY_ALIASES.birthday` in `src/domain/family-import.ts`) onto `customers.birthday` when it's empty. The core post-step already does this after each run, so it's only for imports that skip the admin action and the CLI.
 
+- (core → mobile) Compensation fields (see the log entry): please don't return anything from `staff_compensation`, `staff_custom_fields` or `staff_custom_values` through `/api/v1` until it's needed, and then only through `compensationAccess`. Optional, if the staff app shows pay: a `GET /api/v1/staff/me/pay` that returns what My pay shows, and only for the signed-in person with `compensation.own`. That's their own plan (`describePlan`), this month's and this pay period's commission (`commissionLines` + `commissionBetween`), and the estimate when `payEstimate` is on. If anything the app shows uses a tip method, read it through `effectiveMethod(..., planned)` with `tipOverrides`.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -408,8 +419,18 @@ A client profile is the brand's, never a shop's: one record across every locatio
   - The exact iSolved import template: column names and earning codes. The layout is configurable.
   - Meal break rules: 30 minutes or more is unpaid by default, and the auto-deduction is off.
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
+- Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-24: core (compensation fields), FYI and REQUEST for mobile
+
+- **What changed.** Optional pay plans per employee, with an effective-dated history, and the brand's own employee fields. All off by default (see "Compensation fields" above and README, "Compensation fields"). The new pages are an employee's Compensation tab, **Payroll → Compensation**, **My pay**, and the Commission Payout report. When the brand says so, payroll takes hourly rates, commission (with per-service and per-category overrides and monthly tiers) and the guaranteed minimum from plans. The optional iSolved columns are added only when turned on.
+- **FYI, core API:** `effectiveMethod` takes an optional fourth argument `planned`, and `draftPayouts` an optional `netCardFeeOf`. Existing callers are unchanged. `LineInput.guaranteeTopUp` and `Line.guaranteeTopUp` are new (0 for everyone with compensation off). `exportHeaders` and `exportRows` take optional `ExportOptions`, and `ShopBlock.exportFrom` records what each extra column carries.
+- **Migration `core_0058_compensation`:** the tables above, `brand_settings.compensation`, and the six permissions added to Brand Admin.
+- **Request:** see "Requests" (keep these tables out of `/api/v1`; an optional staff pay endpoint).
+- **Tests:** `tests/compensation.test.ts` (unit) and `tests/db/compensation.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
 
 ### 2026-10-24: core (company-wide client profiles), FYI and REQUEST for mobile
 

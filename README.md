@@ -664,6 +664,37 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   - Training, a PTO day and a typed NetComm override. Sign in as `owner@rayz.test` and open **Payroll → Payroll report**.
 - Against the real workbook (kept outside the repo): `npx tsx scripts/payroll-golden.ts <workbook.xlsx> [--totals] [--write <dir outside the repo>]`. It prints only cell addresses and counts unless `--totals` is given.
 
+### Compensation fields
+
+Optional pay plans for each employee, for when the brand wants them. Everything is off by default (**Payroll → Compensation**). While it's off, no tab, report rows or My pay appear, and payroll, tips and the iSolved files are exactly as before. No bank, card, SSN or tax ID data is kept: that stays with Stripe and iSolved.
+
+- **An employee's Compensation tab** (`/admin/staff/[id]/compensation`) shows the plan in effect, its dated history, and **Add a change**. Each version is the whole plan from a date:
+  - an hourly rate, and a rate per location for people at several shops;
+  - a default service commission %, with rates for particular services or categories, and tiers by monthly net service sales. Tiers pay either the whole month at the tier reached, or on a sliding scale where each slice of sales earns its own rate;
+  - a product commission %;
+  - booth rent (weekly, every two weeks or monthly);
+  - a guaranteed minimum (per pay period, week, month or year);
+  - how tips are paid (it beats the employee's own choice; a shop that pays all tips through payroll still does), and whether the card fee comes out of their card tips;
+  - a note, which can't hold card, bank, SSN or tax ID numbers.
+
+  A blank part uses Payroll setup's rate or the shop's tip setting.
+- **History is never rewritten.** Versions are append-only: the database refuses edits, refuses deleting a version that has started, and refuses one starting on or before the last approved and locked pay period. A change saved twice for the same day replaces the earlier one, and only changes that haven't started can be withdrawn. Every change is audited, without the note's text.
+- **Employee fields:** the brand adds its own text, number, percent, date or dropdown fields. Field names and values for bank, card, SSN, tax ID, licence, passport or birth date data are refused in the app and by a database check. Retiring a field hides it and keeps what was entered, and a dropdown choice someone has can't be removed.
+- **Permissions:** `compensation.view` and `compensation.edit` cover the people at your shops (editing needs every shop they work at), never your own record. `compensation.settings` is brand-only. `compensation.own` is **My pay**. Only Brand Owner and Brand Admin have them to start, and they can be given to any role or person. A shop login never gets them.
+- **Commission Payout report** (`report.commission_payout.view`, brand-only): per barber and location, by month too, service and product commission on sales net of discounts and refunds. It shows the gross, discounts, refunds, net, the rate, booth rent due, and commission less rent. A refund takes back commission at the rate its sale earned, on the day it's given. The sales are payroll's, so net service equals the Payroll Report's service sales.
+- **Payroll**, when **Payroll uses each employee's plan** is on: hourly rates (hours-weighted when a change starts mid-period) and commission come from the plan in effect. Overrides and tiers go in as rates, commission ÷ sales, so the workbook's formulas still hold. Someone short of their guaranteed minimum gets a **Guarantee top-up** on their line at the shop where they worked most; it's in Labor Cost and in its own iSolved column. Optional iSolved columns for service commission $, product commission $ and the hourly rate can be turned on, with headers as settings. All of them reconcile, and a locked period keeps the columns it was approved with.
+- **My pay** (`/admin/my-pay`): your own plan, commission this pay period, this month and last month, how far you are from the next tier, booth rent, and (when **Show a pay estimate** is on) the current period from the Payroll Report's numbers: hourly, commission, overtime, training, top-up and gross before tips. Nobody else's pay shows there.
+- **Tests:** `tests/compensation.test.ts` (unit) covers settings, versions and the timeline, rates and blended hourly, flat, override and tiered commission across periods and months, refunds, the guarantee and booth rent, the payroll top-up and extra columns reconciling, plan summaries, and field validation. `tests/db/compensation.test.ts` covers:
+  - off by default, with payroll and the file unchanged;
+  - brand-only access, delegable but never to your own record or a shop login;
+  - the database guards on versions;
+  - the report net of discounts and refunds, matching payroll;
+  - plans and the guarantee in payroll;
+  - tip overrides;
+  - My pay showing only your own;
+  - employee fields refusing sensitive data;
+  - locked pay.
+
 ### Time clock and timesheets
 
 Everyone is paid hourly. This reverses the earlier "no clock-in" decision.
