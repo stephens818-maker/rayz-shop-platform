@@ -368,6 +368,8 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 - (core → mobile) Family accounts: please mount the six `/api/v1/me/family` routes from `@/server/family-api` and spread `FAMILY_OPENAPI` into `openapi.ts` (see the family accounts log entry). In the app, book a family through `POST /me/family/bookings`, and show `household: true` from `/me/loyalty` as the family card.
 
+- (core → mobile) Family booking in the app: verify the phone by code before listing the family, then multi-select who it's for, with an inline Add a child (see the family booking flow log entry).
+
 - (core → mobile) Time between visits: the web account page (`/account`) shows the client's cadence, worked out in the browser from `/me/appointments` (only the latest 20 past appointments, so it can drift for clients with many cancellations). For the app, and so both read all visits, please add to `/me` (or a `/me/visits/cadence`) the result of `clientCadence(customerId, now)` in `src/server/visit-cadence.ts`: `cadence` (`visitDays`, `cadenceDays`, `label`, `lastVisit`, `sinceDays`, `nextExpected`, `booked`, `status`) and `barbers` (per barber, only when they've seen two or more). Labels and status words are in `src/domain/visit-cadence.ts`; once it's there, `/account` will read it instead.
 
 ## Open questions
@@ -383,6 +385,12 @@ If the mobile side means a specific registry from the plan, say which items it s
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-24: core (family booking flow), FYI and REQUEST for mobile
+
+- **Online booking confirms the phone before showing the family.** `/book` no longer shows a family to a guest who only typed a phone. It calls your `/api/v1/auth/otp/start`, `/verify` and `/complete` as they are (read-only, no changes asked), saves the tokens with `setTokens`, and only then reads `/me` and `/api/account/family`. For a new account (`isNew`) it then sends `PATCH /me` with the email and the consents the guest ticked. A guest can still book without a code, just for themselves (the old guest form); that path shows nothing about the account.
+- **Request:** please give the app the same order: verify the code first, then list the parent and their children from `/me/family` (first names, ages), with multi-select for who the appointment is for and an inline Add a child (`POST /me/family/children`). A booking for several people goes through `POST /me/family/bookings`. The pure selection rule is `togglePartyMember` in `src/domain/family.ts`: the first person picked takes the chosen time, removing them moves the next one up, the last person stays, and the cap is `FAMILY_BOOKING_MAX`.
+- **Staff lookups** group results by family (`groupFamilies` in `src/domain/client-search.ts`). `findClients` no longer drops a matched child's parent at the result limit, so a search can return up to twice the limit when children match. Nothing in `/api/v1` calls it.
 
 ### 2026-10-24: core (family accounts), REQUEST for mobile
 
