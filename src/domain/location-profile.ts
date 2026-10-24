@@ -306,6 +306,9 @@ export function shopPhotoProblem(dataUrl: string): string | null {
   return null;
 }
 
+/** The URL a shop photo is served from. */
+export const shopPhotoUrl = (base: string, slug: string, id: string) => `${base}/locations/${slug}/photos/${id}`;
+
 // ───────────────────────────── Hours and open now ─────────────────────────────
 
 export interface HoursRow {

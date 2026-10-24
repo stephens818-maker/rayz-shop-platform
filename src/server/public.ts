@@ -2,12 +2,11 @@ import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, customers, shopHours, shopPhotos, shops, staffSchedules } from "@/db/schema";
 import { listedPublicly, takesOnlineBookings } from "@/domain/location-lifecycle";
+import { shopPhotoUrl } from "@/domain/location-profile";
 import { minutesToHHMM, todayLocal } from "@/lib/time";
 import { getAppointmentByCode } from "./booking";
 import { getShop, shopBarbers, shopCatalog } from "./catalog";
 import { notFound } from "./errors";
-import { shopPhotoUrl } from "./public-locations";
-
 export async function publicShops() {
   const [rows, hours, counts] = await Promise.all([
     db.select().from(shops).where(inArray(shops.status, ["live", "closed"])).orderBy(asc(shops.name)),

@@ -16,6 +16,7 @@ import {
   mapsUrl,
   openStatus,
   phoneView,
+  shopPhotoUrl,
   socialLinks,
   validLatLng,
   weeklyHours,
@@ -38,10 +39,6 @@ export interface LocationQuery {
   /** false: skip the next open slot (redirects and anything else that doesn't show it). */
   nextSlot?: boolean;
 }
-
-/** The URL a shop photo is served from. */
-export const shopPhotoUrl = (base: string, slug: string, id: string) => `${base}/locations/${slug}/photos/${id}`;
-
 const CLOSURE_DAYS = 90;
 const NEXT_SLOT_DAYS = 14;
 const CACHE_MS = 60_000;
