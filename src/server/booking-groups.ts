@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
 import { appointmentItems, appointments, bookingGroups, customers, giftCardLedger, giftCards, saleItems, sales, staff } from "@/db/schema";
 import {
@@ -76,7 +76,7 @@ async function membersOf(groupId: string, tx: DBorTx = db): Promise<GroupMember[
     .innerJoin(staff, eq(staff.id, appointments.staffId))
     .leftJoin(customers, eq(customers.id, appointments.customerId))
     .where(eq(appointments.groupId, groupId))
-    .orderBy(asc(appointments.startsAt), asc(appointments.createdAt));
+    .orderBy(asc(appointments.startsAt), asc(sql`${customers.guardianId} is not null`), asc(appointments.createdAt), asc(appointments.id));
   const items = rows.length
     ? await tx
         .select({ appointmentId: appointmentItems.appointmentId, name: appointmentItems.name, kind: appointmentItems.kind, serviceId: appointmentItems.serviceId })
