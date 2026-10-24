@@ -9,7 +9,7 @@ import { WEEKDAYS, formatDate } from "@/lib/time";
 import { StaffContext, can, guardPage, reasonViewer } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { Cell, ColumnKind, REPORT_LOADERS, ReportData, ReportTable } from "@/server/report-data";
-import { LocationNotice, ReportFilters, locationProps, reportQuery } from "./filters";
+import { LocationNotice, ReportFilters, locationProps, optionValues, reportQuery } from "./filters";
 import { ReportParams, resolveScope } from "./scope";
 
 /** The strip of reports this person may open. Reports they lack aren't shown at all. */
@@ -176,7 +176,7 @@ export async function ReportPage({
   const params = Object.fromEntries(Object.entries(searchParams).map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
   const data = await REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params });
   const ms = Math.round(performance.now() - t0);
-  const csv = (table: string) => (canExport ? `/admin/reports/export?${reportQuery(scope, { type: report, table, from: scope.from, to: scope.to })}` : null);
+  const csv = (table: string) => (canExport ? `/admin/reports/export?${reportQuery(scope, { ...optionValues(data.options), type: report, table, from: scope.from, to: scope.to })}` : null);
   const view = viewOf(scope.loc);
   const barberLabel = scope.barbers?.pickable && scope.barbers.selection.staffIds ? scope.barbers.label : null;
   const exportAll = data.tables.find((t) => t.exportOnly && t.id !== "heatmap");
@@ -212,6 +212,7 @@ export async function ReportPage({
         to={scope.to}
         scope={scope}
         location={ctx.shops.length > 1 ? locationProps(ctx, scope) : null}
+        options={data.options}
       />
       <LocationNotice locations={scope} />
       {data.stats.length > 0 && (

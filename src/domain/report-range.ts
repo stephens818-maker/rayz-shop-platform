@@ -11,8 +11,16 @@ export const PRESETS: { id: string; label: string }[] = [
   { id: "payperiod", label: "This pay period" },
   { id: "lastpayperiod", label: "Last pay period" },
   { id: "30d", label: "Last 30 days" },
+  { id: "quarter", label: "This quarter" },
+  { id: "lastquarter", label: "Last quarter" },
   { id: "ytd", label: "Year to date" },
 ];
+
+/** The first day of the calendar quarter `date` falls in. */
+export function quarterStart(date: LocalDate): LocalDate {
+  const [y, m] = date.split("-").map(Number);
+  return `${y}-${String(Math.floor((m - 1) / 3) * 3 + 1).padStart(2, "0")}-01`;
+}
 
 export function presetRange(id: string, today: LocalDate = todayLocal()): { from: LocalDate; to: LocalDate } {
   const [y, m] = today.split("-").map(Number);
@@ -41,6 +49,12 @@ export function presetRange(id: string, today: LocalDate = todayLocal()): { from
     case "lastpayperiod": {
       const p = payPeriodFor(addDays(payPeriodFor(today).start, -1));
       return { from: p.start, to: p.end };
+    }
+    case "quarter":
+      return { from: quarterStart(today), to: today };
+    case "lastquarter": {
+      const end = addDays(quarterStart(today), -1);
+      return { from: quarterStart(end), to: end };
     }
     case "ytd":
       return { from: `${y}-01-01`, to: today };

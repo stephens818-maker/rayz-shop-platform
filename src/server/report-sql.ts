@@ -1,7 +1,7 @@
 import { sql, SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { NO_BARBER } from "@/domain/barbers";
-import { segKey } from "@/domain/report-views";
+import { ViewCtx, segKey } from "@/domain/report-views";
 import { LocalDate } from "@/lib/time";
 
 /**
@@ -43,6 +43,14 @@ export const grp = (o: Grain | undefined, col: SQL) => (o?.byShop ? col : sql`nu
 export const sgrp = (o: Grain | undefined, col: SQL) => (o?.byStaff ? sql`coalesce(${col}::text, ${NO_BARBER})` : sql`null::text`);
 /** Joins rows on a grouping column, which is null when folded. */
 export const same = (a: SQL, b: SQL) => sql`${a} is not distinct from ${b}`;
+/** The grains a view shows: its segments, the per-shop subtotals of the location and barber view, and the total. */
+export function grainsFor(v: ViewCtx, o: { split?: boolean } = {}): Grain[] {
+  const out: Grain[] = [{}];
+  if (v.view === "shops") out.push({ byShop: true });
+  if (v.byBarber) out.push({ byShop: v.view === "shops", byStaff: true });
+  if (o.split && v.byBarber && v.shops.length > 1) out.push({ byShop: true, byStaff: true }, { byStaff: true });
+  return [...new Map(out.map((g) => [`${!!g.byShop}${!!g.byStaff}`, g])).values()];
+}
 export const keyOf = (r: { shop_id: string | null; staff_id: string | null }) => segKey(r.shop_id, r.staff_id);
 
 export async function rows<T>(q: SQL): Promise<T[]> {

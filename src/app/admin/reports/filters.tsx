@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Button, Notice, cx } from "@/components/ui";
 import { REPORT_VIEWS, ReportView, viewOf } from "@/domain/report-views";
+import type { ReportOption } from "@/server/report-data";
 import { BarberPicker } from "./barber-picker";
 import { LocationPicker } from "./location-picker";
 import { PRESETS, ReportLocations, ReportViewState } from "./scope";
@@ -131,6 +132,9 @@ export function BarberField({ l }: { l: QueryState }) {
   );
 }
 
+/** A report's own choices (visits to qualify, filing period) as URL values; empty is the default. */
+export const optionValues = (options: readonly ReportOption[] | undefined): Record<string, string | null> => Object.fromEntries((options ?? []).map((o) => [o.param, o.value || null]));
+
 export function ReportFilters({
   base,
   preset,
@@ -138,6 +142,7 @@ export function ReportFilters({
   to,
   scope,
   location,
+  options,
 }: {
   base: string;
   preset: string | null;
@@ -146,9 +151,11 @@ export function ReportFilters({
   scope: QueryState;
   /** Null when the viewer has one shop. */
   location: LocationProps | null;
+  options?: readonly ReportOption[];
 }) {
-  const qs = (extra: Record<string, string | null>) => `${base}?${reportQuery(scope, extra)}`;
-  const range = preset ? { preset } : { from, to };
+  const opts = optionValues(options);
+  const qs = (extra: Record<string, string | null>) => `${base}?${reportQuery(scope, { ...opts, ...extra })}`;
+  const range: Record<string, string> = preset ? { preset } : { from, to };
   return (
     <div className="no-print mb-5 space-y-3">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -162,6 +169,21 @@ export function ReportFilters({
           </Link>
         ))}
       </div>
+      {options?.map((o) => (
+        <div key={o.param} role="group" aria-label={o.label} className="flex flex-wrap items-center gap-1.5 text-sm">
+          <span className="mr-1 text-xs text-zinc-500">{o.label}</span>
+          {o.choices.map((c) => (
+            <Link
+              key={c.value}
+              href={qs({ ...range, [o.param]: c.value || null })}
+              aria-current={o.value === c.value ? "true" : undefined}
+              className={cx("rounded-full px-3 py-0.5 ring-1", o.value === c.value ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
+            >
+              {c.label}
+            </Link>
+          ))}
+        </div>
+      ))}
       {/* Keyed so the uncontrolled inputs reset when a preset link changes the range client-side. */}
       <form key={`${from}|${to}|${scope.shopParam}|${scope.staffParam}`} className="flex flex-wrap items-end gap-2 text-sm" action={base}>
         <label>
@@ -175,11 +197,12 @@ export function ReportFilters({
         {location && <LocationField p={location} />}
         <BarberField l={scope} />
         <ViewInput l={scope} />
+        {Object.entries(opts).map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
         <Button type="submit" variant="dark" size="sm" className="h-9">
           Apply
         </Button>
         <div className="ml-auto self-center">
-          <ViewToggle l={scope} href={(v) => `${base}?${reportQuery(withView(scope, v), range)}`} />
+          <ViewToggle l={scope} href={(v) => `${base}?${reportQuery(withView(scope, v), { ...opts, ...range })}`} />
         </div>
       </form>
     </div>

@@ -708,11 +708,13 @@ export async function refundLog(s: ReportScope) {
     reason: string;
     source: string;
     by: string | null;
+    /** The manager whose PIN approved it, when the person issuing it couldn't on their own. */
+    approvedBy: string | null;
   }>(sql`
     select r.shop_id "shopId", s.staff_id "staffId", to_char(r.business_date, 'YYYY-MM-DD') as day, s.number, sh.name shop, st.display_label barber, r.kind, r.method::text method,
-      r.amount_cents "amountCents", r.tip_cents "tipCents", r.reason, r.source, b.display_label "by"
+      r.amount_cents "amountCents", r.tip_cents "tipCents", r.reason, r.source, b.display_label "by", ap.display_label "approvedBy"
     from refunds r join sales s on s.id = r.sale_id join shops sh on sh.id = r.shop_id
-      left join staff st on st.id = s.staff_id left join staff b on b.id = r.created_by
+      left join staff st on st.id = s.staff_id left join staff b on b.id = r.created_by left join staff ap on ap.id = r.approved_by
     where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} ${staffFilter(sql`s.staff_id`, s)}
     order by r.business_date desc, r.created_at desc limit 2000`);
 }

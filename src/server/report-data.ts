@@ -67,8 +67,10 @@ import { lapsedReportData } from "./marketing/lapsed-report";
 import { openingsReportData } from "./marketing/openings-report";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
+import { acquisitionData, endOfDayData, leaderboardData, phoneOperatorData, retentionData, salesTaxData } from "./shop-reports";
 import { morningDashboardFor } from "./morning-dashboard";
 import { ratingsGivenAt } from "./ratings-report";
+import { grainsFor } from "./report-sql";
 import type { StaffAccess } from "./auth/access";
 
 /**
@@ -81,6 +83,7 @@ import type { StaffAccess } from "./auth/access";
  */
 
 export type { Cell, ColumnKind, ReportTable } from "@/domain/report-views";
+export { grainsFor } from "./report-sql";
 
 export interface ReportStat {
   label: string;
@@ -92,11 +95,19 @@ export interface Heatmap {
   title: string;
   cells: { dow: number; hour: number; n: number }[];
 }
+/** A report's own filter, shown as a row of choices next to the dates: "Visits to qualify: 1+ 2+ 3+". */
+export interface ReportOption {
+  param: string;
+  label: string;
+  value: string;
+  choices: { value: string; label: string }[];
+}
 export interface ReportData {
   stats: ReportStat[];
   tables: ReportTable[];
   heatmaps?: Heatmap[];
   notes?: string[];
+  options?: ReportOption[];
 }
 
 export interface ReportInput {
@@ -134,14 +145,6 @@ const shopKeyed = <T>(perShop: Record<string, T>, total: T): Record<string, T> =
   [TOTAL]: total,
 });
 
-/** The grains a view shows: its segments, the per-shop subtotals of the location and barber view, and the total. */
-export function grainsFor(v: ViewCtx, o: { split?: boolean } = {}): Grain[] {
-  const out: Grain[] = [{}];
-  if (v.view === "shops") out.push({ byShop: true });
-  if (v.byBarber) out.push({ byShop: v.view === "shops", byStaff: true });
-  if (o.split && v.byBarber && v.shops.length > 1) out.push({ byShop: true, byStaff: true }, { byStaff: true });
-  return [...new Map(out.map((g) => [`${!!g.byShop}${!!g.byStaff}`, g])).values()];
-}
 /** Lists are fetched per shop, and per barber when the view breaks out by barber. */
 const listGrain = (v: ViewCtx): Grain => ({ byShop: true, byStaff: !!v.byBarber });
 
@@ -685,8 +688,32 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     return salesData(scope, loc);
   },
 
+  async end_of_day({ scope, loc }) {
+    return endOfDayData(scope, loc);
+  },
+
   async sales_by_barber({ scope, loc }) {
     return barberPerformance(scope, loc);
+  },
+
+  async leaderboard({ scope, loc, params }) {
+    return leaderboardData(scope, loc, params);
+  },
+
+  async sales_tax({ scope, loc, params }) {
+    return salesTaxData(scope, loc, params);
+  },
+
+  async retention({ scope, loc, params }) {
+    return retentionData(scope, loc, params);
+  },
+
+  async acquisition({ scope, loc }) {
+    return acquisitionData(scope, loc);
+  },
+
+  async phone_operator({ scope, loc }) {
+    return phoneOperatorData(scope, loc);
   },
 
   async service_times({ scope, loc }) {
@@ -1021,11 +1048,11 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           id: "refunds",
           title: "Refunds and voids",
           subtitle: log.length >= 2000 ? "Showing the latest 2,000." : undefined,
-          columns: [text("Date"), id("Ticket"), text("Barber"), text("Kind"), text("Tender"), money("Amount"), money("Tip"), text("Reason"), text("Issued by")],
+          columns: [text("Date"), id("Ticket"), text("Barber"), text("Kind"), text("Tender"), money("Amount"), money("Tip"), text("Reason"), text("Issued by"), text("Manager approval")],
           rows: log.map((r) => ({
             shopId: r.shopId,
             staffId: r.staffId,
-            cells: [r.day, r.number, r.barber, r.kind, r.method, r.amountCents, r.tipCents, r.reason, r.by ?? (r.source === "stripe_dashboard" ? "Stripe dashboard" : null)],
+            cells: [r.day, r.number, r.barber, r.kind, r.method, r.amountCents, r.tipCents, r.reason, r.by ?? (r.source === "stripe_dashboard" ? "Stripe dashboard" : null), r.approvedBy],
           })),
           keepShop: loc.shops.length > 1,
           sort: byDayDesc,
@@ -1055,7 +1082,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
   },
 
   async gift_cards({ scope, loc }) {
-    const [perShop, issued] = await Promise.all([giftCardTotalsByShop(scope), giftCardsIssued(scope)]);
+    const bv: ViewCtx = { ...loc, byBarber: true };
+    const [perShop, issued, bx, btender] = await Promise.all([giftCardTotalsByShop(scope), giftCardsIssued(scope), salesTotalsAt(scope, grainsFor(bv)), tenderAt(scope, grainsFor(bv))]);
     const total = {
       issuedN: sum(perShop, (v) => v.issuedN),
       issuedCents: sum(perShop, (v) => v.issuedCents),
@@ -1090,8 +1118,17 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           rows: issued.map((g) => ({ shopId: g.shopId, cells: [g.code, g.source, g.initialCents, g.balanceCents, g.status, g.created] })),
           keepShop: loc.shops.length > 1,
         }),
+        metricTable(bv, {
+          id: "barbers",
+          title: loc.view === "shops" ? "Sold and redeemed on tickets, by location and barber" : "Sold and redeemed on tickets, by barber",
+          subtitle: "Gift cards sold on a ticket, after refunds, and gift card payments, credited to the barber on the ticket.",
+          metrics: [m("Gift cards sold", "money", bx, (v) => v.giftCardsSoldCents), m("Paid with gift cards", "money", btender, (v) => v.giftCardCents)],
+        }),
       ],
-      notes: ["Balances work at every shop, so a card issued here can be redeemed elsewhere."],
+      notes: [
+        "Balances work at every shop, so a card issued here can be redeemed elsewhere.",
+        ...(scope.staffIds?.length ? ["Cards issued and outstanding are the shop's, whichever barbers are picked; the barber table follows the pick."] : []),
+      ],
     };
   },
 
@@ -1229,7 +1266,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
   },
 
   async cash_drawer({ scope, loc }) {
-    const r = await drawerHistory(scope);
+    const bv: ViewCtx = { ...loc, byBarber: true };
+    const [r, btender] = await Promise.all([drawerHistory(scope), tenderAt(scope, grainsFor(bv))]);
     const closed = r.filter((x) => x.countedCents !== null);
     return {
       stats: [
@@ -1248,7 +1286,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           title: "Drawer closes",
           columns: [
             text("Date"),
-            money("Opening float"),
+            money("Opening balance"),
             money("Cash sales"),
             money("Cash refunds"),
             money("Payouts"),
@@ -1264,6 +1302,12 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           })),
           keepShop: loc.shops.length > 1,
           sort: byDayDesc,
+        }),
+        metricTable(bv, {
+          id: "barbers",
+          title: loc.view === "shops" ? "Cash taken by location and barber" : "Cash taken by barber",
+          subtitle: "Cash payments after cash refunds, credited to the barber on the ticket. The drawer itself is the shop's, whichever barbers are picked.",
+          metrics: [m("Cash", "money", btender, (v) => v.cashCents), m("Cash tips", "money", btender, (v) => v.cashTipsCents)],
         }),
       ],
     };

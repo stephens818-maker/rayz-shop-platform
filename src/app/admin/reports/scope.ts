@@ -70,9 +70,29 @@ export const BARBER_REPORTS: ReadonlySet<ReportKey> = new Set([
   "campaign_center",
   "lapsed_clients",
   "openings",
+  "end_of_day",
+  "leaderboard",
+  "sales_tax",
+  "retention",
+  "acquisition",
+  "phone_operator",
+  "staffing",
+  "call_ins",
+  "tip_payouts",
+  "gift_cards",
+  "cash_drawer",
 ]);
 
+/**
+ * Reports with no barber anywhere in them: stock, purchasing, Stripe accounts, loyalty rewards, the
+ * Morning Dashboard and the audit log. Every other report takes the barber filter.
+ */
+export const NO_BARBER_REPORTS: ReadonlySet<ReportKey> = new Set(["inventory", "inventory_movement", "sell_through", "low_stock", "purchasing", "shop_accounts", "loyalty", "morning_dashboard", "audit_log"]);
+
 export const defaultView = (report?: ReportKey): ReportView => (report === "sales_by_barber" || report === "service_times" ? "barbers" : "combined");
+
+/** The range a report opens on without one in the URL. */
+const DEFAULT_PRESET: Partial<Record<ReportKey, string>> = { end_of_day: "today", sales_tax: "lastmonth", retention: "lastquarter", leaderboard: "month", phone_operator: "30d", acquisition: "30d" };
 
 /** Without "See every barber's numbers", reports that break down by barber show only the viewer's own. "My sales" always does. */
 export const selfOnly = (ctx: Pick<StaffContext, "permissions">, report: ReportKey) => report === "my_sales" || !ctx.permissions.has("reports.all_staff");
@@ -144,7 +164,7 @@ export type ResolvedScope = ReportScope & ReportLocations & ReportViewState & { 
  */
 export async function resolveScope(ctx: StaffContext, p: ReportParams, report: ReportKey): Promise<ResolvedScope> {
   const custom = p.from && p.to && isValidLocalDate(p.from) && isValidLocalDate(p.to);
-  const preset = custom ? null : (p.preset ?? "7d");
+  const preset = custom ? null : (p.preset ?? DEFAULT_PRESET[report] ?? "7d");
   let { from, to } = custom ? { from: p.from!, to: p.to! } : presetRange(preset!);
   if (from > to) [from, to] = [to, from];
   const v = await resolveBarberView(ctx, p, report, await resolveLocations(ctx, p));
