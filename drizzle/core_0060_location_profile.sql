@@ -8,7 +8,7 @@ ALTER TABLE "shops" ADD COLUMN IF NOT EXISTS "tax_jurisdiction" jsonb DEFAULT '{
 ALTER TABLE "shops" ADD COLUMN IF NOT EXISTS "geocode_source" text;--> statement-breakpoint
 ALTER TABLE "shops" ADD COLUMN IF NOT EXISTS "geocoded_at" timestamp with time zone;--> statement-breakpoint
 DO $$ BEGIN
-	ALTER TABLE "shops" ADD CONSTRAINT "shops_google_place_id" CHECK ("google_place_id" IS NULL OR "google_place_id" ~ '^[A-Za-z0-9_-]{16,512}$');
+	ALTER TABLE "shops" ADD CONSTRAINT "shops_google_place_id" CHECK ("google_place_id" IS NULL OR "google_place_id" ~ '^[A-Za-z0-9_-]+$' AND char_length("google_place_id") BETWEEN 16 AND 512);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;--> statement-breakpoint
 DO $$ BEGIN
 	ALTER TABLE "shops" ADD CONSTRAINT "shops_directions" CHECK ("directions" IS NULL OR char_length("directions") <= 500);
