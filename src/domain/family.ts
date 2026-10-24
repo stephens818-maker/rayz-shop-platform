@@ -195,7 +195,16 @@ export const FamilyMemberSchema = z.object({
   lastVisit: z.string().nullable().describe("YYYY-MM-DD (shop time)"),
   averageDaysBetween: z.number().int().nullable().describe("Average days between their cuts, from 2 or more visits"),
   upcoming: z.array(z.object({ id: z.string(), startsAt: z.string(), shop: z.string(), barber: z.string(), service: z.string() })),
+  badges: z
+    .array(z.object({ id: z.string(), name: z.string(), text: z.string(), icon: z.string(), color: z.string(), earnedOn: z.string().nullable() }).loose())
+    .describe("The child's badges, as the brand shows them to customers (same shape as /me/badges)"),
   canSplit: z.boolean().describe("Old enough for an account of their own"),
+});
+export const SplitRequestSchema = z.object({
+  phone: z.string().trim().max(30).optional().describe("The child's own phone: they sign in with it"),
+  email: z.string().trim().max(200).optional(),
+  smsOptIn: z.boolean().default(false),
+  emailOptIn: z.boolean().default(false),
 });
 export const FamilySchema = z.object({
   settings: z.object({ maxChildren: z.number().int(), loyalty: z.enum(FAMILY_LOYALTY), splitAge: z.number().int() }),
@@ -225,7 +234,7 @@ const ok = (ref: string) => ({ description: "OK", content: { "application/json":
 
 /** For openApiDocument (src/server/openapi.ts): the paths and schemas, in that file's shapes. Served by src/server/family-api.ts. */
 export const FAMILY_OPENAPI = {
-  components: { Family: FamilySchema, FamilyMember: FamilyMemberSchema, ChildInput: ChildInputSchema, FamilyBookingRequest: FamilyBookingRequestSchema },
+  components: { Family: FamilySchema, FamilyMember: FamilyMemberSchema, ChildInput: ChildInputSchema, FamilyBookingRequest: FamilyBookingRequestSchema, FamilySplitRequest: SplitRequestSchema },
   paths: {
     "/me/family": {
       get: {
@@ -261,6 +270,16 @@ export const FAMILY_OPENAPI = {
         security: [{ bearerAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: { 200: ok("Family"), 404: { description: "Not one of your children", ...errorRef } },
+      },
+    },
+    "/me/family/children/{id}/split": {
+      post: {
+        tags: ["Me"],
+        summary: "Give a child old enough (13 by default) an account of their own, with their own phone or email. Every visit, badge and note stays with them",
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { content: { "application/json": { schema: { $ref: "#/components/schemas/FamilySplitRequest" } } } },
+        responses: { 200: ok("Family"), 400: { description: "Too young, or no phone or email", ...errorRef }, 404: { description: "Not one of your children", ...errorRef } },
       },
     },
     "/me/family/bookings": {

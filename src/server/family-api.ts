@@ -7,7 +7,8 @@ import { body, json, options, route } from "./api";
 import { customerActor } from "./audit";
 import { requireCustomer } from "./auth/customer";
 import { AppError } from "./errors";
-import { addChild, detachChild, familyView, memberOf, updateChild } from "./family";
+import { SplitRequestSchema } from "@/domain/family";
+import { addChild, detachChild, familyView, memberOf, splitChild, updateChild } from "./family";
 import { bookFamily } from "./family-booking";
 
 /**
@@ -51,6 +52,14 @@ export const removeChild = route<{ id: string }>(async (req, params) => {
   const p = await parent(req);
   const { id } = Id.parse(params);
   await detachChild(id, p.actor, { guardianId: p.id });
+  return json(await familyView(p.id));
+});
+
+/** POST /me/family/children/{id}/split */
+export const splitChildAccount = route<{ id: string }>(async (req, params) => {
+  const p = await parent(req);
+  const { id } = Id.parse(params);
+  await splitChild(id, await body(req, SplitRequestSchema), p.actor, { guardianId: p.id });
   return json(await familyView(p.id));
 });
 

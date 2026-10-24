@@ -147,6 +147,13 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     const keep = both.find((c) => c.id === keepId);
     const drop = both.find((c) => c.id === dropId);
     if (!keep || !drop) throw notFound("Client");
+    if (keep.guardianId === dropId || drop.guardianId === keepId) {
+      throw new AppError("bad_request", "That's a parent and their own child. Take the child off the family account first if they're really one person.");
+    }
+    if (keep.guardianId) {
+      const [kid] = await tx.select({ id: customers.id }).from(customers).where(eq(customers.guardianId, dropId)).limit(1);
+      if (kid) throw new AppError("bad_request", "Keep the parent's record: a child profile can't have children of its own");
+    }
 
     const moved: Record<string, number> = {};
     const repoint = async (name: string, q: Promise<unknown[]>) => {

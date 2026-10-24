@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { Badge, Button, Table, Td, Th } from "@/components/ui";
 import type { ActionResult } from "@/server/action";
 import { dismissDuplicateAction, mergeCustomersAction, mergeDuplicatesAction } from "../actions";
+import { attachChildAction } from "../family-actions";
 
 export interface DupPerson {
   id: string;
@@ -50,7 +51,7 @@ function Person({ p, kept }: { p: DupPerson; kept: boolean }) {
  * One group of candidate pairs. Each pair can be merged either way or marked "not the same
  * person"; checked pairs merge together, each keeping the record with more visits (then the older).
  */
-export function DuplicateGroup({ rows }: { rows: DupRow[] }) {
+export function DuplicateGroup({ rows, family = false }: { rows: DupRow[]; /** Offer "is their child": two people sharing a parent's phone or email. */ family?: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -71,6 +72,10 @@ export function DuplicateGroup({ rows }: { rows: DupRow[] }) {
   const merge = (keep: DupPerson, drop: DupPerson) => {
     if (!confirm(`Keep ${keep.label} and merge ${drop.label} into it? This can't be undone (the audit log keeps a copy).`)) return;
     run(() => mergeCustomersAction(keep.id, drop.id));
+  };
+  const attach = (parent: DupPerson, child: DupPerson) => {
+    if (!confirm(`Put ${child.label} on ${parent.label}'s family account? Their visits stay theirs; their own phone, email and consent are cleared, and messages go to ${parent.label}.`)) return;
+    run(() => attachChildAction(parent.id, child.id));
   };
   const chosen = rows.filter((r) => picked.has(key(r)));
   const mergeChosen = () => {
@@ -145,6 +150,16 @@ export function DuplicateGroup({ rows }: { rows: DupRow[] }) {
                   <Button size="sm" variant="secondary" disabled={pending} onClick={() => merge(r.b, r.a)}>
                     Keep B
                   </Button>
+                  {family && (
+                    <>
+                      <Button size="sm" variant="secondary" disabled={pending} onClick={() => attach(r.a, r.b)} title={`${r.b.label} is ${r.a.label}'s child`}>
+                        B is A&apos;s child
+                      </Button>
+                      <Button size="sm" variant="secondary" disabled={pending} onClick={() => attach(r.b, r.a)} title={`${r.a.label} is ${r.b.label}'s child`}>
+                        A is B&apos;s child
+                      </Button>
+                    </>
+                  )}
                   <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => dismissDuplicateAction(r.a.id, r.b.id))}>
                     Not the same person
                   </Button>

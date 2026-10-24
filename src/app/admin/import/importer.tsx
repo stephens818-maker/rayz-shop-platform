@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Notice, Table, Td, Th, cx } from "@/components/ui";
 import { errorsCsv } from "@/lib/import-errors";
 import { statLines } from "@/lib/import-stats";
+import type { FamilyImportResult } from "@/server/family-import";
 import type { ImportKind, ImportResult } from "@/server/importer";
 import { importAction } from "./actions";
 
@@ -60,7 +61,7 @@ export function Importer() {
   const router = useRouter();
   const [kind, setKind] = useState<ImportKind>("clients");
   const [file, setFile] = useState<{ name: string; text: string } | null>(null);
-  const [result, setResult] = useState<(ImportResult & { errorsTruncated: number }) | null>(null);
+  const [result, setResult] = useState<(ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -140,7 +141,7 @@ function download(name: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
-function ResultView({ result }: { result: ImportResult & { errorsTruncated: number } }) {
+function ResultView({ result }: { result: ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null } }) {
   const mapped = Object.entries(result.headerMap);
   const reasons = Object.entries(result.skippedByReason).sort((a, b) => b[1] - a[1]);
   return (
@@ -201,6 +202,7 @@ function ResultView({ result }: { result: ImportResult & { errorsTruncated: numb
           ))}
         </div>
       </div>
+      {result.family && <FamilyView family={result.family} dryRun={result.dryRun} />}
       {result.errors.length > 0 && (
         <div>
           <div className="mb-1 text-sm font-medium text-zinc-700">Rows {result.dryRun ? "that will be" : ""} skipped</div>
@@ -225,6 +227,34 @@ function ResultView({ result }: { result: ImportResult & { errorsTruncated: numb
           {result.errors.length > 100 && <div className="mt-1 text-xs text-zinc-500">Showing 100 of {result.errors.length}. Download the error file for all of them.</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+function FamilyView({ family, dryRun }: { family: FamilyImportResult; dryRun: boolean }) {
+  return (
+    <div className="rounded-lg ring-1 ring-zinc-200">
+      <div className="border-b border-zinc-100 px-3 py-2 text-sm font-medium">Family accounts</div>
+      <div className="space-y-1 px-3 py-2 text-sm">
+        <div>
+          From <span className="font-mono text-xs">{family.columns.join(", ")}</span>:{" "}
+          {dryRun
+            ? `${family.linked} kid record${family.linked === 1 ? "" : "s"} would go on their parent's account.`
+            : `${family.linked} kid record${family.linked === 1 ? "" : "s"} put on their parent's account${family.alreadyLinked ? `, ${family.alreadyLinked} already there` : ""}.`}
+        </div>
+        {family.problems.length > 0 && (
+          <ul className="list-disc pl-5 text-xs text-zinc-600">
+            {family.problems.slice(0, 50).map((p, i) => (
+              <li key={`${p.line}-${i}`}>
+                Row {p.line}: {p.message}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="text-xs text-zinc-500">
+          Families the file doesn&apos;t spell out (a kid sharing a parent&apos;s phone) show on the duplicates page under &quot;Shared phone or email&quot;, with a button to put the child on the parent&apos;s account.
+        </div>
+      </div>
     </div>
   );
 }

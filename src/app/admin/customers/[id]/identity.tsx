@@ -6,18 +6,9 @@ import { useEffect, useState, useTransition } from "react";
 import { ClientAvatar, ClientHitRow } from "@/components/client-hit";
 import { Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
 import type { ClientHit } from "@/domain/client-search";
+import { shrinkPhoto } from "@/lib/shrink-photo";
 import { searchCustomersAction } from "../../calendar/actions";
 import { setClientPhotoAction, updateClientIdentityAction } from "../actions";
-
-/** Square-crop and shrink a photo in the browser, so what's stored is small. */
-async function shrink(file: File, size = 256): Promise<string> {
-  const img = await createImageBitmap(file);
-  const side = Math.min(img.width, img.height);
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
-  canvas.getContext("2d")!.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size);
-  return canvas.toDataURL("image/jpeg", 0.85);
-}
 
 /**
  * Who the client is at a glance: photo, client number and loyalty card, nickname, how they found
@@ -97,7 +88,7 @@ export function ClientIdentity(p: {
                       const file = e.target.files?.[0];
                       e.target.value = "";
                       if (file) {
-                        const url = await shrink(file);
+                        const url = await shrinkPhoto(file);
                         run(() => setClientPhotoAction(p.id, url));
                       }
                     }}

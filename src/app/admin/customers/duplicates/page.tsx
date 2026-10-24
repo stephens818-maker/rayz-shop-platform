@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Card, CardHeader, Empty, PageHeader, cx } from "@/components/ui";
 import { DuplicateKind, SIGNAL_LABEL, pickKeeper } from "@/domain/duplicates";
 import { formatDate } from "@/lib/time";
-import { guardPage } from "@/server/auth/staff";
+import { can, guardPage } from "@/server/auth/staff";
 import { clientPolicy, recordClientAccess } from "@/server/client-privacy";
 import { DuplicateClient, duplicatePairs } from "@/server/customers";
 import { NoCopy } from "../privacy";
@@ -15,7 +15,11 @@ const GROUPS: { kind: DuplicateKind; title: string; subtitle: string }[] = [
   { kind: "likely", title: "Likely the same person", subtitle: "Same phone or email and matching names (Mike / Michael, a nickname, a typo, a missing last name)." },
   { kind: "same_name", title: "Same name, backed by another detail", subtitle: "Same or matching name plus a birthday, zip or phone last 4, or one record with no contact (common after a Squire import or a walk-in)." },
   { kind: "similar_name", title: "Close spelling, backed by another detail", subtitle: "A typo-close name (Jonathon / Jonathan) plus a birthday, zip, phone last 4, or a record with no contact. Check before merging." },
-  { kind: "shared_contact", title: "Shared phone or email, something differs", subtitle: "Different first names or birthdays: often a family. Leave these alone unless you know it's one person." },
+  {
+    kind: "shared_contact",
+    title: "Shared phone or email, something differs",
+    subtitle: "Different first names or birthdays: often a parent and child. Put a child on their parent's family account, or leave these alone unless you know it's one person.",
+  },
 ];
 
 const CONFLICT_LABEL: Record<string, string> = { birthday: "birthday", first_name: "first name" };
@@ -59,6 +63,7 @@ export default async function DuplicatesPage({ searchParams }: { searchParams: P
               <Card key={g.kind}>
                 <CardHeader title={`${g.title} (${list.length})`} subtitle={g.subtitle} />
                 <DuplicateGroup
+                  family={g.kind === "shared_contact" && can(ctx, "clients.family")}
                   rows={list.map((p) => ({
                     a: person(p.a),
                     b: person(p.b),
