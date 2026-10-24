@@ -414,6 +414,13 @@
       "when": 1794265200000,
       "tag": "core_0058_compensation",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1794268800000,
+      "tag": "core_0059_analytics",
+      "breakpoints": true
     }
   ]
 }

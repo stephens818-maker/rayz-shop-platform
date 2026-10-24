@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  bigint,
   boolean,
   check,
   date,
@@ -93,6 +94,8 @@ export const brandSettings = pgTable("brand_settings", {
   family: jsonb("family").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Compensation fields (CompensationSettings in src/domain/compensation.ts): off by default; payroll, the export and My pay use them only when turned on. */
   compensation: jsonb("compensation").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Event log options: the post-visit 1-5 question and the nightly warehouse copy (src/domain/analytics.ts). */
+  analytics: jsonb("analytics").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -1357,6 +1360,8 @@ export const appointments = pgTable(
     bookedAtKnown: boolean("booked_at_known").notNull().default(true),
     cancelledAt: ts("cancelled_at"),
     cancelledBy: text("cancelled_by"),
+    /** Why it was cancelled, when given (scrubbed of card and ID numbers). */
+    cancelReason: text("cancel_reason"),
     checkedInAt: ts("checked_in_at"),
     completedAt: ts("completed_at"),
     /** The barber (or the desk) sent it to checkout: it's on its ticket and waiting to be paid. */
@@ -3436,3 +3441,79 @@ export const clientBadgeNotices = pgTable(
   },
   (t) => [uniqueIndex("client_badge_notices_uq").on(t.customerId, t.badgeKey, t.change, t.occurredOn), index("client_badge_notices_pending_idx").on(t.status, t.createdAt)],
 );
+
+/**
+ * The event log: one append-only row per meaningful action, written by triggers on the source
+ * tables (drizzle/core_0059_analytics.sql) and by recordEvent for what only the app sees (the
+ * booking funnel). Ids, numbers and short codes only; the README lists every event.
+ */
+export const analyticsEvents = pgTable(
+  "analytics_events",
+  {
+    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    occurredAt: ts("occurred_at").notNull(),
+    recordedAt: ts("recorded_at").notNull().default(sql`clock_timestamp()`),
+    businessDate: date("business_date").notNull(),
+    event: text("event").notNull(),
+    category: text("category").notNull(),
+    shopId: uuid("shop_id"),
+    actorKind: text("actor_kind").$type<"staff" | "client" | "system">().notNull(),
+    actorStaffId: uuid("actor_staff_id"),
+    staffId: uuid("staff_id"),
+    customerId: uuid("customer_id"),
+    channel: text("channel"),
+    device: text("device"),
+    source: text("source"),
+    entity: text("entity").notNull(),
+    entityId: text("entity_id"),
+    appointmentId: uuid("appointment_id"),
+    saleId: uuid("sale_id"),
+    amountCents: bigint("amount_cents", { mode: "number" }),
+    quantity: integer("quantity"),
+    minutes: doublePrecision("minutes"),
+    value: doublePrecision("value"),
+    subtype: text("subtype"),
+    reason: text("reason"),
+    props: jsonb("props").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    dedupeKey: text("dedupe_key").unique("analytics_events_dedupe_key"),
+  },
+  (t) => [
+    index("analytics_events_day_idx").on(t.businessDate, t.event),
+    index("analytics_events_shop_idx").on(t.shopId, t.businessDate),
+    index("analytics_events_entity_idx").on(t.entity, t.entityId),
+  ],
+);
+
+/** The optional 1-5 a client gives after a visit, asked of everyone alike (it never decides who is sent to Google). */
+export const visitSatisfaction = pgTable(
+  "visit_satisfaction",
+  {
+    id: id(),
+    saleId: uuid("sale_id")
+      .notNull()
+      .unique("visit_satisfaction_sale_uq")
+      .references(() => sales.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    stars: smallint("stars").notNull(),
+    channel: text("channel").$type<"receipt" | "app">().notNull().default("receipt"),
+    createdAt: createdAt(),
+  },
+  (t) => [check("visit_satisfaction_stars", sql`${t.stars} between 1 and 5`), index("visit_satisfaction_shop_idx").on(t.shopId, t.createdAt)],
+);
+
+/** Each copy of new events to the brand's warehouse. The warehouse address is an environment secret, never stored. */
+export const analyticsExports = pgTable("analytics_exports", {
+  id: id(),
+  target: text("target").notNull(),
+  fromId: bigint("from_id", { mode: "number" }).notNull(),
+  toId: bigint("to_id", { mode: "number" }).notNull(),
+  rows: integer("rows").notNull().default(0),
+  status: text("status").$type<"running" | "done" | "failed">().notNull().default("running"),
+  failure: text("failure"),
+  startedAt: ts("started_at").notNull().defaultNow(),
+  finishedAt: ts("finished_at"),
+});
