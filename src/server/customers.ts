@@ -199,6 +199,13 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     await tx.execute(sql`update customers set referred_by_id = ${keepId} where referred_by_id = ${dropId} and id <> ${keepId}`);
     // Its notes field is folded into the kept record's below, which brings the kept record note along; its other notes move.
     await tx.execute(sql`delete from client_notes where customer_id = ${dropId} and source = 'record'`);
+    // Badges are a cache of one row per client: keep one, and mark it stale so the next read recomputes
+    // it from the combined history. Badge news both records already had on the same day stays once.
+    await tx.execute(sql`delete from client_badges where customer_id = ${dropId} and exists (select 1 from client_badges where customer_id = ${keepId})`);
+    await tx.execute(sql`update client_badges set customer_id = ${keepId} where customer_id = ${dropId}`);
+    await tx.execute(sql`update client_badges set computed_on = computed_on - 1 where customer_id = ${keepId}`);
+    await tx.execute(sql`delete from client_badge_notices d where d.customer_id = ${dropId} and exists (select 1 from client_badge_notices k
+      where k.customer_id = ${keepId} and k.badge_key = d.badge_key and k.change = d.change and k.occurred_on = d.occurred_on)`);
     // Everything else that points at a client, found in the catalog so a table added later (the
     // customer app's too) moves with the merge instead of being deleted with the dropped record.
     // A new table with a unique key on the client fails the merge rather than losing rows.
@@ -218,6 +225,7 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
       "customer_squire_ids.customer_id",
       "client_ratings.customer_id",
       "loyalty_accounts.customer_id",
+      "client_badges.customer_id",
       "customers.referred_by_id",
       "customer_duplicate_dismissals.a_id",
       "customer_duplicate_dismissals.b_id",
