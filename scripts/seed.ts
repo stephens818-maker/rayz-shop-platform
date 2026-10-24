@@ -289,6 +289,39 @@ async function main() {
       customFields: { [instagram.id]: "@jordandemo" },
     })
     .returning();
+  // Zip centers for "within N miles" (production loads the full Census list: scripts/load-zip-points.ts).
+  await db
+    .insert(t.zipPoints)
+    .values(
+      [
+        ["52241", 41.6889, -91.5962],
+        ["52807", 41.5615, -90.5203],
+        ["52753", 41.6213, -90.3817],
+        ["61265", 41.4825, -90.4893],
+        ["61201", 41.4806, -90.5745],
+        ["61282", 41.4998, -90.4119],
+        ["52002", 42.5158, -90.7614],
+      ].map(([zip, lat, lng]) => ({ zip: zip as string, lat: lat as number, lng: lng as number })),
+    )
+    .onConflictDoNothing();
+  // Squire-import duplicates for the duplicates tool: a typo, a nickname, and a parent and child on one phone.
+  {
+    const kimberly = shopBySlug.get("kimberly")!;
+    const dupes = await db
+      .insert(t.customers)
+      .values([
+        { firstName: "Jonathon", lastName: "Reyes", birthday: "1991-03-08", address: "412 Oak St, Davenport, IA 52807", homeShopId: kimberly.id, createdAt: new Date("2019-05-02T15:00:00Z") },
+        { firstName: "Jonathan", lastName: "Reyes", phone: "+15635559801", birthday: "1991-03-08", smsOptIn: true, homeShopId: kimberly.id },
+        { firstName: "Mike", lastName: "Kowalski", phone: "+15635559802", homeShopId: kimberly.id, createdAt: new Date("2018-11-20T15:00:00Z") },
+        { firstName: "Michael", lastName: "Kowalski", phone: "+15635559802", email: "mkowalski@example.test", homeShopId: kimberly.id },
+        { firstName: "Darnell", lastName: "Price", phone: "+15635559803", birthday: "1972-09-14", homeShopId: kimberly.id, createdAt: new Date("2017-08-01T15:00:00Z") },
+        { firstName: "Darnell", lastName: "Price", phone: "+15635559803", birthday: "2004-01-30", homeShopId: kimberly.id },
+      ])
+      .returning();
+    await db.insert(t.customerSquireIds).values(
+      [0, 2, 4].map((i) => ({ squireId: `SQ-DEMO-${i + 1}`, customerId: dupes[i].id, shopId: kimberly.id })),
+    );
+  }
   const customersByShop = new Map<string, typeof customerRows>();
   for (const c of customerRows) customersByShop.set(c.homeShopId!, [...(customersByShop.get(c.homeShopId!) ?? []), c]);
 
