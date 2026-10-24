@@ -1,6 +1,7 @@
 import { asc, eq, inArray, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { ownerEntities, regions, shops } from "@/db/schema";
+import { isFranchiseePerson } from "@/domain/franchise";
 import type { ScopeAt, ShopScope } from "@/domain/permissions";
 import { AppError, forbidden, notFound } from "./errors";
 
@@ -122,6 +123,30 @@ export async function hierarchyChoices(v: EntityViewer, tx: DBorTx = db) {
     )
     .orderBy(asc(regions.name));
   return { entities, regions: regionRows };
+}
+
+/**
+ * Whether everything a person (by their stored access) or a set of locations reaches belongs to
+ * franchisee owner groups: the test for the brand's franchisee client-data rules. People with
+ * every shop have no stored rows, so they're never a franchisee's.
+ */
+export async function isFranchiseeReach(t: { staffId: string } | { shopIds: readonly string[] }, tx: DBorTx = db): Promise<boolean> {
+  const rows = (await tx.execute(
+    "staffId" in t
+      ? sql`select distinct oe.kind from staff_access_shops a join shops sh on sh.id = a.shop_id join owner_entities oe on oe.id = sh.owner_entity_id where a.staff_id = ${t.staffId}::uuid`
+      : t.shopIds.length
+        ? sql`select distinct oe.kind from shops sh join owner_entities oe on oe.id = sh.owner_entity_id where sh.id in (${sql.join(t.shopIds.map((s) => sql`${s}::uuid`), sql`, `)})`
+        : sql`select null::text kind where false`,
+  )) as unknown as { kind: "brand" | "franchisee" }[];
+  return isFranchiseePerson(rows.map((r) => r.kind));
+}
+
+/** Every location of the owner groups that own these locations. */
+export async function sameOwnerShops(shopIds: readonly string[], tx: DBorTx = db): Promise<string[]> {
+  if (!shopIds.length) return [];
+  const rows = (await tx.execute(sql`
+    select id::text id from shops where owner_entity_id in (select owner_entity_id from shops where id in (${sql.join(shopIds.map((s) => sql`${s}::uuid`), sql`, `)}))`)) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
 }
 
 /** The caller may only manage owner-group records with a permission and inside reach. */
