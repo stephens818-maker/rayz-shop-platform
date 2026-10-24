@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { auditLog, shops } from "@/db/schema";
 import { NO_PRIVATE, ReasonViewer, redactReasonDetails } from "@/domain/block-reasons";
 import { ClientPolicy, LOCKED_POLICY, redactAuditDetails, searchesClientDetails } from "./client-privacy";
-import { Permission, ReportKey } from "@/domain/permissions";
+import { Permission, ReportKey, type ShopScope } from "@/domain/permissions";
 import {
   Cell,
   Column,
@@ -58,6 +58,8 @@ import { EXCEPTION_LABEL } from "@/domain/morning-dashboard";
 import { morningDoc } from "@/domain/morning-render";
 import { ACCOUNT_STATE_LABEL, PAYMENTS_MODE_LABEL } from "@/domain/connect";
 import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-report";
+import { ownerPnlData, rollupData, royaltyData } from "./franchise-reports";
+import { entitiesWithin } from "./hierarchy";
 import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
@@ -118,7 +120,17 @@ export interface ReportInput {
   /** Combined, by location, by barber or by location and barber, over the selected shops and barbers. */
   loc: ViewCtx;
   /** The viewer's access: brand-level rows (no shop) are only for people with every shop. */
-  viewer: { brandWide: boolean; currentShopId: string | null; shopIds: string[]; permissions?: ReadonlySet<Permission>; access?: StaffAccess };
+  viewer: {
+    brandWide: boolean;
+    currentShopId: string | null;
+    shopIds: string[];
+    permissions?: ReadonlySet<Permission>;
+    access?: StaffAccess;
+    /** Their hierarchy scope, for owner-group reports (src/server/hierarchy.ts). */
+    scope?: ShopScope;
+    scopeEntityId?: string | null;
+    scopeRegionId?: string | null;
+  };
   /** What the viewer may see of client records; without it, client details in the audit log are hidden. */
   client?: ClientPolicy;
   /** Who is looking at block and time off reasons; without it, private reasons are hidden. */
@@ -872,7 +884,12 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async shop_accounts({ scope, viewer }) {
     const brandPayouts = viewer.brandWide && scope.shopIds.length === viewer.shopIds.length;
-    const [accounts, payouts] = await Promise.all([shopAccountRows(scope), payoutRows(scope, { brand: brandPayouts })]);
+    const accounts = await shopAccountRows(scope);
+    const pooled = new Set(accounts.filter((r) => r.paymentsMode === "entity" && r.ownerId).map((r) => r.ownerId!));
+    const entityIds = pooled.size
+      ? (await entitiesWithin({ brandWide: viewer.brandWide, scope: viewer.scope ?? viewer.access?.scope, scopeEntityId: viewer.scopeEntityId ?? viewer.access?.scopeEntityId, shopIds: viewer.shopIds })).filter((id) => pooled.has(id))
+      : [];
+    const payouts = await payoutRows(scope, { brand: brandPayouts, entityIds });
     const cols: Column[] = [
       text("Owner"),
       text("Shop"),
@@ -914,7 +931,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           r.ownerName,
           r.shopName,
           r.paymentsMode === "brand" ? "Brand account" : (r.stripeAccountId ?? "—"),
-          r.paymentsMode === "connected" ? ACCOUNT_STATE_LABEL[r.state] : PAYMENTS_MODE_LABEL[r.paymentsMode],
+          r.paymentsMode === "connected" || r.paymentsMode === "entity" ? ACCOUNT_STATE_LABEL[r.state] : PAYMENTS_MODE_LABEL[r.paymentsMode],
           ...nums(r),
         ]);
         styles.push(undefined);
@@ -930,9 +947,11 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     }
     const total = add(accounts);
     const unrouted = accounts.reduce((a, r) => a + r.unroutedCardCents, 0);
-    const notReady = accounts.filter((r) => r.paymentsMode === "connected" && !r.canCharge);
+    const own = (r: ShopAccountRow) => r.paymentsMode === "connected" || r.paymentsMode === "entity";
+    const notReady = accounts.filter((r) => own(r) && !r.canCharge);
     const cashOnly = accounts.filter((r) => r.paymentsMode === "cash_only");
-    const restricted = accounts.filter((r) => r.paymentsMode === "connected" && r.canCharge && r.state !== "enabled");
+    const restricted = accounts.filter((r) => own(r) && r.canCharge && r.state !== "enabled");
+    const royalty = accounts.reduce((a, r) => a + r.royaltyCollectedCents + r.adFundCollectedCents, 0);
     const brandSettled = accounts.reduce((a, r) => a + r.brandSettledCents, 0);
     return {
       stats: [
@@ -965,9 +984,23 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         ...(cashOnly.length ? [`Cash and gift cards only: ${cashOnly.map((r) => r.shopName).join(", ")}.`] : []),
         ...(brandSettled ? [`Shops on the brand's account are paid out together to the brand's bank, so their payout columns stay empty; the brand account's deposits are on the Payouts page.`] : []),
         ...(unrouted ? [`${formatCents(unrouted)} of card takings in this range settled before shops had their own accounts, so it isn't in "To Stripe accounts".`] : []),
+        ...(royalty ? [`${formatCents(royalty)} of royalty and ad fund was taken from card charges with the processing fee; it's on the Royalties report, not in processing fees.`] : []),
+        ...(entityIds.length ? ["Shops on an owner group's account are paid out together to that owner's bank; those deposits are listed under the owner group's name."] : []),
         "Processing fees are kept on refunded and voided charges, the same as Stripe's own fee.",
       ],
     };
+  },
+
+  async entity_pnl(i) {
+    return ownerPnlData(i);
+  },
+
+  async royalties(i) {
+    return royaltyData(i);
+  },
+
+  async rollup(i) {
+    return rollupData(i);
   },
 
   async card_vs_cash({ scope, loc }) {
