@@ -262,6 +262,7 @@ export interface NewCall {
   staffId?: string | null;
   outreachId?: string | null;
   customerId?: string | null;
+  operator?: boolean;
 }
 
 export async function logCall(c: NewCall, tx: DBorTx = db, now = new Date()) {
@@ -275,7 +276,7 @@ export async function logCall(c: NewCall, tx: DBorTx = db, now = new Date()) {
   return (await tx.query.callLogs.findFirst({ where: eq(callLogs.providerCallId, c.providerCallId!) }))!;
 }
 
-export async function updateCall(providerCallId: string, patch: Partial<Pick<typeof callLogs.$inferInsert, "status" | "durationSec" | "digits" | "autoTextSent" | "endedAt">>, tx: DBorTx = db) {
+export async function updateCall(providerCallId: string, patch: Partial<Pick<typeof callLogs.$inferInsert, "status" | "durationSec" | "digits" | "autoTextSent" | "endedAt" | "operator" | "operatorChoice">>, tx: DBorTx = db) {
   const [row] = await tx.update(callLogs).set(patch).where(eq(callLogs.providerCallId, providerCallId)).returning();
   return row ?? null;
 }

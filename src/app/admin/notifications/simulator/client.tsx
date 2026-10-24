@@ -28,6 +28,7 @@ export function SimForm({ shops, threads }: { shops: { id: string; name: string;
   const [threadId, setThreadId] = useState("");
   const [phone, setPhone] = useState("");
   const [body, setBody] = useState("1");
+  const [key, setKey] = useState("1");
   const [out, setOut] = useState<string | null>(null);
   const [twiml, setTwiml] = useState<string[]>([]);
   const from = { threadId: threadId || null, phone: threadId ? null : phone };
@@ -69,10 +70,18 @@ export function SimForm({ shops, threads }: { shops: { id: string; name: string;
         <Button disabled={pending || !shop?.line} onClick={() => run(() => simulateTextAction(shopId, from, body), (d) => (setTwiml([]), setOut(`Text received: ${d.handled.replace("_", " ")}`)))}>
           Send text
         </Button>
-        <Button variant="secondary" disabled={pending || !shop?.line} onClick={() => run(() => simulateCallAction(shopId, from, "answered"), (d) => (setTwiml(d.twiml), setOut("Called the shop: answered")))}>
+        <Field label="If the phone operator answers, press">
+          <Select value={key} onChange={(e) => setKey(e.target.value)}>
+            <option value="1">1: text me a booking link</option>
+            <option value="2">2: hear the hours</option>
+            <option value="3">3: talk to the shop</option>
+            <option value="">Nothing</option>
+          </Select>
+        </Field>
+        <Button variant="secondary" disabled={pending || !shop?.line} onClick={() => run(() => simulateCallAction(shopId, from, "answered", key), (d) => (setTwiml(d.twiml), setOut("Called the shop: answered")))}>
           Call: shop answers
         </Button>
-        <Button variant="secondary" disabled={pending || !shop?.line} onClick={() => run(() => simulateCallAction(shopId, from, "missed"), (d) => (setTwiml(d.twiml), setOut("Called the shop: nobody answered")))}>
+        <Button variant="secondary" disabled={pending || !shop?.line} onClick={() => run(() => simulateCallAction(shopId, from, "missed", key), (d) => (setTwiml(d.twiml), setOut("Called the shop: nobody answered")))}>
           Call: nobody answers
         </Button>
       </div>

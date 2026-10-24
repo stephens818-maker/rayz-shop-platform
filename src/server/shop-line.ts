@@ -3,7 +3,8 @@ import { and, desc, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentOutreach, appointments, callIns, callLogs, customers, notificationJobs, shopClosures, shopHours, shops, staff } from "@/db/schema";
 import { advance, isOpen, missedCallText, parseReply, reachable, shopOpenAt, voiceScript } from "@/domain/outreach";
-import { EMPTY_RESPONSE, dial, gather, hangup, pause, response, say } from "@/domain/twiml";
+import { OperatorChoice, cleanOperator, operatorScript, operatorTakes, spokenHours, strongerChoice } from "@/domain/phone-operator";
+import { EMPTY_RESPONSE, dial, gather, hangup, pause, redirect, response, say } from "@/domain/twiml";
 import { appBaseUrl } from "@/lib/deployment";
 import { normalizePhone } from "@/lib/phone";
 import { formatDate, formatTime, localDateOf } from "@/lib/time";
@@ -122,16 +123,19 @@ const MISSED_TEXT_EVERY_MS = 12 * 3_600_000;
  * appointment waiting, else the booking link. Not to numbers that replied STOP, and not to a client
  * on file who hasn't agreed to texts; a caller the shop doesn't know gets the one reply to their call.
  */
-async function autoText(shop: typeof shops.$inferSelect, phone: string, afterHours: boolean, now: Date) {
+async function autoText(shop: typeof shops.$inferSelect, phone: string, afterHours: boolean, now: Date, o: { asked?: boolean } = {}) {
   if (await optedOut(phone, "sms")) return false;
-  const people = await db.select({ smsOptIn: customers.smsOptIn }).from(customers).where(eq(customers.phone, phone));
-  if (people.length && !people.some((p) => p.smsOptIn)) return false;
-  const recent = await db
-    .select({ id: notificationJobs.id })
-    .from(notificationJobs)
-    .where(and(eq(notificationJobs.shopId, shop.id), eq(notificationJobs.to, phone), eq(notificationJobs.kind, "missed_call"), gte(notificationJobs.createdAt, new Date(now.getTime() - MISSED_TEXT_EVERY_MS))))
-    .limit(1);
-  if (recent.length) return false;
+  // Pressing 1 for the link on the call is asking for this one text, the same as on call-in calls. STOP still wins.
+  if (!o.asked) {
+    const people = await db.select({ smsOptIn: customers.smsOptIn }).from(customers).where(eq(customers.phone, phone));
+    if (people.length && !people.some((p) => p.smsOptIn)) return false;
+    const recent = await db
+      .select({ id: notificationJobs.id })
+      .from(notificationJobs)
+      .where(and(eq(notificationJobs.shopId, shop.id), eq(notificationJobs.to, phone), eq(notificationJobs.kind, "missed_call"), gte(notificationJobs.createdAt, new Date(now.getTime() - MISSED_TEXT_EVERY_MS))))
+      .limit(1);
+    if (recent.length) return false;
+  }
   const open = await openOutreachFor(phone, shop.id);
   let link = `${appBaseUrl()}/book/${shop.slug}`;
   let rebook = false;
@@ -151,15 +155,27 @@ async function autoText(shop: typeof shops.$inferSelect, phone: string, afterHou
   return true;
 }
 
+/** The operator's keypad menu. Pressing nothing goes on to the operator webhook too, which texts or rings the shop. */
+function operatorMenu(shop: typeof shops.$inferSelect, o: { open: boolean; missed: boolean; again?: boolean }) {
+  const op = cleanOperator(shop.phoneOperator);
+  const s = operatorScript({ shop: spokenShop(shop.name), greeting: op.greeting, open: o.open, missed: o.missed, canRing: !!shop.phone });
+  return response(gather({ action: webhookUrl("voice/operator") }, ...(o.again ? [] : [say(s.intro)]), say(s.menu)), redirect(webhookUrl("voice/operator", { none: "1" })));
+}
+
 /**
  * A call to the shop's number. Open: it rings the shop phone, showing the shop's own number, so staff
- * never see the caller's. Closed, or no shop phone: the after-hours message and the auto-text.
+ * never see the caller's. Closed, or no shop phone: the after-hours message and the auto-text. With
+ * the phone operator on, it answers closed calls (or every call, if the shop has it answer first).
  */
 export async function handleIncomingCall(i: { from: string; to: string; callSid: string }, now = new Date()) {
   const shop = await shopByLine(i.to);
   if (!shop) return response(say("Sorry, this number isn't in service."), hangup());
   const phone = normalizePhone(i.from) ?? i.from;
   const open = shop.phone ? await isOpenNow(shop.id, now) : false;
+  if (operatorTakes(cleanOperator(shop.phoneOperator), open)) {
+    await logCall({ shopId: shop.id, phone, direction: "in", kind: "inbound", status: open ? "ringing" : "after_hours", providerCallId: i.callSid, operator: true }, db, now);
+    return operatorMenu(shop, { open, missed: false });
+  }
   if (!open) {
     await logCall({ shopId: shop.id, phone, direction: "in", kind: "inbound", status: "after_hours", providerCallId: i.callSid }, db, now);
     const texted = await autoText(shop, phone, true, now);
@@ -178,9 +194,53 @@ export async function handleDialResult(i: { callSid: string; dialStatus: string;
   }
   const call = await updateCall(i.callSid, { status: "missed", endedAt: now });
   const shop = call?.shopId ? await db.query.shops.findFirst({ where: eq(shops.id, call.shopId) }) : null;
+  // A call the operator already put through doesn't go back to its menu.
+  if (shop && call && call.operatorChoice !== "shop" && cleanOperator(shop.phoneOperator).enabled) {
+    await updateCall(i.callSid, { operator: true, endedAt: null });
+    return operatorMenu(shop, { open: false, missed: true });
+  }
   const texted = shop && call ? await autoText(shop, call.phone, false, now) : false;
   if (texted) await updateCall(i.callSid, { autoTextSent: true });
   return response(say(`Sorry we missed you.${texted ? " We've texted you a link to book." : " Please try again in a few minutes."}`), hangup());
+}
+
+/**
+ * A key on the phone operator's menu: 1 texts the booking link, 2 reads the hours and the menu
+ * again, 3 rings the shop while it's open. Nothing pressed: the shop rings if the operator answered
+ * first while open, otherwise the usual missed-call text.
+ */
+export async function handleOperatorChoice(i: { callSid: string; digits: string; none?: boolean }, now = new Date()) {
+  const call = await db.query.callLogs.findFirst({ where: eq(callLogs.providerCallId, i.callSid) });
+  const shop = call?.shopId ? await db.query.shops.findFirst({ where: eq(shops.id, call.shopId) }) : null;
+  if (!call || !shop) return response(hangup());
+  const missed = call.status === "missed";
+  const open = !missed && shop.phone ? await isOpenNow(shop.id, now) : false;
+  const ring = open && !!shop.phone;
+  const chose = (c: OperatorChoice) => updateCall(i.callSid, { operatorChoice: strongerChoice(call.operatorChoice as OperatorChoice | null, c), digits: i.digits || call.digits });
+  const name = spokenShop(shop.name);
+  if (i.digits === "1") {
+    const texted = await autoText(shop, call.phone, !open && !missed, now, { asked: true });
+    await chose("book");
+    await updateCall(i.callSid, { autoTextSent: texted || call.autoTextSent, endedAt: now });
+    await audit(SYSTEM, "phone_operator.key", "call_log", call.id, { digits: "1", texted }, shop.id);
+    return response(say(texted ? `We've texted you a link to book with ${name}. Thanks for calling.` : "We can't text this number. You can book anytime on our website. Thanks for calling."), hangup());
+  }
+  if (i.digits === "2") {
+    await chose("hours");
+    const hours = await db.select().from(shopHours).where(eq(shopHours.shopId, shop.id));
+    return response(say(spokenHours(hours)), gather({ action: webhookUrl("voice/operator") }, say(operatorScript({ shop: name, greeting: null, open, missed, canRing: !!shop.phone }).menu)), redirect(webhookUrl("voice/operator", { none: "1" })));
+  }
+  if ((i.digits === "3" || (i.none && call.status === "ringing")) && ring) {
+    await chose("shop");
+    return response(say("Connecting you to the shop."), dial({ callerId: shop.twilioNumber, timeout: 20, action: webhookUrl("voice/dial") }, shop.phone!));
+  }
+  if (i.none) {
+    await chose("none");
+    const texted = await autoText(shop, call.phone, !open && !missed, now);
+    await updateCall(i.callSid, { autoTextSent: texted || call.autoTextSent, endedAt: now });
+    return response(say(texted ? "We've texted you a link to book. Goodbye." : "Please call back during opening hours, or book online. Goodbye."), hangup());
+  }
+  return operatorMenu(shop, { open, missed, again: true });
 }
 
 // ───────────────────────────── Automated call-in calls ─────────────────────────────
