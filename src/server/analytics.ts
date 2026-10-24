@@ -408,6 +408,8 @@ export function rawEventsCsv(f: RawExportFilter): ReadableStream<Uint8Array> {
 // ───────────────────────────── Warehouse ─────────────────────────────
 
 export const WAREHOUSE_TABLE = "rayz_analytics_events";
+/** Rows per insert: 25 columns each stays under Postgres's 65,534 bound parameters. */
+const WAREHOUSE_ROWS = 2000;
 const WAREHOUSE_DDL = `create table if not exists ${WAREHOUSE_TABLE} (
   id bigint primary key, occurred_at timestamptz not null, recorded_at timestamptz not null, business_date date not null, event text not null, category text not null,
   shop_id uuid, actor_kind text not null, actor_staff_id uuid, staff_id uuid, customer_id uuid, channel text, device text, source text, entity text not null, entity_id text,
@@ -485,7 +487,7 @@ export async function exportToWarehouse(
         reason: r.reason,
         props: wh.json(r.props as postgres.JSONValue),
       }));
-      await wh`insert into ${wh(WAREHOUSE_TABLE)} ${wh(values)} on conflict (id) do nothing`;
+      for (let i = 0; i < values.length; i += WAREHOUSE_ROWS) await wh`insert into ${wh(WAREHOUSE_TABLE)} ${wh(values.slice(i, i + WAREHOUSE_ROWS))} on conflict (id) do nothing`;
       cursor = batch[batch.length - 1].id;
       rows += batch.length;
       await db

@@ -152,7 +152,7 @@ export async function cohorts(s: ReportScope, o: Grain): Promise<Cohort[]> {
         and not exists (select 1 from appointments p where p.customer_id = a.customer_id and p.status = 'completed' and p.shop_id in ${ids(s)}
           and (p.starts_at < a.starts_at or (p.starts_at = a.starts_at and p.id < a.id)))
     )
-    select ${grp(o, sql`f.shop_id`)} shop_id, ${sgrp(o, sql`f.staff_id`)} staff_id, to_char(f.first_at at time zone ${SHOP_TZ}, 'YYYY-MM') month, count(*)::int clients,
+    select ${grp(o, sql`f.shop_id`)} shop_id, ${sgrp(o, sql`f.staff_id`)} staff_id, to_char(f.first_at at time zone ${SHOP_TZ}, 'YYYY-MM') as month, count(*)::int as clients,
       ${sql.join(
         COHORT_MONTHS.map(
           (n) => sql`count(*) filter (where exists (select 1 from appointments b where b.customer_id = f.customer_id and b.status = 'completed' and b.shop_id in ${ids(s)}
