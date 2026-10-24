@@ -354,6 +354,15 @@ Notes follow the client to every location. Domain (pure): `src/domain/client-not
 - **Squire:** a clients file's Notes become the record note (credited "Squire"); an appointments file's notes become that visit's cut note, dated the visit (`source = 'squire_visit'`, idempotent on re-import). Both come from triggers, so `importer.ts` is unchanged.
 - **Migration `core_0057_client_notes`:** the `client_notes` and `client_note_photos` tables, the redaction and sync triggers, a backfill, and the four permissions.
 
+### Company-wide clients (core)
+
+A client profile is the brand's, never a shop's: one record across every location, with visits, notes, badges, family, loyalty, gift cards, ratings, consent and cadence adding up across shops. `customers.home_shop_id` and the shops visited are reporting attributes only.
+
+- **Lookup:** `searchClients` / `findClients` in `src/server/client-search.ts` reach every client from any shop by any part the searcher may search (the client policy still decides what each hit shows). Only `ownClientsOf` (a barber's own list) narrows it, and ticket and appointment numbers still find only the searcher's shops' tickets. `searchCustomers(term, limit, reach)` in `customers.ts` lost its shop `scope` argument; `SearchScope`, `clientSearchScope`, `scopedSearchWhere` and `customerExactWhere` are gone.
+- **Shop logins and money:** a shop login (`staff.kind = 'shop'`) sees a client's visits at every shop (date, shop, barber, services) but prices, tickets and spend only for its own shop. On the web profile that's `customerStats(id, db, now, ctx.shopIds)` and the sales list filtered with `inShops`.
+- **Squire:** `reconcileSquireClients(csv, { dryRun, actor })` in `src/server/squire-reconcile.ts` runs after a clients import (the admin action and the CLI). It fills empty birthdays from the file's Birthday column, merges same name + birthday pairs where no phone or email disagrees (`mergeDuplicatePairs`), and leaves the rest on the duplicates page's Squire tab. `importer.ts` is unchanged.
+- **Merges:** `mergeCustomers` now keeps one `client_badges` row (marked stale) and drops duplicate `client_badge_notices`, so two records with cached badges merge.
+
 ## Requests for the other agent
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
@@ -386,6 +395,8 @@ Notes follow the client to every location. Domain (pure): `src/domain/client-not
 
 - (core → mobile) Client notes in the staff app: please mount the four handlers from `@/server/client-notes-api` under `/api/v1/staff` and spread `CLIENT_NOTES_OPENAPI` (with `ClientNotesSchema` and `NoteSavedSchema`) into `openapi.ts` (see the client notes log entry).
 
+- (core → mobile) Company-wide clients (see the log entry): if the staff app or `/api/v1` searches clients for staff, please call `searchClients` (or `findClients` plus `clientHits`) instead of anything shop-scoped, and on any staff client profile show other shops' visits without their prices or tickets to a shop login. Optional, in `importer.ts`: map a clients file's Birthday column (`FAMILY_ALIASES.birthday` in `src/domain/family-import.ts`) onto `customers.birthday` when it's empty. The core post-step already does this after each run, so it's only for imports that skip the admin action and the CLI.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -399,6 +410,14 @@ Notes follow the client to every location. Domain (pure): `src/domain/client-not
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 
 ## Log
+
+### 2026-10-24: core (company-wide client profiles), FYI and REQUEST for mobile
+
+- **What changed.** Client profiles are brand-level (see "Company-wide clients" above and README, "Clients (brand-wide)"). Staff at any shop find and book any client by any part of their name or details. The client list shows every shop's clients, with home shop and shops visited as columns and filters (plus a `locations_visited` report field). Client-list exports keep to the exporter's shops' clients unless they work brand-wide. Shop logins don't see other shops' prices, tickets or spend on a profile. Same full name + birthday is now a "likely" duplicate. The Squire clients import merges the same client at several Squire shops by name and birthday, with uncertain pairs left for review.
+- **FYI, API change in core:** `searchCustomers(term, limit, reach)` (no `scope` argument); `SearchScope`, `clientSearchScope`, `scopedSearchWhere` and `customerExactWhere` were removed. Nothing under `/api/v1` used them.
+- **Request:** see "Requests" (staff client search through `searchClients`; shop logins and other shops' money; optional Birthday mapping in `importer.ts`).
+- **Tests:** `tests/db/company-wide-clients.test.ts`; `tenant.test.ts`, `client-search.test.ts` and `clients.test.ts` updated for brand-wide lookup.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No migration, no new `ErrorCode`.
 
 ### 2026-10-24: core (client notes), FYI and REQUEST for mobile
 
