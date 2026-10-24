@@ -2363,6 +2363,14 @@ Devices (`device`, from the browser or app user agent):
 | `walkin.done` | Walk-in done | minutes: minutes from joining; value: quoted wait |
 | `walkin.left` | Walk-in left | minutes: minutes waited; value: quoted wait |
 
+**Checkout prompts** (`prompt`). `entity` is `checkout_prompt` and `entity_id` the prompt's id; `sale_id`, `staff_id` (the ticket's barber) and `customer_id` are set; `actor_staff_id` is who was signed in. `props` has `required`, and `skipped: true` when the ticket was paid without an answer.
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `prompt.shown` | Checkout prompt shown | quantity: times or products suggested; subtype: rebook or product |
+| `prompt.accepted` | Checkout prompt taken | amount_cents: estimate booked, or the products' price; quantity: appointments booked or products added; subtype: rebook or product |
+| `prompt.declined` | Checkout prompt declined | value: 1 when a rebook reminder was scheduled; subtype: rebook or product; reason: the reason picked (blank when none, or when paid without answering) |
+
 ---
 
 ## Booking API and the mobile app

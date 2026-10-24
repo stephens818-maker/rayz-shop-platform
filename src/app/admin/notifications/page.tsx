@@ -43,6 +43,7 @@ const KIND_LABEL: Record<string, string> = {
   shop_reply: "Shop text",
   fill_offer: "Today: open-chair offer",
   rebook_nudge: "Today: due to rebook",
+  rebook_reminder: "Rebook reminder from checkout",
   no_show_reminder: "Today: extra reminder",
   running_late: "Today: running late",
   digest: "Morning Dashboard",
@@ -52,7 +53,7 @@ const KIND_LABEL: Record<string, string> = {
   saved_report: "Custom report",
 };
 /** Jobs sent to a client: their number or email shows as the viewer may see it. */
-const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply", "fill_offer", "rebook_nudge", "no_show_reminder", "running_late", "receipt", "review_request", "marketing"]);
+const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply", "fill_offer", "rebook_nudge", "rebook_reminder", "no_show_reminder", "running_late", "receipt", "review_request", "marketing"]);
 
 export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const sp = await searchParams;

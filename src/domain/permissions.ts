@@ -449,6 +449,13 @@ export const FEATURE_PERMISSIONS = [
   },
   { key: "settings.lists", group: "Settings and data", label: "Edit client message wording, pick lists and the Morning Dashboard email", brandOnly: true },
   {
+    key: "checkout_prompts.manage",
+    group: "Settings and data",
+    label: "Set up the checkout prompts: rebook and product suggestions",
+    hint: "Turn each prompt on or off for the brand, a location, a role or a barber, make it skippable or required, and set each service's rebook interval and suggested products.",
+    brandOnly: true,
+  },
+  {
     key: "handoff.settings",
     group: "Settings and data",
     label: "Set the brand's tip presets for the customer screen",
@@ -515,6 +522,12 @@ export const REPORTS = [
     label: "Operations KPIs",
     href: "/admin/reports/operations",
     hint: "Utilization, rebooked at checkout, retention by first-visit month, client lifetime value, average ticket, retail per service ticket, revenue per chair hour, wait time, on-time starts and post-visit rating, by location and barber.",
+  },
+  {
+    key: "checkout_prompts",
+    label: "Checkout prompts",
+    href: "/admin/reports/checkout-prompts",
+    hint: "How often the rebook prompt books the next visit and the product prompt adds a product that's paid for, with the reasons clients gave, by location and barber.",
   },
   {
     key: "retention",
@@ -911,6 +924,7 @@ const TEMPLATES: RoleTemplate[] = [
           "gift_cards",
           "kpis",
           "operations",
+          "checkout_prompts",
           "retention",
           "acquisition",
           "staffing",

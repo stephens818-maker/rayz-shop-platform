@@ -35,6 +35,8 @@ export type NotificationKind =
   /** Today's suggested actions and the Morning Dashboard. */
   | "fill_offer"
   | "rebook_nudge"
+  /** The reminder to book that staff set at checkout when the client didn't book there. */
+  | "rebook_reminder"
   | "no_show_reminder"
   | "running_late"
   | "digest"

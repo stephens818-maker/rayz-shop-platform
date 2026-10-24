@@ -91,6 +91,12 @@ export const TEMPLATE_DEFS = {
     body: "{shop}: Hi {first_name}, it's been a while! Book your next cut: {book_link} Reply STOP to opt out.",
     marketing: true,
   },
+  rebook_reminder: {
+    label: "Rebook reminder (asked for at checkout)",
+    when: "A few days before the client's usual next visit, when they didn't book at checkout and staff set a reminder",
+    subject: "{shop}: time to book your next visit",
+    body: "{shop}: Hi {first_name}, you're due back with {barber} soon. Book your next visit: {book_link}",
+  },
 } satisfies Record<string, TemplateDef>;
 
 export type TemplateKind = keyof typeof TEMPLATE_DEFS;

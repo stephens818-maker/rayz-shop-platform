@@ -59,6 +59,7 @@ export const CATEGORIES = {
   assistant: "Rayz Assistant",
   call: "Phone calls",
   walkin: "Walk-in list",
+  prompt: "Checkout prompts",
 } as const;
 export type EventCategory = keyof typeof CATEGORIES;
 
@@ -409,6 +410,23 @@ export const EVENTS = {
     label: "Walk-in left",
     minutes: "minutes waited",
     value: "quoted wait",
+  },
+  "prompt.shown": {
+    label: "Checkout prompt shown",
+    quantity: "times or products suggested",
+    subtype: "rebook or product",
+  },
+  "prompt.accepted": {
+    label: "Checkout prompt taken",
+    quantity: "appointments booked or products added",
+    amount: "estimate booked, or the products' price",
+    subtype: "rebook or product",
+  },
+  "prompt.declined": {
+    label: "Checkout prompt declined",
+    value: "1 when a rebook reminder was scheduled",
+    subtype: "rebook or product",
+    reason: "the reason picked (blank when none, or when paid without answering)",
   },
 } as const satisfies Record<string, EventDef>;
 export type EventName = keyof typeof EVENTS;
