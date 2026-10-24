@@ -314,3 +314,11 @@ export async function deleteClientSearchAction(id: string) {
     revalidatePath("/admin/customers");
   });
 }
+
+/** The sidebar's client search: the same search as the client list, so barbers find only clients they've had. */
+export async function quickFindClientsAction(q: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    return searchClients(ctx, q, { via: "header", limit: 6, ownClientsOf: can(ctx, "clients.view_all") ? undefined : ctx.staff.id });
+  });
+}

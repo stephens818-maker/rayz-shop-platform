@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
-import { startCheckoutAction } from "../calendar/actions";
+import { ClientHitRow } from "@/components/client-hit";
+import type { ClientHit } from "@/domain/client-search";
+import { searchCustomersAction, startCheckoutAction } from "../calendar/actions";
 import { notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
 
 type Barber = { id: string; label: string; color: string; state: "free" | "busy" | "off"; note: string; until: string | null; untilKind: "busy" | "next" | null };
@@ -26,6 +28,16 @@ export function WalkIns({
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [picked, setPicked] = useState<ClientHit | null>(null);
+  const [found, setFound] = useState<ClientHit[]>([]);
+  useEffect(() => {
+    if (picked || name.trim().length < 2) return setFound([]);
+    const t = setTimeout(async () => {
+      const r = await searchCustomersAction(name, "walk_in");
+      if (r.ok) setFound(r.data);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [name, picked]);
   const [serviceId, setServiceId] = useState(services[0]?.id ?? "");
   const [pref, setPref] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,17 +79,39 @@ export function WalkIns({
             onSubmit={(e) => {
               e.preventDefault();
               run(
-                () => walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref }),
+                () => walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: picked?.id ?? null }),
                 (d) => {
                   setResult(d);
                   setName("");
                   setPhone("");
+                  setPicked(null);
                 },
               );
             }}
           >
-            <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus className="h-11 text-base" />
-            {canAddPhone && <Input placeholder="Mobile (optional, for text when ready)" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />}
+            {picked ? (
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-sm ring-1 ring-zinc-200" data-testid="walk-in-client">
+                <ClientHitRow hit={picked} />
+                <button type="button" className="shrink-0 text-xs underline" onClick={() => setPicked(null)}>
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <Input placeholder="Name, or search phone, card, ticket #…" value={name} onChange={(e) => setName(e.target.value)} required autoFocus className="h-11 text-base" />
+                {found.length > 0 && (
+                  <div className="absolute inset-x-0 z-10 mt-1 divide-y divide-zinc-100 rounded-lg bg-white shadow-lg ring-1 ring-zinc-200">
+                    <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">Returning client?</div>
+                    {found.map((f) => (
+                      <button type="button" key={f.id} onClick={() => (setPicked(f), setFound([]))} className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50">
+                        <ClientHitRow hit={f} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {canAddPhone && !picked && <Input placeholder="Mobile (optional, for text when ready)" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />}
             <div className="grid grid-cols-2 gap-2">
               {top.map((s) => (
                 <button

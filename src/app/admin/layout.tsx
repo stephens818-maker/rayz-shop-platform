@@ -5,6 +5,7 @@ import { navFor } from "@/domain/navigation";
 import { requireStaff } from "@/server/auth/staff";
 import { logout } from "../login/actions";
 import { BfcacheGuard } from "./bfcache-guard";
+import { ClientQuickSearch } from "./client-quick-search";
 import { AdminNav, BackToBrand, ShopSwitcher } from "./nav";
 
 export const metadata: Metadata = { title: { default: "Admin", template: "%s · Ray'z Admin" } };
@@ -36,6 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             )}
           </div>
         </div>
+        {ctx.staff.kind !== "shop" && <ClientQuickSearch />}
         <AdminNav sections={navFor(ctx.permissions)} />
         <div className="hidden border-t border-white/10 px-4 py-3 text-xs lg:block">
           <div className="font-medium text-white">{ctx.staff.displayLabel}</div>

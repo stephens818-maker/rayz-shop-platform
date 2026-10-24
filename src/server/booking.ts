@@ -643,12 +643,16 @@ export async function quickWalkIn(input: {
   serviceId: string;
   name: string;
   phone?: string | null;
+  /** A client found at check-in; otherwise the name and phone find or create one. */
+  customerId?: string | null;
   preferredStaffId?: string | null;
   actor: Actor;
   now?: Date;
 }) {
   const now = input.now ?? new Date();
   const start = new Date(Math.ceil(now.getTime() / 60_000) * 60_000);
+  const known = input.customerId ? await db.query.customers.findFirst({ where: eq(customers.id, input.customerId) }) : null;
+  if (input.customerId && !known) throw notFound("Customer");
   const shop = await getShop(input.shopId);
   if (closedOn(shop, localDateOf(now))) throw new AppError("conflict", shop.status === "archived" ? "This location has closed" : "The shop is closed today");
   const [service] = await servicesByIds(shop.id, [input.serviceId]);
@@ -657,7 +661,7 @@ export async function quickWalkIn(input: {
   const plans = toStaffPlans(await bookingPlans(shop, candidates.map((c) => c.id), [service]));
   const day = await loadDayInput(shop, localDateOf(now), { durationMin: service.durationMin, staffIds: candidates.map((c) => c.id), plans, now, staffOverride: true });
   const free = candidates.map((c) => c.id).filter((id) => isSlotFree(day, id, start.getTime()));
-  const [firstName, ...rest] = input.name.trim().split(/\s+/);
+  const [firstName, ...rest] = (known ? `${known.firstName} ${known.lastName ?? ""}` : input.name).trim().split(/\s+/);
   if (!firstName) throw new AppError("bad_request", "Add the client's name");
   const customer = { firstName, lastName: rest.join(" ") || null, phone: input.phone || null };
 
@@ -668,7 +672,7 @@ export async function quickWalkIn(input: {
       serviceId: service.id,
       barberRef: staffId,
       startsAt: start,
-      customer,
+      ...(known ? { customerId: known.id } : { customer }),
       allowNoContact: true,
       source: "walk_in",
       actor: input.actor,
@@ -679,14 +683,14 @@ export async function quickWalkIn(input: {
   }
 
   const wait = await estimateWait(shop.id, candidates.map((c) => c.id), now);
-  const client = await db.transaction((tx) => findOrCreateCustomer(customer, shop.id, tx, { allowNoContact: true, smsOptInIfNew: true }));
+  const client = known ?? (await db.transaction((tx) => findOrCreateCustomer(customer, shop.id, tx, { allowNoContact: true, smsOptInIfNew: true })));
   const [entry] = await db
     .insert(waitlistEntries)
     .values({
       shopId: shop.id,
       customerId: client.id,
-      name: input.name.trim(),
-      phone: normalizePhone(input.phone),
+      name: known ? `${known.firstName} ${known.lastName ?? ""}`.trim() : input.name.trim(),
+      phone: known ? known.phone : normalizePhone(input.phone),
       serviceId: service.id,
       preferredStaffId: input.preferredStaffId ?? null,
       quotedWaitMin: wait,

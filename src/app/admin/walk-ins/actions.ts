@@ -1,5 +1,6 @@
 "use server";
 
+import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
@@ -13,12 +14,13 @@ import { AppError, notFound } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
 import { requireInTenant } from "@/server/tenant";
 
-export async function walkInAction(input: { shopId: string; serviceId: string; name: string; phone: string; preferredStaffId: string | null }) {
+export async function walkInAction(input: { shopId: string; serviceId: string; name: string; phone: string; preferredStaffId: string | null; customerId?: string | null }) {
   return safe(async () => {
     const ctx = await authorize("walkins.manage");
     assertShopAccess(ctx, input.shopId);
-    assertCanEnter(await clientPolicy(ctx), { phone: input.phone });
-    const r = await quickWalkIn({ ...input, phone: input.phone || null, actor: ctx.actor });
+    const customerId = input.customerId ? z.uuid().parse(input.customerId) : null;
+    if (!customerId) assertCanEnter(await clientPolicy(ctx), { phone: input.phone });
+    const r = await quickWalkIn({ ...input, customerId, phone: customerId ? null : input.phone || null, actor: ctx.actor });
     revalidatePath("/admin/walk-ins");
     revalidatePath("/admin/calendar");
     return r.seated
