@@ -1,18 +1,21 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { shops, staff } from "@/db/schema";
 import { BLOCK_MESSAGE } from "@/domain/network-access";
+import { twoFactorStep } from "@/domain/users";
 import { clientIp } from "@/lib/client-ip";
+import { open } from "@/lib/secret-box";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
 import { DEVICE_REQUEST_COOKIE, TRUSTED_DEVICE_COOKIE } from "@/server/auth/cookies";
 import { DEVICE_TTL, approvedShopIds, deviceCookieValue, deviceTicket, devicesFromCookie, evaluateNetwork, readDeviceTicket, recordBlocked } from "@/server/auth/network";
 import { endSession, startSession, verifyPassword } from "@/server/auth/staff";
+import { TwoFactorPrompt, checkTotp, enrollTotp, readTwoFactorTicket, repeatPrompt, twoFactorPrompt } from "@/server/auth/two-factor";
 import { forbidden } from "@/server/errors";
 import { requestDevice } from "@/server/sign-in-security";
 
@@ -20,15 +23,40 @@ export interface LoginState {
   error: string;
   /** The sign-in was blocked by a location's rule; these shops would take an approved device. */
   blocked?: { deviceShops: { id: string; name: string }[] };
+  /** The password was right; now an authenticator code, or setting one up. */
+  twoFactor?: TwoFactorPrompt;
 }
 
 const cookieOpts = (maxAge: number, path = "/") => ({ httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path, maxAge });
 
+/** The person a password-checked ticket is for, once their code is right; or the state to show instead. */
+async function secondStep(ticket: string, code: string): Promise<{ user: typeof staff.$inferSelect } | LoginState> {
+  const t = await readTwoFactorTicket(ticket);
+  if (!t) return { error: "That took too long. Sign in again." };
+  const user = await db.query.staff.findFirst({ where: and(eq(staff.id, t.sub), eq(staff.active, true), isNull(staff.removedAt)) });
+  if (!user?.passwordHash) return { error: "Email or password is incorrect" };
+  const secret = t.es ? open(t.es) : null;
+  if (t.es && !secret) return { error: "Sign in again" };
+  const r = secret ? await enrollTotp(user.id, secret, code) : await checkTotp(user.id, code);
+  if (!r.ok) return { error: r.error, twoFactor: await repeatPrompt(ticket, t, user.email) };
+  if (secret) await audit({ staffId: user.id, label: user.displayLabel }, "user.two_factor_setup", "staff", user.id, { via: "sign_in" }, null);
+  return { user };
+}
+
 export async function login(_prev: LoginState | null, form: FormData): Promise<LoginState | null> {
-  const email = String(form.get("email") ?? "");
-  const password = String(form.get("password") ?? "");
-  const user = await verifyPassword(email, password);
-  if (!user) return { error: "Email or password is incorrect" };
+  const ticket = String(form.get("ticket") ?? "");
+  let user: typeof staff.$inferSelect;
+  if (ticket) {
+    const r = await secondStep(ticket, String(form.get("code") ?? ""));
+    if (!("user" in r)) return r;
+    user = r.user;
+  } else {
+    const found = await verifyPassword(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
+    if (!found) return { error: "Email or password is incorrect" };
+    const step = twoFactorStep(found);
+    if (step) return { error: "", twoFactor: await twoFactorPrompt(found, step) };
+    user = found;
+  }
   const access = await loadStaffAccess(user.id);
   if (!access) return { error: "Email or password is incorrect" };
   const h = await headers();
@@ -55,7 +83,7 @@ export async function login(_prev: LoginState | null, form: FormData): Promise<L
   }
   await startSession(user.id);
   await db.update(staff).set({ lastSignInAt: new Date() }).where(eq(staff.id, user.id));
-  await audit({ staffId: user.id, label: `${access.role.name}:${user.displayLabel}` }, "staff.login", "staff", user.id, { ip }, access.scope === "all" ? null : (access.shopIds[0] ?? null));
+  await audit({ staffId: user.id, label: `${access.role.name}:${user.displayLabel}` }, "staff.login", "staff", user.id, { ip, ...(ticket ? { twoStep: true } : {}) }, access.scope === "all" ? null : (access.shopIds[0] ?? null));
   const next = String(form.get("next") ?? "");
   redirect(next.startsWith("/admin") ? next : access.permissions.has("sales.view") ? "/admin" : "/admin/calendar");
 }

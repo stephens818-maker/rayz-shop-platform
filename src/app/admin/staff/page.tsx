@@ -23,7 +23,7 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
   const roleOf = new Map(all.map((r) => [r.s.id, r.role]));
   const people = all
     .map((r) => r.s)
-    .filter((s) => s.kind === "person" && (visible.has(s.id) || (ctx.brandWide && !ctx.currentShopId)) && (sp.inactive || s.active));
+    .filter((s) => s.kind === "person" && !s.removedAt && (visible.has(s.id) || (ctx.brandWide && !ctx.currentShopId)) && (sp.inactive || s.active));
   const scheds = people.length
     ? await db
         .select()

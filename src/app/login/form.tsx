@@ -4,6 +4,7 @@ import { useActionState, useRef, useState, useTransition } from "react";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
 import { BLOCK_MESSAGE } from "@/domain/network-access";
 import { login, requestDeviceAction, type LoginState } from "./actions";
+import type { TwoFactorPrompt } from "@/server/auth/two-factor";
 
 type Blocked = NonNullable<LoginState["blocked"]>;
 
@@ -61,6 +62,38 @@ export interface DemoLogin {
   sees: string;
 }
 
+function CodeStep({ prompt, next, error, action, pending }: { prompt: TwoFactorPrompt; next: string; error: string; action: (f: FormData) => void; pending: boolean }) {
+  return (
+    <form action={action} className="mt-5 space-y-4">
+      <input type="hidden" name="next" value={next} />
+      <input type="hidden" name="ticket" value={prompt.ticket} />
+      {prompt.enroll ? (
+        <div className="space-y-3 text-sm text-zinc-700">
+          <p className="font-medium text-zinc-900">Your account needs two-step sign-in. Set it up now.</p>
+          <p>Scan this with an authenticator app (Google Authenticator, Microsoft Authenticator, 1Password and the like), then enter the 6-digit code it shows.</p>
+          {/* eslint-disable-next-line @next/next/no-img-element -- a generated data URL, not a static asset */}
+          <img src={prompt.enroll.qr} alt="QR code for your authenticator app" width={192} height={192} className="rounded-lg ring-1 ring-zinc-200" />
+          <p className="text-xs text-zinc-500">
+            Can&apos;t scan it? Enter this key instead: <code className="select-all rounded bg-zinc-100 px-1 py-0.5 font-mono">{prompt.enroll.secret}</code>
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-zinc-700">Enter the 6-digit code from your authenticator app.</p>
+      )}
+      <Field label="Code">
+        <Input name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9 ]{6,7}" maxLength={7} required autoFocus />
+      </Field>
+      {error && <Notice tone="red">{error}</Notice>}
+      <Button type="submit" className="w-full" disabled={pending}>
+        {pending ? "Checking…" : prompt.enroll ? "Turn on and sign in" : "Sign in"}
+      </Button>
+      <a href="/login" className="block text-center text-xs text-zinc-500 underline">
+        Start over
+      </a>
+    </form>
+  );
+}
+
 export function LoginForm({ next, blocked, demo }: { next: string; blocked?: Blocked; demo?: { password: string | null; logins: DemoLogin[] } }) {
   const [state, action, pending] = useActionState(login, null);
   const shownBlock = state?.blocked ?? (state ? undefined : blocked);
@@ -73,6 +106,7 @@ export function LoginForm({ next, blocked, demo }: { next: string; blocked?: Blo
     password.value = demo!.password;
     f.requestSubmit();
   };
+  if (state?.twoFactor) return <CodeStep key={state.twoFactor.ticket} prompt={state.twoFactor} next={next} error={state.error} action={action} pending={pending} />;
   return (
     <>
       {shownBlock && (

@@ -14,8 +14,9 @@ function secret(): Uint8Array {
  * otp_select: proof that the bearer just verified a code for one phone/email, used to pick or create a profile.
  * trusted_device: a browser's device secret. device_request: a blocked sign-in that may ask for device approval.
  * handoff: this browser is handed to a client for one ticket.
+ * login_2fa: a correct password waiting for its authenticator code (or for setting one up).
  */
-export type TokenType = "staff_session" | "customer_access" | "otp_select" | "trusted_device" | "device_request" | "handoff";
+export type TokenType = "staff_session" | "customer_access" | "otp_select" | "trusted_device" | "device_request" | "handoff" | "login_2fa";
 
 export async function signToken(payload: Record<string, unknown>, typ: TokenType, ttlSeconds: number): Promise<string> {
   return new SignJWT({ ...payload, typ })

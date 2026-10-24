@@ -54,7 +54,9 @@ export type NotificationKind =
   /** Campaign Center: an automated campaign or a blast, only to clients who agreed to marketing on that channel. */
   | "marketing"
   /** A scheduled custom report, to a staff member; its file is dropped from the outbox once sent. */
-  | "saved_report";
+  | "saved_report"
+  /** An invite to the brand portal; the outbox keeps it without the sign-up link. */
+  | "staff_invite";
 
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
 const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);

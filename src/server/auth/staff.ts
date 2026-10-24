@@ -1,6 +1,6 @@
 import "server-only";
 import bcrypt from "bcryptjs";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
@@ -47,7 +47,7 @@ export interface StaffContext {
 }
 
 export async function verifyPassword(email: string, password: string) {
-  const row = await db.query.staff.findFirst({ where: and(eq(staff.email, email.trim().toLowerCase()), eq(staff.active, true)) });
+  const row = await db.query.staff.findFirst({ where: and(eq(staff.email, email.trim().toLowerCase()), eq(staff.active, true), isNull(staff.removedAt)) });
   if (!row?.passwordHash) return null;
   return (await bcrypt.compare(password, row.passwordHash)) ? row : null;
 }

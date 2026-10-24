@@ -1,17 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { asc } from "drizzle-orm";
 import { db } from "@/db";
-import { roles, shops } from "@/db/schema";
-import { Notice, PageHeader } from "@/components/ui";
-import { CONTACT_GRANT_LABEL, ContactGrantKind } from "@/domain/contact-grants";
-import { cleanOverrides, staffEditDenied } from "@/domain/permissions";
+import { PageHeader } from "@/components/ui";
 import { seesStaffContact, staffContact } from "@/domain/staff-contact";
-import { accessState, loadStaffAccess, workShopIds } from "@/server/auth/access";
-import { guardPage, staffGrantor } from "@/server/auth/staff";
-import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
-import { PersonAccessEditor } from "./person-editor";
+import { loadStaffAccess } from "@/server/auth/access";
+import { guardPage } from "@/server/auth/staff";
+import { inTenant } from "@/server/tenant";
+import { PersonAccessSection } from "./access-section";
 
 export const metadata: Metadata = { title: "Access" };
 
@@ -21,25 +17,7 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
   if (!(await inTenant(ctx, "staff", id))) notFound();
   const target = await loadStaffAccess(id);
   if (!target) notFound();
-  const works = await workShopIds(id);
   const person = (await db.query.staff.findFirst({ where: (s, { eq }) => eq(s.id, id) }))!;
-  const [roleRows, allShops] = await Promise.all([db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)), db
-      .select({ id: shops.id, name: shops.name, status: shops.status })
-      .from(shops)
-      .orderBy(asc(shops.name))
-      .then((rows) => rows.map((r) => ({ id: r.id, name: r.status === "archived" ? `${r.name} (archived)` : r.name }))),
-  ]);
-  const g = staffGrantor(ctx);
-  const readOnly =
-    id === ctx.staff.id
-      ? "You can't change your own access. Ask another admin."
-      : (staffEditDenied(g, { ...accessState(target), workShopIds: works }) ?? (target.isOwner && !ctx.isOwner ? "Only the Brand Owner can change a Brand Owner's access" : null));
-
-  const shopName = (sid: string) => allShops.find((s) => s.id === sid)?.name ?? OTHER_SHOP;
-  const contactAccess = [
-    ...[...target.grants.everywhere].map((k) => ({ k, where: "everywhere" })),
-    ...[...target.grants.byShop].flatMap(([sid, ks]) => [...ks].filter((k) => !target.grants.everywhere.has(k)).map((k) => ({ k, where: `at ${shopName(sid)}` }))),
-  ] as { k: ContactGrantKind; where: string }[];
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -54,41 +32,19 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
             <Link className="underline" href={`/admin/staff/${id}`}>
               Staff profile
             </Link>{" "}
+            {person.kind === "person" && (
+              <>
+                ·{" "}
+                <Link className="underline" href={`/admin/users/${id}`}>
+                  Sign-in and account
+                </Link>{" "}
+              </>
+            )}
             · {staffContact(seesStaffContact({ permissions: ctx.permissions, staffId: ctx.staff.id }, id), person).email ?? "no login"}
           </>
         }
       />
-      {contactAccess.length > 0 && (
-        <div className="mb-4">
-          <Notice tone="blue">
-            Contact access from the brand: {contactAccess.map((c) => `${CONTACT_GRANT_LABEL[c.k].toLowerCase()} ${c.where}`).join("; ")}. It&apos;s managed under{" "}
-            <Link className="underline" href="/admin/client-data/contact-access">
-              Contact access
-            </Link>
-            , not here.
-          </Notice>
-        </div>
-      )}
-      <PersonAccessEditor
-        staffId={id}
-        initial={{
-          roleId: target.role.id,
-          overrides: cleanOverrides(person.permissionOverrides),
-          maxDiscountPct: person.maxDiscountPct,
-          scope: target.scope,
-          shopIds: target.scope === "all" ? [] : target.shopIds,
-          shopRoles: target.shopRoles,
-        }}
-        roles={roleRows.map((r) => ({ id: r.id, key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope, brandLevel: r.brandLevel }))}
-        shops={ctx.brandWide ? allShops : allShops.filter((s) => hasShop(ctx, s.id))}
-        worksAt={[...new Set(allShops.filter((s) => works.includes(s.id)).map((s) => (ctx.brandWide || hasShop(ctx, s.id) ? s.name : OTHER_SHOP)))]}
-        mine={[...g.permissions]}
-        myMaxDiscount={ctx.maxDiscountPct}
-        iAmOwner={ctx.isOwner}
-        iAmBrandWide={ctx.brandWide}
-        readOnly={readOnly}
-        kind={person.kind}
-      />
+      <PersonAccessSection ctx={ctx} target={target} />
     </div>
   );
 }

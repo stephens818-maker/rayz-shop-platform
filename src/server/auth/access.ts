@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { clientContactGrants, roles, shops, staff, staffAccessShops, staffShops, type ShopStatus } from "@/db/schema";
 import { ContactGrant, HeldGrants, heldGrants, kindsAt, withGrantKinds } from "@/domain/contact-grants";
@@ -169,12 +169,13 @@ export async function roleByKey(key: string, tx: DBorTx = db) {
   return r;
 }
 
+/** Brand Owners who can sign in: active, signed up and not removed. */
 export async function activeOwnerCount(tx: DBorTx = db) {
   const rows = await tx
     .select({ id: staff.id })
     .from(staff)
     .innerJoin(roles, eq(roles.id, staff.roleId))
-    .where(and(eq(roles.key, "brand_owner"), eq(staff.active, true)));
+    .where(and(eq(roles.key, "brand_owner"), eq(staff.active, true), isNotNull(staff.passwordHash), isNull(staff.removedAt)));
   return rows.length;
 }
 

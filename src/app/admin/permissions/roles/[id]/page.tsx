@@ -66,7 +66,7 @@ export default async function RolePage({ params }: { params: Promise<{ id: strin
                 .map((r) => ({ name: r.name, permissions: [...effectiveAccess(r).permissions], maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope }))
             : []
         }
-        mine={[...ctx.permissions]}
+        mine={[...g.permissions]}
         isOwner={ctx.isOwner}
         myMaxDiscount={ctx.maxDiscountPct}
         people={n}

@@ -38,6 +38,8 @@ export const PAGE_ACCESS = {
   "/admin/tips/settings": ["tips.settings"],
   "/admin/staff": ["staff.manage", "schedules.edit"],
   "/admin/staff/[id]": ["staff.manage", "schedules.edit"],
+  "/admin/users": ["permissions.manage"],
+  "/admin/users/[id]": ["permissions.manage"],
   "/admin/permissions": ["permissions.manage"],
   "/admin/permissions/roles/[id]": ["permissions.manage"],
   "/admin/permissions/people/[id]": ["permissions.manage"],
@@ -181,6 +183,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     title: "Setup",
     items: [
       { href: "/admin/staff", label: "Staff & schedules" },
+      { href: "/admin/users", label: "Users" },
       { href: "/admin/permissions", label: "Permissions" },
       { href: "/admin/client-data", label: "Client data protection" },
       { href: "/admin/client-data/contact-access", label: "Contact access" },
