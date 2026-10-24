@@ -73,19 +73,19 @@ afterAll(async () => {
 });
 
 describe("tools follow the person's permissions", () => {
-  it("offers a barber only their own reports, no client lists and no drafts", async () => {
+  it("offers a barber only their own reports and client notes, no client lists and no drafts", async () => {
     const makenna = await ctxOf("makenna");
     const set = await tools.toolsFor(makenna, (await assistant.loadAssistantSettings()));
-    expect(set.map((t) => t.name).sort()).toEqual(["help", "run_report"]);
+    expect(set.map((t) => t.name).sort()).toEqual(["client_notes", "help", "run_report"]);
     const reportEnum = (set[0].spec.parameters as { properties: { report: { enum: string[] } } }).properties.report.enum;
     expect(reportEnum.sort()).toEqual(["my_sales", "service_times"]);
   });
 
   it("offers a manager client lists and purchase orders but not blasts, and the brand admin everything", async () => {
     const s = await assistant.loadAssistantSettings();
-    expect((await tools.toolsFor(await ctxOf("michelle"), s)).map((t) => t.name).sort()).toEqual(["customer_report", "draft_po", "help", "run_report"]);
-    expect((await tools.toolsFor(await ctxOf("admin"), s)).map((t) => t.name).sort()).toEqual(["customer_report", "draft_blast", "draft_po", "help", "run_report"]);
-    expect((await tools.toolsFor(await ctxOf("admin"), { ...s, actions: false })).map((t) => t.name).sort()).toEqual(["customer_report", "help", "run_report"]);
+    expect((await tools.toolsFor(await ctxOf("michelle"), s)).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "draft_po", "help", "run_report"]);
+    expect((await tools.toolsFor(await ctxOf("admin"), s)).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "draft_blast", "draft_po", "help", "run_report"]);
+    expect((await tools.toolsFor(await ctxOf("admin"), { ...s, actions: false })).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "help", "run_report"]);
   });
 
   it("never offers the audit log, client ratings or reports the person can't view", async () => {
