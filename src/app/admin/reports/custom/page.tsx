@@ -29,7 +29,7 @@ function List({ title, subtitle, items, build }: { title: string; subtitle: stri
         <tbody>
           {items.map((r) => (
             <tr key={r.id} className="align-top">
-              <Td>
+              <Td className="min-w-56 whitespace-normal!">
                 <Link href={`/admin/reports/custom/${r.id}`} className="font-medium hover:underline">
                   {r.name}
                 </Link>
@@ -38,11 +38,11 @@ function List({ title, subtitle, items, build }: { title: string; subtitle: stri
                   {r.description ? ` · ${r.description}` : ""}
                 </div>
               </Td>
-              <Td className="text-xs">
+              <Td className="whitespace-normal! text-xs">
                 <Badge tone={r.visibility === "template" ? "violet" : r.visibility === "roles" ? "blue" : "gray"}>{r.visibility === "roles" ? "Roles" : r.visibility === "template" ? "Template" : "Only me"}</Badge>
                 {r.roles.length > 0 && <div className="mt-1 text-zinc-500">{r.roles.join(", ")}</div>}
               </Td>
-              <Td className="text-xs text-zinc-600">
+              <Td className="min-w-40 whitespace-normal! text-xs text-zinc-600">
                 {r.schedule ?? "—"}
                 {r.morning && <div className="text-zinc-500">In the Morning Dashboard</div>}
               </Td>
