@@ -183,6 +183,39 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     }
 
     await repoint("accessLog", tx.update(clientAccessLog).set({ customerId: keepId }).where(eq(clientAccessLog.customerId, dropId)).returning({ id: clientAccessLog.id }));
+
+    // Tags both had stay once; a photo moves only when the kept record has none.
+    await tx.execute(sql`delete from customer_tags d where d.customer_id = ${dropId} and exists (select 1 from customer_tags k where k.customer_id = ${keepId} and k.tag = d.tag)`);
+    await tx.execute(sql`delete from client_photos where customer_id = ${dropId} and exists (select 1 from client_photos where customer_id = ${keepId})`);
+    await tx.execute(sql`update customers set referred_by_id = ${keepId} where referred_by_id = ${dropId} and id <> ${keepId}`);
+    // Everything else that points at a client, found in the catalog so a table added later (the
+    // customer app's too) moves with the merge instead of being deleted with the dropped record.
+    // A new table with a unique key on the client fails the merge rather than losing rows.
+    const fks = (await tx.execute(sql`
+      select c.conrelid::regclass::text tbl, a.attname col from pg_constraint c
+      join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey)
+      where c.contype = 'f' and c.confrelid = 'customers'::regclass`)) as unknown as { tbl: string; col: string }[];
+    const done = new Set([
+      "appointments.customer_id",
+      "sales.customer_id",
+      "gift_cards.customer_id",
+      "waitlist_entries.customer_id",
+      "notification_jobs.customer_id",
+      "loyalty_rewards.customer_id",
+      "loyalty_ledger.customer_id",
+      "refresh_tokens.customer_id",
+      "customer_squire_ids.customer_id",
+      "client_ratings.customer_id",
+      "loyalty_accounts.customer_id",
+      "customers.referred_by_id",
+      "customer_duplicate_dismissals.a_id",
+      "customer_duplicate_dismissals.b_id",
+    ]);
+    for (const { tbl, col } of fks) {
+      if (done.has(`${tbl}.${col}`) || !/^[a-z_][a-z0-9_]*$/.test(tbl)) continue;
+      const rows = (await tx.execute(sql`update ${sql.identifier(tbl)} set ${sql.identifier(col)} = ${keepId} where ${sql.identifier(col)} = ${dropId} returning 1`)) as unknown as unknown[];
+      if (rows.length) moved[tbl.replace(/_(\w)/g, (_, ch: string) => ch.toUpperCase())] = rows.length;
+    }
     const patch = {
       lastName: keep.lastName ?? drop.lastName,
       phone: keep.phone ?? drop.phone,
@@ -195,6 +228,9 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
       emailOptIn: keep.emailOptIn && drop.emailOptIn,
       homeShopId: keep.homeShopId ?? drop.homeShopId,
       preferredStaffId: keep.preferredStaffId ?? drop.preferredStaffId,
+      nickname: keep.nickname ?? drop.nickname,
+      source: keep.source ?? drop.source,
+      referredById: [keep.referredById, drop.referredById].find((r) => r && r !== keepId && r !== dropId) ?? null,
       createdAt: keep.createdAt < drop.createdAt ? keep.createdAt : drop.createdAt,
     };
     await tx.delete(customers).where(eq(customers.id, dropId));
