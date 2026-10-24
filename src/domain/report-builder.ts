@@ -246,6 +246,17 @@ export function definitionProblem(def: ReportDefinition, sees: PanelSees, custom
 
 export const parseDefinition = (raw: unknown) => ReportDefinition.safeParse(raw);
 
+/** A definition in a link (base64url JSON), for "Open in the report builder". */
+export const encodeDefinition = (def: ReportDefinition) => Buffer.from(JSON.stringify(def), "utf8").toString("base64url");
+export function decodeDefinition(s: string): ReportDefinition | null {
+  try {
+    const r = ReportDefinition.safeParse(JSON.parse(Buffer.from(s, "base64url").toString("utf8")));
+    return r.success ? r.data : null;
+  } catch {
+    return null;
+  }
+}
+
 // ───────────────────────────── Results ─────────────────────────────
 
 export type Cell = string | number | boolean | string[] | null;

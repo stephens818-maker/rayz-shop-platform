@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/ui";
-import { DEFAULT_CUSTOMER_REPORT } from "@/domain/report-builder";
+import { DEFAULT_CUSTOMER_REPORT, decodeDefinition } from "@/domain/report-builder";
 import { guardPage } from "@/server/auth/staff";
 import { ReportBuilder } from "../builder";
 import { builderOptions } from "../data";
@@ -9,8 +9,10 @@ import { builderOptions } from "../data";
 export const metadata: Metadata = { title: "New custom report" };
 export const dynamic = "force-dynamic";
 
-export default async function NewCustomReportPage() {
+/** `d` starts the builder from a definition, as Rayz Assistant links it; it's checked like any other when it runs or saves. */
+export default async function NewCustomReportPage({ searchParams }: { searchParams: Promise<{ d?: string }> }) {
   const ctx = await guardPage("/admin/reports/custom/new");
+  const sp = await searchParams;
   const options = await builderOptions(ctx);
   return (
     <div className="mx-auto max-w-7xl space-y-4">
@@ -25,7 +27,7 @@ export default async function NewCustomReportPage() {
           </>
         }
       />
-      <ReportBuilder o={options} saved={null} initial={DEFAULT_CUSTOMER_REPORT} />
+      <ReportBuilder o={options} saved={null} initial={(sp.d && decodeDefinition(sp.d)) || DEFAULT_CUSTOMER_REPORT} />
     </div>
   );
 }
