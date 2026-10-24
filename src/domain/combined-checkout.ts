@@ -26,6 +26,8 @@ export interface SplitTenderPart {
   baseCents: number;
   tipCents: number;
   feeCents: number;
+  /** What the surcharge rate was applied to; 0 without one. */
+  feeBasisCents: number;
   /** baseCents + feeCents: what's charged to the card, or taken in cash. */
   chargeCents: number;
 }
@@ -33,6 +35,7 @@ export interface SplitTenderPart {
 export interface SplitTenderPlan {
   parts: SplitTenderPart[];
   cardFeeCents: number;
+  cardFeeBaseCents: number;
   chargeCents: number;
 }
 
@@ -66,10 +69,12 @@ export function planSplitTenders(o: { tipCents: number; cardFee: CardFeeConfig; 
   }
   const parts = o.tenders.map((t): SplitTenderPart => {
     const tipCents = tipOf.get(t.key) ?? 0;
-    const feeCents = t.method === "card" ? cardFeeFor(o.cardFee, t.funding ?? null, { chargeCents: t.amountCents, tipCents }).feeCents : 0;
-    return { key: t.key, method: t.method, baseCents: t.amountCents, tipCents, feeCents, chargeCents: t.amountCents + feeCents };
+    const fee = t.method === "card" ? cardFeeFor(o.cardFee, t.funding ?? null, { chargeCents: t.amountCents, tipCents }) : null;
+    const feeCents = fee?.feeCents ?? 0;
+    return { key: t.key, method: t.method, baseCents: t.amountCents, tipCents, feeCents, feeBasisCents: fee?.reason === "applies" ? fee.basisCents : 0, chargeCents: t.amountCents + feeCents };
   });
-  return { parts, cardFeeCents: parts.reduce((a, p) => a + p.feeCents, 0), chargeCents: parts.reduce((a, p) => a + p.chargeCents, 0) };
+  const sum = (f: (p: SplitTenderPart) => number) => parts.reduce((a, p) => a + f(p), 0);
+  return { parts, cardFeeCents: sum((p) => p.feeCents), cardFeeBaseCents: sum((p) => p.feeBasisCents), chargeCents: sum((p) => p.chargeCents) };
 }
 
 /** Evenly by number of payers, the remainder on the first ones: the "split evenly" button. */

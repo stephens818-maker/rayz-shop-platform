@@ -25,7 +25,7 @@ import { getShop } from "./catalog";
 import { openBlankSale, openSaleForAppointment } from "./checkout";
 import { AppError, notFound } from "./errors";
 import { householdHead, householdIds, loadFamilySettings } from "./family";
-import { addAppointmentToTicket, familyTicketFor } from "./family-ticket";
+import { familyTicketFor } from "./family-ticket";
 import { moveReminders, scheduleAppointmentNotifications } from "./notifications/queue";
 
 /**
@@ -574,21 +574,7 @@ async function openTicketOf(appointmentId: string) {
  * A ticket one of them already has open becomes the group's ticket.
  */
 export async function openGroupTicket(groupId: string, actor: Actor): Promise<string> {
-  const g = await groupById(groupId);
-  const live = (await membersOf(g.id)).filter((m) => isActive(m.status));
-  if (!live.length) throw new AppError("conflict", "Nobody in this booking is still booked");
-  let saleId: string | null = null;
-  for (const m of live) {
-    const t = await openTicketOf(m.id);
-    if (t?.status === "open") {
-      saleId = t.id;
-      break;
-    }
-  }
-  if (!saleId) saleId = (await openSaleForAppointment((live.find((m) => m.customerId === g.guardianId) ?? live[0]).id, actor)).id;
-  for (const m of live) if (!(await openTicketOf(m.id))) await addAppointmentToTicket(saleId, m.id, actor);
-  await audit(actor, "booking_group.ticket", "booking_group", g.id, { saleId, people: live.length, split: false }, g.shopId);
-  return saleId;
+  return (await import("./combined-checkout")).sendGroupToCheckout(groupId, actor, { ready: false });
 }
 
 /** A ticket each: everyone pays for their own, with their own barber's tip. */

@@ -33,8 +33,10 @@ import {
   TaxCategory,
   TaxRates,
   computeCheckout,
+  feeLabel,
   manualDiscountProblem,
 } from "@/domain/checkout";
+import { StaffTip, cleanPayerLabel, perBarberTipProblem, planSplitTenders, splitTenderProblem } from "@/domain/combined-checkout";
 import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
 import { giftCardCode } from "@/lib/ids";
 import { formatCents } from "@/lib/money";
@@ -47,7 +49,7 @@ import { heldCoupons, redeemCoupons, resolveCoupon } from "./coupons";
 import { AppError, forbidden, notFound } from "./errors";
 import { postMovements } from "./inventory/ledger";
 import { stockLevels } from "./inventory/stock";
-import { familyTicket, familyTicketFor, ticketAppointmentIds } from "./family-ticket";
+import { appointmentLines, familyTicket, familyTicketFor, ticketAppointmentIds } from "./family-ticket";
 import { accrueForSale, getLoyaltyConfig, loadRedeemableReward, loyaltyShares, markRewardRedeemed } from "./loyalty";
 import { assertReaderAt, chargeRoute } from "./payments/connect";
 import { chargeCard, inspectPaymentMethod, refundCard } from "./payments/processor";
@@ -71,41 +73,32 @@ export function pricingConfig(shop: Shop): { taxRates: TaxRates; cardFee: CardFe
 }
 
 /** Open (or reuse) the ticket for an appointment, pre-filled with its services. */
-export async function openSaleForAppointment(appointmentId: string, actor: Actor) {
-  const appt = await db.query.appointments.findFirst({ where: eq(appointments.id, appointmentId) });
+export async function openSaleForAppointment(appointmentId: string, actor: Actor, tx: DBorTx = db, o: { customerId?: string | null } = {}) {
+  const appt = await tx.query.appointments.findFirst({ where: eq(appointments.id, appointmentId) });
   if (!appt) throw notFound("Appointment");
-  const existing = await db.query.sales.findFirst({
+  const existing = await tx.query.sales.findFirst({
     where: and(eq(sales.appointmentId, appointmentId), inArray(sales.status, ["open", "paid", "partially_refunded", "refunded"])),
   });
   if (existing) return existing;
-  const shared = await familyTicketFor(appointmentId, db);
-  if (shared) return (await db.query.sales.findFirst({ where: eq(sales.id, shared) }))!;
+  const shared = await familyTicketFor(appointmentId, tx);
+  if (shared) return (await tx.query.sales.findFirst({ where: eq(sales.id, shared) }))!;
   if (["cancelled", "no_show"].includes(appt.status)) throw new AppError("conflict", `Appointment is ${appt.status}`);
   await assertOpenForSales(appt.shopId);
-  const [sale] = await db
+  const [sale] = await tx
     .insert(sales)
     .values({
       shopId: appt.shopId,
       appointmentId,
-      customerId: appt.customerId,
+      customerId: o.customerId ?? appt.customerId,
       staffId: appt.staffId,
       businessDate: todayLocal(),
       createdBy: actor.staffId ?? null,
     })
     .returning();
-  const items = await db.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, appointmentId));
-  if (items.length) {
-    // Checkout charges today's menu price, so the ticket opens with it rather than the booked estimate.
-    const menu = await shopCatalog(appt.shopId);
-    await db.insert(saleItems).values(
-      items.map((i) => {
-        const price = menu.find((s) => s.id === i.serviceId)?.priceCents ?? i.priceCents;
-        return { saleId: sale.id, appointmentId, kind: i.kind as LineKind, refId: i.serviceId, name: i.name, staffId: appt.staffId, qty: 1, unitPriceCents: price, grossCents: price, netCents: price };
-      }),
-    );
-  }
+  // Checkout charges today's menu price, so the ticket opens with it rather than the booked estimate.
+  await appointmentLines(sale.id, appt, tx);
   if (appt.status !== "in_service") {
-    await db.update(appointments).set({ status: "in_service", checkedInAt: appt.checkedInAt ?? new Date() }).where(eq(appointments.id, appointmentId));
+    await tx.update(appointments).set({ status: "in_service", checkedInAt: appt.checkedInAt ?? new Date() }).where(eq(appointments.id, appointmentId));
   }
   return sale;
 }
@@ -187,6 +180,15 @@ export type TenderInput =
   | { method: "card"; paymentMethodId: string; entryMode: "keyed" | "terminal"; readerId?: string | null }
   | { method: "none" };
 
+/** One part of a split payment: cash or a card, the amount it pays before any surcharge, and who paid it. */
+export type SplitTenderInput = Exclude<TenderInput, { method: "none" }> & {
+  amountCents: number;
+  /** One of the people on the ticket (or the ticket's client). */
+  payerCustomerId?: string | null;
+  /** Or a short name for someone else ("Grandma"). */
+  payerLabel?: string | null;
+};
+
 export interface FinalizeInput {
   saleId: string;
   staffId?: string | null;
@@ -199,6 +201,10 @@ export interface FinalizeInput {
   tipCents: number;
   giftCard?: { code: string; amountCents: number } | null;
   tender: TenderInput;
+  /** Two or more payments (cash, cards, each with its payer) for what's left after any gift card. Replaces `tender`. */
+  tenders?: SplitTenderInput[] | null;
+  /** tipSplit "per_barber": what each barber gets, adding up to tipCents. */
+  tipByStaff?: StaffTip[] | null;
   /** Total the UI showed; refuse to charge if the server computes something different. */
   expectedTotalCents?: number | null;
   rebookInWeeks?: number | null;
@@ -214,15 +220,24 @@ export interface FinalizeInput {
   now?: Date;
 }
 
-async function buildDiscounts(input: Omit<FinalizeInput, "actor">, sale: { id: string; shopId: string; customerId: string | null; appointmentId: string | null }, lines: CartLine[]) {
+/**
+ * Coupons and a loyalty reward apply to the combined ticket as a whole: a coupon held when booking
+ * any of its appointments counts as the booking's, and a reward may come from anyone's card on it.
+ */
+async function buildDiscounts(
+  input: Omit<FinalizeInput, "actor">,
+  sale: { id: string; shopId: string; customerId: string | null; appointmentId: string | null },
+  lines: CartLine[],
+  ticket: { appointmentIds: string[]; customerIds: string[] },
+) {
   const discounts: Discount[] = [];
   const codes = [...new Set([input.promoCode, ...(input.promoCodes ?? [])].filter((c): c is string => !!c?.trim()).map((c) => c.trim().toUpperCase()))];
-  const held = codes.length && sale.appointmentId ? (await heldCoupons([sale.appointmentId])).get(sale.appointmentId) : undefined;
+  const held = new Set(codes.length && ticket.appointmentIds.length ? (await heldCoupons(ticket.appointmentIds)).values() : []);
   const coupons: CouponRule[] = [];
   for (const code of codes) {
     const rule = await resolveCoupon(code, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId, today: todayLocal(input.now ?? new Date()) });
     const promo = await db.query.promoCodes.findFirst({ where: eq(promoCodes.id, rule.promoId), columns: { autoApply: true } });
-    coupons.push({ ...rule, via: held === code ? "booking" : promo?.autoApply ? "auto" : "code" });
+    coupons.push({ ...rule, via: held.has(code) ? "booking" : promo?.autoApply ? "auto" : "code" });
   }
   const manual = !!(input.manualDiscount && input.manualDiscount.value > 0);
   const stack = stackProblem(coupons, { manualDiscount: manual });
@@ -244,10 +259,16 @@ async function buildDiscounts(input: Omit<FinalizeInput, "actor">, sale: { id: s
   let rewardId: string | null = null;
   let rewardOwnerId: string | null = null;
   if (input.loyaltyRewardId) {
-    if (!sale.customerId) throw new AppError("bad_request", "Attach a client to use a loyalty reward");
+    const owners = [...new Set([sale.customerId, ...ticket.customerIds].filter((x): x is string => !!x))];
+    if (!owners.length) throw new AppError("bad_request", "Attach a client to use a loyalty reward");
     const cfg = await getLoyaltyConfig();
     if (coupons.length && !cfg.stackWithPromos) throw new AppError("bad_request", "Loyalty rewards can't be combined with promo codes");
-    const r = await loadRedeemableReward(db, sale.customerId, input.loyaltyRewardId);
+    let r: Awaited<ReturnType<typeof loadRedeemableReward>> | null = null;
+    for (const who of owners) {
+      r = await loadRedeemableReward(db, who, input.loyaltyRewardId).catch(() => null);
+      if (r) break;
+    }
+    if (!r) throw new AppError("bad_request", "That reward isn't available");
     discounts.push({ source: "loyalty", label: "Loyalty reward", type: "amount", value: r.amountCents, appliesTo: cfg.redeemableOn === "services" ? "services" : "all", refId: r.id });
     rewardId = r.id;
     rewardOwnerId = r.customerId;
@@ -329,7 +350,10 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
   });
   const problem = manualDiscountProblem(input.manualDiscount ?? null, lines, input.maxManualDiscountPct ?? 100);
   if (problem) throw forbidden(problem);
-  const { discounts, coupons, rewardId, rewardOwnerId } = await buildDiscounts(input, ctx.sale, lines);
+  const { discounts, coupons, rewardId, rewardOwnerId } = await buildDiscounts(input, ctx.sale, lines, {
+    appointmentIds: [ctx.sale.appointmentId, ...ctx.family.members.map((m) => m.appointmentId)].filter((x): x is string => !!x),
+    customerIds: [ctx.appointment?.customerId, ...ctx.family.members.map((m) => m.customerId)].filter((x): x is string => !!x),
+  });
 
   const totals = computeCheckout({
     lines,
@@ -353,18 +377,43 @@ export async function priceCart(input: Omit<FinalizeInput, "actor">, funding: Ca
 export async function finalizeSale(input: FinalizeInput) {
   const now = input.now ?? new Date();
   const pre = await loadCheckoutContext(input.saleId);
-  if (pre.sale.status !== "open") throw new AppError("conflict", `Sale is already ${pre.sale.status}`);
+  if (pre.sale.status !== "open") throw new AppError("conflict", pre.sale.mergedIntoSaleId ? "This ticket was combined into another one" : `Sale is already ${pre.sale.status}`);
   if (input.lines.length === 0) throw new AppError("bad_request", "Add at least one item");
   if (!Number.isInteger(input.tipCents) || input.tipCents < 0) throw new AppError("bad_request", "Tip must be zero or more");
   const staffId = input.staffId ?? pre.sale.staffId;
   if (staffId && staffId !== pre.sale.staffId) await assertStaffAtShop(staffId, pre.shop.id);
+  const split = input.tenders?.length ? input.tenders : null;
+  if (split && input.handoffId) throw new AppError("bad_request", "Split payments are taken at the counter");
 
   let card: Awaited<ReturnType<typeof inspectPaymentMethod>> | null = null;
-  if (input.tender.method === "card") card = await inspectPaymentMethod(input.tender.paymentMethodId);
-  const { ctx, totals, promoId, coupons, rewardId, rewardOwnerId, gift, meta } = await priceCart(input, card?.funding ?? null);
-  const people = new Map<string, string>(ctx.family.members.map((m) => [m.appointmentId, m.customerId]));
+  if (!split && input.tender.method === "card") card = await inspectPaymentMethod(input.tender.paymentMethodId);
+  const splitCards = split ? await Promise.all(split.map((t) => (t.method === "card" ? inspectPaymentMethod(t.paymentMethodId) : null))) : [];
+  const priced = await priceCart(split ? { ...input, tender: { method: "cash" } } : input, card?.funding ?? null);
+  const { ctx, promoId, coupons, rewardId, rewardOwnerId, gift, meta } = priced;
+  let totals = priced.totals;
+  const people = new Map<string, string>(ctx.family.members.flatMap((m) => (m.customerId ? [[m.appointmentId, m.customerId] as [string, string]] : [])));
   if (ctx.appointment?.customerId) people.set(ctx.appointment.id, ctx.appointment.customerId);
   const personOf = (appointmentId: string | null) => (appointmentId && people.get(appointmentId)) || ctx.sale.customerId!;
+
+  // Each payment of a split carries its own part of the tip and, on a credit card, its own surcharge.
+  const legs: Leg[] = [];
+  if (split) {
+    const parts = split.map((t, i) => ({ key: String(i), method: t.method, amountCents: t.amountCents, funding: splitCards[i]?.funding ?? null }));
+    const problem = splitTenderProblem(totals.primaryBaseCents, parts);
+    if (problem) throw new AppError("bad_request", problem);
+    const plan = planSplitTenders({ tipCents: Math.min(totals.tipCents, totals.primaryBaseCents), cardFee: ctx.config.cardFee, tenders: parts });
+    const payers = new Set([ctx.sale.customerId, ...people.values()].filter((x): x is string => !!x));
+    for (const [i, t] of split.entries()) {
+      if (t.payerCustomerId && !payers.has(t.payerCustomerId)) throw new AppError("bad_request", "A payer isn't on this ticket");
+      const p = plan.parts[i];
+      legs.push({ tender: t, chargeCents: p.chargeCents, tipCents: p.tipCents, feeCents: p.feeCents, funding: splitCards[i]?.funding ?? null, payerCustomerId: t.payerCustomerId ?? null, payerLabel: t.payerCustomerId ? null : cleanPayerLabel(t.payerLabel) });
+    }
+    const disclosures = [...totals.disclosures];
+    if (plan.cardFeeCents > 0) disclosures.push(`${feeLabel({ rate: totals.cardFeeRate })}: ${formatCents(plan.cardFeeCents)}`);
+    totals = { ...totals, cardFeeCents: plan.cardFeeCents, cardFeeBaseCents: plan.cardFeeBaseCents, totalCents: totals.preFeeTotalCents + plan.cardFeeCents, primaryChargeCents: plan.chargeCents, disclosures };
+  } else if (totals.primaryChargeCents > 0 && input.tender.method !== "none") {
+    legs.push({ tender: input.tender, chargeCents: totals.primaryChargeCents, tipCents: Math.min(totals.tipCents, totals.primaryBaseCents), feeCents: totals.cardFeeCents, funding: card?.funding ?? null, payerCustomerId: null, payerLabel: null });
+  }
 
   if (input.expectedTotalCents != null && input.expectedTotalCents !== totals.totalCents) {
     throw new AppError("conflict", "Totals changed — please review the ticket again", { totalCents: totals.totalCents });
@@ -373,29 +422,38 @@ export async function finalizeSale(input: FinalizeInput) {
   if (rewardId && rewardCents <= 0) {
     throw new AppError("bad_request", "The loyalty reward doesn't apply to anything on this ticket, so it wasn't used");
   }
-  if (input.tender.method === "none" && totals.primaryBaseCents > 0) throw new AppError("bad_request", "Choose cash or card for the remaining balance");
-  if (input.tender.method === "cash" && input.tender.cashTenderedCents != null && input.tender.cashTenderedCents < totals.primaryChargeCents) {
-    throw new AppError("bad_request", "Cash tendered is less than the amount due");
+  if (!split && input.tender.method === "none" && totals.primaryBaseCents > 0) throw new AppError("bad_request", "Choose cash or card for the remaining balance");
+  for (const l of legs) {
+    if (l.tender.method === "cash" && l.tender.cashTenderedCents != null && l.tender.cashTenderedCents < l.chargeCents) throw new AppError("bad_request", "Cash tendered is less than the amount due");
+  }
+  const serviceBarbers = [...new Set(totals.lines.filter((l) => (l.kind === "service" || l.kind === "addon") && l.staffId).map((l) => l.staffId!))];
+  if (input.tipSplit === "per_barber" && splitBarbers(totals.lines, staffId).length) {
+    const problem = perBarberTipProblem(input.tipByStaff ?? [], serviceBarbers, totals.tipCents);
+    if (problem) throw new AppError("bad_request", problem);
   }
   // Card charges settle where the shop's payments mode says: the brand's account or the shop's own. A cash-only shop, or one not set up yet, takes cash or gift cards.
-  const route =
-    input.tender.method === "card" && totals.primaryChargeCents > 0 ? await chargeRoute(ctx.shop, totals.primaryChargeCents, input.tender.entryMode === "terminal" ? "terminal" : "keyed") : null;
-  const destination = route?.destination ?? null;
-  const reader = input.tender.method === "card" && input.tender.entryMode === "terminal" && input.tender.readerId ? await assertReaderAt(ctx.shop.id, input.tender.readerId) : null;
+  for (const l of legs) {
+    if (l.tender.method !== "card") continue;
+    l.route = await chargeRoute(ctx.shop, l.chargeCents, l.tender.entryMode === "terminal" ? "terminal" : "keyed");
+    l.reader = l.tender.entryMode === "terminal" && l.tender.readerId ? await assertReaderAt(ctx.shop.id, l.tender.readerId) : null;
+  }
+  const ticketPeopleThen = [ctx.sale.appointmentId, ...ctx.family.members.map((m) => m.appointmentId)].filter((x): x is string => !!x).sort().join(",");
 
   const businessDate = localDateOf(now);
   const issuedGiftCards: { code: string; amountCents: number }[] = [];
   const stockWarnings: string[] = [];
   let rewardsIssued = 0;
-  // Only this call's own charge is ever compensated. Each attempt gets its own idempotency key, so a
+  // Only this call's own charges are ever compensated. Each attempt gets its own idempotency keys, so a
   // concurrent submit can never be handed (and then refund) the charge that won.
-  let charge: Awaited<ReturnType<typeof chargeCard>> | null = null;
   const attempt = randomUUID();
   try {
     await db.transaction(async (tx: Tx) => {
       // A second submit of this ticket waits here, then sees it paid and stops before charging.
       const [locked] = await tx.select().from(sales).where(eq(sales.id, ctx.sale.id)).for("update");
-      if (locked.status !== "open") throw new AppError("conflict", "This ticket was already paid");
+      if (locked.status !== "open") throw new AppError("conflict", locked.mergedIntoSaleId ? "This ticket was combined into another one" : "This ticket was already paid");
+      // Combined or split while this was being priced: the lines charged would no longer match the people on it.
+      const ticketPeopleNow = [locked.appointmentId, ...(await ticketAppointmentIds(ctx.sale.id, tx))].filter((x): x is string => !!x).sort().join(",");
+      if (ticketPeopleNow !== ticketPeopleThen) throw new AppError("conflict", "Someone was added to or taken off this ticket. Review it again.");
       const [withClient] = await tx
         .select({ id: checkoutHandoffs.id })
         .from(checkoutHandoffs)
@@ -426,11 +484,11 @@ export async function finalizeSale(input: FinalizeInput) {
         )
         .returning({ id: saleItems.id });
 
-      const split = splitBarbers(totals.lines, staffId);
-      if (split.length) {
-        const weights = tipWeights(totals.lines, input.tipSplit ?? "services");
+      if (splitBarbers(totals.lines, staffId).length) {
+        const mode = input.tipSplit ?? "services";
+        const weights = tipWeights(totals.lines, mode, input.tipByStaff);
         await tx.insert(saleTipShares).values(weights.map((w) => ({ saleId: ctx.sale.id, staffId: w.staffId, weight: w.weight })));
-        await audit(input.actor, "sale.tip_split", "sale", ctx.sale.id, { mode: input.tipSplit ?? "services", shares: weights }, ctx.shop.id, tx);
+        await audit(input.actor, "sale.tip_split", "sale", ctx.sale.id, { mode, shares: weights }, ctx.shop.id, tx);
       }
 
       for (const [i, l] of totals.lines.entries()) {
@@ -488,16 +546,18 @@ export async function finalizeSale(input: FinalizeInput) {
         for (const sh of shares) rewardsIssued += await accrueForSale(tx, sh.customerId, ctx.sale.id, sh.cents, now);
       }
 
-      // Everything that can fail on our side has run. Charge last, while still holding the lock.
-      if (input.tender.method === "card" && totals.primaryChargeCents > 0) {
-        charge = await chargeCard({
-          paymentMethodId: input.tender.paymentMethodId,
-          amountCents: totals.primaryChargeCents,
-          description: `Ray'z ${ctx.shop.name} ticket #${ctx.sale.number}`,
-          metadata: { saleId: ctx.sale.id, shop: ctx.shop.slug, cardFeeCents: String(totals.cardFeeCents), attempt },
-          idempotencyKey: `sale-${ctx.sale.id}-${attempt}`,
-          destination,
-          statementDescriptorSuffix: route?.descriptorSuffix ?? null,
+      // Everything that can fail on our side has run. Charge last, while still holding the lock; a
+      // declined second card undoes the first (the catch below).
+      for (const [i, l] of legs.entries()) {
+        if (l.tender.method !== "card" || l.chargeCents <= 0) continue;
+        l.charge = await chargeCard({
+          paymentMethodId: l.tender.paymentMethodId,
+          amountCents: l.chargeCents,
+          description: `Ray'z ${ctx.shop.name} ticket #${ctx.sale.number}${split ? ` (payment ${i + 1} of ${legs.length})` : ""}`,
+          metadata: { saleId: ctx.sale.id, shop: ctx.shop.slug, cardFeeCents: String(l.feeCents), attempt },
+          idempotencyKey: split ? `sale-${ctx.sale.id}-${attempt}-${i}` : `sale-${ctx.sale.id}-${attempt}`,
+          destination: l.route?.destination ?? null,
+          statementDescriptorSuffix: l.route?.descriptorSuffix ?? null,
         });
       }
 
@@ -513,31 +573,33 @@ export async function finalizeSale(input: FinalizeInput) {
           giftCardId: gift.id,
         });
       }
-      if (totals.primaryChargeCents > 0) {
-        const c = charge as Awaited<ReturnType<typeof chargeCard>> | null;
+      for (const l of legs) {
+        const c = l.charge ?? null;
         await tx.insert(payments).values({
           saleId: ctx.sale.id,
           shopId: ctx.shop.id,
           businessDate,
-          method: input.tender.method === "card" ? "card" : "cash",
+          method: l.tender.method,
           status: "succeeded",
-          amountCents: totals.primaryChargeCents,
-          tipCents: Math.min(totals.tipCents, totals.primaryBaseCents),
-          cardFeeCents: totals.cardFeeCents,
-          cashTenderedCents: input.tender.method === "cash" ? (input.tender.cashTenderedCents ?? totals.primaryChargeCents) : null,
-          processor: c ? (input.tender.method === "card" && input.tender.entryMode === "terminal" ? `${c.processor}_terminal` : c.processor) : null,
+          amountCents: l.chargeCents,
+          tipCents: l.tipCents,
+          cardFeeCents: l.feeCents,
+          cashTenderedCents: l.tender.method === "cash" ? (l.tender.cashTenderedCents ?? l.chargeCents) : null,
+          processor: c ? (l.tender.method === "card" && l.tender.entryMode === "terminal" ? `${c.processor}_terminal` : c.processor) : null,
           stripePaymentIntentId: c?.paymentIntentId ?? null,
           cardBrand: c?.card.brand ?? null,
           cardLast4: c?.card.last4 ?? null,
           cardFunding: c?.card.funding ?? null,
-          entryMode: input.tender.method === "card" ? input.tender.entryMode : null,
+          entryMode: l.tender.method === "card" ? l.tender.entryMode : null,
           stripeAccountId: c?.destination?.accountId ?? null,
           applicationFeeCents: c?.destination?.applicationFeeCents ?? 0,
-          processorFeeCents: c ? (c.processorFeeCents ?? (route?.settlement === "platform" ? route.estimatedFeeCents : null)) : null,
+          processorFeeCents: c ? (c.processorFeeCents ?? (l.route?.settlement === "platform" ? l.route.estimatedFeeCents : null)) : null,
           stripeChargeId: c?.chargeId ?? null,
           stripeTransferId: c?.transferId ?? null,
           settlement: c ? (c.destination ? "connected" : "platform") : null,
-          terminalReaderId: c ? (reader?.id ?? null) : null,
+          terminalReaderId: c ? (l.reader?.id ?? null) : null,
+          payerCustomerId: l.payerCustomerId,
+          payerLabel: l.payerLabel,
         });
       }
 
@@ -560,7 +622,14 @@ export async function finalizeSale(input: FinalizeInput) {
           totalCents: totals.totalCents,
           promoCodeId: promoId,
           loyaltyEarnedCents: ctx.sale.customerId ? totals.loyaltyEligibleCents : 0,
-          pricing: { ...ctx.config, discounts: totals.discountBreakdown, disclosures: totals.disclosures, cardFunding: card?.funding ?? null },
+          pricing: {
+            ...ctx.config,
+            discounts: totals.discountBreakdown,
+            disclosures: totals.disclosures,
+            cardFunding: card?.funding ?? null,
+            ...(split ? { split: legs.map((l) => ({ method: l.tender.method, cents: l.chargeCents, tipCents: l.tipCents, feeCents: l.feeCents, funding: l.funding })) } : {}),
+            ...(input.tipSplit === "per_barber" && input.tipByStaff?.length ? { tipByStaff: input.tipByStaff } : {}),
+          },
           paidAt: now,
         })
         .where(eq(sales.id, ctx.sale.id));
@@ -575,7 +644,15 @@ export async function finalizeSale(input: FinalizeInput) {
         "sale.paid",
         "sale",
         ctx.sale.id,
-        { totalCents: totals.totalCents, tipCents: totals.tipCents, method: input.tender.method, cardFunding: card?.funding ?? null, cardFeeCents: totals.cardFeeCents, discounts: totals.discountBreakdown },
+        {
+          totalCents: totals.totalCents,
+          tipCents: totals.tipCents,
+          method: split ? "split" : input.tender.method,
+          cardFunding: card?.funding ?? null,
+          cardFeeCents: totals.cardFeeCents,
+          discounts: totals.discountBreakdown,
+          ...(split ? { tenders: legs.map((l) => ({ method: l.tender.method, cents: l.chargeCents, payer: l.payerCustomerId ?? l.payerLabel })) } : {}),
+        },
         ctx.shop.id,
         tx,
       );
@@ -586,8 +663,7 @@ export async function finalizeSale(input: FinalizeInput) {
       await (await import("./booking-groups")).onSalePaid(ctx.sale.id, tx);
     });
   } catch (e) {
-    const own = charge as Awaited<ReturnType<typeof chargeCard>> | null;
-    if (own) await compensateCharge(own.paymentIntentId, totals.primaryChargeCents, ctx.sale.id, !!own.destination);
+    for (const l of legs) if (l.charge) await compensateCharge(l.charge.paymentIntentId, l.chargeCents, ctx.sale.id, !!l.charge.destination);
     throw e;
   }
 
@@ -601,8 +677,21 @@ export async function finalizeSale(input: FinalizeInput) {
     await import("./badges")
       .then((b) => b.refreshBadges([...new Set([ctx.sale.customerId!, ...people.values()])], now))
       .catch((e: Error) => console.error("badge refresh after checkout failed", e.message));
-  const c = charge as Awaited<ReturnType<typeof chargeCard>> | null;
-  return { saleId: ctx.sale.id, totals, issuedGiftCards, rewardsIssued, rebooked, card: c?.card ?? null, stockWarnings };
+  const cards = legs.flatMap((l) => (l.charge ? [l.charge.card] : []));
+  return { saleId: ctx.sale.id, totals, issuedGiftCards, rewardsIssued, rebooked, card: cards[0] ?? null, cards, stockWarnings };
+}
+
+interface Leg {
+  tender: Exclude<TenderInput, { method: "none" }>;
+  chargeCents: number;
+  tipCents: number;
+  feeCents: number;
+  funding: CardFunding | null;
+  payerCustomerId: string | null;
+  payerLabel: string | null;
+  route?: Awaited<ReturnType<typeof chargeRoute>>;
+  reader?: Awaited<ReturnType<typeof assertReaderAt>> | null;
+  charge?: Awaited<ReturnType<typeof chargeCard>>;
 }
 
 /**

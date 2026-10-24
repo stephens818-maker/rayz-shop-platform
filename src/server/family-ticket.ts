@@ -1,6 +1,6 @@
 import { and, asc, eq, gte, inArray, lt, ne, notInArray, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
-import { appointmentItems, appointments, customers, saleAppointments, saleItems, sales, staff } from "@/db/schema";
+import { appointmentItems, appointments, customers, saleAppointments, saleItems, sales, staff, type Appointment, type Sale } from "@/db/schema";
 import type { LineKind } from "@/domain/checkout";
 import { endOfLocalDay, localDateOf, startOfLocalDay } from "@/lib/time";
 import { Actor, audit } from "./audit";
@@ -9,17 +9,20 @@ import { AppError, notFound } from "./errors";
 import { householdIds } from "./family";
 
 /** Statuses an appointment can be added to a family ticket from. */
-const OPEN_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as const;
+export const OPEN_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as const;
 
 export interface FamilyTicketMember {
   appointmentId: string;
-  customerId: string;
+  /** Null for a walk-in with no client on file, combined in from their own ticket. */
+  customerId: string | null;
   name: string;
   isChild: boolean;
   staffId: string | null;
   staffName: string | null;
   startsAt: Date;
   status: string;
+  /** Sent to checkout by their barber or the desk. */
+  readyAt: Date | null;
 }
 
 /** The household's other appointments on one family ticket, oldest booking first. */
@@ -28,7 +31,14 @@ export async function ticketAppointmentIds(saleId: string, tx: DBorTx = db): Pro
   return rows.map((r) => r.id);
 }
 
-async function members(ids: string[], tx: DBorTx): Promise<FamilyTicketMember[]> {
+/** Everyone on a ticket: its own appointment first, then the others in the order they joined. */
+export async function ticketPeople(sale: { id: string; appointmentId: string | null }, tx: DBorTx = db): Promise<FamilyTicketMember[]> {
+  const ids = [sale.appointmentId, ...(await ticketAppointmentIds(sale.id, tx))].filter((x): x is string => !!x);
+  const found = await members(ids, tx);
+  return ids.map((id) => found.find((m) => m.appointmentId === id)).filter((m): m is FamilyTicketMember => !!m);
+}
+
+export async function members(ids: string[], tx: DBorTx): Promise<FamilyTicketMember[]> {
   if (!ids.length) return [];
   const rows = await tx
     .select({
@@ -41,21 +51,23 @@ async function members(ids: string[], tx: DBorTx): Promise<FamilyTicketMember[]>
       staffName: staff.displayLabel,
       startsAt: appointments.startsAt,
       status: appointments.status,
+      readyAt: appointments.checkoutReadyAt,
     })
     .from(appointments)
-    .innerJoin(customers, eq(customers.id, appointments.customerId))
+    .leftJoin(customers, eq(customers.id, appointments.customerId))
     .leftJoin(staff, eq(staff.id, appointments.staffId))
     .where(inArray(appointments.id, ids))
     .orderBy(asc(appointments.startsAt));
   return rows.map((r) => ({
     appointmentId: r.appointmentId,
-    customerId: r.customerId!,
-    name: [r.first, r.last].filter(Boolean).join(" "),
+    customerId: r.customerId,
+    name: [r.first, r.last].filter(Boolean).join(" ") || "Walk-in",
     isChild: !!r.guardianId,
     staffId: r.staffId,
     staffName: r.staffName,
     startsAt: r.startsAt,
     status: r.status,
+    readyAt: r.readyAt,
   }));
 }
 
@@ -106,17 +118,40 @@ export async function familyTicket(sale: { id: string; shopId: string; customerI
   return { members: extra, candidates: await members(free, tx) };
 }
 
-async function lockOpenSale(tx: DBorTx, saleId: string) {
+export async function lockOpenSale(tx: DBorTx, saleId: string) {
   const [s] = await tx.select().from(sales).where(eq(sales.id, saleId)).for("update");
   if (!s) throw notFound("Sale");
-  if (s.status !== "open") throw new AppError("conflict", "Ticket is closed");
+  if (s.status !== "open") throw new AppError("conflict", s.mergedIntoSaleId ? "That ticket was combined into another one" : "Ticket is closed");
   return s;
 }
 
 /**
- * Put a household member's appointment on this ticket: its services join as lines tagged to that
- * appointment and its barber, so the tip splits per barber and the visit lands on the right person.
+ * Lines for an appointment's services at today's menu price, tagged to the appointment and its
+ * barber, so the tip splits per barber and the visit lands on the right person.
  */
+export async function appointmentLines(saleId: string, appt: Pick<Appointment, "id" | "shopId" | "staffId">, tx: DBorTx) {
+  const items = await tx.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, appt.id));
+  if (!items.length) return;
+  const menu = await shopCatalog(appt.shopId);
+  await tx.insert(saleItems).values(
+    items.map((i) => {
+      const price = menu.find((s) => s.id === i.serviceId)?.priceCents ?? i.priceCents;
+      return { saleId, appointmentId: appt.id, kind: i.kind as LineKind, refId: i.serviceId, name: i.name, staffId: appt.staffId, qty: 1, unitPriceCents: price, grossCents: price, netCents: price };
+    }),
+  );
+}
+
+/** Put a locked appointment on a locked open ticket, with its services; it's in the chair from now. */
+export async function putOnTicket(tx: DBorTx, sale: Sale, appt: Appointment, actor: Actor, action = "sale.family_add") {
+  await tx.insert(saleAppointments).values({ saleId: sale.id, appointmentId: appt.id, addedBy: actor.staffId ?? null });
+  await appointmentLines(sale.id, appt, tx);
+  if (appt.status !== "in_service") {
+    await tx.update(appointments).set({ status: "in_service", checkedInAt: appt.checkedInAt ?? new Date() }).where(eq(appointments.id, appt.id));
+  }
+  await audit(actor, action, "sale", sale.id, { appointmentId: appt.id, customerId: appt.customerId }, sale.shopId, tx);
+}
+
+/** Put a household member's appointment on this ticket. */
 export async function addAppointmentToTicket(saleId: string, appointmentId: string, actor: Actor) {
   return db.transaction(async (tx) => {
     const sale = await lockOpenSale(tx, saleId);
@@ -128,21 +163,7 @@ export async function addAppointmentToTicket(saleId: string, appointmentId: stri
     if (!(OPEN_STATUSES as readonly string[]).includes(appt.status)) throw new AppError("conflict", `That appointment is ${appt.status.replace("_", " ")}`);
     if (!appt.customerId || !(await householdIds(sale.customerId, tx)).includes(appt.customerId)) throw new AppError("bad_request", "Only the paying client's family can share their ticket");
     if (await liveTicketFor(appointmentId, tx)) throw new AppError("conflict", "That appointment is already on a ticket");
-    await tx.insert(saleAppointments).values({ saleId, appointmentId, addedBy: actor.staffId ?? null });
-    const items = await tx.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, appointmentId));
-    if (items.length) {
-      const menu = await shopCatalog(sale.shopId);
-      await tx.insert(saleItems).values(
-        items.map((i) => {
-          const price = menu.find((s) => s.id === i.serviceId)?.priceCents ?? i.priceCents;
-          return { saleId, appointmentId, kind: i.kind as LineKind, refId: i.serviceId, name: i.name, staffId: appt.staffId, qty: 1, unitPriceCents: price, grossCents: price, netCents: price };
-        }),
-      );
-    }
-    if (appt.status !== "in_service") {
-      await tx.update(appointments).set({ status: "in_service", checkedInAt: appt.checkedInAt ?? new Date() }).where(eq(appointments.id, appointmentId));
-    }
-    await audit(actor, "sale.family_add", "sale", saleId, { appointmentId, customerId: appt.customerId }, sale.shopId, tx);
+    await putOnTicket(tx, sale, appt, actor);
     return null;
   });
 }
@@ -157,7 +178,7 @@ export async function removeAppointmentFromTicket(saleId: string, appointmentId:
       .returning({ id: saleAppointments.appointmentId });
     if (!gone.length) throw notFound("Appointment on this ticket");
     await tx.delete(saleItems).where(and(eq(saleItems.saleId, saleId), eq(saleItems.appointmentId, appointmentId)));
-    await tx.update(appointments).set({ status: "checked_in" }).where(and(eq(appointments.id, appointmentId), eq(appointments.status, "in_service")));
+    await tx.update(appointments).set({ status: "checked_in", checkoutReadyAt: null, checkoutReadyBy: null }).where(and(eq(appointments.id, appointmentId), eq(appointments.status, "in_service")));
     await audit(actor, "sale.family_remove", "sale", saleId, { appointmentId }, sale.shopId, tx);
     return null;
   });

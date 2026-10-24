@@ -100,6 +100,20 @@ export async function finishService(appointmentId: string, actor: Actor, now = n
   });
 }
 
+/**
+ * Sent to checkout: the service ends now if it was started and Finish wasn't tapped, so a child's
+ * cut time doesn't run on while the rest of the family finishes. Returns whether it recorded one.
+ */
+export async function finishIfRunning(appointmentId: string, actor: Actor, tx: DBorTx, now = new Date()): Promise<boolean> {
+  const t = await current(appointmentId, tx);
+  if (!t?.startedAt || t.finishedAt || now <= t.startedAt) return false;
+  await write(appointmentId, { finishedAt: now, finishedBy: actor.staffId ?? null, finishedVia: "finish" }, tx);
+  const [a] = await tx.select({ shopId: appointments.shopId }).from(appointments).where(eq(appointments.id, appointmentId));
+  const minutes = actualMinutes({ startedAt: t.startedAt, finishedAt: now })!;
+  await audit(actor, "appointment.service_finish", "appointment", appointmentId, { via: "send_to_checkout", minutes: Math.round(minutes * 10) / 10 }, a?.shopId ?? null, tx);
+  return true;
+}
+
 /** At payment: the checkout time, and the end of the service if Finish wasn't tapped. */
 export async function recordCheckout(appointmentId: string, actor: Actor, tx: DBorTx, now = new Date()) {
   const t = await current(appointmentId, tx);

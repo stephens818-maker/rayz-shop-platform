@@ -44,7 +44,7 @@ type Line = {
   /** Family tickets: whose appointment the line is for. */
   appointmentId?: string | null;
 };
-type FamilyMember = { appointmentId: string; customerId: string; name: string; isChild: boolean; staffId: string | null; staffName: string | null; startsAt: string; status: string };
+type FamilyMember = { appointmentId: string; customerId: string | null; name: string; isChild: boolean; staffId: string | null; staffName: string | null; startsAt: string; status: string; readyAt: string | null };
 type Resume = {
   lines: Omit<Line, "key">[];
   promoCode: string | null;

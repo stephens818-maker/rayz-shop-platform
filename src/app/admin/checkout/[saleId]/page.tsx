@@ -81,8 +81,8 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
       coupons={coupons}
       groupDeposit={c.groupDeposit}
       family={{
-        members: c.family.members.map((m) => ({ ...m, startsAt: m.startsAt.toISOString() })),
-        candidates: c.family.candidates.map((m) => ({ ...m, startsAt: m.startsAt.toISOString() })),
+        members: c.family.members.map((m) => ({ ...m, startsAt: m.startsAt.toISOString(), readyAt: m.readyAt?.toISOString() ?? null })),
+        candidates: c.family.candidates.map((m) => ({ ...m, startsAt: m.startsAt.toISOString(), readyAt: m.readyAt?.toISOString() ?? null })),
       }}
       resume={
         resume && !withClient
