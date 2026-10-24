@@ -75,7 +75,7 @@ const custom = (o: Partial<CustomBadge> = {}): CustomBadge => ({
 });
 
 const STAFF_ONLY = ["no_show_risk", "late_cancels", "vip", "low_rating", "missing_info", "at_risk"];
-const CUSTOMER_DEFAULT = ["gold", "silver", "bronze", "miss_you", "birthday_week", "birthday_month", "anniversary", "reward", "streak", "referral_champion", "review_clicked"];
+const CUSTOMER_DEFAULT = ["gold", "silver", "bronze", "miss_you", "birthday_week", "birthday_month", "anniversary", "reward", "streak", "referral_champion", "review_clicked", "family"];
 
 describe("customer visibility", () => {
   it("shows the gamified badges to customers by default and keeps staff judgments staff-only", () => {
