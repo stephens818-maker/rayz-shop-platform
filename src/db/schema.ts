@@ -1291,6 +1291,9 @@ export const appointments = pgTable(
     cancelledBy: text("cancelled_by"),
     checkedInAt: ts("checked_in_at"),
     completedAt: ts("completed_at"),
+    /** The barber (or the desk) sent it to checkout: it's on its ticket and waiting to be paid. */
+    checkoutReadyAt: ts("checkout_ready_at"),
+    checkoutReadyBy: uuid("checkout_ready_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -1527,6 +1530,8 @@ export const sales = pgTable(
     isImported: boolean("is_imported").notNull().default(false),
     /** Squire transaction ID (or a content hash when the export has none), so re-imports don't duplicate. */
     squireRef: text("squire_ref").unique(),
+    /** Combined into another open ticket at checkout: this one is voided and its people and lines are there. */
+    mergedIntoSaleId: uuid("merged_into_sale_id").references((): AnyPgColumn => sales.id, { onDelete: "set null" }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -1641,9 +1646,13 @@ export const payments = pgTable(
     settlement: text("settlement").$type<"platform" | "connected">(),
     /** The card reader that took it, always one of the shop's. */
     terminalReaderId: uuid("terminal_reader_id").references(() => terminalReaders.id),
+    /** Split payment: who paid this part, one of the people on the ticket or a short label ("Grandma"). */
+    payerCustomerId: uuid("payer_customer_id").references(() => customers.id, { onDelete: "set null" }),
+    payerLabel: text("payer_label"),
     createdAt: createdAt(),
   },
   (t) => [
+    check("payments_payer_label", sql`${t.payerLabel} is null or char_length(${t.payerLabel}) <= 40`),
     check("payments_settlement", sql`${t.settlement} is null or ${t.settlement} in ('platform', 'connected')`),
     index("payments_shop_date_idx").on(t.shopId, t.businessDate),
     index("payments_account_idx").on(t.stripeAccountId),
@@ -1697,6 +1706,8 @@ export const checkoutHandoffs = pgTable(
     /** Which button: p20, a500, custom, none, or reader. */
     tipChoice: text("tip_choice"),
     tipSource: text("tip_source").$type<"screen" | "reader">(),
+    /** The client tipped each barber on their own line: [{ staffId, cents }] adding up to tipCents. */
+    tipByStaff: jsonb("tip_by_staff").$type<{ staffId: string; cents: number }[]>(),
     /** SVG path data in a 600×200 box. */
     signature: text("signature"),
     signedAt: ts("signed_at"),
