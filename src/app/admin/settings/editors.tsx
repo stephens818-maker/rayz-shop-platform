@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { ReceiptBranding } from "@/domain/connect";
 import type { LoyaltyConfig } from "@/domain/loyalty";
+import type { ShopSettingPart } from "@/domain/permissions";
 import { ordinal, type ReviewRules } from "@/domain/reviews";
 import { SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
 import { registerReaderAction } from "../setup/actions";
@@ -30,7 +31,7 @@ const mins = (s: string) => {
   return h * 60 + (m || 0);
 };
 
-function useSave() {
+export function useSave() {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -43,7 +44,7 @@ function useSave() {
   return { pending, msg, save };
 }
 
-function SaveBar({ pending, msg, onClick, label = "Save", disabled }: { pending: boolean; msg: { ok: boolean; text: string } | null; onClick: () => void; label?: string; disabled?: boolean }) {
+export function SaveBar({ pending, msg, onClick, label = "Save", disabled }: { pending: boolean; msg: { ok: boolean; text: string } | null; onClick: () => void; label?: string; disabled?: boolean }) {
   return (
     <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
       <Button disabled={pending || disabled} onClick={onClick}>
@@ -71,57 +72,64 @@ type Info = {
   bufferMinutes: number;
 };
 
-export function ShopInfoEditor({ shopId, initial }: { shopId: string; initial: Info }) {
+const PART_LABEL: Record<ShopSettingPart, string> = { details: "shop details", hours: "hours", booking: "online booking rules", checkout: "checkout", phone: "phone line" };
+
+/** Each part (details, booking rules, phone line) is editable only with its permission; the rest shows read-only. */
+export function ShopInfoEditor({ shopId, initial, editable }: { shopId: string; initial: Info; editable: readonly ShopSettingPart[] }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState(initial);
   const num = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) => setV({ ...v, [k]: Number(e.target.value) || 0 });
+  const details = editable.includes("details");
+  const booking = editable.includes("booking");
+  const phone = editable.includes("phone");
+  const locked = (["details", "booking", "phone"] as const).filter((p) => !editable.includes(p));
   return (
     <Card>
-      <CardHeader title="Shop & online booking" />
+      <CardHeader title="Shop & online booking" subtitle={locked.length ? `You can see but not change the ${locked.map((p) => PART_LABEL[p]).join(" or ")}.` : undefined} />
       <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Name">
-          <Input value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
+          <Input disabled={!details} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
         </Field>
         <Field label="Phone">
-          <Input value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />
+          <Input disabled={!details} value={v.phone} onChange={(e) => setV({ ...v, phone: e.target.value })} />
         </Field>
         <Field label="Twilio number" hint="Clients text and call this; calls forward to the phone above">
-          <Input value={v.twilioNumber} placeholder="Not set up" onChange={(e) => setV({ ...v, twilioNumber: e.target.value })} />
+          <Input disabled={!phone} value={v.twilioNumber} placeholder="Not set up" onChange={(e) => setV({ ...v, twilioNumber: e.target.value })} />
         </Field>
         <Field label="Email">
-          <Input value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />
+          <Input disabled={!details} value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} />
         </Field>
         <label className="flex items-center gap-2 self-end pb-2 text-sm">
-          <input type="checkbox" checked={v.bookingEnabled} onChange={(e) => setV({ ...v, bookingEnabled: e.target.checked })} /> Online booking on
+          <input type="checkbox" disabled={!booking} checked={v.bookingEnabled} onChange={(e) => setV({ ...v, bookingEnabled: e.target.checked })} /> Online booking on
         </label>
         <Field label="Address" className="sm:col-span-2">
-          <Input value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />
+          <Input disabled={!details} value={v.address} onChange={(e) => setV({ ...v, address: e.target.value })} />
         </Field>
         <Field label="City">
-          <Input value={v.city} onChange={(e) => setV({ ...v, city: e.target.value })} />
+          <Input disabled={!details} value={v.city} onChange={(e) => setV({ ...v, city: e.target.value })} />
         </Field>
         <div className="grid grid-cols-2 gap-2">
           <Field label="State">
-            <Input maxLength={2} value={v.state} onChange={(e) => setV({ ...v, state: e.target.value.toUpperCase() })} />
+            <Input disabled={!details} maxLength={2} value={v.state} onChange={(e) => setV({ ...v, state: e.target.value.toUpperCase() })} />
           </Field>
           <Field label="ZIP">
-            <Input value={v.zip} onChange={(e) => setV({ ...v, zip: e.target.value })} />
+            <Input disabled={!details} value={v.zip} onChange={(e) => setV({ ...v, zip: e.target.value })} />
           </Field>
         </div>
         <Field label="Description" className="sm:col-span-2 lg:col-span-4">
-          <Textarea rows={2} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
+          <Textarea disabled={!details} rows={2} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
         </Field>
         <Field label="Online cancel/reschedule cutoff (min)">
-          <Input inputMode="numeric" value={v.cancelCutoffMinutes} onChange={num("cancelCutoffMinutes")} />
+          <Input disabled={!booking} inputMode="numeric" value={v.cancelCutoffMinutes} onChange={num("cancelCutoffMinutes")} />
         </Field>
         <Field label="Minimum notice (min)">
-          <Input inputMode="numeric" value={v.minLeadMinutes} onChange={num("minLeadMinutes")} />
+          <Input disabled={!booking} inputMode="numeric" value={v.minLeadMinutes} onChange={num("minLeadMinutes")} />
         </Field>
         <Field label="Book up to (days ahead)">
-          <Input inputMode="numeric" value={v.bookingWindowDays} onChange={num("bookingWindowDays")} />
+          <Input disabled={!booking} inputMode="numeric" value={v.bookingWindowDays} onChange={num("bookingWindowDays")} />
         </Field>
         <Field label="Buffer between appts (min)">
-          <Input inputMode="numeric" value={v.bufferMinutes} onChange={num("bufferMinutes")} />
+          <Input disabled={!booking} inputMode="numeric" value={v.bufferMinutes} onChange={num("bufferMinutes")} />
         </Field>
       </div>
       <SaveBar

@@ -4,7 +4,7 @@ import { and, eq, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { shopClosures, shopHours, shops, terminalReaders } from "@/db/schema";
+import { brandSettings, shopClosures, shopHours, shops, terminalReaders } from "@/db/schema";
 import { ReceiptBrandingSchema, receiptBranding } from "@/domain/connect";
 import { US_TIMEZONES } from "@/domain/location-lifecycle";
 import { checkSlug } from "@/server/location-admin";
@@ -19,6 +19,30 @@ import { saveLoyaltyConfig } from "@/server/loyalty";
 import { ShopHandoffSchema, TipScreenSchema } from "@/domain/handoff";
 import { saveBrandHandoff, saveShopHandoff } from "@/server/handoff";
 import { saveReviewRules } from "@/server/review-rules";
+import { Permission, SHOP_PART_PERMISSION, SHOP_SETTING_FIELDS, ShopSettingPart, shopSettingsDenied } from "@/domain/permissions";
+import { cleanOperator, operatorProblem } from "@/domain/phone-operator";
+import { FilingFrequency, cleanTaxFiling, stateName } from "@/domain/sales-tax";
+import { saveDrawerOpening } from "@/server/drawer";
+
+/** "Edit every shop setting", or the permission for this part of them. */
+const partPerms = (...parts: ShopSettingPart[]): Permission[] => ["settings.shop", ...parts.map((p) => SHOP_PART_PERMISSION[p])];
+const FIELD_LABEL: Record<keyof typeof SHOP_SETTING_FIELDS, string> = {
+  name: "name",
+  address: "address",
+  city: "city",
+  state: "state",
+  zip: "ZIP",
+  phone: "phone",
+  email: "email",
+  description: "description",
+  twilioNumber: "Twilio number",
+  bookingEnabled: "online booking switch",
+  cancelCutoffMinutes: "cancel cutoff",
+  minLeadMinutes: "minimum notice",
+  bookingWindowDays: "booking window",
+  bufferMinutes: "buffer",
+  drawerOpeningCents: "drawer opening balance",
+};
 
 const Info = z.object({
   name: z.string().trim().min(1),
@@ -40,11 +64,15 @@ const Info = z.object({
 
 export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Info>) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("details", "booking", "phone"));
     assertShopAccess(ctx, shopId);
     const { twilioNumber, ...v } = Info.parse(raw);
     const line = twilioNumber === undefined ? undefined : twilioNumber ? normalizePhone(twilioNumber) : null;
     if (twilioNumber && !line) throw new AppError("bad_request", "The Twilio number doesn't look like a US number");
+    const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
+    if (!before) throw new AppError("not_found", "Shop not found");
+    const denied = shopSettingsDenied(ctx.permissions, before, { ...v, phone: v.phone || null, email: v.email || null, description: v.description || null, ...(line === undefined ? {} : { twilioNumber: line }) });
+    if (denied.length) throw new AppError("forbidden", `You can't change the shop's ${denied.map((f) => FIELD_LABEL[f]).join(", ")}`);
     if (line) {
       const other = await db.query.shops.findFirst({ where: and(eq(shops.twilioNumber, line), ne(shops.id, shopId)), columns: { name: true } });
       if (other) throw new AppError("conflict", `${other.name} already uses that Twilio number`);
@@ -92,7 +120,7 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
 
 export async function saveHoursAction(shopId: string, rows: { weekday: number; openMin: number; closeMin: number }[]) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("hours"));
     assertShopAccess(ctx, shopId);
     const sunday = await db.query.shopHours.findFirst({ where: and(eq(shopHours.shopId, shopId), eq(shopHours.weekday, 0)) });
     const problem = hoursProblem(rows, { canSetSunday: can(ctx, "settings.brand"), currentSunday: sunday ?? null });
@@ -109,7 +137,7 @@ export async function saveHoursAction(shopId: string, rows: { weekday: number; o
 
 export async function addClosureAction(shopId: string, date: string, reason: string, allShops: boolean) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("hours"));
     const ids = allShops ? ctx.shopIds : [shopId];
     for (const id of ids) {
       assertShopAccess(ctx, id);
@@ -123,7 +151,7 @@ export async function addClosureAction(shopId: string, date: string, reason: str
 
 export async function removeClosureAction(shopId: string, date: string) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("hours"));
     assertShopAccess(ctx, shopId);
     await db.delete(shopClosures).where(and(eq(shopClosures.shopId, shopId), eq(shopClosures.date, date)));
     await audit(ctx.actor, "shop.closure_remove", "shop", shopId, { date }, shopId);
@@ -169,7 +197,7 @@ const Profile = z.object({
 /** The booking link and time zone are location setup (they break links and schedules); branding is shop settings. */
 export async function saveShopProfileAction(shopId: string, raw: z.input<typeof Profile>) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("details"));
     assertShopAccess(ctx, shopId);
     const v = Profile.parse(raw);
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
@@ -193,7 +221,7 @@ const Reader = z.object({ label: z.string().trim().min(1, "Name the reader").max
 
 export async function addReaderAction(shopId: string, raw: z.input<typeof Reader>) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("checkout"));
     assertShopAccess(ctx, shopId);
     const v = Reader.parse(raw);
     if (v.stripeReaderId && (await db.query.terminalReaders.findFirst({ where: eq(terminalReaders.stripeReaderId, v.stripeReaderId), columns: { id: true } })))
@@ -210,7 +238,7 @@ export async function addReaderAction(shopId: string, raw: z.input<typeof Reader
 
 export async function setReaderActiveAction(id: string, active: boolean) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("checkout"));
     const r = await db.query.terminalReaders.findFirst({ where: eq(terminalReaders.id, id) });
     if (!r) throw new AppError("not_found", "Reader not found");
     assertShopAccess(ctx, r.shopId);
@@ -224,7 +252,7 @@ export async function setReaderActiveAction(id: string, active: boolean) {
 /** What this shop's receipts show. */
 export async function saveReceiptAction(shopId: string, raw: z.input<typeof ReceiptBrandingSchema>) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("checkout"));
     assertShopAccess(ctx, shopId);
     const v = ReceiptBrandingSchema.parse(raw);
     const values = { ...v, headline: v.headline?.trim() || null, footer: v.footer?.trim() || null, reviewFollowUp: { ...v.reviewFollowUp, enabled: v.reviewFollowUp.enabled && !!v.reviewUrl } };
@@ -249,7 +277,7 @@ export async function saveReviewRulesAction(raw: { minVisits: number; snoozeDays
 /** The customer screen at checkout for one location. With tips on the reader, the presets are pushed to its Stripe Terminal readers. */
 export async function saveShopHandoffAction(shopId: string, raw: z.input<typeof ShopHandoffSchema>) {
   return safe(async () => {
-    const ctx = await authorize("settings.shop");
+    const ctx = await authorize(partPerms("checkout"));
     assertShopAccess(ctx, shopId);
     const r = await saveShopHandoff(shopId, ShopHandoffSchema.parse(raw), ctx.actor);
     revalidatePath("/admin/settings");
@@ -262,6 +290,61 @@ export async function saveBrandTipsAction(raw: z.input<typeof TipScreenSchema>) 
   return safe(async () => {
     const ctx = await authorize("handoff.settings");
     await saveBrandHandoff(TipScreenSchema.parse(raw), ctx.actor);
+    revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+/** What the cash drawer opens with unless whoever opens it counts something else. */
+export async function saveDrawerOpeningAction(shopId: string, cents: number) {
+  return safe(async () => {
+    const ctx = await authorize(partPerms("checkout"));
+    assertShopAccess(ctx, shopId);
+    await saveDrawerOpening(shopId, Math.round(cents), ctx.actor);
+    revalidatePath("/admin/settings");
+    revalidatePath("/admin/drawer");
+    return null;
+  });
+}
+
+const Operator = z.object({
+  enabled: z.boolean(),
+  answer: z.enum(["fallback", "first"]),
+  minutesPerCall: z.number().int(),
+  greeting: z.string().trim().max(300).nullable(),
+});
+
+/** How the phone operator answers this shop's number. */
+export async function savePhoneOperatorAction(shopId: string, raw: z.input<typeof Operator>) {
+  return safe(async () => {
+    const ctx = await authorize(partPerms("phone"));
+    assertShopAccess(ctx, shopId);
+    const v = Operator.parse(raw);
+    const problem = operatorProblem(v);
+    if (problem) throw new AppError("bad_request", problem);
+    const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { phoneOperator: true, twilioNumber: true } });
+    if (!before) throw new AppError("not_found", "Shop not found");
+    if (v.enabled && !before.twilioNumber) throw new AppError("conflict", "Give the shop a Twilio number first");
+    const after = cleanOperator({ ...v, greeting: v.greeting || null });
+    await db.update(shops).set({ phoneOperator: { ...after } }).where(eq(shops.id, shopId));
+    await audit(ctx.actor, "shop.phone_operator", "shop", shopId, { before: cleanOperator(before.phoneOperator), after }, shopId);
+    revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+/** How often each state's sales tax is filed. Brand-wide, so only for people with every shop. */
+export async function saveTaxFilingAction(state: string, frequency: FilingFrequency) {
+  return safe(async () => {
+    const ctx = await authorize("settings.taxes");
+    if (!ctx.brandWide) throw new AppError("forbidden", "The filing schedule is set for the whole brand");
+    const next = cleanTaxFiling({ [state]: frequency });
+    if (!Object.keys(next).length) throw new AppError("bad_request", "Pick a state and monthly or quarterly");
+    const row = await db.query.brandSettings.findFirst({ columns: { taxFiling: true } });
+    const merged = { ...cleanTaxFiling(row?.taxFiling), ...next };
+    await db.update(brandSettings).set({ taxFiling: merged, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
+    await audit(ctx.actor, "brand.tax_filing", "brand", "1", { state: stateName(Object.keys(next)[0]), frequency }, null);
+    revalidatePath("/admin/reports");
     revalidatePath("/admin/settings");
     return null;
   });

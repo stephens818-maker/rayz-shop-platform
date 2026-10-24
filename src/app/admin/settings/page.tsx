@@ -17,13 +17,19 @@ import { brandHandoffConfig, shopHandoffConfig } from "@/server/handoff";
 import { loadReviewRules } from "@/server/review-rules";
 import { BrandTipsEditor, ShopHandoffEditor } from "./handoff-editors";
 import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor, ReadersEditor, ReceiptEditor, ReviewRulesEditor, ShopInfoEditor } from "./editors";
+import { DrawerOpeningEditor, PhoneOperatorEditor, TaxFilingEditor } from "./part-editors";
+import { editableShopParts } from "@/domain/permissions";
+import { cleanOperator } from "@/domain/phone-operator";
+import { cleanTaxFiling, filingFor, stateCode } from "@/domain/sales-tax";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ shop?: string }> }) {
   const ctx = await guardPage("/admin/settings");
-  const shopSettings = can(ctx, "settings.shop");
+  const parts = editableShopParts(ctx.permissions);
+  const part = (p: (typeof parts)[number]) => parts.includes(p);
   const brand = can(ctx, "settings.brand");
+  const filing = can(ctx, "settings.taxes") && ctx.brandWide;
   const shopId = workingShopId(ctx, (await searchParams).shop);
   if (!shopId) return <Empty title="No shop selected" />;
   const [shop, hours, closures, loyalty, brandMinutes, readers, handoff, brandHandoff, reviewRules] = await Promise.all([
@@ -37,14 +43,16 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     brandHandoffConfig(),
     loadReviewRules(),
   ]);
+  const taxStates = filing ? await taxFilingStates() : [];
   if (!shop) return <Empty title="Shop not found" />;
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader title={`${shop.name} settings`} subtitle={ctx.currentShopId === null && shop.id === ctx.shopIds[0] ? "All-shops view: editing the first shop. Use the switcher to pick another." : undefined} />
       {!shop.taxRatesVerified && <Notice>Tax rates for {shop.name} are placeholders. Confirm the local rates with your accountant, enter them below and tick &ldquo;verified&rdquo;.</Notice>}
-      {shopSettings && (
+      {(part("details") || part("booking") || part("phone")) && (
       <ShopInfoEditor
         shopId={shop.id}
+        editable={parts}
         initial={{
           name: shop.name,
           address: shop.address,
@@ -63,7 +71,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         }}
       />
       )}
-      {shopSettings && (
+      {part("details") && (
         <ProfileEditor
           shopId={shop.id}
           canChangeLink={can(ctx, "locations.setup")}
@@ -83,9 +91,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           cardFeeAppliesToTip: shop.cardFeeAppliesToTip,
         }}
       />
-      {shopSettings && <HoursEditor shopId={shop.id} canSetSunday={brand} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />}
-      {shopSettings && <ClosuresEditor shopId={shop.id} multiShop={ctx.shopIds.length > 1} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />}
-      {shopSettings && (
+      {filing && taxStates.length > 0 && <TaxFilingEditor states={taxStates} />}
+      {part("hours") && <HoursEditor shopId={shop.id} canSetSunday={brand} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />}
+      {part("hours") && <ClosuresEditor shopId={shop.id} multiShop={ctx.shopIds.length > 1} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />}
+      {part("checkout") && <DrawerOpeningEditor shopId={shop.id} initialCents={shop.drawerOpeningCents} />}
+      {part("checkout") && (
         <ReadersEditor
           shopId={shop.id}
           shopName={shop.name}
@@ -93,7 +103,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           readers={readers.map((r) => ({ id: r.id, label: r.label, serialNumber: r.serialNumber, stripeReaderId: r.stripeReaderId, deviceType: r.deviceType, stripeLocationId: r.stripeLocationId, active: r.active }))}
         />
       )}
-      {shopSettings && (
+      {part("checkout") && (
         <ShopHandoffEditor
           shopId={shop.id}
           shopName={shop.name}
@@ -102,7 +112,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           hasReaders={readers.some((r) => r.active && r.stripeReaderId)}
         />
       )}
-      {shopSettings && <ReceiptEditor shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} brandReviews={reviewRules} />}
+      {part("phone") && <PhoneOperatorEditor shopId={shop.id} initial={cleanOperator(shop.phoneOperator)} hasLine={!!shop.twilioNumber} />}
+      {part("checkout") && <ReceiptEditor shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} brandReviews={reviewRules} />}
       {can(ctx, "network.settings") && (
         <Card>
           <CardHeader
@@ -131,4 +142,10 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       )}
     </div>
   );
+}
+
+async function taxFilingStates() {
+  const [rows, settings] = await Promise.all([db.select({ state: shops.state }).from(shops).where(eq(shops.active, true)), db.query.brandSettings.findFirst({ columns: { taxFiling: true } })]);
+  const f = cleanTaxFiling(settings?.taxFiling);
+  return [...new Set(rows.map((r) => stateCode(r.state)).filter(Boolean))].sort().map((state) => ({ state, frequency: filingFor(f, state) }));
 }
