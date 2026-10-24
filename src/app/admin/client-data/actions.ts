@@ -21,6 +21,7 @@ import {
   resolveEntry,
   resolveLevel,
 } from "@/domain/client-privacy";
+import { OWNER_ROLE_KEY, isBrandLevelPerson, isBrandLevelRole } from "@/domain/permissions";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, authorize } from "@/server/auth/staff";
@@ -68,14 +69,19 @@ export async function setFieldRuleAction(raw: z.input<typeof RuleSchema>) {
     if (!isBuiltinField(field) && !custom.some((c) => c.id === customFieldId(field))) throw notFound("Field");
     const role = p.roleId ? await db.query.roles.findFirst({ where: eq(roles.id, p.roleId) }) : null;
     if (p.roleId && !role) throw notFound("Role");
-    const person = p.staffId ? await db.query.staff.findFirst({ where: eq(staff.id, p.staffId), columns: { id: true, displayLabel: true, roleId: true } }) : null;
+    const person = p.staffId
+      ? await db.query.staff.findFirst({ where: eq(staff.id, p.staffId), columns: { id: true, displayLabel: true, roleId: true, kind: true, shopScope: true } })
+      : null;
     if (p.staffId && !person) throw notFound("Staff member");
-    const personRole = person ? await db.query.roles.findFirst({ where: eq(roles.id, person.roleId), columns: { key: true } }) : null;
+    const personRole = person ? await db.query.roles.findFirst({ where: eq(roles.id, person.roleId), columns: { key: true, brandLevel: true } }) : null;
     const shop = p.shopId ? await db.query.shops.findFirst({ where: eq(shops.id, p.shopId), columns: { name: true } }) : null;
     if (p.shopId && !shop) throw notFound("Shop");
+    const fullContact = role
+      ? isBrandLevelRole(role)
+      : !!person && !!personRole && (personRole.key === OWNER_ROLE_KEY || isBrandLevelPerson({ kind: person.kind, scope: person.shopScope, role: personRole }));
     const denied = fieldRuleChangeDenied(
       { staffId: ctx.staff.id, roleId: ctx.access.role.id, isOwner: ctx.isOwner, ...(await callerRights(ctx)) },
-      { field, setting: p.setting, roleId: p.roleId, roleKey: role?.key ?? personRole?.key ?? null, staffId: p.staffId, shopId: p.shopId, level: p.level },
+      { field, setting: p.setting, roleId: p.roleId, roleKey: role?.key ?? personRole?.key ?? null, staffId: p.staffId, shopId: p.shopId, level: p.level, fullContact },
     );
     if (denied) throw forbidden(denied);
     const match = and(
@@ -176,12 +182,11 @@ export async function saveLookupLimitsAction(raw: z.input<typeof LimitsSchema>) 
   });
 }
 
-/** How much contact detail shared shop logins see. Lifting the cap to the role's rules is the Brand Owner's call. */
+/** How much contact detail shared shop logins see: masked or hidden, never more. */
 export async function saveShopLoginCapAction(cap: string) {
   return safe(async () => {
     const ctx = await authorize("clients.privacy", "You can't change client data protection");
-    if (!isShopLoginCap(cap)) throw new AppError("bad_request", "Pick how much shop logins see");
-    if (cap === "role" && !ctx.isOwner) throw forbidden("Only the Brand Owner can let shop logins see more than masked contact details");
+    if (!isShopLoginCap(cap)) throw new AppError("bad_request", "Shop logins see contact details masked or hidden, never in full");
     await saveShopLoginCap(cap, ctx.actor);
     revalidate();
     return null;

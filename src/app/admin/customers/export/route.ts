@@ -5,7 +5,7 @@ import { compactSegment } from "@/domain/client-filters";
 import { BUILTIN_FIELDS, customFieldKey } from "@/domain/client-privacy";
 import { audit } from "@/server/audit";
 import { routeStaff } from "@/server/auth/staff";
-import { clientPolicy, recordClientAccess } from "@/server/client-privacy";
+import { clientListDenied, clientPolicy, recordClientAccess } from "@/server/client-privacy";
 import { clientListQuery } from "@/server/client-list";
 import { ratingSummaries } from "@/server/ratings";
 import { toCsv } from "@/server/reports";
@@ -18,6 +18,8 @@ import { toCsv } from "@/server/reports";
 export async function GET(req: Request) {
   const ctx = await routeStaff("clients.export");
   if (ctx instanceof Response) return ctx;
+  const refused = clientListDenied(ctx);
+  if (refused) return new Response(refused, { status: 403 });
   const policy = await clientPolicy(ctx);
   const url = new URL(req.url);
   const q = (url.searchParams.get("q") ?? "").trim().slice(0, 120);

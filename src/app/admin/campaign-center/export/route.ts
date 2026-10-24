@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { customers, marketingCampaigns, marketingSends, shops } from "@/db/schema";
 import { audit } from "@/server/audit";
 import { routeStaff } from "@/server/auth/staff";
-import { clientPolicy, recordClientAccess } from "@/server/client-privacy";
+import { clientListDenied, clientPolicy, recordClientAccess } from "@/server/client-privacy";
 import { contactsFor } from "@/server/marketing/consent";
 import { toCsv } from "@/server/reports";
 
@@ -18,6 +18,8 @@ const MAX_ROWS = 50_000;
 export async function GET(req: Request) {
   const ctx = await routeStaff("campaign_center.export");
   if (ctx instanceof Response) return ctx;
+  const refused = clientListDenied(ctx);
+  if (refused) return new Response(refused, { status: 403 });
   const campaignId = new URL(req.url).searchParams.get("campaign");
   const policy = await clientPolicy(ctx);
   const scoped = ctx.brandWide ? undefined : sql`coalesce((select a.shop_id from appointments a where a.customer_id = ${customers.id} and a.status = 'completed' order by a.starts_at desc limit 1), ${customers.homeShopId}) in (${sql.join(

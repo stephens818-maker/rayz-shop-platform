@@ -1,11 +1,14 @@
 import { audit } from "@/server/audit";
 import { routeStaff } from "@/server/auth/staff";
+import { clientListDenied } from "@/server/client-privacy";
 import { accessEntries, parseAccessFilters, whoLabel } from "@/server/client-access-report";
 import { toCsv } from "@/server/reports";
 
 export async function GET(req: Request) {
   const ctx = await routeStaff("clients.privacy");
   if (ctx instanceof Response) return ctx;
+  const refused = clientListDenied(ctx);
+  if (refused) return new Response(refused, { status: 403 });
   const f = parseAccessFilters(Object.fromEntries(new URL(req.url).searchParams));
   const rows = await accessEntries(f, 50_000);
   const csv = toCsv(

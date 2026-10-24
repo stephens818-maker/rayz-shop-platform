@@ -152,7 +152,7 @@ export function CustomerEditor({
   initial,
   values,
   fields,
-  canReveal,
+  revealable,
   preferred,
   shops,
   barbers,
@@ -163,7 +163,8 @@ export function CustomerEditor({
   /** Fields seen in full, as they are on file. */
   values: Record<string, string>;
   fields: ShownField[];
-  canReveal: boolean;
+  /** Masked fields they may reveal, with a reason. */
+  revealable: string[];
   preferred: ShownField;
   shops: { id: string; name: string }[];
   barbers: { id: string; label: string }[];
@@ -203,7 +204,7 @@ export function CustomerEditor({
         <Field label="Last name">
           <Input value={p.lastName} onChange={(e) => setP({ ...p, lastName: e.target.value })} />
         </Field>
-        {prot.shown.filter((f) => f.key !== "notes" && !notHere.includes(f)).map((f) => prot.field(f, id, canReveal))}
+        {prot.shown.filter((f) => f.key !== "notes" && !notHere.includes(f)).map((f) => prot.field(f, id, revealable.includes(f.key)))}
         {notHere.length > 0 && <p className="col-span-2 text-xs text-zinc-500">Not shown to you: {notHere.map((f) => f.label.toLowerCase()).join(", ")}.</p>}
         <Field label="Home shop">
           <Select value={p.homeShopId ?? ""} onChange={(e) => setP({ ...p, homeShopId: e.target.value || null })}>
@@ -229,10 +230,10 @@ export function CustomerEditor({
         ) : preferred.level === "masked" ? (
           <div className="text-sm">
             <div className="mb-1 text-xs font-medium text-zinc-700">Preferred barber</div>
-            <Masked customerId={id} field="preferred_barber" value={preferred.value} level="masked" canReveal={canReveal} empty="No preference" />
+            <Masked customerId={id} field="preferred_barber" value={preferred.value} level="masked" canReveal={revealable.includes("preferred_barber")} empty="No preference" />
           </div>
         ) : null}
-        {prot.shown.filter((f) => f.key === "notes" && !notHere.includes(f)).map((f) => prot.field({ ...f, label: "Notes (staff only)" }, id, canReveal))}
+        {prot.shown.filter((f) => f.key === "notes" && !notHere.includes(f)).map((f) => prot.field({ ...f, label: "Notes (staff only)" }, id, revealable.includes(f.key)))}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={p.smsOptIn} onChange={(e) => setP({ ...p, smsOptIn: e.target.checked })} /> Texts
         </label>
@@ -259,7 +260,7 @@ export function NotesEditor({
   initial,
   notes: notesField,
   fields,
-  canReveal,
+  revealable,
   preferred,
   usual,
 }: {
@@ -267,7 +268,8 @@ export function NotesEditor({
   initial: string;
   notes: ShownField;
   fields: ShownField[];
-  canReveal: boolean;
+  /** Masked fields they may reveal, with a reason. */
+  revealable: string[];
   preferred: string | null;
   usual: string | null;
 }) {
@@ -287,13 +289,13 @@ export function NotesEditor({
             <Fragment key={f.key}>
               <dt className="text-zinc-500">{f.label}</dt>
               <dd className="col-span-2">
-                <Masked customerId={id} field={f.key} value={f.value} level={f.level} canReveal={canReveal} />
+                <Masked customerId={id} field={f.key} value={f.value} level={f.level} canReveal={revealable.includes(f.key)} />
               </dd>
             </Fragment>
           ))}
         </dl>
       )}
-      <div className="grid grid-cols-2 p-4">{prot.field({ ...notes, label: "Client notes" }, id, canReveal)}</div>
+      <div className="grid grid-cols-2 p-4">{prot.field({ ...notes, label: "Client notes" }, id, revealable.includes(notes.key))}</div>
       {sending !== undefined && (
         <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
           <Button

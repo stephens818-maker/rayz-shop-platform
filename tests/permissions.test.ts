@@ -340,8 +340,8 @@ describe("granting: people", () => {
 
   it("no escalation past the caller, and nobody edits someone with access they don't have", () => {
     const t = state("barber", "selected", [A]);
-    expect(userAccessChangeDenied(regional, t, next(t, "barber", { "import.run": true }), opts)).toMatch(/don't have/);
-    const above = state("shop_manager", "one", [A], "target", { "import.run": true });
+    expect(userAccessChangeDenied(regional, t, next(t, "barber", { "clients.merge": true }), opts)).toMatch(/don't have/);
+    const above = state("shop_manager", "one", [A], "target", { "clients.merge": true });
     expect(userAccessChangeDenied(regional, above, next(above, "barber"), opts)).toMatch(/access you don't/);
     const fd = state("front_desk", "one", [A]);
     const capped = { ...regional, maxDiscountPct: 15 };

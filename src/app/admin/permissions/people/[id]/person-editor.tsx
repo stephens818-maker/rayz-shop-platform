@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
 import {
+  BRAND_LEVEL_ONLY,
   BRAND_ONLY,
   FEATURE_PERMISSIONS,
   OWNER_GRANTS,
@@ -20,6 +21,7 @@ import {
   accessByShop,
   diffPermissions,
   effectiveAccess,
+  isBrandLevelPerson,
   permissionLabel,
   reportExport,
   reportView,
@@ -53,6 +55,7 @@ export function PersonAccessEditor({
   iAmOwner,
   iAmBrandWide,
   readOnly,
+  kind = "person",
 }: {
   staffId: string;
   initial: State;
@@ -64,6 +67,7 @@ export function PersonAccessEditor({
   iAmOwner: boolean;
   iAmBrandWide: boolean;
   readOnly: string | null;
+  kind?: "person" | "shop";
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -85,6 +89,7 @@ export function PersonAccessEditor({
   const perShop = s.scope === "selected" && !isOwnerRole && s.shopIds.length > 1;
   const diff = diffPermissions(before.permissions, after.permissions);
   const locked = !!readOnly;
+  const brandLevel = isBrandLevelPerson({ kind, scope: isOwnerRole ? "all" : s.scope, role });
 
   const setOverride = (p: Permission, v: boolean | null) => {
     const o: Overrides = { ...s.overrides };
@@ -102,7 +107,8 @@ export function PersonAccessEditor({
   const save = () =>
     start(async () => {
       setError(null);
-      const r = await saveUserAccessAction({ staffId, ...s, overrides: s.overrides as Record<string, boolean> });
+      const overrides = Object.fromEntries(Object.entries(s.overrides).filter(([p, v]) => brandLevel || !v || !BRAND_LEVEL_ONLY.has(p as Permission)));
+      const r = await saveUserAccessAction({ staffId, ...s, overrides: overrides as Record<string, boolean> });
       if (!r.ok) return setError(r.error);
       setSaved(true);
       router.refresh();
@@ -251,13 +257,22 @@ export function PersonAccessEditor({
                   {rows.map((p) => {
                     const o = s.overrides[p];
                     const lack = !has.has(p) || (OWNER_GRANTS.has(p) && !iAmOwner);
+                    const shopLevel = BRAND_LEVEL_ONLY.has(p) && !brandLevel;
                     const exportWithoutView = p.endsWith(".export") && !after.permissions.has(p.replace(/\.export$/, ".view") as Permission);
                     return (
                       <li key={p} className="flex flex-wrap items-center gap-3 px-4 py-2 text-sm">
                         <span className="min-w-0 flex-1">
                           {permissionLabel(p)}
                           {BRAND_ONLY.has(p) && (
-                            <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">{s.scope === "all" ? "All shops only" : "All shops only: off with this shop access"}</span>
+                            <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">
+                              {BRAND_LEVEL_ONLY.has(p)
+                                ? brandLevel
+                                  ? "Brand-level only"
+                                  : "Brand-level only: never for shop logins or shop and staff roles"
+                                : s.scope === "all"
+                                  ? "All shops only"
+                                  : "All shops only: off with this shop access"}
+                            </span>
                           )}
                           {lack && <span className="ml-2 text-xs text-zinc-400">you don&apos;t have this</span>}
                         </span>
@@ -275,7 +290,7 @@ export function PersonAccessEditor({
                               type="button"
                               role="radio"
                               aria-checked={(o ?? null) === v}
-                              disabled={locked || (lack && v !== (o ?? null))}
+                              disabled={locked || (lack && v !== (o ?? null)) || (shopLevel && v === true)}
                               onClick={() => setOverride(p, v)}
                               className={cx(
                                 "px-2.5 py-1 disabled:opacity-40",

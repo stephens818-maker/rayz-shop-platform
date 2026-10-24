@@ -17,6 +17,12 @@ interface PermissionDef {
   brandOnly?: boolean;
   /** Not in any role but Brand Owner to start, and only the Brand Owner can grant or remove it. */
   ownerGrants?: boolean;
+  /**
+   * Takes client lists or full client contact details out of the system, so only brand-level roles
+   * ever hold it, with access to all shops. It can't be put in a shop or staff role or granted to
+   * someone in one, and shop logins never have it.
+   */
+  brandLevel?: boolean;
 }
 
 export const FEATURE_PERMISSIONS = [
@@ -107,10 +113,17 @@ export const FEATURE_PERMISSIONS = [
     key: "clients.reveal",
     group: "Clients",
     label: "Reveal a masked client detail, with a reason",
-    hint: "Which details are masked or hidden is set under Client data. Every reveal is logged with the reason.",
+    hint: "Which details are masked or hidden is set under Client data. Phone, email and address are revealed only to brand-level roles. Every reveal is logged with the reason.",
   },
   { key: "clients.message", group: "Clients", label: "Call and text clients through the shop line", hint: "The number stays hidden; calls and texts go through the system." },
-  { key: "clients.export", group: "Clients", label: "Export the client list", hint: "Off for everyone but the Brand Owner unless granted. Every export is logged.", brandOnly: true },
+  {
+    key: "clients.export",
+    group: "Clients",
+    label: "Export the client list",
+    hint: "Brand-level roles only, and off for everyone but the Brand Owner unless granted. Every export is logged.",
+    brandOnly: true,
+    brandLevel: true,
+  },
   { key: "clients.edit", group: "Clients", label: "Add clients and edit client details", hint: "Which details they can add or edit is set in Client data protection, apart from which they can see." },
   { key: "clients.merge", group: "Clients", label: "Merge duplicate clients", brandOnly: true },
   {
@@ -163,8 +176,9 @@ export const FEATURE_PERMISSIONS = [
     key: "campaign_center.export",
     group: "Campaign Center",
     label: "Campaign Center: export",
-    hint: "Export a campaign audience's contact list. Off for everyone but the Brand Owner unless granted. Details are exported as Client data lets them see them, and every export is logged.",
+    hint: "Export a campaign audience's contact list. Brand-level roles only, and off for everyone but the Brand Owner unless granted. Details are exported as Client data lets them see them, and every export is logged.",
     brandOnly: true,
+    brandLevel: true,
   },
   {
     key: "campaign_center.own_clients",
@@ -321,12 +335,14 @@ export const FEATURE_PERMISSIONS = [
     ownerGrants: true,
   },
   { key: "settings.brand", group: "Settings and data", label: "Change brand-level settings: loyalty program, new shops, Sunday hours", ownerOnly: true },
-  { key: "import.run", group: "Settings and data", label: "Run the Squire import", brandOnly: true },
+  { key: "import.run", group: "Settings and data", label: "Run the Squire import", hint: "Brand-level roles only: it reads whole client files.", brandOnly: true, brandLevel: true },
   {
     key: "clients.privacy",
     group: "Settings and data",
     label: "Set which client details each role and person sees, and see who viewed client data",
+    hint: "Brand-level roles only.",
     brandOnly: true,
+    brandLevel: true,
   },
   { key: "notifications.view", group: "Settings and data", label: "See the notification outbox" },
   { key: "notifications.send", group: "Settings and data", label: "Send due notifications now" },
@@ -486,7 +502,14 @@ export const REPORT_PERMISSIONS: ReportPermission[] = REPORTS.flatMap((r) => [re
 export const ALL_PERMISSIONS: Permission[] = [...FEATURE_PERMISSIONS.map((p) => p.key), ...REPORT_PERMISSIONS];
 const KNOWN = new Set<string>(ALL_PERMISSIONS);
 export const OWNER_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "ownerOnly" in p && p.ownerOnly).map((p) => p.key));
-export const BRAND_ONLY = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "brandOnly" in p && p.brandOnly).map((p) => p.key));
+/** Reports whose rows are named clients, so exporting one is downloading a client list. */
+export const CLIENT_LIST_REPORTS: readonly ReportKey[] = ["client_ratings"];
+/** Client lists and full contact details leave the system only through these; see PermissionDef.brandLevel. */
+export const BRAND_LEVEL_ONLY = new Set<Permission>([
+  ...FEATURE_PERMISSIONS.filter((p) => "brandLevel" in p && p.brandLevel).map((p) => p.key),
+  ...CLIENT_LIST_REPORTS.map(reportExport),
+]);
+export const BRAND_ONLY = new Set<Permission>([...FEATURE_PERMISSIONS.filter((p) => "brandOnly" in p && p.brandOnly).map((p) => p.key), ...BRAND_LEVEL_ONLY]);
 export const OWNER_GRANTS = new Set<Permission>(FEATURE_PERMISSIONS.filter((p) => "ownerGrants" in p && p.ownerGrants).map((p) => p.key));
 /**
  * A Brand Admin with access to all shops always has these: every client, every search field and
@@ -564,7 +587,29 @@ export interface RoleDef {
   permissions: readonly string[];
   /** Largest manual discount allowed, in whole percent. */
   maxDiscountPct: number;
+  /** A custom role the Brand Owner made brand-level; see isBrandLevelRole. */
+  brandLevel?: boolean;
 }
+
+const TEMPLATE_KEYS = new Set<string>(ROLE_TEMPLATE_KEYS);
+
+/**
+ * Brand-level roles may see client contact details in full and take client lists out: the Brand
+ * Owner, Brand Admin, and custom roles the Brand Owner marks brand-level. Every other template is a
+ * shop or staff role and never is, whatever it's been given.
+ */
+export function isBrandLevelRole(r: Pick<RoleDef, "key" | "brandLevel">): boolean {
+  if (r.key === OWNER_ROLE_KEY || r.key === BRAND_ADMIN_ROLE_KEY) return true;
+  if (r.key && TEMPLATE_KEYS.has(r.key)) return false;
+  return !!r.brandLevel;
+}
+
+/** A person (not a shared shop login) in a brand-level role with access to all shops. */
+export const isBrandLevelPerson = (p: { kind: "person" | "shop"; scope: ShopScope; role: Pick<RoleDef, "key" | "brandLevel"> }) =>
+  p.kind === "person" && p.scope === "all" && isBrandLevelRole(p.role);
+
+const BRAND_LEVEL_LABEL = "brand-level roles (Brand Owner, Brand Admin and the brand-level roles the Brand Owner creates)";
+const notBrandLevel = (p: Permission) => `"${permissionLabel(p)}" is only for ${BRAND_LEVEL_LABEL}, with access to all shops. It can't be given to a shop or staff role.`;
 
 const reports = (keys: ReportKey[], exportToo = true): ReportPermission[] => keys.flatMap((k) => (exportToo ? [reportView(k), reportExport(k)] : [reportView(k)]));
 const ALL_REPORTS = REPORTS.map((r) => r.key);
@@ -639,8 +684,7 @@ export interface RoleTemplate extends RoleDef {
   defaultScope: ShopScope;
 }
 
-/** Starting points. Every template except Brand Owner can be edited; "Reset" puts these back. */
-export const ROLE_TEMPLATES: RoleTemplate[] = [
+const TEMPLATES: RoleTemplate[] = [
   {
     key: "brand_owner",
     name: "Brand Owner",
@@ -765,6 +809,9 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
   },
 ];
 
+/** Starting points. Every template except Brand Owner can be edited; "Reset" puts these back. Shop and staff templates never hold brand-level permissions. */
+export const ROLE_TEMPLATES: RoleTemplate[] = TEMPLATES.map((t) => (isBrandLevelRole(t) ? t : { ...t, permissions: t.permissions.filter((p) => !BRAND_LEVEL_ONLY.has(p as Permission)) }));
+
 export const templateFor = (key: string | null | undefined) => ROLE_TEMPLATES.find((t) => t.key === key) ?? null;
 
 /** Template rows as stored. Brand Owner's list stays empty: it always has everything, including permissions added later. */
@@ -812,6 +859,7 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
   }
   for (const p of OWNER_ONLY) perms.delete(p);
   if (scope !== "all") for (const p of BRAND_ONLY) perms.delete(p);
+  if (!isBrandLevelRole(role)) for (const p of BRAND_LEVEL_ONLY) perms.delete(p);
   if (role.key === BRAND_ADMIN_ROLE_KEY && scope === "all") for (const p of BRAND_ADMIN_ALWAYS) perms.add(p);
   for (const r of REPORTS) if (!perms.has(reportView(r.key))) perms.delete(reportExport(r.key));
   if (!perms.has("report_builder.view") && !perms.has("report_builder.build")) perms.delete("report_builder.export");
@@ -828,6 +876,7 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
  * details, and never manages people, pay or sign-in.
  */
 export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
+  ...BRAND_LEVEL_ONLY,
   "sales.refund",
   "sales.reassign",
   "clients.reveal",
@@ -949,6 +998,12 @@ export function roleChangeDenied(caller: Grantor, before: RoleDef | null, after:
   const next = new Set((after?.permissions ?? []).filter(isPermission));
   const owner = [...next].filter((p) => OWNER_ONLY.has(p));
   if (owner.length) return `Only the Brand Owner can ${permissionLabel(owner[0]).replace(/^Change/, "change")}`;
+  if (after && !!after.brandLevel !== !!before?.brandLevel) {
+    if (after.key) return "Built-in roles can't be made brand-level or shop-level. Create a custom role.";
+    if (!caller.isOwner) return "Only the Brand Owner can make a role brand-level, or stop it being brand-level";
+  }
+  const shopLevel = after && !isBrandLevelRole(after) && [...next].find((p) => BRAND_LEVEL_ONLY.has(p));
+  if (shopLevel) return notBrandLevel(shopLevel);
   if (after?.key === BRAND_ADMIN_ROLE_KEY) {
     const kept = [...BRAND_ADMIN_ALWAYS].find((p) => !next.has(p));
     if (kept) return `Brand Admins always have "${permissionLabel(kept)}"`;
@@ -977,7 +1032,8 @@ export interface UserAccessState {
 export function userAccessChangeDenied(
   caller: Grantor,
   current: UserAccessState,
-  next: UserAccessState & { overrides: Overrides },
+  /** brandLevel: whether they'd be a brand-level person (isBrandLevelPerson) after the change. */
+  next: UserAccessState & { overrides: Overrides; brandLevel?: boolean },
   opts: { activeOwners: number },
 ): string | null {
   if (!caller.permissions.has("permissions.manage")) return "You can't manage permissions";
@@ -988,6 +1044,8 @@ export function userAccessChangeDenied(
   if (!caller.isOwner && missing(caller, current.permissions).length) return "This person has access you don't, so ask someone above them";
   const ownerOverride = Object.keys(next.overrides).find((k) => OWNER_ONLY.has(k as Permission) && next.overrides[k as Permission]);
   if (ownerOverride) return "Brand-level settings come only with the Brand Owner role";
+  const shopLevel = !next.brandLevel && (Object.keys(next.overrides) as Permission[]).find((k) => BRAND_LEVEL_ONLY.has(k) && next.overrides[k]);
+  if (shopLevel) return notBrandLevel(shopLevel);
   const problem = scopeProblem(next.scope, [...next.shopIds]);
   if (problem) return problem;
   if (caller.scope !== "all") {

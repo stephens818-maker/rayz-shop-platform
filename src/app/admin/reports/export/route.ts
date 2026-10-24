@@ -1,8 +1,8 @@
 import { REPORTS, ReportKey, reportExport, reportView } from "@/domain/permissions";
-import { viewOf } from "@/domain/report-views";
+import { type ReportTable, viewOf } from "@/domain/report-views";
 import { audit } from "@/server/audit";
 import { can, reasonViewer, routeStaff } from "@/server/auth/staff";
-import { clientPolicy } from "@/server/client-privacy";
+import { clientListDenied, clientPolicy } from "@/server/client-privacy";
 import { AppError } from "@/server/errors";
 import { REPORT_LOADERS, tableCsv } from "@/server/report-data";
 import { resolveScope } from "../scope";
@@ -16,6 +16,12 @@ const ALIASES: Record<string, { report: ReportKey; table?: string; view?: string
   barbers: { report: "sales_by_barber" },
   payroll: { report: "tips_payroll" },
 };
+
+/** A downloaded audit log would list the clients whose records were touched, so only brand-level people get those entries. */
+function withoutClientEntries(t: ReportTable): ReportTable {
+  const area = t.columns.findIndex((c) => c.label === "Area");
+  return area < 0 ? t : { ...t, rows: t.rows.filter((r) => r[area] !== "customer" && r[area] !== "client_rating") };
+}
 
 /**
  * CSV for one report table. Needs both "view" and "export" for that report, for shops in your
@@ -41,8 +47,9 @@ export async function GET(req: Request) {
   }
   const data = await REPORT_LOADERS[key]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params: p });
   const tableId = p.table ?? alias?.table;
-  const table = tableId ? data.tables.find((t) => t.id === tableId) : data.tables[0];
-  if (!table) return new Response("Unknown table", { status: 404 });
+  const found = tableId ? data.tables.find((t) => t.id === tableId) : data.tables[0];
+  if (!found) return new Response("Unknown table", { status: 404 });
+  const table = key === "audit_log" && clientListDenied(ctx) ? withoutClientEntries(found) : found;
   const csv = tableCsv(table);
   await audit(ctx.actor, "report.export", "report", key, { table: table.id, rows: table.rows.length, from: scope.from, to: scope.to, shops: scope.shopIds }, ctx.currentShopId);
   const view = { combined: "", shops: "-by-location", barbers: "-by-barber", shops_barbers: "-by-location-and-barber" }[viewOf(scope.loc)];

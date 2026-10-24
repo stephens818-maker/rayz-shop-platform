@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   BUILTIN_FIELDS,
+  CONTACT_FIELDS,
   DEFAULT_LIMITS,
   FieldRule,
   cleanLimits,
+  contactCeiling,
   customFieldKey,
   defaultEntry,
   defaultLevel,
@@ -118,7 +120,7 @@ describe("resolving rules", () => {
 
 describe("who may change a rule", () => {
   const admin = { staffId: "admin", roleId: "admin-role", isOwner: false, levelAt: () => "full" as const };
-  const base = { field: "phone" as const, roleId: "barber-role", roleKey: "barber", staffId: null, shopId: null, level: "full" as const };
+  const base = { field: "birthday" as const, roleId: "barber-role", roleKey: "barber", staffId: null, shopId: null, level: "full" as const };
 
   it("a brand admin can set a barber's level, but not their own or their role's, nor the owner's", () => {
     expect(fieldRuleChangeDenied(admin, base)).toBeNull();
@@ -134,6 +136,20 @@ describe("who may change a rule", () => {
     expect(fieldRuleChangeDenied({ ...admin, levelAt: () => "masked" }, { ...base, level: null })).toBeNull();
     expect(fieldRuleChangeDenied(admin, { ...base, staffId: "jilane" })).toMatch(/role or a person/);
     expect(fieldRuleChangeDenied(admin, { ...base, roleId: null })).toMatch(/role or a person/);
+  });
+
+  it("phone, email and address are never set to full for a shop or staff role or person, not even by the Brand Owner", () => {
+    const owner = { ...admin, isOwner: true };
+    for (const field of CONTACT_FIELDS) {
+      for (const caller of [admin, owner]) {
+        expect(fieldRuleChangeDenied(caller, { ...base, field }), field).toMatch(/never shown in full/);
+        expect(fieldRuleChangeDenied(caller, { ...base, field, roleId: null, roleKey: "shop_manager", staffId: "michelle" }), field).toMatch(/never shown in full/);
+        expect(fieldRuleChangeDenied(caller, { ...base, field, level: "masked" }), field).toBeNull();
+      }
+      expect(fieldRuleChangeDenied(owner, { ...base, field, setting: "edit", level: "allow" }), field).toBeNull();
+      expect(fieldRuleChangeDenied(owner, { ...base, field, roleId: "auditor", roleKey: null, fullContact: true }), field).toBeNull();
+    }
+    expect(fieldRuleChangeDenied(admin, { ...base, field: "birthday" })).toBeNull();
   });
 
   it("the owner can change anyone's entry rights, but Brand Admins always see every detail", () => {
@@ -236,6 +252,34 @@ describe("entering details", () => {
       canEdit: true,
     });
     expect(shownField(p, "email", null)).toMatchObject({ level: "hidden", saved: false, canAdd: false });
+  });
+});
+
+describe("the contact ceiling", () => {
+  it("caps phone, email and address at masked for anyone who isn't brand-level, and leaves other fields alone", () => {
+    for (const f of CONTACT_FIELDS) {
+      expect(contactCeiling(f, "full", false), f).toBe("masked");
+      expect(contactCeiling(f, "masked", false), f).toBe("masked");
+      expect(contactCeiling(f, "hidden", false), f).toBe("hidden");
+      expect(contactCeiling(f, "full", true), f).toBe("full");
+    }
+    for (const f of ["birthday", "notes", "preferred_barber", customFieldKey("x")] as const) expect(contactCeiling(f, "full", false), f).toBe("full");
+  });
+
+  it("a policy shows contact details masked and won't reveal them unless brand-level, whatever its levels say", async () => {
+    const { makePolicy } = await import("@/server/client-privacy");
+    const levels = new Map([...BUILTIN_FIELDS.map((f) => [f.key, "full"] as const), ["birthday", "masked"] as const]);
+    const shop = makePolicy({ staffId: "m", isOwner: false, canReveal: true, custom: [], levels });
+    expect(shop.fullContact).toBe(false);
+    expect(shop.level("phone")).toBe("masked");
+    expect(shop.show("phone", "+13195554321")).toBe("***-***-4321");
+    expect(shop.show("email", "jordan@gmail.com")).toBe("j***@gmail.com");
+    expect(shop.show("notes", "Likes a 2 guard")).toBe("Likes a 2 guard");
+    for (const f of CONTACT_FIELDS) expect(shop.mayReveal(f), f).toBe(false);
+    expect(shop.mayReveal("birthday")).toBe(true);
+    const brand = makePolicy({ staffId: "a", isOwner: false, fullContact: true, canReveal: true, custom: [], levels: new Map([...levels, ["phone", "masked"]]) });
+    expect(brand.level("email")).toBe("full");
+    expect(brand.mayReveal("phone")).toBe(true);
   });
 });
 

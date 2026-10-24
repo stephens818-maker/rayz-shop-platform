@@ -15,9 +15,11 @@ import {
   RULE_VALUE_LABEL,
   SETTINGS,
   SETTING_LABEL,
+  contactCeiling,
   customFieldKey,
   defaultEntry,
   defaultLevel,
+  isContactField,
   isEntryField,
   isSetting,
   resolveEntry,
@@ -25,7 +27,7 @@ import {
   ruleSetting,
   validRule,
 } from "@/domain/client-privacy";
-import { OWNER_ROLE_KEY } from "@/domain/permissions";
+import { OWNER_ROLE_KEY, isBrandLevelPerson, isBrandLevelRole } from "@/domain/permissions";
 import { guardPage } from "@/server/auth/staff";
 import { lookupLimits, shopLoginCap } from "@/server/client-privacy";
 import { CustomFields, LimitsForm, PersonRuleForm, RemoveRule, RuleCell, ShopLoginCapForm } from "./editor";
@@ -44,14 +46,14 @@ const entryText = (add: boolean, edit: boolean) => (add && edit ? "can add and e
 
 export default async function ClientDataPage({ searchParams }: { searchParams: Promise<{ shop?: string; who?: string; setting?: string }> }) {
   const sp = await searchParams;
-  const ctx = await guardPage("/admin/client-data");
+  await guardPage("/admin/client-data");
   const [roleRows, shopRows, fieldRows, ruleRows, people, limits, loginCap] = await Promise.all([
-    db.select({ id: roles.id, name: roles.name, key: roles.key }).from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)),
+    db.select({ id: roles.id, name: roles.name, key: roles.key, brandLevel: roles.brandLevel }).from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)),
     db.select({ id: shops.id, name: shops.name }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name)),
     db.select().from(clientFields).orderBy(asc(clientFields.sortOrder), asc(clientFields.label)),
     db.select().from(clientFieldRules),
     db
-      .select({ id: staff.id, label: staff.displayLabel, roleId: staff.roleId, roleKey: roles.key, scope: staff.shopScope })
+      .select({ id: staff.id, label: staff.displayLabel, roleId: staff.roleId, roleKey: roles.key, roleBrandLevel: roles.brandLevel, scope: staff.shopScope })
       .from(staff)
       .innerJoin(roles, eq(roles.id, staff.roleId))
       .where(and(eq(staff.active, true), eq(staff.kind, "person"), ne(roles.key, OWNER_ROLE_KEY)))
@@ -80,8 +82,12 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
     const rest = rules.filter((r) => r !== own);
     const inherited: Level | Entry = setting === "view" ? resolveLevel(rest, who, shopId, field) : resolveEntry(rest, who, shopId, field, setting) ? "allow" : "deny";
     const from = shopId && rules.some((r) => same(r) && r.shopId === null) ? "brand default" : "built-in";
-    return { level: (own?.level as Level | Entry | undefined) ?? null, inherited, from };
+    const level = (own?.level as Level | Entry | undefined) ?? null;
+    if (setting !== "view") return { level, inherited, from };
+    const cap = (l: Level) => contactCeiling(field, l, isBrandLevelRole(role));
+    return { level: level && cap(level as Level), inherited: cap(inherited as Level), from };
   };
+  const fullContactOf = (p: (typeof people)[number]) => isBrandLevelPerson({ kind: "person", scope: p.scope, role: { key: p.roleKey, brandLevel: p.roleBrandLevel } });
 
   const personRules = rules.filter((r) => r.staffId).map((r) => ({ ...r, who: people.find((p) => p.id === r.staffId)?.label ?? "Former staff" }));
   const who = people.find((p) => p.id === sp.who) ?? null;
@@ -182,7 +188,13 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
                   const c = cell(r, f.key);
                   return (
                     <Td key={f.key} className="px-1.5">
-                      <RuleCell rule={{ field: f.key, setting, roleId: r.id, staffId: null, shopId }} level={c.level} inherited={c.inherited} from={c.from} />
+                      <RuleCell
+                        rule={{ field: f.key, setting, roleId: r.id, staffId: null, shopId }}
+                        level={c.level}
+                        inherited={c.inherited}
+                        from={c.from}
+                        noFull={setting === "view" && isContactField(f.key) && !isBrandLevelRole(r)}
+                      />
                     </Td>
                   );
                 })}
@@ -193,8 +205,10 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
         <p className="border-t border-zinc-100 px-4 py-3 text-xs text-zinc-500">
           {setting === "view" ? (
             <>
-              Masked phone: ***-***-4321. Masked email: j***@gmail.com. Managers with &quot;reveal a masked client detail&quot; can show one detail at a time with a reason, and
-              each reveal is logged. Search still finds a client by their full phone number or email without showing it, and calls and texts go through the shop line.
+              Masked phone: ***-***-4321. Masked email: j***@gmail.com. Phone, email and address are shown in full only to brand-level roles (Brand Owner, Brand Admin and
+              the brand-level roles the Brand Owner creates) with access to all shops: for shop logins and every shop or staff role they&apos;re masked at most, and can&apos;t be
+              revealed. Managers with &quot;reveal a masked client detail&quot; can show another masked detail one at a time with a reason, and each reveal is logged. Search
+              still finds a client by their full phone number or email without showing it, and calls and texts go through the shop line.
             </>
           ) : (
             <>
@@ -237,7 +251,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
             </tbody>
           </Table>
         )}
-        <PersonRuleForm people={people.map((p) => ({ id: p.id, label: p.label }))} fields={fields.map((f) => ({ key: f.key, label: f.label }))} shops={shopRows} />
+        <PersonRuleForm people={people.map((p) => ({ id: p.id, label: p.label, fullContact: fullContactOf(p) }))} fields={fields.map((f) => ({ key: f.key, label: f.label }))} shops={shopRows} />
       </Card>
 
       <Card>
@@ -275,7 +289,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
                   <Td>{f.label}</Td>
                   {whoColumns.map((c) => {
                     const w = { staffId: who.id, roleId: c.roleId, roleKey: c.roleKey };
-                    const l = resolveLevel(rules, w, c.shopId, f.key);
+                    const l = contactCeiling(f.key, resolveLevel(rules, w, c.shopId, f.key), fullContactOf(who));
                     const entry = (t: EntrySetting) => resolveEntry(rules, w, c.shopId, f.key, t);
                     const changed = l !== defaultLevel(c.roleKey, f.key) || (["add", "edit"] as const).some((t) => entry(t) !== defaultEntry(c.roleKey, f.key, t));
                     return (
@@ -298,7 +312,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
           title="Shop logins"
           subtitle="A shop login is shared by everyone at the desk, so on top of its role's rules it sees client contact details masked at most. Whatever its role or overrides say, it never reveals a masked detail, exports or downloads clients, merges duplicates or sees staff phone numbers and emails."
         />
-        <ShopLoginCapForm initial={loginCap} canLift={ctx.isOwner} />
+        <ShopLoginCapForm initial={loginCap} />
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">

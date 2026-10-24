@@ -4,7 +4,7 @@ import { importRuns } from "@/db/schema";
 import { errorsCsv } from "@/lib/import-errors";
 import { audit } from "@/server/audit";
 import { can, canAny, routeStaff } from "@/server/auth/staff";
-import { clientPolicy, recordClientAccess, redactImportErrors } from "@/server/client-privacy";
+import { clientListDenied, clientPolicy, recordClientAccess, redactImportErrors } from "@/server/client-privacy";
 import { mapHeaders, type ImportKind } from "@/server/importer";
 
 const CATALOG_KINDS = ["catalog", "catalog_stock"];
@@ -25,6 +25,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
   const name = `${run.kind}-skipped-rows-${run.createdAt.toISOString().slice(0, 10)}.csv`;
   let errors = run.errors;
   if (!CATALOG_KINDS.includes(run.kind)) {
+    const refused = clientListDenied(ctx);
+    if (refused) return new Response(refused, { status: 403 });
     const columns = [...new Set(errors.flatMap((e) => Object.keys(e.data ?? {})))];
     errors = redactImportErrors(await clientPolicy(ctx), mapHeaders(columns, run.kind as ImportKind), errors);
     await recordClientAccess(ctx, { kind: "export", detail: { export: "import_skipped_rows", runId, rows: errors.length } });

@@ -61,7 +61,7 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
           shopIds: target.scope === "all" ? [] : target.shopIds,
           shopRoles: target.shopRoles,
         }}
-        roles={roleRows.map((r) => ({ id: r.id, key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope }))}
+        roles={roleRows.map((r) => ({ id: r.id, key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope, brandLevel: r.brandLevel }))}
         shops={ctx.brandWide ? allShops : allShops.filter((s) => hasShop(ctx, s.id))}
         worksAt={[...new Set(allShops.filter((s) => works.includes(s.id)).map((s) => (ctx.brandWide || hasShop(ctx, s.id) ? s.name : OTHER_SHOP)))]}
         mine={[...ctx.permissions]}
@@ -69,6 +69,7 @@ export default async function PersonAccessPage({ params }: { params: Promise<{ i
         iAmOwner={ctx.isOwner}
         iAmBrandWide={ctx.brandWide}
         readOnly={readOnly}
+        kind={person.kind}
       />
     </div>
   );

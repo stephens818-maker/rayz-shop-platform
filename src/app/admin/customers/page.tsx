@@ -11,7 +11,7 @@ import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { filterOptions, panelSees } from "@/server/client-filters";
 import { clientListQuery } from "@/server/client-list";
-import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess } from "@/server/client-privacy";
+import { PAUSED_MESSAGE, clientListDenied, clientPolicy, isPaused, recordClientAccess } from "@/server/client-privacy";
 import { listSavedSearches } from "@/server/saved-searches";
 import { ClientListControls } from "./list-controls";
 import { NoCopy } from "./privacy";
@@ -134,7 +134,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         saved={saved}
         maySave={can(ctx, "clients.saved_searches")}
         share={{ shop: !!(ctx.currentShopId ?? (ctx.shopIds.length === 1 ? ctx.shopIds[0] : null)), brand: ctx.brandWide }}
-        mayExport={full && can(ctx, "clients.export")}
+        mayExport={full && can(ctx, "clients.export") && !clientListDenied(ctx)}
         mayBlast={can(ctx, "campaign_center.create")}
       />
       {list?.problem && <Notice tone="amber">{list.problem}. Showing the list without filters.</Notice>}

@@ -1,7 +1,7 @@
 import { LOCATION, viewOf } from "@/domain/report-views";
 import { audit } from "@/server/audit";
 import { can, routeStaff } from "@/server/auth/staff";
-import { clientPolicy, recordClientAccess } from "@/server/client-privacy";
+import { clientListDenied, clientPolicy, recordClientAccess } from "@/server/client-privacy";
 import { AppError } from "@/server/errors";
 import { ratingsByShop } from "@/server/ratings";
 import { ratingsGivenTable, tableCsv } from "@/server/report-data";
@@ -15,6 +15,8 @@ const csvResponse = (csv: string, name: string) =>
 export async function GET(req: Request) {
   const ctx = await routeStaff("report.client_ratings.export");
   if (ctx instanceof Response) return ctx;
+  const refused = clientListDenied(ctx);
+  if (refused) return new Response(refused, { status: 403 });
   if (!can(ctx, "report.client_ratings.view")) return new Response("You don't have permission to export this report", { status: 403 });
   const url = new URL(req.url);
   let p;

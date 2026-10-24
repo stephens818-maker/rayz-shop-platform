@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/ui";
 import { can, guardPage } from "@/server/auth/staff";
+import { clientListDenied } from "@/server/client-privacy";
 import { listAutomations } from "@/server/marketing/campaigns";
 import { mayConfigureOpenings } from "@/server/marketing/openings";
 import { loadMarketingSettings, loadOpeningsSettings } from "@/server/marketing/settings";
@@ -30,7 +31,7 @@ export default async function MarketingSettingsPage() {
       <MarketingSettingsForm
         initial={settings}
         mayEdit={ctx.brandWide && can(ctx, "campaign_center.create")}
-        mayExport={can(ctx, "campaign_center.export")}
+        mayExport={can(ctx, "campaign_center.export") && !clientListDenied(ctx)}
         campaigns={automations.map((a) => ({ id: a.id, name: a.name }))}
       />
       <OpeningsSettingsForm

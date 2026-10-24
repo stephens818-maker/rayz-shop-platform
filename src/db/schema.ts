@@ -304,6 +304,8 @@ export const roles = pgTable("roles", {
   maxDiscountPct: smallint("max_discount_pct").notNull().default(0),
   /** Suggested shop access for people given this role. */
   defaultScope: text("default_scope").$type<"all" | "selected" | "one">().notNull().default("one"),
+  /** Custom roles only, set by the Brand Owner: may see client contact details in full and export client lists. */
+  brandLevel: boolean("brand_level").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(100),
   createdAt: createdAt(),
   updatedAt: ts("updated_at").notNull().defaultNow(),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SHOP_LOGIN_CONTACT_FIELDS, cleanShopLoginCap, shopLoginLevel } from "@/domain/client-privacy";
+import { SHOP_LOGIN_CAPS, SHOP_LOGIN_CONTACT_FIELDS, cleanShopLoginCap, shopLoginLevel } from "@/domain/client-privacy";
 import { drawerTimeline, moveProblem, movesOut, openingProblem } from "@/domain/drawer";
 import { PAGE_ACCESS, navFor, pageAllowed } from "@/domain/navigation";
 import {
@@ -67,14 +67,15 @@ describe("shop login: the Shop Login role and its hard caps", () => {
     expect(ROLE_TEMPLATES.map((t) => t.key)).toContain("shop_login");
   });
 
-  it("client contact details are masked at most for shop logins unless the brand lifts the cap", () => {
+  it("client contact details are masked at most for shop logins, and the cap can't be lifted", () => {
     expect(cleanShopLoginCap(undefined)).toBe("masked");
     expect(cleanShopLoginCap("nonsense")).toBe("masked");
+    expect(cleanShopLoginCap("role")).toBe("masked");
+    expect(SHOP_LOGIN_CAPS).toEqual(["masked", "hidden"]);
     for (const f of SHOP_LOGIN_CONTACT_FIELDS) {
       expect(shopLoginLevel("masked", f, "full")).toBe("masked");
       expect(shopLoginLevel("masked", f, "hidden")).toBe("hidden");
       expect(shopLoginLevel("hidden", f, "full")).toBe("hidden");
-      expect(shopLoginLevel("role", f, "full")).toBe("full");
     }
     expect(shopLoginLevel("hidden", "notes", "full")).toBe("full");
   });

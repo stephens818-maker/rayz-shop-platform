@@ -6,7 +6,7 @@ import { ReportDefinition, ReportSchedule, SavedReportInput, scheduleLabel, type
 import { audit } from "../audit";
 import { loadStaffAccess } from "../auth/access";
 import { can, type StaffContext } from "../auth/staff";
-import { clientPolicy } from "../client-privacy";
+import { clientListDenied, clientPolicy } from "../client-privacy";
 import { AppError, forbidden, notFound } from "../errors";
 import { reportProblem } from "./engine";
 
@@ -29,9 +29,13 @@ export function mayOpen(ctx: Viewer, r: Pick<Row, "ownerId" | "visibility" | "ro
 export const mayEdit = (ctx: Viewer, r: Pick<Row, "ownerId" | "visibility">) => can(ctx, "report_builder.build") && (r.ownerId === ctx.staff.id || (r.visibility !== "private" && ctx.brandWide));
 
 /** Exporting a customer report is exporting clients, so it also needs "Export the client list". */
-export function exportDenied(ctx: Pick<StaffContext, "permissions">, source: string): string | null {
+export function exportDenied(ctx: Pick<StaffContext, "permissions" | "isOwner" | "scope" | "staff" | "access">, source: string): string | null {
   if (!can(ctx, "report_builder.export")) return "Exporting needs \"Custom reports: export to CSV, Excel and PDF\"";
-  if (source === "customers" && !can(ctx, "clients.export")) return "Exporting a customer report also needs \"Export the client list\"";
+  if (source === "customers") {
+    const denied = clientListDenied(ctx);
+    if (denied) return denied;
+    if (!can(ctx, "clients.export")) return "Exporting a customer report also needs \"Export the client list\"";
+  }
   return null;
 }
 

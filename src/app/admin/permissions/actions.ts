@@ -14,6 +14,7 @@ import {
   cleanOverrides,
   diffPermissions,
   effectiveAccess,
+  isBrandLevelPerson,
   isPermission,
   roleChangeDenied,
   templateFor,
@@ -26,7 +27,7 @@ import { accessState, activeOwnerCount, loadStaffAccess } from "@/server/auth/ac
 import { authorize, staffGrantor } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
 
-const asDef = (r: typeof roles.$inferSelect): RoleDef => ({ key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct });
+const asDef = (r: typeof roles.$inferSelect): RoleDef => ({ key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, brandLevel: r.brandLevel });
 const permsOf = (r: RoleDef) => [...effectiveAccess(r).permissions];
 
 function revalidate() {
@@ -40,6 +41,8 @@ const RoleSchema = z.object({
   permissions: z.array(z.string()).transform((xs) => [...new Set(xs.filter(isPermission))]),
   maxDiscountPct: z.number().int().min(0).max(100),
   defaultScope: z.enum(SHOP_SCOPES),
+  /** Custom roles only; left as it is when not sent. */
+  brandLevel: z.boolean().optional(),
 });
 
 /** Create or edit a role. Changes apply to everyone with the role on their next request. */
@@ -49,13 +52,14 @@ export async function saveRoleAction(raw: z.input<typeof RoleSchema>) {
     const p = RoleSchema.parse(raw);
     const before = p.id ? await db.query.roles.findFirst({ where: eq(roles.id, p.id) }) : null;
     if (p.id && !before) throw notFound("Role");
-    const after: RoleDef = { key: before?.key ?? null, name: p.name, permissions: p.permissions, maxDiscountPct: p.maxDiscountPct };
+    const brandLevel = p.brandLevel ?? before?.brandLevel ?? false;
+    const after: RoleDef = { key: before?.key ?? null, name: p.name, permissions: p.permissions, maxDiscountPct: p.maxDiscountPct, brandLevel };
     const denied = roleChangeDenied(staffGrantor(ctx), before ? asDef(before) : null, after);
     if (denied) throw forbidden(denied);
     const dup = await db.query.roles.findFirst({ where: and(sql`lower(${roles.name}) = lower(${p.name})`, p.id ? ne(roles.id, p.id) : undefined) });
     if (dup) throw new AppError("conflict", `There's already a role called "${dup.name}"`);
     const permissions = p.permissions.filter((x) => !x.endsWith(".export") || (p.permissions as string[]).includes(x.replace(/\.export$/, ".view")));
-    const values = { name: p.name, description: p.description, permissions, maxDiscountPct: p.maxDiscountPct, defaultScope: p.defaultScope, updatedAt: new Date() };
+    const values = { name: p.name, description: p.description, permissions, maxDiscountPct: p.maxDiscountPct, defaultScope: p.defaultScope, brandLevel, updatedAt: new Date() };
     const id = await db.transaction(async (tx) => {
       let id = p.id;
       if (id) await tx.update(roles).set(values).where(eq(roles.id, id));
@@ -76,6 +80,7 @@ export async function saveRoleAction(raw: z.input<typeof RoleSchema>) {
           removed: diff.removed,
           maxDiscountPct: before && before.maxDiscountPct === p.maxDiscountPct ? undefined : { from: before?.maxDiscountPct ?? null, to: p.maxDiscountPct },
           defaultScope: before && before.defaultScope === p.defaultScope ? undefined : { from: before?.defaultScope ?? null, to: p.defaultScope },
+          brandLevel: (before?.brandLevel ?? false) === brandLevel ? undefined : { from: before?.brandLevel ?? false, to: brandLevel },
         },
         null,
         tx,
@@ -183,7 +188,7 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
     const denied = userAccessChangeDenied(
       staffGrantor(ctx),
       accessState(current),
-      { staffId: current.staffId, ...next, scope, shopIds, overrides },
+      { staffId: current.staffId, ...next, scope, shopIds, overrides, brandLevel: !!kind && isBrandLevelPerson({ kind, scope, role }) },
       { activeOwners: await activeOwnerCount() },
     );
     if (denied) throw forbidden(denied);

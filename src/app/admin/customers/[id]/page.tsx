@@ -5,7 +5,7 @@ import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, clientPhotos, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, sales, shops, staff } from "@/db/schema";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
-import { RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
+import { type FieldKey, RATINGS_MASKED_HINT, type ShownField, customFieldKey } from "@/domain/client-privacy";
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
 import { formatPhone } from "@/lib/phone";
 import { formatCents } from "@/lib/money";
@@ -170,6 +170,7 @@ export default async function CustomerPage({
   ];
   const preferredShown: ShownField = { ...shownField(policy, "preferred_barber", preferred), saved: !!c.preferredStaffId };
   const isFull = (k: string) => fields.find((f) => f.key === k)?.level === "full";
+  const revealable = [...fields.map((f) => f.key as FieldKey), "preferred_barber" as const].filter((k) => policy.mayReveal(k));
   // Only what the person sees in full goes into a form's inputs; everything else is shown through `fields`.
   const fullValues = Object.fromEntries(
     [
@@ -274,7 +275,7 @@ export default async function CustomerPage({
             <CustomerEditor
               id={c.id}
               fields={fields}
-              canReveal={policy.canReveal}
+              revealable={revealable}
               preferred={preferredShown}
               values={fullValues}
               initial={{
@@ -301,7 +302,7 @@ export default async function CustomerPage({
               initial={isFull("notes") ? (c.notes ?? "") : ""}
               notes={fields.find((f) => f.key === "notes")!}
               fields={fields.filter((f) => f.key !== "notes")}
-              canReveal={policy.canReveal}
+              revealable={revealable}
               preferred={preferredShown.value}
               usual={usual}
             />

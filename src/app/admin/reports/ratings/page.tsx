@@ -4,7 +4,7 @@ import { Card, CardHeader, Empty, Notice, PageHeader, StarBadge, Table, Td, Th }
 import { RATINGS_MASKED_HINT } from "@/domain/client-privacy";
 import { formatDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
-import { clientPolicy } from "@/server/client-privacy";
+import { clientListDenied, clientPolicy } from "@/server/client-privacy";
 import { RatedClientRow, ratingsByShop } from "@/server/ratings";
 import { ratingsGivenTable } from "@/server/report-data";
 import { ReportView } from "@/domain/report-views";
@@ -60,7 +60,7 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
   const t0 = performance.now();
   const [shops, given] = await Promise.all([clients ? ratingsByShop(p.query) : [], ratingsGivenTable(p.scope, p.loc)]);
   const ms = Math.round(performance.now() - t0);
-  const canExport = can(ctx, "report.client_ratings.export");
+  const canExport = can(ctx, "report.client_ratings.export") && !clientListDenied(ctx);
   const csv = reportQuery(p, { min: String(p.min), period: p.period });
   const here = (view: ReportView) => `/admin/reports/ratings?${reportQuery(withView(p, view), { min: String(p.min), period: p.period })}`;
   const barbers = p.barbers?.pickable && p.barbers.selection.staffIds ? ` · rated by ${p.barbers.label}` : "";

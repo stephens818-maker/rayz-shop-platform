@@ -46,7 +46,16 @@ export default async function RolePage({ params }: { params: Promise<{ id: strin
       <RoleEditor
         initial={
           role
-            ? { id: role.id, key: role.key, name: role.name, description: role.description, permissions: [...effectiveAccess(role).permissions], maxDiscountPct: role.maxDiscountPct, defaultScope: role.defaultScope }
+            ? {
+                id: role.id,
+                key: role.key,
+                name: role.name,
+                description: role.description,
+                permissions: [...effectiveAccess(role).permissions],
+                maxDiscountPct: role.maxDiscountPct,
+                defaultScope: role.defaultScope,
+                brandLevel: role.brandLevel,
+              }
             : null
         }
         template={template ? { ...templateRow(template), permissions: [...effectiveAccess(template).permissions] } : null}

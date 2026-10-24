@@ -16,7 +16,10 @@ import {
   ShownField,
   cleanLimits,
   cleanShopLoginCap,
+  contactCeiling,
   customFieldKey,
+  isContactField,
+  isRevealable,
   isShopLoginCap,
   shopLoginLevel,
   entryDenied,
@@ -28,7 +31,7 @@ import {
   resolveLevel,
   validRule,
 } from "@/domain/client-privacy";
-import { OWNER_ROLE_KEY } from "@/domain/permissions";
+import { OWNER_ROLE_KEY, isBrandLevelPerson } from "@/domain/permissions";
 import type { RatingSummary } from "@/domain/ratings";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
@@ -44,8 +47,12 @@ import { AppError } from "./errors";
 export interface ClientPolicy {
   staffId: string;
   isOwner: boolean;
+  /** A brand-level person: the only ones who may see phone, email and address in full, or take client lists out. */
+  fullContact: boolean;
   /** clients.reveal: masked fields can be revealed, one at a time, with a reason. */
   canReveal: boolean;
+  /** Whether this masked field may be revealed: never a contact detail unless they're brand-level. */
+  mayReveal(f: FieldKey): boolean;
   /** Active custom fields, in order. */
   custom: { id: string; label: string }[];
   level(f: FieldKey): Level;
@@ -118,19 +125,23 @@ export function displayFull(f: FieldKey, raw: string | null | undefined): string
 export function makePolicy(o: {
   staffId: string;
   isOwner: boolean;
+  fullContact?: boolean;
   canReveal: boolean;
   custom: { id: string; label: string }[];
   levels: Map<FieldKey, Level>;
   entries?: Map<string, boolean>;
 }): ClientPolicy {
-  const level = (f: FieldKey): Level => (o.isOwner ? "full" : (o.levels.get(f) ?? "hidden"));
+  const fullContact = o.isOwner || !!o.fullContact;
+  const level = (f: FieldKey): Level => (o.isOwner ? "full" : contactCeiling(f, o.levels.get(f) ?? "hidden", fullContact));
   const may = (s: EntrySetting, f: FieldKey) => f !== "ratings" && (o.isOwner || (o.entries?.get(`${s}:${f}`) ?? false));
   const canAdd = (f: FieldKey) => may("add", f);
   const canEdit = (f: FieldKey) => may("edit", f);
   return {
     staffId: o.staffId,
     isOwner: o.isOwner,
+    fullContact,
     canReveal: o.canReveal,
+    mayReveal: (f) => o.canReveal && isRevealable(f) && level(f) === "masked" && (fullContact || !isContactField(f)),
     custom: o.custom,
     level,
     canAdd,
@@ -144,6 +155,21 @@ export function makePolicy(o: {
     stars: (r) => (level("ratings") === "hidden" ? null : (r ?? null)),
     ratingDetail: level("ratings") === "full",
   };
+}
+
+/**
+ * Whether this signed-in person is brand-level (the Brand Owner, a Brand Admin or a brand-level
+ * custom role, with every shop, and not a shared shop login). Nobody else ever sees phone, email or
+ * address in full, or downloads a client list, whatever their role, overrides or rules say.
+ */
+export const seesFullContact = (ctx: Pick<StaffContext, "isOwner" | "scope" | "staff" | "access">) =>
+  ctx.isOwner || isBrandLevelPerson({ kind: ctx.staff.kind, scope: ctx.scope, role: ctx.access.role });
+
+export const CLIENT_LIST_REFUSED = "Client lists can only be downloaded by brand-level roles. Shop logins and shop and staff roles never export clients.";
+
+/** Refuses a client-list download (CSV, PDF, a scheduled attachment) to anyone who isn't brand-level, whatever they've been granted. */
+export function clientListDenied(ctx: Pick<StaffContext, "isOwner" | "scope" | "staff" | "access">): string | null {
+  return seesFullContact(ctx) ? null : CLIENT_LIST_REFUSED;
 }
 
 /** Sees no client details: for code paths that weren't handed the viewer's policy. */
@@ -167,6 +193,7 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
       return makePolicy({
         staffId: ctx.staff.id,
         isOwner: ctx.isOwner,
+        fullContact: seesFullContact(ctx),
         canReveal: ctx.permissions.has("clients.reveal"),
         custom,
         levels,
@@ -320,7 +347,7 @@ export const searchesClientDetails = (p: ClientPolicy) => p.isOwner || (["phone"
 
 // ───────────────────────────── Access log, limits and alerts ─────────────────────────────
 
-/** How much of a client's contact details shop logins see: masked at most unless the brand says otherwise. */
+/** How much of a client's contact details shop logins see: masked to start, or hidden. Never in full. */
 export async function shopLoginCap(): Promise<ShopLoginCap> {
   const [row] = await db.select({ r: brandSettings.shopLogin }).from(brandSettings).where(eq(brandSettings.id, 1));
   return cleanShopLoginCap(row?.r?.clientContact);

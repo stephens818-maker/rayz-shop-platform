@@ -48,9 +48,9 @@ const FULL: Defaults = { phone: "full", email: "full", address: "full", birthday
 const MANAGER: Defaults = { ...FULL, phone: "masked", email: "masked", address: "masked" };
 
 /**
- * Brand defaults for each built-in role, used wherever the brand portal has no rule. Managers see
- * contact details masked and can reveal them with a reason; barbers never see contact details in
- * full. Calls and texts go through the shop line instead.
+ * Brand defaults for each built-in role, used wherever the brand portal has no rule. No shop or
+ * staff role sees contact details in full (see CONTACT_FIELDS); calls and texts go through the shop
+ * line instead.
  */
 export const ROLE_FIELD_DEFAULTS: Record<RoleTemplateKey, Defaults> = {
   brand_owner: FULL,
@@ -62,21 +62,31 @@ export const ROLE_FIELD_DEFAULTS: Record<RoleTemplateKey, Defaults> = {
   barber: { ...FULL, phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
 };
 
+/**
+ * Phone, email and address. Only brand-level people (isBrandLevelPerson) ever see them in full:
+ * for shop logins and every shop or staff role they're masked at most, whatever a rule, an override
+ * or a reveal says. Searching by the exact value still finds the client.
+ */
+export const CONTACT_FIELDS = ["phone", "email", "address"] as const satisfies readonly BuiltinField[];
+export const isContactField = (f: string) => (CONTACT_FIELDS as readonly string[]).includes(f);
+
+/** A field's level with the contact ceiling applied for someone who isn't brand-level. */
+export const contactCeiling = (field: FieldKey, level: Level, fullContact: boolean): Level => (fullContact || !isContactField(field) ? level : minLevel(level, "masked"));
+
 /** Contact details a shared shop login sees at most, whatever its role's rules say. */
-export const SHOP_LOGIN_CONTACT_FIELDS = ["phone", "email", "address", "birthday"] as const satisfies readonly BuiltinField[];
-export const SHOP_LOGIN_CAPS = ["masked", "hidden", "role"] as const;
+export const SHOP_LOGIN_CONTACT_FIELDS = [...CONTACT_FIELDS, "birthday"] as const satisfies readonly BuiltinField[];
+export const SHOP_LOGIN_CAPS = ["masked", "hidden"] as const;
 export type ShopLoginCap = (typeof SHOP_LOGIN_CAPS)[number];
 export const SHOP_LOGIN_CAP_LABEL: Record<ShopLoginCap, string> = {
-  masked: "Masked at most (recommended)",
+  masked: "Masked at most",
   hidden: "Hidden",
-  role: "As the login's role allows",
 };
 export const isShopLoginCap = (v: unknown): v is ShopLoginCap => typeof v === "string" && (SHOP_LOGIN_CAPS as readonly string[]).includes(v);
 export const cleanShopLoginCap = (v: unknown): ShopLoginCap => (isShopLoginCap(v) ? v : "masked");
 
 /** A shop login's level for a field: its role's level, capped for contact details. */
 export function shopLoginLevel(cap: ShopLoginCap, field: FieldKey, level: Level): Level {
-  if (cap === "role" || !(SHOP_LOGIN_CONTACT_FIELDS as readonly string[]).includes(field)) return level;
+  if (!(SHOP_LOGIN_CONTACT_FIELDS as readonly string[]).includes(field)) return level;
   return minLevel(level, cap);
 }
 /** Custom roles start as locked down as a barber's contact details, with masked email. */
@@ -215,12 +225,24 @@ export function fieldRuleChangeDenied(
     levelAt: (shopId: string | null, field: FieldKey) => Level;
     entryAt?: (shopId: string | null, field: FieldKey, setting: EntrySetting) => boolean;
   },
-  rule: { field: FieldKey; setting?: Setting; roleId: string | null; roleKey: string | null; staffId: string | null; shopId: string | null; level: string | null },
+  rule: {
+    field: FieldKey;
+    setting?: Setting;
+    roleId: string | null;
+    roleKey: string | null;
+    staffId: string | null;
+    shopId: string | null;
+    level: string | null;
+    /** Whether the role is brand-level, or the person a brand-level person: only they may see contact details in full. */
+    fullContact?: boolean;
+  },
 ): string | null {
   const setting = rule.setting ?? "view";
   if (!!rule.roleId === !!rule.staffId) return "Pick a role or a person";
   if (rule.roleKey === OWNER_ROLE_KEY) return "The Brand Owner always sees every client detail";
   if (rule.roleKey === BRAND_ADMIN_ROLE_KEY && setting === "view") return "Brand Admins always see every client detail";
+  if (setting === "view" && rule.level === "full" && isContactField(rule.field) && !rule.fullContact)
+    return "Phone, email and address are never shown in full to shop logins or shop and staff roles, only to brand-level roles with access to all shops";
   if (setting !== "view" && !isEntryField(rule.field)) return "Ratings are entered with the rating tools, not client forms";
   if (rule.level !== null && (setting === "view" ? !isLevel(rule.level) : !isEntry(rule.level))) return "Pick a level";
   if (caller.isOwner) return null;

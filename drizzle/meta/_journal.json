@@ -351,6 +351,13 @@
       "when": 1793901600000,
       "tag": "core_0049_shop_login",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1793988000000,
+      "tag": "core_0050_brand_level",
+      "breakpoints": true
     }
   ]
 }

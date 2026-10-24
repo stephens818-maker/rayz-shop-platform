@@ -177,7 +177,10 @@ describe("client ratings never reach customers", () => {
     expect(reports).toEqual(["    rt: sql`rt as (select customer_id, avg(stars)::float8 avg from client_ratings group by customer_id)`,"]);
     // The permission catalog (reached by the cron's Morning Dashboard) names the ratings report, not the table.
     const catalog = readFileSync(join(SRC, "domain", "permissions.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l));
-    expect(catalog).toEqual([`  { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },`]);
+    expect(catalog).toEqual([
+      `  { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },`,
+      `export const CLIENT_LIST_REPORTS: readonly ReportKey[] = ["client_ratings"];`,
+    ]);
     const customers = readFileSync(join(SRC, "server", "customers.ts"), "utf8");
     const uses = customers.split("\n").filter((l) => /clientRatings/.test(l) && !/^\s*clientRatings,$/.test(l));
     expect(uses).toHaveLength(1);

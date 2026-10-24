@@ -14,6 +14,7 @@ import {
   type LookupLimits,
   type Setting,
   type ShopLoginCap,
+  isContactField,
   ruleValues,
 } from "@/domain/client-privacy";
 import { acknowledgeAlertAction, saveCustomFieldAction, saveLookupLimitsAction, saveShopLoginCapAction, setFieldRuleAction } from "./actions";
@@ -41,8 +42,8 @@ const RED = "bg-red-50 text-red-800 ring-red-200";
 const GREEN = "bg-emerald-50 text-emerald-900 ring-emerald-200";
 const TONE: Record<Value, string> = { hidden: RED, masked: "bg-amber-50 text-amber-900 ring-amber-200", full: GREEN, allow: GREEN, deny: RED };
 
-/** One role × field × setting: a level (or allow / deny) set here, or inherit the brand default / built-in default. */
-export function RuleCell({ rule, level, inherited, from }: { rule: Rule; level: Value | null; inherited: Value; from: string }) {
+/** One role × field × setting: a level (or allow / deny) set here, or inherit the brand default / built-in default. `noFull`: a contact field for a role that isn't brand-level. */
+export function RuleCell({ rule, level, inherited, from, noFull }: { rule: Rule; level: Value | null; inherited: Value; from: string; noFull?: boolean }) {
   const { pending, error, run } = useRun();
   const shown = level ?? inherited;
   return (
@@ -58,7 +59,7 @@ export function RuleCell({ rule, level, inherited, from }: { rule: Rule; level: 
           {RULE_VALUE_LABEL[inherited]} ({from})
         </option>
         {ruleValues(rule.setting).map((l) => (
-          <option key={l} value={l}>
+          <option key={l} value={l} disabled={noFull && l === "full"}>
             {RULE_VALUE_LABEL[l]}
           </option>
         ))}
@@ -85,7 +86,8 @@ export function PersonRuleForm({
   fields,
   shops,
 }: {
-  people: { id: string; label: string }[];
+  /** fullContact: a brand-level person, the only ones phone, email and address may be shown to in full. */
+  people: { id: string; label: string; fullContact: boolean }[];
   fields: { key: string; label: string }[];
   shops: { id: string; name: string }[];
 }) {
@@ -96,6 +98,7 @@ export function PersonRuleForm({
   const [setting, setSetting] = useState<Setting>("view");
   const [level, setLevel] = useState<Value>("hidden");
   const choices = setting === "view" ? fields : fields.filter((f) => f.key !== "ratings");
+  const noFull = setting === "view" && isContactField(field) && !people.find((p) => p.id === staffId)?.fullContact;
   const pickSetting = (t: Setting) => {
     setSetting(t);
     setLevel(t === "view" ? "hidden" : "deny");
@@ -135,12 +138,12 @@ export function PersonRuleForm({
       </Select>
       <Select aria-label="Level" value={level} onChange={(e) => setLevel(e.target.value as Value)}>
         {ruleValues(setting).map((l) => (
-          <option key={l} value={l}>
+          <option key={l} value={l} disabled={noFull && l === "full"}>
             {RULE_VALUE_LABEL[l]}
           </option>
         ))}
       </Select>
-      <Button disabled={pending || !staffId} onClick={() => run(() => setFieldRuleAction({ field, setting, roleId: null, staffId, shopId: shopId || null, level }))}>
+      <Button disabled={pending || !staffId || (noFull && level === "full")} onClick={() => run(() => setFieldRuleAction({ field, setting, roleId: null, staffId, shopId: shopId || null, level }))}>
         Add rule
       </Button>
       {error && <p className="text-sm text-red-600 sm:col-span-6">{error}</p>}
@@ -216,16 +219,16 @@ export function LimitsForm({ initial }: { initial: LookupLimits }) {
   );
 }
 
-export function ShopLoginCapForm({ initial, canLift }: { initial: ShopLoginCap; canLift: boolean }) {
+export function ShopLoginCapForm({ initial }: { initial: ShopLoginCap }) {
   const { pending, error, run } = useRun();
   const [v, setV] = useState(initial);
   const [saved, setSaved] = useState(false);
   return (
     <div className="space-y-3 p-4">
-      <Field label="Client phone, email, address and birthday" hint={canLift ? undefined : "Only the Brand Owner can choose “As the login's role allows”."}>
+      <Field label="Client phone, email, address and birthday" hint="Shop logins never see phone, email or address in full, whatever their role.">
         <Select value={v} onChange={(e) => (setSaved(false), setV(e.target.value as ShopLoginCap))} data-testid="shop-login-cap">
           {SHOP_LOGIN_CAPS.map((c) => (
-            <option key={c} value={c} disabled={c === "role" && !canLift && initial !== "role"}>
+            <option key={c} value={c}>
               {SHOP_LOGIN_CAP_LABEL[c]}
             </option>
           ))}

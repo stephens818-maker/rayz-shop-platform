@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { clientPhotos, customerTags, customers, loyaltyLedger, loyaltyRewards, shops, staff } from "@/db/schema";
-import { FieldKey, ShownField, customFieldId, customFieldKey, isBuiltinField, isRevealable } from "@/domain/client-privacy";
+import { FieldKey, ShownField, customFieldId, customFieldKey, isBuiltinField, isContactField, isRevealable } from "@/domain/client-privacy";
 import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
@@ -258,6 +258,8 @@ export async function revealClientFieldAction(raw: z.input<typeof RevealInput>) 
     if (!isRevealable(field)) throw new AppError("bad_request", "That can't be revealed");
     const level = policy.level(field);
     if (level === "hidden") throw forbidden("That detail is hidden for you, so it can't be revealed");
+    if (isContactField(field) && !policy.fullContact)
+      throw forbidden("Phone numbers, emails and addresses are never shown in full at shop level. Call or text the client through the shop line.");
     const access = await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, p.customerId);
     if (!access) throw new AppError("not_found", "Client not found");
     const c = await db.query.customers.findFirst({ where: eq(customers.id, p.customerId) });

@@ -3,10 +3,27 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, cx } from "@/components/ui";
-import { BRAND_ADMIN_ALWAYS, BRAND_ADMIN_ROLE_KEY, BRAND_ONLY, FEATURE_PERMISSIONS, OWNER_GRANTS, OWNER_ONLY, PERMISSION_GROUPS, Permission, REPORTS, SCOPE_LABEL, SHOP_SCOPES, ShopScope, reportExport, reportView } from "@/domain/permissions";
+import {
+  BRAND_ADMIN_ALWAYS,
+  BRAND_ADMIN_ROLE_KEY,
+  BRAND_LEVEL_ONLY,
+  BRAND_ONLY,
+  FEATURE_PERMISSIONS,
+  OWNER_GRANTS,
+  OWNER_ONLY,
+  PERMISSION_GROUPS,
+  Permission,
+  REPORTS,
+  SCOPE_LABEL,
+  SHOP_SCOPES,
+  ShopScope,
+  isBrandLevelRole,
+  reportExport,
+  reportView,
+} from "@/domain/permissions";
 import { deleteRoleAction, resetRoleAction, saveRoleAction } from "../../actions";
 
-type RoleForm = { id: string; key: string | null; name: string; description: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope };
+type RoleForm = { id: string; key: string | null; name: string; description: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope; brandLevel: boolean };
 type Starter = { name: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope };
 
 export function RoleEditor({
@@ -36,6 +53,9 @@ export function RoleEditor({
   const [description, setDescription] = useState(initial?.description ?? "");
   const [scope, setScope] = useState<ShopScope>(initial?.defaultScope ?? "one");
   const [maxPct, setMaxPct] = useState(initial?.maxDiscountPct ?? 0);
+  const [brandLevel, setBrandLevel] = useState(initial?.brandLevel ?? false);
+  const custom = !initial?.key;
+  const roleIsBrandLevel = isBrandLevelRole({ key: initial?.key ?? null, brandLevel });
   const [perms, setPerms] = useState<Set<string>>(new Set([...(initial?.permissions ?? []), ...(initial?.key === BRAND_ADMIN_ROLE_KEY ? BRAND_ADMIN_ALWAYS : [])]));
   const has = useMemo(() => new Set(mine), [mine]);
   const original = useMemo(() => new Set(initial?.permissions ?? []), [initial]);
@@ -43,7 +63,7 @@ export function RoleEditor({
   const locked = !!readOnly;
 
   const changed = [...new Set([...perms, ...original])].filter((p) => perms.has(p) !== original.has(p));
-  const dirty = changed.length > 0 || name !== (initial?.name ?? "") || description !== (initial?.description ?? "") || scope !== (initial?.defaultScope ?? "one") || maxPct !== (initial?.maxDiscountPct ?? 0);
+  const dirty = changed.length > 0 || brandLevel !== (initial?.brandLevel ?? false) || name !== (initial?.name ?? "") || description !== (initial?.description ?? "") || scope !== (initial?.defaultScope ?? "one") || maxPct !== (initial?.maxDiscountPct ?? 0);
 
   /** Why this toggle can't be flipped by the person editing, if it can't. */
   const brandAdmin = initial?.key === BRAND_ADMIN_ROLE_KEY;
@@ -54,7 +74,9 @@ export function RoleEditor({
         ? "Brand Admins always have this"
         : OWNER_ONLY.has(p)
           ? "Brand Owner only"
-          : OWNER_GRANTS.has(p) && !isOwner
+          : BRAND_LEVEL_ONLY.has(p) && !roleIsBrandLevel
+            ? "Brand-level roles only"
+            : OWNER_GRANTS.has(p) && !isOwner
             ? "Only the Brand Owner grants this"
             : !has.has(p)
               ? "You don't have this yourself"
@@ -98,7 +120,7 @@ export function RoleEditor({
 
   const save = () =>
     run(
-      () => saveRoleAction({ id: initial?.id ?? null, name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope }),
+      () => saveRoleAction({ id: initial?.id ?? null, name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope, ...(custom ? { brandLevel } : {}) }),
       initial ? "Saved. Everyone with this role has the change now." : "Role created",
       initial ? undefined : (id) => `/admin/permissions/roles/${id}`,
     );
@@ -155,6 +177,28 @@ export function RoleEditor({
           <Field label="Description" className="sm:col-span-2">
             <Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
           </Field>
+          {custom && (
+            <label className="flex items-start gap-3 text-sm sm:col-span-2">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 accent-ink-900"
+                checked={brandLevel}
+                disabled={!isOwner}
+                data-testid="brand-level"
+                onChange={(e) => {
+                  setBrandLevel(e.target.checked);
+                  if (!e.target.checked) setPerms(new Set([...perms].filter((p) => !BRAND_LEVEL_ONLY.has(p as Permission))));
+                }}
+              />
+              <span>
+                <span className="font-medium">Brand-level role</span>
+                <span className="block text-xs text-zinc-500">
+                  People in it with access to all shops may be given full client phone, email and address and client list exports. Shop and staff roles and shop logins never
+                  are. {isOwner ? "" : "Only the Brand Owner can change this."}
+                </span>
+              </span>
+            </label>
+          )}
         </fieldset>
       </Card>
 
@@ -176,7 +220,9 @@ export function RoleEditor({
                   />
                   <label htmlFor={p.key} className="flex-1 text-sm">
                     <span className="font-medium">{p.label}</span>
-                    {BRAND_ONLY.has(p.key) && <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">All shops only</span>}
+                    {BRAND_ONLY.has(p.key) && (
+                      <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600">{BRAND_LEVEL_ONLY.has(p.key) ? "Brand-level only" : "All shops only"}</span>
+                    )}
                     {"hint" in p && p.hint && <span className="block text-xs text-zinc-500">{p.hint}</span>}
                     {p.key === "pos.discount" && perms.has("pos.discount") && (
                       <span className="mt-1.5 flex items-center gap-2 text-xs text-zinc-600">
