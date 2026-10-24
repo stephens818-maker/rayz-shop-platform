@@ -37,6 +37,7 @@ import {
 import { CATEGORIES, CHANNELS, DEVICES, EVENTS } from "@/domain/analytics";
 import { badgeOptions } from "@/domain/badges";
 import { VISIT_STATUSES, VISIT_STATUS_LABEL } from "@/domain/visit-cadence";
+import { REFILL_STATUSES, REFILL_STATUS_LABEL } from "@/domain/product-history";
 import {
   SHOP_TZ,
   endOfLocalDay,
@@ -51,6 +52,7 @@ import { forbidden, AppError } from "../errors";
 import { reportLocations } from "../locations";
 import { consentColumns } from "../marketing/consent";
 import { cadenceCtes } from "../visit-cadence";
+import { refillCtes } from "../product-history";
 
 export const PAGE_SIZE = 50;
 export const MAX_PAGE_SIZE = 200;
@@ -244,7 +246,9 @@ type Cte =
   | "tg"
   | "rt"
   | "lb"
-  | "bd";
+  | "bd"
+  | "lp"
+  | "rf";
 
 interface Piece {
   expr: SQL;
@@ -362,6 +366,23 @@ async function fieldSql(f: FieldDef, policy: ClientPolicy): Promise<Piece> {
       return raw("si.services", ["si"]);
     case "products_bought":
       return raw("si.products", ["si"]);
+    case "last_product":
+      return raw("lp.name", ["lp"]);
+    case "last_product_date":
+      return raw("to_char(lp.d, 'YYYY-MM-DD')", ["lp"]);
+    case "last_product_location":
+      return raw("lp.shop", ["lp"]);
+    case "last_product_qty":
+      return raw("lp.qty", ["lp"]);
+    case "refill_status":
+      return raw(
+        `(case rf.status ${REFILL_STATUSES.map((s) => `when '${s}' then '${REFILL_STATUS_LABEL[s].replace(/'/g, "''")}'`).join(" ")} end)`,
+        ["rf"],
+      );
+    case "products_running_out":
+      return raw("coalesce(rf.running_out, array[]::text[])", ["rf"]);
+    case "next_refill_due":
+      return raw("to_char(rf.next_due, 'YYYY-MM-DD')", ["rf"]);
     case "loyalty_balance":
       return raw("coalesce(lr.cents, 0)::int", ["lr"]);
     case "gift_cards":
@@ -466,6 +487,16 @@ function ctes(s: ReportScope, now: Date): Record<Cte, SQL> {
     rt: sql`rt as (select customer_id, avg(stars)::float8 avg from client_ratings group by customer_id)`,
     lb: sql`lb as (select distinct on (customer_id) customer_id, staff_id from appointments where status = 'completed' and customer_id is not null order by customer_id, starts_at desc)`,
     bd: sql`bd as (select customer_id, keys from client_badges)`,
+    lp: sql`lp as (select distinct on (s.customer_id) s.customer_id, i.name, s.business_date d, sh.name shop, (i.qty - i.refunded_qty)::int qty
+      from sale_items i join sales s on s.id = i.sale_id join shops sh on sh.id = s.shop_id
+      where i.kind = 'product' and i.qty - i.refunded_qty > 0 and s.status in ${PAID} and s.customer_id is not null${scoped(s, { shop: "s.shop_id", staff: "coalesce(i.staff_id, s.staff_id)", date: "s.business_date" })}
+      order by s.customer_id, s.business_date desc, coalesce(s.paid_at, s.created_at) desc, i.name)`,
+    rf: sql`${refillCtes("rf_p", scoped(s, { shop: "s.shop_id", staff: "coalesce(i.staff_id, s.staff_id)", date: "s.business_date" }), now)}, rf as (
+      select x.customer_id,
+        case when bool_or(x.status = 'running_out') then 'running_out' when bool_or(x.status = 'ran_out') then 'ran_out' when bool_or(x.status = 'stocked') then 'stocked' end status,
+        array_agg(p.brand || ' ' || p.name order by x.due, p.brand, p.name) filter (where x.status = 'running_out') running_out,
+        min(x.due) filter (where x.status in ('stocked', 'running_out')) next_due
+      from rf_p x join products p on p.id = x.product_id group by x.customer_id)`,
   };
 }
 
@@ -484,6 +515,8 @@ const ORDER: Cte[] = [
   "rt",
   "lb",
   "bd",
+  "lp",
+  "rf",
 ];
 
 // ───────────────────────────── Event log ─────────────────────────────
