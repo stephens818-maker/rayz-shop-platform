@@ -6,6 +6,7 @@ import { NO_BARBER } from "@/domain/barbers";
 import { ATTRIBUTION_DAYS, OPERATOR_CHOICE_LABEL, OperatorChoice, cleanOperator, operatorMetrics } from "@/domain/phone-operator";
 import { Cell, Column, ColumnKind, ListRow, Metric, ReportTable, TOTAL, ViewCtx, listTable, metricTable, parseSegKey, segKey, staffName, viewOf } from "@/domain/report-views";
 import { priorPeriod } from "@/domain/report-range";
+import { taxJurisdiction, taxJurisdictionLabel } from "@/domain/location-profile";
 import { FILING_LABEL, PERIOD_OF, TaxPeriod, cleanTaxFiling, filingFor, parsePeriod, periodKey, periodLabel, stateCode, stateName } from "@/domain/sales-tax";
 import { formatCents } from "@/lib/money";
 import { addDays, diffDays, endOfLocalDay, formatDate, formatTime, startOfLocalDay } from "@/lib/time";
@@ -314,7 +315,7 @@ type TaxRefundRow = { shopId: string; staffId: string | null; day: string; ts: n
 export async function salesTaxData(scope0: ReportScope, loc0: ViewCtx, params: Record<string, string | undefined>): Promise<ReportData> {
   const [shopRows, brand] = await Promise.all([
     scope0.shopIds.length
-      ? db.select({ id: shopsTable.id, name: shopsTable.name, state: shopsTable.state, verified: shopsTable.taxRatesVerified }).from(shopsTable).where(inArray(shopsTable.id, scope0.shopIds))
+      ? db.select({ id: shopsTable.id, name: shopsTable.name, state: shopsTable.state, verified: shopsTable.taxRatesVerified, jurisdiction: shopsTable.taxJurisdiction }).from(shopsTable).where(inArray(shopsTable.id, scope0.shopIds))
       : Promise.resolve([]),
     db.query.brandSettings.findFirst({ columns: { taxFiling: true } }),
   ]);
@@ -376,6 +377,11 @@ export async function salesTaxData(scope0: ReportScope, loc0: ViewCtx, params: R
   const toRow = (a: Acc, key: string, first: string): ListRow => ({ shopId: a.shopId, staffId: a.staffId, key, cells: cells(a, first) });
   const t = (f: (a: Acc) => number) => list.reduce((s, a) => s + f(a), 0);
   const unverified = shopRows.filter((s) => !s.verified && (!picked || stateOf.get(s.id) === picked));
+  const jurisdictions = shopRows
+    .filter((s) => !picked || stateOf.get(s.id) === picked)
+    .map((s) => ({ name: s.name, j: taxJurisdiction(s.jurisdiction), state: stateCode(s.state) }))
+    .filter((s) => s.j.county || s.j.city || s.j.district || s.j.code)
+    .sort((a, b) => a.name.localeCompare(b.name));
   return {
     stats: [
       { label: "Net tax collected", value: formatCents(t((a) => a.tax - a.refundedTax)), hint: `${formatCents(t((a) => a.refundedTax))} refunded` },
@@ -413,6 +419,7 @@ export async function salesTaxData(scope0: ReportScope, loc0: ViewCtx, params: R
     notes: [
       "Tax is what each ticket was charged at its shop's rates in Shop settings. Check the totals against the state's return; Ray'z doesn't file for you.",
       ...(unverified.length ? [`Tax rates not marked as checked yet: ${unverified.map((s) => s.name).join(", ")}.`] : []),
+      ...(jurisdictions.length ? [`Jurisdictions: ${jurisdictions.map((s) => `${s.name}: ${taxJurisdictionLabel(s.state, s.j)}`).join("; ")}.`] : []),
       ...(states.length ? [`Filing schedule: ${states.map((s) => `${stateName(s)} ${FILING_LABEL[filingFor(filing, s)].toLowerCase()}`).join(", ")}.`] : []),
     ],
   };

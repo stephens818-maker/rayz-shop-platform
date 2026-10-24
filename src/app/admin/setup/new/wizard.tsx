@@ -15,6 +15,8 @@ import { DEFAULT_HOURS, SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/locati
 import { slugify } from "@/lib/ids";
 import { WEEKDAYS, hhmmToMinutes, minutesToHHMM, minutesToLabel } from "@/lib/time";
 import { checkSlugAction, createLocationAction, startPaymentsOnboardingAction } from "../actions";
+import { AddressLookup, type GeocodeSource } from "../../settings/address-lookup";
+import { AMENITIES, SOCIAL, SOCIAL_KEYS, e164, fullAddress, socialLink, type TaxJurisdiction } from "@/domain/location-profile";
 
 type Options = Awaited<ReturnType<typeof import("@/server/location-admin").wizardOptions>>;
 
@@ -29,7 +31,7 @@ const STEPS = [
   { key: "vendors", title: "Vendors" },
   { key: "team", title: "Team and payroll" },
   { key: "devices", title: "Login, sign-in and phone line" },
-  { key: "brand", title: "Branding" },
+  { key: "brand", title: "Branding and location page" },
   { key: "review", title: "Review" },
 ] as const;
 type StepKey = (typeof STEPS)[number]["key"];
@@ -48,8 +50,10 @@ export function LocationWizard({
   brandIntervalMinutes,
   canBank,
   network,
+  geocoder,
 }: {
   options: Options;
+  geocoder: "google" | "census" | "zip";
   brandIntervalMinutes: number;
   canBank: boolean;
   /** Set when they may limit where staff sign in from. */
@@ -67,9 +71,14 @@ export function LocationWizard({
     slug: "",
     slugTouched: false,
     address: "",
+    address2: "",
     city: "",
     state: "",
     zip: "",
+    latitude: null as number | null,
+    longitude: null as number | null,
+    geocodeSource: null as GeocodeSource | null,
+    googlePlaceId: "",
     phone: "",
     email: "",
     timezone: SUPPORTED_TIMEZONE as string,
@@ -104,6 +113,9 @@ export function LocationWizard({
   const [pay, setPay] = useState({ mode: "connected" as PaymentsMode, descriptor: "" });
   const [receipt, setReceipt] = useState({ headline: "", footer: "", showLogo: true, showAddress: true, showPhone: true, reviewUrl: "", reviewFollowUp: { ...REVIEW_FOLLOW_UP_DEFAULT }, reviewMinVisits: null as number | null, reviewSnoozeDays: null as number | null });
   const [brand, setBrand] = useState({ accent: "", logo: "", description: "" });
+  const [profile, setProfile] = useState({ social: {} as Record<string, string>, directions: "", amenities: [] as string[] });
+  const [jurisdiction, setJurisdiction] = useState<TaxJurisdiction>({ county: null, city: null, district: null, code: null });
+  const setJ = (p: Partial<TaxJurisdiction>) => setJurisdiction({ ...jurisdiction, ...p });
 
   function menuFrom(source: string): MenuRow[] {
     return options.services.map((s) => {
@@ -139,11 +151,20 @@ export function LocationWizard({
       name: basics.name,
       slug: basics.slug,
       address: basics.address,
+      address2: basics.address2,
       city: basics.city,
       state: basics.state,
       zip: basics.zip,
+      latitude: basics.latitude,
+      longitude: basics.longitude,
+      geocodeSource: basics.geocodeSource,
+      googlePlaceId: basics.googlePlaceId.trim() || null,
       phone: basics.phone.trim() || null,
       email: basics.email.trim() || null,
+      social: profile.social,
+      directions: profile.directions.trim() || null,
+      amenities: profile.amenities,
+      taxJurisdiction: jurisdiction,
       timezone: basics.timezone,
       ownerEntityId: basics.ownerEntityId || null,
       description: brand.description.trim() || null,
@@ -178,7 +199,7 @@ export function LocationWizard({
       logoUrl: brand.logo.trim() || null,
       networkAccess: network ? ruleFromDraft(signIn) : DEFAULT_NETWORK_RULE,
     }),
-    [basics, hours, holidays, money, screen, options.brandTips, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank, network, signIn],
+    [basics, hours, holidays, money, screen, options.brandTips, booking, menu, retail, vendorPicks, team, payFrom, login, line, readers, brand, pay, receipt, canBank, network, signIn, profile, jurisdiction],
   );
 
   const index = STEPS.findIndex((s) => s.key === step);
@@ -301,21 +322,24 @@ export function LocationWizard({
               <Field label="Booking link" hint={slugNote ? <span className="text-red-600">{slugNote}</span> : `rayz…/book/${basics.slug || "…"} · never a surname`}>
                 <Input value={basics.slug} onChange={(e) => setBasics({ ...basics, slug: e.target.value.toLowerCase(), slugTouched: true })} onBlur={() => checkSlug(basics.slug)} />
               </Field>
-              <Field label="Street address" className="sm:col-span-2">
-                <Input value={basics.address} onChange={(e) => setBasics({ ...basics, address: e.target.value })} />
-              </Field>
-              <Field label="City">
-                <Input value={basics.city} onChange={(e) => setBasics({ ...basics, city: e.target.value })} />
-              </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="State">
-                  <Input maxLength={2} value={basics.state} onChange={(e) => setBasics({ ...basics, state: e.target.value.toUpperCase() })} />
-                </Field>
-                <Field label="ZIP">
-                  <Input inputMode="numeric" value={basics.zip} onChange={(e) => setBasics({ ...basics, zip: e.target.value })} />
-                </Field>
+              <div className="sm:col-span-2">
+                <AddressLookup
+                  geocoder={geocoder}
+                  value={basics}
+                  onChange={(a) => setBasics((b) => ({ ...b, ...a }))}
+                  onExtras={(x) => setBasics((b) => ({ ...b, googlePlaceId: b.googlePlaceId || x.googlePlaceId || "", phone: b.phone || (x.phone ?? "") }))}
+                />
               </div>
-              <Field label="Shop phone" hint="Rings when clients call the shop line.">
+              <Field
+                label="Main phone"
+                hint={
+                  basics.phone.trim() && !e164(basics.phone) ? (
+                    <span className="text-red-600">Enter a US number, e.g. (563) 555-0100</span>
+                  ) : (
+                    "Rings when clients call; shown with a tap-to-call button."
+                  )
+                }
+              >
                 <Input type="tel" value={basics.phone} onChange={(e) => setBasics({ ...basics, phone: e.target.value })} />
               </Field>
               <Field label="Shop email" hint="Replies to the shop's emails go here; low-stock alerts too.">
@@ -430,6 +454,21 @@ export function LocationWizard({
                   ))}
                 </div>
               )}
+              <fieldset className="grid gap-3 sm:col-span-2 sm:grid-cols-4">
+                <legend className="mb-1 text-sm font-medium text-zinc-700">Jurisdiction (for the books and the sales-tax report; never shown to clients)</legend>
+                <Field label="County">
+                  <Input value={jurisdiction.county ?? ""} onChange={(e) => setJ({ county: e.target.value })} />
+                </Field>
+                <Field label="City">
+                  <Input value={jurisdiction.city ?? ""} onChange={(e) => setJ({ city: e.target.value })} />
+                </Field>
+                <Field label="Special district">
+                  <Input value={jurisdiction.district ?? ""} onChange={(e) => setJ({ district: e.target.value })} />
+                </Field>
+                <Field label="Jurisdiction code">
+                  <Input value={jurisdiction.code ?? ""} onChange={(e) => setJ({ code: e.target.value })} />
+                </Field>
+              </fieldset>
               <label className="flex items-start gap-2 text-sm text-zinc-700 sm:col-span-2">
                 <input type="checkbox" className="mt-1" checked={money.verified} onChange={(e) => setMoney({ ...money, verified: e.target.checked })} />
                 <span>
@@ -946,6 +985,36 @@ export function LocationWizard({
               <Field label="About this location" hint="One or two sentences on the booking page." className="sm:col-span-2">
                 <Textarea rows={3} value={brand.description} onChange={(e) => setBrand({ ...brand, description: e.target.value })} />
               </Field>
+              <Field label="Google Place ID" hint={geocoder === "google" ? "Filled in when you pick the address." : "From Google's Place ID finder; for the map and reviews."} className="sm:col-span-2">
+                <Input value={basics.googlePlaceId} placeholder="ChIJ…" onChange={(e) => setBasics({ ...basics, googlePlaceId: e.target.value.trim() })} />
+              </Field>
+              {SOCIAL_KEYS.map((k) => {
+                const r = socialLink(k, profile.social[k]);
+                return (
+                  <Field key={k} label={SOCIAL[k].label} hint={!r.ok ? <span className="text-red-600">{r.message}</span> : undefined}>
+                    <Input value={profile.social[k] ?? ""} placeholder={SOCIAL[k].placeholder} onChange={(e) => setProfile({ ...profile, social: { ...profile.social, [k]: e.target.value } })} />
+                  </Field>
+                );
+              })}
+              <Field label="Parking and directions" hint="On the location page, confirmations and calendar invites." className="sm:col-span-2">
+                <Textarea rows={2} maxLength={500} value={profile.directions} onChange={(e) => setProfile({ ...profile, directions: e.target.value })} />
+              </Field>
+              <fieldset className="sm:col-span-2">
+                <legend className="mb-1 text-sm font-medium text-zinc-700">Amenities</legend>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {AMENITIES.map((a) => (
+                    <label key={a.key} className="flex items-center gap-2 text-sm text-zinc-700">
+                      <input
+                        type="checkbox"
+                        checked={profile.amenities.includes(a.key)}
+                        onChange={(e) => setProfile({ ...profile, amenities: e.target.checked ? [...profile.amenities, a.key] : profile.amenities.filter((x) => x !== a.key) })}
+                      />
+                      {a.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <p className="text-xs text-zinc-500 sm:col-span-2">Photos and an uploaded logo are added under Settings once the location is saved.</p>
             </div>
           )}
 
@@ -953,7 +1022,9 @@ export function LocationWizard({
             <div className="space-y-3 text-sm text-zinc-700">
               <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
                 <Item k="Location" v={`${basics.name || "—"} · /book/${basics.slug || "—"}`} />
-                <Item k="Address" v={[basics.address, basics.city, basics.state, basics.zip].filter(Boolean).join(", ") || "—"} />
+                <Item k="Address" v={fullAddress(basics) || "—"} />
+                <Item k="Map pin" v={basics.latitude !== null ? `${basics.latitude.toFixed(5)}, ${basics.longitude?.toFixed(5)}` : "Looked up on save"} />
+                <Item k="Phone" v={(basics.phone.trim() && e164(basics.phone)) || basics.phone || "—"} />
                 <Item k="Open" v={hours.filter((h) => h.open).map((h) => WEEKDAYS[h.weekday]).join(", ") || "No days"} />
                 <Item k="Closed days" v={holidays.filter((h) => h.date).length ? `${holidays.filter((h) => h.date).length}` : "None"} />
                 <Item k="Tax" v={`Services ${money.service}%, products ${money.product}%${money.verified ? "" : " (flagged until confirmed)"}`} />

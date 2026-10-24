@@ -1,11 +1,11 @@
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { ownerEntities, shopHours, shopPaymentAccounts, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
-import { AccountState, PAYMENTS_STEP_TITLE, accountState, paymentsStep } from "@/domain/connect";
+import { ownerEntities, shopHours, shopPhotos, shopPaymentAccounts, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
+import { AccountState, PAYMENTS_STEP_TITLE, accountState, paymentsStep, receiptBranding } from "@/domain/connect";
 import { REQUIRED_FOR_LIVE, SUPPORTED_TIMEZONE, US_TIMEZONES, goLiveBlockers, slugProblem } from "@/domain/location-lifecycle";
 import { connectMode, feeSchedule } from "./payments/connect";
 
-export type SetupStepKey = "details" | "timezone" | "slug" | "owner" | "hours" | "taxes" | "menu" | "team" | "payments" | "booking" | "line" | "readers" | "login" | "retail";
+export type SetupStepKey = "details" | "profile" | "timezone" | "slug" | "owner" | "hours" | "taxes" | "menu" | "team" | "payments" | "booking" | "line" | "readers" | "login" | "retail";
 
 export interface SetupStep {
   key: SetupStepKey;
@@ -18,13 +18,13 @@ export interface SetupStep {
   required: boolean;
 }
 
-export const SETUP_ORDER: SetupStepKey[] = ["details", "timezone", "slug", "owner", "hours", "taxes", "menu", "team", "payments", "booking", "line", "readers", "login", "retail"];
+export const SETUP_ORDER: SetupStepKey[] = ["details", "profile", "timezone", "slug", "owner", "hours", "taxes", "menu", "team", "payments", "booking", "line", "readers", "login", "retail"];
 
 /** Every step of opening a location, worked out from what's already saved, plus its payment account and owner. */
 export async function locationSetup(shopId: string) {
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
   if (!shop) return null;
-  const [account, owner, [hours], [menu], scheduled, [readers], [logins], [retail], surnames] = await Promise.all([
+  const [account, owner, [hours], [menu], scheduled, [readers], [logins], [retail], surnames, [photos]] = await Promise.all([
     db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.shopId, shopId) }),
     shop.ownerEntityId ? db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, shop.ownerEntityId) }) : Promise.resolve(undefined),
     db.select({ n: count() }).from(shopHours).where(eq(shopHours.shopId, shopId)),
@@ -47,7 +47,14 @@ export async function locationSetup(shopId: string) {
       .from(shopProducts)
       .where(and(eq(shopProducts.shopId, shopId), eq(shopProducts.active, true))),
     db.select({ n: staff.lastName }).from(staff).where(sql`${staff.lastName} is not null`),
+    db.select({ n: count() }).from(shopPhotos).where(eq(shopPhotos.shopId, shopId)),
   ]);
+  const reviewLink = !!receiptBranding(shop.receipt).reviewUrl;
+  const profileMissing = [
+    shop.latitude === null || shop.geocodeSource === "zip" ? "an exact map pin" : null,
+    shop.googlePlaceId || reviewLink ? null : "the Google Place ID or review link",
+    photos.n > 0 ? null : "photos or a logo",
+  ].filter((x): x is string => !!x);
   const slugIssue = slugProblem(shop.slug, surnames.map((r) => r.n));
   const zone = US_TIMEZONES.find((z) => z.id === shop.timezone)?.label ?? shop.timezone;
   const barbers = scheduled.length;
@@ -59,6 +66,13 @@ export async function locationSetup(shopId: string) {
       title: "Address and phone",
       done: !!(shop.address && shop.city && shop.zip && shop.phone),
       detail: shop.address ? `${shop.address}, ${shop.city} ${shop.state} ${shop.zip}${shop.phone ? "" : " · no phone yet"}` : "Add the street address and phone clients will see.",
+      href: settings,
+    },
+    {
+      key: "profile",
+      title: "Location page",
+      done: profileMissing.length === 0,
+      detail: profileMissing.length ? `Add ${profileMissing.join(", ").replace(/, ([^,]*)$/, " and $1")} for the public location page and search.` : "Map pin, Google listing and photos are set.",
       href: settings,
     },
     {

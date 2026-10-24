@@ -37,6 +37,7 @@ import { brandHandoffConfig } from "./handoff";
 import { loadReviewRules } from "./review-rules";
 import { locationSetup } from "./location-setup";
 import { registerReader } from "./payments/connect";
+import { geocodeAddress } from "./geo";
 import { createShopLogin, shopLoginRoles } from "./shop-logins";
 
 /** Adding, opening and retiring locations needs locations.setup, which only people who see every shop can hold. */
@@ -159,6 +160,13 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
   const productIds = d.products.map((p) => p.productId);
   const productRows = productIds.length ? await db.select({ id: products.id, cost: products.costCents }).from(products).where(inArray(products.id, productIds)) : [];
   if (productRows.length !== new Set(productIds).size) throw new AppError("bad_request", "One of the products no longer exists");
+  const looked = d.latitude === null ? await geocodeAddress(d) : null;
+  const pin =
+    d.latitude !== null && d.longitude !== null
+      ? { latitude: d.latitude, longitude: d.longitude, geocodeSource: d.geocodeSource ?? "manual", geocodedAt: new Date() }
+      : looked && looked.lat !== null && looked.lng !== null
+        ? { latitude: looked.lat, longitude: looked.lng, geocodeSource: looked.source, geocodedAt: new Date() }
+        : {};
 
   const id = await db.transaction(async (tx) => {
     const owner =
@@ -172,7 +180,14 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         city: d.city,
         state: d.state,
         zip: d.zip,
-        phone: d.phone || null,
+        address2: d.address2,
+        ...pin,
+        googlePlaceId: d.googlePlaceId ?? looked?.googlePlaceId ?? null,
+        social: d.social as Record<string, unknown>,
+        directions: d.directions || null,
+        amenities: d.amenities as string[],
+        taxJurisdiction: d.taxJurisdiction as unknown as Record<string, unknown>,
+        phone: d.phone,
         email: d.email || null,
         timezone: d.timezone,
         ownerEntityId: owner,

@@ -4,6 +4,7 @@ import { LinkButton, PageHeader } from "@/components/ui";
 import { clientIp } from "@/lib/client-ip";
 import { can, guardPage, staffGrantor } from "@/server/auth/staff";
 import { wizardOptions } from "@/server/location-admin";
+import { geocoderName } from "@/server/geo";
 import { brandInterval } from "@/server/timing";
 import { LocationWizard } from "./wizard";
 
@@ -27,6 +28,7 @@ export default async function NewLocationPage() {
         options={options}
         brandIntervalMinutes={interval}
         canBank={can(ctx, "payments.banking")}
+        geocoder={geocoderName()}
         network={can(ctx, "network.settings") ? { myIp: clientIp(await headers()), exempt: ctx.isOwner || can(ctx, "access.remote") } : null}
       />
     </div>

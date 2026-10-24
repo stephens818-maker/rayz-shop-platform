@@ -7,6 +7,7 @@ import { ReceiptBrandingSchema, statementDescriptorProblem } from "./connect";
 import { DEFAULT_SHOP_HANDOFF, ShopHandoffSchema } from "./handoff";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE } from "./location-lifecycle";
 import { DEFAULT_NETWORK_RULE, NetworkRuleSchema } from "./network-access";
+import { AMENITIES, TaxJurisdictionSchema, cleanAmenities, e164, socialLink, type SocialKey, type SocialLinks, SOCIAL_KEYS } from "./location-profile";
 
 const money = z.number().int().min(0).max(10_000_00);
 const minutes = z.number().int().min(0).max(24 * 60);
@@ -51,8 +52,47 @@ export const LocationDraft = z.object({
   city: z.string().trim().min(1, "Enter the city").max(60),
   state: z.string().trim().toUpperCase().regex(/^[A-Z]{2}$/, "Use the two-letter state"),
   zip: z.string().trim().regex(/^\d{5}(-\d{4})?$/, "Enter a 5-digit ZIP"),
-  phone: z.string().trim().max(20).nullable(),
+  address2: z.string().trim().max(80).default(""),
+  /** The main phone, saved as E.164 for click-to-call. */
+  phone: z
+    .string()
+    .trim()
+    .max(25)
+    .nullable()
+    .transform((v, ctx) => {
+      if (!v) return null;
+      const n = e164(v);
+      if (!n) ctx.addIssue({ code: "custom", message: "Enter the main phone as a US number, e.g. (563) 555-0100" });
+      return n;
+    }),
   email: z.email("Enter a valid email").nullable(),
+  /** The pin, from the address lookup; without one it's geocoded when the location is saved. */
+  latitude: z.number().min(-90).max(90).nullable().default(null),
+  longitude: z.number().min(-180).max(180).nullable().default(null),
+  geocodeSource: z.enum(["google", "census", "zip", "manual"]).nullable().default(null),
+  googlePlaceId: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9_-]{16,512}$/, "A Google Place ID looks like ChIJN1t_tDeuEmsRUsoyG83frY4")
+    .nullable()
+    .default(null),
+  social: z
+    .record(z.string(), z.string())
+    .default({})
+    .transform((o, ctx) => {
+      const out: SocialLinks = {};
+      for (const [k, v] of Object.entries(o)) {
+        if (!(SOCIAL_KEYS as readonly string[]).includes(k)) continue;
+        const r = socialLink(k as SocialKey, v);
+        if (!r.ok) ctx.addIssue({ code: "custom", message: r.message, path: [k] });
+        else if (r.url) out[k as SocialKey] = r.url;
+      }
+      return out;
+    }),
+  directions: z.string().trim().max(500, "Keep the parking and directions notes under 500 characters").nullable().default(null),
+  amenities: z.array(z.string()).max(AMENITIES.length).default([]).transform((a) => cleanAmenities(a)),
+  /** Needs "Taxes and card fees", like the rates. */
+  taxJurisdiction: TaxJurisdictionSchema.default({ county: null, city: null, district: null, code: null }),
   timezone: z.string().default(SUPPORTED_TIMEZONE),
   ownerEntityId: z.uuid().nullable(),
   description: z.string().trim().max(400).nullable(),
@@ -120,7 +160,7 @@ export const LocationDraft = z.object({
   logoUrl: z.url("Enter the logo's web address").nullable(),
   /** Where staff may sign in from. Anything but off needs "Set where staff can sign in from". */
   networkAccess: NetworkRuleSchema.default(DEFAULT_NETWORK_RULE),
-});
+}).refine((v) => (v.latitude === null) === (v.longitude === null), { message: "Set both the latitude and the longitude, or neither", path: ["latitude"] });
 
 export type LocationDraftInput = z.input<typeof LocationDraft>;
 export type LocationDraftValue = z.output<typeof LocationDraft>;
@@ -152,8 +192,17 @@ export function parseProductLines(text: string): { rows: { sku: string; priceCen
 /** A draft with the wizard's defaults: Mon–Sat hours, Sunday closed, taxes unconfirmed, nothing copied yet. */
 export function draftDefaults(over: Partial<LocationDraftInput> & Pick<LocationDraftInput, "name" | "slug" | "address" | "city" | "state" | "zip">): LocationDraftInput {
   return {
+    address2: "",
     phone: null,
     email: null,
+    latitude: null,
+    longitude: null,
+    geocodeSource: null,
+    googlePlaceId: null,
+    social: {},
+    directions: null,
+    amenities: [],
+    taxJurisdiction: { county: null, city: null, district: null, code: null },
     timezone: SUPPORTED_TIMEZONE,
     ownerEntityId: null,
     description: null,
