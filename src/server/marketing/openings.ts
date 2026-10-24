@@ -493,9 +493,10 @@ export async function approveOpenings(ctx: StaffContext, id: string, now = new D
   const seg = OpeningsSegmentSchema.parse(c.segment);
   const [shop] = await db.select().from(shops).where(eq(shops.id, c.shopIds[0]));
   const [s, os] = await Promise.all([loadMarketingSettings(), loadOpeningsSettings()]);
-  const p = shop ? await planFor(shop, seg.staffId, { ...seg, dates: seg.dates.filter((d) => d >= todayLocal(now)) }, s, os, now) : null;
-  if (!shop || !p || p.problem || !seg.dates.some((d) => d >= todayLocal(now))) {
-    const problem = p?.problem ?? "These openings have passed";
+  const left = seg.dates.filter((d) => d >= todayLocal(now));
+  const p = shop && left.length ? await planFor(shop, seg.staffId, { ...seg, dates: left }, s, os, now) : null;
+  if (!shop || !p || p.problem) {
+    const problem = p?.problem ?? (shop ? "These openings have passed" : "This location is gone");
     await db.update(marketingCampaigns).set({ status: "expired", reviewNote: problem, updatedAt: now }).where(eq(marketingCampaigns.id, c.id));
     await audit(ctx.actor, "campaign_center.openings_expired", "marketing_campaign", c.id, { problem }, c.shopIds[0] ?? null);
     return { staffId: seg.staffId, name: p?.label ?? "", campaignId: c.id, status: "expired", queued: 0, skipped: [], problem };

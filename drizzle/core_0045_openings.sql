@@ -1,4 +1,8 @@
 -- "We have openings": a location texts or emails one barber's regulars and recent clients that the barber has open times today or tomorrow. Each send is a marketing_campaigns row of kind 'openings' (one per barber), which the brand can be asked to approve first; the live page's "join the waitlist" goes in openings_waitlist. Location roles keep only We have openings in the Campaign Center: coupons, automated campaigns, segments, blasts, exports, barbers' own outreach and the marketing reports become the brand's to grant. Additive only.
+ALTER TABLE "marketing_campaigns" DROP CONSTRAINT "marketing_campaigns_kind_chk";--> statement-breakpoint
+ALTER TABLE "marketing_campaigns" ADD CONSTRAINT "marketing_campaigns_kind_chk" CHECK ("kind" in ('trigger', 'blast', 'sequence', 'openings') and ("kind" = 'trigger') = ("trigger" is not null));--> statement-breakpoint
+ALTER TABLE "marketing_campaigns" DROP CONSTRAINT "marketing_campaigns_status_chk";--> statement-breakpoint
+ALTER TABLE "marketing_campaigns" ADD CONSTRAINT "marketing_campaigns_status_chk" CHECK ("status" in ('draft', 'scheduled', 'sending', 'sent', 'cancelled', 'pending_approval', 'rejected', 'expired'));--> statement-breakpoint
 ALTER TABLE "marketing_campaigns" ADD COLUMN "reviewed_by" uuid REFERENCES "staff"("id") ON DELETE set null;--> statement-breakpoint
 ALTER TABLE "marketing_campaigns" ADD COLUMN "reviewed_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "marketing_campaigns" ADD COLUMN "review_note" text;--> statement-breakpoint
