@@ -44,11 +44,11 @@ To put a demo online for the owner (Vercel and Neon, sample data, mock payments 
 | Admin | `admin@rayz.test` | Brand Admin, every shop | Everything except brand-level settings; manages roles and permissions |
 | Regional | `regional@rayz.test` | Regional Manager, Moline and Rock Island | Manager tools and every report, for those two shops only |
 | Michelle | `michelle@rayz.test` | Shop Manager, Coralville | Manager tools and Coralville's reports |
-| Front desk | `frontdesk@rayz.test` | Front Desk, Coralville | Calendar, walk-ins, checkout for every barber, the drawer, blocking time for anyone, discounts up to 10%, and three reports (view only) |
+| Front desk | `frontdesk@rayz.test` | Front Desk, Coralville | Calendar, walk-ins, checkout for every barber, the drawer, blocking time for anyone, discounts up to 10%, **We have openings**, and four reports (view only) |
 | Makenna | `makenna@rayz.test` | Barber, Coralville | Her own calendar column, appointments, clients, and sales (My sales shows only her own numbers), and **My time** for lunch, blocks and time off requests |
 | Morgan | `manager.moline@rayz.test` | Shop Manager, Moline | Manager tools and Moline's reports, inside the Moline workspace |
 | Kat | `kat@rayz.test` | Barber at Moline and Silvis, Shop Manager at Rock Island | Works one shop at a time under that shop's role; the switcher offers only her three shops |
-| Shop logins | `coralville@rayz.test`, `kimberly@rayz.test`, `le-claire@rayz.test`, `moline@rayz.test`, `rock-island@rayz.test`, `dubuque@rayz.test`, `silvis@rayz.test`, `utica@rayz.test` | Front Desk, that one shop | The shared front-desk sign-in for that shop's workspace (see [Shop workspaces](#shop-workspaces)) |
+| Shop logins | `coralville@rayz.test`, `kimberly@rayz.test`, `le-claire@rayz.test`, `moline@rayz.test`, `rock-island@rayz.test`, `dubuque@rayz.test`, `silvis@rayz.test`, `utica@rayz.test` | Front Desk, that one shop | The shared front-desk sign-in for that shop's workspace (see [Shop workspaces](#shop-workspaces)); its one Campaign Center action is **We have openings** |
 
 What each role can do is editable under **Permissions** (see [Roles and permissions](#roles-and-permissions)). How much of each client's details they see is set separately under **Client data protection**: by default barbers, the front desk, and managers see contact details masked or hidden (see [Client data protection](#client-data-protection)).
 
@@ -177,7 +177,7 @@ The same step sets the **statement descriptor** (what clients see on their card 
 
 **Customer screen at checkout:** the brand's tip buttons are under **Setup → Shop settings → Tip buttons on the customer screen** (`handoff.settings`, brand-only). Each shop's **Customer screen at checkout** card (`settings.shop`) uses the brand's buttons or its own (percent or dollar amounts, up to 4, with custom and no tip on or off), and sets whether the tip is asked on the screen or on the Stripe Terminal reader, whether the client signs, whether any staff PIN or only a manager's takes the device back, and what happens after payment. Percent buttons are also the counter's quick tips. See [Customer screen at checkout](#customer-screen-at-checkout).
 
-**Campaign Center:** before anything goes out, set the brand's postal address, quiet hours and weekly and monthly limits under **Campaign Center → Settings**. Then, under **Campaign Center → Campaigns**, give each campaign its wording and coupon and switch it on at the locations that want it. Managers can switch campaigns at their own shops and write and send blasts to their clients (**Campaign Center: create** and **send**). Coupons are under **Promos & gift cards**. See [Campaign Center](#campaign-center).
+**Campaign Center:** before anything goes out, set the brand's postal address, quiet hours and weekly and monthly limits under **Campaign Center → Settings**. Then, under **Campaign Center → Campaigns**, give each campaign its wording and coupon and switch it on at the locations that want it. Locations (shop logins, front desk and managers) get only **We have openings** by default. The rest of the Campaign Center (coupons, campaigns, segments, blasts, exports and the marketing reports) is the brand's, unless the brand grants it in the role editor or per person. Coupons are under **Promos & gift cards**. See [Campaign Center](#campaign-center).
 
 **Morning digest:** **Setup → Morning digest** sets the send time, who gets it (by role, plus always or never per person), and which sections go in. The page shows a preview of your own copy, and **Email me a test** sends it to you now.
 
@@ -1063,7 +1063,7 @@ Kat inside Rock Island, as its Shop Manager, and her assigned shops with a role 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
 - **Roles.** Six editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
-  - The role editor groups the 89 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
+  - The role editor groups the 90 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
@@ -1320,17 +1320,18 @@ Who can edit details already on file, and the front desk's view of a client whos
 
 ### Campaign Center
 
-Brand-level campaigns and coupons, switched on and worded per location, at `/admin/campaign-center`. Nav: **Campaign Center → Campaigns, Blasts, My lapsed clients, Settings**; coupons are under **Promos & gift cards**; the reports are **Reports → Campaign Center** (`/admin/reports/campaign-center`) and **Reports → Lapsed clients by barber** (`/admin/reports/lapsed-clients`).
+Brand-level campaigns and coupons, switched on and worded per location, at `/admin/campaign-center`. Nav: **Campaign Center → We have openings, Campaigns, Blasts, My lapsed clients, Settings**; coupons are under **Promos & gift cards**; the reports are **Reports → Campaign Center** (`/admin/reports/campaign-center`), **Reports → Lapsed clients by barber** (`/admin/reports/lapsed-clients`) and **Reports → We have openings** (`/admin/reports/openings`).
 
-**Who can do what.** Five permissions in the role editor's **Campaign Center** group. Migration `core_0041_marketing` gave the first four to roles under their first names; `core_0042_campaign_center` renames them in every role and per-person override and keeps what each person could do; `core_0043_lapsed_campaigns` adds the fifth.
+**Who can do what.** Six permissions in the role editor's **Campaign Center** group. Migration `core_0041_marketing` gave the first four to roles under their first names; `core_0042_campaign_center` renames them in every role and per-person override and keeps what each person could do; `core_0043_lapsed_campaigns` adds the fifth; `core_0045_openings` adds **We have openings** and makes everything else brand-only by default: it takes view, create, send, own lapsed clients, `promos.manage` and the Campaign Center and lapsed-client reports out of the Regional and Shop Manager roles, and gives them, Front Desk and shop logins We have openings and its report. A brand that wants managers to keep more grants it back in the role editor or per person.
 
 | Permission | What it allows | Who has it |
 |---|---|---|
-| **Campaign Center: view** (`campaign_center.view`) | See campaigns and blasts at their shops, with counts | Brand Admin, Regional Manager, Shop Manager |
-| **Campaign Center: create** (`campaign_center.create`) | Write their shops' own wording and settings, pick coupons, draft blasts to their shops and send tests. With access to all shops: also the brand's version of each campaign, blasts to every location, and **Settings** | Brand Admin, Regional Manager, Shop Manager |
-| **Campaign Center: send** (`campaign_center.send`) | Switch campaigns on or off at their shops, and send, schedule or cancel blasts | Brand Admin, Regional Manager, Shop Manager |
+| **Campaign Center: We have openings** (`campaign_center.openings`) | Tell a barber's regulars and recent clients the barber has open times (below), with counts only | Brand Admin, Regional Manager, Shop Manager, Front Desk (so shop logins) |
+| **Campaign Center: view** (`campaign_center.view`) | See campaigns and blasts at their shops, with counts | Brand Admin. Brand only unless granted |
+| **Campaign Center: create** (`campaign_center.create`) | Write their shops' own wording and settings, pick coupons, draft blasts to their shops and send tests. With access to all shops: also the brand's version of each campaign, blasts to every location, and **Settings** | Brand Admin. Brand only unless granted |
+| **Campaign Center: send** (`campaign_center.send`) | Switch campaigns on or off at their shops, and send, schedule or cancel blasts. With access to all shops: also approve locations' openings | Brand Admin. Brand only unless granted |
 | **Campaign Center: export** (`campaign_center.export`, all shops only) | Download contact lists | Brand Owner only, unless granted |
-| **Campaign Center: own lapsed clients** (`campaign_center.own_clients`) | See their own lapsed clients (first name and last initial, never phone or email) and send them "From your barber" | Brand Admin, Regional Manager, Shop Manager. Barbers only when a manager turns it on for the role or the person |
+| **Campaign Center: own lapsed clients** (`campaign_center.own_clients`) | See their own lapsed clients (first name and last initial, never phone or email) and send them "From your barber" | Brand Admin. Others only when the brand turns it on for the role or the person |
 
 - Create and send are separate. Someone with only create can write a blast but not send it. Someone with only send can send a draft or switch a campaign on but can't change its wording. Discarding a draft needs create; cancelling a scheduled blast needs send.
 - A manager's blast can only target their own shops, and a blast that includes other shops is read-only for them ("This blast goes to shops outside yours").
@@ -1339,7 +1340,17 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 - Inside the code the module keeps its first name: `src/server/marketing/`, `src/domain/marketing.ts`, the `marketing_*` tables and the `marketing` notification kind. "Marketing" in the UI is the legal category (marketing consent, marketing texts and emails), not the module.
 - The export (`/admin/campaign-center/export`, all clients who agreed to marketing, or one campaign's recipients) shows phone and email the way **Client data** settings let the exporter see them. Every export is audited with the clients it contained.
 
-**Coupons** (Promos & gift cards → Coupons; `promos.manage`):
+**We have openings** (Campaign Center → We have openings, `/admin/campaign-center/openings`; Campaign Center: We have openings):
+- **First come, first served, per barber.** The location picks one or several barbers and the days: today or tomorrow by default, or up to three of the next seven. Each barber tile shows their open times today and tomorrow, pulled from online booking for the barber's most booked service.
+- **Who gets it:** the barber's regulars (2+ completed visits with them at the location in a year) and recent clients (a visit with them in the last 60 days, set by the brand), who agreed to marketing and have nothing booked. Optional **last visit over N weeks**. Longest since their last visit first, up to the brand's maximum per blast (150). A client of two barbers in one send gets only the first.
+- **The message** is the brand's wording: "Hi {first_name}, {barber} at {shop} has openings {day}. First come, first served: {book_link} Reply STOP to opt out." by text, or an email, or both (the client's channel). `{day}` reads "today", "tomorrow", "today and tomorrow" or "on Thu, Oct 29", as of when it arrives.
+- **Counts only.** The preview shows the open times, how many would get it by text and by email, how many are held back and why, and the message with a sample name. Nobody sending it sees names, numbers or emails, and there's no list to export.
+- **The link** (`/book/{shop}/openings/{id}`) shows the barber's live open times on those days and refreshes every 15 seconds; booked times drop off. A time opens the booking page on that time. When the last one goes it says **All booked, join the waitlist** (first name, mobile, optional day). The location sees the first names waiting and can **Text them: a time opened** with the link.
+- **Rules:** consent, unsubscribes, quiet hours (9 PM to 9 AM: a send then waits, and leaves out days that will have passed) and the weekly and monthly caps, plus **one openings message per client per 7 days** (brand setting), from any location.
+- **Limits and approval** (Campaign Center → Settings → We have openings; brand only): openings blasts per location per day (3) and per 7 days (12), each barber counting as one; per-location overrides; and **brand approval**. With approval on, a send waits for someone with Campaign Center: send and access to all shops, who approves (its times and clients are pulled again then, and it expires if the times are gone or the days passed) or turns it down with a note. The location can withdraw it while it waits.
+- **Report** (Reports → We have openings; `report.openings.view`, CSV with `.export`): one row per blast with the barber, days, who sent it, status, open times at send, messages, clicks, click rate, bookings (recipients who booked with that barber, at that location, on those days, after the message), fill rate and the waitlist. Locations see their own; the brand sees all.
+
+**Coupons** (Promos & gift cards → Coupons; `promos.manage`, brand only unless granted):
 - **Types:** percent off, dollars off, or a free add-on, service or product. The free item is taken off at its price when it's on the ticket, and online booking adds it for the client.
 - **Rules:**
   - which services or products it applies to (blank means the whole ticket, or services only);
@@ -1459,6 +1470,8 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
   - lapsed sequences: the step by weeks since, once per lapse, leaving on booking and coming back on a cancel, the barber's signature and link, no overlap with "We miss you", create and send kept apart;
   - My lapsed clients without contact details, only their own clients, the location switch and the daily limit;
   - the lapsed report's buckets and rebook rate, and the migration's grants.
+- `tests/openings.test.ts`: the `{day}` wording, the days allowed, limits, per-location rules and settings fallbacks. `tests/permissions.test.ts`: locations get only We have openings.
+- `tests/db/openings.test.ts`: as the Coralville shop login, the preview without names or contacts, who gets it and by which channel, the 7-day cap, quiet hours, the daily limit, approval (approve, turn down, withdraw, expire), the live page and waitlist, and the report.
 
 <img alt="Campaign Center: campaigns with per-location switches" src="docs/screenshots/campaign-center-campaigns.png" width="800" />
 

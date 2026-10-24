@@ -406,7 +406,7 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 Called "Marketing / Engage" in the first request; renamed to the Campaign Center everywhere it shows.
 
 **Name and permissions:**
-- [x] Nav section **Campaign Center** (Campaigns, Blasts, My lapsed clients, Settings), pages under `/admin/campaign-center`, the report **Campaign Center** at `/admin/reports/campaign-center`, the cron at `/api/cron/campaign-center`.
+- [x] Nav section **Campaign Center** (We have openings, Campaigns, Blasts, My lapsed clients, Settings), pages under `/admin/campaign-center`, the report **Campaign Center** at `/admin/reports/campaign-center`, the cron at `/api/cron/campaign-center`.
 - [x] Permissions **Campaign Center: view / create / send / export** (`campaign_center.*`), a **Campaign Center** group in the role editor, and the report permissions `report.campaign_center.view` and `.export`.
 - [x] Create and send are separate: create writes wording, coupons and blast drafts (with access to all shops, also the brand's version and Settings); send switches campaigns on or off and sends, schedules or cancels blasts.
 - [x] Migration `core_0042_campaign_center` renames the old keys in roles and per-person overrides, keeping what each person could do.
@@ -557,6 +557,29 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] Photos are stored in the database (up to about 300 KB each, resized to 256 px in the browser). Move them to object storage if the book grows large.
 - [ ] The customer app showing the loyalty card (NOTES-SYNC has the format).
 - [ ] Scoring weights for duplicates are first guesses; tune them on the real Squire import.
+
+## 23. Campaign Center permissions and We have openings
+
+**1. Shop and location logins:**
+- [x] By default a location (shop login, Front Desk, Shop and Regional Manager) has one Campaign Center action: **We have openings** (`campaign_center.openings`), first come, first served, per barber.
+- [x] Pick one or several barbers; today or tomorrow by default (or up to 3 of the next 7 days); each barber's real open times from online booking.
+- [x] Text and/or email to the barber's clients who agreed to marketing: regulars (2+ visits with them at the location in a year) and recent clients (a visit in the last 60 days), with nothing booked, plus an optional "last visit over N weeks".
+- [x] The brand's template: "Hi {first_name}, {barber} at {shop} has openings {day}. First come, first served: {book_link}" ({shop} reads "Ray'z Coralville").
+- [x] The link goes to the barber's live times; booked times disappear, and when the last goes it says **All booked, join the waitlist**. A time opens the booking page on that time.
+- [x] Counts only: no names, phone numbers or emails, and no export.
+- [x] Consent, quiet hours (9 PM to 9 AM; a send then waits), and at most one openings message per client per 7 days (brand setting), on top of the weekly and monthly caps.
+
+**2. Reports and limits:**
+- [x] **Reports → We have openings**: per blast, messages, clicks, bookings filled and fill rate, the waitlist; locations see their own, the brand all.
+- [x] Per-location daily and weekly send limits set by the brand (defaults 3 and 12, each barber is one blast), and optional brand approval (approve, turn down with a note, withdraw, expire).
+
+**3. Brand login:**
+- [x] Coupons, automated campaigns, segments, blasts, exports, own lapsed clients and the marketing reports are brand-only by default. Migration `core_0045_openings` takes them out of the manager roles; the brand grants them back in the role editor or per person.
+
+**Still open:**
+- [ ] Whether managers at this brand should get any of the Campaign Center back (DEPLOY step 13).
+- [ ] The waitlist text goes to everyone who asked, by text only, without marketing consent (they asked for it). Confirm that's the wanted reading for A2P.
+- [ ] Open times are for the barber's most booked service; a client wanting a longer service may find the time too short and is sent back to pick another.
 
 ## Deferred by decision
 
