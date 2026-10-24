@@ -3517,3 +3517,11 @@ export const analyticsExports = pgTable("analytics_exports", {
   startedAt: ts("started_at").notNull().defaultNow(),
   finishedAt: ts("finished_at"),
 });
+
+/** Client merges and erasures the warehouse copy still has to apply (it has the old client id). */
+export const analyticsCustomerMoves = pgTable("analytics_customer_moves", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  fromCustomer: uuid("from_customer").notNull(),
+  toCustomer: uuid("to_customer"),
+  createdAt: createdAt(),
+});

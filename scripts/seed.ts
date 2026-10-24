@@ -44,7 +44,7 @@ async function main() {
   console.log(`Seeding (today = ${today} America/Chicago)…`);
 
   await db.execute(sql`TRUNCATE TABLE
-    analytics_events, analytics_exports, visit_satisfaction, client_access_alerts, client_access_log, client_field_rules, client_fields,
+    analytics_events, analytics_exports, analytics_customer_moves, visit_satisfaction, client_access_alerts, client_access_log, client_field_rules, client_fields,
     call_logs, messages, message_threads, contact_opt_outs, rebook_links, appointment_outreach, call_ins,
     audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
     tip_ledger, tip_payouts, tip_payout_batches, staff_payout_accounts, cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,

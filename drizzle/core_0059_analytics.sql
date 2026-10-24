@@ -676,12 +676,20 @@ CREATE TRIGGER "waitlist_entries_analytics" AFTER INSERT OR UPDATE OF "status" O
 DROP TRIGGER IF EXISTS "visit_satisfaction_analytics" ON "visit_satisfaction";--> statement-breakpoint
 CREATE TRIGGER "visit_satisfaction_analytics" AFTER INSERT ON "visit_satisfaction" FOR EACH ROW EXECUTE FUNCTION "analytics_capture"();--> statement-breakpoint
 -- Erasing a client keeps the counts but drops who it was. A merge moves their events to the kept record first, so nothing is lost there.
+-- Merges and erasures waiting to be applied to the warehouse copy, which already has the old client id. Each warehouse run applies them and deletes them.
+CREATE TABLE IF NOT EXISTS "analytics_customer_moves" (
+	"id" bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	"from_customer" uuid NOT NULL,
+	"to_customer" uuid,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "analytics_forget"(c uuid) RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE
 	n integer;
 BEGIN
 	UPDATE "analytics_events" SET "customer_id" = NULL WHERE "customer_id" = c;
 	GET DIAGNOSTICS n = ROW_COUNT;
+	INSERT INTO "analytics_customer_moves" ("from_customer") VALUES (c);
 	RETURN n;
 END $$;--> statement-breakpoint
 CREATE OR REPLACE FUNCTION "analytics_customer_removed"() RETURNS trigger LANGUAGE plpgsql AS $$

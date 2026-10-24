@@ -16,6 +16,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "analytics:backfill": "tsx --require ./scripts/allow-server-only.cjs scripts/analytics-backfill.ts",
     "db:reset": "tsx scripts/migrate.ts && tsx scripts/seed.ts",
     "worker": "tsx --require ./scripts/allow-server-only.cjs scripts/worker.ts",
     "import:squire": "tsx scripts/import-squire.ts"

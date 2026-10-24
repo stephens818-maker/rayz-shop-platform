@@ -254,6 +254,7 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     };
     // The event log has no foreign keys; deleting the dropped record would otherwise make its events anonymous.
     await tx.execute(sql`update analytics_events set customer_id = ${keepId} where customer_id = ${dropId}`);
+    await tx.execute(sql`insert into analytics_customer_moves (from_customer, to_customer) values (${dropId}, ${keepId})`);
     await tx.delete(customers).where(eq(customers.id, dropId));
     await tx.update(customers).set(patch).where(eq(customers.id, keepId));
     await audit(actor, "customer.merge", "customer", keepId, { merged: drop, moved, rewardsIssued }, null, tx);
