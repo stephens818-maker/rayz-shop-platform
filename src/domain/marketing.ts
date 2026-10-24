@@ -300,7 +300,7 @@ export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
     templates: tpl(
       `{shop}: {first_name}, {badge_message} {book_link} ${STOP_LINE}`,
       "{badge} at {shop}",
-      "Hi {first_name},\n\n{badge_message}\n\nSee your badges and book your next cut: {book_link}",
+      "Hi {first_name}, {badge_message}\n\nSee your badges and book your next cut: {book_link}",
       "{badge}",
       "{first_name}, {badge_message}",
     ),

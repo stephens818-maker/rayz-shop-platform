@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, marketingCampaigns, marketingLocationSettings, marketingSends, shops, staff } from "@/db/schema";
+import { customers, marketingCampaigns, marketingLocationSettings, marketingSends, promoCodes, shops, staff } from "@/db/schema";
 import { customKey, type BadgeKey, type BadgeProgressFacts, type StoredBadge } from "@/domain/badges";
 import { badgeMessage, customerView, customerWording, notifies, type BadgeChange, type CustomerBadges } from "@/domain/customer-badges";
 import { triggerSettings } from "@/domain/marketing";
@@ -80,6 +80,7 @@ export async function sendBadgeNotices(now = new Date(), o: { limit?: number } =
     listCustomBadges({ active: true }),
   ]);
   const customBy = new Map(custom.map((c) => [customKey(c.id), c]));
+  const [promo] = campaign.promoId ? await db.select().from(promoCodes).where(eq(promoCodes.id, campaign.promoId)) : [];
   const done = async (id: string, status: "queued" | "skipped", reason: string | null, sendId: string | null = null) => {
     await db.execute(sql`update client_badge_notices set status = ${status}, reason = ${reason}, send_id = ${sendId}::uuid, handled_at = now() where id = ${id}::uuid`);
     stats[status]++;
@@ -145,7 +146,7 @@ export async function sendBadgeNotices(now = new Date(), o: { limit?: number } =
       templates: templatesOf(campaign.templates, loc.templates),
       channels: channelsOf(campaign.channels),
       settings,
-      promo: null,
+      promo: promo ?? null,
       recordSkips: true,
       now,
     });
