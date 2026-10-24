@@ -121,6 +121,7 @@ const ids = {} as {
   tipBatch: string;
   tipPayout: string;
   blast: string;
+  sequence: string;
   campaign: string;
   marks: Record<keyof typeof MARK, { appt: string; promo: string; sale: string }>;
 };
@@ -288,6 +289,8 @@ async function seedCanaries() {
   ids.thread = (await m.db.db.insert(m.schema.messageThreads).values({ shopId: cv, phone: CANARY.phone, customerId: client.id }).returning())[0].id;
   ids.tipBatch = (await m.db.db.insert(m.schema.tipPayoutBatches).values({ shopId: cv, kind: "manual", cutoffDate: today, notes: CANARY.apptNote }).returning())[0].id;
   ids.blast = (await m.db.db.insert(m.schema.marketingCampaigns).values({ kind: "blast", name: `Coralville blast ${CANARY.apptNote}`, shopIds: [cv], channels: ["sms"] }).returning())[0].id;
+  ids.sequence = (await m.db.db.insert(m.schema.marketingCampaigns).values({ kind: "sequence", name: `Coralville sequence ${CANARY.apptNote}`, shopIds: [cv], channels: ["sms"] }).returning())[0].id;
+  await m.db.db.insert(m.schema.marketingSteps).values({ campaignId: ids.sequence, position: 0, afterDays: 14, templates: { sms: "{shop}: hi {first_name}. Reply STOP to opt out." } });
   await (await import("@/server/marketing/campaigns")).ensureTriggerCampaigns();
   ids.campaign = (await m.db.db.query.marketingCampaigns.findFirst({ where: eq(m.schema.marketingCampaigns.trigger, "lapsed") }))!.id;
   ids.tipPayout = (await m.db.db.insert(m.schema.tipPayouts).values({ batchId: ids.tipBatch, shopId: cv, staffId: ids.barber, method: "cash", status: "pending", grossCents: 2300, netCents: 2300 }).returning())[0].id;
@@ -464,6 +467,7 @@ function dynamicPages(): [string, Record<string, string>][] {
     ["/admin/timesheets/[staffId]", { staffId: ids.barber }],
     ["/admin/tips/[id]", { id: ids.tipBatch }],
     ["/admin/campaign-center/blasts/[id]", { id: ids.blast }],
+    ["/admin/campaign-center/sequences/[id]", { id: ids.sequence }],
   ];
 }
 
@@ -808,6 +812,13 @@ describe("server actions aimed at another shop's records", () => {
       ["campaign center blast send", () => campaignCenter.scheduleBlastAction(ids.blast, null)],
       ["campaign center blast cancel", () => campaignCenter.cancelBlastAction(ids.blast)],
       ["campaign center test", () => campaignCenter.sendTestAction({ campaignId: ids.campaign, shopId: cv, channel: "sms" })],
+      [
+        "campaign center sequence edit",
+        () => campaignCenter.saveSequenceAction({ id: ids.sequence, name: "Hijacked", channels: ["push"], steps: [{ afterDays: 14, templates: { pushTitle: "Hi", pushBody: "Hi" } }] }),
+      ],
+      ["campaign center sequence on", () => campaignCenter.setSequenceEnabledAction(ids.sequence, true)],
+      ["campaign center sequence delete", () => campaignCenter.deleteSequenceAction(ids.sequence)],
+      ["campaign center sequence count", () => campaignCenter.previewSequenceAction({ channels: ["push"], shopIds: [cv], steps: [{ afterDays: 14 }] })],
     ];
 
     // Each call must be refused for every Moline-side login, and by the tenant check (not just a
