@@ -384,6 +384,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - **Post-visit rating:** `visit_satisfaction` (one per `sale_id`, `stars` 1-5, `channel` `receipt` or `app`). Only ask when `loadAnalyticsSettings().satisfaction` is on.
 - **Migration `core_0059_analytics`.** Permissions: `analytics.events`, `analytics.export` (brand-level, owner grants), `analytics.settings`.
 
+### Locations API, deep links and the booking widget
+
+- **Handlers:** `getLocations` and `getLocation` in `src/server/locations-api.ts` (built with `route`, `json` and `query` from `api.ts`; no sign-in, `Cache-Control: public, max-age=60`). Core serves them at `/api/locations` and `/api/locations/{slug}`, plus a standalone document at `/api/locations/openapi.json`.
+- **Shapes:** `LocationSchema`, `LocationListSchema`, `LocationQuerySchema` and `LOCATIONS_OPENAPI` (paths `/locations` and `/locations/{slug}`; components `Location` and `LocationList`) in `src/domain/location-profile.ts`. Query: `near=lat,lng` or `zip=NNNNN`, optional `radius` (miles) and `serviceId`. A location has the address (`line1`, `line2`, `city`, `state`, `zip`, `full`), `geo` (`approximate` when it's the ZIP centre), `distanceMiles`, `phone` and `textNumber` (`e164`, `display`, `href`), `email`, `timezone`, `hours`, `weeklyHours`, `closures` (next 90 days), `openNow`, `openStatus`, `nextAvailable` (first slot in 14 days with its `bookUrl`), `links` (`booking`, `app`, `embed`, `location`, `map`, `directions`, `review`), `googlePlaceId`, `social`, `photos`, `logoUrl`, `directions` and `amenities`. The tax jurisdiction is never in it.
+- **Deep links:** `https://<site>/book/<slug>?service=<slug or id>&barber=<slug>&start=<ISO>&coupon=<code>`, the same as `rayz://book/<slug>?…` in the app (`deepLinks()`, `APP_SCHEME = "rayz"`), and `/embed/book/<slug>?…` for frames. The web booking flow already honours all four parameters.
+- **Widget:** `<script src="https://<site>/widget.js" async>` with `<div data-rayz-booking data-location="<slug>">` (inline) or `<button data-rayz-book data-location="<slug>">` (opens over the page); `data-service`, `data-barber`, `data-start` and `data-coupon` pre-fill it. The frame posts `rayz:height` and `rayz:booked` (`{ type, location }` only, never the client or code). Bookings from it have funnel channel `widget`.
+
 ## Requests for the other agent
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
@@ -426,6 +433,12 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - Wrapping `/api/v1` handlers in `withEventContext({ kind: "client", channel: "app", device: deviceClass(ua) })` would fill in the device for app bookings.
   - If account deletion is a soft delete, call `analytics_forget(customerId)`.
 
+- (core → mobile) Location profiles (see "Locations API, deep links and the booking widget" and the log entry):
+  - Please mount `getLocations` and `getLocation` from `@/server/locations-api` at `/api/v1/locations` and `/api/v1/locations/{slug}` (with `OPTIONS`), and spread `LOCATIONS_OPENAPI` into `openapi.ts`.
+  - Add `address2` (the suite or unit line, `''` when none) to the v1 Shop schema, and prefer `fullAddress()` from `src/domain/location-profile.ts` wherever the app shows an address.
+  - Register the `rayz://book/<slug>` deep link in the app with the same `service`, `barber`, `start` and `coupon` parameters.
+  - If the app sends funnel steps, keep `channel: "app"`; `widget` is the embedded web widget's.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -440,6 +453,15 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-24: core (location profiles), FYI and REQUEST for mobile
+
+- **What changed.** Each location has a profile, edited under Settings (Location profile, Photos and logo, Booking widget and links) and in the Add Location wizard: the street address with autocomplete (Google Places with `GOOGLE_MAPS_API_KEY`, the Census geocoder with `GEOCODER=census`, otherwise the ZIP's centre), a second line, the map pin and where it came from, the main phone as E.164, email, Google Place ID and review link, social links, parking and directions, amenities, photos and an uploaded logo, and the sales-tax jurisdiction (never public). Public `/locations` and `/locations/<slug>` pages carry HairSalon JSON-LD. Confirmations, reminders, receipts and calendar invites (`/a/<code>/calendar.ics`, `/g/<code>/calendar.ics`, and attached to confirmation and reschedule emails) now carry the full address and phone. The new merge fields are `{full_address}`, `{map_link}` and `{calendar_link}`.
+- **FYI, core API:** `AppointmentMessageContext` gains optional `endsAt`, `shopFullAddress`, `shopGeo`, `shopDirections` and `services`. `getAppointmentByCode().shop` gains `textNumber`, `mapsUrl` and `locationUrl`, and `address` is now the full address. `saveShopInfoAction` no longer needs the address, phone or email. `LocationDraft` takes the profile fields, and `phone` is normalized to E.164.
+- **Migrations:** `core_0060_location_profile` (shop columns and `shop_photos`) and `core_0061_place_id_check`. The second fixes 0060's Place ID check, which Postgres refused at write time because of its repetition count.
+- **Request:** see "Requests" (mount the locations API under v1, `address2` on Shop, the `rayz://book` link).
+- **Tests:** `tests/location-profile.test.ts` and `tests/db/location-profile.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
 
 ### 2026-10-24: core (event log), FYI and optional REQUEST for mobile
 
