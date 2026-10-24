@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { receiptBranding } from "@/domain/connect";
 import { appointments, customers, payments, refunds, saleItems, sales, shops, staff, staffShops } from "@/db/schema";
@@ -9,6 +9,7 @@ import { Badge, Card, LinkButton, Notice, StarBadge } from "@/components/ui";
 import { formatCents, formatRate } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
 import { feeLabel } from "@/domain/checkout";
+import { personHeading } from "@/domain/receipts";
 import { formatDateTime, localDateOf } from "@/lib/time";
 import { can, guardPage, ratingViewer } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
@@ -19,7 +20,7 @@ import { inTenant } from "@/server/tenant";
 import { lookups } from "@/server/lookups";
 import { loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries, visitForSale } from "@/server/ratings";
-import { saleReceiptState } from "@/server/receipts";
+import { receiptData, saleReceiptState } from "@/server/receipts";
 import { QuickRate } from "../../customers/ratings";
 import { ReceiptPanel } from "./receipt-panel";
 import { approvers, needsManager } from "@/server/manager-approval";
@@ -48,13 +49,22 @@ export default async function SalePage({ params, searchParams }: { params: Promi
   ]);
   const policy = await clientPolicy(ctx);
   const receipt = receiptBranding(shop?.receipt);
-  const [loyalty, rateable, ratingMap, screen, receiptState] = await Promise.all([
+  const payerIds = [...new Set(pays.map((p) => p.payerCustomerId).filter((x): x is string => !!x))];
+  const [loyalty, rateable, ratingMap, screen, receiptState, printed, payerRows] = await Promise.all([
     customer ? loyaltyBalance(customer.id) : null,
     customer && policy.ratingDetail ? visitForSale(ratingViewer(ctx), id) : null,
     ratingSummaries([customer?.id]),
     handoffOnSale(id),
     saleReceiptState(id, policy),
+    receiptData(id),
+    payerIds.length ? db.select({ id: customers.id, first: customers.firstName, last: customers.lastName }).from(customers).where(inArray(customers.id, payerIds)) : [],
   ]);
+  const people = printed.people;
+  const personOf = new Map((people ?? []).flatMap((p) => p.lines.flatMap((l) => (l.id ? [[l.id, `${p.name}${l.barber ? ` · ${l.barber}` : ""}`] as [string, string]] : []))));
+  const payerOf = (p: (typeof pays)[number]) => {
+    const c = p.payerCustomerId ? payerRows.find((x) => x.id === p.payerCustomerId) : null;
+    return c ? `${c.first} ${c.last ?? ""}`.trim() : p.payerLabel;
+  };
   const tipShares = screen.shares.length ? splitCents(sale.tipCents, screen.shares.map((x) => ({ id: x.staffId, weight: x.weight }))) : null;
   const splitName = new Map(screen.shares.map((x) => [x.staffId, x.label]));
   const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { rate: number } };
@@ -78,8 +88,22 @@ export default async function SalePage({ params, searchParams }: { params: Promi
     reassignments(id),
   ]);
 
+  const mergedInto = sale.mergedIntoSaleId ? await db.query.sales.findFirst({ where: eq(sales.id, sale.mergedIntoSaleId), columns: { id: true, number: true } }) : null;
   return (
     <div className="mx-auto max-w-4xl">
+      {mergedInto && (
+        <div className="no-print mb-4">
+          <Notice tone="blue">
+            <span data-testid="merged-into">
+              This ticket was combined into{" "}
+              <Link className="font-semibold underline" href={`/admin/sales/${mergedInto.id}`}>
+                ticket #{mergedInto.number}
+              </Link>
+              , with everyone and everything on it.
+            </span>
+          </Notice>
+        </div>
+      )}
       {sp.done && (
         <div className="no-print mb-4 space-y-2">
           <Notice tone="green">
@@ -131,7 +155,18 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           </div>
           <table className="mt-5 w-full text-sm tabular">
             <tbody>
-              {items.map((i) => (
+              {(people ?? [{ name: null as string | null, barbers: [] as string[], cents: 0, lines: items.map((i) => ({ id: i.id })) }]).flatMap((p, k) => [
+                ...(p.name
+                  ? [
+                      <tr key={`p${k}`} data-testid="sale-person">
+                        <td colSpan={2} className={k ? "pt-3 font-semibold" : "font-semibold"}>
+                          {personHeading({ name: p.name, barbers: p.barbers })}
+                          <span className="float-right tabular">{formatCents(p.cents)}</span>
+                        </td>
+                      </tr>,
+                    ]
+                  : []),
+                ...items.filter((i) => p.lines.some((l) => l.id === i.id)).map((i) => (
                 <tr key={i.id}>
                   <td className="py-1">
                     {i.name}
@@ -146,7 +181,8 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                   </td>
                   <td className="py-1 text-right">{formatCents(i.grossCents)}</td>
                 </tr>
-              ))}
+                )),
+              ])}
               <tr>
                 <td colSpan={2} className="pt-2" />
               </tr>
@@ -197,6 +233,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                   <td className="capitalize">
                     {p.method === "card" ? `${p.cardBrand ?? "Card"} •••• ${p.cardLast4 ?? ""} (${p.cardFunding ?? "card"}, ${p.entryMode === "terminal" ? "reader" : "keyed"})` : p.method.replace("_", " ")}
                     {p.method === "cash" && p.cashTenderedCents != null && p.cashTenderedCents > p.amountCents && ` · tendered ${formatCents(p.cashTenderedCents)}, change ${formatCents(p.cashTenderedCents - p.amountCents)}`}
+                    {payerOf(p) && <span className="normal-case" data-testid="payer"> · paid by {payerOf(p)}</span>}
                   </td>
                   <td className="text-right">{formatCents(p.amountCents)}</td>
                 </tr>
@@ -274,6 +311,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                 refundedQty: i.refundedQty,
                 netCents: i.netCents,
                 taxCents: i.taxCents,
+                person: personOf.get(i.id) ?? null,
                 giftCardBalances: i.giftCards.filter((g) => g.status === "active").map((g) => g.balanceCents).sort((a, b) => b - a),
               }))}
             />

@@ -26,6 +26,8 @@ export interface RefundableItem {
   taxCents: number;
   /** Active gift cards sold on this line, largest balance first. */
   giftCardBalances: number[];
+  /** On a combined ticket: whose visit the line was, and their barber. */
+  person?: string | null;
 }
 
 export function SaleActions({
@@ -119,6 +121,7 @@ export function SaleActions({
                 <span className={max === 0 ? "flex-1 text-zinc-400 line-through" : "flex-1"}>
                   {i.name}
                   {i.qty > 1 && <span className="text-zinc-500"> × {i.qty}</span>}
+                  {i.person && <span className="block text-[11px] text-zinc-500">{i.person}</span>}
                   {i.kind === "gift_card" && max > 0 && <span className="block text-[11px] text-zinc-500">Voids the card; refunds what&apos;s unused</span>}
                 </span>
                 {max > 1 && n > 0 && (

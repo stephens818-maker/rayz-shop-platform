@@ -7,6 +7,8 @@ import { Badge, Button, Card, Empty, PageHeader, Table, Td, Th } from "@/compone
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatTime, isValidLocalDate, todayLocal } from "@/lib/time";
 import { can, guardPage, reportShopIds } from "@/server/auth/staff";
+import { openTickets } from "@/server/combined-checkout";
+import { byBarber } from "@/server/reports";
 import { newSaleAction } from "../checkout/actions";
 
 export const metadata: Metadata = { title: "Sales" };
@@ -34,6 +36,8 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
       lastName: customers.lastName,
       methods: sql<string>`(select string_agg(distinct ${payments.method}::text, ' + ') from ${payments} where ${payments.saleId} = ${sales.id})`,
       reassigned: sql<boolean>`exists (select 1 from ${saleReassignments} where ${saleReassignments.saleId} = ${sales.id})`,
+      mergedIntoSaleId: sales.mergedIntoSaleId,
+      mergedIntoNumber: sql<number | null>`(select m.number from ${sales} m where m.id = ${sales.mergedIntoSaleId})`,
     })
     .from(sales)
     .innerJoin(shops, eq(shops.id, sales.shopId))
@@ -42,15 +46,20 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
     .where(and(inArray(sales.shopId, shopIds), eq(sales.businessDate, date)))
     .orderBy(desc(sales.createdAt))
     .limit(500);
+  const isToday = date === todayLocal();
   const open = rows.filter((r) => r.status === "open");
-  const closed = rows.filter((r) => r.status !== "open");
+  const closed = rows.filter((r) => r.status !== "open" && !r.mergedIntoSaleId);
+  const combined = rows.filter((r) => r.mergedIntoSaleId);
   const paidTotal = closed.filter((r) => r.status !== "voided").reduce((a, r) => a + r.totalCents, 0);
-  const perBarber = [...closed.filter((r) => r.status !== "voided").reduce((m, r) => {
-    const k = r.barber ?? "No barber";
-    const x = m.get(k) ?? { tickets: 0, cents: 0, tips: 0 };
-    m.set(k, { tickets: x.tickets + 1, cents: x.cents + r.totalCents, tips: x.tips + r.tipCents });
-    return m;
-  }, new Map<string, { tickets: number; cents: number; tips: number }>())].sort((a, b) => b[1].cents - a[1].cents);
+  // Each service line counts for the barber who did it, so a family ticket with two barbers shows on both.
+  const [queue, barberRows] = await Promise.all([
+    isToday ? openTickets(shopIds) : Promise.resolve(null),
+    byBarber({ shopIds, from: date, to: date }),
+  ]);
+  const perBarber = barberRows
+    .map((b) => ({ name: b.label, tickets: b.tickets, cents: b.netServicesCents + b.netProductsCents, tips: b.tipsCents }))
+    .filter((b) => b.tickets || b.cents || b.tips)
+    .sort((a, b) => b.cents - a.cents);
   const eod = can(ctx, "report.end_of_day.view");
   return (
     <div className="mx-auto max-w-6xl">
@@ -78,27 +87,77 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
           </>
         }
       />
-      {open.length > 0 && (
-        <Card className="mb-4">
-          <div className="border-b border-zinc-100 px-4 py-3 text-sm font-semibold">Open tickets</div>
-          <div className="flex flex-wrap gap-2 p-4">
-            {open.map((r) => (
-              <Link key={r.id} href={`/admin/checkout/${r.id}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-200 hover:bg-amber-100">
-                #{r.number} · {r.firstName ?? "Walk-in"} · {r.barber ?? "No barber"}
-              </Link>
-            ))}
+      {queue && queue.length > 0 ? (
+        <Card className="mb-4" data-testid="checkout-queue">
+          <div className="flex items-baseline justify-between border-b border-zinc-100 px-4 py-3">
+            <span className="text-sm font-semibold">Checkout queue</span>
+            <span className="text-xs text-zinc-500">Ready first. Open a ticket to combine others into it.</span>
           </div>
+          <ul className="grid gap-2 p-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[...queue]
+              .sort((a, b) => Number(b.ready > 0 && b.ready === b.total) - Number(a.ready > 0 && a.ready === a.total) || b.ready - a.ready)
+              .map((t) => {
+                const all = t.total > 0 && t.ready === t.total;
+                return (
+                  <li key={t.id}>
+                    <Link
+                      href={`/admin/checkout/${t.id}`}
+                      className={`block rounded-lg px-3 py-2 text-sm ring-1 ${all ? "bg-emerald-50 ring-emerald-300 hover:bg-emerald-100" : "bg-amber-50 ring-amber-200 hover:bg-amber-100"}`}
+                      data-testid="queue-ticket"
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-semibold">
+                          #{t.number} · {t.client ?? "Walk-in"}
+                        </span>
+                        <span className="tabular text-xs text-zinc-600">{formatCents(t.grossCents)}</span>
+                      </div>
+                      {t.people.length > 1 ? (
+                        <ul className="mt-1 space-y-0.5 text-xs text-zinc-700">
+                          {t.people.map((p) => (
+                            <li key={p.appointmentId} className="flex items-center gap-1.5">
+                              <span className={`inline-block h-2 w-2 rounded-full ${p.readyAt ? "bg-emerald-500" : "bg-zinc-300"}`} aria-hidden />
+                              {p.name}
+                              {p.staffName && <span className="text-zinc-500">· {p.staffName}</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="text-xs text-zinc-600">{t.barber ?? "No barber"}</div>
+                      )}
+                      <div className="mt-1 text-xs font-medium">
+                        {t.total === 0 ? "Retail / gift card" : all ? (t.total > 1 ? `All ${t.total} ready` : "Ready") : `${t.ready} of ${t.total} ready`}
+                        {t.groupCode && <span className="ml-1 font-mono text-zinc-500">{t.groupCode}</span>}
+                      </div>
+                    </Link>
+                  </li>
+                );
+              })}
+          </ul>
         </Card>
+      ) : (
+        !queue &&
+        open.length > 0 && (
+          <Card className="mb-4">
+            <div className="border-b border-zinc-100 px-4 py-3 text-sm font-semibold">Open tickets</div>
+            <div className="flex flex-wrap gap-2 p-4">
+              {open.map((r) => (
+                <Link key={r.id} href={`/admin/checkout/${r.id}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-200 hover:bg-amber-100">
+                  #{r.number} · {r.firstName ?? "Walk-in"} · {r.barber ?? "No barber"}
+                </Link>
+              ))}
+            </div>
+          </Card>
+        )
       )}
       {perBarber.length > 0 && (
         <Card className="mb-4">
           <div className="border-b border-zinc-100 px-4 py-3 text-sm font-semibold">Daily summary by barber</div>
           <div className="grid grid-cols-2 gap-px bg-zinc-100 sm:grid-cols-3 lg:grid-cols-4" data-testid="daily-summary">
-            {perBarber.map(([name, x]) => (
-              <div key={name} className="bg-white px-4 py-3 text-sm">
-                <div className="font-medium">{name}</div>
+            {perBarber.map((x) => (
+              <div key={x.name} className="bg-white px-4 py-3 text-sm">
+                <div className="font-medium">{x.name}</div>
                 <div className="tabular text-zinc-600">
-                  {x.tickets} ticket{x.tickets === 1 ? "" : "s"} · {formatCents(x.cents)} · tips {formatCents(x.tips)}
+                  {x.tickets} ticket{x.tickets === 1 ? "" : "s"} · sales {formatCents(x.cents)} · tips {formatCents(x.tips)}
                 </div>
               </div>
             ))}
@@ -158,6 +217,19 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
             </tbody>
           </Table>
         </Card>
+      )}
+      {combined.length > 0 && (
+        <p className="mt-3 text-xs text-zinc-500" data-testid="combined-tickets">
+          Combined into other tickets:{" "}
+          {combined.map((r, i) => (
+            <span key={r.id}>
+              {i > 0 && ", "}#{r.number} into{" "}
+              <Link className="underline" href={`/admin/sales/${r.mergedIntoSaleId}`}>
+                #{r.mergedIntoNumber}
+              </Link>
+            </span>
+          ))}
+        </p>
       )}
     </div>
   );
