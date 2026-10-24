@@ -58,6 +58,8 @@ describe("the dev stub's router", () => {
     expect(stubPlan("List clients who haven't been back in 6 weeks", opts)).toMatchObject({ name: "customer_report", args: { lastVisitOverDays: 42 } });
     expect(stubPlan("Which clients are overdue for a cut?", opts)).toMatchObject({ name: "customer_report", args: { visitStatus: ["overdue"], columns: expect.arrayContaining(["cadence_label", "next_visit_due"]) } });
     expect(stubPlan("Show me clients who are due this week", opts)).toMatchObject({ args: { visitStatus: ["due"] } });
+    expect(stubPlan("Which clients are running out of product?", opts)).toMatchObject({ name: "customer_report", args: { refillStatus: ["running_out"], columns: expect.arrayContaining(["products_running_out", "next_refill_due"]) } });
+    expect(stubPlan("List clients who ran out of pomade", opts)).toMatchObject({ args: { refillStatus: ["ran_out"] } });
   });
 
   it("reads back the tools' summary lines", () => {

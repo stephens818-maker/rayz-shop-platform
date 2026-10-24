@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { rankProducts } from "@/domain/checkout-prompts";
+import { SegmentSchema, filterCount, segmentProblem } from "@/domain/marketing";
 import {
   HISTORY_ROWS,
   REFILL_GAPS,
@@ -124,6 +125,16 @@ describe("history", () => {
     expect(refillHint({ status: "running_out", due: "2026-10-31" }, (d) => d)).toBe("Likely running out (due 2026-10-31)");
     expect(refillHint({ status: "stocked", due: "2026-12-01" }, (d) => d)).toBe("Has some left until about 2026-12-01");
     expect(refillHint({ status: null, due: null }, (d) => d)).toBeNull();
+  });
+});
+
+describe("refill segment filter", () => {
+  it("counts as a filter and needs a status when products are picked", () => {
+    const seg = SegmentSchema.parse({ refillStatus: ["running_out"], refillProductIds: ["7c9e6679-7425-40de-944b-e07fc1f90ae7"] });
+    expect(filterCount(seg)).toBe(2);
+    expect(segmentProblem(seg, { birthday: true, ratings: true })).toBeNull();
+    expect(segmentProblem({ ...seg, refillStatus: [] }, { birthday: true, ratings: true })).toMatch(/running out/);
+    expect(() => SegmentSchema.parse({ refillStatus: ["soon"] })).toThrow();
   });
 });
 
