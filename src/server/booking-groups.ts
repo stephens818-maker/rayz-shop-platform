@@ -382,7 +382,7 @@ export async function groupView(code: string, now: Date = new Date()) {
     guardianId: g.guardianId,
     code: g.code,
     plan: g.plan,
-    shop: { id: shop.id, slug: shop.slug, name: shop.name, phone: shop.phone },
+    shop: { id: shop.id, slug: shop.slug, name: shop.name, phone: shop.phone, address: shop.address },
     startsAt: new Date(span.start).toISOString(),
     endsAt: new Date(span.end).toISOString(),
     minutes: span.minutes,
@@ -412,6 +412,17 @@ export type GroupView = Awaited<ReturnType<typeof groupView>>;
 export function publicGroup(v: GroupView) {
   const { id: _id, guardianId: _g, shop, members, ...rest } = v;
   return { ...rest, shop: { id: shop.id, slug: shop.slug, name: shop.name }, members: members.map(({ appointmentId: _a, ...m }) => m) };
+}
+
+/** The group an appointment belongs to, by the appointment's code, for linking /a/{code} to /g/{code}. */
+export async function groupCodeOf(appointmentCode: string): Promise<string | null> {
+  const [row] = await db
+    .select({ code: bookingGroups.code })
+    .from(appointments)
+    .innerJoin(bookingGroups, eq(bookingGroups.id, appointments.groupId))
+    .where(eq(appointments.code, appointmentCode.trim().toUpperCase()))
+    .limit(1);
+  return row?.code ?? null;
 }
 
 /** A signed-in parent's group, by its code. */

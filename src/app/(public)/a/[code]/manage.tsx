@@ -43,7 +43,7 @@ function icsFor(a: Appt) {
   return `data:text/calendar;charset=utf-8,${encodeURIComponent(body)}`;
 }
 
-export function ManageAppointment({ code }: { code: string }) {
+export function ManageAppointment({ code, groupCode = null }: { code: string; groupCode?: string | null }) {
   const params = useSearchParams();
   const isNew = params.get("new") === "1";
   const [a, setA] = useState<Appt | null>(null);
@@ -98,6 +98,12 @@ export function ManageAppointment({ code }: { code: string }) {
           <div className="text-lg font-semibold">You&apos;re booked{a.customer ? `, ${a.customer.firstName}` : ""}!</div>
           <div className="text-sm text-emerald-50">We&apos;ll text a confirmation and reminders 24 hours and 2 hours before.</div>
         </div>
+      )}
+      {groupCode && (
+        <Link href={`/g/${groupCode}`} className="flex items-center justify-between rounded-xl bg-sky-50 px-5 py-3 text-sm text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100">
+          <span>Part of a family booking. Changes here are for this person only.</span>
+          <span className="font-medium underline">Manage everyone</span>
+        </Link>
       )}
       <div className="rounded-xl bg-white ring-1 ring-zinc-200">
         <div className="flex items-start justify-between border-b border-zinc-100 px-5 py-4">
