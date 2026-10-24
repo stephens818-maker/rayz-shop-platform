@@ -10,6 +10,7 @@ import {
   draftPayouts,
   effectiveMethod,
   instantFeeCents,
+  netsCardFee,
   parseInstantFee,
   payoutTotals,
   scheduledBatch,
@@ -22,6 +23,7 @@ import { AppError, forbidden, notFound } from "@/server/errors";
 import { enqueueRaw, enqueueShopEmail } from "@/server/notifications/queue";
 import { shopAccount } from "@/server/payments/connect";
 import { stripe } from "@/server/payments/processor";
+import { tipOverrides } from "@/server/compensation";
 import { checkPin } from "@/server/time-clock";
 import { canReceive, staffAccount } from "./accounts";
 import { payoutChoices, shopTipConfigs, syncTipLedger } from "./ledger";
@@ -107,10 +109,12 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
     ).map((e) => ({ ...e, inDraft: e.payoutId, payoutId: null }));
     const staffIds = [...new Set(entries.map((e) => e.staffId))];
     const choices = await payoutChoices(staffIds, tx);
+    const planned = await tipOverrides(staffIds, tx, now);
     const locked = await lastLockedEnd(o.shopId, tx);
-    const methodOf = (staffId: string) => effectiveMethod(settings, policy, choices.get(staffId)?.method ?? null);
+    const methodOf = (staffId: string) => effectiveMethod(settings, policy, choices.get(staffId)?.method ?? null, planned.get(staffId)?.method);
+    const feeOf = (staffId: string) => netsCardFee(settings, planned.get(staffId)?.netCardFee);
     const eligible = entries.filter((e) => !heldStaff.has(e.staffId) && (methodOf(e.staffId) !== "payroll" || (locked !== null && e.businessDate <= locked)));
-    const { payouts, carried } = draftPayouts(eligible, settings, cutoff, asOf);
+    const { payouts, carried } = draftPayouts(eligible, settings, cutoff, asOf, feeOf);
 
     for (const d of payouts) {
       let p = mine.find((x) => x.staffId === d.staffId);
@@ -144,7 +148,7 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
         p.id,
         d.entryIds.filter((id) => !entries.find((e) => e.id === id)?.inDraft),
       );
-      await recompute(tx, p.id, settings.netCardFee);
+      await recompute(tx, p.id, feeOf(d.staffId));
     }
     // Someone whose tips now net to nothing (a refund came in) comes out of the draft; their entries wait for the next batch.
     for (const p of mine.filter((x) => x.status === "pending" && !payouts.some((d) => d.staffId === x.staffId))) {
@@ -283,7 +287,7 @@ export async function adjustPayout(payoutId: string, cents: number, reason: stri
       reason: why,
       createdBy: actor.staffId ?? null,
     });
-    const after = await recompute(tx, p.id, byShop.get(p.shopId)!.netCardFee);
+    const after = await recompute(tx, p.id, netsCardFee(byShop.get(p.shopId)!, (await tipOverrides([p.staffId], tx)).get(p.staffId)?.netCardFee));
     if (after.netCents < 0) throw new AppError("bad_request", "That would take the payout below zero.");
     await audit(actor, "tips.adjust", "tip_payout", payoutId, { reason: why, cents, staffId: p.staffId, beforeNetCents: p.netCents, afterNetCents: after.netCents }, p.shopId, tx);
   });
@@ -552,13 +556,14 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     .leftJoin(tipPayouts, eq(tipPayouts.id, tipLedger.payoutId))
     .where(and(inArray(tipLedger.shopId, [...shopIds]), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end)));
   const { policy, byShop } = await shopTipConfigs(shopIds, tx);
-  const choices = await payoutChoices([...new Set(rows.map((r) => r.staffId))], tx);
+  const people = [...new Set(rows.map((r) => r.staffId))];
+  const [choices, planned] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx)]);
   const out = new Map<string, PayrollTipSplit>();
   for (const r of rows) {
     const k = `${r.staffId}|${r.shopId}`;
     const v = out.get(k) ?? { adjustCents: 0, inPayrollCents: 0, paidOutCents: 0 };
     if (r.kind === "adjust") v.adjustCents += r.amountCents;
-    const viaPayroll = r.payoutId ? r.method === "payroll" : effectiveMethod(byShop.get(r.shopId)!, policy, choices.get(r.staffId)?.method ?? null) === "payroll";
+    const viaPayroll = r.payoutId ? r.method === "payroll" : effectiveMethod(byShop.get(r.shopId)!, policy, choices.get(r.staffId)?.method ?? null, planned.get(r.staffId)?.method) === "payroll";
     if (viaPayroll) v.inPayrollCents += r.amountCents;
     else if (r.status === "paid") v.paidOutCents += r.amountCents;
     out.set(k, v);
@@ -582,8 +587,9 @@ export async function lockPayrollTips(tx: Tx, blocks: readonly { shopId: string;
       .from(tipLedger)
       .where(and(eq(tipLedger.shopId, b.shopId), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end), isNull(tipLedger.payoutId)))
       .for("update");
-    const choices = await payoutChoices([...new Set(entries.map((e) => e.staffId))], tx);
-    const mine = entries.filter((e) => effectiveMethod(settings, policy, choices.get(e.staffId)?.method ?? null) === "payroll");
+    const people = [...new Set(entries.map((e) => e.staffId))];
+    const [choices, planned] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx, now)]);
+    const mine = entries.filter((e) => effectiveMethod(settings, policy, choices.get(e.staffId)?.method ?? null, planned.get(e.staffId)?.method) === "payroll");
     const byStaff = new Map<string, string[]>();
     for (const e of mine) byStaff.set(e.staffId, [...(byStaff.get(e.staffId) ?? []), e.id]);
     if (byStaff.size) {

@@ -14,6 +14,7 @@ import {
 } from "@/domain/tips";
 import { addDays, todayLocal, type LocalDate } from "@/lib/time";
 import { Actor, audit } from "@/server/audit";
+import { tipOverrides } from "@/server/compensation";
 import { AppError, notFound } from "@/server/errors";
 
 /**
@@ -132,7 +133,7 @@ export async function payoutChoices(staffIds: readonly string[], tx: DBorTx = db
 export async function methodFor(staffId: string, shopId: string, tx: DBorTx = db): Promise<TipMethod> {
   const { policy, byShop } = await shopTipConfigs([shopId], tx);
   const choice = (await payoutChoices([staffId], tx)).get(staffId)?.method ?? null;
-  return effectiveMethod(byShop.get(shopId)!, policy, choice);
+  return effectiveMethod(byShop.get(shopId)!, policy, choice, (await tipOverrides([staffId], tx)).get(staffId)?.method);
 }
 
 // ───────────────────────────── Reading the ledger ─────────────────────────────

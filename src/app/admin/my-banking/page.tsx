@@ -13,6 +13,7 @@ import { guardPage } from "@/server/auth/staff";
 import { connectMode } from "@/server/payments/connect";
 import { accountDestination, bankingActivity, refreshStaffAccount, staffAccount, staffAccountState } from "@/server/tips/accounts";
 import { shopTipConfigs } from "@/server/tips/ledger";
+import { tipOverrides } from "@/server/compensation";
 import { PayoutChoice, StripeSetup } from "./client";
 
 export const metadata: Metadata = { title: "My banking" };
@@ -60,12 +61,12 @@ export default async function MyBankingPage({ searchParams }: { searchParams: Pr
   const shopRows = assigned.length ? await db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, assigned), ne(shops.status, "archived"))) : [];
   if (!shopRows.length) return <Empty title="You aren't on a shop's team yet">Ask a manager to add you to a shop.</Empty>;
   if (sp.stripe) await refreshStaffAccount(me).catch(() => null);
-  const [{ policy, byShop }, acct, activity] = await Promise.all([shopTipConfigs(shopRows.map((s) => s.id)), staffAccount(me), bankingActivity(me)]);
+  const [{ policy, byShop }, acct, activity, planned] = await Promise.all([shopTipConfigs(shopRows.map((s) => s.id)), staffAccount(me), bankingActivity(me), tipOverrides([me])]);
   const status = staffAccountState(acct);
   const dest = accountDestination(acct);
   const simulator = connectMode() === "simulator";
   const rate = parseInstantFee(process.env.TIP_INSTANT_FEE) ?? DEFAULT_INSTANT_FEE;
-  const methods = shopRows.map((s) => ({ shop: s.name, method: effectiveMethod(byShop.get(s.id)!, policy, acct?.method ?? null) }));
+  const methods = shopRows.map((s) => ({ shop: s.name, method: effectiveMethod(byShop.get(s.id)!, policy, acct?.method ?? null, planned.get(me)?.method) }));
   const paidByStripe = methods.some((m) => m.method === "stripe");
   const needs = requirementLabels(acct?.requirementsDue ?? []);
   const checking = requirementLabels(acct?.requirementsPending ?? []);

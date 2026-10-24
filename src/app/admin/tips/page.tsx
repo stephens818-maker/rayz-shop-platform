@@ -9,6 +9,7 @@ import { ENTRY_STATUS_LABEL, METHOD_LABEL, SCHEDULE_LABEL, effectiveMethod, entr
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
+import { tipOverrides } from "@/server/compensation";
 import { shopPayoutAccounts } from "@/server/tips/accounts";
 import { ledgerRows, shopTipConfig, syncTipLedger, tipPolicy } from "@/server/tips/ledger";
 import { batchesFor } from "@/server/tips/payouts";
@@ -26,6 +27,7 @@ export default async function TipsPage() {
   await syncTipLedger(db, { shopIds: [shopId] });
   const [settings, policy, unpaid, batches, accounts] = await Promise.all([shopTipConfig(shopId), tipPolicy(), ledgerRows({ shopIds: [shopId], unpaidOnly: true }), batchesFor([shopId]), shopPayoutAccounts(shopId)]);
   const ids = [...new Set(unpaid.map((e) => e.staffId))];
+  const planned = await tipOverrides(accounts.map((a) => a.staffId));
   const names = new Map((ids.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, ids)) : []).map((s) => [s.id, s.label]));
   const byStaff = new Map<string, { available: number; pending: number; entries: number }>();
   for (const e of unpaid) {
@@ -159,13 +161,21 @@ export default async function TipsPage() {
             </thead>
             <tbody>
               {accounts.map((a) => {
-                const method = effectiveMethod(settings, policy, a.method);
+                const plan = planned.get(a.staffId);
+                const method = effectiveMethod(settings, policy, a.method, plan?.method);
                 return (
                   <tr key={a.staffId}>
                     <Td>{a.name}</Td>
                     <Td>
                       {METHOD_LABEL[method]}
-                      {a.method && policy.employeeChooses ? <span className="ml-1 text-xs text-zinc-500">(their choice)</span> : null}
+                      {settings.schedule !== "payroll" && plan?.method && policy.methods.includes(plan.method) ? (
+                        <span className="ml-1 text-xs text-zinc-500">(their pay plan)</span>
+                      ) : a.method && policy.employeeChooses ? (
+                        <span className="ml-1 text-xs text-zinc-500">(their choice)</span>
+                      ) : null}
+                      {plan?.netCardFee != null && plan.netCardFee !== settings.netCardFee ? (
+                        <span className="ml-1 text-xs text-zinc-500">{plan.netCardFee ? "· card fee taken out" : "· card fee not taken out"}</span>
+                      ) : null}
                     </Td>
                     <Td>
                       <Badge tone={method === "stripe" && a.status !== "ready" ? "amber" : BANKING_STATUS_TONE[a.status]}>{BANKING_STATUS_LABEL[a.status]}</Badge>

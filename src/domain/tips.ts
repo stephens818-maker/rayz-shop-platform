@@ -98,12 +98,20 @@ export function settingsProblem(s: ShopTipSettings, policy: BrandTipPolicy): str
   return null;
 }
 
-/** How an employee is paid at a shop: payroll-only shops pay everyone through payroll; otherwise their own choice where allowed, else the shop's default. */
-export function effectiveMethod(shop: ShopTipSettings, policy: BrandTipPolicy, choice: TipMethod | null | undefined): TipMethod {
+/**
+ * How an employee is paid at a shop: payroll-only shops pay everyone through payroll; otherwise the
+ * method their compensation plan sets (when the brand uses compensation fields), else their own
+ * choice where allowed, else the shop's default.
+ */
+export function effectiveMethod(shop: ShopTipSettings, policy: BrandTipPolicy, choice: TipMethod | null | undefined, planned?: TipMethod | null): TipMethod {
   if (shop.schedule === "payroll") return "payroll";
+  if (planned && policy.methods.includes(planned)) return planned;
   if (policy.employeeChooses && choice && policy.methods.includes(choice)) return choice;
   return shop.defaultMethod;
 }
+
+/** Whether the card fee comes out of an employee's card tips: their compensation plan's say, else the shop's. */
+export const netsCardFee = (shop: Pick<ShopTipSettings, "netCardFee">, planned?: boolean | null) => planned ?? shop.netCardFee;
 
 export interface LedgerEntry {
   id: string;
@@ -167,14 +175,14 @@ export function payoutTotals(entries: readonly Pick<LedgerEntry, "kind" | "amoun
  * cutoff that's available by then. Someone whose entries net to zero or less (a refund after they
  * were paid) gets no payout; their entries stay unpaid and net against the next batch.
  */
-export function draftPayouts(entries: readonly LedgerEntry[], s: Pick<ShopTipSettings, "cardDelayDays" | "netCardFee">, cutoff: LocalDate, asOf: LocalDate) {
+export function draftPayouts(entries: readonly LedgerEntry[], s: Pick<ShopTipSettings, "cardDelayDays" | "netCardFee">, cutoff: LocalDate, asOf: LocalDate, netCardFeeOf: (staffId: string) => boolean = () => s.netCardFee) {
   const eligible = entries.filter((e) => !e.payoutId && e.businessDate <= cutoff && availableOn(e, s) <= asOf);
   const byStaff = new Map<string, LedgerEntry[]>();
   for (const e of eligible) byStaff.set(e.staffId, [...(byStaff.get(e.staffId) ?? []), e]);
   const payouts: PayoutDraft[] = [];
   const carried: { staffId: string; netCents: number }[] = [];
   for (const [staffId, list] of byStaff) {
-    const t = payoutTotals(list, s.netCardFee);
+    const t = payoutTotals(list, netCardFeeOf(staffId));
     if (t.netCents > 0) payouts.push({ staffId, entryIds: list.map((e) => e.id), ...t });
     else if (list.length) carried.push({ staffId, netCents: t.netCents });
   }

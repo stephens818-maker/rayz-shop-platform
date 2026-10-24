@@ -12,6 +12,7 @@ import { workShopIds } from "@/server/auth/access";
 import { guardPage } from "@/server/auth/staff";
 import { accountDestination, staffAccount, staffAccountState } from "@/server/tips/accounts";
 import { myTips, shopTipConfigs } from "@/server/tips/ledger";
+import { tipOverrides } from "@/server/compensation";
 import { PAYOUT_STATUS_TONE } from "../tips/labels";
 
 export const metadata: Metadata = { title: "My tips" };
@@ -33,8 +34,8 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
   const shopName = new Map(shopRows.map((s) => [s.id, s.name]));
   const settingsOf = new Map(t.perShop.map((s) => [s.shopId, s.settings]));
   const state = staffAccountState(acct);
-  const { byShop } = await shopTipConfigs(shopRows.map((s) => s.id));
-  const methods = shopRows.map((s) => ({ shop: s.name, method: effectiveMethod(byShop.get(s.id)!, t.policy, acct?.method ?? null) }));
+  const [{ byShop }, planned] = await Promise.all([shopTipConfigs(shopRows.map((s) => s.id)), tipOverrides([me])]);
+  const methods = shopRows.map((s) => ({ shop: s.name, method: effectiveMethod(byShop.get(s.id)!, t.policy, acct?.method ?? null, planned.get(me)?.method) }));
   const dest = accountDestination(acct);
   const longHistory = sp.history === "60";
   const history = longHistory ? t.recent : t.recent.filter((e) => e.businessDate >= addDays(today, -13));
