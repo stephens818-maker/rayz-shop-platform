@@ -96,6 +96,8 @@ export const brandSettings = pgTable("brand_settings", {
   compensation: jsonb("compensation").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Event log options: the post-visit 1-5 question and the nightly warehouse copy (src/domain/analytics.ts). */
   analytics: jsonb("analytics").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Checkout prompts: rebook and product, each on or off, skippable or required (src/domain/checkout-prompts.ts). */
+  checkoutPrompts: jsonb("checkout_prompts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -730,6 +732,8 @@ export const services = pgTable("services", {
   taxCategory: text("tax_category").$type<TaxCategory>().notNull().default("service"),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(100),
+  /** The checkout rebook prompt's interval for a client with no visit history yet. Null: the brand's default. */
+  rebookDays: integer("rebook_days"),
   createdAt: createdAt(),
 });
 
@@ -3561,3 +3565,127 @@ export const analyticsCustomerMoves = pgTable("analytics_customer_moves", {
   toCustomer: uuid("to_customer"),
   createdAt: createdAt(),
 });
+
+/** A checkout prompt switched on or off for one location, one role or one barber's tickets; the brand default is brand_settings.checkout_prompts. */
+export const checkoutPromptRules = pgTable(
+  "checkout_prompt_rules",
+  {
+    id: id(),
+    prompt: text("prompt").$type<"rebook" | "product">().notNull(),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    roleId: uuid("role_id").references(() => roles.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull(),
+    updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+    updatedAt: ts("updated_at").notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [
+    check("checkout_prompt_rules_prompt", sql`${t.prompt} in ('rebook', 'product')`),
+    check("checkout_prompt_rules_one_target", sql`num_nonnulls(${t.shopId}, ${t.roleId}, ${t.staffId}) = 1`),
+    unique("checkout_prompt_rules_uq").on(t.prompt, t.shopId, t.roleId, t.staffId).nullsNotDistinct(),
+  ],
+);
+
+/** The brand's products for a service, suggested at checkout whenever the service is on the ticket. */
+export const serviceProductSuggestions = pgTable(
+  "service_product_suggestions",
+  {
+    serviceId: uuid("service_id")
+      .notNull()
+      .references(() => services.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull().default(100),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: ts("created_at").notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [primaryKey({ name: "service_product_suggestions_pk", columns: [t.serviceId, t.productId] })],
+);
+
+/** Products the barber used in the service, tagged on the ticket (not sold, so no stock moves). */
+export const saleUsedProducts = pgTable(
+  "sale_used_products",
+  {
+    id: id(),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id, { onDelete: "cascade" }),
+    appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "set null" }),
+    taggedBy: uuid("tagged_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: ts("created_at").notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [unique("sale_used_products_uq").on(t.saleId, t.productId)],
+);
+
+/** A reminder to book, asked for at checkout when the client didn't book there; dropped once they have. */
+export const rebookReminders = pgTable(
+  "rebook_reminders",
+  {
+    id: id(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    serviceId: uuid("service_id").references(() => services.id, { onDelete: "set null" }),
+    saleId: uuid("sale_id").references(() => sales.id, { onDelete: "set null" }),
+    runAt: ts("run_at").notNull(),
+    status: text("status").$type<"scheduled" | "sent" | "cancelled" | "skipped">().notNull().default("scheduled"),
+    outcome: text("outcome").$type<"booked" | "no_contact" | "cancelled" | "queued">(),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: ts("created_at").notNull().default(sql`clock_timestamp()`),
+    sentAt: ts("sent_at"),
+  },
+  (t) => [
+    check("rebook_reminders_status", sql`${t.status} in ('scheduled', 'sent', 'cancelled', 'skipped')`),
+    check("rebook_reminders_outcome", sql`${t.outcome} is null or ${t.outcome} in ('booked', 'no_contact', 'cancelled', 'queued')`),
+    index("rebook_reminders_due_idx").on(t.status, t.runAt),
+    index("rebook_reminders_customer_idx").on(t.customerId),
+  ],
+);
+
+/** One prompt shown on one ticket: what it suggested (CheckoutPromptSuggested) and how staff answered it. */
+export const checkoutPrompts = pgTable(
+  "checkout_prompts",
+  {
+    id: id(),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    prompt: text("prompt").$type<"rebook" | "product">().notNull(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    required: boolean("required").notNull().default(false),
+    suggested: jsonb("suggested").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    shownBy: uuid("shown_by").references(() => staff.id, { onDelete: "set null" }),
+    shownAt: ts("shown_at").notNull().default(sql`clock_timestamp()`),
+    outcome: text("outcome").$type<"accepted" | "declined">(),
+    /** Paid without an answer, so declined by default. */
+    skipped: boolean("skipped").notNull().default(false),
+    answeredBy: uuid("answered_by").references(() => staff.id, { onDelete: "set null" }),
+    answeredAt: ts("answered_at"),
+    declineReason: text("decline_reason"),
+    bookedAppointmentIds: uuid("booked_appointment_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    addedProductIds: uuid("added_product_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    paidProductIds: uuid("paid_product_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    paidProductCents: integer("paid_product_cents").notNull().default(0),
+    reminderId: uuid("reminder_id").references(() => rebookReminders.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    check("checkout_prompts_prompt", sql`${t.prompt} in ('rebook', 'product')`),
+    check("checkout_prompts_outcome", sql`${t.outcome} is null or ${t.outcome} in ('accepted', 'declined')`),
+    check("checkout_prompts_answered", sql`(${t.outcome} is null) = (${t.answeredAt} is null)`),
+    check("checkout_prompts_reason", sql`${t.declineReason} is null or char_length(${t.declineReason}) <= 120`),
+    unique("checkout_prompts_uq").on(t.saleId, t.prompt),
+    index("checkout_prompts_shop_idx").on(t.shopId, t.shownAt),
+  ],
+);

@@ -435,6 +435,13 @@
       "when": 1794276000000,
       "tag": "core_0061_place_id_check",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1794362400000,
+      "tag": "core_0062_checkout_prompts",
+      "breakpoints": true
     }
   ]
 }
