@@ -35,13 +35,13 @@ function Person({ p, kept }: { p: DupPerson; kept: boolean }) {
           {p.label}
         </Link>
         {p.squire && <Badge tone="blue">Squire import</Badge>}
-        {kept && <span className="text-xs text-emerald-700">kept in a bulk merge</span>}
       </div>
       <div className="text-xs text-zinc-500">
         {p.detail}
         {p.detail ? " · " : ""}
         {p.visits} visit{p.visits === 1 ? "" : "s"}
       </div>
+      {kept && <div className="text-xs font-medium text-emerald-700">Kept when merged</div>}
     </div>
   );
 }
@@ -124,10 +124,10 @@ export function DuplicateGroup({ rows }: { rows: DupRow[] }) {
               <Td>
                 <input type="checkbox" aria-label={`Select ${r.a.label} and ${r.b.label}`} checked={picked.has(key(r))} onChange={() => toggle(r)} disabled={pending} />
               </Td>
-              <Td>
+              <Td className="whitespace-normal">
                 <Person p={r.a} kept={picked.has(key(r)) && r.keeps === "a"} />
               </Td>
-              <Td>
+              <Td className="whitespace-normal">
                 <Person p={r.b} kept={picked.has(key(r)) && r.keeps === "b"} />
               </Td>
               <Td className="whitespace-normal text-xs text-zinc-600">
@@ -138,7 +138,7 @@ export function DuplicateGroup({ rows }: { rows: DupRow[] }) {
                 {r.conflicts.length > 0 && <div className="mt-0.5 text-red-700">Differs: {r.conflicts.join(", ")}</div>}
               </Td>
               <Td right>
-                <div className="flex justify-end gap-1">
+                <div className="flex flex-wrap justify-end gap-1">
                   <Button size="sm" variant="secondary" disabled={pending} onClick={() => merge(r.a, r.b)}>
                     Keep A
                   </Button>
