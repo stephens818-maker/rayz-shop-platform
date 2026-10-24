@@ -455,22 +455,25 @@ export interface DuplicatePair extends DuplicateScore {
  */
 export async function duplicatePairs(opts: { forId?: string; limit?: number; squireOnly?: boolean } = {}): Promise<DuplicatePair[]> {
   const limit = opts.limit ?? 150;
-  const only = opts.forId ? sql`and ${opts.forId}::uuid in (a.id, b.id)` : sql``;
   const squire = (col: string) => sql.raw(`exists (select 1 from customer_squire_ids s where s.customer_id = ${col})`);
   const backed = sql`(a.birthday = b.birthday or a.address_zip = b.address_zip or right(a.phone, 4) = right(b.phone, 4)
     or (a.phone is null and a.email is null) or (b.phone is null and b.email is null))`;
+  const name = (t: string) => sql.raw(`lower(${t}.first_name || ' ' || coalesce(${t}.last_name, ''))`);
+  const fuzzy = sql`${name("a")} % ${name("b")} and coalesce(a.last_name, '') <> '' and coalesce(b.last_name, '') <> '' and ${backed}`;
+  // One client's pairs start from that client, so the profile page doesn't pair up the whole book.
+  const candidates = opts.forId
+    ? sql`select least(a.id, b.id) a_id, greatest(a.id, b.id) b_id from customers a join customers b on b.id <> a.id
+        and (a.phone = b.phone or a.email = b.email or (${fuzzy})) where a.id = ${opts.forId}::uuid`
+    : sql`select a.id a_id, b.id b_id from customers a join customers b on a.id < b.id and a.phone = b.phone where a.phone is not null
+        union
+        select a.id, b.id from customers a join customers b on a.id < b.id and a.email = b.email where a.email is not null
+        union
+        select a.id, b.id from customers a join customers b on a.id < b.id and ${fuzzy}`;
   const pairs = await db.transaction(async (tx) => {
     // Loose on purpose: this only proposes typo-close names; scoreDuplicate decides what they are.
     await tx.execute(sql`select set_config('pg_trgm.similarity_threshold', '0.5', true)`);
     return (await tx.execute(sql`
-      select a_id, b_id from (
-        select a.id a_id, b.id b_id from customers a join customers b on a.id < b.id and a.phone = b.phone where a.phone is not null ${only}
-        union
-        select a.id, b.id from customers a join customers b on a.id < b.id and a.email = b.email where a.email is not null ${only}
-        union
-        select a.id, b.id from customers a join customers b on a.id < b.id and lower(a.first_name || ' ' || coalesce(a.last_name, '')) % lower(b.first_name || ' ' || coalesce(b.last_name, ''))
-          where coalesce(a.last_name, '') <> '' and coalesce(b.last_name, '') <> '' and ${backed} ${only}
-      ) p
+      select a_id, b_id from (${candidates}) p
       where not exists (select 1 from customer_duplicate_dismissals d where d.a_id = p.a_id and d.b_id = p.b_id)
         ${opts.squireOnly ? sql`and (${squire("p.a_id")} or ${squire("p.b_id")})` : sql``}
       limit ${limit * 3}
