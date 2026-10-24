@@ -17,5 +17,6 @@ CREATE TABLE IF NOT EXISTS "client_badge_notices" (
 	CONSTRAINT "client_badge_notices_change" CHECK ("change" in ('earned', 'lost')),
 	CONSTRAINT "client_badge_notices_status" CHECK ("status" in ('pending', 'queued', 'skipped'))
 );--> statement-breakpoint
+CREATE TRIGGER "client_badge_notices_scrub_sensitive" BEFORE INSERT OR UPDATE OF "reason" ON "client_badge_notices" FOR EACH ROW EXECUTE FUNCTION "scrub_sensitive_row"('reason');--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "client_badge_notices_uq" ON "client_badge_notices" USING btree ("customer_id", "badge_key", "change", "occurred_on");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "client_badge_notices_pending_idx" ON "client_badge_notices" USING btree ("status", "created_at");

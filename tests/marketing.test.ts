@@ -55,8 +55,9 @@ describe("templates and merge fields", () => {
 
   it("every default template passes its own checks", () => {
     for (const k of TRIGGER_KEYS) {
-      expect(templatesProblem(defaultTemplates(k, false), ["sms", "email", "push"], { hasCoupon: false }), k).toBeNull();
-      expect(templatesProblem(TRIGGERS[k].templates, ["sms", "email", "push"], { hasCoupon: true }), k).toBeNull();
+      const extraFields = Object.keys(TRIGGERS[k].fields ?? {});
+      expect(templatesProblem(defaultTemplates(k, false), ["sms", "email", "push"], { hasCoupon: false, extraFields }), k).toBeNull();
+      expect(templatesProblem(TRIGGERS[k].templates, ["sms", "email", "push"], { hasCoupon: true, extraFields }), k).toBeNull();
     }
   });
 

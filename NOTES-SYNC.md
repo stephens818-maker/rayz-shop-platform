@@ -382,6 +382,24 @@ If the mobile side means a specific registry from the plan, say which items it s
 
 ## Log
 
+### 2026-10-24: core (customer badges), REQUEST for mobile
+
+- **Please mount `GET /api/v1/me/badges`.** It's one file: `src/app/api/v1/me/badges/route.ts` with `export { GET, OPTIONS } from "@/server/customer-badges-api";`.
+  - The handler calls `requireCustomer` and returns `customerBadges(id)`: `{ badges: [{ id, name, icon, tone, color, earnedOn, text, action }], progress: [{ badge, name, icon, tone, color, current, target, remaining, text }] }`.
+  - `action` is `{ label: "Book now", url }` on We miss you, otherwise null.
+- **And document it in `openapi.ts`:** `import { CUSTOMER_BADGES_OPENAPI } from "@/domain/customer-badges"`. Spread `.components` into `components` and `.paths` into `paths`. The fragment uses your `bearerAuth` and `Error` names.
+- **Until then**, the web account page and booking site read the same handler at `/api/account/badges` (core-owned, same bearer token). The app can use that path too.
+- **Only customer-visible badges** come back, in customer wording: the brand's setting over the catalog default. Staff judgments (Low rating, How they found us, No product yet, custom badges on ratings) never do. Draw `icon` from the badge icon names (`src/components/badge-icons.tsx` has the paths); `color` is a hex.
+- **Migration `core_0053_customer_badges`:**
+  - `client_badges.since` and `.progress` (jsonb);
+  - the `client_badge_notices` table;
+  - the custom badge tone check gains `orange`.
+- **Badge news:** a new manual Campaign Center trigger `badge_news`. Its messages go through `deliver`, so they use your marketing consent columns read-only, like every campaign.
+- **Booking:** `createAppointment`, `cancelAppointment` and `setAppointmentStatus` (cancelled, no-show, booked) recompute the client's badges. They load `./badges` lazily, so the client API's import graph is unchanged, and a failure never fails the booking.
+- **`api-client.ts`:** `api()` takes an optional `base` (default `/api/v1`).
+- **Worker:** `pnpm worker` preloads `scripts/allow-server-only.cjs`, which resolves `server-only` to an empty module outside Next. Before this change it already crashed on `server-only`, through `marketing/audiences`, then `client-filters`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
 ### 2026-10-24: core (client badges)
 
 - **Badges:** `src/domain/badges.ts` (pure, client-safe: catalog, `BadgeSettingsSchema`, `deriveBadges`, `visibleBadges`, `showBadges`) and `src/server/badges.ts` (facts, cache, `refreshBadges`, `runBadgeJob`, `shownBadges`, `badgeCounts`). The settings loader is `src/server/badge-settings.ts`.
@@ -393,7 +411,7 @@ If the mobile side means a specific registry from the plan, say which items it s
 - **Cron:** `/api/cron/badges` (in `vercel.json`, `CRON_SECRET`).
 - **Checkout:** `finalizeSale` refreshes the client's badges after the sale, loading `./badges` lazily. The client API's import graph is unchanged, and a failure never fails the sale.
 - **Where:** `ClientPolicy` gains `badges` and `customBadges`. Display covers `ClientHit.badges`, `CalAppt.badges`, the POS customer, the profile, the client list, Today and `TodayBlock.clients` in the Morning Dashboard. Filters: `SegmentSchema.badges`, the report builder field `badges`.
-- **For the app (optional):** if you want badges in the staff or customer app, read them through `shownBadges(policy, ids)`, so the brand's on/off, role and data-level rules apply. Never return raw `client_badges` rows. Customers shouldn't see their own badges.
+- **For the app (optional):** if you want badges in the staff app, read them through `shownBadges(policy, ids)`, so the brand's on/off, role and data-level rules apply. Never return raw `client_badges` rows. For customers, use `GET /me/badges` (see the customer badges entry).
 - **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`, and consent columns are only read.
 
 ### 2026-10-24: core (time between visits)

@@ -1368,7 +1368,8 @@ How often a client comes in, everywhere it's useful: their profile, their own ac
 
 Small coloured pills that tell staff something about a client at a glance, each with an icon and a tooltip that says why ("At risk: Visits are stretching: their last gap was 5.5 weeks against their usual 3 weeks."). The catalog, rules and who-sees-what are pure code in `src/domain/badges.ts`. The engine and cache are in `src/server/badges.ts`.
 
-- **Built-in badges (29):**
+- **Built-in badges (35):**
+  - **Customer rewards** (see Customer badges below): Gold, Silver, Bronze, We miss you, Streak, Referral champion.
   - **Visit timing:** On track, Due, Overdue (from the time between visits above), Lapsed (no visit in 16 weeks and nothing booked), At risk (their last gap is 150% or more of their usual one, and at least a week longer).
   - **New and returning:** New client (no visits yet, or the first one is today), 2nd visit, Win-back (booked or back after lapsing).
   - **Value:** VIP (top 10% of 12-month net spend), Loyal regular (10+ visits), Reward ready, Gift card (balance left), Coupon (an unused code).
@@ -1418,6 +1419,31 @@ Small coloured pills that tell staff something about a client at a glance, each 
 - **Tests:**
   - `tests/badges.test.ts`: every rule, visibility by role, money and data level, custom badges, tooltips, settings that tolerate bad values, no sensitive keys in the cache.
   - `tests/db/badges.test.ts`: the cache and the nightly job's budget, the refresh at checkout, who sees what as settings change, stale marking, the client list and report filters, custom badges end to end, the profile, search, calendar, Today and the Morning Dashboard, and the cron route's secret.
+
+### Customer badges (gamified)
+
+Customers see some badges too: in their account (`/account`), on the booking site when signed in, and through the API for the app. They see their own wording, the day they earned each badge, and progress meters. Domain: `src/domain/customer-badges.ts`. Server: `src/server/customer-badges.ts`.
+
+- **Gamified badges:**
+  - **Gold, Silver, Bronze** (Great Client): 10, 6 and 3 visits, with no no-shows in the last 12 months. The no-shows allowed are a setting. A client holds only their highest tier.
+  - **We miss you** (red, a frowning face): no haircut in 8 weeks (a setting) and nothing booked. It comes with a **Book now** to their home location and barber. Booking clears it at once, because booking, cancelling and no-shows recompute the client; cancelling brings it back.
+  - **Streak:** their last 5 appointments kept, on time. Arriving more than 10 minutes late, a no-show or a late cancel ends it.
+  - **Referral champion:** 3 referrals.
+  - Birthday, Anniversary, Reward available and Reviewer (the Review clicked badge) are also shown to customers by default.
+- **Visibility:** each badge is staff-only or customer-visible. The brand sets this in the **Customers see** column of Setup → Client badges.
+  - The badges above start customer-visible. Every other badge, including No-show risk, Late cancels, VIP, Missing info and At risk, starts staff-only.
+  - Low rating, How they found us, No product yet, and any custom badge built on staff ratings can never be shown to customers.
+  - Custom badges start staff-only.
+  - A badge that's off is off for customers too.
+- **What a customer gets:** each badge's id, name, icon, colour (tone and hex), earned date, a line in the second person, and a call to action on We miss you. Progress meters cover the next tier ("2 more visits to Gold"), a streak and Referral champion. Nothing staff wrote or judged is included.
+- **Messages (Badge news):**
+  - When a customer earns or loses a badge they can see, they can get a message. The brand ticks **Earned** and **Lost** per badge; by default, earning a tier, We miss you, a streak or Referral champion sends a message, and losing one doesn't. We miss you clearing and birthdays ending never send one.
+  - Messages go out as the Campaign Center automation **Badge news**. It's manual: only the badge engine triggers it. Each location turns it on, with the brand's wording and `{badge}` / `{badge_message}` merge fields.
+  - That gives it marketing consent per channel, the brand's weekly and monthly caps, quiet hours, unsubscribe links, dedupe and the report. On top, its own cap is at most one badge message per client every 7 days, which is a setting.
+  - Changes are noted in `client_badge_notices` when a client's badges are recomputed. A client's first computation notes nothing, and losing a lower tier on the way up isn't news. They're sent every 15 minutes (`/api/cron/campaign-center`), after the nightly badge run, and by the local worker. Notices nobody could send within 3 days are dropped.
+- **API:** `GET /me/badges` (bearer). The handler is `src/server/customer-badges-api.ts`, with the OpenAPI path and schema in `CUSTOMER_BADGES_OPENAPI`. The web account page calls it at `/api/account/badges`; the app's `/api/v1/me/badges` is the mobile agent's to mount (see NOTES-SYNC).
+- **Migration:** `core_0053_customer_badges`. It adds `client_badges.since` (the earned day per badge) and `.progress`, the `client_badge_notices` table, and widens the custom badge tone check for orange.
+- **Tests:** `tests/customer-badges.test.ts` covers the visibility rules, the customer view (no staff-only badges or wording), progress meters, the rules, the message settings, the Badge news automation and the OpenAPI schema. `tests/db/customer-badges.test.ts` covers the endpoint, earned dates, the brand's settings, booking and cancelling, and Badge news with consent, caps, locations and staff-only badges.
 
 ### Client search, filters and saved searches
 

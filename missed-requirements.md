@@ -772,7 +772,20 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [x] Tests: `tests/badges.test.ts`, `tests/db/badges.test.ts`.
 
 **Still open:**
-- [ ] Badges in the mobile apps, if wanted: the mobile agent owns `/api/v1`. NOTES-SYNC says how to read them safely.
+- [ ] Staff badges in the mobile staff app, if wanted: the mobile agent owns `/api/v1`. NOTES-SYNC says how to read them safely. Customer badges: section 33.
+
+## 33. Customer-facing badges (gamified)
+
+- [x] Each badge has a staff-only or customer-visible setting in the brand portal (Setup → Client badges, **Customers see**). Staff judgments built on ratings can never be shown.
+- [x] Customers see their customer-visible badges in their account and on the booking site (when signed in), with the badge id, name, icon, colour, earned date and progress toward the next.
+- [x] Customer-visible by default: Gold, Silver and Bronze (visits with no no-shows, all thresholds settable), We miss you (8+ weeks, settable; clears when they book; Book now), Birthday, Anniversary, Reward available, Streak (5 kept on time in a row), Referral champion, Reviewer.
+- [x] Staff-only by default: No-show risk, Late cancels, VIP, Low rating, Missing info, At risk, and every other badge.
+- [x] Messages when a customer earns or loses a badge, chosen per badge, through the Campaign Center (Badge news): marketing consent, the brand's caps plus one per N days, quiet hours.
+- [x] Progress meters ("2 more visits to Gold").
+- [x] Tests for the visibility rules: `tests/customer-badges.test.ts`, `tests/db/customer-badges.test.ts`.
+
+**Still open:**
+- [ ] `/api/v1/me/badges` and its OpenAPI entry: the handler and the OpenAPI fragment are ready (`src/server/customer-badges-api.ts`, `CUSTOMER_BADGES_OPENAPI`). The mobile agent owns `/api/v1` and `openapi.ts`; the request is in NOTES-SYNC. Until it's mounted, the same endpoint is at `/api/account/badges`.
 
 ## Deferred by decision
 

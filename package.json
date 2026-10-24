@@ -17,7 +17,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:reset": "tsx scripts/migrate.ts && tsx scripts/seed.ts",
-    "worker": "tsx --conditions=react-server scripts/worker.ts",
+    "worker": "tsx --require ./scripts/allow-server-only.cjs scripts/worker.ts",
     "import:squire": "tsx scripts/import-squire.ts"
   },
   "dependencies": {

@@ -298,3 +298,21 @@ export const CustomerProgressSchema = z.object({
   text: z.string().describe('e.g. "2 more visits to Gold"'),
 });
 export const CustomerBadgesSchema = z.object({ badges: z.array(CustomerBadgeSchema), progress: z.array(CustomerProgressSchema) });
+
+/** For openApiDocument (src/server/openapi.ts): the path and its schema, in that file's shapes. Served by src/server/customer-badges-api.ts. */
+export const CUSTOMER_BADGES_OPENAPI = {
+  components: { CustomerBadges: CustomerBadgesSchema },
+  paths: {
+    "/me/badges": {
+      get: {
+        tags: ["Me"],
+        summary: "My badges (only the ones the brand shows customers), when each was earned, and progress toward the next",
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "OK", content: { "application/json": { schema: { $ref: "#/components/schemas/CustomerBadges" } } } },
+          401: { description: "Sign in required", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+        },
+      },
+    },
+  },
+} as const;
