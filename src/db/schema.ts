@@ -102,8 +102,10 @@ export const brandSettings = pgTable("brand_settings", {
 });
 
 /**
- * Who owns a shop's business: the brand today, a franchisee later. One owner entity can own several
- * shops; each shop still has its own Stripe connected account, so its revenue, fees and payouts stay its own.
+ * The legal business that owns a shop: one of Rayz corporate's entities (an LLC can own several
+ * shops). Each shop still has its own Stripe connected account, so its revenue, fees and payouts
+ * stay its own. `kind` is always "brand" in this build; it and shops.owner_entity_id (nullable)
+ * leave room for another kind of owner later without reshaping locations.
  */
 export const ownerEntities = pgTable("owner_entities", {
   id: id(),
@@ -114,11 +116,20 @@ export const ownerEntities = pgTable("owner_entities", {
   createdAt: createdAt(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
-export type OwnerEntityKind = "brand" | "franchisee";
+export type OwnerEntityKind = "brand";
+
+/** An optional grouping of locations (a market such as "Quad Cities") for brand rollups. A location is in one region at most. */
+export const regions = pgTable("regions", {
+  id: id(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  createdAt: createdAt(),
+});
 
 export const shops = pgTable("shops", {
   id: id(),
   ownerEntityId: uuid("owner_entity_id").references(() => ownerEntities.id),
+  regionId: uuid("region_id").references((): AnyPgColumn => regions.id, { onDelete: "set null" }),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   address: text("address").notNull().default(""),
@@ -205,6 +216,7 @@ export const shops = pgTable("shops", {
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
   check("shops_payments_mode", sql`${t.paymentsMode} in ('brand', 'connected', 'cash_only')`),
+  index("shops_region_idx").on(t.regionId),
 ]);
 export type PaymentsMode = "brand" | "connected" | "cash_only";
 export type NegativeStockPolicy = "block" | "warn";
@@ -3687,5 +3699,71 @@ export const checkoutPrompts = pgTable(
     check("checkout_prompts_reason", sql`${t.declineReason} is null or char_length(${t.declineReason}) <= 120`),
     unique("checkout_prompts_uq").on(t.saleId, t.prompt),
     index("checkout_prompts_shop_idx").on(t.shopId, t.shownAt),
+  ],
+);
+
+// ───────────────────────────── Scale: background tasks and rollups ─────────────────────────────
+
+/**
+ * Background work split into small tasks so it grows with the number of locations: one per
+ * location (rollups, campaign triggers) or per client bucket (badges) and day. Any number of
+ * workers claim tasks with FOR UPDATE SKIP LOCKED; a lease that runs out puts a crashed task back.
+ */
+export const jobTasks = pgTable(
+  "job_tasks",
+  {
+    id: id(),
+    kind: text("kind").notNull(),
+    /** What the task covers: a shop id, a shop and slot ("<id>|14:30"), or a bucket ("3/16"). */
+    shard: text("shard").notNull(),
+    runOn: date("run_on").notNull(),
+    status: text("status").$type<JobTaskStatus>().notNull().default("queued"),
+    attempts: smallint("attempts").notNull().default(0),
+    lockedUntil: ts("locked_until"),
+    startedAt: ts("started_at"),
+    finishedAt: ts("finished_at"),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("job_tasks_uq").on(t.kind, t.shard, t.runOn),
+    index("job_tasks_claim_idx").on(t.status, t.lockedUntil),
+    check("job_tasks_status", sql`${t.status} in ('queued', 'running', 'done', 'failed')`),
+  ],
+);
+export type JobTaskStatus = "queued" | "running" | "done" | "failed";
+
+/**
+ * One location's day, summed by the rollup job from sales, refunds and appointments, so brand
+ * reports compare 50+ locations and regions without scanning every ticket. The region is the
+ * location's at the time the day was rolled up.
+ */
+export const locationDailyStats = pgTable(
+  "location_daily_stats",
+  {
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+    regionId: uuid("region_id").references(() => regions.id, { onDelete: "set null" }),
+    tickets: integer("tickets").notNull().default(0),
+    grossCents: bigint("gross_cents", { mode: "number" }).notNull().default(0),
+    discountCents: bigint("discount_cents", { mode: "number" }).notNull().default(0),
+    serviceNetCents: bigint("service_net_cents", { mode: "number" }).notNull().default(0),
+    productNetCents: bigint("product_net_cents", { mode: "number" }).notNull().default(0),
+    refundCents: bigint("refund_cents", { mode: "number" }).notNull().default(0),
+    taxCents: bigint("tax_cents", { mode: "number" }).notNull().default(0),
+    tipCents: bigint("tip_cents", { mode: "number" }).notNull().default(0),
+    clients: integer("clients").notNull().default(0),
+    newClients: integer("new_clients").notNull().default(0),
+    appointments: integer("appointments").notNull().default(0),
+    noShows: integer("no_shows").notNull().default(0),
+    computedAt: ts("computed_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.shopId, t.day] }),
+    index("location_daily_stats_day_idx").on(t.day),
+    index("location_daily_stats_region_day_idx").on(t.regionId, t.day),
   ],
 );

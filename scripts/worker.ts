@@ -6,8 +6,9 @@ import { extendSeries } from "@/server/block-series";
 import { runFollowUps } from "@/server/call-ins";
 import { runMarketing } from "@/server/marketing/engine";
 import { sendBadgeNotices } from "@/server/customer-badges";
+import { runJobs } from "@/server/jobs";
 
-/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, runs marketing campaigns and Badge news, and drains the notification queue every 30 seconds. `--once` for a single pass. */
+/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, works background tasks (rollups, campaign triggers per location, badge slices), runs marketing campaigns and Badge news, and drains the notification queue every 30 seconds. `--once` for a single pass. */
 async function main() {
   installLogScrubbing();
   const once = process.argv.includes("--once");
@@ -16,7 +17,9 @@ async function main() {
     if (written) console.log(new Date().toISOString(), { recurringBlocks: written });
     const followUps = await runFollowUps();
     if (followUps.retried || followUps.flagged || followUps.closed) console.log(new Date().toISOString(), { followUps });
-    const marketing = await runMarketing();
+    const jobs = await runJobs(new Date(), { budgetMs: 20_000 });
+    if (jobs.done || jobs.failed) console.log(new Date().toISOString(), { jobs });
+    const marketing = await runMarketing(new Date(), { triggers: false });
     if (marketing.triggers.queued || marketing.blasts.queued || marketing.triggers.failed || marketing.blasts.failed) console.log(new Date().toISOString(), { marketing });
     const badgeNews = await sendBadgeNotices();
     if (badgeNews.queued) console.log(new Date().toISOString(), { badgeNews });

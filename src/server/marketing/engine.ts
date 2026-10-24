@@ -498,8 +498,9 @@ export async function runSequences(now = new Date(), o: { ids?: string[] } = {})
 }
 
 /** The cron pass: automated campaigns, lapsed sequences, then due blasts. Delivery is the notification queue's job. */
-export async function runMarketing(now = new Date()) {
-  const triggers = await runTriggers(now);
+/** `triggers: false` when the automated campaigns run per location as background tasks instead (src/server/jobs.ts). */
+export async function runMarketing(now = new Date(), o: { triggers?: boolean } = {}) {
+  const triggers = o.triggers === false ? { queued: 0, skipped: 0, failed: 0 } : await runTriggers(now);
   const sequences = await runSequences(now);
   const blasts = await runBlasts(now);
   return { triggers, sequences, blasts };

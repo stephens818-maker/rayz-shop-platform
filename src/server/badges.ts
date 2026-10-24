@@ -407,15 +407,23 @@ export async function refreshBadges(ids: readonly string[], now: Date, run?: Bad
   return changedIds.size;
 }
 
-/** The nightly run: clients with no cached badges or stale ones, in batches, until the time is up. Run again to carry on. */
-export async function runBadgeJob(now = new Date(), o: { budgetMs?: number; batch?: number } = {}): Promise<{ scanned: number; changed: number; remaining: number }> {
+/**
+ * The nightly run: clients with no cached badges or stale ones, in batches, until the time is up.
+ * Run again to carry on. `bucket` takes one slice of the client file (by a hash of the id), so
+ * background workers can split the work (src/server/jobs.ts).
+ */
+export async function runBadgeJob(
+  now = new Date(),
+  o: { budgetMs?: number; batch?: number; bucket?: { k: number; of: number } } = {},
+): Promise<{ scanned: number; changed: number; remaining: number }> {
   const started = Date.now();
   const budget = o.budgetMs ?? 240_000;
   const batch = o.batch ?? 500;
   const today = todayLocal(now);
   const cols = await consentColumns();
   const alive = cols.deleted ? sql` and c.deleted_at is null` : sql``;
-  const pending = () => sql`from customers c left join client_badges b on b.customer_id = c.id where (b.customer_id is null or b.computed_on < ${today}::date)${alive}`;
+  const slice = o.bucket ? sql` and mod(abs(hashtext(c.id::text)::bigint), ${o.bucket.of}) = ${o.bucket.k}` : sql``;
+  const pending = () => sql`from customers c left join client_badges b on b.customer_id = c.id where (b.customer_id is null or b.computed_on < ${today}::date)${alive}${slice}`;
   const run = await badgeRun(now, { allMembers: true });
   let scanned = 0;
   let changed = 0;
