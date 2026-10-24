@@ -23,7 +23,7 @@ export function ClientAvatar({ hit, size = 36 }: { hit: Pick<ClientHit, "id" | "
  * matched.
  */
 export function ClientHitRow({ hit, className }: { hit: ClientHit; className?: string }) {
-  const sub = [hit.phone, hit.lastVisit ? `Last in ${visitDate(hit.lastVisit.at)}${hit.lastVisit.shop ? ` at ${hit.lastVisit.shop}` : ""}` : "No visits yet", hit.barber && `Usually ${hit.barber}`].filter(Boolean);
+  const sub = [hit.family?.guardian ? `Child of ${hit.family.guardian.short}` : hit.phone, hit.lastVisit ? `Last in ${visitDate(hit.lastVisit.at)}${hit.lastVisit.shop ? ` at ${hit.lastVisit.shop}` : ""}` : "No visits yet", hit.barber && `Usually ${hit.barber}`].filter(Boolean);
   const how = hit.matched.filter((m) => m !== "Name");
   return (
     <span className={cx("flex min-w-0 items-center gap-2.5", className)}>
@@ -36,6 +36,11 @@ export function ClientHitRow({ hit, className }: { hit: ClientHit; className?: s
           <span className="ml-auto shrink-0 font-mono text-[11px] text-zinc-400">C{hit.number}</span>
         </span>
         <span className="block truncate text-xs text-zinc-500">{sub.join(" · ")}</span>
+        {hit.family && hit.family.kids.length > 0 && (
+          <span className="block truncate text-[11px] text-zinc-500" data-testid="hit-kids">
+            Kids: {hit.family.kids.map((k) => (k.age != null ? `${k.firstName} (${k.age})` : k.firstName)).join(", ")}
+          </span>
+        )}
         <ClientBadges badges={hit.badges} max={3} className="mt-0.5" />
         {how.length > 0 && <span className="block truncate text-[11px] text-brand-700">Matched {how.join(", ")}</span>}
       </span>

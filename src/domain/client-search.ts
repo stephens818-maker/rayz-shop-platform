@@ -311,6 +311,8 @@ export interface ClientHit {
   badges?: ShownBadge[];
   /** How it matched: "Name", "Ticket #1234", "Gift card"... */
   matched: string[];
+  /** Family accounts: a child's parent, or a parent's children (age when the searcher sees birthdays). */
+  family?: { guardian: { id: string; short: string } | null; kids: { id: string; firstName: string; age: number | null }[] };
 }
 
 /** "Jordan E.": the first name and last initial, enough to tell clients apart on a shared screen. */

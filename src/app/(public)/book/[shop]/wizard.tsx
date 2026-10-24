@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MyBadges } from "@/components/my-badges";
+import { FamilyParty, PartyMember, partySummary } from "@/components/family-party";
 import { Slot, SlotPicker } from "@/components/slot-picker";
 import { Button, Field, Input, cx } from "@/components/ui";
 import { ApiError, api, dollars, fmtDay, fmtTime, getTokens } from "@/lib/api-client";
@@ -54,7 +55,10 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
   const [slot, setSlot] = useState<Slot | null>(null);
   const [step, setStep] = useState<Step>("service");
   const [form, setForm] = useState(initialBookingForm);
-  const [signedIn, setSignedIn] = useState<{ firstName: string } | null>(null);
+  const [signedIn, setSignedIn] = useState<{ id: string; firstName: string } | null>(null);
+  const [kids, setKids] = useState<{ id: string; firstName: string; age: number | null; preferredStaffId: string | null }[]>([]);
+  const [firstWho, setFirstWho] = useState<string | null>(null);
+  const [party, setParty] = useState<PartyMember[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const idem = useRef(crypto.randomUUID());
@@ -114,7 +118,17 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
         if (params.get("coupon")) applyCoupon(params.get("coupon")!, c);
       })
       .catch((e) => setError(e.message));
-    if (getTokens()) api<{ firstName: string }>("/me").then(setSignedIn).catch(() => {});
+    if (getTokens()) {
+      api<{ id: string; firstName: string }>("/me")
+        .then((me) => {
+          setSignedIn(me);
+          setFirstWho(me.id);
+        })
+        .catch(() => {});
+      api<{ children: { id: string; firstName: string; age: number | null; preferredStaffId: string | null }[] }>("/account/family", { base: "/api" })
+        .then((f) => setKids(f.children))
+        .catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shop.slug]);
 
@@ -147,10 +161,43 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
     return [...g.entries()];
   }, [catalog]);
 
+  async function bookFamily() {
+    if (!service || !slot || !firstWho) return;
+    const r = await api<{ appointments: { code: string }[] }>("/account/family/bookings", {
+      base: "/api",
+      method: "POST",
+      body: JSON.stringify({
+        shopId: shop.slug,
+        people: [
+          { customerId: firstWho, serviceId: service.id, staffId: barberObj?.id ?? null, startsAt: slot.startsAt },
+          ...party.map((m) => ({ customerId: m.customerId, serviceId: m.serviceId, staffId: m.staffId, timing: m.timing })),
+        ],
+      }),
+    });
+    const code = r.appointments[0].code;
+    if (coupon) await holdCouponAction(code, coupon.code);
+    await finishDraftAction(draft.current, code);
+    router.push(`/a/${code}?new=1${r.appointments.length > 1 ? `&family=${r.appointments.length}` : ""}`);
+  }
+
   async function book() {
     if (!service || !slot) return;
     setBusy(true);
     setError(null);
+    if (signedIn && (party.length || (firstWho && firstWho !== signedIn.id))) {
+      try {
+        await bookFamily();
+      } catch (e) {
+        const err = e as ApiError;
+        setError(err.message);
+        if (err.code === "slot_unavailable") {
+          setSlot(null);
+          setStep("time");
+        }
+        setBusy(false);
+      }
+      return;
+    }
     try {
       const r = await api<{ appointment: { code: string } }>("/appointments", {
         method: "POST",
@@ -306,7 +353,21 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
 
         <Section n={4} title="Your details" active={step === "details"} locked={step !== "details"}>
           {signedIn ? (
-            <p className="mb-3 text-sm text-zinc-600">Booking as {signedIn.firstName} (signed in).</p>
+            kids.length ? (
+              <FamilyParty
+                me={signedIn}
+                kids={kids}
+                services={catalog?.services ?? []}
+                barbers={barbers ?? []}
+                firstServiceId={service?.id ?? null}
+                firstWho={firstWho ?? signedIn.id}
+                onFirstWho={setFirstWho}
+                party={party}
+                onParty={setParty}
+              />
+            ) : (
+              <p className="mb-3 text-sm text-zinc-600">Booking as {signedIn.firstName} (signed in).</p>
+            )
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="First name">
@@ -353,6 +414,7 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
             <Row k="Barber" v={barber === "any" ? (assigned ? `Any (${assigned.displayName})` : "Any barber") : (barberObj?.displayName ?? "—")} />
             <Row k="When" v={slot ? `${fmtDay(slot.startsAt)}, ${fmtTime(slot.startsAt)}` : "—"} />
             <Row k="Length" v={minutes ? `${minutes} min` : "—"} />
+            {signedIn && kids.length > 0 && <Row k="For" v={partySummary(signedIn, kids, firstWho ?? signedIn.id, party)} />}
           </div>
           <div className="mt-3 flex items-center justify-between border-t border-zinc-100 pt-3">
             <span className="text-sm text-zinc-500">Est. price</span>

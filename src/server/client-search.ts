@@ -4,7 +4,9 @@ import { and, eq, inArray, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, couponCodes, couponRedemptions, customerSquireIds, customerTags, customers, giftCards, sales } from "@/db/schema";
 import { maskPhone } from "@/domain/client-privacy";
+import { ageOn } from "@/domain/family";
 import { PROBE_RULES, Probe, ProbeKind, allowedProbes, matchLabel, parseSearch, shortName, type ClientHit } from "@/domain/client-search";
+import { todayLocal } from "@/lib/time";
 import { can, type StaffContext } from "./auth/staff";
 import { shownBadges } from "./badges";
 import { ClientPolicy, clientPolicy, recordClientAccess } from "./client-privacy";
@@ -131,6 +133,34 @@ function probeQuery(p: Probe, scope: Scope, cap: number): Promise<Found[]> {
   }
 }
 
+/**
+ * A search that finds a child finds their parent too, right after them: the desk looks a family up
+ * by the child's name. A child in the searcher's reach brings their parent with them: one family.
+ */
+async function withGuardians(ranked: { id: string; matched: Set<string> }[]) {
+  if (!ranked.length) return ranked;
+  const kids = await db
+    .select({ id: customers.id, g: customers.guardianId })
+    .from(customers)
+    .where(and(inArray(customers.id, ranked.map((r) => r.id)), sql`${customers.guardianId} is not null`));
+  if (!kids.length) return ranked;
+  const guardianOf = new Map(kids.map((k) => [k.id, k.g!]));
+  const out: { id: string; matched: Set<string> }[] = [];
+  const seen = new Set<string>();
+  for (const r of ranked) {
+    if (seen.has(r.id)) continue;
+    out.push(r);
+    seen.add(r.id);
+    const g = guardianOf.get(r.id);
+    if (g && !seen.has(g)) {
+      const had = ranked.find((x) => x.id === g);
+      out.push({ id: g, matched: new Set([...(had?.matched ?? []), "Child's name"]) });
+      seen.add(g);
+    }
+  }
+  return out;
+}
+
 /** Matching client ids, best first, with how each matched. Logs nothing: see searchClients. */
 export async function findClients(ctx: StaffContext, policy: ClientPolicy, term: string, o: SearchOptions): Promise<{ ranked: { id: string; matched: Set<string> }[]; kinds: ProbeKind[] }> {
   const probes = allowedProbes(parseSearch(term), (f) => policy.level(f));
@@ -153,6 +183,7 @@ export async function findClients(ctx: StaffContext, policy: ClientPolicy, term:
     const ok = new Set((await db.select({ id: customers.id }).from(customers).where(and(inArray(customers.id, ranked.map((r) => r.id)), visitedScope({ staffId: o.ownClientsOf })))).map((r) => r.id));
     ranked = ranked.filter((r) => ok.has(r.id));
   }
+  if (!o.ownClientsOf) ranked = await withGuardians(ranked.slice(0, limit));
   return { ranked: ranked.slice(0, limit), kinds: [...new Set(found.filter((f) => f.rows.length).map((f) => f.p.kind))] };
 }
 
@@ -172,10 +203,13 @@ export async function clientHits(ctx: StaffContext, policy: ClientPolicy, ranked
     sql`, `,
   );
   const rows = (await db.execute(sql`
-    select c.id, c.number, c.first_name, c.last_name, c.nickname, c.phone, c.email, c.notes,
+    select c.id, c.number, c.first_name, c.last_name, c.nickname, c.phone, c.email, c.notes, c.guardian_id, g.first_name g_first, g.last_name g_last,
+      (select json_agg(json_build_object('id', k.id, 'firstName', k.first_name, 'birthday', k.birthday, 'birthYear', k.birth_year) order by k.created_at, k.id)
+        from customers k where k.guardian_id = c.id) kids,
       lv.starts_at last_at, ls.name last_shop, coalesce(ps.display_label, ub.display_label) barber,
       exists (select 1 from client_photos p where p.customer_id = c.id) and ${reach ? sql`c.id in (select ${customers.id} from ${customers} where ${reach})` : sql`true`} has_photo
     from customers c
+    left join customers g on g.id = c.guardian_id
     left join lateral (select a.starts_at, a.shop_id from appointments a where a.customer_id = c.id and a.status = 'completed' order by a.starts_at desc limit 1) lv on true
     left join shops ls on ls.id = lv.shop_id
     left join staff ps on ps.id = c.preferred_staff_id
@@ -192,12 +226,17 @@ export async function clientHits(ctx: StaffContext, policy: ClientPolicy, ranked
     phone: string | null;
     email: string | null;
     notes: string | null;
+    guardian_id: string | null;
+    g_first: string | null;
+    g_last: string | null;
+    kids: { id: string; firstName: string; birthday: string | null; birthYear: number | null }[] | null;
     last_at: string | Date | null;
     last_shop: string | null;
     barber: string | null;
     has_photo: boolean;
   }[];
   const byId = new Map(rows.map((r) => [r.id, r]));
+  const today = todayLocal();
   const [ratings, badges] = await Promise.all([ratingSummaries(rows.map((r) => r.id)), shownBadges(policy, rows.map((r) => r.id))]);
   return ranked.flatMap(({ id, matched }) => {
     const r = byId.get(id);
@@ -219,6 +258,14 @@ export async function clientHits(ctx: StaffContext, policy: ClientPolicy, ranked
         rating: policy.stars(ratings.get(id)),
         badges: badges.get(id) ?? [],
         matched: [...matched],
+        ...(r.guardian_id || r.kids?.length
+          ? {
+              family: {
+                guardian: r.guardian_id ? { id: r.guardian_id, short: shortName(r.g_first ?? "", r.g_last) } : null,
+                kids: (r.kids ?? []).map((k) => ({ id: k.id, firstName: k.firstName, age: policy.level("birthday") === "hidden" ? null : ageOn(k, today) })),
+              },
+            }
+          : {}),
       },
     ];
   });

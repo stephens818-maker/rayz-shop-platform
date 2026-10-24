@@ -37,6 +37,8 @@ export interface CalAppt {
   phone: string | null;
   hasPhone: boolean;
   smsOptIn: boolean;
+  /** A child's parent: the phone and consent above are theirs. */
+  guardian: { id: string; name: string } | null;
   services: string[];
   estimateCents: number;
   notes: string | null;

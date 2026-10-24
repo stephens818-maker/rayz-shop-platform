@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { appointments, services, staffSchedules } from "@/db/schema";
 import { Empty, PageHeader } from "@/components/ui";
 import { localMinutesOf, todayLocal, weekdayOf } from "@/lib/time";
-import { guardPage, workingShopId } from "@/server/auth/staff";
+import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { estimateWait, waitlistForShop } from "@/server/booking";
 import { clientPolicy } from "@/server/client-privacy";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
@@ -70,6 +70,7 @@ export default async function WalkInsPage() {
         <WalkIns
           shopId={shopId}
           canAddPhone={policy.canAdd("phone")}
+          canFamily={can(ctx, "clients.family")}
           services={catalog.filter((s) => s.kind === "service").map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin, priceCents: s.priceCents }))}
           barbers={board}
           waitlist={waitlist.map((w) => ({

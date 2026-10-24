@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
 import { ClientHitRow } from "@/components/client-hit";
+import { AddChildInline } from "@/components/family-party";
+import { addChildAction } from "@/app/admin/customers/family-actions";
 import type { ClientHit } from "@/domain/client-search";
 import { searchCustomersAction, startCheckoutAction } from "../calendar/actions";
 import { notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
@@ -17,18 +19,25 @@ const t = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "nu
 export function WalkIns({
   shopId,
   canAddPhone,
+  canFamily = false,
   services,
   barbers,
   waitlist,
 }: {
   shopId: string;
   canAddPhone: boolean;
+  canFamily?: boolean;
   services: { id: string; name: string; durationMin: number; priceCents: number }[]; barbers: Barber[]; waitlist: Entry[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [picked, setPicked] = useState<ClientHit | null>(null);
+  const [picked, setPickedHit] = useState<ClientHit | null>(null);
+  const [forWho, setForWho] = useState<string | null>(null);
+  const setPicked = (h: ClientHit | null) => {
+    setPickedHit(h);
+    setForWho(h?.id ?? null);
+  };
   const [found, setFound] = useState<ClientHit[]>([]);
   useEffect(() => {
     if (picked || name.trim().length < 2) return setFound([]);
@@ -79,7 +88,7 @@ export function WalkIns({
             onSubmit={(e) => {
               e.preventDefault();
               run(
-                () => walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: picked?.id ?? null }),
+                () => walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: picked ? (forWho ?? picked.id) : null }),
                 (d) => {
                   setResult(d);
                   setName("");
@@ -108,6 +117,35 @@ export function WalkIns({
                       </button>
                     ))}
                   </div>
+                )}
+              </div>
+            )}
+            {picked && !picked.family?.guardian && ((picked.family?.kids.length ?? 0) > 0 || canFamily) && (
+              <div className="text-sm" data-testid="walk-in-family">
+                <span className="text-zinc-500">For: </span>
+                <span className="inline-flex flex-wrap gap-1">
+                  {[{ id: picked.id, firstName: picked.firstName, age: null as number | null }, ...(picked.family?.kids ?? [])].map((m) => (
+                    <button
+                      type="button"
+                      key={m.id}
+                      onClick={() => setForWho(m.id)}
+                      className={cx("rounded-full px-2.5 py-1 text-xs ring-1", (forWho ?? picked.id) === m.id ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
+                    >
+                      {m.firstName}
+                      {m.age != null ? ` (${m.age})` : ""}
+                    </button>
+                  ))}
+                </span>
+                {canFamily && (
+                  <AddChildInline
+                    onAdd={async (input) => {
+                      const r = await addChildAction(picked.id, input);
+                      if (!r.ok) return r.error;
+                      setPickedHit({ ...picked, family: { guardian: null, kids: [...(picked.family?.kids ?? []), r.data] } });
+                      setForWho(r.data.id);
+                      return null;
+                    }}
+                  />
                 )}
               </div>
             )}

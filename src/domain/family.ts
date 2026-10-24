@@ -202,12 +202,13 @@ export const FamilySchema = z.object({
   children: z.array(FamilyMemberSchema),
 });
 export const FamilyBookingRequestSchema = z.object({
-  shopId: z.uuid(),
+  shopId: z.string().trim().min(1).max(80).describe("The shop's id or slug"),
   people: z
     .array(
       z.object({
         customerId: z.uuid().describe("The signed-in parent, or one of their children"),
         serviceId: z.uuid(),
+        addonIds: z.array(z.uuid()).max(10).default([]),
         staffId: z.uuid().nullable().default(null),
         startsAt: z.string().optional().describe("Required for the first person: an open slot from availability"),
         timing: z.enum(FAMILY_TIMING).default("after"),
