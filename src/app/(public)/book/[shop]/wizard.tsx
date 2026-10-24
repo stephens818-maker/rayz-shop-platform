@@ -98,11 +98,18 @@ export function BookingWizard({ shop }: { shop: ShopInfo }) {
         setBarbers(b.barbers);
         const pre = params.get("service");
         const s = pre ? c.services.find((x) => x.slug === pre || x.id === pre) : null;
+        const preBarber = b.barbers.find((x) => x.slug === params.get("barber"));
+        const start = params.get("start");
+        const at = start ? new Date(start) : null;
         if (s) {
           setServiceId(s.id);
           setStep(params.get("barber") ? "time" : "barber");
+          if (preBarber && at && !Number.isNaN(at.getTime()) && at.getTime() > Date.now()) {
+            setSlot({ startsAt: at.toISOString(), endsAt: new Date(at.getTime() + s.durationMin * 60_000).toISOString(), barberIds: [preBarber.id] });
+            setStep("details");
+          }
         }
-        if (params.get("barber") && !b.barbers.some((x) => x.slug === params.get("barber"))) setBarber("any");
+        if (params.get("barber") && !preBarber) setBarber("any");
         if (params.get("coupon")) applyCoupon(params.get("coupon")!, c);
       })
       .catch((e) => setError(e.message));
