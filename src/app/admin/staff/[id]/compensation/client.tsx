@@ -70,6 +70,7 @@ export function VersionEditor({
   staffId,
   initial,
   earliest,
+  earliestHint,
   shops,
   services,
   categories,
@@ -79,6 +80,7 @@ export function VersionEditor({
   staffId: string;
   initial: Draft;
   earliest: string;
+  earliestHint: string;
   shops: { id: string; name: string }[];
   services: { id: string; name: string; category: string }[];
   categories: string[];
@@ -100,7 +102,7 @@ export function VersionEditor({
   return (
     <div className="space-y-4 px-4 py-3 text-sm">
       <div className="flex flex-wrap items-end gap-3">
-        <Field label="Takes effect" hint={`${earliest} at the earliest: approved and locked pay stays as it was paid.`}>
+        <Field label="Takes effect" hint={earliestHint}>
           <Input type="date" min={earliest} value={d.effectiveFrom} onChange={(e) => set("effectiveFrom", e.target.value)} className="h-9 w-44" />
         </Field>
       </div>

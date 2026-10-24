@@ -96,6 +96,9 @@ export default async function StaffCompensationPage({ params }: { params: Promis
   const names = { shop: shopName, service: serviceName, tipMethod: (m: keyof typeof METHOD_LABEL) => METHOD_LABEL[m] };
   const current = rows.find((r) => r.status === "current") ?? null;
   const earliest = vc.lockedThrough ? addDays(vc.lockedThrough, 1) : addDays(vc.today, -365);
+  const earliestHint = vc.lockedThrough
+    ? `${formatDate(earliest, "MMM d, yyyy")} at the earliest: pay through ${formatDate(vc.lockedThrough, "MMM d, yyyy")} is approved and locked and stays as it was paid.`
+    : "A past date changes pay that hasn't been approved yet; approved and locked pay never changes.";
   const fb = fallbackOf(id)(null);
   const valueOf = new Map(values.map((v) => [v.fieldId, v.value]));
 
@@ -178,6 +181,7 @@ export default async function StaffCompensationPage({ params }: { params: Promis
             staffId={id}
             initial={draftOf(rows.find((r) => r.status !== "replaced") ?? null, vc.lockedThrough && vc.today <= vc.lockedThrough ? earliest : vc.today)}
             earliest={earliest}
+            earliestHint={earliestHint}
             shops={shopRows}
             services={serviceRows.filter((s) => s.active)}
             categories={vc.categories.slice().sort()}
