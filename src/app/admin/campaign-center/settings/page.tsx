@@ -3,15 +3,17 @@ import Link from "next/link";
 import { PageHeader } from "@/components/ui";
 import { can, guardPage } from "@/server/auth/staff";
 import { listAutomations } from "@/server/marketing/campaigns";
-import { loadMarketingSettings } from "@/server/marketing/settings";
+import { mayConfigureOpenings } from "@/server/marketing/openings";
+import { loadMarketingSettings, loadOpeningsSettings } from "@/server/marketing/settings";
 import { MarketingSettingsForm } from "./form";
+import { OpeningsSettingsForm } from "./openings-form";
 
 export const metadata: Metadata = { title: "Campaign Center settings" };
 export const dynamic = "force-dynamic";
 
 export default async function MarketingSettingsPage() {
   const ctx = await guardPage("/admin/campaign-center/settings");
-  const [settings, automations] = await Promise.all([loadMarketingSettings(), listAutomations(ctx)]);
+  const [settings, openings, automations] = await Promise.all([loadMarketingSettings(), loadOpeningsSettings(), listAutomations(ctx)]);
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <PageHeader
@@ -30,6 +32,11 @@ export default async function MarketingSettingsPage() {
         mayEdit={ctx.brandWide && can(ctx, "campaign_center.create")}
         mayExport={can(ctx, "campaign_center.export")}
         campaigns={automations.map((a) => ({ id: a.id, name: a.name }))}
+      />
+      <OpeningsSettingsForm
+        initial={openings}
+        mayEdit={mayConfigureOpenings(ctx)}
+        shops={ctx.shops.filter((s) => s.status !== "archived").map((s) => ({ id: s.id, name: s.name }))}
       />
     </div>
   );

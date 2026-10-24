@@ -37,6 +37,11 @@ export default async function CampaignCenterPage() {
         subtitle="Automated campaigns and one-off blasts by text, email and app push. Only clients who agreed to marketing get them, never in quiet hours and never more than the brand's limits."
         actions={
           <div className="flex gap-2">
+            {can(ctx, "campaign_center.openings") && (
+              <LinkButton variant="secondary" href="/admin/campaign-center/openings">
+                We have openings
+              </LinkButton>
+            )}
             <LinkButton variant="secondary" href="/admin/reports/campaign-center">
               Report
             </LinkButton>

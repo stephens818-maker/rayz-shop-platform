@@ -90,6 +90,7 @@ export const PAGE_ACCESS = {
   "/admin/campaign-center/settings": CAMPAIGN_CENTER,
   "/admin/campaign-center/sequences/[id]": CAMPAIGN_CENTER,
   "/admin/campaign-center/my-clients": ["campaign_center.own_clients"],
+  "/admin/campaign-center/openings": ["campaign_center.openings", "campaign_center.send"],
   "/admin/reports": REPORTS.map((r) => reportView(r.key)),
   ...(Object.fromEntries(REPORTS.map((r) => [r.href, [reportView(r.key)]])) as Record<(typeof REPORTS)[number]["href"], Permission[]>),
 } satisfies Record<string, readonly Permission[] | null>;
@@ -143,6 +144,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
   {
     title: "Campaign Center",
     items: [
+      { href: "/admin/campaign-center/openings", label: "We have openings" },
       { href: "/admin/campaign-center", label: "Campaigns" },
       { href: "/admin/campaign-center/blasts", label: "Blasts" },
       { href: "/admin/campaign-center/my-clients", label: "My lapsed clients" },
