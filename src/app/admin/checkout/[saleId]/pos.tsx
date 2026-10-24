@@ -6,7 +6,7 @@ import { ClientBadges } from "@/components/client-badges";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, StarBadge, Suggestions, cx } from "@/components/ui";
 import type { ShownBadge } from "@/domain/badges";
 import type { RatingSummary } from "@/domain/ratings";
-import { ClientHitRow } from "@/components/client-hit";
+import { FamilyPickList } from "@/components/client-hit";
 import type { ClientHit } from "@/domain/client-search";
 import { CardFeeConfig, CardFunding, Discount, LineKind, TaxCategory, TaxRates, computeCheckout, feeLabel, manualDiscountProblem, tipSuggestions } from "@/domain/checkout";
 import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
@@ -1005,11 +1005,7 @@ function CustomerBox({
           </div>
           {found.length > 0 && (
             <div className="absolute inset-x-0 z-10 mt-1 divide-y divide-zinc-100 rounded-lg bg-white shadow-lg ring-1 ring-zinc-200">
-              {found.map((f) => (
-                <button key={f.id} onClick={() => attach(f.id)} className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50">
-                  <ClientHitRow hit={f} />
-                </button>
-              ))}
+              <FamilyPickList hits={found} onPick={(_, id) => attach(id)} />
             </div>
           )}
         </>

@@ -10,10 +10,15 @@ import {
   childLabel,
   childLimitProblem,
   familySettings,
+  FAMILY_BOOKING_MAX,
   nextSeat,
+  selectedIds,
   splitProblem,
+  togglePartyMember,
+  type PartySelection,
   type Seat,
 } from "@/domain/family";
+import { groupFamilies, type ClientHit } from "@/domain/client-search";
 import { familyColumns, hasFamilyColumns, parseChild, planFamilies, type FamilyRow } from "@/domain/family-import";
 import { CUSTOMER_FIELDS } from "@/domain/report-builder";
 import { EMPTY_SEGMENT, SegmentSchema, filterCount } from "@/domain/marketing";
@@ -232,5 +237,78 @@ describe("family filters, reports and API", () => {
       "/me/family/children/{id}/split",
     ]);
     expect(findSensitive(JSON.stringify(FAMILY_OPENAPI.paths))).toEqual([]);
+  });
+});
+
+describe("who the appointment is for (multi-select)", () => {
+  const d = { serviceId: "svc", staffId: null };
+  const start: PartySelection = { firstWho: "mom", party: [] };
+  it("adds people at the same time with the default service, and the first one keeps the picked time", () => {
+    const s = togglePartyMember(togglePartyMember(start, "max", d), "ava", { serviceId: "kids", staffId: "ray" });
+    expect(selectedIds(s)).toEqual(["mom", "max", "ava"]);
+    expect(s.party[1]).toEqual({ customerId: "ava", serviceId: "kids", staffId: "ray", timing: "same_time" });
+  });
+  it("removing someone from the party drops them; removing the first moves the next one up", () => {
+    const s = togglePartyMember(togglePartyMember(start, "max", d), "ava", d);
+    expect(selectedIds(togglePartyMember(s, "max", d))).toEqual(["mom", "ava"]);
+    const promoted = togglePartyMember(s, "mom", d);
+    expect(promoted.firstWho).toBe("max");
+    expect(selectedIds(promoted)).toEqual(["max", "ava"]);
+  });
+  it("keeps the last person selected and stops at the booking limit", () => {
+    expect(togglePartyMember(start, "mom", d)).toBe(start);
+    let s = start;
+    for (let i = 0; i < FAMILY_BOOKING_MAX + 2; i++) s = togglePartyMember(s, `kid${i}`, d);
+    expect(selectedIds(s)).toHaveLength(FAMILY_BOOKING_MAX);
+  });
+  it("lets a child alone be picked: deselect the parent after picking the child", () => {
+    expect(selectedIds(togglePartyMember(togglePartyMember(start, "max", d), "mom", d))).toEqual(["max"]);
+  });
+});
+
+describe("search results as families", () => {
+  const hit = (id: string, family?: ClientHit["family"], matched: string[] = ["Name"]): ClientHit => ({
+    id,
+    number: 1,
+    firstName: id,
+    lastName: null,
+    short: id,
+    nickname: null,
+    phone: "***-***-4321",
+    email: null,
+    notes: null,
+    lastVisit: null,
+    barber: null,
+    photo: false,
+    rating: null,
+    matched,
+    ...(family ? { family } : {}),
+  });
+  const kids = [
+    { id: "max", firstName: "Max", age: 7 },
+    { id: "ava", firstName: "Ava", age: null },
+  ];
+  it("lists the parent with the kids underneath (first names, ages as shown)", () => {
+    const g = groupFamilies([hit("mom", { guardian: null, kids }), hit("solo")]);
+    expect(g.map((x) => x.hit.id)).toEqual(["mom", "solo"]);
+    expect(g[0].kids).toEqual([
+      { id: "max", firstName: "Max", age: 7, matched: false },
+      { id: "ava", firstName: "Ava", age: null, matched: false },
+    ]);
+    expect(g[0].hit.phone).toBe("***-***-4321");
+    expect(g[1].kids).toEqual([]);
+  });
+  it("folds a matched child under their parent, at the child's place, and marks them", () => {
+    const max = hit("max", { guardian: { id: "mom", short: "Mom" }, kids: [] });
+    const g = groupFamilies([hit("other"), max, hit("mom", { guardian: null, kids }, ["Child's name"])]);
+    expect(g.map((x) => x.hit.id)).toEqual(["other", "mom"]);
+    expect(g[1].kids.find((k) => k.id === "max")?.matched).toBe(true);
+    expect(g[1].kids.find((k) => k.id === "ava")?.matched).toBe(false);
+  });
+  it("keeps a child on their own when their parent isn't in the results", () => {
+    const g = groupFamilies([hit("max", { guardian: { id: "mom", short: "Mom" }, kids: [] })]);
+    expect(g).toHaveLength(1);
+    expect(g[0].hit.id).toBe("max");
+    expect(g[0].kids).toEqual([]);
   });
 });

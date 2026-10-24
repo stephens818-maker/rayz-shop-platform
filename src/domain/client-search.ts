@@ -315,6 +315,33 @@ export interface ClientHit {
   family?: { guardian: { id: string; short: string } | null; kids: { id: string; firstName: string; age: number | null }[] };
 }
 
+/** A search result as the pickers list it: the account, with its children underneath. */
+export interface FamilyGroup {
+  hit: ClientHit;
+  /** The parent's children (empty for a child on their own or a client without kids). */
+  kids: { id: string; firstName: string; age: number | null; matched: boolean }[];
+}
+
+/**
+ * Search results as families: a child whose parent is in the results folds under that parent (at
+ * the child's place in the ranking, marked as what matched); a child whose parent isn't (out of
+ * the searcher's reach) stays a row of their own.
+ */
+export function groupFamilies(hits: readonly ClientHit[]): FamilyGroup[] {
+  const byId = new Map(hits.map((h) => [h.id, h]));
+  const folded = new Set(hits.filter((h) => h.family?.guardian && byId.has(h.family.guardian.id)).map((h) => h.id));
+  const out: FamilyGroup[] = [];
+  const placed = new Set<string>();
+  for (const h of hits) {
+    const head = folded.has(h.id) ? byId.get(h.family!.guardian!.id)! : h;
+    if (placed.has(head.id)) continue;
+    placed.add(head.id);
+    const kids = head.family?.guardian ? [] : (head.family?.kids ?? []);
+    out.push({ hit: head, kids: kids.map((k) => ({ ...k, matched: folded.has(k.id) })) });
+  }
+  return out;
+}
+
 /** "Jordan E.": the first name and last initial, enough to tell clients apart on a shared screen. */
 export function shortName(first: string, last: string | null | undefined): string {
   const l = last?.trim();

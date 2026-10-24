@@ -19,7 +19,8 @@ import {
   cx,
 } from "@/components/ui";
 import { ConflictConfirm } from "@/components/conflict-confirm";
-import { ClientHitRow } from "@/components/client-hit";
+import { ClientHitRow, FamilyPickList } from "@/components/client-hit";
+import { togglePartyMember } from "@/domain/family";
 import {
   AddChildInline,
   FamilyParty,
@@ -1851,9 +1852,9 @@ function NewPanel({
   const [forWho, setForWho] = useState<string | null>(null);
   const [party, setParty] = useState<PartyMember[]>([]);
   const kids = picked?.family?.kids ?? [];
-  const pick = (f: Found | null) => {
+  const pick = (f: Found | null, memberId?: string) => {
     setPicked(f);
-    setForWho(f?.id ?? null);
+    setForWho(memberId ?? f?.id ?? null);
     setParty([]);
   };
   const [first, setFirst] = useState("");
@@ -2091,7 +2092,7 @@ function NewPanel({
               <>
                 <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2 text-sm ring-1 ring-zinc-200">
                   <div className="min-w-0">
-                    <ClientHitRow hit={picked} />
+                    <ClientHitRow hit={picked} hideKids />
                     {picked.notes && (
                       <div className="mt-1 text-xs text-amber-700">
                         {picked.notes}
@@ -2135,7 +2136,13 @@ function NewPanel({
                                 kids: [...kids, r.data],
                               },
                             });
-                            setForWho(r.data.id);
+                            setParty(
+                              togglePartyMember(
+                                { firstWho: forWho ?? picked.id, party },
+                                r.data.id,
+                                { serviceId },
+                              ).party,
+                            );
                             return null;
                           }}
                         />
@@ -2153,15 +2160,7 @@ function NewPanel({
                 />
                 {found.length > 0 && (
                   <div className="mt-1 divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-200">
-                    {found.map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => pick(f)}
-                        className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
-                      >
-                        <ClientHitRow hit={f} />
-                      </button>
-                    ))}
+                    <FamilyPickList hits={found} onPick={pick} />
                   </div>
                 )}
                 <div className="mt-2 text-xs text-zinc-500">Or new client:</div>

@@ -321,6 +321,36 @@ describe("reports, search and filters", () => {
     const ids = r.data.map((h: { id: string }) => h.id);
     expect(ids.slice(0, 2)).toEqual([kid.id, p.id]);
   });
+
+  it("a phone lookup lists the parent with the kids' first names under the masked phone; a child's name brings every parent along", async () => {
+    const { groupFamilies } = await import("@/domain/client-search");
+    const p = await parent("Philippa");
+    const a = await fam.addChild(p.id, { firstName: "Wilhelmina", birthday: "2018-05-01" }, actor);
+    const b = await fam.addChild(p.id, { firstName: "Barnaby" }, actor);
+    await signInAs(fx.frontdesk, fx.shop);
+    const { searchCustomersAction } = await import("@/app/admin/calendar/actions");
+    const r = await searchCustomersAction(p.phone!.slice(2), "walk_in");
+    if (!r.ok) throw new Error(r.error);
+    const g = groupFamilies(r.data).find((x) => x.hit.id === p.id)!;
+    expect(g.hit.phone).toMatch(new RegExp(`${p.phone!.slice(-4)}$`));
+    expect(g.hit.phone).not.toContain(p.phone!.slice(2, 8));
+    expect(g.kids.map((k) => [k.id, k.firstName])).toEqual([
+      [a.id, "Wilhelmina"],
+      [b.id, "Barnaby"],
+    ]);
+    expect(JSON.stringify(g.kids)).not.toMatch(/2018-05-01|Family/);
+
+    const name = `Ozymandias${String(Date.now()).slice(-5)}`;
+    const families = [];
+    for (let i = 0; i < 5; i++) {
+      const mom = await parent(`Guardian${i}`);
+      families.push({ mom: mom.id, kid: (await fam.addChild(mom.id, { firstName: name }, actor)).id });
+    }
+    const r2 = await searchCustomersAction(name, "booking");
+    if (!r2.ok) throw new Error(r2.error);
+    const grouped = groupFamilies(r2.data);
+    for (const f of families) expect(grouped.find((x) => x.hit.id === f.mom)?.kids.find((k) => k.id === f.kid)?.matched).toBe(true);
+  });
 });
 
 describe("Squire families and duplicates", () => {

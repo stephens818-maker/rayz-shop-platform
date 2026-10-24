@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
-import { ClientHitRow } from "@/components/client-hit";
+import { ClientHitRow, FamilyPickList } from "@/components/client-hit";
 import { AddChildInline } from "@/components/family-party";
 import { addChildAction } from "@/app/admin/customers/family-actions";
 import type { ClientHit } from "@/domain/client-search";
+import { FAMILY_BOOKING_MAX } from "@/domain/family";
 import { searchCustomersAction, startCheckoutAction } from "../calendar/actions";
 import { notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
 
@@ -33,11 +34,14 @@ export function WalkIns({
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [picked, setPickedHit] = useState<ClientHit | null>(null);
-  const [forWho, setForWho] = useState<string | null>(null);
-  const setPicked = (h: ClientHit | null) => {
+  /** Who's here: the picked client, or several of a family (the parent and kids, in the order picked). */
+  const [forWho, setForWho] = useState<string[]>([]);
+  const setPicked = (h: ClientHit | null, memberId?: string) => {
     setPickedHit(h);
-    setForWho(h?.id ?? null);
+    setForWho(h ? [memberId ?? h.id] : []);
   };
+  const toggleWho = (id: string) =>
+    setForWho((w) => (w.includes(id) ? (w.length > 1 ? w.filter((x) => x !== id) : w) : w.length < FAMILY_BOOKING_MAX ? [...w, id] : w));
   const [found, setFound] = useState<ClientHit[]>([]);
   useEffect(() => {
     if (picked || name.trim().length < 2) return setFound([]);
@@ -50,7 +54,8 @@ export function WalkIns({
   const [serviceId, setServiceId] = useState(services[0]?.id ?? "");
   const [pref, setPref] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ seated: true; appointmentId: string; barber: string } | { seated: false; quotedWaitMin: number } | null>(null);
+  type Result = { who: string | null; r: { seated: true; appointmentId: string; barber: string } | { seated: false; quotedWaitMin: number } };
+  const [results, setResults] = useState<Result[]>([]);
   const [, tick] = useState(0);
   useEffect(() => {
     const i = setInterval(() => {
@@ -87,20 +92,32 @@ export function WalkIns({
             className="space-y-3 p-4"
             onSubmit={(e) => {
               e.preventDefault();
-              run(
-                () => walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: picked ? (forWho ?? picked.id) : null }),
-                (d) => {
-                  setResult(d);
+              const members = picked ? [{ id: picked.id, firstName: picked.firstName }, ...(picked.family?.kids ?? [])] : [];
+              const who: (string | null)[] = picked ? forWho : [null];
+              start(async () => {
+                setError(null);
+                const done: Result[] = [];
+                for (const id of who) {
+                  const r = await walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: id });
+                  if (!r.ok) {
+                    setError(done.length ? `${r.error} (the others above are in)` : r.error);
+                    break;
+                  }
+                  done.push({ who: who.length > 1 ? (members.find((m) => m.id === id)?.firstName ?? null) : null, r: r.data });
+                }
+                setResults(done);
+                if (done.length === who.length) {
                   setName("");
                   setPhone("");
                   setPicked(null);
-                },
-              );
+                }
+                router.refresh();
+              });
             }}
           >
             {picked ? (
               <div className="flex items-center justify-between gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-sm ring-1 ring-zinc-200" data-testid="walk-in-client">
-                <ClientHitRow hit={picked} />
+                <ClientHitRow hit={picked} hideKids />
                 <button type="button" className="shrink-0 text-xs underline" onClick={() => setPicked(null)}>
                   Change
                 </button>
@@ -110,27 +127,24 @@ export function WalkIns({
                 <Input placeholder="Name, or search phone, card, ticket #…" value={name} onChange={(e) => setName(e.target.value)} required autoFocus className="h-11 text-base" />
                 {found.length > 0 && (
                   <div className="absolute inset-x-0 z-10 mt-1 divide-y divide-zinc-100 rounded-lg bg-white shadow-lg ring-1 ring-zinc-200">
-                    <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400">Returning client?</div>
-                    {found.map((f) => (
-                      <button type="button" key={f.id} onClick={() => (setPicked(f), setFound([]))} className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50">
-                        <ClientHitRow hit={f} />
-                      </button>
-                    ))}
+                    <FamilyPickList title="Returning client?" hits={found} onPick={(h, id) => (setPicked(h, id), setFound([]))} />
                   </div>
                 )}
               </div>
             )}
             {picked && !picked.family?.guardian && ((picked.family?.kids.length ?? 0) > 0 || canFamily) && (
               <div className="text-sm" data-testid="walk-in-family">
-                <span className="text-zinc-500">For: </span>
+                <span className="text-zinc-500">For (pick one or more): </span>
                 <span className="inline-flex flex-wrap gap-1">
                   {[{ id: picked.id, firstName: picked.firstName, age: null as number | null }, ...(picked.family?.kids ?? [])].map((m) => (
                     <button
                       type="button"
                       key={m.id}
-                      onClick={() => setForWho(m.id)}
-                      className={cx("rounded-full px-2.5 py-1 text-xs ring-1", (forWho ?? picked.id) === m.id ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
+                      aria-pressed={forWho.includes(m.id)}
+                      onClick={() => toggleWho(m.id)}
+                      className={cx("rounded-full px-2.5 py-1 text-xs ring-1", forWho.includes(m.id) ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
                     >
+                      {forWho.includes(m.id) && <span aria-hidden>✓ </span>}
                       {m.firstName}
                       {m.age != null ? ` (${m.age})` : ""}
                     </button>
@@ -142,7 +156,7 @@ export function WalkIns({
                       const r = await addChildAction(picked.id, input);
                       if (!r.ok) return r.error;
                       setPickedHit({ ...picked, family: { guardian: null, kids: [...(picked.family?.kids ?? []), r.data] } });
-                      setForWho(r.data.id);
+                      toggleWho(r.data.id);
                       return null;
                     }}
                   />
@@ -191,19 +205,22 @@ export function WalkIns({
             </div>
             {error && <Notice tone="red">{error}</Notice>}
             <Button type="submit" size="lg" className="w-full" disabled={pending || !name}>
-              {free.length && !pref ? `Seat now (${free.length} free)` : "Add walk-in"}
+              {forWho.length > 1 ? `Check in ${forWho.length}` : free.length && !pref ? `Seat now (${free.length} free)` : "Add walk-in"}
             </Button>
-            {result &&
-              (result.seated ? (
-                <Notice tone="green">
-                  Seated with {result.barber}.{" "}
-                  <button type="button" className="font-medium underline" onClick={() => checkout(result.appointmentId)}>
+            {results.map(({ who, r }, i) =>
+              r.seated ? (
+                <Notice key={i} tone="green">
+                  {who ? `${who}: s` : "S"}eated with {r.barber}.{" "}
+                  <button type="button" className="font-medium underline" onClick={() => checkout(r.appointmentId)}>
                     Check out when done
                   </button>
                 </Notice>
               ) : (
-                <Notice tone="blue">Nobody is free. Added to the waitlist: quoted about {result.quotedWaitMin} min.</Notice>
-              ))}
+                <Notice key={i} tone="blue">
+                  {who ? `${who}: n` : "N"}obody is free. Added to the waitlist: quoted about {r.quotedWaitMin} min.
+                </Notice>
+              ),
+            )}
           </form>
         </Card>
         <Card>

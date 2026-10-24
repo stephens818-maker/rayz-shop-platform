@@ -183,8 +183,9 @@ export async function findClients(ctx: StaffContext, policy: ClientPolicy, term:
     const ok = new Set((await db.select({ id: customers.id }).from(customers).where(and(inArray(customers.id, ranked.map((r) => r.id)), visitedScope({ staffId: o.ownClientsOf })))).map((r) => r.id));
     ranked = ranked.filter((r) => ok.has(r.id));
   }
-  if (!o.ownClientsOf) ranked = await withGuardians(ranked.slice(0, limit));
-  return { ranked: ranked.slice(0, limit), kinds: [...new Set(found.filter((f) => f.rows.length).map((f) => f.p.kind))] };
+  // A matched child's parent comes along even past the limit: the pickers list the family under them.
+  ranked = o.ownClientsOf ? ranked.slice(0, limit) : await withGuardians(ranked.slice(0, limit));
+  return { ranked, kinds: [...new Set(found.filter((f) => f.rows.length).map((f) => f.p.kind))] };
 }
 
 /**

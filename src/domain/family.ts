@@ -179,6 +179,42 @@ export function nextSeat(req: SeatRequest, seated: readonly Seat[], slots: reado
   return after.find((s) => s.staffId === prev.staffId) ?? after[0] ?? null;
 }
 
+// ───────────────────────────── Who it's for ─────────────────────────────
+
+/** Someone besides the first person in a family booking: their own service, barber and timing. */
+export interface PartyMember {
+  customerId: string;
+  serviceId: string;
+  staffId: string | null;
+  timing: FamilyTiming;
+}
+/** Who a booking is for: the first person takes the picked time and service; the party comes along. */
+export interface PartySelection {
+  firstWho: string;
+  party: PartyMember[];
+}
+
+export const selectedIds = (sel: PartySelection) => [sel.firstWho, ...sel.party.map((m) => m.customerId)];
+
+/**
+ * Tapping someone in the family picker. An unselected person joins the party (same time, the
+ * defaults' service and barber); a selected one leaves, and when that's the first person the
+ * next one moves up to take the picked time. Nobody is left out: the last person stays selected.
+ */
+export function togglePartyMember(
+  sel: PartySelection,
+  id: string,
+  defaults: { serviceId: string; staffId?: string | null },
+): PartySelection {
+  if (id === sel.firstWho) {
+    const [next, ...rest] = sel.party;
+    return next ? { firstWho: next.customerId, party: rest } : sel;
+  }
+  if (sel.party.some((m) => m.customerId === id)) return { ...sel, party: sel.party.filter((m) => m.customerId !== id) };
+  if (selectedIds(sel).length >= FAMILY_BOOKING_MAX) return sel;
+  return { ...sel, party: [...sel.party, { customerId: id, serviceId: defaults.serviceId, staffId: defaults.staffId ?? null, timing: "same_time" }] };
+}
+
 // ───────────────────────────── Public API ─────────────────────────────
 
 export const FamilyMemberSchema = z.object({

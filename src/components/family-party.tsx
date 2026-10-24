@@ -1,15 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import type { FamilyTiming } from "@/domain/family";
+import { togglePartyMember, type FamilyTiming, type PartyMember } from "@/domain/family";
 import { Button, Field, Input, Select, cx } from "@/components/ui";
 
-export interface PartyMember {
-  customerId: string;
-  serviceId: string;
-  staffId: string | null;
-  timing: FamilyTiming;
-}
+export type { PartyMember };
 type Person = {
   id: string;
   firstName: string;
@@ -22,7 +17,7 @@ type Barber = { id: string; displayName: string };
 const label = (p: Person) =>
   p.age != null ? `${p.firstName} (${p.age})` : p.firstName;
 
-/** "You + Max, Ava" for the summary. */
+/** "You, Max, Ava" for the summary. */
 export function partySummary(
   me: Person,
   kids: Person[],
@@ -37,8 +32,9 @@ export function partySummary(
 }
 
 /**
- * Who a signed-in parent is booking for: themselves or a child takes the time picked above, and
- * anyone else on the account can come too, at the same time with another barber or right after.
+ * Who the appointment is for: the parent, one child or several. The first one picked takes the
+ * time and service chosen above; everyone else picked comes too, each with their own service, at
+ * the same time with another barber or right after.
  */
 export function FamilyParty({
   me,
@@ -56,7 +52,7 @@ export function FamilyParty({
 }: {
   meLabel?: string;
   note?: string;
-  /** Under the chips: the desk's "Add child". */
+  /** Under the chips: "Add a child". */
   children?: React.ReactNode;
   me: Person;
   kids: Person[];
@@ -72,135 +68,124 @@ export function FamilyParty({
     { ...me, firstName: meLabel ?? `Me (${me.firstName})` },
     ...kids,
   ];
-  const others = everyone.filter((p) => p.id !== firstWho);
+  const byId = new Map(everyone.map((p) => [p.id, p]));
   const set = (id: string, patch: Partial<PartyMember>) =>
     onParty(party.map((m) => (m.customerId === id ? { ...m, ...patch } : m)));
+  const toggle = (p: Person) => {
+    const next = togglePartyMember({ firstWho, party }, p.id, {
+      serviceId: firstServiceId ?? services[0]?.id ?? "",
+      staffId: p.preferredStaffId ?? null,
+    });
+    if (next.firstWho !== firstWho) onFirstWho(next.firstWho);
+    onParty(next.party);
+  };
+  const picked = (id: string) =>
+    id === firstWho || party.some((m) => m.customerId === id);
+  const first = byId.get(firstWho);
   return (
     <div className="mb-4 space-y-3" data-testid="family-party">
       <div>
         <div className="mb-1.5 text-sm font-medium text-zinc-700">
-          Who is this time for?
+          Who is this appointment for?{" "}
+          {everyone.length > 1 && (
+            <span className="font-normal text-zinc-500">
+              Pick one or more.
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-1.5">
           {everyone.map((p) => (
             <button
               key={p.id}
               type="button"
-              onClick={() => {
-                onFirstWho(p.id);
-                onParty(party.filter((m) => m.customerId !== p.id));
-              }}
+              aria-pressed={picked(p.id)}
+              data-testid="family-chip"
+              onClick={() => toggle(p)}
               className={cx(
                 "rounded-full px-3 py-1.5 text-sm ring-1 transition",
-                p.id === firstWho
+                picked(p.id)
                   ? "bg-ink-900 text-white ring-ink-900"
                   : "bg-white ring-zinc-300 hover:ring-zinc-500",
               )}
             >
+              {picked(p.id) && <span aria-hidden>✓ </span>}
               {label(p)}
             </button>
           ))}
         </div>
         {children}
       </div>
-      {others.length > 0 && (
-        <div>
-          <div className="mb-1.5 text-sm font-medium text-zinc-700">
-            Anyone else coming?
-          </div>
-          <div className="space-y-2">
-            {others.map((p) => {
-              const m = party.find((x) => x.customerId === p.id);
-              return (
-                <div
-                  key={p.id}
-                  className={cx(
-                    "rounded-lg px-3 py-2 ring-1",
-                    m ? "bg-brand-50 ring-brand-600" : "ring-zinc-200",
-                  )}
-                >
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={!!m}
-                      onChange={(e) =>
-                        onParty(
-                          e.target.checked
-                            ? [
-                                ...party,
-                                {
-                                  customerId: p.id,
-                                  serviceId:
-                                    firstServiceId ?? services[0]?.id ?? "",
-                                  staffId: p.preferredStaffId ?? null,
-                                  timing: "same_time",
-                                },
-                              ]
-                            : party.filter((x) => x.customerId !== p.id),
-                        )
-                      }
-                    />
-                    <span className="font-medium">{label(p)}</span>
-                  </label>
-                  {m && (
-                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                      <Field label="Service">
-                        <Select
-                          value={m.serviceId}
-                          onChange={(e) =>
-                            set(p.id, { serviceId: e.target.value })
-                          }
-                        >
-                          {services.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name} · {s.durationMin} min
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                      <Field label="When">
-                        <Select
-                          value={m.timing}
-                          onChange={(e) =>
-                            set(p.id, {
-                              timing: e.target.value as FamilyTiming,
-                            })
-                          }
-                        >
-                          <option value="same_time">
-                            Same time, another barber
-                          </option>
-                          <option value="after">Right after</option>
-                        </Select>
-                      </Field>
-                      <Field label="Barber">
-                        <Select
-                          value={m.staffId ?? ""}
-                          onChange={(e) =>
-                            set(p.id, { staffId: e.target.value || null })
-                          }
-                        >
-                          <option value="">
-                            {m.timing === "after"
-                              ? "Same barber if free, else any"
-                              : "Any free barber"}
-                          </option>
-                          {barbers.map((b) => (
-                            <option key={b.id} value={b.id}>
-                              {b.displayName}
-                            </option>
-                          ))}
-                        </Select>
-                      </Field>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {party.length > 0 && (
-            <p className="mt-2 text-xs text-zinc-500">{note}</p>
+      {party.length > 0 && (
+        <div className="space-y-2">
+          {first && (
+            <p className="text-xs text-zinc-500">
+              {label(first)} takes the time and service picked above.
+            </p>
           )}
+          {party.map((m) => {
+            const p = byId.get(m.customerId);
+            if (!p) return null;
+            return (
+              <div
+                key={m.customerId}
+                className="rounded-lg bg-brand-50 px-3 py-2 ring-1 ring-brand-600"
+                data-testid="party-member"
+              >
+                <div className="text-sm font-medium">{label(p)}</div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  <Field label="Service">
+                    <Select
+                      value={m.serviceId}
+                      onChange={(e) =>
+                        set(p.id, { serviceId: e.target.value })
+                      }
+                    >
+                      {services.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} · {s.durationMin} min
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label="When">
+                    <Select
+                      value={m.timing}
+                      onChange={(e) =>
+                        set(p.id, {
+                          timing: e.target.value as FamilyTiming,
+                        })
+                      }
+                    >
+                      <option value="same_time">
+                        Same time, another barber
+                      </option>
+                      <option value="after">Right after</option>
+                    </Select>
+                  </Field>
+                  <Field label="Barber">
+                    <Select
+                      value={m.staffId ?? ""}
+                      onChange={(e) =>
+                        set(p.id, { staffId: e.target.value || null })
+                      }
+                    >
+                      <option value="">
+                        {m.timing === "after"
+                          ? "Same barber if free, else any"
+                          : "Any free barber"}
+                      </option>
+                      {barbers.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.displayName}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                </div>
+              </div>
+            );
+          })}
+          <p className="text-xs text-zinc-500">{note}</p>
         </div>
       )}
     </div>
