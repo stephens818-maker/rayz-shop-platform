@@ -43,7 +43,6 @@ import {
   rebookInterval,
   reminderDay,
   requiredMessage,
-  ruleTarget,
   stockStatus,
   unansweredRequired,
 } from "@/domain/checkout-prompts";
