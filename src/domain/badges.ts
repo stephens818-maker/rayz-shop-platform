@@ -224,6 +224,8 @@ export const BADGES = [
   { key: "opted_out", group: "profile", label: "Opted out", icon: "bell_off", tone: "gray", hint: "Unsubscribed from marketing texts, emails or app notifications." },
   { key: "referral_source", group: "profile", label: "Referral source", icon: "users", tone: "gray", hint: "How they found us, or referred by another client.", customer: "never" },
   { key: "referrer", group: "profile", label: "Referrer", icon: "users", tone: "green", hint: "Referred other clients." },
+  { key: "family", group: "profile", label: "Family", icon: "users", tone: "violet", hint: "A parent with children on their family account.", customer: "default" },
+  { key: "kid", group: "profile", label: "Kid", icon: "users", tone: "violet", hint: "A child on a parent's family account: messages go to the parent." },
 ] as const satisfies readonly BadgeDef[];
 
 export type BadgeKey = (typeof BADGES)[number]["key"];
@@ -455,6 +457,9 @@ export interface BadgeFacts {
   referrals: number;
   /** Appointments kept on time in a row, most recent back (a no-show, late cancel or late arrival ends it). */
   streak: number;
+  /** Family accounts: children on this client's account, and whether they're a child themselves. */
+  kids?: number;
+  child?: boolean;
 }
 
 export interface DeriveContext {
@@ -566,8 +571,11 @@ export function deriveBadges(f: BadgeFacts, c: DeriveContext): StoredBadge[] {
   if (f.products.year > 0) add("product_buyer", { n: f.products.year });
   else if (f.products.ever === 0 && n >= 2) add("no_product", { visits: n });
 
-  const miss = [!f.hasPhone && "phone", !f.hasEmail && "email", !f.optedIn && "opt_in"].filter((x): x is string => !!x);
+  // A child's contact and consent are their parent's.
+  const miss = f.child ? [] : [!f.hasPhone && "phone", !f.hasEmail && "email", !f.optedIn && "opt_in"].filter((x): x is string => !!x);
   if (miss.length) add("missing_info", { miss: miss.join(",") });
+  if (f.kids) add("family", { n: f.kids });
+  if (f.child) add("kid");
   if (f.optedOut.length) add("opted_out", { ch: [...new Set(f.optedOut)].sort().join(",") });
   const source = f.source?.trim() && !/squire/i.test(f.source) ? f.source.trim().slice(0, 40) : null;
   if (source) add("referral_source", { src: source });
@@ -703,6 +711,10 @@ function describe(key: BadgeKey, d: Record<string, string | number>, level: (f: 
       return d.src ? { label: `Via ${String(d.src).slice(0, 20)}`, tip: `How they found us: ${d.src}.` } : { label: "Referred", tip: "Referred by another client." };
     case "referrer":
       return { tip: `Referred ${plural(num("n"), "client")}.` };
+    case "family":
+      return { tip: `${plural(num("n"), "child", "children")} on their family account.` };
+    case "kid":
+      return { tip: "On a parent's family account. Reminders and receipts go to the parent." };
   }
 }
 

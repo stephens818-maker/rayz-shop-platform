@@ -14,6 +14,7 @@ import {
   splitProblem,
 } from "@/domain/family";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
+import type { CustomerBadge } from "@/domain/customer-badges";
 import { localDateOf, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { lockIdentity, matchCustomer } from "./customers";
@@ -93,6 +94,22 @@ async function setPhoto(tx: DBorTx, customerId: string, photo: string | null | u
       .onConflictDoUpdate({ target: clientPhotos.customerId, set: { dataUrl: photo, updatedBy: by, updatedAt: new Date() } });
 }
 
+/** The Family and Kid badges follow the household. After the change commits; a failure never fails it. */
+async function refreshFamilyBadges(ids: (string | null | undefined)[]) {
+  const these = [...new Set(ids.filter((x): x is string => !!x))];
+  await import("./badges")
+    .then((b) => b.refreshBadges(these, new Date()))
+    .catch((e: Error) => console.error("badge refresh after a family change failed", e.message));
+}
+
+/** Run in the caller's transaction, or in one of our own and then refresh the household's badges. */
+async function inTx<T>(tx: DBorTx | undefined, run: (tx: DBorTx) => Promise<T>, touched: (r: T) => (string | null | undefined)[]): Promise<T> {
+  if (tx) return run(tx);
+  const r = await db.transaction(run);
+  await refreshFamilyBadges(touched(r));
+  return r;
+}
+
 export interface ChildOptions {
   tx?: DBorTx;
   now?: Date;
@@ -134,7 +151,7 @@ export async function addChild(guardianId: string, raw: unknown, actor: Actor, o
     await audit(actor, "customer.child_add", "customer", row.id, { guardianId, firstName: row.firstName }, null, tx);
     return row;
   };
-  return opts.tx ? run(opts.tx) : db.transaction(run);
+  return inTx(opts.tx, run, (r) => [guardianId, r.id]);
 }
 
 /** Edit a child; fields left out stay as they are. With `guardianId`, only that parent's child. */
@@ -180,7 +197,7 @@ export async function detachChild(childId: string, actor: Actor, opts: { guardia
     await audit(actor, "customer.child_remove", "customer", childId, { guardianId: c.guardianId }, null, tx);
     return { guardianId: c.guardianId };
   };
-  return opts.tx ? run(opts.tx) : db.transaction(run);
+  return inTx(opts.tx, run, (r) => [r.guardianId, childId]);
 }
 
 /**
@@ -216,7 +233,7 @@ export async function attachChild(guardianId: string, childId: string, actor: Ac
     );
     return { attached: true as const };
   };
-  return opts.tx ? run(opts.tx) : db.transaction(run);
+  return inTx(opts.tx, run, () => [guardianId, childId]);
 }
 
 export interface SplitInput {
@@ -238,7 +255,7 @@ export async function splitChild(childId: string, input: SplitInput, actor: Acto
   if (input.email && !email) throw new AppError("bad_request", "Email doesn't look right");
   if (!phone && !email) throw new AppError("bad_request", "Add their own phone number or email for the new account");
   const now = opts.now ?? new Date();
-  return db.transaction(async (tx) => {
+  return inTx(undefined, async (tx) => {
     const [c] = await tx.select().from(customers).where(eq(customers.id, childId)).for("update");
     if (!c || !c.guardianId || (opts.guardianId && c.guardianId !== opts.guardianId)) throw notFound("Child");
     const problem = splitProblem(c, await loadFamilySettings(tx), todayLocal(now));
@@ -256,7 +273,7 @@ export async function splitChild(childId: string, input: SplitInput, actor: Acto
       .where(eq(customers.id, childId));
     await audit(actor, "customer.child_split", "customer", childId, { guardianId: c.guardianId, phone: !!phone, email: !!email }, null, tx);
     return { id: childId, guardianId: c.guardianId };
-  });
+  }, (r) => [r.guardianId, childId]);
 }
 
 // ───────────────────────────── The parent's view ─────────────────────────────
@@ -275,6 +292,8 @@ export interface FamilyMemberView {
   lastVisit: string | null;
   averageDaysBetween: number | null;
   upcoming: { id: string; startsAt: string; shop: string; barber: string; service: string }[];
+  /** The child's own badges, as the brand shows them to customers. */
+  badges: CustomerBadge[];
   canSplit: boolean;
 }
 
@@ -286,7 +305,9 @@ export async function familyView(guardianId: string, now = new Date(), tx: DBorT
   const ids = kids.map((k) => k.id);
   if (!ids.length) return { settings, children: [] };
   const barberIds = [...new Set(kids.map((k) => k.preferredStaffId).filter((x): x is string => !!x))];
-  const [cadence, photos, barbers, stats, upcoming] = await Promise.all([
+  // Loaded here, not at the top: the badge modules reach back into client records.
+  const { customerBadges } = await import("./customer-badges");
+  const [cadence, photos, barbers, stats, upcoming, badges] = await Promise.all([
     cadenceFor(ids, now, tx),
     tx.select({ id: clientPhotos.customerId, url: clientPhotos.dataUrl }).from(clientPhotos).where(inArray(clientPhotos.customerId, ids)),
     barberIds.length ? tx.select({ id: staff.id, name: staff.displayLabel }).from(staff).where(inArray(staff.id, barberIds)) : [],
@@ -302,7 +323,9 @@ export async function familyView(guardianId: string, now = new Date(), tx: DBorT
       .innerJoin(staff, eq(staff.id, appointments.staffId))
       .where(and(inArray(appointments.customerId, ids), inArray(appointments.status, [...UPCOMING_STATUSES]), gte(appointments.startsAt, now)))
       .orderBy(asc(appointments.startsAt)),
+    Promise.all(ids.map((id) => customerBadges(id, now).then((b) => [id, b.badges] as const))),
   ]);
+  const badgesOf = new Map(badges);
   const today = todayLocal(now);
   const photoOf = new Map(photos.map((p) => [p.id, p.url]));
   const barberOf = new Map(barbers.map((b) => [b.id, b.name]));
@@ -329,6 +352,7 @@ export async function familyView(guardianId: string, now = new Date(), tx: DBorT
           .filter((u) => u.customerId === k.id)
           .slice(0, 5)
           .map((u) => ({ id: u.id, startsAt: u.startsAt.toISOString(), shop: u.shop, barber: u.barber, service: u.service })),
+        badges: badgesOf.get(k.id) ?? [],
         canSplit: !splitProblem(k, settings, today),
       };
     }),

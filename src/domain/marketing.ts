@@ -599,6 +599,9 @@ export const SegmentSchema = z.object({
   near: z.object({ shopId: z.uuid(), miles: z.number().min(1).max(500) }).nullable().default(null),
   sources: z.array(z.string().trim().min(1).max(60)).max(30).default([]),
   referred: tri,
+  /** Family accounts: parents with children on their account, and the children themselves. */
+  hasKids: tri,
+  isChild: tri,
   createdFrom: isoDate,
   createdTo: isoDate,
 

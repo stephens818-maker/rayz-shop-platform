@@ -201,6 +201,12 @@ async function fieldSql(f: FieldDef, policy: ClientPolicy): Promise<Piece> {
       return raw("c.source");
     case "created":
       return { expr: day("c.created_at"), needs: [] };
+    case "is_child":
+      return raw("c.guardian_id is not null");
+    case "parent":
+      return raw("(select btrim(pg.first_name || ' ' || coalesce(pg.last_name, '')) from customers pg where pg.id = c.guardian_id)");
+    case "kids":
+      return raw("(select count(*)::int from customers kc where kc.guardian_id = c.id)");
     case "first_visit":
       return { expr: day("va.first_at"), needs: ["va"] };
     case "last_visit":

@@ -168,11 +168,14 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
       has_email: boolean;
       opted_in: boolean;
       referrals: number;
+      kids: number;
+      child: boolean;
     }>(
       tx.execute(sql`select c.id, to_char((c.created_at at time zone ${TZ})::date, 'YYYY-MM-DD') created_on, to_char(c.birthday, 'MM-DD') bday,
           c.preferred_staff_id, c.source, c.referred_by_id is not null referred_by,
           coalesce(btrim(c.phone), '') <> '' has_phone, coalesce(btrim(c.email), '') <> '' has_email, (c.sms_opt_in or c.email_opt_in) opted_in,
-          (select count(*)::int from customers r where r.referred_by_id = c.id) referrals
+          (select count(*)::int from customers r where r.referred_by_id = c.id) referrals,
+          (select count(*)::int from customers k where k.guardian_id = c.id) kids, c.guardian_id is not null child
         from customers c where c.id = any(${these})`),
     ),
     rowsOf<{ customer_id: string; d: string; staff_id: string }>(
@@ -289,6 +292,8 @@ export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSett
       referredBy: p.referred_by,
       referrals: Number(p.referrals),
       streak: Number(streakBy.get(p.id)?.n ?? 0),
+      kids: Number(p.kids),
+      child: p.child,
     });
   }
   return out;

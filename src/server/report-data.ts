@@ -257,6 +257,7 @@ async function barberPerformance(scope: ReportScope, loc: ViewCtx): Promise<Repo
   const visits = [
     m("Appointments", "int", k, (v) => v.appointments),
     m("Walk-ins", "int", k, (v) => v.walkIns),
+    m("Kids' cuts", "int", k, (v) => v.kidsCuts),
     m("No-shows", "int", k, (v) => v.noShows.n),
     m("Cancellations", "int", k, (v) => v.cancellations.n),
     m("Rebook rate", "pct", k, (v) => v.rebookRate),
@@ -1196,6 +1197,11 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           hint: `${formatCents(k.noShows.cents)} lost · ${k.cancellations.n} cancellations`,
           tone: k.noShows.n ? "down" : undefined,
         },
+        {
+          label: "Kids' cuts",
+          value: String(k.kidsCuts),
+          hint: k.visits || k.kidsCuts ? `${k.kidsClients} kids on family accounts` : undefined,
+        },
       ],
       tables: [
         metricTable(loc, {
@@ -1217,6 +1223,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
             km("Returning clients", "int", (x) => x.returningClients, false),
             km("Appointments", "int", (x) => x.appointments),
             km("Walk-ins", "int", (x) => x.walkIns),
+            km("Kids' cuts", "int", (x) => x.kidsCuts),
+            km("Kids seen", "int", (x) => x.kidsClients, false),
             km("No-shows", "int", (x) => x.noShows.n),
             km("No-show value", "money", (x) => x.noShows.cents),
             km("Cancellations", "int", (x) => x.cancellations.n),

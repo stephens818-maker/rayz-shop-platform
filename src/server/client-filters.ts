@@ -175,6 +175,8 @@ export async function segmentConditions(seg: Segment, now: Date): Promise<SQL[]>
         and 7917.6 * asin(least(1, sqrt(power(sin(radians(cz.lat - h.lat) / 2), 2) + cos(radians(h.lat)) * cos(radians(cz.lat)) * power(sin(radians(cz.lng - h.lng) / 2), 2)))) <= ${seg.near.miles})`);
   if (seg.sources.length) add(sql`lower(c.source) in ${texts(seg.sources.map((s) => s.toLowerCase()))}`);
   add(tri(seg.referred, sql`c.referred_by_id is not null`));
+  add(tri(seg.hasKids, sql`exists (select 1 from customers k where k.guardian_id = c.id)`));
+  add(tri(seg.isChild, sql`c.guardian_id is not null`));
   if (seg.createdFrom) add(sql`c.created_at >= ${from(seg.createdFrom)}`);
   if (seg.createdTo) add(sql`c.created_at < ${to(seg.createdTo)}`);
 

@@ -529,6 +529,9 @@ export interface Kpis {
   cancellations: { n: number; cents: number };
   /** Scheduled length of appointments that weren't cancelled or no-shows. */
   bookedMinutes: number;
+  /** Completed visits by someone who was a child on a family account at the time, and how many children. */
+  kidsCuts: number;
+  kidsClients: number;
   heatmap: { shopId: string | null; staffId: string | null; dow: number; hour: number; n: number }[];
 }
 
@@ -551,7 +554,7 @@ async function kpisBy(s: ReportScope, o?: Grain): Promise<Map<string, Kpis>> {
     sql`${sql.raw(b)}.shop_id in ${ids(s)} and (${sql.raw(v)}.shop_id is null or ${sql.raw(b)}.shop_id = ${sql.raw(v)}.shop_id)
       and (${sql.raw(v)}.staff_id is null or ${sql.raw(b)}.staff_id::text = ${sql.raw(v)}.staff_id) ${staffFilter(sql.raw(`${b}.staff_id`), s)}`;
 
-  const [rebook, visitors, retention, outcomes, heat] = await Promise.all([
+  const [rebook, visitors, retention, outcomes, kids, heat] = await Promise.all([
     // Squire rows exported without a booked-at time can't say when the next visit was booked, so
     // those visits are left out rather than counted as not rebooked.
     rows<{ shop_id: string | null; staff_id: string | null; visits: number; rebooked: number; unknown: number }>(sql`
@@ -593,15 +596,23 @@ async function kpisBy(s: ReportScope, o?: Grain): Promise<Map<string, Kpis>> {
       from appointments a
       where a.shop_id in ${ids(s)} and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
       group by 1, 2, 3`),
+    // A child split into their own account still counts as a kid for the visits before the split.
+    rows<{ shop_id: string | null; staff_id: string | null; cuts: number; clients: number }>(sql`
+      select ${g} shop_id, ${gs} staff_id, count(*)::int cuts, count(distinct a.customer_id)::int clients
+      from appointments a join customers c on c.id = a.customer_id
+      where a.shop_id in ${ids(s)} and a.status = 'completed' and a.starts_at >= ${start} and a.starts_at < ${end} ${sf}
+        and (c.guardian_id is not null or (c.own_account_at is not null and a.starts_at < c.own_account_at))
+      group by 1, 2`),
     appointmentHeatmap(s, o),
   ]);
-  const keys = new Set([...rebook, ...visitors, ...retention, ...outcomes].map(keyOf));
+  const keys = new Set([...rebook, ...visitors, ...retention, ...outcomes, ...kids].map(keyOf));
   if (!o?.byShop && !o?.byStaff) keys.add(TOTAL);
   return new Map(
     [...keys].map((k) => {
       const r = rebook.find((x) => keyOf(x) === k) ?? { visits: 0, rebooked: 0, unknown: 0 };
       const v = visitors.find((x) => keyOf(x) === k) ?? { newClients: 0, returning: 0, newToBrand: 0 };
       const ret = retention.find((x) => keyOf(x) === k) ?? { prior: 0, retained: 0 };
+      const kid = kids.find((x) => keyOf(x) === k) ?? { cuts: 0, clients: 0 };
       const mine = outcomes.filter((x) => keyOf(x) === k);
       const status = (st: string) => {
         const x = mine.find((m) => m.status === st);
@@ -626,6 +637,8 @@ async function kpisBy(s: ReportScope, o?: Grain): Promise<Map<string, Kpis>> {
           noShows: status("no_show"),
           cancellations: status("cancelled"),
           bookedMinutes: mine.reduce((a, x) => a + x.minutes, 0),
+          kidsCuts: kid.cuts,
+          kidsClients: kid.clients,
           heatmap: heat.filter((h) => segKey(h.shopId, h.staffId) === k),
         },
       ];
@@ -662,6 +675,8 @@ export function emptyKpis(s: ReportScope): Kpis {
     noShows: { n: 0, cents: 0 },
     cancellations: { n: 0, cents: 0 },
     bookedMinutes: 0,
+    kidsCuts: 0,
+    kidsClients: 0,
     heatmap: [],
   };
 }

@@ -46,7 +46,7 @@ export function aggsFor(t: FieldType): Agg[] {
   return ["none", "count"];
 }
 
-export const FIELD_GROUPS = ["Client", "Contact", "Profile", "Visits", "Spend", "Loyalty and gift cards", "Marketing", "Custom fields"] as const;
+export const FIELD_GROUPS = ["Client", "Contact", "Profile", "Family", "Visits", "Spend", "Loyalty and gift cards", "Marketing", "Custom fields"] as const;
 export type FieldGroup = (typeof FIELD_GROUPS)[number];
 
 export interface FieldDef {
@@ -84,6 +84,9 @@ export const CUSTOMER_FIELDS: FieldDef[] = [
   { key: "primary_barber", label: "Primary barber", group: "Profile", type: "text", reads: "preferred_barber", hint: "The preferred barber on their profile, or who cut them last." },
   { key: "source", label: "Source", group: "Profile", type: "text" },
   { key: "created", label: "Client since", group: "Profile", type: "date" },
+  { key: "is_child", label: "Child profile", group: "Family", type: "bool", hint: "A child on a parent's family account." },
+  { key: "parent", label: "Parent", group: "Family", type: "text", hint: "The parent whose account a child is on." },
+  { key: "kids", label: "Kids on account", group: "Family", type: "int", hint: "Children on this client's family account." },
   { key: "first_visit", label: "First visit", group: "Visits", type: "date", activity: true },
   { key: "last_visit", label: "Last visit", group: "Visits", type: "date", activity: true },
   { key: "visits", label: "Visits", group: "Visits", type: "int", activity: true, hint: "Completed appointments." },

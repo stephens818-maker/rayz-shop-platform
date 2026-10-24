@@ -255,6 +255,8 @@ export function SegmentFilters({
           seg.near,
           seg.sources,
           seg.referred,
+          seg.hasKids,
+          seg.isChild,
           seg.createdFrom,
           seg.createdTo,
         )}
@@ -280,6 +282,8 @@ export function SegmentFilters({
           )}
           <Dates label="Client since" from={seg.createdFrom} to={seg.createdTo} disabled={ro} onChange={(createdFrom, createdTo) => s({ createdFrom, createdTo })} />
           <TriSelect label="Referred by a client" value={seg.referred} disabled={ro} onChange={(referred) => s({ referred })} />
+          <TriSelect label="Has kids on their account" value={seg.hasKids} disabled={ro} onChange={(hasKids) => s({ hasKids })} />
+          <TriSelect label="Is a child (family account)" value={seg.isChild} disabled={ro} onChange={(isChild) => s({ isChild })} />
         </div>
         {at("birthday", "masked") && (
           <Field label="Birthday in">
