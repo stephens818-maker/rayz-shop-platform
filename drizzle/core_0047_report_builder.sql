@@ -1,4 +1,4 @@
--- The custom report builder: saved_reports keeps each report's definition (columns, filters, grouping, totals, dates and locations), who it's shared with and its email schedule; saved_report_sends records each scheduled report, recipient and day so a send goes out once, even when the cron reruns. Indexes for the per-client facts the reports read. Location management roles can open, build and export custom reports. Additive only.
+-- The custom report builder: saved_reports keeps each report's definition (columns, filters, grouping, totals, dates and locations), who it's shared with and its email schedule; saved_report_sends records each scheduled report, recipient and day so a send goes out once, even when the cron reruns. Indexes for the per-client facts the reports read. Scheduled reports go to staff, so like the Morning Dashboard they need no shop on the outbox job. Location management roles can open, build and export custom reports. Additive only.
 CREATE TABLE "saved_reports" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" text NOT NULL,
@@ -32,4 +32,6 @@ CREATE INDEX IF NOT EXISTS "sales_customer_date_idx" ON "sales" ("customer_id", 
 CREATE INDEX IF NOT EXISTS "appointments_customer_status_idx" ON "appointments" ("customer_id", "status", "starts_at") WHERE "customer_id" is not null;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "customers_created_at_idx" ON "customers" ("created_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "customers_preferred_staff_idx" ON "customers" ("preferred_staff_id") WHERE "preferred_staff_id" is not null;--> statement-breakpoint
+ALTER TABLE "notification_jobs" DROP CONSTRAINT "notification_jobs_shop_present";--> statement-breakpoint
+ALTER TABLE "notification_jobs" ADD CONSTRAINT "notification_jobs_shop_present" CHECK ("shop_id" IS NOT NULL OR "kind" IN ('otp', 'privacy_alert', 'digest', 'saved_report')) NOT VALID;--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["report_builder.view","report_builder.build","report_builder.export"]'::jsonb WHERE "key" IN ('brand_admin', 'regional_manager', 'shop_manager') AND NOT ("permissions" ? 'report_builder.view');

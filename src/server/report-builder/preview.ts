@@ -1,5 +1,5 @@
 import { encodeFilter } from "@/domain/client-filters";
-import { ReportDefinition, segmentFromReport, type ExportFormat, type ReportResult } from "@/domain/report-builder";
+import { ReportDefinition, fieldDef, segmentFromReport, type ExportFormat, type ReportResult } from "@/domain/report-builder";
 import { todayLocal } from "@/lib/time";
 import { can, type StaffContext } from "../auth/staff";
 import { clientPolicy, recordClientAccess } from "../client-privacy";
@@ -53,12 +53,17 @@ export interface Preview {
   blast: { f: string; shops: string; notes: string[] } | null;
 }
 
-/** One page of the report, logged in the client data access log like browsing the client list. */
+/**
+ * One page of the report. A page showing protected client details (contact details, birthday,
+ * custom fields) is logged in the client data access log like browsing the client list, and counts
+ * toward the lookup limits; one of names and visit counts isn't, so building a report doesn't trip them.
+ */
 export async function previewReport(ctx: StaffContext, req: RunRequest, now: Date = new Date()): Promise<Preview> {
   const r = await resolveRun(ctx, req);
   const policy = await clientPolicy(ctx);
   const { scope, customerIds, ...result } = await runReport(ctx, policy, r.definition, { page: req.page, own: r.own, now });
-  if (customerIds.length)
+  const details = result.columns.some((c) => fieldDef(c.key, policy.custom)?.reads);
+  if (customerIds.length && details)
     await recordClientAccess(ctx, { kind: "list", detail: { report: r.id, name: r.name, page: result.page, clients: customerIds.length, fields: result.columns.map((c) => `${c.key}${c.masked ? ":masked" : ""}`) } });
   let blast: Preview["blast"] = null;
   if (r.definition.source === "customers" && can(ctx, "campaign_center.create")) {
