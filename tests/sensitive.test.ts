@@ -217,7 +217,10 @@ describe("SAQ-A: card data only in Stripe's own fields", () => {
     vi.stubEnv("NODE_ENV", "production");
     try {
       const cfg = (await import("../next.config")).default;
-      expect(await cfg.headers!()).toEqual([{ source: "/admin/checkout/:path*", headers: [{ key: "Content-Security-Policy", value: CHECKOUT_CSP }] }]);
+      expect(await cfg.headers!()).toEqual([
+        { source: "/admin/checkout/:path*", headers: [{ key: "Content-Security-Policy", value: CHECKOUT_CSP }] },
+        { source: "/embed/:path*", headers: [{ key: "Content-Security-Policy", value: "frame-ancestors *" }] },
+      ]);
     } finally {
       vi.unstubAllEnvs();
     }
