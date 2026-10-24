@@ -90,7 +90,7 @@ export const BARBER_REPORTS: ReadonlySet<ReportKey> = new Set([
  * Reports with no barber anywhere in them: stock, purchasing, Stripe accounts, loyalty rewards, the
  * Morning Dashboard and the audit log. Every other report takes the barber filter.
  */
-export const NO_BARBER_REPORTS: ReadonlySet<ReportKey> = new Set(["inventory", "inventory_movement", "sell_through", "low_stock", "purchasing", "shop_accounts", "loyalty", "morning_dashboard", "audit_log"]);
+export const NO_BARBER_REPORTS: ReadonlySet<ReportKey> = new Set(["inventory", "inventory_movement", "sell_through", "low_stock", "purchasing", "shop_accounts", "rollup", "loyalty", "morning_dashboard", "audit_log"]);
 
 export const defaultView = (report?: ReportKey): ReportView => (report === "sales_by_barber" || report === "service_times" ? "barbers" : "combined");
 

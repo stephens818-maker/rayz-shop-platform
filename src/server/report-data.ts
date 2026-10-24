@@ -58,6 +58,7 @@ import { EXCEPTION_LABEL } from "@/domain/morning-dashboard";
 import { morningDoc } from "@/domain/morning-render";
 import { ACCOUNT_STATE_LABEL, PAYMENTS_MODE_LABEL } from "@/domain/connect";
 import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-report";
+import { rollupData } from "./rollup-report";
 import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
@@ -968,6 +969,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         "Processing fees are kept on refunded and voided charges, the same as Stripe's own fee.",
       ],
     };
+  },
+
+  async rollup(i) {
+    return rollupData(i);
   },
 
   async card_vs_cash({ scope, loc }) {

@@ -507,6 +507,12 @@ export const REPORTS = [
     hint: "Taxable sales and tax collected per state, location and month or quarter, after refunds, for each state's filing.",
   },
   { key: "shop_accounts", label: "Shop P&L by Stripe account", href: "/admin/reports/shop-accounts", hint: "Each shop's card sales, fees, refunds, tips and payouts through its own connected account, grouped by owner." },
+  {
+    key: "rollup",
+    label: "Location comparison",
+    href: "/admin/reports/rollup",
+    hint: "Locations or regions side by side: sales, average ticket, clients, new clients, appointments, no-shows, growth on the prior period and rank. Built from the nightly location rollups.",
+  },
   { key: "discounts_refunds", label: "Discounts and refunds", href: "/admin/reports/discounts-refunds" },
   { key: "inventory", label: "Inventory valuation", href: "/admin/reports/inventory" },
   { key: "inventory_movement", label: "Stock movement and shrink", href: "/admin/reports/inventory-movement" },
