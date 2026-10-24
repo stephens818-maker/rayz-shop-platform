@@ -6,6 +6,8 @@ import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader } from "@/compo
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { getLoyaltyConfig } from "@/server/loyalty";
+import { loadFamilySettings } from "@/server/family";
+import { FamilyEditor } from "./family-editor";
 import { brandInterval } from "@/server/timing";
 import { ShopTimingCard } from "../booking-times/editors";
 import { headers } from "next/headers";
@@ -32,7 +34,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const filing = can(ctx, "settings.taxes") && ctx.brandWide;
   const shopId = workingShopId(ctx, (await searchParams).shop);
   if (!shopId) return <Empty title="No shop selected" />;
-  const [shop, hours, closures, loyalty, brandMinutes, readers, handoff, brandHandoff, reviewRules] = await Promise.all([
+  const [shop, hours, closures, loyalty, brandMinutes, readers, handoff, brandHandoff, reviewRules, family] = await Promise.all([
     db.query.shops.findFirst({ where: eq(shops.id, shopId) }),
     db.select().from(shopHours).where(eq(shopHours.shopId, shopId)),
     db.select().from(shopClosures).where(and(eq(shopClosures.shopId, shopId), gte(shopClosures.date, todayLocal()))).orderBy(asc(shopClosures.date)),
@@ -42,6 +44,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     shopHandoffConfig(shopId),
     brandHandoffConfig(),
     loadReviewRules(),
+    loadFamilySettings(),
   ]);
   const taxStates = filing ? await taxFilingStates() : [];
   if (!shop) return <Empty title="Shop not found" />;
@@ -131,6 +134,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       {can(ctx, "handoff.settings") && <BrandTipsEditor initial={brandHandoff.tips} />}
       {brand && <ReviewRulesEditor initial={reviewRules} />}
       {brand && <LoyaltyEditor initial={loyalty} />}
+      {brand && <FamilyEditor initial={family} />}
       {can(ctx, "locations.setup") && (
         <Card>
           <CardHeader

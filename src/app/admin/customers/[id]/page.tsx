@@ -23,11 +23,16 @@ import { latestReceipts, receiptOnFile } from "@/server/receipts";
 import { CALL_KIND_LABEL, CALL_STATUS_LABEL, callsWith, optOutKeys } from "@/server/messaging";
 import { hasShop, inShops } from "@/server/tenant";
 import { clientCadence } from "@/server/visit-cadence";
+import { ageOn, splitProblem } from "@/domain/family";
+import { cadenceLabel } from "@/domain/visit-cadence";
+import { todayLocal } from "@/lib/time";
+import { familyView, loadFamilySettings } from "@/server/family";
 import { shownBadges } from "@/server/badges";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
 import { ResendReceipt } from "../../sales/[id]/receipt-panel";
 import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
+import { FamilyCard, type FamilyKid } from "./family-card";
 import { ClientIdentity } from "./identity";
 import { ClientTags } from "./tags";
 
@@ -189,6 +194,38 @@ export default async function CustomerPage({
     latestReceipts(saleRows.map((r) => r.s.id)),
     shownBadges(policy, [c.id]),
   ]);
+  const [familySettings, family, parentRow, formerRow] = await Promise.all([
+    loadFamilySettings(),
+    c.guardianId ? null : familyView(c.id),
+    c.guardianId ? db.query.customers.findFirst({ where: eq(customers.id, c.guardianId), columns: { id: true, firstName: true, lastName: true } }) : null,
+    c.formerGuardianId ? db.query.customers.findFirst({ where: eq(customers.id, c.formerGuardianId), columns: { id: true, firstName: true, lastName: true } }) : null,
+  ]);
+  const today = todayLocal();
+  const nameOf = (x: { firstName: string; lastName: string | null }) => `${x.firstName} ${x.lastName ?? ""}`.trim();
+  const seesAge = policy.level("birthday") !== "hidden";
+  const kidOf = (k: { id: string; firstName: string; lastName: string | null; birthday: string | null; notes: string | null }, extra: Pick<FamilyKid, "age" | "visits" | "lastVisit" | "cadence" | "canSplit">): FamilyKid => ({
+    id: k.id,
+    firstName: k.firstName,
+    lastName: k.lastName,
+    birthday: policy.level("birthday") === "full" ? k.birthday : null,
+    notes: policy.level("notes") === "full" ? k.notes : null,
+    ...extra,
+    age: seesAge ? extra.age : null,
+  });
+  const familyKids = (family?.children ?? []).map((k) =>
+    kidOf(k, { age: k.age, visits: k.visits, lastVisit: k.lastVisit, cadence: k.averageDaysBetween != null ? cadenceLabel(k.averageDaysBetween) : null, canSplit: k.canSplit }),
+  );
+  const familySelf = c.guardianId
+    ? kidOf(c, {
+        age: ageOn(c, today),
+        visits: stats.visits,
+        lastVisit: null,
+        cadence: cadence.cadence.cadenceDays != null ? cadenceLabel(cadence.cadence.cadenceDays) : null,
+        canSplit: !splitProblem(c, familySettings, today),
+      })
+    : null;
+  const canFamily = full && can(ctx, "clients.family");
+  const showFamily = !!c.guardianId || familyKids.length > 0 || !!c.formerGuardianId || canFamily;
   const receiptLabel = (r: { channel: string; masked: string | null } | undefined) => (!r ? null : r.channel === "none" ? "No receipt" : `${r.channel === "sms" ? "Texted" : "Emailed"} ${r.masked}`);
   const pager = (key: "v" | "s", pageNo: number, total: number, size: number) =>
     total > size && (
@@ -253,7 +290,7 @@ export default async function CustomerPage({
         <Stat
           label="Loyalty progress"
           value={`${formatCents(loyalty.progressCents)} / ${formatCents(loyalty.thresholdCents)}`}
-          hint={`${formatCents(loyalty.remainingCents)} to next ${formatCents(loyalty.rewardCents)}`}
+          hint={`${loyalty.household ? `household card (${parentRow ? parentRow.firstName : "parent"}'s) · ` : ""}${formatCents(loyalty.remainingCents)} to next ${formatCents(loyalty.rewardCents)}`}
         />
         <Stat label="Rewards ready" value={formatCents(loyalty.availableCents)} hint={`${loyalty.rewards.length} reward${loyalty.rewards.length === 1 ? "" : "s"}`} />
         {rating && (
@@ -317,7 +354,20 @@ export default async function CustomerPage({
               usual={usual}
             />
           )}
-          {canMessage && (
+          {showFamily && (
+            <FamilyCard
+              customerId={c.id}
+              firstName={c.firstName}
+              parent={parentRow ? { id: parentRow.id, name: nameOf(parentRow) } : null}
+              self={familySelf}
+              former={formerRow ? { id: formerRow.id, name: nameOf(formerRow), at: c.ownAccountAt ? formatDate(c.ownAccountAt, "MMM d, yyyy") : null } : null}
+              kids={familyKids}
+              settings={familySettings}
+              canEdit={canFamily}
+              allow={{ birthday: policy.canEdit("birthday"), notes: policy.canEdit("notes"), phone: policy.canAdd("phone"), email: policy.canAdd("email") }}
+            />
+          )}
+          {canMessage && !c.guardianId && (
             <Card>
               <CardHeader title="Contact" subtitle="Calls and texts go through the shop line, so the client's number stays private." />
               <div className="p-4">
