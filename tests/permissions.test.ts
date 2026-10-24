@@ -173,9 +173,12 @@ describe("effective permissions", () => {
   });
 
   it("owner-only permissions can't be granted per user, and export needs view", () => {
-    const a = access("brand_admin", { "settings.brand": true, "report.gift_cards.view": false });
+    const a = access("brand_admin", { "settings.brand": true });
     expect(a.permissions.has("settings.brand")).toBe(false);
-    expect(a.permissions.has("report.gift_cards.export")).toBe(false);
+    const r = access("regional_manager", { "report.gift_cards.view": false, "report.gift_cards.export": true });
+    expect(r.permissions.has("report.gift_cards.export")).toBe(false);
+    // A brand-wide Brand Admin always sees every report, so the floor puts a removed view back.
+    expect(access("brand_admin", { "report.gift_cards.view": false }).permissions.has("report.gift_cards.view")).toBe(true);
     expect(access("barber", { "report.sales_summary.export": true }).permissions.has("report.sales_summary.export")).toBe(false);
   });
 

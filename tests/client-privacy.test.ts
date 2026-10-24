@@ -122,7 +122,8 @@ describe("who may change a rule", () => {
 
   it("a brand admin can set a barber's level, but not their own or their role's, nor the owner's", () => {
     expect(fieldRuleChangeDenied(admin, base)).toBeNull();
-    expect(fieldRuleChangeDenied(admin, { ...base, roleId: "admin-role", roleKey: "brand_admin" })).toMatch(/what you see yourself/);
+    expect(fieldRuleChangeDenied(admin, { ...base, roleId: "admin-role", roleKey: "brand_admin" })).toMatch(/Brand Admins always/);
+    expect(fieldRuleChangeDenied(admin, { ...base, roleId: "admin-role", roleKey: "brand_admin", setting: "edit", level: "deny" })).toMatch(/what you see yourself/);
     expect(fieldRuleChangeDenied(admin, { ...base, roleId: null, staffId: "admin" })).toMatch(/what you see yourself/);
     expect(fieldRuleChangeDenied(admin, { ...base, roleId: "owner", roleKey: "brand_owner" })).toMatch(/Brand Owner/);
   });
@@ -135,8 +136,10 @@ describe("who may change a rule", () => {
     expect(fieldRuleChangeDenied(admin, { ...base, roleId: null })).toMatch(/role or a person/);
   });
 
-  it("the owner can change anyone's, including their own role's rules for others", () => {
-    expect(fieldRuleChangeDenied({ ...admin, isOwner: true, levelAt: () => "full" }, { ...base, roleId: "admin-role", roleKey: "brand_admin" })).toBeNull();
+  it("the owner can change anyone's entry rights, but Brand Admins always see every detail", () => {
+    const owner = { ...admin, isOwner: true, levelAt: () => "full" as const };
+    expect(fieldRuleChangeDenied(owner, { ...base, roleId: "admin-role", roleKey: "brand_admin", setting: "edit", level: "deny" })).toBeNull();
+    expect(fieldRuleChangeDenied(owner, { ...base, roleId: "admin-role", roleKey: "brand_admin", level: "masked" })).toMatch(/Brand Admins always/);
   });
 });
 

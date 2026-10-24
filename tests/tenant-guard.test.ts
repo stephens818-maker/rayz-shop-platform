@@ -16,6 +16,8 @@ function walk(dir: string): string[] {
 const BRAND_LEVEL: Record<string, string> = {
   "customers/[id]/page.tsx":
     "Clients are brand-wide and their visit history follows them to every shop; ratings and notes are filtered to the viewer's shops, and only their own shops' tickets are linked",
+  "customers/[id]/photo/route.ts":
+    "Clients are brand-wide; the photo needs the photo field at full, then photoReach limits it to clients of the viewer's shops (or ones they've served) unless they see every client",
   "import/[runId]/errors/route.ts": "Import runs are brand-level; the route needs import.run, which only all-shops access keeps",
   "campaign-center/automations/[id]/page.tsx": "Automated campaigns are the brand's; the page shows and switches only the viewer's own locations, and rewording the brand's version needs Campaign Center: create with access to all shops",
   "inventory/[id]/page.tsx": "A product is brand catalog; stock, ledger and orders on the page are filtered to the viewer's shops",
