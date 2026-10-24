@@ -9,6 +9,7 @@ import { VERSION_STATUS_LABEL, describePlan, formatFieldValue, timeline, type Co
 import { METHOD_LABEL } from "@/domain/tips";
 import { addDays, formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
+import { inTenant } from "@/server/tenant";
 import { compensationAccess, customFields, customValues, loadCompensationSettings, setupRates, versionContext, versionsFor } from "@/server/compensation";
 import { DeleteVersion, FieldValues, VersionEditor, type Draft } from "./client";
 
@@ -41,7 +42,7 @@ function draftOf(v: CompVersion | null, effectiveFrom: string): Draft {
 export default async function StaffCompensationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await guardPage("/admin/staff/[id]/compensation");
-  if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
+  if (!/^[0-9a-f-]{36}$/i.test(id) || !(await inTenant(ctx, "staff", id))) notFound();
   const person = await db.query.staff.findFirst({ where: eq(staff.id, id) });
   if (!person) notFound();
   const access = await compensationAccess(ctx, id);

@@ -2424,7 +2424,7 @@ export const staffCompensation = pgTable(
   (t) => [index("staff_compensation_staff_idx").on(t.staffId, t.effectiveFrom, t.createdAt)],
 );
 
-/** Employee fields the brand adds itself. Labels that look like bank, card, SSN or tax ID fields are refused (by the app and a check). */
+/** Employee fields the brand adds itself. Labels that look like bank, card, social security or tax ID fields are refused (by the app and a check). */
 export const staffCustomFields = pgTable("staff_custom_fields", {
   id: id(),
   label: text("label").notNull(),
