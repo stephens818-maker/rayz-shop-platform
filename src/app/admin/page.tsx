@@ -160,7 +160,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <Stat label={ownBook ? "Waiting for me" : "Waiting now"} value={count(["checked_in"]) + (waitlist[0]?.n ?? 0)} hint={!seesWalkins ? undefined : `${waitlist[0]?.n ?? 0} on waitlist`} />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card>
           <CardHeader title="Up next" action={<Link className="text-xs underline" href="/admin/calendar">Open calendar</Link>} />
           {upcoming.length === 0 ? (
