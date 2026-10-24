@@ -54,7 +54,7 @@ export type Block =
   | { kind: "note"; text: string };
 
 export interface DocSection {
-  key: MorningSection;
+  key: MorningSection | "saved_reports";
   title: string;
   subtitle?: string;
   link?: { label: string; href: string };
@@ -305,6 +305,15 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
     if (r.byShop.length > 1) blocks.push({ kind: "bars", title: `Clicks by location, ${L.dayShort}`, rows: [...r.byShop].sort((a, b) => b.clicks.day - a.clicks.day).map((x) => ({ label: x.shop.name, value: x.clicks.day, valueLabel: String(x.clicks.day), prior: x.clicks.prior })) });
     sections.push({ key: "reviews", title: SECTION_LABEL.reviews, link: { label: "Reviews report", href: reportLink(d, "/admin/reports/reviews", p.reportDay, p.reportDay, r.shops) }, blocks: [...blocks, ...partial(d, r.shops)] });
   }
+
+  if (d.savedReports?.length)
+    sections.push({
+      key: "saved_reports",
+      title: "Your custom reports",
+      subtitle: "Totals as of this morning, for the dates each report covers",
+      link: { label: "Custom reports", href: appLink(d, "/admin/reports/custom") },
+      blocks: [{ kind: "list", items: d.savedReports.map((r) => ({ title: r.name, detail: r.lines.join(" · "), href: appLink(d, r.href) })) }],
+    });
 
   const skipped = p.skipped.length ? ` (${p.skipped.map((x) => formatDate(x, "EEEE")).join(", ")} closed)` : "";
   const headline = s ? `: ${dollars(s.net.day)} net, ${changeWords(s.net.day, s.net.prior)}` : "";

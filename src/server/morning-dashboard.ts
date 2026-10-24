@@ -49,6 +49,7 @@ import { processDueJobs } from "./notifications/queue";
 import { loadSettings as loadPayrollSettings } from "./payroll/groups";
 import { ZERO_SALES, availableMinutesAt, dailyTotals, giftCardTotalsByShop, kpisAt, loyaltyActivity, refundTotals, salesTotalsAt } from "./reports";
 import { stockLevels } from "./inventory/stock";
+import { morningReportsFor } from "./report-builder/deliver";
 import { rows as sqlRows, uuids } from "./report-sql";
 import { timedAppointments } from "./service-times-report";
 import { staffingFor } from "./staff-time";
@@ -714,6 +715,8 @@ export interface BuildInput {
   memo?: Memo;
   /** For the in-app page: every section, whatever the email settings leave out. */
   allSections?: boolean;
+  /** Add the custom reports they put in the dashboard: on the page, and on one version a day. */
+  savedReports?: boolean;
 }
 
 /**
@@ -752,13 +755,17 @@ export async function buildMorningDashboard(input: BuildInput, cals?: Map<string
           ? shopRefs.map((s) => s.name).join(", ")
           : `${shopRefs.length} locations`;
   const keys = Object.keys(LOADERS) as MorningSection[];
-  const blocks = await Promise.all(keys.map((k) => (input.allSections || settings.sections[k] ? LOADERS[k](c) : Promise.resolve(null))));
+  const [blocks, savedReports] = await Promise.all([
+    Promise.all(keys.map((k) => (input.allSections || settings.sections[k] ? LOADERS[k](c) : Promise.resolve(null)))),
+    input.savedReports ? morningReportsFor(access.staffId, now) : Promise.resolve(null),
+  ]);
   const d = {
     firstName: input.firstName,
     version: { scope: shopRefs.length === 1 ? shopRefs[0].id : "all", label, shops: shopRefs },
     periods: p,
     baseUrl: appBaseUrl(),
     ...Object.fromEntries(keys.map((k, i) => [k, blocks[i]])),
+    savedReports,
   } as MorningDashboard;
   return d;
 }
@@ -766,7 +773,7 @@ export async function buildMorningDashboard(input: BuildInput, cals?: Map<string
 /** For the in-app page: the person's dashboard for these shops (or all theirs) on a morning. */
 export async function morningDashboardFor(access: StaffAccess, firstName: string, shopIds: string[] | null, today: LocalDate, now = new Date()) {
   const ids = shopIds ?? morningShops(access);
-  return buildMorningDashboard({ access, firstName, shopIds: ids, today, now, allSections: true });
+  return buildMorningDashboard({ access, firstName, shopIds: ids, today, now, allSections: true, savedReports: true });
 }
 
 // ───────────────────────────── Sending ─────────────────────────────
@@ -844,7 +851,7 @@ export async function sendDueMorningDashboards(now: Date = new Date()) {
       const email = wantEmail && (await claim(today, person.staffId, plan.scope, "email", now));
       const sms = wantSms && (await claim(today, person.staffId, plan.scope, "sms", now));
       if (!email && !sms) continue;
-      const d = await buildMorningDashboard({ access, firstName: person.firstName, shopIds: plan.shopIds, now, today, settings: s, memo }, cals);
+      const d = await buildMorningDashboard({ access, firstName: person.firstName, shopIds: plan.shopIds, now, today, settings: s, memo, savedReports: plan === person.plans[0] }, cals);
       const channels = [...(email ? (["email"] as const) : []), ...(sms ? (["sms"] as const) : [])];
       if (!d || !hasContent(d)) {
         for (const ch of channels) await db.update(morningDashboardSends).set({ status: "skipped" }).where(sendRow(today, person.staffId, plan.scope, ch));
@@ -885,7 +892,7 @@ export async function sendTestMorningDashboard(staffId: string, now: Date = new 
   const memo = new Memo();
   const ids: string[] = [];
   for (const plan of plans) {
-    const d = await buildMorningDashboard({ access, firstName: person.firstName, shopIds: plan.shopIds, now, settings: s, memo });
+    const d = await buildMorningDashboard({ access, firstName: person.firstName, shopIds: plan.shopIds, now, settings: s, memo, savedReports: plan === plans[0] });
     if (!d || !hasContent(d)) continue;
     const r = renderAll(d, { pdf: s.pdf });
     const [job] = await db

@@ -12,8 +12,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (ctx instanceof Response) return ctx;
   const { id } = await params;
   if (!(await inTenant(ctx, "notification_job", id))) return new Response("Not found", { status: 404 });
-  const job = await db.query.notificationJobs.findFirst({ where: eq(notificationJobs.id, id), columns: { purchaseOrderId: true, attachments: true } });
-  if (!job) return new Response("Not found", { status: 404 });
+  const job = await db.query.notificationJobs.findFirst({ where: eq(notificationJobs.id, id), columns: { kind: true, purchaseOrderId: true, attachments: true } });
+  // A scheduled report's file holds what its recipient may see, not what the outbox viewer may.
+  if (!job || job.kind === "saved_report") return new Response("Not found", { status: 404 });
   const allowed = canAny(ctx, ["notifications.view", "notifications.send"]) || (job.purchaseOrderId !== null && canAny(ctx, PO_PERMS));
   if (!allowed) return new Response("You don't have permission to do that", { status: 403 });
   const file = (job.attachments ?? [])[Number(new URL(req.url).searchParams.get("i") ?? 0)];

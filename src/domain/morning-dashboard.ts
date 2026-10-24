@@ -342,9 +342,18 @@ export interface MorningDashboard {
   reviews: ReviewsBlock | null;
   today: TodayBlock | null;
   exceptions: ExceptionsBlock | null;
+  /** Custom reports this person put in the dashboard (theirs, or ones scheduled to them): totals only, never a client's row. */
+  savedReports?: SavedReportLine[] | null;
 }
 
-export const hasContent = (d: MorningDashboard) => MORNING_SECTIONS.some((k) => d[k] !== null);
+export interface SavedReportLine {
+  name: string;
+  /** Path in the app, without the host. */
+  href: string;
+  lines: string[];
+}
+
+export const hasContent = (d: MorningDashboard) => MORNING_SECTIONS.some((k) => d[k] !== null) || !!d.savedReports?.length;
 
 export const SEVERITY_RANK = { high: 0, medium: 1, low: 2 } as const;
 export const urgentCount = (d: MorningDashboard) => d.exceptions?.items.filter((i) => i.severity === "high").length ?? 0;

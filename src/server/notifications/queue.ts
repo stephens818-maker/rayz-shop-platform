@@ -52,7 +52,9 @@ export type NotificationKind =
   /** A location's Google review link, a set time after the visit (same for every client who agreed to texts or emails). */
   | "review_request"
   /** Campaign Center: an automated campaign or a blast, only to clients who agreed to marketing on that channel. */
-  | "marketing";
+  | "marketing"
+  /** A scheduled custom report, to a staff member; its file is dropped from the outbox once sent. */
+  | "saved_report";
 
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
 const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);

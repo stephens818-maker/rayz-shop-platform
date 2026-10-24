@@ -49,6 +49,7 @@ const KIND_LABEL: Record<string, string> = {
   receipt: "Receipt",
   review_request: "Google review request",
   marketing: "Campaign Center",
+  saved_report: "Custom report",
 };
 /** Jobs sent to a client: their number or email shows as the viewer may see it. */
 const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply", "fill_offer", "rebook_nudge", "no_show_reminder", "running_late", "receipt", "review_request", "marketing"]);
@@ -150,7 +151,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                   <Td className="max-w-md text-xs text-zinc-600">
                     {j.subject && j.channel === "email" && <div className="font-medium text-zinc-800">{j.subject}</div>}
                     <div className="whitespace-pre-line">{redactLinks(j.body, { receipts: !demoMode() })}</div>
-                    {(j.attachments ?? []).length > 0 && (
+                    {j.kind !== "saved_report" && (j.attachments ?? []).length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-2">
                         {(j.attachments ?? []).map((a, i) => (
                           <a key={a.filename} className="text-brand-700 underline" href={`/admin/notifications/${j.id}/attachment?i=${i}`}>
