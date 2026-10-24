@@ -198,7 +198,6 @@ describe("badge rules: value, celebrations, booking, feedback, profile", () => {
   });
 });
 
-const RANK: Record<Level, number> = { hidden: 0, masked: 1, full: 2 };
 const viewer = (o: Partial<BadgeViewer> & { lv?: Partial<Record<FieldKey, Level>> } = {}): BadgeViewer => ({
   isOwner: false,
   roles: [{ id: "front", key: "front_desk" }],
@@ -238,7 +237,12 @@ describe("who sees which badge", () => {
     for (const k of ["birthday_week", "birthday_month", "always_with", "switched_barber", "barber_left", "low_rating", "missing_info"]) expect(hidden).not.toContain(k);
     expect(hidden).toContain("at_risk");
     // Every badge that reads a detail is gated on it.
-    for (const b of BADGES) if ("reads" in b) for (const [f, want] of b.reads) expect(RANK[want]).toBeGreaterThan(0), expect(visibleBadges(s(), [], viewer({ lv: { [f]: "hidden" } }))).not.toContain(b.key);
+    for (const b of BADGES)
+      if ("reads" in b)
+        for (const [f, want] of b.reads as readonly (readonly [FieldKey, string])[]) {
+          expect(want).not.toBe("hidden");
+          expect(visibleBadges(s(), [], viewer({ lv: { [f]: "hidden" } as Partial<Record<FieldKey, Level>> }))).not.toContain(b.key);
+        }
   });
 
   it("a custom badge shows only to people who could run its filter", () => {

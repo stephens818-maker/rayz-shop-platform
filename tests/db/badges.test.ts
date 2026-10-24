@@ -7,7 +7,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Mods, actor, loadModules } from "./setup";
-import { get, open } from "./render";
+import { open } from "./render";
 import { signInAs } from "./session";
 
 vi.mock("server-only", () => ({}));
@@ -319,11 +319,13 @@ describe("client badges", () => {
     const { GET } = await import("@/app/api/cron/badges/route");
     const before = process.env.CRON_SECRET;
     process.env.CRON_SECRET = "test-badges-secret";
+    const call = (headers: Record<string, string> = {}) => GET(new Request("http://localhost/api/cron/badges", { headers }), { params: Promise.resolve({}) });
     try {
-      expect((await get(GET, "/api/cron/badges")).status).toBe(401);
-      const ok = await get(GET, "/api/cron/badges", undefined, { headers: { authorization: "Bearer test-badges-secret" } });
+      expect((await call()).status).toBe(401);
+      expect((await call({ authorization: "Bearer wrong" })).status).toBe(401);
+      const ok = await call({ authorization: "Bearer test-badges-secret" });
       expect(ok.status).toBe(200);
-      expect(JSON.parse(ok.text)).toMatchObject({ remaining: 0 });
+      expect(await ok.json()).toMatchObject({ remaining: 0 });
     } finally {
       process.env.CRON_SECRET = before;
     }
