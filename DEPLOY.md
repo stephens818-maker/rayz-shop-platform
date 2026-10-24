@@ -216,8 +216,12 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - **Invites are emailed**, and the Postmark and Resend providers are still stubs (see the email notes above). Until one is wired, the invite link is shown once to whoever sent it; pass it on privately. The outbox never keeps the link. Don't set `NOTIFICATIONS_EMAIL_PROVIDER=console` in production: it counts as sent, so the link only reaches the server log.
    - **`AUTH_SECRET` also encrypts authenticator keys.** Changing it signs everyone out, as before, and now also breaks every two-step sign-in set up so far: reset two-step for those users under **Setup → Users** afterwards, and they set it up again at their next sign-in.
    - Before go-live, check **Setup → Users**: turn on **Require two-step sign-in** for the Brand Owner and Brand Admins, and check who has **Remote access**.
-21. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-22. Add the custom domain under **Settings → Domains**.
+21. Checkout prompts (migration `core_0062_checkout_prompts`; see [Checkout prompts](README.md#checkout-prompts)):
+   - Both prompts are **on and skippable** everywhere as soon as the migration runs. Before go-live, review **Setup → Checkout prompts** (Brand Admin): each prompt's on/off and skippable or required, the number of rebook times, the decline reasons, and any location, role or barber overrides.
+   - Set each service's rebook interval and suggested products there too. Until then, clients without a visit history get the brand's 28 days, and the product prompt only shows tagged products and past purchases.
+   - Rebook reminders go out through the notifications cron, so SMS and email must be configured. On the Hobby plan's daily cron, they go out once a day rather than at 10 AM.
+22. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+23. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 
