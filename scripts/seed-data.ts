@@ -49,6 +49,12 @@ export const SHOPS: ShopSeed[] = [
 ];
 
 /** Saved report filters the brand admin can edit under Setup → Location groups. */
+/** Brand markets: regions with no owner group. A shop is in one region at most. */
+export const MARKETS: { name: string; shops: string[] }[] = [
+  { name: "Quad Cities", shops: ["kimberly", "utica", "le-claire", "moline", "rock-island", "silvis"] },
+  { name: "Eastern Iowa", shops: ["coralville", "dubuque"] },
+];
+
 export const LOCATION_GROUPS: { name: string; shops: string[] }[] = [
   { name: "Quad Cities", shops: ["kimberly", "utica", "le-claire", "moline", "rock-island", "silvis"] },
   { name: "Iowa shops", shops: ["coralville", "dubuque", "kimberly", "le-claire", "utica"] },

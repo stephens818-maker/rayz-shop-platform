@@ -32,6 +32,8 @@ export async function staffContextFor(staffId: string): Promise<StaffContext | n
     combinedView: all.uniform && all.shopIds.length > 1,
     currentShopId,
     scope: access.scope,
+    scopeEntityId: access.scopeEntityId,
+    scopeRegionId: access.scopeRegionId,
     brandWide: access.scope === "all",
     isOwner: access.isOwner,
     permissions: access.permissions,

@@ -117,7 +117,7 @@ describe("permissions", () => {
     const holders = ROLE_TEMPLATES.filter((t) => effectiveAccess(t).permissions.has("access.remote")).map((t) => t.key);
     expect(holders).toEqual(["brand_owner", "brand_admin"]);
     const approvers = ROLE_TEMPLATES.filter((t) => effectiveAccess(t).permissions.has("devices.approve")).map((t) => t.key);
-    expect(approvers).toEqual(["brand_owner", "brand_admin", "regional_manager", "shop_manager"]);
+    expect(approvers).toEqual(["brand_owner", "brand_admin", "franchisee_owner", "franchisee_manager", "regional_manager", "shop_manager"]);
     expect(BRAND_ONLY.has("network.settings")).toBe(true);
     expect(effectiveAccess(templateFor("brand_admin")!, {}, null, "selected").permissions.has("network.settings")).toBe(false);
     expect(PAGE_ACCESS["/admin/sign-in-security"]).toEqual(["network.settings", "devices.approve"]);

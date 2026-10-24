@@ -98,12 +98,18 @@ export const brandSettings = pgTable("brand_settings", {
   analytics: jsonb("analytics").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Checkout prompts: rebook and product, each on or off, skippable or required (src/domain/checkout-prompts.ts). */
   checkoutPrompts: jsonb("checkout_prompts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** What locations may change of the brand's standards (BrandStandards in src/domain/brand-standards.ts); missing keys use the defaults. */
+  standards: jsonb("standards").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Client data ownership for franchise agreements (FranchiseData in src/domain/franchise.ts); missing keys use the defaults: the brand owns every client. */
+  franchise: jsonb("franchise").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
 /**
- * Who owns a shop's business: the brand today, a franchisee later. One owner entity can own several
- * shops; each shop still has its own Stripe connected account, so its revenue, fees and payouts stay its own.
+ * Who owns a shop's business: Rayz corporate (kind brand) or a franchisee, each a legal business.
+ * Every shop belongs to one (a database trigger puts new shops under corporate when none is given).
+ * The entity has its own Stripe account (entity_payment_accounts), payroll company code, tax
+ * settings and royalty terms; tax IDs and bank details stay with Stripe.
  */
 export const ownerEntities = pgTable("owner_entities", {
   id: id(),
@@ -111,14 +117,107 @@ export const ownerEntities = pgTable("owner_entities", {
   legalName: text("legal_name"),
   kind: text("kind").$type<OwnerEntityKind>().notNull().default("brand"),
   contactEmail: text("contact_email"),
+  /** onboarding: being set up, no live shops yet; active; exited: left the system, history kept. */
+  status: text("status").$type<OwnerEntityStatus>().notNull().default("active"),
+  /** The entity's company code in iSolved (or another payroll provider); its shops' payroll files carry it. */
+  payrollCompanyCode: text("payroll_company_code"),
+  /** Sales tax filing per state for this entity's shops (EntityTaxSettings in src/domain/franchise.ts). Never tax IDs: Stripe holds those. */
+  taxSettings: jsonb("tax_settings").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  createdAt: createdAt(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+}, (t) => [
+  check("owner_entities_kind", sql`${t.kind} in ('brand', 'franchisee')`),
+  check("owner_entities_status", sql`${t.status} in ('onboarding', 'active', 'exited')`),
+]);
+export type OwnerEntityKind = "brand" | "franchisee";
+export type OwnerEntityStatus = "onboarding" | "active" | "exited";
+
+/**
+ * A region or market: an optional grouping of locations. With an owner entity it's that entity's
+ * own region (all its locations are that entity's); without one it's a brand market that can span
+ * owners (for reporting and regional managers).
+ */
+export const regions = pgTable(
+  "regions",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull().unique(),
+    ownerEntityId: uuid("owner_entity_id").references(() => ownerEntities.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("regions_entity_idx").on(t.ownerEntityId)],
+);
+
+/** An owner entity's Stripe Connect account (Express, Stripe-hosted onboarding). Shops in payments mode "entity" settle here. */
+export const entityPaymentAccounts = pgTable("entity_payment_accounts", {
+  ownerEntityId: uuid("owner_entity_id")
+    .primaryKey()
+    .references(() => ownerEntities.id),
+  stripeAccountId: text("stripe_account_id").notNull().unique(),
+  simulated: boolean("simulated").notNull().default(false),
+  chargesEnabled: boolean("charges_enabled").notNull().default(false),
+  payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
+  detailsSubmitted: boolean("details_submitted").notNull().default(false),
+  requirementsDue: jsonb("requirements_due").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  disabledReason: text("disabled_reason"),
+  payoutSchedule: jsonb("payout_schedule").$type<PayoutSchedule>(),
+  deauthorizedAt: ts("deauthorized_at"),
   createdAt: createdAt(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
-export type OwnerEntityKind = "brand" | "franchisee";
+
+/**
+ * An owner entity's royalty and ad fund rates from a date (effective-dated, never rewritten): the
+ * rates in force on a sale's business date apply. Basis points of royalty-eligible sales (services
+ * and products after discounts, before tax, tips and fees). `collect` application_fee adds them to
+ * each card charge's Stripe application fee; invoice leaves them all to the royalty statement.
+ */
+export const entityFeeTerms = pgTable(
+  "entity_fee_terms",
+  {
+    id: id(),
+    ownerEntityId: uuid("owner_entity_id")
+      .notNull()
+      .references(() => ownerEntities.id),
+    effectiveFrom: date("effective_from").notNull(),
+    royaltyBps: integer("royalty_bps").notNull().default(0),
+    adFundBps: integer("ad_fund_bps").notNull().default(0),
+    collect: text("collect").$type<FeeCollection>().notNull().default("application_fee"),
+    createdBy: uuid("created_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("entity_fee_terms_uq").on(t.ownerEntityId, t.effectiveFrom),
+    check("entity_fee_terms_bps", sql`${t.royaltyBps} between 0 and 3000 and ${t.adFundBps} between 0 and 3000`),
+    check("entity_fee_terms_collect", sql`${t.collect} in ('application_fee', 'invoice')`),
+  ],
+);
+export type FeeCollection = "application_fee" | "invoice";
+
+/** Who owned a shop when: kept by a trigger on shops.owner_entity_id, so royalties and owner reports follow a resale. valid_to is exclusive. */
+export const shopOwnerHistory = pgTable(
+  "shop_owner_history",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    ownerEntityId: uuid("owner_entity_id")
+      .notNull()
+      .references(() => ownerEntities.id),
+    validFrom: date("valid_from").notNull(),
+    validTo: date("valid_to"),
+  },
+  (t) => [index("shop_owner_history_shop_idx").on(t.shopId, t.validFrom), index("shop_owner_history_entity_idx").on(t.ownerEntityId)],
+);
 
 export const shops = pgTable("shops", {
   id: id(),
+  /** Not null in the database; a trigger fills in Rayz corporate's entity when an insert leaves it out. */
   ownerEntityId: uuid("owner_entity_id").references(() => ownerEntities.id),
+  /** Optional region or market; an entity's own region must be that shop's entity's (checked by trigger). */
+  regionId: uuid("region_id").references((): AnyPgColumn => regions.id),
   slug: text("slug").notNull().unique(),
   name: text("name").notNull(),
   address: text("address").notNull().default(""),
@@ -204,9 +303,11 @@ export const shops = pgTable("shops", {
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
-  check("shops_payments_mode", sql`${t.paymentsMode} in ('brand', 'connected', 'cash_only')`),
+  check("shops_payments_mode", sql`${t.paymentsMode} in ('brand', 'connected', 'entity', 'cash_only')`),
+  index("shops_owner_entity_idx").on(t.ownerEntityId),
+  index("shops_region_idx").on(t.regionId),
 ]);
-export type PaymentsMode = "brand" | "connected" | "cash_only";
+export type PaymentsMode = "brand" | "connected" | "entity" | "cash_only";
 export type NegativeStockPolicy = "block" | "warn";
 export type ShopStatus = "setup" | "live" | "closed" | "archived";
 export type GeocodeSource = "google" | "census" | "zip" | "manual";
@@ -298,6 +399,8 @@ export const shopPayouts = pgTable(
   {
     id: id(),
     shopId: uuid("shop_id").references(() => shops.id),
+    /** A payout from an owner entity's account, which pools every shop on it (shop_id null). */
+    ownerEntityId: uuid("owner_entity_id").references(() => ownerEntities.id),
     stripeAccountId: text("stripe_account_id").notNull(),
     stripePayoutId: text("stripe_payout_id").notNull().unique(),
     amountCents: integer("amount_cents").notNull(),
@@ -312,7 +415,11 @@ export const shopPayouts = pgTable(
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [index("shop_payouts_shop_arrival_idx").on(t.shopId, t.arrivalDate), check("shop_payouts_owner", sql`${t.shopId} is not null or ${t.stripeAccountId} = 'platform'`)],
+  (t) => [
+    index("shop_payouts_shop_arrival_idx").on(t.shopId, t.arrivalDate),
+    index("shop_payouts_entity_arrival_idx").on(t.ownerEntityId, t.arrivalDate),
+    check("shop_payouts_owner", sql`${t.shopId} is not null or ${t.ownerEntityId} is not null or ${t.stripeAccountId} = 'platform'`),
+  ],
 );
 
 export const shopHours = pgTable(
@@ -350,7 +457,7 @@ export const roles = pgTable("roles", {
   permissions: jsonb("permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   maxDiscountPct: smallint("max_discount_pct").notNull().default(0),
   /** Suggested shop access for people given this role. */
-  defaultScope: text("default_scope").$type<"all" | "selected" | "one">().notNull().default("one"),
+  defaultScope: text("default_scope").$type<"all" | "entity" | "region" | "selected" | "one">().notNull().default("one"),
   /** Custom roles only, set by the Brand Owner: may see client contact details in full and export client lists. */
   brandLevel: boolean("brand_level").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(100),
@@ -375,8 +482,14 @@ export const staff = pgTable("staff", {
   roleId: uuid("role_id")
     .notNull()
     .references(() => roles.id),
-  /** all = every shop; selected / one = the shops in staff_access_shops. */
-  shopScope: text("shop_scope").$type<"all" | "selected" | "one">().notNull().default("selected"),
+  /**
+   * all = every shop (brand level); entity = every shop of scope_entity_id; region = every shop of
+   * scope_region_id; selected / one = the shops in staff_access_shops. Entity and region follow the
+   * hierarchy, so a shop added to the entity or region is in reach at once.
+   */
+  shopScope: text("shop_scope").$type<"all" | "entity" | "region" | "selected" | "one">().notNull().default("selected"),
+  scopeEntityId: uuid("scope_entity_id").references(() => ownerEntities.id),
+  scopeRegionId: uuid("scope_region_id").references(() => regions.id),
   /** Per-person changes on top of the role: { "pos.discount": true, "sales.refund": false }. */
   permissionOverrides: jsonb("permission_overrides").$type<Record<string, boolean>>().notNull().default(sql`'{}'::jsonb`),
   /** Replaces the role's discount limit for this person. */
@@ -734,8 +847,16 @@ export const services = pgTable("services", {
   sortOrder: integer("sort_order").notNull().default(100),
   /** The checkout rebook prompt's interval for a client with no visit history yet. Null: the brand's default. */
   rebookDays: integer("rebook_days"),
+  /** Brand standard for location prices (LocalPrice in src/domain/brand-standards.ts): open, within the range, or locked to the brand price. */
+  localPrice: text("local_price").$type<LocalPrice>().notNull().default("open"),
+  priceFloorCents: integer("price_floor_cents"),
+  priceCeilingCents: integer("price_ceiling_cents"),
+  /** Whether a location may rename the service or change its duration. */
+  localName: boolean("local_name").notNull().default(true),
+  localDuration: boolean("local_duration").notNull().default(true),
   createdAt: createdAt(),
 });
+export type LocalPrice = "open" | "range" | "locked";
 
 export const shopServices = pgTable(
   "shop_services",
@@ -782,6 +903,9 @@ export const products = pgTable("products", {
   /** Brand default par: suggested orders fill up to this. Shops can override it. */
   parLevel: integer("par_level").notNull().default(6),
   active: boolean("active").notNull().default(true),
+  localPrice: text("local_price").$type<LocalPrice>().notNull().default("open"),
+  priceFloorCents: integer("price_floor_cents"),
+  priceCeilingCents: integer("price_ceiling_cents"),
   createdAt: createdAt(),
 });
 
@@ -1749,8 +1873,11 @@ export const payments = pgTable(
     refundedCents: integer("refunded_cents").notNull().default(0),
     /** The shop's connected account this card charge settled to (on_behalf_of + transfer_data.destination). */
     stripeAccountId: text("stripe_account_id"),
-    /** What the platform kept to cover processing: the shop's processing fee for this charge. */
+    /** What the platform kept: the shop's processing fee for this charge, plus royaltyCents and adFundCents. */
     applicationFeeCents: integer("application_fee_cents").notNull().default(0),
+    /** The royalty and ad fund taken in this charge's application fee under the owner entity's fee terms. */
+    royaltyCents: integer("royalty_cents").notNull().default(0),
+    adFundCents: integer("ad_fund_cents").notNull().default(0),
     /** What Stripe actually charged the platform, from the balance transaction, when known. */
     processorFeeCents: integer("processor_fee_cents"),
     stripeChargeId: text("stripe_charge_id"),
@@ -3687,5 +3814,73 @@ export const checkoutPrompts = pgTable(
     check("checkout_prompts_reason", sql`${t.declineReason} is null or char_length(${t.declineReason}) <= 120`),
     unique("checkout_prompts_uq").on(t.saleId, t.prompt),
     index("checkout_prompts_shop_idx").on(t.shopId, t.shownAt),
+  ],
+);
+
+// ───────────────────────────── Scale: background tasks and rollups ─────────────────────────────
+
+/**
+ * Background work split into small tasks so it grows with the number of locations: one per
+ * location (rollups, campaign triggers) or per client bucket (badges) and day. Any number of
+ * workers claim tasks with FOR UPDATE SKIP LOCKED; a lease that runs out puts a crashed task back.
+ */
+export const jobTasks = pgTable(
+  "job_tasks",
+  {
+    id: id(),
+    kind: text("kind").notNull(),
+    /** What the task covers: a shop id, a bucket ("3/16"), or "all". */
+    shard: text("shard").notNull(),
+    runOn: date("run_on").notNull(),
+    status: text("status").$type<JobTaskStatus>().notNull().default("queued"),
+    attempts: smallint("attempts").notNull().default(0),
+    lockedUntil: ts("locked_until"),
+    startedAt: ts("started_at"),
+    finishedAt: ts("finished_at"),
+    result: jsonb("result").$type<Record<string, unknown>>(),
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    unique("job_tasks_uq").on(t.kind, t.shard, t.runOn),
+    index("job_tasks_claim_idx").on(t.status, t.lockedUntil),
+    check("job_tasks_status", sql`${t.status} in ('queued', 'running', 'done', 'failed')`),
+  ],
+);
+export type JobTaskStatus = "queued" | "running" | "done" | "failed";
+
+/**
+ * One location's day, summed by the rollup job from sales, refunds and appointments so brand
+ * reports compare 50+ locations, regions and owners without scanning every ticket. The owner and
+ * region are as of that day (shop_owner_history), so a resale doesn't move history.
+ */
+export const locationDailyStats = pgTable(
+  "location_daily_stats",
+  {
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+    ownerEntityId: uuid("owner_entity_id").references(() => ownerEntities.id),
+    regionId: uuid("region_id").references(() => regions.id, { onDelete: "set null" }),
+    tickets: integer("tickets").notNull().default(0),
+    grossCents: bigint("gross_cents", { mode: "number" }).notNull().default(0),
+    discountCents: bigint("discount_cents", { mode: "number" }).notNull().default(0),
+    serviceNetCents: bigint("service_net_cents", { mode: "number" }).notNull().default(0),
+    productNetCents: bigint("product_net_cents", { mode: "number" }).notNull().default(0),
+    refundCents: bigint("refund_cents", { mode: "number" }).notNull().default(0),
+    taxCents: bigint("tax_cents", { mode: "number" }).notNull().default(0),
+    tipCents: bigint("tip_cents", { mode: "number" }).notNull().default(0),
+    clients: integer("clients").notNull().default(0),
+    newClients: integer("new_clients").notNull().default(0),
+    appointments: integer("appointments").notNull().default(0),
+    noShows: integer("no_shows").notNull().default(0),
+    computedAt: ts("computed_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.shopId, t.day] }),
+    index("location_daily_stats_day_idx").on(t.day),
+    index("location_daily_stats_entity_day_idx").on(t.ownerEntityId, t.day),
+    index("location_daily_stats_region_day_idx").on(t.regionId, t.day),
   ],
 );

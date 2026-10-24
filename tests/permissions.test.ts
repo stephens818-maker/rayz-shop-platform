@@ -202,7 +202,10 @@ describe("permission catalog and templates", () => {
       sortOrder: Number(m[7]),
     }));
     const resorted = [...later.matchAll(/UPDATE "roles" SET "sort_order" = (\d+) WHERE "key" = '(\w+)'/g)].map((m) => ({ key: m[2], sortOrder: Number(m[1]) }));
-    const all = [...rows.map((r) => ({ ...r, at: -1 })), ...inserted].map((r) => resorted.filter((s) => s.key === r.key).reduce<typeof r>((x, s) => ({ ...x, sortOrder: s.sortOrder }), r));
+    const rescoped = [...later.matchAll(/UPDATE "roles" SET "default_scope" = '(\w+)' WHERE "key" = '(\w+)' AND "default_scope" = '(\w+)'/g)].map((m) => ({ key: m[2], to: m[1], from: m[3] }));
+    const all = [...rows.map((r) => ({ ...r, at: -1 })), ...inserted]
+      .map((r) => resorted.filter((s) => s.key === r.key).reduce<typeof r>((x, s) => ({ ...x, sortOrder: s.sortOrder }), r))
+      .map((r) => rescoped.filter((s) => s.key === r.key).reduce<typeof r>((x, s) => (x.defaultScope === s.from ? { ...x, defaultScope: s.to } : x), r));
     const seeded = all.sort((a, b) => a.sortOrder - b.sortOrder).map(({ at, ...r }) => {
       const perms = new Set<string>(r.permissions);
       for (const c of changes.filter((c) => c.at > at)) {
