@@ -1,0 +1,4 @@
+-- Client contact lockdown: only brand-level roles (Brand Owner, Brand Admin and custom roles the Brand Owner marks brand-level with roles.brand_level) see client phone, email and address in full or download client lists. Shop and staff roles lose the client ratings export, and custom roles that aren't brand-level lose the client-list permissions they can no longer use. Additive only.
+ALTER TABLE "roles" ADD COLUMN IF NOT EXISTS "brand_level" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - 'report.client_ratings.export' WHERE "key" IN ('regional_manager', 'shop_manager');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" - ARRAY['clients.export', 'campaign_center.export', 'import.run', 'clients.privacy', 'report.client_ratings.export'] WHERE "key" IS NULL AND NOT "brand_level";

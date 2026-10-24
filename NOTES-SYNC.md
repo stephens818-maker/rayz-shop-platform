@@ -1,0 +1,989 @@
+# NOTES-SYNC
+
+Working notes between the two agents on this repo. The **core agent** (this branch, `cursor/rayz-barbershop-v1-8f0b`, PR #1) updates this file on every push. The **mobile agent** (`bc-645fbcc0-ed66-58c5-a7b9-f578411fa9e1`) opens PRs into this branch. The newest entry goes at the top of the log.
+
+## Who owns what
+
+| Area | Owner |
+| --- | --- |
+| Everything under `src/app/api/v1/**`, plus `src/server/api.ts`, `src/server/api-schemas.ts` and `src/server/openapi.ts` | mobile (bc-645fbcc0) |
+| Customer auth and OTP: `src/server/auth/customer.ts`, `src/app/api/v1/auth/**` | mobile |
+| Devices and push, consent, account deletion | mobile |
+| Stripe Customer and saved cards (PaymentMethods attached to platform Customers) | mobile |
+| `src/server/importer.ts` (Squire import) | mobile |
+| Mobile workstream C1–C22 and I1–I16, except where noted below | mobile |
+| Admin back office (`src/app/admin/**`), booking engine (`src/server/booking.ts`, `src/domain/availability.ts`, `src/domain/timing.ts`), POS and checkout, refunds, reports, inventory, permissions and roles, client data protection, notifications back office | core |
+| Card fee config and `computeCardFee` | core (mobile reads only) |
+| I10 Stripe Connect: platform account, connected account per shop, destination charges, onboarding, per-shop P&L, per-location banking (payments mode, descriptor, Terminal Locations and readers, payouts) | core, except the platform Customer and saved-card side, which is mobile's |
+| Payroll (`src/domain/payroll/**`, `src/server/payroll/**`, `src/app/admin/payroll/**`) and service times (`src/domain/service-times.ts`, `src/server/service-times*.ts`) | core |
+| Time clock and timesheets (`src/domain/time-clock.ts`, `src/server/time-clock*.ts`, `src/server/labor-report.ts`, `src/app/admin/clock/**`, `src/app/admin/timesheets/**`, `src/app/admin/time-clock/**`) | core |
+| Tip payouts (`src/domain/tips.ts`, `src/server/tips/**`, `src/app/admin/tips/**`, `src/app/admin/my-tips/**`), including employees' Stripe Express accounts | core |
+| Staff sign-in restrictions (`src/domain/network-access.ts`, `src/server/auth/network.ts`, `src/server/sign-in-security.ts`, `src/middleware.ts`, `src/lib/client-ip.ts`, `src/app/admin/sign-in-security/**`) | core |
+| Customer screen at checkout and split tips (`src/domain/handoff.ts`, `src/server/handoff.ts`, `src/server/auth/handoff-lock.ts`, `src/app/handoff/**`) | core |
+| Digital receipts (`src/domain/receipts.ts`, `src/server/receipts.ts`, `src/app/receipt/**`, the ticket's receipt panel). The consent itself (opt-ins, wording, STOP) stays mobile's; receipts only read it | core |
+
+Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
+
+## Rules both sides follow
+
+- **Migrations are additive only.** Never rewrite, squash or renumber an existing migration. The core agent's new migrations are named `core_NNNN_<name>.sql` in `drizzle/` (the `_journal.json` tag matches the filename). The mobile agent uses its own prefix. Migrations up to `0019_slot_timing` already exist and stay as they are. The core side has since added `core_0020_stripe_connect`, `core_0021_service_times`, `core_0022_payroll`, `core_0023_staff_time`, `core_0024_block_reasons`, `core_0025_call_ins`, `core_0026_append_only`, `core_0027_locations`, `core_0028_digest_jobs`, `core_0029_location_banking`, `core_0030_time_clock`, `core_0031_clock_live`, `core_0032_clock_blocks`, `core_0033_tip_payouts`, `core_0034_staff_banking`, `core_0035_scrub_sensitive`, `core_0036_network_access`, `core_0037_handoff`, `core_0038_digital_receipts`, `core_0039_google_reviews`, `core_0040_review_visits`, `core_0041_marketing`, `core_0042_campaign_center`, `core_0043_lapsed_campaigns`, `core_0044_client_search`, `core_0045_openings`, `core_0046_morning_dashboard` and `core_0047_report_builder`.
+- `drizzle/meta/_journal.json` and the snapshots are shared. When both sides add a migration, merge the journal by keeping both entries in `when` order, and regenerate the latest snapshot with `pnpm db:generate` (it should produce no new SQL).
+- Server actions return `{ ok: true, data } | { ok: false, error }` through `safe()` in `src/server/action.ts`. Errors are `AppError(code, message, details)` from `src/server/errors.ts`.
+- Every change to records goes through `audit(actor, action, entity, entityId, details, shopId, tx?)` in `src/server/audit.ts`.
+- **Processor-hosted data only.** Card numbers, bank accounts, debit cards, SSNs, TINs, EINs, dates of birth for identity checks and ID documents are collected only by Stripe (Connect onboarding and the Express dashboards, the Payment Element, Terminal). Neither side adds a column, field, request or response property for them; store only Stripe's IDs, statuses, last 4 and bank or brand names. `src/lib/sensitive.ts` (`scrub`, `findSensitive`, `isForbiddenKey`) holds the rules, and `core_0035_scrub_sensitive` applies them in SQL. A new free-text column (a name ending in `note`, `notes`, `reason`, `body`, `subject`, `detail`, `details`, `errors`, `custom_fields` or `message`) needs a `<table>_scrub_sensitive` trigger calling `scrub_sensitive_row('<column>', ...)`, or `tests/db/sensitive-data.test.ts` fails.
+
+## Shared interfaces
+
+### `computeCardFee`: `src/server/payments/card-fee.ts`
+
+```ts
+computeCardFee(
+  shopId: string,
+  funding: "credit" | "debit" | "prepaid" | "unknown" | null,
+  amounts: { chargeCents: number; tipCents?: number }, // chargeCents = what goes on the card before the fee, tip included
+  opts?: { wallet?: boolean },                         // Apple Pay / Google Pay
+): Promise<{
+  feeCents: number;
+  rate: number;          // after clamping to 3%; 0 when no fee
+  basis: "charge_excluding_tip" | "charge_including_tip";
+  basisCents: number;    // what the rate was applied to
+  waivable: boolean;     // true whenever a fee applies: a surcharge is the shop's option, never required
+  reason: "applies" | "disabled" | "not_credit" | "wallet_fee_off" | "zero_amount";
+  label: string | null;      // "Credit card surcharge (3%)"
+  disclosure: string | null; // the legal text to show before charging
+}>
+```
+
+- The math is the pure `cardFeeFor(config, funding, amounts, opts)` in `src/domain/checkout.ts`. The POS's `computeCheckout` uses the same function, so the app and the POS can't disagree. `tests/card-fee.test.ts` checks that.
+- Fee config lives on `shops`: `card_fee_enabled`, `card_fee_rate` (numeric, fraction), and `card_fee_applies_to_tip`. Only people with `settings.taxes` change it, under Shop settings.
+- Wallet payments get no fee while `FEATURE_WALLET_FEE` is off (the default; see flags below).
+
+### Feature flags: `src/lib/flags.ts`
+
+`flags.reviewLogin()` (C18, app store review login) and `flags.walletFee()` read `FEATURE_REVIEW_LOGIN` and `FEATURE_WALLET_FEE`. Both are off unless the variable is exactly `"true"`. Both decisions are still open with Charles, so leave them off.
+
+### Permissions and roles
+
+- Catalog: `src/domain/permissions.ts`. It has `FEATURE_PERMISSIONS`, `REPORTS` (each report gets `report.<key>.view` and `report.<key>.export`), `ROLE_TEMPLATES`, `OWNER_ONLY`, `BRAND_ONLY`, `effectiveAccess`, and the grant rules (`roleChangeDenied`, `userAccessChangeDenied`).
+- Server checks are in `src/server/auth/staff.ts`:
+  - `requireStaff()` and `authorize(perm | perms, message?)` return a `StaffContext` with `permissions`, `shopIds`, `brandWide`, `currentShopId` and `actor`.
+  - `can(ctx, perm)` checks a single permission.
+  - `assertShopAccess(ctx, shopId)` refuses a shop outside the caller's access.
+  - `guardPage(page)` uses `PAGE_ACCESS` in `src/domain/navigation.ts`.
+- `src/server/auth/access.ts` has `loadStaffAccess(staffId)`.
+- Adding a permission: add it to `FEATURE_PERMISSIONS`, and to the templates that should have it. Then add a migration that appends it to the existing `roles` rows, for example `UPDATE roles SET permissions = permissions || '["x"]'::jsonb WHERE key IN (...) AND NOT (permissions ? 'x')`. Brand Owner gets everything automatically.
+- Staff API routes (if mobile adds any): use `authorize()` and `assertShopAccess()` the same way the admin actions do. `tests/db/tenant.test.ts` tries every action against another shop's records and must keep passing.
+
+### I10 Stripe Connect (core)
+
+One Ray'z platform account, and one Express connected account per shop. The platform carries fees and losses (`controller.fees.payer = application`, `losses.payments = application`), and Stripe collects the requirements. Code: `src/domain/connect.ts` (pure: states, fee schedule, labels), `src/server/payments/connect.ts` (accounts, onboarding, destination, payouts), `src/server/payments/connect-webhook.ts` and `src/app/api/stripe/connect/route.ts`.
+
+- **`chargeCard(opts)`** in `src/server/payments/processor.ts` is still the only place a PaymentIntent is created. New optional inputs:
+  - `destination: { accountId, applicationFeeCents }`. With it, the charge sets `on_behalf_of` and `transfer_data.destination` to the shop's account, and `application_fee_amount`.
+  - `customerId`: the platform Stripe Customer (mobile's), so a saved card pays at any shop.
+  - It returns `destination`, `chargeId`, `transferId` and `processorFeeCents` (from the balance transaction) as well.
+- **`chargeDestination(shop, amountCents, "keyed" | "terminal")`** in `src/server/payments/connect.ts` gives the destination for a charge at a shop. If the shop's account can't take charges, it throws `AppError("payment_failed", <message>, { reason: "payments_not_ready", state })`, where `state` is one of `not_started | onboarding | in_review | restricted | disconnected`. I used `payment_failed` because `ErrorCode` lives in `api-schemas.ts` (mobile's). If you'd like a dedicated `payments_not_ready` code in the API, add it on your side and map `details.reason`.
+- **Application fee** = the processing fee estimate: `CONNECT_FEE_KEYED` (default `2.9%+30`) for keyed and online, `CONNECT_FEE_TERMINAL` (default `2.7%+5`) for the reader. It is not returned on refunds.
+- **Refunds:** `refundCard(pi, amount, key, { reverseTransfer: true })` for any payment with a `stripe_account_id`. It sends `reverse_transfer: true` and `refund_application_fee: false`.
+- **Schema** (`drizzle/core_0020_stripe_connect.sql`):
+  - `owner_entities` (`kind` is `brand` or `franchisee`) and `shops.owner_entity_id`. This is the S4 grouping; a franchisee can own several shops.
+  - `shop_payment_accounts`: one row per shop. It has `stripe_account_id` (unique), `simulated`, `charges_enabled`, `payouts_enabled`, `details_submitted`, `requirements_due`, `disabled_reason` and `deauthorized_at`.
+  - `shop_payouts`: from the `payout.*` webhooks, keyed on `stripe_payout_id`.
+  - `payments` gains `stripe_account_id`, `application_fee_cents`, `processor_fee_cents`, `stripe_charge_id` and `stripe_transfer_id`.
+  - New permissions: `payments.accounts` (brand-only) and the report `shop_accounts`.
+- **Env:** `STRIPE_CONNECT_WEBHOOK_SECRET` is the signing secret of a separate **Connect** webhook endpoint at `/api/stripe/connect` (events `account.updated`, `account.application.deauthorized`, `payout.*`).
+- **Without keys:** accounts are `sim_acct_…`, and onboarding is a stand-in page. Simulated accounts are refused in Stripe mode, so a shop has to onboard for real once keys are set.
+
+### Per-location banking (core)
+
+Each shop has a **payments mode** in `shops.payments_mode`: `connected` (the default; its own Express account and bank, for a separate LLC), `brand` (charges on the brand's own Stripe account, paid out to the brand bank) or `cash_only`. Pure rules are in `src/domain/connect.ts` (`PAYMENTS_MODES`, `takesCards`, `paymentsStep`, `statementDescriptorProblem`, `descriptorSuffix`, `receiptBranding`, `summarizePayout`).
+
+- **Route every card charge through `chargeRoute(shop, amountCents, "keyed" | "terminal")`** in `src/server/payments/connect.ts`, then pass the result to `chargeCard`. It returns:
+  - `{ settlement: "connected", destination, estimatedFeeCents }`: pass `destination` (a destination charge, as before).
+  - `{ settlement: "platform", destination: null, estimatedFeeCents, descriptorSuffix }`: no destination, and pass `statementDescriptorSuffix: descriptorSuffix`. Store `processor_fee_cents` (Stripe's, or the estimate) and `settlement = 'platform'`.
+  - For a cash-only shop it throws `AppError("payment_failed", …, { reason: "cash_only" })`. A shop on its own account that Stripe hasn't enabled still throws `reason: "payments_not_ready"`.
+  - `chargeDestination` still works, but only knows about own accounts. Please use `chargeRoute` for app checkout and prepayment so brand-account and cash-only shops behave correctly.
+- **Refunds** follow the original payment, not the shop's current mode: `reverse_transfer` when the payment has a `stripe_account_id`, a plain refund when it settled on the brand account. `refundSale` and the webhooks already do this.
+- **Webhooks:** `/api/stripe/webhook` (platform) books dashboard refunds and disputes at the payment's shop, and records the brand account's own payouts. `/api/stripe/connect` handles `account.updated`, `capability.updated`, `account.external_account.*`, `account.application.deauthorized` and the connected accounts' `payout.*`.
+- **Terminal:** `ensureTerminalLocation(shopId)` creates one Stripe Terminal Location per shop (`shops.stripe_terminal_location_id`). `registerReader(shopId, { label, registrationCode })` registers a reader to it. `assertReaderAt(shopId, readerId)` refuses a reader from another shop; checkout stores `payments.terminal_reader_id`.
+- **Permission:** `payments.banking` is an owner grant (only the Brand Owner gives or removes it; Brand Admin's template doesn't have it). It covers choosing the mode, onboarding, the Express dashboard and the statement descriptor. `payments.accounts` still covers viewing status and refreshing it. Every change is audited (`payments.mode`, `payments.account_created`, `payments.onboarding_started`, `payments.dashboard_opened`, `payments.statement_descriptor`, `payments.terminal_location`, `reader.register`, `shop.receipt`).
+- **We never store bank numbers, SSNs or EINs.** Stripe-hosted onboarding (Account Links) collects them. We keep the account ID, `charges_enabled`, `payouts_enabled`, `requirements_due` and the payout schedule Stripe reports. `tests/banking.test.ts` fails if a column like that appears.
+- **Schema** (`drizzle/core_0029_location_banking.sql`):
+  - `shops`: `payments_mode`, `statement_descriptor`, `receipt` (jsonb) and `stripe_terminal_location_id`.
+  - `shop_payment_accounts.payout_schedule`.
+  - `shop_payouts.shop_id` is now nullable: brand-account payouts are stored with `stripe_account_id = 'platform'` and no shop (a check enforces this). It also gains `gross_cents`, `fee_cents`, `refund_cents` and `item_count`.
+  - `terminal_readers`: `device_type`, `stripe_location_id` and `registered_at`.
+  - `payments`: `settlement` (`platform` or `connected`) and `terminal_reader_id`.
+- **Env:** optional `STRIPE_STATEMENT_PREFIX` (default `RAYZ`) for brand-account shops' statements.
+
+### Payroll (core)
+
+Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook problems: [`docs/payroll-workbook-discrepancies.md`](docs/payroll-workbook-discrepancies.md).
+
+- **No iSolved connection.** Output is a per-shop xlsx in the workbook's exact format, downloaded after approve-and-lock and uploaded by hand. Nothing calls iSolved. Exports go through `PayrollExporter` in `src/server/payroll/export.ts`.
+- **Employee Numbers are sensitive.** `payroll_profiles.employee_number` lives in the database only. Please never return it from `/api/v1` or put it in logs, push payloads or fixtures.
+- **Schema** (`drizzle/core_0022_payroll.sql`): `pay_groups` (one per shop, each with its own calendar and legal entity), `payroll_profiles`, `payroll_rates`, `time_entries`, `payroll_overrides`, `payroll_runs` (locked snapshots), `payroll_locked_ot`, and `brand_settings.payroll` (jsonb). New permissions `payroll.run` and `payroll.approve` (brand-only, added to Brand Admin).
+- **Sales and tips** come from `payrollSalesBetween` in `src/server/reports.ts`, so a ticket counts at the shop it was rung up at, same as the reports.
+- Service times (`drizzle/core_0021_service_times.sql`): `appointment_times` records arrival, start, finish and checkout, each with who recorded it. The mobile side doesn't need to write it; check-in through the API can set arrival later if you'd like it.
+
+### Staff time (core)
+
+- **Code:** `src/domain/staff-time.ts` (pure: rules, limits, notice, recurring occurrences, time off spans, who's in) and `src/server/staff-time.ts` (blocks, series, requests, decisions, affected appointments, staffing). `extendSeries` is in `src/server/block-series.ts`, so the cron route doesn't import the staff app.
+- **Schema** (`drizzle/core_0023_staff_time.sql`):
+  - `time_blocks` gains `category` (lunch, break, personal, other, time_off), `series_id` and `request_id`. Existing `day_off` rows became `time_off`.
+  - `time_block_series`: a weekday pattern written ahead into `time_blocks`.
+  - `time_off_requests`: pending, approved, denied or cancelled, with who decided and how.
+  - `brand_settings.staff_time` and `shops.staff_time` (jsonb rules).
+  - New permissions `blocks.own`, `blocks.others`, `timeoff.request`, `timeoff.approve`, and the report `staffing`.
+- **Reasons** (`drizzle/core_0024_block_reasons.sql`, `src/domain/block-reasons.ts`, `src/server/block-reasons.ts`):
+  - `block_reasons`: the brand's list (`key`, `label`, `color`, `used_for` blocks/time_off/both, `counts_as_lunch`, `notice_exempt`, `private`, `sort_order`, `archived_at`).
+  - `time_blocks`, `time_block_series` and `time_off_requests` gain `reason_id` and `note`. `reason` is now the label at the time (kept in step on a rename). `category` is just `lunch`, `other` or `time_off`; `break` and `personal` became reasons.
+  - New permissions `blocks.private` (see private reasons and notes) and `blocks.reasons` (edit the list).
+  - **Every read takes a viewer.** `staffingFor(shopIds, from, to, viewer, staffIds?)`, `timeOffEntries(shopIds, from, to, viewer, staffIds?)`, `listRequests(scope, { viewer, ... })` and `loadDayCalendar(..., reasons)` take a `ReasonViewer` (`reasonViewer(ctx)` in `src/server/auth/staff.ts`, or `NO_PRIVATE`). They return a `ShownReason` (`{ reasonId, label, color, note, hidden }`); a private one comes back as "Blocked" or "Time off" with no note. `RequestView.reason` is now a `ShownReason` and its separate `note` is gone.
+  - **Customers never get a reason.** `/api/v1` availability only uses block times, as before. If the app ever shows staff blocks, please read them through these functions so the masking applies.
+- **Availability:** `getAvailability` (and so `/api/v1` availability) now also leaves out **pending** time off for online and API bookings; staff bookings ignore it. Approved time off and every block were already left out. There's nothing to change on the mobile side.
+- **Writes:** to add a block or time off, please go through `addBlock`, `requestTimeOff` and `decideTimeOff`, which now take a `reasonId` (and an optional `note`) instead of a category or reason key. They check booked appointments, write the audit rows and send the barber's email. Avoid inserting into `time_blocks` directly.
+- **Notification kinds:** `time_off_reschedule` (to the client, with the manage link) and `time_off_decision` (an email to the barber).
+
+### Call-ins and the shop line (core)
+
+- **Code:** `src/domain/outreach.ts` (pure: rules, quiet hours, message wording, reply parsing, link states, follow-up timing) and `src/domain/twiml.ts`. Server: `src/server/call-ins.ts` (mark, affected appointments, reassign, outreach, text answers, follow-ups), `src/server/rebook-links.ts`, `src/server/messaging.ts` (opt-outs, inbox threads, call log), `src/server/shop-line.ts` (Twilio webhook handlers), `src/server/client-contact.ts` (staff text and click-to-call), `src/server/call-in-report.ts` and `src/server/twilio/*`.
+- **Schema** (`drizzle/core_0025_call_ins.sql`):
+  - `call_ins` (barber, shop or all, span, reason, note) with its own `time_blocks` row, so the calendar and availability treat it as time off.
+  - `appointment_outreach` (one per affected appointment: option, status notified/delivered/rebooked/declined/no_response/flagged, attempts, next follow-up), `rebook_links` (SHA-256 of the token only, expiry, used and revoked).
+  - `message_threads` and `messages` (the per-shop inbox), `call_logs` (in, out, missed, after hours, click-to-call), `contact_opt_outs` (phone and channel, with the customer ids STOP turned off).
+  - New columns: `brand_settings.outreach` (jsonb rules), `customers.allow_other_shop`, `notification_jobs.provider_message_id`, `delivered_at` and `outreach_id`, and `shops.twilio_number` (unique).
+  - A private **Emergency** time off reason.
+  - New permissions `callins.mark`, `callins.mark_own`, `callins.outreach`, `callins.voice`, `inbox.view` and the report `call_ins`. There are 63 feature permissions now.
+- **Notification kinds:** `callin_reassign`, `callin_rebook`, `callin_voice`, `callin_link` (the press-1 text), `missed_call` and `shop_reply`. `staff_call` (click-to-call) now really dials through Twilio, and `NOTIFICATIONS_VOICE_PROVIDER=twilio` is no longer a stub.
+- **Opt-outs apply to every text.** `processDueJobs` now suppresses any SMS job to a number in `contact_opt_outs` (reminders included), and automated call-in calls to a number that pressed 9. If the app queues texts through `notification_jobs`, there's nothing to change.
+- **Consent (mobile's area), touched lightly:** STOP sets `customers.sms_opt_in = false` for every client on that number and records which ones; START turns those same clients back on. Nothing else writes `sms_opt_in`. Please don't turn `sms_opt_in` back on for a number that's in `contact_opt_outs`, or the next text will be suppressed anyway.
+- **Routes:** `/api/twilio/**` (signed Twilio webhooks) and the public rebook page `/r/[token]`. Nothing under `/api/v1` changed.
+- **Availability:** a call-in is a time off block, so `/api/v1` availability already leaves the barber out.
+
+### Time clock (core)
+
+Everyone is paid hourly and punches in and out. This reverses the earlier "no clock-in" decision.
+
+- **Code:**
+  - `src/domain/time-clock.ts` (pure): pairing, breaks, the evidence check, schedule flags, the FT/PT rolling average, the export layout and DST wall times.
+  - `src/server/time-clock.ts`: punches, the PIN, devices, edits, timesheets, approvals, locks, alerts and the cron pass.
+  - `src/server/time-clock-export.ts`: the payroll CSVs and labor cost.
+  - `src/server/labor-report.ts`: the Labor and Attendance reports.
+  - `src/server/payroll/groups.ts`: pay groups and locks, split out of `payroll/run.ts` so the cron doesn't import the reports module.
+- **Schema** (`drizzle/core_0030_time_clock.sql`):
+  - `time_punches`: one row per punch (`in`, `break_start`, `break_end`, `out`). Each records its shop, `source` (self, kiosk or manager), `method` (device, gps, network, manager or none), lat/lng/accuracy and distance, IP, device, flags, minutes off the schedule, and void and edit stamps.
+  - `time_punch_photos`, and `time_punch_edits`, which is append-only: a trigger refuses updates and deletes.
+  - `clock_devices`: front-desk devices, holding only the SHA-256 of their token.
+  - `timesheets`: per person, shop and period, with employee and manager approval.
+  - `timesheet_locks` and `ft_status_changes`.
+  - `shops` gains `latitude`, `longitude` and `time_clock` (jsonb: methods, radius, networks, grace, photo). `brand_settings` gains `time_clock` (jsonb rules). `staff` gains `clock_pin_hash` (bcrypt), `clock_pin_failures` and `clock_pin_locked_until`. `time_entries` gains `punch_in_id`.
+- **Hours come from punches.** Each shift's paid time is re-derived into `time_entries` (source `clock`, linked by `punch_in_id`) on every punch or edit, so payroll, OT, tips and the Payroll Report need no change. Hand-entered hours still work.
+- **If the app adds clock-in:** call `punch({ staffId, shopId, type, source: "self", evidence: { deviceShopId: null, ip, gps }, deviceId: null, photo, confirmTimeOff, actor })`, and `clockState(staffId)` for what to show.
+  - `punch` returns `{ kind: "confirm", message }` during time off; ask the user, then call again with `confirmTimeOff: true`. Otherwise it returns `{ kind: "done", … }`.
+  - A refused punch throws `AppError("bad_request")` with the reason, such as outside the geofence, not on the shop network or in a locked period. A shop that isn't theirs throws `forbidden`.
+  - Please don't insert into `time_punches` directly.
+  - Gate it on `timeclock.punch`. `punch` itself checks that the shop is one of theirs: a shop they're scheduled at, or one their access covers.
+- **Permissions:** `timeclock.punch`, `timeclock.kiosk`, `timesheet.own`, `timesheet.edit`, `timesheet.approve`, `payroll.rates` and `payroll.export`, plus the reports `labor` and `attendance`. There are 74 feature permissions now.
+- **Notification kinds:** `clock_forgot_out` and `ft_status_change`, both emails to the shop's managers.
+- **Cron:** `/api/cron/notifications` now runs `timeClockCron`. It flags forgotten clock-outs and sends the live clock alerts on every run, and runs the FT/PT check once a night around 3 AM local. The response gains `timeClock`.
+- **Employee Numbers** go into the CSV only, from `payroll_profiles`. The download's audit row holds the period, shops and row count, never the numbers. Nothing calls iSolved.
+- **Clock events write real block-outs** (`drizzle/core_0032_clock_blocks.sql`, `src/domain/clock-blocks.ts`, `src/server/clock-blocks.ts`):
+  - A break, a clock-out before the scheduled end and (when the shop turns on `notInBlock`) "Not in yet" become `time_blocks` rows. `time_blocks` gains `source` (`manual` or `clock`), `clock_key` (unique: `break:<punchId>`, `out:<punchId>`, `not_in:…`), `punch_id`, `end_punch_id`, `clock_open`, `overridden_at` and `overridden_by`. Please treat `source = 'clock'` rows as read-only from the app; they change through punches.
+  - `time_punches` gains `reason_id` and `planned_min` (break start only). `punch()` takes optional `breakReasonId` and `plannedMin`.
+  - `syncClockBlocks` runs inside every punch, edit, add and void. The cron (`refreshClockBlocks`) moves open blocks on to 15 minutes past now.
+  - New table `clock_block_releases`: blocks a manager removed, so the clock doesn't write them back. New reasons `clocked_out` and `not_in` (`used_for = 'clock'`).
+  - Because they're ordinary blocks, `getAvailability` and `loadDayInput` in `src/server/booking.ts` take the time out for online and `staffOverride` booking alike, on any date. `/api/v1` availability and booking pick this up with no change on your side.
+  - The early time after an early clock-in is still read live (`src/domain/clock-live.ts`, `liveClock` in `src/server/clock-live.ts`), today only, for both.
+  - The shop rules are keys in `shops.time_clock`: `blockOnBreak`, `breakHoldMinutes`, `blockAfterClockOut`, `notInBlock` (default false), `openEarly` and `lateAlertMinutes`. Their defaults are in `shopClockSettings`.
+  - Audit actions: `block.create`, `block.update` and `block.delete` (as the person punching, or the manager editing the punch), and `block.clock_override`, `block.clock_release` and `block.clock_reset`.
+  - `staff` gains `clock_opens_early` (boolean, default false): the barber's own permission for early time.
+  - New table `clock_alert_log` (key, shop, sent at) sends each email once.
+  - Clients never see clock status. The slots are simply absent, and the reason stays "No openings on this day". Please keep clock status out of `/api/v1` customer responses too.
+  - New notification kinds `clock_late_in` and `clock_affected`: emails to the shop's managers with `calendar.manage`. The cron's `timeClock` result gains `clockAlerts`.
+
+### Tip payouts (core)
+
+- **Code:** `src/domain/tips.ts` (pure: policy and shop settings, availability, statuses, batch drafting, fee share, instant fee), `src/server/tips/ledger.ts` (ledger sync, settings, reading), `src/server/tips/payouts.ts` (batches, holds, adjustments, cash, Stripe, webhooks, payroll, cron), `src/server/tips/accounts.ts` (employees' Express accounts: status, destination, notices), `src/domain/banking.ts` (pure: the four banking statuses, requirement labels, destinations) and `src/server/tips/report.ts`.
+- **Schema** (`drizzle/core_0033_tip_payouts.sql`):
+  - `tip_ledger`: one row per tip (`payment_id`, unique), per refund or void that gave tip back (`refund_id`, unique, negative), or per manager adjustment (with `reason`). Each has its shop, staff, sale, method, amount, fee share, business date and `payout_id`. A trigger refuses changes to amounts, people, dates and kind, moving an entry to another payout, and taking it off a payout that's approved, processing or paid.
+  - `tip_payout_batches` (kinds `end_of_night`, `daily_delay`, `weekly`, `manual`, `payroll`, `opening`; one draft per shop) and `tip_payouts` (one per batch and employee; method `cash`, `stripe`, `payroll` or `prior`; Stripe debit, transfer and payout ids, each unique; cash `drawer_date` and acknowledgment; hold reason).
+  - `staff_payout_accounts`: the employee's chosen method, instant flag and Express account id with its status. `core_0034_staff_banking` adds what Stripe returns about the payout destination (`destination_type` `bank_account` or `card`, `destination_last4`, checked to be 4 digits, and `destination_name`, the bank or card brand), `requirements_pending` and `requirements_deadline`. No full account, routing or card number, SSN or ID is ever stored.
+  - `brand_settings.tip_payouts` and `shops.tip_payouts` (jsonb), and `cash_drawers.tip_payouts_cents`.
+  - The migration fills the ledger from existing payments and refunds and records it all as paid before tip payouts (`prior` payouts in an `opening` batch per shop).
+- **If the app checks out or refunds**, nothing extra is needed: `syncTipLedger` runs inside checkout and refunds, and before every batch, from `payments.tip_cents` and `refunds.tip_cents`. Please don't insert into `tip_ledger` or `tip_payouts` directly.
+- **If the app shows an employee's tips** later, read `myTips(staffId, shopIds)` from `src/server/tips/ledger.ts` and gate it on `tips.own`. Please never return other people's tips, or Stripe account ids, from `/api/v1`.
+- **If the app shows an employee's banking** later, use `staffAccountState` (one of `not_set_up`, `pending_verification`, `ready`, `action_needed`) and `accountDestination` from `src/server/tips/accounts.ts`, and send them to `/admin/my-banking` (or Stripe's hosted pages through `staffOnboardingUrl` and `staffDashboardUrl`) to change anything. For anyone else, use only `payoutAccountSummaries` (method, status, last 4). Please change accounts only through `setPayoutChoice` and the functions there, which audit and send the security notices.
+- **Stripe:** employees' Express accounts send their events to the Connect webhook (`/api/stripe/connect`): `account.updated`, `capability.updated`, `account.external_account.*` and `payout.paid`/`failed`/`canceled`. The platform webhook handles `transfer.reversed`. Transfers come from the shop's connected account (an account debit, then a transfer with `source_transaction`) or the brand's balance.
+- **Payroll:** `payrollTipSplit` gives each line `tipsInPayroll`, `tipsOutside` (still `E_Cash Tips Recd_Dollars`) and `tipsPaidOut`. The iSolved file gets an extra column (`tipsInPayrollHeader`, default `E_Tips Paid In Payroll_Dollars`) only when someone has tips paid in payroll. `lockPayrollTips` runs inside approve-and-lock.
+- **Permissions:** `tips.own`, `tips.approve` and `tips.settings` (brand-only), and the report `tip_payouts`. There are 77 feature permissions now.
+- **Notification kinds:** `tip_payout`, to the employee (email, or a text if they have no email) when a payout is sent or fails, and to the shop's email when one fails. `tip_banking`, to the employee: Stripe needs more information (email, or a text without one), and security notices when the payout destination or method changes (email and text).
+- **Cron:** `/api/cron/notifications` runs `tipPayoutCron`, which builds each live shop's daily or weekly draft once it's due. The response gains `tipPayouts`.
+
+### Sign-in restrictions (core)
+
+- **Code:** `src/domain/network-access.ts` (pure: rules, IP and CIDR checks, the verdict, `BLOCK_MESSAGE`), `src/lib/client-ip.ts` (`clientIp(headers)`, the only reader of `x-real-ip`, `x-vercel-forwarded-for` and `x-forwarded-for`; a test fails if any other file in `src` names `x-forwarded-for` or `x-real-ip`), `src/server/auth/network.ts` (devices, `evaluateNetwork`, `recordBlocked`, `gateRequest`) and `src/server/sign-in-security.ts` (settings, devices, the portal's lists).
+- **Schema** (`drizzle/core_0036_network_access.sql`): `shops.network_access` (`{enabled, require: ip|device|either|both, allowedIps}`) and `brand_settings.network_access` (`{alertOnBlock}`), both jsonb defaulting to `{}`, meaning off. `trusted_devices`: one row per browser and shop, with only the SHA-256 of the cookie's secret (`token_hash`), status `pending|approved|declined|revoked`, who asked, who decided, and last seen.
+- **Enforcement:** `src/middleware.ts` now runs on the Node runtime and calls `gateRequest` for every `/admin` request with a session cookie. `getStaffContext` calls `evaluateNetwork` and drops the shops a request can't reach (`withoutShops` in `src/server/auth/access.ts`), returning null when none are left. Staff sign-in checks after the password. Exempt: the Brand Owner, and `access.remote` at the shop.
+- **Permissions:** `access.remote` and `devices.approve` (Staff group) and `network.settings` (brand-only). The migration gives Brand Admin all three and Regional and Shop Managers `devices.approve`. There are 80 feature permissions now.
+- **Audit actions:** `network.blocked` and `network.limited` (entity `staff`, one per shop, details `ip`, `via`, `shop`, `missing`, `require`, `path`, `device`, `userAgent`), `network.rule` (entity `shop`), `network.settings` (entity `brand_settings`, the alert), and `device.request`, `device.approve`, `device.decline`, `device.revoke`, `device.trust`. Notification kind `access_alert` (email).
+- **If the app ever adds staff endpoints** to `/api/v1`, please call `evaluateNetwork(access, { ip: clientIp(req.headers), deviceShopIds })` and refuse or narrow the same way, with `BLOCK_MESSAGE`. Customer endpoints aren't affected and nothing in `/api/v1` changed.
+
+### Customer screen at checkout (core)
+
+- **Code:** `src/domain/handoff.ts` (pure: tip buttons and their amounts, settings schemas, steps, the credit total `amountsFor`, `splitCents`, `tipWeights`, `splitBarbers`), `src/server/handoff.ts` (settings, start, the view, tip, signature, receipt, reader, pay, cash, unlock, end, resume, the receipt record), `src/server/auth/handoff-lock.ts` (the `rayz_handoff` JWT, `typ: "handoff"`, 12 hours; `lockedHandoff` checks the row on every request) and `src/app/handoff/[id]/**` (the customer screen and its actions).
+- **Schema** (`drizzle/core_0037_handoff.sql`):
+  - `brand_settings.handoff` (`{tips}`) and `shops.handoff` (`{tips | null, tipEntry: screen|reader, signature, unlock: staff|manager, afterPayment: auto|pin, thankYouSeconds}`), jsonb defaulting to `{}`. Shops whose `tip_presets` weren't the default got them as their own buttons. `shops.tip_presets` is still written (the shop's percent buttons) and is what the counter uses.
+  - `checkout_handoffs`: one row per hand-off, with the ticket as handed over (`draft`), the tip and where it came from, the signature (SVG path), the receipt choice (the typed number or email is cleared once paid; `receipt_masked` stays), and `status` `active|paid|returned`. One active per sale.
+  - `sale_tip_shares` (`sale_id`, `staff_id`, `weight`): only on tickets whose tip is split. The views `tip_split_shares` (each barber's whole cents of every tip and tip refund on those tickets) and `tip_split_moves` (the shares, less the whole tip from the ticket's barber; zero per tip).
+  - `tip_ledger_payment_uq` and `tip_ledger_refund_uq` are now `(payment_id, staff_id)` and `(refund_id, staff_id)`, since a split tip is one entry per barber.
+- **Checkout:** `finalizeSale` takes an optional `tipSplit` (`services` or `evenly`) and each line's optional `staffId`. It refuses while the ticket is with the client (`conflict`, "with the client").
+- **Lock:** `src/middleware.ts` now matches every page except `_next`, `api` and files (`/((?!_next/|api/|.*\..*).*)`), not just `/admin`. With a live `rayz_handoff` cookie, pages redirect to `/handoff/{id}` and actions get 403. `getStaffContext` returns null while it's live, so `/api/*` staff routes using `routeStaff()` refuse too. `/api/v1` is untouched.
+- **Permissions:** `handoff.unlock` (Point of sale group; Brand Admin, Regional and Shop Manager) and `handoff.settings` (brand-only; Brand Admin). There are 82 feature permissions now.
+- **Audit actions:** `handoff.start`, `handoff.paid`, `handoff.unlock` (the PIN's person, with the rule), `handoff.end` (from the counter), `handoff.settings` (shop) and `handoff.brand_settings`.
+- **Reports:** every query that credits tips to the ticket's barber adds `tip_split_moves`, so per-barber tips are split and shop totals are unchanged. `payrollSalesBetween` does the same. If the app ever shows a barber's tips, please read through these functions rather than `sales.tip_cents`.
+- **If the app checks out a ticket with several barbers** later, please pass `staffId` per line and `tipSplit`, and leave the split to `finalizeSale`. Please don't write `sale_tip_shares` directly.
+
+### Digital receipts (core)
+
+- **Code:** `src/domain/receipts.ts` (pure: `receiptConsent`, `cardLabel`, `tenderLabel`, `barberFirstName`, the text and email wording, `REQUEST_LIMIT`), `src/server/receipts.ts` (`receiptData`, `deliverReceipt`, `sendUpdatedReceipt`, `sendReceiptFromStaff`, `requestReceiptCopies`, `resolveReceipt`, `stopReceiptEmails`, `saleReceiptState`, `isOptedOut`), `src/app/receipt/**` (the page and the copy request) and `src/app/admin/sales/[id]/receipt-panel.tsx`.
+- **Schema** (`drizzle/core_0038_digital_receipts.sql`):
+  - `receipt_deliveries`: one row per receipt sent or chosen. `sale_id`, `shop_id`, `customer_id`, `channel` (`sms|email|none`), `destination` (null exactly when `none`), `masked`, `purpose` (`counter|handoff|refund|void|resend|request`), `token_hash` (SHA-256 of the link's token, unique), `job_id` (the `notification_jobs` row, kind `receipt`), `skipped` (`opted_out|no_consent`, when an update wasn't sent), `sent_by`.
+  - `receipt_opt_outs` (`email` primary key): emails that used **Stop receipt and review emails** on a receipt. Receipts and review requests only; it isn't marketing consent.
+  - `ReceiptBranding` (in `shops`' receipt settings) gains `reviewUrl` (`https://` or null) and `allowPrint` (default false).
+- **Consent:** a number in `contact_opt_outs` (sms) or an email in `receipt_opt_outs` is never sent a receipt. Choosing a receipt at checkout or asking for copies is consent for that receipt. Updates (refund, void) and resends to what's on file need the client to have chosen that destination for the ticket, or `sms_opt_in`/`email_opt_in`; a destination staff type in counts as the client asking. Core reads these columns and doesn't write them.
+- **Hand-off:** the receipt step and `payHandoff` now go through `deliverReceipt` (purpose `handoff`) in a savepoint, so a receipt failure never undoes the payment. An opted-out number on file isn't offered.
+- **Refunds and voids:** `reverse()` and `recordProcessorRefund` call `sendUpdatedReceipt` (never throws, savepoint), and their audit details carry `receipt: {status, to}`.
+- **Audit actions:** `receipt.sent`, `receipt.none`, `receipt.resent`, `receipt.requested`, `receipt.email_opt_out` (destination masked).
+- **If the app shows receipts**, please send them through `deliverReceipt` (purpose `request` or `resend`) or `requestReceiptCopies(contact)` and use the `/receipt/{token}` page, rather than building a receipt of your own. Only the token's hash is stored, so a link can't be rebuilt from a row later. Please also treat `receipt_opt_outs` as "no receipt emails" for that address.
+
+### Google reviews (core)
+
+- **Code:** `src/domain/reviews.ts` (pure: `googleReviewLink` parses a `g.page/r/…` link, a `search.google.com/local/writereview?placeid=…` link or a bare Place ID into the saved `https` link; `reviewFollowUp` settings; the text and email wording; `isAutomatedOpen`), `src/server/reviews.ts` (`openReviewLink`, `askForReview`, `queueReviewFollowUps`), `src/server/review-rules.ts` (`loadReviewRules`, `saveReviewRules`, `visitNumber`, `reviewTiming`), `src/server/review-report.ts`, `src/app/receipt/[token]/review/route.ts` and `src/app/admin/settings/review-fields.tsx` (settings and wizard).
+- **Schema** (`drizzle/core_0039_google_reviews.sql`):
+  - `receipt_deliveries.purpose` gains `review` (the follow-up; `notification_jobs.kind` `review_request`), and `skipped` gains `recent` (asked at this location within the repeat days). New index on `(customer_id, shop_id, purpose, created_at)`.
+  - `review_clicks`: `shop_id`, `staff_id` (the ticket's barber), `sale_id`, `delivery_id` (the link used), `source` (`receipt|follow_up`), `created_at`. No free-text columns.
+  - `ReceiptBranding.reviewUrl` is now Google only (anything else reads as null), and `reviewFollowUp: { enabled, delayHours (1–48), repeatDays (0–365) }`, off by default.
+  - Report permissions `report.google_reviews.view`/`.export` for Brand Admin, Regional Manager and Shop Manager.
+- **When it's shown** (`drizzle/core_0040_review_visits.sql`): `brand_settings.reviews` `{ minVisits (1–50, default 3), snoozeDays (0–365, default 90) }`; per location `ReceiptBranding.reviewMinVisits` / `reviewSnoozeDays` (null: the brand's). The receipt's `reviewUrl` is null before the client's Nth visit (distinct shop and local day across all locations: `completed` appointments and `paid|partially_refunded|refunded` sales, imported included, up to the ticket's day) and for `snoozeDays` after a `review_clicks` row from another of their tickets at that location. Follow-ups held for those reasons are skipped `few_visits` or `snoozed` (added to the check). Brand changes are audited as `brand.review_rules`.
+- **Consent:** the follow-up goes only to `sms_opt_in` (text, first) or `email_opt_in` (email) clients, never to a number in `contact_opt_outs` or an email in `receipt_opt_outs`, and not in quiet hours (`brand_settings.outreach`). A receipt choice isn't consent for it. Core reads these and doesn't write them.
+- **No gating:** who's asked depends only on the visit count, a recent tap and consent, never on ratings, tips, refunds or complaints, and the button looks the same for everyone who gets it. Please keep it that way if the app asks for reviews (Google policy).
+- **Cron:** `/api/cron/notifications` runs `queueReviewFollowUps()` before sending due jobs.
+- **If the app shows a Leave a review link**, please link to `/receipt/{token}/review` (or use `receiptData(saleId).reviewUrl`, which applies the visit and pause rules; `reviewTiming(saleId)` says why it's held) so clicks are counted, and don't add a rating step in front of it.
+
+### Campaign Center (core)
+
+Called "Marketing / Engage" at first. The UI, routes, permissions and report now say Campaign Center; the code paths, tables and notification kind keep `marketing`.
+
+- **Code:**
+  - Pure: `src/domain/coupons.ts` (`couponDiscount`, `couponProblem`, `stackProblem`, `couponSummary`, `uniqueCode`, `issuedExpiry`) and `src/domain/marketing.ts` (`TRIGGERS`, `render`/`fill`, `templatesProblem`, `inQuiet`, `nextSendAt`, `capProblem`, `pickChannel`, `SegmentSchema`, `dedupeKey`, `roi`).
+  - Server: `src/server/coupons.ts`, `src/server/booking-drafts.ts`, and `src/server/marketing/` (`consent`, `audiences`, `engine`, `campaigns`, `sequences`, `my-clients`, `links`, `report`, `lapsed-report`, `settings`).
+  - Routes: `/admin/campaign-center` (campaigns, blasts, `sequences/{id}`, `my-clients`, settings, `/export`), `/admin/reports/campaign-center`, `/admin/reports/lapsed-clients`, `/api/cron/campaign-center`, and `/m/{token}` and `/m/{token}/unsubscribe` (unchanged, since they're in messages already sent).
+  - Shared report helpers moved out of `reports.ts` into `report-sql.ts` and `available-minutes.ts`; `reports.ts` re-exports them.
+- **Schema** (`drizzle/core_0041_marketing.sql`):
+  - `promo_codes` gains `free_item_kind`/`free_item_id` (type `free_item`), `service_ids`, `product_ids`, `shop_ids` (jsonb, empty means all), `min_spend_cents`, `max_per_customer`, `code_mode` (`shared|unique`), `valid_days`, `first_visit_only`, `stackable` (default true) and `auto_apply`. Existing codes are unchanged shared codes.
+  - `coupon_codes`: single-use codes issued to one client by a campaign (`expires_on`, `redeemed_at`, `sale_id`).
+  - `coupon_redemptions`: one per sale and coupon, `via` `code|booking|auto`, with `campaign_id` and `reversed_at` (refund or void).
+  - `appointment_coupons`: the code held from online booking.
+  - `marketing_campaigns`: `kind` `trigger|blast`, one row per trigger key. Blasts have `segment`, `shop_ids`, and `status` `draft|scheduled|sending|sent|cancelled`.
+  - `marketing_location_settings`: per campaign and shop, `enabled`, and `templates`/`settings` overrides.
+  - `marketing_sends`: one per client per campaign occasion. `dedupe_key` is unique; `status` is `queued|skipped|test`; also `job_id` (`notification_jobs` kind `marketing`), a 22-character `token`, `book_path`, `clicks` and `cost_cents`.
+  - `marketing_unsubscribes`: by channel and client, email or phone; `source` is `link|stop|staff`.
+  - `booking_drafts`: unfinished online bookings by a browser token.
+  - `customer_tags`.
+  - `brand_settings.marketing`: quiet hours, caps, postal address, HELP text, attribution days and costs.
+  - Permissions, renamed by `drizzle/core_0042_campaign_center.sql` in `roles.permissions` and `staff.permission_overrides`: `campaign_center.view`, `.create`, `.send` and `.export` (labels "Campaign Center: view/create/send/export"), and `report.campaign_center.view`/`.export`. The old `marketing.location` and `marketing.manage` each became create plus send; `marketing.*` keys no longer exist.
+  - Lapsed sequences (`drizzle/core_0043_lapsed_campaigns.sql`): `marketing_campaigns.kind` gains `sequence` (its audience in `segment` as `{ staffIds, barberMatch }`, `settings.stopAfterDays`) and an `enabled` column; `marketing_steps` (`campaign_id`, `position`, `after_days` 7–365, `templates`, `promo_id`); `marketing_sends.step_id`. Occasions are `seq:{last visit day}:{step id}` for sequences and `barber:{last visit day}` for From your barber (trigger key `barber_outreach`, sent by hand, never by the cron).
+  - Also added by core_0043: `campaign_center.own_clients` ("Campaign Center: own lapsed clients") for Brand Admin, Regional Manager and Shop Manager roles that have `campaign_center.view`, and `report.lapsed_clients.view`/`.export` for those with `report.campaign_center.view`. The Barber template doesn't have it.
+  - We have openings (`drizzle/core_0045_openings.sql`): `marketing_campaigns.kind` gains `openings` (one row per barber per send; `segment` is `{ staffId, dates, lastVisitOverWeeks, serviceId }`, `settings.openSlots`), statuses `pending_approval|rejected|expired`, and `reviewed_by`, `reviewed_at`, `review_note`; table `openings_waitlist`; `brand_settings.marketing.openings` for the cap, limits, approval and wording. Permission `campaign_center.openings` and report `report.openings`. The same migration takes `promos.manage`, `campaign_center.view/create/send/own_clients` and the Campaign Center and lapsed reports out of the Regional and Shop Manager roles: the brand grants them back.
+- **Consent (read-only for core):**
+  - Marketing reach per channel reads the columns below. `consentColumns()` checks which exist once a minute; until they do, nobody qualifies.
+    - `customers.sms_marketing_opt_in`
+    - `customers.email_marketing_opt_in`
+    - `customers.push_marketing`
+    - `customer_devices` (`push_enabled`, `revoked_at`, newest `last_seen_at`)
+    - `customers.deleted_at`, if present
+  - `contact_opt_outs` (sms) and `marketing_unsubscribes` always win. `sms_opt_in`/`email_opt_in` (appointment messages) are never read as marketing consent.
+  - Core writes only `marketing_unsubscribes`, from its own links, STOP and START.
+- **STOP, START and HELP** on the shop line:
+  - STOP also adds an `sms` unsubscribe and cancels pending marketing jobs. START removes the STOP unsubscribes.
+  - HELP gets the brand's HELP text unless `TWILIO_ADVANCED_OPT_OUT=1`.
+- **Audit actions:**
+  - Campaigns: `campaign_center.automation_saved`, `campaign_center.automation_on`/`_off`, `campaign_center.test_sent`.
+  - Blasts: `campaign_center.blast_created`, `_saved`, `_scheduled`, `_sent`, `_cancelled`.
+  - Sequences: `campaign_center.sequence_created`, `_saved`, `_on`, `_off`, `_deleted`; a barber's send: `campaign_center.own_clients_sent`.
+  - Other: `campaign_center.export`, `brand.campaign_center_settings`, `promo.create`/`.update`, `customer.tags`. Rows written before the rename keep their `marketing.*` and `brand.marketing_rules` names.
+- **If the app takes coupons or bookings:**
+  - **Bookings:** check and hold a code with `checkBookingCoupon(shopSlug, code)` and `holdBookingCoupon(appointmentCode, code)` right after booking, so the POS picks it up.
+  - **Checkout:** redeem only through checkout's `redeemCoupons` (it re-checks limits under a lock), and never increment `promo_codes.redemptions` yourself.
+  - **Unfinished bookings:** `saveBookingDraft` and `finishBookingDraft` feed the "Finish your booking" campaign.
+- **Push:**
+  - Marketing push jobs have `channel = 'push'` and `to` set to the `customer_devices.id`.
+  - The provider (`NOTIFICATIONS_PUSH_PROVIDER`) is `disabled`, `console`, `simulator` or an `expo` stub.
+
+### Brand-to-shop settings ("brand-sync registry")
+
+There's no module by that name yet. These are the places where a brand setting flows down to shops today:
+
+- **Catalog:** `services` and `products` hold the brand records. `shop_services` and `shop_products` hold each shop's price, duration, enabled flag and stock. `catalog.manage` pushes brand items to shops.
+- **Booking times:**
+  - Interval precedence is in `resolveInterval` in `src/domain/timing.ts`: barber at shop, then barber, then shop, then brand (`brand_settings.slot_interval_minutes`).
+  - Duration precedence is in `resolveDuration`: barber at shop, then barber, then the shop menu, then the service default.
+- **Loyalty:** brand-wide, in `brand_settings`.
+- **Client data protection:** brand policy, with per-role and per-person rules.
+
+If the mobile side means a specific registry from the plan, say which items it should cover and the core agent will build it.
+
+### Schema notes the mobile side may read
+
+- `appointments`:
+  - `busy_from` and `busy_until` are set by a trigger from `buffer_before_minutes` and `buffer_minutes`.
+  - The `appointments_no_double_booking` constraint stops service times overlapping. `appointments_no_buffer_overlap` stops buffers overlapping, unless the booking has `squeezed = true`.
+  - Online and API bookings must start on a time from `getAvailability`, which is per barber now (`slot.ends[staffId]`). Squeeze-in is staff-only.
+- `payments` gains Connect columns. See the I10 section above, and `settlement` and `terminal_reader_id` in the per-location banking section.
+- `shop_payouts.shop_id` can be null (brand-account payouts). Join with a left join.
+
+### Client notes (brand-wide)
+
+Notes follow the client to every location. Domain (pure): `src/domain/client-notes.ts`. Server: `src/server/client-notes.ts`, with staff route handlers in `src/server/client-notes-api.ts`.
+
+- **Kinds:** `profile` (can be pinned; pinned notes show on the appointment block, check-in and checkout), `visit` (cut and formula notes: `details` holds `guard`, `style` and `products`, with up to 4 before/after photos, optionally tied to an appointment) and `private` (managers only).
+- **Who sees them:** anyone with `notes.view` who reaches the client (a client they may look up, or one booked at their shop from yesterday on, in their own column unless they run the calendar), as far as Client data protection's "Client notes" level allows: full shows them, masked shows only the count, hidden shows nothing. `private` needs `notes.private`, which a shop login never has. Writing needs `notes.write`; anyone's notes at their shops need `notes.edit_any`.
+- **The record note:** `customers.notes` stays the client's main profile note. A trigger keeps it as a pinned `profile` note with `source = 'record'`, so every existing writer (the importer, `/api/v1`, the profile) still works and still follows the field's add and edit rules.
+- **Contact details never stay in a note.** `redact_contact_text` (SQL) and `redactContact` (TypeScript, same patterns) replace emails and phone numbers with `[email removed]` and `[phone removed]` in `client_notes.body` and `details` and in `customers.notes`, whoever writes them. The app warns while typing and reports `removed` after saving.
+- **Squire:** a clients file's Notes become the record note (credited "Squire"); an appointments file's notes become that visit's cut note, dated the visit (`source = 'squire_visit'`, idempotent on re-import). Both come from triggers, so `importer.ts` is unchanged.
+- **Migration `core_0057_client_notes`:** the `client_notes` and `client_note_photos` tables, the redaction and sync triggers, a backfill, and the four permissions.
+
+### Company-wide clients (core)
+
+A client profile is the brand's, never a shop's: one record across every location, with visits, notes, badges, family, loyalty, gift cards, ratings, consent and cadence adding up across shops. `customers.home_shop_id` and the shops visited are reporting attributes only.
+
+- **Lookup:** `searchClients` / `findClients` in `src/server/client-search.ts` reach every client from any shop by any part the searcher may search (the client policy still decides what each hit shows). Only `ownClientsOf` (a barber's own list) narrows it, and ticket and appointment numbers still find only the searcher's shops' tickets. `searchCustomers(term, limit, reach)` in `customers.ts` lost its shop `scope` argument; `SearchScope`, `clientSearchScope`, `scopedSearchWhere` and `customerExactWhere` are gone.
+- **Shop logins and money:** a shop login (`staff.kind = 'shop'`) sees a client's visits at every shop (date, shop, barber, services) but prices, tickets and spend only for its own shop. On the web profile that's `customerStats(id, db, now, ctx.shopIds)` and the sales list filtered with `inShops`.
+- **Squire:** `reconcileSquireClients(csv, { dryRun, actor })` in `src/server/squire-reconcile.ts` runs after a clients import (the admin action and the CLI). It fills empty birthdays from the file's Birthday column, merges same name + birthday pairs where no phone or email disagrees (`mergeDuplicatePairs`), and leaves the rest on the duplicates page's Squire tab. `importer.ts` is unchanged.
+- **Merges:** `mergeCustomers` now keeps one `client_badges` row (marked stale) and drops duplicate `client_badge_notices`, so two records with cached badges merge.
+
+### Compensation fields (core)
+
+Optional and off until the brand turns it on (`brand_settings.compensation.enabled`). Domain (pure): `src/domain/compensation.ts`. Server: `src/server/compensation.ts`; the report is `src/server/commission-report.ts`.
+
+- **Schema (`core_0058_compensation`):** `staff_compensation` (one row per version: `effective_from`, rates in cents and fractions, overrides, tiers, booth rent, guarantee, tip method and card-fee netting, a note). Rows are append-only: a trigger refuses updates, refuses deleting a version that has started, and refuses a version starting on or before the last locked `payroll_runs.period_end`. Also `staff_custom_fields`, `staff_custom_values` and `brand_settings.compensation`. A check refuses field names for bank, card, SSN, tax ID, licence, passport or birth date data. No bank or SSN data anywhere: that stays with Stripe and iSolved.
+- **Reading a plan:** `versionsFor(staffIds)` returns each person's versions, newest first, and `versionOn(sorted, date)` gives the one in effect. A blank part of a plan means Payroll setup's rate, or the shop's tip setting. `commissionLines` plus `commissionBetween` give commission net of discounts and refunds, per shop.
+- **Who sees it:** `compensationAccess(ctx, staffId)` returns `{ view, edit }`. It's never true for your own record or for a shop login. The new permissions are `compensation.view`, `compensation.edit`, `compensation.settings` (brand-only) and `compensation.own` (your own pay on My pay); Brand Admin has all four. The new report is `commission_payout`.
+- **Tips:** `effectiveMethod(shop, policy, choice, planned?)` and `netsCardFee(shop, planned?)` take the plan's say from `tipOverrides(staffIds)`, while compensation is on.
+
+### Event log (core)
+
+Append-only `analytics_events`, written by database triggers on the tables both sides already write (see README, "Event log and operations KPIs" and "Event log schema"). The catalog is `EVENTS` and `EVENT_COLUMNS` in `src/domain/analytics.ts`; server code is `src/server/analytics.ts`.
+
+- **Nothing is needed in `/api/v1`.** Bookings, cancellations, moves and tickets made through it are logged by the triggers. An appointment with `source = 'api'` is logged with channel `app` and actor `client`. The web client's `x-client: web` keeps it `online`.
+- **Never write to `analytics_events` directly** except through `recordEvent` (server) or the funnel endpoint. Updates and deletes are refused by trigger, except the client id on merge and erasure.
+- **Actor and device:** a transaction run inside `withEventContext({ kind, channel, device, staff })` from `src/db/event-context.ts` hands that context to the triggers. `safe()` and `authorize()` do it for staff server actions. Without one, the row's own source decides, and the device is blank.
+- **Erasure:** deleting a `customers` row runs `analytics_forget` by trigger. A soft delete or anonymise should call `select analytics_forget(id)` itself.
+- **Funnel:** `POST /api/events/funnel` (core-owned, CORS open, no auth) takes `funnelBeacon`: `{ funnel, step, shop, services?, staff?, anyBarber?, startsAt?, appointment?, channel? }`. `shop` and `staff` can be ids or slugs, and `appointment` an id or code. `step` is `viewed`, `service_picked`, `barber_picked`, `time_picked`, `details` or `booked`. Funnels with no booked step after an hour are logged `funnel.abandoned` by the nightly cron.
+- **Post-visit rating:** `visit_satisfaction` (one per `sale_id`, `stars` 1-5, `channel` `receipt` or `app`). Only ask when `loadAnalyticsSettings().satisfaction` is on.
+- **Migration `core_0059_analytics`.** Permissions: `analytics.events`, `analytics.export` (brand-level, owner grants), `analytics.settings`.
+
+### Locations API, deep links and the booking widget
+
+- **Handlers:** `getLocations` and `getLocation` in `src/server/locations-api.ts` (built with `route`, `json` and `query` from `api.ts`; no sign-in, `Cache-Control: public, max-age=60`). Core serves them at `/api/locations` and `/api/locations/{slug}`, plus a standalone document at `/api/locations/openapi.json`.
+- **Shapes:** `LocationSchema`, `LocationListSchema`, `LocationQuerySchema` and `LOCATIONS_OPENAPI` (paths `/locations` and `/locations/{slug}`; components `Location` and `LocationList`) in `src/domain/location-profile.ts`. Query: `near=lat,lng` or `zip=NNNNN`, optional `radius` (miles) and `serviceId`. A location has the address (`line1`, `line2`, `city`, `state`, `zip`, `full`), `geo` (`approximate` when it's the ZIP centre), `distanceMiles`, `phone` and `textNumber` (`e164`, `display`, `href`), `email`, `timezone`, `hours`, `weeklyHours`, `closures` (next 90 days), `openNow`, `openStatus`, `nextAvailable` (first slot in 14 days with its `bookUrl`), `links` (`booking`, `app`, `embed`, `location`, `map`, `directions`, `review`), `googlePlaceId`, `social`, `photos`, `logoUrl`, `directions` and `amenities`. The tax jurisdiction is never in it.
+- **Deep links:** `https://<site>/book/<slug>?service=<slug or id>&barber=<slug>&start=<ISO>&coupon=<code>`, the same as `rayz://book/<slug>?…` in the app (`deepLinks()`, `APP_SCHEME = "rayz"`), and `/embed/book/<slug>?…` for frames. The web booking flow already honours all four parameters.
+- **Widget:** `<script src="https://<site>/widget.js" async>` with `<div data-rayz-booking data-location="<slug>">` (inline) or `<button data-rayz-book data-location="<slug>">` (opens over the page); `data-service`, `data-barber`, `data-start` and `data-coupon` pre-fill it. The frame posts `rayz:height` and `rayz:booked` (`{ type, location }` only, never the client or code). Bookings from it have funnel channel `widget`.
+
+## Requests for the other agent
+
+- (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
+- (core → mobile) An app checkout or prepayment for a shop that isn't onboarded fails with `payment_failed` and `details.reason = "payments_not_ready"`. Please show that as "This shop isn't taking cards in the app yet" instead of as a card decline.
+- (core → mobile) Card charges should now go through `chargeRoute` (see "Per-location banking"). A cash-only shop fails with `details.reason = "cash_only"`; please show it as "This shop takes cash only" and don't offer card prepayment there.
+
+- (core → mobile) Twilio now handles STOP and START on each shop number and writes `contact_opt_outs`. If the app shows a client's text consent, please treat a number in `contact_opt_outs` (channel `sms`) as not texting, whatever `sms_opt_in` says.
+
+- (core → mobile) Locations now have a lifecycle in `shops.status`: `setup` (hidden from clients), `live`, `closed` (temporary, with `closed_until` and `closed_note`) and `archived` (`active = false`, which a database check enforces). The pure rules are in `src/domain/location-lifecycle.ts`: `listedPublicly`, `takesOnlineBookings`, `closedOn` and `operational`. PR #8 adds `shops.launch_at` and `booking_mode` as a cutover gate from Squire. That's a separate question (which system takes the bookings), so they should be combined rather than replace each other. Please have `/api/v1` list and book only shops where both the cutover gate and `takesOnlineBookings` allow it. Archived shops should never appear. Temporarily closed shops can be listed with `closed_note`.
+- (core → mobile) Today's open-chair and rebook texts read `customers.sms_marketing_opt_in` from PR #8. They check for the column at runtime and send nothing until it exists. Core doesn't add the column; the consent UI and its capture are yours.
+- (core → mobile) The Campaign Center (see "Campaign Center") reads these PR #8 names:
+  - `customers.sms_marketing_opt_in`, `email_marketing_opt_in` and `push_marketing` (booleans);
+  - `customer_devices.push_enabled`, `revoked_at` and `last_seen_at`.
+
+  Please confirm the names, or tell us yours, and we'll change `src/server/marketing/consent.ts`. Please also:
+  - capture marketing consent separately from appointment messages, with the TCPA disclosure;
+  - treat a `marketing_unsubscribes` row as "off" for that channel in the app's settings, and record an in-app opt-out there (`source` `staff` or a new `app` source we'd add);
+  - tell us when real push delivery replaces the `expo` stub. Jobs carry the device id in `to`.
+
+- (core → mobile) Processor-hosted data: the server now scrubs card, bank, SSN and EIN values from every log line (`src/instrumentation.ts` wraps `console`, which covers `errorResponse` in `api.ts`), from audit details, and in the database from every free-text column, including what `importer.ts` writes. Please never add a request or response field for those values to `/api/v1`, `api-schemas.ts` or `openapi.ts`; `tests/db/sensitive-data.test.ts` checks every `/api/v1` GET and the OpenAPI document with `findSensitive`. When the app adds saved cards, collect them with Stripe's mobile Payment Sheet or SetupIntents and keep only the PaymentMethod id, brand and last 4.
+
+- (core → mobile) If the app shows hours or adds a clock-in, please read and write through `src/server/time-clock.ts` (see "Time clock"). Never return `clock_pin_hash`, punch photos or other people's punches from `/api/v1`.
+
+- (core → mobile) Family accounts: please mount the six `/api/v1/me/family` routes from `@/server/family-api` and spread `FAMILY_OPENAPI` into `openapi.ts` (see the family accounts log entry). In the app, book a family through `POST /me/family/bookings`, and show `household: true` from `/me/loyalty` as the family card.
+
+- (core → mobile) Family booking in the app: verify the phone by code before listing the family, then multi-select who it's for, with an inline Add a child (see the family booking flow log entry).
+- (core → mobile) Family booking groups: please mount the seven `/api/v1/me/family/booking-options` and `booking-groups/...` routes, show the slot finder's three plans with the total window, and show the 409 `alternatives` (see the family booking groups log entry).
+
+- (core → mobile) Time between visits: the web account page (`/account`) shows the client's cadence, worked out in the browser from `/me/appointments` (only the latest 20 past appointments, so it can drift for clients with many cancellations). For the app, and so both read all visits, please add to `/me` (or a `/me/visits/cadence`) the result of `clientCadence(customerId, now)` in `src/server/visit-cadence.ts`: `cadence` (`visitDays`, `cadenceDays`, `label`, `lastVisit`, `sinceDays`, `nextExpected`, `booked`, `status`) and `barbers` (per barber, only when they've seen two or more). Labels and status words are in `src/domain/visit-cadence.ts`; once it's there, `/account` will read it instead.
+
+- (core → mobile) Client notes in the staff app: please mount the four handlers from `@/server/client-notes-api` under `/api/v1/staff` and spread `CLIENT_NOTES_OPENAPI` (with `ClientNotesSchema` and `NoteSavedSchema`) into `openapi.ts` (see the client notes log entry).
+
+- (core → mobile) Company-wide clients (see the log entry): if the staff app or `/api/v1` searches clients for staff, please call `searchClients` (or `findClients` plus `clientHits`) instead of anything shop-scoped, and on any staff client profile show other shops' visits without their prices or tickets to a shop login. Optional, in `importer.ts`: map a clients file's Birthday column (`FAMILY_ALIASES.birthday` in `src/domain/family-import.ts`) onto `customers.birthday` when it's empty. The core post-step already does this after each run, so it's only for imports that skip the admin action and the CLI.
+
+- (core → mobile) Compensation fields (see the log entry): please don't return anything from `staff_compensation`, `staff_custom_fields` or `staff_custom_values` through `/api/v1` until it's needed, and then only through `compensationAccess`. Optional, if the staff app shows pay: a `GET /api/v1/staff/me/pay` that returns what My pay shows, and only for the signed-in person with `compensation.own`. That's their own plan (`describePlan`), this month's and this pay period's commission (`commissionLines` + `commissionBetween`), and the estimate when `payEstimate` is on. If anything the app shows uses a tip method, read it through `effectiveMethod(..., planned)` with `tipOverrides`.
+
+- (core → mobile) Event log (see "Event log" above), all optional:
+  - In the app's booking flow, send the same funnel steps as the web wizard to `POST /api/events/funnel` with `channel: "app"` and a random `funnel` id per attempt, so the funnel compares app and web.
+  - If the app asks "How was your visit?", insert into `visit_satisfaction` with `channel = 'app'` (first answer stands).
+  - Wrapping `/api/v1` handlers in `withEventContext({ kind: "client", channel: "app", device: deviceClass(ua) })` would fill in the device for app bookings.
+  - If account deletion is a soft delete, call `analytics_forget(customerId)`.
+
+- (core → mobile) Location profiles (see "Locations API, deep links and the booking widget" and the log entry):
+  - Please mount `getLocations` and `getLocation` from `@/server/locations-api` at `/api/v1/locations` and `/api/v1/locations/{slug}` (with `OPTIONS`), and spread `LOCATIONS_OPENAPI` into `openapi.ts`.
+  - Add `address2` (the suite or unit line, `''` when none) to the v1 Shop schema, and prefer `fullAddress()` from `src/domain/location-profile.ts` wherever the app shows an address.
+  - Register the `rayz://book/<slug>` deep link in the app with the same `service`, `barber`, `start` and `coupon` parameters.
+  - If the app sends funnel steps, keep `channel: "app"`; `widget` is the embedded web widget's.
+
+## Open questions
+
+- Which C/I/S items does "brand-sync registry" refer to? See above.
+- C18 review login and the wallet fee: flags are off until Charles decides.
+- I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
+- Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
+- Time clock, pending the owner or the accountant:
+  - Iowa and Illinois overtime rules. It's federal weekly-over-40 for now, with optional daily OT as a setting.
+  - The exact iSolved import template: column names and earning codes. The layout is configurable.
+  - Meal break rules: 30 minutes or more is unpaid by default, and the auto-deduction is off.
+  - Each shop's real coordinates and network addresses. The seeded ones are approximate.
+- Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
+
+## Log
+
+### 2026-10-24: core (product history and refills), FYI for mobile
+
+- **What changed.** The checkout product prompt and the client profile show the client's last product (name, date, location, quantity), their last 5 purchases, and a refill hint per product: has some left, likely running out (a week before it's due) or likely ran out. The hint comes from how long one unit lasts them (the median gap between purchase days divided by what they bought), or the product's typical interval when they bought it once. **Buy again** adds it in one tap at checkout. On the profile it puts it on the client's open ticket today, or a new retail ticket. The report builder gains a Products group (last product, date, location, quantity, refill status, products likely running out, next refill due). Segments gain `refillStatus` and `refillProductIds`.
+- **FYI, core API:**
+  - `TicketPrompts` gains `history` (`ProductHistory` from `src/domain/product-history.ts`). Each `ProductSuggestion` gains an optional `refill { status, due }`.
+  - `SegmentSchema` gains `refillStatus` (`stocked` | `running_out` | `ran_out`) and `refillProductIds`. Both default to empty, so saved segments and anything the app sends parse as before.
+  - `FilterOptions` gains `products`.
+  - The new audit action is `sale.buy_again`.
+- **No migration.** It reads paid tickets. The next free number is still `core_0063`.
+- **No request.** A "running low?" card in the app could read `clientProductHistory(customerId, now)` from `src/server/product-history.ts` later. Nothing is needed now.
+- **Tests:** `tests/product-history.test.ts` and `tests/db/product-history.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (checkout prompts), FYI for mobile
+
+- **What changed.** The POS shows a rebook prompt (the next visit with the same barber at the client's interval, 2–3 times, one tap, families together, "Not now" with a reason and an optional reminder) and a product prompt (products tagged as used, the brand's service-product suggestions and past purchases, with stock, one tap to add). The brand switches each on or off per location, role and barber, and makes each skippable or required. **Reports → Checkout prompts** shows rebook rate and attach rate by barber and location. `prompt.shown`, `prompt.accepted` and `prompt.declined` go to the event log.
+- **FYI, core API:**
+  - `finalizeSale` (without a `handoffId`) and `startHandoff` refuse with `bad_request` "Answer the rebook prompt … before taking payment." while a required prompt is unanswered. Nothing in `/api/v1` pays tickets, so nothing changes there.
+  - Appointments booked from the prompt use source `rebook` with `rebookedFromId`; a family's is a booking group with source `staff`.
+  - The new notification kind is `rebook_reminder` (SMS/email only, from `/api/cron/notifications`). If the app lists a client's notifications, show it as "Rebook reminder".
+- **Migration `core_0062_checkout_prompts`.** The next free number is `core_0063`.
+- **No request.** A client-side "you're due" nudge in the app could read the same interval later; nothing is needed now.
+- **Tests:** `tests/checkout-prompts.test.ts` and `tests/db/checkout-prompts.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (location profiles), FYI and REQUEST for mobile
+
+- **What changed.** Each location has a profile, edited under Settings (Location profile, Photos and logo, Booking widget and links) and in the Add Location wizard: the street address with autocomplete (Google Places with `GOOGLE_MAPS_API_KEY`, the Census geocoder with `GEOCODER=census`, otherwise the ZIP's centre), a second line, the map pin and where it came from, the main phone as E.164, email, Google Place ID and review link, social links, parking and directions, amenities, photos and an uploaded logo, and the sales-tax jurisdiction (never public). Public `/locations` and `/locations/<slug>` pages carry HairSalon JSON-LD. Confirmations, reminders, receipts and calendar invites (`/a/<code>/calendar.ics`, `/g/<code>/calendar.ics`, and attached to confirmation and reschedule emails) now carry the full address and phone. The new merge fields are `{full_address}`, `{map_link}` and `{calendar_link}`.
+- **FYI, core API:** `AppointmentMessageContext` gains optional `endsAt`, `shopFullAddress`, `shopGeo`, `shopDirections` and `services`. `getAppointmentByCode().shop` gains `textNumber`, `mapsUrl` and `locationUrl`, and `address` is now the full address. `saveShopInfoAction` no longer needs the address, phone or email. `LocationDraft` takes the profile fields, and `phone` is normalized to E.164.
+- **Migrations:** `core_0060_location_profile` (shop columns and `shop_photos`) and `core_0061_place_id_check`. The second fixes 0060's Place ID check, which Postgres refused at write time because of its repetition count.
+- **Request:** see "Requests" (mount the locations API under v1, `address2` on Shop, the `rayz://book` link).
+- **Tests:** `tests/location-profile.test.ts` and `tests/db/location-profile.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (event log), FYI and optional REQUEST for mobile
+
+- **What changed.** Every meaningful action is logged once in `analytics_events` by triggers: bookings, the online funnel, appointment flow, tickets, payments, tips, stock, staff time, messages, campaigns, badges, reviews, the assistant, calls, walk-ins and post-visit ratings. It's reportable in the report builder (Event log source), in Rayz Assistant (`event_report`), as an owner-only raw CSV and in a nightly Postgres warehouse copy. The new **Operations KPIs** report and the **Insights → Event log** page come with it.
+- **FYI:** `safe()` now runs each action inside `withEventContext`, and `authorize()` stamps the staff member. `mergeCustomers` queues the merge for the warehouse. The new cron is `/api/cron/analytics` (09:20 UTC).
+- **Migration `core_0059_analytics`.**
+- **Request (optional):** see "Requests" (app funnel steps, app ratings, the device on app bookings, soft deletes).
+- **Tests:** `tests/analytics.test.ts` and `tests/db/analytics.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (compensation fields), FYI and REQUEST for mobile
+
+- **What changed.** Optional pay plans per employee, with an effective-dated history, and the brand's own employee fields. All off by default (see "Compensation fields" above and README, "Compensation fields"). The new pages are an employee's Compensation tab, **Payroll → Compensation**, **My pay**, and the Commission Payout report. When the brand says so, payroll takes hourly rates, commission (with per-service and per-category overrides and monthly tiers) and the guaranteed minimum from plans. The optional iSolved columns are added only when turned on.
+- **FYI, core API:** `effectiveMethod` takes an optional fourth argument `planned`, and `draftPayouts` an optional `netCardFeeOf`. Existing callers are unchanged. `LineInput.guaranteeTopUp` and `Line.guaranteeTopUp` are new (0 for everyone with compensation off). `exportHeaders` and `exportRows` take optional `ExportOptions`, and `ShopBlock.exportFrom` records what each extra column carries.
+- **Migration `core_0058_compensation`:** the tables above, `brand_settings.compensation`, and the six permissions added to Brand Admin.
+- **Request:** see "Requests" (keep these tables out of `/api/v1`; an optional staff pay endpoint).
+- **Tests:** `tests/compensation.test.ts` (unit) and `tests/db/compensation.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (company-wide client profiles), FYI and REQUEST for mobile
+
+- **What changed.** Client profiles are brand-level (see "Company-wide clients" above and README, "Clients (brand-wide)"). Staff at any shop find and book any client by any part of their name or details. The client list shows every shop's clients, with home shop and shops visited as columns and filters (plus a `locations_visited` report field). Client-list exports keep to the exporter's shops' clients unless they work brand-wide. Shop logins don't see other shops' prices, tickets or spend on a profile. Same full name + birthday is now a "likely" duplicate. The Squire clients import merges the same client at several Squire shops by name and birthday, with uncertain pairs left for review.
+- **FYI, API change in core:** `searchCustomers(term, limit, reach)` (no `scope` argument); `SearchScope`, `clientSearchScope`, `scopedSearchWhere` and `customerExactWhere` were removed. Nothing under `/api/v1` used them.
+- **Request:** see "Requests" (staff client search through `searchClients`; shop logins and other shops' money; optional Birthday mapping in `importer.ts`).
+- **Tests:** `tests/db/company-wide-clients.test.ts`; `tenant.test.ts`, `client-search.test.ts` and `clients.test.ts` updated for brand-wide lookup.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No migration, no new `ErrorCode`.
+
+### 2026-10-24: core (client notes), FYI and REQUEST for mobile
+
+- **What changed.** Client notes are brand-wide (see "Client notes" above and README, "Client notes"). They show on the client profile, the calendar block and appointment panel, the barber's Up next, walk-in check-in and checkout, and in the assistant's new `client_notes` tool.
+- **FYI: `customers.notes` is now redacted by trigger.** A phone number or email written into it by any path, including `importer.ts` and `/api/v1`, is replaced with `[phone removed]` or `[email removed]`. Existing notes were redacted by the migration.
+- **Request (when the staff app shows notes):** mount these under `/api/v1/staff`, each a one-line re-export plus `OPTIONS`, like the web routes under `src/app/api/staff/**`:
+  - `GET /staff/clients/{id}/notes` → `getClientNotes`: `ClientNotesSchema` (`mode` full or count, `count`, `notes`, `canWrite`). 404 when they don't reach the client, 403 when notes are hidden for them. Each read is logged in `client_access_log`.
+  - `POST /staff/clients/{id}/notes` → `postClientNote` (201): body `{ kind, body, pinned?, details?, appointmentId? }`, returns `{ note, removed }`, where `removed` lists `phone` or `email` if any were taken out.
+  - `PATCH /staff/notes/{id}` → `patchNote` (body `{ body?, pinned?, details? }`) and `POST /staff/notes/{id}/remove` → `postRemoveNote`.
+
+  The handlers resolve the staff member from the web session (`getStaffContext`). If the app's staff auth is a bearer token, call `listNotes`, `addNote`, `editNote` and `removeNote` from `src/server/client-notes.ts` with your `StaffContext` instead; they do every permission check.
+- **Migration `core_0057_client_notes`.** New permissions `notes.view`, `notes.write`, `notes.edit_any` and `notes.private`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (combined checkout), FYI and REQUEST for mobile
+
+- **What changed (web and server only).** Linked and family appointments check out on one combined ticket (see README, "Combined checkout"). Server: `src/server/combined-checkout.ts` (`sendToCheckout`, `sendGroupToCheckout`, `mergeTickets`, `splitOffTicket`, `splitTicketApart`, `openTickets`). `finalizeSale` in `checkout.ts` takes three new optional inputs:
+  - `tenders`: split payment, each `{ method, amountCents, payerCustomerId?, payerLabel?, ... }`;
+  - `tipByStaff`: per-barber tips;
+  - `ticketPeople`: the appointment ids the screen showed. When it's given and someone was combined in or split off since, it fails with `conflict`.
+
+  Existing callers are unaffected; `/api/v1` doesn't call any of these today.
+- **Migration `core_0056_combined_checkout`:**
+  - `appointments.checkout_ready_at` and `checkout_ready_by`;
+  - `sales.merged_into_sale_id`: a ticket combined away is `voided` with it set;
+  - `payments.payer_customer_id` and `payer_label` (40 characters, cleaned of anything like a card number);
+  - `checkout_handoffs.tip_by_staff`;
+  - the `sale_line_moves` view.
+
+  If the app reads sales, please treat a voided sale with `merged_into_sale_id` as "moved to ticket #N" and not as a cancelled visit. Anything summing a barber's services from `sales.staff_id` should add `sale_line_moves`, the way `tip_split_moves` is added for tips.
+- **Request (optional, when the app shows these):**
+  - A barber's **Send to checkout** in the staff app: `POST /api/v1/staff/appointments/{id}/send-to-checkout` → `sendToCheckout(id, actor)`, returning `{ saleId, joined, ready, total, all }`. Permission: their own appointment, or `checkout.any`.
+  - `checkoutReadyAt` on the staff appointment payloads, from `appointments.checkout_ready_at`.
+  - On the client's receipt or visit history, `people` from `receiptData(saleId)` (lines grouped by person and barber, with `refundedQty`), and the payer in each tender's label (already in `receiptData`).
+  - No new response field may carry a card or bank number: payer labels are names only, and `findSensitive` should keep passing.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (family booking groups), REQUEST for mobile
+
+- **Please mount seven more family routes under `/api/v1/me/family`**, each a one-line re-export from `@/server/family-api` plus `OPTIONS`, like the web routes under `src/app/api/account/family/booking-options` and `booking-groups/**`:
+  - `POST /me/family/booking-options` → `postGroupOptions`: the slot finder for one day. Body `{ shopId, date, people: [{ customerId, serviceId, addonIds?, staffId? }], after? }`, with 2 to 7 people (the parent and up to 6 children). Returns `{ plans: [{ plan, label, options, reason }], depositCents }`. The plans are `same_barber` (back to back), `together` (same time or overlapping, several barbers) and `earliest_finish` (mixed). Each option has `startsAt`, `endsAt`, `minutes` (the total window), `barbers` and `seats`.
+  - `POST /me/family/booking-groups` → `postBookingGroup` (201): books the option picked, all or nothing. Body `{ shopId, people, plan, seats: [{ customerId, staffId, startsAt }] }`. It honors `Idempotency-Key`. When a seat was taken mid-checkout nothing is booked. For a named plan (not `custom`) the server first retries the same times with another barber for anyone who didn't ask for one. Otherwise it answers 409 `slot_unavailable` with `error.details.alternatives` (the same shape as booking-options). Please show those alternatives instead of a dead end.
+  - `GET /me/family/booking-groups` → `listBookingGroups` (`{ groups }`, upcoming) and `GET /me/family/booking-groups/{code}` → `getBookingGroup`.
+  - `POST /me/family/booking-groups/{code}/cancel` → `cancelBookingGroup`: everyone still booked, closing at the shop's cutoff before the first person's time.
+  - `POST /me/family/booking-groups/{code}/options` → `postGroupRescheduleOptions` (body `{ date, after? }`) and `POST /me/family/booking-groups/{code}/reschedule` → `rescheduleBookingGroup` (body `{ plan, seats }`, all or nothing, 409 with alternatives).
+  - `FAMILY_OPENAPI` in `src/domain/family.ts` already has the paths and the schemas (`GroupOptionsRequest`, `GroupOptions`, `GroupBookingRequest`, `GroupRescheduleRequest`, `BookingGroup`). If you spread it into `openapi.ts` they appear.
+- **One set of messages for the group.** It gets one confirmation, one 24h and 2h reminder pair and one cancel or reschedule message. They go to the parent and sit on the first person's appointment, with the link `/g/{code}`. When that person is cancelled alone, the reminders move to the next one. Each member's `/a/{code}` still changes just that person. A group member's `appointments.group_id` is set, and `/api/v1/appointments/{code}` doesn't show it yet. Optional: add `groupCode` there (from `groupCodeOf` in `src/server/booking-groups.ts`) so the app can link to the group.
+- **Deposits are taken at the desk for now.** When the brand sets `groupDepositCents`, a group of at least `groupDepositFrom` people is created with deposit `due`. Staff take it on a ticket, and it's held as credit (a gift card with source `deposit`). It's applied at checkout and kept on a whole-group no-show or late cancel when `groupNoShowForfeit` is on. Taking it online needs your saved-card flow. When that exists, tell us and we'll add a hook that marks it `held` from a PaymentIntent.
+- **`POST /me/family/bookings` is unchanged for callers.** It now books through a group (plan `custom`) for two or more people, so those bookings also get one confirmation and a `/g/{code}` link.
+- **Migration `core_0055_booking_groups`:** the `booking_groups` table and `appointments.group_id`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`. `src/lib/api-client.ts` (web) now keeps `error.details` on `ApiError`.
+
+### 2026-10-24: core (family booking flow), FYI and REQUEST for mobile
+
+- **Online booking confirms the phone before showing the family.** `/book` no longer shows a family to a guest who only typed a phone. It calls your `/api/v1/auth/otp/start`, `/verify` and `/complete` as they are (read-only, no changes asked), saves the tokens with `setTokens`, and only then reads `/me` and `/api/account/family`. For a new account (`isNew`) it then sends `PATCH /me` with the email and the consents the guest ticked. A guest can still book without a code, just for themselves (the old guest form); that path shows nothing about the account.
+- **Request:** please give the app the same order: verify the code first, then list the parent and their children from `/me/family` (first names, ages), with multi-select for who the appointment is for and an inline Add a child (`POST /me/family/children`). A booking for several people goes through `POST /me/family/bookings`. The pure selection rule is `togglePartyMember` in `src/domain/family.ts`: the first person picked takes the chosen time, removing them moves the next one up, the last person stays, and the cap is `FAMILY_BOOKING_MAX`.
+- **Staff lookups** group results by family (`groupFamilies` in `src/domain/client-search.ts`). `findClients` no longer drops a matched child's parent at the result limit, so a search can return up to twice the limit when children match. Nothing in `/api/v1` calls it.
+
+### 2026-10-24: core (family accounts), REQUEST for mobile
+
+- **Please mount the family endpoints under `/api/v1/me/family`.** Each is a one-line route file re-exporting from `@/server/family-api`, the same as the core web routes under `src/app/api/account/family/`:
+  - `GET /me/family` → `getFamily`;
+  - `POST /me/family/children` → `postChild` (201);
+  - `PATCH /me/family/children/{id}` → `patchChild`;
+  - `POST /me/family/children/{id}/remove` → `removeChild`;
+  - `POST /me/family/children/{id}/split` → `splitChildAccount`;
+  - `POST /me/family/bookings` → `postFamilyBooking` (201, `{ appointments }`; source `api` unless the request sends `x-client: web`).
+  - Every file also exports `OPTIONS`. The handlers call `requireCustomer`, and a child's token gets 403: the parent manages children.
+- **And document them in `openapi.ts`:** `import { FAMILY_OPENAPI } from "@/domain/family"`. Spread `.components` (`Family`, `FamilyMember`, `ChildInput`, `FamilyBookingRequest`, `FamilySplitRequest`) and `.paths`. The fragment uses your `bearerAuth` and `Error` names.
+- **Until then**, the web account page reads `/api/account/family/...` with the same bearer token. The app can use those paths too.
+- **Children have no login or contact details.** A child is a `customers` row with `guardian_id` set (one level only). The `customers_family_guard` trigger clears a child's phone, email and opt-ins on every write, so please don't offer sign-in, OTP or consent capture for a child. Messages for a child go to the parent through `src/server/household-contact.ts` (`contactFor`, `householdContact`).
+- **`loyaltyBalance(customerId)`** now resolves the household card: for a child in household mode (the default), it returns the parent's balance with `household: true` and `ownerId`. Consider showing "Family card" when `household` is true.
+- **`/me/appointments`** is unchanged and lists only the signed-in person's own appointments. The children's upcoming appointments are in `GET /me/family` (`children[].upcoming`).
+- **Squire import:** family links are a post-step in `src/server/family-import.ts` (`importFamilies`), called from the core import action after a clients file. It reads `mapHeaders` and `parseSquireDateTime` from `importer.ts` read-only. `importer.ts` isn't changed.
+- **Migration `core_0054_family_accounts`:**
+  - `customers.guardian_id`, `birth_year`, `former_guardian_id`, `own_account_at`;
+  - the `sale_appointments` table and `sale_items.appointment_id`;
+  - `brand_settings.family` jsonb (`maxChildren` 6, `loyalty` `household`/`individual`, `splitAge` 13);
+  - the `clients.family` permission.
+- **Server-only:** `src/server/family.ts` and `family-ticket.ts` don't import `server-only`, because checkout and refunds load them outside Next (the worker, scripts). They load the badge and cadence modules lazily.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (customer badges), REQUEST for mobile
+
+- **Please mount `GET /api/v1/me/badges`.** It's one file: `src/app/api/v1/me/badges/route.ts` with `export { GET, OPTIONS } from "@/server/customer-badges-api";`.
+  - The handler calls `requireCustomer` and returns `customerBadges(id)`: `{ badges: [{ id, name, icon, tone, color, earnedOn, text, action }], progress: [{ badge, name, icon, tone, color, current, target, remaining, text }] }`.
+  - `action` is `{ label: "Book now", url }` on We miss you, otherwise null.
+- **And document it in `openapi.ts`:** `import { CUSTOMER_BADGES_OPENAPI } from "@/domain/customer-badges"`. Spread `.components` into `components` and `.paths` into `paths`. The fragment uses your `bearerAuth` and `Error` names.
+- **Until then**, the web account page and booking site read the same handler at `/api/account/badges` (core-owned, same bearer token). The app can use that path too.
+- **Only customer-visible badges** come back, in customer wording: the brand's setting over the catalog default. Staff judgments (Low rating, How they found us, No product yet, custom badges on ratings) never do. Draw `icon` from the badge icon names (`src/components/badge-icons.tsx` has the paths); `color` is a hex.
+- **Migration `core_0053_customer_badges`:**
+  - `client_badges.since` and `.progress` (jsonb);
+  - the `client_badge_notices` table;
+  - the custom badge tone check gains `orange`.
+- **Badge news:** a new manual Campaign Center trigger `badge_news`. Its messages go through `deliver`, so they use your marketing consent columns read-only, like every campaign.
+- **Booking:** `createAppointment`, `cancelAppointment` and `setAppointmentStatus` (cancelled, no-show, booked) recompute the client's badges. They load `./badges` lazily, so the client API's import graph is unchanged, and a failure never fails the booking.
+- **`api-client.ts`:** `api()` takes an optional `base` (default `/api/v1`).
+- **Worker:** `pnpm worker` preloads `scripts/allow-server-only.cjs`, which resolves `server-only` to an empty module outside Next. Before this change it already crashed on `server-only`, through `marketing/audiences`, then `client-filters`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`.
+
+### 2026-10-24: core (client badges)
+
+- **Badges:** `src/domain/badges.ts` (pure, client-safe: catalog, `BadgeSettingsSchema`, `deriveBadges`, `visibleBadges`, `showBadges`) and `src/server/badges.ts` (facts, cache, `refreshBadges`, `runBadgeJob`, `shownBadges`, `badgeCounts`). The settings loader is `src/server/badge-settings.ts`.
+- **Migration `core_0052_client_badges`:**
+  - `brand_settings.badges` jsonb;
+  - `custom_badges` (scrub trigger on `label` and `tooltip`);
+  - `client_badges` (`customer_id` PK cascade, `keys text[]` GIN, `badges jsonb`, `hash`, `computed_on`);
+  - grants `badges.settings` to `brand_admin`.
+- **Cron:** `/api/cron/badges` (in `vercel.json`, `CRON_SECRET`).
+- **Checkout:** `finalizeSale` refreshes the client's badges after the sale, loading `./badges` lazily. The client API's import graph is unchanged, and a failure never fails the sale.
+- **Where:** `ClientPolicy` gains `badges` and `customBadges`. Display covers `ClientHit.badges`, `CalAppt.badges`, the POS customer, the profile, the client list, Today and `TodayBlock.clients` in the Morning Dashboard. Filters: `SegmentSchema.badges`, the report builder field `badges`.
+- **For the app (optional):** if you want badges in the staff app, read them through `shownBadges(policy, ids)`, so the brand's on/off, role and data-level rules apply. Never return raw `client_badges` rows. For customers, use `GET /me/badges` (see the customer badges entry).
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`, and consent columns are only read.
+
+### 2026-10-24: core (time between visits)
+
+- **Cadence:** `src/domain/visit-cadence.ts` (pure, client-safe) and `src/server/visit-cadence.ts`. Visit days are distinct America/Chicago dates of completed appointments; the cadence is the median of the last 10 gaps (`CADENCE_GAPS`), null under two visit days. Status: `on_track` (booked, or more than `DUE_LEAD_DAYS` = 3 before the next expected visit), `due` (until `max(7, 25%)` past it), `overdue`. `cadenceCtes(name, cond, now)` is the SQL twin (`percentile_cont(0.5)`, `round(numeric)` for the next day); `cadenceFor(ids, now)` takes one `uuid[]` parameter; `clientCadence(customerId, now)` gives the profile's card and per-barber rows.
+- **Where:** profile card, `/account` (from `/me/appointments`), client list column and CSV export, `SegmentSchema.visitStatus` (new) with `minAvgGapDays`/`maxAvgGapDays` now reading the median, report builder fields `cadence_label`, `days_since_visit`, `next_visit_due`, `visit_status` (`avg_gap_days` now the median; CTE `cd` scoped like `va`), assistant `customer_report` args `visitStatus`, `minDaysBetweenVisits`, `maxDaysBetweenVisits`.
+- **Rebook:** `rebookReminderDue` now takes the cadence and two visit days (was three and the plain average); the Campaign Center reminder fires at cadence less `leadDays`. `rebookDue`/`dueForCut` take an optional `cadenceDays`, which Today's lists pass.
+- No migration. Tests: `tests/visit-cadence.test.ts`, `tests/db/visit-cadence.test.ts`; `tests/marketing.test.ts` now expects two visits to be enough.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`. No new `ErrorCode`. See the request above for `/me`.
+
+### 2026-10-24: core (contact access grants and brand portal users)
+
+- **Contact access grants:** table `client_contact_grants` (kind `full_contact` | `export`, `staff_id` xor `shop_id`, optional `expires_at`, revoked rows kept). `src/server/contact-grants.ts` and `src/domain/contact-grants.ts`; applied in `accessFor` after the `BRAND_LEVEL_ONLY` and `SHOP_LOGIN_NEVER` strips. `full_contact` adds `clients.contact_full` (in `GRANT_ONLY`: no role or override can hold it, and the editors hide it). `export` adds `clients.export`, each `CLIENT_LIST_REPORTS` export whose view is held, and `campaign_center.export` with its view. `StaffAccess.granted` lists them, and `grantor` leaves them out, so a grant is never the holder's to give on. `seesFullContact` and `clientListDenied` honour them. Page `/admin/client-data/contact-access`; audit actions `client_contact.grant` and `client_contact.revoke`.
+- **Users:** `/admin/users` and `/admin/users/[id]` (`permissions.manage`), sign-up at `/invite/[token]`. `src/server/users.ts`, rules in `src/domain/users.ts` (`accountChangeDenied`: self, the last owner who can sign in, `staffEditDenied`, upcoming bookings). Invites in `staff_invites` (SHA-256 token hash, 7 days, single use) sent with `sendNow` kind `staff_invite`; the outbox keeps the body with the link removed. Remove is a soft delete (`staff.removed_at`; email, password, authenticator and PIN cleared, invites and grants ended). Remote access is the `access.remote` override through `saveUserAccessAction`. The person access editor moved to `src/app/admin/permissions/people/[id]/access-section.tsx` and is shared with the user page.
+- **Two-step sign-in:** `src/lib/totp.ts` (RFC 6238, SHA-1, 6 digits, 30 s, ±1 step; replay refused through `staff.totp_last_step`; 5 failures lock for 15 minutes) and `src/lib/secret-box.ts` (AES-256-GCM from `AUTH_SECRET`) in `src/server/auth/two-factor.ts`. Login is password, then the code (or enrolment, through a `login_2fa` ticket), then the network check. New columns on `staff`: `two_factor_required`, `totp_secret`, `totp_enabled_at`, `totp_last_step`, `totp_failures`, `totp_locked_until`, `invited_at`, `removed_at`. Audit actions `user.*`.
+- Migration `core_0051_user_admin` (also widens `notification_jobs_shop_present` for `staff_invite`, `NOT VALID` like the others). Tests: `tests/contact-grants.test.ts`, `tests/db/contact-grants.test.ts`, `tests/users.test.ts`, `tests/db/users.test.ts`; the lockdown and privacy tests now expect the new refusal messages.
+- **For the mobile agent:** `/api/v1` has no staff sign-in today. If one is added, it needs the two-step code for anyone with `totp_enabled_at` or `two_factor_required`, and must refuse rows with `removed_at` (as `verifyPassword` does).
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read. No new `ErrorCode`.
+
+### 2026-10-24: core (client contact lockdown)
+
+- **Brand-level roles:** `roles.brand_level` (custom roles only, set by the Brand Owner). `isBrandLevelRole` (Brand Owner, Brand Admin, or a custom role with `brand_level`; built-in shop and staff templates never) and `isBrandLevelPerson` (a person, not a shop login, in one with scope "all") in `src/domain/permissions.ts`.
+- **`BRAND_LEVEL_ONLY`:** `clients.export`, `campaign_center.export`, `import.run`, `clients.privacy` and `report.client_ratings.export` (`CLIENT_LIST_REPORTS`). Stripped by `effectiveAccess` for roles that aren't brand-level, part of `BRAND_ONLY` and `SHOP_LOGIN_NEVER`, taken off the shop and staff templates, and refused by `roleChangeDenied` and `userAccessChangeDenied` (which takes `next.brandLevel`).
+- **Contact ceiling:** `CONTACT_FIELDS` and `contactCeiling` in `src/domain/client-privacy.ts`; `makePolicy({ fullContact })` caps phone, email and address at masked, and `ClientPolicy` gains `fullContact` and `mayReveal(f)`. `seesFullContact(ctx)` and `clientListDenied(ctx)` in `src/server/client-privacy.ts`. `fieldRuleChangeDenied` takes `rule.fullContact`. `SHOP_LOGIN_CAPS` is `masked` | `hidden`; a stored `role` reads as `masked`.
+- **Guarded:** `revealClientFieldAction` (contact fields), the customers, Campaign Center, ratings, import skipped-rows and access-log downloads, `exportDenied` for customer custom reports (page, download, scheduled attachment), and the audit log CSV (client entries dropped).
+- Fixed: `saveRoleAction` dropped `clients.export` (and any `.export` without a `.view` twin); the view-before-export filter now applies to report permissions only.
+- Migration `core_0050_brand_level` (column, and the data updates taking the client-list permissions off shop and staff roles). Tests: `tests/client-contact-lockdown.test.ts`, `tests/db/client-contact-lockdown.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read. No new `ErrorCode`.
+
+### 2026-10-24: core (shop login parity with Squire)
+
+- **Shop Login role** (`shop_login` in `ROLE_TEMPLATES`) for new shop logins, and hard caps for every `staff.kind = 'shop'` login: `SHOP_LOGIN_NEVER` / `sharedLoginAccess` in `src/domain/permissions.ts`, applied in `accessFor` (`src/server/auth/access.ts`). Client contact for shop logins is capped by `brand_settings.shop_login.clientContact` (`masked` | `hidden`, default `masked`; `role` was removed by the client contact lockdown) in `clientPolicy`; `saveShopLoginCapAction` on Client data protection.
+- **Staff contact:** permission `staff.contact`; `seesStaffContact` / `staffContact` in `src/domain/staff-contact.ts`. `saveProfileAction` keeps email and phone when the editor can't see them.
+- **Manager approval:** `src/server/manager-approval.ts` (`needsManager`, `approvers`, `approvedActor`, using the time clock PIN and its lockout). `Actor.approvedBy` is written to `refunds.approved_by`, `sales.void_approved_by`, `sale_reassignments.approved_by` and the audit details. Sales actions take an optional `approval`.
+- **Reassign:** `reassignSale` in `src/server/reassign.ts`, permission `sales.reassign`. Unpaid `tip_ledger` rows are deleted and re-synced for the new barber (the ledger guard allows deleting unpaid rows and nothing else); paid ones get an `adjust` row.
+- **Drawer:** `shops.drawer_opening_cents`, `cash_drawers.opened_by/opened_at`, `cash_drawer_moves` (`paid_in` | `paid_out`). `src/domain/drawer.ts` (`drawerTimeline`) and `src/server/drawer.ts`. `closeDrawer` uses the counted opening and adds the moves.
+- **Shop settings per part:** `settings.shop_details`, `_hours`, `_booking`, `_checkout`, `_phone`; `SHOP_SETTING_FIELDS`, `shopSettingsDenied`, `editableShopParts`. `settings.shop` still means every part.
+- **Phone operator:** `shops.phone_operator` (jsonb), `call_logs.operator` and `operator_choice`; `src/domain/phone-operator.ts`, `handleOperatorChoice` in `src/server/shop-line.ts`, route `/api/twilio/voice/operator`. Attribution: first booking by the same phone at the same shop within 7 days.
+- **Reports:** `end_of_day`, `leaderboard`, `sales_tax`, `retention`, `acquisition`, `phone_operator` in `src/server/shop-reports.ts`; `ReportData.options` (chip rows carried in links and CSV); `grainsFor` moved to `report-sql.ts`; presets `quarter` and `lastquarter`; `priorPeriod`; saved shortcuts in `src/domain/report-shortcuts.ts`; `brand_settings.tax_filing` with `src/domain/sales-tax.ts`. `NO_BARBER_REPORTS` in `src/app/admin/reports/scope.ts` lists the reports without a barber filter.
+- Migration `core_0049_shop_login`. Tests: `tests/shop-login.test.ts`, `tests/db/shop-login.test.ts`; the migration-seed test now reads roles inserted by later migrations.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read. No new `ErrorCode`.
+
+### 2026-10-24: core (Rayz Assistant)
+
+- **Rayz Assistant:** a chat panel (`src/app/admin/assistant/panel.tsx`) in the admin layout for anyone whose role has it on, plus a settings page at `/admin/assistant/settings` (Setup). Server actions are in `src/app/admin/assistant/actions.ts`; the run loop, drafts, limits and settings are in `src/server/assistant/index.ts`.
+- **Tools** (`src/server/assistant/tools.ts`): `run_report` (over `REPORT_LOADERS` via `resolveScope`; the enum is the person's viewable reports minus `audit_log`, `client_ratings` and `morning_dashboard`), `customer_report` (the report builder's `runReport`; fields limited to `fieldUse` "full" and never contact, birthday or custom fields), `help` (`src/domain/assistant-help.ts`, filtered by `pageAllowed`), `draft_po` (`suggestionsFor`, then `createPos` on confirm) and `draft_blast` (`saveBlast` on confirm, draft only). Location and barber names are matched only against the person's shops, location groups and `barbersAt(ctx.shopIds)`.
+- **Providers** (`src/server/assistant/providers.ts`): OpenAI chat completions (`store: false`), Anthropic messages, and a keyword stub. Chosen by `ASSISTANT_PROVIDER`, else whichever key is set, else the stub outside production. `ASSISTANT_MODEL` overrides the model. No user id is sent, and errors log the status only.
+- **Builder links:** `encodeDefinition` / `decodeDefinition` in `src/domain/report-builder.ts`; `/admin/reports/custom/new?d=<definition>` opens the builder with it.
+- Permission `assistant.settings` (Settings and data, brand-only). Settings live in `brand_settings.assistant`: `enabled`, `roles` (role id → false to turn off; missing means on), `perMinute`, `perDay`, `actions`. Audit actions `assistant.question`, `assistant.tool`, `assistant.rate_limited`, `assistant.action_confirmed`, `assistant.action_cancelled`, `assistant.action_failed`, `settings.assistant`.
+- Migration `core_0048_assistant`: `brand_settings.assistant`, `assistant_conversations`, `assistant_messages`, `assistant_actions` (with `scrub_sensitive_row` triggers on their free text), and the permission for Brand Admin.
+- Tests: `tests/assistant.test.ts`, `tests/db/assistant.test.ts`.
+- Also: the Today page's **Up next** table scrolls inside its card instead of widening the page on phones.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read.
+
+### 2026-10-24: core (custom report builder)
+
+- **Custom reports** under Reports (`/admin/reports/custom`, `/new`, `/[id]`): a builder over a whitelisted field list (`src/domain/report-builder.ts`), run by `src/server/report-builder/engine.ts`, which puts the query together from one SQL fragment per field with every value bound. Customers is the only source built; sales, appointments, staff, inventory, tips and campaigns are listed in `REPORT_SOURCES` and allowed by the table's check, so adding one needs no migration.
+- **Saved reports** (`saved_reports`): definition (jsonb of field keys, filter segment, sort, grouping, totals, dates, location and barber tokens), visibility `private` / `roles` / `template`, `role_ids`, `schedule` (jsonb) and `morning`. `saved_report_sends` (report, staff, period) claims each scheduled send.
+- **Scheduled sends** run from the notifications cron (`sendDueReports` in `src/server/report-builder/deliver.ts`) as `notification_jobs` kind `saved_report`, brand-level (no `shop_id`; `notification_jobs_shop_present` now allows it, `NOT VALID` like the others), with the file removed once sent. `/admin/notifications/[id]/attachment` returns 404 for that kind.
+- **Morning Dashboard:** `MorningDashboard.savedReports` holds the totals of reports marked for it, for each person's broadest version only. `morningDoc` adds a `saved_reports` section.
+- **Blasts:** `/admin/campaign-center/blasts/new?f=<filter>&shops=<ids>` fills in a new blast's filter and locations; `shops` is checked against the person's locations.
+- Permissions `report_builder.view`, `report_builder.build`, `report_builder.export` (group "Custom reports"; always on for Brand Admin except export). Exporting a customer report also needs `clients.export`. Audit actions `report_builder.create`, `update`, `duplicate`, `delete`, `export`; exports and previews showing protected details go in the client data access log.
+- Migration `core_0047_report_builder`: the two tables, indexes `sales_customer_date_idx`, `appointments_customer_status_idx`, `customers_created_at_idx`, `customers_preferred_staff_idx`, the outbox check, and the permissions for Brand Admin, Regional Manager and Shop Manager.
+- Tests: `tests/report-builder.test.ts`, `tests/db/report-builder.test.ts`; `tests/db/tenant.test.ts` (another shop's private report), `tests/tenant-guard.test.ts`, `tests/ratings.test.ts` (the engine reads ratings only for the rating column).
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read.
+
+### 2026-10-24: core (Morning Dashboard)
+
+- **The morning digest is now the Morning Dashboard:** a page at `/admin/morning` (Insights) and an email built from the same data. `src/server/digest.ts` and `src/domain/digest.ts` are gone; `src/server/morning-dashboard.ts` builds it and `src/domain/morning-render.ts` lays it out once for the page, the HTML and text email, the PDF and the SMS line. Settings stay in `brand_settings.digest` (old settings carry over) and are edited at `/admin/digest`.
+- **Content:** the last open day (Monday covers Saturday) against the same weekday last week, plus week to date against the same days last week: sales, clients and bookings, utilization and cut times, loyalty and gift cards, Campaign Center results, review link clicks, today's schedule and open time, and exceptions (punches, overtime risk over 40 or a part-timer over 32, low stock, purchase orders, tip payouts, approvals, Stripe payouts). Each section is gated by the matching report permission per shop.
+- **Recipients and versions:** by role (main or per-shop) plus include/exclude, and only people with the new report `report.morning_dashboard.view` at a live or temporarily closed shop. Several shops get the all-locations version by default; per person the brand can pick one per shop or both (`versions` in the settings).
+- **Sending:** `/api/cron/morning-dashboard` every minute 09:00–17:59 UTC, plus the notifications cron as a fallback; default 7:02 AM, nothing after noon. Each person, version and channel is claimed in `morning_dashboard_sends` first, so runs never double-send; stale claims are taken over after 10 minutes. Jobs are kind `digest` with the new `notification_jobs.html_body` (scrubbed by the same trigger as `body`) and an optional PDF attachment; an optional SMS line goes to recipients with a phone. `EmailProvider.sendEmail` takes an optional `html` argument.
+- `ratingsGivenAt` moved from `src/server/reports.ts` to `src/server/ratings-report.ts`, so the cron's import graph never reaches the ratings table. `tests/ratings.test.ts`'s walker now ignores `import type` lines, which load nothing.
+- Migration `core_0046_morning_dashboard`: `html_body`, the scrub trigger on it, `morning_dashboard_sends`, and the report for Brand Admin, Regional Manager and Shop Manager.
+- Tests: `tests/morning-dashboard.test.ts`, `tests/db/morning-dashboard.test.ts`; the digest cases left `tests/today.test.ts` and `tests/db/today.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read.
+
+### 2026-10-24: core (Campaign Center permissions and We have openings)
+
+- **Locations get one Campaign Center action by default: We have openings** (`campaign_center.openings`). Coupons (`promos.manage`), campaigns, segments, blasts, exports, own lapsed clients and the marketing reports are brand-only unless the brand grants them in the role editor or per person. Migration `core_0045_openings` takes them out of the Regional and Shop Manager roles and gives those roles, Front Desk and shop logins We have openings and `report.openings`.
+- **We have openings:** a location picks barbers and today or tomorrow (or up to 3 of the next 7 days). For each barber it pulls their real open times from `getAvailability`, and texts or emails the barber's regulars and recent clients who agreed to marketing and have nothing booked, through the engine (consent, unsubscribes, quiet hours, caps). The brand sets a per-client window (one openings message per 7 days by default), per-location daily and weekly send limits, optional approval, and the wording. Counts only; no names or contacts are shown or exported.
+- **Live page:** the link goes to `/book/{shop}/openings/{id}`, the barber's open times refreshed every 15 seconds, then **All booked, join the waitlist** (`openings_waitlist`, separate from walk-in `waitlist_entries`). A time opens `/book/{shop}?service=&barber=&start=<ISO>`, which lands on the details step with that time; a taken time still fails with `slot_unavailable` as before. If the app ever opens these links, the same `start` parameter works.
+- New: `marketing_campaigns.kind` `openings` and statuses `pending_approval`, `rejected`, `expired` (checks widened); `reviewed_by`, `reviewed_at`, `review_note` (scrubbed); table `openings_waitlist`. Settings live under `brand_settings.marketing.openings`.
+- Tests: `tests/openings.test.ts`, `tests/permissions.test.ts`, `tests/db/openings.test.ts`; `tests/db/marketing.test.ts` and `tests/db/tenant.test.ts` grant the Campaign Center where a brand would.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`; consent columns are only read.
+
+### 2026-10-24: core (client search, filters and duplicates)
+
+- **Search** everywhere in the brand portal (client list, sidebar **Find a client**, calendar, POS, walk-ins): names in any order with typos and nicknames, phone in any format or last 4, email, client ID or number, loyalty card, gift card, coupon, ticket, appointment code, Squire ID, birthday, address, zip, town, notes and tags. A hidden detail is matched only on its exact whole value through a SHA-256 lookup hash (`customers.phone_hash`, `email_hash`, `birthday_hash`, `address_hash`, kept by a trigger).
+- **Loyalty card for the app:** `RAYZ1-<customers.number>-<10 base32 characters>`. The signature is HMAC-SHA256 with `AUTH_SECRET` over `loyalty-card:<customer id>:<number>`, first 50 bits in RFC 4648 base32. `src/server/loyalty-card.ts` has `loyaltyCardValue`. **Request to the mobile agent:** if the app shows a card, show this value as a QR (error correction M), and don't invent another format, since the desk's scanner types it into the search. An endpoint that returns it would need `/api/v1`, which core doesn't touch.
+- **Filters** (one `SegmentSchema` for the client list and Campaign Center): visit history, barbers and locations, spend and tips, loyalty, gift cards and coupons, profile (rating, tags, birthday, age, zip, city, distance, source, referral, created), messaging (consent per channel, review clicks, campaigns received and clicked) and filled-in or empty checks. Marketing consent is read through `consentColumns()` as before; missing columns mean nobody matches.
+- **Duplicates** for Squire imports: scored pairs, "not the same person" (`customer_duplicate_dismissals`), bulk merge. Merges now repoint every foreign key to `customers` found in `pg_constraint`, so a customer-app table that references a client moves with a merge instead of cascading away. A new table with a unique key on `customer_id` makes merges fail until it's handled in `mergeCustomers`.
+- **Brand Admins always see every client detail** at full; field rules for them are refused.
+- New columns on `customers`: `number`, `nickname`, `source`, `referred_by_id`, and generated `search_name`, `address_zip`, `address_city`. Tables `client_photos`, `saved_client_searches`, `customer_duplicate_dismissals`, `zip_points`. Permissions `clients.filters`, `clients.saved_searches`. Migration `core_0044_client_search`.
+- Tests: `tests/client-search.test.ts`, `tests/db/client-search.test.ts`, `tests/db/client-privacy.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written or migrated.
+
+### 2026-10-23: core (lapsed clients in the Campaign Center)
+
+- **Segment builder:** last visit more than 2 / 3 / 4 / 5 / 6 / 8 / 12 weeks ago, between two points (weeks or days) or custom days, "nothing booked since", and barbers by the client's primary barber (preferred, else last), most recent barber or any visit. The opted-in count updates live.
+- **Lapsed sequences:** several steps per campaign (2 weeks reminder, 3 weeks with the booking link, 4 weeks coupon, 6+ weeks bigger coupon by default), each with its own wording and coupon. A client gets the step for how long it's been, once per lapse, and leaves on booking. Per location and barber, each message signed by the client's barber with a link to book with them. "We miss you" and win-back skip clients a sequence already wrote to.
+- **My lapsed clients:** with **Campaign Center: own lapsed clients**, a barber sees their own lapsed clients (first name and last initial, never phone or email) and sends **From your barber** through the engine. Per-location switch, daily limit, audited.
+- **Report:** **Lapsed clients by barber** (`report.lapsed_clients`): week buckets, lapsed messages, clients messaged, rebooked and rebook rate, by barber and by campaign and step.
+- Migration `core_0043_lapsed_campaigns` (see "Campaign Center"). If the app ever sends a booking link from a sequence, `?barber={slug}` on `/book/{shop}` picks the barber, as before.
+- Tests: `tests/marketing.test.ts`, `tests/db/marketing.test.ts`, `tests/db/tenant.test.ts` (another shop's sequence page and actions).
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written or migrated.
+
+### 2026-10-23: core (Marketing renamed to the Campaign Center)
+
+- Nav **Campaign Center → Campaigns, Blasts, Settings**; pages under `/admin/campaign-center`, the report **Campaign Center** at `/admin/reports/campaign-center`, and the cron at `/api/cron/campaign-center` (`vercel.json`). The old routes never shipped, so there are no redirects.
+- Permissions **Campaign Center: view / create / send / export** (`campaign_center.*`) and `report.campaign_center.*`. Create and send are now separate: create writes and drafts (brand-level with access to all shops), send switches campaigns and sends, schedules or cancels blasts. Migration `core_0042_campaign_center` renames the old keys in roles and per-person overrides. If the app ever checks staff permissions, use the new names.
+- Audit actions renamed to `campaign_center.*` and `brand.campaign_center_settings`.
+- Tests: `tests/db/marketing.test.ts` (create and send apart, brand-wide create, the rename migration), `tests/permissions.test.ts` (templates replayed through the rename).
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written or migrated.
+
+### 2026-10-23: core (Marketing / Engage)
+
+- **Coupons:**
+  - Percent, dollars or a free item, with targets, locations, minimum spend, dates, total and per-client limits, shared or single-use codes, first visit only, stacking and auto-apply.
+  - Redeemed in POS checkout (held from online booking, or applied automatically) and reversed on refund or void.
+  - They lower loyalty's net service spend.
+- **Campaigns:** ten automated campaigns, switched on and worded per location, and blasts with a segment builder, preview, test send, schedule or send now.
+- **Engine:** consent from PR #8's columns only, STOP, HELP and unsubscribe, quiet hours (9 PM to 9 AM local), weekly and monthly caps, and idempotent sends on a 15-minute cron.
+- **Reporting:** a report by campaign, location and barber, and a contact export behind `marketing.export` (now **Campaign Center: export**).
+- Migration `core_0041_marketing`. Tests: `tests/coupons.test.ts`, `tests/marketing.test.ts`, `tests/db/marketing.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts` (only imported, to read a signed-in customer for booking drafts), `importer.ts`, and no consent columns were written or migrated.
+
+### 2026-10-23: core (when the Google review link is shown)
+
+- **Leave a review** and the follow-up only from the client's 3rd completed visit, counted across all locations (brand setting, overridable per location), and not again at a location for 90 days (configurable) after the client taps its link. Visit count and taps only, no rating gating.
+- Migration `core_0040_review_visits`: `brand_settings.reviews`, and skip reasons `few_visits` and `snoozed`. Tests in `tests/reviews.test.ts` and `tests/db/google-reviews.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written.
+
+### 2026-10-23: core (Google reviews)
+
+- Each location's Google review link (Shop settings → Receipts and the setup wizard): a `g.page/r/…` link, a write-review link or a Place ID, saved as the write-review URL. No link, no **Leave a review** button.
+- Clicks counted per location and barber through `/receipt/{token}/review` (previews and scanners not counted); **Reports → Google review links**.
+- Optional follow-up a set number of hours after the visit, per location: opt-in only, STOP and email opt-outs, quiet hours, once per ticket and at most every N days per client. No review gating.
+- Migration `core_0039_google_reviews`. Tests: `tests/reviews.test.ts`, `tests/db/google-reviews.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written.
+
+### 2026-10-23: core (digital receipts)
+
+- Receipts are a text with a link, an email, or none; paper is off unless a shop turns on the Print button. The number or email on file is offered first, masked for staff whose client-data settings mask or hide it.
+- A branded receipt page per link (`/receipt/{token}`): shop info, items, tip, fee, tax, card brand and last 4, the barber's first name, loyalty, Rebook and Leave a review.
+- Refunds and voids send an updated receipt; staff resend from the ticket or the client's purchases; clients ask for copies at `/receipt`.
+- Migration `core_0038_digital_receipts`; settings `reviewUrl`, `allowPrint`. The hand-off receipt step goes through the same code.
+- Tests: `tests/receipts.test.ts`, `tests/db/receipts.test.ts`, and the receipt step in `tests/db/handoff.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, and no consent columns were written.
+
+### 2026-10-23: core (customer screen at checkout)
+
+- **Hand to customer** on the POS turns the device to the client: tip (the brand's or the shop's buttons, custom, no tip, with the credit surcharge shown), signature (optional per shop), receipt (text, email or none) and payment (reader, Elements or test cards; cash goes back to the counter). The device is locked to that ticket until a staff or manager PIN, per shop; after payment it goes back by itself after the thank-you screen, or waits for a PIN.
+- Tips on the Stripe Terminal reader per shop: the first three buttons are pushed to a Terminal configuration on the shop's Location. The reader itself is still simulated.
+- Split tips: a barber per line and the tip split by services or evenly, through the ledger, tip payouts, reports and payroll.
+- Settings: Shop settings, the brand's tip buttons and the Add Location wizard (the old tip presets field moved into **Customer screen at checkout**).
+- Migration `core_0037_handoff`; permissions `handoff.unlock`, `handoff.settings`; the middleware matcher change above.
+- Tests: `tests/handoff.test.ts`, `tests/db/handoff.test.ts`. `tests/db/session.ts` keeps the `rayz_handoff` cookie; `tests/network-access.test.ts` checks the new matcher.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`.
+
+### 2026-10-23: core (sign-in restrictions)
+
+- Per-location sign-in restrictions: allowed IPs and CIDR ranges, trusted devices, or either or both, set under **Setup → Sign-in security**, Shop settings and the Add Location wizard. Off for every shop until the brand turns one on.
+- Enforced on every `/admin` request in the middleware (now `runtime: "nodejs"`), in `getStaffContext` and at sign-in. Blocked sessions are signed out with "Sign-in is only allowed from the shop."
+- The client IP comes only from `clientIp()`: `x-real-ip` on Vercel, `TRUSTED_PROXY_HOPS` self-hosted, otherwise unknown. The time clock's network check now uses it too; before, it read the first `x-forwarded-for` entry, which a client can set off Vercel.
+- Migration `core_0036_network_access`; permissions `access.remote`, `devices.approve`, `network.settings`; audit actions `network.*` and `device.*`; notification kind `access_alert`.
+- Tests: `tests/network-access.test.ts` and `tests/db/network-access.test.ts`. `tests/db/session.ts` sets `TRUSTED_PROXY_HOPS=1` and keeps the device cookies.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
+
+### 2026-10-23: core (processor-hosted data)
+
+- **Never stored or logged:** card numbers, bank and routing numbers, SSNs, TINs, EINs, dates of birth for identity checks and ID documents. `src/lib/sensitive.ts` has the rules. `src/instrumentation.ts` and `scripts/worker.ts` scrub every `console` call, and `audit()` scrubs its details. Vendor audits record the supplier account number as `supplierAccount`.
+- Migration `core_0035_scrub_sensitive`: the SQL functions `scrub_sensitive_text`, `scrub_sensitive_jsonb`, `is_forbidden_key` and `luhn_ok`, plus `scrub_sensitive_row` triggers on 39 tables covering their 52 free-text columns. On append-only tables it fires on insert only, elsewhere on insert and on updates of those columns. Existing rows were scrubbed once, with one `privacy.scrub_existing` audit entry if any changed.
+- SAQ A: the Payment Element takes cards only. Production checkout pages get a Stripe-only CSP (`CHECKOUT_CSP` in `next.config.ts`). The onboarding simulator no longer shows test EIN, birth-date or bank numbers. Tax-form notes are on Location setup and My banking.
+- Tests: `tests/sensitive.test.ts` and `tests/db/sensitive-data.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
+
+### 2026-10-23: core (my banking)
+
+- **My banking** (`/admin/my-banking`, `tips.own`): the employee's Stripe payout account with one of four statuses (not set up, pending verification, ready, action needed), where payouts go (bank or card name and last 4 only), what Stripe needs in plain words with its deadline, their payout method choice (moved from My tips) and the history of changes. Setup and changes are on Stripe's hosted pages.
+- Stripe's `account.updated`, `capability.updated` and `account.external_account.created`/`updated`/`deleted` keep the status and destination current. Stripe asking for more notifies the employee once per new request; a new destination or method sends a security notice by email and text and is audited.
+- Managers see only each person's method, status and last 4 (a **Payout accounts** card on Tip payouts, and on each Stripe payout in a batch).
+- Migration `core_0034_staff_banking`. Notification kind `tip_banking`. Tests: `tests/banking-status.test.ts`, the banking status flow in `tests/db/tips.test.ts`, and updates to `tests/banking.test.ts` and `tests/permissions.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
+
+### 2026-10-23: core (tip payouts)
+
+- **Tip payouts to employees**: a tip ledger per employee, shop and ticket (card, cash and gift card tips, refunds and voids reversing them, manager adjustments), with card tips pending settlement until the shop's delay has passed.
+- Per-shop schedules (end of night, daily on a delay, weekly, payroll only, manual) and methods the brand allows (cash from the drawer, Stripe Express to the employee's own card or bank with optional instant payout, through payroll). Employees choose where the brand lets them.
+- Managers review and approve every batch per employee and ticket; holds, adjustments, removals and cancellations need a reason and are audited. Double payment is refused by claims under row locks, a trigger, unique indexes and Stripe idempotency keys.
+- Cash payouts are acknowledged with the clock PIN or name and come off the drawer's expected cash. Stripe payouts reconcile from `payout.*` and `transfer.reversed`.
+- Payroll: tips paid outside payroll still go to iSolved as received; tips paid through payroll get their own column and are locked as paid at approve-and-lock.
+- **My tips**, **Tip payouts**, **Tip payout settings** and **Reports → Tip payouts**. Permissions `tips.own`, `tips.approve`, `tips.settings`.
+- Migration `core_0033_tip_payouts`. Tests: `tests/tips.test.ts`, `tests/db/tips.test.ts`, and additions to `tests/payroll-engine.test.ts`, `tests/permissions.test.ts` and `tests/db/tenant.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
+
+### 2026-10-23: core (clock block-outs)
+
+- **Clock events are real block-outs now**, replacing the calendar overlay and the online-only holds. Break (or the reason picked, for its planned length or the shop's default, running on while it lasts), Clocked out (to the end of the shift) and an optional soft Not in yet. Clocking back in or ending the break trims them.
+- They're marked from the time clock, linked to their punches, and moved, trimmed or removed when a punch is edited, added or voided.
+- Same reasons, colors, privacy and permissions as manual blocks. They take the time out of availability (staff booking too), show in who's off, who's blocked and reports, and drive the affected-clients alert and rebook flow (`/admin/call-ins?block=<id>`).
+- Managers (`blocks.others`) can change, remove or reset them, each audit-logged. Barbers can't change or remove them.
+- Migration `core_0032_clock_blocks`. Tests: `tests/clock-blocks.test.ts` and `tests/db/clock-blocks.test.ts`; `tests/db/clock-live.test.ts` now checks the rows.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
+
+### 2026-10-23: core (the clock on the calendar)
+
+- **Day calendar:**
+  - Each barber's column shows a clock status badge (Clocked in, On break, Clocked out or Not in yet), worked time beside the shift, and shaded breaks.
+  - Late, past-start, early-out and missed-punch flags are marked in red.
+  - Clients booked in held time are ringed, with a reassign-or-rebook link to the call-in form, which now takes `staff`, `shop`, `from` and `to` in the URL.
+  - Today's calendar checks for changes every 15 seconds (`calendarPulseAction`) and redraws without a reload.
+- **Availability:** a break or early clock-out holds online time, and an early clock-in can open slots. These are per-shop rules, plus the barber's own permission for early time. See "Time clock" above for what changes under `/api/v1`.
+- **Alerts:** not clocked in before the first client, and clients booked in held time. They show on Today and go to managers by email once (from the cron, and right after the punch). Today's who's-in, open chair time and waitlist alerts follow the actual clock.
+- Migration `core_0031_clock_live`. Tests: `tests/clock-live.test.ts` and `tests/db/clock-live.test.ts`.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
+
+### 2026-10-23: core (time clock and hours)
+
+- **Punching:** a phone clock (`/admin/clock`) with the shop's device, GPS or network check, and a front-desk clock (`/admin/clock/kiosk`) on a registered device with personal PINs. Breaks, an optional photo, and the method and location recorded on every punch.
+- **Rules:** late, early and stayed-late against the schedule with grace minutes; a warning during time off; forgotten clock-outs flagged with an email and a Today alert; unpaid breaks from 30 minutes; overtime via the existing payroll rules; overnight and DST handled.
+- **Timesheets** per person, shop and period:
+  - Manager edits with a reason, written to the edit log and the audit log.
+  - Employee then manager approval, then a period lock.
+  - Scheduled vs actual hours.
+  - FT/PT rolling averages over 4, 8, 12 or 13 weeks, with crossing alerts.
+- **Payroll export:** a generic CSV and an iSolved-friendly CSV, with configurable columns. **Reports:** Labor hours and cost (rates gated by `payroll.rates`) and Attendance.
+- **Fixes found while testing:**
+  - An overnight shift over a week boundary lost its after-midnight hours from that week.
+  - A shift still in progress counted as a missed punch.
+- Migration `core_0030_time_clock`. Tests: `tests/time-clock.test.ts` and `tests/db/time-clock.test.ts`. The tenant test covers the new page.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
+
+### 2026-10-23: core (per-location banking)
+
+- **Payments mode per shop** (`connected`, `brand` or `cash_only`), chosen in the Add Location wizard's new **Payments and banking** step and in Location setup. Only holders of `payments.banking` (an owner grant) can choose it, onboard or change the descriptor.
+- **Wizard step:** mode, statement descriptor, card fee and tips (moved here), readers by registration code, and receipt branding. The done screen goes straight to Stripe onboarding.
+- **Go-live gating:** the checklist blocks go-live until Stripe enables charges on a shop's own account. A brand-account shop is ready right away; a cash-only shop passes with the cash-only waiver.
+- **Routing:** `chargeRoute` sends each charge, tip and gift card sale to the brand account or the shop's account, and refuses cash-only shops. Refunds follow the original account. POS picks the shop's own readers and disables Card when the shop can't take cards.
+- **Payouts page** at `/admin/payouts` (per shop and brand-wide, with fees and refunds). Shop P&L reconciles brand-account shops. Today flags failed payouts.
+- **Receipts** use each shop's branding (`shops.receipt`).
+- Migration `core_0029_location_banking`.
+- Tests: `tests/banking.test.ts` and `tests/db/banking.test.ts`. The tenant test covers the new actions.
+- **Not touched:** `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent.
+
+### 2026-10-23: core (self-service locations, Today, morning digest)
+
+- **Review fixes first:**
+  - The booking SMS opt-in now starts unchecked, with TCPA wording.
+  - Payroll tips and sales leave out Squire-imported tickets.
+  - `audit_log` and `gift_card_ledger` are append-only (`core_0026_append_only`), and refunds are indexed by sale.
+- **Locations (`core_0027_locations`):**
+  - The Add Location wizard (`/admin/setup/new`, `locations.setup`) and the lifecycle described above.
+  - A go-live checklist with required steps, temporary close, and archive. Archive is refused while appointments, open tickets or an open drawer remain, and it keeps all history.
+  - Branding, card readers (`terminal_readers`) and shop vendor accounts (`shop_vendors`).
+  - Booking, the public site, call-ins, POS and every picker respect status. Reports and permissions include archived shops, labelled "(archived)".
+  - Only `America/Chicago` can go live.
+- **Self-service:**
+  - Staff offboarding: `active = false`, `sessions_valid_after = now`, schedules removed and recurring blocks ended. Booked appointments are listed to move.
+  - Brand-editable client messages (`brand_settings.message_templates`, with merge fields).
+  - Picklists (`brand_settings.lookups`).
+  - New permission `settings.lists`.
+- **Today:**
+  - `src/server/today.ts` builds alerts per viewer, scoped by shop and gated by permission. The actions in `src/app/admin/today/actions.ts` work each alert out again on the server before acting.
+  - Texts go through `src/server/outreach-campaigns.ts`, deduplicated in `client_nudges`. Dismissals are stored in `alert_dismissals`.
+  - New notification kinds: `fill_offer`, `rebook_nudge`, `no_show_reminder`, `running_late` and `digest`.
+- **Morning digest:**
+  - Built in `src/server/digest.ts` and set up at `/admin/digest`; settings live in `brand_settings.digest`.
+  - The notifications cron sends it, once per person per day (`digest_sends`).
+  - `core_0028_digest_jobs` lets `digest` jobs have no shop.
+- Tests:
+  - New: `tests/db/locations.test.ts`, `tests/db/today.test.ts`, `tests/today.test.ts` and `tests/message-templates.test.ts`.
+  - Changed: `tests/ratings.test.ts` now allows the permission catalog's `client_ratings` report key. The cron reaches that file through the digest; it isn't the table.
+- **Deferred by decision:**
+  - I10 separate charges, `payment_transfers` and tip transfers: destination charges stay.
+  - The Q11/C2 flag stays off.
+  - Merging PR #8.
+  - `DEMO_MODE` in production, because it breaks the Vercel demo.
+- **Not touched:** anything under `/api/v1`, `src/server/api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts`, `importer.ts`, or consent. The cron route imports from `@/server/api` but doesn't change it.
+
+### 2026-10-23: core (call-ins)
+
+- **Call-ins** at `/admin/call-ins`: a manager (or a barber with `callins.mark_own`) marks a barber called in (sick, emergency or other) for a whole day, part of a day or a range. It writes a time off block that shows on the calendar and lists every affected appointment.
+- Per appointment, or one choice for all: move to a free barber (same shop, or another shop when the client allows it), with a text and a decline option; text and email a sorry note with the original time and a one-tap rebook link (`/r/[token]`, keeps the service and add-ons, any barber or a chosen one); or an automated Twilio call (press 1 for the link by text, 2 for the shop, voicemail message, 9 for no more calls).
+- Replies: "1" takes the offered time (or keeps the move), "2" declines. Anything else lands in the shop's **Inbox**, where staff answer without seeing the number when it's masked for them.
+- Shop line: each shop's Twilio number forwards to the shop phone. Missed and after-hours calls get a booking (or rebook) text, at most one per number and shop every 12 hours. Calls are logged on the client's profile, and click-to-call bridges through the shop line.
+- Tracking per appointment, one retry after the follow-up wait with no answer, then flagged for staff. New **Call-ins** report by shop and barber.
+- Quiet hours, opt-ins and STOP are respected. Everything is off until Twilio keys are set; the outbox and the call and text simulator work without them.
+- Migration `core_0025_call_ins`. Grants: Brand Admin, Regional Manager and Shop Manager get mark, outreach, calls, inbox and the report; the front desk gets outreach and the inbox; `callins.mark_own` is on Brand Admin only. Custom roles get mark, outreach, calls and the report with `timeoff.approve`, and the inbox with `calendar.manage`.
+- Tests: `tests/outreach.test.ts` and `tests/db/call-ins.test.ts`. `tenant.test.ts` covers the new pages and actions.
+- **Not touched:** anything under `/api/v1`.
+
+### 2026-10-23: core (block reasons)
+
+- Every block and time off entry has a reason from a brand list (Lunch, Break, Bank, Doctor, Personal, Vacation, Sick, Training, Meeting), plus an optional note. Managers edit the list at `/admin/block-reasons`, each with a color, what it's for, and whether it counts as lunch, skips the notice and is private.
+- The day calendar writes the reason on the block in its color, with the note on hover or tap. New **week view** for one barber (`/admin/calendar?view=week`).
+- Private reasons (Doctor and Sick to start) are masked on the server for people without `blocks.private`, except for the barber's own entries. Calendar, dashboard, time off page, staffing report and CSV, and the audit log (entries and search) all apply it. Online booking never sees reasons.
+- The staffing report has a **Time off for** column, notes beside each reason, and a **By reason** hours table.
+- Migration `core_0024_block_reasons` seeds the list, maps existing entries by category and reason, and grants `blocks.private` and `blocks.reasons` to Brand Admin, Regional Manager and Shop Manager. Custom roles get `blocks.private` with `timeoff.approve`, and `blocks.reasons` with `settings.shop`.
+- Tests: `tests/block-reasons.test.ts` and `tests/db/block-reasons.test.ts`. `tests/db/staff-time.test.ts`, `tenant.test.ts` and `slot-timing.test.ts` moved to reason ids.
+- **Not touched:** anything under `/api/v1`.
+
+### 2026-10-23: core (staff time)
+
+- **My time** at `/admin/my-time`, for a phone. It has quick blocks (lunch, break, personal, other) with a start and a length, recurring blocks with skip and stop, one-tap lunch now, time off requests (a day, a range or part of a day, at one shop or all), and the barber's requests with their status.
+- **Time off** at `/admin/time-off`, per shop:
+  - Pending requests to approve or deny, with the booked appointments in them.
+  - Approved time off coming up, where an appointment can be moved to a free barber at the same time or the client asked to reschedule (`time_off_reschedule`). Appointments are never cancelled.
+  - A month calendar, who's off, recently decided, and the rules (approval mode, longest lunch, longest block, minimum notice), per brand with shop overrides.
+- Blocks and requests over booked appointments warn first and need a confirm. Automatic approval happens only when nothing is booked. Pending time off is held from online booking.
+- The calendar's block panel gained categories, and the calendar shows an "Off today" banner. The dashboard has a "Who's in today" card. There's a new **Who's working, off and blocked** report (`staffing`).
+- Migration `core_0023_staff_time`. The template grants are listed by role key. Custom roles get `blocks.own`, and `blocks.others` if they could already manage the calendar or schedules.
+- **Seed:** brand rules, with Moline set to automatic approval. Makenna has a recurring lunch made from her seeded 12:30 lunches, so the sample history is unchanged. The seed also has time off requests in every state, kept off the Coralville days the booking tests use.
+- **Fixes to existing tests, both date-dependent:**
+  - `scripts/squire-fixture.ts` looped forever when five days before the export date was a Sunday (as it is from 2026-10-23).
+  - The review test P2#24 squeezed in seven minutes before the last slot even when the barber had a client then.
+- Tests: `tests/staff-time.test.ts` and `tests/db/staff-time.test.ts`. The permission template and navigation tests were updated for the new permissions.
+- **Not touched:** anything under `/api/v1` (availability now honours pending time off; see Staff time above).
+
+### 2026-10-23: core (payroll)
+
+- **Payroll Report** at `/admin/payroll/report`: the workbook's Locations math row for row, plus O.T. Pay (1.5 × base × split OT hours), Training Pay and Labor Cost as real cost. Includes the Locations view, per-employee drill-down, anomalies, a reconciliation gate that blocks approve-and-lock on any $0.01 mismatch, and downloads of locked periods only.
+- **Cross-shop OT (C4):** per Sun–Sat America/Chicago workweek, across every shop of the same legal entity (default Ray'z Inc.), split by share of hours, across pay periods and DST weeks. Locked periods keep their OT.
+- **Per-shop pay groups and calendars.** The main shops are on period 23 = 10/18–10/31 (check 11/6). Dubuque has its own calendar (period 01 = 10/4–10/17, check 10/23) and its own export file, which resolves Q16.
+- **iSolved export:** a per-shop xlsx with the same columns, headers and codes as the workbook (including `E_Cash Tips Recd_Dollars`). It carries OT hours only, never OT dollars, unrounded by default, and copies each tab's formatting cell for cell. There's no iSolved API; the export is behind `PayrollExporter`.
+- **Declined by Charles (keep iSolved as-is):** C1 blended-rate OT and C3 moving card tips off Cash Tips Recd. Neither is built and there are no flags for them.
+- Also added Payroll → Hours (time entries plus shift CSV import) and Payroll → Setup (settings, pay groups, profiles and rates).
+- Migration `core_0022_payroll`; the seed adds sample payroll data with synthetic Employee Numbers.
+- Tests: `tests/payroll-engine.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`.
+- Docs: `docs/payroll-report-spec.md` and `docs/payroll-workbook-discrepancies.md` (anonymized).
+- **Service times:**
+  - The `appointment_times` table, capture through status changes and checkout, manager corrections with audit, outlier flags, duration suggestions. Migration `core_0021_service_times`.
+  - Start and Finish are in the calendar panel, on the barber's Up next list and on the checkout screen. The calendar panel's old "In chair" button is now Start.
+  - Added the Service times report page (`/admin/reports/service-times`) with **Use N min**.
+  - Fixed: Finish and checkout's stand-in Finish used to fail the `appointment_times_order` check. Postgres checks an upsert's insert row before it sees the conflict, so writes now update first and insert only when there's no row.
+  - Tests: `tests/service-times.test.ts` and `tests/db/service-times.test.ts`.
+  - `vitest.config.mts` turns off Vitest's on-disk module cache, which was serving a stale page list to the page-rendering tests.
+- **Not touched:** anything under `/api/v1`.
+
+### 2026-10-23: core (I10 Stripe Connect)
+
+- Added a connected account per shop, destination charges, transfer reversal on refunds, and a refusal to charge cards at shops that aren't onboarded.
+- Added a location setup wizard at `/admin/setup`, with Stripe-hosted onboarding, or a simulator stand-in when there are no keys.
+- Added owner entities, the Connect webhook, and the "Shop P&L by Stripe account" report.
+- Migration `core_0020_stripe_connect`.
+- The seed now gives every shop a simulated, onboarded account, and routes its card history there.
+- Tests: `tests/connect.test.ts` and `tests/db/connect.test.ts`. The setup actions are now in the tenant test.
+- **For mobile to review:** the `chargeCard` contract and the `payments_not_ready` error above.
+- **Not touched:** everything under `/api/v1`, the platform Customer and saved cards, consent, devices and push, and `importer.ts`.
+
+### 2026-10-23: core
+
+- **Booking times:**
+  - Brand, shop, and per-barber-per-shop slot intervals.
+  - Service timing: duration step, booking increment, prep and cleanup.
+  - Shop and barber durations.
+  - The day calendar draws each barber's own grid, with drag-and-drop.
+  - A squeeze-in that needs a permission and is audited.
+  - New permissions `scheduling.timing` and `calendar.squeeze_in`. Migration `0019_slot_timing`.
+- **Card fee:** added `computeCardFee` (`src/server/payments/card-fee.ts`), the pure `cardFeeFor` (`src/domain/checkout.ts`) and `src/lib/flags.ts`.
+- Created this file.
+- **Next:** I10 Stripe Connect (connected account per shop, destination charges with `on_behalf_of` and `transfer_data`, hosted onboarding in location setup, owner entities, and a per-account P&L report).

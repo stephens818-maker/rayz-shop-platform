@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["cle1"],
+  "crons": [
+    { "path": "/api/cron/notifications", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/campaign-center", "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/morning-dashboard", "schedule": "* 9-17 * * *" },
+    { "path": "/api/cron/badges", "schedule": "10,40 6-8 * * *" },
+    { "path": "/api/cron/analytics", "schedule": "20 9 * * *" }
+  ]
+}
