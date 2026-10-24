@@ -2662,15 +2662,17 @@ export const digestSends = pgTable(
 
 // ───────────────────────────── Campaign Center ─────────────────────────────
 
-export type CampaignKind = "trigger" | "blast" | "sequence";
-export type BlastStatus = "draft" | "scheduled" | "sending" | "sent" | "cancelled";
+export type CampaignKind = "trigger" | "blast" | "sequence" | "openings";
+/** Openings blasts can also wait for the brand ("pending_approval"), be turned down, or expire when their times pass first. */
+export type BlastStatus = "draft" | "scheduled" | "sending" | "sent" | "cancelled" | "pending_approval" | "rejected" | "expired";
 
 /**
  * A marketing campaign: one brand-level row per automated trigger (switched on per location in
- * marketing_location_settings), a one-off blast to a segment, or a lapsed sequence (its steps in
- * marketing_steps, its barbers in segment, its locations in shop_ids). Wording, settings and
- * segment are jsonb (Templates, trigger and sequence settings, Segment and SequenceAudience in
- * src/domain/marketing.ts).
+ * marketing_location_settings), a one-off blast to a segment, a lapsed sequence (its steps in
+ * marketing_steps, its barbers in segment, its locations in shop_ids), or one location's "We have
+ * openings" for one barber (its barber, days and filter in segment, OpeningsSegment). Wording,
+ * settings and segment are jsonb (Templates, trigger and sequence settings, Segment and
+ * SequenceAudience in src/domain/marketing.ts).
  */
 export const marketingCampaigns = pgTable(
   "marketing_campaigns",
@@ -2695,10 +2697,51 @@ export const marketingCampaigns = pgTable(
     scheduledAt: ts("scheduled_at"),
     sentAt: ts("sent_at"),
     createdBy: uuid("created_by"),
+    /** Openings blasts the brand approves first: who approved or turned it down, and why. */
+    reviewedBy: uuid("reviewed_by").references(() => staff.id, { onDelete: "set null" }),
+    reviewedAt: ts("reviewed_at"),
+    reviewNote: text("review_note"),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("marketing_campaigns_trigger_uq").on(t.trigger).where(sql`${t.kind} = 'trigger'`), index("marketing_campaigns_due_idx").on(t.status, t.scheduledAt)],
+  (t) => [
+    uniqueIndex("marketing_campaigns_trigger_uq").on(t.trigger).where(sql`${t.kind} = 'trigger'`),
+    index("marketing_campaigns_due_idx").on(t.status, t.scheduledAt),
+    index("marketing_campaigns_kind_idx").on(t.kind, t.createdAt),
+  ],
+);
+
+export type OpeningsWaitlistStatus = "waiting" | "texted" | "removed";
+
+/**
+ * "All booked, join the waitlist" on an openings blast's live page: a first name and a mobile
+ * number, for the location to text when a time with that barber opens up. Staff see the first
+ * name, never the number; texts go through the system.
+ */
+export const openingsWaitlist = pgTable(
+  "openings_waitlist",
+  {
+    id: id(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => marketingCampaigns.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    firstName: text("first_name").notNull(),
+    phone: text("phone").notNull(),
+    wantsDate: date("wants_date"),
+    status: text("status").$type<OpeningsWaitlistStatus>().notNull().default("waiting"),
+    textedAt: ts("texted_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("openings_waitlist_phone_uq").on(t.campaignId, t.phone),
+    index("openings_waitlist_shop_idx").on(t.shopId, t.status, t.createdAt),
+    check("openings_waitlist_status_chk", sql`${t.status} in ('waiting', 'texted', 'removed')`),
+  ],
 );
 
 /** One message of a lapsed sequence: when it goes (days since the client's last visit), its wording and its coupon. */

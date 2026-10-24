@@ -316,6 +316,13 @@
       "when": 1793469600000,
       "tag": "core_0044_client_search",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1793556000000,
+      "tag": "core_0045_openings",
+      "breakpoints": true
     }
   ]
 }

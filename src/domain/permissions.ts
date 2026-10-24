@@ -88,7 +88,7 @@ export const FEATURE_PERMISSIONS = [
   { key: "sales.view", group: "Point of sale", label: "See every ticket at their shops" },
   { key: "sales.refund", group: "Point of sale", label: "Refund and void tickets" },
   { key: "drawer.manage", group: "Point of sale", label: "Open and close the cash drawer" },
-  { key: "promos.manage", group: "Point of sale", label: "Create and turn off promo codes" },
+  { key: "promos.manage", group: "Point of sale", label: "Create and turn off promo codes", hint: "The Campaign Center's coupons. Brand only unless granted." },
   { key: "giftcards.issue", group: "Point of sale", label: "Issue comp gift cards" },
   { key: "giftcards.void", group: "Point of sale", label: "Void gift cards" },
   { key: "clients.view_all", group: "Clients", label: "Look up any client in the brand", hint: "Without it, only clients of their shops, and full profiles only for clients they've served." },
@@ -125,22 +125,28 @@ export const FEATURE_PERMISSIONS = [
     hint: "From Today. Only clients who agreed to marketing texts or emails, outside quiet hours, and never the same client twice in a week.",
   },
   {
+    key: "campaign_center.openings",
+    group: "Campaign Center",
+    label: "Campaign Center: We have openings",
+    hint: "Pick a barber and today or tomorrow, and text or email that barber's regulars and recent clients who agreed to marketing that they have openings, first come, first served. Counts only, never names, numbers or a list to export. Quiet hours, the brand's openings frequency cap and each location's send limits apply, and the brand can require its approval.",
+  },
+  {
     key: "campaign_center.view",
     group: "Campaign Center",
     label: "Campaign Center: view",
-    hint: "See automated campaigns, blasts and what they sent at their shops. Counts only, never contact lists.",
+    hint: "See automated campaigns, blasts and what they sent at their shops. Counts only, never contact lists. Brand only unless granted.",
   },
   {
     key: "campaign_center.create",
     group: "Campaign Center",
     label: "Campaign Center: create",
-    hint: "Write campaign wording, pick coupons, draft blasts and send tests. With access to all shops, also the brand's version of each campaign, blasts to every location and the Campaign Center settings: quiet hours, frequency limits, the postal address.",
+    hint: "Write campaign wording, pick coupons, build segments, draft blasts and send tests. With access to all shops, also the brand's version of each campaign, blasts to every location and the Campaign Center settings: quiet hours, frequency limits, the postal address, and the We have openings rules. Brand only unless granted.",
   },
   {
     key: "campaign_center.send",
     group: "Campaign Center",
     label: "Campaign Center: send",
-    hint: "Switch automated campaigns on or off at their shops, and send, schedule or cancel blasts. Only to clients who agreed to marketing, outside quiet hours and within the brand's frequency limits.",
+    hint: "Switch automated campaigns on or off at their shops, and send, schedule or cancel blasts. Only to clients who agreed to marketing, outside quiet hours and within the brand's frequency limits. With access to all shops, also approve locations' We have openings blasts when the brand requires it. Brand only unless granted.",
   },
   {
     key: "campaign_center.export",
@@ -153,7 +159,7 @@ export const FEATURE_PERMISSIONS = [
     key: "campaign_center.own_clients",
     group: "Campaign Center",
     label: "Campaign Center: own lapsed clients",
-    hint: "See their own lapsed clients (first name, last visit, weeks since) and send them the brand's \"From your barber\" message, signed with their name. Never shows a phone number or email; only clients who agreed to marketing get it, within quiet hours and the frequency limits. Off for barbers unless granted.",
+    hint: "See their own lapsed clients (first name, last visit, weeks since) and send them the brand's \"From your barber\" message, signed with their name. Never shows a phone number or email; only clients who agreed to marketing get it, within quiet hours and the frequency limits. Off for locations and barbers unless granted.",
   },
   { key: "catalog.prices", group: "Catalog and inventory", label: "Edit services and prices at their shops" },
   { key: "catalog.manage", group: "Catalog and inventory", label: "Manage the brand catalog, bulk upload items, and push them to shops", brandOnly: true },
@@ -337,6 +343,12 @@ export const REPORTS = [
     hint: "Per campaign, location and barber: messages sent and delivered, clicks, bookings, coupon redemptions, attributed revenue, ROI and unsubscribes.",
   },
   {
+    key: "openings",
+    label: "We have openings",
+    href: "/admin/reports/openings",
+    hint: "Each openings blast: the barber and days, who sent it, open times at send, messages sent, clicks, and the bookings recipients made with that barber in those days.",
+  },
+  {
     key: "lapsed_clients",
     label: "Lapsed clients by barber",
     href: "/admin/reports/lapsed-clients",
@@ -381,11 +393,30 @@ export const BRAND_ADMIN_ALWAYS = new Set<Permission>([
   "clients.filters",
   "clients.saved_searches",
   "reports.all_staff",
+  "campaign_center.openings",
   "campaign_center.view",
   "campaign_center.create",
   "campaign_center.send",
   "campaign_center.own_clients",
   ...REPORTS.map((r) => reportView(r.key)),
+]);
+
+/**
+ * The Campaign Center beyond "We have openings": coupons, automated campaigns, segments, blasts,
+ * exports and barbers' own outreach, with its reports. No location role has these to start; the
+ * brand grants them in a role or per person.
+ */
+export const BRAND_CAMPAIGN_CENTER = new Set<Permission>([
+  "promos.manage",
+  "campaign_center.view",
+  "campaign_center.create",
+  "campaign_center.send",
+  "campaign_center.export",
+  "campaign_center.own_clients",
+  "report.campaign_center.view",
+  "report.campaign_center.export",
+  "report.lapsed_clients.view",
+  "report.lapsed_clients.export",
 ]);
 
 export const isPermission = (s: unknown): s is Permission => typeof s === "string" && KNOWN.has(s);
@@ -430,6 +461,7 @@ export interface RoleDef {
 
 const reports = (keys: ReportKey[], exportToo = true): ReportPermission[] => keys.flatMap((k) => (exportToo ? [reportView(k), reportExport(k)] : [reportView(k)]));
 const ALL_REPORTS = REPORTS.map((r) => r.key);
+const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)));
 const MANAGER_FEATURES: FeaturePermission[] = [
   "calendar.manage",
   "walkins.manage",
@@ -441,7 +473,6 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "sales.view",
   "sales.refund",
   "drawer.manage",
-  "promos.manage",
   "giftcards.issue",
   "clients.view_all",
   "clients.reveal",
@@ -477,10 +508,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "notifications.view",
   "reports.all_staff",
   "clients.campaigns",
-  "campaign_center.view",
-  "campaign_center.create",
-  "campaign_center.send",
-  "campaign_center.own_clients",
+  "campaign_center.openings",
   "timeclock.punch",
   "timeclock.kiosk",
   "timesheet.own",
@@ -520,23 +548,23 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
   {
     key: "regional_manager",
     name: "Regional Manager",
-    description: "Manages several shops: front desk, POS, clients, staff and shop settings, with every report for those shops.",
+    description: "Manages several shops: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with every report for those shops but the brand's marketing reports.",
     defaultScope: "selected",
-    permissions: [...REGIONAL_FEATURES, "giftcards.void", ...reports(ALL_REPORTS)],
+    permissions: [...REGIONAL_FEATURES, "giftcards.void", ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
   },
   {
     key: "shop_manager",
     name: "Shop Manager",
-    description: "Manages one shop: front desk, POS, clients, staff and shop settings, with that shop's reports.",
+    description: "Manages one shop: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with that shop's reports but the brand's marketing reports.",
     defaultScope: "one",
-    permissions: [...MANAGER_FEATURES, ...reports(ALL_REPORTS)],
+    permissions: [...MANAGER_FEATURES, ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
   },
   {
     key: "front_desk",
     name: "Front Desk",
-    description: "Books and checks out every barber's clients, runs walk-ins and the drawer. Small discounts only.",
+    description: "Books and checks out every barber's clients, runs walk-ins and the drawer, and sends We have openings. Small discounts only.",
     defaultScope: "one",
     permissions: [
       "calendar.manage",
@@ -562,7 +590,8 @@ export const ROLE_TEMPLATES: RoleTemplate[] = [
       "timeclock.kiosk",
       "timesheet.own",
       "tips.own",
-      ...reports(["card_vs_cash", "cash_drawer", "staffing"], false),
+      "campaign_center.openings",
+      ...reports(["card_vs_cash", "cash_drawer", "staffing", "openings"], false),
     ],
     maxDiscountPct: 10,
   },
