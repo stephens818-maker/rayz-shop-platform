@@ -17,13 +17,13 @@ import { inTenant } from "@/server/tenant";
 import { KpiSkeleton } from "../../kpis";
 import { CampaignResultsSection } from "../../results-section";
 import { BlastActions } from "../blast-actions";
-import { BLAST_STATUS } from "../status";
+import { BLAST_STATUS, wizardStep } from "../status";
 import { BlastWizard } from "./wizard";
 
 export const metadata: Metadata = { title: "Blast" };
 export const dynamic = "force-dynamic";
 
-export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string; shops?: string; done?: string; queued?: string; skipped?: string; celebrate?: string }> }) {
+export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string; shops?: string; done?: string; queued?: string; skipped?: string; celebrate?: string; step?: string }> }) {
   const ctx = await guardPage("/admin/campaign-center/blasts/[id]");
   const { id } = await params;
   const sp = await searchParams;
@@ -115,6 +115,7 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
         sees={panelSees(ctx, policy)}
         initialSegment={initial}
         initialShopIds={initialShops}
+        initialStep={wizardStep(sp.step)}
         initialDraft={celebrate ? { name: celebrate.name, templateId: celebrate.templateId, channels: celebrate.channels, templates: celebrate.templates } : undefined}
         coupons={coupons}
         library={library.filter((t) => t.status === "approved" && (!t.purpose || t.id === celebrate?.templateId)).map((t) => ({ id: t.id, name: t.name, campaignType: t.campaignType, description: t.description, channels: t.channels, templates: t.templates }))}

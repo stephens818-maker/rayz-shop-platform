@@ -19,3 +19,15 @@ export const STATUS_FILTERS = {
   sent: { label: "Sent", statuses: ["sent"] },
 } as const;
 export type StatusFilter = keyof typeof STATUS_FILTERS;
+
+/** The wizard's steps, and their names in links like ?step=content. */
+export const WIZARD_STEPS = [
+  { key: "type", label: "Type" },
+  { key: "audience", label: "Audience & options" },
+  { key: "content", label: "Content" },
+  { key: "review", label: "Review" },
+] as const;
+export const wizardStep = (key: string | undefined): number | undefined => {
+  const i = WIZARD_STEPS.findIndex((s) => s.key === key);
+  return i < 0 ? undefined : i;
+};

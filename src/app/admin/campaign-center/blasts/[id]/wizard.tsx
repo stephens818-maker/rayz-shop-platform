@@ -8,13 +8,14 @@ import { SegmentFilters } from "@/components/segment-filters";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, cx } from "@/components/ui";
 import type { FilterOptions, PanelSees } from "@/domain/client-filters";
 import { AB_METRICS, AB_METRIC_LABEL, FREQS, FREQ_LABEL, HOLDOUT_MAX, abChanges, variantTemplates, type AbMetric, type Freq } from "@/domain/campaign-schedule";
-import { CHANNELS, CHANNEL_LABEL, CLIENT_STAGES, EMPTY_SEGMENT, STAGE_FIELDS, stageSegment, type Channel, type ClientStage, type Segment, type Templates } from "@/domain/marketing";
+import { CHANNELS, CHANNEL_LABEL, CLIENT_STAGES, EMPTY_SEGMENT, SAMPLE_VALUES, STAGE_FIELDS, render, stageSegment, templatesProblem, type Channel, type ClientStage, type Segment, type Templates } from "@/domain/marketing";
 import { formatCents } from "@/lib/money";
 import { formatDateTime } from "@/lib/time";
 import { cancelBlastAction, draftBlastAction, previewBlastAction, saveBlastAction, scheduleBlastAction } from "../../actions";
 import { ChannelPreview } from "../../channel-preview";
 import { ChannelOrder, TemplateFields } from "../../template-fields";
 import { TestSend } from "../../test-send";
+import { WIZARD_STEPS } from "../status";
 
 export interface WizardBlast {
   id: string;
@@ -66,7 +67,6 @@ type Option = { id: string; name: string };
 type Preview = { matched: number; optedIn: number; byChannel: Record<Channel, number>; optedInBy: Record<Channel, number>; unreachable: number; sample: string[] };
 type Kind = "update" | "promotion" | "ai";
 
-const STEPS = ["Type", "Audience & options", "Content", "Review"] as const;
 const NEW_TEMPLATES: Templates = {
   sms: "{shop}: Hi {first_name}, .",
   emailSubject: "News from {shop}",
@@ -116,6 +116,8 @@ export function BlastWizard(p: {
   sees: PanelSees;
   initialSegment?: Segment;
   initialShopIds?: string[];
+  /** Opens on this step (?step=content); any step can be opened at any time. */
+  initialStep?: number;
   /** A prefilled draft from a brand template, e.g. celebrating a barber's milestone; still reviewed before it's sent. */
   initialDraft?: { name: string; templateId: string; channels: Channel[]; templates: Templates };
   coupons: WizardCoupon[];
@@ -126,7 +128,7 @@ export function BlastWizard(p: {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const [step, setStep] = useState(p.blast ? (p.mayEdit ? 1 : 3) : p.initialDraft ? 1 : 0);
+  const [step, setStep] = useState(p.initialStep ?? (p.blast ? (p.mayEdit ? 1 : 3) : p.initialDraft ? 1 : 0));
   const [id, setId] = useState(p.blast?.id ?? null);
   const [kind, setKind] = useState<Kind>(p.blast?.campaignType ?? "update");
   const [name, setName] = useState(p.blast?.name ?? p.initialDraft?.name ?? "");
@@ -213,18 +215,24 @@ export function BlastWizard(p: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const stepProblem = (s: number): string | null => {
-    if (s >= 1 && !name.trim()) return "Name the blast";
-    if (s >= 2 && !channels.length) return "Pick at least one channel";
-    if (s >= 3 && campaignType === "promotion" && !promoId) return "Pick the promotion's coupon";
-    if (s >= 3 && abOn && !repeating && !abChanges(templates, ab.b).length) return "Give variant B different wording, or turn off the A/B test";
-    return null;
-  };
+  /** What still needs fixing on each step. Steps open freely; Send waits until there's nothing left. */
+  const problems: string[][] = [
+    [!name.trim() && "Name the blast"].filter((x): x is string => !!x),
+    [!channels.length && "Pick at least one channel", preview && preview.optedIn === 0 && "Nobody matching has agreed to marketing on these channels"].filter((x): x is string => !!x),
+    [
+      campaignType === "promotion" && !promoId && "Pick the promotion's coupon",
+      coupon && !coupon.usable && `${coupon.code} can't be used any more; pick another coupon`,
+      channels.length > 0 && templatesProblem(templates, channels, { hasCoupon: campaignType === "promotion" && !!promoId }),
+      abOn && !repeating && !abChanges(templates, ab.b).length && "Give variant B different wording, or turn off the A/B test",
+      abOn && !repeating && channels.length > 0 && (templatesProblem(bTemplates, channels, { hasCoupon: campaignType === "promotion" && !!promoId }) ?? "").replace(/^(.)/, "Version B: $1"),
+    ].filter((x): x is string => !!x),
+    [],
+  ];
+  const allProblems = problems.flat();
   const go = (s: number) => {
-    const problem = s > step ? stepProblem(s) : null;
-    if (problem) return setError(problem);
     setError(null);
     setStep(s);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const pickKind = (k: Kind) => {
@@ -261,6 +269,7 @@ export function BlastWizard(p: {
   const send = () =>
     start(async () => {
       setDone(null);
+      if (allProblems.length) return setError(allProblems[0]);
       if (!reviewed) return setError("Confirm you've reviewed the audience and wording");
       const n = preview ? preview.optedIn - Math.round((preview.optedIn * holdoutPct) / 100) : null;
       if (when === "now" && !confirm(n !== null ? `Send to about ${n} opted-in clients now?` : "Send this blast now?")) return;
@@ -281,16 +290,24 @@ export function BlastWizard(p: {
 
   return (
     <div className="space-y-5">
-      <ol className="grid grid-cols-4 gap-2" aria-label="Steps">
-        {STEPS.map((label, i) => (
-          <li key={label}>
+      <ol className="grid grid-cols-4 gap-2" aria-label="Steps" data-testid="wizard-steps">
+        {WIZARD_STEPS.map(({ key, label }, i) => (
+          <li key={key}>
             <button
               type="button"
               onClick={() => go(i)}
               aria-current={step === i ? "step" : undefined}
-              className={cx("w-full rounded-lg px-3 py-2 text-left text-sm ring-1 ring-inset", step === i ? "bg-zinc-900 text-white ring-zinc-900" : i < step ? "bg-white text-zinc-900 ring-zinc-300" : "bg-zinc-50 text-zinc-500 ring-zinc-200")}
+              data-testid={`step-${key}`}
+              className={cx("w-full rounded-lg px-3 py-2 text-left text-sm ring-1 ring-inset", step === i ? "bg-zinc-900 text-white ring-zinc-900" : "bg-white text-zinc-900 ring-zinc-300 hover:ring-zinc-500")}
             >
-              <span className="block text-[11px] uppercase tracking-wide opacity-70">Step {i + 1}</span>
+              <span className="flex items-center justify-between text-[11px] uppercase tracking-wide opacity-70">
+                Step {i + 1}
+                {problems[i].length > 0 && (
+                  <span className="rounded-full bg-amber-400 px-1.5 text-[10px] font-semibold normal-case tracking-normal text-zinc-900" title={problems[i].join("\n")}>
+                    {problems[i].length} to fix
+                  </span>
+                )}
+              </span>
               {label}
             </button>
           </li>
@@ -563,9 +580,27 @@ export function BlastWizard(p: {
         <Card>
           <CardHeader title="Review" subtitle="Check it, send yourself a test, then confirm." />
           <div className="space-y-4 p-4">
-            <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[10rem_1fr]">
+            {allProblems.length > 0 && (
+              <Notice tone="amber">
+                <span className="font-medium">Fix before sending:</span>
+                <ul className="mt-1 space-y-0.5" data-testid="review-problems">
+                  {problems.flatMap((list, i) =>
+                    list.map((x) => (
+                      <li key={`${i}-${x}`}>
+                        • {x}{" "}
+                        <button type="button" className="underline" onClick={() => go(i)}>
+                          {WIZARD_STEPS[i].label}
+                        </button>
+                      </li>
+                    )),
+                  )}
+                </ul>
+              </Notice>
+            )}
+            <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-[10rem_1fr_auto]" data-testid="review-summary">
               <dt className="text-zinc-500">Name</dt>
               <dd>{name || "—"}</dd>
+              <EditLink to={0} go={go} ro={ro} />
               <dt className="text-zinc-500">Type</dt>
               <dd>
                 {campaignType === "promotion" ? "Promotion" : "Quick update"}
@@ -575,39 +610,51 @@ export function BlastWizard(p: {
                   </Badge>
                 )}
               </dd>
+              <EditLink to={0} go={go} ro={ro} />
               <dt className="text-zinc-500">Locations</dt>
               <dd>{shopIds.length ? shopIds.map((s) => p.shops.find((x) => x.id === s)?.name ?? "Another location").join(", ") : "Every location"}</dd>
+              <EditLink to={1} go={go} ro={ro} />
               <dt className="text-zinc-500">Audience</dt>
               <dd>
                 {preview ? (
                   <>
                     {preview.optedIn} opted-in of {preview.matched} matching
                     {holdoutN ? `, about ${holdoutN} held back` : ""} · {audienceLabel(seg, stage)}
+                    <span className="block text-xs text-zinc-500">{CHANNELS.map((c) => `${CHANNEL_LABEL[c]} ${preview.optedInBy[c].toLocaleString()}`).join(" / ")} of {preview.matched.toLocaleString()} reachable</span>
                   </>
                 ) : (
                   "Counting…"
                 )}
               </dd>
+              <EditLink to={1} go={go} ro={ro} />
               <dt className="text-zinc-500">Channels</dt>
               <dd>{channels.map((c) => CHANNEL_LABEL[c]).join(" → ")}</dd>
+              <EditLink to={1} go={go} ro={ro} />
               <dt className="text-zinc-500">Coupon</dt>
               <dd>{coupon ? `${coupon.code}: ${coupon.summary}${coupon.when ? ` (${coupon.when})` : ""}` : "None"}</dd>
+              <EditLink to={2} go={go} ro={ro} />
+              {channels.map((c) => (
+                <MessageRow key={c} channel={c} templates={templates} sample={sample} address={p.settings.address} go={go} ro={ro} />
+              ))}
               <dt className="text-zinc-500">When</dt>
               <dd>
                 {when === "later" ? formatDateTime(new Date(at)) : "Now"}
                 {repeating ? `, then ${FREQ_LABEL[freq].toLowerCase()}${endsOn ? ` until ${endsOn}` : ""}` : ""}
                 {sendTimeOpt ? " · at each client's usual booking time" : ""}
               </dd>
+              <EditLink to={1} go={go} ro={ro} />
               <dt className="text-zinc-500">A/B test</dt>
               <dd>{abOn && !repeating ? `${ab.testPct}% split A/B, winner by ${AB_METRIC_LABEL[ab.metric].toLowerCase()} after ${ab.waitHours}h · B changes ${abChanges(templates, ab.b).join(", ") || "nothing"}` : "Off"}</dd>
+              <EditLink to={1} go={go} ro={ro} />
               <dt className="text-zinc-500">Holdout</dt>
               <dd>{holdoutPct ? `${holdoutPct}% held back to measure lift` : "None"}</dd>
+              <EditLink to={1} go={go} ro={ro} />
               <dt className="text-zinc-500">Limits</dt>
               <dd>
                 {p.settings.capPerWeek}/week, {p.settings.capPerMonth}/month per client; quiet {p.settings.quietStart}–{p.settings.quietEnd}
               </dd>
+              <span />
             </dl>
-            {coupon && !coupon.usable && <Notice tone="red">{coupon.code} has expired or can&apos;t be used. Pick another coupon in Content.</Notice>}
             {p.mayEdit && (
               <div className="space-y-2">
                 <TestSend campaignId={id} channels={channels} shops={p.shops.filter((x) => !shopIds.length || shopIds.includes(x.id))} templates={templates} beforeSend={persist} />
@@ -674,10 +721,10 @@ export function BlastWizard(p: {
         </div>
         {step < 3 ? (
           <Button onClick={() => go(step + 1)} disabled={kind === "ai" && step === 0 && !aiDrafted} data-testid="next">
-            Next: {STEPS[step + 1]}
+            Next: {WIZARD_STEPS[step + 1].label}
           </Button>
         ) : p.mayEdit && p.maySend ? (
-          <Button disabled={pending || !reviewed || (coupon !== null && !coupon.usable)} onClick={send} data-testid="send-now">
+          <Button disabled={pending || !reviewed || allProblems.length > 0} onClick={send} data-testid="send-now" title={allProblems[0]}>
             {when === "later" ? "Schedule" : "Send now"}
           </Button>
         ) : p.mayEdit ? (
@@ -705,8 +752,10 @@ function AudiencePanel({ preview, counting, canCount, channels, holdoutN }: { pr
           <div className="grid grid-cols-3 gap-2" data-testid="opted-in-by-channel">
             {CHANNELS.map((c) => (
               <div key={c} className={cx("rounded-lg bg-white p-2 ring-1 ring-zinc-200", !channels.includes(c) && "opacity-50")}>
-                <div className="text-[11px] uppercase tracking-wide text-zinc-500">{CHANNEL_LABEL[c]} opted in</div>
-                <div className="tabular text-lg font-semibold">{preview.optedInBy[c]}</div>
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500">{CHANNEL_LABEL[c]} reachable</div>
+                <div className="tabular text-lg font-semibold">
+                  {preview.optedInBy[c].toLocaleString()} <span className="text-xs font-normal text-zinc-500">of {preview.matched.toLocaleString()}</span>
+                </div>
                 <div className="text-[11px] text-zinc-500">{channels.includes(c) ? `${preview.byChannel[c]} get it by ${CHANNEL_LABEL[c].toLowerCase()}` : "Not used"}</div>
               </div>
             ))}
@@ -769,5 +818,41 @@ function CouponList({ coupons, value, onChange, disabled }: { coupons: WizardCou
         );
       })}
     </div>
+  );
+}
+
+function EditLink({ to, go, ro }: { to: number; go: (s: number) => void; ro: boolean }) {
+  return (
+    <button type="button" className="justify-self-end text-xs text-blue-700 underline" onClick={() => go(to)} data-testid={`edit-${WIZARD_STEPS[to].key}`}>
+      {ro ? "View" : "Edit"}
+    </button>
+  );
+}
+
+/** The wording as a client gets it, on Review, so the content is never out of sight. */
+function MessageRow({ channel, templates, sample, address, go, ro }: { channel: Channel; templates: Templates; sample?: Partial<Record<string, string>>; address: string; go: (s: number) => void; ro: boolean }) {
+  const r = render(templates, { ...SAMPLE_VALUES, ...sample }, { brand: "Ray'z Barber Shop", address: address || "(the brand's postal address)", unsubscribeUrl: "…" });
+  return (
+    <>
+      <dt className="text-zinc-500">{CHANNEL_LABEL[channel]}</dt>
+      <dd className="min-w-0 text-zinc-800" data-testid={`review-${channel}`}>
+        {channel === "sms" && <span className="whitespace-pre-wrap">{r.sms}</span>}
+        {channel === "email" && (
+          <span className="block">
+            <span className="font-medium">{r.email.subject || "(no subject)"}</span>
+            <span className="block text-xs text-zinc-500">
+              {[r.email.image && "Image", r.email.headline && `Headline “${r.email.headline}”`, r.email.cta && `Button “${r.email.cta.label}”`].filter(Boolean).join(" · ") || "Text only"}
+            </span>
+            <span className="line-clamp-2 block whitespace-pre-wrap text-xs">{r.email.body.split("\n\n--\n")[0]}</span>
+          </span>
+        )}
+        {channel === "push" && (
+          <span>
+            <span className="font-medium">{r.push.title}</span> {r.push.body}
+          </span>
+        )}
+      </dd>
+      <EditLink to={2} go={go} ro={ro} />
+    </>
   );
 }
