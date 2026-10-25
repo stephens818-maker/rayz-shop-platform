@@ -459,6 +459,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-25: core (Rebook Rate report), nothing needed from mobile
+
+- **What's new:** a Rebook Rate report by location and barber with the brand rollup (README, "Rebook rate"). It covers rebooked at checkout, return within 30/45/60 days or the client's own gap, future appointments, new-client rebook rate and 2nd-visit retention. It also appears in the Morning Dashboard (new `rebook` section, on by default), on a barber's Today page, as custom report fields and in the assistant.
+- **Migration:** `core_0067_rebook_rate`, permissions only: `report.rebook_rate.view` and `report.rebook_rate.export` for roles that had `report.kpis.*`, plus view for Barber. No schema change. The next free number is `core_0068`.
+- **No API change.** Nothing under `/api/v1` changed. A staff app could show the same per-barber numbers from `myRebook` in `src/server/rebook-report.ts`.
+- **Tests:** `tests/rebook.test.ts` and `tests/db/rebook-report.test.ts`.
+
 ### 2026-10-25: core (staff milestones on the day), nothing needed from mobile
 
 - **What's new:** milestones show in the admin on the day they happen, by first name (README, "Staff milestones", "On the day"). Banners on the shop's calendar, Sales and POS, confetti on the barber's calendar column, a congratulations window on clocking in and on Today, and a live toast for the shop when a count is reached at checkout.

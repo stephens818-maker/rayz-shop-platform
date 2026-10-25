@@ -296,6 +296,7 @@ The last open day's numbers with week to date and the same day last week, today'
 | Sales | Sales summary | Gross and net, services and products, tips, card fees, refunds, tickets, average ticket; net by day this week against last, and by location. Voids need Discounts & refunds. The barber table needs Barber performance, and without **See every barber's numbers** shows only your own row |
 | Clients and bookings | KPIs | New and returning clients, bookings made (online, walk-in, front desk), appointments, cancellations, no-shows |
 | Barber utilization | Barber performance | Booked against available hours, overall and per barber, day and week to date. Average cut against booked time needs Service times |
+| Rebook rate | Rebook rate | Visits rebooked at checkout and the rate, day and week to date against the prior period and the brand; new-client rebook rate; per barber with their week against the brand (only your own row without **See every barber's numbers**); future appointments; 2nd-visit retention of the new clients seen 60 to 89 days earlier |
 | Loyalty and gift cards | Loyalty / Gift cards | Rewards earned and redeemed; gift cards sold and redeemed, and what's still owed |
 | Campaign Center | Campaign Center (or We have openings) | Sends, clicks, bookings, coupon redemptions and attributed revenue for messages sent that day |
 | Google review links | Google reviews | Review link clicks and follow-ups sent, by location |
@@ -1197,6 +1198,30 @@ Every meaningful thing that happens is logged once in `analytics_events`, an app
   - receipt ratings;
   - the pages per person;
   - builder and assistant scoping.
+
+### Rebook rate
+
+**Reports → Rebook rate** (`/admin/reports/rebook`) gives rebook and retention numbers by location and by barber, with the brand rollup. Definitions are in `src/domain/rebook.ts` and the queries in `src/server/rebook-report.ts`. Migration `core_0067_rebook_rate` (permissions only).
+
+- **What it measures:**
+  - **Rebooked at checkout:** the share of completed visits where the client left with their next visit booked for a later day. It counts if it was booked by the end of the visit's day (at checkout, later that day, or already on the books) and not cancelled that day. Squire visits without a booked-at time are left out of the rate, and the notes say how many.
+  - **Return rate:** the share of clients back within 30, 45 or 60 days, or within their own usual gap (time since their first visit divided by their visits so far), however the visit was booked. Each client is judged once, from their first visit in the range, and only once their window has closed.
+  - **Future appointments:** booked or confirmed appointments still to come, plus how many of the clients seen have one.
+  - **New-client rebook rate and 2nd-visit retention:** the same rebook rate on first-ever visits to the brand, and the share of new clients back for a second visit within the window (60 days when the window is their own gap).
+- **Filters:** dates, locations and barbers as on every report, plus service, client type (all, new or returning), return window, trend grain (weekly or monthly; monthly by default past about a quarter) and leaderboard measure.
+- **What's on the page:**
+  - Tiles with each measure against the brand average.
+  - A rebook-rate trend chart with the brand average dashed alongside, and a new-client chart.
+  - The full metric table by location or barber, and a table against the brand average in points.
+  - Barber and location leaderboards. Anyone with fewer than 10 visits (or judged clients) is listed at the end without a rank.
+  - The weekly or monthly trend table.
+  - The brand average uses every location and barber over the same dates and filters. When the selection is already the whole brand, the page says so instead of comparing.
+- **Other places it appears:**
+  - **Morning Dashboard:** a Rebook rate section after Utilization. It shows the report day and week to date against the prior period and the brand, with a table by barber, future appointments and 2nd-visit retention for the new clients seen 60 to 89 days earlier. Text messages include the rate.
+  - **Staff portal:** a barber's Today page shows their own rate over the last 30 days against the brand, their new-client rebooks, 2nd-visit retention and their booked-ahead count.
+  - **Custom reports:** client fields in the **Rebooking** group: visits rebooked, rebook rate, first visit rebooked, came back for a 2nd visit, days to 2nd visit, next booked visit and future appointments.
+  - **Rayz Assistant:** questions about rebooks, return rates, 2nd visits or booked-ahead appointments run this report.
+- **Permissions (à la carte):** `report.rebook_rate.view` and `report.rebook_rate.export`. They go to every role that had the Retention and rebook KPIs report. Barbers get view only, and like every report, without "See every barber's numbers" they see only their own numbers against the brand. The shop login can be given it.
 
 ### Reports across locations
 
