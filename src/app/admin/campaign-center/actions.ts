@@ -6,6 +6,7 @@ import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
 import { AppError, forbidden } from "@/server/errors";
 import { draftBlast } from "@/server/marketing/ai-draft";
+import { refineCopy, uploadEmailImage } from "@/server/marketing/email-design";
 import {
   cancelBlast,
   duplicateBlast,
@@ -104,6 +105,20 @@ export async function draftBlastAction(prompt: string) {
   return safe(async () => {
     const ctx = await authorize("campaign_center.create", "Drafting a blast needs Campaign Center: create");
     return draftBlast(ctx, prompt);
+  });
+}
+
+export async function uploadEmailImageAction(input: unknown) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Adding email images needs Campaign Center: create");
+    return uploadEmailImage(ctx, input);
+  });
+}
+
+export async function refineCopyAction(input: unknown) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Refining wording needs Campaign Center: create");
+    return refineCopy(ctx, input);
   });
 }
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { cx } from "@/components/ui";
 import { marketingEmailHtml } from "@/domain/marketing-email";
-import { CHANNEL_LABEL, SAMPLE_VALUES, render, type Channel, type MarketingValues, type Templates } from "@/domain/marketing";
+import { CHANNEL_LABEL, SAMPLE_VALUES, render, smsSegments, type Channel, type MarketingValues, type Templates } from "@/domain/marketing";
 
 const BRAND = "Ray'z Barber Shop";
 
@@ -27,12 +27,25 @@ function Toggle<T extends string>({ value, options, onChange, label }: { value: 
 }
 
 /** What each client would see, filled in with sample values: the email in light or dark mode at desktop or phone width, the text, and the push. */
-export function ChannelPreview({ templates, channels, address, sample }: { templates: Templates; channels: Channel[]; address: string; sample?: Partial<MarketingValues> }) {
+export function ChannelPreview({
+  templates,
+  channels,
+  address,
+  sample,
+  color,
+}: {
+  templates: Templates;
+  channels: Channel[];
+  address: string;
+  sample?: Partial<MarketingValues>;
+  color?: string | null;
+}) {
   const [tab, setTab] = useState<Channel>(channels[0] ?? "sms");
   const [scheme, setScheme] = useState<"light" | "dark">("light");
   const [width, setWidth] = useState<"desktop" | "mobile">("desktop");
   const ch = channels.includes(tab) ? tab : (channels[0] ?? "sms");
   const r = render(templates, { ...SAMPLE_VALUES, ...sample }, { brand: BRAND, address: address || "(the brand's postal address)", unsubscribeUrl: "https://rayz.example/m/…/unsubscribe" });
+  const seg = smsSegments(r.sms);
   return (
     <div className="rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200" data-testid="channel-preview">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -68,7 +81,7 @@ export function ChannelPreview({ templates, channels, address, sample }: { templ
             </div>
             <div className="font-semibold text-zinc-900">{r.email.subject || "(no subject)"}</div>
           </div>
-          <iframe title={`Email preview, ${scheme} mode, ${width}`} sandbox="" className="block h-[460px] w-full" srcDoc={marketingEmailHtml({ subject: r.email.subject, body: r.email.body, scheme })} />
+          <iframe title={`Email preview, ${scheme} mode, ${width}`} sandbox="" className="block h-[520px] w-full" srcDoc={marketingEmailHtml({ ...r.email, color, scheme })} />
         </div>
       )}
       {ch === "sms" && (
@@ -76,7 +89,10 @@ export function ChannelPreview({ templates, channels, address, sample }: { templ
           <div className="rounded-[1.5rem] bg-white px-3 pb-6 pt-4">
             <div className="mb-3 text-center text-[11px] text-zinc-400">Text message · now</div>
             <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-bl-sm bg-zinc-200 px-3 py-2 text-sm text-zinc-900">{r.sms}</div>
-            <div className="mt-2 text-[11px] text-zinc-400">{r.sms.length} characters</div>
+            <div className="mt-2 text-[11px] text-zinc-400">
+              {seg.chars} characters · {seg.segments} {seg.segments === 1 ? "segment" : "segments"}
+              {seg.unicode ? " (unicode)" : ""}
+            </div>
           </div>
         </div>
       )}

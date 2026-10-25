@@ -40,11 +40,18 @@ const t = (sms: string, extra: Partial<Record<"emailSubject" | "emailBody" | "pu
 describe("templates and merge fields", () => {
   it("fills merge fields and tidies the gaps", () => {
     expect(fill("{shop}: Hi {first_name}, use {coupon_code} by {expiry}.", SAMPLE_VALUES)).toBe("Ray'z Coralville: Hi Jordan, use MISSYOU-7K2Q9D by Nov 30.");
-    expect(fill("Hi {first_name} !", { first_name: "" })).toBe("Hi!");
+    expect(fill("Hi {first_name} !", { first_name: "" })).toBe("Hi there!");
+    expect(fill("Hi {first_name|friend}, see {barber}.", {})).toBe("Hi friend, see your barber.");
+    expect(fill("Hi {first_name|friend}", { first_name: "Sam" })).toBe("Hi Sam");
+    expect(fill("{shop}{day} !", {})).toBe("!");
   });
 
-  it("texts must carry the opt-out line, stay short, and use real merge fields", () => {
-    expect(templatesProblem(t("{shop}: hi"), ["sms"], { hasCoupon: false })).toMatch(/opt out/);
+  it("texts stay short with the link and opt-out line added, and use real merge fields", () => {
+    expect(templatesProblem(t("{shop}: hi"), ["sms"], { hasCoupon: false })).toBeNull();
+    expect(templatesProblem(t("{shop}: hi {first_name|friend}"), ["sms"], { hasCoupon: false })).toBeNull();
+    expect(templatesProblem(t("hi {first name}"), ["sms"], { hasCoupon: false })).toMatch(/\{first name\} isn't a merge field/);
+    expect(templatesProblem(t("hi {first_name|a{b}"), ["sms"], { hasCoupon: false })).toMatch(/isn't closed/);
+    expect(templatesProblem(t("x".repeat(270)), ["sms"], { hasCoupon: false })).toMatch(/booking link and opt-out line/);
     expect(templatesProblem(t(`{shop}: hi {nickname}. ${STOP_LINE}`), ["sms"], { hasCoupon: false })).toMatch(/\{nickname\} isn't a merge field/);
     expect(templatesProblem(t(`{coupon_code} ${STOP_LINE}`), ["sms"], { hasCoupon: false })).toMatch(/pick a coupon/);
     expect(templatesProblem(t(`${"x".repeat(330)} ${STOP_LINE}`), ["sms"], { hasCoupon: false })).toMatch(/under 320/);
@@ -61,9 +68,9 @@ describe("templates and merge fields", () => {
     }
   });
 
-  it("rendered texts end with STOP; emails end with the postal address and unsubscribe link", () => {
+  it("rendered texts end with the booking link and STOP; emails end with the postal address and unsubscribe link", () => {
     const r = render(t("{shop}: hi {first_name}", { emailSubject: "Hi {first_name}", emailBody: "Book: {book_link}" }), SAMPLE_VALUES, { brand: "Ray'z Barber Shop", address: "1 Main St", unsubscribeUrl: "https://x/m/T/unsubscribe" });
-    expect(r.sms).toBe(`Ray'z Coralville: hi Jordan ${STOP_LINE}`);
+    expect(r.sms).toBe(`Ray'z Coralville: hi Jordan https://rayz.example/m/Xy12abCD ${STOP_LINE}`);
     expect(r.email.subject).toBe("Hi Jordan");
     expect(r.email.body).toMatch(/Book: https:\/\/rayz\.example\/m\/Xy12abCD[\s\S]*1 Main St[\s\S]*Unsubscribe: https:\/\/x\/m\/T\/unsubscribe$/);
   });

@@ -219,15 +219,15 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
     const token = marketingToken();
     const base = appBaseUrl();
     const values: MarketingValues = {
-      first_name: i.contact?.firstName || "there",
+      first_name: i.contact?.firstName || "",
       shop: `Ray'z ${shop.name}`,
-      barber: barber ?? "your barber",
+      barber: barber ?? "",
       book_link: `${base}/m/${token}`,
       coupon_code: code ?? "",
       expiry: expiresOn ? formatDate(expiresOn, "MMM d") : "",
       ...t.values,
     };
-    const m = render(i.templates, values, { brand: BRAND_NAME, address: s.address, unsubscribeUrl: `${base}/m/${token}/unsubscribe` });
+    const m = render(i.templates, values, { brand: BRAND_NAME, address: s.address, unsubscribeUrl: `${base}/m/${token}/unsubscribe` }, { base });
     const contact = i.contact!;
     const to = channel === "sms" ? contact.phone! : channel === "email" ? contact.email! : contact.deviceId!;
     const tz = shop.timezone || SHOP_TZ;
@@ -240,8 +240,8 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
         channel,
         to,
         subject: channel === "email" ? m.email.subject : channel === "push" ? m.push.title : null,
-        body: channel === "sms" ? m.sms : channel === "email" ? m.email.body : m.push.body,
-        htmlBody: channel === "email" ? marketingEmailHtml({ subject: m.email.subject, body: m.email.body, pixelUrl: `${base}/m/${token}/o.gif` }) : null,
+        body: channel === "sms" ? m.sms : channel === "email" ? m.email.text : m.push.body,
+        htmlBody: channel === "email" ? marketingEmailHtml({ ...m.email, color: shop.accentColor, pixelUrl: `${base}/m/${token}/o.gif` }) : null,
         shopId: shop.id,
         customerId: t.customerId,
         runAt: nextSendAt(sendAt, tz, s),
@@ -649,7 +649,7 @@ export async function testSend(o: {
     coupon_code: code,
     expiry: promo ? formatDate(issuedExpiry(todayLocal(now), promo.validDays, promo.endsOn, addDays) ?? addDays(todayLocal(now), 30), "MMM d") : "",
   };
-  const m = render(o.templates ?? templatesOf(o.campaign.templates), values, { brand: BRAND_NAME, address: s.address || "(your postal address goes here)", unsubscribeUrl: `${base}/m/${token}/unsubscribe` });
+  const m = render(o.templates ?? templatesOf(o.campaign.templates), values, { brand: BRAND_NAME, address: s.address || "(your postal address goes here)", unsubscribeUrl: `${base}/m/${token}/unsubscribe` }, { base });
   const [job] = await db.transaction(async (tx) => {
     const j = await tx
       .insert(notificationJobs)
@@ -658,8 +658,8 @@ export async function testSend(o: {
         channel: o.channel,
         to,
         subject: o.channel === "email" ? `[Test] ${m.email.subject}` : null,
-        body: o.channel === "sms" ? `[Test] ${m.sms}` : m.email.body,
-        htmlBody: o.channel === "email" ? marketingEmailHtml({ subject: `[Test] ${m.email.subject}`, body: m.email.body }) : null,
+        body: o.channel === "sms" ? `[Test] ${m.sms}` : m.email.text,
+        htmlBody: o.channel === "email" ? marketingEmailHtml({ ...m.email, subject: `[Test] ${m.email.subject}`, color: o.shop.accentColor }) : null,
         shopId: o.shop.id,
         runAt: now,
       })

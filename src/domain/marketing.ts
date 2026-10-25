@@ -27,57 +27,142 @@ export const MARKETING_FIELDS = {
 export type MarketingField = keyof typeof MARKETING_FIELDS;
 /** `day` is We have openings' own field (OPENINGS_FIELDS in src/domain/openings.ts); `badge` and `badge_message` are Badge news' (TRIGGERS.badge_news.fields). */
 export type MarketingValues = Partial<Record<MarketingField | "day" | "badge" | "badge_message", string>>;
+/** What a merge field says when the client's value is missing and the wording gives no fallback of its own. */
+export const MERGE_DEFAULTS: MarketingValues = { first_name: "there", barber: "your barber" };
 
 export interface Templates {
   sms: string;
   emailSubject: string;
+  /** Large type above the email's text. Blank: none. */
+  emailHeadline?: string;
   emailBody: string;
+  /** The booking button's label, in the brand's color, linking to {book_link}. Blank: no button. */
+  emailCta?: string;
+  /** The image at the top of the email: one uploaded in the editor (/mi/<id>) or an https link. Blank: none. */
+  emailImage?: string;
+  emailImageAlt?: string;
   pushTitle: string;
   pushBody: string;
 }
 
+export const TEMPLATE_PART_LABEL: Record<keyof Templates, string> = {
+  sms: "Text",
+  emailSubject: "Email subject",
+  emailHeadline: "Email headline",
+  emailBody: "Email",
+  emailCta: "Email button",
+  emailImage: "Email image",
+  emailImageAlt: "Email image description",
+  pushTitle: "Push title",
+  pushBody: "Push",
+};
+
+export const EMAIL_IMAGE_RE = /^(\/mi\/[0-9a-f-]{36}|https:\/\/[^\s"'<>]+)$/;
+
 export const TemplatesSchema = z.object({
   sms: z.string().max(480).default(""),
   emailSubject: z.string().max(150).default(""),
+  emailHeadline: z.string().max(120).default(""),
   emailBody: z.string().max(5000).default(""),
+  emailCta: z.string().max(40).default(""),
+  emailImage: z
+    .string()
+    .max(500)
+    .refine((v) => v === "" || EMAIL_IMAGE_RE.test(v), "Use an uploaded image or an https:// link")
+    .default(""),
+  emailImageAlt: z.string().max(150).default(""),
   pushTitle: z.string().max(65).default(""),
   pushBody: z.string().max(240).default(""),
 });
 
-const FIELD_RE = /\{([a-z_]+)\}/g;
+/** `{first_name}`, or `{first_name|friend}` with what to say when the client's value is missing. */
+const FIELD_RE = /\{([a-z_]+)(?:\|([^{}|]*))?\}/g;
+const hasField = (text: string, f: string) => new RegExp(`\\{${f}(\\|[^{}|]*)?\\}`).test(text);
 /** Two SMS segments; longer texts cost more. */
 export const MARKETING_SMS_MAX = 320;
 export const STOP_LINE = "Reply STOP to opt out.";
 
+/** A } with no { before it, a { inside another, or a { never closed. */
+function unbalanced(text: string): boolean {
+  let open = false;
+  for (const c of text) {
+    if (c === "{") {
+      if (open) return true;
+      open = true;
+    } else if (c === "}") {
+      if (!open) return true;
+      open = false;
+    }
+  }
+  return open;
+}
+
 /** What's wrong with a campaign's wording, or null. */
 export function templatesProblem(t: Templates, channels: readonly Channel[], o: { hasCoupon: boolean; extraFields?: readonly string[] }): string | null {
   const known = [...Object.keys(MARKETING_FIELDS), ...(o.extraFields ?? [])];
-  const parts: [string, string, Channel][] = [
+  const parts: [string, string, Channel | null][] = [
     ["Text", t.sms, "sms"],
     ["Email subject", t.emailSubject, "email"],
+    ["Email headline", t.emailHeadline ?? "", null],
     ["Email", t.emailBody, "email"],
+    ["Email button", t.emailCta ?? "", null],
     ["Push title", t.pushTitle, "push"],
     ["Push", t.pushBody, "push"],
   ];
   for (const [label, text] of parts) {
+    if (unbalanced(text)) return `${label}: a { or } isn't closed`;
     for (const [, f] of text.matchAll(FIELD_RE)) {
       if (!known.includes(f)) return `${label}: {${f}} isn't a merge field. Use ${known.map((x) => `{${x}}`).join(", ")}.`;
       if ((f === "coupon_code" || f === "expiry") && !o.hasCoupon) return `${label}: pick a coupon to use {${f}}`;
     }
-    if (/\{[^}]*$|^[^{]*\}/.test(text)) return `${label}: a { or } isn't closed`;
+    const stray = text.replace(FIELD_RE, "").match(/\{[^}]*\}/);
+    if (stray) return `${label}: ${stray[0]} isn't a merge field. Write it like {first_name} or, with a fallback, {first_name|friend}.`;
   }
-  for (const [label, text, ch] of parts) if (channels.includes(ch) && !text.trim()) return `${label} can't be empty when the campaign sends by ${CHANNEL_LABEL[ch].toLowerCase()}`;
-  if (channels.includes("sms") && !/\bSTOP\b/.test(t.sms)) return `Texts must say how to opt out (${STOP_LINE})`;
-  if (channels.includes("sms") && fill(t.sms, SAMPLE_VALUES).length > MARKETING_SMS_MAX) return `Keep the text under ${MARKETING_SMS_MAX} characters with the sample filled in`;
+  for (const [label, text, ch] of parts) if (ch && channels.includes(ch) && !text.trim()) return `${label} can't be empty when the campaign sends by ${CHANNEL_LABEL[ch].toLowerCase()}`;
+  if (t.emailImage && !EMAIL_IMAGE_RE.test(t.emailImage)) return "Email image: use an uploaded image or an https:// link";
+  if (t.emailImage && !(t.emailImageAlt ?? "").trim()) return "Email image: describe it for clients whose email hides images (alt text)";
+  if (channels.includes("sms") && smsText(t.sms, SAMPLE_VALUES).length > MARKETING_SMS_MAX)
+    return `Keep the text under ${MARKETING_SMS_MAX} characters with the sample filled in, including the booking link and opt-out line added at the end`;
   return null;
 }
 
 export function fill(text: string, values: MarketingValues): string {
   return text
-    .replace(FIELD_RE, (_, f: string) => values[f as keyof MarketingValues] ?? "")
+    .replace(FIELD_RE, (_, f: string, fallback?: string) => values[f as keyof MarketingValues] || fallback?.trim() || MERGE_DEFAULTS[f as keyof MarketingValues] || "")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/ ([.,!?])/g, "$1")
     .trim();
+}
+
+/**
+ * A marketing text as it goes out: the wording filled in, then the booking link (unless the
+ * wording already places {book_link}) and the opt-out line (unless it already says STOP) added at
+ * the end, so nobody has to remember either.
+ */
+export function smsText(template: string, values: MarketingValues): string {
+  let s = fill(template, values);
+  if (!hasField(template, "book_link") && values.book_link) s = `${s} ${values.book_link}`;
+  if (!/\bSTOP\b/.test(s)) s = `${s} ${STOP_LINE}`;
+  return s.trim();
+}
+
+/** What the end of a text gets automatically, for the editor: the link, the opt-out line, both or neither. */
+export function smsAppends(template: string): { link: boolean; stop: boolean } {
+  return { link: !hasField(template, "book_link"), stop: !/\bSTOP\b/.test(template) };
+}
+
+/** GSM-7 characters (what most texts are written in); anything else, like an emoji or a curly quote, makes the text UCS-2. */
+const GSM = /^[@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !"#¤%&'()*+,\-./0-9:;<=>?¡A-ZÄÖÑÜ§¿a-zäöñüà^{}\\[~\]|€]*$/;
+const GSM_EXT = /[\^{}\\[~\]|€]/g;
+
+/** Characters and segments a text is billed as: 160 per single GSM-7 text (153 per part when split), 70 and 67 with any other character. */
+export function smsSegments(text: string): { chars: number; segments: number; unicode: boolean; perSegment: number } {
+  const unicode = !GSM.test(text);
+  const chars = unicode ? [...text].length : text.length + (text.match(GSM_EXT)?.length ?? 0);
+  const single = unicode ? 70 : 160;
+  const part = unicode ? 67 : 153;
+  const segments = chars === 0 ? 0 : chars <= single ? 1 : Math.ceil(chars / part);
+  return { chars, segments, unicode, perSegment: segments > 1 ? part : single };
 }
 
 export const SAMPLE_VALUES: MarketingValues = {
@@ -96,18 +181,46 @@ export function emailFooter(o: { brand: string; address: string; unsubscribeUrl:
   return `\n\n--\n${o.brand}\n${o.address}\nYou're getting this because you agreed to emails from ${o.brand}. Unsubscribe: ${o.unsubscribeUrl}`;
 }
 
+export interface RenderedEmail {
+  subject: string;
+  /** The text and the footer (after "\n\n--\n"), which the HTML part lays out around the headline, image and button. */
+  body: string;
+  headline: string;
+  /** The booking button: its label and the client's tracked booking link. */
+  cta: { label: string; url: string } | null;
+  image: { src: string; alt: string } | null;
+  /** The plain-text part: headline, text, the button as a link, then the footer. */
+  text: string;
+}
+
 export interface Rendered {
   sms: string;
-  email: { subject: string; body: string };
+  email: RenderedEmail;
   push: { title: string; body: string };
 }
 
-/** The messages for one client. Texts always end with the opt-out line, emails with the footer. */
-export function render(t: Templates, v: MarketingValues, footer: { brand: string; address: string; unsubscribeUrl: string }): Rendered {
-  const sms = fill(t.sms, v);
+/**
+ * The messages for one client. Texts end with the booking link and the opt-out line, emails with
+ * the footer. `base` makes an uploaded email image's address absolute, for the email itself.
+ */
+export function render(t: Templates, v: MarketingValues, footer: { brand: string; address: string; unsubscribeUrl: string }, o: { base?: string } = {}): Rendered {
+  const headline = fill(t.emailHeadline ?? "", v);
+  const main = fill(t.emailBody, v);
+  const label = fill(t.emailCta ?? "", v);
+  const cta = label && v.book_link ? { label, url: v.book_link } : null;
+  const img = (t.emailImage ?? "").trim();
+  const image = img && EMAIL_IMAGE_RE.test(img) ? { src: img.startsWith("/") ? `${o.base ?? ""}${img}` : img, alt: fill(t.emailImageAlt ?? "", v) } : null;
+  const foot = emailFooter(footer);
   return {
-    sms: /\bSTOP\b/.test(sms) ? sms : `${sms} ${STOP_LINE}`.trim(),
-    email: { subject: fill(t.emailSubject, v), body: fill(t.emailBody, v) + emailFooter(footer) },
+    sms: smsText(t.sms, v),
+    email: {
+      subject: fill(t.emailSubject, v),
+      body: main + foot,
+      headline,
+      cta,
+      image,
+      text: [headline, main, cta ? `${cta.label}: ${cta.url}` : ""].filter(Boolean).join("\n\n") + foot,
+    },
     push: { title: fill(t.pushTitle, v), body: fill(t.pushBody, v) },
   };
 }

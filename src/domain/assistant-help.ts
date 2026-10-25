@@ -119,7 +119,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     title: "Send a blast to clients",
     page: "/admin/campaign-center/blasts",
     words: ["blast", "campaign", "text clients", "email clients", "marketing", "promo"],
-    steps: ["Open Blasts and choose New blast.", "Build the segment, write the wording (texts must say Reply STOP to opt out), pick the locations and send a test.", "Only clients who agreed to marketing get it, outside quiet hours and within the frequency limits."],
+    steps: ["Open Blasts and choose New blast.", "Build the segment, write the wording (texts get the booking link and Reply STOP to opt out added automatically), pick the locations and send a test.", "Only clients who agreed to marketing get it, outside quiet hours and within the frequency limits."],
   },
   {
     title: "Tell clients a barber has openings",

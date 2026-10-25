@@ -70,7 +70,7 @@ describe("We have openings", () => {
     expect(openingsTemplatesProblem({ ...OPENINGS_TEMPLATES, sms: "Hi {first_name}, {barber} has openings {day}. Reply STOP to opt out." })).toMatch(/text needs \{book_link\}/);
     expect(openingsTemplatesProblem({ ...OPENINGS_TEMPLATES, emailBody: "Openings {day}" })).toMatch(/email needs \{book_link\}/);
     expect(openingsTemplatesProblem({ ...OPENINGS_TEMPLATES, sms: `${OPENINGS_TEMPLATES.sms} {coupon}` })).not.toBeNull();
-    expect(openingsTemplatesProblem({ ...OPENINGS_TEMPLATES, sms: "{barber} has openings {day}: {book_link}" })).toMatch(/STOP/i);
+    expect(openingsTemplatesProblem({ ...OPENINGS_TEMPLATES, sms: "{barber} has openings {day}: {book_link}" })).toBeNull();
   });
 
   it("a send needs a barber, a day and a channel", () => {

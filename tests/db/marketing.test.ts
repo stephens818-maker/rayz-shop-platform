@@ -608,7 +608,7 @@ describe("blasts, location scope and the preview", () => {
     const birthday = await campaign("birthday");
     await CP.setLocationAutomation(ctx, { campaignId: birthday.id, shopId: fx.cv, enabled: true, templates: { sms: "{shop}: happy birthday {first_name}! Reply STOP to opt out." } });
     await expect(CP.setLocationAutomation(ctx, { campaignId: birthday.id, shopId: fx.other, enabled: true })).rejects.toThrow();
-    await expect(CP.setLocationAutomation(ctx, { campaignId: birthday.id, shopId: fx.cv, enabled: true, templates: { sms: "no opt-out line" } })).rejects.toThrow(/STOP/);
+    await expect(CP.setLocationAutomation(ctx, { campaignId: birthday.id, shopId: fx.cv, enabled: true, templates: { sms: "hi {nickname}" } })).rejects.toThrow(/isn't a merge field/);
     await expect(CP.saveAutomation(ctx, birthday.id, { name: "x", channels: ["sms"], templates: { sms: "Reply STOP" } })).rejects.toThrow();
   });
 
@@ -1177,6 +1177,49 @@ describe("Campaign Center v2: A/B, holdout, repeats, opens, attribution, templat
     await expect(CP.resumeBlast(ctx, ended, at("2028-02-18", "09:00"))).rejects.toThrow(/end date/);
   });
 
+  it("the email editor: an uploaded image served publicly, refined copies, the headline and booking button sent, and AI refine audited", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const ED = await import("@/server/marketing/email-design");
+    const imageRoute = (await import("@/app/mi/[id]/route")).GET;
+    const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    await expect(ED.uploadEmailImage(ctx, { dataUrl: "data:image/svg+xml;base64,PHN2Zz4=" })).rejects.toThrow(/JPEG, PNG or WebP/);
+    const up = await ED.uploadEmailImage(ctx, { dataUrl: PNG, width: 1, height: 1, alt: "Shop front" });
+    expect(up.src).toBe(`/mi/${up.id}`);
+    const res = await imageRoute(new Request(`http://x${up.src}`), { params: Promise.resolve({ id: up.id }) });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toMatch(/immutable/);
+    expect((await imageRoute(new Request("http://x/mi/nope"), { params: Promise.resolve({ id: "nope" }) })).status).toBe(404);
+    const crop = await ED.uploadEmailImage(ctx, { dataUrl: PNG, width: 1, height: 1, sourceId: up.id });
+    const audits = await m.db.db.select().from(s().auditLog).where(m.drizzle.inArray(s().auditLog.entityId, [up.id, crop.id]));
+    expect(audits.map((a) => a.action).sort()).toEqual(["campaign_center.image_refined", "campaign_center.image_uploaded"]);
+    expect(JSON.stringify(audits)).not.toContain("base64");
+
+    const { tag, list } = await tagged(1, { email: true });
+    const templates = { sms: SMS, emailSubject: "Fall cuts", emailHeadline: "Fall cuts, {first_name|friend}", emailBody: "Hi {first_name}, the fall lineup is in.", emailCta: "Book now", emailImage: up.src, emailImageAlt: "Shop front" };
+    const id = await CP.saveBlast(ctx, { name: "Designed email", channels: ["email"], templates, segment: { tags: [tag] }, shopIds: [fx.cv] });
+    await CP.scheduleBlast(ctx, id, null, NOW);
+    const [send] = await sendsFor(list[0].id);
+    const j = await job(send.jobId);
+    expect(j.htmlBody).toContain(`/mi/${up.id}" alt="Shop front"`);
+    expect(j.htmlBody).toMatch(/https?:\/\/[^"]+\/mi\//);
+    expect(j.htmlBody).toContain("Fall cuts, Mark</h1>");
+    expect(j.htmlBody).toMatch(new RegExp(`class="cta" href="[^"]*/m/${send.token}"[^>]*>Book now</a>`));
+    expect(j.body).toMatch(new RegExp(`^Fall cuts, Mark\\n\\nHi Mark, the fall lineup is in\\.\\n\\nBook now: \\S+/m/${send.token}\\n\\n--\\n`));
+
+    const r = await ED.refineCopy(ctx, { part: "sms", style: "shorter", text: "We just really miss you, {first_name}. Use {coupon_code}." }, { provider: null });
+    expect(r).toMatchObject({ refiner: "keywords", text: "We miss you, {first_name}. Use {coupon_code}." });
+    const alt = await ED.refineCopy(ctx, { part: "emailImageAlt", style: "custom", text: "", context: { emailSubject: "Fall cuts", emailHeadline: "", emailBody: "" } }, { provider: null });
+    expect(alt.text).toBe("Ray'z Barber Shop: Fall cuts");
+    const [a] = await m.db.db.select().from(s().auditLog).where(eq(s().auditLog.action, "campaign_center.ai_refined")).orderBy(m.drizzle.desc(s().auditLog.at)).limit(1);
+    expect(a.details).toMatchObject({ refiner: "keywords", part: "emailImageAlt", style: "describe_image" });
+    expect(JSON.stringify(a.details)).not.toContain("Fall cuts");
+    await signInAs(fx.barber);
+    await expect(ED.refineCopy(await ctxOf(), { part: "sms", style: "shorter", text: "x" }, { provider: null })).rejects.toThrow(/Campaign Center/);
+  });
+
   it("the email's open pixel counts real opens once in the open rate, never a mail scanner", async () => {
     await consent(true);
     await signInAs(fx.owner);
@@ -1333,7 +1376,7 @@ describe("Campaign Center v2: A/B, holdout, repeats, opens, attribution, templat
     const before = await count();
     const stub = await AI.draftBlast(ctx, "Bring back clients we haven't seen in two months", { provider: null, now: NOW });
     expect(stub.drafter).toBe("keywords");
-    expect(stub.templates.sms).toMatch(/STOP/);
+    expect(stub.templates.sms).not.toMatch(/STOP|\{book_link\}/);
     expect(await count()).toBe(before);
     await expect(AI.draftBlast(ctx, "hi", { provider: null })).rejects.toThrow(/more/);
 

@@ -16,7 +16,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
 import { customers, marketingCampaigns, notificationJobs, openingsWaitlist, services, shops, staff } from "@/db/schema";
-import { MarketingSettings, SKIP_LABEL, capProblem, fill, nextSendAt, pickChannel } from "@/domain/marketing";
+import { MarketingSettings, SKIP_LABEL, capProblem, fill, nextSendAt, pickChannel, smsText } from "@/domain/marketing";
 import {
   OPENINGS_STATUS_LABEL,
   OpeningsInputSchema,
@@ -346,7 +346,7 @@ export async function previewOpenings(ctx: StaffContext, input: unknown, now = n
     if (!out.sample && !p.problem) {
       const t = templatesOf(os.templates);
       const values = { first_name: "Jordan", barber: p.firstName, shop: `Ray'z ${shop.name}`, day: p.dayText, book_link: `${appBaseUrl()}/m/…` };
-      out.sample = { sms: fill(t.sms, values), emailSubject: fill(t.emailSubject, values), emailBody: fill(t.emailBody, values) };
+      out.sample = { sms: smsText(t.sms, values), emailSubject: fill(t.emailSubject, values), emailBody: fill(t.emailBody, values) };
       out.sendsAt = p.deferred ? p.sendAt.toISOString() : null;
     }
   }

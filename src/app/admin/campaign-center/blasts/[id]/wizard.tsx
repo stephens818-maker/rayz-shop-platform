@@ -8,7 +8,7 @@ import { SegmentFilters } from "@/components/segment-filters";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, cx } from "@/components/ui";
 import type { FilterOptions, PanelSees } from "@/domain/client-filters";
 import { AB_METRICS, AB_METRIC_LABEL, FREQS, FREQ_LABEL, HOLDOUT_MAX, abChanges, variantTemplates, type AbMetric, type Freq } from "@/domain/campaign-schedule";
-import { CHANNELS, CHANNEL_LABEL, CLIENT_STAGES, EMPTY_SEGMENT, STAGE_FIELDS, STOP_LINE, stageSegment, type Channel, type ClientStage, type Segment, type Templates } from "@/domain/marketing";
+import { CHANNELS, CHANNEL_LABEL, CLIENT_STAGES, EMPTY_SEGMENT, STAGE_FIELDS, stageSegment, type Channel, type ClientStage, type Segment, type Templates } from "@/domain/marketing";
 import { formatCents } from "@/lib/money";
 import { formatDateTime } from "@/lib/time";
 import { cancelBlastAction, draftBlastAction, previewBlastAction, saveBlastAction, scheduleBlastAction } from "../../actions";
@@ -68,16 +68,24 @@ type Kind = "update" | "promotion" | "ai";
 
 const STEPS = ["Type", "Audience & options", "Content", "Review"] as const;
 const NEW_TEMPLATES: Templates = {
-  sms: `{shop}: Hi {first_name}, . Book: {book_link} ${STOP_LINE}`,
+  sms: "{shop}: Hi {first_name}, .",
   emailSubject: "News from {shop}",
-  emailBody: "Hi {first_name},\n\n\n\nBook your next cut: {book_link}",
+  emailHeadline: "",
+  emailBody: "Hi {first_name},\n\n",
+  emailCta: "Book now",
+  emailImage: "",
+  emailImageAlt: "",
   pushTitle: "{shop}",
   pushBody: "",
 };
 const PROMO_TEMPLATES: Templates = {
-  sms: `{shop}: Hi {first_name}, use {coupon_code} on your next visit, good till {expiry}. Book: {book_link} ${STOP_LINE}`,
+  sms: "{shop}: Hi {first_name}, use {coupon_code} on your next visit, good till {expiry}.",
   emailSubject: "A little something from {shop}",
-  emailBody: "Hi {first_name},\n\nUse {coupon_code} on your next visit, good till {expiry}.\n\nBook here: {book_link}",
+  emailHeadline: "A little something for you",
+  emailBody: "Hi {first_name},\n\nUse {coupon_code} on your next visit, good till {expiry}.",
+  emailCta: "Book with {coupon_code}",
+  emailImage: "",
+  emailImageAlt: "",
   pushTitle: "An offer from {shop}",
   pushBody: "Use {coupon_code} till {expiry}.",
 };

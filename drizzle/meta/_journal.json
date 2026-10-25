@@ -484,6 +484,13 @@
       "when": 1794884400000,
       "tag": "core_0068_loyalty_program",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1794970800000,
+      "tag": "core_0069_email_design",
+      "breakpoints": true
     }
   ]
 }

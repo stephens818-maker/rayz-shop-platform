@@ -72,9 +72,11 @@ export const DRAFT_TOOL = {
         type: "object",
         required: ["sms", "emailSubject", "emailBody", "pushTitle", "pushBody"],
         properties: {
-          sms: { type: "string", description: `Under 300 characters, starting with {shop}: and ending with '${STOP_LINE}'` },
+          sms: { type: "string", description: "Under 240 characters, starting with {shop}: . The booking link and the opt-out line are added at the end automatically; don't write them." },
           emailSubject: { type: "string", description: "Under 80 characters." },
-          emailBody: { type: "string", description: "Plain text, a few short lines, with {book_link}." },
+          emailHeadline: { type: "string", description: "Under 60 characters, shown large above the email." },
+          emailBody: { type: "string", description: "Plain text, a few short lines. A booking button follows it." },
+          emailCta: { type: "string", description: "The booking button's label, 2 to 4 words, e.g. 'Book your cut'." },
           pushTitle: { type: "string", description: "Under 60 characters." },
           pushBody: { type: "string", description: "Under 200 characters." },
         },
@@ -109,8 +111,8 @@ export function draftSystemPrompt(o: { brand: string; shops: string[]; coupons: 
   const coupons = o.coupons.filter((c) => c.usable);
   return [
     `You draft marketing blasts for ${o.brand}, a barbershop brand with locations ${o.shops.join(", ") || "(several)"}. Call draft_campaign once with the draft.`,
-    `Write like a friendly local barbershop: short, warm, no hype, no emoji, no ALL CAPS. Use merge fields, never made-up names: ${fields}. Every message links {book_link}.`,
-    `The text starts with "{shop}: " and ends with "${STOP_LINE}". Use {coupon_code} and {expiry} only with a coupon.`,
+    `Write like a friendly local barbershop: short, warm, no hype, no emoji, no ALL CAPS. Use merge fields, never made-up names: ${fields}. A field can say what to use when a client's value is missing, e.g. {first_name|there}.`,
+    `The text starts with "{shop}: "; its booking link and "${STOP_LINE}" are added automatically. The email gets a booking button. Use {coupon_code} and {expiry} only with a coupon.`,
     coupons.length ? `Coupons you may use (code: what it gives): ${coupons.map((c) => `${c.code}: ${c.summary}`).join("; ")}. Pick one only for a promotion.` : "There are no coupons to use, so it's an update without an offer.",
     o.badges.length ? `Client badges (key: label): ${o.badges.map((b) => `${b.key}: ${b.label}`).join("; ")}.` : "",
     "Lapsed means no visit in a while and nothing booked since: set lastVisitOverDays and notBooked. New clients: firstVisitWithinDays. Regulars: minVisits 3 and lastVisitWithinDays 60.",
@@ -120,7 +122,7 @@ export function draftSystemPrompt(o: { brand: string; shops: string[]; coupons: 
     .join("\n");
 }
 
-const MAX = { sms: 300, emailSubject: 120, emailBody: 2000, pushTitle: 60, pushBody: 200 } as const;
+const MAX = { sms: 300, emailSubject: 120, emailHeadline: 80, emailBody: 2000, emailCta: 30, emailImage: 0, emailImageAlt: 0, pushTitle: 60, pushBody: 200 } as const;
 
 /** The model's draft made to fit the rules: known merge fields, the opt-out line, a real coupon, filters the person may use. */
 export function normalizeDraft(raw: unknown, o: { coupons: readonly DraftCoupon[]; badges: readonly string[] }): CampaignDraft {
@@ -133,7 +135,7 @@ export function normalizeDraft(raw: unknown, o: { coupons: readonly DraftCoupon[
   const hasCoupon = !!coupon;
   const known = Object.keys(MARKETING_FIELDS);
   const clean = (s: string, k: keyof Templates) => {
-    let t = s.replace(/\{([a-z_]+)\}/g, (m, f: string) => (known.includes(f) && (hasCoupon || (f !== "coupon_code" && f !== "expiry")) ? m : ""));
+    let t = s.replace(/\{([a-z_]+)(\|[^{}|]*)?\}/g, (m, f: string) => (known.includes(f) && (hasCoupon || (f !== "coupon_code" && f !== "expiry")) ? m : ""));
     t = t.replace(/[ \t]{2,}/g, " ").trim();
     if (t.length > MAX[k]) t = t.slice(0, MAX[k]).trim();
     return t;
@@ -141,14 +143,17 @@ export function normalizeDraft(raw: unknown, o: { coupons: readonly DraftCoupon[
   const t: Templates = {
     sms: clean(d.templates.sms, "sms"),
     emailSubject: clean(d.templates.emailSubject, "emailSubject"),
+    emailHeadline: clean(d.templates.emailHeadline ?? "", "emailHeadline"),
     emailBody: clean(d.templates.emailBody, "emailBody"),
+    emailCta: clean(d.templates.emailCta ?? "", "emailCta") || "Book now",
+    emailImage: "",
+    emailImageAlt: "",
     pushTitle: clean(d.templates.pushTitle, "pushTitle"),
     pushBody: clean(d.templates.pushBody, "pushBody"),
   };
   if (!t.sms.startsWith("{shop}")) t.sms = `{shop}: ${t.sms}`;
-  if (!t.sms.includes("{book_link}")) t.sms = `${t.sms.replace(new RegExp(`\\s*${STOP_LINE.replace(/\./g, "\\.")}$`), "")} {book_link}`;
-  if (!/\bSTOP\b/.test(t.sms)) t.sms = `${t.sms} ${STOP_LINE}`;
-  if (!t.emailBody.includes("{book_link}")) t.emailBody = `${t.emailBody}\n\nBook: {book_link}`;
+  // The link and opt-out line are added when it's sent (smsText); a model that wrote them anyway at the end has them taken off.
+  t.sms = t.sms.replace(new RegExp(`\\s*${STOP_LINE.replace(/\./g, "\\.")}$`), "").replace(/\s*(Book( here| now)?:?\s*)?\{book_link\}\s*$/i, "").trim();
   if (!t.emailSubject) t.emailSubject = "News from {shop}";
   if (!t.pushTitle) t.pushTitle = "{shop}";
   if (!t.pushBody) t.pushBody = "Tap to book your next cut.";
@@ -229,9 +234,11 @@ export function stubDraftRaw(prompt: string, coupons: readonly DraftCoupon[], ba
     campaignType: offer ? "promotion" : "update",
     channels,
     templates: {
-      sms: `{shop}: Hi {first_name}, ${line} {book_link} ${STOP_LINE}`,
+      sms: `{shop}: Hi {first_name}, ${line}`,
       emailSubject: offer ? "A little something from {shop}" : topic === "holiday" ? "Holiday hours at {shop}" : "News from {shop}",
-      emailBody: `Hi {first_name},\n\n${line[0].toUpperCase()}${line.slice(1)}\n\nBook here: {book_link}`,
+      emailHeadline: offer ? "A little something for your next cut" : topic === "holiday" ? "Holiday hours" : topic === "barber" ? "Meet our new barber" : who === "lapsed clients" ? "We miss you" : "News from Ray'z",
+      emailBody: `Hi {first_name},\n\n${line[0].toUpperCase()}${line.slice(1)}`,
+      emailCta: offer ? "Use it on your next cut" : "Book your cut",
       pushTitle: offer ? "An offer from {shop}" : "{shop}",
       pushBody: offer ? "Use {coupon_code} till {expiry}." : "Tap to book your next cut.",
     },

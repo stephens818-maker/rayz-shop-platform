@@ -3312,6 +3312,23 @@ export const marketingTemplates = pgTable(
  * settings and segment are jsonb (Templates, trigger and sequence settings, Segment and
  * SequenceAudience in src/domain/marketing.ts).
  */
+/**
+ * Images uploaded for marketing emails (the header image), served at /mi/<id> to anyone with the
+ * link, since email clients fetch them. Never changed under its ID: a refined or replaced image
+ * is a new row, so a sent email keeps the picture it went out with.
+ */
+export const marketingImages = pgTable("marketing_images", {
+  id: id(),
+  dataUrl: text("data_url").notNull(),
+  alt: text("alt"),
+  width: integer("width"),
+  height: integer("height"),
+  /** The image this one was refined from (cropped or enhanced in the editor). */
+  sourceId: uuid("source_id"),
+  createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+});
+
 export const marketingCampaigns = pgTable(
   "marketing_campaigns",
   {

@@ -6,7 +6,7 @@
  */
 import { DateTime } from "luxon";
 import { z } from "zod";
-import { TemplatesSchema, type Templates } from "./marketing";
+import { TEMPLATE_PART_LABEL, TemplatesSchema, type Templates } from "./marketing";
 
 // ───────────────────────────── Recurring schedules ─────────────────────────────
 
@@ -149,8 +149,7 @@ export function variantTemplates(a: Templates, b: Partial<Templates>): Templates
 
 /** What a variant changes, for the review step: "Email subject, Text". */
 export function abChanges(a: Templates, b: Partial<Templates>): string[] {
-  const label: Record<keyof Templates, string> = { sms: "Text", emailSubject: "Email subject", emailBody: "Email", pushTitle: "Push title", pushBody: "Push" };
-  return (Object.keys(label) as (keyof Templates)[]).filter((k) => typeof b[k] === "string" && b[k]!.trim() && b[k] !== a[k]).map((k) => label[k]);
+  return (Object.keys(TEMPLATE_PART_LABEL) as (keyof Templates)[]).filter((k) => typeof b[k] === "string" && b[k]!.trim() && b[k] !== (a[k] ?? "")).map((k) => TEMPLATE_PART_LABEL[k]);
 }
 
 /** The variant with the higher rate wins; a tie (or no data) keeps A, the original. */

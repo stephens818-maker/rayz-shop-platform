@@ -181,7 +181,9 @@ describe("AI drafts", () => {
     expect(d.campaignType).toBe("promotion");
     expect(d.channels).toEqual(["sms"]);
     expect(d.templates.sms.startsWith("{shop}")).toBe(true);
-    expect(d.templates.sms).toContain(STOP_LINE);
+    expect(d.templates.sms).not.toContain(STOP_LINE);
+    expect(d.templates.sms).not.toContain("{book_link}");
+    expect(d.templates.emailCta).toBeTruthy();
     expect(templatesProblem(d.templates, d.channels, { hasCoupon: true })).toBeNull();
   });
 
@@ -204,13 +206,13 @@ describe("AI drafts", () => {
     expect(seg("Lapsed Gold members, come back")).toMatchObject({ lastVisitOverDays: 42, badges: ["gold"] });
   });
 
-  it("never attaches an unusable or invented coupon, drops unknown fields and badges, adds the opt-out line", () => {
+  it("never attaches an unusable or invented coupon, drops unknown fields and badges, leaves the link and opt-out to sending", () => {
     const d = normalizeDraft(
       {
         name: "X",
         campaignType: "promotion",
         channels: ["sms", "email"],
-        templates: { sms: "Hi {first_name} use {coupon_code} {ssn}", emailSubject: "Hi", emailBody: "Body", pushTitle: "", pushBody: "" },
+        templates: { sms: "Hi {first_name} use {coupon_code} {ssn} {book_link} Reply STOP to opt out.", emailSubject: "Hi", emailBody: "Body", pushTitle: "", pushBody: "" },
         audience: { badges: ["vip", "secret"], minAvgGapDays: 20 },
         couponCode: "OLD10",
       },
@@ -220,9 +222,8 @@ describe("AI drafts", () => {
     expect(d.campaignType).toBe("update");
     expect(d.templates.sms).not.toMatch(/\{ssn\}|\{coupon_code\}/);
     expect(d.templates.sms).toMatch(/^\{shop\}: /);
-    expect(d.templates.sms).toContain("{book_link}");
-    expect(d.templates.sms).toMatch(/STOP/);
-    expect(d.templates.emailBody).toContain("{book_link}");
+    expect(d.templates.sms).not.toMatch(/\{book_link\}|STOP/);
+    expect(d.templates.emailCta).toBe("Book now");
     expect(d.segment.badges).toEqual(["vip"]);
     expect(d.segment.minAvgGapDays).toBe(20);
     expect(d.notes.join(" ")).toMatch(/OLD10 isn't one of your active coupons/);
