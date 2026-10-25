@@ -67,7 +67,6 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
           <Th right>
             <MetricLabel k="attributedSales" defs={defs} />
           </Th>
-          <Th />
         </tr>
       </thead>
       <tbody>
@@ -87,6 +86,7 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
                   {b.holdoutPct > 0 && <Badge>Holdout {b.holdoutPct}%</Badge>}
                   {b.aiDrafted && <Badge tone="violet">AI draft</Badge>}
                 </div>
+                <BlastActions id={b.id} name={b.name} status={b.status} mayWrite={mayCreate} maySend={maySend} mayManage={b.inScope} className="mt-1" />
               </Td>
               <Td>
                 <Badge tone={st.tone}>{st.label}</Badge>
@@ -99,9 +99,6 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
               <Td right>{pctLabel(r.clickRate)}</Td>
               <Td right>{pctLabel(r.bookingRate)}</Td>
               <Td right>{formatCents(funnel.revenueCents)}</Td>
-              <Td right>
-                <BlastActions id={b.id} name={b.name} status={b.status} mayWrite={mayCreate} maySend={maySend} mayManage={b.inScope} className="justify-end" />
-              </Td>
             </tr>
           );
         })}
