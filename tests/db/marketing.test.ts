@@ -1059,3 +1059,399 @@ describe("renamed to the Campaign Center", () => {
     await m.db.db.delete(s().roles).where(eq(s().roles.id, role.id));
   });
 });
+
+describe("Campaign Center v2: A/B, holdout, repeats, opens, attribution, templates, the assistant and the calendar", () => {
+  let R: typeof import("@/server/marketing/results");
+  let T: typeof import("@/server/marketing/templates");
+  let AI: typeof import("@/server/marketing/ai-draft");
+  let CAL: typeof import("@/server/marketing/calendar");
+  let pixel: typeof import("@/app/m/[token]/o.gif/route").GET;
+  const SMS = "{shop}: hi {first_name}, come see us. {book_link} Reply STOP to opt out.";
+  const camp = async (id: string) => (await m.db.db.query.marketingCampaigns.findFirst({ where: eq(s().marketingCampaigns.id, id) }))!;
+  const sendsOf = (id: string) => m.db.db.select().from(s().marketingSends).where(eq(s().marketingSends.campaignId, id));
+  async function tagged(n: number, o: ClientOpts = { sms: true }) {
+    const tag = `v2-${++seq}`;
+    const list = [];
+    for (let i = 0; i < n; i++) {
+      const c = await client(o);
+      await m.db.db.insert(s().customerTags).values({ customerId: c.id, tag });
+      list.push(c);
+    }
+    return { tag, list };
+  }
+
+  beforeAll(async () => {
+    R = await import("@/server/marketing/results");
+    T = await import("@/server/marketing/templates");
+    AI = await import("@/server/marketing/ai-draft");
+    CAL = await import("@/server/marketing/calendar");
+    pixel = (await import("@/app/m/[token]/o.gif/route")).GET;
+  });
+
+  it("an A/B test sends only the test groups, then the winner on its measure to everyone else", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const { tag, list } = await tagged(40);
+    const B = "{shop}: {first_name}, a fresh cut is waiting. {book_link} Reply STOP to opt out.";
+    const base = { name: "A/B fresh cut", channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv] };
+    await expect(CP.saveBlast(ctx, { ...base, ab: { testPct: 50, metric: "click", waitHours: 2, b: { sms: SMS } } })).rejects.toThrow(/different/);
+    await expect(CP.saveBlast(ctx, { ...base, recurrence: { freq: "weekly" }, ab: { testPct: 50, metric: "click", waitHours: 2, b: { sms: B } } })).rejects.toThrow(/one-time/);
+    const id = await CP.saveBlast(ctx, { ...base, ab: { testPct: 50, metric: "click", waitHours: 2, b: { sms: B } } });
+    await CP.scheduleBlast(ctx, id, null, NOW);
+    expect((await camp(id)).status).toBe("testing");
+    const test = await sendsOf(id);
+    expect(test.length).toBeGreaterThan(0);
+    expect(test.length).toBeLessThan(40);
+    expect(new Set(test.map((x) => x.variant))).toEqual(new Set(["a", "b"]));
+    await expect(CP.pauseBlast(ctx, id, NOW)).rejects.toThrow(/A\/B/);
+    for (const x of test.filter((x) => x.variant === "b")) await LK.openMarketingLink(x.token, IPHONE, new Date(NOW.getTime() + 30 * 60_000));
+
+    expect((await E.runAbWinners(new Date(NOW.getTime() + HOUR), { ids: [id] })).queued).toBe(0);
+    expect((await camp(id)).status).toBe("testing");
+    const r = await E.runAbWinners(new Date(NOW.getTime() + 3 * HOUR), { ids: [id] });
+    expect(r.queued).toBe(40 - test.length);
+    const after = await camp(id);
+    expect(after.status).toBe("sent");
+    const ab = after.ab as { winner: string; result: { a: { n: number; hits: number }; b: { n: number; hits: number } } };
+    expect(ab.winner).toBe("b");
+    expect(ab.result.b.hits).toBe(test.filter((x) => x.variant === "b").length);
+    expect(ab.result.a.hits).toBe(0);
+    const all = await sendsOf(id);
+    expect(all).toHaveLength(40);
+    expect(new Set(all.map((x) => x.customerId)).size).toBe(list.length);
+    const late = all.find((x) => !test.some((t) => t.id === x.id))!;
+    expect(late.variant).toBe("b");
+    expect((await job(late.jobId)).body).toContain("a fresh cut is waiting");
+    const res = await R.campaignResults(ctx, { id, ab: after.ab });
+    expect(res.byVariant.map((v) => v.key).sort()).toEqual(["a", "b"]);
+  });
+
+  it("a holdout group gets nothing and is the baseline for the campaign's lift", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const { tag } = await tagged(60);
+    const id = await CP.saveBlast(ctx, { name: "Holdout test", channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv], holdoutPct: 50 });
+    await expect(CP.saveBlast(ctx, { name: "Too many", channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv], holdoutPct: 80 })).rejects.toThrow(/50%/);
+    const stats = await CP.scheduleBlast(ctx, id, null, NOW);
+    expect(stats.held).toBeGreaterThan(0);
+    expect(stats.queued + stats.held!).toBe(60);
+    const rows = await sendsOf(id);
+    const held = rows.filter((x) => x.status === "holdout");
+    expect(held).toHaveLength(stats.held!);
+    expect(held.every((x) => x.jobId === null)).toBe(true);
+    const treated = rows.filter((x) => x.status === "queued");
+    for (const [i, x] of treated.slice(0, Math.ceil(treated.length / 2)).entries())
+      await visit(x.customerId!, new Date(at("2028-03-20", "08:00").getTime() + i * 30 * 60_000), { status: "booked", createdAt: new Date(NOW.getTime() + 2 * HOUR) });
+    const res = await R.campaignResults(ctx, { id, ab: null });
+    expect(res.overall.lift.holdout).toMatchObject({ n: held.length, booked: 0, rate: 0 });
+    expect(res.overall.lift.treated.n).toBe(treated.length);
+    expect(res.overall.lift.points!).toBeGreaterThan(0.4);
+    expect(res.overall.funnel.sent).toBe(treated.length);
+  });
+
+  it("a weekly blast sends each week as its own occasion, pauses and resumes, and stops after its end date", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const { tag, list } = await tagged(1);
+    const c = list[0];
+    const id = await CP.saveBlast(ctx, { name: "Weekly", channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv], recurrence: { freq: "weekly", endsOn: "2028-02-24" } });
+    await expect(CP.scheduleBlast(ctx, id, at("2028-02-25", "12:00"), NOW)).rejects.toThrow(/end date/);
+    await CP.scheduleBlast(ctx, id, new Date(NOW.getTime() + HOUR), NOW);
+    expect((await camp(id)).recurrence).toMatchObject({ freq: "weekly", anchor: new Date(NOW.getTime() + HOUR).toISOString() });
+    expect((await E.runBlasts(new Date(NOW.getTime() + HOUR + 60_000), { ids: [id] })).queued).toBe(1);
+    expect(await camp(id)).toMatchObject({ status: "scheduled", scheduledAt: at("2028-02-23", "12:00") });
+
+    await CP.pauseBlast(ctx, id, at("2028-02-17", "09:00"));
+    expect((await E.runBlasts(at("2028-02-23", "12:01"), { ids: [id] })).queued).toBe(0);
+    expect((await CP.resumeBlast(ctx, id, at("2028-02-20", "09:00"))).toISOString()).toBe(at("2028-02-23", "12:00").toISOString());
+    expect((await E.runBlasts(at("2028-02-23", "12:01"), { ids: [id] })).queued).toBe(1);
+    expect((await camp(id)).status).toBe("sent");
+    expect((await sendsFor(c.id)).map((x) => x.dedupeKey.split(":").slice(-2).join(":")).sort()).toEqual(["blast:2028-02-16", "blast:2028-02-23"]);
+
+    const ended = await CP.saveBlast(ctx, { name: "Weekly, short", channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv], recurrence: { freq: "weekly", endsOn: "2028-02-16" } });
+    await CP.scheduleBlast(ctx, ended, new Date(NOW.getTime() + HOUR), NOW);
+    await CP.pauseBlast(ctx, ended, NOW);
+    await expect(CP.resumeBlast(ctx, ended, at("2028-02-18", "09:00"))).rejects.toThrow(/end date/);
+  });
+
+  it("the email's open pixel counts real opens once in the open rate, never a mail scanner", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const { tag, list } = await tagged(1, { email: true });
+    const id = await CP.saveBlast(ctx, { name: "Opens", channels: ["email"], templates: { sms: SMS, emailSubject: "New hours", emailBody: "Hi {first_name}, we're open later now. {book_link}" }, segment: { tags: [tag] }, shopIds: [fx.cv] });
+    await CP.scheduleBlast(ctx, id, null, NOW);
+    const [send] = await sendsFor(list[0].id);
+    const j = await job(send.jobId);
+    expect(j.htmlBody).toContain(`/m/${send.token}/o.gif`);
+    expect(j.htmlBody).toContain("Hi Mark, we're open later now.");
+    const hit = (ua: string) => pixel(new Request(`http://x/m/${send.token}/o.gif`, { headers: { "user-agent": ua } }), { params: Promise.resolve({ token: send.token }) });
+    const r = await hit(IPHONE);
+    expect(r.headers.get("content-type")).toBe("image/gif");
+    await hit(IPHONE);
+    await hit("Mimecast Email Security");
+    const [after] = await sendsFor(list[0].id);
+    expect(after.opens).toBe(2);
+    expect(after.openedAt).not.toBeNull();
+    const f = (await R.campaignFunnels([id])).get(id)!.funnel;
+    expect(f).toMatchObject({ sent: 1, emailDelivered: 1, uniqueOpens: 1, uniqueClicks: 0 });
+    const { ratesOf } = await import("@/domain/campaign-metrics");
+    expect(ratesOf(f).openRate).toBe(1);
+    expect(ratesOf(f).clickRate).toBe(0);
+  });
+
+  it("revenue leaves out clients already booked when it went; the engaged basis counts only after an open or click", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const { tag, list } = await tagged(2);
+    const [booked, fresh] = list;
+    await visit(booked.id, at("2028-02-19", "10:00"), { status: "booked", createdAt: new Date(NOW.getTime() - DAY) });
+    const id = await CP.saveBlast(ctx, { name: "Attribution", channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv] });
+    await CP.scheduleBlast(ctx, id, null, NOW);
+    const sends = await sendsOf(id);
+    expect(sends.find((x) => x.customerId === booked.id)!.alreadyBooked).toBe(true);
+    expect(sends.find((x) => x.customerId === fresh.id)!.alreadyBooked).toBe(false);
+    const paidA = await pay({ customerId: booked.id, now: new Date(NOW.getTime() + DAY) });
+    const paidB = await pay({ customerId: fresh.id, now: new Date(NOW.getTime() + DAY) });
+    expect(paidA.serviceNetCents).toBeGreaterThan(0);
+    const net = paidB.serviceNetCents + paidB.productNetCents;
+    const funnel = async () => (await R.campaignFunnels([id])).get(id)!.funnel;
+    expect(await funnel()).toMatchObject({ sent: 2, alreadyBooked: 1, revenueCents: net });
+
+    try {
+      await m.db.db.update(s().brandSettings).set({ marketing: { address: ADDRESS, attributeOn: "engaged" } });
+      expect((await funnel()).revenueCents).toBe(0);
+      await LK.openMarketingLink(sends.find((x) => x.customerId === fresh.id)!.token, IPHONE, new Date(NOW.getTime() + 2 * HOUR));
+      expect((await funnel()).revenueCents).toBe(net);
+      expect((await R.campaignResults(ctx, { id, ab: null })).definitions.attributedSales.definition).toMatch(/open|click/i);
+    } finally {
+      await m.db.db.update(s().brandSettings).set({ marketing: { address: ADDRESS } });
+    }
+  });
+
+  it("the wizard's coupon list has every code with its redemptions and revenue, and an expired one can't go out", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const used = await promo({ value: 300, code: `USED${++seq}` });
+    const old = await promo({ value: 300, code: `OLD${++seq}`, endsOn: "2028-01-31" });
+    const off = await promo({ value: 300, code: `OFF${++seq}`, active: false });
+    const weekdays = await promo({ value: 300, code: `WKD${++seq}`, daysOfWeek: [2, 3], timeFrom: "10:00", timeTo: "14:00", firstVisitOnly: true });
+    const c = await client();
+    const sale = await pay({ customerId: c.id, codes: [used.code] });
+    const usable = await CP.couponOptions("2028-02-16");
+    expect(usable.find((x) => x.id === used.id)).toMatchObject({ usable: true, redemptions: 1, revenueCents: sale.serviceNetCents + sale.productNetCents });
+    expect(usable.find((x) => x.id === old.id)).toBeUndefined();
+    const every = await CP.couponOptions("2028-02-16", { includeUnusable: true });
+    const o = every.find((x) => x.id === old.id)!;
+    expect(o).toMatchObject({ usable: false, expired: true });
+    expect(CP.couponUnusable(o)).toMatch(/expired on 2028-01-31/);
+    expect(CP.couponUnusable(every.find((x) => x.id === off.id)!)).toMatch(/switched off/);
+    expect(every.find((x) => x.id === weekdays.id)).toMatchObject({ when: expect.stringMatching(/Tue.*Wed.*10/), firstVisitOnly: true });
+
+    const tpl = { sms: "{shop}: {coupon_code} takes $3 off. {book_link} Reply STOP to opt out." };
+    const base = { name: "Coupon rules", channels: ["sms"], templates: tpl, segment: { tags: ["nobody-here"] }, shopIds: [fx.cv] };
+    await expect(CP.saveBlast(ctx, { ...base, campaignType: "promotion" })).rejects.toThrow(/needs a coupon/);
+    await expect(CP.saveBlast(ctx, { ...base, campaignType: "update", promoId: used.id })).rejects.toThrow(/no coupon/);
+    const id = await CP.saveBlast(ctx, { ...base, promoId: old.id });
+    expect((await camp(id)).campaignType).toBe("promotion");
+    await expect(CP.scheduleBlast(ctx, id, null, NOW)).rejects.toThrow(/expired/);
+  });
+
+  it("the preview counts clients opted in on each channel, before anything is sent", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const tag = `oi-${++seq}`;
+    for (const o of [{ sms: true, email: true }, { email: true, push: true }, {}]) {
+      const c = await client(o);
+      await m.db.db.insert(s().customerTags).values({ customerId: c.id, tag });
+    }
+    const p = await CP.previewBlast(ctx, { channels: ["sms", "email", "push"], segment: { tags: [tag] }, shopIds: [fx.cv] }, NOW);
+    expect(p.optedInBy).toEqual({ sms: 1, email: 2, push: 1 });
+    expect(p).toMatchObject({ matched: 3, optedIn: 2, unreachable: 1 });
+  });
+
+  it("duplicates as a draft, renames, and keeps a location manager to their own blasts", async () => {
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const id = await CP.saveBlast(ctx, { name: "Holiday hours", channels: ["sms"], templates: { sms: SMS }, segment: { tags: ["nobody-here"] }, shopIds: [], holdoutPct: 10, sendTimeOpt: true });
+    await CP.scheduleBlast(ctx, id, new Date(NOW.getTime() + DAY), NOW);
+    const copy = await CP.duplicateBlast(ctx, id);
+    expect(await camp(copy)).toMatchObject({ name: "Copy of Holiday hours", status: "draft", holdoutPct: 10, sendTimeOpt: true, scheduledAt: null });
+    await CP.renameCampaign(ctx, copy, "  New Year hours ");
+    expect((await camp(copy)).name).toBe("New Year hours");
+    await expect(CP.renameCampaign(ctx, copy, " ")).rejects.toThrow(/name/);
+    await signInAs(fx.michelle);
+    const local = await ctxOf();
+    await expect(CP.renameCampaign(local, copy, "Mine now")).rejects.toThrow(/outside yours/);
+    await expect(CP.duplicateBlast(local, id)).rejects.toThrow(/outside yours/);
+    const own = await CP.saveBlast(local, { name: "Coralville hours", channels: ["sms"], templates: { sms: SMS }, segment: {}, shopIds: [fx.cv] });
+    const ownCopy = await CP.duplicateBlast(local, own);
+    expect((await camp(ownCopy)).shopIds).toEqual([fx.cv]);
+  });
+
+  it("the brand's template library: only the brand writes and approves, locations see approved ones, and an edit needs approving again", async () => {
+    await signInAs(fx.owner);
+    const brand = await ctxOf();
+    const seeded = await T.listTemplates(brand);
+    expect(seeded.filter((t) => t.status === "approved").length).toBeGreaterThanOrEqual(4);
+    const id = await T.saveTemplate(brand, { name: `Snow day ${++seq}`, channels: ["sms"], templates: { sms: "{shop}: we're closed today for snow, {first_name}. {book_link} Reply STOP to opt out." } });
+    await signInAs(fx.michelle);
+    const local = await ctxOf();
+    await expect(T.saveTemplate(local, { name: "Mine", channels: ["sms"], templates: { sms: SMS } })).rejects.toThrow(/brand/);
+    await expect(T.setTemplateStatus(local, id, "approved")).rejects.toThrow(/brand/);
+    expect((await T.listTemplates(local)).some((t) => t.id === id)).toBe(false);
+    await expect(CP.saveBlast(local, { name: "From a draft", channels: ["sms"], templates: { sms: SMS }, segment: {}, shopIds: [fx.cv], templateId: id })).rejects.toThrow(/approved/);
+
+    await signInAs(fx.owner);
+    await T.setTemplateStatus(await ctxOf(), id, "approved", NOW);
+    await signInAs(fx.michelle);
+    const seen = (await T.listTemplates(await ctxOf())).find((t) => t.id === id)!;
+    expect(seen).toMatchObject({ status: "approved", approvedBy: expect.any(String) });
+    await CP.saveBlast(await ctxOf(), { name: "From the library", channels: ["sms"], templates: seen.templates, segment: {}, shopIds: [fx.cv], templateId: id });
+
+    await signInAs(fx.owner);
+    await T.saveTemplate(await ctxOf(), { id, name: seen.name, channels: ["sms"], templates: { sms: "{shop}: closed for snow until noon, {first_name}. {book_link} Reply STOP to opt out." } });
+    const [row] = await m.db.db.select().from(s().marketingTemplates).where(eq(s().marketingTemplates.id, id));
+    expect(row).toMatchObject({ status: "draft", approvedAt: null });
+    await T.setTemplateStatus(await ctxOf(), id, "archived", NOW);
+    expect((await T.listTemplates(await ctxOf())).some((t) => t.id === id)).toBe(false);
+    expect((await T.listTemplates(await ctxOf(), { archived: true })).find((t) => t.id === id)?.status).toBe("archived");
+  });
+
+  it("the assistant drafts from the request alone, saves nothing, and its blast goes only after a person reviews it", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const secret = await client({ sms: true, first: "Quillon", last: "Varga" });
+    const count = async () => (await m.db.db.select({ n: sql`count(*)::int` }).from(s().marketingCampaigns))[0].n;
+    const before = await count();
+    const stub = await AI.draftBlast(ctx, "Bring back clients we haven't seen in two months", { provider: null, now: NOW });
+    expect(stub.drafter).toBe("keywords");
+    expect(stub.templates.sms).toMatch(/STOP/);
+    expect(await count()).toBe(before);
+    await expect(AI.draftBlast(ctx, "hi", { provider: null })).rejects.toThrow(/more/);
+
+    let asked = "";
+    const fake = {
+      id: "openai" as const,
+      model: "test",
+      retention: "none",
+      async complete(r: import("@/server/assistant/providers").CompletionRequest) {
+        asked = JSON.stringify(r);
+        return {
+          text: null,
+          toolCalls: [
+            {
+              id: "1",
+              name: "draft_campaign",
+              args: {
+                name: "Spring beard trims",
+                campaignType: "update",
+                channels: ["sms"],
+                templates: { sms: "{shop}: spring beard trims are in, {first_name}. {book_link} Reply STOP to opt out.", emailSubject: "Spring beard trims", emailBody: "Hi {first_name}, book here: {book_link}", pushTitle: "Beard trims", pushBody: "Book a trim" },
+                audience: { lastVisitOverDays: 30 },
+                rationale: "Clients away a month.",
+              },
+            },
+          ],
+        };
+      },
+    };
+    const d = await AI.draftBlast(ctx, "A spring beard trim push for clients away a month", { provider: fake, now: NOW });
+    expect(d).toMatchObject({ drafter: "openai", name: "Spring beard trims", campaignType: "update", segment: expect.objectContaining({ lastVisitOverDays: 30 }) });
+    expect(asked).toContain("A spring beard trim push");
+    expect(asked).not.toContain("Quillon");
+    expect(asked).not.toContain("Varga");
+    expect(asked).not.toContain(secret.phone!);
+    expect(asked).not.toContain("@example.com");
+    expect(await count()).toBe(before);
+    const [a] = await m.db.db.select().from(s().auditLog).where(eq(s().auditLog.action, "campaign_center.ai_drafted")).orderBy(m.drizzle.desc(s().auditLog.at)).limit(1);
+    expect(a.details).toMatchObject({ drafter: "openai" });
+
+    const id = await CP.saveBlast(ctx, { name: d.name, channels: d.channels, templates: d.templates, segment: { tags: ["nobody-here"] }, shopIds: [fx.cv], aiDrafted: true });
+    await CP.saveBlast(ctx, { id, name: d.name, channels: d.channels, templates: d.templates, segment: { tags: ["nobody-here"] }, shopIds: [fx.cv] });
+    expect((await camp(id)).aiDrafted).toBe(true);
+    await expect(CP.scheduleBlast(ctx, id, new Date(NOW.getTime() + DAY), NOW)).rejects.toThrow(/assistant/);
+    await CP.scheduleBlast(ctx, id, new Date(NOW.getTime() + DAY), NOW, { reviewed: true });
+    expect(await camp(id)).toMatchObject({ status: "scheduled", reviewedBy: fx.owner, reviewedAt: NOW });
+    expect((await camp(await CP.duplicateBlast(ctx, id))).aiDrafted).toBe(false);
+  });
+
+  it("the calendar shows each week a repeating blast goes and the days it went", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const { tag } = await tagged(1);
+    const id = await CP.saveBlast(ctx, { name: `Calendar weekly ${++seq}`, channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv], recurrence: { freq: "weekly", endsOn: null } });
+    await CP.scheduleBlast(ctx, id, new Date(NOW.getTime() + HOUR), NOW);
+    const mine = async (now: Date) => (await CAL.campaignCalendar(ctx, "2028-02", now)).entries.filter((e) => e.campaignId === id).map((e) => `${e.day} ${e.state}`);
+    expect(await mine(NOW)).toEqual(["2028-02-16 scheduled", "2028-02-23 scheduled"]);
+    const later = new Date(NOW.getTime() + HOUR + 60_000);
+    await E.runBlasts(later, { ids: [id] });
+    expect(await mine(later)).toEqual(["2028-02-16 sent", "2028-02-23 scheduled"]);
+    expect((await CAL.campaignCalendar(ctx, "2028-03", later)).entries.filter((e) => e.campaignId === id).map((e) => e.day)).toEqual(["2028-03-01", "2028-03-08", "2028-03-15", "2028-03-22", "2028-03-29"]);
+    await expect(CAL.campaignCalendar(ctx, "2028-13", NOW)).rejects.toThrow(/month/);
+    await CP.pauseBlast(ctx, id, later);
+  });
+
+  it("come back for a 2nd visit and after every visit: the right clients, once per visit", async () => {
+    await consent(true);
+    await turnOn("second_visit");
+    await turnOn("post_visit");
+    const once = await client({ sms: true });
+    const odd = (ms: number) => new Date(NOW.getTime() + ms + 7 * 60_000);
+    await visit(once.id, odd(-22 * DAY));
+    const onceBooked = await client({ sms: true });
+    await visit(onceBooked.id, odd(-22 * DAY + HOUR));
+    await visit(onceBooked.id, odd(3 * DAY + 2 * HOUR), { status: "booked" });
+    const regular = await client({ sms: true });
+    await visit(regular.id, odd(-40 * DAY));
+    const last = odd(-4 * HOUR);
+    await visit(regular.id, last);
+    const firstToday = await client({ sms: true });
+    await visit(firstToday.id, last, { staff: fx.barber });
+    await E.runTriggers(NOW, { shopIds: [fx.cv], keys: ["second_visit", "post_visit"] });
+    const occ = async (id: string) => (await sendsFor(id)).map((x) => x.dedupeKey.split(":").slice(2).join(":"));
+    expect(await occ(once.id)).toEqual(["second_visit"]);
+    expect(await occ(onceBooked.id)).toEqual([]);
+    expect(await occ(regular.id)).toEqual([`post_visit:${last.toISOString().slice(0, 10)}`]);
+    expect(await occ(firstToday.id)).toEqual([]);
+    await E.runTriggers(new Date(NOW.getTime() + HOUR), { shopIds: [fx.cv], keys: ["second_visit", "post_visit"] });
+    expect(await sendsFor(regular.id)).toHaveLength(1);
+    for (const k of ["second_visit", "post_visit"]) {
+      const c = await campaign(k);
+      await m.db.db.update(s().marketingLocationSettings).set({ enabled: false }).where(eq(s().marketingLocationSettings.campaignId, c.id));
+    }
+  });
+
+  it("send-time optimization holds each message until the client's usual booking time", async () => {
+    await consent(true);
+    await signInAs(fx.owner);
+    const ctx = await ctxOf();
+    const { tag, list } = await tagged(2);
+    const [usual, unknown] = list;
+    await visit(usual.id, new Date(NOW.getTime() - 30 * DAY), { createdAt: at("2028-01-10", "18:00") });
+    await visit(usual.id, new Date(NOW.getTime() - 60 * DAY), { createdAt: at("2027-12-10", "18:00") });
+    const id = await CP.saveBlast(ctx, { name: "Send time", channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv], sendTimeOpt: true });
+    await CP.scheduleBlast(ctx, id, null, NOW);
+    expect((await job((await sendsFor(usual.id))[0].jobId)).runAt.toISOString()).toBe(at("2028-02-16", "18:00").toISOString());
+    expect((await job((await sendsFor(unknown.id))[0].jobId)).runAt.toISOString()).toBe(NOW.toISOString());
+  });
+
+  it("coupons limited to some days and hours work only then at checkout", async () => {
+    const tuesday = await promo({ daysOfWeek: [2] });
+    const wednesday = await promo({ daysOfWeek: [3] });
+    const afternoon = await promo({ timeFrom: "12:00", timeTo: "15:00" });
+    const c = await client();
+    await expect(pay({ customerId: c.id, codes: [tuesday.code] })).rejects.toThrow(/only works Tue/);
+    expect((await pay({ customerId: c.id, codes: [wednesday.code] })).discountCents).toBe(500);
+    await expect(pay({ customerId: c.id, codes: [afternoon.code] })).rejects.toThrow(/only works 12/);
+    expect((await pay({ customerId: c.id, codes: [afternoon.code], now: at("2028-02-16", "13:00") })).discountCents).toBe(500);
+  });
+});
