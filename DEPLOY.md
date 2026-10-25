@@ -220,8 +220,14 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Both prompts are **on and skippable** everywhere as soon as the migration runs. Before go-live, review **Setup → Checkout prompts** (Brand Admin): each prompt's on/off and skippable or required, the number of rebook times, the decline reasons, and any location, role or barber overrides.
    - Set each service's rebook interval and suggested products there too. Until then, clients without a visit history get the brand's 28 days, and the product prompt only shows tagged products and past purchases.
    - Rebook reminders go out through the notifications cron, so SMS and email must be configured. On the Hobby plan's daily cron, they go out once a day rather than at 10 AM.
-22. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-23. Add the custom domain under **Settings → Domains**.
+22. Scale to 50+ locations (migration `core_0063_scale`; see [Scaling to 50+ locations](README.md#scaling-to-50-locations)):
+   - The migration adds `regions` (optional; every location starts without one), `job_tasks` and `location_daily_stats`, and gives the Location comparison report to every role that has the KPIs report. It changes no one's shop access.
+   - Under **Location setup**, add regions if you want regional comparisons and pick each location's region.
+   - `vercel.json` adds `/api/cron/jobs` (07:15, 08:15 and 09:15 UTC, after midnight Central) for the nightly location rollups. The campaign-center and badges crons now work through `job_tasks` too. On the Hobby plan's daily cron, make the jobs run fall after midnight Central.
+   - After the Squire import, backfill the rollups once so the comparison has history: `pnpm rollups:backfill 2024-01-01` (through yesterday, or give a last day too). It's safe to run again.
+   - `pnpm test:perf` checks the database at 50 locations, 500 staff and 500k clients. Run it against a throwaway `*perf*` database, never production.
+23. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+24. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 
