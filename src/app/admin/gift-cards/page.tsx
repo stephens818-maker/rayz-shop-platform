@@ -107,6 +107,11 @@ export default async function GiftCardsPage({ searchParams }: { searchParams: Pr
               </tr>
             </thead>
             <tbody>
+              {detail.ledger.length === 0 && (
+                <tr>
+                  <Td className="text-sm text-zinc-500">No history recorded for this card yet.</Td>
+                </tr>
+              )}
               {detail.ledger.map((l) => (
                 <tr key={l.id}>
                   <Td className="text-xs">{formatDateTime(l.at)}</Td>

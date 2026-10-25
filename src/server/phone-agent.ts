@@ -79,7 +79,7 @@ function callsSql(shopIds: string[], start: Date, end: Date) {
       c.created_at "createdAt", c.ended_at "endedAt", b.estimate_cents "bookedCents", b.id "bookedAppointmentId",
       c.followed_up_at "followedUpAt", c.follow_up_note "followUpNote", st.display_label "followedUpBy",
       (select count(*)::int from call_transcript_lines t where t.call_log_id = c.id) lines,
-      (select t.text from call_transcript_lines t where t.call_log_id = c.id and t.speaker = 'caller' order by t.n desc limit 1) "lastCallerLine"
+      (select t.text from call_transcript_lines t where t.call_log_id = c.id and t.speaker = 'caller' order by (t.text = 'Pressed nothing'), t.n desc limit 1) "lastCallerLine"
     from call_logs c
     join shops sh on sh.id = c.shop_id
     left join customers cu on cu.id = c.customer_id

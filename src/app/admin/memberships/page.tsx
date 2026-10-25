@@ -170,7 +170,7 @@ export default async function MembershipsPage({ searchParams }: { searchParams: 
                     </div>
                   </Td>
                   <Td right>{formatCents(m.priceCents)}</Td>
-                  <Td className="tabular-nums">{m.visitsPerPeriod == null ? `${m.used} visits` : `${m.used} of ${m.visitsPerPeriod}`}</Td>
+                  <Td className="tabular-nums">{m.visitsPerPeriod == null ? `${m.used} visit${m.used === 1 ? "" : "s"}` : `${m.used} of ${m.visitsPerPeriod}`}</Td>
                   <Td className="text-xs">{m.status === "canceled" || m.cancelAtPeriodEnd ? "—" : formatDate(m.periodEnd)}</Td>
                   <Td className="text-xs">{formatDate(m.createdAt)}</Td>
                   {sell && (

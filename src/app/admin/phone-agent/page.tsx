@@ -178,7 +178,7 @@ export default async function PhoneAgentPage({ searchParams }: { searchParams: P
                   </p>
                 )}
                 <div className="mt-1">
-                  <FollowUp id={detail.id} done={!!detail.followedUpAt} />
+                  <FollowUp id={detail.id} done={!!detail.followedUpAt} flagged={detail.followUp} />
                 </div>
               </div>
             </div>
