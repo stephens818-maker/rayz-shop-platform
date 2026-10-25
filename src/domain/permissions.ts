@@ -929,6 +929,7 @@ const TEMPLATES: RoleTemplate[] = [
           "discounts_refunds",
           "gift_cards",
           "kpis",
+          "rollup",
           "operations",
           "checkout_prompts",
           "retention",
