@@ -454,6 +454,23 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-25: core (franchising withdrawn; scale to 50+ locations), FYI for mobile
+
+- **Franchising is withdrawn.** This build is for Ray'z corporate only. The franchising commits pushed earlier (owner groups, royalties, franchisee roles and scopes, brand standards) were reverted. Migration `core_0063_franchising` is gone and replaced by `core_0063_scale`. Any database that ran the old one should be reset (`pnpm db:reset`). Ignore the previous franchising FYI.
+- **What's kept: scale readiness.**
+  - Optional `regions` with nullable `shops.region_id`, managed on Location setup by people with every shop. Regions don't grant access; shop scoping stays `all`, `selected` and `one` through `staff_access_shops`.
+  - `job_tasks`, a background queue claimed with `FOR UPDATE SKIP LOCKED` (`src/server/jobs.ts`). New cron `/api/cron/jobs` (rollups); `/api/cron/campaign-center` and `/api/cron/badges` now work through it, and so does `pnpm worker`.
+  - `location_daily_stats`, per-location daily rollups (`src/server/rollups.ts`), and the Location comparison report (`report.rollup.view` and `.export`, granted wherever the KPIs report is).
+  - A perf test at 50 locations, 500 staff and 500k clients (`pnpm test:perf`).
+- **FYI, core API:**
+  - `runMarketing(now, { triggers?: boolean })`: the cron passes `triggers: false` because triggers run per location from the job queue.
+  - `runBadgeJob` takes an optional `bucket: { k, of }`.
+  - `saveOwnerEntityAction` no longer takes a `kind`. Owner entities are corporate's LLCs (kind is always `brand`); `owner_entities` and the nullable `shops.owner_entity_id` stay as the hook for a later franchise layer.
+  - The new audit actions are `region.create`, `region.update`, `region.delete` and `shop.region`.
+- **Migration:** `core_0063_scale`. The next free number is `core_0064`.
+- **No request.** None of the mobile-owned files changed.
+- **Tests:** `tests/db/scale.test.ts`, `tests/regions.test.ts` and `tests/perf/scale.test.ts`.
+
 ### 2026-10-24: core (product history and refills), FYI for mobile
 
 - **What changed.** The checkout product prompt and the client profile show the client's last product (name, date, location, quantity), their last 5 purchases, and a refill hint per product: has some left, likely running out (a week before it's due) or likely ran out. The hint comes from how long one unit lasts them (the median gap between purchase days divided by what they bought), or the product's typical interval when they bought it once. **Buy again** adds it in one tap at checkout. On the profile it puts it on the client's open ticket today, or a new retail ticket. The report builder gains a Products group (last product, date, location, quantity, refill status, products likely running out, next refill due). Segments gain `refillStatus` and `refillProductIds`.
