@@ -107,6 +107,11 @@ export async function timedAppointments(s: ReportScope, now = new Date()): Promi
       and a.starts_at >= ${startOfLocalDay(s.from).toISOString()} and a.starts_at < ${endOfLocalDay(s.to).toISOString()}
       and a.status not in ('cancelled', 'no_show')
       ${sel ? sql`and a.staff_id in ${uuids(sel)}` : sql``}
+      -- Barbers whose time isn't tracked (their "Track time" booking option, this shop then all shops) are left out.
+      and coalesce(
+        (select (ss.booking_options->>'trackTime')::boolean from staff_shops ss where ss.staff_id = a.staff_id and ss.shop_id = a.shop_id),
+        (select (st.booking_options->>'trackTime')::boolean from staff st where st.id = a.staff_id),
+        true)
     order by a.starts_at`)) as unknown as Row[];
   return rows.map((r) => {
     const t = { bookedMin: r.booked_min, arrivedAt: at(r.arrived_at), startedAt: at(r.started_at), finishedAt: at(r.finished_at), review: r.review };

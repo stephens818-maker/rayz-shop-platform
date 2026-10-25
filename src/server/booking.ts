@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import {
   appointmentItems,
@@ -9,6 +9,7 @@ import {
   shopHours,
   shops,
   staff,
+  staffDaysOn,
   staffSchedules,
   timeBlocks,
   timeOffRequests,
@@ -46,7 +47,9 @@ import { liveClock } from "./clock-live";
 import { AppointmentMessageContext, cancelPendingReminders, queueAppointmentMessage, scheduleAppointmentNotifications } from "./notifications/queue";
 import { guardian, householdContact } from "./household-contact";
 import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
-import { bookingPlans, shopInterval, staffIntervals, toStaffPlans } from "./timing";
+import { queueStaffAlert } from "./staff-alerts";
+import { cleanNotificationPrefs, reminderHours } from "@/domain/staff-notifications";
+import { bookingPlans, shopInterval, staffBookingOptions, staffIntervals, toStaffPlans } from "./timing";
 
 export const ACTIVE_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as const;
 
@@ -66,7 +69,7 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
   const dayStart = startOfLocalDay(date);
   const dayEnd = endOfLocalDay(date);
   const ids = opts.staffIds.length ? opts.staffIds : ["00000000-0000-0000-0000-000000000000"];
-  const [hours, closures, schedules, blocks, appts, pending] = await Promise.all([
+  const [hours, closures, schedules, blocks, appts, pending, daysOn] = await Promise.all([
     tx.select().from(shopHours).where(eq(shopHours.shopId, shop.id)),
     tx.select().from(shopClosures).where(and(eq(shopClosures.shopId, shop.id), eq(shopClosures.date, date))),
     tx.select().from(staffSchedules).where(inArray(staffSchedules.staffId, ids)),
@@ -95,6 +98,10 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
           .select({ staffId: timeOffRequests.staffId, shopId: timeOffRequests.shopId, startsAt: timeOffRequests.startsAt, endsAt: timeOffRequests.endsAt })
           .from(timeOffRequests)
           .where(and(inArray(timeOffRequests.staffId, ids), eq(timeOffRequests.status, "pending"), lt(timeOffRequests.startsAt, dayEnd), gt(timeOffRequests.endsAt, dayStart))),
+    tx
+      .select({ staffId: staffDaysOn.staffId, shopId: staffDaysOn.shopId, date: staffDaysOn.date, startMin: staffDaysOn.startMin, endMin: staffDaysOn.endMin })
+      .from(staffDaysOn)
+      .where(and(inArray(staffDaysOn.staffId, ids), eq(staffDaysOn.shopId, shop.id), eq(staffDaysOn.date, date), isNull(staffDaysOn.removedAt))),
   ]);
   const interval = await shopInterval(shop, tx);
   const now = opts.now ?? new Date();
@@ -114,8 +121,10 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
     durationMin: opts.durationMin,
     slotIntervalMin: interval.minutes,
     bufferMin: shop.bufferMinutes,
-    plans: opts.plans,
+    // Staff booking isn't held to a barber's client limits, as it isn't to the shop's.
+    plans: opts.staffOverride && opts.plans ? Object.fromEntries(Object.entries(opts.plans).map(([id, p]) => [id, { ...p, leadMin: undefined, windowDays: undefined }])) : opts.plans,
     minLeadMin: opts.staffOverride ? 0 : shop.minLeadMinutes,
+    daysOn,
     now,
     ignoreAppointmentId: opts.ignoreAppointmentId,
     ignoreAppointmentIds: opts.ignoreAppointmentIds,
@@ -163,6 +172,14 @@ async function resolveBooking(q: Pick<AvailabilityQuery, "shopRef" | "serviceId"
     staffIds = [b.id];
   }
   const timing = await bookingPlans(shop, staffIds, items, tx);
+  // A barber can take one service per online booking: clients can't add add-ons with them.
+  if (!q.staffOverride && addons.length) {
+    const one = staffIds.filter((id) => !timing.get(id)!.options.multipleServices.value);
+    if (requestedStaffId && one.includes(requestedStaffId)) {
+      throw new AppError("bad_request", `${barbers.find((b) => b.id === requestedStaffId)?.displayName ?? "This barber"} takes one service per online booking. Remove the add-ons or call the shop.`);
+    }
+    staffIds = staffIds.filter((id) => !one.includes(id));
+  }
   const durationMin = requestedStaffId ? timing.get(requestedStaffId)!.plan.durationMin : totalDuration(items);
   return { shop, service, addons, items, barbers, staffIds, requestedStaffId, durationMin, timing, plans: toStaffPlans(timing) };
 }
@@ -357,6 +374,15 @@ export async function bookInTx(input: CreateAppointmentInput, tx: DBorTx) {
       free = onGrid.filter((id) => isSlotFree(day, id, t));
     }
     if (free.length === 0) throw new AppError("slot_unavailable", "That time was just taken — please pick another");
+    // The booking site takes no card: barbers who need one are booked in the app (which saves a card) or by phone.
+    if (input.source === "online") {
+      const payFirst = free.filter((id) => !r.timing.get(id)!.options.bookWithoutPayment.value);
+      if (payFirst.length === free.length) {
+        const name = r.barbers.find((b) => b.id === free[0])?.displayName ?? "This barber";
+        throw new AppError("forbidden", `${r.requestedStaffId ? name : "The open barbers"} take bookings with a card on file. Book in the Rayz app or call the shop.`);
+      }
+      free = free.filter((id) => !payFirst.includes(id));
+    }
     const ordered = r.requestedStaffId ? free : [pickBarber(free, day.appointments, date)!, ...free].filter((v, i, a) => a.indexOf(v) === i);
 
     for (const staffId of ordered) {
@@ -415,6 +441,7 @@ export async function bookInTx(input: CreateAppointmentInput, tx: DBorTx) {
         if (customer && !input.silent) {
           await scheduleAppointmentNotifications("created", await messageContext(appt.id, tx), tx, now);
         }
+        if (!input.silent && input.source !== "walk_in") await queueStaffAlert("confirm", appt.id, { actorStaffId: input.actor.staffId, now }, tx);
         return appt;
       } catch (e) {
         if (isDoubleBookingError(e)) continue;
@@ -456,7 +483,9 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
       shopDirections: shops.directions,
       shopSlug: shops.slug,
       shopPhone: shops.phone,
-      cutoff: shops.cancelCutoffMinutes,
+      shopDefaults: { bookingWindowDays: shops.bookingWindowDays, minLeadMinutes: shops.minLeadMinutes, cancelCutoffMinutes: shops.cancelCutoffMinutes, bufferMinutes: shops.bufferMinutes },
+      staffId: appointments.staffId,
+      staffPrefs: staff.notificationPrefs,
       firstName: customers.firstName,
       barberName: staff.displayLabel,
       customerId: customers.id,
@@ -484,7 +513,8 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
     firstName: row.firstName,
     shopSlug: row.shopSlug,
     shopPhone: row.shopPhone ? formatPhone(row.shopPhone) : null,
-    cancelCutoffMinutes: row.cutoff,
+    reminders: reminderHours(cleanNotificationPrefs(row.staffPrefs)),
+    cancelCutoffMinutes: (await staffBookingOptions({ ...row.shopDefaults, id: row.shopId }, [row.staffId], tx)).get(row.staffId)!.cancelCutoffMinutes.value,
     endsAt: row.endsAt,
     shopFullAddress: fullAddress({ address: row.shopAddress, address2: row.shopAddress2, city: row.shopCity, state: row.shopState, zip: row.shopZip }),
     shopGeo: row.geocodeSource !== "zip" && validLatLng({ lat: row.shopLat, lng: row.shopLng }) ? { lat: row.shopLat!, lng: row.shopLng! } : null,
@@ -512,6 +542,7 @@ export async function getAppointmentByCode(code: string, now: Date = new Date())
     .leftJoin(customers, eq(customers.id, appointments.customerId))
     .where(eq(appointments.code, code.toUpperCase()));
   if (!row) throw notFound("Appointment");
+  row.shop = await withBarberCutoff(row.shop, row.a.staffId);
   const items = await db.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, row.a.id)).orderBy(asc(appointmentItems.kind));
   const cutoffAt = new Date(row.a.startsAt.getTime() - row.shop.cancelCutoffMinutes * 60_000);
   const changeable = (ACTIVE_STATUSES as readonly string[]).includes(row.a.status) && row.a.status !== "in_service" && !pastCutoff(now, row.a.startsAt, row.shop.cancelCutoffMinutes);
@@ -545,10 +576,16 @@ export async function getAppointmentByCode(code: string, now: Date = new Date())
 
 export type PublicAppointment = Awaited<ReturnType<typeof getAppointmentByCode>>;
 
+/** The shop as its barber is booked there: the barber's own cancellation cutoff in place of the shop's. */
+async function withBarberCutoff<T extends Shop>(shop: T, staffId: string, tx: DBorTx = db): Promise<T> {
+  const o = (await staffBookingOptions(shop, [staffId], tx)).get(staffId)!;
+  return { ...shop, cancelCutoffMinutes: o.cancelCutoffMinutes.value };
+}
+
 async function loadForChange(code: string) {
   const a = await db.query.appointments.findFirst({ where: eq(appointments.code, code.toUpperCase()) });
   if (!a) throw notFound("Appointment");
-  const shop = await getShop(a.shopId);
+  const shop = await withBarberCutoff(await getShop(a.shopId), a.staffId);
   return { a, shop };
 }
 
@@ -578,6 +615,7 @@ export async function cancelAppointment(
       .where(eq(appointments.id, a.id));
     await audit(opts.actor, "appointment.cancel", "appointment", a.id, { reason: opts.reason ?? null, byCustomer: opts.byCustomer }, a.shopId, tx);
     if (a.customerId) await scheduleAppointmentNotifications("cancelled", await messageContext(a.id, tx), tx, now);
+    await queueStaffAlert("cancel", a.id, { actorStaffId: opts.actor.staffId, now }, tx);
     if (a.groupId) await (await import("./booking-groups")).refreshGroupReminders(a.groupId, tx, now);
   });
   await refreshClientBadges(a.customerId, now);
@@ -610,6 +648,7 @@ export async function rescheduleAppointment(
   if (opts.squeezeIn && opts.byCustomer) throw new AppError("forbidden", "Only staff can squeeze in a booking");
   await db.transaction(async (tx) => {
     await moveInTx(a, shop, { ...opts, now }, tx);
+    if (!opts.quiet) await queueStaffAlert("reschedule", a.id, { actorStaffId: opts.actor.staffId, now }, tx);
     if (!a.customerId) return;
     if (!a.groupId) return void (await scheduleAppointmentNotifications(opts.quiet ? "reminders" : "rescheduled", await messageContext(a.id, tx), tx, now));
     // One of a family booked together: tell them about this move; the group keeps one set of reminders.
@@ -728,11 +767,15 @@ export async function setAppointmentStatus(id: string, status: keyof typeof TRAN
         })
         .where(eq(appointments.id, id));
       await audit(actor, `appointment.${status}`, "appointment", id, { from: a.status }, a.shopId, tx);
-      if (status === "checked_in") await recordArrival(id, actor, tx, now);
+      if (status === "checked_in") {
+        await recordArrival(id, actor, tx, now);
+        await queueStaffAlert("arrived", id, { actorStaffId: actor.staffId, now }, tx);
+      }
       if (status === "booked" && a.status === "checked_in") await clearArrival(id, tx);
       if (status === "checked_in" && a.status === "in_service") await clearStart(id, tx);
       if (status === "cancelled" || status === "no_show") await cancelPendingReminders(id, tx);
       if (status === "cancelled" && a.customerId) await scheduleAppointmentNotifications("cancelled", await messageContext(id, tx), tx, now);
+      if (status === "cancelled") await queueStaffAlert("cancel", id, { actorStaffId: actor.staffId, now }, tx);
       if (a.groupId && (status === "cancelled" || status === "no_show" || status === "booked")) await (await import("./booking-groups")).refreshGroupReminders(a.groupId, tx, now);
     });
   } catch (e) {

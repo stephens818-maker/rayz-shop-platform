@@ -21,6 +21,8 @@ import { milestoneViewer, personFor, trophyCase } from "@/server/milestones/view
 import { futureBookings } from "@/server/offboarding";
 import { AffectedRow } from "../../time-off/client";
 import { OffboardCard, ProfileForm, ScheduleEditor, TimeOff } from "./editors";
+import { BookingOptionsCard, DaysOnCard, NotificationsCard } from "./settings";
+import { dayHistory, loadBookingOptions, loadNotificationPrefs } from "@/server/staff-settings";
 
 export const metadata: Metadata = { title: "Staff member" };
 
@@ -61,6 +63,11 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
   const seesPay = !!person && (await loadCompensationSettings()).enabled && (await compensationAccess(ctx, person.id)).view;
   const milestones = person && person.kind === "person" ? await staffTrophies(ctx, person.id) : null;
   const ahead = person && !person.active && can(ctx, "timeoff.approve") ? (await futureBookings(person.id)).filter((a) => hasShop(ctx, a.shopId)) : [];
+  const isPerson = !!person && person.kind === "person";
+  const [bookingView, prefs, days] = isPerson
+    ? await Promise.all([loadBookingOptions(ctx, person!.id), loadNotificationPrefs(person!.id), canSchedule ? dayHistory(person!.id, ctx.brandWide ? null : ctx.shopIds) : Promise.resolve([])])
+    : [null, null, []];
+  const ownOrManager = isPerson && (person!.id === ctx.staff.id || (can(ctx, "staff.manage") && !editDenied));
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -141,8 +148,18 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
               shop: b.shopId ? (allShops.find((s) => s.id === b.shopId)?.name ?? "") : "All shops",
             }))}
           />
+          {isPerson && (
+            <DaysOnCard
+              staffId={person.id}
+              shops={editableShops.filter((s) => links.some((l) => l.shopId === s.id))}
+              history={days.map((d) => ({ ...d, shopName: d.shopId ? (allShops.find((s) => s.id === d.shopId)?.name ?? "") : "All shops" }))}
+              canEdit
+            />
+          )}
         </>
       )}
+      {bookingView && (can(ctx, "staff.manage") || person!.id === ctx.staff.id) && <BookingOptionsCard staffId={person!.id} view={bookingView} canEdit={can(ctx, "staff.manage") && !editDenied} />}
+      {prefs && ownOrManager && <NotificationsCard staffId={person!.id} prefs={prefs} canEdit={ownOrManager} self={person!.id === ctx.staff.id} />}
       {milestones && (
         <Card>
           <CardHeader

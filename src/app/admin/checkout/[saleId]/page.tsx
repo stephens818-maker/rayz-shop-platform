@@ -179,6 +179,7 @@ export default async function CheckoutPage({
               : c.config.tipPresets,
         }}
         feeNotice={feeDisclosure(c.config.cardFee)}
+        bookingTipCents={c.appointment?.bookingTipCents ?? 0}
         initialLines={c.items.map((i) => {
           const menu =
             i.kind === "product"

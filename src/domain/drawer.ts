@@ -4,7 +4,7 @@
  * should be there. Pure: the server loads the events and this lays out the running balance.
  */
 
-export type DrawerEventKind = "open" | "sale" | "refund" | "tip_payout" | "paid_in" | "paid_out" | "close";
+export type DrawerEventKind = "open" | "sale" | "refund" | "tip_payout" | "paid_in" | "paid_out" | "no_sale" | "close";
 
 export const DRAWER_EVENT_LABEL: Record<DrawerEventKind, string> = {
   open: "Opened",
@@ -13,6 +13,7 @@ export const DRAWER_EVENT_LABEL: Record<DrawerEventKind, string> = {
   tip_payout: "Cash tip payout",
   paid_in: "Paid in",
   paid_out: "Paid out",
+  no_sale: "Opened, no sale",
   close: "Closed",
 };
 
@@ -32,7 +33,7 @@ export interface DrawerLine extends DrawerEvent {
   varianceCents?: number;
 }
 
-const SIGN: Record<Exclude<DrawerEventKind, "open" | "close">, 1 | -1> = { sale: 1, paid_in: 1, refund: -1, tip_payout: -1, paid_out: -1 };
+const SIGN: Record<Exclude<DrawerEventKind, "open" | "close">, 1 | -1 | 0> = { sale: 1, paid_in: 1, refund: -1, tip_payout: -1, paid_out: -1, no_sale: 0 };
 
 /** Events in time order with the running balance. Without an "open" event the drawer starts at `startCents`. */
 export function drawerTimeline(events: readonly DrawerEvent[], startCents = 0): DrawerLine[] {
@@ -51,8 +52,8 @@ export function drawerTimeline(events: readonly DrawerEvent[], startCents = 0): 
 }
 
 /** Paid-outs less paid-ins: what the moves took out of the drawer. */
-export const movesOut = (moves: readonly { kind: "paid_in" | "paid_out"; amountCents: number }[]) =>
-  moves.reduce((a, m) => a + (m.kind === "paid_out" ? m.amountCents : -m.amountCents), 0);
+export const movesOut = (moves: readonly { kind: "paid_in" | "paid_out" | "no_sale"; amountCents: number }[]) =>
+  moves.reduce((a, m) => a + (m.kind === "paid_out" ? m.amountCents : m.kind === "paid_in" ? -m.amountCents : 0), 0);
 
 export function openingProblem(cents: number): string | null {
   if (!Number.isInteger(cents) || cents < 0) return "Enter what's in the drawer";

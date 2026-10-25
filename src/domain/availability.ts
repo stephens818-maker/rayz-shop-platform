@@ -1,4 +1,4 @@
-import { LocalDate, endOfLocalDay, startOfLocalDay, weekdayOf, zonedWallTime } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 
 /** Half-open interval [start, end) in epoch milliseconds. */
 export interface Span {
@@ -45,6 +45,10 @@ export interface StaffPlan {
   beforeMin: number;
   afterMin: number;
   gapMin: number;
+  /** Clients only: this barber's minimum notice, over the input's. */
+  leadMin?: number;
+  /** Clients only: how many days ahead this barber can be booked. */
+  windowDays?: number;
 }
 
 /**
@@ -85,6 +89,8 @@ export interface DayAvailabilityInput {
   ignoreAppointmentIds?: readonly string[];
   /** Time a barber opened ahead of a scheduled stretch by clocking in early (src/domain/clock-live.ts). */
   early?: EarlyOpening[];
+  /** Extra working days on this date, added to the weekly schedule (even on a day the shop is normally closed). */
+  daysOn?: DayOn[];
 }
 
 /** Bookable time before a scheduled stretch. `end` is that stretch's start; its slots count back from there, so the day's grid doesn't move. */
@@ -168,20 +174,34 @@ export function planFor(input: DayAvailabilityInput, staffId: string): StaffPlan
     beforeMin: p.beforeMin ?? input.bufferBeforeMin ?? 0,
     afterMin: p.afterMin ?? input.bufferAfterMin ?? 0,
     gapMin: p.gapMin ?? input.bufferMin ?? 0,
+    leadMin: p.leadMin,
+    windowDays: p.windowDays,
   };
+}
+
+/** Days on: dates a barber works outside their weekly hours, at this shop. */
+export interface DayOn {
+  staffId: string;
+  shopId: string;
+  date: LocalDate;
+  startMin: number;
+  endMin: number;
 }
 
 /** Their weekly hours inside the shop's on this date. Each stretch starts its own slot grid. */
 function scheduledSpans(input: DayAvailabilityInput, staffId: string): Span[] {
   const { date, shopId } = input;
   if (input.closedDates?.includes(date)) return [];
+  const extra = (input.daysOn ?? [])
+    .filter((d) => d.staffId === staffId && d.shopId === shopId && d.date === date)
+    .map((d) => ({ start: zonedWallTime(date, d.startMin).toMillis(), end: zonedWallTime(date, d.endMin).toMillis() }));
   const shopOpen = toSpans(date, input.shopHours);
-  if (shopOpen.length === 0) return [];
   const work = toSpans(
     date,
     input.schedules.filter((s) => s.staffId === staffId && s.shopId === shopId),
   );
-  return intersectSpans(shopOpen, work);
+  const weekly = shopOpen.length ? intersectSpans(shopOpen, work) : [];
+  return extra.length ? mergeSpans([...weekly, ...extra]) : weekly;
 }
 
 /** Early-opened time inside shop hours, each with the scheduled start its slots count back from. */
@@ -239,7 +259,10 @@ function fits(plan: StaffPlan, start: number, work: Span[], busy: Span[]): boole
   return !busy.some((b) => overlaps(b, h.held));
 }
 
-const earliestStart = (input: DayAvailabilityInput) => (input.now === undefined ? Date.now() : ms(input.now)) + (input.minLeadMin ?? 0) * 60_000;
+const nowOf = (input: DayAvailabilityInput) => (input.now === undefined ? Date.now() : ms(input.now));
+const earliestStart = (input: DayAvailabilityInput, plan?: StaffPlan) => nowOf(input) + (plan?.leadMin ?? input.minLeadMin ?? 0) * 60_000;
+/** Past this barber's booking window for clients. */
+const beyondWindow = (input: DayAvailabilityInput, plan: StaffPlan) => plan.windowDays !== undefined && input.date > addDays(todayLocal(new Date(nowOf(input))), plan.windowDays);
 
 /**
  * Weekly hours for one barber must not overlap across shops (they can't be in two chairs).
@@ -280,11 +303,11 @@ export function gridStarts(input: DayAvailabilityInput, staffId: string): number
  * their working hours and nothing they hold touches a block or another appointment's held time.
  */
 export function computeDaySlots(input: DayAvailabilityInput): Slot[] {
-  const earliest = earliestStart(input);
   const byStart = new Map<number, Slot>();
   for (const staffId of input.staffIds) {
     const plan = planFor(input, staffId);
-    if (plan.durationMin <= 0) continue;
+    if (plan.durationMin <= 0 || beyondWindow(input, plan)) continue;
+    const earliest = earliestStart(input, plan);
     const work = workSpans(input, staffId);
     const busy = [...blockSpans(input, staffId), ...heldSpans(input, staffId)];
     for (const t of gridStarts(input, staffId)) {
@@ -319,9 +342,10 @@ export function onSlotGrid(input: DayAvailabilityInput, start: number, staffId?:
 
 /** Can this barber take the booking at `start` (grid aside)? Used to validate a booking request server-side. */
 export function isSlotFree(input: DayAvailabilityInput, staffId: string, start: number): boolean {
-  if (start < earliestStart(input)) return false;
+  const plan = planFor(input, staffId);
+  if (start < earliestStart(input, plan) || beyondWindow(input, plan)) return false;
   const busy = [...blockSpans(input, staffId), ...heldSpans(input, staffId)];
-  return fits(planFor(input, staffId), start, workSpans(input, staffId), busy);
+  return fits(plan, start, workSpans(input, staffId), busy);
 }
 
 /** The rules a staff "squeeze in" may bend. It never puts two services in one chair at once or books over time off. */

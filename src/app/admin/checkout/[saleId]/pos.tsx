@@ -185,6 +185,8 @@ export function Pos(props: {
   shop: { id: string; name: string; taxVerified: boolean };
   config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[]; loyalty?: LoyaltyBasis };
   feeNotice: string | null;
+  /** The tip the client chose while booking; filled in until someone changes it. */
+  bookingTipCents?: number;
   initialLines: Omit<Line, "key">[];
   customer: PosCustomer | null;
   barber: { id: string; label: string } | null;
@@ -300,13 +302,10 @@ export function Pos(props: {
   const [rewardId, setRewardId] = useState<string | null>(
     r0?.loyaltyRewardId ?? null,
   );
-  const [tipCents, setTipCents] = useState(r0?.tipCents ?? 0);
-  const [tipMode, setTipMode] = useState<string>(
-    r0?.tipCents ? "custom" : "none",
-  );
-  const [customTip, setCustomTip] = useState(
-    r0?.tipCents ? (r0.tipCents / 100).toFixed(2) : "",
-  );
+  const tip0 = r0 ? (r0.tipCents ?? 0) : (props.bookingTipCents ?? 0);
+  const [tipCents, setTipCents] = useState(tip0);
+  const [tipMode, setTipMode] = useState<string>(tip0 ? "custom" : "none");
+  const [customTip, setCustomTip] = useState(tip0 ? (tip0 / 100).toFixed(2) : "");
   const [tipSplit, setTipSplit] = useState<TipSplitMode>(
     r0?.tipSplit ?? "services",
   );

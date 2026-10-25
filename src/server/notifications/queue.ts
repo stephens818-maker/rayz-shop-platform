@@ -90,6 +90,8 @@ export interface AppointmentMessageContext {
   shopGeo?: { lat: number; lng: number } | null;
   shopDirections?: string | null;
   services?: string[];
+  /** The barber's reminder times, in hours before; 0 is none. Unset: 24 and 2. */
+  reminders?: { firstHours: number; secondHours: number };
 }
 
 const baseUrl = appBaseUrl;
@@ -197,19 +199,20 @@ export async function scheduleAppointmentNotifications(
   if (event === "cancelled") jobs.push({ kind: "cancellation", runAt: now });
   else {
     if (event !== "imported" && event !== "reminders") jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
-    jobs.push(...reminderJobs(c.startsAt, now));
+    jobs.push(...reminderJobs(c.startsAt, now, c.reminders));
   }
   return insertJobs(jobs, c, tx, extra, now);
 }
 
 const REMINDER_KINDS = ["reminder_24h", "reminder_2h"] as const;
 
-function reminderJobs(startsAt: Date, now: Date) {
+/** The first ("day before") and second ("same day") reminders, at the barber's times when they set them. */
+function reminderJobs(startsAt: Date, now: Date, hours: { firstHours: number; secondHours: number } = { firstHours: 24, secondHours: 2 }) {
   const jobs: { kind: NotificationKind; runAt: Date }[] = [];
-  const r24 = new Date(startsAt.getTime() - 24 * 3_600_000);
-  const r2 = new Date(startsAt.getTime() - 2 * 3_600_000);
-  if (r24 > now) jobs.push({ kind: "reminder_24h", runAt: r24 });
-  if (r2 > now) jobs.push({ kind: "reminder_2h", runAt: r2 });
+  const r24 = new Date(startsAt.getTime() - hours.firstHours * 3_600_000);
+  const r2 = new Date(startsAt.getTime() - hours.secondHours * 3_600_000);
+  if (hours.firstHours > 0 && r24 > now) jobs.push({ kind: "reminder_24h", runAt: r24 });
+  if (hours.secondHours > 0 && r2 > now) jobs.push({ kind: "reminder_2h", runAt: r2 });
   return jobs;
 }
 
@@ -223,7 +226,7 @@ export async function moveReminders(appointmentIds: string[], c: AppointmentMess
       .update(notificationJobs)
       .set({ status: "cancelled" })
       .where(and(inArray(notificationJobs.appointmentId, appointmentIds), eq(notificationJobs.status, "pending"), inArray(notificationJobs.kind, [...REMINDER_KINDS])));
-  return c ? insertJobs(reminderJobs(c.startsAt, now), c, tx, extra, now) : 0;
+  return c ? insertJobs(reminderJobs(c.startsAt, now, c.reminders), c, tx, extra, now) : 0;
 }
 
 async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: AppointmentMessageContext, tx: DBorTx, extra?: MergeValues, now: Date = new Date()) {

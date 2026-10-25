@@ -6,6 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Slot, SlotPicker } from "@/components/slot-picker";
 import { Badge, Button, StatusBadge } from "@/components/ui";
 import { api, dollars, fmtDay, fmtTime } from "@/lib/api-client";
+import type { TipOffer as Offer } from "@/server/booking-tips";
+import { TipOffer } from "./tip";
 
 interface Appt {
   code: string;
@@ -24,7 +26,7 @@ interface Appt {
 }
 
 /** `basePath` is "/embed" inside the booking widget, so its links stay in the frame. */
-export function ManageAppointment({ code, groupCode = null, basePath = "" }: { code: string; groupCode?: string | null; basePath?: string }) {
+export function ManageAppointment({ code, groupCode = null, basePath = "", offer = null }: { code: string; groupCode?: string | null; basePath?: string; offer?: Offer | null }) {
   const params = useSearchParams();
   const isNew = params.get("new") === "1";
   const [a, setA] = useState<Appt | null>(null);
@@ -77,8 +79,18 @@ export function ManageAppointment({ code, groupCode = null, basePath = "" }: { c
       {isNew && a.status === "booked" && (
         <div className="rounded-xl bg-emerald-600 px-5 py-4 text-white">
           <div className="text-lg font-semibold">You&apos;re booked{a.customer ? `, ${a.customer.firstName}` : ""}!</div>
-          <div className="text-sm text-emerald-50">We&apos;ll text a confirmation and reminders 24 hours and 2 hours before.</div>
+          <div className="text-sm text-emerald-50">{reminderLine(offer?.reminders)}</div>
         </div>
+      )}
+      {offer?.open && (isNew ? offer.bookingTip : offer.confirmationTip || (offer.bookingTip && offer.tipCents > 0)) && (
+        <TipOffer
+          code={a.code}
+          barber={a.barber.displayName}
+          presets={offer.presets}
+          estimateCents={offer.estimateCents}
+          tipCents={offer.tipCents}
+          title={isNew ? `Add a tip for ${a.barber.displayName}?` : offer.tipCents ? "Your tip" : `Tip ${a.barber.displayName} ahead of time?`}
+        />
       )}
       {groupCode && (
         <Link href={`${basePath}/g/${groupCode}`} className="flex items-center justify-between rounded-xl bg-sky-50 px-5 py-3 text-sm text-sky-800 ring-1 ring-sky-200 hover:bg-sky-100">
@@ -200,4 +212,10 @@ export function ManageAppointment({ code, groupCode = null, basePath = "" }: { c
       </p>
     </div>
   );
+}
+
+function reminderLine(r: { firstHours: number; secondHours: number } | undefined) {
+  const hours = [r?.firstHours ?? 24, r?.secondHours ?? 2].filter((h) => h > 0);
+  if (!hours.length) return "We'll text a confirmation.";
+  return `We'll text a confirmation and ${hours.length === 1 ? "a reminder" : "reminders"} ${hours.map((h) => `${h} hour${h === 1 ? "" : "s"}`).join(" and ")} before.`;
 }

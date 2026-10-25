@@ -472,6 +472,10 @@ export const staff = pgTable("staff", {
   birthdayDay: smallint("birthday_day"),
   /** Their milestones may show in the team feed, when the brand turns it on. */
   milestonesShared: boolean("milestones_shared").notNull().default(true),
+  /** Booking options at every shop they work at (src/domain/staff-booking.ts); staff_shops can override per shop. */
+  bookingOptions: jsonb("booking_options").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** How they hear about their clients' bookings, and when their clients are reminded (src/domain/staff-notifications.ts). */
+  notificationPrefs: jsonb("notification_prefs").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   createdAt: createdAt(),
 });
 
@@ -531,8 +535,39 @@ export const staffShops = pgTable(
     isPrimary: boolean("is_primary").notNull().default(false),
     /** This barber's slot interval at this shop; null follows the barber, then the shop, then the brand. */
     slotIntervalMinutes: integer("slot_interval_minutes"),
+    /** "This shop only" booking options, over the barber's all-shops ones. */
+    bookingOptions: jsonb("booking_options").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   },
   (t) => [primaryKey({ columns: [t.staffId, t.shopId] })],
+);
+
+/**
+ * A day on: a date a barber works outside their weekly schedule (a Sunday event, covering a shift).
+ * Bookable like scheduled hours. Removing one keeps the row, so the history of days on stays.
+ */
+export const staffDaysOn = pgTable(
+  "staff_days_on",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    date: date("date").notNull(),
+    startMin: integer("start_min").notNull(),
+    endMin: integer("end_min").notNull(),
+    note: text("note"),
+    createdBy: uuid("created_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    removedAt: ts("removed_at"),
+    removedBy: uuid("removed_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("staff_days_on_staff_date_idx").on(t.staffId, t.date),
+    check("staff_days_on_span", sql`${t.startMin} >= 0 and ${t.endMin} <= 1440 and ${t.endMin} > ${t.startMin}`),
+  ],
 );
 
 /**
@@ -1451,6 +1486,8 @@ export const appointments = pgTable(
     source: appointmentSource("source").notNull().default("online"),
     anyBarber: boolean("any_barber").notNull().default(false),
     estimateCents: integer("estimate_cents").notNull().default(0),
+    /** A tip the client chose while booking or on the confirmation page; filled in on the ticket at checkout. */
+    bookingTipCents: integer("booking_tip_cents").notNull().default(0),
     notes: text("notes"),
     idempotencyKey: text("idempotency_key").unique(),
     rebookedFromId: uuid("rebooked_from_id"),
@@ -2052,15 +2089,16 @@ export const cashDrawerMoves = pgTable(
     id: id(),
     shopId: uuid("shop_id").notNull().references(() => shops.id),
     businessDate: date("business_date").notNull(),
-    kind: text("kind").$type<"paid_in" | "paid_out">().notNull(),
+    /** no_sale: the drawer was opened without a sale (amount 0), with "Open the cash drawer". */
+    kind: text("kind").$type<"paid_in" | "paid_out" | "no_sale">().notNull(),
     amountCents: integer("amount_cents").notNull(),
     reason: text("reason").notNull(),
     staffId: uuid("staff_id"),
     createdAt: createdAt(),
   },
   (t) => [
-    check("cash_drawer_moves_kind", sql`${t.kind} in ('paid_in', 'paid_out')`),
-    check("cash_drawer_moves_amount", sql`${t.amountCents} > 0`),
+    check("cash_drawer_moves_kind", sql`${t.kind} in ('paid_in', 'paid_out', 'no_sale')`),
+    check("cash_drawer_moves_amount", sql`(${t.kind} = 'no_sale' and ${t.amountCents} = 0) or (${t.kind} <> 'no_sale' and ${t.amountCents} > 0)`),
     index("cash_drawer_moves_shop_date_idx").on(t.shopId, t.businessDate),
   ],
 );

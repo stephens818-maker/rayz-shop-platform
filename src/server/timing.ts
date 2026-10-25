@@ -2,6 +2,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { brandSettings, shops, staff, staffServiceDurations, staffShops, Shop } from "@/db/schema";
 import type { StaffPlan } from "@/domain/availability";
+import { EffectiveOptions, ShopBookingDefaults, cleanBookingOptions, effectiveBookingOptions } from "@/domain/staff-booking";
 import { BookingPlan, IntervalSource, bookingPlan, resolveDuration, resolveInterval } from "@/domain/timing";
 import type { EffectiveService } from "./catalog";
 
@@ -61,6 +62,21 @@ export interface StaffBooking {
   items: EffectiveService[];
   plan: BookingPlan;
   interval: ResolvedInterval;
+  /** Their booking options at this shop: this shop only, then all shops, then the shop's own. */
+  options: EffectiveOptions;
+}
+
+/** Each barber's booking options at this shop. */
+export async function staffBookingOptions(shop: Pick<Shop, "id"> & ShopBookingDefaults, staffIds: string[], tx: DBorTx = db): Promise<Map<string, EffectiveOptions>> {
+  const rows = staffIds.length
+    ? await tx
+        .select({ id: staff.id, all: staff.bookingOptions, here: staffShops.bookingOptions })
+        .from(staff)
+        .leftJoin(staffShops, and(eq(staffShops.staffId, staff.id), eq(staffShops.shopId, shop.id)))
+        .where(inArray(staff.id, staffIds))
+    : [];
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return new Map(staffIds.map((id) => [id, effectiveBookingOptions(shop, cleanBookingOptions(byId.get(id)?.all), cleanBookingOptions(byId.get(id)?.here))]));
 }
 
 /**
@@ -68,8 +84,9 @@ export interface StaffBooking {
  * services' buffers plus the shop's gap, and their interval (or the main service's own increment).
  */
 export async function bookingPlans(shop: Shop, staffIds: string[], items: EffectiveService[], tx: DBorTx = db): Promise<Map<string, StaffBooking>> {
-  const [intervals, durations] = await Promise.all([
+  const [intervals, options, durations] = await Promise.all([
     staffIntervals(shop, staffIds, tx),
+    staffBookingOptions(shop, staffIds, tx),
     barberDurations(
       shop.id,
       staffIds,
@@ -84,12 +101,15 @@ export async function bookingPlans(shop: Shop, staffIds: string[], items: Effect
       return { ...i, durationMin: resolveDuration({ service: i.durationMin, barber: d?.everywhere, barberAtShop: d?.atShop }).minutes };
     });
     const interval = intervals.get(staffId)!;
-    out.set(staffId, { items: timed, interval, plan: bookingPlan(timed, { intervalMin: interval.minutes, gapMin: shop.bufferMinutes }) });
+    const o = options.get(staffId)!;
+    out.set(staffId, { items: timed, interval, options: o, plan: bookingPlan(timed, { intervalMin: interval.minutes, gapMin: o.barberIntervalMinutes.value }) });
   }
   return out;
 }
 
-export const toStaffPlans = (plans: Map<string, StaffBooking>): Record<string, StaffPlan> => Object.fromEntries([...plans].map(([id, b]) => [id, b.plan]));
+/** Plans for the availability engine, with each barber's own minimum notice and booking window for clients. */
+export const toStaffPlans = (plans: Map<string, StaffBooking>): Record<string, StaffPlan> =>
+  Object.fromEntries([...plans].map(([id, b]) => [id, { ...b.plan, leadMin: b.options.minNoticeMinutes.value, windowDays: b.options.maxDaysAhead.value }]));
 
 export interface BarberRow {
   id: string;
