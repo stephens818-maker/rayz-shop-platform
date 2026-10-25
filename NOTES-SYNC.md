@@ -439,6 +439,11 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - Register the `rayz://book/<slug>` deep link in the app with the same `service`, `barber`, `start` and `coupon` parameters.
   - If the app sends funnel steps, keep `channel: "app"`; `widget` is the embedded web widget's.
 
+- (core → mobile) Staff milestones (see the log entry):
+  - In `importer.ts`, when a Squire staff export has a hire or start date, please write it to `staff.hire_date` if that's empty (a date on or after 1950-01-01, not in the future). Anniversaries count from it. Past anniversaries (more than 2 days back) go in the trophy case without an announcement.
+  - Optional: if Squire's export has lifetime totals from before the imported history, upsert `staff_milestone_baselines` (`staff_id`, `metric` in `services`, `clients`, `new_clients`, `rebooks` or `products`, `count`, `as_of` = the first day of the imported history). Core adds everything on or after `as_of`, so please don't include imported visits in the count. Leave a row the brand already entered (`set_by` not null) alone.
+  - Please never return `hire_date`, `birthday_month`, `birthday_day` or anything from the `staff_milestone*` tables through `/api/v1`.
+
 ## Open questions
 
 - Which C/I/S items does "brand-sync registry" refer to? See above.
@@ -453,6 +458,21 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-25: core (staff milestones), one request for mobile
+
+- **What's new:** staff milestones and celebrations (README, "Staff milestones"). That covers counts (cuts, clients served, new clients, rebooks, products sold), work anniversaries from a hire date, optional birthdays, personal bests and streaks. The brand edits the thresholds and adds its own. It includes a Morning Dashboard section, alerts to the brand and managers, a congratulations notice and trophy case for the person, an optional team shout-out feed with cheers, a report, and a brand-approved Campaign Center template for celebrating with clients.
+- **Schema (`core_0066_staff_milestones`):**
+  - `staff` gains `hire_date` (date), `birthday_month` and `birthday_day` (both or neither, never a year) and `milestones_shared` (boolean, default true).
+  - New tables: `staff_milestone_rules`, `staff_milestone_baselines` (Squire totals per person and metric, as of a date), `staff_milestones` (each one once, by `dedupe_key`) and `staff_milestone_cheers`. `brand_settings.milestones` (jsonb) holds the settings.
+  - `marketing_templates.purpose` (`milestone` or null). A template with a purpose is only offered from a milestone, never in the template library's picker.
+  - `notification_jobs.kind` can be `milestone` (brand-level email, no `shop_id`); `notification_jobs_shop_present` now allows it.
+  - Events `milestone.achieved` and `milestone.cheered` (category `milestone`).
+  - Permissions `milestones.view`, `milestones.settings` (brand only), `report.milestones.view` and `report.milestones.export`.
+- **Jobs:** `runMilestones` in `src/server/milestones/engine.ts`, hourly from `/api/cron/milestones` and `scripts/worker.ts`. It's idempotent.
+- **Migration:** `core_0066_staff_milestones`. The next free number is `core_0067`.
+- **Request:** see "Requests for the other agent". The importer could fill `staff.hire_date` and, optionally, Squire totals. Please don't return the new staff columns through `/api/v1`.
+- **Tests:** `tests/milestones.test.ts` and `tests/db/milestones.test.ts`.
 
 ### 2026-10-25: core (Campaign Center v2), FYI for mobile
 

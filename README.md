@@ -930,6 +930,50 @@ Tips are paid to employees nightly, a few days later, weekly, with payroll, or o
   - Makenna has a denied request, and Sara has an automatically approved sick day.
   - Every sample entry has a reason, e.g. Makenna's product training block, and the afternoon off today is a Doctor visit (private), so the front desk sees just "Time off".
 
+### Staff milestones
+
+Benchmarks and celebrations for the team at **Front desk → Milestones** (`/admin/milestones`), set up at **Setup → Staff milestones** (`/admin/milestones/settings`), reported at **Reports → Staff milestones** (`/admin/reports/milestones`). Migration `core_0066_staff_milestones`.
+
+**What's tracked.** The built-in milestones, which the brand can rename, re-threshold or switch off:
+
+| Kind | Built in | Notes |
+|---|---|---|
+| Counts | Cuts and services (100, 500, 1,000, 5,000, 10,000), clients served, new clients, rebooks, products sold | Completed appointments and paid tickets at every location, plus the person's Squire total (below). |
+| Work anniversaries | 1, 5 and 10 years | From the **Hire date** on the staff profile (**Staff & schedules → person → Profile**). |
+| Birthdays | Off by default | Month and day only, never a year. When the brand turns them on, each person adds theirs (or not) under **My preferences**. The audit log records that it changed, not the date, and birthdays stay out of the report and trophy cases. |
+| Personal bests | Best sales day, week and month, most cuts in a day, highest monthly rebook rate | Celebrated once there's enough history (30 days, 4 weeks or 3 months); a rebook rate needs 20 visits in the month. |
+| Streaks | 5-star ratings in a row (10, 25, 50, 100), on-time starts in a row (25, 50, 100, 250) | A lower rating or a late start ends the streak. |
+
+- **Custom milestones.** Under **Setup → Staff milestones**, the brand adds its own counts (optionally only some services, e.g. "Beard trims"), anniversaries and streaks, with their own name, wording and thresholds. Built-ins can be edited and switched off but not deleted. Changes are audited.
+- **Squire totals.** Brand-level history from before the imported data goes under **Squire totals**: a count per person and metric, as of a date. The total is that count plus everything in Rayz from that date on, so a barber with 940 cuts in Squire reaches 1,000 after 60 more. Milestones a Squire total already passes go in the trophy case quietly, without an announcement. The same page lists people missing a hire date.
+- **The check** runs hourly (`/api/cron/milestones` on Vercel, and the worker) and from **Check now** on the settings page. Each milestone is recorded once (`staff_milestones`), so a repeated or overlapping run adds nothing. Anything reached more than 2 days before it's found (older history, past anniversaries from a newly entered hire date, what a Squire total already passes) goes in the trophy case without an announcement.
+
+**Notifications.**
+- **Morning Dashboard:** a **Staff milestones** section ("Worth a shout-out") lists who reached what since the report day and what's coming up, e.g. "Jamie reached 1,000 cuts today" and "Casey's 5-year work anniversary is Friday". It's in the email too and can be switched off like any other section. It follows the reader's own milestone access.
+- **Alerts:** the brand (people with access to every shop who see milestones) and the managers of the shops the person works at get one email per run listing the new ones. Each is a separate switch. The person is never alerted about their own.
+- **Congratulations:** the person sees a notice on **Today** and on **Milestones** for 14 days, until they dismiss it.
+- **Team shout-outs:** an optional feed of the last 30 days. Teammates at the same shops see each other's milestones and can cheer one with an optional note of up to 140 characters (scrubbed like other free text). Anyone can keep theirs out of it under **My preferences**.
+
+**Profile and history.**
+- **Trophy case:** on the person's staff profile and on **Milestones** (**My trophy case**), with personal bests listed separately and progress toward the next one (**On the way**). Sales figures only show to the person and those who manage them, never in the team feed.
+- **Event log:** `milestone.achieved` and `milestone.cheered` (category `milestone`; see [Event log schema](#event-log-schema)), so they're in custom reports and the warehouse.
+- **Report:** **Staff milestones** lists each one reached in the date range, by location and barber, with its kind and whether it was announced. It has the usual report filters and a CSV export with its own permission.
+
+**Celebrate with clients.** When the brand allows it, a recent cuts, clients served, new clients or work anniversary milestone has **Celebrate with clients**. That opens a blast to the barber's clients from the brand-approved **Celebrate a barber's milestone** template (Campaign Center → Templates, marked **Staff milestones**). It uses the client's first name only and never a number about the business: "{barber} just hit a big milestone". It's never offered for sales, rebooks, products, rates or ratings, and only while the template is approved. Sending goes through the usual Campaign Center permissions and consent.
+
+**Who sees what.**
+
+| Permission | What it allows | Who has it |
+|---|---|---|
+| **See everyone's milestones at their shops** (`milestones.view`) | Everyone's trophy cases, what's coming up, the alerts, and the Morning Dashboard section | Roles with **Add and edit staff profiles**: Brand Owner, Brand Admin, Regional and Shop Manager |
+| **Set up staff milestones** (`milestones.settings`, brand only) | Thresholds, custom milestones, alerts, birthdays, the team feed and Squire totals | Brand Owner, Brand Admin |
+| **Staff milestones report** (`report.milestones.view` / `.export`) | The report and its CSV | Same as `milestones.view` |
+
+- Everyone else sees only their own milestones, plus shared teammates' at the same shops when the team feed is on. Opening someone else's (`/admin/milestones?staff=…`) shows "Not available".
+- A shop login sees the team's milestones only through those permissions, and has no trophy case of its own.
+
+**Seeded:** hire dates for everyone except Lindsay and the owner. Casey's 5-year anniversary is five days from today and Makenna's 1-year was yesterday. Jamie has a Squire total that puts him at 1,000 cuts with his latest completed appointment.
+
 ### Call-ins and the shop line (Twilio)
 
 When a barber calls in sick or can't make it, the shop marks it, sees every client booked in the time, and moves them, sends a rebook link, or calls them automatically. Every text and call goes from the shop's own Twilio number, and replies land in a per-shop inbox.
@@ -2497,6 +2541,13 @@ Devices (`device`, from the browser or app user agent):
 | `prompt.shown` | Checkout prompt shown | quantity: times or products suggested; subtype: rebook or product |
 | `prompt.accepted` | Checkout prompt taken | amount_cents: estimate booked, or the products' price; quantity: appointments booked or products added; subtype: rebook or product |
 | `prompt.declined` | Checkout prompt declined | value: 1 when a rebook reminder was scheduled; subtype: rebook or product; reason: the reason picked (blank when none, or when paid without answering) |
+
+**Staff milestones** (`milestone`). `entity` is `staff_milestone` and `entity_id` the milestone's id; `staff_id` is the person it's about and `shop_id` their home location. `props` has `metric` (services, clients, new_clients, rebooks, products, hire_date, birthday, sales_day and so on), and `silent: true` for one that's kept for the trophy case but never announced (reached more than 2 days before it was found, or already passed by a Squire total).
+
+| Event | What it is | Measures |
+| --- | --- | --- |
+| `milestone.achieved` | Staff milestone reached | value: the number reached (count, streak or years), or the record (cents, cuts, or rebook rate in tenths of a percent); subtype: count, anniversary, birthday, best or streak |
+| `milestone.cheered` | Teammate cheered a milestone | subtype: the milestone's kind |
 
 ---
 
