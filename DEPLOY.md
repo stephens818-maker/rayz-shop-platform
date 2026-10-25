@@ -226,8 +226,13 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - `vercel.json` adds `/api/cron/jobs` (07:15, 08:15 and 09:15 UTC, after midnight Central) for the nightly location rollups. The campaign-center and badges crons now work through `job_tasks` too. On the Hobby plan's daily cron, make the jobs run fall after midnight Central.
    - After the Squire import, backfill the rollups once so the comparison has history: `pnpm rollups:backfill 2024-01-01` (through yesterday, or give a last day too). It's safe to run again.
    - `pnpm test:perf` checks the database at 50 locations, 500 staff and 500k clients. Run it against a throwaway `*perf*` database, never production.
-23. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-24. Add the custom domain under **Settings → Domains**.
+23. Owner entities and franchising basics (migration `core_0064_owner_entities`; see [Owner entities and franchising basics](README.md#owner-entities-and-franchising-basics)):
+   - The migration makes the oldest brand owner **Ray'z Corporate**, the default owner (renamed only if it still has the name given automatically), gives it every location without an owner, and makes a location's owner required. It adds the Franchisee Owner and Franchisee Manager role templates and the "an owner's shops" scope. Nobody's access changes.
+   - Under **Location setup → Owners**, check Ray'z Corporate's legal name and contact email. Add franchisee owners only when there are any.
+   - Owner-level Stripe accounts are optional. Every shop stays on its current payments mode until someone with the banking permission switches it to **Owner's account**. The Connect webhook endpoint needs no change: owner accounts' events arrive on the same endpoint.
+   - A database that ever ran the withdrawn `core_0063_franchising` migration must be reset (`pnpm db:reset`) before this one.
+24. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+25. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

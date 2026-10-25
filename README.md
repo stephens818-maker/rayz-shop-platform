@@ -484,16 +484,17 @@ Receipts are a text with a link, an email, or none. Paper is off: the staff tick
 
 ### Card payments: per-location banking (Stripe Connect)
 
-Ray'z is the platform on one Stripe account. Each shop's **payments mode** decides where its card money settles: its own **connected account** (`connected`, the default), the brand's own account (`brand`), or nowhere (`cash_only`). The [owner's guide](#banking-per-location) covers the choice; this is how it works.
+Ray'z is the platform on one Stripe account. Each shop's **payments mode** decides where its card money settles: its own **connected account** (`connected`, the default), its **owner's connected account** (`entity`, shared by that owner's shops), the brand's own account (`brand`), or nowhere (`cash_only`). The [owner's guide](#banking-per-location) covers the choice; this is how it works.
 
 - **One routing decision.** `chargeRoute` in `src/server/payments/connect.ts` picks the route for every card charge, and `chargeCard` in `src/server/payments/processor.ts` is the only place a PaymentIntent is created. Services, add-ons, products, tips, surcharges and gift cards sold at the POS are all in the sale's one charge, so they all follow the route. Reader payments do too.
   - **Own account:** a destination charge (`on_behalf_of` plus `transfer_data.destination`). The shop is the merchant on the statement, and the platform keeps an application fee equal to the processing cost: 2.9% + 30¢ keyed or online, and 2.7% + 5¢ on the reader. Set `CONNECT_FEE_KEYED` or `CONNECT_FEE_TERMINAL` (for example `2.9%+30`) to change them. The payment row stores `stripe_account_id`, `stripe_transfer_id`, `application_fee_cents` and `settlement = 'connected'`.
+  - **Owner's account:** the same destination charge, to the owner entity's account (`entity_payment_accounts`, one per owner, onboarded under **Location setup → Owners**). Each payment row still carries its shop, so per-shop sales, refunds and fees report as before; the owner's payouts are recorded with `shop_payouts.owner_entity_id` and pool its shops.
   - **Brand account:** a plain platform charge with the shop's `statement_descriptor_suffix`, recorded with `settlement = 'platform'` and Stripe's fee in `processor_fee_cents`. The shop is still on every row, so its sales, refunds and fees report on their own.
-  - **Cash only, or own account not ready:** refused before anything is charged (`payment_failed` with reason `cash_only` or `payments_not_ready`). The POS greys out Card and says why.
+  - **Cash only, or the shop's or owner's account not ready:** refused before anything is charged (`payment_failed` with reason `cash_only` or `payments_not_ready`). The POS greys out Card and says why.
 - **Refunds follow the money.** A refund reverses the transfer (`reverse_transfer`) when the payment went to a connected account, and is a plain refund when it settled in the brand's. That's decided by the payment, not the shop's current mode, so switching a shop never misroutes an old refund. Processing fees aren't returned.
 - **Readers.** Each shop gets a Stripe Terminal Location, created on first use from its address. Readers register to it with their registration code (`terminal.readers.create`), and checkout refuses a reader that isn't the shop's own and records which reader took each payment (`payments.terminal_reader_id`).
 - **Clients and saved cards live on the platform** as Stripe Customers, so one saved card pays at any shop, on either kind of account. That side is built by the mobile workstream.
-- **Go-live.** The checklist's Payments and banking step is done when the shop is on the brand's account, cash only, or its own account has `charges_enabled`. Payouts can lag. **Open cash-only for now** waives it once, without changing the mode.
+- **Go-live.** The checklist's Payments and banking step is done when the shop is on the brand's account, cash only, or the account it settles to (its own or its owner's) has `charges_enabled`. Payouts can lag. **Open cash-only for now** waives it once, without changing the mode.
 - **Webhooks.**
   - The platform webhook (`/api/stripe/webhook`) books refunds made in Stripe's dashboard at the payment's shop, whichever account it settled in, logs disputes against that shop, and records the brand account's own `payout.*` as brand payouts.
   - The Connect webhook (`/api/stripe/connect`) takes `account.updated`, `capability.updated`, `account.external_account.*`, `account.application.deauthorized` and `payout.*` from shops' accounts. It stores the status flags, what's due and the payout schedule, and records payouts against the shop. Events for accounts that aren't ours are acknowledged and ignored.
@@ -503,13 +504,13 @@ Ray'z is the platform on one Stripe account. Each shop's **payments mode** decid
   - `payments.accounts` (Brand Owner and Brand Admin) covers viewing status, refreshing it, and owner entities.
   - Registering readers needs `settings.shop`, and the Payouts page needs the Shop P&L report.
   - Every change is audited: `payments.mode`, `payments.statement_descriptor`, `payments.terminal_location`, `reader.register`, `shop.receipt`, and the go-live and create entries with the mode.
-- **Owners.** Every shop belongs to an owner entity, either the brand or a franchisee. A franchisee can own several shops. Owners are managed under Location setup.
+- **Owners.** Every shop belongs to an owner entity: **Ray'z Corporate** (the default) or a franchisee, which can own several shops. Owners are managed under Location setup; see [Owner entities and franchising basics](#owner-entities-and-franchising-basics). An owner can have its own Stripe account (`payments.banking`, brand-wide only); its shops settle there when set to **Owner's account**, and its account events and payouts come through the same Connect webhook.
 - **Shop P&L by Stripe account** (`/admin/reports/shop-accounts`) shows each shop's account (or "Brand account"), grouped and subtotalled by owner, with:
   - card charges, card takings after refunds, tips, surcharge and refunds
   - processing fees, and what the accounts received. Brand-account takings are counted at their shop, not as unrouted.
   - payouts paid and in transit, with every payout's gross, fees and refunds
   - cash and gift cards taken outside Stripe
-- **Payouts** (`/admin/payouts`) has the same numbers per account, plus the brand account's pooled payouts, each account's payout schedule, and every deposit itemized.
+- **Payouts** (`/admin/payouts`) has the same numbers per account, plus the brand account's and owners' accounts' pooled payouts (an owner's only to people who see all of that owner's shops), each account's payout schedule, and every deposit itemized.
 - **Without Stripe keys,** each shop on its own account gets a simulated account (`sim_acct_…`) and a stand-in for the hosted onboarding page. Readers register as `sim_tmr_…` to a `sim_tml_…` location. The seed gives every shop an onboarded simulated account, routes its card history there, and makes daily payouts, itemized. Brand-account sales get brand payouts. Simulated accounts are refused once real keys are set, so every shop goes through Stripe's onboarding then. Reader-driven collection (`terminal.readers.processPaymentIntent`) is still simulated at the POS.
 
 <img alt="Add a location: the Payments and banking step" src="docs/screenshots/banking-wizard-step.png" width="800" />
@@ -1356,12 +1357,12 @@ Squire's single-shop (kiosk) login does the day's work at one shop. Ours covers 
 
 **Permissions** (`/admin/permissions`) is where the brand decides who can do what. It has three parts.
 
-- **Roles.** Seven editable templates ship with the app: **Brand Owner, Brand Admin, Regional Manager, Shop Manager, Front Desk, Shop Login, and Barber**. Add as many **custom roles** as you like, either blank or copied from another role.
+- **Roles.** Nine editable templates ship with the app: **Brand Owner, Brand Admin, Franchisee Owner, Franchisee Manager, Regional Manager, Shop Manager, Front Desk, Shop Login, and Barber**. The two franchisee roles default to an owner's shops; see [Owner entities and franchising basics](#owner-entities-and-franchising-basics). Add as many **custom roles** as you like, either blank or copied from another role.
   - The role editor groups the 101 feature permissions (front desk, point of sale, clients, Campaign Center, catalog and inventory, staff, custom reports, settings and data) with a toggle each, plus a **report matrix** with a View and an Export switch for every report. Each role also has a discount limit (Front Desk defaults to 10%) and a default shop scope for new hires.
   - Built-in roles can be **reset** to their template. A custom role can be deleted once nobody has it.
   - Brand Owner always has every permission, including ones added later, and can't be edited.
 - **People.** Each person has one role, plus optional **overrides** that grant or take away single permissions on top of it (shown as "Role default / Allow / Deny"), and their own discount limit. The page shows their effective permissions and what differs from the role.
-- **Shop access.** Each person has a scope: **all shops**, **selected shops**, or **one shop**. Everything they see and do is limited to their assigned shops: the shop picker, calendar, sales, staff, inventory, and reports. Access is separate from where a barber is bookable, so a regional manager can oversee shops without being on their schedule. With selected shops, each shop can carry its own role (**Role at Moline**: main role, Shop Manager, and so on); personal overrides apply at every shop. Brand Owner can't be a role at one shop.
+- **Shop access.** Each person has a scope: **all shops**, **an owner's shops** (every shop one owner entity owns, now and later), **selected shops**, or **one shop**. Everything they see and do is limited to their assigned shops: the shop picker, calendar, sales, staff, inventory, and reports. Access is separate from where a barber is bookable, so a regional manager can oversee shops without being on their schedule. With selected shops, each shop can carry its own role (**Role at Moline**: main role, Shop Manager, and so on); personal overrides apply at every shop. Brand Owner can't be a role at one shop.
 
 **Rules**, all enforced on the server and covered by tests:
 
@@ -2516,13 +2517,13 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 
 Ray'z corporate runs every location; the platform is built to grow from 8 to 25–50+ without changes to how it's run. Migration `drizzle/core_0063_scale.sql`.
 
-- **One scoping layer.** Every query is scoped by the shop IDs in the person's stored access (`staff_access_shops`, scopes `all`, `selected` and `one`), loaded in `src/server/auth/access.ts` and enforced by the tenant guard (`src/server/tenant.ts`). Adding a location adds rows, not code paths. The tenant canaries (`tests/db/tenant.test.ts`) aim every page, action, route and job at another shop's records and expect "not found" or "outside your access".
+- **One scoping layer.** Every query is scoped by the shop IDs in the person's stored access (`staff_access_shops`, scopes `all`, `entity`, `selected` and `one`), loaded in `src/server/auth/access.ts` and enforced by the tenant guard (`src/server/tenant.ts`). Adding a location adds rows, not code paths. The tenant canaries (`tests/db/tenant.test.ts`) aim every page, action, route and job at another shop's records and expect "not found" or "outside your access".
 - **Regions (optional).** `regions` groups locations, e.g. "Quad Cities" or a district manager's patch, for the location comparison report. They're managed on **Location setup** by people with every shop (add, rename, delete, and a region picker per location). A location's rolled-up history moves with it, so comparisons always use current regions. Regions don't grant access: a regional manager is still given their shops directly.
 - **Indexes and pagination.** New tables are indexed for their reads: rollups by shop and day and by region and day, job tasks for claiming, shops by region. Lists that grow with clients or tickets (clients, sales, the audit log, report tables, custom reports) are paged or capped. The perf test fails if a hot query needs a sequential scan of a big table.
 - **Background jobs** (`job_tasks`, `src/server/jobs.ts`). Work that grows with the location count is split into small tasks: one location's day for the rollups, one location's campaign triggers per 15-minute slot, and one of 16 slices of the client file for badges. Each cron run (or `pnpm worker`) queues what's due, then claims tasks with `FOR UPDATE SKIP LOCKED` until its time is up, so runs can overlap without double work. A claimed task holds a 5-minute lease; if its run dies, another picks it up. A task stops after 5 failed attempts and stays failed for someone to look at. Crons: `/api/cron/jobs` (rollups), `/api/cron/campaign-center` (triggers) and `/api/cron/badges` (badge slices).
 - **Daily rollups** (`location_daily_stats`, `src/server/rollups.ts`): one row per location and day (tickets, gross, discounts, net services and products, refunds, tax, tips, clients, new clients, appointments, no-shows) with its region. After go-live or a Squire import, build past days once with `pnpm rollups:backfill <first day> [last day]`. It's safe to run again.
-- **Location comparison** (Reports → Location comparison, `/admin/reports/rollup`): locations or regions side by side over a range, ranked on net sales, with net per location, average ticket, growth on the prior period, client visits, new clients and the no-show rate. It reads the rollups, so it stays fast however many tickets there are, and it says which days aren't rolled up yet. Anyone with the KPIs report has it, over their own shops.
-- **Per-location Stripe** is unchanged: each location settles in the brand's account, its own Connect account, or takes cash only ([Card payments](#card-payments-per-location-banking-stripe-connect)).
+- **Location comparison** (Reports → Location comparison, `/admin/reports/rollup`): locations, regions or owners side by side over a range, ranked on net sales, with net per location, average ticket, growth on the prior period, client visits, new clients and the no-show rate. It reads the rollups, so it stays fast however many tickets there are, and it says which days aren't rolled up yet. Anyone with the KPIs report has it, over their own shops.
+- **Per-location Stripe:** each location settles in the brand's account, its own Connect account, its owner's, or takes cash only ([Card payments](#card-payments-per-location-banking-stripe-connect)).
 
 ### Performance test
 
@@ -2550,9 +2551,25 @@ Measured on a 4-core cloud VM with local Postgres (median of 3 warm runs; seedin
 
 Budgets are deliberately loose: the test is there to catch a missing index or a per-row loop, not small regressions.
 
-### Future franchising
+### Owner entities and franchising basics
 
-Not built: this version is for Ray'z corporate only, with no franchisee entities, royalties or ad fund, franchisee roles or brand-standard locks. The model leaves room for it. `owner_entities` already records the business entity (LLC) that owns each location, through the nullable `shops.owner_entity_id`; today every entity is corporate's (kind `brand`). A franchise layer would add franchisee entities there, scope people to an entity (expanded into `staff_access_shops` like today's shop scopes, so the tenant guard stays as it is), add the entity to the rollups, and take royalties through the per-location Stripe application fee.
+Only the basics are built; Ray'z corporate still runs every location today. Migration `drizzle/core_0064_owner_entities.sql`.
+
+- **Owner entities** (`owner_entities`, kind `brand` or `franchisee`). **Ray'z Corporate** is the one default owner (`is_default`) and owns every location unless someone picks another. A new shop without an owner gets it (`shops_default_owner` trigger, `rayz_corporate_entity()`), and `shops.owner_entity_id` is required. The default can't become a franchisee. Owners are added and edited under **Location setup → Owners** by people with every shop.
+- **Locations belong to an owner**, picked in the new-location wizard (Ray'z Corporate first) and changed on the location's **Owner** step.
+- **People scoped to an owner.** A person's scope can be **an owner's shops** (`staff.shop_scope = 'entity'` with `scope_entity_id`). Their `staff_access_shops` rows are kept to exactly that owner's shops by triggers when they're saved and when a shop is added or changes hands, so the tenant guard and every query stay shop-ID based. Someone below brand level can give an owner scope only for their own owner, and can't edit someone scoped to another owner's shops. Brand-only permissions (locations, owners, Stripe setup, the catalog) stay off for owner scopes.
+- **Franchisee Owner and Franchisee Manager** role templates, both defaulting to an owner's shops. Franchisee Owner: Regional Manager's tools there plus voiding gift cards and managing its people's access. Franchisee Manager: the same without access management. Both get every location report for their shops and mask client contact details like other shop roles.
+- **Rollups by owner.** The location comparison has **Compare: Owners**, grouping each location under its current owner, history included. The Shop P&L by Stripe account was already grouped by owner.
+- **Stripe at the owner or the location.** A shop settles to its own connected account, its owner's (payments mode `entity`), the brand's, or cash only. An owner's account (`entity_payment_accounts`) is onboarded once on Stripe's hosted pages (or the simulator, `sim_eacct_…`) by the Brand Owner or someone with `payments.banking`, and serves every shop of that owner set to it. Charges are destination charges with the same application fee as a shop account, which is the processing cost only.
+
+#### Future work (not built)
+
+- **Royalty and ad-fund fees and reports:** a fee schedule per owner or agreement, collected on top of the application fee or invoiced, with royalty statements and ad-fund reports.
+- **Brand-standard lock and override UI:** which brand settings (menu, prices, hours, receipts, policies) a franchisee may change, and an editor to lock or allow each.
+- **Franchise agreements:** terms, dates, territories and renewals per owner.
+- **Client-data ownership rules:** whose clients a franchisee's shops create, what they may export or keep on exit, and how saved cards and history move when a shop changes hands. Today every client is the brand's, under the existing [client data protection](#contact-lockdown) rules.
+- **Franchisee self-service Stripe:** today only the brand onboards an owner's account; a Franchisee Owner can't manage their own bank or payouts.
+- **Ownership history:** a shop's reports follow its current owner; there's no dated record of earlier owners.
 
 ## Architecture
 

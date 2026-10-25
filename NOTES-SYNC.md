@@ -454,6 +454,20 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-25: core (owner entities and franchising basics), FYI for mobile
+
+- **What's new:** lightweight franchising basics only. Ray'z corporate still runs every location. Royalties, the ad fund, brand-standard locks, franchise agreements and client-data ownership rules are future work (README, "Owner entities and franchising basics").
+- **Schema (`core_0064_owner_entities`):**
+  - `owner_entities.is_default` marks **Ray'z Corporate**, the one default owner. `kind` is `brand` or `franchisee` again (checked). `shops.owner_entity_id` is now NOT NULL; an insert without one gets the default (trigger), so mobile inserts need no change.
+  - New staff scope `entity` (`staff.shop_scope`) with `staff.scope_entity_id`. Its `staff_access_shops` rows are maintained by triggers, so anything that reads access by shop IDs keeps working. If the API ever lists or validates scopes, add `entity` (core: `SHOP_SCOPES` in `src/domain/permissions.ts`).
+  - New role templates `franchisee_owner` and `franchisee_manager` (default scope `entity`). Template sort orders moved to 10 to 90.
+  - New payments mode `entity`: the shop's card money settles to its owner's connected account (`entity_payment_accounts`). `chargeRoute` handles it, so app charges through core checkout need nothing. Any code that reads a shop's account to decide whether it takes cards should use `settlementAccount(shop)` from `src/server/payments/connect.ts` instead of `shopAccount(shopId)`; `chargeDestination` now takes `{ id, name, paymentsMode, ownerEntityId }`.
+  - `shop_payouts.owner_entity_id`: an owner account's payouts have `shop_id` null and this set.
+- **Core API:** `saveOwnerEntityAction` takes `kind` again (defaults to `brand`). New setup actions: `startEntityOnboardingAction`, `refreshEntityAccountAction`, `completeSimulatedEntityOnboardingAction`, `entityDashboardAction`. The location comparison takes `by=owner`.
+- **Migration:** `core_0064_owner_entities`. The next free number is `core_0065`.
+- **No request.** None of the mobile-owned files changed.
+- **Tests:** `tests/db/owner-entities.test.ts` and `tests/owner-entities.test.ts`.
+
 ### 2026-10-25: core (franchising withdrawn; scale to 50+ locations), FYI for mobile
 
 - **Franchising is withdrawn.** This build is for Ray'z corporate only. The franchising commits pushed earlier (owner groups, royalties, franchisee roles and scopes, brand standards) were reverted. Migration `core_0063_franchising` is gone and replaced by `core_0063_scale`. Any database that ran the old one should be reset (`pnpm db:reset`). Ignore the previous franchising FYI.
