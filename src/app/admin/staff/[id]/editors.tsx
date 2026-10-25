@@ -50,6 +50,7 @@ type Profile = {
   isBookable: boolean;
   active: boolean;
   squireName: string;
+  hireDate: string;
   shopIds: string[];
   hasLogin: boolean;
 };
@@ -86,6 +87,7 @@ export function ProfileForm({
       isBookable: true,
       active: true,
       squireName: "",
+      hireDate: "",
       shopIds: shops.length === 1 ? [shops[0].id] : [],
       hasLogin: false,
     },
@@ -147,6 +149,9 @@ export function ProfileForm({
         </Field>
         <Field label="Squire name" hint="Exact name in Squire exports, used to match imported appointments.">
           <Input value={p.squireName} onChange={(e) => set({ squireName: e.target.value })} />
+        </Field>
+        <Field label="Hire date" hint="For work anniversaries. From Squire or their start paperwork.">
+          <Input type="date" min="1950-01-01" value={p.hireDate} onChange={(e) => set({ hireDate: e.target.value })} />
         </Field>
         <div className="sm:col-span-2 lg:col-span-3">
           <div className="mb-1 text-xs font-medium text-zinc-700">Works at</div>

@@ -5,6 +5,7 @@ import { and, asc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { roles, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
+import { TrophyCase } from "@/components/trophy-case";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
 import { seesStaffContact, staffContact } from "@/domain/staff-contact";
 import { formatDateTime } from "@/lib/time";
@@ -15,6 +16,8 @@ import { compensationAccess, loadCompensationSettings } from "@/server/compensat
 import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
 import { barberIntervalRows } from "@/server/timing";
 import { StaffTimingCard } from "../../booking-times/editors";
+import { loadMilestoneSettings } from "@/server/milestones/engine";
+import { milestoneViewer, personFor, trophyCase } from "@/server/milestones/views";
 import { futureBookings } from "@/server/offboarding";
 import { AffectedRow } from "../../time-off/client";
 import { OffboardCard, ProfileForm, ScheduleEditor, TimeOff } from "./editors";
@@ -56,6 +59,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
   const [show, offReasons] = await Promise.all([reasonShower(reasonViewer(ctx)), pickerReasons("time_off")]);
   const canOffboard = !!person && person.active && person.id !== ctx.staff.id && !editDenied && !target?.isOwner;
   const seesPay = !!person && (await loadCompensationSettings()).enabled && (await compensationAccess(ctx, person.id)).view;
+  const milestones = person && person.kind === "person" ? await staffTrophies(ctx, person.id) : null;
   const ahead = person && !person.active && can(ctx, "timeoff.approve") ? (await futureBookings(person.id)).filter((a) => hasShop(ctx, a.shopId)) : [];
 
   return (
@@ -110,6 +114,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
                 isBookable: person.isBookable,
                 active: person.active,
                 squireName: person.squireName ?? "",
+                hireDate: person.hireDate ?? "",
                 shopIds: links.map((l) => l.shopId),
                 hasLogin: !!person.passwordHash,
               }
@@ -138,6 +143,20 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
           />
         </>
       )}
+      {milestones && (
+        <Card>
+          <CardHeader
+            title="Trophy case"
+            subtitle={person!.hireDate ? undefined : "Add a hire date above for work anniversaries."}
+            action={
+              <Link className="text-sm text-brand-700 hover:underline" href={milestones.own ? "/admin/milestones" : `/admin/milestones?staff=${person!.id}`}>
+                Milestones
+              </Link>
+            }
+          />
+          <TrophyCase trophies={milestones.trophies} bests={milestones.bests} money={milestones.money} empty="No milestones yet." />
+        </Card>
+      )}
       {timing && <StaffTimingCard barber={timing} />}
       {person && person.kind === "person" && (ahead.length > 0 || canOffboard) && (
         <>
@@ -156,4 +175,12 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
       )}
     </div>
   );
+}
+
+async function staffTrophies(ctx: Awaited<ReturnType<typeof guardPage>>, staffId: string) {
+  const s = await loadMilestoneSettings();
+  if (!s.enabled) return null;
+  const p = await personFor(await milestoneViewer(ctx), s, staffId);
+  if (!p) return null;
+  return { ...(await trophyCase(staffId)), money: p.rel !== "team", own: p.rel === "own" };
 }

@@ -10,7 +10,7 @@ import { findScheduleConflicts } from "@/domain/availability";
 import { assignableRoles, scopeWithin, staffEditDenied } from "@/domain/permissions";
 import { seesStaffContact } from "@/domain/staff-contact";
 import { labelContainsSurname, staffPublicSlug } from "@/lib/ids";
-import { WEEKDAYS, addDays, minutesToLabel, startOfLocalDay } from "@/lib/time";
+import { WEEKDAYS, addDays, isValidLocalDate, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
 import { staffWallTime } from "@/server/booking";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
@@ -55,6 +55,11 @@ const ProfileSchema = z.object({
   isBookable: z.boolean(),
   active: z.boolean(),
   squireName: z.string().trim().optional().default(""),
+  /** For work anniversaries. Left out: unchanged. */
+  hireDate: z
+    .string()
+    .refine((d) => d === "" || (isValidLocalDate(d) && d >= "1950-01-01" && d <= todayLocal()), "Pick a hire date that isn't in the future")
+    .optional(),
   shopIds: z.array(z.string().uuid()),
   password: z.string().optional().default(""),
 });
@@ -99,6 +104,7 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
       isBookable: p.isBookable,
       active: p.active,
       squireName: p.squireName || null,
+      ...(p.hireDate !== undefined ? { hireDate: p.hireDate || null } : {}),
       ...(p.id && !p.active ? { sessionsValidAfter: new Date() } : {}),
       ...(p.password ? { passwordHash: await bcrypt.hash(p.password, 10) } : {}),
     };

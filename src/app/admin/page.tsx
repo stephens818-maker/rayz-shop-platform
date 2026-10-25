@@ -24,6 +24,9 @@ import { ServiceTimer } from "./calendar/service-times-panel";
 import { SendToCheckoutButton } from "./checkout/send-to-checkout";
 import { TodayAlerts } from "./today/alerts";
 import { byShop, salesSummary } from "@/server/reports";
+import { todayMilestones } from "@/server/milestones/views";
+import { congratsLine } from "@/domain/milestones";
+import { DismissCongrats } from "./milestones/client";
 
 export const metadata: Metadata = { title: "Today" };
 
@@ -81,7 +84,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   ]);
   const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
   const policy = await clientPolicy(ctx);
-  const [times, staffing, myDecisions, badges, badgeTally, noteBriefsFor] = await Promise.all([
+  const [times, staffing, myDecisions, badges, badgeTally, noteBriefsFor, milestones] = await Promise.all([
     timesFor(upcoming.map((a) => a.id), now),
     staffingFor(shopIds, today, today, reasonViewer(ctx), seesTeam ? null : [ctx.staff.id]),
     can(ctx, "timeoff.request")
@@ -96,6 +99,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     ),
     badgeCounts(shopIds, today, [...policy.badges], { now, staffId }),
     noteBriefs(noteViewer(ctx, policy), upcoming.map((a) => a.customerId)),
+    todayMilestones(ctx, shopIds, now),
   ]);
   const whosIn = shopIds
     .map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "", rows: staffing.filter((r) => r.shopId === id) }))
@@ -161,6 +165,27 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           </Link>
         </Notice>
       ))}
+      {milestones.congrats.length > 0 && (
+        <Notice tone="green">
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span>
+              Congratulations! {milestones.congrats.map(congratsLine).join(" · ")}.{" "}
+              <Link className="underline" href="/admin/milestones">
+                Trophy case
+              </Link>
+            </span>
+            <DismissCongrats ids={milestones.congrats.map((m) => m.id)} />
+          </span>
+        </Notice>
+      )}
+      {milestones.team.length > 0 && (
+        <Notice tone="blue">
+          {milestones.team.map((l) => l.text).join("; ")}.{" "}
+          <Link className="underline" href="/admin/milestones">
+            Milestones
+          </Link>
+        </Notice>
+      )}
       {can(ctx, "notifications.view") && notificationsOff && (
         <Notice tone="blue">
           Customer texts and emails are off (stub provider). Reminders are queued and marked &ldquo;suppressed&rdquo;; see{" "}
