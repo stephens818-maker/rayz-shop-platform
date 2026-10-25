@@ -954,6 +954,22 @@ Benchmarks and celebrations for the team at **Front desk → Milestones** (`/adm
 - **Congratulations:** the person sees a notice on **Today** and on **Milestones** for 14 days, until they dismiss it.
 - **Team shout-outs:** an optional feed of the last 30 days. Teammates at the same shops see each other's milestones and can cheer one with an optional note of up to 140 characters (scrubbed like other free text). Anyone can keep theirs out of it under **My preferences**.
 
+**On the day.** Milestones show in the software on the day they happen, always by first name. Each display has its own switch under **Setup → Staff milestones → On the day**, and all are on by default:
+
+| Display | Where | Example |
+|---|---|---|
+| **Banner on the calendar** | Top of the shop's calendar for today (day view, and week view for the current week) | "Today is Jamie's 1,000th cut!" · "Happy 5-year anniversary, Casey!" |
+| **Banner on Sales & checkout** | Sales and the checkout screen (POS) | Same lines |
+| **Confetti on their calendar column** | Next to the barber's name on today's calendar, with the lines as its tooltip | |
+| **Congratulations when they clock in or open their portal** | A window after a **Clock in** on their phone or the front-desk clock, and on their **Today** page | "Congratulations, Jamie! Your 1,000th cut" |
+| **Live toast for the shop** | Bottom right of every admin page for everyone signed in at the shop, within about 20 seconds (immediately for whoever took the payment) | "Just now: Today is Jamie's 1,000th cut!" |
+
+- **Checkout records counts right away.** When a ticket is paid, its barbers' counts are checked immediately (counts only, about 30 ms), so a 1,000th cut at checkout is recorded, announced and celebrated the moment it happens instead of at the next hourly check. The alert emails go out with the notification queue. Anniversaries, birthdays, bests and streaks still come from the hourly check. The live toast covers counts and streaks; anniversaries and birthdays get the banners.
+- **Which shops.** Banners and toasts show at the shops the person works at (and the shop where a count was reached). **Show at other locations too** puts them up at every location. The toast follows the shop the viewer is working in, or all their shops when they view them all.
+- **What the shop never sees.** The shop displays carry only cuts, clients served, new clients, rebooks, products sold, anniversaries, birthdays (when on) and on-time streaks: never sales amounts, rebook rates or ratings. Someone who turned off **Share my milestones** gets no banner, badge or toast, but still gets their own congratulations.
+- **The congratulations window** lists what they haven't seen from the last 7 days, so a day off doesn't miss it. Closing it on **Today** marks it seen (audited as `milestone.seen`), and so does showing it on clocking in. The front-desk clock leaves sales amounts out and closes by itself after 15 seconds for the next person.
+- **Wording.** Built-in counts read as the nth one ("Today is Jamie's 1,000th cut!", "Jamie served their 250th client today!"). The brand's own counts and renamed units use their title ("Jamie hit 100 beard trims today!").
+
 **Profile and history.**
 - **Trophy case:** on the person's staff profile and on **Milestones** (**My trophy case**), with personal bests listed separately and progress toward the next one (**On the way**). Sales figures only show to the person and those who manage them, never in the team feed.
 - **Event log:** `milestone.achieved` and `milestone.cheered` (category `milestone`; see [Event log schema](#event-log-schema)), so they're in custom reports and the warehouse.

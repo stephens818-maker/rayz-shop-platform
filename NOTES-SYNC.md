@@ -459,6 +459,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-25: core (staff milestones on the day), nothing needed from mobile
+
+- **What's new:** milestones show in the admin on the day they happen, by first name (README, "Staff milestones", "On the day"). Banners on the shop's calendar, Sales and POS, confetti on the barber's calendar column, a congratulations window on clocking in and on Today, and a live toast for the shop when a count is reached at checkout.
+- **No migration.** `brand_settings.milestones` gains `calendarBanner`, `posBanner`, `columnBadge`, `welcomeModal`, `liveToast` (all default true) and `allLocations` (default false). Older stored settings read with those defaults. Next migration number is still `core_0067`.
+- **Checkout:** `finalizeSale` (shared with the client API's checkout) now records count milestones for the ticket's barbers right after a paid ticket, like the badge refresh. A failure there never fails the sale. No change to any `/api/v1` response.
+- **Mobile, optional:** a staff app could show the same congratulations from the `staff_milestones` rows with `seen_at` null (the Today page uses `welcomeFor` in `src/server/milestones/day.ts`). Nothing in the customer app changes.
+
 ### 2026-10-25: core (staff milestones), one request for mobile
 
 - **What's new:** staff milestones and celebrations (README, "Staff milestones"). That covers counts (cuts, clients served, new clients, rebooks, products sold), work anniversaries from a hire date, optional birthdays, personal bests and streaks. The brand edits the thresholds and adds its own. It includes a Morning Dashboard section, alerts to the brand and managers, a congratulations notice and trophy case for the person, an optional team shout-out feed with cheers, a report, and a brand-approved Campaign Center template for celebrating with clients.
