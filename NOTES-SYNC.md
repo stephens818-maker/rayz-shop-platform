@@ -459,6 +459,46 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-25: core (Squire brand admin review: reports, staff, catalog, brand defaults, bulk edit, payouts, gift cards, memberships, phone agent), requests for mobile
+
+- **What's new** (README, "Brand admin, against Squire's"):
+  - **Reports:** grouped navigation, a last-business-day default that skips Sundays, the sales waterfall, Cash Register History, the Appointments report with its filters, the Commission Payout report in Squire's columns, and Analytics period over period with saved views.
+  - **Staff:** a per-staff permission matrix, booking options (all shops or this shop only), notification channels and reminder timings, days on with history, and visible online.
+  - **Brand:** the all-shops day board; one brand catalog with category order, a brand Products page and taxes by jurisdiction beside card fees; brand defaults inherited by locations, including GA4 and Meta Pixel on the booking site.
+  - **Operations:** bulk edit and schedule templates; payouts matched to the bank; the Gift cards page with paid reloads at checkout.
+  - **Memberships:** optional, billed with Stripe Billing.
+  - **Phone agent page:** call log, outcomes, transcripts, follow-ups, settings, and optional speech.
+- **Schema** (all additive):
+  - `core_0070`: appointments report permissions.
+  - `core_0071`: staff booking options. Adds `staff.booking_options`, `staff_shops.booking_options`, `staff.notification_prefs`, `staff_days_on`, `appointments.booking_tip_cents`, and the drawer move kind `no_sale`.
+  - `core_0072`: register permissions (`drawer.no_sale`, `pos.custom_charge`).
+  - `core_0073`: analytics and saved report views.
+  - `core_0074`: catalog category order, high stock thresholds, and unallocated brand stock with its ledger.
+  - `core_0075`: location defaults.
+  - `core_0076`: schedule templates.
+  - `core_0077`: `payout_reconciliations`.
+  - `core_0078`: memberships. Adds `brand_settings.memberships_enabled`, `membership_plans`, `memberships`, `membership_invoices` and `membership_uses`.
+  - `core_0079`: memberships permissions.
+  - `core_0080`: phone agent. Adds `call_transcript_lines`, plus `call_logs.followed_up_at`, `followed_up_by` and `follow_up_note`.
+  - Free-text columns have `scrub_sensitive_row` triggers.
+  - **The next free number is `core_0081`.**
+- **Nothing under `/api/v1`, `src/server/api*.ts`, `openapi.ts`, `auth/customer.ts` or `importer.ts` changed.**
+- **Mobile, please:**
+  - **Book without payment:** honor the per-barber `bookWithoutPayment` option (`staff.booking_options`, overridden per shop in `staff_shops.booking_options`; read it with `effectiveBookingOptions` in `src/domain/staff-booking.ts`) for `source = "api"` bookings. Web booking already enforces it.
+  - **Staff push:** `staff.notification_prefs` has a `push` channel per alert (confirm, reschedule, cancel, arrived). Core sends email and SMS. Push needs your devices table, so please send it when you add staff devices.
+  - **Importer:** before overwriting an imported gift card balance, the importer checks for ledger activity. Please add the new `gift_card_ledger` kinds `reload`, `reload_refund` and `comp` to that check, so a reloaded or comped card isn't overwritten on re-import.
+  - **Memberships:** these use Stripe Checkout in subscription mode on the brand account and don't touch your Stripe Customers. If you want members to reuse their saved card, pass your Customer id into `enroll` (`src/server/memberships.ts`), which today lets Checkout create one. The webhook now sends brand-account `checkout.session.completed` (mode subscription), `invoice.paid`, `invoice.payment_failed` and `customer.subscription.*` to `applyMembershipEvent`, which ignores anything that isn't a membership.
+  - **Optional API exposure:**
+    - booking tip (`appointments.booking_tip_cents`);
+    - per-barber booking options (max days ahead, minimum notice, cancellation cutoff, multiple services);
+    - memberships (`clientMemberships`, and `checkoutCoverage` for a client app's own card);
+    - `FinalizeInput.membershipId`, which is optional, so client API checkout is unchanged.
+  - **`publicShopPage`** (`src/server/public.ts`) now also returns `headline`, `cancellationPolicy`, `noShowPolicy` and `tracking` (`ga4`, `metaPixel`) from brand defaults with the shop's overrides. Your public shop endpoint can pass them through.
+- **New crons:** `/api/cron/memberships` daily (renews simulated memberships). It's a no-op when Stripe bills.
+- **Tests:**
+  - Unit: `tests/squire-brand.test.ts`.
+  - DB: `tests/db/payout-reconcile.test.ts`, `tests/db/gift-cards.test.ts`, `tests/db/memberships.test.ts` and `tests/db/phone-agent.test.ts`, plus updates to the tenant, permissions and shop-login tests.
+
 ### 2026-10-25: core (Squire Engage parity: email design, texts, wizard, per-send results, loyalty program), FYI for mobile
 
 - **What's new** (README, "Campaign Center" and "Loyalty"):

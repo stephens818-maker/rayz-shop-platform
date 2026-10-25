@@ -1419,7 +1419,7 @@ Squire's single-shop (kiosk) login does the day's work at one shop. Ours covers 
 
 **Saved reports** on the reports hub open a report with its range and options set: End of day, Yesterday's close, Tips, Gross and net sales, Employee summary, Total collected, Leaderboard, Quarterly retention, and one sales tax shortcut per state on that state's schedule ("Iowa monthly sales tax"). Each shows only to people who may open the report. Quarter presets (This quarter, Last quarter) are on every report.
 
-**Phone operator.** Turned on per shop under Shop settings → Phone operator (it needs the shop's Twilio number). It answers when the shop is closed or nobody picks up, or first on every call. The caller hears a menu: **1** texts them a booking link, **2** reads the hours, **3** rings the shop while it's open; pressing nothing texts the link as before. STOP still wins. A booking by the same number at the same shop within 7 days counts toward the call. Try it in the call simulator. It's a keypad menu, not a voice AI: nothing the caller says is recorded or sent anywhere.
+**Phone operator.** Turned on per shop under Shop settings → Phone agent, or on the [Phone agent page](#phone-agent) (it needs the shop's Twilio number). It answers when the shop is closed or nobody picks up, or first on every call. The caller hears a menu: **1** texts them a booking link, **2** reads the hours, **3** rings the shop while it's open; pressing nothing texts the link as before. STOP still wins. A booking by the same number at the same shop within 7 days counts toward the call. Try it in the call simulator. It's a menu, not a voice AI. With **Callers can say what they want** on, Twilio's speech recognition turns "book", "hours" or "someone at the shop" into the same choices, and the words go in the call's transcript (card and bank numbers scrubbed). Nothing is sent to any other service.
 
 <img alt="Drawer balance history" src="docs/screenshots/shop-login-drawer-balance-history.png" width="800" />
 
@@ -2343,6 +2343,87 @@ These were built in response to the owner's request: "mimic Squire, but make it 
 - Duplicate first names get unique IDs and admin-set labels instead of guesswork.
 - An API-first booking backend is ready for a mobile app.
 
+<a id="brand-admin"></a>
+
+### Brand admin, against Squire's
+
+Built from a read-only review of Squire's brand admin. It matches what Squire does well and fixes its gaps.
+
+**Matched from Squire**
+
+| Squire strength | Here |
+| --- | --- |
+| Location switcher with **Shop (all)** | On every report, Analytics, Payouts, the day board and the Phone agent. |
+| Sales waterfall | Reports → Sales: gross, refunds, discounts, tips, net, taxes, card fees, collected. Each step reconciles to the next. |
+| Commission Payout report | `/admin/reports/commission-payout` in Squire's columns: hours, card, cash, GC used and bought, total, commission %, barber commission, tips by source (online booking, POS, gift card), due to barbers, tax, due to shop. |
+| Per-staff permission matrix | Permissions → a person: the areas (Appointments, Clients, Services, Schedules, Bank Accounts, Profile, Reports, Products, Inventory, Campaigns, Register, Open Cash Drawer, Custom Charge) by the actions (View, Add/Edit, Book, Modify, History, Cancel, Block Time). Each cell overrides the role. |
+| Notification channels and reminder timings | Per person: confirm, reschedule, cancel and arrived alerts by channel, and the first and second client reminder. |
+| Booking options | Per person, for **all shops** or **this shop only**: book without payment, booking and confirmation tip, multiple services, track time, max days ahead, minimum notice, cancellation cutoff, client and barber intervals, and visible online. |
+| Days off and on, with history | On the staff profile, every change kept. |
+| Analytics period over period | 1W, 4W, MTD, QTD and YTD against the period before or last year, overall and by location. Any report's settings save as a view. |
+| GA4 and Meta Pixel | Brand defaults → Integrations. The booking site sends an event at each step (viewed, service, time, details, booked); Meta gets ViewContent, InitiateCheckout and Schedule. |
+| Cash Register History | `/admin/reports/cash-drawer`: every open, paid in and out, no sale, and close. |
+| Appointments report filters | Shop, barber, payment, booking method, status and platform. |
+| Product fields | `/admin/products`: SKU, brand, supply price, unallocated vs allocated stock, low and high thresholds. |
+
+**Fixed from Squire**
+
+- **Brand live calendar.** `/admin/calendar/board` shows every location's day side by side, with a lane per barber (hours, days on, blocks, appointments). It updates live for today.
+- **One person, many shops.** A barber is one record assigned to several locations. Settings that can differ per shop are labeled **this shop only** or **all shops**.
+- **One catalog.** Services, categories and taxes live once at brand level, with per-location price and duration overrides. Category order is set once for the menu and checkout.
+- **Card fees aren't taxes.** Taxes are grouped by jurisdiction (`/admin/taxes`) beside each location's card fee, which has its own model and its own line on receipts and reports.
+- **Brand defaults.** `/admin/brand-defaults` sets policies, the booking site, client reminders, integrations and the starting role. Locations inherit them, and any override is marked as this shop's.
+- **Bulk edit.** `/admin/bulk-edit` changes staff, services, products and schedules many at a time, and shared schedule templates apply per shop without double-booking. Times are typed, with quarter-hour arrow steps, instead of a 288-option dropdown.
+- **Payouts and deposits.** `/admin/payouts` lists each location's Stripe deposits. Each can be matched to the bank statement (who matched it, when, and the bank reference). It also shows an unmatched-deposits count and what each account still has to pay out.
+- **Gift cards.** See [Gift cards](#gift-cards-page) below.
+- **Memberships.** See [Memberships](#memberships) below.
+- **Report navigation.** Reports are grouped on one page, with no "More" menu. They default to the last completed business day, skipping Sundays, so nobody opens a report to an empty $0.
+- **Phone agent.** See [Phone agent](#phone-agent) below.
+
+<a id="gift-cards-page"></a>
+
+**Gift cards** (`/admin/gift-cards`, Front desk):
+
+- **Lookup.** Any card can be found by its whole code. Searching part of a code or a client's name finds cards issued at your shops.
+- **Card detail.** Each card shows its ledger: issued, sold, spent, reloaded, comped, refunded and voided, with the ticket for each.
+- **Reloads.** A reload is rung up at checkout onto the same card. Refunding it takes the reload back off and leaves the card active.
+- **Comps and voids.** Comp cards and comp value need `giftcards.issue` and a reason. Voids need `giftcards.void`. Every change is audited.
+- **Caps.** Cards hold at most $1,000.
+
+<a id="memberships"></a>
+
+**Memberships** (`/admin/memberships`, optional, off until the brand turns it on):
+
+- **Plans** are brand-wide, for example Buzz Club, unlimited buzz cuts for $39 a month. Each plan sets:
+  - the services a visit covers in full, and an optional monthly visit limit;
+  - an optional retail discount;
+  - the shops that sell and honor it.
+- **Billing:**
+  - With Stripe keys, each plan gets a Stripe Billing Product and monthly Price. Signing up opens Stripe Checkout in subscription mode, so the card is collected on Stripe's page and never touches us. The webhook turns the membership on, records each invoice, marks failed payments **Payment failed**, and follows cancellations made in Stripe.
+  - Without keys, billing is simulated: the membership starts today and a daily cron renews it.
+- **Checkout:**
+  - The **Membership** panel covers the member's own plan services (not the family's), most expensive first, up to the visits left, and adds the retail discount.
+  - The visit counts only once the ticket is paid. A void or full refund gives the visit back.
+- **Members table:** status, this month's visits, the renewal date, and cancel at month end, cancel now, or keep. Also shown: MRR, payment failures and recent invoices.
+- **Client profile:** shows the client's memberships.
+- **Permissions:**
+  - `memberships.manage` (brand) runs plans and the switch.
+  - `memberships.sell` (managers) signs clients up and cancels.
+
+<a id="phone-agent"></a>
+
+**Phone agent** (`/admin/phone-agent`, Front desk):
+
+- **Call log.** Every call to each shop's number, with its outcome:
+  - Booked, link texted, heard the hours, put through, or hung up, when the agent took it.
+  - Answered by staff, missed, or after hours, when it didn't.
+  - Filters by outcome, shop (or Shop (all)) and period. Callers show by name when they're a client; otherwise the number stays masked.
+- **Transcript.** Opening a call shows it line by line: what the agent said, what the caller pressed or said, and what the line did (rang the shop, nobody picked up, texted the link). It also shows the texts sent and the booking that followed. A shop can keep outcomes only.
+- **Follow-ups.** Missed calls, hang-ups, and calls put through but missed are flagged **Ring back**. Marking one followed up records who did it, when, and a note. This is audited and can be undone.
+- **Settings.** For each shop: on or off, when the agent answers, the greeting, staff minutes per call, speech, and transcripts.
+  - Speech is optional. Callers say "book", "hours" or "someone", and Twilio's speech recognition maps that to the menu.
+  - Seeing calls needs the Phone operator report. Changing settings needs the shop's phone settings.
+
 ---
 
 <a id="event-log-schema"></a>
@@ -2794,5 +2875,5 @@ samples/squire/      example Squire CSV exports for the importer
 - Barber photos and bios on booking pages, using first-name image files.
 - Barcode scanning for counts and receiving, and vendor price lists by upload.
 - A real email provider for vendor purchase orders, and reading the vendor's confirmation back.
-- Memberships (Squire's unlimited plans were disabled, so they're not built).
+- Memberships in the mobile app and on the booking site (sign up and manage from the client's side); today staff sign clients up and Stripe's hosted page takes the payment.
 - The mobile app against `/api/v1`, plus push notifications (add an `/me/devices` endpoint).
