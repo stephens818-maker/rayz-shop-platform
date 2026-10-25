@@ -3,8 +3,11 @@ import { db, DBorTx } from "@/db";
 import { EmailAttachment, brandSettings, contactOptOuts, notificationJobs, shops } from "@/db/schema";
 import { MergeValues, SavedTemplates, cutoffText, fill, isTemplateKind, templateFor } from "@/domain/message-templates";
 import { icsCalendar, locationDescription } from "@/domain/ics";
+import { OPT_OUT_REASON, clientEmailHtml, reminderTimes, withUnsubscribe } from "@/domain/notification-delivery";
+import { outreachRules, type OutreachRules } from "@/domain/outreach";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
+import { SUPPRESSION_ERROR, oneClickUnsubscribeUrl, suppressedEmails, takesUnsubscribe, unsubscribeUrl } from "./email-events";
 import { emailProvider, pushProvider, smsProvider, voiceProvider } from "./providers";
 
 export type NotificationKind =
@@ -144,9 +147,12 @@ export function locationFooter(c: AppointmentMessageContext, values: MergeValues
     .join("\n");
 }
 
-const INVITE_KINDS = new Set<NotificationKind>(["confirmation", "reschedule"]);
+const INVITE_KINDS = new Set<NotificationKind>(["confirmation", "reschedule", "cancellation"]);
 
-/** The calendar invite on a confirmation or move email, for one appointment (not a family's one message). */
+/**
+ * The calendar invite on a confirmation, move or cancel email, for one appointment (not a family's
+ * one message). The same UID with a higher SEQUENCE updates the event; a cancel marks it CANCELLED.
+ */
 export function inviteAttachment(kind: NotificationKind, c: AppointmentMessageContext, extra: MergeValues | undefined, now: Date): EmailAttachment[] | null {
   if (!INVITE_KINDS.has(kind) || !c.endsAt || extra?.link) return null;
   const manageUrl = `${baseUrl()}/a/${c.code}`;
@@ -161,6 +167,7 @@ export function inviteAttachment(kind: NotificationKind, c: AppointmentMessageCo
         location: `Ray'z ${c.shopName}, ${c.shopFullAddress ?? c.shopAddress}`,
         geo: c.shopGeo ?? null,
         url: manageUrl,
+        status: kind === "cancellation" ? "CANCELLED" : "CONFIRMED",
         sequence: Math.max(0, Math.floor(now.getTime() / 1000) - 1_790_000_000),
         now,
       },
@@ -199,20 +206,28 @@ export async function scheduleAppointmentNotifications(
   if (event === "cancelled") jobs.push({ kind: "cancellation", runAt: now });
   else {
     if (event !== "imported" && event !== "reminders") jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
-    jobs.push(...reminderJobs(c.startsAt, now, c.reminders));
+    jobs.push(...reminderJobs(c.startsAt, now, c.reminders, await quietRules(tx)));
   }
   return insertJobs(jobs, c, tx, extra, now);
 }
 
 const REMINDER_KINDS = ["reminder_24h", "reminder_2h"] as const;
 
-/** The first ("day before") and second ("same day") reminders, at the barber's times when they set them. */
-function reminderJobs(startsAt: Date, now: Date, hours: { firstHours: number; secondHours: number } = { firstHours: 24, secondHours: 2 }) {
+/** The brand's quiet hours (Call-ins rules), which reminders keep out of. */
+async function quietRules(tx: DBorTx): Promise<OutreachRules> {
+  const [b] = await tx.select({ outreach: brandSettings.outreach }).from(brandSettings).limit(1);
+  return outreachRules(b?.outreach ?? {});
+}
+
+/**
+ * The first ("day before") and second ("same day") reminders, at the barber's times when they set
+ * them, moved out of quiet hours (reminderTimes).
+ */
+function reminderJobs(startsAt: Date, now: Date, hours: { firstHours: number; secondHours: number } = { firstHours: 24, secondHours: 2 }, rules: OutreachRules) {
   const jobs: { kind: NotificationKind; runAt: Date }[] = [];
-  const r24 = new Date(startsAt.getTime() - hours.firstHours * 3_600_000);
-  const r2 = new Date(startsAt.getTime() - hours.secondHours * 3_600_000);
-  if (hours.firstHours > 0 && r24 > now) jobs.push({ kind: "reminder_24h", runAt: r24 });
-  if (hours.secondHours > 0 && r2 > now) jobs.push({ kind: "reminder_2h", runAt: r2 });
+  const t = reminderTimes(startsAt, now, hours, rules);
+  if (t.first) jobs.push({ kind: "reminder_24h", runAt: t.first });
+  if (t.second) jobs.push({ kind: "reminder_2h", runAt: t.second });
   return jobs;
 }
 
@@ -226,7 +241,7 @@ export async function moveReminders(appointmentIds: string[], c: AppointmentMess
       .update(notificationJobs)
       .set({ status: "cancelled" })
       .where(and(inArray(notificationJobs.appointmentId, appointmentIds), eq(notificationJobs.status, "pending"), inArray(notificationJobs.kind, [...REMINDER_KINDS])));
-  return c ? insertJobs(reminderJobs(c.startsAt, now, c.reminders), c, tx, extra, now) : 0;
+  return c ? insertJobs(reminderJobs(c.startsAt, now, c.reminders, await quietRules(tx)), c, tx, extra, now) : 0;
 }
 
 async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: AppointmentMessageContext, tx: DBorTx, extra?: MergeValues, now: Date = new Date()) {
@@ -373,14 +388,19 @@ export async function processDueJobs(
     const optedOut = new Set(
       phones.length ? (await tx.select({ phone: contactOptOuts.phone, channel: contactOptOuts.channel }).from(contactOptOuts).where(inArray(contactOptOuts.phone, phones))).map((o) => `${o.channel}:${o.phone}`) : [],
     );
+    const stoppedEmails = await suppressedEmails(
+      due.filter((j) => j.channel === "email").map((j) => j.to),
+      tx,
+    );
 
     for (const job of due) {
       const provider = job.channel === "sms" ? sms : job.channel === "voice" ? voice : job.channel === "push" ? push : email;
-      const stopped = (job.channel === "sms" && optedOut.has(`sms:${job.to}`)) || (job.channel === "voice" && AUTOMATED_CALLS.has(job.kind) && optedOut.has(`voice:${job.to}`));
+      const emailStop = job.channel === "email" ? stoppedEmails.get(job.to.trim().toLowerCase()) : undefined;
+      const stopped = (job.channel === "sms" && optedOut.has(`sms:${job.to}`)) || (job.channel === "voice" && AUTOMATED_CALLS.has(job.kind) && optedOut.has(`voice:${job.to}`)) || !!emailStop;
       if (stopped) {
         await tx
           .update(notificationJobs)
-          .set({ status: "suppressed", provider: provider.name, attempts: job.attempts + 1, lastError: job.channel === "sms" ? "The number replied STOP" : "The client asked for no automated calls" })
+          .set({ status: "suppressed", provider: provider.name, attempts: job.attempts + 1, lastError: emailStop ? SUPPRESSION_ERROR[emailStop] : job.channel === "sms" ? OPT_OUT_REASON.stop : OPT_OUT_REASON.noCalls })
           .where(eq(notificationJobs.id, job.id));
         stats.suppressed++;
         continue;
@@ -404,7 +424,7 @@ export async function processDueJobs(
                 : await voice.bridgeCall(job.to, job.subject, { jobId: job.id, callerId: line })
               : job.channel === "push"
                 ? await push.sendPush(job.to, job.subject ?? "Ray'z Barber Shop", job.body)
-                : await email.sendEmail(job.to, job.subject ?? "Ray'z Barber Shop", job.body, job.attachments ?? [], job.htmlBody);
+                : await sendEmailJob(email, job);
         await tx
           .update(notificationJobs)
           .set({ status: "sent", sentAt: new Date(), provider: provider.name, providerMessageId: r.providerMessageId ?? null, attempts: job.attempts + 1 })
@@ -429,6 +449,23 @@ export async function processDueJobs(
   });
   return stats;
 }
+
+/**
+ * An email to a client goes out in the brand's HTML layout (unless it has its own, like Campaign
+ * Center's) with a stop link in both parts and the one-click unsubscribe headers.
+ */
+function sendEmailJob(email: ReturnType<typeof emailProvider>, job: typeof notificationJobs.$inferSelect) {
+  const subject = job.subject ?? "Ray'z Barber Shop";
+  const stop = takesUnsubscribe(job.kind) ? unsubscribeUrl(job.id) : null;
+  const html = job.htmlBody ?? (CLIENT_EMAIL_LAYOUT.has(job.kind) ? clientEmailHtml({ subject, body: job.body, unsubscribeUrl: stop }) : null);
+  return email.sendEmail(job.to, subject, job.htmlBody || !stop ? job.body : withUnsubscribe(job.body, stop), job.attachments ?? [], html, {
+    listUnsubscribe: stop ? oneClickUnsubscribeUrl(job.id) : null,
+    stream: job.kind === "marketing" ? "broadcast" : "outbound",
+  });
+}
+
+/** Client emails that get the brand layout when they're sent as plain text. */
+const CLIENT_EMAIL_LAYOUT = new Set<string>(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "waitlist_ready", "time_off_reschedule", "callin_reassign", "callin_rebook", "fill_offer", "rebook_nudge", "rebook_reminder", "no_show_reminder", "running_late", "receipt", "review_request"]);
 
 export async function notificationCounts(appointmentIds: string[]) {
   if (!appointmentIds.length) return [];

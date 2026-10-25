@@ -2418,6 +2418,7 @@ export const notificationJobs = pgTable(
     index("notification_jobs_appt_idx").on(t.appointmentId),
     index("notification_jobs_provider_msg_idx").on(t.providerMessageId),
     index("notification_jobs_outreach_idx").on(t.outreachId),
+    index("notification_jobs_customer_idx").on(t.customerId, t.createdAt),
   ],
 );
 
@@ -3065,6 +3066,39 @@ export const contactOptOuts = pgTable(
     createdAt: createdAt(),
   },
   (t) => [unique("contact_opt_outs_uq").on(t.phone, t.channel)],
+);
+
+/**
+ * Addresses no email goes to: a hard bounce or spam complaint reported by the email provider, the
+ * stop link in an email, or staff. `customerIds`: whose "OK to email" this turned off.
+ */
+export const emailSuppressions = pgTable(
+  "email_suppressions",
+  {
+    id: id(),
+    email: text("email").notNull(),
+    reason: text("reason").$type<"bounce" | "complaint" | "unsubscribe" | "staff">().notNull(),
+    provider: text("provider"),
+    customerIds: jsonb("customer_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("email_suppressions_email_uq").on(t.email), check("email_suppressions_reason_chk", sql`${t.reason} in ('bounce', 'complaint', 'unsubscribe', 'staff')`)],
+);
+
+/** A customer's private calendar feed of upcoming appointments (theirs and their children's). Only the token's hash is kept. */
+export const calendarFeeds = pgTable(
+  "calendar_feeds",
+  {
+    id: id(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    createdAt: createdAt(),
+    lastFetchedAt: ts("last_fetched_at"),
+    revokedAt: ts("revoked_at"),
+  },
+  (t) => [unique("calendar_feeds_token_uq").on(t.tokenHash), uniqueIndex("calendar_feeds_active_uq").on(t.customerId).where(sql`${t.revokedAt} is null`)],
 );
 
 /** A shop's text conversation with one phone number: the shop inbox. */
