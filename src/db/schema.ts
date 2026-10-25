@@ -1573,6 +1573,10 @@ export const promoCodes = pgTable("promo_codes", {
   stackable: boolean("stackable").notNull().default(true),
   /** Applied at checkout, without a code, when the client is eligible. */
   autoApply: boolean("auto_apply").notNull().default(false),
+  /** Only on these days (0 Sunday to 6 Saturday) and between these local times; empty and null is any time. */
+  daysOfWeek: jsonb("days_of_week").$type<number[]>().notNull().default(sql`'[]'::jsonb`),
+  timeFrom: text("time_from"),
+  timeTo: text("time_to"),
   createdAt: createdAt(),
 });
 
@@ -3259,8 +3263,33 @@ export const assistantActions = pgTable(
 // ───────────────────────────── Campaign Center ─────────────────────────────
 
 export type CampaignKind = "trigger" | "blast" | "sequence" | "openings";
-/** Openings blasts can also wait for the brand ("pending_approval"), be turned down, or expire when their times pass first. */
-export type BlastStatus = "draft" | "scheduled" | "sending" | "sent" | "cancelled" | "pending_approval" | "rejected" | "expired";
+/**
+ * Openings blasts can also wait for the brand ("pending_approval"), be turned down, or expire when
+ * their times pass first. Recurring blasts can be paused; an A/B-tested blast is "testing" while
+ * its test groups have it and the rest wait for the winner.
+ */
+export type BlastStatus = "draft" | "scheduled" | "sending" | "sent" | "cancelled" | "pending_approval" | "rejected" | "expired" | "paused" | "testing";
+export type CampaignType = "update" | "promotion";
+
+/** The brand's approved wording (Templates in src/domain/marketing.ts) for new blasts to start from. */
+export const marketingTemplates = pgTable(
+  "marketing_templates",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    campaignType: text("campaign_type").$type<CampaignType>().notNull().default("update"),
+    description: text("description"),
+    channels: jsonb("channels").$type<string[]>().notNull().default(sql`'["sms","email","push"]'::jsonb`),
+    templates: jsonb("templates").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
+    status: text("status").$type<"draft" | "approved" | "archived">().notNull().default("draft"),
+    approvedBy: uuid("approved_by").references(() => staff.id, { onDelete: "set null" }),
+    approvedAt: ts("approved_at"),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [index("marketing_templates_status_idx").on(t.status, t.name)],
+);
 
 /**
  * A marketing campaign: one brand-level row per automated trigger (switched on per location in
@@ -3297,6 +3326,19 @@ export const marketingCampaigns = pgTable(
     reviewedBy: uuid("reviewed_by").references(() => staff.id, { onDelete: "set null" }),
     reviewedAt: ts("reviewed_at"),
     reviewNote: text("review_note"),
+    /** Blasts: a quick update (no offer) or a promotion (with a coupon). */
+    campaignType: text("campaign_type").$type<CampaignType>(),
+    /** Blasts: repeats (Recurrence in src/domain/campaign-schedule.ts); null is one time. */
+    recurrence: jsonb("recurrence").$type<Record<string, unknown>>(),
+    /** Blasts: an A/B test of the wording (AbTest in src/domain/campaign-schedule.ts). */
+    ab: jsonb("ab").$type<Record<string, unknown>>(),
+    /** This share of eligible clients gets nothing, to measure lift against. */
+    holdoutPct: integer("holdout_pct").notNull().default(0),
+    /** Each client's message waits for the time of day they usually book. */
+    sendTimeOpt: boolean("send_time_opt").notNull().default(false),
+    templateId: uuid("template_id").references(() => marketingTemplates.id, { onDelete: "set null" }),
+    /** Drafted by the assistant: it can only be scheduled or sent from the review step, by a person. */
+    aiDrafted: boolean("ai_drafted").notNull().default(false),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
@@ -3378,7 +3420,8 @@ export const marketingLocationSettings = pgTable(
   (t) => [primaryKey({ columns: [t.campaignId, t.shopId] })],
 );
 
-export type SendStatus = "queued" | "skipped" | "test";
+/** holdout: the client was eligible and held back on purpose, to compare against. */
+export type SendStatus = "queued" | "skipped" | "test" | "holdout";
 
 /**
  * One client and one campaign occasion. The dedupe key is unique, so running the engine twice (or
@@ -3408,12 +3451,23 @@ export const marketingSends = pgTable(
     bookPath: text("book_path"),
     clicks: integer("clicks").notNull().default(0),
     firstClickAt: ts("first_click_at"),
+    /** Emails: tracking-pixel loads (not mail scanners), and the first. */
+    opens: integer("opens").notNull().default(0),
+    openedAt: ts("opened_at"),
     costCents: doublePrecision("cost_cents").notNull().default(0),
     /** Lapsed sequences: which step it was. */
     stepId: uuid("step_id").references(() => marketingSteps.id, { onDelete: "set null" }),
+    /** A/B-tested blasts: the wording it got. */
+    variant: text("variant").$type<"a" | "b">(),
+    /** The client had an appointment coming up when it went, so what they spend isn't credited to it. */
+    alreadyBooked: boolean("already_booked").notNull().default(false),
     createdAt: createdAt(),
   },
-  (t) => [index("marketing_sends_campaign_idx").on(t.campaignId, t.createdAt), index("marketing_sends_customer_idx").on(t.customerId, t.createdAt)],
+  (t) => [
+    index("marketing_sends_campaign_idx").on(t.campaignId, t.createdAt),
+    index("marketing_sends_customer_idx").on(t.customerId, t.createdAt),
+    index("marketing_sends_campaign_status_idx").on(t.campaignId, t.status),
+  ],
 );
 
 /** Unsubscribes from marketing, per channel: an email link, STOP to a marketing text, or staff. Checked before every marketing send. */

@@ -456,6 +456,13 @@
       "when": 1794538800000,
       "tag": "core_0064_owner_entities",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1794625200000,
+      "tag": "core_0065_campaign_center_v2",
+      "breakpoints": true
     }
   ]
 }
