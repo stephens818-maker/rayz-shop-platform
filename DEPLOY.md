@@ -231,8 +231,13 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Under **Location setup → Owners**, check Ray'z Corporate's legal name and contact email. Add franchisee owners only when there are any.
    - Owner-level Stripe accounts are optional. Every shop stays on its current payments mode until someone with the banking permission switches it to **Owner's account**. The Connect webhook endpoint needs no change: owner accounts' events arrive on the same endpoint.
    - A database that ever ran the withdrawn `core_0063_franchising` migration must be reset (`pnpm db:reset`) before this one.
-24. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
-25. Add the custom domain under **Settings → Domains**.
+24. Campaign Center v2 (migration `core_0065_campaign_center_v2`; see [Campaign Center](README.md#campaign-center)):
+   - The migration adds blast types, repeats, A/B tests, holdout groups, send-time optimization and the review record to `marketing_campaigns`; variants, opens and the already-booked flag to `marketing_sends`; days and hours to coupons; and the template library with four approved starter templates. Existing blasts read as quick updates or promotions by their coupon, and nothing already scheduled changes. The 2nd-visit and after-visit automations appear switched off at every location.
+   - Before go-live, check **Campaign Center → Settings → Attribution** (window and whether it starts at the send or at the open or click) and review the starter templates under **Campaign Center → Templates**.
+   - **Describe what you want** uses the assistant's provider (`ASSISTANT_PROVIDER` with `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). Without one it drafts from keyword rules. Either way only the request, coupon codes, location and badge names are sent, and a person reviews before anything goes.
+   - Email opens are counted from an image in the HTML part. The queue hands `htmlBody` to the email provider, so when Postmark or Resend is wired, check it sends the HTML part as well as the text.
+25. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
+26. Add the custom domain under **Settings → Domains**.
 
 ## Running the production build locally
 

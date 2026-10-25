@@ -1971,7 +1971,7 @@ Who can edit details already on file, and the front desk's view of a client whos
 
 ### Campaign Center
 
-Brand-level campaigns and coupons, switched on and worded per location, at `/admin/campaign-center`. Nav: **Campaign Center → We have openings, Campaigns, Blasts, My lapsed clients, Settings**; coupons are under **Promos & gift cards**; the reports are **Reports → Campaign Center** (`/admin/reports/campaign-center`), **Reports → Lapsed clients by barber** (`/admin/reports/lapsed-clients`) and **Reports → We have openings** (`/admin/reports/openings`).
+Brand-level campaigns and coupons, switched on and worded per location, at `/admin/campaign-center`. Nav: **Campaign Center → We have openings, Campaigns, Blasts, Calendar, Templates, My lapsed clients, Settings**; coupons are under **Promos & gift cards**; the reports are **Reports → Campaign Center** (`/admin/reports/campaign-center`), **Reports → Lapsed clients by barber** (`/admin/reports/lapsed-clients`) and **Reports → We have openings** (`/admin/reports/openings`).
 
 **Who can do what.** Six permissions in the role editor's **Campaign Center** group. Migration `core_0041_marketing` gave the first four to roles under their first names; `core_0042_campaign_center` renames them in every role and per-person override and keeps what each person could do; `core_0043_lapsed_campaigns` adds the fifth; `core_0045_openings` adds **We have openings** and makes everything else brand-only by default: it takes view, create, send, own lapsed clients, `promos.manage` and the Campaign Center and lapsed-client reports out of the Regional and Shop Manager roles, and gives them, Front Desk and shop logins We have openings and its report. A brand that wants managers to keep more grants it back in the role editor or per person.
 
@@ -2007,12 +2007,14 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
   - which services or products it applies to (blank means the whole ticket, or services only);
   - which locations (blank means all; a manager can only pick their own);
   - minimum spend before discounts, and start and end dates (checked against the ticket's day);
-  - how many uses in total and per client;
+  - **days and hours:** some days of the week and a From/Until time (e.g. Tue and Wed, 10 AM to 2 PM), in the location's time zone. Checkout checks the sale's time; a code held from online booking is checked against the appointment's time, when booking and again at checkout;
+  - how many uses in total, and **use per client:** One time, Up to N, or Recurring (no per-client limit);
   - first visit only (earlier walk-in tickets count as visits);
   - whether it stacks with other coupons and manual discounts;
   - whether it applies automatically.
 - **Codes:** one shared code, or single-use codes (one per client, issued by a campaign, with an optional "valid for N days").
 - **Locked after use:** once a coupon has been redeemed or has issued codes, its code and code type stay as they are.
+- **The list** shows each coupon's redemptions (not counting reversed ones) and the revenue on those tickets, its use per client and its days and hours.
 - **At checkout:**
   - The POS takes a code, and the ticket starts with any coupon held from the online booking ("From online booking") and any shared coupon that applies automatically for this client ("Applied automatically").
   - Each redemption is recorded inside checkout's transaction, with the limits checked again under a lock, so two tills can't both take the last use.
@@ -2020,7 +2022,7 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 - **Loyalty:** coupons lower net service spend, so loyalty is earned on what the client actually paid for services.
 - **Online booking:** `/book/{shop}` has a coupon box, filled in from a campaign link (`?coupon=`). The coupon is checked and shown as "Free Beard Trim", "$5 off" and so on, held on the appointment, and applied when the ticket is opened. A coupon that no longer works by then is shown on the ticket with the reason. Checks are limited to 20 per 10 minutes per client IP (the trusted-proxy IP, see `TRUSTED_PROXY_HOPS`).
 
-**Automated campaigns** (Campaign Center → Campaigns): ten campaigns, each switched on per location, off by default, plus **From your barber**, which barbers send by hand (below).
+**Automated campaigns** (Campaign Center → Campaigns): twelve event-based campaigns, each switched on per location, off by default, plus **From your barber**, which barbers send by hand (below), and **Badge news**, which the badge engine sends.
 
 | Campaign | Who gets it | Default |
 |---|---|---|
@@ -2028,6 +2030,8 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 | We miss you | No visit since | 42 days |
 | Win-back | No visit since | 90 days |
 | Thanks for your first visit | After the client's first visit | 24 hours after |
+| Come back for a 2nd visit | Clients with one visit and nothing booked | 21 days after the first visit |
+| After every visit | After each completed visit but the first (the first-visit thanks covers that one), once per visit | 3 hours after |
 | Visit milestone | After the client's Nth visit | 10th visit |
 | Missed appointment follow-up | After a no-show | 3 hours after |
 | Rebook reminder | Before their next expected visit: last visit plus their [usual time between visits](#time-between-visits) | 3 days before |
@@ -2042,7 +2046,22 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
 - **Test send:** sends the campaign to yourself, by text or email.
 - **Missed runs:** a campaign that missed a day catches up for 14 days, and each client gets each occasion once (one birthday a year, one lapse per last visit, and so on).
 
-**Blasts** (Campaign Center → Blasts): one-off text, email or push.
+**Blasts** (Campaign Center → Blasts): one-time or repeating text, email or push, built in a four-step wizard.
+- **The wizard:** **Type → Audience & options → Content → Review**. Every step can go back; nothing is sent before Review.
+- **Types:**
+  - **Quick update:** no offer. A coupon can't be attached ("A quick update carries no coupon").
+  - **Promotion:** carries a coupon, and the wording needs `{coupon_code}`.
+  - **Describe what you want:** one sentence ("Bring back clients we haven't seen in two months with 15% off"). The assistant's language model (the same pluggable provider as [Rayz Assistant](#rayz-assistant): `ASSISTANT_PROVIDER`, OpenAI or Anthropic, or keyword rules without one) drafts the name, type, channels, wording for each channel, the audience and the coupon, and fills in the wizard. The model is sent the request, the brand's coupon codes, the location names and the badge names, never anything about a client. The draft isn't saved. Its blast is marked as drafted by the assistant, and goes out only from the Review step after the person ticks **I've checked the audience, wording and timing** (the server refuses it otherwise and records who reviewed it). What the assistant changed to fit the rules (a filter the person can't use, a coupon that isn't usable) is listed for the reviewer. Every draft is audited (`campaign_center.ai_drafted`).
+- **Audience** uses the full segment builder, plus **client stage** chips (New, Regular, Due or overdue, Lapsed; the same words on every screen, so it's always "Lapsed", never "Lapsing"). Beside it, the **live audience** shows the matched clients, how many are opted in on each channel (email, text and push on their own, so a client can count on several), how many the blast reaches by its channel order, and who can't be reached.
+- **When:** now, or a date and time. **Repeat:** One time, Every week, Every 2 weeks or Every month, with an optional end date. The first send sets the weekday (or day of the month) and the time, kept in local time across daylight saving. Each send is its own occasion, so a client gets each week's once. A repeat that would start after its end date is refused.
+- **Options:**
+  - **A/B test** of the subject, text or push (one-time blasts only): each variant goes to half of the test share (10 to 50%), and after the wait (1 to 72 hours, default 4) the variant with the better click, open or booking rate is picked (a tie keeps A) and sent to everyone else. While it runs the blast shows as **A/B testing** and can't be paused or changed. Variant B needs different wording from A.
+  - **Holdout group** (up to 50%): eligible clients held back at random get nothing and are the baseline for lift.
+  - **Send-time optimization:** each message waits until the client's usual time to book (the median local time they made their bookings in the last year, from two bookings), within a day; clients without one get it now. Quiet hours still apply.
+  - **Frequency caps and quiet hours** (from Settings) always apply and are shown here.
+- **Content:** the coupon list shows every code with its redemptions and revenue; expired, switched-off and used-up codes are listed with a red badge and the reason, never hidden. A blast can start from an approved **template**. A **preview per channel**: the email as it will look (light or dark, web or mobile), the text on a phone, and the push on a lock screen.
+- **Review:** a summary of type, audience, channels, schedule and options; **Send a test to me** (each variant); then **Send now** or **Schedule**.
+- **List:** status filters (**All, Scheduled, Paused, Draft, Sent**; Scheduled includes A/B testing and sending), sort by **Newest** or **Most successful** (attributed sales, then booking rate, then click rate), each row's open, click and booking rate and attributed sales, and **Pause, Resume, Rename, Duplicate**. Duplicate makes a draft "Copy of …" with the same wording, audience and options. A one-time blast resumed after its time goes on the next run; a repeating one picks up at its next send (or can't be resumed once its end date has passed).
 - **Segment builder:**
   - locations;
   - **last visit:** quick filters "more than 2 / 3 / 4 / 5 / 6 / 8 / 12 weeks ago", **Between…** a range in weeks or days (e.g. 3 to 4 weeks ago), or custom days. The quick filters also tick **Nothing booked since their last visit**, so it's clients who really lapsed; a cancelled or missed booking doesn't count as booked;
@@ -2056,7 +2075,21 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
   - The count updates as the filters change: how many opted-in clients would get it, how many match, how many can be reached on each channel, and a few first names.
   - **Test send**, **Save draft**, **Schedule** for a date and time, or **Send now** after a confirmation.
   - A scheduled blast can be cancelled until it goes out.
-- **Results:** a sent blast shows queued and skipped counts with the reasons ("No marketing consent", "Weekly limit reached", …).
+- **Results:** a sent blast shows queued and skipped counts with the reasons ("No marketing consent", "Weekly limit reached", …), then its tiles (attributed sales, open, click and booking rate), delivered, unsubscribe and opt-out rates, ROI, lift against the holdout group, the A/B result, and breakdowns by variant, location and barber. A manager sees their own locations' share.
+
+**Metrics** (the overview's tiles, the blasts list, a blast's results and the report all come from one query, `sendOutcomes` in `src/server/marketing/report.ts`):
+- **Unique, capped at 100%.** Open rate is emails opened at least once over emails delivered; click rate is messages whose link was opened at least once over messages delivered; booking rate is messages followed by a booking in the window over messages delivered. A rate with nothing to divide by shows "—", not 0%.
+- **Delivered:** the provider accepted it (texts once Twilio reports them delivered), or it was opened or clicked, which proves it arrived. Tests, skips and holdouts aren't counted.
+- **Opens:** every marketing email has an HTML part with a 1×1 image, `/m/{token}/o.gif`, which counts the open (not mail scanners or link checkers). A click counts as an open. Texts and pushes have no opens; push opens aren't tracked yet.
+- **Clicks:** each message's link is its own token (`/m/{token}`), so a click is that client's.
+- **Attribution:** **Settings → Attribution** sets the window (default 7 days) and when it starts: when the message was sent, or when the client opened or clicked it. A booking, paid ticket or redemption in the window counts toward the latest message before it (last touch).
+- **Already booked:** a client who had an appointment coming up when the message went is marked, and their spend isn't credited; nor is spend on an appointment booked before the message.
+- **Lift:** the booking rate of clients who got it, less the holdout group's, each counting any booking in the window.
+- **Every tile has an "i"** with its definition, from `metricDefinitions` in `src/domain/campaign-metrics.ts`. Numbers load behind grey skeletons and never show a placeholder $0.
+
+**Calendar** (Campaign Center → Calendar, `/admin/campaign-center/calendar?m=YYYY-MM`): a month of blasts. Days a blast went out (with its message count) come from its messages; upcoming sends come from its schedule, every repeat included. Paused and A/B-testing blasts are marked, and drafts are listed beside it.
+
+**Templates** (Campaign Center → Templates): the brand's library of wording for common blasts. It starts with New hours, Holiday closing, Seasonal promotion and Refer a friend, approved. Only the brand (create, with access to all shops) writes, approves, sends back to draft or archives them; locations see and start from approved ones only. Changing an approved template's wording sends it back to draft until it's approved again, and a blast can't be saved from a template that isn't approved.
 
 **Lapsed sequences** (Campaign Center → Campaigns → **Lapsed sequences**, `/admin/campaign-center/sequences/{id}`; create writes them, send switches them on or off):
 - **Several steps in one campaign**, each at its own point after the last visit with its own text, email and push and an optional coupon. A new sequence starts with four: 2 weeks, a friendly reminder with no coupon or link; 3 weeks, a reminder with the booking link; 4 weeks, a coupon; 6 weeks and on, a bigger coupon. Up to six steps, at least a week apart.
@@ -2097,9 +2130,9 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
   - The token says nothing about the client.
 
 **Reporting** (Reports → Campaign Center; `report.campaign_center.view`, CSV with `.export`):
-- **Measures:** sends, delivered, clicks, bookings, redemptions, attributed revenue, cost, ROI, unsubscribes and unsubscribe rate.
+- **Measures:** sends, delivered, unique opens and clicks, bookings, redemptions, attributed revenue, cost, ROI, unsubscribes and unsubscribe rate (see **Metrics** above).
 - **Grouping:** by campaign, location and barber.
-- **Attribution:** a booking, paid ticket or redemption within the attribution window (default 7 days) counts toward the latest message the client got before it (last touch).
+- **Attribution:** a booking, paid ticket or redemption within the attribution window (default 7 days, from the send or from the open or click) counts toward the latest message the client got before it (last touch), leaving out clients already booked.
 - **Cost:** message costs per channel are set in Settings.
 
 **Engine:**
@@ -2120,7 +2153,9 @@ Brand-level campaigns and coupons, switched on and worded per location, at `/adm
   - barber matching (primary, most recent, any) and nothing booked since;
   - lapsed sequences: the step by weeks since, once per lapse, leaving on booking and coming back on a cancel, the barber's signature and link, no overlap with "We miss you", create and send kept apart;
   - My lapsed clients without contact details, only their own clients, the location switch and the daily limit;
-  - the lapsed report's buckets and rebook rate, and the migration's grants.
+  - the lapsed report's buckets and rebook rate, and the migration's grants;
+  - the A/B test and its winner, the holdout group and lift, weekly repeats with pause and resume, the open pixel, already-booked and engaged attribution, the coupon list and the expired-coupon guard, opted-in counts per channel, duplicate and rename, the template library, the assistant's draft (nothing about clients sent to the model) and the review gate, the calendar, the 2nd-visit and after-visit audiences, send-time optimization and coupon days and hours at checkout.
+- `tests/campaign-center.test.ts`: repeats across daylight saving and end dates, A/B and holdout group sizes, the winner, send-time optimization, unique capped rates and their definitions, the assistant's draft normalized from good and malformed answers, the email's HTML, coupon days and hours, and consistent stage names.
 - `tests/openings.test.ts`: the `{day}` wording, the days allowed, limits, per-location rules and settings fallbacks. `tests/permissions.test.ts`: locations get only We have openings.
 - `tests/db/openings.test.ts`: as the Coralville shop login, the preview without names or contacts, who gets it and by which channel, the 7-day cap, quiet hours, the daily limit, approval (approve, turn down, withdraw, expire), the live page and waitlist, and the report.
 

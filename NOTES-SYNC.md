@@ -454,6 +454,20 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-25: core (Campaign Center v2), FYI for mobile
+
+- **What's new:** a four-step blast wizard (quick update, promotion, or drafted by the assistant and reviewed by a person), repeating blasts, A/B tests with an automatic winner, holdout groups and lift, send-time optimization, an email open pixel, unique capped metrics with definitions, an attribution basis setting, revenue that leaves out clients already booked, a campaign calendar, a brand-approved template library, and coupon days and hours (README, "Campaign Center").
+- **Schema (`core_0065_campaign_center_v2`):**
+  - `marketing_campaigns` gains `campaign_type` (`update` | `promotion`, null on old rows: read it from `promo_id`), `recurrence`, `ab`, `holdout_pct`, `send_time_opt`, `template_id` and `ai_drafted`; a blast's review is recorded in the existing `reviewed_by` and `reviewed_at`. Blast `status` can now also be `paused` and `testing` (an A/B test waiting for its winner). Anything that lists blasts by status should expect both.
+  - `marketing_sends.status` can be `holdout` (no message went, no job). It also gains `variant` (`a` | `b`), `opens`, `opened_at` and `already_booked`. Count sends with `status = 'queued'` as before.
+  - New trigger keys `second_visit` and `post_visit` (switched off everywhere). If the app ever lists trigger keys, add them.
+  - `promo_codes` gains `days_of_week` (0 = Sunday) and `time_from` / `time_to` (HH:MM, both or neither). Core checks them at checkout against the sale's time, and for a coupon held from booking against the appointment's time (when the hold is made and again at checkout). `checkBookingCoupon`, before a time is picked, doesn't check days or hours, so an app that shows a coupon early should expect the hold to refuse it for a time outside them.
+  - New table `marketing_templates`.
+- **Email opens:** marketing emails now have `notification_jobs.html_body` with a pixel at `/m/{token}/o.gif` (core route). Push opens aren't tracked yet. If the app reports push opens later, a core endpoint can set `marketing_sends.opened_at`; ask here.
+- **Migration:** `core_0065_campaign_center_v2`. The next free number is `core_0066`.
+- **No request.** None of the mobile-owned files changed.
+- **Tests:** `tests/campaign-center.test.ts` and the "Campaign Center v2" block in `tests/db/marketing.test.ts`.
+
 ### 2026-10-25: core (owner entities and franchising basics), FYI for mobile
 
 - **What's new:** lightweight franchising basics only. Ray'z corporate still runs every location. Royalties, the ad fund, brand-standard locks, franchise agreements and client-data ownership rules are future work (README, "Owner entities and franchising basics").
