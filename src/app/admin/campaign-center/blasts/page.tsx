@@ -91,7 +91,7 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
               <Td>
                 <Badge tone={st.tone}>{st.label}</Badge>
               </Td>
-              <Td className="text-xs">
+              <Td className="min-w-[6.5rem] whitespace-normal text-xs">
                 {b.status === "scheduled" || b.status === "paused" ? (b.scheduledAt ? formatDateTime(b.scheduledAt) : "—") : b.sentAt ? formatDateTime(b.sentAt) : b.scheduledAt ? formatDateTime(b.scheduledAt) : "—"}
               </Td>
               <Td right>{funnel.sent}</Td>
