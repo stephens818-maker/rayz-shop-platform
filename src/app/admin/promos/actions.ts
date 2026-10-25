@@ -66,6 +66,9 @@ export async function saveCouponAction(id: string | null, raw: unknown) {
       firstVisitOnly: c.firstVisitOnly,
       stackable: c.stackable,
       autoApply: c.autoApply,
+      daysOfWeek: [...new Set(c.daysOfWeek)].sort((a, b) => a - b),
+      timeFrom: c.timeFrom || null,
+      timeTo: c.timeTo || null,
     };
     const shopId = c.shopIds.length === 1 ? c.shopIds[0] : null;
     if (before) {

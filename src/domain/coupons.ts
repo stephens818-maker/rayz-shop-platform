@@ -86,10 +86,34 @@ export interface CouponLimits {
   maxPerCustomer: number | null;
   firstVisitOnly: boolean;
   codeMode: CodeMode;
+  /** 0 Sunday to 6 Saturday; empty is every day. */
+  daysOfWeek?: readonly number[];
+  /** HH:MM, local; both or neither. */
+  timeFrom?: string | null;
+  timeTo?: string | null;
+}
+
+export const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const hm = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
+const clock = (s: string) => {
+  const m = hm(s);
+  const h = Math.floor(m / 60) % 12 || 12;
+  return `${h}${m % 60 ? `:${String(m % 60).padStart(2, "0")}` : ""} ${m >= 720 ? "PM" : "AM"}`;
+};
+
+/** "Tue, Wed", "Weekdays", "Tue, Wed, 10 AM to 2 PM", or null for any time. */
+export function couponWhenLabel(p: Pick<CouponLimits, "daysOfWeek" | "timeFrom" | "timeTo">): string | null {
+  const days = [...new Set(p.daysOfWeek ?? [])].sort((a, b) => a - b);
+  const d = !days.length || days.length === 7 ? null : days.join() === "1,2,3,4,5" ? "Weekdays" : days.join() === "0,6" ? "Weekends" : days.map((x) => DAY_NAMES[x]).join(", ");
+  const t = p.timeFrom && p.timeTo ? `${clock(p.timeFrom)} to ${clock(p.timeTo)}` : null;
+  return d && t ? `${d}, ${t}` : (d ?? t);
 }
 
 export interface CouponCheck {
   today: string;
+  /** When it's used, in the location's time zone: the weekday (0 Sunday) and minutes after midnight. Undefined skips the day and time limits (checked again at checkout). */
+  weekday?: number;
+  minutes?: number;
   shopId: string;
   /** Undefined: not known yet (a client booking online before they're matched); the client's limits are checked at checkout. */
   customerId?: string | null;
@@ -109,6 +133,8 @@ export function couponProblem(p: CouponLimits, c: CouponCheck): string | null {
   if (p.startsOn && c.today < p.startsOn) return "That coupon isn't active yet";
   if (p.endsOn && c.today > p.endsOn) return "That coupon has expired";
   if (p.maxRedemptions !== null && p.redemptions >= p.maxRedemptions) return "That coupon has been fully redeemed";
+  if (c.weekday !== undefined && p.daysOfWeek?.length && !p.daysOfWeek.includes(c.weekday)) return `That coupon only works ${couponWhenLabel({ daysOfWeek: p.daysOfWeek })}`;
+  if (c.minutes !== undefined && p.timeFrom && p.timeTo && (c.minutes < hm(p.timeFrom) || c.minutes >= hm(p.timeTo))) return `That coupon only works ${couponWhenLabel({ timeFrom: p.timeFrom, timeTo: p.timeTo })}`;
   if (p.codeMode === "unique") {
     if (!c.issued) return "That coupon only works with the client's own code";
     if (c.issued.redeemed) return "That code has already been used";
@@ -160,9 +186,14 @@ export const CouponInput = z
     firstVisitOnly: z.boolean().default(false),
     stackable: z.boolean().default(false),
     autoApply: z.boolean().default(false),
+    daysOfWeek: z.array(z.number().int().min(0).max(6)).max(7).default([]),
+    timeFrom: z.union([z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 10:00"), z.literal("")]).nullable().optional(),
+    timeTo: z.union([z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 14:00"), z.literal("")]).nullable().optional(),
   })
   .superRefine((c, ctx) => {
     const bad = (message: string, path: string) => ctx.addIssue({ code: "custom", message, path: [path] });
+    if (!!c.timeFrom !== !!c.timeTo) bad("Set both times, or neither", "timeTo");
+    if (c.timeFrom && c.timeTo && c.timeTo <= c.timeFrom) bad("The end time is before the start time", "timeTo");
     if (c.type === "percent" && (c.value < 1 || c.value > 100)) bad("Percent off is 1 to 100", "value");
     if (c.type === "amount" && c.value < 1) bad("Enter the dollars off", "value");
     if (c.type === "free_item" && (!c.freeItemId || !c.freeItemKind)) bad("Pick the free add-on or product", "freeItemId");

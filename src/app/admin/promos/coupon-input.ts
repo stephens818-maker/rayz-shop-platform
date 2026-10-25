@@ -24,6 +24,9 @@ export interface CouponFormValues {
   firstVisitOnly: boolean;
   stackable: boolean;
   autoApply: boolean;
+  daysOfWeek: number[];
+  timeFrom: string | null;
+  timeTo: string | null;
 }
 
 /** Where a coupon works: its location list, or the single shop older promo codes were tied to. Empty is every location. */
@@ -51,5 +54,8 @@ export function couponInputOf(p: Promo): CouponFormValues {
     firstVisitOnly: p.firstVisitOnly,
     stackable: p.stackable,
     autoApply: p.autoApply,
+    daysOfWeek: p.daysOfWeek ?? [],
+    timeFrom: p.timeFrom,
+    timeTo: p.timeTo,
   };
 }

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { and, asc, desc, eq, ilike, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { couponCodes, customers, giftCardLedger, giftCards, products, promoCodes, sales, services, shops } from "@/db/schema";
-import { couponSummary } from "@/domain/coupons";
+import { couponSummary, couponWhenLabel } from "@/domain/coupons";
 import { Badge, Card, CardHeader, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { formatDateTime, todayLocal } from "@/lib/time";
@@ -47,6 +47,13 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
   ]);
   const shown = promos.filter((p) => ctx.brandWide || !scopeOf(p).length || scopeOf(p).some((s) => ctx.shopIds.includes(s)));
   const visible = await Promise.all(shown.map(async (p) => ({ p, summary: couponSummary(await ruleOf(p, p.code, "code")) })));
+  // Redemptions that weren't reversed and what those tickets brought in, at the person's shops.
+  const used = (await db.execute(sql`
+    select r.promo_id, count(*)::int n, coalesce(sum(case when s.status in ('paid', 'partially_refunded') then s.service_net_cents + s.product_net_cents else 0 end), 0)::bigint cents
+    from coupon_redemptions r join sales s on s.id = r.sale_id
+    where r.reversed_at is null ${ctx.brandWide ? sql`` : ctx.shopIds.length ? sql`and r.shop_id in (${sql.join(ctx.shopIds.map((x) => sql`${x}::uuid`), sql`, `)})` : sql`and false`}
+    group by r.promo_id`)) as unknown as { promo_id: string; n: number; cents: string | number }[];
+  const usedBy = new Map(used.map((u) => [u.promo_id, { n: Number(u.n), cents: Number(u.cents) }]));
   const editing = managesPromos && sp.edit ? (shown.find((p) => p.id === sp.edit) ?? null) : null;
   const [serviceRows, productRows, issued] = managesPromos
     ? await Promise.all([
@@ -83,6 +90,7 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
               <Th>Locations</Th>
               <Th>Dates</Th>
               <Th right>Used</Th>
+              <Th right>Revenue</Th>
               <Th>Status</Th>
               <Th />
             </tr>
@@ -104,16 +112,18 @@ export default async function PromosPage({ searchParams }: { searchParams: Promi
                       {p.codeMode === "unique" && <Badge tone="violet">{p.validDays ? `Single-use, ${p.validDays} days` : "Single-use codes"}</Badge>}
                       {p.autoApply && <Badge tone="blue">Applies itself</Badge>}
                       {p.firstVisitOnly && <Badge>First visit</Badge>}
-                      {p.maxPerCustomer && <Badge>{p.maxPerCustomer === 1 ? "Once per client" : `${p.maxPerCustomer} per client`}</Badge>}
+                      {p.maxPerCustomer ? <Badge>{p.maxPerCustomer === 1 ? "One time per client" : `Up to ${p.maxPerCustomer} per client`}</Badge> : <Badge>Recurring</Badge>}
+                      {couponWhenLabel(p) && <Badge tone="amber">{couponWhenLabel(p)}</Badge>}
                       {p.stackable && <Badge>Stacks</Badge>}
                     </div>
                   </Td>
                   <Td className="whitespace-normal text-xs">{scope.length ? [...new Set(scope.map((id) => ((ctx.brandWide || ctx.shopIds.includes(id)) && shopRows.find((s) => s.id === id)?.name) || OTHER_SHOP))].join(", ") : "All shops"}</Td>
                   <Td className="text-xs">{p.startsOn || p.endsOn ? `${p.startsOn ?? "…"} → ${p.endsOn ?? "…"}` : "Always"}</Td>
                   <Td right>
-                    {p.redemptions}
+                    {usedBy.get(p.id)?.n ?? 0}
                     {p.maxRedemptions ? ` / ${p.maxRedemptions}` : ""}
                   </Td>
+                  <Td right>{formatCents(usedBy.get(p.id)?.cents ?? 0)}</Td>
                   <Td>{!p.active ? <Badge>Off</Badge> : expired ? <Badge tone="amber">Expired</Badge> : <Badge tone="green">Active</Badge>}</Td>
                   <Td>
                     {editable && (

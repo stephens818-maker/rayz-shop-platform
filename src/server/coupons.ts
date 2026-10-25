@@ -7,9 +7,10 @@
 import { and, desc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db, DBorTx, Tx } from "@/db";
 import { appointmentCoupons, appointments, couponCodes, couponRedemptions, marketingCampaigns, marketingSends, products, promoCodes, saleAppointments, services, shops } from "@/db/schema";
-import { CouponRule, couponProblem, couponSummary, type CodeMode, type CouponType, type FreeItemKind } from "@/domain/coupons";
+import { CouponRule, couponProblem, couponSummary, couponWhenLabel, type CodeMode, type CouponType, type FreeItemKind } from "@/domain/coupons";
 import type { DiscountTarget } from "@/domain/checkout";
-import { formatDate, todayLocal } from "@/lib/time";
+import { DateTime } from "luxon";
+import { SHOP_TZ, formatDate, todayLocal } from "@/lib/time";
 import { AppError } from "./errors";
 import { loadMarketingSettings } from "./marketing/settings";
 
@@ -89,6 +90,16 @@ export interface CouponWhere {
   saleId?: string | null;
   appointmentId?: string | null;
   today?: string;
+  /** When it's used, for day and time limits: now at checkout, the appointment's time when held from a booking. Null skips them (the booking page, before a time is picked). */
+  at?: Date | null;
+}
+
+/** The weekday and minute of `at` at this location, for coupons limited to some days or hours. */
+async function localWhen(p: Promo, shopId: string, at: Date | null | undefined, tx: DBorTx): Promise<{ weekday?: number; minutes?: number }> {
+  if (at === null || (!p.daysOfWeek?.length && !p.timeFrom)) return {};
+  const [s] = await tx.select({ tz: shops.timezone }).from(shops).where(eq(shops.id, shopId));
+  const local = DateTime.fromJSDate(at ?? new Date()).setZone(s?.tz ?? SHOP_TZ);
+  return { weekday: local.weekday % 7, minutes: local.hour * 60 + local.minute };
 }
 
 /** Why this coupon can't be used here, or null. */
@@ -97,6 +108,7 @@ export async function problemFor(found: { promo: Promo; issued: Issued | null },
   const p = found.promo;
   const needsHistory = known && (p.firstVisitOnly || p.maxPerCustomer !== null);
   return couponProblem(limitsOf(p), {
+    ...(await localWhen(p, w.shopId, w.at, tx)),
     today: w.today ?? todayLocal(),
     shopId: w.shopId,
     customerId: w.customerId,
@@ -179,7 +191,7 @@ export async function redeemCoupons(
     if (p.codeMode === "unique") {
       [issued] = await tx.select().from(couponCodes).where(eq(couponCodes.code, u.rule.code)).for("update");
     }
-    const problem = await problemFor({ promo: p, issued }, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId, today: todayLocal(now) }, tx);
+    const problem = await problemFor({ promo: p, issued }, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId, today: todayLocal(now), at: now }, tx);
     if (problem) throw new AppError("conflict", `${u.rule.code}: ${problem}`);
     await tx.update(promoCodes).set({ redemptions: p.redemptions + 1 }).where(eq(promoCodes.id, p.id));
     if (issued) await tx.update(couponCodes).set({ redeemedAt: now, saleId: sale.id }).where(eq(couponCodes.id, issued.id));
@@ -225,6 +237,8 @@ async function bookingView(rule: CouponRule, found: { promo: Promo; issued: Issu
   const ends = found.issued?.expiresOn ?? found.promo.endsOn;
   if (ends) notes.push(`Good through ${formatDate(ends, "MMM d")}.`);
   if (found.promo.firstVisitOnly) notes.push("For first visits.");
+  const when = couponWhenLabel(found.promo);
+  if (when) notes.push(`Only ${when}.`);
   if (found.promo.minSpendCents) notes.push("Minimum spend applies.");
   notes.push("Taken off at checkout.");
   return { code: rule.code, summary: couponSummary(rule), freeAddonId: rule.freeItem?.kind === "addon" ? rule.freeItem.id : null, note: notes.join(" ") };
@@ -236,7 +250,7 @@ export async function checkBookingCoupon(shopSlug: string, code: string): Promis
   if (!shop) throw new AppError("not_found", "Shop not found");
   const found = await findCoupon(code);
   if (!found) throw new AppError("bad_request", "That coupon code wasn't found");
-  const problem = await problemFor(found, { shopId: shop.id });
+  const problem = await problemFor(found, { shopId: shop.id, at: null });
   if (problem) throw new AppError("bad_request", problem);
   return bookingView(await ruleOf(found.promo, code, "booking"), found);
 }
@@ -253,7 +267,7 @@ export async function holdBookingCoupon(appointmentCode: string, code: string, n
   if (!a || !["booked", "confirmed"].includes(a.status) || now.getTime() - a.createdAt.getTime() > HOLD_WINDOW_MS) throw new AppError("bad_request", "Add the coupon when you book, or show it at checkout");
   const found = await findCoupon(code);
   if (!found) throw new AppError("bad_request", "That coupon code wasn't found");
-  const problem = await problemFor(found, { shopId: a.shopId, customerId: a.customerId, appointmentId: a.id });
+  const problem = await problemFor(found, { shopId: a.shopId, customerId: a.customerId, appointmentId: a.id, at: a.startsAt });
   if (problem) throw new AppError("bad_request", problem);
   const c = norm(code);
   await db.insert(appointmentCoupons).values({ appointmentId: a.id, promoId: found.promo.id, code: c }).onConflictDoUpdate({ target: appointmentCoupons.appointmentId, set: { promoId: found.promo.id, code: c, createdAt: now } });

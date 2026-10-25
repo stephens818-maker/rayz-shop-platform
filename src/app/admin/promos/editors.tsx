@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Chips, ItemPicker, toggle } from "@/components/chips";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
-import { CODE_MODES, CODE_MODE_LABEL, COUPON_TYPES, COUPON_TYPE_LABEL, type CodeMode, type CouponType } from "@/domain/coupons";
+import { CODE_MODES, CODE_MODE_LABEL, COUPON_TYPES, COUPON_TYPE_LABEL, DAY_NAMES, type CodeMode, type CouponType } from "@/domain/coupons";
 import { issueGiftCardAction, saveCouponAction, togglePromoAction, voidGiftCardAction } from "./actions";
 import type { CouponFormValues } from "./coupon-input";
 
@@ -42,6 +42,9 @@ const BLANK: CouponFormValues = {
   firstVisitOnly: false,
   stackable: false,
   autoApply: false,
+  daysOfWeek: [],
+  timeFrom: null,
+  timeTo: null,
 };
 
 export function CouponForm({ initial, editingId, locked, shops, allShops, services, products }: { initial: CouponFormValues | null; editingId: string | null; locked: boolean; shops: Item[]; allShops: boolean; services: Item[]; products: Item[] }) {
@@ -52,6 +55,7 @@ export function CouponForm({ initial, editingId, locked, shops, allShops, servic
   const [valueText, setValueText] = useState(initial ? (initial.type === "amount" ? String(initial.value / 100) : String(initial.value)) : "");
   const [minSpend, setMinSpend] = useState(initial?.minSpendCents ? String(initial.minSpendCents / 100) : "");
   const set = (x: Partial<CouponFormValues>) => setV({ ...v, ...x });
+  const perClient = v.maxPerCustomer === 1 ? "once" : v.maxPerCustomer === null ? "recurring" : "upto";
   const free = [...services.map((s) => ({ id: `${s.kind === "addon" ? "addon" : "service"}:${s.id}`, name: `${s.name}${s.kind === "addon" ? " (add-on)" : ""}` })), ...products.map((p) => ({ id: `product:${p.id}`, name: p.name }))];
   const submit = () =>
     start(async () => {
@@ -163,14 +167,44 @@ export function CouponForm({ initial, editingId, locked, shops, allShops, servic
         <Field label="Most uses in total">
           <Input inputMode="numeric" value={str(v.maxRedemptions)} onChange={(e) => set({ maxRedemptions: num(e.target.value) || null })} />
         </Field>
-        <Field label="Most uses per client">
-          <Input inputMode="numeric" value={str(v.maxPerCustomer)} onChange={(e) => set({ maxPerCustomer: num(e.target.value) || null })} />
+        <Field label="Use per client" hint={perClient === "once" ? "Each client uses it once" : perClient === "recurring" ? "Every visit, while it runs" : undefined}>
+          <Select
+            value={perClient}
+            onChange={(e) => {
+              const k = e.target.value as typeof perClient;
+              set({ maxPerCustomer: k === "once" ? 1 : k === "recurring" ? null : Math.max(2, v.maxPerCustomer ?? 2) });
+            }}
+          >
+            <option value="once">One time</option>
+            <option value="recurring">Recurring (every visit)</option>
+            <option value="upto">Up to a number of times</option>
+          </Select>
         </Field>
+        {perClient === "upto" && (
+          <Field label="Times per client">
+            <Input inputMode="numeric" value={str(v.maxPerCustomer)} onChange={(e) => set({ maxPerCustomer: Math.max(2, num(e.target.value) ?? 2) })} />
+          </Field>
+        )}
         {v.codeMode === "unique" && (
           <Field label="Code works for (days)">
             <Input inputMode="numeric" value={str(v.validDays)} onChange={(e) => set({ validDays: num(e.target.value) || null })} />
           </Field>
         )}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto]">
+        <Field label="Days it works" hint="None picked: every day. Checked against the appointment's day at checkout.">
+          <Chips
+            options={DAY_NAMES.map((d, i) => ({ id: String(i), name: d }))}
+            selected={v.daysOfWeek.map(String)}
+            onToggle={(id) => set({ daysOfWeek: toggle(v.daysOfWeek.map(String), id).map(Number).sort((a, b) => a - b) })}
+          />
+        </Field>
+        <Field label="From" hint="Blank: any time">
+          <Input type="time" value={v.timeFrom ?? ""} onChange={(e) => set({ timeFrom: e.target.value || null, timeTo: e.target.value ? (v.timeTo ?? null) : null })} />
+        </Field>
+        <Field label="Until">
+          <Input type="time" value={v.timeTo ?? ""} disabled={!v.timeFrom} onChange={(e) => set({ timeTo: e.target.value || null })} />
+        </Field>
       </div>
       <div className="flex flex-wrap gap-5 text-sm">
         <label className="flex items-center gap-2">
