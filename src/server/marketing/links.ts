@@ -31,6 +31,15 @@ export async function openMarketingLink(token: string, userAgent: string | null,
   return s.bookPath ?? "/book";
 }
 
+/** The email's tracking image loaded: counts the open (not mail scanners or link checkers). Only real sends count, once each in the open rate. */
+export async function openMarketingEmail(token: string, userAgent: string | null, now = new Date()): Promise<void> {
+  if (!TOKEN.test(token) || isAutomatedOpen(userAgent)) return;
+  await db
+    .update(marketingSends)
+    .set({ opens: sql`${marketingSends.opens} + 1`, openedAt: sql`coalesce(${marketingSends.openedAt}, ${now.toISOString()}::timestamptz)` })
+    .where(and(eq(marketingSends.token, token), eq(marketingSends.status, "queued"), eq(marketingSends.channel, "email")));
+}
+
 export interface UnsubscribeView {
   shopName: string;
   channel: Channel;

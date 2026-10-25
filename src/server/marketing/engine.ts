@@ -31,9 +31,11 @@ import {
   stepDue,
   triggerSettings,
 } from "@/domain/marketing";
+import { abGroup, abOf, blastOccasion, inHoldout, nextOccurrence, optimizedSendAt, pickWinner, recurrenceOf, usualMinute, variantTemplates, type AbTest } from "@/domain/campaign-schedule";
+import { marketingEmailHtml } from "@/domain/marketing-email";
 import { appBaseUrl } from "@/lib/deployment";
 import { couponSuffix, marketingToken } from "@/lib/ids";
-import { addDays, formatDate, todayLocal } from "@/lib/time";
+import { SHOP_TZ, addDays, formatDate, todayLocal } from "@/lib/time";
 import { processDueJobs } from "../notifications/queue";
 import { Target, barberCards, clientsOf, segmentMembers, signedBy, triggerTargets } from "./audiences";
 import { Contact, contactsFor } from "./consent";
@@ -111,7 +113,20 @@ export interface DeliverInput {
   stepId?: string | null;
   /** We have openings: no client gets a second openings message within this many days. */
   openingsCapDays?: number;
+  /** A/B-tested blasts: which wording this is. */
+  variant?: "a" | "b" | null;
   now: Date;
+}
+
+const ACTIVE = sql.raw("('booked', 'confirmed', 'checked_in', 'in_service')");
+
+/** The local minute of the day this client usually books (when they made their bookings in the last year), from two bookings. */
+async function usualBookingMinute(customerId: string, timeZone: string, now: Date, tx: DBorTx): Promise<number | null> {
+  const rows = (await tx.execute(sql`
+    select (extract(hour from a.created_at at time zone ${timeZone}) * 60 + extract(minute from a.created_at at time zone ${timeZone}))::int m
+    from appointments a where a.customer_id = ${customerId} and a.created_at > ${new Date(now.getTime() - 365 * DAY).toISOString()}
+    order by a.created_at desc limit 20`)) as unknown as { m: number }[];
+  return usualMinute(rows.map((r) => Number(r.m)));
 }
 
 /** Someone in this household got a We have openings message in the last `days` days. */
@@ -167,6 +182,13 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
     const today = todayLocal(now);
     const promoBad = promoProblem(i.promo, today);
     if (promoBad) return skip(promoBad);
+    if (inHoldout(c.id, t.customerId, c.holdoutPct ?? 0)) {
+      await tx
+        .insert(marketingSends)
+        .values({ campaignId: c.id, customerId: t.customerId, shopId: shop.id, staffId: t.staffId, channel, stepId: i.stepId ?? null, dedupeKey: key, status: "holdout", skipped: "holdout", token: marketingToken(), variant: i.variant ?? null, createdAt: now })
+        .onConflictDoNothing();
+      return { status: "skipped", reason: "holdout" };
+    }
 
     let code: string | null = null;
     let couponCodeId: string | null = null;
@@ -208,6 +230,9 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
     const m = render(i.templates, values, { brand: BRAND_NAME, address: s.address, unsubscribeUrl: `${base}/m/${token}/unsubscribe` });
     const contact = i.contact!;
     const to = channel === "sms" ? contact.phone! : channel === "email" ? contact.email! : contact.deviceId!;
+    const tz = shop.timezone || SHOP_TZ;
+    const sendAt = c.sendTimeOpt ? optimizedSendAt(now, tz, await usualBookingMinute(t.customerId, tz, now, tx)) : now;
+    const [booked] = (await tx.execute(sql`select 1 x from appointments where customer_id = ${t.customerId} and starts_at > ${now.toISOString()} and status in ${ACTIVE} limit 1`)) as unknown as { x: number }[];
     const [job] = await tx
       .insert(notificationJobs)
       .values({
@@ -216,9 +241,10 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
         to,
         subject: channel === "email" ? m.email.subject : channel === "push" ? m.push.title : null,
         body: channel === "sms" ? m.sms : channel === "email" ? m.email.body : m.push.body,
+        htmlBody: channel === "email" ? marketingEmailHtml({ subject: m.email.subject, body: m.email.body, pixelUrl: `${base}/m/${token}/o.gif` }) : null,
         shopId: shop.id,
         customerId: t.customerId,
-        runAt: nextSendAt(now, shop.timezone, s),
+        runAt: nextSendAt(sendAt, tz, s),
       })
       .returning({ id: notificationJobs.id });
     const [send] = await tx
@@ -237,6 +263,8 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
         bookPath: t.path ?? bookPathFor(shop.slug, { ...t.link, coupon: code }),
         costCents: costCents(channel, s),
         stepId: i.stepId ?? null,
+        variant: i.variant ?? null,
+        alreadyBooked: !!booked,
         createdAt: now,
       })
       .onConflictDoNothing()
@@ -255,10 +283,13 @@ export interface RunStats {
   queued: number;
   skipped: number;
   failed: number;
+  /** Eligible clients held back in the holdout group. */
+  held?: number;
 }
 const add = (a: RunStats, r: DeliverResult | "failed") => {
   if (r === "failed") a.failed++;
   else if (r.status === "queued") a.queued++;
+  else if (r.status === "skipped" && r.reason === "holdout") a.held = (a.held ?? 0) + 1;
   else if (r.status === "skipped") a.skipped++;
 };
 
@@ -355,6 +386,64 @@ export async function unsent<T extends Target>(campaignId: string, targets: T[])
   return keys.filter((k) => !done.has(k)).map((k) => byKey.get(k)!);
 }
 
+/** A blast's clock: its first location's time zone (every location today is Central). */
+export function blastTimeZone(c: Pick<Campaign, "shopIds">, shopById: Map<string, Pick<Shop, "timezone">>): string {
+  return (c.shopIds.length ? shopById.get(c.shopIds[0])?.timezone : undefined) || SHOP_TZ;
+}
+
+/**
+ * The A/B tests whose wait is over: each variant's rate on the test's measure (clicks or bookings
+ * over messages sent, opens over emails sent), the winner (a tie keeps A), and the rest of the
+ * audience gets the winner straight away.
+ */
+export async function runAbWinners(now = new Date(), o: { ids?: string[] } = {}): Promise<RunStats> {
+  const stats: RunStats = { queued: 0, skipped: 0, failed: 0 };
+  const list = await db
+    .select()
+    .from(marketingCampaigns)
+    .where(and(eq(marketingCampaigns.kind, "blast"), eq(marketingCampaigns.status, "testing"), o.ids ? inArray(marketingCampaigns.id, o.ids.length ? o.ids : [crypto.randomUUID()]) : undefined));
+  for (const c of list) {
+    const ab = abOf(c.ab);
+    if (!ab || ab.winner || (ab.testEndsAt && new Date(ab.testEndsAt).getTime() > now.getTime())) continue;
+    const result = await abResults(c.id, ab.metric);
+    const winner = pickWinner(result.a, result.b);
+    const decided: AbTest = { ...ab, winner, decidedAt: now.toISOString(), result };
+    const [claimed] = await db
+      .update(marketingCampaigns)
+      .set({ status: "scheduled", scheduledAt: now, ab: decided, updatedAt: now })
+      .where(and(eq(marketingCampaigns.id, c.id), eq(marketingCampaigns.status, "testing")))
+      .returning({ id: marketingCampaigns.id });
+    if (!claimed) continue;
+    const r = await runBlasts(now, { ids: [c.id] });
+    stats.queued += r.queued;
+    stats.skipped += r.skipped;
+    stats.failed += r.failed;
+    stats.held = (stats.held ?? 0) + (r.held ?? 0);
+  }
+  return stats;
+}
+
+/** Each variant's messages sent so far and how many hit the measure. */
+export async function abResults(campaignId: string, metric: AbTest["metric"]): Promise<{ a: { n: number; hits: number }; b: { n: number; hits: number } }> {
+  const rows = (await db.execute(sql`
+    select s.variant,
+      count(*) filter (where ${metric === "open" ? sql`s.channel = 'email'` : sql`true`})::int n,
+      count(*) filter (where ${
+        metric === "click"
+          ? sql`s.first_click_at is not null`
+          : metric === "open"
+            ? sql`s.channel = 'email' and (s.opened_at is not null or s.first_click_at is not null)`
+            : sql`exists (select 1 from appointments a where a.customer_id = s.customer_id and a.created_at > s.created_at and a.status <> 'cancelled')`
+      })::int hits
+    from marketing_sends s where s.campaign_id = ${campaignId} and s.status = 'queued' and s.variant is not null
+    group by s.variant`)) as unknown as { variant: "a" | "b"; n: number; hits: number }[];
+  const of = (v: "a" | "b") => {
+    const r = rows.find((x) => x.variant === v);
+    return { n: Number(r?.n ?? 0), hits: Number(r?.hits ?? 0) };
+  };
+  return { a: of("a"), b: of("b") };
+}
+
 /** A blast stuck "sending" this long (the run died) is picked up again; the dedupe keys keep it from sending twice. */
 const STALE_SENDING_MS = 10 * 60_000;
 
@@ -381,6 +470,11 @@ export async function runBlasts(now = new Date(), o: { ids?: string[] } = {}): P
     try {
       const seg = SegmentSchema.parse(c.segment ?? {});
       const scope = c.shopIds.length ? c.shopIds : allShops.filter((x) => x.status !== "archived").map((x) => x.id);
+      const tz = blastTimeZone(c, shopById);
+      const rec = recurrenceOf(c.recurrence);
+      const ab = rec ? null : abOf(c.ab);
+      const testing = !!ab && !ab.winner;
+      const occasion = blastOccasion(c.scheduledAt, !!rec, tz);
       const members = await segmentMembers(seg, scope, now);
       const contacts = await contactsFor(members.map((m) => m.customerId));
       const promo = await promoById(c.promoId);
@@ -390,18 +484,23 @@ export async function runBlasts(now = new Date(), o: { ids?: string[] } = {}): P
         if (n && n % 200 === 0) await db.update(marketingCampaigns).set({ updatedAt: new Date() }).where(eq(marketingCampaigns.id, c.id));
         const shop = shopById.get(m.shopId);
         if (!shop) continue;
+        // A/B: while testing only the two test groups get it; afterwards everyone else gets the winner (the test groups are already sent).
+        const group = ab ? abGroup(c.id, m.customerId, ab.testPct) : null;
+        if (testing && !group) continue;
+        const variant = ab ? (group ?? ab.winner) : null;
         add(
           stats,
           await deliver({
             campaign: c,
             shop,
-            target: { customerId: m.customerId, shopId: m.shopId, staffId: m.staffId, occasion: "blast" },
+            target: { customerId: m.customerId, shopId: m.shopId, staffId: m.staffId, occasion },
             contact: contacts.get(m.customerId),
-            templates,
+            templates: variant === "b" && ab ? variantTemplates(templates, ab.b) : templates,
             channels,
             settings,
             promo,
             recordSkips: true,
+            variant,
             now,
           }).catch((e) => {
             console.error("marketing blast send failed", c.id, (e as Error).message);
@@ -409,7 +508,19 @@ export async function runBlasts(now = new Date(), o: { ids?: string[] } = {}): P
           }),
         );
       }
-      await db.update(marketingCampaigns).set({ status: "sent", sentAt: now, updatedAt: now }).where(eq(marketingCampaigns.id, c.id));
+      if (testing) {
+        const next: AbTest = { ...ab, testEndsAt: new Date(now.getTime() + ab.waitHours * 3_600_000).toISOString() };
+        await db.update(marketingCampaigns).set({ status: "testing", ab: next, sentAt: now, updatedAt: now }).where(eq(marketingCampaigns.id, c.id));
+      } else if (rec) {
+        const anchor = rec.anchor ? new Date(rec.anchor) : (c.scheduledAt ?? now);
+        const next = nextOccurrence(rec, anchor, new Date(Math.max(now.getTime(), (c.scheduledAt ?? now).getTime())), tz);
+        await db
+          .update(marketingCampaigns)
+          .set(next ? { status: "scheduled", scheduledAt: next, sentAt: now, updatedAt: now } : { status: "sent", sentAt: now, updatedAt: now })
+          .where(eq(marketingCampaigns.id, c.id));
+      } else {
+        await db.update(marketingCampaigns).set({ status: "sent", sentAt: now, updatedAt: now }).where(eq(marketingCampaigns.id, c.id));
+      }
     } catch (e) {
       stats.failed++;
       console.error("marketing blast failed", c.id, (e as Error).message);
@@ -502,8 +613,9 @@ export async function runSequences(now = new Date(), o: { ids?: string[] } = {})
 export async function runMarketing(now = new Date(), o: { triggers?: boolean } = {}) {
   const triggers = o.triggers === false ? { queued: 0, skipped: 0, failed: 0 } : await runTriggers(now);
   const sequences = await runSequences(now);
+  const abWinners = await runAbWinners(now);
   const blasts = await runBlasts(now);
-  return { triggers, sequences, blasts };
+  return { triggers, sequences, blasts, abWinners };
 }
 
 /**
@@ -541,7 +653,16 @@ export async function testSend(o: {
   const [job] = await db.transaction(async (tx) => {
     const j = await tx
       .insert(notificationJobs)
-      .values({ kind: "marketing", channel: o.channel, to, subject: o.channel === "email" ? `[Test] ${m.email.subject}` : null, body: o.channel === "sms" ? `[Test] ${m.sms}` : m.email.body, shopId: o.shop.id, runAt: now })
+      .values({
+        kind: "marketing",
+        channel: o.channel,
+        to,
+        subject: o.channel === "email" ? `[Test] ${m.email.subject}` : null,
+        body: o.channel === "sms" ? `[Test] ${m.sms}` : m.email.body,
+        htmlBody: o.channel === "email" ? marketingEmailHtml({ subject: `[Test] ${m.email.subject}`, body: m.email.body }) : null,
+        shopId: o.shop.id,
+        runAt: now,
+      })
       .returning({ id: notificationJobs.id });
     await tx.insert(marketingSends).values({
       campaignId: o.campaign.id,

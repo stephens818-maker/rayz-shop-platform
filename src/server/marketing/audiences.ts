@@ -102,6 +102,10 @@ export async function triggerTargets(i: TriggerInput): Promise<Target[]> {
       return clients.filter((r) => r.n > 0 && !r.future && t - ms(r.last_at) >= s.days * DAY && t - ms(r.last_at) < (s.days + CATCH_UP_DAYS) * DAY).map((r) => mk(r, `${i.key}:${lastDay(r)}`));
     case "first_visit":
       return clients.filter((r) => r.n === 1 && t - ms(r.last_at) >= s.delayHours * HOUR && t - ms(r.last_at) < s.delayHours * HOUR + 7 * DAY).map((r) => mk(r, "first_visit"));
+    case "second_visit":
+      return clients.filter((r) => r.n === 1 && !r.future && t - ms(r.last_at) >= s.days * DAY && t - ms(r.last_at) < (s.days + CATCH_UP_DAYS) * DAY).map((r) => mk(r, "second_visit"));
+    case "post_visit":
+      return clients.filter((r) => r.n > 1 && t - ms(r.last_at) >= s.delayHours * HOUR && t - ms(r.last_at) < s.delayHours * HOUR + DAY).map((r) => mk(r, `post_visit:${lastDay(r)}`));
     case "milestone":
       return clients.filter((r) => r.n === s.visits && t - ms(r.last_at) >= HOUR && t - ms(r.last_at) < 7 * DAY).map((r) => mk(r, `milestone:${s.visits}`));
     case "rebook":
