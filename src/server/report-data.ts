@@ -68,6 +68,7 @@ import { reviewReportData } from "./review-report";
 import { marketingReportData } from "./marketing/report";
 import { lapsedReportData } from "./marketing/lapsed-report";
 import { openingsReportData } from "./marketing/openings-report";
+import { milestonesReportData } from "./milestones/views";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
 import { commissionPayoutData } from "./commission-report";
@@ -763,6 +764,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async openings({ scope, loc }) {
     return openingsReportData(scope, loc);
+  },
+
+  async milestones({ scope, loc }) {
+    return milestonesReportData(scope, loc);
   },
 
   async services_vs_products({ scope, loc }) {

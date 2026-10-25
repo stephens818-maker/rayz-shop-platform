@@ -7,11 +7,13 @@ import { runFollowUps } from "@/server/call-ins";
 import { runMarketing } from "@/server/marketing/engine";
 import { sendBadgeNotices } from "@/server/customer-badges";
 import { runJobs } from "@/server/jobs";
+import { runMilestones } from "@/server/milestones/engine";
 
-/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, works background tasks (rollups, campaign triggers per location, badge slices), runs marketing campaigns and Badge news, and drains the notification queue every 30 seconds. `--once` for a single pass. */
+/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, works background tasks (rollups, campaign triggers per location, badge slices), runs marketing campaigns and Badge news, records staff milestones hourly, and drains the notification queue every 30 seconds. `--once` for a single pass. */
 async function main() {
   installLogScrubbing();
   const once = process.argv.includes("--once");
+  let milestonesAt = 0;
   do {
     const written = await extendSeries();
     if (written) console.log(new Date().toISOString(), { recurringBlocks: written });
@@ -23,6 +25,11 @@ async function main() {
     if (marketing.triggers.queued || marketing.blasts.queued || marketing.triggers.failed || marketing.blasts.failed) console.log(new Date().toISOString(), { marketing });
     const badgeNews = await sendBadgeNotices();
     if (badgeNews.queued) console.log(new Date().toISOString(), { badgeNews });
+    if (Date.now() - milestonesAt >= 3_600_000) {
+      milestonesAt = Date.now();
+      const milestones = await runMilestones(new Date());
+      if (milestones.recorded) console.log(new Date().toISOString(), { milestones });
+    }
     const stats = await processDueJobs();
     if (stats.sent || stats.suppressed || stats.failed) console.log(new Date().toISOString(), stats);
     if (once) break;
