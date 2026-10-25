@@ -57,7 +57,7 @@ import { addDays, diffDays, formatDate, formatDateTime } from "@/lib/time";
 import { EXCEPTION_LABEL } from "@/domain/morning-dashboard";
 import { morningDoc } from "@/domain/morning-render";
 import { ACCOUNT_STATE_LABEL, PAYMENTS_MODE_LABEL } from "@/domain/connect";
-import { ShopAccountRow, payoutRows, shopAccountRows } from "./payments/account-report";
+import { ShopAccountRow, coveredOwners, payoutRows, shopAccountRows } from "./payments/account-report";
 import { rollupData } from "./rollup-report";
 import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
@@ -873,7 +873,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async shop_accounts({ scope, viewer }) {
     const brandPayouts = viewer.brandWide && scope.shopIds.length === viewer.shopIds.length;
-    const [accounts, payouts] = await Promise.all([shopAccountRows(scope), payoutRows(scope, { brand: brandPayouts })]);
+    const owned = await coveredOwners(scope.shopIds);
+    const [accounts, payouts] = await Promise.all([shopAccountRows(scope), payoutRows(scope, { brand: brandPayouts, owners: owned })]);
     const cols: Column[] = [
       text("Owner"),
       text("Shop"),
@@ -914,8 +915,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         rowsOut.push([
           r.ownerName,
           r.shopName,
-          r.paymentsMode === "brand" ? "Brand account" : (r.stripeAccountId ?? "—"),
-          r.paymentsMode === "connected" ? ACCOUNT_STATE_LABEL[r.state] : PAYMENTS_MODE_LABEL[r.paymentsMode],
+          r.paymentsMode === "brand" ? "Brand account" : r.paymentsMode === "entity" ? `Owner's: ${r.ownerAccountId ?? "—"}` : (r.stripeAccountId ?? "—"),
+          r.paymentsMode === "connected" || r.paymentsMode === "entity" ? ACCOUNT_STATE_LABEL[r.state] : PAYMENTS_MODE_LABEL[r.paymentsMode],
           ...nums(r),
         ]);
         styles.push(undefined);
@@ -931,9 +932,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     }
     const total = add(accounts);
     const unrouted = accounts.reduce((a, r) => a + r.unroutedCardCents, 0);
-    const notReady = accounts.filter((r) => r.paymentsMode === "connected" && !r.canCharge);
+    const notReady = accounts.filter((r) => (r.paymentsMode === "connected" || r.paymentsMode === "entity") && !r.canCharge);
     const cashOnly = accounts.filter((r) => r.paymentsMode === "cash_only");
-    const restricted = accounts.filter((r) => r.paymentsMode === "connected" && r.canCharge && r.state !== "enabled");
+    const restricted = accounts.filter((r) => (r.paymentsMode === "connected" || r.paymentsMode === "entity") && r.canCharge && r.state !== "enabled");
     const brandSettled = accounts.reduce((a, r) => a + r.brandSettledCents, 0);
     return {
       stats: [
@@ -947,7 +948,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           id: "accounts",
           title: "P&L by shop account",
           subtitle:
-            "Card charges settle in the shop's own Stripe connected account, or the brand's account for shops set to use it. Card takings include tips and surcharges, after refunds. Cash and gift cards never touch Stripe.",
+            "Card charges settle in the shop's own Stripe connected account, its owner's account, or the brand's account, as each shop is set. Card takings include tips and surcharges, after refunds. Cash and gift cards never touch Stripe.",
           columns: cols,
           rows: rowsOut,
           rowStyles: styles,
@@ -955,7 +956,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         {
           id: "payouts",
           title: "Payouts",
-          subtitle: `Deposits from each shop's connected account to its bank, by arrival date${brandPayouts ? ", and the brand account's pooled deposits to the brand's bank" : ""}. The Payouts page itemizes each one.`,
+          subtitle: `Deposits from each shop's connected account to its bank, by arrival date${owned.length ? ", owners' pooled deposits for owners whose every shop is shown" : ""}${brandPayouts ? ", and the brand account's pooled deposits to the brand's bank" : ""}. The Payouts page itemizes each one.`,
           columns: [text("Arrives"), text("Account"), text("Payout"), text("Status"), money("Gross"), money("Fees"), money("Refunds"), money("Net deposit"), text("Problem")],
           rows: payouts.map((p) => [p.arrivalDate, p.shopName, p.stripePayoutId, p.status.replace("_", " "), p.grossCents, p.feeCents, p.refundCents, p.amountCents, p.failureMessage]),
         },
@@ -964,6 +965,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         ...(notReady.length ? [`Not taking cards yet: ${notReady.map((r) => `${r.shopName} (${ACCOUNT_STATE_LABEL[r.state].toLowerCase()})`).join(", ")}. Finish Payments in Location setup.`] : []),
         ...(restricted.length ? [`Stripe needs more details before paying out: ${restricted.map((r) => r.shopName).join(", ")}. See Payments in Location setup.`] : []),
         ...(cashOnly.length ? [`Cash and gift cards only: ${cashOnly.map((r) => r.shopName).join(", ")}.`] : []),
+        ...(accounts.some((r) => r.entitySettledCents)
+          ? [`Shops on their owner's account are paid out together to the owner's bank, so their payout columns stay empty; the owner account's deposits are listed under Payouts.`]
+          : []),
         ...(brandSettled ? [`Shops on the brand's account are paid out together to the brand's bank, so their payout columns stay empty; the brand account's deposits are on the Payouts page.`] : []),
         ...(unrouted ? [`${formatCents(unrouted)} of card takings in this range settled before shops had their own accounts, so it isn't in "To Stripe accounts".`] : []),
         "Processing fees are kept on refunded and voided charges, the same as Stripe's own fee.",

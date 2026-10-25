@@ -15,7 +15,19 @@ import { LocationAdmin, archiveLocation, checkSlug, closeTemporarily, createLoca
 import type { LocationDraftInput } from "@/domain/location-draft";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { deleteRegion, saveRegion, setShopRegion } from "@/server/regions";
-import { completeSimulatedOnboarding, expressDashboardUrl, onboardingUrl, refreshAccount, registerReader, setPaymentsMode, setStatementDescriptor } from "@/server/payments/connect";
+import {
+  completeSimulatedEntityOnboarding,
+  completeSimulatedOnboarding,
+  entityDashboardUrl,
+  entityOnboardingUrl,
+  expressDashboardUrl,
+  onboardingUrl,
+  refreshAccount,
+  refreshEntityAccount,
+  registerReader,
+  setPaymentsMode,
+  setStatementDescriptor,
+} from "@/server/payments/connect";
 
 const BANKING = "Only the Brand Owner, or someone they've given the banking permission, can connect or change a shop's Stripe account and bank";
 const BRAND_RECORD = "Owner entities are records every shop shares, so changing them needs access to all shops";
@@ -85,7 +97,7 @@ export async function expressDashboardAction(shopId: string) {
   });
 }
 
-/** Where the shop's card money settles: the brand's account, its own connected account, or nowhere (cash only). */
+/** Where the shop's card money settles: the brand's account, its own or its owner's connected account, or nowhere (cash only). */
 export async function setPaymentsModeAction(shopId: string, mode: string) {
   return safe(async () => {
     const ctx = await authorize("payments.banking", BANKING);
@@ -135,7 +147,12 @@ export async function setShopOwnerAction(shopId: string, ownerEntityId: string) 
   });
 }
 
-const Owner = z.object({ name: z.string().trim(), legalName: z.string().trim().nullable(), contactEmail: z.string().trim().nullable() });
+const Owner = z.object({
+  name: z.string().trim(),
+  legalName: z.string().trim().nullable(),
+  contactEmail: z.string().trim().nullable(),
+  kind: z.enum(["brand", "franchisee"]).default("brand"),
+});
 
 export async function saveOwnerEntityAction(id: string | null, raw: z.input<typeof Owner>) {
   return safe(async () => {
@@ -144,8 +161,11 @@ export async function saveOwnerEntityAction(id: string | null, raw: z.input<type
     const v = Owner.parse(raw);
     const problem = ownerEntityProblem(v);
     if (problem) throw new AppError("bad_request", problem);
-    const values = { name: v.name, legalName: v.legalName || null, contactEmail: v.contactEmail || null };
+    const values = { name: v.name, legalName: v.legalName || null, contactEmail: v.contactEmail || null, kind: v.kind };
     if (id) {
+      const current = await db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, id), columns: { isDefault: true } });
+      if (!current) throw notFound("Owner");
+      if (current.isDefault && v.kind !== "brand") throw new AppError("bad_request", "Ray'z Corporate owns new locations by default, so it can't be a franchisee");
       const [row] = await db
         .update(ownerEntities)
         .set({ ...values, updatedAt: new Date() })
@@ -160,6 +180,52 @@ export async function saveOwnerEntityAction(id: string | null, raw: z.input<type
     await audit(ctx.actor, "owner_entity.create", "owner_entity", row.id, values, null);
     refresh();
     return { id: row.id };
+  });
+}
+
+/** An owner entity's own Stripe account, shared by its shops in payments mode "entity". Brand-wide, like the owner records. */
+async function entityBanking(entityId: string) {
+  const ctx = await authorize("payments.banking", BANKING);
+  if (!ctx.brandWide) throw forbidden(BRAND_RECORD);
+  const owner = await db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, z.string().uuid().parse(entityId)), columns: { id: true } });
+  if (!owner) throw notFound("Owner");
+  return ctx;
+}
+
+export async function startEntityOnboardingAction(entityId: string) {
+  return safe(async () => {
+    const ctx = await entityBanking(entityId);
+    const url = await entityOnboardingUrl(entityId, ctx.actor, await origin());
+    refresh();
+    return { url };
+  });
+}
+
+export async function refreshEntityAccountAction(entityId: string) {
+  return safe(async () => {
+    await entityBanking(entityId);
+    await refreshEntityAccount(entityId);
+    refresh();
+    return null;
+  });
+}
+
+export async function completeSimulatedEntityOnboardingAction(entityId: string, withBank: boolean) {
+  return safe(async () => {
+    const ctx = await entityBanking(entityId);
+    await completeSimulatedEntityOnboarding(entityId, ctx.actor, { withBank });
+    refresh();
+    return null;
+  });
+}
+
+export async function entityDashboardAction(entityId: string) {
+  return safe(async () => {
+    const ctx = await entityBanking(entityId);
+    const url = await entityDashboardUrl(entityId);
+    if (!url) throw new AppError("bad_request", "The Stripe dashboard opens once onboarding is finished");
+    await audit(ctx.actor, "payments.dashboard_opened", "owner_entity", entityId, {}, null);
+    return { url };
   });
 }
 

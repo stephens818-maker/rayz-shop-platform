@@ -8,6 +8,7 @@ import { useAction } from "@/components/use-action";
 import {
   ACCOUNT_STATE_LABEL,
   AccountState,
+  OWNER_KIND_LABEL,
   PAYMENTS_MODES,
   PAYMENTS_MODE_HINT,
   PAYMENTS_MODE_LABEL,
@@ -22,9 +23,12 @@ import {
   closeLocationAction,
   goLiveAction,
   reopenLocationAction,
+  completeSimulatedEntityOnboardingAction,
   completeSimulatedOnboardingAction,
   deleteRegionAction,
+  entityDashboardAction,
   expressDashboardAction,
+  refreshEntityAccountAction,
   refreshPaymentsAccountAction,
   saveOwnerEntityAction,
   saveRegionAction,
@@ -32,6 +36,7 @@ import {
   setPaymentsModeAction,
   setShopOwnerAction,
   setShopRegionAction,
+  startEntityOnboardingAction,
   startPaymentsOnboardingAction,
 } from "./actions";
 
@@ -214,9 +219,12 @@ export function PaymentsPanel({
   payoutSchedule,
   terminalLocationId,
   readers,
+  owner,
 }: {
   shopId: string;
   shopName: string;
+  /** The shop's owner entity and its own account, for payments mode "entity". */
+  owner: { name: string; stripeAccountId: string | null } | null;
   state: AccountState;
   mode: "stripe" | "simulator";
   paymentsMode: PaymentsMode;
@@ -268,6 +276,7 @@ export function PaymentsPanel({
             <span className="text-xs text-zinc-500">
               New charges follow the switch. Earlier charges stay where they settled, and their refunds come out of that account.
               {choice === "connected" && state !== "enabled" && " Cards stop until Stripe approves the shop's own account."}
+              {choice === "entity" && " Cards stop unless the owner's account is approved."}
             </span>
           </div>
         )}
@@ -329,6 +338,24 @@ export function PaymentsPanel({
           </div>
         </div>
       )}
+      {paymentsMode === "entity" && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <AccountStateBadge state={state} />
+            {owner?.stripeAccountId && <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">{owner.stripeAccountId}</code>}
+          </div>
+          <p className="text-sm text-zinc-600">
+            {shopName}&apos;s card sales, tips and surcharges settle in {owner?.name ?? "its owner"}&apos;s Stripe account, with every other shop of theirs set to it, and are paid
+            out together to the owner&apos;s bank. Refunds come back out of it. Each charge is still tagged with {shopName}, so its sales and fees report on their own. Processing is{" "}
+            {fees.keyed} keyed or online and {fees.terminal} on the card reader. Card statements show the owner account&apos;s descriptor.
+          </p>
+          <p className="text-sm">
+            <Link className="font-medium text-brand-700 hover:underline" href="/admin/setup#owners">
+              {state === "enabled" ? "The owner's account" : "Set up the owner's account"} under Owners
+            </Link>
+          </p>
+        </div>
+      )}
       {paymentsMode === "brand" && (
         <p className="text-sm text-zinc-600">
           {shopName}&apos;s card sales, tips and surcharges settle in the brand&apos;s main Stripe account and are paid out to the brand&apos;s bank with the other brand-account
@@ -338,7 +365,7 @@ export function PaymentsPanel({
       )}
       {paymentsMode === "cash_only" && (
         <p className="text-sm text-zinc-600">
-          {shopName} takes cash and gift cards only. Checkout won&apos;t offer cards until you switch it to the brand&apos;s account or its own.
+          {shopName} takes cash and gift cards only. Checkout won&apos;t offer cards until you switch it to a Stripe account above.
         </p>
       )}
 
@@ -354,7 +381,7 @@ export function PaymentsPanel({
               {terminalLocationId ? <code className="text-xs">{terminalLocationId}</code> : "Created when the first reader is registered"} · {readers} reader{readers === 1 ? "" : "s"}
             </dd>
           </div>
-          <div className="sm:col-span-2">
+          <div className={cx("sm:col-span-2", paymentsMode === "entity" && "hidden")}>
             <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500">Statement descriptor</dt>
             <dd className="text-zinc-800">
               {canBank ? (
@@ -398,14 +425,16 @@ export function PaymentsPanel({
   );
 }
 
-export function SimulatedOnboardingForm({ shopId, shopName }: { shopId: string; shopName: string }) {
+/** Either a shop's account (`shopId`) or an owner entity's (`entityId`). */
+export function SimulatedOnboardingForm({ shopId, entityId, shopName }: { shopId?: string; entityId?: string; shopName: string }) {
   const router = useRouter();
   const { pending, error, run } = useAction();
   const [bank, setBank] = useState(true);
+  const back = entityId ? `/admin/setup?owner=${entityId}` : `/admin/setup?shop=${shopId}&step=payments`;
   const submit = () =>
     run(
-      () => completeSimulatedOnboardingAction(shopId, bank),
-      () => router.push(`/admin/setup?shop=${shopId}&step=payments&stripe=return`),
+      () => (entityId ? completeSimulatedEntityOnboardingAction(entityId, bank) : completeSimulatedOnboardingAction(shopId!, bank)),
+      () => router.push(`${back}&stripe=return`),
     );
   return (
     <Card>
@@ -425,7 +454,7 @@ export function SimulatedOnboardingForm({ shopId, shopName }: { shopId: string; 
         <Button disabled={pending} onClick={submit}>
           {pending ? "Submitting…" : "Submit"}
         </Button>
-        <Button variant="ghost" onClick={() => router.push(`/admin/setup?shop=${shopId}&step=payments`)}>
+        <Button variant="ghost" onClick={() => router.push(back)}>
           Back without finishing
         </Button>
         <Problem error={error} />
@@ -434,11 +463,80 @@ export function SimulatedOnboardingForm({ shopId, shopName }: { shopId: string; 
   );
 }
 
+/** An owner entity's own Stripe account, which its shops in payments mode "entity" share. */
+export function OwnerAccountPanel({
+  entityId,
+  ownerName,
+  state,
+  mode,
+  canBank,
+  account,
+  shopsOn,
+  returned,
+}: {
+  entityId: string;
+  ownerName: string;
+  state: AccountState;
+  mode: "stripe" | "simulator";
+  canBank: boolean;
+  account: { stripeAccountId: string; simulated: boolean; requirementsDue: string[]; chargesEnabled: boolean; payoutsEnabled: boolean } | null;
+  shopsOn: string[];
+  returned: boolean;
+}) {
+  const { pending, error, run } = useAction();
+  const due = [...new Set((account?.requirementsDue ?? []).map(requirementLabel))];
+  if (!account && !canBank) return null;
+  const go = () =>
+    run(
+      () => startEntityOnboardingAction(entityId),
+      (d) => {
+        window.location.href = d.url;
+      },
+    );
+  return (
+    <div className="mt-2 space-y-2 rounded-lg border border-zinc-200 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-zinc-800">Owner&apos;s Stripe account</span>
+        <AccountStateBadge state={state} />
+        {account && <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">{account.stripeAccountId}</code>}
+      </div>
+      {returned && <p className="text-emerald-700">{state === "enabled" ? `${ownerName}'s account can take cards.` : "Stripe has what you entered. Anything it still needs is listed here."}</p>}
+      <p className="text-zinc-600">
+        Optional: one account for the owner&apos;s legal entity and bank, which any of their shops can settle to instead of its own. Stripe collects the EIN, owners and bank; Ray&apos;z
+        keeps only the account ID and status. {shopsOn.length ? `Settling here: ${shopsOn.join(", ")}.` : "No shop settles here yet; choose it in a shop's Payments and banking step."}
+      </p>
+      {due.length > 0 && state !== "enabled" && <p className="text-amber-800">Stripe still needs: {due.join(", ")}.</p>}
+      {canBank && (
+        <div className="flex flex-wrap gap-2">
+          {state !== "enabled" && (
+            <Button size="sm" disabled={pending} onClick={go}>
+              {pending ? "Opening Stripe…" : account ? "Continue Stripe onboarding" : "Set up the owner's Stripe account"}
+            </Button>
+          )}
+          {account && mode === "stripe" && !account.simulated && (
+            <>
+              <Button size="sm" variant="secondary" disabled={pending} onClick={() => run(() => refreshEntityAccountAction(entityId))}>
+                Refresh status
+              </Button>
+              {state !== "not_started" && state !== "onboarding" && (
+                <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => entityDashboardAction(entityId), (d) => window.open(d.url, "_blank", "noopener"))}>
+                  Open the owner&apos;s Stripe dashboard
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      <Problem error={error} />
+    </div>
+  );
+}
+
 export function OwnerEditor({
   owner,
   canEdit,
 }: {
-  owner: { id: string; name: string; legalName: string | null; kind: string; contactEmail: string | null } | null;
+  owner: { id: string; name: string; legalName: string | null; kind: "brand" | "franchisee"; isDefault: boolean; contactEmail: string | null } | null;
   canEdit: boolean;
 }) {
   const { pending, error, run } = useAction();
@@ -447,6 +545,7 @@ export function OwnerEditor({
     name: owner?.name ?? "",
     legalName: owner?.legalName ?? "",
     contactEmail: owner?.contactEmail ?? "",
+    kind: owner?.kind ?? ("franchisee" as "brand" | "franchisee"),
   });
   if (!canEdit) return null;
   if (!open)
@@ -465,6 +564,15 @@ export function OwnerEditor({
       </Field>
       <Field label="Contact email">
         <Input type="email" value={v.contactEmail} onChange={(e) => setV({ ...v, contactEmail: e.target.value })} />
+      </Field>
+      <Field label="Kind" hint={owner?.isDefault ? "The default owner of new locations is always Ray'z corporate." : "A franchisee's people can be scoped to its shops."}>
+        <Select value={v.kind} disabled={owner?.isDefault} onChange={(e) => setV({ ...v, kind: e.target.value as "brand" | "franchisee" })}>
+          {(["brand", "franchisee"] as const).map((k) => (
+            <option key={k} value={k}>
+              {OWNER_KIND_LABEL[k]}
+            </option>
+          ))}
+        </Select>
       </Field>
       <div className="flex items-center gap-2 sm:col-span-2">
         <Button

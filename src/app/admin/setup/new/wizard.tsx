@@ -353,11 +353,12 @@ export function LocationWizard({
                   ))}
                 </Select>
               </Field>
-              <Field label="Owner" hint="Whose P&L the shop rolls up to.">
+              <Field label="Owner" hint="The business that owns the shop. Its owner-level people and rollups include it, and it can take card money on the owner's Stripe account.">
                 <Select value={basics.ownerEntityId} onChange={(e) => setBasics({ ...basics, ownerEntityId: e.target.value })}>
                   {options.owners.map((o) => (
                     <option key={o.id} value={o.id}>
                       {o.name}
+                      {o.kind === "franchisee" ? " (franchisee)" : ""}
                     </option>
                   ))}
                 </Select>
@@ -496,6 +497,12 @@ export function LocationWizard({
                     </span>
                   </label>
                 ))}
+                {pay.mode === "entity" && (
+                  <p className="text-sm text-zinc-500">
+                    Card money settles to {options.owners.find((o) => o.id === basics.ownerEntityId)?.name ?? "the owner"}&apos;s Stripe account, shared by every shop of theirs on
+                    it. Connect it once under Owners in Location setup.
+                  </p>
+                )}
                 {pay.mode === "connected" && (
                   <p className="text-sm text-zinc-500">
                     After you create the location, Stripe&apos;s own pages collect the legal entity, EIN, owner identity and bank account. Ray&apos;z stores only the Stripe

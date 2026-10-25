@@ -111,7 +111,7 @@ export const LocationDraft = z.object({
   /** The customer screen at checkout: tip presets (null uses the brand's), tips on the reader, signature, and whose PIN takes the device back. */
   handoff: ShopHandoffSchema.default(DEFAULT_SHOP_HANDOFF),
   /** Where card money settles. Anything but the default needs the banking permission. */
-  paymentsMode: z.enum(["connected", "brand", "cash_only"]).default("connected"),
+  paymentsMode: z.enum(["connected", "entity", "brand", "cash_only"]).default("connected"),
   statementDescriptor: z
     .string()
     .trim()

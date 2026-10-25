@@ -1,6 +1,6 @@
-import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { ownerEntities, shopHours, shopPhotos, shopPaymentAccounts, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
+import { entityPaymentAccounts, ownerEntities, shopHours, shopPhotos, shopPaymentAccounts, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
 import { AccountState, PAYMENTS_STEP_TITLE, accountState, paymentsStep, receiptBranding } from "@/domain/connect";
 import { REQUIRED_FOR_LIVE, SUPPORTED_TIMEZONE, US_TIMEZONES, goLiveBlockers, slugProblem } from "@/domain/location-lifecycle";
 import { connectMode, feeSchedule } from "./payments/connect";
@@ -24,9 +24,10 @@ export const SETUP_ORDER: SetupStepKey[] = ["details", "profile", "timezone", "s
 export async function locationSetup(shopId: string) {
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
   if (!shop) return null;
-  const [account, owner, [hours], [menu], scheduled, [readers], [logins], [retail], surnames, [photos]] = await Promise.all([
+  const [account, owner, ownerAccount, [hours], [menu], scheduled, [readers], [logins], [retail], surnames, [photos]] = await Promise.all([
     db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.shopId, shopId) }),
     shop.ownerEntityId ? db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, shop.ownerEntityId) }) : Promise.resolve(undefined),
+    shop.ownerEntityId ? db.query.entityPaymentAccounts.findFirst({ where: eq(entityPaymentAccounts.ownerEntityId, shop.ownerEntityId) }) : Promise.resolve(undefined),
     db.select({ n: count() }).from(shopHours).where(eq(shopHours.shopId, shopId)),
     db
       .select({ n: count() })
@@ -58,7 +59,8 @@ export async function locationSetup(shopId: string) {
   const slugIssue = slugProblem(shop.slug, surnames.map((r) => r.n));
   const zone = US_TIMEZONES.find((z) => z.id === shop.timezone)?.label ?? shop.timezone;
   const barbers = scheduled.length;
-  const state: AccountState = accountState(account);
+  const settles = shop.paymentsMode === "entity" ? ownerAccount : account;
+  const state: AccountState = accountState(settles);
   const settings = `/admin/settings?shop=${shopId}`;
   const steps: SetupStep[] = ([
     {
@@ -96,7 +98,7 @@ export async function locationSetup(shopId: string) {
       key: "owner",
       title: "Owner",
       done: !!owner,
-      detail: owner ? owner.name : "Choose which Rayz business entity owns this location.",
+      detail: owner ? `${owner.name}${owner.kind === "franchisee" ? " (franchisee)" : ""}` : "Choose which business owns this location: Ray'z corporate or a franchisee.",
     },
     { key: "hours", title: "Opening hours", done: hours.n > 0, detail: hours.n ? `${hours.n} days a week` : "Set the weekday hours.", href: settings },
     {
@@ -122,7 +124,7 @@ export async function locationSetup(shopId: string) {
       detail: barbers ? `${barbers} barber${barbers === 1 ? "" : "s"} with weekly hours here` : "Add barbers and give them hours at this shop.",
       href: "/admin/staff",
     },
-    { key: "payments", title: PAYMENTS_STEP_TITLE, ...paymentsStep(shop.paymentsMode, account) },
+    { key: "payments", title: PAYMENTS_STEP_TITLE, ...paymentsStep(shop.paymentsMode, settles) },
     {
       key: "booking",
       title: "Online booking",
@@ -157,17 +159,16 @@ export async function locationSetup(shopId: string) {
       href: `/admin/inventory/settings?shop=${shopId}`,
     },
   ] as Omit<SetupStep, "required">[]).map((x) => ({ ...x, required: (REQUIRED_FOR_LIVE as readonly string[]).includes(x.key) }));
-  return { shop, owner: owner ?? null, account: account ?? null, state, steps, blockers: goLiveBlockers(steps), mode: connectMode(), fees: feeSchedule(), readers: readers.n };
+  return { shop, owner: owner ?? null, account: account ?? null, ownerAccount: ownerAccount ?? null, state, steps, blockers: goLiveBlockers(steps), mode: connectMode(), fees: feeSchedule(), readers: readers.n };
 }
 
 /** One line per shop for the setup overview. */
 export async function setupOverview(shopIds: string[]) {
   if (!shopIds.length) return [];
   const rows = await db
-    .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, regionId: shops.regionId, ownerName: ownerEntities.name, ownerKind: ownerEntities.kind, account: shopPaymentAccounts })
+    .select({ id: shops.id, name: shops.name, status: shops.status, closedUntil: shops.closedUntil, regionId: shops.regionId, ownerName: ownerEntities.name, ownerKind: ownerEntities.kind })
     .from(shops)
     .leftJoin(ownerEntities, eq(ownerEntities.id, shops.ownerEntityId))
-    .leftJoin(shopPaymentAccounts, eq(shopPaymentAccounts.shopId, shops.id))
     .where(inArray(shops.id, shopIds))
     .orderBy(asc(shops.name));
   const details = await Promise.all(rows.map((r) => locationSetup(r.id)));
@@ -182,8 +183,8 @@ export async function setupOverview(shopIds: string[]) {
       blockers: details[i]!.blockers.length,
       ownerName: r.ownerName,
       ownerKind: r.ownerKind,
-      stripeAccountId: r.account?.stripeAccountId ?? null,
-      state: accountState(r.account),
+      stripeAccountId: (details[i]!.shop.paymentsMode === "entity" ? details[i]!.ownerAccount : details[i]!.account)?.stripeAccountId ?? null,
+      state: details[i]!.state,
       paymentsMode: details[i]!.shop.paymentsMode,
       done: steps.filter((s) => s.done && s.required).length,
       total: steps.filter((s) => s.required).length,
@@ -191,8 +192,20 @@ export async function setupOverview(shopIds: string[]) {
   });
 }
 
+/** Every owner entity, the default first, with its shops and its own Stripe account if it has one. */
 export async function ownerEntityList() {
-  const owners = await db.select().from(ownerEntities).orderBy(asc(ownerEntities.kind), asc(ownerEntities.name));
-  const shopRows = await db.select({ id: shops.id, name: shops.name, ownerEntityId: shops.ownerEntityId }).from(shops).orderBy(asc(shops.name));
-  return owners.map((o) => ({ ...o, shops: shopRows.filter((s) => s.ownerEntityId === o.id).map((s) => ({ id: s.id, name: s.name })) }));
+  const [owners, shopRows, accounts] = await Promise.all([
+    db.select().from(ownerEntities).orderBy(desc(ownerEntities.isDefault), asc(ownerEntities.kind), asc(ownerEntities.name)),
+    db.select({ id: shops.id, name: shops.name, ownerEntityId: shops.ownerEntityId, paymentsMode: shops.paymentsMode }).from(shops).orderBy(asc(shops.name)),
+    db.select().from(entityPaymentAccounts),
+  ]);
+  return owners.map((o) => {
+    const account = accounts.find((a) => a.ownerEntityId === o.id) ?? null;
+    return {
+      ...o,
+      account,
+      state: accountState(account),
+      shops: shopRows.filter((s) => s.ownerEntityId === o.id).map((s) => ({ id: s.id, name: s.name, onOwnerAccount: s.paymentsMode === "entity" })),
+    };
+  });
 }

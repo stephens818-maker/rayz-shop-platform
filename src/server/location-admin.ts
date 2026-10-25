@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appointments,
@@ -38,6 +38,7 @@ import { loadReviewRules } from "./review-rules";
 import { locationSetup } from "./location-setup";
 import { registerReader } from "./payments/connect";
 import { geocodeAddress } from "./geo";
+import { defaultOwnerEntity } from "./owner-entities";
 import { createShopLogin, shopLoginRoles } from "./shop-logins";
 
 /** Adding, opening and retiring locations needs locations.setup, which only people who see every shop can hold. */
@@ -82,7 +83,10 @@ export async function wizardOptions(g: Grantor) {
     db.select({ staffId: staffShops.staffId, shopId: staffShops.shopId }).from(staffShops),
     db.select({ staffId: staffSchedules.staffId, shopId: staffSchedules.shopId, weekday: staffSchedules.weekday, startMin: staffSchedules.startMin, endMin: staffSchedules.endMin }).from(staffSchedules),
     db.select({ id: locationGroups.id, name: locationGroups.name }).from(locationGroups).orderBy(asc(locationGroups.name)),
-    db.select({ id: ownerEntities.id, name: ownerEntities.name, kind: ownerEntities.kind }).from(ownerEntities).orderBy(asc(ownerEntities.kind), asc(ownerEntities.name)),
+    db
+      .select({ id: ownerEntities.id, name: ownerEntities.name, kind: ownerEntities.kind, isDefault: ownerEntities.isDefault })
+      .from(ownerEntities)
+      .orderBy(desc(ownerEntities.isDefault), asc(ownerEntities.kind), asc(ownerEntities.name)),
     db.select().from(roles).orderBy(asc(roles.sortOrder)),
     db.select({ shopId: payGroups.shopId, anchorStart: payGroups.anchorStart, anchorNumber: payGroups.anchorNumber, periodDays: payGroups.periodDays }).from(payGroups),
   ]);
@@ -169,8 +173,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         : {};
 
   const id = await db.transaction(async (tx) => {
-    const owner =
-      d.ownerEntityId ?? (await tx.query.ownerEntities.findFirst({ where: eq(ownerEntities.kind, "brand"), orderBy: asc(ownerEntities.createdAt), columns: { id: true } }))?.id ?? null;
+    const owner = d.ownerEntityId ?? (await defaultOwnerEntity(tx)).id;
     const [s] = await tx
       .insert(shops)
       .values({

@@ -1,20 +1,20 @@
 import type { Metadata } from "next";
-import { asc, inArray } from "drizzle-orm";
+import { asc, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { shopPaymentAccounts, shops } from "@/db/schema";
+import { entityPaymentAccounts, shopPaymentAccounts, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Input, PageHeader, Select, Stat, Table, Td, Th, buttonClass } from "@/components/ui";
 import { ACCOUNT_STATE_LABEL, payoutScheduleLabel } from "@/domain/connect";
 import { formatCents } from "@/lib/money";
 import { addDays, todayLocal, type LocalDate } from "@/lib/time";
 import { guardPage, reportShopIds } from "@/server/auth/staff";
-import { payoutRows, shopAccountRows } from "@/server/payments/account-report";
+import { coveredOwners, payoutRows, shopAccountRows } from "@/server/payments/account-report";
 import { brandPayoutSchedule } from "@/server/payments/connect";
 
 export const metadata: Metadata = { title: "Payouts" };
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const STATUS_TONE = { paid: "green", in_transit: "blue", pending: "amber", failed: "red", canceled: "gray" } as const;
-const NOW = { brand: "Now on the brand's account", cash_only: "Now cash only", connected: "" } as const;
+const NOW = { brand: "Now on the brand's account", entity: "Now on its owner's account", cash_only: "Now cash only", connected: "" } as const;
 const $ = (c: number | null) => (c == null ? "—" : formatCents(c));
 
 export default async function PayoutsPage({ searchParams }: { searchParams: Promise<{ shop?: string; from?: string; to?: string }> }) {
@@ -27,25 +27,36 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
   const scope = { shopIds, from, to };
   const allShops = shopIds.length === ctx.shopIds.length;
   const withBrand = ctx.brandWide && allShops;
-  const [accounts, payouts, names, schedules, brandSchedule] = await Promise.all([
+  const owners = await coveredOwners(shopIds);
+  const [accounts, payouts, names, schedules, brandSchedule, ownerSchedules] = await Promise.all([
     shopAccountRows(scope),
-    payoutRows(scope, { brand: withBrand }),
+    payoutRows(scope, { brand: withBrand, owners }),
     db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, ctx.shopIds)).orderBy(asc(shops.name)),
     db.select({ shopId: shopPaymentAccounts.shopId, schedule: shopPaymentAccounts.payoutSchedule }).from(shopPaymentAccounts).where(inArray(shopPaymentAccounts.shopId, shopIds)),
     brandPayoutSchedule(),
+    db
+      .select({ ownerEntityId: entityPaymentAccounts.ownerEntityId, schedule: entityPaymentAccounts.payoutSchedule })
+      .from(entityPaymentAccounts)
+      .where(owners.length ? inArray(entityPaymentAccounts.ownerEntityId, owners) : sql`false`),
   ]);
   const scheduleOf = (shopId: string) => schedules.find((s) => s.shopId === shopId)?.schedule ?? null;
   const own = accounts
     .filter((a) => a.paymentsMode === "connected" || a.stripeAccountId)
     .map((a) => {
-      const cardCents = a.cardNetCents - a.brandSettledCents - a.unroutedCardCents;
-      const feeCents = a.processingFeesCents - a.brandFeesCents;
+      const cardCents = a.cardNetCents - a.brandSettledCents - a.entitySettledCents - a.unroutedCardCents;
+      const feeCents = a.processingFeesCents - a.brandFeesCents - a.entityFeesCents;
       return { ...a, cardCents, feeCents, netCents: cardCents - feeCents };
     });
   const onBrand = accounts.filter((a) => a.paymentsMode === "brand" || a.brandSettledCents !== 0);
   const brandCard = onBrand.reduce((x, a) => x + a.brandSettledCents, 0);
   const brandFees = onBrand.reduce((x, a) => x + a.brandFeesCents, 0);
-  const brandPayouts = payouts.filter((p) => p.shopId === null);
+  const brandPayouts = payouts.filter((p) => p.shopId === null && p.ownerEntityId === null);
+  const onOwner = [...new Map(accounts.filter((a) => a.ownerId && (a.paymentsMode === "entity" || a.entitySettledCents !== 0)).map((a) => [a.ownerId!, a])).values()].map((first) => {
+    const shopsOn = accounts.filter((a) => a.ownerId === first.ownerId && (a.paymentsMode === "entity" || a.entitySettledCents !== 0));
+    const cardCents = shopsOn.reduce((x, a) => x + a.entitySettledCents, 0);
+    const feeCents = shopsOn.reduce((x, a) => x + a.entityFeesCents, 0);
+    return { ...first, shopsOn, cardCents, feeCents, covered: owners.includes(first.ownerId!) };
+  });
   const sum = (xs: { amountCents: number; status: string }[], st: string[]) => xs.filter((p) => st.includes(p.status)).reduce((a, p) => a + p.amountCents, 0);
   const paid = sum(payouts, ["paid"]);
   const transit = sum(payouts, ["pending", "in_transit"]);
@@ -59,7 +70,7 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
     <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader
         title="Payouts"
-        subtitle={`${label}, ${from} to ${to}. Deposits Stripe made to each bank, what they're made of, and the processing fees. Shops on their own account are paid to their own bank; shops on the brand's account are paid together to the brand's.`}
+        subtitle={`${label}, ${from} to ${to}. Deposits Stripe made to each bank, what they're made of, and the processing fees. Shops on their own account are paid to their own bank; shops on their owner's account or the brand's are paid together to that bank.`}
       />
       <form method="get" className="flex flex-wrap items-end gap-2">
         <label className="text-sm text-zinc-700">
@@ -137,6 +148,30 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
                 </tr>
               );
             })}
+            {onOwner.map((o) => {
+              const mine = payouts.filter((p) => p.ownerEntityId === o.ownerId);
+              return (
+                <tr key={`owner-${o.ownerId}`} className="bg-zinc-50/60">
+                  <Td className="max-w-56 whitespace-normal">
+                    <div className="font-medium text-zinc-900">{o.ownerName}&apos;s account</div>
+                    <div className="text-xs text-zinc-500">
+                      {o.ownerAccountId ? <code>{o.ownerAccountId}</code> : "No account yet"}
+                      <br />
+                      {o.shopsOn.map((a) => a.shopName).join(", ")}
+                    </div>
+                  </Td>
+                  <Td className="max-w-44 whitespace-normal text-zinc-600">
+                    <div>To {o.ownerName}&apos;s bank</div>
+                    <div className="text-xs text-zinc-500">{payoutScheduleLabel(ownerSchedules.find((x) => x.ownerEntityId === o.ownerId)?.schedule ?? null)}</div>
+                  </Td>
+                  <Td right>{$(o.cardCents)}</Td>
+                  <Td right>{$(o.feeCents)}</Td>
+                  <Td right>{$(o.cardCents - o.feeCents)}</Td>
+                  <Td right>{o.covered ? $(sum(mine, ["paid"])) : "—"}</Td>
+                  <Td right>{o.covered ? $(sum(mine, ["pending", "in_transit"])) : "—"}</Td>
+                </tr>
+              );
+            })}
             {onBrand.length > 0 && (
               <tr className="bg-zinc-50/60">
                 <Td className="max-w-56 whitespace-normal">
@@ -156,8 +191,11 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
             )}
           </tbody>
         </Table>
-        {onBrand.length > 0 && !withBrand && (
-          <p className="px-4 py-3 text-xs text-zinc-500">The brand account&apos;s deposits pool every shop on it, so they&apos;re shown only to people who see every shop, with every shop selected.</p>
+        {((onBrand.length > 0 && !withBrand) || onOwner.some((o) => !o.covered)) && (
+          <p className="px-4 py-3 text-xs text-zinc-500">
+            A shared account&apos;s deposits pool every shop on it, so they&apos;re shown only with all of those shops selected: every shop for the brand account, all of an owner&apos;s
+            for theirs.
+          </p>
         )}
       </Card>
 

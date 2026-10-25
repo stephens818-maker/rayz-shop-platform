@@ -5,6 +5,9 @@
  *    behalf of it (on_behalf_of + transfer_data.destination); the platform keeps an application fee
  *    equal to the shop's processing fee, so revenue, tips, surcharges, refunds, fees and payouts all
  *    land in the shop's own account and bank. For a shop run by its own LLC.
+ *  - entity: the shop's owner entity's connected account (entity_payment_accounts), shared by every
+ *    shop that owner has in this mode. The same destination charge and processing-fee application
+ *    fee; payouts go to the owner's bank.
  *  - brand: the brand's own (platform) Stripe account, paid out to the brand's bank.
  *  - cash_only: no cards; cash and gift cards only.
  * Pure: the states, the fee schedule, statement descriptors, payout schedules and their labels.
@@ -18,17 +21,20 @@ export type { PaymentsMode, PayoutSchedule };
 /** The go-live checklist step for payments. */
 export const PAYMENTS_STEP_TITLE = "Payments and banking";
 
-export const PAYMENTS_MODES = ["connected", "brand", "cash_only"] as const satisfies readonly PaymentsMode[];
+export const PAYMENTS_MODES = ["connected", "entity", "brand", "cash_only"] as const satisfies readonly PaymentsMode[];
 
 export const PAYMENTS_MODE_LABEL: Record<PaymentsMode, string> = {
   connected: "Its own Stripe account and bank",
+  entity: "Its owner's Stripe account and bank",
   brand: "The brand's Stripe account and bank",
   cash_only: "No cards (cash and gift cards only)",
 };
 
-export const PAYMENTS_MODE_SHORT: Record<PaymentsMode, string> = { connected: "Own account", brand: "Brand account", cash_only: "Cash only" };
+export const PAYMENTS_MODE_SHORT: Record<PaymentsMode, string> = { connected: "Own account", entity: "Owner account", brand: "Brand account", cash_only: "Cash only" };
 
 export const PAYMENTS_MODE_HINT: Record<PaymentsMode, string> = {
+  entity:
+    "For an owner with several shops under one business (a franchisee, or a corporate LLC). Stripe onboards the owner once (legal details, tax ID, bank); every shop of theirs on this setting settles and pays out there.",
   connected: "For a shop that's its own business (an LLC with its own EIN). Stripe collects its legal details, owner and bank account, and pays out to that bank.",
   brand: "Card sales settle in the brand's main Stripe account and are paid out to the brand's bank with every other shop on it. Nothing to onboard.",
   cash_only: "Until cards are set up. The shop can go live without Stripe; switch it to one of the others later.",
@@ -66,7 +72,7 @@ export function accountState(a: AccountFlags | null | undefined): AccountState {
 /** Card payments need the account's charges capability; payouts can lag behind. */
 export const canCharge = (a: AccountFlags | null | undefined) => !!a && !a.deauthorizedAt && a.chargesEnabled;
 
-/** Whether the shop can take cards right now, by its payments mode. The brand account is always ready. */
+/** Whether the shop can take cards right now, by its payments mode. The brand account is always ready. `a` is the account the mode settles to: the shop's (connected) or its owner's (entity). */
 export function takesCards(mode: PaymentsMode, a: AccountFlags | null | undefined): boolean {
   if (mode === "cash_only") return false;
   if (mode === "brand") return true;
@@ -81,12 +87,17 @@ export function paymentsStep(mode: PaymentsMode, a: AccountFlags | null | undefi
   if (mode === "cash_only") return { done: true, detail: "Cash and gift cards only. Choose a Stripe account here to start taking cards." };
   if (mode === "brand") return { done: true, detail: "Cards settle in the brand's Stripe account and are paid out to the brand's bank." };
   const state = accountState(a);
-  if (state === "enabled") return { done: true, detail: "Taking cards; payouts go to the shop's bank." };
-  if (canCharge(a)) return { done: true, detail: "Taking cards. Stripe needs a few more details before it pays out to the shop's bank." };
-  if (state === "not_started") return { done: false, detail: "Create this shop's Stripe account so its card sales, fees and payouts are its own." };
-  if (state === "disconnected") return { done: false, detail: "The shop's Stripe account was disconnected. Reconnect it, or choose the brand account or cash only." };
-  if (state === "in_review") return { done: false, detail: "Stripe is reviewing the shop's details. Cards start once it enables charges." };
-  return { done: false, detail: "Finish Stripe's onboarding so this shop can take cards." };
+  const whose = mode === "entity" ? "the owner's" : "the shop's";
+  if (state === "enabled") return { done: true, detail: `Taking cards; payouts go to ${whose} bank.` };
+  if (canCharge(a)) return { done: true, detail: `Taking cards. Stripe needs a few more details before it pays out to ${whose} bank.` };
+  if (state === "not_started")
+    return {
+      done: false,
+      detail: mode === "entity" ? "Set up the owner's Stripe account under Owners; this shop's card sales settle there." : "Create this shop's Stripe account so its card sales, fees and payouts are its own.",
+    };
+  if (state === "disconnected") return { done: false, detail: `${mode === "entity" ? "The owner's" : "The shop's"} Stripe account was disconnected. Reconnect it, or choose another account or cash only.` };
+  if (state === "in_review") return { done: false, detail: `Stripe is reviewing ${whose} details. Cards start once it enables charges.` };
+  return { done: false, detail: mode === "entity" ? "Finish the owner's Stripe onboarding under Owners so this shop can take cards." : "Finish Stripe's onboarding so this shop can take cards." };
 }
 
 /** Stripe's statement descriptor rules: 5 to 22 Latin characters, at least one letter, none of < > \ ' " *. */
@@ -258,8 +269,11 @@ export function requirementLabel(field: string): string {
   return tail.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
-export function ownerEntityProblem(v: { name: string; contactEmail?: string | null }): string | null {
+export const OWNER_KIND_LABEL = { brand: "Ray'z corporate", franchisee: "Franchisee" } as const;
+
+export function ownerEntityProblem(v: { name: string; kind?: string; contactEmail?: string | null }): string | null {
   if (v.name.trim().length < 2) return "Give the owner a name";
+  if (v.kind !== undefined && v.kind !== "brand" && v.kind !== "franchisee") return "Pick Ray'z corporate or franchisee";
   if (v.contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.contactEmail)) return "That email doesn't look right";
   return null;
 }

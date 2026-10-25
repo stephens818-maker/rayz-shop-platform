@@ -11,6 +11,8 @@ export interface ShopAccountRow {
   ownerName: string;
   ownerKind: OwnerEntityKind | null;
   stripeAccountId: string | null;
+  /** The owner entity's own connected account, which shops in payments mode "entity" share. */
+  ownerAccountId: string | null;
   /** Where the shop's card money goes now. Earlier charges stay where they settled. */
   paymentsMode: PaymentsMode;
   state: AccountState;
@@ -22,6 +24,10 @@ export interface ShopAccountRow {
   brandSettledCents: number;
   /** The part of processingFeesCents on charges that settled in the brand's account. */
   brandFeesCents: number;
+  /** The part of cardNetCents that settled in an owner entity's account. */
+  entitySettledCents: number;
+  /** The part of processingFeesCents on charges that settled in an owner entity's account. */
+  entityFeesCents: number;
   cardTipsCents: number;
   surchargeCents: number;
   cardRefundsCents: number;
@@ -46,7 +52,7 @@ const uuids = (xs: string[]) => sql`(${sql.join(xs.length ? xs.map((i) => sql`${
 export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]> {
   const ids = uuids(s.shopIds);
   const rows = (await db.execute(sql`
-    with pay as (
+    with eacct as (select stripe_account_id from entity_payment_accounts), pay as (
       select p.shop_id,
         count(*) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided')::int charges,
         coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int card,
@@ -56,6 +62,8 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
         coalesce(sum(p.card_fee_cents) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int surcharge,
         coalesce(sum(case when p.settlement = 'platform' then p.processor_fee_cents else p.application_fee_cents end) filter (where p.method = 'card'), 0)::int fees,
         coalesce(sum(p.processor_fee_cents) filter (where p.method = 'card' and p.settlement = 'platform'), 0)::int brand_fees,
+        coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.stripe_account_id in (select * from eacct) and p.status <> 'voided' and sa.status <> 'voided'), 0)::int entity,
+        coalesce(sum(p.application_fee_cents) filter (where p.method = 'card' and p.stripe_account_id in (select * from eacct)), 0)::int entity_fees,
         coalesce(sum(p.amount_cents) filter (where p.method = 'cash' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int cash,
         coalesce(sum(p.amount_cents) filter (where p.method = 'gift_card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int gift
       from payments p join sales sa on sa.id = p.sale_id
@@ -68,6 +76,7 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
         coalesce(sum(r.card_fee_cents) filter (where r.method = 'card'), 0)::int surcharge,
         coalesce(sum(r.amount_cents) filter (where r.method = 'card' and p.stripe_account_id is null and p.settlement is distinct from 'platform'), 0)::int unrouted,
         coalesce(sum(r.amount_cents) filter (where r.method = 'card' and p.settlement = 'platform'), 0)::int brand,
+        coalesce(sum(r.amount_cents) filter (where r.method = 'card' and p.stripe_account_id in (select * from eacct)), 0)::int entity,
         coalesce(sum(r.amount_cents) filter (where r.method = 'cash'), 0)::int cash,
         coalesce(sum(r.amount_cents) filter (where r.method = 'gift_card'), 0)::int gift
       from refunds r left join payments p on p.id = r.payment_id
@@ -81,8 +90,9 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
       group by shop_id
     )
     select sh.id "shopId", sh.name "shopName", oe.id "ownerId", coalesce(oe.name, 'No owner set') "ownerName", oe.kind "ownerKind",
-      a.stripe_account_id "stripeAccountId", sh.payments_mode "paymentsMode", a.charges_enabled "chargesEnabled", a.payouts_enabled "payoutsEnabled", a.details_submitted "detailsSubmitted",
-      a.requirements_due "requirementsDue", a.disabled_reason "disabledReason", a.deauthorized_at "deauthorizedAt",
+      a.stripe_account_id "stripeAccountId", ea.stripe_account_id "ownerAccountId", sh.payments_mode "paymentsMode",
+      sa.stripe_account_id "settlementAccountId", sa.charges_enabled "chargesEnabled", sa.payouts_enabled "payoutsEnabled", sa.details_submitted "detailsSubmitted",
+      sa.requirements_due "requirementsDue", sa.disabled_reason "disabledReason", sa.deauthorized_at "deauthorizedAt",
       coalesce(pay.charges, 0) "cardCharges",
       coalesce(pay.card, 0) - coalesce(ref.card, 0) "cardNetCents",
       coalesce(pay.brand, 0) - coalesce(ref.brand, 0) "brandSettledCents",
@@ -91,6 +101,8 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
       coalesce(ref.card, 0) "cardRefundsCents",
       coalesce(pay.fees, 0) "processingFeesCents",
       coalesce(pay.brand_fees, 0) "brandFeesCents",
+      coalesce(pay.entity, 0) - coalesce(ref.entity, 0) "entitySettledCents",
+      coalesce(pay.entity_fees, 0) "entityFeesCents",
       coalesce(pay.unrouted, 0) - coalesce(ref.unrouted, 0) "unroutedCardCents",
       coalesce(po.paid, 0) "payoutsPaidCents", coalesce(po.pending, 0) "payoutsPendingCents",
       coalesce(pay.cash, 0) - coalesce(ref.cash, 0) "cashCents",
@@ -98,11 +110,19 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
     from shops sh
     left join owner_entities oe on oe.id = sh.owner_entity_id
     left join shop_payment_accounts a on a.shop_id = sh.id
+    left join entity_payment_accounts ea on ea.owner_entity_id = sh.owner_entity_id
+    left join lateral (
+      select x.stripe_account_id, x.charges_enabled, x.payouts_enabled, x.details_submitted, x.requirements_due, x.disabled_reason, x.deauthorized_at
+      from (select a.stripe_account_id, a.charges_enabled, a.payouts_enabled, a.details_submitted, a.requirements_due, a.disabled_reason, a.deauthorized_at where sh.payments_mode <> 'entity'
+            union all
+            select ea.stripe_account_id, ea.charges_enabled, ea.payouts_enabled, ea.details_submitted, ea.requirements_due, ea.disabled_reason, ea.deauthorized_at where sh.payments_mode = 'entity') x
+    ) sa on true
     left join pay on pay.shop_id = sh.id
     left join ref on ref.shop_id = sh.id
     left join po on po.shop_id = sh.id
     where sh.id in ${ids}
-    order by oe.id is null, oe.kind <> 'brand', oe.name, oe.id, sh.name`)) as unknown as (Omit<ShopAccountRow, "state" | "canCharge" | "toAccountCents"> & {
+    order by oe.id is null, not oe.is_default, oe.kind <> 'brand', oe.name, oe.id, sh.name`)) as unknown as (Omit<ShopAccountRow, "state" | "canCharge" | "toAccountCents"> & {
+    settlementAccountId: string | null;
     chargesEnabled: boolean | null;
     payoutsEnabled: boolean | null;
     detailsSubmitted: boolean | null;
@@ -110,8 +130,8 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
     disabledReason: string | null;
     deauthorizedAt: Date | null;
   })[];
-  return rows.map(({ chargesEnabled, payoutsEnabled, detailsSubmitted, requirementsDue, disabledReason, deauthorizedAt, ...r }) => {
-    const flags = r.stripeAccountId
+  return rows.map(({ settlementAccountId, chargesEnabled, payoutsEnabled, detailsSubmitted, requirementsDue, disabledReason, deauthorizedAt, ...r }) => {
+    const flags = settlementAccountId
       ? {
           chargesEnabled: !!chargesEnabled,
           payoutsEnabled: !!payoutsEnabled,
@@ -126,8 +146,10 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
 }
 
 export interface PayoutRow {
-  /** Null for a payout from the brand's own account, which pools every brand-account shop. */
+  /** Null for a payout from the brand's own account, which pools every brand-account shop, or from an owner entity's. */
   shopId: string | null;
+  /** Set for a payout from an owner entity's account, which pools that owner's shops in payments mode "entity". */
+  ownerEntityId: string | null;
   shopName: string;
   stripeAccountId: string;
   stripePayoutId: string;
@@ -141,13 +163,22 @@ export interface PayoutRow {
   itemCount: number | null;
 }
 
-/** Payouts arriving in the scope's dates. With `brand`, the brand account's pooled payouts too. */
-export async function payoutRows(s: ReportScope, o: { brand?: boolean } = {}): Promise<PayoutRow[]> {
+/** Owner entities every one of whose shops is in `shopIds`: their pooled account's payouts are safe to show. */
+export async function coveredOwners(shopIds: readonly string[]): Promise<string[]> {
+  if (!shopIds.length) return [];
+  const rows = (await db.execute(sql`
+    select owner_entity_id id from shops group by owner_entity_id having bool_and(id in ${uuids([...shopIds])})`)) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/** Payouts arriving in the scope's dates. With `brand`, the brand account's pooled payouts too; with `owners`, those owners' pooled payouts. */
+export async function payoutRows(s: ReportScope, o: { brand?: boolean; owners?: string[] } = {}): Promise<PayoutRow[]> {
+  const owners = o.owners?.length ? sql` or p.owner_entity_id in ${uuids(o.owners)}` : sql``;
   return (await db.execute(sql`
-    select p.shop_id "shopId", coalesce(sh.name, 'Brand account') "shopName", p.stripe_account_id "stripeAccountId", p.stripe_payout_id "stripePayoutId",
+    select p.shop_id "shopId", p.owner_entity_id "ownerEntityId", coalesce(sh.name, oe.name || ' (owner account)', 'Brand account') "shopName", p.stripe_account_id "stripeAccountId", p.stripe_payout_id "stripePayoutId",
       p.amount_cents "amountCents", p.status, p.arrival_date::text "arrivalDate", p.failure_message "failureMessage",
       p.gross_cents "grossCents", p.fee_cents "feeCents", p.refund_cents "refundCents", p.item_count "itemCount"
-    from shop_payouts p left join shops sh on sh.id = p.shop_id
-    where (p.shop_id in ${uuids(s.shopIds)}${o.brand ? sql` or p.shop_id is null` : sql``}) and p.arrival_date between ${s.from} and ${s.to}
-    order by p.arrival_date desc, p.shop_id is null, sh.name`)) as unknown as PayoutRow[];
+    from shop_payouts p left join shops sh on sh.id = p.shop_id left join owner_entities oe on oe.id = p.owner_entity_id
+    where (p.shop_id in ${uuids(s.shopIds)}${o.brand ? sql` or (p.shop_id is null and p.owner_entity_id is null)` : sql``}${owners}) and p.arrival_date between ${s.from} and ${s.to}
+    order by p.arrival_date desc, p.shop_id is null, p.owner_entity_id is null, sh.name, oe.name`)) as unknown as PayoutRow[];
 }

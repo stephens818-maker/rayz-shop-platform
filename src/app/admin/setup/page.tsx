@@ -1,33 +1,47 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge, Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Table, Td, Th, cx } from "@/components/ui";
-import { PAYMENTS_MODE_SHORT, formatFeeRate, payoutScheduleLabel } from "@/domain/connect";
+import { OWNER_KIND_LABEL, PAYMENTS_MODE_SHORT, formatFeeRate, payoutScheduleLabel } from "@/domain/connect";
 import { SHOP_STATUS_LABEL } from "@/domain/location-lifecycle";
 import { can, guardPage } from "@/server/auth/staff";
 import { SETUP_ORDER, locationSetup, ownerEntityList, setupOverview } from "@/server/location-setup";
-import { brandDescriptorPrefix, brandPayoutSchedule, refreshAccount } from "@/server/payments/connect";
+import { brandDescriptorPrefix, brandPayoutSchedule, connectMode, refreshAccount, refreshEntityAccount } from "@/server/payments/connect";
 import { regionList } from "@/server/regions";
-import { AccountStateBadge, LifecyclePanel, OwnerEditor, OwnerPicker, PaymentsPanel, RegionPicker, RegionsEditor } from "./panels";
+import { AccountStateBadge, LifecyclePanel, OwnerAccountPanel, OwnerEditor, OwnerPicker, PaymentsPanel, RegionPicker, RegionsEditor } from "./panels";
 
 const STATUS_TONE = { setup: "amber", live: "green", closed: "blue", archived: "gray" } as const;
 
 export const metadata: Metadata = { title: "Location setup" };
 
-type Params = { shop?: string; step?: string; stripe?: string };
+type Params = { shop?: string; step?: string; stripe?: string; owner?: string };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function LocationSetupPage({ searchParams }: { searchParams: Promise<Params> }) {
   const ctx = await guardPage("/admin/setup");
-  const { shop: requested, step, stripe } = await searchParams;
+  const { shop: requested, step, stripe, owner: returnedOwner } = await searchParams;
   const shopId = requested && ctx.shopIds.includes(requested) ? requested : null;
-  if (!shopId)
-    return <Overview shopIds={ctx.shopIds} canEditOwners={ctx.brandWide} canEditRegions={ctx.brandWide && can(ctx, "locations.setup")} canAdd={can(ctx, "locations.setup")} />;
+  if (!shopId) {
+    const returned = ctx.brandWide && stripe === "return" && returnedOwner && UUID.test(returnedOwner) ? returnedOwner : null;
+    if (returned) await refreshEntityAccount(returned).catch(() => null);
+    return (
+      <Overview
+        shopIds={ctx.shopIds}
+        canEditOwners={ctx.brandWide}
+        canBank={ctx.brandWide && can(ctx, "payments.banking")}
+        returnedOwner={returned}
+        canEditRegions={ctx.brandWide && can(ctx, "locations.setup")}
+        canAdd={can(ctx, "locations.setup")}
+      />
+    );
+  }
 
   if (stripe === "return") await refreshAccount(shopId).catch(() => null);
   const [setup, owners] = await Promise.all([locationSetup(shopId), ownerEntityList()]);
   if (!setup) return <Empty title="That shop wasn't found" />;
-  const { shop, owner, account, state, steps, blockers, mode, fees } = setup;
+  const { shop, owner, account, ownerAccount, state, steps, blockers, mode, fees } = setup;
   const payments = steps.find((s) => s.key === "payments")!;
-  const schedule = shop.paymentsMode === "brand" ? await brandPayoutSchedule() : (account?.payoutSchedule ?? null);
+  const schedule = shop.paymentsMode === "brand" ? await brandPayoutSchedule() : ((shop.paymentsMode === "entity" ? ownerAccount : account)?.payoutSchedule ?? null);
   const required = steps.filter((s) => s.required);
   const done = required.filter((s) => s.done).length;
 
@@ -98,11 +112,14 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
                       )}
                     </div>
                     {key === "owner" ? (
-                      <p className="text-sm text-zinc-600">The Rayz business entity (LLC) that owns this location. The shop&apos;s P&amp;L rolls up to it, and one entity can own several shops.</p>
+                      <p className="text-sm text-zinc-600">
+                        The business that owns this location: Ray&apos;z corporate or a franchisee. The shop&apos;s P&amp;L rolls up to it, its owner-scoped people see it, and one
+                        owner can own several shops. {s.detail}
+                      </p>
                     ) : (
                       <p className="text-sm text-zinc-600">{s.detail}</p>
                     )}
-                    {key === "owner" && <OwnerPicker shopId={shop.id} ownerId={owner?.id ?? null} owners={owners.map((o) => ({ id: o.id, name: o.name }))} />}
+                    {key === "owner" && <OwnerPicker shopId={shop.id} ownerId={owner?.id ?? null} owners={owners.map((o) => ({ id: o.id, name: o.kind === "franchisee" ? `${o.name} (franchisee)` : o.name }))} />}
                     {key === "payments" && (
                       <PaymentsPanel
                         shopId={shop.id}
@@ -116,6 +133,7 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
                         payoutSchedule={payoutScheduleLabel(schedule)}
                         terminalLocationId={shop.stripeTerminalLocationId}
                         readers={setup.readers}
+                        owner={owner && { name: owner.name, stripeAccountId: ownerAccount?.stripeAccountId ?? null }}
                         account={
                           account && {
                             stripeAccountId: account.stripeAccountId,
@@ -141,14 +159,28 @@ export default async function LocationSetupPage({ searchParams }: { searchParams
   );
 }
 
-async function Overview({ shopIds, canEditOwners, canEditRegions, canAdd }: { shopIds: string[]; canEditOwners: boolean; canEditRegions: boolean; canAdd: boolean }) {
+async function Overview({
+  shopIds,
+  canEditOwners,
+  canBank,
+  returnedOwner,
+  canEditRegions,
+  canAdd,
+}: {
+  shopIds: string[];
+  canEditOwners: boolean;
+  canBank: boolean;
+  returnedOwner: string | null;
+  canEditRegions: boolean;
+  canAdd: boolean;
+}) {
   const [rows, owners, regions] = await Promise.all([setupOverview(shopIds), ownerEntityList(), regionList()]);
   const regionName = new Map(regions.map((r) => [r.id, r.name]));
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
         title="Location setup"
-        subtitle="Every location and its go-live checklist: details, owner, hours, taxes, menu, team, where its card money goes (the brand's Stripe account or its own), and online booking."
+        subtitle="Every location and its go-live checklist: details, owner, hours, taxes, menu, team, where its card money goes (the brand's Stripe account, its own, or its owner's), and online booking."
         actions={canAdd && <LinkButton href="/admin/setup/new">Add a location</LinkButton>}
       />
       {rows.length === 0 ? (
@@ -178,7 +210,10 @@ async function Overview({ shopIds, canEditOwners, canEditRegions, canAdd }: { sh
                   <Td>
                     <Badge tone={STATUS_TONE[r.status]}>{SHOP_STATUS_LABEL[r.status]}</Badge>
                   </Td>
-                  <Td>{r.ownerName ?? <span className="text-zinc-400">Not set</span>}</Td>
+                  <Td>
+                    {r.ownerName ?? <span className="text-zinc-400">Not set</span>}
+                    {r.ownerKind === "franchisee" && <Badge className="ml-1.5">Franchisee</Badge>}
+                  </Td>
                   <Td>
                     {canEditRegions && r.status !== "archived" ? (
                       <RegionPicker shopId={r.id} shopName={r.name} regionId={r.regionId} regions={regions.map(({ id, name }) => ({ id, name }))} />
@@ -189,7 +224,7 @@ async function Overview({ shopIds, canEditOwners, canEditRegions, canAdd }: { sh
                     )}
                   </Td>
                   <Td className="text-zinc-600">{PAYMENTS_MODE_SHORT[r.paymentsMode]}</Td>
-                  <Td>{r.paymentsMode === "connected" ? <AccountStateBadge state={r.state} /> : <span className="text-zinc-400">—</span>}</Td>
+                  <Td>{r.paymentsMode === "connected" || r.paymentsMode === "entity" ? <AccountStateBadge state={r.state} /> : <span className="text-zinc-400">—</span>}</Td>
                   <Td>{r.paymentsMode === "brand" ? <span className="text-zinc-400">—</span> : r.stripeAccountId ? <code className="text-xs text-zinc-600">{r.stripeAccountId}</code> : <span className="text-zinc-400">None yet</span>}</Td>
                   <Td right>
                     {r.done}/{r.total}
@@ -207,10 +242,10 @@ async function Overview({ shopIds, canEditOwners, canEditRegions, canAdd }: { sh
         </Card>
       )}
       {canEditRegions && <RegionsEditor regions={regions} canEdit />}
-      <Card>
+      <Card id="owners">
         <CardHeader
           title="Owners"
-          subtitle="The Rayz business entities (LLCs) that own the locations. Shops are grouped by owner in the Shop P&L report, so an entity that owns several shops sees them together. Where each shop's card money goes is set in its Payments and banking step."
+          subtitle="The businesses that own the locations: Ray'z Corporate, which owns every location unless you choose another, and any franchisees. Shops group by owner in the Shop P&L and Brand rollup reports, and people can be scoped to one owner's shops. An owner can have its own Stripe account for its shops to settle to; each shop chooses in its Payments and banking step."
           action={<OwnerEditor owner={null} canEdit={canEditOwners} />}
         />
         <ul className="divide-y divide-zinc-100">
@@ -219,6 +254,8 @@ async function Overview({ shopIds, canEditOwners, canEditRegions, canAdd }: { sh
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-zinc-900">
                   {o.name}
+                  <Badge tone={o.kind === "franchisee" ? "violet" : "gray"}>{OWNER_KIND_LABEL[o.kind]}</Badge>
+                  {o.isDefault && <Badge tone="blue">Default owner</Badge>}
                 </div>
                 <div className="mt-0.5 text-sm text-zinc-500">
                   {[o.legalName, o.contactEmail].filter(Boolean).join(" · ")}
@@ -227,6 +264,18 @@ async function Overview({ shopIds, canEditOwners, canEditRegions, canAdd }: { sh
                 </div>
               </div>
               <OwnerEditor owner={o} canEdit={canEditOwners} />
+              <div className="w-full">
+                <OwnerAccountPanel
+                  entityId={o.id}
+                  ownerName={o.name}
+                  state={o.state}
+                  mode={connectMode()}
+                  canBank={canBank}
+                  account={o.account && { stripeAccountId: o.account.stripeAccountId, simulated: o.account.simulated, requirementsDue: o.account.requirementsDue, chargesEnabled: o.account.chargesEnabled, payoutsEnabled: o.account.payoutsEnabled }}
+                  shopsOn={o.shops.filter((s) => s.onOwnerAccount).map((s) => s.name)}
+                  returned={returnedOwner === o.id}
+                />
+              </div>
             </li>
           ))}
           {owners.length === 0 && <li className="px-4 py-6 text-center text-sm text-zinc-500">No owners yet.</li>}

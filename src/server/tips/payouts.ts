@@ -21,7 +21,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { Actor, SYSTEM, audit } from "@/server/audit";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { enqueueRaw, enqueueShopEmail } from "@/server/notifications/queue";
-import { shopAccount } from "@/server/payments/connect";
+import { settlementAccount } from "@/server/payments/connect";
 import { stripe } from "@/server/payments/processor";
 import { tipOverrides } from "@/server/compensation";
 import { checkPin } from "@/server/time-clock";
@@ -391,13 +391,13 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
     await maybeComplete(p.batchId);
     return row;
   }
-  const shop = await db.query.shops.findFirst({ where: eq(shops.id, p.shopId), columns: { paymentsMode: true, name: true } });
+  const shop = await db.query.shops.findFirst({ where: eq(shops.id, p.shopId), columns: { id: true, paymentsMode: true, name: true, ownerEntityId: true } });
   let debitId: string | null = null;
   let transferId: string | null = null;
   try {
-    if (shop?.paymentsMode === "connected") {
-      const sa = await shopAccount(p.shopId);
-      if (!sa || sa.simulated || sa.deauthorizedAt) throw new Error(`${shop.name}'s Stripe account isn't connected`);
+    if (shop?.paymentsMode === "connected" || shop?.paymentsMode === "entity") {
+      const sa = await settlementAccount(shop);
+      if (!sa || sa.simulated || sa.deauthorizedAt) throw new Error(`${shop.name}'s ${shop.paymentsMode === "entity" ? "owner's " : ""}Stripe account isn't connected`);
       const debit = await s.charges.create(
         { amount: p.netCents, currency: "usd", source: sa.stripeAccountId, description: `Tip payout ${p.id}`, metadata: { tipPayoutId: p.id, staffId: p.staffId } },
         { idempotencyKey: `tip-debit-${p.id}` },

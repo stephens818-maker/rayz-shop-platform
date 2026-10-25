@@ -15,7 +15,7 @@ import { getLoyaltyConfig, loyaltyBalance } from "@/server/loyalty";
 import { ratingSummaries } from "@/server/ratings";
 import { timesFor } from "@/server/service-times";
 import { TEST_CARDS, paymentsMode, terminal } from "@/server/payments/processor";
-import { shopAccount } from "@/server/payments/connect";
+import { settlementAccount } from "@/server/payments/connect";
 import { takesCards } from "@/domain/connect";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
@@ -46,7 +46,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
     ratingSummaries([c.customer?.id]),
     timesFor(c.appointment ? [c.appointment.id] : []),
     lookups(),
-    shopAccount(c.shop.id),
+    settlementAccount(c.shop),
     db
       .select({ id: terminalReaders.id, label: terminalReaders.label })
       .from(terminalReaders)
@@ -148,7 +148,7 @@ export default async function CheckoutPage({ params, searchParams }: { params: P
           ? null
           : c.shop.paymentsMode === "cash_only"
             ? `${c.shop.name} takes cash and gift cards only for now.`
-            : `${c.shop.name} can't take cards until Stripe finishes approving its account. Take cash or a gift card.`,
+            : `${c.shop.name} can't take cards until Stripe finishes approving its ${c.shop.paymentsMode === "entity" ? "owner's " : ""}account. Take cash or a gift card.`,
         readers,
       }}
       taxCategories={Object.fromEntries([...catalog.map((s) => [s.id, s.taxCategory] as const), ...c.retail.map((p) => [p.productId, p.taxCategory] as const)])}
