@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
-import { Badge, Card, PageHeader } from "@/components/ui";
-import { recurrenceLabel } from "@/domain/campaign-schedule";
+import { Badge, Card, Notice, PageHeader } from "@/components/ui";
+import { FREQ_LABEL, recurrenceLabel } from "@/domain/campaign-schedule";
 import { SHOP_TZ, formatDateTime, todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { decodeFilter } from "@/domain/client-filters";
@@ -22,7 +22,7 @@ import { BlastWizard } from "./wizard";
 export const metadata: Metadata = { title: "Blast" };
 export const dynamic = "force-dynamic";
 
-export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string; shops?: string }> }) {
+export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string; shops?: string; done?: string; queued?: string; skipped?: string }> }) {
   const ctx = await guardPage("/admin/campaign-center/blasts/[id]");
   const { id } = await params;
   const sp = await searchParams;
@@ -36,6 +36,13 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
   const initial = id === "new" && sp.f ? decodeFilter(sp.f) : undefined;
   const initialShops = id === "new" && sp.shops ? sp.shops.split(",").filter((s) => shops.some((x) => x.id === s)) : undefined;
   const status = blast ? (BLAST_STATUS[blast.status] ?? { label: blast.status, tone: "gray" as const }) : null;
+  const count = (x: string | undefined) => Math.max(0, Number.parseInt(x ?? "", 10) || 0);
+  const done =
+    blast && sp.done === "scheduled" && blast.scheduledAt
+      ? `Scheduled for ${formatDateTime(blast.scheduledAt)}${blast.recurrence ? `, then ${FREQ_LABEL[blast.recurrence.freq].toLowerCase()}` : ""}.`
+      : blast && sp.done === "sent"
+        ? `Sent: ${count(sp.queued)} queued${count(sp.skipped) ? `, ${count(sp.skipped)} skipped (limits, consent or the holdout group)` : ""}. Messages due in quiet hours go out when they end.`
+        : null;
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
@@ -50,6 +57,7 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
         }
         actions={blast && <BlastActions id={blast.id} name={blast.name} status={blast.status} mayWrite={mayCreate} maySend={maySend} mayManage={blast.inScope} />}
       />
+      {done && <Notice tone="green">{done}</Notice>}
       {blast && status && (
         <Card className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
           <Badge tone={status.tone}>{status.label}</Badge>

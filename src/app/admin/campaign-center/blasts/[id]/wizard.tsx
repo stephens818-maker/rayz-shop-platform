@@ -90,6 +90,12 @@ const stageOf = (seg: Segment): ClientStage | null =>
     const want = { ...Object.fromEntries(STAGE_FIELDS.map((f) => [f, (EMPTY_SEGMENT as Record<string, unknown>)[f]])), ...stageSegment(k) };
     return STAGE_FIELDS.every((f) => JSON.stringify((seg as Record<string, unknown>)[f]) === JSON.stringify((want as Record<string, unknown>)[f]));
   }) ?? null;
+const audienceLabel = (seg: Segment, stage: ClientStage | null) => {
+  const empty = EMPTY_SEGMENT as Record<string, unknown>;
+  const changed = Object.keys(empty).filter((f) => JSON.stringify((seg as Record<string, unknown>)[f]) !== JSON.stringify(empty[f]));
+  if (stage) return changed.some((f) => !(STAGE_FIELDS as readonly string[]).includes(f)) ? `${CLIENT_STAGES[stage].label} + filters` : CLIENT_STAGES[stage].label;
+  return changed.length ? "Custom filters" : "Everyone";
+};
 
 export function BlastWizard(p: {
   blast: WizardBlast | null;
@@ -245,12 +251,7 @@ export function BlastWizard(p: {
       if (!saved) return;
       const r = await scheduleBlastAction(saved, when === "later" ? new Date(at).toISOString() : null, true);
       if (!r.ok) return setError(r.error);
-      setDone(
-        when === "later"
-          ? `Scheduled for ${formatDateTime(new Date(at))}${repeating ? `, then ${FREQ_LABEL[freq].toLowerCase()}` : ""}.`
-          : `Sent: ${r.data.queued} queued${r.data.skipped ? `, ${r.data.skipped} skipped (limits, consent or the holdout group)` : ""}. Messages due in quiet hours go out when they end.`,
-      );
-      router.refresh();
+      router.replace(`/admin/campaign-center/blasts/${saved}?${when === "later" ? "done=scheduled" : `done=sent&queued=${r.data.queued}&skipped=${r.data.skipped}`}`);
     });
 
   const kinds: { k: Kind; title: string; body: string }[] = [
@@ -564,7 +565,7 @@ export function BlastWizard(p: {
                 {preview ? (
                   <>
                     {preview.optedIn} opted-in of {preview.matched} matching
-                    {holdoutN ? `, about ${holdoutN} held back` : ""} · {stage ? CLIENT_STAGES[stage].label : "Custom filters"}
+                    {holdoutN ? `, about ${holdoutN} held back` : ""} · {audienceLabel(seg, stage)}
                   </>
                 ) : (
                   "Counting…"
