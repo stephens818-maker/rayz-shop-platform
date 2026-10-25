@@ -8,7 +8,7 @@ import { rows, uuids } from "./report-sql";
 import type { ReportData, ReportInput } from "./report-data";
 
 /**
- * The brand's location comparison: locations or regions side by side over a range, ranked on net
+ * The brand's location comparison: locations, regions or owners side by side over a range, ranked on net
  * sales, read from location_daily_stats (the nightly rollups in src/server/jobs.ts) so it stays
  * quick at 50+ locations however many tickets they have.
  */
@@ -21,6 +21,7 @@ const pctCol = (label: string): Column => ({ label, kind: "pct", sum: false });
 export const ROLLUP_BY = [
   { value: "location", label: "Locations" },
   { value: "region", label: "Regions" },
+  { value: "owner", label: "Owners" },
 ] as const;
 export type RollupBy = (typeof ROLLUP_BY)[number]["value"];
 
@@ -28,8 +29,8 @@ type RollupRow = { key: string | null; name: string | null; locations: number; t
 
 async function rollupRows(shopIds: string[], from: string, to: string, by: RollupBy): Promise<RollupRow[]> {
   if (!shopIds.length) return [];
-  const key = by === "location" ? sql`d.shop_id` : sql`d.region_id`;
-  const name = by === "location" ? sql`max(sh.name)` : sql`max(rg.name)`;
+  const key = by === "location" ? sql`d.shop_id` : by === "region" ? sql`d.region_id` : sql`sh.owner_entity_id`;
+  const name = by === "location" ? sql`max(sh.name)` : by === "region" ? sql`max(rg.name)` : sql`max(oe.name)`;
   return (
     await rows<Record<string, string | number | null>>(sql`
     select ${key}::text "key", ${name} "name", count(distinct d.shop_id)::int locations, sum(d.tickets)::bigint tickets, sum(d.gross_cents)::bigint gross,
@@ -38,6 +39,7 @@ async function rollupRows(shopIds: string[], from: string, to: string, by: Rollu
     from location_daily_stats d
     join shops sh on sh.id = d.shop_id
     left join regions rg on rg.id = d.region_id
+    left join owner_entities oe on oe.id = sh.owner_entity_id
     where d.shop_id in ${uuids(shopIds)} and d.day between ${from} and ${to}
     group by 1`)
   ).map((r) => ({
@@ -68,7 +70,7 @@ export async function rollupData({ scope, params }: ReportInput): Promise<Report
       : Promise.resolve([]),
   ]);
   const ranked = [...cur].sort((a, b) => b.net - a.net);
-  const label = by === "location" ? "Location" : "Region";
+  const label = by === "location" ? "Location" : by === "region" ? "Region" : "Owner";
   const cols = [
     { label: "Rank", kind: "int", sum: false } as Column,
     text(label),
@@ -88,7 +90,7 @@ export async function rollupData({ scope, params }: ReportInput): Promise<Report
     const p = prev.find((x) => x.key === r.key);
     return [
       i + 1,
-      r.name ?? "No region",
+      r.name ?? (by === "owner" ? "No owner" : "No region"),
       r.locations,
       r.tickets,
       r.gross,
@@ -117,7 +119,7 @@ export async function rollupData({ scope, params }: ReportInput): Promise<Report
       {
         id: "rollup",
         title: `${label}s compared`,
-        subtitle: "Ranked on net sales. Each location counts toward its current region, history included.",
+        subtitle: `Ranked on net sales. Each location counts toward its current ${by === "owner" ? "owner" : "region"}, history included.`,
         columns: cols,
         rows: out,
       },
