@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { CelebrationBanner } from "@/components/celebration";
 import { Empty, PageHeader } from "@/components/ui";
 import {
@@ -49,7 +50,20 @@ export default async function CalendarPage({
   const header = ctx.currentShopId === null && (
     <PageHeader
       title="Calendar"
-      subtitle="The calendar shows one shop at a time. Use the shop switcher to change."
+      subtitle={
+        <>
+          The calendar shows one shop at a time. Use the shop switcher to change
+          {manages && (
+            <>
+              , or see every shop on the{" "}
+              <Link className="underline" href="/admin/calendar/board">
+                all-shops day board
+              </Link>
+            </>
+          )}
+          .
+        </>
+      }
     />
   );
 

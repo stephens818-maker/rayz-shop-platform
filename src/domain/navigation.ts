@@ -16,6 +16,7 @@ const CUSTOM_REPORTS: Permission[] = ["report_builder.view", "report_builder.bui
 export const PAGE_ACCESS = {
   "/admin": null,
   "/admin/calendar": null,
+  "/admin/calendar/board": ["calendar.manage"],
   "/admin/customers": null,
   "/admin/customers/[id]": null,
   "/admin/checkout/[saleId]": null,
@@ -133,6 +134,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     items: [
       { href: "/admin", label: "Today" },
       { href: "/admin/calendar", label: "Calendar" },
+      { href: "/admin/calendar/board", label: "All-shops day board" },
       { href: "/admin/clock", label: "Time clock" },
       { href: "/admin/clock/kiosk", label: "Front-desk clock" },
       { href: "/admin/my-time", label: "My time" },
