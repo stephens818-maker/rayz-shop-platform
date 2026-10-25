@@ -50,7 +50,7 @@ export function TrendChart({ id, title, labels, series }: { id: string; title: s
             ))}
             {labels.map((l, i) =>
               i % every === 0 || i === n - 1 ? (
-                <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize={11} fill="#71717a">
+                <text key={i} x={x(i)} y={H - 8} textAnchor={n > 1 && i === n - 1 ? "end" : n > 1 && i === 0 ? "start" : "middle"} fontSize={11} fill="#71717a">
                   {l.replace(/^Week of /, "")}
                 </text>
               ) : null,
