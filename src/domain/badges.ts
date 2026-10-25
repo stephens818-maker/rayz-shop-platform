@@ -134,7 +134,7 @@ export const BADGES = [
     action: true,
     today: (n) => `${clients(n, "")} on their 2nd visit`,
   },
-  { key: "win_back", group: "new", label: "Win-back", icon: "return", tone: "green", hint: "Back, or booked again, after lapsing.", today: (n) => `${clients(n, "")} coming back after a lapse` },
+  { key: "win_back", group: "new", label: "Win-back", icon: "return", tone: "green", hint: "Back, or booked again, after being lapsed.", today: (n) => `${clients(n, "")} coming back after a lapse` },
   { key: "vip", group: "value", label: "VIP", icon: "crown", tone: "violet", hint: "Top spenders over the last 12 months.", money: true, sensitive: true, today: (n) => clients(n, "VIP") },
   { key: "loyal", group: "value", label: "Loyal regular", icon: "heart", tone: "green", hint: "At least the number of visits below." },
   {

@@ -1505,7 +1505,7 @@ Small coloured pills that tell staff something about a client at a glance, each 
 - **Built-in badges (35):**
   - **Customer rewards** (see Customer badges below): Gold, Silver, Bronze, We miss you, Streak, Referral champion.
   - **Visit timing:** On track, Due, Overdue (from the time between visits above), Lapsed (no visit in 16 weeks and nothing booked), At risk (their last gap is 150% or more of their usual one, and at least a week longer).
-  - **New and returning:** New client (no visits yet, or the first one is today), 2nd visit, Win-back (booked or back after lapsing).
+  - **New and returning:** New client (no visits yet, or the first one is today), 2nd visit, Win-back (booked or back after being lapsed).
   - **Value:** VIP (top 10% of 12-month net spend), Loyal regular (10+ visits), Reward ready, Gift card (balance left), Coupon (an unused code).
   - **Celebrations:** Birthday this week, Birthday this month, Anniversary (a year or more since their first visit, this week).
   - **Booking behavior:** No-show risk (2 in 12 months, or a third of their appointments), Late cancels (2 within 24 hours), Always books with {barber} (80% of the last 10 visits), Switched barbers (recently, after being a regular with another), Books online (75% of bookings).

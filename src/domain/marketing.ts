@@ -136,7 +136,22 @@ export interface TriggerDef {
 
 const tpl = (sms: string, emailSubject: string, emailBody: string, pushTitle: string, pushBody: string): Templates => ({ sms, emailSubject, emailBody, pushTitle, pushBody });
 
-export const TRIGGER_KEYS = ["birthday", "lapsed", "win_back", "first_visit", "milestone", "no_show", "rebook", "announcement", "fill_slow_day", "abandoned_booking", "barber_outreach", "badge_news"] as const;
+export const TRIGGER_KEYS = [
+  "birthday",
+  "lapsed",
+  "win_back",
+  "first_visit",
+  "second_visit",
+  "post_visit",
+  "milestone",
+  "no_show",
+  "rebook",
+  "announcement",
+  "fill_slow_day",
+  "abandoned_booking",
+  "barber_outreach",
+  "badge_news",
+] as const;
 export type TriggerKey = (typeof TRIGGER_KEYS)[number];
 export const isTriggerKey = (k: unknown): k is TriggerKey => typeof k === "string" && (TRIGGER_KEYS as readonly string[]).includes(k);
 
@@ -190,6 +205,32 @@ export const TRIGGERS: Record<TriggerKey, TriggerDef> = {
       "Thanks for visiting {shop}",
       "Hi {first_name},\n\nThanks for choosing {shop}. When you're ready for your next cut with {barber}, book here: {book_link}",
       "Thanks for visiting {shop}",
+      "Book your next cut with {barber} anytime.",
+    ),
+  },
+  second_visit: {
+    key: "second_visit",
+    label: "Come back for a 2nd visit",
+    when: (s) => `${s.days} days after a client's first visit, when they haven't booked a second`,
+    settings: [{ key: "days", label: "Days after the first visit", min: 7, max: 120, default: 21, unit: "days" }],
+    templates: tpl(
+      `{shop}: Hi {first_name}, ready for round two with {barber}? Book your next cut: {book_link} ${STOP_LINE}`,
+      "Ready for your next cut at {shop}?",
+      "Hi {first_name},\n\nThanks again for trying {shop}. {barber} would be glad to see you for your next cut. Book here: {book_link}",
+      "Ready for your next cut?",
+      "Book your second visit with {barber}.",
+    ),
+  },
+  post_visit: {
+    key: "post_visit",
+    label: "After every visit",
+    when: (s) => `${s.delayHours} hours after each completed visit but the first (Thanks for your first visit covers that one)`,
+    settings: [{ key: "delayHours", label: "Hours after the visit", min: 1, max: 72, default: 3, unit: "hours" }],
+    templates: tpl(
+      `{shop}: Thanks for coming in, {first_name}! Book your next cut with {barber} anytime: {book_link} ${STOP_LINE}`,
+      "Thanks for coming in to {shop}",
+      "Hi {first_name},\n\nThanks for coming in today. When you're ready for your next cut with {barber}, book here: {book_link}",
+      "Thanks for coming in",
       "Book your next cut with {barber} anytime.",
     ),
   },
@@ -385,6 +426,8 @@ export const MarketingSettingsSchema = z.object({
   address: z.string().trim().max(300).default(""),
   /** A booking or a sale within this many days after a message counts toward that campaign. */
   attributionDays: z.number().int().min(1).max(60).default(7),
+  /** The window starts when the message was sent, or only once the client opened or clicked it. */
+  attributeOn: z.enum(["sent", "engaged"]).default("sent"),
   /** What each message costs, in cents, for ROI. */
   smsCostCents: z.number().min(0).max(100).default(1),
   emailCostCents: z.number().min(0).max(100).default(0.1),
@@ -458,7 +501,41 @@ export const SKIP_LABEL: Record<string, string> = {
   no_coupon: "No coupon codes left",
   openings_cap: "Got a We have openings message recently",
   household: "Someone else in the family already got it (one message per parent's phone and email)",
+  holdout: "In the holdout group (held back on purpose to measure lift)",
 };
+
+export const ATTRIBUTE_ON_LABEL: Record<MarketingSettings["attributeOn"], string> = {
+  sent: "From when the message was sent",
+  engaged: "From when the client opened or clicked it",
+};
+
+/**
+ * The words for where a client is, used the same way on every screen (Squire mixes "Lapsing" and
+ * "Lapsed"). Each is a starting point in the segment builder, which can narrow it further.
+ */
+export const CLIENT_STAGES = {
+  new: { label: "New", hint: "First visit in the last 30 days" },
+  regular: { label: "Regular", hint: "3 or more visits, the last in the last 60 days" },
+  due: { label: "Due or overdue", hint: "At or past their usual time between visits, nothing booked" },
+  lapsed: { label: "Lapsed", hint: "No visit in over 6 weeks and nothing booked since" },
+} as const;
+export type ClientStage = keyof typeof CLIENT_STAGES;
+
+export function stageSegment(stage: ClientStage): Partial<Segment> {
+  switch (stage) {
+    case "new":
+      return { firstVisitWithinDays: 30 };
+    case "regular":
+      return { minVisits: 3, lastVisitWithinDays: 60 };
+    case "due":
+      return { visitStatus: ["due", "overdue"], upcoming: "no" };
+    case "lapsed":
+      return lapsedOver(6);
+  }
+}
+
+/** Clears what a stage set, so picking another doesn't pile them up. */
+export const STAGE_FIELDS: (keyof Segment)[] = ["firstVisitWithinDays", "minVisits", "lastVisitWithinDays", "lastVisitOverDays", "notBooked", "visitStatus", "upcoming"];
 
 // ───────────────────────────── Segments ─────────────────────────────
 
