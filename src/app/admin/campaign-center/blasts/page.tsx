@@ -73,6 +73,7 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
         {rows.map(({ b, funnel }) => {
           const r = ratesOf(funnel);
           const st = BLAST_STATUS[b.status] ?? { label: b.status, tone: "gray" as const };
+          const at = b.status === "scheduled" || b.status === "paused" ? b.scheduledAt : (b.sentAt ?? b.scheduledAt);
           return (
             <tr key={b.id}>
               <Td className="whitespace-normal">
@@ -91,8 +92,14 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
               <Td>
                 <Badge tone={st.tone}>{st.label}</Badge>
               </Td>
-              <Td className="min-w-[6.5rem] whitespace-normal text-xs">
-                {b.status === "scheduled" || b.status === "paused" ? (b.scheduledAt ? formatDateTime(b.scheduledAt) : "—") : b.sentAt ? formatDateTime(b.sentAt) : b.scheduledAt ? formatDateTime(b.scheduledAt) : "—"}
+              <Td className="text-xs">
+                {at
+                  ? formatDateTime(at)
+                      .split(" · ")
+                      .map((x) => (
+                        <div key={x}>{x}</div>
+                      ))
+                  : "—"}
               </Td>
               <Td right>{funnel.sent}</Td>
               <Td right>{pctLabel(r.openRate)}</Td>
