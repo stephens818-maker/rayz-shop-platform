@@ -82,14 +82,20 @@ const ordinal = (d: number) => (d % 100 >= 11 && d % 100 <= 13 ? "th" : (["th", 
 
 // ───────────────────────────── Groups ─────────────────────────────
 
-/** A stable number in [0, 1) for a key (FNV-1a), so the same client always lands in the same group. */
+/** A stable number in [0, 1) for a key, so the same client always lands in the same group. */
 export function bucket(key: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < key.length; i++) {
     h ^= key.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
-  return h / 0x1_0000_0000;
+  // FNV-1a alone skews when keys differ only in their last characters (sequential ids); murmur3's finalizer evens it out.
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return (h >>> 0) / 0x1_0000_0000;
 }
 
 export const HOLDOUT_MAX = 50;
