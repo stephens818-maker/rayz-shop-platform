@@ -102,6 +102,8 @@ export const brandSettings = pgTable("brand_settings", {
   milestones: jsonb("milestones").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** What every location inherits (LocationDefaults in src/domain/location-defaults.ts); missing keys use the built-in values. */
   locationDefaults: jsonb("location_defaults").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Memberships (src/server/memberships.ts) are optional: off, no plans are sold and checkout doesn't offer them. */
+  membershipsEnabled: boolean("memberships_enabled").notNull().default(false),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -3244,6 +3246,116 @@ export const payoutReconciliations = pgTable(
     reconciledAt: ts("reconciled_at").notNull().defaultNow(),
   },
   (t) => [check("payout_reconciliations_ref_len", sql`${t.bankReference} is null or length(${t.bankReference}) <= 60`)],
+);
+
+/** A membership plan, e.g. unlimited buzz cuts for a monthly price. The brand's; sold at the shops in shopIds (every shop when empty). */
+export const membershipPlans = pgTable(
+  "membership_plans",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    description: text("description"),
+    priceCents: integer("price_cents").notNull(),
+    /** Services a visit covers in full. */
+    serviceIds: uuid("service_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    /** Covered visits per billing month; null is unlimited. */
+    visitsPerPeriod: integer("visits_per_period"),
+    /** Off retail on members' tickets. */
+    productDiscountPct: integer("product_discount_pct").notNull().default(0),
+    shopIds: uuid("shop_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    active: boolean("active").notNull().default(true),
+    stripeProductId: text("stripe_product_id"),
+    stripePriceId: text("stripe_price_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("membership_plans_name_uq").on(sql`lower(${t.name})`),
+    check("membership_plans_name", sql`length(trim(${t.name})) between 1 and 60`),
+    check("membership_plans_price", sql`${t.priceCents} between 100 and 100000`),
+    check("membership_plans_visits", sql`${t.visitsPerPeriod} is null or ${t.visitsPerPeriod} between 1 and 31`),
+    check("membership_plans_product_pct", sql`${t.productDiscountPct} between 0 and 50`),
+  ],
+);
+
+export type MembershipStatus = "incomplete" | "active" | "past_due" | "canceled";
+
+/** A client on a plan. Billing "stripe" is a Stripe Billing subscription; "simulated" renews itself with no card (no Stripe keys). */
+export const memberships = pgTable(
+  "memberships",
+  {
+    id: id(),
+    planId: uuid("plan_id")
+      .notNull()
+      .references(() => membershipPlans.id),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    homeShopId: uuid("home_shop_id")
+      .notNull()
+      .references(() => shops.id),
+    status: text("status").$type<MembershipStatus>().notNull().default("active"),
+    billing: text("billing").$type<"simulated" | "stripe">().notNull().default("simulated"),
+    /** The plan's price when they joined; a later price change doesn't reach existing members. */
+    priceCents: integer("price_cents").notNull(),
+    stripeSubscriptionId: text("stripe_subscription_id").unique(),
+    /** Stripe's hosted sign-up page, until the client has paid the first month. */
+    stripeCheckoutUrl: text("stripe_checkout_url"),
+    currentPeriodStart: date("current_period_start").notNull(),
+    currentPeriodEnd: date("current_period_end").notNull(),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    canceledAt: ts("canceled_at"),
+    cancelReason: text("cancel_reason"),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("memberships_live_uq").on(t.customerId, t.planId).where(sql`${t.status} <> 'canceled'`),
+    index("memberships_customer_idx").on(t.customerId),
+    index("memberships_shop_idx").on(t.homeShopId, t.status),
+    check("memberships_status", sql`${t.status} in ('incomplete', 'active', 'past_due', 'canceled')`),
+    check("memberships_billing", sql`${t.billing} in ('simulated', 'stripe')`),
+    check("memberships_period", sql`${t.currentPeriodEnd} > ${t.currentPeriodStart}`),
+  ],
+);
+
+export const membershipInvoices = pgTable(
+  "membership_invoices",
+  {
+    id: id(),
+    membershipId: uuid("membership_id")
+      .notNull()
+      .references(() => memberships.id, { onDelete: "cascade" }),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    status: text("status").$type<"paid" | "failed">().notNull(),
+    stripeInvoiceId: text("stripe_invoice_id").unique(),
+    failureMessage: text("failure_message"),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("membership_invoices_period_uq").on(t.membershipId, t.periodStart, t.status), check("membership_invoices_status", sql`${t.status} in ('paid', 'failed')`)],
+);
+
+/** Covered visits rung up at checkout. A voided or fully refunded ticket gives its visits back. */
+export const membershipUses = pgTable(
+  "membership_uses",
+  {
+    id: id(),
+    membershipId: uuid("membership_id")
+      .notNull()
+      .references(() => memberships.id, { onDelete: "cascade" }),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    periodStart: date("period_start").notNull(),
+    visits: integer("visits").notNull(),
+    valueCents: integer("value_cents").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [unique("membership_uses_sale_uq").on(t.membershipId, t.saleId), index("membership_uses_period_idx").on(t.membershipId, t.periodStart), check("membership_uses_visits", sql`${t.visits} >= 0`)],
 );
 
 export const reportViews = pgTable(

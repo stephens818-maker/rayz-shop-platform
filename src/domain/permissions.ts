@@ -133,6 +133,14 @@ export const FEATURE_PERMISSIONS = [
   { key: "promos.manage", group: "Point of sale", label: "Create and turn off promo codes", hint: "The Campaign Center's coupons. Brand only unless granted." },
   { key: "giftcards.issue", group: "Point of sale", label: "Issue comp gift cards" },
   { key: "giftcards.void", group: "Point of sale", label: "Void gift cards" },
+  {
+    key: "memberships.manage",
+    group: "Point of sale",
+    label: "Set up membership plans and turn memberships on or off",
+    hint: "Plans are the brand's: the monthly price, what a visit covers, and where they're sold.",
+    brandOnly: true,
+  },
+  { key: "memberships.sell", group: "Point of sale", label: "Sign clients up for memberships and cancel them", hint: "Using a membership at checkout needs nothing extra." },
   { key: "clients.view_all", group: "Clients", label: "Look up any client in the brand", hint: "Without it, only clients of their shops, and full profiles only for clients they've served." },
   {
     key: "clients.reveal",
@@ -808,6 +816,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "drawer.no_sale",
   "pos.custom_charge",
   "giftcards.issue",
+  "memberships.sell",
   "clients.view_all",
   "clients.reveal",
   "clients.message",

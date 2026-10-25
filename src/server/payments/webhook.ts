@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { payments } from "@/db/schema";
 import { SYSTEM, audit } from "@/server/audit";
 import { recordProcessorRefund } from "@/server/refunds";
+import { applyMembershipEvent } from "@/server/memberships";
 import { applyTransferReversed } from "@/server/tips/payouts";
 import { PLATFORM_ACCOUNT, recordPayout } from "./connect";
 
@@ -14,7 +15,8 @@ import { PLATFORM_ACCOUNT, recordPayout } from "./connect";
  * against that shop. Refunds the POS made itself arrive here too; they're already recorded, so
  * they're a no-op. Payouts here are the brand account's, for shops on the brand account. A reversed
  * transfer of a tip payout puts its tips back into the next batch. Events from shops' and
- * employees' own accounts come to the Connect webhook.
+ * employees' own accounts come to the Connect webhook. Membership sign-ups, invoices and cancellations
+ * (Stripe Billing, on the brand account) keep each membership's status and month in step.
  */
 export async function handleStripeWebhook(rawBody: string, signature: string, secret: string | undefined) {
   if (!secret) return { status: 400, body: "Stripe webhook secret not configured" };
@@ -41,6 +43,8 @@ export async function handleStripeWebhook(rawBody: string, signature: string, se
     await applyTransferReversed(event.data.object as Stripe.Transfer);
   } else if (event.type.startsWith("payout.") && !event.account) {
     await recordPayout(PLATFORM_ACCOUNT, event.data.object as Stripe.Payout);
+  } else if (!event.account && (event.type === "checkout.session.completed" || event.type.startsWith("invoice.") || event.type.startsWith("customer.subscription."))) {
+    await applyMembershipEvent(event);
   }
   return { status: 200, body: "ok" };
 }

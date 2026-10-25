@@ -46,6 +46,7 @@ import {
 } from "@/domain/combined-checkout";
 import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
 import { reloadProblem } from "@/domain/gift-cards";
+import { membershipDiscounts } from "@/domain/memberships";
 import { DEFAULT_LOYALTY, LoyaltyConfig, loyaltyAtShop } from "@/domain/loyalty";
 import { giftCardCode } from "@/lib/ids";
 import { formatCents } from "@/lib/money";
@@ -55,6 +56,7 @@ import { staffAtShopDenied } from "./auth/policy";
 import { createAppointment, getAvailability } from "./booking";
 import { getShop, shopCatalog } from "./catalog";
 import { heldCoupons, redeemCoupons, resolveCoupon } from "./coupons";
+import { checkoutCoverage, recordMembershipUse } from "./memberships";
 import { AppError, forbidden, notFound } from "./errors";
 import { postMovements } from "./inventory/ledger";
 import { stockLevels } from "./inventory/stock";
@@ -348,6 +350,8 @@ export interface FinalizeInput {
     reason: string;
   } | null;
   loyaltyRewardId?: string | null;
+  /** A ticket client's membership: covers their plan's services in full and takes its retail discount. */
+  membershipId?: string | null;
   tipCents: number;
   giftCard?: { code: string; amountCents: number } | null;
   tender: TenderInput;
@@ -711,6 +715,22 @@ export async function priceCart(
     },
   );
 
+  let membershipUse: { membershipId: string; periodStart: string; visits: number } | null = null;
+  if (input.membershipId) {
+    const customerOf = new Map<string, string | null>(ctx.family.members.map((m) => [m.appointmentId, m.customerId]));
+    if (ctx.appointment) customerOf.set(ctx.appointment.id, ctx.appointment.customerId);
+    const onTicket = [ctx.sale.customerId, ...customerOf.values()].filter((x): x is string => !!x);
+    const coverage = (await checkoutCoverage(onTicket, ctx.shop.id)).find((c) => c.membershipId === input.membershipId);
+    if (!coverage) throw new AppError("bad_request", "That membership can't be used on this ticket");
+    const r = membershipDiscounts(
+      coverage,
+      lines.map((l, i) => ({ ...l, forCustomerId: (meta[i].appointmentId && customerOf.get(meta[i].appointmentId!)) || ctx.sale.customerId })),
+    );
+    if (!r.discounts.length) throw new AppError("bad_request", `${coverage.planName} doesn't cover anything on this ticket${coverage.visitsLeft === 0 ? ": no visits left this month" : ""}`);
+    discounts.push(...r.discounts);
+    membershipUse = { membershipId: coverage.membershipId, periodStart: coverage.periodStart, visits: r.visits };
+  }
+
   const totals = computeCheckout({
     lines,
     discounts,
@@ -748,6 +768,7 @@ export async function priceCart(
     gift,
     inv,
     meta,
+    membershipUse,
   };
 }
 
@@ -791,7 +812,7 @@ export async function finalizeSale(input: FinalizeInput) {
     split ? { ...input, tender: { method: "cash" } } : input,
     card?.funding ?? null,
   );
-  const { ctx, promoId, coupons, rewardId, rewardOwnerId, gift, meta } = priced;
+  const { ctx, promoId, coupons, rewardId, rewardOwnerId, gift, meta, membershipUse } = priced;
   let totals = priced.totals;
   const people = new Map<string, string>(
     ctx.family.members.flatMap((m) =>
@@ -1159,6 +1180,18 @@ export async function finalizeSale(input: FinalizeInput) {
 
       if (coupons.length)
         await redeemCoupons(tx, coupons, { ...ctx.sale, staffId }, now);
+      if (membershipUse) {
+        await recordMembershipUse(
+          tx,
+          {
+            ...membershipUse,
+            saleId: ctx.sale.id,
+            shopId: ctx.shop.id,
+            valueCents: totals.discountBreakdown.filter((d) => d.source === "membership").reduce((a, d) => a + d.cents, 0),
+          },
+          input.actor,
+        );
+      }
       if (rewardId && rewardOwnerId)
         await markRewardRedeemed(
           tx,

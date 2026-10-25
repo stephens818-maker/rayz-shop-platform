@@ -1,3 +1,4 @@
+import { checkoutCoverage } from "@/server/memberships";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { CelebrationBanner } from "@/components/celebration";
@@ -97,6 +98,10 @@ export default async function CheckoutPage({
     shopDay([c.shop.id]),
   ]);
   const people = await ticketPeople(c.sale);
+  const memberCoverage = await checkoutCoverage(
+    [c.sale.customerId, ...people.map((p) => p.customerId)].filter((x): x is string => !!x),
+    c.shop.id,
+  );
   const prompts = await promptsForTicket(saleId, {
     roleId: ctx.staff.roleId,
     actor: ctx.actor,
@@ -217,6 +222,7 @@ export default async function CheckoutPage({
         prompts={prompts}
         people={people.map((p) => ({
           appointmentId: p.appointmentId,
+          customerId: p.customerId,
           name: p.name,
           isChild: p.isChild,
           staffId: p.staffId,
@@ -287,6 +293,7 @@ export default async function CheckoutPage({
         }))}
         retail={c.retail}
         negativeStock={c.negativeStock}
+        memberships={memberCoverage}
         loyalty={
           loyalty && loyalty.enabled && c.config.loyalty.on
             ? {

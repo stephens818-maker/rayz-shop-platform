@@ -49,6 +49,7 @@ import {
   tipSuggestions,
 } from "@/domain/checkout";
 import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
+import { type MemberCoverage, membershipDiscounts } from "@/domain/memberships";
 import {
   type TipSplitMode,
   splitBarbers,
@@ -125,6 +126,7 @@ type Resume = {
     reason: string;
   } | null;
   loyaltyRewardId: string | null;
+  membershipId?: string | null;
   giftCard: { code: string; amountCents: number } | null;
   rebookInWeeks: number | null;
   tipSplit: TipSplitMode | null;
@@ -141,6 +143,7 @@ type Card4 = {
 /** Everyone on the ticket, its own appointment first. */
 type Person = {
   appointmentId: string;
+  customerId?: string | null;
   name: string;
   isChild: boolean;
   staffId: string | null;
@@ -208,6 +211,8 @@ export function Pos(props: {
     available: number;
   }[];
   negativeStock: "block" | "warn";
+  /** Memberships of people on the ticket that this shop honors. */
+  memberships?: MemberCoverage[];
   /** Rewards with an owner are someone else's on this combined ticket. */
   loyalty: {
     rewards: {
@@ -304,6 +309,10 @@ export function Pos(props: {
   );
   const [rewardId, setRewardId] = useState<string | null>(
     r0?.loyaltyRewardId ?? null,
+  );
+  const memberOptions = props.memberships ?? [];
+  const [membershipId, setMembershipId] = useState<string | null>(() =>
+    r0 ? (r0.membershipId ?? null) : memberOptions.length === 1 ? memberOptions[0].membershipId : null,
   );
   const tip0 = r0 ? (r0.tipCents ?? 0) : (props.bookingTipCents ?? 0);
   const [tipCents, setTipCents] = useState(tip0);
@@ -431,6 +440,18 @@ export function Pos(props: {
           props.loyalty!.redeemableOn === "services" ? "services" : "all",
       });
   }
+  const coverage = memberOptions.find((c) => c.membershipId === membershipId) ?? null;
+  const memberResult = coverage
+    ? membershipDiscounts(
+        coverage,
+        priced.map((l) => ({
+          ...l,
+          forCustomerId: (l.appointmentId && props.people.find((p) => p.appointmentId === l.appointmentId)?.customerId) || props.customer?.id || null,
+        })),
+      )
+    : null;
+  if (memberResult) discounts.push(...memberResult.discounts);
+  const usedMembershipId = memberResult?.discounts.length ? membershipId : null;
   const couponProblem =
     stackProblem(coupons, {
       manualDiscount:
@@ -723,6 +744,7 @@ export function Pos(props: {
               }
             : null,
           loyaltyRewardId: rewardId,
+          membershipId: usedMembershipId,
           tipCents,
           giftCard: gift
             ? { code: gift.code, amountCents: gift.balanceCents }
@@ -813,6 +835,7 @@ export function Pos(props: {
             ? { type: manual.type, value: manualValue, reason: manual.reason }
             : null,
           loyaltyRewardId: rewardId,
+          membershipId: usedMembershipId,
           giftCard: gift
             ? { code: gift.code, amountCents: gift.balanceCents }
             : null,
@@ -1617,6 +1640,33 @@ export function Pos(props: {
                 !couponResults.some((c) => c.problem === couponProblem) && (
                   <p className="text-xs text-amber-700">{couponProblem}</p>
                 )}
+              {memberOptions.length > 0 && (
+                <div className="rounded-lg bg-violet-50/60 p-3 ring-1 ring-violet-200" data-testid="membership">
+                  <div className="text-sm font-medium">Membership</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {memberOptions.map((c) => (
+                      <button
+                        key={c.membershipId}
+                        onClick={() => setMembershipId(membershipId === c.membershipId ? null : c.membershipId)}
+                        className={cx(
+                          "rounded-full px-3 py-1 text-sm ring-1",
+                          membershipId === c.membershipId ? "bg-violet-600 text-white ring-violet-600" : "bg-white text-violet-800 ring-violet-300",
+                        )}
+                      >
+                        {membershipId === c.membershipId ? "✓ " : ""}
+                        {c.planName}
+                        {memberOptions.length > 1 || props.people.length > 1 ? ` (${c.memberName.split(" ")[0]})` : ""}
+                        {c.visitsLeft != null ? ` · ${c.visitsLeft} visit${c.visitsLeft === 1 ? "" : "s"} left` : ""}
+                      </button>
+                    ))}
+                  </div>
+                  {coverage && memberResult && !memberResult.discounts.length && (
+                    <div className="mt-1 text-xs text-zinc-500">
+                      {coverage.visitsLeft === 0 ? "No covered visits left this month." : "Nothing on the ticket is covered by this plan."}
+                    </div>
+                  )}
+                </div>
+              )}
               {props.loyalty && (
                 <div className="rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-200">
                   <div className="flex items-center justify-between text-sm">

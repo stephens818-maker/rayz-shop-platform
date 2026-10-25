@@ -17,6 +17,8 @@ import { can, guardPage, ratingViewer, workingShopId } from "@/server/auth/staff
 import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, shownField } from "@/server/client-privacy";
 import { customerAccess, customerStats, duplicatePairs } from "@/server/customers";
 import { loyaltyBalance } from "@/server/loyalty";
+import { clientMemberships } from "@/server/memberships";
+import { MEMBERSHIP_STATUS_LABEL } from "@/domain/memberships";
 import { loyaltyCardSvg, loyaltyCardValue } from "@/server/loyalty-card";
 import { lookups } from "@/server/lookups";
 import { rateableVisits, ratingHistory, ratingSummary } from "@/server/ratings";
@@ -152,7 +154,7 @@ export default async function CustomerPage({
     clientCadence(id, new Date()),
   ]);
   const buyShopId = workingShopId(ctx);
-  const [products, carried] = await Promise.all([
+  const [products, carried, memberOf] = await Promise.all([
     clientProductHistory(id, new Date()),
     buyShopId
       ? db
@@ -161,6 +163,7 @@ export default async function CustomerPage({
           .innerJoin(productsTable, eq(productsTable.id, shopProducts.productId))
           .where(and(eq(shopProducts.shopId, buyShopId), eq(shopProducts.active, true), eq(productsTable.active, true)))
       : [],
+    clientMemberships(id),
   ]);
   const spend = money ?? stats;
   const [tags, knownTags] = full
@@ -409,6 +412,21 @@ export default async function CustomerPage({
             </Card>
           )}
           {c.phone && <CallsAndTexts customerId={c.id} shopIds={ctx.brandWide ? null : ctx.shopIds} canInbox={can(ctx, "inbox.view")} />}
+          {memberOf.length > 0 && (
+            <Card>
+              <CardHeader title="Memberships" action={can(ctx, "memberships.manage") || can(ctx, "memberships.sell") ? <Link className="text-xs underline" href="/admin/memberships">Manage</Link> : undefined} />
+              <ul className="divide-y divide-zinc-100 text-sm">
+                {memberOf.map((m) => (
+                  <li key={m.id} className="flex items-center justify-between gap-2 px-4 py-2">
+                    <span className="font-medium">{m.plan}</span>
+                    <span className="text-xs text-zinc-500">
+                      {m.status === "active" ? (m.cancelAtPeriodEnd ? `ends ${formatDate(m.periodEnd)}` : `renews ${formatDate(m.periodEnd)}`) : MEMBERSHIP_STATUS_LABEL[m.status]}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
           <Card>
             <CardHeader title="Loyalty" subtitle={loyalty.rules.earn} />
             <ul className="divide-y divide-zinc-100 text-sm">

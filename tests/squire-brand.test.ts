@@ -14,6 +14,8 @@ import { jurisdictionGroups, ratePct } from "@/domain/tax-fees";
 import { matchesFilters, parseAppointmentFilters, paymentOf, platformOf } from "@/domain/appointment-report";
 import { ReconcileInput, isReconcilable, notYetPaidOut, unmatched } from "@/domain/payout-reconcile";
 import { IssueCompInput, ledgerLabel, reloadProblem } from "@/domain/gift-cards";
+import { PlanInput, membershipDiscounts, monthlyRecurring, periodEnd, planProblem, planSummary, visitsLeft } from "@/domain/memberships";
+import { computeCheckout } from "@/domain/checkout";
 
 describe("report navigation and defaults", () => {
   it("puts every report in one category, in category order", () => {
@@ -291,5 +293,56 @@ describe("gift card management", () => {
     expect(() => IssueCompInput.parse({ shopId, amountCents: 50, reason: "x" })).toThrow(/at least \$1/);
     expect(IssueCompInput.parse({ shopId, amountCents: 1000, reason: " Recovery " }).reason).toBe("Recovery");
     expect([ledgerLabel("reload"), ledgerLabel("reload_refund"), ledgerLabel("something_new")]).toEqual(["Reloaded", "Reload refunded", "something new"]);
+  });
+});
+
+describe("memberships", () => {
+  const cut = "00000000-0000-4000-8000-000000000001";
+  const beard = "00000000-0000-4000-8000-000000000002";
+  const coverage = { membershipId: "m1", customerId: "dad", memberName: "Dad", planName: "Buzz Club", serviceIds: [cut], visitsLeft: null as number | null, productDiscountPct: 0, periodStart: "2026-10-01" };
+  const line = (key: string, refId: string, unitPriceCents: number, forCustomerId: string | null, qty = 1) => ({ key, kind: "service" as const, name: key, refId, unitPriceCents, qty, forCustomerId });
+
+  it("covers only the member's own plan services, most expensive first, up to the visits left", () => {
+    const lines = [line("a", cut, 2500, "dad"), line("b", cut, 3000, "dad"), line("c", cut, 2500, "kid"), line("d", beard, 1500, "dad")];
+    const all = membershipDiscounts(coverage, lines);
+    expect(all.visits).toBe(2);
+    expect(all.discounts).toEqual([expect.objectContaining({ source: "membership", type: "amount", value: 5500, lineKeys: ["b", "a"], refId: "m1" })]);
+    const one = membershipDiscounts({ ...coverage, visitsLeft: 1 }, lines);
+    expect([one.visits, one.discounts[0].value, one.discounts[0].lineKeys]).toEqual([1, 3000, ["b"]]);
+    expect(membershipDiscounts({ ...coverage, visitsLeft: 0 }, lines)).toEqual({ discounts: [], visits: 0 });
+  });
+
+  it("takes the plan's percent off retail, and checkout keeps the covered amount on the member's lines", () => {
+    const lines = [line("a", cut, 2500, "dad"), line("c", cut, 2500, "kid"), { key: "p", kind: "product" as const, name: "Pomade", refId: beard, unitPriceCents: 2000, qty: 1, forCustomerId: "dad" }];
+    const r = membershipDiscounts({ ...coverage, productDiscountPct: 10 }, lines);
+    expect(r.discounts.map((d) => [d.type, d.value, d.appliesTo])).toEqual([
+      ["amount", 2500, "services"],
+      ["percent", 10, "products"],
+    ]);
+    const t = computeCheckout({ lines, discounts: r.discounts, taxRates: { serviceRate: 0, productRate: 0 }, cardFee: { enabled: false, rate: 0, appliesToTip: false }, tender: { method: "cash" } });
+    expect(t.discountCents).toBe(2500 + 200);
+    expect(t.lines.map((l) => [l.key, l.discountCents])).toEqual([
+      ["a", 2500],
+      ["c", 0],
+      ["p", 200],
+    ]);
+  });
+
+  it("validates plans and counts months and recurring revenue", () => {
+    expect(planProblem(PlanInput.parse({ name: "Retail", priceCents: 1000, productDiscountPct: 10 }))).toBeNull();
+    expect(planProblem(PlanInput.parse({ name: "Empty", priceCents: 1000 }))).toMatch(/needs services/);
+    expect(() => PlanInput.parse({ name: "Cheap", priceCents: 50, serviceIds: [cut] })).toThrow(/at least \$1/);
+    expect([periodEnd("2026-10-25"), periodEnd("2027-01-31"), periodEnd("2028-01-31")]).toEqual(["2026-11-25", "2027-02-28", "2028-02-29"]);
+    expect([visitsLeft(null, 9), visitsLeft(2, 1), visitsLeft(2, 5)]).toEqual([null, 1, 0]);
+    expect(planSummary({ priceCents: 3900, visitsPerPeriod: null, productDiscountPct: 10 }, ["Buzz cut"])).toBe("Unlimited Buzz cut · 10% off retail");
+    expect(
+      monthlyRecurring([
+        { status: "active", priceCents: 3900, cancelAtPeriodEnd: false },
+        { status: "past_due", priceCents: 3900, cancelAtPeriodEnd: false },
+        { status: "active", priceCents: 3900, cancelAtPeriodEnd: true },
+        { status: "incomplete", priceCents: 3900, cancelAtPeriodEnd: false },
+        { status: "canceled", priceCents: 3900, cancelAtPeriodEnd: false },
+      ]),
+    ).toBe(7800);
   });
 });

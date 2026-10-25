@@ -547,6 +547,13 @@
       "when": 1795662000000,
       "tag": "core_0077_payout_reconciliation",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1795748400000,
+      "tag": "core_0078_memberships",
+      "breakpoints": true
     }
   ]
 }

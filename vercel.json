@@ -8,6 +8,7 @@
     { "path": "/api/cron/badges", "schedule": "10,40 6-8 * * *" },
     { "path": "/api/cron/milestones", "schedule": "55 * * * *" },
     { "path": "/api/cron/analytics", "schedule": "20 9 * * *" },
-    { "path": "/api/cron/jobs", "schedule": "15 7-9 * * *" }
+    { "path": "/api/cron/jobs", "schedule": "15 7-9 * * *" },
+    { "path": "/api/cron/memberships", "schedule": "5 6 * * *" }
   ]
 }

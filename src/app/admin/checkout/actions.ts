@@ -200,6 +200,7 @@ export async function finalizeAction(input: {
   promoCodes?: string[] | null;
   manualDiscount: { type: "percent" | "amount"; value: number; reason: string } | null;
   loyaltyRewardId: string | null;
+  membershipId?: string | null;
   tipCents: number;
   giftCard: { code: string; amountCents: number } | null;
   tender: TenderInput;
