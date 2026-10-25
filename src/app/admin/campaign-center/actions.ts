@@ -5,7 +5,21 @@ import type { Channel } from "@/domain/marketing";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
 import { AppError, forbidden } from "@/server/errors";
-import { cancelBlast, previewBlast, saveAutomation, saveBlast, scheduleBlast, sendTest, setLocationAutomation } from "@/server/marketing/campaigns";
+import { draftBlast } from "@/server/marketing/ai-draft";
+import {
+  cancelBlast,
+  duplicateBlast,
+  pauseBlast,
+  previewBlast,
+  renameCampaign,
+  resumeBlast,
+  saveAutomation,
+  saveBlast,
+  scheduleBlast,
+  sendTest,
+  setLocationAutomation,
+} from "@/server/marketing/campaigns";
+import { saveTemplate, setTemplateStatus } from "@/server/marketing/templates";
 import { deleteSequence, previewSequence, saveSequence, setSequenceEnabled } from "@/server/marketing/sequences";
 import { saveMarketingSettings } from "@/server/marketing/settings";
 
@@ -38,14 +52,77 @@ export async function saveBlastAction(input: unknown) {
   });
 }
 
-export async function scheduleBlastAction(id: string, at: string | null) {
+export async function scheduleBlastAction(id: string, at: string | null, reviewed = false) {
   return safe(async () => {
     const ctx = await authorize("campaign_center.send", "Sending a blast needs Campaign Center: send");
     const when = at ? new Date(at) : null;
     if (when && Number.isNaN(when.getTime())) throw new AppError("bad_request", "Pick a date and time");
-    const r = await scheduleBlast(ctx, String(id), when);
+    const r = await scheduleBlast(ctx, String(id), when, new Date(), { reviewed: reviewed === true });
     revalidatePath("/admin/campaign-center/blasts");
     return r;
+  });
+}
+
+export async function pauseBlastAction(id: string) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.send", "Pausing a blast needs Campaign Center: send");
+    await pauseBlast(ctx, String(id));
+    revalidatePath("/admin/campaign-center/blasts");
+    return null;
+  });
+}
+
+export async function resumeBlastAction(id: string) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.send", "Resuming a blast needs Campaign Center: send");
+    const at = await resumeBlast(ctx, String(id));
+    revalidatePath("/admin/campaign-center/blasts");
+    return { at: at.toISOString() };
+  });
+}
+
+export async function duplicateBlastAction(id: string) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Copying a blast needs Campaign Center: create");
+    const copy = await duplicateBlast(ctx, String(id));
+    revalidatePath("/admin/campaign-center/blasts");
+    return { id: copy };
+  });
+}
+
+export async function renameCampaignAction(id: string, name: string) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Renaming needs Campaign Center: create");
+    await renameCampaign(ctx, String(id), name);
+    revalidatePath("/admin/campaign-center");
+    revalidatePath("/admin/campaign-center/blasts");
+    return null;
+  });
+}
+
+export async function draftBlastAction(prompt: string) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Drafting a blast needs Campaign Center: create");
+    return draftBlast(ctx, prompt);
+  });
+}
+
+export async function saveTemplateAction(input: unknown) {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Only the brand writes templates");
+    const id = await saveTemplate(ctx, input);
+    revalidatePath("/admin/campaign-center/templates");
+    return { id };
+  });
+}
+
+export async function setTemplateStatusAction(id: string, status: "draft" | "approved" | "archived") {
+  return safe(async () => {
+    const ctx = await authorize("campaign_center.create", "Only the brand approves templates");
+    if (status !== "draft" && status !== "approved" && status !== "archived") throw new AppError("bad_request", "Pick a status");
+    await setTemplateStatus(ctx, String(id), status);
+    revalidatePath("/admin/campaign-center/templates");
+    return null;
   });
 }
 
