@@ -179,18 +179,23 @@ export function stubDraftRaw(prompt: string, coupons: readonly DraftCoupon[], ba
   const span = p.match(/(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s*(day|week|month)s?/);
   const amount = span ? (Number(span[1]) || WORD_NUM[span[1]] || 0) * (span[2] === "day" ? 1 : span[2] === "week" ? 7 : 30) : 0;
   let who = "clients";
-  if (/laps|miss|haven'?t (seen|been)|not been in|come back|win.?back|been a while/.test(p)) {
+  const lapsed = /laps|miss|haven'?t (seen|been)|not been in|come back|win.?back|been a while/;
+  const fresh = /new client|first.?time|first visit|newcomer/;
+  const regular = badges.some((b) => b.key === "vip") ? /regular|loyal|best client/ : /regular|loyal|best client|vip/;
+  const due = /overdue|due for|\bdue\b/;
+  const stage = [lapsed, fresh, regular, due].find((re) => re.test(p)) ?? null;
+  if (stage === lapsed) {
     audience.lastVisitOverDays = amount || 42;
     audience.notBooked = true;
     who = "lapsed clients";
-  } else if (/new client|first.?time|first visit|newcomer/.test(p)) {
+  } else if (stage === fresh) {
     audience.firstVisitWithinDays = amount || 30;
     who = "new clients";
-  } else if (/regular|loyal|best client|vip/.test(p)) {
+  } else if (stage === regular) {
     audience.minVisits = 3;
     audience.lastVisitWithinDays = 60;
     who = "regulars";
-  } else if (/overdue|due for/.test(p)) {
+  } else if (stage === due) {
     audience.visitStatus = ["due", "overdue"];
     who = "clients due for a cut";
   }
@@ -198,7 +203,8 @@ export function stubDraftRaw(prompt: string, coupons: readonly DraftCoupon[], ba
     audience.birthdayMonths = [new Date().getMonth() + 1];
     who = "clients with a birthday this month";
   }
-  const badge = badges.find((b) => p.includes(b.label.toLowerCase()));
+  // "Lapsed", "We miss you", "New client" and the like are badges too; requiring the badge on top of the same rule only shrinks the audience.
+  const badge = badges.find((b) => p.includes(b.label.toLowerCase()) && !stage?.test(b.label.toLowerCase()));
   if (badge) audience.badges = [badge.key];
   const usable = coupons.filter((c) => c.usable);
   const named = usable.find((c) => p.includes(c.code.toLowerCase()));

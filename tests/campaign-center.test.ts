@@ -185,6 +185,25 @@ describe("AI drafts", () => {
     expect(templatesProblem(d.templates, d.channels, { hasCoupon: true })).toBeNull();
   });
 
+  it("the keyword drafter doesn't also require a badge that names the same stage", () => {
+    const all = [
+      { key: "lapsed", label: "Lapsed" },
+      { key: "miss_you", label: "We miss you" },
+      { key: "new_client", label: "New client" },
+      { key: "due", label: "Due" },
+      { key: "vip", label: "VIP" },
+      { key: "gold", label: "Gold" },
+    ];
+    const keys = all.map((b) => b.key);
+    const seg = (prompt: string) => normalizeDraft(stubDraftRaw(prompt, coupons, all), { coupons, badges: keys }).segment;
+    expect(seg("Win back lapsed clients with 20% off")).toMatchObject({ lastVisitOverDays: 42, notBooked: true, badges: [] });
+    expect(seg("We miss you note for clients we haven't seen")).toMatchObject({ lastVisitOverDays: 42, badges: [] });
+    expect(seg("Welcome offer for new clients")).toMatchObject({ firstVisitWithinDays: 30, badges: [] });
+    expect(seg("Nudge clients who are due for a cut")).toMatchObject({ visitStatus: ["due", "overdue"], badges: [] });
+    expect(seg("Thank our VIP clients")).toMatchObject({ minVisits: null, badges: ["vip"] });
+    expect(seg("Lapsed Gold members, come back")).toMatchObject({ lastVisitOverDays: 42, badges: ["gold"] });
+  });
+
   it("never attaches an unusable or invented coupon, drops unknown fields and badges, adds the opt-out line", () => {
     const d = normalizeDraft(
       {
