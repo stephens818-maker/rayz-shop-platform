@@ -80,6 +80,7 @@ import { acquisitionData, endOfDayData, leaderboardData, phoneOperatorData, rete
 import { morningDashboardFor } from "./morning-dashboard";
 import { ratingsGivenAt } from "./ratings-report";
 import { grainsFor } from "./report-sql";
+import { analyticsData } from "./analytics-report";
 import type { StaffAccess } from "./auth/access";
 
 /**
@@ -127,6 +128,8 @@ export interface ReportData {
   charts?: ReportChart[];
   notes?: string[];
   options?: ReportOption[];
+  /** Date presets to offer instead of the usual list, like Analytics' 1W / 4W / MTD / QTD / YTD. */
+  presets?: { id: string; label: string }[];
 }
 
 export interface ReportInput {
@@ -1230,6 +1233,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async client_ratings({ scope, loc }) {
     return { stats: [], tables: [await ratingsGivenTable(scope, loc)] };
+  },
+
+  async analytics({ scope, loc, params }) {
+    return analyticsData(scope, loc, params);
   },
 
   async kpis({ scope, loc }) {

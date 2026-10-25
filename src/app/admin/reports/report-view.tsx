@@ -13,6 +13,8 @@ import { clientPolicy } from "@/server/client-privacy";
 import { Cell, ColumnKind, REPORT_LOADERS, ReportData, ReportTable } from "@/server/report-data";
 import { LocationNotice, ReportFilters, locationProps, optionValues, reportQuery } from "./filters";
 import { ReportParams, resolveScope } from "./scope";
+import { SavedViews } from "./saved-views";
+import { cleanViewQuery, listReportViews } from "@/server/report-views-saved";
 
 /** Report categories on top (only those with a report this person may open), then every report in the active one's category. Nothing sits behind a "More" menu. */
 export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportKey }) {
@@ -197,7 +199,11 @@ export async function ReportPage({
   const canExport = can(ctx, reportExport(report));
   const t0 = performance.now();
   const params = Object.fromEntries(Object.entries(searchParams).map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
-  const data = await REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params });
+  const [data, views] = await Promise.all([
+    REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params }),
+    listReportViews(ctx.staff.id, report),
+  ]);
+  const query = cleanViewQuery(new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => !!e[1])).toString());
   const ms = Math.round(performance.now() - t0);
   const csv = (table: string) => (canExport ? `/admin/reports/export?${reportQuery(scope, { ...optionValues(data.options), type: report, table, from: scope.from, to: scope.to })}` : null);
   const view = viewOf(scope.loc);
@@ -236,7 +242,9 @@ export async function ReportPage({
         scope={scope}
         location={ctx.shops.length > 1 ? locationProps(ctx, scope) : null}
         options={data.options}
+        presets={data.presets}
       />
+      <SavedViews report={report} base={meta.href} query={query} views={views} canShare={can(ctx, "report_builder.build")} />
       <LocationNotice locations={scope} />
       {data.stats.length > 0 && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

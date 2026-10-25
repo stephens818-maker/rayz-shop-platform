@@ -18,6 +18,7 @@ export type ReportGroupId = (typeof REPORT_GROUPS)[number]["id"];
 
 export const REPORT_GROUP: Record<ReportKey, ReportGroupId> = {
   my_sales: "sales",
+  analytics: "sales",
   sales_summary: "sales",
   end_of_day: "sales",
   card_vs_cash: "sales",

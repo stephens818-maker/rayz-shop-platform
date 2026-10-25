@@ -511,3 +511,20 @@ describe("saved location groups", () => {
     expect(await save(null, { name: "Mine", shopIds: [shop.coralville.id, shop.dubuque.id] })).toMatchObject({ ok: false });
   });
 });
+
+describe("analytics", () => {
+  it("compares the range with the one before, and the locations add up to the total", async () => {
+    const d = await load("analytics", THREE, "shops");
+    const main = table(d, "compare");
+    const net = main.rows.find((r) => r[0] === "Net sales")!;
+    expect(main.title).toContain("vs");
+    expect(main.columns.map((c) => c.label)).toEqual(["Metric", "Now", "Before", "Change", "% change"]);
+    const byShop = table(d, "locations");
+    expect(byShop.rows).toHaveLength(3);
+    expect(byShop.rows.reduce((a, r) => a + Number(r[1]), 0)).toBe(net[1]);
+    expect(byShop.rows.reduce((a, r) => a + Number(r[2]), 0)).toBe(net[2]);
+    const sales = table(await load("sales_summary", THREE, "combined"), "summary");
+    expect(net[1]).toBe(sales.rows.find((r) => r[0] === "Net sales")![1]);
+    expect(d.presets!.map((p) => p.label)).toEqual(["1W", "4W", "MTD", "QTD", "YTD"]);
+  });
+});

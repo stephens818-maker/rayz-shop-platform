@@ -143,6 +143,7 @@ export function ReportFilters({
   scope,
   location,
   options,
+  presets = PRESETS,
 }: {
   base: string;
   preset: string | null;
@@ -152,6 +153,7 @@ export function ReportFilters({
   /** Null when the viewer has one shop. */
   location: LocationProps | null;
   options?: readonly ReportOption[];
+  presets?: readonly { id: string; label: string }[];
 }) {
   const opts = optionValues(options);
   const qs = (extra: Record<string, string | null>) => `${base}?${reportQuery(scope, { ...opts, ...extra })}`;
@@ -159,7 +161,7 @@ export function ReportFilters({
   return (
     <div className="no-print mb-5 space-y-3">
       <div className="flex flex-wrap items-center gap-1.5">
-        {PRESETS.map((p) => (
+        {presets.map((p) => (
           <Link
             key={p.id}
             href={qs({ preset: p.id })}

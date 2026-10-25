@@ -3175,6 +3175,27 @@ export const morningDashboardSends = pgTable(
 
 // ───────────────────────────── Custom reports ─────────────────────────────
 
+/** A person's named filters for one report (dates, shops, barbers, options), as its query string; shared ones show for everyone who can open the report. */
+export const reportViews = pgTable(
+  "report_views",
+  {
+    id: id(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    report: text("report").notNull(),
+    name: text("name").notNull(),
+    query: text("query").notNull(),
+    shared: boolean("shared").notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("report_views_report_idx").on(t.report, t.ownerId),
+    check("report_views_name", sql`length(trim(${t.name})) between 1 and 60`),
+    check("report_views_query", sql`length(${t.query}) <= 2000`),
+  ],
+);
+
 /**
  * A report built in the report builder: its data source and definition (ReportDefinition in
  * src/domain/report-builder.ts). Private to its owner, shared with roles, or a brand template

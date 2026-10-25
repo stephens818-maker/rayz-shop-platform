@@ -541,6 +541,12 @@ export const REPORTS = [
   { key: "gift_cards", label: "Gift cards", href: "/admin/reports/gift-cards" },
   { key: "loyalty", label: "Loyalty", href: "/admin/reports/loyalty" },
   { key: "client_ratings", label: "Client ratings", href: "/admin/reports/ratings" },
+  {
+    key: "analytics",
+    label: "Analytics",
+    href: "/admin/reports/analytics",
+    hint: "Sales, tickets and clients against the period before or last year: 1W, 4W, MTD, QTD and YTD, overall and by location.",
+  },
   { key: "kpis", label: "Retention and rebook KPIs", href: "/admin/reports/kpis" },
   {
     key: "operations",
@@ -993,6 +999,7 @@ const TEMPLATES: RoleTemplate[] = [
           "discounts_refunds",
           "gift_cards",
           "kpis",
+          "analytics",
           "rollup",
           "operations",
           "rebook_rate",

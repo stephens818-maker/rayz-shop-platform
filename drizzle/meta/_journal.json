@@ -512,6 +512,13 @@
       "when": 1795230000000,
       "tag": "core_0072_register_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1795316400000,
+      "tag": "core_0073_analytics_saved_views",
+      "breakpoints": true
     }
   ]
 }

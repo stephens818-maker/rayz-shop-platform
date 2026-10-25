@@ -3,6 +3,7 @@ import { REPORTS, ROLE_TEMPLATES, isPermission, type Permission } from "@/domain
 import { MATRIX_ACTIONS, MATRIX_AREAS, MATRIX_PERMISSIONS, cellOverride, cellState, nextOverride, setCell } from "@/domain/permission-matrix";
 import { REPORT_GROUP, REPORT_GROUPS, groupReports } from "@/domain/report-groups";
 import { lastBusinessDay, presetRange } from "@/domain/report-range";
+import { ANALYTICS_PERIODS, comparePeriod, periodChange, yearBefore } from "@/domain/period-compare";
 import { WATERFALL, waterfallGap } from "@/domain/sales-waterfall";
 import { matchesFilters, parseAppointmentFilters, paymentOf, platformOf } from "@/domain/appointment-report";
 
@@ -101,5 +102,39 @@ describe("per-staff permission matrix", () => {
     expect(perms("front_desk").has("drawer.no_sale")).toBe(true);
     expect(perms("front_desk").has("pos.custom_charge")).toBe(false);
     expect(perms("barber").has("drawer.no_sale")).toBe(false);
+  });
+});
+
+describe("analytics period over period", () => {
+  it("offers 1W, 4W, MTD, QTD and YTD as the report presets they are", () => {
+    expect(ANALYTICS_PERIODS.map((p) => p.label)).toEqual(["1W", "4W", "MTD", "QTD", "YTD"]);
+    const today = "2026-10-25";
+    expect(ANALYTICS_PERIODS.map((p) => presetRange(p.id, today))).toEqual([
+      { from: "2026-10-19", to: "2026-10-25" },
+      { from: "2026-09-28", to: "2026-10-25" },
+      { from: "2026-10-01", to: "2026-10-25" },
+      { from: "2026-10-01", to: "2026-10-25" },
+      { from: "2026-01-01", to: "2026-10-25" },
+    ]);
+  });
+
+  it("compares like with like", () => {
+    expect(comparePeriod("2026-10-19", "2026-10-25", "7d", "prior")).toEqual({ from: "2026-10-12", to: "2026-10-18" });
+    expect(comparePeriod("2026-09-28", "2026-10-25", "4w", "prior")).toEqual({ from: "2026-08-31", to: "2026-09-27" });
+    // Month to date against the same days of last month, capped at its end.
+    expect(comparePeriod("2026-10-01", "2026-10-25", "month", "prior")).toEqual({ from: "2026-09-01", to: "2026-09-25" });
+    expect(comparePeriod("2026-03-01", "2026-03-31", "month", "prior")).toEqual({ from: "2026-02-01", to: "2026-02-28" });
+    // Quarter to date: as many days into last quarter.
+    expect(comparePeriod("2026-10-01", "2026-10-25", "quarter", "prior")).toEqual({ from: "2026-07-01", to: "2026-07-25" });
+    // Year to date and "last year": the same dates a year back.
+    expect(comparePeriod("2026-01-01", "2026-10-25", "ytd", "prior")).toEqual({ from: "2025-01-01", to: "2025-10-25" });
+    expect(comparePeriod("2026-10-19", "2026-10-25", "7d", "year")).toEqual({ from: "2025-10-19", to: "2025-10-25" });
+    expect(yearBefore("2028-02-29")).toBe("2027-02-28");
+  });
+
+  it("change and percent change, with nothing before as no percent", () => {
+    expect(periodChange(150, 100)).toEqual({ diff: 50, pct: 0.5 });
+    expect(periodChange(50, 0)).toEqual({ diff: 50, pct: null });
+    expect(periodChange(null, 10)).toEqual({ diff: null, pct: null });
   });
 });
