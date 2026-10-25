@@ -255,3 +255,53 @@ describe("add to calendar and the calendar feed", () => {
     }
   });
 });
+
+describe("delivery tracking for staff", () => {
+  it("lists a client's messages with where they got to, masked for the front desk and scoped to their shops", async () => {
+    const H = await import("@/server/notification-history");
+    const context = await import("@/server/report-builder/context");
+    const staffId = async (email: string) => (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, email) }))!.id;
+    const coralville = (await m.db.db.query.shops.findFirst({ where: eq(m.schema.shops.slug, "coralville") }))!.id;
+    const c = await client("history");
+    const now = new Date();
+    const rows = await m.db.db
+      .insert(m.schema.notificationJobs)
+      .values([
+        { kind: "reminder_24h", channel: "sms", to: "+15635559876", body: "x".repeat(200), customerId: c.id, shopId: coralville, runAt: now, status: "sent", sentAt: now, deliveredAt: now },
+        { kind: "confirmation", channel: "email", to: c.email, subject: "s", body: "b", customerId: c.id, shopId: coralville, runAt: now, status: "suppressed", lastError: "The address bounced, so emails to it are stopped" },
+        { kind: "reminder_2h", channel: "sms", to: "+15635559876", body: "Hi 👋 ".repeat(15), customerId: c.id, shopId: coralville, runAt: now, status: "sent", sentAt: now },
+        { kind: "reminder_2h", channel: "sms", to: "+15635559876", body: "stop", customerId: c.id, shopId: coralville, runAt: now, status: "suppressed", lastError: "The number replied STOP" },
+      ])
+      .returning({ id: m.schema.notificationJobs.id });
+    jobIds.push(...rows.map((r) => r.id));
+
+    const owner = (await context.staffContextFor(await staffId("owner@rayz.test")))!;
+    const all = await H.messageHistory(owner, { customerId: c.id });
+    expect(all.map((l) => l.state).sort()).toEqual(["delivered", "opted_out", "opted_out", "sent"]);
+    expect(all.find((l) => l.channel === "email")!.to).toBe(c.email);
+    expect(all.find((l) => l.channel === "email")!.error).toMatch(/bounced/);
+
+    const desk = (await context.staffContextFor(await staffId("frontdesk@rayz.test")))!;
+    const masked = await H.messageHistory(desk, { customerId: c.id });
+    expect(masked).toHaveLength(4);
+    expect(JSON.stringify(masked)).not.toContain("5635559876");
+    expect(JSON.stringify(masked)).not.toContain(c.email);
+    expect(masked.find((l) => l.channel === "sms")!.to).toBe("***-***-9876");
+
+    const elsewhere = { ...desk, shopIds: [] as string[], currentShopId: null };
+    expect(await H.messageHistory(elsewhere, { customerId: c.id })).toEqual([]);
+
+    const report = await H.notificationsByShop(owner, new Date(now.getTime() - 60_000));
+    const sms = report.find((r) => r.shopId === coralville && r.channel === "sms")!;
+    expect(sms.delivered).toBeGreaterThanOrEqual(1);
+    expect(sms.optedOut).toBeGreaterThanOrEqual(1);
+    const mine = await m.db.db.select().from(m.schema.notificationJobs).where(m.drizzle.inArray(m.schema.notificationJobs.id, rows.map((r) => r.id)));
+    expect(mine).toHaveLength(4);
+    const solo = await H.notificationsByShop({ ...owner, brandWide: false, currentShopId: coralville, shopIds: [coralville] }, new Date(now.getTime() - 60_000));
+    expect(solo.every((r) => r.shopId === coralville)).toBe(true);
+    // 200 plain characters: 2 segments; 90 characters with an emoji: 2 segments (70, then 67 each)
+    expect(sms.segments).toBeGreaterThanOrEqual(4);
+    const rates = await (await import("@/server/marketing/settings")).loadMarketingSettings();
+    expect(sms.costCents).toBeCloseTo(sms.segments * rates.smsCostCents, 2);
+  });
+});

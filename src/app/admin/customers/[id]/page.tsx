@@ -38,6 +38,8 @@ import { listNotes } from "@/server/client-notes";
 import { RateVisitForm, RatingHistory, Stars } from "../ratings";
 import { ContactClient } from "../privacy";
 import { ResendReceipt } from "../../sales/[id]/receipt-panel";
+import { MessageHistoryList } from "@/components/message-history";
+import { messageHistory } from "@/server/notification-history";
 import { CustomerEditor, GrantReward, MergeInto, NotesEditor } from "./editor";
 import { FamilyCard, type FamilyKid } from "./family-card";
 import { NotesCard } from "./notes-card";
@@ -412,6 +414,7 @@ export default async function CustomerPage({
             </Card>
           )}
           {c.phone && <CallsAndTexts customerId={c.id} shopIds={ctx.brandWide ? null : ctx.shopIds} canInbox={can(ctx, "inbox.view")} />}
+          <MessagesSent ctx={ctx} customerId={c.id} />
           {memberOf.length > 0 && (
             <Card>
               <CardHeader title="Memberships" action={can(ctx, "memberships.manage") || can(ctx, "memberships.sell") ? <Link className="text-xs underline" href="/admin/memberships">Manage</Link> : undefined} />
@@ -640,6 +643,20 @@ export default async function CustomerPage({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Reminders, confirmations, receipts and other messages to this client, and where each got to. */
+async function MessagesSent({ ctx, customerId }: { ctx: Parameters<typeof messageHistory>[0]; customerId: string }) {
+  const lines = await messageHistory(ctx, { customerId }, 15);
+  if (!lines.length) return null;
+  return (
+    <Card>
+      <CardHeader title="Messages" subtitle="Texts and emails the system sent this client, newest first. Delivered means the carrier or mail server confirmed it." />
+      <div className="px-4 pb-2">
+        <MessageHistoryList lines={lines} showShop={ctx.brandWide} />
+      </div>
+    </Card>
   );
 }
 

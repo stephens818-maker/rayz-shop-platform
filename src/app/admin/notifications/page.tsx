@@ -3,64 +3,32 @@ import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, notificationJobs, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { CLIENT_MESSAGE_KINDS, DELIVERY_LABEL, DELIVERY_TONE, MESSAGE_KIND_LABEL, deliveryState } from "@/domain/notification-delivery";
 import { redactLinks } from "@/domain/outreach";
 import { demoMode } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { emailProvider, liveTwilio, smsProvider, voiceProvider } from "@/server/notifications/providers";
+import { notificationsByShop } from "@/server/notification-history";
 import { inShops } from "@/server/tenant";
 import { ProcessNowButton } from "./process-button";
 
 export const metadata: Metadata = { title: "Notifications" };
 
 const STATUSES = ["pending", "sent", "suppressed", "failed", "cancelled"] as const;
-const TONE = { pending: "blue", sent: "green", suppressed: "gray", failed: "red", cancelled: "gray" } as const;
-const KIND_LABEL: Record<string, string> = {
-  confirmation: "Confirmation",
-  reminder_24h: "24h reminder",
-  reminder_2h: "2h reminder",
-  cancellation: "Cancellation",
-  reschedule: "Rescheduled",
-  otp: "Sign-in code",
-  waitlist_ready: "Waitlist: ready",
-  purchase_order: "Purchase order",
-  low_stock: "Low stock",
-  staff_text: "Text from staff",
-  staff_call: "Call through shop line",
-  privacy_alert: "Client data alert",
-  time_off_reschedule: "Time off: please reschedule",
-  time_off_decision: "Time off decision",
-  clock_forgot_out: "Forgotten clock-out",
-  ft_status_change: "Full-time / part-time change",
-  clock_late_in: "Not clocked in for first client",
-  clock_affected: "Clients booked over a break or clock-out",
-  callin_reassign: "Call-in: moved to another barber",
-  callin_rebook: "Call-in: rebook link",
-  callin_voice: "Call-in: automated call",
-  callin_link: "Call-in: link after a call",
-  missed_call: "Missed call text",
-  shop_reply: "Shop text",
-  fill_offer: "Today: open-chair offer",
-  rebook_nudge: "Today: due to rebook",
-  rebook_reminder: "Rebook reminder from checkout",
-  no_show_reminder: "Today: extra reminder",
-  running_late: "Today: running late",
-  digest: "Morning Dashboard",
-  receipt: "Receipt",
-  review_request: "Google review request",
-  marketing: "Campaign Center",
-  saved_report: "Custom report",
-};
-/** Jobs sent to a client: their number or email shows as the viewer may see it. */
-const TO_CLIENT = new Set(["confirmation", "reminder_24h", "reminder_2h", "cancellation", "reschedule", "otp", "waitlist_ready", "staff_text", "staff_call", "time_off_reschedule", "callin_reassign", "callin_rebook", "callin_voice", "callin_link", "missed_call", "shop_reply", "fill_offer", "rebook_nudge", "rebook_reminder", "no_show_reminder", "running_late", "receipt", "review_request", "marketing"]);
 
-export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
+
+const RANGES = [7, 30, 90] as const;
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+export default async function NotificationsPage({ searchParams }: { searchParams: Promise<{ status?: string; days?: string }> }) {
   const sp = await searchParams;
+  const days = RANGES.find((d) => String(d) === sp.days) ?? 30;
   const ctx = await guardPage("/admin/notifications");
   const policy = await clientPolicy(ctx);
   const recipient = (j: { kind: string; channel: string; to: string }) =>
-    TO_CLIENT.has(j.kind) ? (policy.show(j.channel === "email" ? "email" : "phone", j.to) ?? "hidden") : j.to;
+    CLIENT_MESSAGE_KINDS.has(j.kind) ? (policy.show(j.channel === "email" ? "email" : "phone", j.to) ?? "hidden") : j.to;
   const status = STATUSES.find((s) => s === sp.status);
 
   // Managers only see jobs for their shops (a booking's shop, or the shop a purchase order or stock alert is for);
@@ -69,7 +37,8 @@ export default async function NotificationsPage({ searchParams }: { searchParams
   const scope: SQL | undefined = ctx.brandWide && !ctx.currentShopId ? undefined : inShops({ shopIds: ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds }, jobShop);
   const where = and(scope, status ? eq(notificationJobs.status, status) : undefined);
 
-  const [counts, jobs] = await Promise.all([
+  const [byShop, counts, jobs] = await Promise.all([
+    notificationsByShop(ctx, new Date(Date.now() - days * 86_400_000)),
     db
       .select({ status: notificationJobs.status, n: sql<number>`count(*)::int` })
       .from(notificationJobs)
@@ -124,6 +93,59 @@ export default async function NotificationsPage({ searchParams }: { searchParams
           </a>
         ))}
       </div>
+      <Card className="mt-4" data-testid="notifications-by-shop">
+        <CardHeader
+          title="By shop"
+          subtitle={`Last ${days} days. Delivered means the carrier or mail server confirmed it. Cost is an estimate at Campaign Center's rates per text segment and per email.`}
+          action={
+            <div className="flex gap-1 text-sm">
+              {RANGES.map((d) => (
+                <a key={d} href={`/admin/notifications?days=${d}${status ? `&status=${status}` : ""}`} className={d === days ? "rounded-md bg-zinc-900 px-2 py-1 text-white" : "rounded-md px-2 py-1 text-zinc-600 hover:bg-zinc-100"}>
+                  {d} days
+                </a>
+              ))}
+            </div>
+          }
+        />
+        {byShop.length === 0 ? (
+          <Empty title={`No messages in the last ${days} days`} />
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Shop</Th>
+                <Th>Channel</Th>
+                <Th className="text-right">Total</Th>
+                <Th className="text-right">Queued</Th>
+                <Th className="text-right">Sent</Th>
+                <Th className="text-right">Delivered</Th>
+                <Th className="text-right">Failed</Th>
+                <Th className="text-right">Opted out</Th>
+                <Th className="text-right">Not sent (off)</Th>
+                <Th className="text-right">Text segments</Th>
+                <Th className="text-right">Est. cost</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {byShop.map((r) => (
+                <tr key={`${r.shopId}-${r.channel}`}>
+                  <Td>{r.shop}</Td>
+                  <Td className="uppercase text-xs text-zinc-500">{r.channel}</Td>
+                  <Td className="text-right tabular-nums">{r.total}</Td>
+                  <Td className="text-right tabular-nums">{r.queued}</Td>
+                  <Td className="text-right tabular-nums">{r.sent}</Td>
+                  <Td className="text-right tabular-nums">{r.delivered}</Td>
+                  <Td className="text-right tabular-nums">{r.failed}</Td>
+                  <Td className="text-right tabular-nums">{r.optedOut}</Td>
+                  <Td className="text-right tabular-nums">{r.notSent}</Td>
+                  <Td className="text-right tabular-nums">{r.channel === "sms" ? r.segments : "—"}</Td>
+                  <Td className="text-right tabular-nums">{money(r.costCents)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
       <Card className="mt-4">
         <CardHeader title={status ? `${status[0].toUpperCase() + status.slice(1)} jobs` : "Recent jobs"} subtitle="Newest first, up to 150." />
         {jobs.length === 0 ? (
@@ -145,7 +167,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                 <tr key={j.id} className="align-top">
                   <Td className="whitespace-nowrap">{formatDateTime(j.runAt)}</Td>
                   <Td className="whitespace-nowrap">
-                    {KIND_LABEL[j.kind] ?? j.kind}
+                    {MESSAGE_KIND_LABEL[j.kind] ?? j.kind}
                     <div className="text-xs uppercase text-zinc-400">{j.channel}</div>
                   </Td>
                   <Td className="whitespace-nowrap">{recipient(j)}</Td>
@@ -182,7 +204,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
                     )}
                   </Td>
                   <Td>
-                    <Badge tone={TONE[j.status]}>{j.status}</Badge>
+                    <Badge tone={DELIVERY_TONE[deliveryState(j)]}>{DELIVERY_LABEL[deliveryState(j)]}</Badge>
                     {j.lastError && <div className="mt-1 max-w-40 text-xs text-red-600">{j.lastError}</div>}
                   </Td>
                 </tr>

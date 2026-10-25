@@ -93,6 +93,7 @@ import {
 } from "@/components/group-options";
 import { ContactClient } from "../customers/privacy";
 import { ServiceTimesBox } from "./service-times-panel";
+import { AppointmentMessages } from "./appointment-messages";
 
 const PX = 1.6; // pixels per minute
 const SNAP = 15;
@@ -1683,6 +1684,7 @@ function ApptPanel({
         )}
       </dl>
       <ClientNotesBrief brief={appt.clientNotes} customerId={appt.customerId} />
+      {appt.customerId && <AppointmentMessages key={appt.id} appointmentId={appt.id} />}
 
       {appt.customerId && appt.hasPhone && canManage.message && (
         <ContactClient

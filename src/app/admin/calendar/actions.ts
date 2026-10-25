@@ -20,6 +20,7 @@ import { searchClients } from "@/server/client-search";
 import { usableReason } from "@/server/block-reasons";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { correctServiceTimes, finishService, reviewServiceTime } from "@/server/service-times";
+import { messageHistory } from "@/server/notification-history";
 import { hasShop, requireInTenant } from "@/server/tenant";
 import { isValidLocalDate, localDateOf, localMinutesOf, zonedWallTime } from "@/lib/time";
 
@@ -70,6 +71,15 @@ async function loadAppt(ctx: StaffContext, id: string, othersNeed: "calendar.man
   if (!a) throw notFound("Appointment");
   if (a.staffId !== ctx.staff.id && !can(ctx, othersNeed)) throw forbidden("You can only change your own appointments");
   return a;
+}
+
+/** The messages about one appointment (confirmation, reminders, moves), with where each got to. */
+export async function appointmentMessagesAction(id: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadAppt(ctx, id);
+    return messageHistory(ctx, { appointmentId: id }, 20);
+  });
 }
 
 type Status = "confirmed" | "checked_in" | "in_service" | "completed" | "cancelled" | "no_show" | "booked";
