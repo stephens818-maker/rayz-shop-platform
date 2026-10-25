@@ -465,6 +465,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - New table `marketing_templates`.
 - **Email opens:** marketing emails now have `notification_jobs.html_body` with a pixel at `/m/{token}/o.gif` (core route). Push opens aren't tracked yet. If the app reports push opens later, a core endpoint can set `marketing_sends.opened_at`; ask here.
 - **Migration:** `core_0065_campaign_center_v2`. The next free number is `core_0066`.
+- **Later the same day (admin only, nothing for the app):** fixes from a browser walkthrough. The assistant's keyword drafter no longer also requires a badge that names the stage it picked ("lapsed" had matched the Lapsed badge too). The wizard keeps its step after the first save, and the preview shows the chosen promo code. In the blasts list, the row actions sit under each name.
 - **No request.** None of the mobile-owned files changed.
 - **Tests:** `tests/campaign-center.test.ts` and the "Campaign Center v2" block in `tests/db/marketing.test.ts`.
 
