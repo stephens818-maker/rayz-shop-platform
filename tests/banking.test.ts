@@ -64,7 +64,7 @@ describe("payments mode", () => {
     expect(d.paymentsMode).toBe("connected");
     expect(d.statementDescriptor).toBeNull();
     expect(d.receipt).toEqual({ headline: null, footer: null, showLogo: true, showAddress: true, showPhone: true, reviewUrl: null, allowPrint: false, reviewFollowUp: { enabled: false, delayHours: 3, repeatDays: 90 }, reviewMinVisits: null, reviewSnoozeDays: null });
-    expect(PAYMENTS_MODES).toEqual(["connected", "brand", "cash_only"]);
+    expect(PAYMENTS_MODES).toEqual(["connected", "entity", "brand", "cash_only"]);
   });
 });
 
