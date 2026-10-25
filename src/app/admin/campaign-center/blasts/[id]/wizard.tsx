@@ -191,10 +191,17 @@ export function BlastWizard(p: {
     if (!r.ok) return (setError(r.error), null);
     if (!id) {
       setId(r.data.id);
-      window.history.replaceState(null, "", `/admin/campaign-center/blasts/${r.data.id}`);
+      // Only the hash: a new path makes the router load the saved blast's page, which restarts the wizard mid-edit.
+      window.history.replaceState(null, "", `#${r.data.id}`);
     }
     return r.data.id;
   };
+  useEffect(() => {
+    const saved = window.location.hash.slice(1);
+    if (!p.blast && /^[0-9a-f-]{36}$/.test(saved)) router.replace(`/admin/campaign-center/blasts/${saved}`);
+    // Only on arrival: a reload of a new blast that was already saved opens the saved draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const stepProblem = (s: number): string | null => {
     if (s >= 1 && !name.trim()) return "Name the blast";

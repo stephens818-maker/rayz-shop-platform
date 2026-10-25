@@ -46,8 +46,8 @@ export async function setLocationAutomationAction(input: unknown) {
 export async function saveBlastAction(input: unknown) {
   return safe(async () => {
     const ctx = await authorize("campaign_center.create", "Writing a blast needs Campaign Center: create");
-    // No revalidatePath: the wizard swaps its URL to the saved id, and a refresh here would remount it mid-edit. Every Campaign Center page is dynamic.
     const id = await saveBlast(ctx, input);
+    revalidatePath("/admin/campaign-center/blasts");
     return { id };
   });
 }
