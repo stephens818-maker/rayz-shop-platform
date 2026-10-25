@@ -616,6 +616,8 @@ export interface BlastView {
   aiDrafted: boolean;
   reviewedAt: Date | null;
   createdAt: Date;
+  /** Goes only to the person's locations (or they're the brand): they can rename, copy, pause or resume it. */
+  inScope: boolean;
 }
 
 export async function listBlasts(ctx: StaffContext): Promise<BlastView[]> {
@@ -637,6 +639,7 @@ export async function listBlasts(ctx: StaffContext): Promise<BlastView[]> {
         )
         .groupBy(marketingSends.campaignId)
     : [];
+  const inScope = (c: Campaign) => mayBrand(ctx) || (c.shopIds.length > 0 && c.shopIds.every((s) => ctx.shopIds.includes(s)));
   return visible.map((c) => ({
     id: c.id,
     name: c.name,
@@ -649,7 +652,8 @@ export async function listBlasts(ctx: StaffContext): Promise<BlastView[]> {
     scheduledAt: c.scheduledAt,
     sentAt: c.sentAt,
     sent: counts.find((x) => x.id === c.id)?.n ?? 0,
-    mayEdit: EDITABLE.includes(c.status) && (mayCreate(ctx) || maySend(ctx)) && (mayBrand(ctx) || (c.shopIds.length > 0 && c.shopIds.every((s) => ctx.shopIds.includes(s)))),
+    mayEdit: EDITABLE.includes(c.status) && (mayCreate(ctx) || maySend(ctx)) && inScope(c),
+    inScope: inScope(c),
     campaignType: c.campaignType ?? (c.promoId ? "promotion" : "update"),
     recurrence: recurrenceOf(c.recurrence),
     ab: abOf(c.ab),

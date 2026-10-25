@@ -1,16 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { PageHeader } from "@/components/ui";
-import { todayLocal } from "@/lib/time";
+import { Suspense } from "react";
+import { Badge, Card, PageHeader } from "@/components/ui";
+import { recurrenceLabel } from "@/domain/campaign-schedule";
+import { SHOP_TZ, formatDateTime, todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { decodeFilter } from "@/domain/client-filters";
 import { clientPolicy } from "@/server/client-privacy";
 import { filterOptions, panelSees } from "@/server/client-filters";
 import { couponOptions, listBlasts } from "@/server/marketing/campaigns";
 import { loadMarketingSettings } from "@/server/marketing/settings";
+import { listTemplates } from "@/server/marketing/templates";
 import { inTenant } from "@/server/tenant";
-import { BlastEditor } from "./editor";
+import { KpiSkeleton } from "../../kpis";
+import { CampaignResultsSection } from "../../results-section";
+import { BlastActions } from "../blast-actions";
+import { BLAST_STATUS } from "../status";
+import { BlastWizard } from "./wizard";
 
 export const metadata: Metadata = { title: "Blast" };
 export const dynamic = "force-dynamic";
@@ -25,9 +32,10 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
   if (id === "new" ? !mayCreate : !blast) notFound();
   const shops = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
   const policy = await clientPolicy(ctx);
-  const [settings, coupons, options] = await Promise.all([loadMarketingSettings(), couponOptions(todayLocal()), filterOptions(ctx, policy)]);
+  const [settings, coupons, options, library] = await Promise.all([loadMarketingSettings(), couponOptions(todayLocal(), { includeUnusable: true }), filterOptions(ctx, policy), listTemplates(ctx)]);
   const initial = id === "new" && sp.f ? decodeFilter(sp.f) : undefined;
   const initialShops = id === "new" && sp.shops ? sp.shops.split(",").filter((s) => shops.some((x) => x.id === s)) : undefined;
+  const status = blast ? (BLAST_STATUS[blast.status] ?? { label: blast.status, tone: "gray" as const }) : null;
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
@@ -40,8 +48,31 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
             · Goes only to clients who agreed to marketing, once each, outside quiet hours ({settings.quietStart}–{settings.quietEnd} local) and within the brand&apos;s limits.
           </>
         }
+        actions={blast && <BlastActions id={blast.id} name={blast.name} status={blast.status} mayWrite={mayCreate} maySend={maySend} mayManage={blast.inScope} />}
       />
-      <BlastEditor
+      {blast && status && (
+        <Card className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+          <Badge tone={status.tone}>{status.label}</Badge>
+          <span>{blast.campaignType === "promotion" ? "Promotion" : "Quick update"}</span>
+          {blast.recurrence && <span>{recurrenceLabel(blast.recurrence, SHOP_TZ)}</span>}
+          {blast.sentAt && (
+            <span>
+              Last sent {formatDateTime(blast.sentAt)} · {blast.sent} messages
+            </span>
+          )}
+          {(blast.status === "scheduled" || blast.status === "paused") && blast.scheduledAt && (
+            <span>
+              {blast.status === "paused" ? "Paused; was due" : "Next send"} {formatDateTime(blast.scheduledAt)}
+            </span>
+          )}
+          {blast.status === "testing" && blast.ab?.testEndsAt && <span>A/B test running; the winner goes out {formatDateTime(blast.ab.testEndsAt)}</span>}
+          {blast.holdoutPct > 0 && <Badge>Holdout {blast.holdoutPct}%</Badge>}
+          {blast.sendTimeOpt && <Badge>Usual booking time</Badge>}
+          {blast.aiDrafted && <Badge tone="violet">{blast.reviewedAt ? "AI draft, reviewed" : "AI draft, not reviewed yet"}</Badge>}
+        </Card>
+      )}
+      <BlastWizard
+        key={blast?.id ?? "new"}
         blast={
           blast && {
             id: blast.id,
@@ -55,6 +86,13 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
             scheduledAt: blast.scheduledAt?.toISOString() ?? null,
             sentAt: blast.sentAt?.toISOString() ?? null,
             sent: blast.sent,
+            campaignType: blast.campaignType,
+            recurrence: blast.recurrence ? { freq: blast.recurrence.freq, endsOn: blast.recurrence.endsOn } : null,
+            ab: blast.ab ? { testPct: blast.ab.testPct, metric: blast.ab.metric, waitHours: blast.ab.waitHours, b: blast.ab.b } : null,
+            holdoutPct: blast.holdoutPct,
+            sendTimeOpt: blast.sendTimeOpt,
+            templateId: blast.templateId,
+            aiDrafted: blast.aiDrafted && !blast.reviewedAt,
           }
         }
         mayEdit={blast ? blast.mayEdit : mayCreate}
@@ -67,8 +105,14 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
         initialSegment={initial}
         initialShopIds={initialShops}
         coupons={coupons}
-        address={settings.address}
+        library={library.filter((t) => t.status === "approved").map((t) => ({ id: t.id, name: t.name, campaignType: t.campaignType, description: t.description, channels: t.channels, templates: t.templates }))}
+        settings={{ address: settings.address, quietStart: settings.quietStart, quietEnd: settings.quietEnd, capPerWeek: settings.capPerWeek, capPerMonth: settings.capPerMonth, attributionDays: settings.attributionDays }}
       />
+      {blast && blast.status !== "draft" && (
+        <Suspense fallback={<KpiSkeleton />}>
+          <CampaignResultsSection ctx={ctx} campaign={{ id: blast.id, ab: blast.ab }} />
+        </Suspense>
+      )}
     </div>
   );
 }

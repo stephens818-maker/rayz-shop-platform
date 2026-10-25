@@ -1,29 +1,36 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Card, CardHeader, LinkButton, Notice, PageHeader, Stat } from "@/components/ui";
+import { Suspense } from "react";
+import { Card, CardHeader, LinkButton, Notice, PageHeader } from "@/components/ui";
 import { CHANNEL_LABEL } from "@/domain/marketing";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
-import { couponOptions, listAutomations, marketingOverview } from "@/server/marketing/campaigns";
+import { couponOptions, listAutomations } from "@/server/marketing/campaigns";
+import { centerKpis } from "@/server/marketing/results";
 import { listSequences } from "@/server/marketing/sequences";
 import { consentColumns } from "@/server/marketing/consent";
 import { loadMarketingSettings } from "@/server/marketing/settings";
 import { AutomationToggles } from "./automation-toggles";
+import { KpiSkeleton, KpiTiles } from "./kpis";
 import { SequenceToggle } from "./sequence-toggle";
 
 export const metadata: Metadata = { title: "Campaign Center" };
 export const dynamic = "force-dynamic";
 
+async function Kpis({ shopIds }: { shopIds: string[] }) {
+  const k = await centerKpis(shopIds);
+  return <KpiTiles funnel={k.funnel} defs={k.definitions} caption={`Last ${k.days} days · ${k.funnel.sent} sent · ${k.funnel.bookings} bookings credited`} />;
+}
+
 export default async function CampaignCenterPage() {
   const ctx = await guardPage("/admin/campaign-center");
   const shops = openShops(ctx);
-  const [list, sequences, settings, cols, coupons, stats] = await Promise.all([
+  const [list, sequences, settings, cols, coupons] = await Promise.all([
     listAutomations(ctx),
     listSequences(ctx),
     loadMarketingSettings(),
     consentColumns(),
     couponOptions(todayLocal()),
-    marketingOverview(shops.map((s) => s.id)),
   ]);
   const shopName = new Map(ctx.shops.map((s) => [s.id, s.name]));
   const mayToggle = can(ctx, "campaign_center.send");
@@ -72,12 +79,9 @@ export default async function CampaignCenterPage() {
           ; until then campaigns go by text and push only.
         </Notice>
       )}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Sent, last 30 days" value={stats.sent} />
-        <Stat label="Clicked" value={stats.clicked} hint={stats.sent ? `${Math.round((stats.clicked / stats.sent) * 100)}% of messages` : undefined} />
-        <Stat label="Coupons redeemed" value={stats.redeemed} />
-        <Stat label="Unsubscribed" value={stats.unsubscribed} hint={stats.sent ? `${((stats.unsubscribed / stats.sent) * 100).toFixed(1)}% of messages` : undefined} />
-      </div>
+      <Suspense fallback={<KpiSkeleton />}>
+        <Kpis shopIds={shops.map((s) => s.id)} />
+      </Suspense>
       <Card>
         <CardHeader
           title="Lapsed sequences"
@@ -150,7 +154,15 @@ export default async function CampaignCenterPage() {
       <div className="grid gap-3 md:grid-cols-3">
         <Link href="/admin/campaign-center/blasts" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
           <div className="font-semibold">Blasts</div>
-          <div className="text-sm text-zinc-600">One-off texts, emails and pushes to a segment, now or scheduled.</div>
+          <div className="text-sm text-zinc-600">Quick updates and promotions to a segment: now, scheduled or repeating, with A/B tests and holdout groups.</div>
+        </Link>
+        <Link href="/admin/campaign-center/calendar" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+          <div className="font-semibold">Calendar</div>
+          <div className="text-sm text-zinc-600">Every blast that went out and every send still to come, repeats included.</div>
+        </Link>
+        <Link href="/admin/campaign-center/templates" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+          <div className="font-semibold">Templates</div>
+          <div className="text-sm text-zinc-600">The brand&apos;s approved wording to start a blast from.</div>
         </Link>
         <Link href="/admin/promos" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
           <div className="font-semibold">Coupons</div>

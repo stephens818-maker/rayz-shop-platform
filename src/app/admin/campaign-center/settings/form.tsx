@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, buttonClass } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import type { MarketingSettings } from "@/domain/marketing";
+import { ATTRIBUTE_ON_LABEL, type MarketingSettings } from "@/domain/marketing";
 import { saveMarketingSettingsAction } from "../actions";
 
 export function MarketingSettingsForm({ initial, mayEdit, mayExport, campaigns }: { initial: MarketingSettings; mayEdit: boolean; mayExport: boolean; campaigns: { id: string; name: string }[] }) {
@@ -46,10 +46,19 @@ export function MarketingSettingsForm({ initial, mayEdit, mayExport, campaigns }
           </div>
         </Card>
         <Card>
-          <CardHeader title="Reporting" subtitle="A booking or sale within the window after a message counts toward that campaign (the latest message wins). Costs are for ROI." />
-          <div className="grid gap-3 p-4 sm:grid-cols-4">
+          <CardHeader title="Reporting" subtitle="A booking or sale within the window counts toward the latest message the client got (last touch). Clients already booked when it went aren't credited. Costs are for ROI." />
+          <div className="grid gap-3 p-4 sm:grid-cols-5">
             <Field label="Attribution window (days)">
               <Input type="number" min={1} max={60} value={v.attributionDays} onChange={(e) => set("attributionDays", n(e.target.value))} />
+            </Field>
+            <Field label="Window starts" hint={v.attributeOn === "engaged" ? "A message nobody opened or clicked gets no credit" : undefined}>
+              <Select value={v.attributeOn} onChange={(e) => set("attributeOn", e.target.value as MarketingSettings["attributeOn"])} data-testid="attribute-on">
+                {(Object.keys(ATTRIBUTE_ON_LABEL) as MarketingSettings["attributeOn"][]).map((k) => (
+                  <option key={k} value={k}>
+                    {ATTRIBUTE_ON_LABEL[k]}
+                  </option>
+                ))}
+              </Select>
             </Field>
             <Field label="Cost per text (¢)">
               <Input type="number" step="0.01" min={0} value={v.smsCostCents} onChange={(e) => set("smsCostCents", n(e.target.value))} />
