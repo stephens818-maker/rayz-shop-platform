@@ -53,6 +53,7 @@ import { reportLocations } from "../locations";
 import { consentColumns } from "../marketing/consent";
 import { cadenceCtes } from "../visit-cadence";
 import { refillCtes } from "../product-history";
+import { DAY_END, nextBookedWhere } from "../rebook-report";
 
 export const PAGE_SIZE = 50;
 export const MAX_PAGE_SIZE = 200;
@@ -248,7 +249,10 @@ type Cte =
   | "lb"
   | "bd"
   | "lp"
-  | "rf";
+  | "rf"
+  | "rb"
+  | "fv"
+  | "nb";
 
 interface Piece {
   expr: SQL;
@@ -345,6 +349,23 @@ async function fieldSql(f: FieldDef, policy: ClientPolicy): Promise<Piece> {
       return raw("coalesce(va.no_shows, 0)", ["va"]);
     case "cancellations":
       return raw("coalesce(va.cancels, 0)", ["va"]);
+    case "visits_rebooked":
+      return raw("coalesce(rb.rebooked, 0)", ["rb"]);
+    case "rebook_rate":
+      return raw("(rb.rebooked::float8 / nullif(rb.known, 0))", ["rb"]);
+    case "first_visit_rebooked":
+      return raw("coalesce(fv.rebooked, false)", ["fv"]);
+    case "second_visit":
+      return raw("(fv.second_at is not null)", ["fv"]);
+    case "days_to_second_visit":
+      return raw(
+        `((fv.second_at at time zone '${SHOP_TZ}')::date - (fv.first_at at time zone '${SHOP_TZ}')::date)`,
+        ["fv"],
+      );
+    case "next_booked":
+      return { expr: day("nb.next_at"), needs: ["nb"] };
+    case "future_appointments":
+      return raw("coalesce(nb.n, 0)", ["nb"]);
     case "total_spend":
       return raw("(coalesce(sa.cents, 0) - coalesce(ra.cents, 0))::int", [
         "sa",
@@ -497,6 +518,14 @@ function ctes(s: ReportScope, now: Date): Record<Cte, SQL> {
         array_agg(p.brand || ' ' || p.name order by x.due, p.brand, p.name) filter (where x.status = 'running_out') running_out,
         min(x.due) filter (where x.status in ('stocked', 'running_out')) next_due
       from rf_p x join products p on p.id = x.product_id group by x.customer_id)`,
+    rb: sql`rb as (select a.customer_id, (count(*) filter (where a.booked_at_known))::int known,
+      (count(*) filter (where a.booked_at_known and exists (select 1 from appointments b where ${nextBookedWhere("a", DAY_END)})))::int rebooked
+      from appointments a join shops sh on sh.id = a.shop_id where a.status = 'completed' and a.customer_id is not null${scoped(s, { shop: "a.shop_id", staff: "a.staff_id", at: "a.starts_at" })} group by a.customer_id)`,
+    fv: sql`fv as (select distinct on (a.customer_id) a.customer_id, a.booked_at_known and exists (select 1 from appointments b where ${nextBookedWhere("a", DAY_END)}) rebooked,
+      a.starts_at first_at, (select min(b.starts_at) from appointments b where b.customer_id = a.customer_id and b.status = 'completed' and b.starts_at >= ${DAY_END}) second_at
+      from appointments a join shops sh on sh.id = a.shop_id where a.status = 'completed' and a.customer_id is not null order by a.customer_id, a.starts_at, a.id)`,
+    nb: sql`nb as (select a.customer_id, min(a.starts_at) next_at, count(*)::int n from appointments a
+      where a.status in ('booked', 'confirmed') and a.customer_id is not null and a.starts_at > ${nowIso}::timestamptz${scoped(s, { shop: "a.shop_id", staff: "a.staff_id" })} group by a.customer_id)`,
   };
 }
 
@@ -517,6 +546,9 @@ const ORDER: Cte[] = [
   "bd",
   "lp",
   "rf",
+  "rb",
+  "fv",
+  "nb",
 ];
 
 // ───────────────────────────── Event log ─────────────────────────────

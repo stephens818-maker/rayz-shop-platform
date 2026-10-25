@@ -470,6 +470,13 @@
       "when": 1794711600000,
       "tag": "core_0066_staff_milestones",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1794798000000,
+      "tag": "core_0067_rebook_rate",
+      "breakpoints": true
     }
   ]
 }

@@ -18,6 +18,7 @@ import {
   MorningSection,
   MorningSettings,
   Period,
+  RebookBlock,
   ReviewsBlock,
   SalesBlock,
   ShopRef,
@@ -38,6 +39,7 @@ import {
   versionPlans,
 } from "@/domain/morning-dashboard";
 import { recordedSentence, upcomingSentence } from "@/domain/milestones";
+import { type RebookCounts, zeroCounts } from "@/domain/rebook";
 import { renderMorningHtml, renderMorningPdf, renderMorningSms, renderMorningText } from "@/domain/morning-render";
 import { weekStartOf } from "@/domain/payroll/overtime";
 import { type Permission, reportView } from "@/domain/permissions";
@@ -54,6 +56,7 @@ import { attributedSends } from "./marketing/report";
 import { loadMarketingSettings } from "./marketing/settings";
 import { loadMilestoneSettings, teamAt, upcomingFor } from "./milestones/engine";
 import { processDueJobs } from "./notifications/queue";
+import { brandShopIds, rebookAt } from "./rebook-report";
 import { loadSettings as loadPayrollSettings } from "./payroll/groups";
 import { ZERO_SALES, availableMinutesAt, dailyTotals, giftCardTotalsByShop, kpisAt, loyaltyActivity, refundTotals, salesTotalsAt } from "./reports";
 import { stockLevels } from "./inventory/stock";
@@ -752,12 +755,65 @@ async function milestonesBlock(c: Ctx): Promise<MilestonesBlock | null> {
   return achieved.length || soon.length ? { achieved, upcoming: soon } : null;
 }
 
+/**
+ * Rebooked at checkout on the day and week to date, per barber, against the brand; appointments on
+ * the books; and 2nd-visit retention of the new clients whose 60 days have just closed. Without
+ * "every barber's numbers" at a shop, it's their own numbers, as in the report.
+ */
+async function rebookBlock(c: Ctx): Promise<RebookBlock | null> {
+  const shops = c.allowed(reportView("rebook_rate"));
+  if (!shops.length) return null;
+  const ids = idsOf(shops);
+  const ownOnly = shops.some((s) => !canAt(c.access, s.id, "reports.all_staff"));
+  const staffIds = ownOnly ? [c.access.staffId] : null;
+  const f = { serviceId: null, clients: "all" as const, window: 60 as const, now: c.now };
+  const visitsOnly = { clients: false, future: false };
+  const allIds = await c.memo.get("brand-shops", brandShopIds);
+  const whole = !ownOnly && allIds.every((id) => ids.includes(id));
+  const r = RANGES(c.p);
+  const cohort = { from: addDays(c.p.reportDay, -89), to: addDays(c.p.reportDay, -60) };
+  const [t, brandDay, brandWtd, future, second, brandSecond] = await Promise.all([
+    per(c, (from, to) => c.memo.get(key("rebook", ids, from, to, staffIds), () => rebookAt({ shopIds: ids, from, to, staffIds }, f, [{}, { byStaff: true }], visitsOnly))),
+    whole ? null : c.memo.get(key("rebook-brand", r.day), () => rebookAt({ shopIds: allIds, from: r.day[0], to: r.day[1] }, f, [{}], visitsOnly)),
+    whole ? null : c.memo.get(key("rebook-brand", r.wtd), () => rebookAt({ shopIds: allIds, from: r.wtd[0], to: r.wtd[1] }, f, [{}], visitsOnly)),
+    c.memo.get(key("rebook-future", ids, staffIds, c.p.today), () => rebookAt({ shopIds: ids, from: c.p.today, to: c.p.today, staffIds }, f, [{}], { clients: false })),
+    c.memo.get(key("rebook-2nd", ids, staffIds, cohort.from), () => rebookAt({ shopIds: ids, ...cohort, staffIds }, f, [{}], { future: false })),
+    whole ? null : c.memo.get(key("rebook-2nd-brand", cohort.from), () => rebookAt({ shopIds: allIds, ...cohort }, f, [{}], { future: false })),
+  ]);
+  const at = (p: Period, k = TOTAL) => t[p][k] ?? zeroCounts();
+  const rate = (x: RebookCounts) => (x.known ? x.rebooked / x.known : null);
+  const newRate = (x: RebookCounts) => (x.newKnown ? x.newRebooked / x.newKnown : 0);
+  const staffKeys = [...new Set([...Object.keys(t.day), ...Object.keys(t.wtd)])].filter((k) => k !== TOTAL && !k.endsWith(`|${NO_BARBER}`));
+  const byBarber = await Promise.all(
+    staffKeys.map(async (k) => {
+      const staffId = k.split("|")[1];
+      return { staffId, label: await c.label(staffId), visits: at("day", k).known, rate: rate(at("day", k)), wtdVisits: at("wtd", k).known, wtdRate: rate(at("wtd", k)) };
+    }),
+  );
+  byBarber.sort((a, b) => (b.rate ?? -1) - (a.rate ?? -1) || (b.wtdRate ?? -1) - (a.wtdRate ?? -1) || a.label.localeCompare(b.label));
+  const s2 = second[TOTAL] ?? zeroCounts();
+  const b2 = brandSecond?.[TOTAL];
+  return {
+    shops,
+    visits: cmpOf((p) => at(p).known),
+    rebooked: cmpOf((p) => at(p).rebooked),
+    rebook: cmpOf((p) => rate(at(p)) ?? 0),
+    newRebook: cmpOf((p) => newRate(at(p))),
+    brand: whole ? null : { day: rate(brandDay?.[TOTAL] ?? zeroCounts()), wtd: rate(brandWtd?.[TOTAL] ?? zeroCounts()) },
+    future: (future[TOTAL] ?? zeroCounts()).future,
+    secondVisit: { ...cohort, judged: s2.newJudged, back: s2.newBack, brand: b2 && b2.newJudged ? b2.newBack / b2.newJudged : null },
+    byBarber: byBarber.length ? byBarber : null,
+    ownOnly,
+  };
+}
+
 // ───────────────────────────── Assembly ─────────────────────────────
 
 const LOADERS: { [K in MorningSection]: (c: Ctx) => Promise<MorningDashboard[K]> } = {
   sales: salesBlock,
   traffic: trafficBlock,
   utilization: utilizationBlock,
+  rebook: rebookBlock,
   loyalty: loyaltyBlock,
   marketing: marketingBlock,
   reviews: reviewsBlock,

@@ -269,7 +269,7 @@ export function ResultTable({
       </div>
     );
   const numeric = (t: string) =>
-    t === "int" || t === "number" || t === "money" || t === "stars";
+    t === "int" || t === "number" || t === "money" || t === "stars" || t === "pct";
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full text-sm" data-testid="report-table">

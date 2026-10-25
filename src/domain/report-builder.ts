@@ -81,12 +81,13 @@ export const sourceLabel = (s: string) =>
 
 // ───────────────────────────── Fields ─────────────────────────────
 
-/** `number` is a decimal (days between visits); `stars` an average rating; `list` several names. */
+/** `number` is a decimal (days between visits); `stars` an average rating; `pct` a rate from 0 to 1; `list` several names. */
 export const FIELD_TYPES = [
   "text",
   "int",
   "number",
   "money",
+  "pct",
   "date",
   "stars",
   "bool",
@@ -109,7 +110,7 @@ const NUMERIC = new Set<FieldType>(["int", "number", "money"]);
 /** Which totals make sense for a field: sums of money and counts, averages of ratings, the earliest and latest date. Counting filled-in values works for anything. */
 export function aggsFor(t: FieldType): Agg[] {
   if (NUMERIC.has(t)) return ["none", "sum", "avg", "count", "min", "max"];
-  if (t === "stars") return ["none", "avg", "count", "min", "max"];
+  if (t === "stars" || t === "pct") return ["none", "avg", "count", "min", "max"];
   if (t === "date") return ["none", "count", "min", "max"];
   return ["none", "count"];
 }
@@ -120,6 +121,7 @@ export const FIELD_GROUPS = [
   "Profile",
   "Family",
   "Visits",
+  "Rebooking",
   "Spend",
   "Products",
   "Loyalty and gift cards",
@@ -334,6 +336,59 @@ export const CUSTOMER_FIELDS: FieldDef[] = [
     group: "Visits",
     type: "int",
     activity: true,
+  },
+  {
+    key: "visits_rebooked",
+    label: "Visits rebooked at checkout",
+    group: "Rebooking",
+    type: "int",
+    activity: true,
+    hint: "Completed visits they left with their next visit booked: at checkout, later that day, or already on the books. Squire visits with no booking time don't count.",
+  },
+  {
+    key: "rebook_rate",
+    label: "Rebook rate",
+    group: "Rebooking",
+    type: "pct",
+    activity: true,
+    hint: "Visits rebooked at checkout out of their completed visits with a booking time. Average it for a rebook rate per client.",
+  },
+  {
+    key: "first_visit_rebooked",
+    label: "Rebooked at first visit",
+    group: "Rebooking",
+    type: "bool",
+    hint: "Their first visit to any Ray'z shop ended with the next one booked.",
+  },
+  {
+    key: "second_visit",
+    label: "Came back for a 2nd visit",
+    group: "Rebooking",
+    type: "bool",
+    hint: "Two or more completed visits at any Ray'z shop.",
+  },
+  {
+    key: "days_to_second_visit",
+    label: "Days to 2nd visit",
+    group: "Rebooking",
+    type: "int",
+    hint: "Days from their first completed visit to their second, at any Ray'z shop.",
+  },
+  {
+    key: "next_booked",
+    label: "Next booked visit",
+    group: "Rebooking",
+    type: "date",
+    activity: true,
+    hint: "Their next booked or confirmed appointment, at the report's locations and with its barbers.",
+  },
+  {
+    key: "future_appointments",
+    label: "Future appointments",
+    group: "Rebooking",
+    type: "int",
+    activity: true,
+    hint: "Booked or confirmed appointments still to come, at the report's locations and with its barbers.",
   },
   {
     key: "total_spend",
@@ -993,6 +1048,8 @@ export function cellText(type: FieldType, v: Cell, masked = false): string {
       return (Math.round(Number(v) * 10) / 10).toLocaleString("en-US");
     case "stars":
       return Number(v).toFixed(1);
+    case "pct":
+      return `${Math.round(Number(v) * 100)}%`;
     case "date":
       return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)
         ? formatDate(v, "MMM d, yyyy")
@@ -1013,6 +1070,7 @@ export function cellValue(
   if (Array.isArray(v)) return v.join("; ");
   if (typeof v === "boolean") return v ? "yes" : "no";
   if (type === "money") return Math.round(Number(v)) / 100;
+  if (type === "pct") return `${(Number(v) * 100).toFixed(1)}%`;
   if (type === "number" || type === "stars")
     return Math.round(Number(v) * 100) / 100;
   if (type === "int") return Number(v);

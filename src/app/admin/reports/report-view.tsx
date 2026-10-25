@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
+import { TrendChart } from "@/components/trend-chart";
 import { reportFor, reportsFor } from "@/domain/navigation";
 import { ReportKey, reportExport } from "@/domain/permissions";
 import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
@@ -219,6 +220,13 @@ export async function ReportPage({
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {data.stats.map((s) => (
             <Stat key={s.label} label={s.label} value={s.value} hint={s.hint} tone={s.tone} />
+          ))}
+        </div>
+      )}
+      {data.charts && (
+        <div className={cx(data.charts.length > 1 && "grid gap-x-4 xl:grid-cols-2")}>
+          {data.charts.map((c) => (
+            <TrendChart key={c.id} id={c.id} title={c.title} labels={c.labels} series={c.series} />
           ))}
         </div>
       )}

@@ -63,6 +63,7 @@ import { serviceTimesData } from "./service-times-report";
 import { staffingData } from "./staffing-report";
 import { callInReportData } from "./call-in-report";
 import { operationsData } from "./operations-report";
+import { rebookReportData } from "./rebook-report";
 import { checkoutPromptsData } from "./checkout-prompts-report";
 import { reviewReportData } from "./review-report";
 import { marketingReportData } from "./marketing/report";
@@ -106,11 +107,21 @@ export interface ReportOption {
   label: string;
   value: string;
   choices: { value: string; label: string }[];
+  /** A dropdown next to the dates instead of a row of choices, for long lists. */
+  select?: boolean;
+}
+/** A line chart of rates over periods, drawn above the tables. Its numbers are also in a table. */
+export interface ReportChart {
+  id: string;
+  title: string;
+  labels: string[];
+  series: { label: string; values: (number | null)[]; dashed?: boolean; tone?: "alt" }[];
 }
 export interface ReportData {
   stats: ReportStat[];
   tables: ReportTable[];
   heatmaps?: Heatmap[];
+  charts?: ReportChart[];
   notes?: string[];
   options?: ReportOption[];
 }
@@ -712,6 +723,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async retention({ scope, loc, params }) {
     return retentionData(scope, loc, params);
+  },
+
+  async rebook_rate({ scope, loc, params }) {
+    return rebookReportData(scope, loc, params);
   },
 
   async acquisition({ scope, loc }) {

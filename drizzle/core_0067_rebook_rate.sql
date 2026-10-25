@@ -1,0 +1,4 @@
+-- Rebook Rate report: its view and export permissions go to every role that already has the Retention and rebook KPIs report (export only where that report's export is), and view-only to the Barber role, which sees only its own numbers without "See every barber's numbers". No schema change.
+UPDATE "roles" SET "permissions" = "permissions" || '["report.rebook_rate.view"]'::jsonb WHERE "permissions" ? 'report.kpis.view' AND NOT ("permissions" ? 'report.rebook_rate.view');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["report.rebook_rate.view"]'::jsonb WHERE "key" = 'barber' AND NOT ("permissions" ? 'report.rebook_rate.view');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["report.rebook_rate.export"]'::jsonb WHERE "permissions" ? 'report.kpis.export' AND NOT ("permissions" ? 'report.rebook_rate.export');

@@ -61,6 +61,8 @@ import { byShop, salesSummary } from "@/server/reports";
 import { todayMilestones } from "@/server/milestones/views";
 import { congratsLine } from "@/domain/milestones";
 import { DismissCongrats } from "./milestones/client";
+import { myRebook } from "@/server/rebook-report";
+import { pctText, ptsLabel } from "@/domain/rebook";
 
 export const metadata: Metadata = { title: "Today" };
 
@@ -165,6 +167,7 @@ export default async function Dashboard({
     badgeTally,
     noteBriefsFor,
     milestones,
+    myRebookRate,
   ] = await Promise.all([
     timesFor(
       upcoming.map((a) => a.id),
@@ -206,6 +209,9 @@ export default async function Dashboard({
       upcoming.map((a) => a.customerId),
     ),
     todayMilestones(ctx, shopIds, now),
+    can(ctx, "report.rebook_rate.view") && ctx.staff.kind === "person"
+      ? myRebook(ctx.staff.id, ctx.shopIds, today, now)
+      : Promise.resolve(null),
   ]);
   const whosIn = shopIds
     .map((id) => ({
@@ -621,6 +627,9 @@ export default async function Dashboard({
               </div>
             </Card>
           )}
+          {myRebookRate && myRebookRate.counts.known > 0 && (
+            <MyRebookCard r={myRebookRate} />
+          )}
           <Card className="p-4 text-sm">
             <div className="font-semibold">Today so far</div>
             <dl className="mt-2 space-y-1 tabular">
@@ -677,5 +686,50 @@ export default async function Dashboard({
         </Card>
       )}
     </div>
+  );
+}
+
+/** The signed-in barber's own rebook numbers over the last 30 days, against the brand average. */
+function MyRebookCard({ r }: { r: Awaited<ReturnType<typeof myRebook>> }) {
+  const vs = ptsLabel(r.rates.rebook, r.brand.rebook);
+  const ahead = r.rates.rebook !== null && r.brand.rebook !== null && r.rates.rebook > r.brand.rebook;
+  const line = (label: string, x: number | null, brand: number | null) => (
+    <div className="flex justify-between">
+      <dt className="text-zinc-500">{label}</dt>
+      <dd>
+        {pctText(x)}
+        <span className="ml-1 text-xs text-zinc-400">brand {pctText(brand)}</span>
+      </dd>
+    </div>
+  );
+  return (
+    <Card className="p-4 text-sm" data-testid="my-rebook">
+      <div className="flex items-baseline justify-between">
+        <div className="font-semibold">My rebook rate</div>
+        <span className="text-xs text-zinc-500">Last 30 days</span>
+      </div>
+      <div className="mt-2 flex items-baseline gap-2">
+        <span className="text-3xl font-semibold tabular">{pctText(r.rates.rebook)}</span>
+        {vs && (
+          <span className={ahead ? "text-sm text-emerald-700" : vs === "even" ? "text-sm text-zinc-500" : "text-sm text-red-700"}>
+            {vs === "even" ? "same as the brand" : `${vs} vs brand ${pctText(r.brand.rebook)}`}
+          </span>
+        )}
+      </div>
+      <p className="text-xs text-zinc-500">
+        {r.counts.rebooked} of {r.counts.known} clients left with their next visit booked.
+      </p>
+      <dl className="mt-2 space-y-1 tabular">
+        {line("New clients rebooked", r.rates.newRebook, r.brand.newRebook)}
+        {r.newJudged > 0 && line("2nd-visit retention", r.second, r.brandSecond)}
+        <div className="flex justify-between">
+          <dt className="text-zinc-500">Booked ahead</dt>
+          <dd>{r.counts.future.toLocaleString("en-US")}</dd>
+        </div>
+      </dl>
+      <Link className="mt-3 inline-block text-xs underline" href="/admin/reports/rebook?preset=30d">
+        Rebook report
+      </Link>
+    </Card>
   );
 }

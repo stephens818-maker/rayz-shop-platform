@@ -146,7 +146,7 @@ export function systemPrompt(p: PromptPerson): string {
     "Rules:",
     "- Answer only from tool results. Never guess or invent numbers, names or dates.",
     "- The tools already run with this person's permissions and locations. If a tool says something is outside their access, say so plainly and don't suggest a way around it.",
-    '- run_report gives business numbers (sales, barbers, locations, inventory, purchase orders, tips, labor hours, campaigns, lapsed clients, utilization). Use view "shops" to compare locations and "barbers" to compare barbers.',
+    '- run_report gives business numbers (sales, barbers, locations, inventory, purchase orders, tips, labor hours, campaigns, lapsed clients, utilization, rebook rate and 2nd-visit retention). Use view "shops" to compare locations and "barbers" to compare barbers.',
     p.tools.includes("customer_report")
       ? "- customer_report lists or counts clients with filters (lapsed, visits, spend)."
       : "",
@@ -200,6 +200,10 @@ const REPORT_WORDS: [RegExp, ReportKey][] = [
     "operations",
   ],
   [/booked|capacity|schedule|working/, "staffing"],
+  [
+    /rebook|re-book|2nd visit|second visit|return rate|came back within|pre-?booked|booked ahead|future appointments/,
+    "rebook_rate",
+  ],
   [/rebook|retention|kpi/, "kpis"],
   [/service time|wait time|chair time/, "service_times"],
   [/gift card/, "gift_cards"],

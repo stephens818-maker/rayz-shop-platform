@@ -169,7 +169,7 @@ export function ReportFilters({
           </Link>
         ))}
       </div>
-      {options?.map((o) => (
+      {options?.filter((o) => !o.select).map((o) => (
         <div key={o.param} role="group" aria-label={o.label} className="flex flex-wrap items-center gap-1.5 text-sm">
           <span className="mr-1 text-xs text-zinc-500">{o.label}</span>
           {o.choices.map((c) => (
@@ -196,8 +196,22 @@ export function ReportFilters({
         </label>
         {location && <LocationField p={location} />}
         <BarberField l={scope} />
+        {options
+          ?.filter((o) => o.select)
+          .map((o) => (
+            <label key={o.param}>
+              <span className="block text-xs text-zinc-500">{o.label}</span>
+              <select name={o.param} defaultValue={o.value} className="h-9 max-w-56 rounded-lg bg-white px-2 ring-1 ring-zinc-300">
+                {o.choices.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
         <ViewInput l={scope} />
-        {Object.entries(opts).map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
+        {Object.entries(opts).map(([k, v]) => (v && !options?.some((o) => o.select && o.param === k) ? <input key={k} type="hidden" name={k} value={v} /> : null))}
         <Button type="submit" variant="dark" size="sm" className="h-9">
           Apply
         </Button>

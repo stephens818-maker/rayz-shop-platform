@@ -30,6 +30,7 @@ import {
   reportLink,
   urgentCount,
 } from "./morning-dashboard";
+import { ptsLabel } from "./rebook";
 
 /** `hours` values are minutes, shown as hours. */
 export type ValueKind = "money" | "int" | "pct" | "minutes" | "hours";
@@ -282,6 +283,40 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
     sections.push({ key: "utilization", title: SECTION_LABEL.utilization, link: { label: "Barber performance", href: reportLink(d, "/admin/reports/barbers", p.reportDay, p.reportDay, u.shops) }, blocks: [...blocks, ...partial(d, u.shops)] });
   }
 
+  if (d.rebook) {
+    const r = d.rebook;
+    const blocks: Block[] = [
+      {
+        kind: "metrics",
+        rows: [metric("Rebook rate", r.rebook, "pct"), metric("New-client rebook rate", r.newRebook, "pct"), metric("Visits rebooked", r.rebooked, "int"), metric("Visits", r.visits, "int")],
+      },
+    ];
+    if (r.brand) blocks.push({ kind: "note", text: `Brand average: ${pctLabel(r.brand.day)} on the day, ${pctLabel(r.brand.wtd)} week to date.` });
+    const c = cap(r.byBarber ?? []);
+    if (r.byBarber?.length)
+      blocks.push({
+        kind: "table",
+        title: r.ownOnly ? "Your rebook rate" : "By barber",
+        columns: ["Barber", L.dayShort, "Visits", "WTD", "WTD visits", ...(r.brand ? ["WTD vs brand"] : [])],
+        numeric: [false, true, true, true, true, false],
+        narrow: r.brand ? [0, 1, 3, 5] : [0, 1, 3],
+        rows: c.rows.map((b) => [b.label, pctLabel(b.rate), String(b.visits), pctLabel(b.wtdRate), String(b.wtdVisits), ...(r.brand ? [ptsLabel(b.wtdRate, r.brand.wtd) ?? "—"] : [])]),
+      });
+    blocks.push(...c.more);
+    const sv = r.secondVisit;
+    blocks.push({
+      kind: "note",
+      text: `${plural(r.future, "appointment")} on the books. 2nd-visit retention: ${pctLabel(sv.judged ? sv.back / sv.judged : null)} of ${plural(sv.judged, "new client")} first seen ${formatDate(sv.from, "MMM d")}–${formatDate(sv.to, "MMM d")} came back within 60 days${sv.brand !== null ? ` (brand ${pctLabel(sv.brand)})` : ""}.`,
+    });
+    sections.push({
+      key: "rebook",
+      title: SECTION_LABEL.rebook,
+      subtitle: "Left with their next visit booked",
+      link: { label: "Rebook rate", href: reportLink(d, "/admin/reports/rebook", p.wtdFrom, p.reportDay, r.shops) },
+      blocks: [...blocks, ...partial(d, r.shops)],
+    });
+  }
+
   if (d.loyalty) {
     const lo = d.loyalty.loyalty;
     const gc = d.loyalty.giftCards;
@@ -383,6 +418,7 @@ export function renderMorningSms(d: MorningDashboard): string {
   if (d.sales) parts.push(`${dollars(d.sales.net.day)} net (${changeWords(d.sales.net.day, d.sales.net.prior)} vs ${L.prior}), ${plural(d.sales.tickets.day, "ticket")}`);
   if (d.sales) parts.push(`WTD ${dollars(d.sales.net.wtd)}`);
   if (d.traffic && d.traffic.noShows.day) parts.push(plural(d.traffic.noShows.day, "no-show"));
+  if (d.rebook?.visits.day) parts.push(`${pctLabel(d.rebook.rebook.day)} rebooked`);
   if (d.today) {
     const working = d.today.shops.reduce((a, s) => a + s.barbers.length, 0);
     const open = d.today.shops.reduce((a, s) => a + s.openMin, 0);

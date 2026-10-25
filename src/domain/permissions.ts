@@ -542,6 +542,12 @@ export const REPORTS = [
     hint: "Utilization, rebooked at checkout, retention by first-visit month, client lifetime value, average ticket, retail per service ticket, revenue per chair hour, wait time, on-time starts and post-visit rating, by location and barber.",
   },
   {
+    key: "rebook_rate",
+    label: "Rebook rate",
+    href: "/admin/reports/rebook",
+    hint: "Rebooked at checkout, clients back within 30, 45 or 60 days or their own usual gap, new-client rebook rate and 2nd-visit retention, and future appointments booked, by location and barber, with a weekly or monthly trend, leaderboards and the brand average.",
+  },
+  {
     key: "checkout_prompts",
     label: "Checkout prompts",
     href: "/admin/reports/checkout-prompts",
@@ -972,6 +978,7 @@ const TEMPLATES: RoleTemplate[] = [
           "kpis",
           "rollup",
           "operations",
+          "rebook_rate",
           "checkout_prompts",
           "retention",
           "acquisition",
@@ -990,7 +997,7 @@ const TEMPLATES: RoleTemplate[] = [
     name: "Barber",
     description: "Their own column, their own clients and their own sales.",
     defaultScope: "selected",
-    permissions: ["clients.rate", "clients.message", "notes.view", "notes.write", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", ...reports(["my_sales", "service_times"])],
+    permissions: ["clients.rate", "clients.message", "notes.view", "notes.write", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", ...reports(["my_sales", "service_times"]), reportView("rebook_rate")],
     maxDiscountPct: 0,
   },
 ];

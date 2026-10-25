@@ -101,6 +101,7 @@ function dash(o: Partial<MorningDashboard> = {}): MorningDashboard {
       ],
     },
     milestones: null,
+    rebook: null,
     ...o,
   };
 }
@@ -115,7 +116,7 @@ describe("Morning Dashboard settings", () => {
       coverLastOpenDay: true,
       pdf: false,
       sms: false,
-      sections: { sales: true, traffic: true, utilization: true, loyalty: true, marketing: true, reviews: true, today: true, exceptions: true, milestones: true },
+      sections: { sales: true, traffic: true, utilization: true, rebook: true, loyalty: true, marketing: true, reviews: true, today: true, exceptions: true, milestones: true },
     });
   });
 
@@ -305,6 +306,34 @@ describe("Morning Dashboard renderers", () => {
     expect(renderMorningText(d).body).toContain("STAFF MILESTONES\nWorth a shout-out\n  Reached\n  - Jamie hit 1,000 cuts");
     expect(renderMorningHtml(d)).toContain("Casey&#39;s 5-year work anniversary Friday");
     expect(renderMorningSms(d)).toContain("; Jamie hit 1,000 cuts; 2 to handle");
+  });
+
+  it("shows the rebook rate after utilization, per barber against the brand, and in the text", () => {
+    const d = dash({
+      rebook: {
+        shops: [CORAL, ROCK],
+        visits: cmp(20, 18, 90, 80),
+        rebooked: cmp(12, 9, 45, 40),
+        rebook: cmp(0.6, 0.5, 0.5, 0.5),
+        newRebook: cmp(0.5, 0.25, 0.4, 0.4),
+        brand: { day: 0.55, wtd: 0.47 },
+        future: 140,
+        secondVisit: { from: "2026-07-27", to: "2026-08-25", judged: 40, back: 26, brand: 0.6 },
+        byBarber: [{ staffId: "b0", label: "Makenna", visits: 8, rate: 0.75, wtdVisits: 30, wtdRate: 0.6 }],
+        ownOnly: false,
+      },
+    });
+    const doc = morningDoc(d);
+    const keys = doc.sections.map((s) => s.key);
+    expect(keys.indexOf("rebook")).toBe(keys.indexOf("utilization") + 1);
+    const r = doc.sections.find((s) => s.key === "rebook")!;
+    expect(r.link?.href).toBe(`https://rayz.test/admin/reports/rebook?from=2026-10-18&to=2026-10-24&shop=${CORAL.id}&shop=${ROCK.id}`);
+    expect(r.blocks[0]).toMatchObject({ kind: "metrics", rows: [{ label: "Rebook rate", day: "60%", dayChange: "▲ 10 pts", wtd: "50%" }, { label: "New-client rebook rate" }, { label: "Visits rebooked" }, { label: "Visits" }] });
+    expect(r.blocks).toContainEqual({ kind: "note", text: "Brand average: 55% on the day, 47% week to date." });
+    expect(r.blocks).toContainEqual(expect.objectContaining({ kind: "table", title: "By barber", rows: [["Makenna", "75%", "8", "60%", "30", "+13 pts"]] }));
+    expect(r.blocks).toContainEqual({ kind: "note", text: "140 appointments on the books. 2nd-visit retention: 65% of 40 new clients first seen Jul 27–Aug 25 came back within 60 days (brand 60%)." });
+    expect(renderMorningSms(d)).toContain("; 1 no-show; 60% rebooked; today");
+    expect(renderMorningText(d).body).toContain("REBOOK RATE\nLeft with their next visit booked\n  Rebook rate: 60% (▲ 10 pts)".replace("▲", "+"));
   });
 
   it("renders a PDF", () => {

@@ -10,13 +10,14 @@ import { weekStartOf } from "./payroll/overtime";
 
 export const MORNING_ROLE_DEFAULTS = ["brand_owner", "brand_admin", "regional_manager", "shop_manager"];
 
-export const MORNING_SECTIONS = ["sales", "traffic", "utilization", "loyalty", "marketing", "reviews", "today", "exceptions", "milestones"] as const;
+export const MORNING_SECTIONS = ["sales", "traffic", "utilization", "rebook", "loyalty", "marketing", "reviews", "today", "exceptions", "milestones"] as const;
 export type MorningSection = (typeof MORNING_SECTIONS)[number];
 
 export const SECTION_LABEL: Record<MorningSection, string> = {
   sales: "Sales",
   traffic: "Clients and bookings",
   utilization: "Barber utilization",
+  rebook: "Rebook rate",
   loyalty: "Loyalty and gift cards",
   marketing: "Campaign Center",
   reviews: "Google review links",
@@ -29,6 +30,7 @@ export const SECTION_HINT: Record<MorningSection, string> = {
   sales: "Gross and net sales, services and products, tips, card fees, refunds and voids, tickets and average ticket, by location and barber",
   traffic: "New and returning clients, bookings made online, walk-in and at the desk, visits, cancellations and no-shows",
   utilization: "Booked against available hours per barber, and average time in the chair against the booked time",
+  rebook: "Rebooked at checkout and the new-client rebook rate against the brand average, per barber, future appointments booked and 2nd-visit retention",
   loyalty: "Rewards issued and redeemed, gift cards sold and redeemed, and what's still owed on gift cards",
   marketing: "Campaign Center sends, clicks, bookings, coupon redemptions and attributed revenue",
   reviews: "Review follow-ups sent and clicks on each location's Google review link",
@@ -249,6 +251,24 @@ export interface UtilizationBlock {
   cutTimes: { avgActualMin: number | null; avgBookedMin: number | null; n: number } | null;
 }
 
+export interface RebookBlock {
+  shops: ShopRef[];
+  /** Visits with a booking time, and how many left with their next visit booked. */
+  visits: Cmp;
+  rebooked: Cmp;
+  rebook: Cmp;
+  newRebook: Cmp;
+  /** The brand's rebook rate on the day and week to date; null when this version is the whole brand. */
+  brand: { day: number | null; wtd: number | null } | null;
+  /** Booked or confirmed appointments still to come, this morning. */
+  future: number;
+  /** New clients whose first visit was in this closed window, and how many came back within 60 days. */
+  secondVisit: { from: LocalDate; to: LocalDate; judged: number; back: number; brand: number | null };
+  /** Without the barber breakdown (or "every barber's numbers"), only their own row; null when they have no visits. */
+  byBarber: { staffId: string; label: string; visits: number; rate: number | null; wtdVisits: number; wtdRate: number | null }[] | null;
+  ownOnly: boolean;
+}
+
 export interface LoyaltyBlock {
   loyalty: { shops: ShopRef[]; rewardsIssued: Cmp; rewardsRedeemed: Cmp; redeemedCents: Cmp; members: Cmp } | null;
   giftCards: { shops: ShopRef[]; soldN: Cmp; soldCents: Cmp; redeemedCents: Cmp; outstandingCents: number } | null;
@@ -348,6 +368,7 @@ export interface MorningDashboard {
   sales: SalesBlock | null;
   traffic: TrafficBlock | null;
   utilization: UtilizationBlock | null;
+  rebook: RebookBlock | null;
   loyalty: LoyaltyBlock | null;
   marketing: MarketingBlock | null;
   reviews: ReviewsBlock | null;

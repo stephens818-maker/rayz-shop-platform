@@ -390,7 +390,7 @@ const aggOf = (f: FieldDef) =>
     ? "avg"
     : f.type === "int" || f.type === "money"
       ? "sum"
-      : f.type === "number" || f.type === "stars"
+      : f.type === "number" || f.type === "stars" || f.type === "pct"
         ? "avg"
         : "none";
 
