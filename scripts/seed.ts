@@ -66,8 +66,11 @@ async function main() {
     return { reasonId: r.id, reason: r.label };
   };
 
-  // ── Shops, all owned by Rayz corporate ──
-  const [brandOwner] = await db.insert(t.ownerEntities).values({ name: "Ray'z Barber Shop", legalName: "Ray'z Barber Shop LLC", kind: "brand", contactEmail: "owner@rayz.test" }).returning();
+  // ── Shops, all owned by Ray'z Corporate, the default owner ──
+  const [brandOwner] = await db
+    .insert(t.ownerEntities)
+    .values({ name: "Ray'z Corporate", legalName: "Ray'z Barber Shop LLC", kind: "brand", isDefault: true, contactEmail: "owner@rayz.test" })
+    .returning();
   const shopRows = await db
     .insert(t.shops)
     .values(

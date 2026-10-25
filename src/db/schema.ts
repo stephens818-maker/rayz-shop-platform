@@ -102,21 +102,48 @@ export const brandSettings = pgTable("brand_settings", {
 });
 
 /**
- * The legal business that owns a shop: one of Rayz corporate's entities (an LLC can own several
- * shops). Each shop still has its own Stripe connected account, so its revenue, fees and payouts
- * stay its own. `kind` is always "brand" in this build; it and shops.owner_entity_id (nullable)
- * leave room for another kind of owner later without reshaping locations.
+ * The legal business that owns a shop: Ray'z Corporate (the default, kind brand), another corporate
+ * LLC, or a franchisee. An entity can own several shops. Its Stripe account
+ * (entity_payment_accounts) is optional: each shop picks its own, the entity's, or the brand's.
  */
-export const ownerEntities = pgTable("owner_entities", {
-  id: id(),
-  name: text("name").notNull(),
-  legalName: text("legal_name"),
-  kind: text("kind").$type<OwnerEntityKind>().notNull().default("brand"),
-  contactEmail: text("contact_email"),
+export const ownerEntities = pgTable(
+  "owner_entities",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    legalName: text("legal_name"),
+    kind: text("kind").$type<OwnerEntityKind>().notNull().default("brand"),
+    contactEmail: text("contact_email"),
+    /** Ray'z Corporate: exactly one, always kind brand. Shops added without an owner go to it. */
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("owner_entities_kind", sql`${t.kind} in ('brand', 'franchisee')`),
+    check("owner_entities_default_brand", sql`not ${t.isDefault} or ${t.kind} = 'brand'`),
+    uniqueIndex("owner_entities_one_default").on(t.isDefault).where(sql`${t.isDefault}`),
+  ],
+);
+export type OwnerEntityKind = "brand" | "franchisee";
+
+/** An owner entity's Stripe Connect account (Express, Stripe-hosted onboarding). Shops in payments mode "entity" settle here. */
+export const entityPaymentAccounts = pgTable("entity_payment_accounts", {
+  ownerEntityId: uuid("owner_entity_id")
+    .primaryKey()
+    .references(() => ownerEntities.id),
+  stripeAccountId: text("stripe_account_id").notNull().unique(),
+  simulated: boolean("simulated").notNull().default(false),
+  chargesEnabled: boolean("charges_enabled").notNull().default(false),
+  payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
+  detailsSubmitted: boolean("details_submitted").notNull().default(false),
+  requirementsDue: jsonb("requirements_due").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  disabledReason: text("disabled_reason"),
+  payoutSchedule: jsonb("payout_schedule").$type<PayoutSchedule>(),
+  deauthorizedAt: ts("deauthorized_at"),
   createdAt: createdAt(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
-export type OwnerEntityKind = "brand";
 
 /** An optional grouping of locations (a market such as "Quad Cities") for brand rollups. A location is in one region at most. */
 export const regions = pgTable("regions", {
@@ -128,6 +155,7 @@ export const regions = pgTable("regions", {
 
 export const shops = pgTable("shops", {
   id: id(),
+  /** Not null in the database; a trigger puts a shop inserted without one under Ray'z Corporate. */
   ownerEntityId: uuid("owner_entity_id").references(() => ownerEntities.id),
   regionId: uuid("region_id").references((): AnyPgColumn => regions.id, { onDelete: "set null" }),
   slug: text("slug").notNull().unique(),
@@ -215,10 +243,11 @@ export const shops = pgTable("shops", {
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
-  check("shops_payments_mode", sql`${t.paymentsMode} in ('brand', 'connected', 'cash_only')`),
+  check("shops_payments_mode", sql`${t.paymentsMode} in ('brand', 'connected', 'entity', 'cash_only')`),
   index("shops_region_idx").on(t.regionId),
+  index("shops_owner_entity_idx").on(t.ownerEntityId),
 ]);
-export type PaymentsMode = "brand" | "connected" | "cash_only";
+export type PaymentsMode = "brand" | "connected" | "entity" | "cash_only";
 export type NegativeStockPolicy = "block" | "warn";
 export type ShopStatus = "setup" | "live" | "closed" | "archived";
 export type GeocodeSource = "google" | "census" | "zip" | "manual";
@@ -302,14 +331,16 @@ export interface PayoutSchedule {
 }
 
 /**
- * Payouts to a bank, as Stripe reports them: from a shop's connected account (shop_id set), or from
- * the brand's own account (stripe_account_id 'platform', no shop) for every shop on the brand account.
+ * Payouts to a bank, as Stripe reports them: from a shop's connected account (shop_id set), from an
+ * owner entity's account (owner_entity_id set) for every shop of theirs on it, or from the brand's
+ * own account (stripe_account_id 'platform', neither) for every shop on the brand account.
  */
 export const shopPayouts = pgTable(
   "shop_payouts",
   {
     id: id(),
     shopId: uuid("shop_id").references(() => shops.id),
+    ownerEntityId: uuid("owner_entity_id").references(() => ownerEntities.id),
     stripeAccountId: text("stripe_account_id").notNull(),
     stripePayoutId: text("stripe_payout_id").notNull().unique(),
     amountCents: integer("amount_cents").notNull(),
@@ -324,7 +355,11 @@ export const shopPayouts = pgTable(
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [index("shop_payouts_shop_arrival_idx").on(t.shopId, t.arrivalDate), check("shop_payouts_owner", sql`${t.shopId} is not null or ${t.stripeAccountId} = 'platform'`)],
+  (t) => [
+    index("shop_payouts_shop_arrival_idx").on(t.shopId, t.arrivalDate),
+    index("shop_payouts_entity_arrival_idx").on(t.ownerEntityId, t.arrivalDate),
+    check("shop_payouts_owner", sql`${t.shopId} is not null or ${t.ownerEntityId} is not null or ${t.stripeAccountId} = 'platform'`),
+  ],
 );
 
 export const shopHours = pgTable(
@@ -362,7 +397,7 @@ export const roles = pgTable("roles", {
   permissions: jsonb("permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   maxDiscountPct: smallint("max_discount_pct").notNull().default(0),
   /** Suggested shop access for people given this role. */
-  defaultScope: text("default_scope").$type<"all" | "selected" | "one">().notNull().default("one"),
+  defaultScope: text("default_scope").$type<"all" | "entity" | "selected" | "one">().notNull().default("one"),
   /** Custom roles only, set by the Brand Owner: may see client contact details in full and export client lists. */
   brandLevel: boolean("brand_level").notNull().default(false),
   sortOrder: integer("sort_order").notNull().default(100),
@@ -387,8 +422,13 @@ export const staff = pgTable("staff", {
   roleId: uuid("role_id")
     .notNull()
     .references(() => roles.id),
-  /** all = every shop; selected / one = the shops in staff_access_shops. */
-  shopScope: text("shop_scope").$type<"all" | "selected" | "one">().notNull().default("selected"),
+  /**
+   * all = every shop; entity = every shop of scope_entity_id; selected / one = the shops in
+   * staff_access_shops. An entity person's staff_access_shops rows are kept to exactly that
+   * entity's shops by database triggers, so a shop added to the entity is in reach at once.
+   */
+  shopScope: text("shop_scope").$type<"all" | "entity" | "selected" | "one">().notNull().default("selected"),
+  scopeEntityId: uuid("scope_entity_id").references((): AnyPgColumn => ownerEntities.id),
   /** Per-person changes on top of the role: { "pos.discount": true, "sales.refund": false }. */
   permissionOverrides: jsonb("permission_overrides").$type<Record<string, boolean>>().notNull().default(sql`'{}'::jsonb`),
   /** Replaces the role's discount limit for this person. */
