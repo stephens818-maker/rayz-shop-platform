@@ -1045,6 +1045,7 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | Loyalty | `loyalty` | Rewards issued, redeemed, and reversed by refunds |
 | Client ratings | `client_ratings` | Lowest- and highest-rated clients per shop |
 | Retention and rebook KPIs | `kpis` | Rebook rate, retention, new vs returning, no-shows |
+| Rebook rate | `rebook_rate` | Rebooked at checkout, return within 30/45/60 days or the client's own gap, future appointments, new-client rebook rate and 2nd-visit retention, by location and barber against the brand, with trend and leaderboards (see [Rebook rate](#rebook-rate)) |
 | Busiest times heatmap | `heatmap` | Visits by weekday and hour |
 | Who's working, off and blocked | `staffing` | Per day, shop and barber: working, partly off or off, scheduled hours, time off and blocks with their reasons, and bookings; hours by reason |
 | Call-ins and client outreach | `call_ins` | Call-ins by shop and barber, the appointments they hit, and how each ended: moved, rebooked, declined, no response, flagged |

@@ -717,7 +717,7 @@ function MyRebookCard({ r }: { r: Awaited<ReturnType<typeof myRebook>> }) {
         )}
       </div>
       <p className="text-xs text-zinc-500">
-        {r.counts.rebooked} of {r.counts.known} clients left with their next visit booked.
+        {r.counts.rebooked} of {r.counts.known} visits ended with the client&apos;s next visit booked.
       </p>
       <dl className="mt-2 space-y-1 tabular">
         {line("New clients rebooked", r.rates.newRebook, r.brand.newRebook)}

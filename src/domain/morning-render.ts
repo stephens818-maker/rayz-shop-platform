@@ -306,7 +306,7 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
     const sv = r.secondVisit;
     blocks.push({
       kind: "note",
-      text: `${plural(r.future, "appointment")} on the books. 2nd-visit retention: ${pctLabel(sv.judged ? sv.back / sv.judged : null)} of ${plural(sv.judged, "new client")} first seen ${formatDate(sv.from, "MMM d")}–${formatDate(sv.to, "MMM d")} came back within 60 days${sv.brand !== null ? ` (brand ${pctLabel(sv.brand)})` : ""}.`,
+      text: `${plural(r.future, "appointment")} on the books.${sv.judged ? ` 2nd-visit retention: ${pctLabel(sv.back / sv.judged)} of ${plural(sv.judged, "new client")} first seen ${formatDate(sv.from, "MMM d")}–${formatDate(sv.to, "MMM d")} came back within 60 days${sv.brand !== null ? ` (brand ${pctLabel(sv.brand)})` : ""}.` : ""}`,
     });
     sections.push({
       key: "rebook",

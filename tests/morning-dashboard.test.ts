@@ -334,6 +334,8 @@ describe("Morning Dashboard renderers", () => {
     expect(r.blocks).toContainEqual({ kind: "note", text: "140 appointments on the books. 2nd-visit retention: 65% of 40 new clients first seen Jul 27–Aug 25 came back within 60 days (brand 60%)." });
     expect(renderMorningSms(d)).toContain("; 1 no-show; 60% rebooked; today");
     expect(renderMorningText(d).body).toContain("REBOOK RATE\nLeft with their next visit booked\n  Rebook rate: 60% (▲ 10 pts)".replace("▲", "+"));
+    const none = morningDoc({ ...d, rebook: { ...d.rebook!, secondVisit: { from: "2026-07-27", to: "2026-08-25", judged: 0, back: 0, brand: null } } });
+    expect(none.sections.find((s) => s.key === "rebook")!.blocks).toContainEqual({ kind: "note", text: "140 appointments on the books." });
   });
 
   it("renders a PDF", () => {
