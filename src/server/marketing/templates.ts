@@ -4,7 +4,7 @@
  * approved template and change what they need; only the brand writes, approves or archives them.
  * Changing an approved template's wording sends it back to draft until it's approved again.
  */
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { marketingTemplates, staff } from "@/db/schema";
 import { CHANNELS, TemplatesSchema, templatesProblem, type Channel, type Templates } from "@/domain/marketing";
@@ -27,6 +27,8 @@ export interface TemplateView {
   approvedAt: Date | null;
   approvedBy: string | null;
   updatedAt: Date;
+  /** Offered from a staff milestone rather than as a general blast. */
+  purpose: "milestone" | null;
 }
 
 const mayBrand = (ctx: StaffContext) => can(ctx, "campaign_center.create") && ctx.brandWide;
@@ -87,7 +89,7 @@ export const STARTER_TEMPLATES: { name: string; campaignType: "update" | "promot
 export async function ensureStarterTemplates() {
   await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('marketing_templates:starter'))`);
-    const [any] = await tx.select({ id: marketingTemplates.id }).from(marketingTemplates).limit(1);
+    const [any] = await tx.select({ id: marketingTemplates.id }).from(marketingTemplates).where(isNull(marketingTemplates.purpose)).limit(1);
     if (any) return;
     const now = new Date();
     await tx.insert(marketingTemplates).values(STARTER_TEMPLATES.map((t) => ({ ...t, templates: { ...t.templates }, channels: [...CHANNELS], status: "approved" as const, approvedAt: now })));
@@ -114,6 +116,7 @@ export async function listTemplates(ctx: StaffContext, o: { archived?: boolean }
     approvedAt: r.approvedAt,
     approvedBy: names.find((n) => n.id === r.approvedBy)?.label ?? null,
     updatedAt: r.updatedAt,
+    purpose: r.purpose ?? null,
   }));
 }
 

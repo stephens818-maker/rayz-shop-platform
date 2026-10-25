@@ -12,6 +12,7 @@ import { filterOptions, panelSees } from "@/server/client-filters";
 import { couponOptions, listBlasts } from "@/server/marketing/campaigns";
 import { loadMarketingSettings } from "@/server/marketing/settings";
 import { listTemplates } from "@/server/marketing/templates";
+import { celebrateDraft } from "@/server/milestones/views";
 import { inTenant } from "@/server/tenant";
 import { KpiSkeleton } from "../../kpis";
 import { CampaignResultsSection } from "../../results-section";
@@ -22,7 +23,7 @@ import { BlastWizard } from "./wizard";
 export const metadata: Metadata = { title: "Blast" };
 export const dynamic = "force-dynamic";
 
-export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string; shops?: string; done?: string; queued?: string; skipped?: string }> }) {
+export default async function BlastPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ f?: string; shops?: string; done?: string; queued?: string; skipped?: string; celebrate?: string }> }) {
   const ctx = await guardPage("/admin/campaign-center/blasts/[id]");
   const { id } = await params;
   const sp = await searchParams;
@@ -33,8 +34,9 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
   const shops = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
   const policy = await clientPolicy(ctx);
   const [settings, coupons, options, library] = await Promise.all([loadMarketingSettings(), couponOptions(todayLocal(), { includeUnusable: true }), filterOptions(ctx, policy), listTemplates(ctx)]);
-  const initial = id === "new" && sp.f ? decodeFilter(sp.f) : undefined;
-  const initialShops = id === "new" && sp.shops ? sp.shops.split(",").filter((s) => shops.some((x) => x.id === s)) : undefined;
+  const celebrate = id === "new" && sp.celebrate && /^[0-9a-f-]{36}$/i.test(sp.celebrate) ? await celebrateDraft(ctx, sp.celebrate) : null;
+  const initial = celebrate ? celebrate.segment : id === "new" && sp.f ? decodeFilter(sp.f) : undefined;
+  const initialShops = celebrate ? celebrate.shopIds.filter((s) => shops.some((x) => x.id === s)) : id === "new" && sp.shops ? sp.shops.split(",").filter((s) => shops.some((x) => x.id === s)) : undefined;
   const status = blast ? (BLAST_STATUS[blast.status] ?? { label: blast.status, tone: "gray" as const }) : null;
   const count = (x: string | undefined) => Math.max(0, Number.parseInt(x ?? "", 10) || 0);
   const done =
@@ -58,6 +60,7 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
         actions={blast && <BlastActions id={blast.id} name={blast.name} status={blast.status} mayWrite={mayCreate} maySend={maySend} mayManage={blast.inScope} />}
       />
       {done && <Notice tone="green">{done}</Notice>}
+      {id === "new" && sp.celebrate && (celebrate ? <Notice tone="blue">Started from the brand&rsquo;s approved milestone template: the barber&rsquo;s recent clients, their first name only. Review the wording and audience before it goes out.</Notice> : <Notice>That milestone can&rsquo;t be shared with clients (it&rsquo;s not one about the work, the barber keeps theirs private, or the brand turned client celebrations off).</Notice>)}
       {blast && status && (
         <Card className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
           <Badge tone={status.tone}>{status.label}</Badge>
@@ -112,8 +115,9 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
         sees={panelSees(ctx, policy)}
         initialSegment={initial}
         initialShopIds={initialShops}
+        initialDraft={celebrate ? { name: celebrate.name, templateId: celebrate.templateId, channels: celebrate.channels, templates: celebrate.templates } : undefined}
         coupons={coupons}
-        library={library.filter((t) => t.status === "approved").map((t) => ({ id: t.id, name: t.name, campaignType: t.campaignType, description: t.description, channels: t.channels, templates: t.templates }))}
+        library={library.filter((t) => t.status === "approved" && (!t.purpose || t.id === celebrate?.templateId)).map((t) => ({ id: t.id, name: t.name, campaignType: t.campaignType, description: t.description, channels: t.channels, templates: t.templates }))}
         settings={{ address: settings.address, quietStart: settings.quietStart, quietEnd: settings.quietEnd, capPerWeek: settings.capPerWeek, capPerMonth: settings.capPerMonth, attributionDays: settings.attributionDays }}
       />
       {blast && blast.status !== "draft" && (

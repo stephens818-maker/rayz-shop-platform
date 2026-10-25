@@ -108,6 +108,8 @@ export function BlastWizard(p: {
   sees: PanelSees;
   initialSegment?: Segment;
   initialShopIds?: string[];
+  /** A prefilled draft from a brand template, e.g. celebrating a barber's milestone; still reviewed before it's sent. */
+  initialDraft?: { name: string; templateId: string; channels: Channel[]; templates: Templates };
   coupons: WizardCoupon[];
   library: WizardTemplate[];
   settings: { address: string; quietStart: string; quietEnd: string; capPerWeek: number; capPerMonth: number; attributionDays: number };
@@ -116,13 +118,13 @@ export function BlastWizard(p: {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const [step, setStep] = useState(p.blast ? (p.mayEdit ? 1 : 3) : 0);
+  const [step, setStep] = useState(p.blast ? (p.mayEdit ? 1 : 3) : p.initialDraft ? 1 : 0);
   const [id, setId] = useState(p.blast?.id ?? null);
   const [kind, setKind] = useState<Kind>(p.blast?.campaignType ?? "update");
-  const [name, setName] = useState(p.blast?.name ?? "");
+  const [name, setName] = useState(p.blast?.name ?? p.initialDraft?.name ?? "");
   const [shopIds, setShopIds] = useState<string[]>(p.blast?.shopIds ?? (p.initialShopIds?.length ? p.initialShopIds : p.everyLocation ? [] : p.shops.map((x) => x.id)));
-  const [channels, setChannels] = useState<Channel[]>(p.blast?.channels ?? ["sms", "email", "push"]);
-  const [templates, setTemplates] = useState<Templates>(p.blast?.templates ?? NEW_TEMPLATES);
+  const [channels, setChannels] = useState<Channel[]>(p.blast?.channels ?? p.initialDraft?.channels ?? ["sms", "email", "push"]);
+  const [templates, setTemplates] = useState<Templates>(p.blast?.templates ?? (p.initialDraft ? { ...NEW_TEMPLATES, ...p.initialDraft.templates } : NEW_TEMPLATES));
   const [promoId, setPromoId] = useState(p.blast?.promoId ?? null);
   const [seg, setSeg] = useState<Segment>(p.blast?.segment ?? p.initialSegment ?? EMPTY_SEGMENT);
   const [freq, setFreq] = useState<Freq>(p.blast?.recurrence?.freq ?? "once");
@@ -132,7 +134,7 @@ export function BlastWizard(p: {
   const [variant, setVariant] = useState<"a" | "b">("a");
   const [holdoutPct, setHoldoutPct] = useState(p.blast?.holdoutPct ?? 0);
   const [sendTimeOpt, setSendTimeOpt] = useState(p.blast?.sendTimeOpt ?? false);
-  const [templateId, setTemplateId] = useState(p.blast?.templateId ?? null);
+  const [templateId, setTemplateId] = useState(p.blast?.templateId ?? p.initialDraft?.templateId ?? null);
   const [aiDrafted, setAiDrafted] = useState(p.blast?.aiDrafted ?? false);
   const [prompt, setPrompt] = useState("");
   const [draftInfo, setDraftInfo] = useState<{ rationale: string; notes: string[]; drafter: string } | null>(null);

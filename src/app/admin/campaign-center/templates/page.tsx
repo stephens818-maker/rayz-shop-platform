@@ -58,7 +58,14 @@ export default async function TemplatesPage({ searchParams }: { searchParams: Pr
               {list.map((t) => (
                 <tr key={t.id}>
                   <Td className="whitespace-normal">
-                    <div className="font-semibold">{t.name}</div>
+                    <div className="font-semibold">
+                      {t.name}
+                      {t.purpose === "milestone" && (
+                        <Badge tone="violet" className="ml-2">
+                          Staff milestones
+                        </Badge>
+                      )}
+                    </div>
                     {t.description && <div className="text-xs text-zinc-500">{t.description}</div>}
                     <div className="mt-1 max-w-xl truncate text-xs text-zinc-500">{t.templates.sms}</div>
                   </Td>
