@@ -51,8 +51,11 @@ export function LocationWizard({
   canBank,
   network,
   geocoder,
+  brandBooking = { minLeadMinutes: 15, bookingWindowDays: 60, cancelCutoffMinutes: 30 },
 }: {
   options: Options;
+  /** The brand defaults a new location starts on. */
+  brandBooking?: { minLeadMinutes: number; bookingWindowDays: number; cancelCutoffMinutes: number };
   geocoder: "google" | "census" | "zip";
   brandIntervalMinutes: number;
   canBank: boolean;
@@ -97,7 +100,7 @@ export function LocationWizard({
     const { tips: _, ...rules } = DEFAULT_SHOP_HANDOFF;
     return { own: false, tips: options.brandTips, rules };
   });
-  const [booking, setBooking] = useState({ online: true, interval: "", lead: "15", window: "60", cutoff: "30" });
+  const [booking, setBooking] = useState({ online: true, interval: "", lead: String(brandBooking.minLeadMinutes), window: String(brandBooking.bookingWindowDays), cutoff: String(brandBooking.cancelCutoffMinutes) });
   const [menuSource, setMenuSource] = useState("brand");
   const [menu, setMenu] = useState<MenuRow[]>(() => menuFrom("brand"));
   const [retailSource, setRetailSource] = useState("none");

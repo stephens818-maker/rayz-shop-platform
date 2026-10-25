@@ -40,9 +40,9 @@ export function cleanNotificationPrefs(raw: unknown): StaffNotificationPrefs {
   return out;
 }
 
-/** The reminder times for this barber's clients, in hours before the start; 0 is no reminder. */
-export function reminderHours(p: StaffNotificationPrefs | null | undefined): { firstHours: number; secondHours: number } {
-  return { firstHours: p?.firstHours ?? DEFAULT_REMINDERS.firstHours, secondHours: p?.secondHours ?? DEFAULT_REMINDERS.secondHours };
+/** The reminder times for this barber's clients, in hours before the start; 0 is no reminder. Unset follows the location's times. */
+export function reminderHours(p: StaffNotificationPrefs | null | undefined, location: { firstHours: number; secondHours: number } = DEFAULT_REMINDERS): { firstHours: number; secondHours: number } {
+  return { firstHours: p?.firstHours ?? location.firstHours, secondHours: p?.secondHours ?? location.secondHours };
 }
 
 export const channelsFor = (p: StaffNotificationPrefs | null | undefined, e: StaffEvent): StaffChannel[] => p?.events[e] ?? [];

@@ -49,6 +49,7 @@ import { guardian, householdContact } from "./household-contact";
 import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
 import { queueStaffAlert } from "./staff-alerts";
 import { cleanNotificationPrefs, reminderHours } from "@/domain/staff-notifications";
+import { shopReminderHours } from "./location-defaults";
 import { bookingPlans, shopInterval, staffBookingOptions, staffIntervals, toStaffPlans } from "./timing";
 
 export const ACTIVE_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as const;
@@ -513,7 +514,7 @@ export async function messageContext(appointmentId: string, tx: DBorTx = db): Pr
     firstName: row.firstName,
     shopSlug: row.shopSlug,
     shopPhone: row.shopPhone ? formatPhone(row.shopPhone) : null,
-    reminders: reminderHours(cleanNotificationPrefs(row.staffPrefs)),
+    reminders: reminderHours(cleanNotificationPrefs(row.staffPrefs), await shopReminderHours(row.shopId, tx)),
     cancelCutoffMinutes: (await staffBookingOptions({ ...row.shopDefaults, id: row.shopId }, [row.staffId], tx)).get(row.staffId)!.cancelCutoffMinutes.value,
     endsAt: row.endsAt,
     shopFullAddress: fullAddress({ address: row.shopAddress, address2: row.shopAddress2, city: row.shopCity, state: row.shopState, zip: row.shopZip }),

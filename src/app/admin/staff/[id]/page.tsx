@@ -23,6 +23,7 @@ import { AffectedRow } from "../../time-off/client";
 import { OffboardCard, ProfileForm, ScheduleEditor, TimeOff } from "./editors";
 import { BookingOptionsCard, DaysOnCard, NotificationsCard } from "./settings";
 import { dayHistory, loadBookingOptions, loadNotificationPrefs } from "@/server/staff-settings";
+import { loadBrandDefaults, shopDefaults } from "@/server/location-defaults";
 
 export const metadata: Metadata = { title: "Staff member" };
 
@@ -55,6 +56,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
   const roleChoices = isNew
     ? assignableRoles(staffGrantor(ctx), await db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name))).filter((r) => r.defaultScope !== "all" || ctx.brandWide)
     : [];
+  const startingRole = isNew ? (ctx.currentShopId ? await shopDefaults(ctx.currentShopId) : await loadBrandDefaults()).newStaffRole : null;
   const contact = person ? staffContact(seesStaffContact({ permissions: ctx.permissions, staffId: ctx.staff.id }, person.id), person) : null;
   const canSchedule = can(ctx, "schedules.edit");
   const timing = person && person.kind === "person" && can(ctx, "scheduling.timing") ? (await barberIntervalRows(ctx, person.id))[0] : undefined;
@@ -107,6 +109,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         shops={editableShops}
         allShops={allShops}
         roles={roleChoices.map((r) => ({ id: r.id, name: r.name, description: r.description, defaultScope: r.defaultScope }))}
+        defaultRoleId={roleChoices.find((r) => r.key === startingRole)?.id ?? null}
         initial={
           person
             ? {

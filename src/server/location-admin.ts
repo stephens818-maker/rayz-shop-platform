@@ -40,6 +40,8 @@ import { registerReader } from "./payments/connect";
 import { geocodeAddress } from "./geo";
 import { defaultOwnerEntity } from "./owner-entities";
 import { createShopLogin, shopLoginRoles } from "./shop-logins";
+import { loadBrandDefaults, noteShopColumnChanges } from "./location-defaults";
+import { overridesFromColumns } from "@/domain/location-defaults";
 
 /** Adding, opening and retiring locations needs locations.setup, which only people who see every shop can hold. */
 export interface LocationAdmin {
@@ -165,6 +167,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
   const productRows = productIds.length ? await db.select({ id: products.id, cost: products.costCents }).from(products).where(inArray(products.id, productIds)) : [];
   if (productRows.length !== new Set(productIds).size) throw new AppError("bad_request", "One of the products no longer exists");
   const looked = d.latitude === null ? await geocodeAddress(d) : null;
+  const brand = await loadBrandDefaults();
   const pin =
     d.latitude !== null && d.longitude !== null
       ? { latitude: d.latitude, longitude: d.longitude, geocodeSource: d.geocodeSource ?? "manual", geocodedAt: new Date() }
@@ -213,12 +216,15 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         minLeadMinutes: d.minLeadMinutes,
         bookingWindowDays: d.bookingWindowDays,
         cancelCutoffMinutes: d.cancelCutoffMinutes,
+        bufferMinutes: brand.bufferMinutes,
+        drawerOpeningCents: brand.drawerOpeningCents,
         twilioNumber: d.twilioNumber || null,
         accentColor: d.accentColor,
         logoUrl: d.logoUrl,
         networkAccess: { ...d.networkAccess },
       })
       .returning({ id: shops.id });
+    await noteShopColumnChanges(s.id, overridesFromColumns({ minLeadMinutes: d.minLeadMinutes, bookingWindowDays: d.bookingWindowDays, cancelCutoffMinutes: d.cancelCutoffMinutes, accentColor: d.accentColor }), tx);
     if (d.hours.length) await tx.insert(shopHours).values(d.hours.map((h) => ({ shopId: s.id, ...h })));
     if (d.holidays.length) await tx.insert(shopClosures).values(d.holidays.map((h) => ({ shopId: s.id, date: h.date, reason: h.reason }))).onConflictDoNothing();
     if (d.services.length) await tx.insert(shopServices).values(d.services.map((x) => ({ shopId: s.id, ...x })));

@@ -526,6 +526,13 @@
       "when": 1795402800000,
       "tag": "core_0074_catalog_brand_stock",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1795489200000,
+      "tag": "core_0075_location_defaults",
+      "breakpoints": true
     }
   ]
 }

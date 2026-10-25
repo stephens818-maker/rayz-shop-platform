@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { BookingTracking } from "@/components/booking-tracking";
 import { publicShopPage } from "@/server/public";
 import { BookingWizard } from "../../../(public)/book/[shop]/wizard";
 
@@ -12,8 +13,11 @@ export default async function EmbedBook({ params }: { params: Promise<{ shop: st
   const s = await publicShopPage(shop).catch(() => null);
   if (!s) notFound();
   return (
-    <Suspense>
-      <BookingWizard shop={s} basePath="/embed" />
-    </Suspense>
+    <>
+      <BookingTracking ga4={s.tracking.ga4} metaPixel={s.tracking.metaPixel} />
+      <Suspense>
+        <BookingWizard shop={s} basePath="/embed" />
+      </Suspense>
+    </>
   );
 }

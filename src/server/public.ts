@@ -7,6 +7,7 @@ import { minutesToHHMM, todayLocal } from "@/lib/time";
 import { getAppointmentByCode } from "./booking";
 import { getShop, shopBarbers, shopCatalog } from "./catalog";
 import { notFound } from "./errors";
+import { shopDefaults } from "./location-defaults";
 export async function publicShops() {
   const [rows, hours, counts] = await Promise.all([
     db.select().from(shops).where(inArray(shops.status, ["live", "closed"])).orderBy(asc(shops.name)),
@@ -51,9 +52,16 @@ export async function publicShop(ref: string) {
 export async function publicShopPage(ref: string) {
   const s = await getShop(ref);
   const shop = await publicShop(ref);
-  const logo = await db.query.shopPhotos.findFirst({ where: and(eq(shopPhotos.shopId, s.id), eq(shopPhotos.kind, "logo")), columns: { id: true } });
+  const [logo, d] = await Promise.all([
+    db.query.shopPhotos.findFirst({ where: and(eq(shopPhotos.shopId, s.id), eq(shopPhotos.kind, "logo")), columns: { id: true } }),
+    shopDefaults(s.id),
+  ]);
   return {
     ...shop,
+    headline: d.bookingHeadline || null,
+    cancellationPolicy: d.cancellationPolicy || null,
+    noShowPolicy: d.noShowPolicy || null,
+    tracking: { ga4: d.ga4MeasurementId, metaPixel: d.metaPixelId },
     closedNote: s.status === "closed" && !shop.bookingEnabled ? (s.closedNote ?? "This shop is temporarily closed.") : null,
     closedUntil: s.closedUntil,
     accentColor: s.accentColor,

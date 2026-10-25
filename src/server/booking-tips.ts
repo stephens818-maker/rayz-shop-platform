@@ -1,9 +1,10 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, shops } from "@/db/schema";
-import { DEFAULT_REMINDERS, cleanNotificationPrefs, reminderHours } from "@/domain/staff-notifications";
+import { cleanNotificationPrefs, reminderHours } from "@/domain/staff-notifications";
 import { customerActor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
+import { shopReminderHours } from "./location-defaults";
 import { staffBookingOptions } from "./timing";
 
 export const MAX_BOOKING_TIP_CENTS = 200_00;
@@ -27,7 +28,11 @@ export async function tipOffer(code: string, now = new Date()): Promise<TipOffer
   if (!a) return null;
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, a.shopId) });
   if (!shop) return null;
-  const [o, person] = await Promise.all([staffBookingOptions(shop, [a.staffId]).then((m) => m.get(a.staffId)!), db.query.staff.findFirst({ where: (s, { eq }) => eq(s.id, a.staffId), columns: { notificationPrefs: true } })]);
+  const [o, person, location] = await Promise.all([
+    staffBookingOptions(shop, [a.staffId]).then((m) => m.get(a.staffId)!),
+    db.query.staff.findFirst({ where: (s, { eq }) => eq(s.id, a.staffId), columns: { notificationPrefs: true } }),
+    shopReminderHours(shop.id),
+  ]);
   return {
     bookingTip: o.bookingTip.value,
     confirmationTip: o.confirmationTip.value,
@@ -35,7 +40,7 @@ export async function tipOffer(code: string, now = new Date()): Promise<TipOffer
     estimateCents: a.estimateCents,
     tipCents: a.bookingTipCents,
     open: (a.status === "booked" || a.status === "confirmed") && a.startsAt > now,
-    reminders: person ? reminderHours(cleanNotificationPrefs(person.notificationPrefs)) : { ...DEFAULT_REMINDERS },
+    reminders: reminderHours(person ? cleanNotificationPrefs(person.notificationPrefs) : null, location),
   };
 }
 

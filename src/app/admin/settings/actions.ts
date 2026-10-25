@@ -24,6 +24,8 @@ import { Permission, SHOP_PART_PERMISSION, SHOP_SETTING_FIELDS, ShopSettingPart,
 import { cleanOperator, operatorProblem } from "@/domain/phone-operator";
 import { FilingFrequency, cleanTaxFiling, stateName } from "@/domain/sales-tax";
 import { saveDrawerOpening } from "@/server/drawer";
+import { overridesFromColumns } from "@/domain/location-defaults";
+import { noteShopColumnChanges } from "@/server/location-defaults";
 
 /** "Edit every shop setting", or the permission for this part of them. */
 const partPerms = (...parts: ShopSettingPart[]): Permission[] => ["settings.shop", ...parts.map((p) => SHOP_PART_PERMISSION[p])];
@@ -83,6 +85,7 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
       if (other) throw new AppError("conflict", `${other.name} already uses that Twilio number`);
     }
     await db.update(shops).set(values).where(eq(shops.id, shopId));
+    await noteShopColumnChanges(shopId, overridesFromColumns(values));
     await audit(ctx.actor, "shop.update", "shop", shopId, values, shopId);
     revalidatePath("/admin/settings");
     return null;
@@ -228,6 +231,7 @@ export async function saveShopProfileAction(shopId: string, raw: z.input<typeof 
     }
     const values = { slug: v.slug, timezone: v.timezone, accentColor: v.accentColor || null, logoUrl: v.logoUrl || null };
     await db.update(shops).set(values).where(eq(shops.id, shopId));
+    await noteShopColumnChanges(shopId, overridesFromColumns({ accentColor: values.accentColor }));
     await audit(ctx.actor, "shop.profile", "shop", shopId, { ...values, previousSlug: v.slug !== before.slug ? before.slug : undefined }, shopId);
     revalidatePath("/admin/settings");
     revalidatePath("/admin/setup");
@@ -319,6 +323,7 @@ export async function saveDrawerOpeningAction(shopId: string, cents: number) {
     const ctx = await authorize(partPerms("checkout"));
     assertShopAccess(ctx, shopId);
     await saveDrawerOpening(shopId, Math.round(cents), ctx.actor);
+    await noteShopColumnChanges(shopId, overridesFromColumns({ drawerOpeningCents: Math.round(cents) }));
     revalidatePath("/admin/settings");
     revalidatePath("/admin/drawer");
     return null;

@@ -100,6 +100,8 @@ export const brandSettings = pgTable("brand_settings", {
   checkoutPrompts: jsonb("checkout_prompts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Staff milestones (MilestoneSettings in src/domain/milestones.ts): alerts, congratulations, birthdays, the team feed. */
   milestones: jsonb("milestones").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** What every location inherits (LocationDefaults in src/domain/location-defaults.ts); missing keys use the built-in values. */
+  locationDefaults: jsonb("location_defaults").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -239,6 +241,8 @@ export const shops = pgTable("shops", {
   directions: text("directions"),
   amenities: jsonb("amenities").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   taxJurisdiction: jsonb("tax_jurisdiction").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** This shop's own values for brand defaults ("this shop only"); missing keys follow the brand (src/domain/location-defaults.ts). */
+  brandOverrides: jsonb("brand_overrides").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Where latitude/longitude came from: an address lookup (google, census), the ZIP centre (approximate), or placed by hand. */
   geocodeSource: text("geocode_source").$type<GeocodeSource>(),
   geocodedAt: ts("geocoded_at"),

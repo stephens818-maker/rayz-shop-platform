@@ -65,11 +65,14 @@ export function ProfileForm({
   roles,
   readOnly,
   contactMasked = false,
+  defaultRoleId = null,
 }: {
   initial: Profile | null;
   shops: { id: string; name: string }[];
   allShops: { id: string; name: string }[];
   roles: RoleChoice[];
+  /** The location's starting role for new staff (Brand defaults). */
+  defaultRoleId?: string | null;
   readOnly: boolean;
   contactMasked?: boolean;
 }) {
@@ -83,7 +86,7 @@ export function ProfileForm({
       email: "",
       phone: "",
       color: "#2563eb",
-      roleId: roles.find((r) => r.name === "Barber")?.id ?? roles[0]?.id ?? null,
+      roleId: defaultRoleId ?? roles.find((r) => r.name === "Barber")?.id ?? roles[0]?.id ?? null,
       isBookable: true,
       active: true,
       squireName: "",

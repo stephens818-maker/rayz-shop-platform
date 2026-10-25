@@ -6,6 +6,9 @@ import { lastBusinessDay, presetRange } from "@/domain/report-range";
 import { ANALYTICS_PERIODS, comparePeriod, periodChange, yearBefore } from "@/domain/period-compare";
 import { WATERFALL, waterfallGap } from "@/domain/sales-waterfall";
 import { highProblem } from "@/domain/inventory";
+import { brandDefaults, cleanPartial, columnPatch, effectiveDefaults, overridesFromColumns, parseDefault } from "@/domain/location-defaults";
+import { reminderHours } from "@/domain/staff-notifications";
+import { CONVERSION_EVENTS, trackBookingStep } from "@/lib/conversion-tracking";
 import { jurisdictionGroups, ratePct } from "@/domain/tax-fees";
 import { matchesFilters, parseAppointmentFilters, paymentOf, platformOf } from "@/domain/appointment-report";
 
@@ -158,5 +161,66 @@ describe("brand products and taxes vs card fees", () => {
     expect(ratePct(0.0825)).toBe("8.25%");
     expect(ratePct(0.07)).toBe("7%");
     expect(ratePct(0)).toBe("0%");
+  });
+});
+
+describe("brand defaults with location overrides", () => {
+  it("fills missing brand values with the built-ins and drops invalid stored ones", () => {
+    const b = brandDefaults({ cancelCutoffMinutes: 120, ga4MeasurementId: "g-abc1234", metaPixelId: "not-digits", junk: 1 });
+    expect(b.cancelCutoffMinutes).toBe(120);
+    expect(b.ga4MeasurementId).toBe("G-ABC1234");
+    expect(b.metaPixelId).toBeNull();
+    expect(b.minLeadMinutes).toBe(15);
+    expect(b.reminderFirstHours).toBe(24);
+    expect("junk" in b).toBe(false);
+  });
+
+  it("a location's own value wins and is labelled this shop only; the rest follow the brand", () => {
+    const b = brandDefaults({ cancelCutoffMinutes: 60 });
+    const e = effectiveDefaults(b, cleanPartial({ cancelCutoffMinutes: 15, reminderSecondHours: 7 }));
+    expect(e.cancelCutoffMinutes).toEqual({ value: 15, scope: "shop" });
+    expect(e.reminderSecondHours).toEqual({ value: 2, scope: "all" });
+    expect(e.minLeadMinutes).toEqual({ value: 15, scope: "all" });
+  });
+
+  it("validates each field", () => {
+    expect(parseDefault("bookingWindowDays", 0)).toEqual({ ok: false, error: "At least a day" });
+    expect(parseDefault("reminderFirstHours", 5).ok).toBe(false);
+    expect(parseDefault("accentColor", "#ABCDEF")).toEqual({ ok: true, value: "#abcdef" });
+    expect(parseDefault("accentColor", "")).toEqual({ ok: true, value: null });
+    expect(parseDefault("metaPixelId", "1234567890")).toEqual({ ok: true, value: "1234567890" });
+    expect(parseDefault("cancellationPolicy", "x".repeat(501)).ok).toBe(false);
+  });
+
+  it("maps column-backed fields to shop columns both ways", () => {
+    expect(columnPatch({ cancelCutoffMinutes: 45, bookingHeadline: "Hi", accentColor: null })).toEqual({ cancelCutoffMinutes: 45, accentColor: null });
+    expect(overridesFromColumns({ minLeadMinutes: 30, name: "Moline", accentColor: "#112233" })).toEqual({ minLeadMinutes: 30, accentColor: "#112233" });
+  });
+
+  it("a barber's reminder times beat the location's, which beat the built-ins", () => {
+    expect(reminderHours({ events: {}, firstHours: 12 }, { firstHours: 18, secondHours: 0 })).toEqual({ firstHours: 12, secondHours: 0 });
+    expect(reminderHours(null)).toEqual({ firstHours: 24, secondHours: 2 });
+  });
+});
+
+describe("booking-site conversion tracking", () => {
+  it("sends GA4 and Meta events with the shop and step only", () => {
+    const calls: unknown[][] = [];
+    const g = globalThis as unknown as { window?: unknown };
+    const had = "window" in g;
+    const prev = g.window;
+    g.window = { gtag: (...a: unknown[]) => calls.push(["ga4", ...a]), fbq: (...a: unknown[]) => calls.push(["meta", ...a]) };
+    try {
+      trackBookingStep("booked", { shop: "moline", channel: "online", appointment: "ABC123" });
+      trackBookingStep("barber_picked", { shop: "moline", channel: "online" });
+    } finally {
+      if (had) g.window = prev;
+      else delete g.window;
+    }
+    expect(calls).toEqual([
+      ["ga4", "event", "book_appointment", { shop: "moline", channel: "online", transaction_id: "ABC123" }],
+      ["meta", "track", "Schedule", { content_category: "appointment", shop: "moline" }],
+    ]);
+    expect(Object.keys(CONVERSION_EVENTS)).toContain("details");
   });
 });

@@ -45,6 +45,7 @@ import {
   saveDraftAction,
 } from "./actions";
 import { VerifyPhone, type SignedIn } from "./verify-phone";
+import { trackBookingStep } from "@/lib/conversion-tracking";
 
 interface Service {
   id: string;
@@ -74,6 +75,9 @@ interface ShopInfo {
   closedNote?: string | null;
   accentColor?: string | null;
   logoUrl?: string | null;
+  headline?: string | null;
+  cancellationPolicy?: string | null;
+  noShowPolicy?: string | null;
 }
 
 type Step = "service" | "barber" | "time" | "details";
@@ -123,6 +127,7 @@ export function BookingWizard({
   const funnel = useRef(`w${crypto.randomUUID().replace(/-/g, "")}`);
   /** One step of the booking funnel for the event log; it never holds who the visitor is. */
   const beacon = (step: string, extra: Record<string, unknown> = {}) => {
+    trackBookingStep(step, { shop: shop.slug, channel: basePath ? "widget" : "online", ...extra });
     try {
       const body = JSON.stringify({
         funnel: funnel.current,
@@ -613,7 +618,7 @@ export function BookingWizard({
           )}
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
-              Book at {shop.name}
+              {shop.headline ?? `Book at ${shop.name}`}
             </h1>
             <p className="text-sm text-zinc-500">
               {shop.address}, {shop.city}, {shop.state}
@@ -957,6 +962,27 @@ export function BookingWizard({
             No payment needed. Free cancellation up to{" "}
             {shop.cancelCutoffMinutes} minutes before.
           </p>
+          {(shop.cancellationPolicy || shop.noShowPolicy) && (
+            <div
+              className="mt-2 space-y-1 text-xs text-zinc-500"
+              data-testid="booking-policies"
+            >
+              {shop.cancellationPolicy && (
+                <p>
+                  <span className="font-medium text-zinc-700">
+                    Cancellation:
+                  </span>{" "}
+                  {shop.cancellationPolicy}
+                </p>
+              )}
+              {shop.noShowPolicy && (
+                <p>
+                  <span className="font-medium text-zinc-700">No-shows:</span>{" "}
+                  {shop.noShowPolicy}
+                </p>
+              )}
+            </div>
+          )}
         </Section>
       </div>
 
