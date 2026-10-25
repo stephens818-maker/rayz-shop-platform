@@ -38,56 +38,56 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 
 **Email (Resend, or Postmark behind the same interface)**
 
-- [ ] Real API integration with branded HTML templates and an unsubscribe link.
-- [ ] Bounce and complaint webhooks that update opt-in.
+- [x] Real API calls to Resend (`RESEND_API_KEY`) and Postmark (`POSTMARK_SERVER_TOKEN`) from `EMAIL_FROM`, off until the key is set. Client emails go out in the brand's HTML layout with the plain text alongside, a stop link (`/u/e/<token>`) and the one-click `List-Unsubscribe` headers. Campaign Center keeps its own unsubscribe and uses Postmark's broadcast stream. Not yet tried against a real account.
+- [x] Bounce and complaint webhooks (`/api/email/resend`, Svix-signed; `/api/email/postmark`, basic auth). Hard bounces, complaints and the stop link add the address to `email_suppressions`, turn off "OK to email" and add a Campaign Center unsubscribe, audited. Delivered events mark the email delivered.
 
 **Push** (owned by bc-645fbcc0, the mobile workstream: devices and push)
 
-- [ ] Web Push (VAPID) for the booking site and the installable PWA.
-- [ ] FCM and APNs-ready through the mobile API, with a device token registration endpoint. Owned by bc-645fbcc0.
+- [ ] Web Push (VAPID) for the booking site and the installable PWA. Owned by bc-645fbcc0 (NOTES-SYNC "Who owns what").
+- [ ] FCM and APNs-ready through the mobile API, with a device token registration endpoint. Owned by bc-645fbcc0. Core already sends app push for Campaign Center to `customer_devices` through `NOTIFICATIONS_PUSH_PROVIDER` (Expo stub).
 - [ ] Customers opt in from the browser or the app. Owned by bc-645fbcc0.
 
 **Reminder rules** (brand portal, with per-shop overrides)
 
-- [ ] Booking confirmation.
-- [ ] Reminders 24 hours and 2 hours before, with editable timings.
-- [ ] Reschedule and cancel notices.
-- [ ] A "running late" message sent by staff.
-- [ ] A rebook nudge X weeks after the last visit.
-- [ ] A no-show follow-up.
-- [ ] An optional birthday message.
-- [ ] Templates with merge fields: client first name, shop, barber first name or display label, date and time, manage-booking link.
-- [ ] Quiet hours in America/Chicago.
-- [ ] Sent through a background job queue with retries and dedupe.
-- [ ] Sent even when staff can't see the client's contact details (masking applies only to staff views).
+- [x] Booking confirmation.
+- [x] Reminders 24 hours and 2 hours before, with editable timings: a brand default each location can override (Settings → Brand defaults → Client notifications), and a barber's own times win.
+- [x] Reschedule and cancel notices.
+- [x] A "running late" message sent by staff (Today).
+- [x] A rebook nudge X weeks after the last visit (Today's rebook nudges, the checkout rebook reminder, and Campaign Center's rebook-by-usual-interval automation).
+- [x] A no-show follow-up (Campaign Center automation, per location).
+- [x] An optional birthday message (Campaign Center automation, per location; marketing consent).
+- [x] Templates with merge fields: client first name, shop, barber first name or display label, date and time, manage-booking link (Settings → Messages).
+- [x] Quiet hours in America/Chicago: reminders move out of the brand's quiet hours (Call-ins rules) to when they end, or the evening before when that's too close to the appointment.
+- [x] Sent through a background job queue with retries and dedupe (`notification_jobs`, `SKIP LOCKED`, backoff, pending reminders replaced on every move).
+- [x] Sent even when staff can't see the client's contact details (masking applies only to staff views).
 
 **Consent** (owned by bc-645fbcc0, the mobile workstream)
 
-- [ ] Separate SMS, email, and push opt-ins, captured at booking with TCPA-compliant wording, a timestamp, and the source.
-- [ ] Opt-outs stick: no re-import or booking can silently opt someone back in.
-- [ ] Default to opted out.
+- [ ] Separate SMS, email, and push opt-ins, captured at booking with TCPA-compliant wording, a timestamp, and the source. Owned by bc-645fbcc0; core reads them (PR #8's marketing columns).
+- [x] Opt-outs stick on core's side: STOP (`contact_opt_outs`), email bounces, complaints and the stop link (`email_suppressions`) and Campaign Center unsubscribes are checked before every send, whatever an import or booking later sets on the client.
+- [ ] Default to opted out. Owned by bc-645fbcc0 (the booking form's consent capture).
 
 **Add to calendar** (when the customer allows it)
 
-- [ ] Google, Apple/iCal (.ics download), and Outlook, on the confirmation page, in the email, and through an SMS link.
-- [ ] Includes the shop address, the barber's display name, and the manage link.
-- [ ] Reschedules and cancels send an updated or cancelled event (same UID, higher SEQUENCE).
-- [ ] An optional per-customer calendar feed URL of upcoming appointments, with a private token that can be revoked.
+- [x] Google, Apple/iCal (.ics download), and Outlook on the booking page; all three links in the email; texts link to the booking page.
+- [x] Includes the shop address, the barber's display name, and the manage link.
+- [x] Reschedules and cancels send an updated or cancelled event (same UID, higher SEQUENCE).
+- [x] An optional per-customer calendar feed URL (`/cal/<token>.ics`, theirs and their kids' appointments) on the account page, replaceable and revocable, audited. The `/api/v1/me/calendar-feed` mount is the mobile side's (NOTES-SYNC).
 
 **Delivery tracking**
 
-- [ ] Status per message: queued, sent, delivered, failed, opted out.
-- [ ] Shown on the appointment and the client profile, subject to field permissions.
-- [ ] A notifications report by shop, with an estimated SMS cost per channel.
+- [x] Status per message: queued, sent, delivered, failed, opted out (and not sent when the channel is off).
+- [x] Shown on the calendar's appointment panel and the client profile, with the number or email as the viewer's client field rules allow, for their shops.
+- [x] A notifications report by shop (Notifications → By shop), per channel and status, with text segments and the estimated cost.
 
 **Tests**
 
-- [ ] Scheduling and timing, including DST.
-- [x] Quiet hours (call-in outreach: `tests/outreach.test.ts`, `tests/db/call-ins.test.ts`). Reminders don't have quiet hours yet.
-- [ ] Dedupe on reschedule.
-- [x] The STOP webhook and opt-out persistence (`tests/db/call-ins.test.ts`: STOP suppresses later texts, START restores, 9 stops automated calls).
-- [ ] .ics content and updates.
-- [x] Webhook signature checks (Twilio, `tests/outreach.test.ts`).
+- [x] Scheduling and timing, including DST (`tests/notification-delivery.test.ts`: both 2026 changes).
+- [x] Quiet hours (call-in outreach: `tests/outreach.test.ts`, `tests/db/call-ins.test.ts`; reminders: `tests/notification-delivery.test.ts`).
+- [x] Dedupe on reschedule (`tests/db/notification-delivery.test.ts`).
+- [x] The STOP webhook and opt-out persistence (`tests/db/call-ins.test.ts`: STOP suppresses later texts, START restores, 9 stops automated calls; bounces, complaints and the stop link in `tests/db/notification-delivery.test.ts`).
+- [x] .ics content and updates (`tests/location-profile.test.ts`, `tests/db/notification-delivery.test.ts`: same UID, CONFIRMED then CANCELLED, the feed).
+- [x] Webhook signature checks (Twilio, `tests/outreach.test.ts`; Resend's Svix signature and Postmark's credentials, `tests/notification-delivery.test.ts`).
 
 ## 4. Booking time increments
 
@@ -501,7 +501,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [ ] Before any location turns a campaign on:
   - an A2P 10DLC campaign registered with a marketing use case;
   - the brand's postal address, under Campaign Center → Settings;
-  - a real email provider (Postmark broadcast stream or Resend; both are stubs) and real push (Expo stub).
+  - a real email account (Postmark broadcast stream or Resend, built; needs a key and a verified domain) and real push (Expo stub).
 - [ ] Message costs for ROI are estimates set under Campaign Center → Settings (1¢ a text, 0.1¢ an email by default); replace them with the real rates.
 - [ ] "Nearby" for announcements uses the shops' coordinates (clients of locations within the radius), since client addresses aren't used. The seeded coordinates are approximate.
 - [ ] "Finish your booking" only knows about the website's booking flow. App bookings would need to call `saveBookingDraft` (NOTES-SYNC).
@@ -608,7 +608,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [x] Tests: `tests/morning-dashboard.test.ts` and `tests/db/morning-dashboard.test.ts`.
 
 **Still open:**
-- [ ] Resend and Postmark are still stubs; wiring them must send the HTML part and the PDF.
+- [x] Resend and Postmark send the HTML part and the PDF (core_0081). Not yet tried against a real account.
 - [ ] "Bookings made" counts appointments created that day by source; phone bookings entered at the desk count as front desk, since the app doesn't record a phone source.
 - [ ] As in the KPI report, a client is new for a period when their first visit at those shops falls in it, so the week to date can show fewer returning clients than one day of it. With a short history (like the seed's) most of the week shows as new.
 
@@ -639,7 +639,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 
 **Still open:**
 - [ ] Sales, appointments, staff, inventory, tips and campaigns sources: listed as coming next; each needs its fields and their SQL.
-- [ ] Scheduled emails need a real email provider (Resend or Postmark are still stubs).
+- [ ] Scheduled emails need the email provider's key set (Resend and Postmark are built).
 
 ## 26. Rayz Assistant
 
@@ -736,7 +736,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [x] Tests: `tests/users.test.ts`, `tests/db/users.test.ts`. Migration `core_0051_user_admin`.
 
 **Still open:**
-- [ ] Email providers are still stubs, so until one is wired the invite link is shown to the inviter to pass on (DEPLOY.md step 20).
+- [ ] Until Resend or Postmark is set up (DEPLOY.md step 25), the invite link is shown to the inviter to pass on.
 - [ ] Changing `AUTH_SECRET` makes stored authenticator keys unreadable; those users need their two-step reset.
 
 ## 31. Time between visits

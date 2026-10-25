@@ -459,6 +459,16 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-25: core (email delivery, calendar feed, delivery tracking), requests for mobile
+
+- **What's new** (README, "Notifications"): real Resend and Postmark email (off until a key is set), client emails in the brand layout with a stop link, bounce and complaint webhooks, Google and Outlook add-to-calendar links, cancelled calendar events on cancel emails, a per-customer calendar feed, reminders kept out of quiet hours, and delivery status on the client profile, the appointment panel and Notifications → By shop. Migration `core_0081_email_delivery` (additive).
+- **Consent (mobile's area), touched lightly, like STOP:** a hard bounce, a spam complaint or the stop link in an email sets `customers.email_opt_in = false` for every client with that address (case-insensitive) and records them in `email_suppressions.customer_ids`. Nothing else in core writes `email_opt_in`. Please don't turn it back on for an address in `email_suppressions`: the next email would be held back anyway, and the outbox says why.
+- **`email_suppressions`** (`email` lowercase and unique, `reason` `bounce|complaint|unsubscribe|staff`, `provider`, `customer_ids`). Every email job to a listed address is suppressed at send time. If the app shows a client's email consent, treat a listed address as not emailing.
+- **Calendar feed:** handlers `getCalendarFeed`, `postCalendarFeed` and `deleteCalendarFeed` in `src/server/calendar-feed-api.ts` (built with `route` and `json` from `api.ts`, signed-in customer). The web account page uses them at `/api/account/calendar-feed`. GET returns `{ on, createdAt, lastFetchedAt }` (never the URL); POST returns `{ url }` once (`https://<site>/cal/<token>.ics`) and ends any earlier link; DELETE returns `{ revoked }`. The feed has the customer's and their children's appointments.
+- **Requests:**
+  - (core → mobile) Please mount the calendar feed handlers at `/api/v1/me/calendar-feed` (GET, POST, DELETE) and add them to the OpenAPI doc, if the app should offer "Add my appointments to my calendar".
+  - (core → mobile) Web Push (VAPID) for the booking site and the app's FCM/APNs device registration are still yours. When a provider replaces the `expo` stub, emails and texts need nothing from you; app push jobs keep the device id in `to`.
+
 ### 2026-10-25: core (Squire brand admin review: reports, staff, catalog, brand defaults, bulk edit, payouts, gift cards, memberships, phone agent), requests for mobile
 
 - **What's new** (README, "Brand admin, against Squire's"):
