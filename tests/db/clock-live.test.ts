@@ -96,7 +96,7 @@ beforeAll(async () => {
   await m.db.db
     .update(m.schema.appointments)
     .set({ status: "cancelled", cancelledAt: new Date() })
-    .where(and(eq(m.schema.appointments.staffId, mk.id), gte(m.schema.appointments.startsAt, at(day, 0)), lt(m.schema.appointments.startsAt, at(day, 24 * 60))));
+    .where(and(eq(m.schema.appointments.staffId, mk.id), gte(m.schema.appointments.startsAt, at(m.time.addDays(day, -1), 0)), lt(m.schema.appointments.startsAt, at(day, 24 * 60))));
   await m.db.db.delete(m.schema.timeBlocks).where(and(eq(m.schema.timeBlocks.staffId, mk.id), lt(m.schema.timeBlocks.startsAt, at(day, 24 * 60)), gte(m.schema.timeBlocks.endsAt, at(day, 0))));
   // She uses the clock: a shift the day before.
   await punchAt("in", at(m.time.addDays(day, -1), 9 * 60));
