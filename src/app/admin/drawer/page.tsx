@@ -14,7 +14,7 @@ import { shopTipConfig } from "@/server/tips/ledger";
 import { cashAwaiting } from "@/server/tips/payouts";
 import { BuildBatch, CashAck } from "../tips/client";
 import { CloseDrawerForm } from "./close-form";
-import { DrawerMoveForm, OpenDrawerForm } from "./open-form";
+import { DrawerMoveForm, NoSaleButton, OpenDrawerForm } from "./open-form";
 
 export const metadata: Metadata = { title: "Cash drawer" };
 
@@ -84,6 +84,7 @@ export default async function DrawerPage({ searchParams }: { searchParams: Promi
                   subtitle={`Opened ${formatDateTime(s.drawer!.openedAt!)} with ${formatCents(s.drawer!.openingFloatCents)}. Record cash put in or taken out so the close balances.`}
                 />
                 <DrawerMoveForm shopId={shopId} date={date} />
+                {can(ctx, "drawer.no_sale") && <NoSaleButton shopId={shopId} date={date} />}
               </>
             ) : (
               <>
@@ -139,7 +140,7 @@ export default async function DrawerPage({ searchParams }: { searchParams: Promi
                         {l.label ? <span className="text-zinc-500"> · {l.label}</span> : null}
                       </Td>
                       <Td>{l.by ?? "—"}</Td>
-                      <Td right>{l.kind === "open" || l.kind === "close" ? formatCents(l.cents) : formatCents(l.kind === "sale" || l.kind === "paid_in" ? l.cents : -l.cents, { sign: true })}</Td>
+                      <Td right>{l.kind === "no_sale" ? "—" : l.kind === "open" || l.kind === "close" ? formatCents(l.cents) : formatCents(l.kind === "sale" || l.kind === "paid_in" ? l.cents : -l.cents, { sign: true })}</Td>
                       <Td right className={l.varianceCents ? (l.varianceCents < 0 ? "text-red-600" : "text-amber-700") : ""}>
                         {l.kind === "close" ? `${formatCents(l.varianceCents ?? 0, { sign: true })} vs ${formatCents(l.balanceCents)}` : formatCents(l.balanceCents)}
                       </Td>

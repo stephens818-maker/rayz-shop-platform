@@ -101,6 +101,8 @@ type Line = {
   staffId?: string | null;
   /** Family tickets: whose appointment the line is for. */
   appointmentId?: string | null;
+  /** A custom charge rung up at the register, not a menu item. */
+  custom?: boolean;
 };
 type FamilyMember = {
   appointmentId: string;
@@ -236,6 +238,7 @@ export function Pos(props: {
     maxDiscountPct: number;
     priceOverride: boolean;
     reassign: boolean;
+    customCharge?: boolean;
   };
   canAdd: { phone: boolean; email: boolean };
   reasons?: { discount: string[]; priceChange: string[] };
@@ -341,6 +344,7 @@ export function Pos(props: {
   const [pending, start] = useTransition();
   const [productQ, setProductQ] = useState("");
   const [giftSale, setGiftSale] = useState("");
+  const [customCharge, setCustomCharge] = useState({ name: "", amount: "" });
   const [editing, setEditing] = useState<{
     key: string;
     price: string;
@@ -692,6 +696,7 @@ export function Pos(props: {
               override,
               staffId,
               appointmentId,
+              custom,
             }) => ({
               kind,
               refId,
@@ -701,6 +706,7 @@ export function Pos(props: {
               priceOverride: override ?? null,
               staffId: staffId ?? null,
               appointmentId: appointmentId ?? null,
+              ...(custom ? { custom: true } : {}),
             }),
           ),
           promoCode: coupons[0]?.code ?? null,
@@ -787,6 +793,7 @@ export function Pos(props: {
               override,
               staffId,
               appointmentId,
+              custom,
             }) => ({
               kind,
               refId,
@@ -796,6 +803,7 @@ export function Pos(props: {
               priceOverride: override ?? null,
               staffId: staffId ?? null,
               appointmentId: appointmentId ?? null,
+              ...(custom ? { custom: true } : {}),
             }),
           ),
           promoCode: coupons[0]?.code ?? null,
@@ -1203,7 +1211,7 @@ export function Pos(props: {
                           Remove
                         </button>
                       )}
-                      {props.perms.priceOverride && l.kind !== "gift_card" ? (
+                      {props.perms.priceOverride && l.kind !== "gift_card" && !l.custom ? (
                         <button
                           className={cx(
                             "w-20 text-right text-sm tabular underline decoration-dotted underline-offset-2",
@@ -1372,6 +1380,46 @@ export function Pos(props: {
                   </Button>
                 </div>
               </div>
+              {props.perms.customCharge && (
+                <div className="sm:col-span-2">
+                  <div className="mb-1 text-xs font-medium text-zinc-700">
+                    Custom charge
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="What it's for"
+                      maxLength={80}
+                      value={customCharge.name}
+                      onChange={(e) => setCustomCharge({ ...customCharge, name: e.target.value })}
+                    />
+                    <Input
+                      className="w-28"
+                      placeholder="$ amount"
+                      inputMode="decimal"
+                      value={customCharge.amount}
+                      onChange={(e) => setCustomCharge({ ...customCharge, amount: e.target.value })}
+                    />
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        const c = toCents(customCharge.amount);
+                        const name = customCharge.name.trim();
+                        if (!name) return setError("Say what the custom charge is for");
+                        if (c < 1 || c > 100_000)
+                          return setError("Custom charges are from $0.01 to $1,000");
+                        setLines((ls) => [
+                          ...ls,
+                          { key: key(), kind: "service", refId: null, name, unitPriceCents: c, qty: 1, custom: true },
+                        ]);
+                        setCustomCharge({ name: "", amount: "" });
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-500">A service for this ticket&apos;s barber, taxed as a service.</p>
+                </div>
+              )}
             </div>
             <div className="border-t border-zinc-100 p-4">
               <div className="mb-2 flex items-center justify-between gap-2">

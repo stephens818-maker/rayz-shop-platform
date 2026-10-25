@@ -505,6 +505,13 @@
       "when": 1795143600000,
       "tag": "core_0071_staff_booking_options",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1795230000000,
+      "tag": "core_0072_register_permissions",
+      "breakpoints": true
     }
   ]
 }

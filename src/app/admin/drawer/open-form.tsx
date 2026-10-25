@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
-import { drawerMoveAction, openDrawerAction } from "./actions";
+import { drawerMoveAction, noSaleAction, openDrawerAction } from "./actions";
 
 const cents = (s: string) => Math.round((Number(s) || 0) * 100);
 
@@ -78,6 +78,35 @@ export function DrawerMoveForm({ shopId, date }: { shopId: string; date: string 
       >
         Record {kind === "paid_out" ? "paid out" : "paid in"}
       </Button>
+    </div>
+  );
+}
+
+/** Opens the drawer with no sale, to make change. Kept in the register history with who did it. */
+export function NoSaleButton({ shopId, date }: { shopId: string; date: string }) {
+  const router = useRouter();
+  const [reason, setReason] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pending, start] = useTransition();
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 p-4" data-testid="no-sale">
+      <Input className="min-w-40 flex-1" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why (optional): making change" aria-label="Why the drawer was opened" />
+      <Button
+        variant="secondary"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const r = await noSaleAction({ shopId, date, reason });
+            if (!r.ok) return setMsg({ ok: false, text: r.error });
+            setReason("");
+            setMsg({ ok: true, text: "Recorded: opened, no sale" });
+            router.refresh();
+          })
+        }
+      >
+        Open drawer, no sale
+      </Button>
+      {msg && <span className={msg.ok ? "text-xs text-green-700" : "text-xs text-red-600"}>{msg.text}</span>}
     </div>
   );
 }

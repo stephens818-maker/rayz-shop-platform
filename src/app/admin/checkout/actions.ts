@@ -217,7 +217,7 @@ export async function finalizeAction(input: {
     if (input.manualDiscount && input.manualDiscount.value > 0 && !input.manualDiscount.reason.trim()) {
       throw new AppError("bad_request", "Add a reason for the discount");
     }
-    const r = await finalizeSale({ ...input, canOverridePrice: can(ctx, "pos.price_override"), maxManualDiscountPct: ctx.maxDiscountPct, actor: ctx.actor });
+    const r = await finalizeSale({ ...input, canOverridePrice: can(ctx, "pos.price_override"), canCustomCharge: can(ctx, "pos.custom_charge"), maxManualDiscountPct: ctx.maxDiscountPct, actor: ctx.actor });
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     revalidatePath("/admin/sales");
@@ -249,6 +249,7 @@ export async function handToCustomerAction(saleId: string, draft: HandoffDraftIn
       staffId: ctx.staff.id,
       canDiscount: can(ctx, "pos.discount"),
       canOverridePrice: can(ctx, "pos.price_override"),
+      canCustomCharge: can(ctx, "pos.custom_charge"),
       maxManualDiscountPct: ctx.maxDiscountPct,
     });
     (await cookies()).set(HANDOFF_COOKIE, await handoffToken(h.id), {

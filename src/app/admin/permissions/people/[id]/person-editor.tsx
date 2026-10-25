@@ -28,6 +28,7 @@ import {
   reportView,
 } from "@/domain/permissions";
 import { saveUserAccessAction } from "../../actions";
+import { PermissionMatrix } from "./matrix";
 
 type RoleOption = RoleDef & { id: string; defaultScope: ShopScope };
 type State = {
@@ -243,6 +244,22 @@ export function PersonAccessEditor({
           </fieldset>
         </Card>
       </div>
+
+      {!isOwnerRole && (
+        <PermissionMatrix
+          overrides={s.overrides}
+          has={after.permissions}
+          fromRole={fromRole.permissions}
+          blocked={(p, v) =>
+            locked ||
+            OWNER_ONLY.has(p) ||
+            GRANT_ONLY.has(p) ||
+            ((!has.has(p) || (OWNER_GRANTS.has(p) && !iAmOwner)) && v !== (s.overrides[p] ?? null)) ||
+            (BRAND_LEVEL_ONLY.has(p) && !brandLevel && v === true)
+          }
+          onChange={(overrides) => set({ overrides })}
+        />
+      )}
 
       {!isOwnerRole && (
         <Card>

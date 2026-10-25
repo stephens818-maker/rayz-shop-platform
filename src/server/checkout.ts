@@ -309,7 +309,11 @@ export interface CheckoutLineInput {
   staffId?: string | null;
   /** Family tickets: whose appointment the line is for. Defaults to the ticket's own appointment. */
   appointmentId?: string | null;
+  /** A custom charge: a service line with no menu item, priced and named at the register (`name`, `unitPriceCents`). */
+  custom?: boolean;
 }
+
+export const CUSTOM_CHARGE_MAX_CENTS = 100_000;
 
 export type TenderInput =
   | { method: "cash"; cashTenderedCents?: number | null }
@@ -361,6 +365,8 @@ export interface FinalizeInput {
   handoffId?: string | null;
   /** Set by the caller from the signed-in person's permissions, never from the request body. */
   canOverridePrice?: boolean;
+  /** Set like canOverridePrice: may ring up custom charges. */
+  canCustomCharge?: boolean;
   /** Largest manual discount allowed, in whole percent of the ticket (gift cards excluded). Defaults to no limit. */
   maxManualDiscountPct?: number;
   actor: Actor;
@@ -497,6 +503,7 @@ async function buildDiscounts(
 export interface PricedLineMeta {
   catalogPriceCents: number | null;
   overrideReason: string | null;
+  custom?: boolean;
   appointmentId: string | null;
 }
 
@@ -574,6 +581,18 @@ export async function priceCart(
     let name: string;
     let catalog: number;
     let taxCategory: TaxCategory;
+    if (l.custom) {
+      if (!input.canCustomCharge) throw forbidden("You don't have permission to ring up a custom charge");
+      const label = l.name?.trim().slice(0, 80);
+      const cents = l.unitPriceCents ?? 0;
+      if (l.kind !== "service") throw new AppError("bad_request", "A custom charge is a service line");
+      if (!label) throw new AppError("bad_request", "Say what the custom charge is for");
+      if (!Number.isInteger(cents) || cents < 1 || cents > CUSTOM_CHARGE_MAX_CENTS)
+        throw new AppError("bad_request", `Custom charges are from $0.01 to ${formatCents(CUSTOM_CHARGE_MAX_CENTS)}`);
+      if (l.priceOverride) throw new AppError("bad_request", "A custom charge is priced as it's rung up");
+      meta.push({ catalogPriceCents: null, overrideReason: null, appointmentId: l.appointmentId ?? ctx.sale.appointmentId, custom: true });
+      return { key: String(i), kind: "service", name: label, unitPriceCents: cents, qty: l.qty, refId: null, staffId: lineStaff(l), taxCategory: "service" };
+    }
     if (l.kind === "service" || l.kind === "addon") {
       const s = l.refId
         ? menu.find((x) => x.id === l.refId && x.kind === l.kind)
@@ -1032,6 +1051,8 @@ export async function finalizeSale(input: FinalizeInput) {
             tx,
           );
         }
+        if (meta[i].custom)
+          await audit(input.actor, "sale.custom_charge", "sale", ctx.sale.id, { item: l.name, chargedCents: l.unitPriceCents, qty: l.qty }, ctx.shop.id, tx);
         if (l.kind !== "gift_card") continue;
         for (let q = 0; q < l.qty; q++) {
           const code = giftCardCode();

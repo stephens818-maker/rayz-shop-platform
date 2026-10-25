@@ -115,6 +115,7 @@ export const HandoffDraftInput = z.object({
         priceOverride: z.object({ unitPriceCents: z.number().int().min(0), reason: z.string().max(200) }).nullable().optional(),
         staffId: z.uuid().nullable().optional(),
         appointmentId: z.uuid().nullable().optional(),
+        custom: z.boolean().optional(),
       }),
     )
     .min(1, "Add at least one item")
@@ -132,6 +133,7 @@ export type HandoffDraftInput = z.infer<typeof HandoffDraftInput>;
 /** The ticket as staff handed it over, with what the person who handed it may do (price changes, discounts). */
 export interface HandoffDraft extends HandoffDraftInput {
   canOverridePrice: boolean;
+  canCustomCharge?: boolean;
   maxManualDiscountPct: number;
 }
 
@@ -140,6 +142,7 @@ export interface HandingOver {
   staffId: string;
   canDiscount: boolean;
   canOverridePrice: boolean;
+  canCustomCharge?: boolean;
   maxManualDiscountPct: number;
 }
 
@@ -157,6 +160,7 @@ function finalizeFields(d: HandoffDraft) {
     rebookInWeeks: d.rebookInWeeks,
     tipSplit: d.tipSplit,
     canOverridePrice: d.canOverridePrice,
+    canCustomCharge: d.canCustomCharge ?? false,
     maxManualDiscountPct: d.maxManualDiscountPct,
   };
 }
@@ -168,7 +172,7 @@ export async function startHandoff(saleId: string, raw: HandoffDraftInput, by: H
     if (!by.canDiscount) throw forbidden("You don't have permission to give discounts");
     if (!input.manualDiscount.reason.trim()) throw new AppError("bad_request", "Add a reason for the discount");
   }
-  const draft: HandoffDraft = { ...input, canOverridePrice: by.canOverridePrice, maxManualDiscountPct: by.maxManualDiscountPct };
+  const draft: HandoffDraft = { ...input, canOverridePrice: by.canOverridePrice, canCustomCharge: by.canCustomCharge ?? false, maxManualDiscountPct: by.maxManualDiscountPct };
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
   if (!sale) throw notFound("Sale");
   if (sale.status !== "open") throw new AppError("conflict", `This ticket is already ${sale.status}`);

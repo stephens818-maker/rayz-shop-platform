@@ -41,6 +41,20 @@ export async function recordDrawerMove(input: { shopId: string; date: LocalDate;
   return row.id;
 }
 
+/** The drawer opened with no sale (to make change): nothing moves, but who opened it and when is kept. */
+export async function openDrawerNoSale(input: { shopId: string; date: LocalDate; reason?: string | null; actor: Actor }, now = new Date()) {
+  const drawer = await db.query.cashDrawers.findFirst({ where: and(eq(cashDrawers.shopId, input.shopId), eq(cashDrawers.businessDate, input.date)) });
+  if (!drawer?.openedAt) throw new AppError("conflict", "Open the drawer for the day first");
+  if (drawer.closedAt) throw new AppError("conflict", "The drawer is closed for this day");
+  const reason = input.reason?.trim().slice(0, 200) || "No sale";
+  const [row] = await db
+    .insert(cashDrawerMoves)
+    .values({ shopId: input.shopId, businessDate: input.date, kind: "no_sale", amountCents: 0, reason, staffId: input.actor.staffId ?? null, createdAt: now })
+    .returning({ id: cashDrawerMoves.id });
+  await audit(input.actor, "drawer.no_sale", "cash_drawer", `${input.shopId}:${input.date}`, { reason }, input.shopId);
+  return row.id;
+}
+
 export async function drawerMoves(shopId: string, date: LocalDate, tx: DBorTx = db) {
   return tx
     .select({ m: cashDrawerMoves, by: staff.displayLabel })

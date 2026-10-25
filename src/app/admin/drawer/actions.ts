@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { closeDrawer } from "@/server/checkout";
-import { openDrawer, recordDrawerMove } from "@/server/drawer";
+import { openDrawer, openDrawerNoSale, recordDrawerMove } from "@/server/drawer";
 
 export async function closeDrawerAction(input: { shopId: string; date: string; openingFloatCents: number; payoutsCents: number; countedCents: number; notes: string }) {
   return safe(async () => {
@@ -31,6 +31,16 @@ export async function drawerMoveAction(input: { shopId: string; date: string; ki
     const ctx = await authorize("drawer.manage");
     assertShopAccess(ctx, input.shopId);
     await recordDrawerMove({ ...input, actor: ctx.actor });
+    revalidatePath("/admin/drawer");
+    return null;
+  });
+}
+
+export async function noSaleAction(input: { shopId: string; date: string; reason: string }) {
+  return safe(async () => {
+    const ctx = await authorize("drawer.no_sale");
+    assertShopAccess(ctx, input.shopId);
+    await openDrawerNoSale({ ...input, actor: ctx.actor });
     revalidatePath("/admin/drawer");
     return null;
   });

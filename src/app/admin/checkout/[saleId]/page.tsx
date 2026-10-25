@@ -250,6 +250,7 @@ export default async function CheckoutPage({
                   override: l.priceOverride ?? null,
                   staffId: l.staffId ?? null,
                   appointmentId: l.appointmentId ?? null,
+                  custom: l.custom ?? false,
                 })),
               }
             : null
@@ -325,6 +326,7 @@ export default async function CheckoutPage({
           discount: can(ctx, "pos.discount") && ctx.maxDiscountPct > 0,
           maxDiscountPct: ctx.maxDiscountPct,
           priceOverride: can(ctx, "pos.price_override"),
+          customCharge: can(ctx, "pos.custom_charge"),
           reassign: can(ctx, "checkout.any"),
         }}
         canAdd={{

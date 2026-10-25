@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { REPORTS } from "@/domain/permissions";
+import { REPORTS, ROLE_TEMPLATES, isPermission, type Permission } from "@/domain/permissions";
+import { MATRIX_ACTIONS, MATRIX_AREAS, MATRIX_PERMISSIONS, cellOverride, cellState, nextOverride, setCell } from "@/domain/permission-matrix";
 import { REPORT_GROUP, REPORT_GROUPS, groupReports } from "@/domain/report-groups";
 import { lastBusinessDay, presetRange } from "@/domain/report-range";
 import { WATERFALL, waterfallGap } from "@/domain/sales-waterfall";
@@ -55,5 +56,50 @@ describe("appointments report filters", () => {
     expect(matchesFilters({ status: "completed", source: "online", methods: ["card", "gift_card"] }, f)).toBe(true);
     expect(matchesFilters({ status: "completed", source: "online", methods: ["card"] }, f)).toBe(false);
     expect(matchesFilters({ status: "booked", source: "api", methods: null }, parseAppointmentFilters({ payment: "unpaid", platform: "app" }))).toBe(true);
+  });
+});
+
+describe("per-staff permission matrix", () => {
+  it("covers Squire's areas, and every cell is a real permission", () => {
+    expect(MATRIX_AREAS.map((a) => a.label)).toEqual([
+      "Appointments",
+      "Contact info",
+      "Clients",
+      "Services",
+      "Schedules",
+      "Bank accounts",
+      "Profile",
+      "Reports",
+      "Products",
+      "Inventory",
+      "Campaigns",
+      "Register",
+      "Open cash drawer",
+      "Custom charge",
+    ]);
+    expect(MATRIX_ACTIONS.map((a) => a.label)).toEqual(["View", "Add/Edit", "Book", "Modify", "History", "Cancel", "Block time"]);
+    for (const p of MATRIX_PERMISSIONS) expect(isPermission(p), p).toBe(true);
+  });
+
+  it("a cell is on, off or partly on, and allow/deny/default sets each permission behind it", () => {
+    const cell: Permission[] = ["pos.discount", "pos.price_override"];
+    expect(cellState(new Set<Permission>(["pos.discount"]), cell)).toBe("partial");
+    expect(cellState(new Set<Permission>(cell), cell)).toBe("on");
+    expect(cellState(new Set<Permission>(), "always")).toBe("always");
+    const allowed = setCell({ "sales.view": true }, cell, true);
+    expect(allowed).toEqual({ "sales.view": true, "pos.discount": true, "pos.price_override": true });
+    expect(cellOverride(allowed, cell)).toBe(true);
+    expect(cellOverride({ "pos.discount": false }, cell)).toBe("mixed");
+    expect(setCell(allowed, cell, null)).toEqual({ "sales.view": true });
+    expect([null, true, false, "mixed"].map((o) => nextOverride(o as boolean | null | "mixed"))).toEqual([true, false, null, true]);
+  });
+
+  it("the drawer's no-sale opening and custom charges go to the roles that run the register", () => {
+    const perms = (k: string) => new Set(ROLE_TEMPLATES.find((t) => t.key === k)!.permissions);
+    expect(perms("shop_manager").has("drawer.no_sale")).toBe(true);
+    expect(perms("shop_manager").has("pos.custom_charge")).toBe(true);
+    expect(perms("front_desk").has("drawer.no_sale")).toBe(true);
+    expect(perms("front_desk").has("pos.custom_charge")).toBe(false);
+    expect(perms("barber").has("drawer.no_sale")).toBe(false);
   });
 });
