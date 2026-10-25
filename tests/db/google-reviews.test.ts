@@ -522,7 +522,7 @@ describe("Google review links report", () => {
     const paidAt = at("2028-04-05", "10:00");
     const a1 = await paid(paidAt, { smsOptIn: true });
     const a2 = await paid(paidAt, { emailOptIn: true });
-    const b1 = await paid(paidAt, { smsOptIn: true, staffId: fx.second });
+    await paid(paidAt, { smsOptIn: true, staffId: fx.second });
     const o1 = await paid(paidAt, { smsOptIn: true, shopId: fx.other });
     const nope = await paid(paidAt, { staffId: fx.second });
     await RV.queueReviewFollowUps(new Date(paidAt.getTime() + 3 * HOUR));
