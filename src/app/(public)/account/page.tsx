@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { MyBadges } from "@/components/my-badges";
+import { MyCalendarFeed } from "@/components/my-calendar-feed";
 import { MyFamily } from "@/components/my-family";
 import { Button, Field, Input, StatusBadge } from "@/components/ui";
 import { VISIT_STATUS_LABEL, cadenceByBarber, cadenceOf } from "@/domain/visit-cadence";
@@ -205,6 +206,7 @@ export default function AccountPage() {
       )}
       <MyBadges />
       <MyFamily parentName={me.firstName} />
+      <MyCalendarFeed />
       {appts && <Rhythm upcoming={appts.upcoming} past={appts.past} />}
       <List title="Upcoming" list={appts?.upcoming ?? []} empty={<Link href="/" className="text-brand-600 underline">Book a cut</Link>} />
       <List title="Past visits" list={appts?.past ?? []} />

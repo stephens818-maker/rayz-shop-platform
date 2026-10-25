@@ -142,6 +142,7 @@ export function locationFooter(c: AppointmentMessageContext, values: MergeValues
     c.shopDirections ? `Parking: ${c.shopDirections}` : null,
     values.map_link ? `Directions: ${values.map_link}` : null,
     `Add to calendar: ${values.calendar_link}`,
+    ...(values.calendar_link === `${baseUrl()}/a/${c.code}/calendar.ics` ? [`Google Calendar: ${baseUrl()}/a/${c.code}/calendar/google`, `Outlook: ${baseUrl()}/a/${c.code}/calendar/outlook`] : []),
   ]
     .filter((l) => l !== null)
     .join("\n");

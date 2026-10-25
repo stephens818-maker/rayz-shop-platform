@@ -209,3 +209,49 @@ describe("bounces, complaints and the stop link", () => {
     expect(await E.unsubscribeTarget("not-a-token")).toBeNull();
   });
 });
+
+describe("add to calendar and the calendar feed", () => {
+  it("Google and Outlook links carry the appointment's time, shop and manage link", async () => {
+    const I = await import("@/server/calendar-invites");
+    const a = (await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.id, apptId) }))!;
+    const g = new URL(await I.appointmentCalendarLink(a.code, "google"));
+    expect(g.searchParams.get("text")).toMatch(/^Ray'z /);
+    expect(g.searchParams.get("details")).toContain(`/a/${a.code}`);
+    expect(g.searchParams.get("dates")!.split("/")[0]).toBe(a.startsAt.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, ""));
+    const o = new URL(await I.appointmentCalendarLink(a.code, "outlook"));
+    expect(o.searchParams.get("enddt")).toBe(a.endsAt.toISOString());
+    await expect(I.appointmentCalendarLink("NOPE00", "google")).rejects.toThrow();
+  });
+
+  it("a feed lists the customer's and their children's appointments, and stops when replaced or turned off", async () => {
+    const F = await import("@/server/calendar-feeds");
+    const a = (await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.id, apptId) }))!;
+    const parent = await client("feed");
+    const [kid] = await m.db.db.insert(m.schema.customers).values({ firstName: "Max", guardianId: parent.id }).returning({ id: m.schema.customers.id });
+    customerIds.unshift(kid.id);
+    const original = a.customerId;
+    await m.db.db.update(m.schema.appointments).set({ customerId: kid.id }).where(eq(m.schema.appointments.id, apptId));
+    try {
+      const actor = { staffId: null, label: "customer:Riley" };
+      expect(await F.feedStatus(parent.id)).toMatchObject({ on: false });
+      const first = await F.createFeed(parent.id, actor);
+      const token = first.url.split("/cal/")[1].replace(/\.ics$/, "");
+      const ics = (await F.feedIcs(token))!.replace(/\r\n /g, "");
+      expect(ics).toContain(`UID:${a.code}@rayzbs.com`);
+      expect(ics).toContain("(Max)");
+      expect((await F.feedStatus(parent.id)).lastFetchedAt).not.toBeNull();
+      const second = await F.createFeed(parent.id, actor);
+      expect(await F.feedIcs(token)).toBeNull();
+      const token2 = second.url.split("/cal/")[1].replace(/\.ics$/, "");
+      expect(await F.feedIcs(token2)).toContain("BEGIN:VCALENDAR");
+      expect(await F.revokeFeed(parent.id, actor)).toBe(true);
+      expect(await F.feedIcs(token2)).toBeNull();
+      expect(await F.feedIcs("short")).toBeNull();
+      const audits = await m.db.db.select({ action: m.schema.auditLog.action }).from(m.schema.auditLog).where(m.drizzle.sql`${m.schema.auditLog.details}->>'customerId' = ${parent.id}`);
+      expect(audits.map((x) => x.action).sort()).toEqual(["calendar_feed.created", "calendar_feed.created", "calendar_feed.revoked"]);
+    } finally {
+      await m.db.db.update(m.schema.appointments).set({ customerId: original }).where(eq(m.schema.appointments.id, apptId));
+      await m.db.db.delete(m.schema.calendarFeeds).where(eq(m.schema.calendarFeeds.customerId, parent.id));
+    }
+  });
+});

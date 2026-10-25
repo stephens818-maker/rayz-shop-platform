@@ -161,9 +161,18 @@ export function ManageAppointment({ code, groupCode = null, basePath = "", offer
               </Button>
             )}
             {["booked", "confirmed"].includes(a.status) && (
-              <a className="inline-flex h-10 items-center rounded-lg px-4 text-sm font-medium text-zinc-700 hover:bg-zinc-100" href={`/a/${a.code}/calendar.ics`} download={`rayz-${a.code}.ics`}>
-                Add to calendar
-              </a>
+              <div className="flex flex-wrap items-center gap-1 text-sm" aria-label="Add to calendar">
+                <span className="px-1 text-zinc-500">Add to calendar:</span>
+                <a className="inline-flex h-10 items-center rounded-lg px-3 font-medium text-zinc-700 hover:bg-zinc-100" href={`/a/${a.code}/calendar/google`} target="_blank" rel="noopener noreferrer">
+                  Google
+                </a>
+                <a className="inline-flex h-10 items-center rounded-lg px-3 font-medium text-zinc-700 hover:bg-zinc-100" href={`/a/${a.code}/calendar.ics`} download={`rayz-${a.code}.ics`}>
+                  Apple / iCal
+                </a>
+                <a className="inline-flex h-10 items-center rounded-lg px-3 font-medium text-zinc-700 hover:bg-zinc-100" href={`/a/${a.code}/calendar/outlook`} target="_blank" rel="noopener noreferrer">
+                  Outlook
+                </a>
+              </div>
             )}
             {!a.canCancel && ["booked", "confirmed"].includes(a.status) && (
               <p className="w-full text-sm text-zinc-500">Online changes close 30 minutes before your appointment — please call the shop.</p>

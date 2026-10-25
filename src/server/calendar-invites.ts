@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { appointments, shops, staff } from "@/db/schema";
 import { icsCalendar, locationDescription, type IcsEvent } from "@/domain/ics";
 import { fullAddress, validLatLng } from "@/domain/location-profile";
+import { calendarLinks } from "@/domain/notification-delivery";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
 import { formatTime } from "@/lib/time";
@@ -45,8 +46,7 @@ export function appointmentEvent(o: { code: string; startsAt: Date; endsAt: Date
   };
 }
 
-/** /a/<code>/calendar.ics: anyone with the code (the same as the manage page). */
-export async function appointmentIcs(code: string, now = new Date()): Promise<string> {
+async function appointmentRow(code: string, now: Date) {
   const [row] = await db
     .select({ a: appointments, shop: shops, barber: staff.displayLabel })
     .from(appointments)
@@ -56,7 +56,19 @@ export async function appointmentIcs(code: string, now = new Date()): Promise<st
   if (!row) throw notFound("Appointment");
   const items = await db.query.appointmentItems.findMany({ where: (t, { eq: e }) => e(t.appointmentId, row.a.id), columns: { name: true, kind: true } });
   const services = items.sort((x, y) => (x.kind === y.kind ? 0 : x.kind === "service" ? -1 : 1)).map((i) => i.name);
-  return icsCalendar([appointmentEvent({ code: row.a.code, startsAt: row.a.startsAt, endsAt: row.a.endsAt, status: row.a.status, barber: row.barber, services, shop: row.shop, now })], { name: `Ray'z ${row.shop.name}` });
+  return { shopName: row.shop.name, event: appointmentEvent({ code: row.a.code, startsAt: row.a.startsAt, endsAt: row.a.endsAt, status: row.a.status, barber: row.barber, services, shop: row.shop, now }) };
+}
+
+/** /a/<code>/calendar.ics: anyone with the code (the same as the manage page). */
+export async function appointmentIcs(code: string, now = new Date()): Promise<string> {
+  const r = await appointmentRow(code, now);
+  return icsCalendar([r.event], { name: `Ray'z ${r.shopName}` });
+}
+
+/** /a/<code>/calendar/google and /outlook: the same event as an "add event" link. */
+export async function appointmentCalendarLink(code: string, app: "google" | "outlook", now = new Date()): Promise<string> {
+  const { event: e } = await appointmentRow(code, now);
+  return calendarLinks({ title: e.summary, start: e.start, end: e.end, location: e.location ?? "", details: e.description ?? "" })[app];
 }
 
 /** /g/<code>/calendar.ics: a family booked together, as one event for the whole visit. */
