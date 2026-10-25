@@ -3226,7 +3226,24 @@ export const scheduleTemplates = pgTable(
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("schedule_templates_name_uq").on(sql`lower(${t.name})`), check("schedule_templates_rows_array", sql`jsonb_typeof(${t.rows}) = 'array'`)],
+  (t) => [uniqueIndex("schedule_templates_name_uq").on(sql`lower(${t.name})`), check("schedule_templates_rows_array", sql`jsonb_typeof(${t.rows}) = 'array'`)  ],
+);
+
+/** A Stripe payout matched to the bank statement: who matched it, when, and the bank's reference. */
+export const payoutReconciliations = pgTable(
+  "payout_reconciliations",
+  {
+    id: id(),
+    payoutId: uuid("payout_id")
+      .notNull()
+      .unique("payout_reconciliations_payout_uq")
+      .references(() => shopPayouts.id, { onDelete: "cascade" }),
+    bankReference: text("bank_reference"),
+    note: text("note"),
+    reconciledBy: uuid("reconciled_by").references(() => staff.id, { onDelete: "set null" }),
+    reconciledAt: ts("reconciled_at").notNull().defaultNow(),
+  },
+  (t) => [check("payout_reconciliations_ref_len", sql`${t.bankReference} is null or length(${t.bankReference}) <= 60`)],
 );
 
 export const reportViews = pgTable(

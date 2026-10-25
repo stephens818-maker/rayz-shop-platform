@@ -4,11 +4,15 @@ import { db } from "@/db";
 import { entityPaymentAccounts, shopPaymentAccounts, shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Input, PageHeader, Select, Stat, Table, Td, Th, buttonClass } from "@/components/ui";
 import { ACCOUNT_STATE_LABEL, payoutScheduleLabel } from "@/domain/connect";
+import { Reconciliation, isReconcilable, notYetPaidOut, unmatched } from "@/domain/payout-reconcile";
+import { reportExport } from "@/domain/permissions";
 import { formatCents } from "@/lib/money";
-import { addDays, todayLocal, type LocalDate } from "@/lib/time";
-import { guardPage, reportShopIds } from "@/server/auth/staff";
+import { addDays, formatDateTime, todayLocal, type LocalDate } from "@/lib/time";
+import { can, guardPage, reportShopIds } from "@/server/auth/staff";
 import { coveredOwners, payoutRows, shopAccountRows } from "@/server/payments/account-report";
 import { brandPayoutSchedule } from "@/server/payments/connect";
+import { reconciliationsFor } from "@/server/payments/reconcile";
+import { BankMatch, MatchState } from "./match";
 
 export const metadata: Metadata = { title: "Payouts" };
 
@@ -16,8 +20,10 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const STATUS_TONE = { paid: "green", in_transit: "blue", pending: "amber", failed: "red", canceled: "gray" } as const;
 const NOW = { brand: "Now on the brand's account", entity: "Now on its owner's account", cash_only: "Now cash only", connected: "" } as const;
 const $ = (c: number | null) => (c == null ? "—" : formatCents(c));
+const matchState = (m: Reconciliation | undefined): MatchState | null =>
+  m ? { bankReference: m.bankReference, note: m.note, by: m.reconciledByName, at: formatDateTime(m.reconciledAt) } : null;
 
-export default async function PayoutsPage({ searchParams }: { searchParams: Promise<{ shop?: string; from?: string; to?: string }> }) {
+export default async function PayoutsPage({ searchParams }: { searchParams: Promise<{ shop?: string; from?: string; to?: string; bank?: string }> }) {
   const ctx = await guardPage("/admin/payouts");
   const sp = await searchParams;
   const requested = sp.shop ?? (ctx.currentShopId ? ctx.currentShopId : "all");
@@ -39,6 +45,11 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
       .from(entityPaymentAccounts)
       .where(owners.length ? inArray(entityPaymentAccounts.ownerEntityId, owners) : sql`false`),
   ]);
+  const matches = await reconciliationsFor(payouts.map((p) => p.id));
+  const open = unmatched(payouts, matches);
+  const onlyUnmatched = sp.bank === "unmatched";
+  const listed = onlyUnmatched ? open.rows : payouts;
+  const canMatch = can(ctx, reportExport("shop_accounts"));
   const scheduleOf = (shopId: string) => schedules.find((s) => s.shopId === shopId)?.schedule ?? null;
   const own = accounts
     .filter((a) => a.paymentsMode === "connected" || a.stripeAccountId)
@@ -92,20 +103,33 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
           <span className="mb-1 block text-xs font-medium text-zinc-500">to</span>
           <Input type="date" name="to" defaultValue={to} />
         </label>
+        <label className="text-sm text-zinc-700">
+          <span className="mb-1 block text-xs font-medium text-zinc-500">Bank</span>
+          <Select name="bank" defaultValue={onlyUnmatched ? "unmatched" : "all"} className="w-48">
+            <option value="all">Every deposit</option>
+            <option value="unmatched">Not matched to the bank</option>
+          </Select>
+        </label>
         <button type="submit" className={buttonClass("secondary")}>
           Show
         </button>
       </form>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Stat label="Paid to banks" value={formatCents(paid)} hint={`${payouts.filter((p) => p.status === "paid").length} payouts`} />
         <Stat label="On the way" value={formatCents(transit)} hint={failed.length ? `${failed.length} failed` : "pending or in transit"} tone={failed.length ? "down" : undefined} />
+        <Stat
+          label="Unmatched deposits"
+          value={String(open.count)}
+          hint={open.count ? `${formatCents(open.cents)} paid or in transit, not yet ticked off the bank statement` : "every deposit is matched to the bank"}
+          tone={open.count ? "down" : undefined}
+        />
         <Stat label="Processing fees" value={formatCents(fees)} hint={card ? `${((fees / card) * 100).toFixed(2)}% of ${formatCents(card)} card takings` : undefined} />
         <Stat label="Card refunds" value={formatCents(refunds)} />
       </div>
 
       <Card>
-        <CardHeader title="By account" subtitle="Card takings are by business date, after refunds, with tips and surcharges. Payout schedules are as Stripe reports them. Payouts are by the day they reach the bank, so the two don't line up day for day." />
+        <CardHeader title="By account" subtitle="Card takings are by business date, after refunds, with tips and surcharges. Payout schedules are as Stripe reports them. Payouts are by the day they reach the bank, so the two don't line up day for day. Not yet paid out is what reached the account less what's been paid out or is on the way: money Stripe still holds for this location." />
         <Table>
           <thead>
             <tr>
@@ -116,6 +140,7 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
               <Th right>To account</Th>
               <Th right>Paid out</Th>
               <Th right>On the way</Th>
+              <Th right>Not yet paid out</Th>
             </tr>
           </thead>
           <tbody>
@@ -145,6 +170,7 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
                   <Td right>{$(a.netCents)}</Td>
                   <Td right>{$(sum(mine, ["paid"]))}</Td>
                   <Td right>{$(sum(mine, ["pending", "in_transit"]))}</Td>
+                  <Td right>{$(notYetPaidOut(a.netCents, sum(mine, ["paid"]), sum(mine, ["pending", "in_transit"])))}</Td>
                 </tr>
               );
             })}
@@ -169,6 +195,7 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
                   <Td right>{$(o.cardCents - o.feeCents)}</Td>
                   <Td right>{o.covered ? $(sum(mine, ["paid"])) : "—"}</Td>
                   <Td right>{o.covered ? $(sum(mine, ["pending", "in_transit"])) : "—"}</Td>
+                  <Td right>{o.covered ? $(notYetPaidOut(o.cardCents - o.feeCents, sum(mine, ["paid"]), sum(mine, ["pending", "in_transit"]))) : "—"}</Td>
                 </tr>
               );
             })}
@@ -187,6 +214,7 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
                 <Td right>{$(brandCard - brandFees)}</Td>
                 <Td right>{withBrand ? $(sum(brandPayouts, ["paid"])) : "—"}</Td>
                 <Td right>{withBrand ? $(sum(brandPayouts, ["pending", "in_transit"])) : "—"}</Td>
+                <Td right>{withBrand ? $(notYetPaidOut(brandCard - brandFees, sum(brandPayouts, ["paid"]), sum(brandPayouts, ["pending", "in_transit"]))) : "—"}</Td>
               </tr>
             )}
           </tbody>
@@ -200,9 +228,12 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
       </Card>
 
       <Card>
-        <CardHeader title="Payouts" subtitle="Each deposit, itemized from Stripe's balance transactions: gross card charges, the fees taken, and refunds netted out." />
-        {payouts.length === 0 ? (
-          <Empty title="No payouts arriving in these dates" />
+        <CardHeader
+          title="Payouts"
+          subtitle="Each deposit, itemized from Stripe's balance transactions: gross card charges, the fees taken, and refunds netted out. Tick each one off against the bank statement as it lands."
+        />
+        {listed.length === 0 ? (
+          <Empty title={onlyUnmatched ? "Every deposit in these dates is matched to the bank" : "No payouts arriving in these dates"} />
         ) : (
           <Table>
             <thead>
@@ -215,10 +246,11 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
                 <Th right>Fees</Th>
                 <Th right>Refunds</Th>
                 <Th right>Net deposit</Th>
+                <Th>Bank</Th>
               </tr>
             </thead>
             <tbody>
-              {payouts.map((p) => (
+              {listed.map((p) => (
                 <tr key={p.stripePayoutId}>
                   <Td>{p.arrivalDate}</Td>
                   <Td>{p.shopName}</Td>
@@ -235,6 +267,14 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
                   <Td right>{p.refundCents == null ? "—" : formatCents(-p.refundCents)}</Td>
                   <Td right className="font-medium">
                     {formatCents(p.amountCents)}
+                  </Td>
+                  <Td>
+                    <BankMatch
+                      payoutId={p.id}
+                      canEdit={canMatch}
+                      reconcilable={isReconcilable(p.status)}
+                      matched={matchState(matches.get(p.id))}
+                    />
                   </Td>
                 </tr>
               ))}

@@ -12,6 +12,7 @@ import { reminderHours } from "@/domain/staff-notifications";
 import { CONVERSION_EVENTS, trackBookingStep } from "@/lib/conversion-tracking";
 import { jurisdictionGroups, ratePct } from "@/domain/tax-fees";
 import { matchesFilters, parseAppointmentFilters, paymentOf, platformOf } from "@/domain/appointment-report";
+import { ReconcileInput, isReconcilable, notYetPaidOut, unmatched } from "@/domain/payout-reconcile";
 
 describe("report navigation and defaults", () => {
   it("puts every report in one category, in category order", () => {
@@ -243,5 +244,28 @@ describe("bulk edit", () => {
     expect(templateProblem([{ weekday: 2, startMin: 540, endMin: 780 }, { weekday: 2, startMin: 720, endMin: 1020 }])).toBe("Tue: two shifts overlap");
     expect(weeklyHours([{ weekday: 1, startMin: 540, endMin: 1020 }, { weekday: 2, startMin: 540, endMin: 780 }])).toBe(12);
     expect(bulkSummary([{ id: "a", label: "A", ok: true }, { id: "b", label: "B", ok: false, error: "x" }])).toBe("Updated 1 of 2");
+  });
+});
+
+describe("payout reconciliation", () => {
+  it("only deposits that left Stripe can be matched, and unmatched counts those not yet ticked off", () => {
+    expect(["paid", "in_transit", "pending", "failed", "canceled"].map(isReconcilable)).toEqual([true, true, false, false, false]);
+    const payouts = [
+      { id: "a", status: "paid", amountCents: 1000 },
+      { id: "b", status: "in_transit", amountCents: 500 },
+      { id: "c", status: "failed", amountCents: 700 },
+      { id: "d", status: "paid", amountCents: 300 },
+    ];
+    const u = unmatched(payouts, new Map([["d", {}]]));
+    expect(u.rows.map((p) => p.id)).toEqual(["a", "b"]);
+    expect([u.count, u.cents]).toEqual([2, 1500]);
+  });
+
+  it("what's not yet paid out never goes negative, and blank references are dropped", () => {
+    expect(notYetPaidOut(10_000, 6_000, 1_500)).toBe(2_500);
+    expect(notYetPaidOut(10_000, 9_000, 3_000)).toBe(0);
+    const v = ReconcileInput.parse({ payoutId: "6f1e0c3e-3b9e-4c55-9a51-0d6b2d1c9f10", bankReference: "  ", note: " ok " });
+    expect([v.bankReference, v.note]).toEqual([null, "ok"]);
+    expect(() => ReconcileInput.parse({ payoutId: "6f1e0c3e-3b9e-4c55-9a51-0d6b2d1c9f10", bankReference: "x".repeat(61) })).toThrow(/60 characters/);
   });
 });

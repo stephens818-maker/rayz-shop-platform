@@ -146,6 +146,7 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
 }
 
 export interface PayoutRow {
+  id: string;
   /** Null for a payout from the brand's own account, which pools every brand-account shop, or from an owner entity's. */
   shopId: string | null;
   /** Set for a payout from an owner entity's account, which pools that owner's shops in payments mode "entity". */
@@ -175,7 +176,7 @@ export async function coveredOwners(shopIds: readonly string[]): Promise<string[
 export async function payoutRows(s: ReportScope, o: { brand?: boolean; owners?: string[] } = {}): Promise<PayoutRow[]> {
   const owners = o.owners?.length ? sql` or p.owner_entity_id in ${uuids(o.owners)}` : sql``;
   return (await db.execute(sql`
-    select p.shop_id "shopId", p.owner_entity_id "ownerEntityId", coalesce(sh.name, oe.name || ' (owner account)', 'Brand account') "shopName", p.stripe_account_id "stripeAccountId", p.stripe_payout_id "stripePayoutId",
+    select p.id, p.shop_id "shopId", p.owner_entity_id "ownerEntityId", coalesce(sh.name, oe.name || ' (owner account)', 'Brand account') "shopName", p.stripe_account_id "stripeAccountId", p.stripe_payout_id "stripePayoutId",
       p.amount_cents "amountCents", p.status, p.arrival_date::text "arrivalDate", p.failure_message "failureMessage",
       p.gross_cents "grossCents", p.fee_cents "feeCents", p.refund_cents "refundCents", p.item_count "itemCount"
     from shop_payouts p left join shops sh on sh.id = p.shop_id left join owner_entities oe on oe.id = p.owner_entity_id
