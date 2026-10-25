@@ -491,6 +491,13 @@
       "when": 1794970800000,
       "tag": "core_0069_email_design",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1795057200000,
+      "tag": "core_0070_appointments_report",
+      "breakpoints": true
     }
   ]
 }

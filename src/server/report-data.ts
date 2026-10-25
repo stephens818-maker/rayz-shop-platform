@@ -34,6 +34,7 @@ import {
   dailyTotals,
   discountBreakdown,
   drawerHistory,
+  registerHistory,
   emptyKpis,
   giftCardTotalsByShop,
   giftCardsIssued,
@@ -72,6 +73,8 @@ import { openingsReportData } from "./marketing/openings-report";
 import { milestonesReportData } from "./milestones/views";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
+import { WATERFALL, waterfallGap } from "@/domain/sales-waterfall";
+import { appointmentsReportData } from "./appointments-report";
 import { commissionPayoutData } from "./commission-report";
 import { acquisitionData, endOfDayData, leaderboardData, phoneOperatorData, retentionData, salesTaxData } from "./shop-reports";
 import { morningDashboardFor } from "./morning-dashboard";
@@ -231,7 +234,21 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
     merge: true,
     sort: byDay,
   });
+  const keys = [...new Set([...Object.keys(x), ...Object.keys(tender)])];
+  const wf = Object.fromEntries(keys.map((k) => [k, { ...(x[k] ?? ZERO_SALES()), ...(tender[k] ?? ZERO_TENDER()) }]));
+  const waterfallTable = metricTable(loc, {
+    id: "waterfall",
+    title: titled(loc, "Sales waterfall"),
+    subtitle: "From gross sales to the card and cash collected. Card fees are the surcharge clients paid, kept apart from tax.",
+    label: "Step",
+    metrics: WATERFALL.map((w) => m(w.label, "money", wf, w.value)),
+  });
+  if (!loc.byBarber) waterfallTable.rowStyles = WATERFALL.map((w) => w.style);
+  const gap = waterfallGap(wf[TOTAL] ?? { ...ZERO_SALES(), ...ZERO_TENDER() });
   return {
+    notes: gap
+      ? [`Card and cash taken differ from the collected line by ${formatCents(gap)}: a ticket paid on a different day than it was rung up, or a refund given back on another tender.`]
+      : undefined,
     stats: [
       { label: "Gross sales", value: formatCents(s.grossSalesCents), hint: `${s.tickets} tickets · avg ${formatCents(s.avgTicketCents)}` },
       { label: "Net services", value: formatCents(s.netServicesCents), hint: s.discountCents ? `after ${formatCents(s.discountCents)} discounts` : undefined },
@@ -242,7 +259,7 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
       { label: "Card surcharges", value: formatCents(s.cardFeeCents) },
       { label: "Card / cash", value: `${formatCents(t.cardCents)} / ${formatCents(t.cashCents)}` },
     ],
-    tables: [summary, dailyTable, monthlyTable],
+    tables: [waterfallTable, summary, dailyTable, monthlyTable],
   };
 }
 
@@ -344,6 +361,7 @@ export async function ratingsGivenTable(scope: ReportScope, loc: ViewCtx): Promi
 
 const days = (scope: ReportScope) => diffDays(scope.to, scope.from) + 1;
 const multi = (loc: ViewCtx) => loc.shops.length > 1;
+const REGISTER_EVENT_LABEL = { opened: "Opened", paid_in: "Paid in", paid_out: "Paid out", no_sale: "Opened, no sale", closed: "Counted and closed" } as const;
 /** Merged rows list the shops they came from, after the product name. */
 const shopsAt = (loc: ViewCtx, at: number) => (multi(loc) && loc.view === "combined" ? at : undefined);
 const byProduct = (at: number) => (a: Cell[], b: Cell[]) => String(a[at]).localeCompare(String(b[at]));
@@ -755,6 +773,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async tip_payouts({ scope, loc }) {
     return tipPayoutsData(scope, loc);
+  },
+
+  async appointments({ scope, loc, params }) {
+    return appointmentsReportData(scope, loc, params);
   },
 
   async staffing({ scope, loc, reasons }) {
@@ -1320,8 +1342,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async cash_drawer({ scope, loc }) {
     const bv: ViewCtx = { ...loc, byBarber: true };
-    const [r, btender] = await Promise.all([drawerHistory(scope), tenderAt(scope, grainsFor(bv))]);
+    const [r, btender, events] = await Promise.all([drawerHistory(scope), tenderAt(scope, grainsFor(bv)), registerHistory(scope)]);
     const closed = r.filter((x) => x.countedCents !== null);
+    const noSales = events.filter((e) => e.event === "no_sale").length;
     return {
       stats: [
         { label: "Drawers closed", value: String(closed.length), hint: `${r.length - closed.length} not closed` },
@@ -1331,9 +1354,18 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           value: formatCents(closed.reduce((a, x) => a + (x.varianceCents ?? 0), 0)),
           tone: closed.some((x) => (x.varianceCents ?? 0) < 0) ? "down" : undefined,
         },
-        { label: "Payouts", value: formatCents(r.reduce((a, x) => a + x.payoutsCents, 0)) },
+        { label: "Payouts", value: formatCents(r.reduce((a, x) => a + x.payoutsCents, 0)), hint: noSales ? `${noSales} no-sale opens` : undefined },
       ],
       tables: [
+        listTable(loc, {
+          id: "register",
+          title: "Cash register history",
+          subtitle: "Every open, paid in, paid out, no-sale open and close, newest first.",
+          columns: [text("When"), text("Event"), money("Amount"), text("Who"), text("Reason or note"), money("Expected"), money("Over / short")],
+          rows: events.map((e) => ({ shopId: e.shopId, cells: [e.at, REGISTER_EVENT_LABEL[e.event], e.amountCents, e.who, e.note, e.expectedCents, e.varianceCents] })),
+          keepShop: loc.shops.length > 1,
+          totals: false,
+        }),
         listTable(loc, {
           id: "drawers",
           title: "Drawer closes",

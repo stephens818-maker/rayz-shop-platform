@@ -121,7 +121,7 @@ describe("permission catalog and templates", () => {
     expect(pageAllowed(access("shop_manager").permissions, "/admin/campaign-center/blasts/[id]")).toBe(false);
   });
 
-  it("Barber gets their own sales, service times and rebook rate; Front Desk gets five reports, view only, and a 10% discount cap", () => {
+  it("Barber gets their own sales, service times and rebook rate; Front Desk gets six reports, view only, and a 10% discount cap", () => {
     expect(reportsFor(access("barber").permissions).map((r) => [r.key, r.canExport])).toEqual([
       ["my_sales", true],
       ["rebook_rate", false],
@@ -130,6 +130,7 @@ describe("permission catalog and templates", () => {
     expect(reportsFor(access("front_desk").permissions).map((r) => [r.key, r.canExport])).toEqual([
       ["end_of_day", false],
       ["card_vs_cash", false],
+      ["appointments", false],
       ["staffing", false],
       ["openings", false],
       ["cash_drawer", false],

@@ -2,10 +2,12 @@ import { payPeriodFor } from "./payroll";
 import { LocalDate, addDays, todayLocal, weekdayOf } from "@/lib/time";
 
 export const PRESETS: { id: string; label: string }[] = [
+  { id: "lastday", label: "Last business day" },
   { id: "today", label: "Today" },
   { id: "yesterday", label: "Yesterday" },
   { id: "week", label: "This week" },
   { id: "7d", label: "Last 7 days" },
+  { id: "4w", label: "Last 4 weeks" },
   { id: "month", label: "This month" },
   { id: "lastmonth", label: "Last month" },
   { id: "payperiod", label: "This pay period" },
@@ -48,10 +50,26 @@ export function priorPeriod(from: LocalDate, to: LocalDate, preset?: string | nu
   return { from: addDays(from, -len), to: end };
 }
 
+/**
+ * The last day the shops were open before `today`: yesterday, or Saturday on a Monday. Sundays are
+ * always skipped, so a report opened on Monday morning shows Saturday's close, not an empty $0 day.
+ */
+export function lastBusinessDay(today: LocalDate = todayLocal(), closedWeekdays: readonly number[] = [0]): LocalDate {
+  let d = addDays(today, -1);
+  for (let i = 0; i < 7 && (weekdayOf(d) === 0 || closedWeekdays.includes(weekdayOf(d))); i++) d = addDays(d, -1);
+  return d;
+}
+
 export function presetRange(id: string, today: LocalDate = todayLocal()): { from: LocalDate; to: LocalDate } {
   const [y, m] = today.split("-").map(Number);
   const monthStart = `${y}-${String(m).padStart(2, "0")}-01`;
   switch (id) {
+    case "lastday": {
+      const d = lastBusinessDay(today);
+      return { from: d, to: d };
+    }
+    case "4w":
+      return { from: addDays(today, -27), to: today };
     case "today":
       return { from: today, to: today };
     case "yesterday":

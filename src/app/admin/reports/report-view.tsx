@@ -4,6 +4,7 @@ import { Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th, cx } from "@/
 import { TrendChart } from "@/components/trend-chart";
 import { reportFor, reportsFor } from "@/domain/navigation";
 import { ReportKey, reportExport } from "@/domain/permissions";
+import { REPORT_GROUP, groupReports } from "@/domain/report-groups";
 import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
 import { WEEKDAYS, formatDate } from "@/lib/time";
@@ -13,22 +14,43 @@ import { Cell, ColumnKind, REPORT_LOADERS, ReportData, ReportTable } from "@/ser
 import { LocationNotice, ReportFilters, locationProps, optionValues, reportQuery } from "./filters";
 import { ReportParams, resolveScope } from "./scope";
 
-/** The strip of reports this person may open. Reports they lack aren't shown at all. */
+/** Report categories on top (only those with a report this person may open), then every report in the active one's category. Nothing sits behind a "More" menu. */
 export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportKey }) {
   const list = reportsFor(ctx.permissions);
   if (list.length < 2) return null;
+  const groups = groupReports(list);
+  const current = groups.find((g) => g.id === REPORT_GROUP[active]) ?? groups[0];
   return (
-    <nav aria-label="Reports" className="no-print mb-4 flex flex-wrap gap-1 border-b border-zinc-200 pb-2">
-      {list.map((r) => (
-        <Link
-          key={r.key}
-          href={r.href}
-          aria-current={r.key === active ? "page" : undefined}
-          className={cx("rounded-md px-2.5 py-1 text-sm", r.key === active ? "bg-ink-900 text-white" : "text-zinc-600 hover:bg-zinc-100")}
-        >
-          {r.label}
-        </Link>
-      ))}
+    <nav aria-label="Reports" className="no-print mb-4 border-b border-zinc-200 pb-2">
+      {groups.length > 1 && (
+        <div className="mb-1.5 flex flex-wrap gap-1" aria-label="Report categories">
+          <Link href="/admin/reports" className="rounded-md px-2.5 py-1 text-xs font-medium text-zinc-500 hover:bg-zinc-100">
+            All reports
+          </Link>
+          {groups.map((g) => (
+            <Link
+              key={g.id}
+              href={g.reports[0].href}
+              aria-current={g.id === current.id ? "true" : undefined}
+              className={cx("rounded-md px-2.5 py-1 text-xs font-medium", g.id === current.id ? "bg-zinc-200 text-ink-900" : "text-zinc-500 hover:bg-zinc-100")}
+            >
+              {g.label} <span className="text-zinc-400">{g.reports.length}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {current.reports.map((r) => (
+          <Link
+            key={r.key}
+            href={r.href}
+            aria-current={r.key === active ? "page" : undefined}
+            className={cx("rounded-md px-2.5 py-1 text-sm", r.key === active ? "bg-ink-900 text-white" : "text-zinc-600 hover:bg-zinc-100")}
+          >
+            {r.label}
+          </Link>
+        ))}
+      </div>
     </nav>
   );
 }

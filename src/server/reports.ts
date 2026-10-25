@@ -936,6 +936,39 @@ export async function drawerHistory(s: ReportScope) {
     order by d.business_date desc, sh.name`);
 }
 
+export interface RegisterEvent {
+  shopId: string;
+  at: string;
+  day: string;
+  event: "opened" | "paid_in" | "paid_out" | "no_sale" | "closed";
+  amountCents: number | null;
+  who: string | null;
+  note: string | null;
+  expectedCents: number | null;
+  varianceCents: number | null;
+}
+
+/** Every time a drawer was opened, cash paid in or out, opened with no sale, or counted and closed, newest first. */
+export async function registerHistory(s: ReportScope, limit = 5000) {
+  return rows<RegisterEvent>(sql`
+    select * from (
+      select d.shop_id "shopId", to_char(d.opened_at at time zone 'America/Chicago', 'YYYY-MM-DD HH24:MI') at, to_char(d.business_date, 'YYYY-MM-DD') as day, 'opened' as event,
+        d.opening_float_cents "amountCents", st.display_label who, null::text note, null::int "expectedCents", null::int "varianceCents", d.opened_at sort
+      from cash_drawers d left join staff st on st.id = d.opened_by
+      where d.shop_id in ${ids(s)} and d.business_date between ${s.from} and ${s.to} and d.opened_at is not null
+      union all
+      select m.shop_id, to_char(m.created_at at time zone 'America/Chicago', 'YYYY-MM-DD HH24:MI'), to_char(m.business_date, 'YYYY-MM-DD'), m.kind,
+        case when m.kind = 'paid_out' then -m.amount_cents when m.kind = 'no_sale' then null else m.amount_cents end, st.display_label, m.reason, null, null, m.created_at
+      from cash_drawer_moves m left join staff st on st.id = m.staff_id
+      where m.shop_id in ${ids(s)} and m.business_date between ${s.from} and ${s.to}
+      union all
+      select d.shop_id, to_char(d.closed_at at time zone 'America/Chicago', 'YYYY-MM-DD HH24:MI'), to_char(d.business_date, 'YYYY-MM-DD'), 'closed',
+        d.counted_cents, st.display_label, d.notes, d.expected_cents, d.variance_cents, d.closed_at
+      from cash_drawers d left join staff st on st.id = d.closed_by
+      where d.shop_id in ${ids(s)} and d.business_date between ${s.from} and ${s.to} and d.closed_at is not null
+    ) e order by sort desc limit ${limit}`);
+}
+
 export function toCsv(headers: string[], data: (string | number | null | undefined)[][]): string {
   const esc = (v: string | number | null | undefined) => {
     let s = v === null || v === undefined ? "" : String(v);

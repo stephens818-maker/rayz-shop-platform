@@ -80,6 +80,7 @@ export const BARBER_REPORTS: ReadonlySet<ReportKey> = new Set([
   "retention",
   "acquisition",
   "phone_operator",
+  "appointments",
   "staffing",
   "call_ins",
   "tip_payouts",
@@ -96,7 +97,7 @@ export const NO_BARBER_REPORTS: ReadonlySet<ReportKey> = new Set(["inventory", "
 export const defaultView = (report?: ReportKey): ReportView => (report === "sales_by_barber" || report === "service_times" ? "barbers" : "combined");
 
 /** The range a report opens on without one in the URL. */
-const DEFAULT_PRESET: Partial<Record<ReportKey, string>> = { end_of_day: "today", sales_tax: "lastmonth", retention: "lastquarter", rebook_rate: "lastquarter", leaderboard: "month", phone_operator: "30d", acquisition: "30d" };
+const DEFAULT_PRESET: Partial<Record<ReportKey, string>> = { end_of_day: "lastday", sales_tax: "lastmonth", retention: "lastquarter", rebook_rate: "lastquarter", leaderboard: "month", phone_operator: "30d", acquisition: "30d" };
 
 /** Without "See every barber's numbers", reports that break down by barber show only the viewer's own. "My sales" always does. */
 export const selfOnly = (ctx: Pick<StaffContext, "permissions">, report: ReportKey) => report === "my_sales" || !ctx.permissions.has("reports.all_staff");

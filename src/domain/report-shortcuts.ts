@@ -15,8 +15,8 @@ export interface ReportShortcut {
 }
 
 export const REPORT_SHORTCUTS: readonly ReportShortcut[] = [
-  { label: "End of day", report: "end_of_day", query: "preset=today", hint: "Today's sales, tax, tips, tenders, refunds, each barber and the drawer." },
-  { label: "Yesterday's close", report: "end_of_day", query: "preset=yesterday", hint: "The same for yesterday, with the counted drawer." },
+  { label: "End of day", report: "end_of_day", query: "preset=lastday", hint: "The last day the shops were open (Saturday on a Monday): sales, tax, tips, tenders, refunds, each barber and the counted drawer." },
+  { label: "Today so far", report: "end_of_day", query: "preset=today", hint: "Today's sales, tax, tips, tenders, refunds, each barber and the drawer, as they come in." },
   { label: "Tips", report: "tips_payroll", query: "", hint: "Each barber's card, cash and gift card tips for the pay period." },
   { label: "Gross and net sales", report: "sales_summary", query: "preset=month", hint: "This month's gross, discounts, refunds and net, by day and month." },
   { label: "Employee summary", report: "sales_by_barber", query: "preset=lastpayperiod&view=barbers", hint: "Last pay period, per barber: sales, tips, clients and hours." },
