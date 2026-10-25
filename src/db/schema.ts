@@ -3133,8 +3133,30 @@ export const callLogs = pgTable(
     operatorChoice: text("operator_choice"),
     createdAt: createdAt(),
     endedAt: ts("ended_at"),
+    /** Someone at the shop followed up on the call (rang back, texted, booked them). */
+    followedUpAt: ts("followed_up_at"),
+    followedUpBy: uuid("followed_up_by").references(() => staff.id, { onDelete: "set null" }),
+    followUpNote: text("follow_up_note"),
   },
   (t) => [index("call_logs_phone_idx").on(t.phone, t.createdAt), index("call_logs_shop_idx").on(t.shopId, t.createdAt)],
+);
+
+export type TranscriptSpeaker = "agent" | "caller" | "line";
+
+/** A call's transcript, in order: what the phone agent said, what the caller pressed or said, and what the line did. */
+export const callTranscriptLines = pgTable(
+  "call_transcript_lines",
+  {
+    id: id(),
+    callLogId: uuid("call_log_id")
+      .notNull()
+      .references(() => callLogs.id, { onDelete: "cascade" }),
+    n: bigint("n", { mode: "number" }).generatedAlwaysAsIdentity(),
+    speaker: text("speaker").$type<TranscriptSpeaker>().notNull(),
+    text: text("text").notNull(),
+    at: ts("at").notNull().defaultNow(),
+  },
+  (t) => [index("call_transcript_lines_call_idx").on(t.callLogId, t.n)],
 );
 
 /** A Today alert someone handled or snoozed, so it stays hidden for everyone until `until`. */

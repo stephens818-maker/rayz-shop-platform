@@ -29,8 +29,8 @@ export function PhoneOperatorEditor({ shopId, initial, hasLine }: { shopId: stri
   return (
     <Card>
       <CardHeader
-        title="Phone operator"
-        subtitle="Answers the shop's Twilio number when nobody at the shop can. Callers press 1 for a text with the booking link, 2 for the hours, or 3 to ring the shop while it's open. Its calls, bookings and minutes saved are on the Phone operator report."
+        title="Phone agent"
+        subtitle="Answers the shop's Twilio number when nobody at the shop can. Callers press 1 for a text with the booking link, 2 for the hours, or 3 to ring the shop while it's open. Each call's outcome and transcript are on the Phone agent page; bookings and minutes saved are on the Phone operator report."
       />
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <label className="flex items-center gap-2 text-sm sm:col-span-2">
@@ -52,6 +52,20 @@ export function PhoneOperatorEditor({ shopId, initial, hasLine }: { shopId: stri
         <Field label="Greeting" hint="Said before the menu. Leave empty for “Thanks for calling Rays <shop>.”" className="sm:col-span-2">
           <Textarea rows={2} maxLength={300} value={v.greeting ?? ""} onChange={(e) => setV({ ...v, greeting: e.target.value || null })} />
         </Field>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-1" checked={v.speech} onChange={(e) => setV({ ...v, speech: e.target.checked })} />
+          <span>
+            Callers can say what they want
+            <span className="block text-xs text-zinc-500">“Book”, “hours” or “someone at the shop”, as well as pressing a key.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-1" checked={v.transcripts} onChange={(e) => setV({ ...v, transcripts: e.target.checked })} />
+          <span>
+            Keep call transcripts
+            <span className="block text-xs text-zinc-500">What the agent said and what the caller pressed or said. Off keeps the outcome only.</span>
+          </span>
+        </label>
       </div>
       <SaveBar pending={pending} msg={msg} onClick={() => save(() => savePhoneOperatorAction(shopId, v))} />
     </Card>

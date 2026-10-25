@@ -16,6 +16,8 @@ import { ReconcileInput, isReconcilable, notYetPaidOut, unmatched } from "@/doma
 import { IssueCompInput, ledgerLabel, reloadProblem } from "@/domain/gift-cards";
 import { PlanInput, membershipDiscounts, monthlyRecurring, periodEnd, planProblem, planSummary, visitsLeft } from "@/domain/memberships";
 import { computeCheckout } from "@/domain/checkout";
+import { callOutcome, choiceFromSpeech, cleanOperator, formatCallLength, needsFollowUp, operatorScript } from "@/domain/phone-operator";
+import { gather } from "@/domain/twiml";
 
 describe("report navigation and defaults", () => {
   it("puts every report in one category, in category order", () => {
@@ -344,5 +346,48 @@ describe("memberships", () => {
         { status: "canceled", priceCents: 3900, cancelAtPeriodEnd: false },
       ]),
     ).toBe(7800);
+  });
+});
+
+describe("phone agent", () => {
+  it("hears what callers say as a menu choice", () => {
+    expect(["I'd like to book a haircut", "Can I get an appointment", "one", "what are your hours", "when do you close", "can I talk to someone", "Operator!", "uh what is this", "someone told me to call", ""].map(choiceFromSpeech)).toEqual([
+      "1",
+      "1",
+      "1",
+      "2",
+      "2",
+      "3",
+      "3",
+      null,
+      "3",
+      null,
+    ]);
+  });
+
+  it("names each call's outcome and which ones want a ring back", () => {
+    const base = { operator: true, status: "after_hours", choice: null, autoTextSent: false, bookedCents: null, endedAt: new Date() };
+    expect(callOutcome({ ...base, choice: "book", autoTextSent: true, bookedCents: 3300 })).toBe("booked");
+    expect(callOutcome({ ...base, choice: "book", autoTextSent: true })).toBe("link_texted");
+    expect(callOutcome({ ...base, choice: "none", autoTextSent: true })).toBe("link_texted");
+    expect(callOutcome({ ...base, choice: "hours" })).toBe("hours");
+    expect(callOutcome({ ...base, choice: "shop", status: "answered", autoTextSent: true })).toBe("put_through");
+    expect(callOutcome({ ...base, choice: "none" })).toBe("hung_up");
+    expect(callOutcome({ ...base, status: "ringing", endedAt: null })).toBe("in_progress");
+    expect(callOutcome({ ...base, operator: false, status: "answered" })).toBe("staff_answered");
+    expect(callOutcome({ ...base, operator: false, status: "missed" })).toBe("missed");
+    expect(callOutcome({ ...base, operator: false, status: "after_hours", autoTextSent: true })).toBe("after_hours");
+    expect([needsFollowUp("missed", "missed"), needsFollowUp("hung_up", "after_hours"), needsFollowUp("put_through", "missed"), needsFollowUp("put_through", "answered"), needsFollowUp("booked", "after_hours")]).toEqual([true, true, true, false, false]);
+    expect([formatCallLength(null), formatCallLength(42), formatCallLength(95)]).toEqual(["—", "42s", "1m 35s"]);
+  });
+
+  it("listens for speech only when the shop turns it on, and keeps transcripts by default", () => {
+    expect(cleanOperator({})).toMatchObject({ speech: false, transcripts: true });
+    expect(cleanOperator({ speech: true, transcripts: false })).toMatchObject({ speech: true, transcripts: false });
+    expect(gather({ action: "/x" })).not.toContain("speech");
+    expect(gather({ action: "/x", speech: { hints: "book, hours" } })).toContain('input="dtmf speech" speechTimeout="auto" hints="book, hours"');
+    const s = operatorScript({ shop: "Rays Kimberly", greeting: null, open: true, missed: false, canRing: true, speech: true });
+    expect(s.menu).toContain("Press 1 or say book");
+    expect(s.menu).toContain("Press 3 or say someone");
   });
 });

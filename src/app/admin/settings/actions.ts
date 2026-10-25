@@ -335,6 +335,8 @@ const Operator = z.object({
   answer: z.enum(["fallback", "first"]),
   minutesPerCall: z.number().int(),
   greeting: z.string().trim().max(300).nullable(),
+  speech: z.boolean().optional().default(false),
+  transcripts: z.boolean().optional().default(true),
 });
 
 /** How the phone operator answers this shop's number. */
@@ -352,6 +354,7 @@ export async function savePhoneOperatorAction(shopId: string, raw: z.input<typeo
     await db.update(shops).set({ phoneOperator: { ...after } }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.phone_operator", "shop", shopId, { before: cleanOperator(before.phoneOperator), after }, shopId);
     revalidatePath("/admin/settings");
+    revalidatePath("/admin/phone-agent");
     return null;
   });
 }

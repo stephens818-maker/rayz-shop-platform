@@ -10,8 +10,9 @@ const attrs = (a: Record<string, string | number | undefined>) =>
 export const say = (text: string) => `<Say voice="Polly.Joanna">${esc(text)}</Say>`;
 export const pause = (seconds: number) => `<Pause length="${seconds}"/>`;
 export const hangup = () => "<Hangup/>";
-export const gather = (a: { action: string; numDigits?: number; timeout?: number }, ...inner: string[]) =>
-  `<Gather${attrs({ action: a.action, method: "POST", numDigits: a.numDigits ?? 1, timeout: a.timeout ?? 6 })}>${inner.join("")}</Gather>`;
+/** `speech`: the caller can also talk; Twilio posts what it heard as SpeechResult. */
+export const gather = (a: { action: string; numDigits?: number; timeout?: number; speech?: { hints: string } }, ...inner: string[]) =>
+  `<Gather${attrs({ action: a.action, method: "POST", numDigits: a.numDigits ?? 1, timeout: a.timeout ?? 6, ...(a.speech ? { input: "dtmf speech", speechTimeout: "auto", hints: a.speech.hints, language: "en-US" } : {}) })}>${inner.join("")}</Gather>`;
 export const dial = (a: { callerId?: string | null; timeout?: number; action?: string }, number: string) =>
   `<Dial${attrs({ callerId: a.callerId ?? undefined, timeout: a.timeout, action: a.action, method: a.action ? "POST" : undefined })}>${esc(number)}</Dial>`;
 /** Continues the call at another webhook, as when a Gather times out with no key pressed. */

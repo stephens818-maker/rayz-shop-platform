@@ -15,9 +15,13 @@ export interface PhoneOperator {
   minutesPerCall: number;
   /** Said before the menu instead of "Thanks for calling Rays <shop>." */
   greeting: string | null;
+  /** Callers can also say what they want ("book", "hours", "someone at the shop") instead of pressing a key. */
+  speech: boolean;
+  /** Keep each call's transcript on the Phone agent page. Off: only the outcome is kept. */
+  transcripts: boolean;
 }
 
-export const DEFAULT_OPERATOR: PhoneOperator = { enabled: false, answer: "fallback", minutesPerCall: 3, greeting: null };
+export const DEFAULT_OPERATOR: PhoneOperator = { enabled: false, answer: "fallback", minutesPerCall: 3, greeting: null, speech: false, transcripts: true };
 export const OPERATOR_ANSWER_LABEL: Record<OperatorAnswer, string> = {
   fallback: "When the shop is closed or nobody picks up",
   first: "First, on every call (3 rings the shop while it's open)",
@@ -42,8 +46,67 @@ export function cleanOperator(raw: unknown): PhoneOperator {
     answer: r.answer === "first" ? "first" : "fallback",
     minutesPerCall: Number.isFinite(minutes) && minutes >= 1 && minutes <= 30 ? Math.round(minutes) : DEFAULT_OPERATOR.minutesPerCall,
     greeting: greeting || null,
+    speech: r.speech === true,
+    transcripts: r.transcripts !== false,
   };
 }
+
+/** What a caller said, as a key on the menu. Null when it doesn't match any option. */
+export function choiceFromSpeech(said: string | null | undefined): "1" | "2" | "3" | null {
+  const t = ` ${(said ?? "").toLowerCase().replace(/[^a-z0-9 ]/g, " ")} `;
+  if (/ (one|1|book|booking|appointment|schedule|link|haircut|cut|reserve) /.test(t)) return "1";
+  if (/ (two|2|hours|open|close|closing|when) /.test(t)) return "2";
+  if (/ (three|3|someone|somebody|person|human|talk|speak|shop|barber|representative|operator) /.test(t)) return "3";
+  return null;
+}
+
+/** Hints for Twilio's speech recognition: the words the menu listens for. */
+export const SPEECH_HINTS = "book, appointment, hours, open, someone, talk to the shop";
+
+export type CallOutcome = "booked" | "link_texted" | "hours" | "put_through" | "hung_up" | "staff_answered" | "missed" | "after_hours" | "in_progress";
+export const CALL_OUTCOME_LABEL: Record<CallOutcome, string> = {
+  booked: "Booked",
+  link_texted: "Booking link texted",
+  hours: "Heard the hours",
+  put_through: "Put through to the shop",
+  hung_up: "Hung up",
+  staff_answered: "Answered by staff",
+  missed: "Missed",
+  after_hours: "After hours, no agent",
+  in_progress: "On the line",
+};
+export const CALL_OUTCOME_TONE: Record<CallOutcome, "green" | "blue" | "amber" | "red" | "gray" | "violet"> = {
+  booked: "green",
+  link_texted: "blue",
+  hours: "gray",
+  put_through: "violet",
+  hung_up: "amber",
+  staff_answered: "green",
+  missed: "red",
+  after_hours: "red",
+  in_progress: "gray",
+};
+
+/** How an incoming call ended, from the agent's side: a booking that followed beats everything else. */
+export function callOutcome(c: { operator: boolean; status: string; choice: string | null; autoTextSent: boolean; bookedCents: number | null; endedAt?: Date | string | null }): CallOutcome {
+  if (c.operator && c.bookedCents !== null) return "booked";
+  if (c.operator) {
+    if (c.choice === "book" || (c.autoTextSent && c.choice !== "shop")) return "link_texted";
+    if (c.choice === "shop") return "put_through";
+    if (c.choice === "hours") return "hours";
+    if (!c.choice && !c.endedAt && c.status === "ringing") return "in_progress";
+    return "hung_up";
+  }
+  if (c.status === "answered") return "staff_answered";
+  if (c.status === "after_hours") return "after_hours";
+  if (c.status === "ringing" && !c.endedAt) return "in_progress";
+  return "missed";
+}
+
+/** Calls that want someone at the shop to follow up: nobody helped, or the caller asked for a person and the shop missed them. */
+export const needsFollowUp = (o: CallOutcome, status: string) => o === "missed" || o === "after_hours" || o === "hung_up" || (o === "put_through" && status === "missed");
+
+export const formatCallLength = (sec: number | null | undefined) => (sec == null ? "—" : sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`);
 
 export function operatorProblem(o: { minutesPerCall: number; greeting: string | null }): string | null {
   if (!Number.isInteger(o.minutesPerCall) || o.minutesPerCall < 1 || o.minutesPerCall > 30) return "Minutes per call is 1 to 30";
@@ -55,9 +118,11 @@ export function operatorProblem(o: { minutesPerCall: number; greeting: string | 
 export const operatorTakes = (o: PhoneOperator, open: boolean) => o.enabled && (o.answer === "first" || !open);
 
 /** The words before and the menu itself. Option 3 only while the shop is open and has a phone. */
-export function operatorScript(o: { shop: string; greeting: string | null; open: boolean; missed: boolean; canRing: boolean }) {
+export function operatorScript(o: { shop: string; greeting: string | null; open: boolean; missed: boolean; canRing: boolean; speech?: boolean }) {
   const intro = o.missed ? "Sorry, nobody could get to the phone." : (o.greeting ?? `Thanks for calling ${o.shop}.`) + (o.open ? "" : " We're closed right now.");
-  const menu = ["Press 1 and we'll text you a link to book online.", "Press 2 to hear our hours.", ...(o.open && o.canRing ? ["Press 3 to talk to someone at the shop."] : [])].join(" ");
+  const menu = o.speech
+    ? ["Press 1 or say book, and we'll text you a link to book online.", "Press 2 or say hours to hear our hours.", ...(o.open && o.canRing ? ["Press 3 or say someone, to talk to someone at the shop."] : [])].join(" ")
+    : ["Press 1 and we'll text you a link to book online.", "Press 2 to hear our hours.", ...(o.open && o.canRing ? ["Press 3 to talk to someone at the shop."] : [])].join(" ");
   return { intro, menu };
 }
 

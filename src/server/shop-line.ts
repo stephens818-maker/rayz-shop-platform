@@ -3,7 +3,7 @@ import { and, desc, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentOutreach, appointments, callIns, callLogs, customers, notificationJobs, shopClosures, shopHours, shops, staff } from "@/db/schema";
 import { advance, isOpen, missedCallText, parseReply, reachable, shopOpenAt, voiceScript } from "@/domain/outreach";
-import { OperatorChoice, cleanOperator, operatorScript, operatorTakes, spokenHours, strongerChoice } from "@/domain/phone-operator";
+import { OperatorChoice, SPEECH_HINTS, choiceFromSpeech, cleanOperator, formatCallLength, operatorScript, operatorTakes, spokenHours, strongerChoice } from "@/domain/phone-operator";
 import { EMPTY_RESPONSE, dial, gather, hangup, pause, redirect, response, say } from "@/domain/twiml";
 import { appBaseUrl } from "@/lib/deployment";
 import { normalizePhone } from "@/lib/phone";
@@ -14,6 +14,7 @@ import { logCall, logMessage, optedOut, queueShopText, recordOptIn, recordOptOut
 import { resubscribePhone } from "./marketing/consent";
 import { stopFromText } from "./marketing/links";
 import { loadMarketingSettings } from "./marketing/settings";
+import { transcribe } from "./phone-agent";
 import { issueLink } from "./rebook-links";
 import { webhookUrl } from "./twilio/client";
 
@@ -155,12 +156,25 @@ async function autoText(shop: typeof shops.$inferSelect, phone: string, afterHou
   return true;
 }
 
-/** The operator's keypad menu. Pressing nothing goes on to the operator webhook too, which texts or rings the shop. */
-function operatorMenu(shop: typeof shops.$inferSelect, o: { open: boolean; missed: boolean; again?: boolean }) {
+/** The operator's keypad (and, if the shop turns it on, speech) menu. Pressing nothing goes on to the operator webhook too, which texts or rings the shop. */
+async function operatorMenu(shop: typeof shops.$inferSelect, o: { open: boolean; missed: boolean; again?: boolean; sorry?: boolean; callId?: string | null }, now = new Date()) {
   const op = cleanOperator(shop.phoneOperator);
-  const s = operatorScript({ shop: spokenShop(shop.name), greeting: op.greeting, open: o.open, missed: o.missed, canRing: !!shop.phone });
-  return response(gather({ action: webhookUrl("voice/operator") }, ...(o.again ? [] : [say(s.intro)]), say(s.menu)), redirect(webhookUrl("voice/operator", { none: "1" })));
+  const s = operatorScript({ shop: spokenShop(shop.name), greeting: op.greeting, open: o.open, missed: o.missed, canRing: !!shop.phone, speech: op.speech });
+  const before = o.sorry ? "Sorry, I didn't catch that." : o.again ? "" : s.intro;
+  await transcribe(o.callId, op, [["agent", `${before} ${s.menu}`]], now);
+  return response(
+    gather({ action: webhookUrl("voice/operator"), ...(op.speech ? { speech: { hints: SPEECH_HINTS } } : {}) }, ...(before ? [say(before)] : []), say(s.menu)),
+    redirect(webhookUrl("voice/operator", { none: "1" })),
+  );
 }
+
+/** Says the words and keeps them in the call's transcript. */
+async function sayAndLog(shop: typeof shops.$inferSelect, callId: string | null | undefined, text: string, now: Date) {
+  await transcribe(callId, cleanOperator(shop.phoneOperator), [["agent", text]], now);
+  return say(text);
+}
+
+const lineNote = (shop: typeof shops.$inferSelect, callId: string | null | undefined, text: string, now: Date) => transcribe(callId, cleanOperator(shop.phoneOperator), [["line", text]], now);
 
 /**
  * A call to the shop's number. Open: it rings the shop phone, showing the shop's own number, so staff
@@ -173,35 +187,42 @@ export async function handleIncomingCall(i: { from: string; to: string; callSid:
   const phone = normalizePhone(i.from) ?? i.from;
   const open = shop.phone ? await isOpenNow(shop.id, now) : false;
   if (operatorTakes(cleanOperator(shop.phoneOperator), open)) {
-    await logCall({ shopId: shop.id, phone, direction: "in", kind: "inbound", status: open ? "ringing" : "after_hours", providerCallId: i.callSid, operator: true }, db, now);
-    return operatorMenu(shop, { open, missed: false });
+    const call = await logCall({ shopId: shop.id, phone, direction: "in", kind: "inbound", status: open ? "ringing" : "after_hours", providerCallId: i.callSid, operator: true }, db, now);
+    await lineNote(shop, call.id, open ? "The phone agent answered first." : "After hours: the phone agent answered.", now);
+    return operatorMenu(shop, { open, missed: false, callId: call.id }, now);
   }
   if (!open) {
-    await logCall({ shopId: shop.id, phone, direction: "in", kind: "inbound", status: "after_hours", providerCallId: i.callSid }, db, now);
+    const call = await logCall({ shopId: shop.id, phone, direction: "in", kind: "inbound", status: "after_hours", providerCallId: i.callSid }, db, now);
     const texted = await autoText(shop, phone, true, now);
     if (texted) await updateCall(i.callSid, { autoTextSent: true, endedAt: now });
-    return response(say(`Thanks for calling ${spokenShop(shop.name)}. We're closed right now.${texted ? " We've texted you a link to book." : " Please call back during opening hours, or book online."}`), hangup());
+    await lineNote(shop, call.id, texted ? "After hours. Texted the booking link." : "After hours.", now);
+    return response(await sayAndLog(shop, call.id, `Thanks for calling ${spokenShop(shop.name)}. We're closed right now.${texted ? " We've texted you a link to book." : " Please call back during opening hours, or book online."}`, now), hangup());
   }
-  await logCall({ shopId: shop.id, phone, direction: "in", kind: "inbound", status: "ringing", providerCallId: i.callSid }, db, now);
+  const call = await logCall({ shopId: shop.id, phone, direction: "in", kind: "inbound", status: "ringing", providerCallId: i.callSid }, db, now);
+  await lineNote(shop, call.id, "Rang the shop phone.", now);
   return response(dial({ callerId: shop.twilioNumber, timeout: 20, action: webhookUrl("voice/dial") }, shop.phone!));
 }
 
 /** How the forwarded call ended. Not answered: a missed call, and the auto-text. */
 export async function handleDialResult(i: { callSid: string; dialStatus: string; duration?: number | null }, now = new Date()) {
   if (i.dialStatus === "completed" || i.dialStatus === "answered") {
-    await updateCall(i.callSid, { status: "answered", durationSec: i.duration ?? null, endedAt: now });
+    const call = await updateCall(i.callSid, { status: "answered", durationSec: i.duration ?? null, endedAt: now });
+    const shop = call?.shopId ? await db.query.shops.findFirst({ where: eq(shops.id, call.shopId) }) : null;
+    if (shop && call) await lineNote(shop, call.id, `The shop answered${i.duration ? ` (${formatCallLength(i.duration)})` : ""}.`, now);
     return response(hangup());
   }
   const call = await updateCall(i.callSid, { status: "missed", endedAt: now });
   const shop = call?.shopId ? await db.query.shops.findFirst({ where: eq(shops.id, call.shopId) }) : null;
+  if (shop && call) await lineNote(shop, call.id, "Nobody at the shop picked up.", now);
   // A call the operator already put through doesn't go back to its menu.
   if (shop && call && call.operatorChoice !== "shop" && cleanOperator(shop.phoneOperator).enabled) {
     await updateCall(i.callSid, { operator: true, endedAt: null });
-    return operatorMenu(shop, { open: false, missed: true });
+    return operatorMenu(shop, { open: false, missed: true, callId: call.id }, now);
   }
   const texted = shop && call ? await autoText(shop, call.phone, false, now) : false;
   if (texted) await updateCall(i.callSid, { autoTextSent: true });
-  return response(say(`Sorry we missed you.${texted ? " We've texted you a link to book." : " Please try again in a few minutes."}`), hangup());
+  const words = `Sorry we missed you.${texted ? " We've texted you a link to book." : " Please try again in a few minutes."}`;
+  return response(shop && call ? await sayAndLog(shop, call.id, words, now) : say(words), hangup());
 }
 
 /**
@@ -209,10 +230,14 @@ export async function handleDialResult(i: { callSid: string; dialStatus: string;
  * again, 3 rings the shop while it's open. Nothing pressed: the shop rings if the operator answered
  * first while open, otherwise the usual missed-call text.
  */
-export async function handleOperatorChoice(i: { callSid: string; digits: string; none?: boolean }, now = new Date()) {
+export async function handleOperatorChoice(i: { callSid: string; digits: string; none?: boolean; speech?: string | null }, now = new Date()) {
   const call = await db.query.callLogs.findFirst({ where: eq(callLogs.providerCallId, i.callSid) });
   const shop = call?.shopId ? await db.query.shops.findFirst({ where: eq(shops.id, call.shopId) }) : null;
   if (!call || !shop) return response(hangup());
+  const said = (i.speech ?? "").trim().slice(0, 300);
+  if (!i.digits && said) i = { ...i, digits: choiceFromSpeech(said) ?? "?", none: false };
+  await transcribe(call.id, cleanOperator(shop.phoneOperator), [["caller", said ? `“${said}”` : i.digits ? `Pressed ${i.digits}` : "Pressed nothing"]], now);
+  const agent = (text: string) => sayAndLog(shop, call.id, text, now);
   const missed = call.status === "missed";
   const open = !missed && shop.phone ? await isOpenNow(shop.id, now) : false;
   const ring = open && !!shop.phone;
@@ -222,25 +247,32 @@ export async function handleOperatorChoice(i: { callSid: string; digits: string;
     const texted = await autoText(shop, call.phone, !open && !missed, now, { asked: true });
     await chose("book");
     await updateCall(i.callSid, { autoTextSent: texted || call.autoTextSent, endedAt: now });
-    await audit(SYSTEM, "phone_operator.key", "call_log", call.id, { digits: "1", texted }, shop.id);
-    return response(say(texted ? `We've texted you a link to book with ${name}. Thanks for calling.` : "We can't text this number. You can book anytime on our website. Thanks for calling."), hangup());
+    await audit(SYSTEM, "phone_operator.key", "call_log", call.id, { digits: "1", texted, spoken: !!said }, shop.id);
+    await lineNote(shop, call.id, texted ? "Texted the booking link." : "Couldn't text this number.", now);
+    return response(await agent(texted ? `We've texted you a link to book with ${name}. Thanks for calling.` : "We can't text this number. You can book anytime on our website. Thanks for calling."), hangup());
   }
   if (i.digits === "2") {
     await chose("hours");
     const hours = await db.select().from(shopHours).where(eq(shopHours.shopId, shop.id));
-    return response(say(spokenHours(hours)), gather({ action: webhookUrl("voice/operator") }, say(operatorScript({ shop: name, greeting: null, open, missed, canRing: !!shop.phone }).menu)), redirect(webhookUrl("voice/operator", { none: "1" })));
+    const op = cleanOperator(shop.phoneOperator);
+    const menu = operatorScript({ shop: name, greeting: null, open, missed, canRing: !!shop.phone, speech: op.speech }).menu;
+    const spoken = spokenHours(hours);
+    await transcribe(call.id, op, [["agent", `${spoken} ${menu}`]], now);
+    return response(say(spoken), gather({ action: webhookUrl("voice/operator"), ...(op.speech ? { speech: { hints: SPEECH_HINTS } } : {}) }, say(menu)), redirect(webhookUrl("voice/operator", { none: "1" })));
   }
   if ((i.digits === "3" || (i.none && call.status === "ringing")) && ring) {
     await chose("shop");
-    return response(say("Connecting you to the shop."), dial({ callerId: shop.twilioNumber, timeout: 20, action: webhookUrl("voice/dial") }, shop.phone!));
+    await lineNote(shop, call.id, "Put the caller through to the shop phone.", now);
+    return response(await agent("Connecting you to the shop."), dial({ callerId: shop.twilioNumber, timeout: 20, action: webhookUrl("voice/dial") }, shop.phone!));
   }
   if (i.none) {
     await chose("none");
     const texted = await autoText(shop, call.phone, !open && !missed, now);
     await updateCall(i.callSid, { autoTextSent: texted || call.autoTextSent, endedAt: now });
-    return response(say(texted ? "We've texted you a link to book. Goodbye." : "Please call back during opening hours, or book online. Goodbye."), hangup());
+    if (texted) await lineNote(shop, call.id, "Texted the booking link.", now);
+    return response(await agent(texted ? "We've texted you a link to book. Goodbye." : "Please call back during opening hours, or book online. Goodbye."), hangup());
   }
-  return operatorMenu(shop, { open, missed, again: true });
+  return operatorMenu(shop, { open, missed, again: true, sorry: i.digits === "?", callId: call.id }, now);
 }
 
 // ───────────────────────────── Automated call-in calls ─────────────────────────────

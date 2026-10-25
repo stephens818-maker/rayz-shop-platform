@@ -54,7 +54,7 @@ export async function simulateTextAction(shopId: string, from: { threadId?: stri
  * A call to the shop line: "answered" or "missed" by the shop phone, unless it's after hours. When the
  * phone operator answers, `key` is what the caller presses on its menu (none: they press nothing).
  */
-export async function simulateCallAction(shopId: string, from: { threadId?: string | null; phone?: string | null }, outcome: "answered" | "missed", key?: string | null) {
+export async function simulateCallAction(shopId: string, from: { threadId?: string | null; phone?: string | null }, outcome: "answered" | "missed", key?: string | null, said?: string | null) {
   return safe(async () => {
     const ctx = await simulator();
     const { line, phone, shop } = await lineAndPhone(ctx, shopId, from);
@@ -64,7 +64,8 @@ export async function simulateCallAction(shopId: string, from: { threadId?: stri
     if (twiml[0].includes("<Dial")) twiml.push(await dialed());
     if (twiml[twiml.length - 1].includes("voice/operator")) {
       const k = key && /^[0-9]$/.test(key) ? key : "";
-      twiml.push(await handleOperatorChoice({ callSid, digits: k, none: !k }));
+      const words = (said ?? "").trim().slice(0, 300);
+      twiml.push(await handleOperatorChoice({ callSid, digits: k, speech: k ? null : words || null, none: !k && !words }));
       if (twiml[twiml.length - 1].includes("<Dial")) twiml.push(await dialed());
     }
     await audit(ctx.actor, "simulator.call", "shop", shop.id, { outcome, key: key ?? null }, shop.id);

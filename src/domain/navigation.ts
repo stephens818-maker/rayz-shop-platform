@@ -85,6 +85,7 @@ export const PAGE_ACCESS = {
   "/admin/setup/new": ["locations.setup"],
   "/admin/setup/simulated-onboarding": ["payments.banking"],
   "/admin/payouts": ["report.shop_accounts.view"],
+  "/admin/phone-agent": ["report.phone_operator.view", "settings.shop_phone"],
   "/admin/import": ["import.run"],
   "/admin/assistant/settings": ["assistant.settings"],
   "/admin/client-badges": ["badges.settings"],
@@ -157,6 +158,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/memberships", label: "Memberships" },
       { href: "/admin/customers", label: "Clients" },
       { href: "/admin/inbox", label: "Inbox" },
+      { href: "/admin/phone-agent", label: "Phone agent" },
     ],
   },
   {

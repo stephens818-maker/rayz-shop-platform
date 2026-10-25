@@ -158,7 +158,7 @@ describe("cash drawer", () => {
 describe("phone operator", () => {
   it("cleans settings and checks them", () => {
     expect(cleanOperator(null)).toEqual(DEFAULT_OPERATOR);
-    expect(cleanOperator({ enabled: true, answer: "first", minutesPerCall: 99, greeting: "  Hi  " })).toEqual({ enabled: true, answer: "first", minutesPerCall: 3, greeting: "Hi" });
+    expect(cleanOperator({ enabled: true, answer: "first", minutesPerCall: 99, greeting: "  Hi  " })).toEqual({ enabled: true, answer: "first", minutesPerCall: 3, greeting: "Hi", speech: false, transcripts: true });
     expect(operatorProblem({ minutesPerCall: 0, greeting: null })).toMatch(/1 to 30/);
     expect(operatorProblem({ minutesPerCall: 4, greeting: "x".repeat(301) })).toMatch(/300/);
   });
