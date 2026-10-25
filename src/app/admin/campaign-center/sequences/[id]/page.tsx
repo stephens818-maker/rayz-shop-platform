@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { staff, staffShops } from "@/db/schema";
+import { Suspense } from "react";
 import { PageHeader } from "@/components/ui";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
@@ -12,6 +13,8 @@ import { couponOptions } from "@/server/marketing/campaigns";
 import { listSequences } from "@/server/marketing/sequences";
 import { loadMarketingSettings } from "@/server/marketing/settings";
 import { inTenant } from "@/server/tenant";
+import { KpiSkeleton } from "../../kpis";
+import { CampaignResultsSection } from "../../results-section";
 import { SequenceEditor } from "./editor";
 
 export const metadata: Metadata = { title: "Lapsed sequence" };
@@ -75,6 +78,11 @@ export default async function SequencePage({ params }: { params: Promise<{ id: s
         address={settings.address}
         seesPreferred={policy.level("preferred_barber") !== "hidden"}
       />
+      {seq && (
+        <Suspense fallback={<KpiSkeleton />}>
+          <CampaignResultsSection ctx={ctx} campaign={{ id: seq.id, ab: null }} />
+        </Suspense>
+      )}
     </div>
   );
 }

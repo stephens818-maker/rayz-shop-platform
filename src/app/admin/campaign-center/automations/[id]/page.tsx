@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 import { PageHeader } from "@/components/ui";
 import { isTriggerKey } from "@/domain/marketing";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { couponOptions, listAutomations } from "@/server/marketing/campaigns";
 import { loadMarketingSettings } from "@/server/marketing/settings";
+import { KpiSkeleton } from "../../kpis";
+import { CampaignResultsSection } from "../../results-section";
 import { AutomationEditor } from "./editor";
 
 export const metadata: Metadata = { title: "Campaign" };
@@ -42,6 +45,9 @@ export default async function AutomationPage({ params }: { params: Promise<{ id:
         mayWrite={mayWrite}
         maySwitch={maySwitch}
       />
+      <Suspense fallback={<KpiSkeleton />}>
+        <CampaignResultsSection ctx={ctx} campaign={{ id: a.id, ab: null }} />
+      </Suspense>
     </div>
   );
 }

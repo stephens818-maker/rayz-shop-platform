@@ -5,6 +5,7 @@
  * plain definition for its tooltip. Nothing here guesses: a rate with nothing to divide by is null
  * ("—"), never 0%.
  */
+import { DateTime } from "luxon";
 
 export interface Funnel {
   /** Marketing messages queued to clients (not tests, skips or holdouts). */
@@ -137,4 +138,20 @@ export function liftOf(treated: { n: number; booked: number }, holdout: { n: num
   const hr = rate(holdout.booked, holdout.n);
   const points = tr !== null && hr !== null ? tr - hr : null;
   return { treated: { ...treated, rate: tr }, holdout: { ...holdout, rate: hr }, points, incremental: points === null ? null : Math.round(points * treated.n) };
+}
+
+/**
+ * Which send a message counts toward on a campaign's results. A blast's sends are its occasions:
+ * one for a one-time blast, one per date for a recurring one. Automations and sequences send a
+ * little every day, so theirs are grouped by the week (Monday) the message went.
+ */
+export function sendKey(kind: string, occasion: string, at: Date, timeZone: string): string {
+  if (kind === "blast") return occasion.startsWith("blast") ? occasion : "blast";
+  return `week:${DateTime.fromJSDate(at).setZone(timeZone).startOf("week").toISODate()}`;
+}
+
+export function sendLabel(key: string, firstAt: Date, timeZone: string): string {
+  if (key.startsWith("week:")) return `Week of ${DateTime.fromISO(key.slice(5)).toFormat("MMM d, yyyy")}`;
+  const date = /^blast:(\d{4}-\d{2}-\d{2})$/.exec(key)?.[1];
+  return date ? DateTime.fromISO(date).toFormat("EEE, MMM d, yyyy") : DateTime.fromJSDate(firstAt).setZone(timeZone).toFormat("EEE, MMM d, yyyy");
 }

@@ -316,3 +316,18 @@ describe("new automations, stages and terms", () => {
     expect(SKIP_LABEL.holdout).toBeTruthy();
   });
 });
+
+describe("results per send", () => {
+  it("a blast's sends are its occasions; automations and sequences go by the week sent", async () => {
+    const { sendKey, sendLabel } = await import("@/domain/campaign-metrics");
+    const tz = "America/Chicago";
+    const wed = new Date("2028-02-16T17:00:00Z");
+    expect(sendKey("blast", "blast", wed, tz)).toBe("blast");
+    expect(sendKey("blast", "blast:2028-02-23", wed, tz)).toBe("blast:2028-02-23");
+    expect(sendKey("trigger", "2028-02-16", wed, tz)).toBe("week:2028-02-14");
+    expect(sendKey("sequence", "lapse:x", new Date("2028-02-21T03:00:00Z"), tz)).toBe("week:2028-02-14");
+    expect(sendLabel("blast:2028-02-23", wed, tz)).toBe("Wed, Feb 23, 2028");
+    expect(sendLabel("blast", wed, tz)).toBe("Wed, Feb 16, 2028");
+    expect(sendLabel("week:2028-02-14", wed, tz)).toBe("Week of Feb 14, 2028");
+  });
+});

@@ -6,9 +6,11 @@
  */
 import { inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { staff } from "@/db/schema";
-import { metricDefinitions, type Funnel, type Lift } from "@/domain/campaign-metrics";
+import { marketingSteps, staff } from "@/db/schema";
+import { metricDefinitions, sendKey, sendLabel, type Funnel, type Lift } from "@/domain/campaign-metrics";
+import { SHOP_TZ } from "@/lib/time";
 import { abOf, type AbTest } from "@/domain/campaign-schedule";
+import { stepLabel } from "@/domain/marketing";
 import { StaffContext } from "../auth/staff";
 import { funnelOf, sendOutcomes, type SendRow } from "./report";
 import { loadMarketingSettings } from "./settings";
@@ -20,15 +22,29 @@ export interface CampaignResult {
   lift: Lift;
 }
 
-/** Each campaign's funnel and lift, all time. Only messages at these shops count, so a manager sees their own shops' share. */
-export async function campaignFunnels(campaignIds: readonly string[], shopIds?: readonly string[]): Promise<Map<string, CampaignResult>> {
-  const out = new Map<string, CampaignResult>();
+/** The latest send of a blast sent more than once, so its rates aren't read as the lifetime ones. */
+function lastSend(rows: readonly SendRow[]): { label: string; funnel: Funnel } | null {
+  if (rows[0]?.campaign_kind !== "blast") return null;
+  const by = new Map<string, SendRow[]>();
+  for (const r of rows) {
+    const k = sendKey("blast", r.occasion, new Date(r.created_at), SHOP_TZ);
+    by.set(k, [...(by.get(k) ?? []), r]);
+  }
+  if (by.size < 2) return null;
+  const at = (rs: SendRow[]) => Math.min(...rs.map((r) => new Date(r.created_at).getTime()));
+  const [k, rs] = [...by].sort((a, b) => at(b[1]) - at(a[1]))[0];
+  return { label: sendLabel(k, new Date(at(rs)), SHOP_TZ), funnel: funnelOf(rs).funnel };
+}
+
+/** Each campaign's funnel and lift, all time, and a repeating blast's last send. Only messages at these shops count, so a manager sees their own shops' share. */
+export async function campaignFunnels(campaignIds: readonly string[], shopIds?: readonly string[]): Promise<Map<string, CampaignResult & { last: { label: string; funnel: Funnel } | null }>> {
+  const out = new Map<string, CampaignResult & { last: { label: string; funnel: Funnel } | null }>();
   if (!campaignIds.length) return out;
   const s = await loadMarketingSettings();
   const rows = await sendOutcomes(sql`ms.campaign_id in (${uuidList(campaignIds)}) ${shopIds ? sql`and ms.shop_id in (${uuidList(shopIds)})` : sql``}`, { days: s.attributionDays, basis: s.attributeOn });
   const by = new Map<string, SendRow[]>();
   for (const r of rows) by.set(r.campaign_id, [...(by.get(r.campaign_id) ?? []), r]);
-  for (const id of campaignIds) out.set(id, funnelOf(by.get(id) ?? []));
+  for (const id of campaignIds) out.set(id, { ...funnelOf(by.get(id) ?? []), last: lastSend(by.get(id) ?? []) });
   return out;
 }
 
@@ -46,8 +62,23 @@ export interface Breakdown {
   funnel: Funnel;
 }
 
+/** One send of the campaign (a blast's date, or a week of an automation) with when it first went. */
+export interface SendBreakdown extends Breakdown {
+  at: string;
+  lift: Lift;
+}
+
 export interface CampaignResults {
+  /** Every send together. */
   overall: CampaignResult;
+  /** Newest first: each send of a blast, or each week of an automation or sequence. */
+  bySend: SendBreakdown[];
+  /** Blasts: "send"; automations and sequences: "week". */
+  sendUnit: "send" | "week";
+  /** A blast sent more than once: its latest send on its own, beside the lifetime numbers. */
+  last: SendBreakdown | null;
+  /** Lapsed sequences: each step. */
+  byStep: Breakdown[];
   byShop: Breakdown[];
   byBarber: Breakdown[];
   byVariant: Breakdown[];
@@ -76,8 +107,34 @@ export async function campaignResults(ctx: StaffContext, c: { id: string; ab: un
       .filter((b) => b.funnel.sent > 0)
       .sort((a, b) => b.funnel.revenueCents - a.funnel.revenueCents || b.funnel.sent - a.funnel.sent || a.label.localeCompare(b.label));
   };
+  const kind = rows[0]?.campaign_kind ?? "blast";
+  const sends = new Map<string, SendRow[]>();
+  for (const r of rows) {
+    const k = sendKey(kind, r.occasion, new Date(r.created_at), SHOP_TZ);
+    sends.set(k, [...(sends.get(k) ?? []), r]);
+  }
+  const bySend: SendBreakdown[] = [...sends]
+    .map(([k, rs]) => {
+      const first = new Date(Math.min(...rs.map((r) => new Date(r.created_at).getTime())));
+      return { key: k, label: sendLabel(k, first, SHOP_TZ), at: first.toISOString(), ...funnelOf(rs) };
+    })
+    .sort((a, b) => b.at.localeCompare(a.at));
+  const stepIds = [...new Set(rows.map((r) => r.step_id).filter((x): x is string => !!x))];
+  const steps = stepIds.length ? await db.select({ id: marketingSteps.id, position: marketingSteps.position, afterDays: marketingSteps.afterDays }).from(marketingSteps).where(inArray(marketingSteps.id, stepIds)) : [];
+  const stepOf = new Map(steps.map((x) => [x.id, x]));
+  const byStep = group(
+    (r) => r.step_id,
+    (k) => {
+      const st = stepOf.get(k);
+      return st ? `Step ${st.position + 1} · ${stepLabel(st.afterDays, false)} away` : "A removed step";
+    },
+  ).sort((a, b) => (stepOf.get(a.key)?.position ?? 99) - (stepOf.get(b.key)?.position ?? 99));
   return {
     overall: funnelOf(rows),
+    bySend,
+    sendUnit: kind === "blast" ? "send" : "week",
+    last: kind === "blast" && bySend.length > 1 ? bySend[0] : null,
+    byStep,
     byShop: group(
       (r) => r.shop_id,
       (k) => shopName.get(k) ?? "Another location",

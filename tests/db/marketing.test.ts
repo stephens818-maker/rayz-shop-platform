@@ -888,6 +888,19 @@ describe("lapsed clients: weeks, barbers and sequences", () => {
     expect(v).toMatchObject({ enabled: true, mayEdit: true, audience: { staffIds: [B], barberMatch: "primary" }, settings: { stopAfterDays: 120 } });
     expect(v.steps.map((x) => x.label)).toEqual(["2 weeks", "3 weeks", "4 weeks", "6 weeks+"]);
     expect(v.sent30).toBeGreaterThanOrEqual(7);
+    const res = await (await import("@/server/marketing/results")).campaignResults(ctx, { id, ab: null });
+    expect(res).toMatchObject({ sendUnit: "week", last: null });
+    expect(res.bySend.map((x) => [x.label, x.funnel.sent])).toEqual([
+      ["Week of Feb 28, 2028", 2],
+      ["Week of Feb 21, 2028", 2],
+      ["Week of Feb 14, 2028", 4],
+    ]);
+    expect(res.byStep.map((x) => [x.label, x.funnel.sent])).toEqual([
+      ["Step 1 · 2 weeks away", 1],
+      ["Step 2 · 3 weeks away", 2],
+      ["Step 3 · 4 weeks away", 3],
+      ["Step 4 · 6 weeks away", 2],
+    ]);
     await SQ.setSequenceEnabled(ctx, id, false);
     await SQ.deleteSequence(ctx, id);
     expect((await SQ.listSequences(ctx)).some((x) => x.id === id)).toBe(false);
@@ -1170,6 +1183,16 @@ describe("Campaign Center v2: A/B, holdout, repeats, opens, attribution, templat
     expect((await E.runBlasts(at("2028-02-23", "12:01"), { ids: [id] })).queued).toBe(1);
     expect((await camp(id)).status).toBe("sent");
     expect((await sendsFor(c.id)).map((x) => x.dedupeKey.split(":").slice(-2).join(":")).sort()).toEqual(["blast:2028-02-16", "blast:2028-02-23"]);
+    await exec(sql`update marketing_sends set clicks = 1, first_click_at = ${at("2028-02-23", "13:00").toISOString()} where campaign_id = ${id}::uuid and dedupe_key like '%:blast:2028-02-23'`);
+    const res = await R.campaignResults(ctx, { id, ab: null });
+    expect(res.sendUnit).toBe("send");
+    expect(res.bySend.map((x) => [x.label, x.funnel.sent, x.funnel.uniqueClicks])).toEqual([
+      ["Wed, Feb 23, 2028", 1, 1],
+      ["Wed, Feb 16, 2028", 1, 0],
+    ]);
+    expect(res.last).toMatchObject({ label: "Wed, Feb 23, 2028", funnel: expect.objectContaining({ sent: 1, uniqueClicks: 1 }) });
+    expect(res.overall.funnel).toMatchObject({ sent: 2, uniqueClicks: 1 });
+    expect((await R.campaignFunnels([id])).get(id)!.last).toMatchObject({ label: "Wed, Feb 23, 2028", funnel: expect.objectContaining({ sent: 1 }) });
 
     const ended = await CP.saveBlast(ctx, { name: "Weekly, short", channels: ["sms"], templates: { sms: SMS }, segment: { tags: [tag] }, shopIds: [fx.cv], recurrence: { freq: "weekly", endsOn: "2028-02-16" } });
     await CP.scheduleBlast(ctx, ended, new Date(NOW.getTime() + HOUR), NOW);

@@ -35,7 +35,7 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
   const maySend = can(ctx, "campaign_center.send");
   const [funnels, s] = await Promise.all([campaignFunnels(list.map((b) => b.id), ctx.brandWide ? undefined : ctx.shopIds), loadMarketingSettings()]);
   const defs = metricDefinitions(s.attributionDays, s.attributeOn);
-  const rows = list.map((b) => ({ b, ...(funnels.get(b.id) ?? { funnel: undefined, lift: undefined }) })).filter((r): r is typeof r & { funnel: NonNullable<typeof r.funnel> } => !!r.funnel);
+  const rows = list.map((b) => ({ b, ...(funnels.get(b.id) ?? { funnel: undefined, lift: undefined, last: null }) })).filter((r): r is typeof r & { funnel: NonNullable<typeof r.funnel> } => !!r.funnel);
   if (sort === "success") rows.sort(bySuccess);
   const shops = openShops(ctx);
   const where = (ids: string[]) => (ids.length ? ids.map((id) => shops.find((x) => x.id === id)?.name ?? OTHER_SHOP).join(", ") : "Every location");
@@ -70,8 +70,22 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
         </tr>
       </thead>
       <tbody>
-        {rows.map(({ b, funnel }) => {
+        {rows.map(({ b, funnel, last }) => {
           const r = ratesOf(funnel);
+          const lr = last ? ratesOf(last.funnel) : null;
+          const cell = (k: "openRate" | "clickRate" | "bookingRate") =>
+            lr ? (
+              <>
+                <div title="Every send together">
+                  {pctLabel(r[k])} <span className="text-[10px] text-zinc-400">lifetime</span>
+                </div>
+                <div className="text-xs text-zinc-500" title={`The send on ${last!.label}`}>
+                  {pctLabel(lr[k])} <span className="text-[10px] text-zinc-400">last send</span>
+                </div>
+              </>
+            ) : (
+              pctLabel(r[k])
+            );
           const st = BLAST_STATUS[b.status] ?? { label: b.status, tone: "gray" as const };
           const at = b.status === "scheduled" || b.status === "paused" ? b.scheduledAt : (b.sentAt ?? b.scheduledAt);
           return (
@@ -102,9 +116,9 @@ async function BlastTable({ ctx, status, sort }: { ctx: StaffContext; status: St
                   : "—"}
               </Td>
               <Td right>{funnel.sent}</Td>
-              <Td right>{pctLabel(r.openRate)}</Td>
-              <Td right>{pctLabel(r.clickRate)}</Td>
-              <Td right>{pctLabel(r.bookingRate)}</Td>
+              <Td right>{cell("openRate")}</Td>
+              <Td right>{cell("clickRate")}</Td>
+              <Td right>{cell("bookingRate")}</Td>
               <Td right>{formatCents(funnel.revenueCents)}</Td>
             </tr>
           );

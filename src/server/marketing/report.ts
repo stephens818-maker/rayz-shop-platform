@@ -62,6 +62,10 @@ export interface SendRow {
   staff_id: string | null;
   channel: "sms" | "email" | "push" | null;
   variant: "a" | "b" | null;
+  created_at: Date | string;
+  /** The dedupe key's occasion: "blast", "blast:2028-02-16" for each send of a recurring blast, a trigger's date, or a sequence step. */
+  occasion: string;
+  step_id: string | null;
   /** In the holdout group: no message went. */
   held: boolean;
   cost_cents: number;
@@ -122,7 +126,8 @@ function outcomesSql(where: SQL, { days, basis }: { days: number; basis: Basis }
       ) send_id, r.discount_cents from coupon_redemptions r
       where r.campaign_id is not null and r.reversed_at is null and r.created_at >= (select min(created_at) from q)
     )
-    select s.id, s.campaign_id, c.kind campaign_kind, s.shop_id, s.staff_id, s.channel, s.variant, s.status = 'holdout' held, s.cost_cents, s.clicks,
+    select s.id, s.campaign_id, c.kind campaign_kind, s.shop_id, s.staff_id, s.channel, s.variant, s.created_at, regexp_replace(s.dedupe_key, '^[^:]+:[^:]+:', '') occasion, s.step_id,
+      s.status = 'holdout' held, s.cost_cents, s.clicks,
       s.first_click_at is not null clicked,
       coalesce(s.channel = 'email' and (s.opened_at is not null or s.first_click_at is not null), false) opened,
       (s.status = 'queued' and (coalesce(j.status = 'sent' and (s.channel <> 'sms' or j.delivered_at is not null or j.provider <> 'twilio'), false) or s.first_click_at is not null or s.opened_at is not null)) delivered,

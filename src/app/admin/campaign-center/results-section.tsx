@@ -9,16 +9,19 @@ import { KpiTiles, MetricLabel, liftLabel } from "./kpis";
 
 type Defs = Record<MetricKey, { label: string; definition: string }>;
 
-function BreakdownTable({ title, rows, defs }: { title: string; rows: Breakdown[]; defs: Defs }) {
+function BreakdownTable({ title, rows, defs, testId }: { title: string; rows: Breakdown[]; defs: Defs; testId?: string }) {
   if (!rows.length) return null;
   return (
-    <div>
+    <div data-testid={testId}>
       <div className="px-4 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">{title}</div>
       <Table>
         <thead>
           <tr>
             <Th />
             <Th right>Sent</Th>
+            <Th right>
+              <MetricLabel k="delivered" defs={defs} />
+            </Th>
             <Th right>
               <MetricLabel k="openRate" defs={defs} />
             </Th>
@@ -46,6 +49,7 @@ function BreakdownTable({ title, rows, defs }: { title: string; rows: Breakdown[
               <tr key={b.key}>
                 <Td className="font-medium">{b.label}</Td>
                 <Td right>{b.funnel.sent}</Td>
+                <Td right>{b.funnel.delivered}</Td>
                 <Td right>{pctLabel(r.openRate)}</Td>
                 <Td right>{pctLabel(r.clickRate)}</Td>
                 <Td right>{pctLabel(r.bookingRate)}</Td>
@@ -72,7 +76,20 @@ export async function CampaignResultsSection({ ctx, campaign }: { ctx: StaffCont
     <Card data-testid="campaign-results">
       <CardHeader title="Results" subtitle={`Each message counts once. Bookings and sales within ${res.attributionDays} days, last touch. Clients already booked when it went aren't credited.`} />
       <div className="space-y-4 p-4">
-        <KpiTiles funnel={f} defs={defs} />
+        {res.last ? (
+          <div className="grid gap-4 lg:grid-cols-2" data-testid="last-vs-lifetime">
+            <div className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Last send · {res.last.label}</div>
+              <KpiTiles funnel={res.last.funnel} defs={defs} />
+            </div>
+            <div className="space-y-2">
+              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Lifetime · {res.bySend.length} sends</div>
+              <KpiTiles funnel={f} defs={defs} />
+            </div>
+          </div>
+        ) : (
+          <KpiTiles funnel={f} defs={defs} />
+        )}
         <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
           <div>
             <div className="text-xs text-zinc-500">
@@ -140,6 +157,8 @@ export async function CampaignResultsSection({ ctx, campaign }: { ctx: StaffCont
           </div>
         )}
       </div>
+      {(res.sendUnit === "week" || res.bySend.length > 1) && <BreakdownTable title={res.sendUnit === "week" ? "Each week" : "Each send"} rows={res.bySend} defs={defs} testId="results-by-send" />}
+      <BreakdownTable title="By step" rows={res.byStep} defs={defs} testId="results-by-step" />
       <BreakdownTable title="By variant" rows={res.byVariant} defs={defs} />
       <BreakdownTable title="By location" rows={res.byShop} defs={defs} />
       <BreakdownTable title="By barber" rows={res.byBarber} defs={defs} />
