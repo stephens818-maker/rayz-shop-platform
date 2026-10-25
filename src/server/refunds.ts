@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, Tx } from "@/db";
 import { reverseCoupons } from "./coupons";
 import { appointments, cashDrawers, giftCardLedger, giftCards, payments, promoCodes, refunds, saleItems, sales } from "@/db/schema";
@@ -29,6 +29,8 @@ import { refundCard } from "./payments/processor";
 import { sendUpdatedReceipt } from "./receipts";
 import { syncTipLedger } from "./tips/ledger";
 
+const NONE = "00000000-0000-0000-0000-000000000000";
+
 type Sale = typeof sales.$inferSelect;
 type Payment = typeof payments.$inferSelect;
 
@@ -52,13 +54,19 @@ export async function refundableState(saleId: string, tx: Tx | typeof db = db) {
   const items = await tx.select().from(saleItems).where(eq(saleItems.saleId, saleId)).orderBy(asc(saleItems.kind));
   const prior = await tx.select().from(refunds).where(eq(refunds.saleId, saleId));
   const done = prior.reduce<RefundComponents>((a, r) => addComponents(a, r), { ...ZERO });
-  const cards = await tx.select().from(giftCards).where(inArray(giftCards.saleItemId, items.length ? items.map((i) => i.id) : ["00000000-0000-0000-0000-000000000000"]));
+  const reloaded = items.filter((i) => i.kind === "gift_card" && i.refId).map((i) => i.refId!);
+  const cards = await tx
+    .select()
+    .from(giftCards)
+    .where(or(inArray(giftCards.saleItemId, items.length ? items.map((i) => i.id) : [NONE]), inArray(giftCards.id, reloaded.length ? reloaded : [NONE])));
   return {
     sale,
     items: items.map((i) => ({
       ...i,
       refundableQty: i.qty - i.refundedQty,
-      giftCards: cards.filter((c) => c.saleItemId === i.id).map((c) => ({ id: c.id, code: c.code, status: c.status, balanceCents: c.balanceCents, initialCents: c.initialCents })),
+      giftCards: cards
+        .filter((c) => c.saleItemId === i.id || (i.kind === "gift_card" && i.refId === c.id))
+        .map((c) => ({ id: c.id, code: c.code, status: c.status, balanceCents: c.balanceCents, initialCents: c.initialCents, reload: i.refId === c.id })),
     })),
     tipRemainingCents: sale.tipCents - done.tipCents,
     cardFeeRemainingCents: sale.cardFeeCents - done.cardFeeCents,
@@ -163,7 +171,23 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
 
   // A gift card sold on the ticket is refunded by voiding it, and only for what's still on it.
   const voided: { code: string; refundedCents: number }[] = [];
+  const reloadsTaken: { code: string; refundedCents: number }[] = [];
   for (const l of lines.filter((x) => x.kind === "gift_card")) {
+    const item = st.items.find((i) => i.id === l.itemId);
+    if (item?.refId) {
+      // A reload on an existing card is refunded by taking it back off the card; the card stays live.
+      const [g] = await tx.select().from(giftCards).where(eq(giftCards.id, item.refId)).for("update");
+      if (!g || g.status !== "active") throw new AppError("conflict", "The reloaded gift card isn't active any more");
+      const take = Math.min(g.balanceCents, item.unitPriceCents);
+      if (take <= 0) throw new AppError("conflict", `Gift card ${g.code} has been fully spent, so the reload can't be refunded`);
+      if (o.strictGiftCards && take < item.unitPriceCents)
+        throw new AppError("conflict", `Gift card ${g.code} has less on it than the reload. Refund the ticket instead; only ${formatCents(take)} goes back.`);
+      await tx.update(giftCards).set({ balanceCents: g.balanceCents - take }).where(eq(giftCards.id, g.id));
+      await tx.insert(giftCardLedger).values({ giftCardId: g.id, saleId: sale.id, deltaCents: -take, kind: "reload_refund", staffId: o.actor.staffId ?? null });
+      reloadsTaken.push({ code: g.code, refundedCents: take });
+      l.netCents = take;
+      continue;
+    }
     const cards = await tx
       .select()
       .from(giftCards)
@@ -236,6 +260,7 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
       components,
       items: itemsJson,
       giftCardsVoided: voided,
+      ...(reloadsTaken.length ? { giftCardReloadsRefunded: reloadsTaken } : {}),
       tenders: plan.map((s) => ({ method: s.method, cents: s.amountCents })),
       loyalty: result.loyalty,
       receipt: receipt && receipt.status !== "none" ? { status: receipt.status, to: receipt.masked } : null,
@@ -383,25 +408,31 @@ export async function recordProcessorRefund(paymentIntentId: string, amountRefun
 /** Take value off gift cards sold on the ticket (largest balance first), voiding any that hit zero. */
 async function cutSoldGiftCards(tx: Tx, saleId: string, cents: number) {
   if (cents <= 0) return [];
-  const items = await tx.select({ id: saleItems.id }).from(saleItems).where(and(eq(saleItems.saleId, saleId), eq(saleItems.kind, "gift_card")));
+  const items = await tx
+    .select({ id: saleItems.id, refId: saleItems.refId, unitPriceCents: saleItems.unitPriceCents })
+    .from(saleItems)
+    .where(and(eq(saleItems.saleId, saleId), eq(saleItems.kind, "gift_card")));
   if (!items.length) return [];
+  const reloads = new Map(items.filter((i) => i.refId).map((i) => [i.refId!, i.unitPriceCents]));
   const cards = await tx
     .select()
     .from(giftCards)
-    .where(and(inArray(giftCards.saleItemId, items.map((i) => i.id)), eq(giftCards.status, "active")))
+    .where(and(or(inArray(giftCards.saleItemId, items.map((i) => i.id)), inArray(giftCards.id, reloads.size ? [...reloads.keys()] : [NONE])), eq(giftCards.status, "active")))
     .orderBy(desc(giftCards.balanceCents))
     .for("update");
   let left = cents;
   const out: { code: string; cutCents: number }[] = [];
   for (const g of cards) {
     if (left <= 0) break;
-    const take = Math.min(left, g.balanceCents);
+    const reload = reloads.get(g.id);
+    // A reloaded card gives back at most the reload, and stays live for what was on it before.
+    const take = Math.min(left, g.balanceCents, reload ?? Infinity);
     if (take <= 0) continue;
     await tx
       .update(giftCards)
-      .set({ balanceCents: g.balanceCents - take, status: g.balanceCents - take === 0 ? "void" : g.status })
+      .set({ balanceCents: g.balanceCents - take, status: g.balanceCents - take === 0 && reload == null ? "void" : g.status })
       .where(eq(giftCards.id, g.id));
-    await tx.insert(giftCardLedger).values({ giftCardId: g.id, saleId, deltaCents: -take, kind: "refund_cut" });
+    await tx.insert(giftCardLedger).values({ giftCardId: g.id, saleId, deltaCents: -take, kind: reload == null ? "refund_cut" : "reload_refund" });
     out.push({ code: g.code, cutCents: take });
     left -= take;
   }

@@ -45,6 +45,7 @@ import {
   splitTenderProblem,
 } from "@/domain/combined-checkout";
 import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
+import { reloadProblem } from "@/domain/gift-cards";
 import { DEFAULT_LOYALTY, LoyaltyConfig, loyaltyAtShop } from "@/domain/loyalty";
 import { giftCardCode } from "@/lib/ids";
 import { formatCents } from "@/lib/money";
@@ -544,6 +545,8 @@ export async function priceCart(
           ),
         )
     : [];
+  const reloadIds = input.lines.filter((l) => l.kind === "gift_card" && l.refId).map((l) => l.refId!);
+  const reloadCards = reloadIds.length ? await db.select().from(giftCards).where(inArray(giftCards.id, reloadIds)) : [];
   const staffId = input.staffId ?? ctx.sale.staffId;
   const onTicket = new Map<string, string | null>(
     ctx.family.members.map((m) => [m.appointmentId, m.staffId]),
@@ -634,6 +637,12 @@ export async function priceCart(
         overrideReason: null,
         appointmentId: null,
       });
+      if (l.refId) {
+        const g = reloadCards.find((c) => c.id === l.refId);
+        const problem = reloadProblem(g, { qty: l.qty, now: input.now ?? new Date(), payingWith: gift?.id ?? null, amountCents: face });
+        if (problem) throw new AppError("bad_request", problem);
+        return { key: String(i), kind: l.kind, name: `Gift card reload ${g!.code} ${formatCents(face)}`, unitPriceCents: face, qty: 1, refId: g!.id };
+      }
       return {
         key: String(i),
         kind: l.kind,
@@ -931,6 +940,7 @@ export async function finalizeSale(input: FinalizeInput) {
 
   const businessDate = localDateOf(now);
   const issuedGiftCards: { code: string; amountCents: number }[] = [];
+  const reloadedGiftCards: { code: string; amountCents: number; balanceCents: number }[] = [];
   const stockWarnings: string[] = [];
   let rewardsIssued = 0;
   // Only this call's own charges are ever compensated. Each attempt gets its own idempotency keys, so a
@@ -1054,6 +1064,18 @@ export async function finalizeSale(input: FinalizeInput) {
         if (meta[i].custom)
           await audit(input.actor, "sale.custom_charge", "sale", ctx.sale.id, { item: l.name, chargedCents: l.unitPriceCents, qty: l.qty }, ctx.shop.id, tx);
         if (l.kind !== "gift_card") continue;
+        if (l.refId) {
+          const [g] = await tx
+            .update(giftCards)
+            .set({ balanceCents: sql`${giftCards.balanceCents} + ${l.unitPriceCents}` })
+            .where(and(eq(giftCards.id, l.refId), eq(giftCards.status, "active")))
+            .returning();
+          if (!g) throw new AppError("conflict", "That gift card was voided before the reload went through");
+          await tx.insert(giftCardLedger).values({ giftCardId: g.id, saleId: ctx.sale.id, deltaCents: l.unitPriceCents, kind: "reload", staffId: input.actor.staffId ?? null });
+          await audit(input.actor, "giftcard.reload", "gift_card", g.id, { amountCents: l.unitPriceCents, balanceCents: g.balanceCents, saleId: ctx.sale.id }, ctx.shop.id, tx);
+          reloadedGiftCards.push({ code: g.code, amountCents: l.unitPriceCents, balanceCents: g.balanceCents });
+          continue;
+        }
         for (let q = 0; q < l.qty; q++) {
           const code = giftCardCode();
           const [g] = await tx
@@ -1389,6 +1411,7 @@ export async function finalizeSale(input: FinalizeInput) {
     saleId: ctx.sale.id,
     totals,
     issuedGiftCards,
+    reloadedGiftCards,
     rewardsIssued,
     rebooked,
     card: cards[0] ?? null,

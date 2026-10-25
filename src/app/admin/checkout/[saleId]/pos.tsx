@@ -344,6 +344,7 @@ export function Pos(props: {
   const [pending, start] = useTransition();
   const [productQ, setProductQ] = useState("");
   const [giftSale, setGiftSale] = useState("");
+  const [reload, setReload] = useState({ code: "", amount: "" });
   const [customCharge, setCustomCharge] = useState({ name: "", amount: "" });
   const [editing, setEditing] = useState<{
     key: string;
@@ -1374,6 +1375,56 @@ export function Pos(props: {
                         },
                       ]);
                       setGiftSale("");
+                    }}
+                  >
+                    Add
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <div className="mb-1 text-xs font-medium text-zinc-700">
+                  Reload a gift card
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Card code"
+                    className="uppercase"
+                    value={reload.code}
+                    onChange={(e) => setReload({ ...reload, code: e.target.value.toUpperCase() })}
+                  />
+                  <Input
+                    className="w-24"
+                    placeholder="$ amount"
+                    inputMode="decimal"
+                    value={reload.amount}
+                    onChange={(e) => setReload({ ...reload, amount: e.target.value })}
+                  />
+                  <Button
+                    variant="secondary"
+                    disabled={!reload.code || !reload.amount || pending}
+                    onClick={() => {
+                      const c = toCents(reload.amount);
+                      if (c < 500 || c > 50_000)
+                        return setError("Reloads are from $5 to $500");
+                      act(
+                        () => giftCardAction(reload.code),
+                        (g) => {
+                          if (lines.some((l) => l.kind === "gift_card" && l.refId === g.id))
+                            return setError(`Gift card ${g.code} is already being reloaded on this ticket`);
+                          setLines((ls) => [
+                            ...ls,
+                            {
+                              key: key(),
+                              kind: "gift_card",
+                              refId: g.id,
+                              name: `Gift card reload ${g.code} ${$short(c)}`,
+                              unitPriceCents: c,
+                              qty: 1,
+                            },
+                          ]);
+                          setReload({ code: "", amount: "" });
+                        },
+                      );
                     }}
                   >
                     Add

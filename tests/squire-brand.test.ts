@@ -13,6 +13,7 @@ import { CONVERSION_EVENTS, trackBookingStep } from "@/lib/conversion-tracking";
 import { jurisdictionGroups, ratePct } from "@/domain/tax-fees";
 import { matchesFilters, parseAppointmentFilters, paymentOf, platformOf } from "@/domain/appointment-report";
 import { ReconcileInput, isReconcilable, notYetPaidOut, unmatched } from "@/domain/payout-reconcile";
+import { IssueCompInput, ledgerLabel, reloadProblem } from "@/domain/gift-cards";
 
 describe("report navigation and defaults", () => {
   it("puts every report in one category, in category order", () => {
@@ -267,5 +268,28 @@ describe("payout reconciliation", () => {
     const v = ReconcileInput.parse({ payoutId: "6f1e0c3e-3b9e-4c55-9a51-0d6b2d1c9f10", bankReference: "  ", note: " ok " });
     expect([v.bankReference, v.note]).toEqual([null, "ok"]);
     expect(() => ReconcileInput.parse({ payoutId: "6f1e0c3e-3b9e-4c55-9a51-0d6b2d1c9f10", bankReference: "x".repeat(61) })).toThrow(/60 characters/);
+  });
+});
+
+describe("gift card management", () => {
+  const now = new Date("2026-10-25T15:00:00Z");
+  const card = { id: "g1", code: "AAAA-BBBB-CCCC-DDDD", status: "active", balanceCents: 2000, expiresAt: null };
+
+  it("a reload needs a live, unexpired card, one per line, not paid with itself, and stays under $1,000", () => {
+    expect(reloadProblem(card, { qty: 1, now, payingWith: null, amountCents: 5000 })).toBeNull();
+    expect(reloadProblem(undefined, { qty: 1, now, payingWith: null })).toMatch(/wasn't found/);
+    expect(reloadProblem({ ...card, status: "void" }, { qty: 1, now, payingWith: null })).toMatch(/voided/);
+    expect(reloadProblem({ ...card, expiresAt: new Date("2026-01-01") }, { qty: 1, now, payingWith: null })).toMatch(/expired/);
+    expect(reloadProblem(card, { qty: 2, now, payingWith: null })).toMatch(/one card per line/);
+    expect(reloadProblem(card, { qty: 1, now, payingWith: "g1" })).toMatch(/its own reload/);
+    expect(reloadProblem(card, { qty: 1, now, payingWith: null, amountCents: 98_001 })).toMatch(/\$1,000/);
+  });
+
+  it("comp cards need a reason and a sensible amount; ledger kinds read plainly", () => {
+    const shopId = "6f1e0c3e-3b9e-4c55-9a51-0d6b2d1c9f10";
+    expect(() => IssueCompInput.parse({ shopId, amountCents: 1000, reason: " " })).toThrow(/Add a reason/);
+    expect(() => IssueCompInput.parse({ shopId, amountCents: 50, reason: "x" })).toThrow(/at least \$1/);
+    expect(IssueCompInput.parse({ shopId, amountCents: 1000, reason: " Recovery " }).reason).toBe("Recovery");
+    expect([ledgerLabel("reload"), ledgerLabel("reload_refund"), ledgerLabel("something_new")]).toEqual(["Reloaded", "Reload refunded", "something new"]);
   });
 });

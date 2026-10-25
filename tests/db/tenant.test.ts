@@ -658,6 +658,7 @@ describe("server actions aimed at another shop's records", () => {
     const counts = await import("@/app/admin/inventory/counts/actions");
     const inventory = await import("@/app/admin/inventory/actions");
     const promos = await import("@/app/admin/promos/actions");
+    const giftCards = await import("@/app/admin/gift-cards/actions");
     const settings = await import("@/app/admin/settings/actions");
     const staffActions = await import("@/app/admin/staff/actions");
     const services = await import("@/app/admin/services/actions");
@@ -737,8 +738,10 @@ describe("server actions aimed at another shop's records", () => {
       ["promo toggle", () => promos.togglePromoAction(ids.promo, false)],
       ["promo create", () => promos.saveCouponAction(null, { code: "CVSNEAK1", type: "percent", value: 50, appliesTo: "all", shopIds: [cv] })],
       ["promo edit", () => promos.saveCouponAction(ids.promo, { code: "CVSNEAK2", type: "percent", value: 90, appliesTo: "all", shopIds: [shop.moline] })],
-      ["gift card void", () => promos.voidGiftCardAction(ids.giftCard, "x")],
-      ["gift card issue", () => promos.issueGiftCardAction(cv, 1000, "x")],
+      ["gift card void", () => giftCards.voidGiftCardAction(ids.giftCard, "x")],
+      ["gift card issue", () => giftCards.issueCompCardAction({ shopId: cv, amountCents: 1000, reason: "x" })],
+      ["gift card comp", () => giftCards.compReloadAction({ id: ids.giftCard, amountCents: 1000, reason: "x" })],
+      ["gift card reload ticket", () => giftCards.startReloadAction({ shopId: cv, id: ids.giftCard, amountCents: 1000 })],
       [
         "settings info",
         () =>
@@ -855,7 +858,7 @@ describe("server actions aimed at another shop's records", () => {
       .update(m.schema.staff)
       .set({
         permissionOverrides: {
-          ...Object.fromEntries(["settings.taxes", "giftcards.void", "permissions.manage", "clients.merge", "po.approve", "payments.accounts", "payments.banking"].map((p) => [p, true])),
+          ...Object.fromEntries(["settings.taxes", "giftcards.void", "giftcards.issue", "checkout.any", "permissions.manage", "clients.merge", "po.approve", "payments.accounts", "payments.banking"].map((p) => [p, true])),
           ...Object.fromEntries(["promos.manage", "campaign_center.view", "campaign_center.create", "campaign_center.send"].map((p) => [p, true])),
         },
       })
@@ -878,10 +881,10 @@ describe("server actions aimed at another shop's records", () => {
   }, 120_000);
 
   it("the same kind of change works on the workspace's own shop", async () => {
-    const promos = await import("@/app/admin/promos/actions");
+    const giftCards = await import("@/app/admin/gift-cards/actions");
     const settings = await import("@/app/admin/settings/actions");
     await as("manager.moline");
-    expect(await promos.issueGiftCardAction(shop.moline, 1000, "test")).toMatchObject({ ok: true });
+    expect(await giftCards.issueCompCardAction({ shopId: shop.moline, amountCents: 1000, reason: "test" })).toMatchObject({ ok: true });
     expect(await settings.addClosureAction(shop.moline, m.time.addDays(today, 41), "Test closure", false)).toMatchObject({ ok: true });
     expect(await settings.removeClosureAction(shop.moline, m.time.addDays(today, 41))).toMatchObject({ ok: true });
     const timing = await import("@/app/admin/booking-times/actions");
@@ -984,6 +987,7 @@ describe("staff assigned to several shops (Kat: barber at Moline and Silvis, Sho
 
   it("acts on a shop only with that shop's role, and never on her other shops from the one she's in", async () => {
     const promos = await import("@/app/admin/promos/actions");
+    const giftCards = await import("@/app/admin/gift-cards/actions");
     const settings = await import("@/app/admin/settings/actions");
     const calendar = await import("@/app/admin/calendar/actions");
     const active = async (id: string) => (await m.db.db.query.promoCodes.findFirst({ where: eq(m.schema.promoCodes.id, id) }))!.active;
@@ -992,7 +996,7 @@ describe("staff assigned to several shops (Kat: barber at Moline and Silvis, Sho
     await as("kat", shop["rock-island"]);
     for (const [name, call] of [
       ["promo toggle", () => promos.togglePromoAction(ids.marks.moline.promo, false)],
-      ["gift card", () => promos.issueGiftCardAction(shop.moline, 1000, "x")],
+      ["gift card", () => giftCards.issueCompCardAction({ shopId: shop.moline, amountCents: 1000, reason: "x" })],
       ["closure", () => settings.addClosureAction(shop.moline, closure, "x", false)],
       ["appointment", () => calendar.setStatusAction(ids.marks.moline.appt, "cancelled")],
     ] as const) {
@@ -1003,12 +1007,12 @@ describe("staff assigned to several shops (Kat: barber at Moline and Silvis, Sho
     expect(await active(ids.marks.moline.promo)).toBe(true);
     expect(await promos.togglePromoAction(ids.marks.ri.promo, false)).toMatchObject({ ok: true });
     expect(await promos.togglePromoAction(ids.marks.ri.promo, true)).toMatchObject({ ok: true });
-    expect(await promos.issueGiftCardAction(shop["rock-island"], 1000, "test")).toMatchObject({ ok: true });
+    expect(await giftCards.issueCompCardAction({ shopId: shop["rock-island"], amountCents: 1000, reason: "test" })).toMatchObject({ ok: true });
 
     await as("kat", shop.moline);
     for (const call of [
       () => promos.togglePromoAction(ids.marks.moline.promo, false),
-      () => promos.issueGiftCardAction(shop.moline, 1000, "x"),
+      () => giftCards.issueCompCardAction({ shopId: shop.moline, amountCents: 1000, reason: "x" }),
       () => promos.togglePromoAction(ids.marks.ri.promo, false),
     ])
       expect((await call()).ok).toBe(false);

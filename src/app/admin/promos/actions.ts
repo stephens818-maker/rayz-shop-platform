@@ -3,9 +3,8 @@
 import { and, count, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
-import { couponCodes, giftCardLedger, giftCards, products, promoCodes, services } from "@/db/schema";
+import { couponCodes, products, promoCodes, services } from "@/db/schema";
 import { CouponInput } from "@/domain/coupons";
-import { giftCardCode } from "@/lib/ids";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, assertShopAccess, authorize } from "@/server/auth/staff";
@@ -91,42 +90,6 @@ export async function togglePromoAction(id: string, active: boolean) {
     assertMayManage(ctx, p);
     await db.update(promoCodes).set({ active }).where(eq(promoCodes.id, id));
     await audit(ctx.actor, active ? "promo.enable" : "promo.disable", "promo", id, {}, p.shopId);
-    revalidatePath("/admin/promos");
-    return null;
-  });
-}
-
-/** Comp / promotional gift card issued without a sale (e.g. service recovery). */
-export async function issueGiftCardAction(shopId: string, amountCents: number, note: string) {
-  return safe(async () => {
-    const ctx = await authorize("giftcards.issue");
-    assertShopAccess(ctx, shopId);
-    if (!Number.isInteger(amountCents) || amountCents <= 0) throw new AppError("bad_request", "Enter an amount");
-    if (!note.trim()) throw new AppError("bad_request", "Add a reason");
-    const code = giftCardCode();
-    const g = await db.transaction(async (tx) => {
-      const [g] = await tx.insert(giftCards).values({ code, initialCents: amountCents, balanceCents: amountCents, issuedShopId: shopId, source: "promo" }).returning();
-      await tx.insert(giftCardLedger).values({ giftCardId: g.id, deltaCents: amountCents, kind: "issue", staffId: ctx.staff.id });
-      await audit(ctx.actor, "giftcard.issue_comp", "gift_card", g.id, { amountCents, note }, shopId, tx);
-      return g;
-    });
-    revalidatePath("/admin/promos");
-    return { code: g.code };
-  });
-}
-
-export async function voidGiftCardAction(id: string, reason: string) {
-  return safe(async () => {
-    const ctx = await authorize("giftcards.void");
-    if (!reason.trim()) throw new AppError("bad_request", "Add a reason");
-    const g = await db.query.giftCards.findFirst({ where: eq(giftCards.id, id) });
-    if (!g) throw notFound("Gift card");
-    if (!ctx.brandWide && (!g.issuedShopId || !ctx.shopIds.includes(g.issuedShopId))) throw forbidden("That gift card was issued outside your shops");
-    await db.transaction(async (tx) => {
-      await tx.update(giftCards).set({ status: "void", balanceCents: 0 }).where(eq(giftCards.id, id));
-      await tx.insert(giftCardLedger).values({ giftCardId: id, deltaCents: -g.balanceCents, kind: "void", staffId: ctx.staff.id });
-      await audit(ctx.actor, "giftcard.void", "gift_card", id, { reason, balanceCents: g.balanceCents }, g.issuedShopId, tx);
-    });
     revalidatePath("/admin/promos");
     return null;
   });

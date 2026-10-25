@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { Chips, ItemPicker, toggle } from "@/components/chips";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
 import { CODE_MODES, CODE_MODE_LABEL, COUPON_TYPES, COUPON_TYPE_LABEL, DAY_NAMES, type CodeMode, type CouponType } from "@/domain/coupons";
-import { issueGiftCardAction, saveCouponAction, togglePromoAction, voidGiftCardAction } from "./actions";
+import { saveCouponAction, togglePromoAction } from "./actions";
 import type { CouponFormValues } from "./coupon-input";
 
 export function PromoToggle({ id, active }: { id: string; active: boolean }) {
@@ -232,75 +232,5 @@ export function CouponForm({ initial, editingId, locked, shops, allShops, servic
       </div>
       {error && <Notice tone="red">{error}</Notice>}
     </div>
-  );
-}
-
-export function GiftCardTools({ shopId, initialQuery, canIssue }: { shopId: string; initialQuery: string; canIssue: boolean }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [q, setQ] = useState(initialQuery);
-  const [amount, setAmount] = useState("");
-  const [note, setNote] = useState("");
-  const [msg, setMsg] = useState<{ tone: "green" | "red"; text: string } | null>(null);
-  return (
-    <div className="grid gap-4 border-b border-zinc-100 p-4 md:grid-cols-2">
-      <form
-        className="flex items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          router.push(`/admin/promos?gc=${encodeURIComponent(q)}`);
-        }}
-      >
-        <Field label="Look up a card" className="flex-1">
-          <Input className="uppercase" placeholder="Code" value={q} onChange={(e) => setQ(e.target.value.toUpperCase())} />
-        </Field>
-        <Button variant="secondary" type="submit">
-          Search
-        </Button>
-      </form>
-      <div className={canIssue ? "flex flex-wrap items-end gap-2" : "hidden"}>
-        <Field label="Comp gift card $">
-          <Input className="w-24" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-        </Field>
-        <Field label="Reason" className="min-w-40 flex-1">
-          <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Service recovery, giveaway…" />
-        </Field>
-        <Button
-          disabled={pending}
-          onClick={() =>
-            start(async () => {
-              const r = await issueGiftCardAction(shopId, Math.round(Number(amount) * 100), note);
-              setMsg(r.ok ? { tone: "green", text: `Issued ${r.data.code}` } : { tone: "red", text: r.error });
-              if (r.ok) setAmount("");
-              router.refresh();
-            })
-          }
-        >
-          Issue
-        </Button>
-      </div>
-      {msg && (
-        <div className="md:col-span-2">
-          <Notice tone={msg.tone}>{msg.text}</Notice>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function VoidGiftCard({ id }: { id: string }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  return (
-    <button
-      className="text-xs text-red-600 underline"
-      disabled={pending}
-      onClick={() => {
-        const reason = prompt("Reason for voiding this gift card?");
-        if (reason) start(async () => (await voidGiftCardAction(id, reason), router.refresh()));
-      }}
-    >
-      Void
-    </button>
   );
 }
