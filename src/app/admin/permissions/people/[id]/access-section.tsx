@@ -8,20 +8,22 @@ import { cleanOverrides, staffEditDenied } from "@/domain/permissions";
 import { StaffAccess, accessState, workShopIds } from "@/server/auth/access";
 import { StaffContext, staffGrantor } from "@/server/auth/staff";
 import { OTHER_SHOP, hasShop } from "@/server/tenant";
+import { entityChoices } from "@/server/owner-entities";
 import { PersonAccessEditor } from "./person-editor";
 
 /** One person's role, à la carte permissions and locations, with any contact access the brand gave them. Used on Permissions and on Users. */
 export async function PersonAccessSection({ ctx, target }: { ctx: StaffContext; target: StaffAccess }) {
   const id = target.staffId;
-  const [works, person, roleRows, allShops] = await Promise.all([
+  const [works, person, roleRows, allShops, entities] = await Promise.all([
     workShopIds(id),
     db.query.staff.findFirst({ where: eq(staff.id, id) }).then((p) => p!),
     db.select().from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)),
     db
-      .select({ id: shops.id, name: shops.name, status: shops.status })
+      .select({ id: shops.id, name: shops.name, status: shops.status, ownerEntityId: shops.ownerEntityId })
       .from(shops)
       .orderBy(asc(shops.name))
-      .then((rows) => rows.map((r) => ({ id: r.id, name: r.status === "archived" ? `${r.name} (archived)` : r.name }))),
+      .then((rows) => rows.map((r) => ({ id: r.id, ownerEntityId: r.ownerEntityId, name: r.status === "archived" ? `${r.name} (archived)` : r.name }))),
+    entityChoices(ctx),
   ]);
   const g = staffGrantor(ctx);
   const readOnly =
@@ -55,11 +57,13 @@ export async function PersonAccessSection({ ctx, target }: { ctx: StaffContext; 
           overrides: cleanOverrides(person.permissionOverrides),
           maxDiscountPct: person.maxDiscountPct,
           scope: target.scope,
+          scopeEntityId: target.scopeEntityId,
           shopIds: target.scope === "all" ? [] : target.shopIds,
           shopRoles: target.shopRoles,
         }}
         roles={roleRows.map((r) => ({ id: r.id, key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope, brandLevel: r.brandLevel }))}
         shops={ctx.brandWide ? allShops : allShops.filter((s) => hasShop(ctx, s.id))}
+        entities={entities}
         worksAt={[...new Set(allShops.filter((s) => works.includes(s.id)).map((s) => (ctx.brandWide || hasShop(ctx, s.id) ? s.name : OTHER_SHOP)))]}
         mine={[...g.permissions]}
         myMaxDiscount={ctx.maxDiscountPct}

@@ -506,12 +506,12 @@ export const REPORTS = [
     href: "/admin/reports/sales-tax",
     hint: "Taxable sales and tax collected per state, location and month or quarter, after refunds, for each state's filing.",
   },
-  { key: "shop_accounts", label: "Shop P&L by Stripe account", href: "/admin/reports/shop-accounts", hint: "Each shop's card sales, fees, refunds, tips and payouts through its own connected account, grouped by owner." },
+  { key: "shop_accounts", label: "Shop P&L by Stripe account", href: "/admin/reports/shop-accounts", hint: "Each shop's card sales, fees, refunds, tips and payouts through its own, its owner's or the brand's Stripe account, grouped by owner." },
   {
     key: "rollup",
     label: "Location comparison",
     href: "/admin/reports/rollup",
-    hint: "Locations or regions side by side: sales, average ticket, clients, new clients, appointments, no-shows, growth on the prior period and rank. Built from the nightly location rollups.",
+    hint: "Locations, regions or owners side by side: sales, average ticket, clients, new clients, appointments, no-shows, growth on the prior period and rank. Built from the nightly location rollups.",
   },
   { key: "discounts_refunds", label: "Discounts and refunds", href: "/admin/reports/discounts-refunds" },
   { key: "inventory", label: "Inventory valuation", href: "/admin/reports/inventory" },
@@ -686,12 +686,17 @@ export function permissionLabel(p: Permission): string {
 
 // ───────────────────────────── Shop scope ─────────────────────────────
 
-export const SHOP_SCOPES = ["all", "selected", "one"] as const;
+/**
+ * Where a person works: the brand (all shops), one owner entity's shops (Ray'z Corporate or a
+ * franchisee, including shops it gets later), chosen shops, or one shop.
+ */
+export const SHOP_SCOPES = ["all", "entity", "selected", "one"] as const;
 export type ShopScope = (typeof SHOP_SCOPES)[number];
-export const SCOPE_LABEL: Record<ShopScope, string> = { all: "All shops", selected: "Selected shops", one: "One shop" };
+export const SCOPE_LABEL: Record<ShopScope, string> = { all: "All shops", entity: "An owner's shops", selected: "Selected shops", one: "One shop" };
 
-export function scopeProblem(scope: ShopScope, shopIds: string[]): string | null {
+export function scopeProblem(scope: ShopScope, shopIds: string[], entityId?: string | null): string | null {
   if (scope === "all") return null;
+  if (scope === "entity") return entityId ? null : "Pick the owner";
   if (scope === "one" && shopIds.length !== 1) return "Pick exactly one shop";
   if (scope === "selected" && shopIds.length === 0) return "Pick at least one shop";
   return null;
@@ -702,7 +707,7 @@ export function scopeProblem(scope: ShopScope, shopIds: string[]): string | null
 export const OWNER_ROLE_KEY = "brand_owner";
 export const BRAND_ADMIN_ROLE_KEY = "brand_admin";
 
-export const ROLE_TEMPLATE_KEYS = ["brand_owner", "brand_admin", "regional_manager", "shop_manager", "front_desk", "shop_login", "barber"] as const;
+export const ROLE_TEMPLATE_KEYS = ["brand_owner", "brand_admin", "franchisee_owner", "franchisee_manager", "regional_manager", "shop_manager", "front_desk", "shop_login", "barber"] as const;
 export const SHOP_LOGIN_ROLE_KEY = "shop_login";
 export type RoleTemplateKey = (typeof ROLE_TEMPLATE_KEYS)[number];
 
@@ -835,6 +840,23 @@ const TEMPLATES: RoleTemplate[] = [
     description: "Runs the whole brand day to day. Everything except brand-level settings and granting Brand Owner.",
     defaultScope: "all",
     permissions: ALL_PERMISSIONS.filter((p) => !OWNER_ONLY.has(p) && !OWNER_GRANTS.has(p) && !GRANT_ONLY.has(p) && p !== "clients.export" && p !== "campaign_center.export"),
+    maxDiscountPct: 100,
+  },
+  {
+    key: "franchisee_owner",
+    name: "Franchisee Owner",
+    description:
+      "Owns a franchisee business (an owner entity) and runs all its locations: everything a regional manager does there, plus voiding gift cards and managing its people's access. Brand-wide settings, the catalog, client exports and Stripe setup stay the brand's.",
+    defaultScope: "entity",
+    permissions: [...REGIONAL_FEATURES, "giftcards.void", "permissions.manage", ...reports(LOCATION_REPORTS)],
+    maxDiscountPct: 100,
+  },
+  {
+    key: "franchisee_manager",
+    name: "Franchisee Manager",
+    description: "Manages a franchisee's locations day to day: front desk, POS, clients, staff and shop settings, with every report for those locations but the brand's marketing reports.",
+    defaultScope: "entity",
+    permissions: [...REGIONAL_FEATURES, ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
   },
   {
@@ -1138,6 +1160,19 @@ export interface Grantor {
   maxDiscountPct: number;
   scope: ShopScope;
   shopIds: readonly string[];
+  /** The owner entity an entity scope covers. */
+  scopeEntityId?: string | null;
+}
+
+/**
+ * Whether a caller below brand level reaches a scope as a whole, so shops added there later stay
+ * theirs: an owner entity's scope only from the same entity. Chosen shops are checked shop by shop.
+ */
+export function scopeWithin(caller: Pick<Grantor, "scope" | "scopeEntityId">, target: { scope: ShopScope; scopeEntityId?: string | null }): boolean {
+  if (caller.scope === "all") return true;
+  if (target.scope === "all") return false;
+  if (target.scope === "entity") return caller.scope === "entity" && !!target.scopeEntityId && target.scopeEntityId === caller.scopeEntityId;
+  return true;
 }
 
 const missing = (caller: Grantor, perms: Iterable<Permission>) => [...perms].filter((p) => !caller.permissions.has(p));
@@ -1183,6 +1218,7 @@ export interface UserAccessState {
   maxDiscountPct: number;
   scope: ShopScope;
   shopIds: readonly string[];
+  scopeEntityId?: string | null;
 }
 
 /** Changing someone's role, per-user overrides or shop access. */
@@ -1205,12 +1241,14 @@ export function userAccessChangeDenied(
   if (grantOnly) return grantOnlyDenied(grantOnly);
   const shopLevel = !next.brandLevel && (Object.keys(next.overrides) as Permission[]).find((k) => BRAND_LEVEL_ONLY.has(k) && next.overrides[k]);
   if (shopLevel) return notBrandLevel(shopLevel);
-  const problem = scopeProblem(next.scope, [...next.shopIds]);
+  const problem = scopeProblem(next.scope, [...next.shopIds], next.scopeEntityId);
   if (problem) return problem;
   if (caller.scope !== "all") {
     if (current.scope === "all" || current.shopIds.some((s) => !caller.shopIds.includes(s))) return "This person has access to shops outside yours";
     if (next.scope === "all") return "Only people with access to all shops can grant it";
     if (next.shopIds.some((s) => !caller.shopIds.includes(s))) return "You can only give access to your own shops";
+    if (!scopeWithin(caller, current)) return "This person's access covers a whole owner's shops, so only the brand or someone over that owner can change it";
+    if (!scopeWithin(caller, next)) return "Only the brand, or someone over that whole owner, can give access to all of an owner's shops";
   }
   const gained = [...next.permissions].filter((p) => !current.permissions.has(p));
   const ownerGrant = [...gained, ...[...current.permissions].filter((p) => !next.permissions.has(p))].find((p) => OWNER_GRANTS.has(p));
@@ -1234,6 +1272,7 @@ export function staffEditDenied(caller: Grantor, target: UserAccessState & { wor
   if (caller.scope !== "all") {
     const theirs = [...new Set([...target.shopIds, ...target.workShopIds])];
     if (target.scope === "all" || !theirs.some((s) => caller.shopIds.includes(s))) return "That person isn't on your shops' team";
+    if (!scopeWithin(caller, target)) return "This person's access covers a whole owner's shops, so only the brand or someone over that owner can edit them";
   }
   return null;
 }

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { roles, shops, staff, staffAccessShops, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import { findScheduleConflicts } from "@/domain/availability";
-import { assignableRoles, staffEditDenied } from "@/domain/permissions";
+import { assignableRoles, scopeWithin, staffEditDenied } from "@/domain/permissions";
 import { seesStaffContact } from "@/domain/staff-contact";
 import { labelContainsSurname, staffPublicSlug } from "@/lib/ids";
 import { WEEKDAYS, addDays, minutesToLabel, startOfLocalDay } from "@/lib/time";
@@ -19,6 +19,7 @@ import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, authorize, caller, staffGrantor } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { offboardStaff } from "@/server/offboarding";
+import { commonOwner } from "@/server/owner-entities";
 import { addBlock, removeBlock } from "@/server/staff-time";
 
 /** Profile edits: nobody edits a person who holds access they don't have. */
@@ -107,14 +108,17 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
         await tx.update(staff).set(values).where(eq(staff.id, id));
       } else {
         const r = role!;
-        const scope = r.defaultScope === "all" ? "all" : r.defaultScope === "one" ? "one" : "selected";
+        // An owner-entity role covers the owner of the shops they work at, when that's one owner the adder reaches as a whole.
+        const owner = r.defaultScope === "entity" ? await commonOwner(p.shopIds, tx) : null;
+        const entityId = owner && scopeWithin(staffGrantor(ctx), { scope: "entity", scopeEntityId: owner }) ? owner : null;
+        const scope = r.defaultScope === "all" ? "all" : r.defaultScope === "one" ? "one" : entityId ? "entity" : "selected";
         const [{ n }] = await tx.select({ n: sql<number>`coalesce(max(substring(${staff.staffCode} from 3)::int), 0)::int` }).from(staff);
         const [row] = await tx
           .insert(staff)
-          .values({ ...values, roleId: r.id, shopScope: scope, staffCode: `S-${String(n + 1).padStart(4, "0")}`, publicSlug: staffPublicSlug(p.firstName) })
+          .values({ ...values, roleId: r.id, shopScope: scope, scopeEntityId: entityId, staffCode: `S-${String(n + 1).padStart(4, "0")}`, publicSlug: staffPublicSlug(p.firstName) })
           .returning({ id: staff.id });
         id = row.id;
-        const accessShops = scope === "all" ? [] : scope === "one" ? p.shopIds.slice(0, 1) : p.shopIds;
+        const accessShops = scope === "all" || scope === "entity" ? [] : scope === "one" ? p.shopIds.slice(0, 1) : p.shopIds;
         if (accessShops.length) await tx.insert(staffAccessShops).values(accessShops.map((shopId) => ({ staffId: row.id, shopId })));
       }
       const editable = ctx.brandWide ? null : ctx.shopIds;

@@ -26,6 +26,8 @@ export interface StaffAccess extends Access {
   /** Their main role. */
   role: Role;
   scope: ShopScope;
+  /** The owner entity an entity scope covers. */
+  scopeEntityId: string | null;
   /** Shops this person may see and act on. */
   shopIds: string[];
   /** Archived shops stay in here, so reports and permissions still cover their history; operational lists use openShops. */
@@ -74,6 +76,7 @@ export async function loadStaffAccess(staffId: string, tx: DBorTx = db): Promise
 
 export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DBorTx = db): Promise<StaffAccess> {
   const scope: ShopScope = role.key === OWNER_ROLE_KEY ? "all" : s.shopScope;
+  const scopeEntityId = scope === "entity" ? s.scopeEntityId : null;
   const overrides = cleanOverrides(s.permissionOverrides);
   const cols = { id: shops.id, name: shops.name, slug: shops.slug, address: shops.address, city: shops.city, status: shops.status };
   const shopRows: (StaffAccess["shops"][number] & { roleId: string | null })[] =
@@ -104,7 +107,7 @@ export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DB
   const shopRoles = Object.fromEntries([...byShop].filter(([, a]) => a.role.id !== role.id).map(([id, a]) => [id, a.role.id]));
   const needsAllShops =
     scope === "all" ? [] : [...unionAccess([role, ...others.values()].map((r) => effectiveAccess(r, overrides, s.maxDiscountPct))).permissions].filter((p) => BRAND_ONLY.has(p));
-  return { ...union, staffId: s.id, role, scope, shopIds: shopRows.map((x) => x.id), shops: shopRows.map(({ roleId: _, ...x }) => x), byShop, shopRoles, uniform, needsAllShops, grants, granted };
+  return { ...union, staffId: s.id, role, scope, scopeEntityId, shopIds: shopRows.map((x) => x.id), shops: shopRows.map(({ roleId: _, ...x }) => x), byShop, shopRoles, uniform, needsAllShops, grants, granted };
 }
 
 /** The same person working in one of their shops: that shop's role and nothing else. */
@@ -116,7 +119,8 @@ export function atShop(a: StaffAccess, shopId: string): StaffAccess {
 
 /**
  * The same person with some of their shops out of reach (a location's sign-in restriction). Brand-only
- * permissions work on records every shop shares, so losing any shop takes them away too.
+ * permissions work on records every shop shares, so losing any shop takes them away too; an owner
+ * entity scope no longer covers the whole entity, so it's chosen shops for this request.
  */
 export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAccess {
   if (!drop.size || !a.shopIds.some((id) => drop.has(id))) return a;
@@ -129,7 +133,8 @@ export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAc
   return {
     ...a,
     ...union,
-    scope: a.scope === "all" ? "selected" : a.scope,
+    scope: a.scope === "all" || a.scope === "entity" ? "selected" : a.scope,
+    scopeEntityId: null,
     shopIds: a.shopIds.filter((id) => !drop.has(id)),
     shops: a.shops.filter((s) => !drop.has(s.id)),
     byShop,
@@ -140,13 +145,16 @@ export function withoutShops(a: StaffAccess, drop: ReadonlySet<string>): StaffAc
 }
 
 /** What they may give others: never what only a contact access grant gives them. */
-export const grantor = (a: Pick<StaffAccess, "staffId" | "isOwner" | "permissions" | "maxDiscountPct" | "scope" | "shopIds"> & { granted?: ReadonlySet<Permission> }): Grantor => ({
+export const grantor = (
+  a: Pick<StaffAccess, "staffId" | "isOwner" | "permissions" | "maxDiscountPct" | "scope" | "shopIds"> & Partial<Pick<StaffAccess, "scopeEntityId">> & { granted?: ReadonlySet<Permission> },
+): Grantor => ({
   staffId: a.staffId,
   isOwner: a.isOwner,
   permissions: a.granted?.size ? new Set([...a.permissions].filter((p) => !a.granted!.has(p))) : a.permissions,
   maxDiscountPct: a.maxDiscountPct,
   scope: a.scope,
   shopIds: a.shopIds,
+  scopeEntityId: a.scopeEntityId ?? null,
 });
 
 /** What their role and overrides give, without contact access grants (those are managed apart). */
@@ -157,6 +165,7 @@ export const accessState = (a: StaffAccess): UserAccessState => ({
   maxDiscountPct: a.maxDiscountPct,
   scope: a.scope,
   shopIds: a.shopIds,
+  scopeEntityId: a.scopeEntityId,
 });
 
 export async function workShopIds(staffId: string, tx: DBorTx = db) {

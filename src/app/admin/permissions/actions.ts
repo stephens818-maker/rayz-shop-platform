@@ -26,6 +26,7 @@ import { audit } from "@/server/audit";
 import { accessState, activeOwnerCount, loadStaffAccess } from "@/server/auth/access";
 import { authorize, staffGrantor } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
+import { entityShopIds, resolveEntityScope } from "@/server/owner-entities";
 
 const asDef = (r: typeof roles.$inferSelect): RoleDef => ({ key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, brandLevel: r.brandLevel });
 const permsOf = (r: RoleDef) => [...effectiveAccess(r).permissions];
@@ -142,6 +143,8 @@ const UserSchema = z.object({
   overrides: z.record(z.string(), z.boolean()).transform(cleanOverrides),
   maxDiscountPct: z.number().int().min(0).max(100).nullable(),
   scope: z.enum(SHOP_SCOPES),
+  /** For an entity scope: which owner entity. Its shops come from the entity, not shopIds. */
+  scopeEntityId: z.string().uuid().nullable().optional(),
   shopIds: z.array(z.string().uuid()).transform((xs) => [...new Set(xs)]),
   /** A different role at some of their shops (shop ID → role ID). */
   shopRoles: z.record(z.string().uuid(), z.string().uuid()).optional().default({}),
@@ -161,13 +164,15 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
     const scope = owner ? "all" : p.scope;
     const kind = (await db.query.staff.findFirst({ where: eq(staff.id, p.staffId), columns: { kind: true } }))?.kind;
     if (kind === "shop" && scope !== "one") throw new AppError("bad_request", "A shop login always has access to exactly one shop");
-    const shopIds = scope === "all" ? [] : p.shopIds;
+    const scopeEntityId = await resolveEntityScope(scope, p.scopeEntityId);
+    const shopIds = scope === "all" ? [] : scopeEntityId ? await entityShopIds(scopeEntityId) : p.shopIds;
+    if (scope === "entity" && !shopIds.length) throw new AppError("bad_request", "That owner has no locations yet");
     if (shopIds.length) {
       const found = await db.select({ id: shops.id }).from(shops).where(inArray(shops.id, shopIds));
       if (found.length !== shopIds.length) throw notFound("Shop");
     }
     const shopRoles: Record<string, string> = {};
-    if (scope === "selected") {
+    if (scope === "selected" || scope === "entity") {
       for (const [shopId, roleId] of Object.entries(p.shopRoles)) {
         if (!shopIds.includes(shopId)) throw new AppError("bad_request", "A shop role needs the person assigned to that shop");
         if (roleId !== role.id) shopRoles[shopId] = roleId;
@@ -188,7 +193,7 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
     const denied = userAccessChangeDenied(
       staffGrantor(ctx),
       accessState(current),
-      { staffId: current.staffId, ...next, scope, shopIds, overrides, brandLevel: !!kind && isBrandLevelPerson({ kind, scope, role }) },
+      { staffId: current.staffId, ...next, scope, scopeEntityId, shopIds, overrides, brandLevel: !!kind && isBrandLevelPerson({ kind, scope, role }) },
       { activeOwners: await activeOwnerCount() },
     );
     if (denied) throw forbidden(denied);
@@ -196,7 +201,7 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
     await db.transaction(async (tx) => {
       await tx
         .update(staff)
-        .set({ roleId: role.id, shopScope: scope, permissionOverrides: overrides as Record<string, boolean>, maxDiscountPct: owner ? null : p.maxDiscountPct })
+        .set({ roleId: role.id, shopScope: scope, scopeEntityId, permissionOverrides: overrides as Record<string, boolean>, maxDiscountPct: owner ? null : p.maxDiscountPct })
         .where(eq(staff.id, p.staffId));
       await tx.delete(staffAccessShops).where(eq(staffAccessShops.staffId, p.staffId));
       if (shopIds.length) await tx.insert(staffAccessShops).values(shopIds.map((shopId) => ({ staffId: p.staffId, shopId, roleId: shopRoles[shopId] ?? null })));
@@ -209,6 +214,7 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
         {
           role: current.role.id === role.id ? role.name : { from: current.role.name, to: role.name },
           scope: current.scope === scope ? scope : { from: current.scope, to: scope },
+          scopeEntity: current.scopeEntityId === scopeEntityId ? undefined : { from: current.scopeEntityId, to: scopeEntityId },
           shops: { from: current.scope === "all" ? "all" : current.shopIds, to: scope === "all" ? "all" : shopIds },
           shopRoles:
             JSON.stringify(current.shopRoles) === JSON.stringify(shopRoles)

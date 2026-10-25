@@ -40,6 +40,8 @@ export interface StaffContext {
   /** Selected shop, or null for "all my shops" (people with more than one shop). */
   currentShopId: string | null;
   scope: ShopScope;
+  /** The owner entity an entity scope covers. */
+  scopeEntityId: string | null;
   /** Access to every shop, including brand-level records that belong to no shop. */
   brandWide: boolean;
   isOwner: boolean;
@@ -120,6 +122,7 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
     combinedView,
     currentShopId,
     scope: access.scope,
+    scopeEntityId: access.scopeEntityId,
     brandWide: access.scope === "all",
     isOwner: access.isOwner,
     permissions: access.permissions,

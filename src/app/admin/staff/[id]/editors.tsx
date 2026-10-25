@@ -55,7 +55,7 @@ type Profile = {
 };
 
 type RoleChoice = { id: string; name: string; description: string; defaultScope: string };
-const SCOPE_HINT: Record<string, string> = { all: "every shop", selected: "the shops they work at", one: "one shop" };
+const SCOPE_HINT: Record<string, string> = { all: "every shop", entity: "every shop of the owner of the shops they work at", selected: "the shops they work at", one: "one shop" };
 
 export function ProfileForm({
   initial,
