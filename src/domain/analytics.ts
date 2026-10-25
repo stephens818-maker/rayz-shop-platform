@@ -60,6 +60,7 @@ export const CATEGORIES = {
   call: "Phone calls",
   walkin: "Walk-in list",
   prompt: "Checkout prompts",
+  milestone: "Staff milestones",
 } as const;
 export type EventCategory = keyof typeof CATEGORIES;
 
@@ -427,6 +428,15 @@ export const EVENTS = {
     value: "1 when a rebook reminder was scheduled",
     subtype: "rebook or product",
     reason: "the reason picked (blank when none, or when paid without answering)",
+  },
+  "milestone.achieved": {
+    label: "Staff milestone reached",
+    value: "the number reached (count, streak or years), or the record (cents, cuts, or rebook rate in tenths of a percent)",
+    subtype: "count, anniversary, birthday, best or streak",
+  },
+  "milestone.cheered": {
+    label: "Teammate cheered a milestone",
+    subtype: "the milestone's kind",
   },
 } as const satisfies Record<string, EventDef>;
 export type EventName = keyof typeof EVENTS;

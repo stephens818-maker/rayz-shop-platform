@@ -463,6 +463,13 @@
       "when": 1794625200000,
       "tag": "core_0065_campaign_center_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1794711600000,
+      "tag": "core_0066_staff_milestones",
+      "breakpoints": true
     }
   ]
 }

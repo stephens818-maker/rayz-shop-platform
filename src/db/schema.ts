@@ -98,6 +98,8 @@ export const brandSettings = pgTable("brand_settings", {
   analytics: jsonb("analytics").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Checkout prompts: rebook and product, each on or off, skippable or required (src/domain/checkout-prompts.ts). */
   checkoutPrompts: jsonb("checkout_prompts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Staff milestones (MilestoneSettings in src/domain/milestones.ts): alerts, congratulations, birthdays, the team feed. */
+  milestones: jsonb("milestones").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -463,6 +465,13 @@ export const staff = pgTable("staff", {
   invitedAt: ts("invited_at"),
   /** Removed from the brand portal: kept for history, never signs in again. */
   removedAt: ts("removed_at"),
+  /** Work anniversaries count from this (src/domain/milestones.ts). */
+  hireDate: date("hire_date"),
+  /** Optional birthday: month and day only, never a year. */
+  birthdayMonth: smallint("birthday_month"),
+  birthdayDay: smallint("birthday_day"),
+  /** Their milestones may show in the team feed, when the brand turns it on. */
+  milestonesShared: boolean("milestones_shared").notNull().default(true),
   createdAt: createdAt(),
 });
 
@@ -3285,6 +3294,8 @@ export const marketingTemplates = pgTable(
     approvedBy: uuid("approved_by").references(() => staff.id, { onDelete: "set null" }),
     approvedAt: ts("approved_at"),
     createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    /** "milestone": the wording offered from a barber's milestone for their clients to celebrate with them. */
+    purpose: text("purpose").$type<"milestone">(),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
@@ -3860,4 +3871,100 @@ export const locationDailyStats = pgTable(
     index("location_daily_stats_day_idx").on(t.day),
     index("location_daily_stats_region_day_idx").on(t.regionId, t.day),
   ],
+);
+
+// ───────────────────────────── Staff milestones ─────────────────────────────
+
+/**
+ * What counts as a staff milestone: the built-in counts, anniversaries, birthdays, personal bests
+ * and streaks (key set, kind and metric fixed), and the brand's own. Kinds and metrics are in
+ * src/domain/milestones.ts.
+ */
+export const staffMilestoneRules = pgTable("staff_milestone_rules", {
+  id: id(),
+  /** Built-in rules only. */
+  key: text("key").unique(),
+  kind: text("kind").$type<"count" | "anniversary" | "birthday" | "best" | "streak">().notNull(),
+  metric: text("metric").notNull(),
+  name: text("name").notNull(),
+  /** Counts and streaks: what the number is of, plural ("cuts", "fades"). */
+  unit: text("unit"),
+  /** Counts and streaks: the numbers to reach; anniversaries: the years. */
+  thresholds: jsonb("thresholds").$type<number[]>().notNull().default(sql`'[]'::jsonb`),
+  /** Cuts and services only: count just these services; empty is every service. */
+  serviceIds: jsonb("service_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  active: boolean("active").notNull().default(true),
+  builtIn: boolean("built_in").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(100),
+  createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** A person's total from before the history in the system (Squire's own counts): the metric is this plus everything on or after as_of. */
+export const staffMilestoneBaselines = pgTable(
+  "staff_milestone_baselines",
+  {
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    metric: text("metric").notNull(),
+    count: integer("count").notNull(),
+    asOf: date("as_of").notNull(),
+    setBy: uuid("set_by").references(() => staff.id, { onDelete: "set null" }),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.staffId, t.metric] })],
+);
+
+/**
+ * One milestone a person reached, once (dedupe_key). Silent ones were found after the fact (history,
+ * a baseline, a first record) and are kept for the trophy case without an alert.
+ */
+export const staffMilestones = pgTable(
+  "staff_milestones",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    ruleId: uuid("rule_id").references(() => staffMilestoneRules.id, { onDelete: "set null" }),
+    kind: text("kind").$type<"count" | "anniversary" | "birthday" | "best" | "streak">().notNull(),
+    metric: text("metric").notNull(),
+    /** Counts and streaks: the number reached; anniversaries: the years. */
+    threshold: integer("threshold"),
+    /** Personal bests: the record (cents, cuts, or rebook rate in tenths of a percent). */
+    value: bigint("value", { mode: "number" }),
+    /** Personal bests: the record it beat. */
+    previous: bigint("previous", { mode: "number" }),
+    /** Personal bests: the day, the week's Sunday, or the month (YYYY-MM). */
+    period: text("period"),
+    achievedOn: date("achieved_on").notNull(),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "set null" }),
+    /** As it read when reached, for the history when the rule changes. */
+    title: text("title").notNull(),
+    silent: boolean("silent").notNull().default(false),
+    dedupeKey: text("dedupe_key").notNull().unique(),
+    notifiedAt: ts("notified_at"),
+    /** When they dismissed the congratulations. */
+    seenAt: ts("seen_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("staff_milestones_staff_idx").on(t.staffId, t.achievedOn), index("staff_milestones_date_idx").on(t.achievedOn)],
+);
+
+/** A teammate's cheer on a milestone in the team feed, with an optional short message (scrubbed by trigger). */
+export const staffMilestoneCheers = pgTable(
+  "staff_milestone_cheers",
+  {
+    milestoneId: uuid("milestone_id")
+      .notNull()
+      .references(() => staffMilestones.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    message: text("message"),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.milestoneId, t.staffId] })],
 );

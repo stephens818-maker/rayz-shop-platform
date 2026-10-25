@@ -251,6 +251,18 @@ export const FEATURE_PERMISSIONS = [
   { key: "po.receive", group: "Catalog and inventory", label: "Receive deliveries against purchase orders" },
   { key: "staff.manage", group: "Staff", label: "Add and edit staff profiles" },
   {
+    key: "milestones.view",
+    group: "Staff",
+    label: "See everyone's milestones at their shops",
+    hint: "Trophy cases, what's coming up and the alerts when someone reaches one. Without it, people see only their own, and their teammates' when the brand turns on the team feed.",
+  },
+  {
+    key: "milestones.settings",
+    group: "Staff",
+    label: "Set up staff milestones: the thresholds, custom milestones, alerts, birthdays, the team feed and Squire totals",
+    brandOnly: true,
+  },
+  {
     key: "staff.contact",
     group: "Staff",
     label: "See staff phone numbers and email addresses",
@@ -612,6 +624,12 @@ export const REPORTS = [
     href: "/admin/morning",
     hint: "Yesterday's numbers with week to date and the same day last week, today's schedule and the exceptions to handle, in the app and as the morning email. Each section shows only what the person's other reports allow; export is the PDF.",
   },
+  {
+    key: "milestones",
+    label: "Staff milestones",
+    href: "/admin/reports/milestones",
+    hint: "Milestones reached by location and barber: counts, work anniversaries, personal bests and streaks, with whether each one was announced.",
+  },
   { key: "audit_log", label: "Audit log", href: "/admin/audit" },
 ] as const;
 
@@ -786,6 +804,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "po.receive",
   "staff.manage",
   "staff.contact",
+  "milestones.view",
   "settings.shop",
   "scheduling.timing",
   "calendar.squeeze_in",
