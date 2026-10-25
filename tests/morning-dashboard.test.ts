@@ -100,6 +100,7 @@ function dash(o: Partial<MorningDashboard> = {}): MorningDashboard {
         { category: "payouts", severity: "low", shop: CORAL.name, title: "$812.00 deposit on its way", href: "/admin/payouts" },
       ],
     },
+    milestones: null,
     ...o,
   };
 }
@@ -114,7 +115,7 @@ describe("Morning Dashboard settings", () => {
       coverLastOpenDay: true,
       pdf: false,
       sms: false,
-      sections: { sales: true, traffic: true, utilization: true, loyalty: true, marketing: true, reviews: true, today: true, exceptions: true },
+      sections: { sales: true, traffic: true, utilization: true, loyalty: true, marketing: true, reviews: true, today: true, exceptions: true, milestones: true },
     });
   });
 
@@ -284,6 +285,26 @@ describe("Morning Dashboard renderers", () => {
     );
     const one = renderMorningSms(dash({ version: { scope: CORAL.id, label: "Coralville", shops: [CORAL] }, sales: null, traffic: null, today: null, exceptions: null }));
     expect(one).toBe(`Ray'z Coralville Sat 10/24: nothing to report. https://rayz.test/admin/morning?date=${MONDAY}&shop=${CORAL.id}`);
+  });
+
+  it("adds the team's milestones after today, and the first one to the text", () => {
+    const d = dash({
+      milestones: {
+        achieved: [{ text: "Jamie hit 1,000 cuts", on: MONDAY, shop: CORAL.name }],
+        upcoming: [{ text: "Casey's 5-year work anniversary Friday", on: "2026-10-30" }],
+      },
+    });
+    const doc = morningDoc(d);
+    expect(doc.sections.map((s) => s.key).slice(0, 3)).toEqual(["exceptions", "today", "milestones"]);
+    const m = doc.sections.find((s) => s.key === "milestones")!;
+    expect(m.link?.href).toBe("https://rayz.test/admin/milestones");
+    expect(m.blocks).toEqual([
+      { kind: "list", title: "Reached", items: [{ title: "Jamie hit 1,000 cuts", detail: "Coralville, Mon Oct 26" }] },
+      { kind: "list", title: "Coming up", items: [{ title: "Casey's 5-year work anniversary Friday" }] },
+    ]);
+    expect(renderMorningText(d).body).toContain("STAFF MILESTONES\nWorth a shout-out\n  Reached\n  - Jamie hit 1,000 cuts");
+    expect(renderMorningHtml(d)).toContain("Casey&#39;s 5-year work anniversary Friday");
+    expect(renderMorningSms(d)).toContain("; Jamie hit 1,000 cuts; 2 to handle");
   });
 
   it("renders a PDF", () => {

@@ -179,6 +179,14 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
     sections.push({ key: "today", title: `${SECTION_LABEL.today}: ${L.today}`, link: { label: "Calendar", href: appLink(d, "/admin/calendar") }, blocks });
   }
 
+  if (d.milestones) {
+    const m = d.milestones;
+    const blocks: Block[] = [];
+    if (m.achieved.length) blocks.push({ kind: "list", title: "Reached", items: m.achieved.map((x) => ({ title: x.text, detail: [x.shop, formatDate(x.on, "EEE MMM d")].filter(Boolean).join(", ") })) });
+    if (m.upcoming.length) blocks.push({ kind: "list", title: "Coming up", items: m.upcoming.map((x) => ({ title: x.text })) });
+    sections.push({ key: "milestones", title: SECTION_LABEL.milestones, subtitle: "Worth a shout-out", link: { label: "Milestones", href: appLink(d, "/admin/milestones") }, blocks });
+  }
+
   if (s) {
     const blocks: Block[] = [
       {
@@ -382,6 +390,8 @@ export function renderMorningSms(d: MorningDashboard): string {
     const first = d.today.clients?.[0];
     if (first) parts.push(`${first.label} booked`);
   }
+  const ms = d.milestones?.achieved[0] ?? d.milestones?.upcoming[0];
+  if (ms) parts.push(ms.text);
   const n = handleCount(d);
   if (n) {
     const u = urgentCount(d);

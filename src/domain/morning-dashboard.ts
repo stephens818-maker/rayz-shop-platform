@@ -10,7 +10,7 @@ import { weekStartOf } from "./payroll/overtime";
 
 export const MORNING_ROLE_DEFAULTS = ["brand_owner", "brand_admin", "regional_manager", "shop_manager"];
 
-export const MORNING_SECTIONS = ["sales", "traffic", "utilization", "loyalty", "marketing", "reviews", "today", "exceptions"] as const;
+export const MORNING_SECTIONS = ["sales", "traffic", "utilization", "loyalty", "marketing", "reviews", "today", "exceptions", "milestones"] as const;
 export type MorningSection = (typeof MORNING_SECTIONS)[number];
 
 export const SECTION_LABEL: Record<MorningSection, string> = {
@@ -22,6 +22,7 @@ export const SECTION_LABEL: Record<MorningSection, string> = {
   reviews: "Google review links",
   today: "Today",
   exceptions: "Needs attention",
+  milestones: "Staff milestones",
 };
 
 export const SECTION_HINT: Record<MorningSection, string> = {
@@ -33,6 +34,7 @@ export const SECTION_HINT: Record<MorningSection, string> = {
   reviews: "Review follow-ups sent and clicks on each location's Google review link",
   today: "Each shop's hours, who's working, open time per barber, time off and call-ins",
   exceptions: "Missed punches, overtime risk, low stock and purchase orders, pending tip payouts, approvals and Stripe payouts",
+  milestones: "Cuts, clients, anniversaries, personal bests and streaks your team reached since the day covered, and what's coming up",
 };
 
 /** All locations in one email, one email per shop, or both. */
@@ -330,6 +332,13 @@ export interface ExceptionsBlock {
   items: ExceptionItem[];
 }
 
+export interface MilestonesBlock {
+  /** Reached on the day covered through this morning, newest first: "Jamie hit 1,000 cuts". */
+  achieved: { text: string; on: LocalDate; shop: string | null }[];
+  /** "Casey's 5-year work anniversary Friday". */
+  upcoming: { text: string; on: LocalDate }[];
+}
+
 export interface MorningDashboard {
   firstName: string;
   version: { scope: string; label: string; shops: ShopRef[] };
@@ -344,6 +353,7 @@ export interface MorningDashboard {
   reviews: ReviewsBlock | null;
   today: TodayBlock | null;
   exceptions: ExceptionsBlock | null;
+  milestones: MilestonesBlock | null;
   /** Custom reports this person put in the dashboard (theirs, or ones scheduled to them): totals only, never a client's row. */
   savedReports?: SavedReportLine[] | null;
 }

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, lte, gte, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { brandSettings, callIns, morningDashboardSends, notificationJobs, roles, shopClosures, shopHours, shops, staff, staffAccessShops, staffSchedules, staffShops } from "@/db/schema";
+import { brandSettings, callIns, morningDashboardSends, notificationJobs, roles, shopClosures, shopHours, shops, staff, staffAccessShops, staffMilestones, staffSchedules, staffShops } from "@/db/schema";
 import { todayLine, visibleBadges } from "@/domain/badges";
 import { NO_BARBER } from "@/domain/barbers";
 import type { FieldKey } from "@/domain/client-privacy";
@@ -13,6 +13,7 @@ import {
   ExceptionsBlock,
   LoyaltyBlock,
   MarketingBlock,
+  MilestonesBlock,
   MorningDashboard,
   MorningSection,
   MorningSettings,
@@ -36,6 +37,7 @@ import {
   ratioCmp,
   versionPlans,
 } from "@/domain/morning-dashboard";
+import { recordedSentence, upcomingSentence } from "@/domain/milestones";
 import { renderMorningHtml, renderMorningPdf, renderMorningSms, renderMorningText } from "@/domain/morning-render";
 import { weekStartOf } from "@/domain/payroll/overtime";
 import { type Permission, reportView } from "@/domain/permissions";
@@ -50,6 +52,7 @@ import { levelsFor, makePolicy, rulesFor } from "./client-privacy";
 import { AppError } from "./errors";
 import { attributedSends } from "./marketing/report";
 import { loadMarketingSettings } from "./marketing/settings";
+import { loadMilestoneSettings, teamAt, upcomingFor } from "./milestones/engine";
 import { processDueJobs } from "./notifications/queue";
 import { loadSettings as loadPayrollSettings } from "./payroll/groups";
 import { ZERO_SALES, availableMinutesAt, dailyTotals, giftCardTotalsByShop, kpisAt, loyaltyActivity, refundTotals, salesTotalsAt } from "./reports";
@@ -714,6 +717,41 @@ async function exceptionsBlock(c: Ctx): Promise<ExceptionsBlock | null> {
   return { categories: categories.sort((a, b) => order.indexOf(a) - order.indexOf(b)), items: [...parts.flat(), ...approvals.items] };
 }
 
+/** What the people at their shops reached from the day covered through this morning, and what's coming up. Never their own. */
+async function milestonesBlock(c: Ctx): Promise<MilestonesBlock | null> {
+  const shops = c.allowed("milestones.view");
+  if (!shops.length) return null;
+  const s = await c.memo.get("milestone-settings", loadMilestoneSettings);
+  if (!s.enabled) return null;
+  const ids = idsOf(shops);
+  const team = (await c.memo.get(key("milestone-team", ids), () => teamAt(ids))).filter((p) => p.id !== c.access.staffId);
+  if (!team.length) return null;
+  const staffIds = team.map((p) => p.id);
+  const label = new Map(team.map((p) => [p.id, p.label]));
+  const names = new Map(c.shops.map((x) => [x.id, x.name]));
+  const [reached, upcoming] = await Promise.all([
+    c.memo.get(key("milestones", staffIds, c.p.reportDay, c.p.today), () =>
+      db
+        .select()
+        .from(staffMilestones)
+        .where(
+          and(
+            inArray(staffMilestones.staffId, staffIds),
+            eq(staffMilestones.silent, false),
+            gte(staffMilestones.achievedOn, c.p.reportDay),
+            lte(staffMilestones.achievedOn, c.p.today),
+            s.birthdays ? undefined : sql`${staffMilestones.kind} <> 'birthday'`,
+          ),
+        )
+        .orderBy(sql`${staffMilestones.achievedOn} desc`, asc(staffMilestones.createdAt)),
+    ),
+    c.memo.get(key("milestones-up", staffIds, c.p.today), () => upcomingFor(team, c.now, s.upcomingDays, s)),
+  ]);
+  const achieved = reached.map((m) => ({ text: recordedSentence(label.get(m.staffId)!, m), on: m.achievedOn, shop: m.shopId && shops.length > 1 ? (names.get(m.shopId) ?? null) : null }));
+  const soon = upcoming.slice(0, 10).map((u) => ({ text: upcomingSentence(label.get(u.staffId)!, u, c.p.today), on: u.on }));
+  return achieved.length || soon.length ? { achieved, upcoming: soon } : null;
+}
+
 // ───────────────────────────── Assembly ─────────────────────────────
 
 const LOADERS: { [K in MorningSection]: (c: Ctx) => Promise<MorningDashboard[K]> } = {
@@ -725,6 +763,7 @@ const LOADERS: { [K in MorningSection]: (c: Ctx) => Promise<MorningDashboard[K]>
   reviews: reviewsBlock,
   today: todayBlock,
   exceptions: exceptionsBlock,
+  milestones: milestonesBlock,
 };
 
 export interface BuildInput {
