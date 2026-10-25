@@ -554,6 +554,13 @@
       "when": 1795748400000,
       "tag": "core_0078_memberships",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1795834800000,
+      "tag": "core_0079_membership_permissions",
+      "breakpoints": true
     }
   ]
 }
