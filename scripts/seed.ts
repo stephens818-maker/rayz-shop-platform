@@ -14,6 +14,7 @@ import { offSchedule } from "@/domain/time-clock";
 import { rederive } from "@/server/time-clock";
 import { recordOpeningTips, syncTipLedger } from "@/server/tips/ledger";
 import { computeDailyStats } from "@/server/rollups";
+import { anniversaryDate } from "@/domain/milestones";
 import { DEFAULT_STAFF_TIME_RULES, SERIES_HORIZON_DAYS, seriesOccurrences, timeOffSpan } from "@/domain/staff-time";
 import { LocalDate, addDays, diffDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, REGIONS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
@@ -737,6 +738,7 @@ async function main() {
   await seedServiceTimes({ now, appts, items, staffByKey });
   await seedStaffTime({ now, staffByKey, shopBySlug, scheduleRows, appts });
   await seedTips({ today, staffByKey, shopBySlug });
+  await seedMilestones({ today, now, staffByKey });
   for (const shop of shopRows) for (let d = addDays(today, -HISTORY_DAYS); d < today; d = addDays(d, 1)) await computeDailyStats(shop.id, d);
 
   console.log("Seed complete.");
@@ -750,6 +752,28 @@ async function main() {
   console.log("    manager.moline@rayz.test  Shop Manager, Moline");
   console.log("    kat@rayz.test        Barber at Moline and Silvis, Shop Manager at Rock Island (one shop at a time)");
   console.log(`    <shop>@rayz.test     Shop login (front desk) for one shop: ${SHOPS.map((s) => s.slug).join(", ")}`);
+}
+
+/**
+ * Staff milestones: hire dates for all but the last two (so Setup lists who's missing one), with
+ * Casey's 5-year anniversary five days out and Makenna's first yesterday, and a Squire total for
+ * Jamie from before the imported history so his latest cut is his 1,000th. The worker records them.
+ */
+async function seedMilestones(o: { today: LocalDate; now: Date; staffByKey: Map<string, typeof t.staff.$inferSelect> }) {
+  const { today, now, staffByKey } = o;
+  const keys = STAFF.map((s) => s.key);
+  for (const [i, key] of keys.slice(0, -2).entries()) {
+    const hire =
+      key === "casey" ? addDays(anniversaryDate(today, -5), 5) : key === "makenna" ? addDays(anniversaryDate(today, -1), -1) : addDays(anniversaryDate(today, -(1 + ((i * 7) % 9))), -(10 + ((i * 37) % 300)));
+    await db.update(t.staff).set({ hireDate: hire }).where(eq(t.staff.id, staffByKey.get(key)!.id));
+  }
+  const jamie = staffByKey.get("jamie");
+  if (!jamie) return;
+  const [{ n, first }] = await db
+    .select({ n: sql<number>`count(*)::int`, first: sql<string>`min((${t.appointments.startsAt} at time zone 'America/Chicago')::date)::text` })
+    .from(t.appointments)
+    .where(and(eq(t.appointments.staffId, jamie.id), eq(t.appointments.status, "completed"), sql`${t.appointments.startsAt} <= ${now.toISOString()}`));
+  if (n > 0 && n < 1000 && first) await db.insert(t.staffMilestoneBaselines).values({ staffId: jamie.id, metric: "services", count: 1000 - n, asOf: first, setBy: staffByKey.get("michelle")?.id ?? null });
 }
 
 /**
