@@ -10,6 +10,7 @@ import { type FieldKey, RATINGS_MASKED_HINT, type ShownField, customFieldKey } f
 import { formatAverage, seesAllRatings } from "@/domain/ratings";
 import { CADENCE_GAPS, DUE_LEAD_DAYS, VISIT_STATUS_LABEL, VISIT_STATUS_TONE, type BarberCadence, type Cadence } from "@/domain/visit-cadence";
 import { formatPhone } from "@/lib/phone";
+import { progressLabel } from "@/domain/loyalty";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage, ratingViewer, workingShopId } from "@/server/auth/staff";
@@ -313,8 +314,8 @@ export default async function CustomerPage({
         )}
         <Stat
           label="Loyalty progress"
-          value={`${formatCents(loyalty.progressCents)} / ${formatCents(loyalty.thresholdCents)}`}
-          hint={`${loyalty.household ? `household card (${parentRow ? parentRow.firstName : "parent"}'s) · ` : ""}${formatCents(loyalty.remainingCents)} to next ${formatCents(loyalty.rewardCents)}`}
+          value={progressLabel(loyalty, formatCents)}
+          hint={`${loyalty.household ? `household card (${parentRow ? parentRow.firstName : "parent"}'s) · ` : ""}${loyalty.type === "transaction" ? `${loyalty.remainingCents} visit${loyalty.remainingCents === 1 ? "" : "s"}` : formatCents(loyalty.remainingCents)} to next ${formatCents(loyalty.rewardCents)}`}
         />
         <Stat label="Rewards ready" value={formatCents(loyalty.availableCents)} hint={`${loyalty.rewards.length} reward${loyalty.rewards.length === 1 ? "" : "s"}`} />
         {rating && (

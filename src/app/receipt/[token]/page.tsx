@@ -221,14 +221,13 @@ export default async function ReceiptPage({
                 <div
                   className="h-full rounded-full"
                   style={{
-                    width: `${Math.min(100, Math.round((d.loyalty.progressCents / Math.max(1, d.loyalty.thresholdCents)) * 100))}%`,
+                    width: `${Math.round(d.loyalty.share * 100)}%`,
                     background: accent,
                   }}
                 />
               </div>
               <p className="mt-2 text-zinc-600">
-                {formatCents(d.loyalty.progressCents)} of{" "}
-                {formatCents(d.loyalty.thresholdCents)} toward your next{" "}
+                {d.loyalty.progress} toward your next{" "}
                 {formatCents(d.loyalty.rewardCents)} reward
               </p>
             </div>

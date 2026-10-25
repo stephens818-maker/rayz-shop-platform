@@ -2292,8 +2292,10 @@ export const loyaltyLedger = pgTable(
     id: id(),
     customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
     saleId: uuid("sale_id"),
-    kind: text("kind").notNull(), // earn | reverse | reward_issued | reward_redeemed | import | expire
+    kind: text("kind").notNull(), // earn | reverse | reward_issued | reward_redeemed | import | expire | merge | convert
     progressDeltaCents: integer("progress_delta_cents").notNull().default(0),
+    /** What progressDeltaCents counts: cents (value based) or paid visits (transaction based). */
+    unit: text("unit").notNull().default("cents"),
     rewardCents: integer("reward_cents").notNull().default(0),
     createdAt: createdAt(),
   },

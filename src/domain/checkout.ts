@@ -1,4 +1,5 @@
 import { allocateProportionally, applyRate, formatCents, formatRate } from "@/lib/money";
+import { loyaltyEligibleCents } from "./loyalty";
 
 export type LineKind = "service" | "addon" | "product" | "gift_card";
 export type CardFunding = "credit" | "debit" | "prepaid" | "unknown";
@@ -57,6 +58,13 @@ export interface TenderPlan {
   cardFunding?: CardFunding | null;
 }
 
+/** Loyalty at the ticket's location: whether it runs there, and what counts beyond services. */
+export interface LoyaltyBasis {
+  on: boolean;
+  includeProducts: boolean;
+  includeTips: boolean;
+}
+
 export interface CheckoutInput {
   lines: CartLine[];
   discounts?: Discount[];
@@ -64,6 +72,8 @@ export interface CheckoutInput {
   tipCents?: number;
   cardFee: CardFeeConfig;
   tender: TenderPlan;
+  /** Left out: services only, as before the brand could count products and tips. */
+  loyalty?: LoyaltyBasis;
 }
 
 export interface LineResult extends CartLine {
@@ -96,7 +106,7 @@ export interface CheckoutTotals {
   cardFeeRate: number;
   totalCents: number;
   primaryChargeCents: number;
-  /** Net service dollars after discounts, before tax. Products, tips and gift cards never count. */
+  /** Net service dollars after discounts, before tax, plus products and tips when the brand counts them; 0 where loyalty doesn't run. Gift cards never count. */
   loyaltyEligibleCents: number;
   disclosures: string[];
 }
@@ -266,7 +276,7 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
     cardFeeRate,
     totalCents: preFeeTotalCents + cardFeeCents,
     primaryChargeCents: primaryBaseCents + cardFeeCents,
-    loyaltyEligibleCents: serviceNetCents,
+    loyaltyEligibleCents: !input.loyalty ? serviceNetCents : input.loyalty.on ? loyaltyEligibleCents({ serviceNetCents, productNetCents, tipCents }, input.loyalty) : 0,
     disclosures,
   };
 }

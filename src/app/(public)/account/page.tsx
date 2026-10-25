@@ -16,6 +16,8 @@ interface Me {
 }
 interface Loyalty {
   enabled: boolean;
+  type?: "value" | "transaction";
+  visitsGoal?: number;
   thresholdCents: number;
   rewardCents: number;
   progressCents: number;
@@ -171,7 +173,9 @@ export default function AccountPage() {
     );
   }
 
-  const pct = loyalty ? Math.min(100, Math.round((loyalty.progressCents / loyalty.thresholdCents) * 100)) : 0;
+  const visits = loyalty?.type === "transaction";
+  const goal = loyalty ? (visits ? (loyalty.visitsGoal ?? 1) : loyalty.thresholdCents) : 1;
+  const pct = loyalty ? Math.min(100, Math.round((loyalty.progressCents / Math.max(1, goal)) * 100)) : 0;
   return (
     <div className="mx-auto max-w-2xl space-y-4">
       <div className="flex items-center justify-between">
@@ -190,7 +194,9 @@ export default function AccountPage() {
             <div className="h-full rounded-full bg-brand-500" style={{ width: `${pct}%` }} />
           </div>
           <div className="mt-2 text-sm text-zinc-300">
-            {dollars(loyalty.progressCents)} of {dollars(loyalty.thresholdCents)} · {dollars(loyalty.remainingCents)} to your next {dollars(loyalty.rewardCents)} reward
+            {visits
+              ? `${loyalty.progressCents} of ${goal} visits · ${loyalty.remainingCents} more to your next ${dollars(loyalty.rewardCents)} reward`
+              : `${dollars(loyalty.progressCents)} of ${dollars(loyalty.thresholdCents)} · ${dollars(loyalty.remainingCents)} to your next ${dollars(loyalty.rewardCents)} reward`}
           </div>
           <p className="mt-2 text-xs text-zinc-400">
             {loyalty.rules.earn} {loyalty.rules.expiry}

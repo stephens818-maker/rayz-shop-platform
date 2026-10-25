@@ -111,7 +111,7 @@ export default async function CheckoutPage({
         .filter((x): x is string => !!x && x !== c.customer?.id),
     ),
   ];
-  const otherBalances = loyalty?.enabled
+  const otherBalances = loyalty?.enabled && c.config.loyalty.on
     ? await Promise.all(
         others.map(async (id) => ({ id, b: await loyaltyBalance(id) })),
       )
@@ -286,11 +286,14 @@ export default async function CheckoutPage({
         retail={c.retail}
         negativeStock={c.negativeStock}
         loyalty={
-          loyalty && loyalty.enabled
+          loyalty && loyalty.enabled && c.config.loyalty.on
             ? {
                 rewards: [...loyalty.rewards, ...otherRewards],
+                type: loyaltyCfg.type,
                 progressCents: loyalty.progressCents,
                 thresholdCents: loyalty.thresholdCents,
+                visitsGoal: loyaltyCfg.visitsGoal,
+                minVisitCents: loyaltyCfg.minVisitCents,
                 redeemableOn: loyaltyCfg.redeemableOn,
               }
             : null

@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { receiptBranding } from "@/domain/connect";
 import { appointments, customers, payments, refunds, saleItems, sales, shops, staff, staffShops } from "@/db/schema";
 import { Badge, Card, LinkButton, Notice, StarBadge } from "@/components/ui";
+import { progressLabel } from "@/domain/loyalty";
 import { formatCents, formatRate } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
 import { feeLabel } from "@/domain/checkout";
@@ -273,7 +274,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           )}
           {loyalty && loyalty.enabled && (
             <div className="mt-3 text-center text-xs text-zinc-500">
-              Loyalty: {formatCents(loyalty.progressCents)} of {formatCents(loyalty.thresholdCents)} toward your next {formatCents(loyalty.rewardCents)} reward
+              Loyalty: {progressLabel(loyalty, formatCents)} toward your next {formatCents(loyalty.rewardCents)} reward
               {loyalty.availableCents > 0 && ` · ${formatCents(loyalty.availableCents)} in rewards ready`}
             </div>
           )}

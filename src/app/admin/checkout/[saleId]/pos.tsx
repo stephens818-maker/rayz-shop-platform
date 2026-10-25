@@ -37,6 +37,7 @@ import { FamilyPickList } from "@/components/client-hit";
 import type { ClientHit } from "@/domain/client-search";
 import {
   CardFeeConfig,
+  LoyaltyBasis,
   CardFunding,
   Discount,
   LineKind,
@@ -182,7 +183,7 @@ export function Pos(props: {
     times: TimesView | null;
   } | null;
   shop: { id: string; name: string; taxVerified: boolean };
-  config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[] };
+  config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[]; loyalty?: LoyaltyBasis };
   feeNotice: string | null;
   initialLines: Omit<Line, "key">[];
   customer: PosCustomer | null;
@@ -211,8 +212,11 @@ export function Pos(props: {
       expiresAt: string | null;
       owner?: string;
     }[];
+    type: "value" | "transaction";
     progressCents: number;
     thresholdCents: number;
+    visitsGoal: number;
+    minVisitCents: number;
     redeemableOn: "services" | "all";
   } | null;
   payments: {
@@ -453,6 +457,7 @@ export function Pos(props: {
       taxRates: props.config.taxRates,
       tipCents,
       cardFee: props.config.cardFee,
+      loyalty: props.config.loyalty,
       tender: {
         method,
         cardFunding: funding,
@@ -1519,8 +1524,10 @@ export function Pos(props: {
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium">Loyalty</span>
                     <span className="text-xs text-zinc-500 tabular">
-                      {$short(props.loyalty.progressCents)} /{" "}
-                      {$short(props.loyalty.thresholdCents)} toward next reward
+                      {props.loyalty.type === "transaction"
+                        ? `${props.loyalty.progressCents} / ${props.loyalty.visitsGoal} visits`
+                        : `${$short(props.loyalty.progressCents)} / ${$short(props.loyalty.thresholdCents)}`}{" "}
+                      toward next reward
                     </span>
                   </div>
                   {props.loyalty.rewards.length > 0 ? (
@@ -2334,9 +2341,21 @@ export function Pos(props: {
                   {$(totals.primaryChargeCents)}
                 </dd>
               </div>
-              {totals.loyaltyEligibleCents > 0 && props.customer && (
+              {totals.loyaltyEligibleCents > 0 && props.customer && props.loyalty?.type !== "transaction" && (
                 <div className="pt-1 text-xs text-zinc-500">
                   Earns {$(totals.loyaltyEligibleCents)} toward loyalty.
+                </div>
+              )}
+              {props.customer && props.loyalty?.type === "transaction" && totals.loyaltyEligibleCents > 0 && (
+                <div className="pt-1 text-xs text-zinc-500">
+                  {totals.loyaltyEligibleCents >= props.loyalty.minVisitCents
+                    ? "Counts as a loyalty visit."
+                    : `Spend ${$(props.loyalty.minVisitCents - totals.loyaltyEligibleCents)} more for this to count as a loyalty visit.`}
+                </div>
+              )}
+              {props.customer && props.config.loyalty && !props.config.loyalty.on && (
+                <div className="pt-1 text-xs text-zinc-500">
+                  Loyalty doesn&apos;t run at this location.
                 </div>
               )}
             </dl>

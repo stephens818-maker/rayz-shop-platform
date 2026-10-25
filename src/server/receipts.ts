@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { db, DBorTx, Tx } from "@/db";
+import { progressLabel, progressShare } from "@/domain/loyalty";
 import { appointments, contactOptOuts, customers, notificationJobs, payments, receiptDeliveries, receiptOptOuts, refunds, saleItems, sales, shops, staff } from "@/db/schema";
 import { feeLabel } from "@/domain/checkout";
 import { groupByPerson } from "@/domain/combined-checkout";
@@ -131,9 +132,11 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
         ? {
             progressCents: loyalty.progressCents,
             thresholdCents: loyalty.thresholdCents,
+            share: progressShare(loyalty),
+            progress: progressLabel(loyalty, formatCents),
             rewardCents: loyalty.rewardCents,
             availableCents: loyalty.availableCents,
-            text: `Loyalty: ${formatCents(loyalty.progressCents)} of ${formatCents(loyalty.thresholdCents)} toward your next ${formatCents(loyalty.rewardCents)} reward${loyalty.availableCents > 0 ? `, and ${formatCents(loyalty.availableCents)} in rewards ready to use` : ""}.`,
+            text: `Loyalty: ${progressLabel(loyalty, formatCents)} toward your next ${formatCents(loyalty.rewardCents)} reward${loyalty.availableCents > 0 ? `, and ${formatCents(loyalty.availableCents)} in rewards ready to use` : ""}.`,
           }
         : null,
     rebookUrl: rebook,

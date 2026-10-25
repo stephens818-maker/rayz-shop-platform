@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
@@ -15,7 +15,8 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { assertShopAccess, authorize, can } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
-import { saveLoyaltyConfig } from "@/server/loyalty";
+import { LOYALTY_TYPES } from "@/domain/loyalty";
+import { getLoyaltyConfig, saveLoyaltyConfig } from "@/server/loyalty";
 import { ShopHandoffSchema, TipScreenSchema } from "@/domain/handoff";
 import { saveBrandHandoff, saveShopHandoff } from "@/server/handoff";
 import { saveReviewRules } from "@/server/review-rules";
@@ -165,8 +166,14 @@ export async function removeClosureAction(shopId: string, date: string) {
 
 const Loyalty = z.object({
   enabled: z.boolean(),
-  thresholdCents: z.number().int().min(100),
-  rewardCents: z.number().int().min(100),
+  type: z.enum(LOYALTY_TYPES),
+  thresholdCents: z.number().int().min(100, "Set the goal to at least $1"),
+  visitsGoal: z.number().int().min(1, "At least 1 visit").max(100, "At most 100 visits"),
+  minVisitCents: z.number().int().min(0).max(100_000),
+  rewardCents: z.number().int().min(100, "Make the reward at least $1"),
+  includeProducts: z.boolean(),
+  includeTips: z.boolean(),
+  shopIds: z.array(z.uuid()).max(500).nullable(),
   rewardExpiryDays: z.number().int().min(1).nullable(),
   progressExpiryDays: z.number().int().min(1).nullable(),
   redeemableOn: z.enum(["services", "all"]),
@@ -177,8 +184,16 @@ export async function saveLoyaltyAction(raw: z.input<typeof Loyalty>) {
   return safe(async () => {
     const ctx = await authorize("settings.brand", "Only the Brand Owner can change the loyalty program");
     const v = Loyalty.parse(raw);
-    await saveLoyaltyConfig(v);
-    await audit(ctx.actor, "loyalty.config", "brand", "1", v, null);
+    if (v.shopIds) {
+      const known = await db.select({ id: shops.id }).from(shops).where(inArray(shops.id, v.shopIds.length ? v.shopIds : [crypto.randomUUID()]));
+      if (known.length !== new Set(v.shopIds).size) throw new AppError("bad_request", "Pick locations from the list");
+      v.shopIds = [...new Set(v.shopIds)];
+    }
+    await db.transaction(async (tx) => {
+      const before = await getLoyaltyConfig(tx);
+      const { converted } = await saveLoyaltyConfig(v, tx);
+      await audit(ctx.actor, "loyalty.config", "brand", "1", { before, after: v, ...(converted ? { progressConverted: converted } : {}) }, null, tx);
+    });
     revalidatePath("/admin/settings");
     return null;
   });

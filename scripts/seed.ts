@@ -93,6 +93,8 @@ async function main() {
     )
     .returning();
   const shopBySlug = new Map(shopRows.map((s) => [s.slug, s]));
+  // As in Squire: Dubuque isn't assigned to the loyalty program.
+  await db.update(t.brandSettings).set({ loyalty: { ...DEFAULT_LOYALTY, shopIds: shopRows.filter((s) => s.slug !== "dubuque").map((s) => s.id) } });
   await db.insert(t.shopHours).values(
     SHOPS.flatMap((s) =>
       Object.entries(s.hours).map(([wd, [o, c]]) => ({ shopId: shopBySlug.get(s.slug)!.id, weekday: Number(wd), openMin: o * 60, closeMin: c * 60 })),
@@ -447,6 +449,7 @@ async function main() {
             tipCents: tip,
             cardFee: { enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate), appliesToTip: false },
             tender: { method: card ? "card" : "cash", cardFunding: funding },
+            loyalty: { on: shop.slug !== "dubuque", includeProducts: false, includeTips: false },
           });
           const saleId = uuid();
           const businessDate = localDateOf(end);

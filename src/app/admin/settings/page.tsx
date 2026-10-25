@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { and, asc, eq, gte } from "drizzle-orm";
+import { and, asc, eq, gte, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shopClosures, shopHours, shops, terminalReaders } from "@/db/schema";
 import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader } from "@/components/ui";
@@ -167,7 +167,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       )}
       {can(ctx, "handoff.settings") && <BrandTipsEditor initial={brandHandoff.tips} />}
       {brand && <ReviewRulesEditor initial={reviewRules} />}
-      {brand && <LoyaltyEditor initial={loyalty} />}
+      {brand && <LoyaltyEditor initial={loyalty} shops={await db.select({ id: shops.id, name: shops.name, status: shops.status }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name))} />}
       {brand && <FamilyEditor initial={family} />}
       {can(ctx, "locations.setup") && (
         <Card>

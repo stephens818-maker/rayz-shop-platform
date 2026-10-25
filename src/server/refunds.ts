@@ -16,6 +16,8 @@ import {
   componentsTotal,
   lineRefunds,
 } from "@/domain/refunds";
+import type { LoyaltyBasis } from "@/domain/checkout";
+import { loyaltyEligibleCents } from "@/domain/loyalty";
 import { formatCents } from "@/lib/money";
 import { localDateOf } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "./audit";
@@ -318,8 +320,10 @@ async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "r
   const [{ refunded }] = await tx.select({ refunded: sql<number>`coalesce(sum(${refunds.amountCents}),0)::int` }).from(refunds).where(eq(refunds.saleId, sale.id));
   const full = kind === "void" || refunded >= sale.totalCents;
   let loyalty = null;
-  if (sale.customerId && sale.loyaltyEarnedCents > 0 && components.serviceNetCents > 0) {
-    loyalty = await reverseSaleLoyalty(tx, sale.id, sale.customerId, Math.min(components.serviceNetCents, sale.loyaltyEarnedCents), now);
+  const counted = (sale.pricing as { loyalty?: Partial<LoyaltyBasis> } | null)?.loyalty;
+  const back = loyaltyEligibleCents(components, { includeProducts: !!counted?.includeProducts, includeTips: !!counted?.includeTips });
+  if (sale.customerId && sale.loyaltyEarnedCents > 0 && (back > 0 || full)) {
+    loyalty = await reverseSaleLoyalty(tx, sale.id, sale.customerId, Math.min(back, sale.loyaltyEarnedCents), now, { full });
   }
   if (full) {
     // The client didn't get the reward's value as cash, so a full reversal gives the reward back.

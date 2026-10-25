@@ -26,6 +26,7 @@ import { TipSplitMode, splitBarbers, tipWeights } from "@/domain/handoff";
 import { operational } from "@/domain/location-lifecycle";
 import {
   CardFeeConfig,
+  LoyaltyBasis,
   CardFunding,
   CartLine,
   Discount,
@@ -44,6 +45,7 @@ import {
   splitTenderProblem,
 } from "@/domain/combined-checkout";
 import { CouponRule, couponDiscount, stackProblem } from "@/domain/coupons";
+import { DEFAULT_LOYALTY, LoyaltyConfig, loyaltyAtShop } from "@/domain/loyalty";
 import { giftCardCode } from "@/lib/ids";
 import { formatCents } from "@/lib/money";
 import { localDateOf, toZoned, todayLocal } from "@/lib/time";
@@ -87,12 +89,21 @@ export {
   voidSale,
 } from "./refunds";
 
-export function pricingConfig(shop: Shop): {
+export function pricingConfig(
+  shop: Shop,
+  loyalty: LoyaltyConfig = DEFAULT_LOYALTY,
+): {
   taxRates: TaxRates;
   cardFee: CardFeeConfig;
   tipPresets: number[];
+  loyalty: LoyaltyBasis;
 } {
   return {
+    loyalty: {
+      on: loyaltyAtShop(loyalty, shop.id),
+      includeProducts: loyalty.includeProducts,
+      includeTips: loyalty.includeTips,
+    },
     taxRates: {
       serviceRate: Number(shop.serviceTaxRate),
       productRate: Number(shop.productTaxRate),
@@ -259,7 +270,7 @@ export async function loadCheckoutContext(saleId: string) {
     barber,
     family,
     groupDeposit,
-    config: pricingConfig(shop),
+    config: pricingConfig(shop, await getLoyaltyConfig()),
     negativeStock: shop.negativeStock,
   };
 }
@@ -451,6 +462,11 @@ async function buildDiscounts(
         "Attach a client to use a loyalty reward",
       );
     const cfg = await getLoyaltyConfig();
+    if (!loyaltyAtShop(cfg, sale.shopId))
+      throw new AppError(
+        "bad_request",
+        "Loyalty rewards aren't used at this location",
+      );
     if (coupons.length && !cfg.stackWithPromos)
       throw new AppError(
         "bad_request",
@@ -673,6 +689,7 @@ export async function priceCart(
     taxRates: ctx.config.taxRates,
     tipCents: input.tipCents,
     cardFee: ctx.config.cardFee,
+    loyalty: ctx.config.loyalty,
     tender: {
       method: input.tender.method,
       cardFunding: funding,

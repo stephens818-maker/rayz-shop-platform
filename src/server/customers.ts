@@ -18,7 +18,7 @@ import {
 } from "@/db/schema";
 import { MatchVia, pickMatch } from "@/domain/customers";
 import { DuplicateKind, DuplicateScore, planMerges, scoreDuplicate } from "@/domain/duplicates";
-import { rewardExpiry } from "@/domain/loyalty";
+import { goalOf, rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { Actor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
@@ -176,8 +176,9 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
       const cfg = await getLoyaltyConfig(tx);
       const acct = await lockAccount(tx, keepId);
       const combined = acct.progressCents + dropAcct.progressCents;
-      rewardsIssued = cfg.thresholdCents > 0 ? Math.floor(combined / cfg.thresholdCents) : 0;
-      const progress = combined - rewardsIssued * cfg.thresholdCents;
+      const goal = goalOf(cfg);
+      rewardsIssued = goal > 0 ? Math.floor(combined / goal) : 0;
+      const progress = combined - rewardsIssued * goal;
       const lastEarnAt = [acct.lastEarnAt, dropAcct.lastEarnAt].filter(Boolean).sort((a, b) => b!.getTime() - a!.getTime())[0] ?? null;
       await tx
         .update(loyaltyAccounts)

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { ReceiptBranding } from "@/domain/connect";
-import type { LoyaltyConfig } from "@/domain/loyalty";
+import { LOYALTY_TYPES, LOYALTY_TYPE_LABEL, type LoyaltyConfig } from "@/domain/loyalty";
 import type { ShopSettingPart } from "@/domain/permissions";
 import { ordinal, type ReviewRules } from "@/domain/reviews";
 import { SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
@@ -244,41 +244,118 @@ export function ClosuresEditor({ shopId, closures, multiShop }: { shopId: string
   );
 }
 
-export function LoyaltyEditor({ initial }: { initial: LoyaltyConfig }) {
+export function LoyaltyEditor({ initial, shops }: { initial: LoyaltyConfig; shops: { id: string; name: string; status: string }[] }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState(initial);
   const [th, setTh] = useState(String(initial.thresholdCents / 100));
   const [rw, setRw] = useState(String(initial.rewardCents / 100));
+  const [min, setMin] = useState(initial.minVisitCents ? String(initial.minVisitCents / 100) : "");
+  const all = v.shopIds === null;
+  const assigned = (id: string) => all || v.shopIds!.includes(id);
+  const toggleShop = (id: string) => {
+    const now = all ? shops.map((s) => s.id) : v.shopIds!;
+    setV({ ...v, shopIds: now.includes(id) ? now.filter((x) => x !== id) : [...now, id] });
+  };
+  const typeChanged = v.type !== initial.type;
+  const counts = ["Services", ...(v.includeProducts ? ["products"] : []), ...(v.includeTips ? ["tips"] : [])].join(", ");
   return (
-    <Card>
-      <CardHeader title="Loyalty (brand-wide)" subtitle="Value based: net service spend after discounts, before tax. Products, tips and gift cards never earn." />
-      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={v.enabled} onChange={(e) => setV({ ...v, enabled: e.target.checked })} /> Loyalty on
+    <Card data-testid="loyalty-editor">
+      <CardHeader title="Loyalty program (brand-wide)" subtitle={`${counts} count, net of discounts and before tax. Gift cards never earn. Clients earn and spend rewards only at the assigned locations.`} />
+      <div className="space-y-4 p-4">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input type="checkbox" checked={v.enabled} onChange={(e) => setV({ ...v, enabled: e.target.checked })} data-testid="loyalty-enabled" /> Enabled
         </label>
-        <Field label="Every $ of service">
-          <Input inputMode="decimal" value={th} onChange={(e) => setTh(e.target.value)} />
-        </Field>
-        <Field label="Earns $ reward">
-          <Input inputMode="decimal" value={rw} onChange={(e) => setRw(e.target.value)} />
-        </Field>
-        <Field label="Rewards expire after (days)" hint="Blank = never">
-          <Input inputMode="numeric" value={v.rewardExpiryDays ?? ""} onChange={(e) => setV({ ...v, rewardExpiryDays: e.target.value ? Number(e.target.value) : null })} />
-        </Field>
-        <Field label="Progress resets after no visit for (days)" hint="Blank = never">
-          <Input inputMode="numeric" value={v.progressExpiryDays ?? ""} onChange={(e) => setV({ ...v, progressExpiryDays: e.target.value ? Number(e.target.value) : null })} />
-        </Field>
-        <Field label="Rewards can pay for">
-          <Select value={v.redeemableOn} onChange={(e) => setV({ ...v, redeemableOn: e.target.value as LoyaltyConfig["redeemableOn"] })}>
-            <option value="services">Services only</option>
-            <option value="all">Services and products</option>
-          </Select>
-        </Field>
-        <label className="flex items-center gap-2 self-end pb-2 text-sm">
-          <input type="checkbox" checked={v.stackWithPromos} onChange={(e) => setV({ ...v, stackWithPromos: e.target.checked })} /> Combine with promo codes
-        </label>
+        <div role="radiogroup" aria-label="Program type" className="grid gap-2 sm:grid-cols-2">
+          {LOYALTY_TYPES.map((t) => (
+            <label key={t} className={`flex cursor-pointer items-start gap-2 rounded-lg p-3 text-sm ring-1 ring-inset ${v.type === t ? "bg-brand-50 ring-2 ring-brand-600" : "ring-zinc-200"}`}>
+              <input type="radio" name="loyalty-type" className="mt-1" checked={v.type === t} onChange={() => setV({ ...v, type: t })} data-testid={`loyalty-type-${t}`} />
+              <span>
+                <span className="font-medium">{LOYALTY_TYPE_LABEL[t]}</span>
+                <span className="block text-xs text-zinc-500">{t === "value" ? "Every $ spent earns toward the reward, e.g. $15 for every $300." : "Every paid visit counts once, e.g. $15 after 10 visits."}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {typeChanged && (
+          <Notice tone="amber">
+            Switching to {LOYALTY_TYPE_LABEL[v.type].toLowerCase()} carries every client&apos;s progress over as the same share of the way to a reward (rounded down), when you save. Rewards already earned stay.
+          </Notice>
+        )}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {v.type === "value" ? (
+            <Field label="Goal: every $ spent">
+              <Input inputMode="decimal" value={th} onChange={(e) => setTh(e.target.value)} data-testid="loyalty-threshold" />
+            </Field>
+          ) : (
+            <>
+              <Field label="Goal: paid visits">
+                <Input inputMode="numeric" value={v.visitsGoal} onChange={(e) => setV({ ...v, visitsGoal: Number(e.target.value) || 0 })} data-testid="loyalty-visits" />
+              </Field>
+              <Field label="A visit counts from $" hint="Blank = any paid visit">
+                <Input inputMode="decimal" value={min} onChange={(e) => setMin(e.target.value)} />
+              </Field>
+            </>
+          )}
+          <Field label="Earns $ reward">
+            <Input inputMode="decimal" value={rw} onChange={(e) => setRw(e.target.value)} data-testid="loyalty-reward" />
+          </Field>
+          <Field label="Rewards expire after (days)" hint="Blank = never">
+            <Input inputMode="numeric" value={v.rewardExpiryDays ?? ""} onChange={(e) => setV({ ...v, rewardExpiryDays: e.target.value ? Number(e.target.value) : null })} />
+          </Field>
+          <Field label="Progress resets after no visit for (days)" hint="Blank = never">
+            <Input inputMode="numeric" value={v.progressExpiryDays ?? ""} onChange={(e) => setV({ ...v, progressExpiryDays: e.target.value ? Number(e.target.value) : null })} />
+          </Field>
+          <Field label="Rewards can pay for">
+            <Select value={v.redeemableOn} onChange={(e) => setV({ ...v, redeemableOn: e.target.value as LoyaltyConfig["redeemableOn"] })}>
+              <option value="services">Services only</option>
+              <option value="all">Services and products</option>
+            </Select>
+          </Field>
+        </div>
+        <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={v.includeProducts} onChange={(e) => setV({ ...v, includeProducts: e.target.checked })} data-testid="loyalty-products" /> Include product sales
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={v.includeTips} onChange={(e) => setV({ ...v, includeTips: e.target.checked })} data-testid="loyalty-tips" /> Include tips
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={v.stackWithPromos} onChange={(e) => setV({ ...v, stackWithPromos: e.target.checked })} /> Combine with promo codes
+          </label>
+        </div>
+        <fieldset>
+          <legend className="text-sm font-medium">Assigned shops</legend>
+          <p className="text-xs text-zinc-500">Tickets at other locations don&apos;t earn, and rewards can&apos;t be used there. {all ? "Every location, including ones you open later." : `${v.shopIds!.length} of ${shops.length}.`}</p>
+          <div className="mt-2 grid gap-1 sm:grid-cols-3" data-testid="loyalty-shops">
+            {shops.map((s) => (
+              <label key={s.id} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={assigned(s.id)} onChange={() => toggleShop(s.id)} />
+                {s.name}
+                {s.status !== "live" && <span className="text-xs text-zinc-400">({s.status})</span>}
+              </label>
+            ))}
+          </div>
+          {!all && (
+            <button type="button" className="mt-1 text-xs underline" onClick={() => setV({ ...v, shopIds: null })}>
+              Every location, including new ones
+            </button>
+          )}
+        </fieldset>
       </div>
-      <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveLoyaltyAction({ ...v, thresholdCents: Math.round(Number(th) * 100), rewardCents: Math.round(Number(rw) * 100) }))} />
+      <SaveBar
+        pending={pending}
+        msg={msg}
+        onClick={() =>
+          save(() =>
+            saveLoyaltyAction({
+              ...v,
+              thresholdCents: Math.round(Number(th) * 100),
+              rewardCents: Math.round(Number(rw) * 100),
+              minVisitCents: min.trim() ? Math.round(Number(min) * 100) : 0,
+            }),
+          )
+        }
+      />
     </Card>
   );
 }
