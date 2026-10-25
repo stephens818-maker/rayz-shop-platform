@@ -81,7 +81,7 @@ export function ChannelPreview({
             </div>
             <div className="font-semibold text-zinc-900">{r.email.subject || "(no subject)"}</div>
           </div>
-          <iframe title={`Email preview, ${scheme} mode, ${width}`} sandbox="" className="block h-[520px] w-full" srcDoc={marketingEmailHtml({ ...r.email, color, scheme })} />
+          <iframe title={`Email preview, ${scheme} mode, ${width}`} sandbox="" className="block h-[680px] w-full" srcDoc={marketingEmailHtml({ ...r.email, color, scheme })} />
         </div>
       )}
       {ch === "sms" && (

@@ -843,7 +843,7 @@ function MessageRow({ channel, templates, sample, address, go, ro }: { channel: 
             <span className="block text-xs text-zinc-500">
               {[r.email.image && "Image", r.email.headline && `Headline “${r.email.headline}”`, r.email.cta && `Button “${r.email.cta.label}”`].filter(Boolean).join(" · ") || "Text only"}
             </span>
-            <span className="line-clamp-2 block whitespace-pre-wrap text-xs">{r.email.body.split("\n\n--\n")[0]}</span>
+            <span className="line-clamp-2 whitespace-pre-line text-xs">{r.email.body.split("\n\n--\n")[0]}</span>
           </span>
         )}
         {channel === "push" && (
