@@ -28,15 +28,15 @@ const due = (x: WaterfallInput) => net(x) + x.taxCents + x.tipsCents + x.cardFee
 
 export const WATERFALL: WaterfallStep[] = [
   { label: "Gross sales", value: (x) => x.grossSalesCents },
-  { label: "− Refunds", value: (x) => -x.refundCents },
-  { label: "− Discounts", value: (x) => -x.discountCents },
+  { label: "− Refunds", value: (x) => 0 - x.refundCents },
+  { label: "− Discounts", value: (x) => 0 - x.discountCents },
   { label: "= Net sales", style: "subtotal", value: net },
   { label: "+ Taxes", value: (x) => x.taxCents },
   { label: "+ Tips", value: (x) => x.tipsCents },
   { label: "+ Card fees paid by clients", value: (x) => x.cardFeeCents },
   { label: "+ Gift cards sold", value: (x) => x.giftCardsSoldCents },
   { label: "= Total paid", style: "subtotal", value: due },
-  { label: "− Paid from gift card balances", value: (x) => -x.giftCardCents },
+  { label: "− Paid from gift card balances", value: (x) => 0 - x.giftCardCents },
   { label: "= Collected", style: "total", value: (x) => due(x) - x.giftCardCents },
   { label: "Card", value: (x) => x.cardCents },
   { label: "Cash", value: (x) => x.cashCents },
