@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { ConflictConfirm } from "@/components/conflict-confirm";
+import { TimeInput } from "@/components/time-input";
 import { type PickReason, ReasonPicker, ReasonTag } from "@/components/reason-picker";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, cx } from "@/components/ui";
 import type { ShownReason } from "@/domain/block-reasons";
@@ -10,7 +11,6 @@ import type { BookedConflict } from "@/server/staff-time";
 import { addTimeOffAction, deleteTimeOffAction, offboardStaffAction, saveProfileAction, saveScheduleAction } from "../actions";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const mins = (s: string) => {
   const [h, m] = s.split(":").map(Number);
   return h * 60 + (m || 0);
@@ -273,8 +273,8 @@ export function ScheduleEditor({
                       </label>
                       {r && (
                         <div className="mt-1 space-y-1">
-                          <input type="time" step={900} disabled={!s.editable} className="w-[92px] rounded px-1 py-0.5 text-xs ring-1 ring-zinc-300" value={hhmm(r.startMin)} onChange={(e) => update(r, { startMin: mins(e.target.value) })} />
-                          <input type="time" step={900} disabled={!s.editable} className="w-[92px] rounded px-1 py-0.5 text-xs ring-1 ring-zinc-300" value={hhmm(r.endMin)} onChange={(e) => update(r, { endMin: mins(e.target.value) })} />
+                          <TimeInput aria-label={`${s.name} ${DAYS[d]} start`} disabled={!s.editable} value={r.startMin} onChange={(m) => update(r, { startMin: m })} />
+                          <TimeInput aria-label={`${s.name} ${DAYS[d]} end`} disabled={!s.editable} value={r.endMin} onChange={(m) => update(r, { endMin: m })} />
                         </div>
                       )}
                       {h && <div className="mt-1 text-[10px] text-zinc-400">shop {label(h.openMin)}–{label(h.closeMin)}</div>}
