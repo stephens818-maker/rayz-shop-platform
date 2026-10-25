@@ -237,8 +237,12 @@ async function buildDiscounts(
   const codes = [...new Set([input.promoCode, ...(input.promoCodes ?? [])].filter((c): c is string => !!c?.trim()).map((c) => c.trim().toUpperCase()))];
   const held = new Set(codes.length && ticket.appointmentIds.length ? (await heldCoupons(ticket.appointmentIds)).values() : []);
   const coupons: CouponRule[] = [];
+  const now = input.now ?? new Date();
+  // A code held from online booking was checked against the appointment's time; checking out late doesn't lose it.
+  const [first] = held.size ? await db.select({ at: appointments.startsAt }).from(appointments).where(inArray(appointments.id, ticket.appointmentIds)).orderBy(appointments.startsAt).limit(1) : [];
   for (const code of codes) {
-    const rule = await resolveCoupon(code, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId, today: todayLocal(input.now ?? new Date()) });
+    const at = held.has(code) && first ? first.at : now;
+    const rule = await resolveCoupon(code, { shopId: sale.shopId, customerId: sale.customerId, saleId: sale.id, appointmentId: sale.appointmentId, today: todayLocal(now), at });
     const promo = await db.query.promoCodes.findFirst({ where: eq(promoCodes.id, rule.promoId), columns: { autoApply: true } });
     coupons.push({ ...rule, via: held.has(code) ? "booking" : promo?.autoApply ? "auto" : "code" });
   }
