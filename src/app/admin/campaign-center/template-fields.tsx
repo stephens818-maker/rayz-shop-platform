@@ -1,7 +1,7 @@
 "use client";
 
 import { Field, Input, Textarea, cx } from "@/components/ui";
-import { CHANNELS, CHANNEL_LABEL, Channel, MARKETING_FIELDS, MARKETING_SMS_MAX, SAMPLE_VALUES, Templates, fill, render } from "@/domain/marketing";
+import { CHANNELS, CHANNEL_LABEL, Channel, MARKETING_FIELDS, MARKETING_SMS_MAX, SAMPLE_VALUES, Templates, fill, render, type MarketingValues } from "@/domain/marketing";
 
 /** Channels in the order they're tried: each client gets one message, on the first they agreed to. */
 export function ChannelOrder({ value, onChange, disabled }: { value: Channel[]; onChange: (v: Channel[]) => void; disabled?: boolean }) {
@@ -65,6 +65,7 @@ export function TemplateFields({
   disabled,
   address,
   extraFields,
+  sample,
 }: {
   value: Templates;
   onChange: (t: Templates) => void;
@@ -72,9 +73,11 @@ export function TemplateFields({
   disabled?: boolean;
   address: string;
   extraFields?: Record<string, string>;
+  /** Real values for the preview, such as the chosen coupon's code. */
+  sample?: Partial<MarketingValues>;
 }) {
   const set = (k: keyof Templates, v: string) => onChange({ ...value, [k]: v });
-  const preview = render(value, SAMPLE_VALUES, { brand: "Ray'z Barber Shop", address: address || "(the brand's postal address)", unsubscribeUrl: "https://rayz.example/m/…/unsubscribe" });
+  const preview = render(value, { ...SAMPLE_VALUES, ...sample }, { brand: "Ray'z Barber Shop", address: address || "(the brand's postal address)", unsubscribeUrl: "https://rayz.example/m/…/unsubscribe" });
   const smsLen = fill(value.sms, SAMPLE_VALUES).length;
   return (
     <div className="space-y-4">

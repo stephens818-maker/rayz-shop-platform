@@ -52,6 +52,7 @@ export interface WizardCoupon {
   maxPerCustomer: number | null;
   redemptions: number;
   revenueCents: number;
+  preview: { code: string; expiry: string };
 }
 export interface WizardTemplate {
   id: string;
@@ -140,6 +141,7 @@ export function BlastWizard(p: {
   const repeating = freq !== "once";
   const coupon = p.coupons.find((c) => c.id === promoId) ?? null;
   const bTemplates = variantTemplates(templates, ab.b);
+  const sample = coupon && campaignType === "promotion" ? { coupon_code: coupon.preview.code, expiry: coupon.preview.expiry } : undefined;
   const canCount = p.mayWrite || p.maySend;
 
   useEffect(() => {
@@ -495,7 +497,7 @@ export function BlastWizard(p: {
               title="Message"
               action={
                 p.library.length > 0 && (
-                  <Select className="w-56" aria-label="Start from a brand template" disabled={ro} value={templateId ?? ""} onChange={(e) => applyTemplate(p.library.find((t) => t.id === e.target.value) ?? null)}>
+                  <Select className="w-64" aria-label="Start from a brand template" disabled={ro} value={templateId ?? ""} onChange={(e) => applyTemplate(p.library.find((t) => t.id === e.target.value) ?? null)}>
                     <option value="">Start from a brand template…</option>
                     {p.library
                       .filter((t) => campaignType === "promotion" || t.campaignType === "update")
@@ -526,15 +528,16 @@ export function BlastWizard(p: {
                   channels={channels}
                   disabled={ro}
                   address={p.settings.address}
+                  sample={sample}
                   onChange={(t) => setAb({ ...ab, b: Object.fromEntries((Object.keys(t) as (keyof Templates)[]).filter((k) => t[k] !== templates[k]).map((k) => [k, t[k]])) })}
                 />
               ) : (
-                <TemplateFields value={templates} channels={channels} disabled={ro} address={p.settings.address} onChange={setTemplates} />
+                <TemplateFields value={templates} channels={channels} disabled={ro} address={p.settings.address} sample={sample} onChange={setTemplates} />
               )}
               {coupon && !coupon.usable && <Notice tone="red">{coupon.code} can&apos;t be sent: it&apos;s {coupon.expired ? `expired (ended ${coupon.endsOn})` : coupon.maxedOut ? "used up" : "switched off"}.</Notice>}
             </div>
           </Card>
-          <ChannelPreview templates={variant === "b" && abOn && !repeating ? bTemplates : templates} channels={channels} address={p.settings.address} />
+          <ChannelPreview templates={variant === "b" && abOn && !repeating ? bTemplates : templates} channels={channels} address={p.settings.address} sample={sample} />
         </>
       )}
 
@@ -720,14 +723,18 @@ function CouponList({ coupons, value, onChange, disabled }: { coupons: WizardCou
         {coupons.filter((c) => c.usable).length} of {coupons.length} codes can be used
       </div>
       {sorted.map((c) => {
-        const why = !c.active ? "Switched off" : c.expired ? `Expired ${c.endsOn}` : c.maxedOut ? "Used up" : null;
+        const why = [!c.active && "Switched off", c.expired && `Expired ${c.endsOn}`, c.maxedOut && "Used up"].filter((x): x is string => !!x);
         return (
           <label key={c.id} className={cx("flex cursor-pointer items-center gap-3 px-4 py-2 text-sm", !c.usable && "cursor-not-allowed bg-zinc-50 text-zinc-500", value === c.id && "bg-brand-50")}>
             <input type="radio" name="coupon" checked={value === c.id} disabled={disabled || (!c.usable && value !== c.id)} onChange={() => onChange(c.id)} />
             <span className="min-w-0 flex-1">
               <span className="font-mono font-semibold">{c.unique ? `${c.code}-…` : c.code}</span> <span>{c.summary}</span>
               <span className="mt-0.5 flex flex-wrap gap-1">
-                {why && <Badge tone="red">{why}</Badge>}
+                {why.map((w) => (
+                  <Badge key={w} tone="red">
+                    {w}
+                  </Badge>
+                ))}
                 {c.notStarted && <Badge tone="amber">Not started yet</Badge>}
                 {c.endsOn && !c.expired && <Badge>Ends {c.endsOn}</Badge>}
                 {c.when && <Badge tone="amber">{c.when}</Badge>}

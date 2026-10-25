@@ -25,10 +25,10 @@ import {
   templatesProblem,
   triggerSettings,
 } from "@/domain/marketing";
-import { couponSummary, couponWhenLabel } from "@/domain/coupons";
+import { couponSummary, couponWhenLabel, issuedExpiry, uniqueCode } from "@/domain/coupons";
 import { AbSchema, AbVariantSchema, AB_METRICS, FREQS, HOLDOUT_MAX, abChanges, abOf, nextOccurrence, recurrenceOf, variantTemplates, type AbTest, type Recurrence } from "@/domain/campaign-schedule";
 import { DateTime } from "luxon";
-import { SHOP_TZ } from "@/lib/time";
+import { SHOP_TZ, addDays, formatDate } from "@/lib/time";
 import { z } from "zod";
 import { audit } from "../audit";
 import { ruleOf } from "../coupons";
@@ -238,6 +238,8 @@ export interface CouponOption {
   /** Redemptions that weren't reversed, and what those tickets brought in (services and products, after discounts). */
   redemptions: number;
   revenueCents: number;
+  /** What {coupon_code} and {expiry} would show in a message sent today, for the wizard's preview. */
+  preview: { code: string; expiry: string };
 }
 
 /** Why a coupon can't go on a campaign, or null. */
@@ -288,6 +290,10 @@ export async function couponOptions(today: string, o: { includeUnusable?: boolea
       maxPerCustomer: p.maxPerCustomer,
       redemptions,
       revenueCents: Number(c?.cents ?? 0),
+      preview: {
+        code: p.codeMode === "unique" ? uniqueCode(p.code, () => "7K2Q9D") : p.code,
+        expiry: formatDate(issuedExpiry(today, p.validDays, p.endsOn, addDays) ?? addDays(today, 30), "MMM d"),
+      },
     });
   }
   return out;

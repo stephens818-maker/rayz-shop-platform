@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { cx } from "@/components/ui";
 import { marketingEmailHtml } from "@/domain/marketing-email";
-import { CHANNEL_LABEL, SAMPLE_VALUES, render, type Channel, type Templates } from "@/domain/marketing";
+import { CHANNEL_LABEL, SAMPLE_VALUES, render, type Channel, type MarketingValues, type Templates } from "@/domain/marketing";
 
 const BRAND = "Ray'z Barber Shop";
 
@@ -27,12 +27,12 @@ function Toggle<T extends string>({ value, options, onChange, label }: { value: 
 }
 
 /** What each client would see, filled in with sample values: the email in light or dark mode at desktop or phone width, the text, and the push. */
-export function ChannelPreview({ templates, channels, address }: { templates: Templates; channels: Channel[]; address: string }) {
+export function ChannelPreview({ templates, channels, address, sample }: { templates: Templates; channels: Channel[]; address: string; sample?: Partial<MarketingValues> }) {
   const [tab, setTab] = useState<Channel>(channels[0] ?? "sms");
   const [scheme, setScheme] = useState<"light" | "dark">("light");
   const [width, setWidth] = useState<"desktop" | "mobile">("desktop");
   const ch = channels.includes(tab) ? tab : (channels[0] ?? "sms");
-  const r = render(templates, SAMPLE_VALUES, { brand: BRAND, address: address || "(the brand's postal address)", unsubscribeUrl: "https://rayz.example/m/…/unsubscribe" });
+  const r = render(templates, { ...SAMPLE_VALUES, ...sample }, { brand: BRAND, address: address || "(the brand's postal address)", unsubscribeUrl: "https://rayz.example/m/…/unsubscribe" });
   return (
     <div className="rounded-xl bg-zinc-50 p-3 ring-1 ring-zinc-200" data-testid="channel-preview">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

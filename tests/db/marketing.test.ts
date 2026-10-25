@@ -1244,7 +1244,7 @@ describe("Campaign Center v2: A/B, holdout, repeats, opens, attribution, templat
     const c = await client();
     const sale = await pay({ customerId: c.id, codes: [used.code] });
     const usable = await CP.couponOptions("2028-02-16");
-    expect(usable.find((x) => x.id === used.id)).toMatchObject({ usable: true, redemptions: 1, revenueCents: sale.serviceNetCents + sale.productNetCents });
+    expect(usable.find((x) => x.id === used.id)).toMatchObject({ usable: true, redemptions: 1, revenueCents: sale.serviceNetCents + sale.productNetCents, preview: { code: used.code, expiry: "Mar 17" } });
     expect(usable.find((x) => x.id === old.id)).toBeUndefined();
     const every = await CP.couponOptions("2028-02-16", { includeUnusable: true });
     const o = every.find((x) => x.id === old.id)!;
