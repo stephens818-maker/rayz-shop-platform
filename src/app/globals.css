@@ -1,7 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-brand-50: #fef2f2;
   --color-brand-100: #fee2e2;
@@ -27,10 +29,18 @@ body {
 
 /* Diagonal shading for unavailable time on the day calendar */
 .shade-off {
-  background-image: repeating-linear-gradient(135deg, rgb(228 228 231 / 0.9) 0 6px, rgb(244 244 245 / 0.9) 6px 12px);
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgb(228 228 231 / 0.9) 0 6px,
+    rgb(244 244 245 / 0.9) 6px 12px
+  );
 }
 .shade-block {
-  background-image: repeating-linear-gradient(135deg, rgb(254 215 170 / 0.85) 0 6px, rgb(255 237 213 / 0.85) 6px 12px);
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgb(254 215 170 / 0.85) 0 6px,
+    rgb(255 237 213 / 0.85) 6px 12px
+  );
 }
 /* Blocked time in its reason's color (set --reason on the element) */
 .shade-reason {
@@ -39,7 +49,9 @@ body {
     color-mix(in srgb, var(--reason, #a1a1aa) 30%, white) 0 6px,
     color-mix(in srgb, var(--reason, #a1a1aa) 16%, white) 6px 12px
   );
-  box-shadow: inset 3px 0 0 var(--reason, #a1a1aa), inset 0 0 0 1px color-mix(in srgb, var(--reason, #a1a1aa) 45%, white);
+  box-shadow:
+    inset 3px 0 0 var(--reason, #a1a1aa),
+    inset 0 0 0 1px color-mix(in srgb, var(--reason, #a1a1aa) 45%, white);
 }
 .shade-reason-pending {
   background: color-mix(in srgb, var(--reason, #a1a1aa) 10%, white);
@@ -48,7 +60,11 @@ body {
 }
 /* Prep and cleanup time held around an appointment */
 .shade-buffer {
-  background-image: repeating-linear-gradient(45deg, rgb(212 212 216 / 0.55) 0 3px, transparent 3px 7px);
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgb(212 212 216 / 0.55) 0 3px,
+    transparent 3px 7px
+  );
 }
 /* A soft time-clock block ("Not in yet"): the reason's colour, lighter, with a dashed edge */
 .shade-reason-soft {
@@ -57,9 +73,31 @@ body {
     color-mix(in srgb, var(--reason, #a1a1aa) 16%, white) 0 6px,
     color-mix(in srgb, var(--reason, #a1a1aa) 6%, white) 6px 12px
   );
-  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--reason, #a1a1aa) 60%, white);
+  box-shadow: inset 3px 0 0
+    color-mix(in srgb, var(--reason, #a1a1aa) 60%, white);
   outline: 1.5px dashed color-mix(in srgb, var(--reason, #a1a1aa) 70%, white);
   outline-offset: -1.5px;
+}
+
+/* Staff milestone celebrations: a short burst of falling confetti */
+@keyframes confetti-fall {
+  0% {
+    transform: translate3d(0, -0.5rem, 0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--drift, 0), 7rem, 0) rotate(540deg);
+    opacity: 0;
+  }
+}
+.confetti-piece {
+  animation: confetti-fall 1.8s ease-in var(--delay, 0s) 2 both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .confetti-piece {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 @media print {

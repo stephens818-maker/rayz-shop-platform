@@ -2,15 +2,48 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointmentItems, appointments, customers, shops, staff, waitlistEntries } from "@/db/schema";
-import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, StatusBadge, Table, Td, Th } from "@/components/ui";
+import {
+  appointmentItems,
+  appointments,
+  customers,
+  shops,
+  staff,
+  waitlistEntries,
+} from "@/db/schema";
+import {
+  Card,
+  CardHeader,
+  Empty,
+  LinkButton,
+  Notice,
+  PageHeader,
+  Stat,
+  StatusBadge,
+  Table,
+  Td,
+  Th,
+} from "@/components/ui";
 import { formatCents } from "@/lib/money";
-import { addDays, endOfLocalDay, formatDate, formatTime, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
+import {
+  addDays,
+  endOfLocalDay,
+  formatDate,
+  formatTime,
+  minutesToLabel,
+  startOfLocalDay,
+  todayLocal,
+} from "@/lib/time";
 import { ACTION_BADGES, todayLine } from "@/domain/badges";
 import { reportsFor } from "@/domain/navigation";
 import { STATUS_LABEL } from "@/domain/staff-time";
 import { listRequests, staffingFor } from "@/server/staff-time";
-import { can, canAny, guardPage, reasonViewer, reportShopIds } from "@/server/auth/staff";
+import {
+  can,
+  canAny,
+  guardPage,
+  reasonViewer,
+  reportShopIds,
+} from "@/server/auth/staff";
 import { todayAlerts, viewerOf } from "@/server/today";
 import { badgeCounts, shownBadges } from "@/server/badges";
 import { noteBriefs, noteViewer } from "@/server/client-notes";
@@ -18,6 +51,7 @@ import { clientPolicy } from "@/server/client-privacy";
 import { ClientNotesBrief } from "@/components/client-notes-brief";
 import { ClientBadges } from "@/components/client-badges";
 import { liveClock } from "@/server/clock-live";
+import { PortalWelcome } from "@/components/celebration";
 import { LiveRefresh } from "@/components/live-refresh";
 import { timesFor } from "@/server/service-times";
 import { ServiceTimer } from "./calendar/service-times-panel";
@@ -30,7 +64,11 @@ import { DismissCongrats } from "./milestones/client";
 
 export const metadata: Metadata = { title: "Today" };
 
-export default async function Dashboard({ searchParams }: { searchParams: Promise<{ denied?: string }> }) {
+export default async function Dashboard({
+  searchParams,
+}: {
+  searchParams: Promise<{ denied?: string }>;
+}) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin");
   const today = todayLocal();
@@ -40,7 +78,12 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const salesStaffId = ownSales ? ctx.staff.id : null;
   const staffId = ownBook ? ctx.staff.id : null;
   const scope = { shopIds, from: today, to: today, staffId: salesStaffId };
-  const lastWeek = { shopIds, from: addDays(today, -7), to: addDays(today, -7), staffId: salesStaffId };
+  const lastWeek = {
+    shopIds,
+    from: addDays(today, -7),
+    to: addDays(today, -7),
+    staffId: salesStaffId,
+  };
   const seesWalkins = can(ctx, "walkins.manage");
   const now = new Date();
   const apptWhere = and(
@@ -50,46 +93,106 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     staffId ? eq(appointments.staffId, staffId) : undefined,
   );
 
-  const [summary, prior, statusCounts, upcoming, waitlist, shopRows, alerts] = await Promise.all([
-    salesSummary(scope),
-    salesSummary(lastWeek),
-    db.select({ status: appointments.status, n: sql<number>`count(*)::int` }).from(appointments).where(apptWhere).groupBy(appointments.status),
-    db
-      .select({
-        id: appointments.id,
-        startsAt: appointments.startsAt,
-        status: appointments.status,
-        staffId: appointments.staffId,
-        customerId: appointments.customerId,
-        barber: staff.displayLabel,
-        first: customers.firstName,
-        last: customers.lastName,
-        notes: appointments.notes,
-        readyAt: appointments.checkoutReadyAt,
-        shop: shops.name,
-        services: sql<string>`(select string_agg(${appointmentItems.name}, ' + ') from ${appointmentItems} where ${appointmentItems.appointmentId} = ${appointments.id})`,
-      })
-      .from(appointments)
-      .innerJoin(staff, eq(staff.id, appointments.staffId))
-      .innerJoin(shops, eq(shops.id, appointments.shopId))
-      .leftJoin(customers, eq(customers.id, appointments.customerId))
-      .where(and(apptWhere, gt(appointments.endsAt, now), inArray(appointments.status, ["booked", "confirmed", "checked_in", "in_service"])))
-      .orderBy(asc(appointments.startsAt))
-      .limit(10),
-    !seesWalkins
-      ? Promise.resolve([{ n: 0 }])
-      : db.select({ n: sql<number>`count(*)::int` }).from(waitlistEntries).where(and(inArray(waitlistEntries.shopId, shopIds), eq(waitlistEntries.status, "waiting"))),
-    ctx.currentShopId === null && !ownSales ? byShop(scope) : Promise.resolve([]),
-    todayAlerts(viewerOf(ctx), now),
+  const [summary, prior, statusCounts, upcoming, waitlist, shopRows, alerts] =
+    await Promise.all([
+      salesSummary(scope),
+      salesSummary(lastWeek),
+      db
+        .select({ status: appointments.status, n: sql<number>`count(*)::int` })
+        .from(appointments)
+        .where(apptWhere)
+        .groupBy(appointments.status),
+      db
+        .select({
+          id: appointments.id,
+          startsAt: appointments.startsAt,
+          status: appointments.status,
+          staffId: appointments.staffId,
+          customerId: appointments.customerId,
+          barber: staff.displayLabel,
+          first: customers.firstName,
+          last: customers.lastName,
+          notes: appointments.notes,
+          readyAt: appointments.checkoutReadyAt,
+          shop: shops.name,
+          services: sql<string>`(select string_agg(${appointmentItems.name}, ' + ') from ${appointmentItems} where ${appointmentItems.appointmentId} = ${appointments.id})`,
+        })
+        .from(appointments)
+        .innerJoin(staff, eq(staff.id, appointments.staffId))
+        .innerJoin(shops, eq(shops.id, appointments.shopId))
+        .leftJoin(customers, eq(customers.id, appointments.customerId))
+        .where(
+          and(
+            apptWhere,
+            gt(appointments.endsAt, now),
+            inArray(appointments.status, [
+              "booked",
+              "confirmed",
+              "checked_in",
+              "in_service",
+            ]),
+          ),
+        )
+        .orderBy(asc(appointments.startsAt))
+        .limit(10),
+      !seesWalkins
+        ? Promise.resolve([{ n: 0 }])
+        : db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(waitlistEntries)
+            .where(
+              and(
+                inArray(waitlistEntries.shopId, shopIds),
+                eq(waitlistEntries.status, "waiting"),
+              ),
+            ),
+      ctx.currentShopId === null && !ownSales
+        ? byShop(scope)
+        : Promise.resolve([]),
+      todayAlerts(viewerOf(ctx), now),
+    ]);
+  const seesTeam = canAny(ctx, [
+    "calendar.manage",
+    "timeoff.approve",
+    "schedules.edit",
   ]);
-  const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
   const policy = await clientPolicy(ctx);
-  const [times, staffing, myDecisions, badges, badgeTally, noteBriefsFor, milestones] = await Promise.all([
-    timesFor(upcoming.map((a) => a.id), now),
-    staffingFor(shopIds, today, today, reasonViewer(ctx), seesTeam ? null : [ctx.staff.id]),
+  const [
+    times,
+    staffing,
+    myDecisions,
+    badges,
+    badgeTally,
+    noteBriefsFor,
+    milestones,
+  ] = await Promise.all([
+    timesFor(
+      upcoming.map((a) => a.id),
+      now,
+    ),
+    staffingFor(
+      shopIds,
+      today,
+      today,
+      reasonViewer(ctx),
+      seesTeam ? null : [ctx.staff.id],
+    ),
     can(ctx, "timeoff.request")
-      ? listRequests({ staffId: ctx.staff.id }, { viewer: reasonViewer(ctx), statuses: ["approved", "denied"], limit: 20 }).then((rs) =>
-          rs.filter((r) => r.decidedAt && new Date(r.decidedAt).getTime() > now.getTime() - 7 * 86_400_000 && r.decidedVia !== "auto"),
+      ? listRequests(
+          { staffId: ctx.staff.id },
+          {
+            viewer: reasonViewer(ctx),
+            statuses: ["approved", "denied"],
+            limit: 20,
+          },
+        ).then((rs) =>
+          rs.filter(
+            (r) =>
+              r.decidedAt &&
+              new Date(r.decidedAt).getTime() >
+                now.getTime() - 7 * 86_400_000 &&
+              r.decidedVia !== "auto",
+          ),
         )
       : Promise.resolve([]),
     shownBadges(
@@ -98,24 +201,80 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       now,
     ),
     badgeCounts(shopIds, today, [...policy.badges], { now, staffId }),
-    noteBriefs(noteViewer(ctx, policy), upcoming.map((a) => a.customerId)),
+    noteBriefs(
+      noteViewer(ctx, policy),
+      upcoming.map((a) => a.customerId),
+    ),
     todayMilestones(ctx, shopIds, now),
   ]);
   const whosIn = shopIds
-    .map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "", rows: staffing.filter((r) => r.shopId === id) }))
+    .map((id) => ({
+      id,
+      name: ctx.shops.find((s) => s.id === id)?.name ?? "",
+      rows: staffing.filter((r) => r.shopId === id),
+    }))
     .filter((s) => s.rows.length > 0);
-  const clockShops = whosIn.length ? await db.select({ id: shops.id, timeClock: shops.timeClock }).from(shops).where(inArray(shops.id, whosIn.map((s) => s.id))) : [];
+  const clockShops = whosIn.length
+    ? await db
+        .select({ id: shops.id, timeClock: shops.timeClock })
+        .from(shops)
+        .where(
+          inArray(
+            shops.id,
+            whosIn.map((s) => s.id),
+          ),
+        )
+    : [];
   const clocks = new Map(
-    await Promise.all(clockShops.map(async (s) => [s.id, (await liveClock(s, today, staffing.filter((r) => r.shopId === s.id).map((r) => r.staffId), now)).days] as const)),
+    await Promise.all(
+      clockShops.map(
+        async (s) =>
+          [
+            s.id,
+            (
+              await liveClock(
+                s,
+                today,
+                staffing.filter((r) => r.shopId === s.id).map((r) => r.staffId),
+                now,
+              )
+            ).days,
+          ] as const,
+      ),
+    ),
   );
   const clockOf = (r: (typeof staffing)[number]) => {
     const d = clocks.get(r.shopId)?.get(r.staffId);
     if (!d?.status || r.status === "off") return null;
     if (d.status === "not_in" && r.status === "not_scheduled") return null;
     const at = d.since ? formatTime(d.since) : "";
-    const text = d.elsewhereShopId ? "Clocked in at another shop" : d.status === "in" ? `Clocked in ${at}` : d.status === "break" ? `On break since ${at}` : d.status === "out" ? `Clocked out ${at}` : "Not in yet";
-    const flag = d.overdueMin !== null ? `${d.overdueMin}m past start` : d.lateMin !== null ? `late ${d.lateMin}m` : d.earlyOutMin !== null ? `left ${d.earlyOutMin}m early` : d.missed.length ? "missed punch" : null;
-    const tone = d.status === "in" ? "text-emerald-700" : d.status === "break" ? "text-amber-700" : d.overdueMin !== null ? "font-semibold text-red-700" : "text-zinc-500";
+    const text = d.elsewhereShopId
+      ? "Clocked in at another shop"
+      : d.status === "in"
+        ? `Clocked in ${at}`
+        : d.status === "break"
+          ? `On break since ${at}`
+          : d.status === "out"
+            ? `Clocked out ${at}`
+            : "Not in yet";
+    const flag =
+      d.overdueMin !== null
+        ? `${d.overdueMin}m past start`
+        : d.lateMin !== null
+          ? `late ${d.lateMin}m`
+          : d.earlyOutMin !== null
+            ? `left ${d.earlyOutMin}m early`
+            : d.missed.length
+              ? "missed punch"
+              : null;
+    const tone =
+      d.status === "in"
+        ? "text-emerald-700"
+        : d.status === "break"
+          ? "text-amber-700"
+          : d.overdueMin !== null
+            ? "font-semibold text-red-700"
+            : "text-zinc-500";
     return { text, flag, tone };
   };
   const blockText = (r: (typeof staffing)[number]) =>
@@ -126,17 +285,45 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const offText = (r: (typeof staffing)[number]) =>
     r.blocks
       .filter((b) => b.category === "time_off")
-      .map((b) => `${b.label.toLowerCase()} ${minutesToLabel(b.startMin)}–${minutesToLabel(b.endMin % (24 * 60))}`)
+      .map(
+        (b) =>
+          `${b.label.toLowerCase()} ${minutesToLabel(b.startMin)}–${minutesToLabel(b.endMin % (24 * 60))}`,
+      )
       .join(", ");
-  const offReason = (r: (typeof staffing)[number]) => [...new Set(r.blocks.filter((b) => b.category === "time_off").map((b) => b.label.toLowerCase()))].join(", ");
+  const offReason = (r: (typeof staffing)[number]) =>
+    [
+      ...new Set(
+        r.blocks
+          .filter((b) => b.category === "time_off")
+          .map((b) => b.label.toLowerCase()),
+      ),
+    ].join(", ");
   const soon = new Date(now.getTime() + 30 * 60_000);
   const runsTimer = (a: { staffId: string; status: string; startsAt: Date }) =>
-    (a.staffId === ctx.staff.id || can(ctx, "calendar.manage")) && (a.status === "checked_in" || a.status === "in_service" || a.startsAt <= soon);
-  const sends = (a: { staffId: string; status: string }) => (a.staffId === ctx.staff.id || can(ctx, "checkout.any")) && (a.status === "checked_in" || a.status === "in_service");
-  const count = (s: string[]) => statusCounts.filter((c) => s.includes(c.status)).reduce((a, c) => a + c.n, 0);
-  const delta = (a: number, b: number) => (b ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs last ${formatDate(today, "EEEE")}` : undefined);
-  const notificationsOff = (process.env.NOTIFICATIONS_SMS_PROVIDER ?? "disabled") === "disabled" && (process.env.NOTIFICATIONS_EMAIL_PROVIDER ?? "disabled") === "disabled";
-  const scopeName = ctx.currentShopId === null ? (ctx.brandWide ? "All shops" : "All my shops") : ctx.shops.find((s) => s.id === ctx.currentShopId)?.name;
+    (a.staffId === ctx.staff.id || can(ctx, "calendar.manage")) &&
+    (a.status === "checked_in" ||
+      a.status === "in_service" ||
+      a.startsAt <= soon);
+  const sends = (a: { staffId: string; status: string }) =>
+    (a.staffId === ctx.staff.id || can(ctx, "checkout.any")) &&
+    (a.status === "checked_in" || a.status === "in_service");
+  const count = (s: string[]) =>
+    statusCounts
+      .filter((c) => s.includes(c.status))
+      .reduce((a, c) => a + c.n, 0);
+  const delta = (a: number, b: number) =>
+    b
+      ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs last ${formatDate(today, "EEEE")}`
+      : undefined;
+  const notificationsOff =
+    (process.env.NOTIFICATIONS_SMS_PROVIDER ?? "disabled") === "disabled" &&
+    (process.env.NOTIFICATIONS_EMAIL_PROVIDER ?? "disabled") === "disabled";
+  const scopeName =
+    ctx.currentShopId === null
+      ? ctx.brandWide
+        ? "All shops"
+        : "All my shops"
+      : ctx.shops.find((s) => s.id === ctx.currentShopId)?.name;
 
   return (
     <div className="mx-auto max-w-6xl space-y-5">
@@ -148,16 +335,27 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             <LinkButton href="/admin/calendar" variant="secondary">
               Calendar
             </LinkButton>
-            {seesWalkins && <LinkButton href="/admin/walk-ins">+ Quick walk-in</LinkButton>}
+            {seesWalkins && (
+              <LinkButton href="/admin/walk-ins">+ Quick walk-in</LinkButton>
+            )}
           </>
         }
       />
       <LiveRefresh everyMs={30_000} />
-      {sp.denied && <Notice tone="red">You don&apos;t have access to that page.</Notice>}
+      {milestones.welcome.length > 0 && (
+        <PortalWelcome
+          firstName={ctx.staff.firstName}
+          items={milestones.welcome}
+        />
+      )}
+      {sp.denied && (
+        <Notice tone="red">You don&apos;t have access to that page.</Notice>
+      )}
       <TodayAlerts alerts={alerts} multiShop={shopIds.length > 1} />
       {myDecisions.map((r) => (
         <Notice key={r.id} tone={r.status === "approved" ? "green" : "red"}>
-          Your {r.reason.label.toLowerCase()} time off for {r.range} was {r.status}
+          Your {r.reason.label.toLowerCase()} time off for {r.range} was{" "}
+          {r.status}
           {r.decidedBy ? ` by ${r.decidedBy}` : ""}
           {r.decisionNote ? `: “${r.decisionNote}”` : "."}{" "}
           <Link className="underline" href="/admin/my-time">
@@ -169,7 +367,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <Notice tone="green">
           <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>
-              Congratulations! {milestones.congrats.map(congratsLine).join(" · ")}.{" "}
+              Congratulations!{" "}
+              {milestones.congrats.map(congratsLine).join(" · ")}.{" "}
               <Link className="underline" href="/admin/milestones">
                 Trophy case
               </Link>
@@ -188,7 +387,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       )}
       {can(ctx, "notifications.view") && notificationsOff && (
         <Notice tone="blue">
-          Customer texts and emails are off (stub provider). Reminders are queued and marked &ldquo;suppressed&rdquo;; see{" "}
+          Customer texts and emails are off (stub provider). Reminders are
+          queued and marked &ldquo;suppressed&rdquo;; see{" "}
           <Link className="underline" href="/admin/notifications">
             Notifications
           </Link>
@@ -197,15 +397,45 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label={ownSales ? "My services today" : "Net sales today"} value={formatCents(summary.netSalesCents)} hint={delta(summary.netSalesCents, prior.netSalesCents)} tone={summary.netSalesCents >= prior.netSalesCents ? "up" : "down"} />
-        <Stat label="Tips today" value={formatCents(summary.tipsCents)} hint={`${summary.tickets} tickets`} />
-        <Stat label="Appointments" value={count(["booked", "confirmed", "checked_in", "in_service", "completed"])} hint={`${count(["completed"])} done · ${count(["no_show"])} no-show`} />
-        <Stat label={ownBook ? "Waiting for me" : "Waiting now"} value={count(["checked_in"]) + (waitlist[0]?.n ?? 0)} hint={!seesWalkins ? undefined : `${waitlist[0]?.n ?? 0} on waitlist`} />
+        <Stat
+          label={ownSales ? "My services today" : "Net sales today"}
+          value={formatCents(summary.netSalesCents)}
+          hint={delta(summary.netSalesCents, prior.netSalesCents)}
+          tone={summary.netSalesCents >= prior.netSalesCents ? "up" : "down"}
+        />
+        <Stat
+          label="Tips today"
+          value={formatCents(summary.tipsCents)}
+          hint={`${summary.tickets} tickets`}
+        />
+        <Stat
+          label="Appointments"
+          value={count([
+            "booked",
+            "confirmed",
+            "checked_in",
+            "in_service",
+            "completed",
+          ])}
+          hint={`${count(["completed"])} done · ${count(["no_show"])} no-show`}
+        />
+        <Stat
+          label={ownBook ? "Waiting for me" : "Waiting now"}
+          value={count(["checked_in"]) + (waitlist[0]?.n ?? 0)}
+          hint={!seesWalkins ? undefined : `${waitlist[0]?.n ?? 0} on waitlist`}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card>
-          <CardHeader title="Up next" action={<Link className="text-xs underline" href="/admin/calendar">Open calendar</Link>} />
+          <CardHeader
+            title="Up next"
+            action={
+              <Link className="text-xs underline" href="/admin/calendar">
+                Open calendar
+              </Link>
+            }
+          />
           {upcoming.length === 0 ? (
             <div className="p-4">
               <Empty title="Nothing else on the books today" />
@@ -215,27 +445,58 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               <tbody>
                 {upcoming.map((a) => (
                   <tr key={a.id} className="hover:bg-zinc-50">
-                    <Td className="w-20 font-medium">{formatTime(a.startsAt)}</Td>
+                    <Td className="w-20 font-medium">
+                      {formatTime(a.startsAt)}
+                    </Td>
                     <Td>
-                      <Link href={`/admin/calendar?appt=${a.id}`} className="font-medium hover:underline">
-                        {a.first ? `${a.first} ${a.last ?? ""}` : (a.notes?.replace("Walk-in: ", "") ?? "Walk-in")}
+                      <Link
+                        href={`/admin/calendar?appt=${a.id}`}
+                        className="font-medium hover:underline"
+                      >
+                        {a.first
+                          ? `${a.first} ${a.last ?? ""}`
+                          : (a.notes?.replace("Walk-in: ", "") ?? "Walk-in")}
                       </Link>
                       <div className="text-xs text-zinc-500">{a.services}</div>
-                      <ClientBadges badges={a.customerId ? badges.get(a.customerId) : undefined} only={ACTION_BADGES} strongActions className="mt-0.5 flex" />
-                      <ClientNotesBrief brief={a.customerId ? noteBriefsFor.get(a.customerId) : null} compact className="mt-1 max-w-md" />
+                      <ClientBadges
+                        badges={
+                          a.customerId ? badges.get(a.customerId) : undefined
+                        }
+                        only={ACTION_BADGES}
+                        strongActions
+                        className="mt-0.5 flex"
+                      />
+                      <ClientNotesBrief
+                        brief={
+                          a.customerId ? noteBriefsFor.get(a.customerId) : null
+                        }
+                        compact
+                        className="mt-1 max-w-md"
+                      />
                     </Td>
                     <Td>
                       {a.barber}
-                      {ctx.currentShopId === null && <div className="text-xs text-zinc-500">{a.shop}</div>}
+                      {ctx.currentShopId === null && (
+                        <div className="text-xs text-zinc-500">{a.shop}</div>
+                      )}
                     </Td>
                     <Td>
                       <StatusBadge status={a.status} />
                     </Td>
                     <Td right className="w-36">
-                      {runsTimer(a) && <ServiceTimer appointmentId={a.id} status={a.status} times={times.get(a.id) ?? null} />}
+                      {runsTimer(a) && (
+                        <ServiceTimer
+                          appointmentId={a.id}
+                          status={a.status}
+                          times={times.get(a.id) ?? null}
+                        />
+                      )}
                       {sends(a) && (
                         <div className="mt-1">
-                          <SendToCheckoutButton appointmentId={a.id} readyAt={a.readyAt?.toISOString() ?? null} />
+                          <SendToCheckoutButton
+                            appointmentId={a.id}
+                            readyAt={a.readyAt?.toISOString() ?? null}
+                          />
                         </div>
                       )}
                     </Td>
@@ -248,12 +509,19 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <div className="space-y-4">
           {badgeTally.length > 0 && (
             <Card data-testid="today-badges">
-              <CardHeader title={ownBook ? "Your clients today" : "Today's clients"} subtitle="Booked today, by badge." />
+              <CardHeader
+                title={ownBook ? "Your clients today" : "Today's clients"}
+                subtitle="Booked today, by badge."
+              />
               <ul className="space-y-1 px-4 py-3 text-sm">
                 {badgeTally.map((b) => (
                   <li key={b.key} className="flex items-center gap-2">
-                    <span className="w-6 text-right font-semibold tabular">{b.count}</span>
-                    <span className="text-zinc-700">{todayLine(b.key, b.count).replace(/^\d+ /, "")}</span>
+                    <span className="w-6 text-right font-semibold tabular">
+                      {b.count}
+                    </span>
+                    <span className="text-zinc-700">
+                      {todayLine(b.key, b.count).replace(/^\d+ /, "")}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -264,7 +532,14 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               <CardHeader
                 title={seesTeam ? "Who's in today" : "My day"}
                 action={
-                  <Link className="text-xs underline" href={can(ctx, "report.staffing.view") ? "/admin/reports/staffing" : "/admin/my-time"}>
+                  <Link
+                    className="text-xs underline"
+                    href={
+                      can(ctx, "report.staffing.view")
+                        ? "/admin/reports/staffing"
+                        : "/admin/my-time"
+                    }
+                  >
                     {can(ctx, "report.staffing.view") ? "Report" : "My time"}
                   </Link>
                 }
@@ -272,30 +547,72 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               <div className="divide-y divide-zinc-100 text-sm">
                 {whosIn.map((s) => (
                   <div key={s.id} className="px-4 py-2">
-                    {whosIn.length > 1 && <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">{s.name}</div>}
+                    {whosIn.length > 1 && (
+                      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                        {s.name}
+                      </div>
+                    )}
                     <ul className="space-y-1">
                       {s.rows.map((r) => {
                         const clock = clockOf(r);
                         return (
-                        <li key={r.staffId} className="flex items-baseline justify-between gap-2">
-                          <span className="font-medium">{r.label}</span>
-                          <span className="text-right text-xs">
-                            {clock ? (
-                              <span className={clock.tone}>
-                                {clock.text}
-                                {clock.flag && <span className="text-red-700"> · {clock.flag}</span>}
-                              </span>
-                            ) : (
-                              <span className={r.status === "off" ? "font-semibold text-violet-700" : r.status === "partly_off" ? "text-violet-700" : r.status === "working" ? "text-emerald-700" : "text-zinc-500"}>
-                                {STATUS_LABEL[r.status]}
-                              </span>
-                            )}
-                            {r.status === "partly_off" && <span className="text-violet-700"> · {offText(r)}</span>}
-                            {r.status === "off" && offReason(r) && <span className="text-violet-700"> · {offReason(r)}</span>}
-                            {r.pending && <span className="text-amber-700"> · off requested</span>}
-                            {r.blockedMin > 0 && <span className="text-zinc-500"> · {blockText(r)}</span>}
-                          </span>
-                        </li>
+                          <li
+                            key={r.staffId}
+                            className="flex items-baseline justify-between gap-2"
+                          >
+                            <span className="font-medium">{r.label}</span>
+                            <span className="text-right text-xs">
+                              {clock ? (
+                                <span className={clock.tone}>
+                                  {clock.text}
+                                  {clock.flag && (
+                                    <span className="text-red-700">
+                                      {" "}
+                                      · {clock.flag}
+                                    </span>
+                                  )}
+                                </span>
+                              ) : (
+                                <span
+                                  className={
+                                    r.status === "off"
+                                      ? "font-semibold text-violet-700"
+                                      : r.status === "partly_off"
+                                        ? "text-violet-700"
+                                        : r.status === "working"
+                                          ? "text-emerald-700"
+                                          : "text-zinc-500"
+                                  }
+                                >
+                                  {STATUS_LABEL[r.status]}
+                                </span>
+                              )}
+                              {r.status === "partly_off" && (
+                                <span className="text-violet-700">
+                                  {" "}
+                                  · {offText(r)}
+                                </span>
+                              )}
+                              {r.status === "off" && offReason(r) && (
+                                <span className="text-violet-700">
+                                  {" "}
+                                  · {offReason(r)}
+                                </span>
+                              )}
+                              {r.pending && (
+                                <span className="text-amber-700">
+                                  {" "}
+                                  · off requested
+                                </span>
+                              )}
+                              {r.blockedMin > 0 && (
+                                <span className="text-zinc-500">
+                                  {" "}
+                                  · {blockText(r)}
+                                </span>
+                              )}
+                            </span>
+                          </li>
                         );
                       })}
                     </ul>
@@ -321,7 +638,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               </div>
             </dl>
             {reportsFor(ctx.permissions).length > 0 && (
-              <Link className="mt-3 inline-block text-xs underline" href="/admin/reports">
+              <Link
+                className="mt-3 inline-block text-xs underline"
+                href="/admin/reports"
+              >
                 Full reports
               </Link>
             )}

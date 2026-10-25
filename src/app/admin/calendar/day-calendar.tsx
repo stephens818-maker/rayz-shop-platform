@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { ClientNotesBrief } from "@/components/client-notes-brief";
 import { PinIcon } from "@/components/pin-icon";
+import { ConfettiIcon } from "@/components/celebration";
 import { ClientBadges } from "@/components/client-badges";
 import { actionFirst } from "@/domain/badges";
 import {
@@ -257,7 +258,10 @@ export function DayCalendar({
   meId,
   initialApptId,
   reasons,
+  celebrating,
 }: {
+  /** Today's milestones by barber, for the confetti on their column. */
+  celebrating: Record<string, string[]>;
   data: DayCalendarData;
   today: string;
   nowMin: number | null;
@@ -613,6 +617,7 @@ export function DayCalendar({
                 <Column
                   key={col.id}
                   col={col}
+                  celebrating={celebrating[col.id] ?? []}
                   data={data}
                   height={height}
                   hours={hours}
@@ -696,7 +701,11 @@ export function DayCalendar({
             <ApptPanel
               appt={panel.appt}
               col={panel.col}
-              group={panel.appt.groupId ? (data.groups[panel.appt.groupId] ?? null) : null}
+              group={
+                panel.appt.groupId
+                  ? (data.groups[panel.appt.groupId] ?? null)
+                  : null
+              }
               canManage={canManage}
               onDone={() => setPanel(null)}
             />
@@ -733,6 +742,7 @@ export function DayCalendar({
 
 function Column({
   col,
+  celebrating,
   data,
   height,
   hours,
@@ -747,6 +757,7 @@ function Column({
   drag,
 }: {
   col: CalColumn;
+  celebrating: string[];
   data: DayCalendarData;
   height: number;
   hours: number[];
@@ -837,6 +848,14 @@ function Column({
             style={{ background: col.color }}
           />
           <span className="truncate text-sm font-semibold">{col.label}</span>
+          {celebrating.length > 0 && (
+            <span
+              className="shrink-0 rounded-full bg-amber-100 p-0.5 ring-1 ring-amber-300"
+              data-testid="column-celebration"
+            >
+              <ConfettiIcon className="size-4" title={celebrating.join(" ")} />
+            </span>
+          )}
           <span
             className="ml-auto rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium tabular text-zinc-600"
             title={`${col.intervalMin}-minute slots (${INTERVAL_SOURCE_LABEL[col.intervalSource]})`}
@@ -1012,7 +1031,9 @@ function Column({
               <div className="flex items-center gap-1 font-semibold">
                 {a.groupId && data.groups[a.groupId] && (
                   <GroupLinkIcon
-                    title={`Family booking ${data.groups[a.groupId].code}: ${data.groups[a.groupId].members
+                    title={`Family booking ${data.groups[a.groupId].code}: ${data.groups[
+                      a.groupId
+                    ].members
                       .filter((m) => m.status !== "cancelled")
                       .map((m) => m.firstName ?? "Guest")
                       .join(", ")}`}
@@ -1410,7 +1431,9 @@ function GroupBox({
             className="col-span-2"
             disabled={pending}
             data-testid="group-send-to-checkout"
-            onClick={() => run(() => groupSendToCheckoutAction(groupId), onDone)}
+            onClick={() =>
+              run(() => groupSendToCheckoutAction(groupId), onDone)
+            }
           >
             Send group to checkout
           </Button>
@@ -1471,10 +1494,7 @@ function GroupBox({
         <ul className="space-y-0.5 text-xs" data-testid="group-tickets">
           {tickets.map((t) => (
             <li key={t.appointmentId}>
-              <Link
-                className="underline"
-                href={`/admin/checkout/${t.saleId}`}
-              >
+              <Link className="underline" href={`/admin/checkout/${t.saleId}`}>
                 {t.firstName ?? "Guest"}&apos;s ticket
               </Link>
             </li>
@@ -1567,7 +1587,9 @@ function ApptPanel({
   onDone: () => void;
 }) {
   const { pending, error, run, router } = useAction();
-  const [sent, setSent] = useState<{ ready: number; total: number } | null>(null);
+  const [sent, setSent] = useState<{ ready: number; total: number } | null>(
+    null,
+  );
   const s = appt.status;
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
   const checkout = () =>
@@ -2482,7 +2504,10 @@ function NewPanel({
                       )}
                     </FamilyParty>
                     {groupPeople && (
-                      <div className="space-y-2" data-testid="staff-group-finder">
+                      <div
+                        className="space-y-2"
+                        data-testid="staff-group-finder"
+                      >
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-xs text-zinc-600">
                             {finder
@@ -2495,10 +2520,16 @@ function NewPanel({
                             disabled={finderBusy}
                             onClick={findTimes}
                           >
-                            {finderBusy ? "Finding…" : finder ? "Refresh" : "Find times"}
+                            {finderBusy
+                              ? "Finding…"
+                              : finder
+                                ? "Refresh"
+                                : "Find times"}
                           </Button>
                         </div>
-                        {finderError && <Notice tone="amber">{finderError}</Notice>}
+                        {finderError && (
+                          <Notice tone="amber">{finderError}</Notice>
+                        )}
                         {finder && (
                           <GroupOptionsPicker
                             options={finder}
@@ -2506,7 +2537,10 @@ function NewPanel({
                             selected={finderPick ? optionKey(finderPick) : null}
                             onPick={(o) =>
                               setFinderPick(
-                                finderPick && optionKey(finderPick) === optionKey(o) ? null : o,
+                                finderPick &&
+                                  optionKey(finderPick) === optionKey(o)
+                                  ? null
+                                  : o,
                               )
                             }
                           />
@@ -2570,52 +2604,54 @@ function NewPanel({
               (!finderPick && !!loaded && !isOpen && !squeeze)
             }
             onClick={() =>
-              finderPick ? bookPick() : run(
-                () =>
-                  picked && party.length
-                    ? staffFamilyBookingAction({
-                        shopId: data.shop.id,
-                        guardianId: picked.id,
-                        date: data.date,
-                        startMin: fromHHMM(time),
-                        squeezeIn: squeeze && !isOpen,
-                        people: [
-                          {
-                            customerId: forWho ?? picked.id,
+              finderPick
+                ? bookPick()
+                : run(
+                    () =>
+                      picked && party.length
+                        ? staffFamilyBookingAction({
+                            shopId: data.shop.id,
+                            guardianId: picked.id,
+                            date: data.date,
+                            startMin: fromHHMM(time),
+                            squeezeIn: squeeze && !isOpen,
+                            people: [
+                              {
+                                customerId: forWho ?? picked.id,
+                                serviceId,
+                                addonIds,
+                                staffId: col.id,
+                                timing: "same_time" as const,
+                              },
+                              ...party.map((m) => ({
+                                customerId: m.customerId,
+                                serviceId: m.serviceId,
+                                addonIds: [],
+                                staffId: m.staffId,
+                                timing: m.timing,
+                              })),
+                            ],
+                          })
+                        : createStaffAppointmentAction({
+                            shopId: data.shop.id,
+                            staffId: col.id,
+                            date: data.date,
+                            startMin: fromHHMM(time),
                             serviceId,
                             addonIds,
-                            staffId: col.id,
-                            timing: "same_time" as const,
-                          },
-                          ...party.map((m) => ({
-                            customerId: m.customerId,
-                            serviceId: m.serviceId,
-                            addonIds: [],
-                            staffId: m.staffId,
-                            timing: m.timing,
-                          })),
-                        ],
-                      })
-                    : createStaffAppointmentAction({
-                        shopId: data.shop.id,
-                        staffId: col.id,
-                        date: data.date,
-                        startMin: fromHHMM(time),
-                        serviceId,
-                        addonIds,
-                        customerId: picked ? (forWho ?? picked.id) : null,
-                        customer: picked
-                          ? null
-                          : {
-                              firstName: first || q.split(" ")[0] || "",
-                              lastName: last,
-                              phone,
-                            },
-                        notes,
-                        squeezeIn: squeeze && !isOpen,
-                      }),
-                onDone,
-              )
+                            customerId: picked ? (forWho ?? picked.id) : null,
+                            customer: picked
+                              ? null
+                              : {
+                                  firstName: first || q.split(" ")[0] || "",
+                                  lastName: last,
+                                  phone,
+                                },
+                            notes,
+                            squeezeIn: squeeze && !isOpen,
+                          }),
+                    onDone,
+                  )
             }
           >
             {finderPick

@@ -428,6 +428,9 @@ async function OwnSections({
             shared={person.shared}
             teamFeed={s.teamFeed}
             celebrate={s.celebrate}
+            onTheDay={
+              s.calendarBanner || s.posBanner || s.columnBadge || s.liveToast
+            }
           />
         </Card>
       )}

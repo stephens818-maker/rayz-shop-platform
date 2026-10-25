@@ -2,23 +2,76 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
+import {
+  Button,
+  Card,
+  CardHeader,
+  Input,
+  Notice,
+  Select,
+  cx,
+} from "@/components/ui";
+import { CelebrationModal } from "@/components/celebration";
 import { useAction } from "@/components/use-action";
-import { FLAG_LABEL, PUNCH_LABEL, type PunchFlag, type PunchType } from "@/domain/time-clock";
-import { kioskPunchAction, kioskStatusAction, punchAction, registerDeviceAction, setOpensEarlyAction, setPinAction } from "./actions";
+import {
+  FLAG_LABEL,
+  PUNCH_LABEL,
+  type PunchFlag,
+  type PunchType,
+} from "@/domain/time-clock";
+import type { Welcome } from "@/server/milestones/day";
+import {
+  kioskPunchAction,
+  kioskStatusAction,
+  punchAction,
+  registerDeviceAction,
+  setOpensEarlyAction,
+  setPinAction,
+} from "./actions";
+
+/** The shared clock closes their congratulations by itself, for the next person in line. */
+const KIOSK_WELCOME_MS = 15_000;
 
 type Gps = { lat: number; lng: number; accuracyM: number | null };
-type Done = { kind: "done"; type: PunchType; at: Date | string; shop: string; flags: PunchFlag[]; notes: string[] };
+type Done = {
+  kind: "done";
+  type: PunchType;
+  at: Date | string;
+  shop: string;
+  flags: PunchFlag[];
+  notes: string[];
+};
 
-const time = (d: Date | string) => new Date(d).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+const time = (d: Date | string) =>
+  new Date(d).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "America/Chicago",
+  });
 
-const BUTTON_TONE: Record<PunchType, "primary" | "secondary" | "danger" | "dark"> = { in: "primary", break_start: "secondary", break_end: "primary", out: "dark" };
+const BUTTON_TONE: Record<
+  PunchType,
+  "primary" | "secondary" | "danger" | "dark"
+> = {
+  in: "primary",
+  break_start: "secondary",
+  break_end: "primary",
+  out: "dark",
+};
 
 function location(): Promise<Gps | null> {
   return new Promise((resolve) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) return resolve(null);
+    if (typeof navigator === "undefined" || !navigator.geolocation)
+      return resolve(null);
     navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracyM: Number.isFinite(p.coords.accuracy) ? Math.round(p.coords.accuracy) : null }),
+      (p) =>
+        resolve({
+          lat: p.coords.latitude,
+          lng: p.coords.longitude,
+          accuracyM: Number.isFinite(p.coords.accuracy)
+            ? Math.round(p.coords.accuracy)
+            : null,
+        }),
       () => resolve(null),
       { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 },
     );
@@ -46,7 +99,15 @@ async function shrink(file: File): Promise<string> {
   }
 }
 
-function PhotoInput({ mode, value, onChange }: { mode: "off" | "optional" | "required"; value: string | null; onChange: (v: string | null) => void }) {
+function PhotoInput({
+  mode,
+  value,
+  onChange,
+}: {
+  mode: "off" | "optional" | "required";
+  value: string | null;
+  onChange: (v: string | null) => void;
+}) {
   const ref = useRef<HTMLInputElement>(null);
   if (mode === "off") return null;
   return (
@@ -64,13 +125,30 @@ function PhotoInput({ mode, value, onChange }: { mode: "off" | "optional" | "req
       />
       {value ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={value} alt="Your punch photo" className="h-14 w-14 rounded-md object-cover" />
+        <img
+          src={value}
+          alt="Your punch photo"
+          className="h-14 w-14 rounded-md object-cover"
+        />
       ) : null}
-      <Button type="button" variant="secondary" size="sm" onClick={() => ref.current?.click()}>
-        {value ? "Retake photo" : mode === "required" ? "Take photo (required)" : "Add a photo (optional)"}
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={() => ref.current?.click()}
+      >
+        {value
+          ? "Retake photo"
+          : mode === "required"
+            ? "Take photo (required)"
+            : "Add a photo (optional)"}
       </Button>
       {value && (
-        <button type="button" className="text-xs text-zinc-500 underline" onClick={() => onChange(null)}>
+        <button
+          type="button"
+          className="text-xs text-zinc-500 underline"
+          onClick={() => onChange(null)}
+        >
           Remove
         </button>
       )}
@@ -84,7 +162,10 @@ function Result({ r }: { r: Done }) {
       <strong>
         {PUNCH_LABEL[r.type]} at {time(r.at)}
       </strong>{" "}
-      at {r.shop}.{r.flags.length ? ` Flagged: ${r.flags.map((f) => FLAG_LABEL[f]).join(", ")}.` : ""}
+      at {r.shop}.
+      {r.flags.length
+        ? ` Flagged: ${r.flags.map((f) => FLAG_LABEL[f]).join(", ")}.`
+        : ""}
       {r.notes.map((n) => (
         <span key={n} className="block">
           {n}
@@ -110,12 +191,26 @@ export interface BreakReason {
 const PLANNED = [10, 15, 20, 30, 45, 60] as const;
 
 /** At break start: what it's for and how long, for the block-out it puts on the calendar. */
-function BreakPlan({ reasons, reasonId, minutes, onChange }: { reasons: BreakReason[]; reasonId: string; minutes: string; onChange: (v: { reasonId?: string; minutes?: string }) => void }) {
+function BreakPlan({
+  reasons,
+  reasonId,
+  minutes,
+  onChange,
+}: {
+  reasons: BreakReason[];
+  reasonId: string;
+  minutes: string;
+  onChange: (v: { reasonId?: string; minutes?: string }) => void;
+}) {
   return (
     <div className="grid grid-cols-2 gap-3 text-sm">
       <label className="block">
         <span className="mb-1 block text-xs text-zinc-500">Break for</span>
-        <Select value={reasonId} onChange={(e) => onChange({ reasonId: e.target.value })} aria-label="Break reason">
+        <Select
+          value={reasonId}
+          onChange={(e) => onChange({ reasonId: e.target.value })}
+          aria-label="Break reason"
+        >
           {reasons.map((r) => (
             <option key={r.id} value={r.id}>
               {r.label}
@@ -125,7 +220,11 @@ function BreakPlan({ reasons, reasonId, minutes, onChange }: { reasons: BreakRea
       </label>
       <label className="block">
         <span className="mb-1 block text-xs text-zinc-500">How long</span>
-        <Select value={minutes} onChange={(e) => onChange({ minutes: e.target.value })} aria-label="Planned break length">
+        <Select
+          value={minutes}
+          onChange={(e) => onChange({ minutes: e.target.value })}
+          aria-label="Planned break length"
+        >
           <option value="">Until I end it</option>
           {PLANNED.map((m) => (
             <option key={m} value={m}>
@@ -138,10 +237,25 @@ function BreakPlan({ reasons, reasonId, minutes, onChange }: { reasons: BreakRea
   );
 }
 
-const planOf = (type: PunchType, reasonId: string, minutes: string) => (type === "break_start" ? { breakReasonId: reasonId || null, plannedMin: minutes ? Number(minutes) : null } : {});
+const planOf = (type: PunchType, reasonId: string, minutes: string) =>
+  type === "break_start"
+    ? {
+        breakReasonId: reasonId || null,
+        plannedMin: minutes ? Number(minutes) : null,
+      }
+    : {};
 
 /** The phone clock: pick the shop you're working at, then clock in, take a break, clock out. */
-export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next, defaultShopId, breakReasons }: {
+export function ClockPanel({
+  shops,
+  state,
+  shiftShopId,
+  since,
+  breakSince,
+  next,
+  defaultShopId,
+  breakReasons,
+}: {
   shops: ClockShop[];
   state: "off" | "working" | "on_break";
   shiftShopId: string | null;
@@ -152,12 +266,15 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
   breakReasons: BreakReason[];
 }) {
   const router = useRouter();
-  const [shopId, setShopId] = useState(shiftShopId ?? defaultShopId ?? shops[0]?.id ?? "");
+  const [shopId, setShopId] = useState(
+    shiftShopId ?? defaultShopId ?? shops[0]?.id ?? "",
+  );
   const [photo, setPhoto] = useState<string | null>(null);
   const [breakReasonId, setBreakReasonId] = useState(breakReasons[0]?.id ?? "");
   const [planned, setPlanned] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Done | null>(null);
+  const [welcome, setWelcome] = useState<Welcome | null>(null);
   const [step, setStep] = useState<string | null>(null);
   const [pending, start] = useTransition();
   const shop = shops.find((s) => s.id === shopId);
@@ -172,13 +289,21 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
         gps = await location();
       }
       setStep(null);
-      const r = await punchAction({ shopId, type, gps, photo, confirmTimeOff, ...planOf(type, breakReasonId, planned) });
+      const r = await punchAction({
+        shopId,
+        type,
+        gps,
+        photo,
+        confirmTimeOff,
+        ...planOf(type, breakReasonId, planned),
+      });
       if (!r.ok) return setError(r.error);
       if (r.data.kind === "confirm") {
         if (window.confirm(r.data.message)) go(type, true);
         return;
       }
       setDone(r.data);
+      setWelcome(r.data.welcome ?? null);
       setPhoto(null);
       setPlanned("");
       router.refresh();
@@ -186,17 +311,41 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
 
   return (
     <Card className="space-y-4 p-5">
+      {welcome && (
+        <CelebrationModal
+          title={`Congratulations, ${welcome.firstName}!`}
+          lines={welcome.items.map((i) => i.text)}
+          onClose={() => setWelcome(null)}
+        />
+      )}
       <div>
-        <div className="text-xs uppercase tracking-wide text-zinc-500">Right now</div>
+        <div className="text-xs uppercase tracking-wide text-zinc-500">
+          Right now
+        </div>
         <div className="text-2xl font-semibold">
-          {state === "off" ? "Clocked out" : state === "working" ? "Working" : "On a break"}
-          {since && state !== "off" ? <span className="ml-2 text-base font-normal text-zinc-500">since {time(breakSince ?? since)}</span> : null}
+          {state === "off"
+            ? "Clocked out"
+            : state === "working"
+              ? "Working"
+              : "On a break"}
+          {since && state !== "off" ? (
+            <span className="ml-2 text-base font-normal text-zinc-500">
+              since {time(breakSince ?? since)}
+            </span>
+          ) : null}
         </div>
       </div>
       {shops.length > 1 && (
         <label className="block text-sm">
-          <span className="mb-1 block text-xs text-zinc-500">Shop you&apos;re working at</span>
-          <Select value={shopId} onChange={(e) => setShopId(e.target.value)} disabled={state !== "off"} aria-label="Shop">
+          <span className="mb-1 block text-xs text-zinc-500">
+            Shop you&apos;re working at
+          </span>
+          <Select
+            value={shopId}
+            onChange={(e) => setShopId(e.target.value)}
+            disabled={state !== "off"}
+            aria-label="Shop"
+          >
             {shops.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -206,7 +355,9 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
         </label>
       )}
       {shop && <p className="text-xs text-zinc-500">{shop.rule}</p>}
-      {shop && <PhotoInput mode={shop.photo} value={photo} onChange={setPhoto} />}
+      {shop && (
+        <PhotoInput mode={shop.photo} value={photo} onChange={setPhoto} />
+      )}
       {next.includes("break_start") && breakReasons.length > 0 && (
         <BreakPlan
           reasons={breakReasons}
@@ -220,7 +371,13 @@ export function ClockPanel({ shops, state, shiftShopId, since, breakSince, next,
       )}
       <div className="grid grid-cols-2 gap-3">
         {next.map((t) => (
-          <Button key={t} variant={BUTTON_TONE[t]} className={cx("h-14 text-base", next.length === 1 && "col-span-2")} disabled={pending || !shopId} onClick={() => go(t)}>
+          <Button
+            key={t}
+            variant={BUTTON_TONE[t]}
+            className={cx("h-14 text-base", next.length === 1 && "col-span-2")}
+            disabled={pending || !shopId}
+            onClick={() => go(t)}
+          >
             {PUNCH_LABEL[t]}
           </Button>
         ))}
@@ -239,7 +396,14 @@ export function PinForm({ hasPin }: { hasPin: boolean }) {
   const [saved, setSaved] = useState(false);
   return (
     <Card>
-      <CardHeader title="Front-desk PIN" subtitle={hasPin ? "Set. Change it any time." : "Set a 4 to 6 digit PIN to punch on the shop's front-desk clock."} />
+      <CardHeader
+        title="Front-desk PIN"
+        subtitle={
+          hasPin
+            ? "Set. Change it any time."
+            : "Set a 4 to 6 digit PIN to punch on the shop's front-desk clock."
+        }
+      />
       <form
         className="flex flex-wrap items-end gap-3 p-4 pt-0"
         onSubmit={(e) => {
@@ -256,12 +420,36 @@ export function PinForm({ hasPin }: { hasPin: boolean }) {
           );
         }}
       >
-        <Input type="password" inputMode="numeric" autoComplete="new-password" placeholder="New PIN" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} className="w-32" maxLength={6} aria-label="New PIN" />
-        <Input type="password" inputMode="numeric" autoComplete="new-password" placeholder="Again" value={again} onChange={(e) => setAgain(e.target.value.replace(/\D/g, ""))} className="w-32" maxLength={6} aria-label="PIN again" />
+        <Input
+          type="password"
+          inputMode="numeric"
+          autoComplete="new-password"
+          placeholder="New PIN"
+          value={pin}
+          onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+          className="w-32"
+          maxLength={6}
+          aria-label="New PIN"
+        />
+        <Input
+          type="password"
+          inputMode="numeric"
+          autoComplete="new-password"
+          placeholder="Again"
+          value={again}
+          onChange={(e) => setAgain(e.target.value.replace(/\D/g, ""))}
+          className="w-32"
+          maxLength={6}
+          aria-label="PIN again"
+        />
         <Button size="sm" disabled={pending || pin.length < 4 || pin !== again}>
           {hasPin ? "Change PIN" : "Set PIN"}
         </Button>
-        {pin && again && pin !== again && <span className="text-xs text-red-700">The PINs don&apos;t match.</span>}
+        {pin && again && pin !== again && (
+          <span className="text-xs text-red-700">
+            The PINs don&apos;t match.
+          </span>
+        )}
         {saved && <span className="text-xs text-emerald-700">Saved.</span>}
         {error && <span className="text-xs text-red-700">{error}</span>}
       </form>
@@ -270,7 +458,13 @@ export function PinForm({ hasPin }: { hasPin: boolean }) {
 }
 
 /** The barber's own say on whether an early clock-in opens their book early. */
-export function OpensEarlyForm({ on, shops }: { on: boolean; shops: string[] }) {
+export function OpensEarlyForm({
+  on,
+  shops,
+}: {
+  on: boolean;
+  shops: string[];
+}) {
   const { pending, error, run } = useAction();
   const [value, setValue] = useState(on);
   return (
@@ -294,7 +488,8 @@ export function OpensEarlyForm({ on, shops }: { on: boolean; shops: string[] }) 
             run(() => setOpensEarlyAction(next));
           }}
         />
-        Open my book from when I clock in, if that&apos;s before my scheduled start
+        Open my book from when I clock in, if that&apos;s before my scheduled
+        start
         {error && <span className="text-xs text-red-700">{error}</span>}
       </label>
     </Card>
@@ -302,13 +497,20 @@ export function OpensEarlyForm({ on, shops }: { on: boolean; shops: string[] }) 
 }
 
 /** Makes this browser a shop's front-desk clock. */
-export function RegisterDevice({ shops }: { shops: { id: string; name: string }[] }) {
+export function RegisterDevice({
+  shops,
+}: {
+  shops: { id: string; name: string }[];
+}) {
   const { pending, error, run } = useAction();
   const [shopId, setShopId] = useState(shops[0]?.id ?? "");
   const [label, setLabel] = useState("Front desk");
   return (
     <Card>
-      <CardHeader title="Use this device as a front-desk clock" subtitle="Staff then punch here with their own PIN. Register it once, on the device itself; it stays registered in this browser until revoked in Time clock setup." />
+      <CardHeader
+        title="Use this device as a front-desk clock"
+        subtitle="Staff then punch here with their own PIN. Register it once, on the device itself; it stays registered in this browser until revoked in Time clock setup."
+      />
       <form
         className="flex flex-wrap items-end gap-3 p-4 pt-0"
         onSubmit={(e) => {
@@ -317,7 +519,12 @@ export function RegisterDevice({ shops }: { shops: { id: string; name: string }[
         }}
       >
         {shops.length > 1 && (
-          <Select value={shopId} onChange={(e) => setShopId(e.target.value)} aria-label="Shop" className="w-48">
+          <Select
+            value={shopId}
+            onChange={(e) => setShopId(e.target.value)}
+            aria-label="Shop"
+            className="w-48"
+          >
             {shops.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}
@@ -325,7 +532,13 @@ export function RegisterDevice({ shops }: { shops: { id: string; name: string }[
             ))}
           </Select>
         )}
-        <Input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={60} aria-label="Device name" className="w-48" />
+        <Input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          maxLength={60}
+          aria-label="Device name"
+          className="w-48"
+        />
         <Button size="sm" disabled={pending || !shopId || !label.trim()}>
           Register this device
         </Button>
@@ -336,15 +549,31 @@ export function RegisterDevice({ shops }: { shops: { id: string; name: string }[
 }
 
 /** The shared front-desk clock: tap your name, type your PIN, punch. It forgets you after each punch. */
-export function Kiosk({ shop, people, photo, breakReasons }: { shop: string; people: { id: string; label: string; hasPin: boolean }[]; photo: "off" | "optional" | "required"; breakReasons: BreakReason[] }) {
+export function Kiosk({
+  shop,
+  people,
+  photo,
+  breakReasons,
+}: {
+  shop: string;
+  people: { id: string; label: string; hasPin: boolean }[];
+  photo: "off" | "optional" | "required";
+  breakReasons: BreakReason[];
+}) {
   const [who, setWho] = useState<{ id: string; label: string } | null>(null);
   const [pin, setPin] = useState("");
   const [breakReasonId, setBreakReasonId] = useState(breakReasons[0]?.id ?? "");
   const [planned, setPlanned] = useState("");
-  const [status, setStatus] = useState<{ state: string; next: PunchType[]; shop: string | null; since: string | null } | null>(null);
+  const [status, setStatus] = useState<{
+    state: string;
+    next: PunchType[];
+    shop: string | null;
+    since: string | null;
+  } | null>(null);
   const [shot, setShot] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Done | null>(null);
+  const [welcome, setWelcome] = useState<Welcome | null>(null);
   const [pending, start] = useTransition();
 
   const reset = () => {
@@ -368,23 +597,41 @@ export function Kiosk({ shop, people, photo, breakReasons }: { shop: string; peo
   const go = (type: PunchType, confirmTimeOff = false) =>
     start(async () => {
       setError(null);
-      const r = await kioskPunchAction({ staffId: who!.id, pin, type, photo: shot, confirmTimeOff, ...planOf(type, breakReasonId, planned) });
+      const r = await kioskPunchAction({
+        staffId: who!.id,
+        pin,
+        type,
+        photo: shot,
+        confirmTimeOff,
+        ...planOf(type, breakReasonId, planned),
+      });
       if (!r.ok) return setError(r.error);
       if (r.data.kind === "confirm") {
         if (window.confirm(r.data.message)) go(type, true);
         return;
       }
       setDone({ ...r.data, notes: [`${who!.label}`, ...r.data.notes] });
+      setWelcome(r.data.welcome ?? null);
       reset();
     });
 
   return (
     <div className="space-y-4">
+      {welcome && (
+        <CelebrationModal
+          title={`Congratulations, ${welcome.firstName}!`}
+          lines={welcome.items.map((i) => i.text)}
+          autoCloseMs={KIOSK_WELCOME_MS}
+          onClose={() => setWelcome(null)}
+        />
+      )}
       {done && <Result r={done} />}
       {error && <Notice tone="red">{error}</Notice>}
       {!who ? (
         <Card className="p-4">
-          <div className="mb-3 text-sm text-zinc-500">Tap your name at {shop}.</div>
+          <div className="mb-3 text-sm text-zinc-500">
+            Tap your name at {shop}.
+          </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {people.map((p) => (
               <Button
@@ -397,41 +644,66 @@ export function Kiosk({ shop, people, photo, breakReasons }: { shop: string; peo
                   setWho(p);
                 }}
                 disabled={!p.hasPin}
-                title={p.hasPin ? undefined : "No PIN yet: set one on your Time clock page"}
+                title={
+                  p.hasPin
+                    ? undefined
+                    : "No PIN yet: set one on your Time clock page"
+                }
               >
                 {p.label}
-                {!p.hasPin && <span className="ml-1 text-xs text-zinc-400">(no PIN)</span>}
+                {!p.hasPin && (
+                  <span className="ml-1 text-xs text-zinc-400">(no PIN)</span>
+                )}
               </Button>
             ))}
           </div>
         </Card>
       ) : !status ? (
         <Card className="space-y-3 p-4">
-          <div className="text-lg font-semibold">{who.label}, type your PIN</div>
+          <div className="text-lg font-semibold">
+            {who.label}, type your PIN
+          </div>
           <div className="text-3xl tracking-[0.5em]" aria-label="PIN entered">
             {"•".repeat(pin.length) || "\u00a0"}
           </div>
           <div className="grid max-w-xs grid-cols-3 gap-2">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK"].map((k) => (
-              <Button
-                key={k}
-                variant={k === "OK" ? "primary" : "secondary"}
-                className="h-14 text-lg"
-                disabled={pending || (k === "OK" && pin.length < 4)}
-                onClick={() => (k === "⌫" ? setPin(pin.slice(0, -1)) : k === "OK" ? check() : pin.length < 6 && setPin(pin + k))}
-              >
-                {k}
-              </Button>
-            ))}
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK"].map(
+              (k) => (
+                <Button
+                  key={k}
+                  variant={k === "OK" ? "primary" : "secondary"}
+                  className="h-14 text-lg"
+                  disabled={pending || (k === "OK" && pin.length < 4)}
+                  onClick={() =>
+                    k === "⌫"
+                      ? setPin(pin.slice(0, -1))
+                      : k === "OK"
+                        ? check()
+                        : pin.length < 6 && setPin(pin + k)
+                  }
+                >
+                  {k}
+                </Button>
+              ),
+            )}
           </div>
-          <button type="button" className="text-sm text-zinc-500 underline" onClick={reset}>
+          <button
+            type="button"
+            className="text-sm text-zinc-500 underline"
+            onClick={reset}
+          >
             Not you?
           </button>
         </Card>
       ) : (
         <Card className="space-y-3 p-4">
           <div className="text-lg font-semibold">
-            {who.label}: {status.state === "off" ? "clocked out" : status.state === "working" ? `working since ${time(status.since!)}` : "on a break"}
+            {who.label}:{" "}
+            {status.state === "off"
+              ? "clocked out"
+              : status.state === "working"
+                ? `working since ${time(status.since!)}`
+                : "on a break"}
           </div>
           <PhotoInput mode={photo} value={shot} onChange={setShot} />
           {status.next.includes("break_start") && breakReasons.length > 0 && (
@@ -447,12 +719,22 @@ export function Kiosk({ shop, people, photo, breakReasons }: { shop: string; peo
           )}
           <div className="grid grid-cols-2 gap-3">
             {status.next.map((t) => (
-              <Button key={t} variant={BUTTON_TONE[t]} className="h-16 text-lg" disabled={pending} onClick={() => go(t)}>
+              <Button
+                key={t}
+                variant={BUTTON_TONE[t]}
+                className="h-16 text-lg"
+                disabled={pending}
+                onClick={() => go(t)}
+              >
                 {PUNCH_LABEL[t]}
               </Button>
             ))}
           </div>
-          <button type="button" className="text-sm text-zinc-500 underline" onClick={reset}>
+          <button
+            type="button"
+            className="text-sm text-zinc-500 underline"
+            onClick={reset}
+          >
             Cancel
           </button>
         </Card>

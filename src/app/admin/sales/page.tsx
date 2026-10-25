@@ -2,20 +2,54 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { customers, payments, saleReassignments, sales, shops, staff } from "@/db/schema";
-import { Badge, Button, Card, Empty, PageHeader, Table, Td, Th } from "@/components/ui";
+import {
+  customers,
+  payments,
+  saleReassignments,
+  sales,
+  shops,
+  staff,
+} from "@/db/schema";
+import { CelebrationBanner } from "@/components/celebration";
+import {
+  Badge,
+  Button,
+  Card,
+  Empty,
+  PageHeader,
+  Table,
+  Td,
+  Th,
+} from "@/components/ui";
 import { formatCents } from "@/lib/money";
-import { addDays, formatDate, formatTime, isValidLocalDate, todayLocal } from "@/lib/time";
+import {
+  addDays,
+  formatDate,
+  formatTime,
+  isValidLocalDate,
+  todayLocal,
+} from "@/lib/time";
 import { can, guardPage, reportShopIds } from "@/server/auth/staff";
 import { openTickets } from "@/server/combined-checkout";
+import { shopDay } from "@/server/milestones/day";
 import { byBarber } from "@/server/reports";
 import { newSaleAction } from "../checkout/actions";
 
 export const metadata: Metadata = { title: "Sales" };
 
-const TONE = { paid: "green", open: "amber", voided: "gray", refunded: "red", partially_refunded: "amber" } as const;
+const TONE = {
+  paid: "green",
+  open: "amber",
+  voided: "gray",
+  refunded: "red",
+  partially_refunded: "amber",
+} as const;
 
-export default async function SalesPage({ searchParams }: { searchParams: Promise<{ date?: string }> }) {
+export default async function SalesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ date?: string }>;
+}) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/sales");
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : todayLocal();
@@ -37,7 +71,9 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
       methods: sql<string>`(select string_agg(distinct ${payments.method}::text, ' + ') from ${payments} where ${payments.saleId} = ${sales.id})`,
       reassigned: sql<boolean>`exists (select 1 from ${saleReassignments} where ${saleReassignments.saleId} = ${sales.id})`,
       mergedIntoSaleId: sales.mergedIntoSaleId,
-      mergedIntoNumber: sql<number | null>`(select m.number from ${sales} m where m.id = ${sales.mergedIntoSaleId})`,
+      mergedIntoNumber: sql<
+        number | null
+      >`(select m.number from ${sales} m where m.id = ${sales.mergedIntoSaleId})`,
     })
     .from(sales)
     .innerJoin(shops, eq(shops.id, sales.shopId))
@@ -50,14 +86,22 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
   const open = rows.filter((r) => r.status === "open");
   const closed = rows.filter((r) => r.status !== "open" && !r.mergedIntoSaleId);
   const combined = rows.filter((r) => r.mergedIntoSaleId);
-  const paidTotal = closed.filter((r) => r.status !== "voided").reduce((a, r) => a + r.totalCents, 0);
+  const paidTotal = closed
+    .filter((r) => r.status !== "voided")
+    .reduce((a, r) => a + r.totalCents, 0);
   // Each service line counts for the barber who did it, so a family ticket with two barbers shows on both.
-  const [queue, barberRows] = await Promise.all([
+  const [queue, barberRows, day] = await Promise.all([
     isToday ? openTickets(shopIds) : Promise.resolve(null),
     byBarber({ shopIds, from: date, to: date }),
+    isToday ? shopDay(shopIds) : null,
   ]);
   const perBarber = barberRows
-    .map((b) => ({ name: b.label, tickets: b.tickets, cents: b.netServicesCents + b.netProductsCents, tips: b.tipsCents }))
+    .map((b) => ({
+      name: b.label,
+      tickets: b.tickets,
+      cents: b.netServicesCents + b.netProductsCents,
+      tips: b.tipsCents,
+    }))
     .filter((b) => b.tickets || b.cents || b.tips)
     .sort((a, b) => b.cents - a.cents);
   const eod = can(ctx, "report.end_of_day.view");
@@ -68,14 +112,23 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
         subtitle={`${formatDate(date, "EEEE, MMM d")} · ${closed.length} tickets · ${formatCents(paidTotal)} collected`}
         actions={
           <>
-            <Link className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/sales?date=${addDays(date, -1)}`}>
+            <Link
+              className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white"
+              href={`/admin/sales?date=${addDays(date, -1)}`}
+            >
               ‹ Prev
             </Link>
-            <Link className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/sales?date=${addDays(date, 1)}`}>
+            <Link
+              className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white"
+              href={`/admin/sales?date=${addDays(date, 1)}`}
+            >
               Next ›
             </Link>
             {eod && (
-              <Link className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={`/admin/reports/end-of-day?from=${date}&to=${date}`}>
+              <Link
+                className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white"
+                href={`/admin/reports/end-of-day?from=${date}&to=${date}`}
+              >
                 End of day
               </Link>
             )}
@@ -87,15 +140,23 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
           </>
         }
       />
+      <CelebrationBanner items={day?.pos ?? []} className="mb-4" />
       {queue && queue.length > 0 ? (
         <Card className="mb-4" data-testid="checkout-queue">
           <div className="flex items-baseline justify-between border-b border-zinc-100 px-4 py-3">
             <span className="text-sm font-semibold">Checkout queue</span>
-            <span className="text-xs text-zinc-500">Ready first. Open a ticket to combine others into it.</span>
+            <span className="text-xs text-zinc-500">
+              Ready first. Open a ticket to combine others into it.
+            </span>
           </div>
           <ul className="grid gap-2 p-4 sm:grid-cols-2 lg:grid-cols-3">
             {[...queue]
-              .sort((a, b) => Number(b.ready > 0 && b.ready === b.total) - Number(a.ready > 0 && a.ready === a.total) || b.ready - a.ready)
+              .sort(
+                (a, b) =>
+                  Number(b.ready > 0 && b.ready === b.total) -
+                    Number(a.ready > 0 && a.ready === a.total) ||
+                  b.ready - a.ready,
+              )
               .map((t) => {
                 const all = t.total > 0 && t.ready === t.total;
                 return (
@@ -109,24 +170,48 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
                         <span className="font-semibold">
                           #{t.number} · {t.client ?? "Walk-in"}
                         </span>
-                        <span className="tabular text-xs text-zinc-600">{formatCents(t.grossCents)}</span>
+                        <span className="tabular text-xs text-zinc-600">
+                          {formatCents(t.grossCents)}
+                        </span>
                       </div>
                       {t.people.length > 1 ? (
                         <ul className="mt-1 space-y-0.5 text-xs text-zinc-700">
                           {t.people.map((p) => (
-                            <li key={p.appointmentId} className="flex items-center gap-1.5">
-                              <span className={`inline-block h-2 w-2 rounded-full ${p.readyAt ? "bg-emerald-500" : "bg-zinc-300"}`} aria-hidden />
+                            <li
+                              key={p.appointmentId}
+                              className="flex items-center gap-1.5"
+                            >
+                              <span
+                                className={`inline-block h-2 w-2 rounded-full ${p.readyAt ? "bg-emerald-500" : "bg-zinc-300"}`}
+                                aria-hidden
+                              />
                               {p.name}
-                              {p.staffName && <span className="text-zinc-500">· {p.staffName}</span>}
+                              {p.staffName && (
+                                <span className="text-zinc-500">
+                                  · {p.staffName}
+                                </span>
+                              )}
                             </li>
                           ))}
                         </ul>
                       ) : (
-                        <div className="text-xs text-zinc-600">{t.barber ?? "No barber"}</div>
+                        <div className="text-xs text-zinc-600">
+                          {t.barber ?? "No barber"}
+                        </div>
                       )}
                       <div className="mt-1 text-xs font-medium">
-                        {t.total === 0 ? "Retail / gift card" : all ? (t.total > 1 ? `All ${t.total} ready` : "Ready") : `${t.ready} of ${t.total} ready`}
-                        {t.groupCode && <span className="ml-1 font-mono text-zinc-500">{t.groupCode}</span>}
+                        {t.total === 0
+                          ? "Retail / gift card"
+                          : all
+                            ? t.total > 1
+                              ? `All ${t.total} ready`
+                              : "Ready"
+                            : `${t.ready} of ${t.total} ready`}
+                        {t.groupCode && (
+                          <span className="ml-1 font-mono text-zinc-500">
+                            {t.groupCode}
+                          </span>
+                        )}
                       </div>
                     </Link>
                   </li>
@@ -138,11 +223,18 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
         !queue &&
         open.length > 0 && (
           <Card className="mb-4">
-            <div className="border-b border-zinc-100 px-4 py-3 text-sm font-semibold">Open tickets</div>
+            <div className="border-b border-zinc-100 px-4 py-3 text-sm font-semibold">
+              Open tickets
+            </div>
             <div className="flex flex-wrap gap-2 p-4">
               {open.map((r) => (
-                <Link key={r.id} href={`/admin/checkout/${r.id}`} className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-200 hover:bg-amber-100">
-                  #{r.number} · {r.firstName ?? "Walk-in"} · {r.barber ?? "No barber"}
+                <Link
+                  key={r.id}
+                  href={`/admin/checkout/${r.id}`}
+                  className="rounded-lg bg-amber-50 px-3 py-2 text-sm ring-1 ring-amber-200 hover:bg-amber-100"
+                >
+                  #{r.number} · {r.firstName ?? "Walk-in"} ·{" "}
+                  {r.barber ?? "No barber"}
                 </Link>
               ))}
             </div>
@@ -151,13 +243,19 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
       )}
       {perBarber.length > 0 && (
         <Card className="mb-4">
-          <div className="border-b border-zinc-100 px-4 py-3 text-sm font-semibold">Daily summary by barber</div>
-          <div className="grid grid-cols-2 gap-px bg-zinc-100 sm:grid-cols-3 lg:grid-cols-4" data-testid="daily-summary">
+          <div className="border-b border-zinc-100 px-4 py-3 text-sm font-semibold">
+            Daily summary by barber
+          </div>
+          <div
+            className="grid grid-cols-2 gap-px bg-zinc-100 sm:grid-cols-3 lg:grid-cols-4"
+            data-testid="daily-summary"
+          >
             {perBarber.map((x) => (
               <div key={x.name} className="bg-white px-4 py-3 text-sm">
                 <div className="font-medium">{x.name}</div>
                 <div className="tabular text-zinc-600">
-                  {x.tickets} ticket{x.tickets === 1 ? "" : "s"} · sales {formatCents(x.cents)} · tips {formatCents(x.tips)}
+                  {x.tickets} ticket{x.tickets === 1 ? "" : "s"} · sales{" "}
+                  {formatCents(x.cents)} · tips {formatCents(x.tips)}
                 </div>
               </div>
             ))}
@@ -187,28 +285,48 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
               {closed.map((r) => (
                 <tr key={r.id} className="hover:bg-zinc-50">
                   <Td>
-                    <Link className="font-medium underline-offset-2 hover:underline" href={`/admin/sales/${r.id}`}>
+                    <Link
+                      className="font-medium underline-offset-2 hover:underline"
+                      href={`/admin/sales/${r.id}`}
+                    >
                       {r.number}
                     </Link>
                   </Td>
                   <Td>{formatTime(r.paidAt ?? r.createdAt)}</Td>
                   {ctx.currentShopId === null && <Td>{r.shop}</Td>}
-                  <Td>{r.firstName ? `${r.firstName} ${r.lastName ?? ""}` : <span className="text-zinc-400">Walk-in</span>}</Td>
+                  <Td>
+                    {r.firstName ? (
+                      `${r.firstName} ${r.lastName ?? ""}`
+                    ) : (
+                      <span className="text-zinc-400">Walk-in</span>
+                    )}
+                  </Td>
                   <Td>
                     {r.barber ?? "—"}
-                    {r.reassigned && <span className="ml-1 text-xs text-zinc-500">(reassigned)</span>}
+                    {r.reassigned && (
+                      <span className="ml-1 text-xs text-zinc-500">
+                        (reassigned)
+                      </span>
+                    )}
                   </Td>
                   <Td className="capitalize">
                     {r.methods?.replace("_", " ") ?? "—"}
-                    {r.cardFeeCents > 0 && <span className="ml-1 text-xs text-amber-700">+fee</span>}
+                    {r.cardFeeCents > 0 && (
+                      <span className="ml-1 text-xs text-amber-700">+fee</span>
+                    )}
                   </Td>
                   <Td right>{formatCents(r.tipCents)}</Td>
                   <Td right>{formatCents(r.totalCents)}</Td>
                   <Td>
-                    <Badge tone={TONE[r.status]}>{r.status.replace("_", " ")}</Badge>
+                    <Badge tone={TONE[r.status]}>
+                      {r.status.replace("_", " ")}
+                    </Badge>
                   </Td>
                   <Td right>
-                    <Link className="text-xs underline" href={`/admin/sales/${r.id}`}>
+                    <Link
+                      className="text-xs underline"
+                      href={`/admin/sales/${r.id}`}
+                    >
                       Receipt, refund, reassign
                     </Link>
                   </Td>
@@ -219,12 +337,18 @@ export default async function SalesPage({ searchParams }: { searchParams: Promis
         </Card>
       )}
       {combined.length > 0 && (
-        <p className="mt-3 text-xs text-zinc-500" data-testid="combined-tickets">
+        <p
+          className="mt-3 text-xs text-zinc-500"
+          data-testid="combined-tickets"
+        >
           Combined into other tickets:{" "}
           {combined.map((r, i) => (
             <span key={r.id}>
               {i > 0 && ", "}#{r.number} into{" "}
-              <Link className="underline" href={`/admin/sales/${r.mergedIntoSaleId}`}>
+              <Link
+                className="underline"
+                href={`/admin/sales/${r.mergedIntoSaleId}`}
+              >
                 #{r.mergedIntoNumber}
               </Link>
             </span>

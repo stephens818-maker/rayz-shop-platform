@@ -1,7 +1,16 @@
 import "server-only";
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { type DBorTx, db } from "@/db";
-import { brandSettings, marketingTemplates, notificationJobs, staff, staffMilestoneBaselines, staffMilestoneRules, staffMilestones, staffShops } from "@/db/schema";
+import {
+  brandSettings,
+  marketingTemplates,
+  notificationJobs,
+  staff,
+  staffMilestoneBaselines,
+  staffMilestoneRules,
+  staffMilestones,
+  staffShops,
+} from "@/db/schema";
 import {
   BEST_METRICS,
   BUILT_IN_RULES,
@@ -35,7 +44,14 @@ import {
 } from "@/domain/milestones";
 import { weekStartOf } from "@/domain/payroll/overtime";
 import { appBaseUrl } from "@/lib/deployment";
-import { LocalDate, SHOP_TZ, addDays, diffDays, formatDate, todayLocal } from "@/lib/time";
+import {
+  LocalDate,
+  SHOP_TZ,
+  addDays,
+  diffDays,
+  formatDate,
+  todayLocal,
+} from "@/lib/time";
 import { recordEvent } from "../analytics";
 import { SYSTEM, audit } from "../audit";
 import { type StaffAccess, loadStaffAccess } from "../auth/access";
@@ -43,7 +59,10 @@ import { processDueJobs } from "../notifications/queue";
 import { rows, uuids } from "../report-sql";
 
 export async function loadMilestoneSettings(): Promise<MilestoneSettings> {
-  const [b] = await db.select({ m: brandSettings.milestones }).from(brandSettings).limit(1);
+  const [b] = await db
+    .select({ m: brandSettings.milestones })
+    .from(brandSettings)
+    .limit(1);
   return milestoneSettings(b?.m);
 }
 
@@ -53,24 +72,61 @@ export async function loadMilestoneSettings(): Promise<MilestoneSettings> {
  */
 export async function ensureMilestoneDefaults() {
   await db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('milestones:defaults'))`);
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext('milestones:defaults'))`,
+    );
     await tx
       .insert(staffMilestoneRules)
-      .values(BUILT_IN_RULES.map((r) => ({ ...r, thresholds: [...r.thresholds], builtIn: true })))
+      .values(
+        BUILT_IN_RULES.map((r) => ({
+          ...r,
+          thresholds: [...r.thresholds],
+          builtIn: true,
+        })),
+      )
       .onConflictDoNothing({ target: staffMilestoneRules.key });
-    const [t] = await tx.select({ id: marketingTemplates.id }).from(marketingTemplates).where(eq(marketingTemplates.purpose, "milestone")).limit(1);
-    if (!t) await tx.insert(marketingTemplates).values({ ...MILESTONE_TEMPLATE, templates: { ...MILESTONE_TEMPLATE.templates }, channels: ["sms", "email", "push"], status: "approved", approvedAt: new Date(), purpose: "milestone" });
+    const [t] = await tx
+      .select({ id: marketingTemplates.id })
+      .from(marketingTemplates)
+      .where(eq(marketingTemplates.purpose, "milestone"))
+      .limit(1);
+    if (!t)
+      await tx
+        .insert(marketingTemplates)
+        .values({
+          ...MILESTONE_TEMPLATE,
+          templates: { ...MILESTONE_TEMPLATE.templates },
+          channels: ["sms", "email", "push"],
+          status: "approved",
+          approvedAt: new Date(),
+          purpose: "milestone",
+        });
   });
 }
 
-export async function loadRules(o: { activeOnly?: boolean } = {}): Promise<RuleLike[]> {
-  const read = () => db.select().from(staffMilestoneRules).orderBy(asc(staffMilestoneRules.sortOrder), asc(staffMilestoneRules.name));
+export async function loadRules(
+  o: { activeOnly?: boolean } = {},
+): Promise<RuleLike[]> {
+  const read = () =>
+    db
+      .select()
+      .from(staffMilestoneRules)
+      .orderBy(
+        asc(staffMilestoneRules.sortOrder),
+        asc(staffMilestoneRules.name),
+      );
   let list = await read();
   if (!list.some((r) => r.builtIn)) {
     await ensureMilestoneDefaults();
     list = await read();
   }
-  return list.filter((r) => !o.activeOnly || r.active).map((r) => ({ ...r, thresholds: cleanThresholds(r.thresholds ?? []), serviceIds: r.serviceIds ?? [] }));
+  return list
+    .filter((r) => !o.activeOnly || r.active)
+    .map((r) => ({
+      ...r,
+      thresholds: cleanThresholds(r.thresholds ?? []),
+      serviceIds: r.serviceIds ?? [],
+    }));
 }
 
 export interface Person {
@@ -96,10 +152,19 @@ export async function people(ids?: readonly string[]): Promise<Person[]> {
       birthdayMonth: staff.birthdayMonth,
       birthdayDay: staff.birthdayDay,
       shared: staff.milestonesShared,
-      shops: sql<string[]>`coalesce((select array_agg(ss.shop_id::text order by ss.is_primary desc, ss.shop_id) from staff_shops ss where ss.staff_id = ${staff.id}), '{}')`,
+      shops: sql<
+        string[]
+      >`coalesce((select array_agg(ss.shop_id::text order by ss.is_primary desc, ss.shop_id) from staff_shops ss where ss.staff_id = ${staff.id}), '{}')`,
     })
     .from(staff)
-    .where(and(eq(staff.kind, "person"), eq(staff.active, true), isNull(staff.removedAt), ids ? inArray(staff.id, [...ids]) : undefined))
+    .where(
+      and(
+        eq(staff.kind, "person"),
+        eq(staff.active, true),
+        isNull(staff.removedAt),
+        ids ? inArray(staff.id, [...ids]) : undefined,
+      ),
+    )
     .orderBy(asc(staff.displayLabel));
   return list.map(({ shops, ...p }) => ({ ...p, workShops: shops ?? [] }));
 }
@@ -110,14 +175,20 @@ const TZ = sql.raw(`'${SHOP_TZ}'`);
 const localDay = (col: SQL) => sql`(${col} at time zone ${TZ})::date`;
 
 /** One row per thing counted: who gets it, when, the shop and how many (products count each unit). */
-function eventsSql(metric: CountMetric, serviceIds: readonly string[], now: Date): SQL {
+function eventsSql(
+  metric: CountMetric,
+  serviceIds: readonly string[],
+  now: Date,
+): SQL {
   const at = now.toISOString();
   const done = sql`a.status = 'completed' and a.starts_at <= ${at}`;
   const pick = sql`a.staff_id, a.starts_at at_, ${localDay(sql`a.starts_at`)} day_, a.shop_id, 1 w`;
   switch (metric) {
     case "services":
       return sql`select ${pick} from appointments a where ${done}${
-        serviceIds.length ? sql` and exists (select 1 from appointment_items i where i.appointment_id = a.id and i.service_id in ${uuids([...serviceIds])})` : sql``
+        serviceIds.length
+          ? sql` and exists (select 1 from appointment_items i where i.appointment_id = a.id and i.service_id in ${uuids([...serviceIds])})`
+          : sql``
       }`;
     case "clients":
       return sql`select distinct on (a.staff_id, a.customer_id) ${pick} from appointments a where ${done} and a.customer_id is not null order by a.staff_id, a.customer_id, a.starts_at`;
@@ -135,21 +206,42 @@ function eventsSql(metric: CountMetric, serviceIds: readonly string[], now: Date
 }
 
 /** The counted rows on or after each person's baseline date (the baseline counts what came before). */
-function countedSql(metric: CountMetric, serviceIds: readonly string[], useBaseline: boolean, staffIds: readonly string[], now: Date) {
+function countedSql(
+  metric: CountMetric,
+  serviceIds: readonly string[],
+  useBaseline: boolean,
+  staffIds: readonly string[],
+  now: Date,
+) {
   return sql`select ev.* from (${eventsSql(metric, serviceIds, now)}) ev
     ${useBaseline ? sql`left join staff_milestone_baselines bl on bl.staff_id = ev.staff_id and bl.metric = ${metric}` : sql``}
     where ev.staff_id in ${uuids([...staffIds])} ${useBaseline ? sql`and (bl.as_of is null or ev.day_ >= bl.as_of)` : sql``}`;
 }
 
 /** Baselines apply to a built-in metric counted in full, not to a rule that counts only some services. */
-const usesBaseline = (r: Pick<RuleLike, "serviceIds">) => r.serviceIds.length === 0;
+const usesBaseline = (r: Pick<RuleLike, "serviceIds">) =>
+  r.serviceIds.length === 0;
 
 export async function baselines(staffIds?: readonly string[]) {
   const list = await db
     .select()
     .from(staffMilestoneBaselines)
-    .where(staffIds ? inArray(staffMilestoneBaselines.staffId, staffIds.length ? [...staffIds] : ["00000000-0000-0000-0000-000000000000"]) : undefined);
-  return new Map(list.map((b) => [`${b.staffId}|${b.metric}`, { count: b.count, asOf: b.asOf }]));
+    .where(
+      staffIds
+        ? inArray(
+            staffMilestoneBaselines.staffId,
+            staffIds.length
+              ? [...staffIds]
+              : ["00000000-0000-0000-0000-000000000000"],
+          )
+        : undefined,
+    );
+  return new Map(
+    list.map((b) => [
+      `${b.staffId}|${b.metric}`,
+      { count: b.count, asOf: b.asOf },
+    ]),
+  );
 }
 
 export interface CountTotal {
@@ -161,19 +253,31 @@ export interface CountTotal {
 }
 
 /** Each person's total for a count rule: their baseline plus what's counted since. */
-export async function countTotals(rule: Pick<RuleLike, "metric" | "serviceIds">, staffIds: readonly string[], now: Date): Promise<Map<string, CountTotal>> {
+export async function countTotals(
+  rule: Pick<RuleLike, "metric" | "serviceIds">,
+  staffIds: readonly string[],
+  now: Date,
+): Promise<Map<string, CountTotal>> {
   const out = new Map<string, CountTotal>();
   if (!staffIds.length) return out;
   const metric = rule.metric as CountMetric;
   const base = usesBaseline(rule);
   const today = todayLocal(now);
-  const got = await rows<{ staff_id: string; total: number; recent: number }>(sql`
+  const got = await rows<{
+    staff_id: string;
+    total: number;
+    recent: number;
+  }>(sql`
     select staff_id, coalesce(sum(w), 0)::int total, coalesce(sum(w) filter (where day_ >= ${addDays(today, -PACE_DAYS)} and day_ < ${today}), 0)::int recent
     from (${countedSql(metric, rule.serviceIds, base, staffIds, now)}) c group by 1`);
   const bl = base ? await baselines(staffIds) : new Map();
   for (const id of staffIds) {
     const r = got.find((g) => g.staff_id === id);
-    out.set(id, { total: (r?.total ?? 0) + (bl.get(`${id}|${metric}`)?.count ?? 0), recent: r?.recent ?? 0, laterToday: 0 });
+    out.set(id, {
+      total: (r?.total ?? 0) + (bl.get(`${id}|${metric}`)?.count ?? 0),
+      recent: r?.recent ?? 0,
+      laterToday: 0,
+    });
   }
   if (metric === "services") {
     const later = await rows<{ staff_id: string; n: number }>(sql`
@@ -191,7 +295,11 @@ export async function countTotals(rule: Pick<RuleLike, "metric" | "serviceIds">,
 }
 
 /** The day and shop of each person's Nth counted row. */
-async function nthEvents(rule: RuleLike, wanted: { key: string; staffId: string; n: number }[], now: Date) {
+async function nthEvents(
+  rule: RuleLike,
+  wanted: { key: string; staffId: string; n: number }[],
+  now: Date,
+) {
   const found = new Map<string, { day: LocalDate; shopId: string | null }>();
   if (!wanted.length) return found;
   const staffIds = [...new Set(wanted.map((w) => w.staffId))];
@@ -199,7 +307,11 @@ async function nthEvents(rule: RuleLike, wanted: { key: string; staffId: string;
     wanted.map((w) => sql`(${w.key}, ${w.staffId}::uuid, ${w.n}::int)`),
     sql`, `,
   );
-  const got = await rows<{ k: string; day: string; shop_id: string | null }>(sql`
+  const got = await rows<{
+    k: string;
+    day: string;
+    shop_id: string | null;
+  }>(sql`
     with r as materialized (
       select staff_id, day_, shop_id, sum(w) over (partition by staff_id order by at_, day_ rows unbounded preceding) cum
       from (${countedSql(rule.metric as CountMetric, rule.serviceIds, usesBaseline(rule), staffIds, now)}) c
@@ -215,21 +327,34 @@ async function nthEvents(rule: RuleLike, wanted: { key: string; staffId: string;
 const SALES_NET = sql`(si.net_cents::numeric * (si.qty - si.refunded_qty) / nullif(si.qty, 0))`;
 
 /** Each person's value per closed period, for a personal best. */
-export async function bestSeries(metric: BestMetric, staffIds: readonly string[], today: LocalDate): Promise<Map<string, PeriodValue[]>> {
+export async function bestSeries(
+  metric: BestMetric,
+  staffIds: readonly string[],
+  today: LocalDate,
+): Promise<Map<string, PeriodValue[]>> {
   const out = new Map<string, PeriodValue[]>();
   if (!staffIds.length) return out;
   const who = uuids([...staffIds]);
   const thisWeek = weekStartOf(today);
   const thisMonth = `${today.slice(0, 7)}-01`;
   let q: SQL;
-  if (metric === "sales_day" || metric === "sales_week" || metric === "sales_month") {
+  if (
+    metric === "sales_day" ||
+    metric === "sales_week" ||
+    metric === "sales_month"
+  ) {
     const period =
       metric === "sales_day"
         ? sql`s.business_date::text`
         : metric === "sales_week"
           ? sql`(s.business_date - extract(dow from s.business_date)::int)::text`
           : sql`to_char(s.business_date, 'YYYY-MM')`;
-    const before = metric === "sales_day" ? today : metric === "sales_week" ? thisWeek : thisMonth;
+    const before =
+      metric === "sales_day"
+        ? today
+        : metric === "sales_week"
+          ? thisWeek
+          : thisMonth;
     q = sql`select coalesce(si.staff_id, s.staff_id) staff_id, ${period} period, round(sum(${SALES_NET}))::bigint v, mode() within group (order by s.shop_id) shop_id
       from sale_items si join sales s on s.id = si.sale_id
       where si.kind in ('service', 'addon', 'product') and s.status in ('paid', 'partially_refunded') and s.business_date < ${before}
@@ -249,9 +374,19 @@ export async function bestSeries(metric: BestMetric, staffIds: readonly string[]
         and ${localDay(sql`a.starts_at`)} < ${thisMonth}
       group by 1, 2 having count(*) >= ${MIN_REBOOK_VISITS}`;
   }
-  const got = await rows<{ staff_id: string; period: string; v: string | number; shop_id: string | null }>(q);
+  const got = await rows<{
+    staff_id: string;
+    period: string;
+    v: string | number;
+    shop_id: string | null;
+  }>(q);
   for (const g of got) {
-    const end = metric === "sales_week" ? addDays(g.period, 6) : metric === "sales_month" || metric === "rebook_month" ? monthEnd(g.period) : g.period;
+    const end =
+      metric === "sales_week"
+        ? addDays(g.period, 6)
+        : metric === "sales_month" || metric === "rebook_month"
+          ? monthEnd(g.period)
+          : g.period;
     const list = out.get(g.staff_id) ?? [];
     list.push({ period: g.period, end, value: Number(g.v), shopId: g.shop_id });
     out.set(g.staff_id, list);
@@ -262,16 +397,31 @@ export async function bestSeries(metric: BestMetric, staffIds: readonly string[]
 // ───────────────────────────── Streaks ─────────────────────────────
 
 /** Each person's events in order: a 5-star answer or not, an on-time start or not. */
-export async function streakEvents(metric: StreakMetric, staffIds: readonly string[]): Promise<Map<string, StreakEvent[]>> {
+export async function streakEvents(
+  metric: StreakMetric,
+  staffIds: readonly string[],
+): Promise<Map<string, StreakEvent[]>> {
   const out = new Map<string, StreakEvent[]>();
   if (!staffIds.length) return out;
   const who = uuids([...staffIds]);
   const got =
     metric === "five_star"
-      ? await rows<{ staff_id: string; id: string; day: string; shop_id: string | null; ok: boolean }>(sql`
+      ? await rows<{
+          staff_id: string;
+          id: string;
+          day: string;
+          shop_id: string | null;
+          ok: boolean;
+        }>(sql`
           select v.staff_id, v.id::text id, ${localDay(sql`v.created_at`)}::text as "day", v.shop_id, v.stars = 5 ok
           from visit_satisfaction v where v.staff_id in ${who} order by v.staff_id, v.created_at, v.id`)
-      : await rows<{ staff_id: string; id: string; day: string; shop_id: string | null; ok: boolean }>(sql`
+      : await rows<{
+          staff_id: string;
+          id: string;
+          day: string;
+          shop_id: string | null;
+          ok: boolean;
+        }>(sql`
           select a.staff_id, a.id::text id, ${localDay(sql`a.starts_at`)}::text as "day", a.shop_id, t.started_at <= a.starts_at + interval '5 minutes' ok
           from appointments a join appointment_times t on t.appointment_id = a.id
           where a.staff_id in ${who} and a.status = 'completed' and a.source <> 'walk_in' and t.started_at is not null
@@ -302,20 +452,27 @@ export interface Found {
   dedupeKey: string;
 }
 
-const isOld = (day: LocalDate, today: LocalDate) => diffDays(today, day) > NOTIFY_DAYS;
+const isOld = (day: LocalDate, today: LocalDate) =>
+  diffDays(today, day) > NOTIFY_DAYS;
 
 /**
  * Every milestone reached so far that isn't recorded yet. Those reached more than NOTIFY_DAYS ago
  * (history, a new hire date, a Squire baseline) are silent: kept for the trophy case, never announced.
  */
-export async function findMilestones(now: Date, o: { staffIds?: string[] } = {}): Promise<Found[]> {
+export async function findMilestones(
+  now: Date,
+  o: { staffIds?: string[]; kinds?: readonly MilestoneKind[] } = {},
+): Promise<Found[]> {
   const settings = await loadMilestoneSettings();
   if (!settings.enabled) return [];
   const today = todayLocal(now);
   const [rules, team, have] = await Promise.all([
     loadRules({ activeOnly: true }),
     people(o.staffIds),
-    db.select({ k: staffMilestones.dedupeKey }).from(staffMilestones).then((r) => new Set(r.map((x) => x.k))),
+    db
+      .select({ k: staffMilestones.dedupeKey })
+      .from(staffMilestones)
+      .then((r) => new Set(r.map((x) => x.k))),
   ]);
   if (!team.length) return [];
   const ids = team.map((p) => p.id);
@@ -327,13 +484,25 @@ export async function findMilestones(now: Date, o: { staffIds?: string[] } = {})
     out.push(f);
   };
 
-  for (const rule of rules) {
+  for (const rule of rules.filter(
+    (r) => !o.kinds || o.kinds.includes(r.kind),
+  )) {
     const facts = { kind: rule.kind, metric: rule.metric };
     const unit = ruleUnit(rule);
-    if (rule.kind === "count" && (COUNT_METRICS as readonly string[]).includes(rule.metric)) {
+    if (
+      rule.kind === "count" &&
+      (COUNT_METRICS as readonly string[]).includes(rule.metric)
+    ) {
       const totals = await countTotals(rule, ids, now);
-      const bl = usesBaseline(rule) ? await baselines(ids) : new Map<string, { count: number; asOf: LocalDate }>();
-      const wanted: { key: string; staffId: string; n: number; threshold: number }[] = [];
+      const bl = usesBaseline(rule)
+        ? await baselines(ids)
+        : new Map<string, { count: number; asOf: LocalDate }>();
+      const wanted: {
+        key: string;
+        staffId: string;
+        n: number;
+        threshold: number;
+      }[] = [];
       for (const id of ids) {
         const total = totals.get(id)?.total ?? 0;
         for (const t of rule.thresholds.filter((x) => x <= total)) {
@@ -341,7 +510,21 @@ export async function findMilestones(now: Date, o: { staffIds?: string[] } = {})
           if (have.has(key)) continue;
           const b = bl.get(`${id}|${rule.metric}`) ?? null;
           const n = eventIndexFor(t, b);
-          if (n <= 0) add({ staffId: id, ruleId: rule.id, ...facts, threshold: t, value: t, previous: null, period: null, achievedOn: b!.asOf, shopId: home.get(id) ?? null, title: milestoneTitle({ ...facts, unit, threshold: t, value: t }), silent: true, dedupeKey: key });
+          if (n <= 0)
+            add({
+              staffId: id,
+              ruleId: rule.id,
+              ...facts,
+              threshold: t,
+              value: t,
+              previous: null,
+              period: null,
+              achievedOn: b!.asOf,
+              shopId: home.get(id) ?? null,
+              title: milestoneTitle({ ...facts, unit, threshold: t, value: t }),
+              silent: true,
+              dedupeKey: key,
+            });
           else wanted.push({ key, staffId: id, n, threshold: t });
         }
       }
@@ -349,7 +532,25 @@ export async function findMilestones(now: Date, o: { staffIds?: string[] } = {})
       for (const w of wanted) {
         const hit = at.get(w.key);
         if (!hit) continue;
-        add({ staffId: w.staffId, ruleId: rule.id, ...facts, threshold: w.threshold, value: w.threshold, previous: null, period: null, achievedOn: hit.day, shopId: hit.shopId, title: milestoneTitle({ ...facts, unit, threshold: w.threshold, value: w.threshold }), silent: isOld(hit.day, today), dedupeKey: w.key });
+        add({
+          staffId: w.staffId,
+          ruleId: rule.id,
+          ...facts,
+          threshold: w.threshold,
+          value: w.threshold,
+          previous: null,
+          period: null,
+          achievedOn: hit.day,
+          shopId: hit.shopId,
+          title: milestoneTitle({
+            ...facts,
+            unit,
+            threshold: w.threshold,
+            value: w.threshold,
+          }),
+          silent: isOld(hit.day, today),
+          dedupeKey: w.key,
+        });
       }
     } else if (rule.kind === "anniversary") {
       for (const p of team) {
@@ -357,7 +558,20 @@ export async function findMilestones(now: Date, o: { staffIds?: string[] } = {})
         for (const t of rule.thresholds) {
           const on = anniversaryDate(p.hireDate, t);
           if (on > today) continue;
-          add({ staffId: p.id, ruleId: rule.id, ...facts, threshold: t, value: t, previous: null, period: null, achievedOn: on, shopId: home.get(p.id) ?? null, title: milestoneTitle({ ...facts, unit, threshold: t, value: t }), silent: isOld(on, today), dedupeKey: `anniversary:${rule.id}:${p.id}:${t}` });
+          add({
+            staffId: p.id,
+            ruleId: rule.id,
+            ...facts,
+            threshold: t,
+            value: t,
+            previous: null,
+            period: null,
+            achievedOn: on,
+            shopId: home.get(p.id) ?? null,
+            title: milestoneTitle({ ...facts, unit, threshold: t, value: t }),
+            silent: isOld(on, today),
+            dedupeKey: `anniversary:${rule.id}:${p.id}:${t}`,
+          });
         }
       }
     } else if (rule.kind === "birthday") {
@@ -367,23 +581,61 @@ export async function findMilestones(now: Date, o: { staffIds?: string[] } = {})
         if (!p.birthdayMonth || !p.birthdayDay) continue;
         const on = birthdayIn(year, p.birthdayMonth, p.birthdayDay);
         if (on > today) continue;
-        add({ staffId: p.id, ruleId: rule.id, ...facts, threshold: null, value: null, previous: null, period: String(year), achievedOn: on, shopId: home.get(p.id) ?? null, title: "Birthday", silent: isOld(on, today), dedupeKey: `birthday:${p.id}:${year}` });
+        add({
+          staffId: p.id,
+          ruleId: rule.id,
+          ...facts,
+          threshold: null,
+          value: null,
+          previous: null,
+          period: String(year),
+          achievedOn: on,
+          shopId: home.get(p.id) ?? null,
+          title: "Birthday",
+          silent: isOld(on, today),
+          dedupeKey: `birthday:${p.id}:${year}`,
+        });
       }
-    } else if (rule.kind === "best" && (BEST_METRICS as readonly string[]).includes(rule.metric)) {
+    } else if (
+      rule.kind === "best" &&
+      (BEST_METRICS as readonly string[]).includes(rule.metric)
+    ) {
       const metric = rule.metric as BestMetric;
       const series = await bestSeries(metric, ids, today);
       for (const [id, list] of series) {
         const r = bestRecord(list);
         if (!r) continue;
         const f = { ...facts, threshold: null, value: r.value };
-        add({ staffId: id, ruleId: rule.id, ...f, previous: r.previous, period: r.period, achievedOn: r.end, shopId: r.shopId, title: milestoneTitle(f), silent: !bestIsNews(r, metric, today), dedupeKey: `best:${rule.id}:${id}:${r.period}` });
+        add({
+          staffId: id,
+          ruleId: rule.id,
+          ...f,
+          previous: r.previous,
+          period: r.period,
+          achievedOn: r.end,
+          shopId: r.shopId,
+          title: milestoneTitle(f),
+          silent: !bestIsNews(r, metric, today),
+          dedupeKey: `best:${rule.id}:${id}:${r.period}`,
+        });
       }
     } else if (rule.kind === "streak") {
       const events = await streakEvents(rule.metric as StreakMetric, ids);
       for (const [id, list] of events) {
         for (const h of streakHits(list, rule.thresholds).hits) {
           const f = { ...facts, threshold: h.threshold, value: h.threshold };
-          add({ staffId: id, ruleId: rule.id, ...f, previous: null, period: null, achievedOn: h.day, shopId: h.shopId, title: milestoneTitle({ ...f, unit }), silent: isOld(h.day, today), dedupeKey: `streak:${rule.id}:${id}:${h.threshold}` });
+          add({
+            staffId: id,
+            ruleId: rule.id,
+            ...f,
+            previous: null,
+            period: null,
+            achievedOn: h.day,
+            shopId: h.shopId,
+            title: milestoneTitle({ ...f, unit }),
+            silent: isOld(h.day, today),
+            dedupeKey: `streak:${rule.id}:${id}:${h.threshold}`,
+          });
         }
       }
     }
@@ -394,23 +646,53 @@ export async function findMilestones(now: Date, o: { staffIds?: string[] } = {})
 // ───────────────────────────── Recording and alerts ─────────────────────────────
 
 /** Who hears about a milestone: the brand, and the managers of the shops the person works at. Never the person themselves. */
-export function alertAudience(a: Pick<StaffAccess, "staffId" | "scope" | "permissions" | "byShop">, subject: Pick<Person, "id" | "workShops">, s: MilestoneSettings) {
+export function alertAudience(
+  a: Pick<StaffAccess, "staffId" | "scope" | "permissions" | "byShop">,
+  subject: Pick<Person, "id" | "workShops">,
+  s: MilestoneSettings,
+) {
   if (a.staffId === subject.id) return null;
-  if (a.scope === "all") return s.alertBrand && a.permissions.has("milestones.view") ? "brand" : null;
+  if (a.scope === "all")
+    return s.alertBrand && a.permissions.has("milestones.view")
+      ? "brand"
+      : null;
   if (!s.alertManagers) return null;
-  return subject.workShops.some((id) => a.byShop.get(id)?.permissions.has("milestones.view")) ? "manager" : null;
+  return subject.workShops.some((id) =>
+    a.byShop.get(id)?.permissions.has("milestones.view"),
+  )
+    ? "manager"
+    : null;
 }
 
 type Recorded = typeof staffMilestones.$inferSelect;
 
-async function queueAlerts(list: Recorded[], team: Person[], s: MilestoneSettings, now: Date, tx: DBorTx) {
+async function queueAlerts(
+  list: Recorded[],
+  team: Person[],
+  s: MilestoneSettings,
+  now: Date,
+  tx: DBorTx,
+) {
   if (!list.length || (!s.alertBrand && !s.alertManagers)) return [];
   const recipients = await db
     .select({ id: staff.id, firstName: staff.firstName, email: staff.email })
     .from(staff)
-    .where(and(eq(staff.kind, "person"), eq(staff.active, true), isNull(staff.removedAt), sql`${staff.email} is not null`));
+    .where(
+      and(
+        eq(staff.kind, "person"),
+        eq(staff.active, true),
+        isNull(staff.removedAt),
+        sql`${staff.email} is not null`,
+      ),
+    );
   const byId = new Map(team.map((p) => [p.id, p]));
-  const shopNames = new Map((await rows<{ id: string; name: string }>(sql`select id::text id, name from shops`)).map((x) => [x.id, x.name]));
+  const shopNames = new Map(
+    (
+      await rows<{ id: string; name: string }>(
+        sql`select id::text id, name from shops`,
+      )
+    ).map((x) => [x.id, x.name]),
+  );
   const jobs: string[] = [];
   for (const r of recipients) {
     const access = await loadStaffAccess(r.id);
@@ -422,11 +704,19 @@ async function queueAlerts(list: Recorded[], team: Person[], s: MilestoneSetting
     if (!mine.length) continue;
     const lines = mine.map((m) => {
       const p = byId.get(m.staffId)!;
-      const where = [m.shopId ? shopNames.get(m.shopId) : null, formatDate(m.achievedOn, "EEE MMM d")].filter(Boolean).join(", ");
+      const where = [
+        m.shopId ? shopNames.get(m.shopId) : null,
+        formatDate(m.achievedOn, "EEE MMM d"),
+      ]
+        .filter(Boolean)
+        .join(", ");
       return `- ${recordedSentence(p.label, m)}${where ? ` (${where})` : ""}`;
     });
     const first = recordedSentence(byId.get(mine[0].staffId)!.label, mine[0]);
-    const subject = mine.length === 1 ? `Milestone: ${first}` : `${mine.length} staff milestones: ${first} and ${mine.length - 1} more`;
+    const subject =
+      mine.length === 1
+        ? `Milestone: ${first}`
+        : `${mine.length} staff milestones: ${first} and ${mine.length - 1} more`;
     const body = [
       `Hi ${r.firstName},`,
       "",
@@ -438,7 +728,17 @@ async function queueAlerts(list: Recorded[], team: Person[], s: MilestoneSetting
       "",
       "You get these because you see staff milestones at their shops. The brand chooses who's told under Setup → Staff milestones.",
     ].join("\n");
-    const [job] = await tx.insert(notificationJobs).values({ kind: "milestone", channel: "email", to: r.email!, subject, body, runAt: now }).returning({ id: notificationJobs.id });
+    const [job] = await tx
+      .insert(notificationJobs)
+      .values({
+        kind: "milestone",
+        channel: "email",
+        to: r.email!,
+        subject,
+        body,
+        runAt: now,
+      })
+      .returning({ id: notificationJobs.id });
     jobs.push(job.id);
   }
   return jobs;
@@ -449,7 +749,14 @@ async function queueAlerts(list: Recorded[], team: Person[], s: MilestoneSetting
  * and the person's managers about the new ones (not silent). Each milestone is recorded once, so a
  * repeated or overlapping run adds and sends nothing.
  */
-export async function runMilestones(now: Date = new Date(), o: { staffIds?: string[]; send?: boolean } = {}) {
+export async function runMilestones(
+  now: Date = new Date(),
+  o: {
+    staffIds?: string[];
+    kinds?: readonly MilestoneKind[];
+    send?: boolean;
+  } = {},
+) {
   const s = await loadMilestoneSettings();
   if (!s.enabled) return { recorded: 0, announced: 0, emails: 0 };
   const found = await findMilestones(now, o);
@@ -457,21 +764,32 @@ export async function runMilestones(now: Date = new Date(), o: { staffIds?: stri
   for (let i = 0; i < found.length; i += 500) {
     const chunk = found.slice(i, i + 500);
     await db.transaction(async (tx) => {
-      const got = await tx.insert(staffMilestones).values(chunk).onConflictDoNothing({ target: staffMilestones.dedupeKey }).returning();
+      const got = await tx
+        .insert(staffMilestones)
+        .values(chunk)
+        .onConflictDoNothing({ target: staffMilestones.dedupeKey })
+        .returning();
       for (const m of got) {
         await recordEvent(
           {
             event: "milestone.achieved",
-            at: new Date(Math.min(now.getTime(), Date.parse(`${m.achievedOn}T17:00:00Z`))),
+            at: new Date(
+              Math.min(now.getTime(), Date.parse(`${m.achievedOn}T17:00:00Z`)),
+            ),
             key: `milestone:${m.id}`,
             shop: m.shopId ?? undefined,
             staff: m.staffId,
             actorKind: "system",
             entity: "staff_milestone",
             entityId: m.id,
-            value: m.kind === "best" ? (m.value ?? undefined) : (m.threshold ?? undefined),
+            value:
+              m.kind === "best"
+                ? (m.value ?? undefined)
+                : (m.threshold ?? undefined),
             subtype: m.kind,
-            props: m.silent ? { metric: m.metric, silent: true } : { metric: m.metric },
+            props: m.silent
+              ? { metric: m.metric, silent: true }
+              : { metric: m.metric },
           },
           tx,
         );
@@ -488,7 +806,14 @@ export async function runMilestones(now: Date = new Date(), o: { staffIds?: stri
         eq(staffMilestones.silent, false),
         isNull(staffMilestones.notifiedAt),
         sql`${staffMilestones.achievedOn} >= ${addDays(todayLocal(now), -NOTIFY_DAYS)}`,
-        o.staffIds ? inArray(staffMilestones.staffId, o.staffIds.length ? o.staffIds : ["00000000-0000-0000-0000-000000000000"]) : undefined,
+        o.staffIds
+          ? inArray(
+              staffMilestones.staffId,
+              o.staffIds.length
+                ? o.staffIds
+                : ["00000000-0000-0000-0000-000000000000"],
+            )
+          : undefined,
       ),
     );
   let jobs: string[] = [];
@@ -505,12 +830,32 @@ export async function runMilestones(now: Date = new Date(), o: { staffIds?: stri
             news.map((m) => m.id),
           ),
         );
-      await audit(SYSTEM, "milestones.announced", "staff_milestone", null, { milestones: news.map((m) => ({ id: m.id, staffId: m.staffId, title: m.title })), emails: ids.length }, null, tx);
+      await audit(
+        SYSTEM,
+        "milestones.announced",
+        "staff_milestone",
+        null,
+        {
+          milestones: news.map((m) => ({
+            id: m.id,
+            staffId: m.staffId,
+            title: m.title,
+          })),
+          emails: ids.length,
+        },
+        null,
+        tx,
+      );
       return ids;
     });
-    if (o.send !== false && jobs.length) await processDueJobs({ ids: jobs, now });
+    if (o.send !== false && jobs.length)
+      await processDueJobs({ ids: jobs, now });
   }
-  return { recorded: inserted.length, announced: news.length, emails: jobs.length };
+  return {
+    recorded: inserted.length,
+    announced: news.length,
+    emails: jobs.length,
+  };
 }
 
 // ───────────────────────────── Coming up ─────────────────────────────
@@ -519,7 +864,12 @@ export async function runMilestones(now: Date = new Date(), o: { staffIds?: stri
  * What these people should reach in the next `horizon` days: cuts booked for later today that
  * cross a threshold, anniversaries and birthdays on their date, and other counts at their pace.
  */
-export async function upcomingFor(team: Person[], now: Date, horizon: number, s?: MilestoneSettings): Promise<Upcoming[]> {
+export async function upcomingFor(
+  team: Person[],
+  now: Date,
+  horizon: number,
+  s?: MilestoneSettings,
+): Promise<Upcoming[]> {
   const settings = s ?? (await loadMilestoneSettings());
   if (!settings.enabled || !team.length) return [];
   const today = todayLocal(now);
@@ -527,7 +877,12 @@ export async function upcomingFor(team: Person[], now: Date, horizon: number, s?
   const ids = team.map((p) => p.id);
   const out: Upcoming[] = [];
   for (const rule of rules) {
-    const facts = { kind: rule.kind, metric: rule.metric, unit: ruleUnit(rule), value: null };
+    const facts = {
+      kind: rule.kind,
+      metric: rule.metric,
+      unit: ruleUnit(rule),
+      value: null,
+    };
     if (rule.kind === "count") {
       const totals = await countTotals(rule, ids, now);
       for (const id of ids) {
@@ -535,10 +890,32 @@ export async function upcomingFor(team: Person[], now: Date, horizon: number, s?
         if (!t) continue;
         const next = rule.thresholds.find((x) => x > t.total);
         if (!next) continue;
-        if (t.laterToday && t.total + t.laterToday >= next) out.push({ ...facts, staffId: id, threshold: next, on: today, sure: true, left: next - t.total });
+        if (t.laterToday && t.total + t.laterToday >= next)
+          out.push({
+            ...facts,
+            staffId: id,
+            threshold: next,
+            on: today,
+            sure: true,
+            left: next - t.total,
+          });
         else {
-          const on = paceDate(t.total, next, t.recent / PACE_DAYS, today, horizon);
-          if (on) out.push({ ...facts, staffId: id, threshold: next, on, sure: false, left: next - t.total });
+          const on = paceDate(
+            t.total,
+            next,
+            t.recent / PACE_DAYS,
+            today,
+            horizon,
+          );
+          if (on)
+            out.push({
+              ...facts,
+              staffId: id,
+              threshold: next,
+              on,
+              sure: false,
+              left: next - t.total,
+            });
         }
       }
     } else if (rule.kind === "anniversary") {
@@ -546,19 +923,40 @@ export async function upcomingFor(team: Person[], now: Date, horizon: number, s?
         if (!p.hireDate) continue;
         for (const y of rule.thresholds) {
           const on = anniversaryDate(p.hireDate, y);
-          if (on > today && diffDays(on, today) <= horizon) out.push({ ...facts, staffId: p.id, threshold: y, on, sure: true, left: null });
+          if (on > today && diffDays(on, today) <= horizon)
+            out.push({
+              ...facts,
+              staffId: p.id,
+              threshold: y,
+              on,
+              sure: true,
+              left: null,
+            });
         }
       }
     } else if (rule.kind === "birthday" && settings.birthdays) {
       const year = Number(today.slice(0, 4));
       for (const p of team) {
         if (!p.birthdayMonth || !p.birthdayDay) continue;
-        const on = [birthdayIn(year, p.birthdayMonth, p.birthdayDay), birthdayIn(year + 1, p.birthdayMonth, p.birthdayDay)].find((d) => d > today);
-        if (on && diffDays(on, today) <= horizon) out.push({ ...facts, staffId: p.id, threshold: null, on, sure: true, left: null });
+        const on = [
+          birthdayIn(year, p.birthdayMonth, p.birthdayDay),
+          birthdayIn(year + 1, p.birthdayMonth, p.birthdayDay),
+        ].find((d) => d > today);
+        if (on && diffDays(on, today) <= horizon)
+          out.push({
+            ...facts,
+            staffId: p.id,
+            threshold: null,
+            on,
+            sure: true,
+            left: null,
+          });
       }
     }
   }
-  return out.sort((a, b) => a.on.localeCompare(b.on) || Number(b.sure) - Number(a.sure));
+  return out.sort(
+    (a, b) => a.on.localeCompare(b.on) || Number(b.sure) - Number(a.sure),
+  );
 }
 
 /** Staff working at these shops. */
