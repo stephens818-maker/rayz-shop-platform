@@ -459,6 +459,25 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-25: core (Squire Engage parity: email design, texts, wizard, per-send results, loyalty program), FYI for mobile
+
+- **What's new** (README, "Campaign Center" and "Loyalty"):
+  - Campaign emails get a headline, a header image (uploaded, enhanced or cropped in the browser, with AI alt text) and a booking button in the location's accent color or the brand's red. "Refine with AI" rewrites any part and keeps its merge fields.
+  - Marketing texts get the booking link and "Reply STOP to opt out." added at send time when the wording doesn't already have them, with a segment counter in the editor. Merge fields take fallbacks: `{first_name|friend}`. Without one, `{first_name}` says "there" and `{barber}` "your barber".
+  - The blast wizard opens any step at any time, the review shows each channel's message with Edit links and blocks Send while anything is left to fix, and the audience shows each channel's reachable count of everyone matching.
+  - Results: a repeating blast shows its last send beside its lifetime numbers (detail page and list), every send gets a full metrics row, and automated campaigns and lapsed sequences show results on their own pages (by week, and by step for sequences).
+  - The loyalty program is set at brand level like Squire's: enabled, value or transaction based, include products and tips, assigned shops. Ray'z: value based, $15 per $300, products and tips off, every location but Dubuque.
+- **Schema:**
+  - `core_0068_loyalty_program`: `loyalty_ledger.unit` (`cents` | `visits`, default `cents`). `brand_settings.loyalty` gains `type`, `visitsGoal`, `minVisitCents`, `includeProducts`, `includeTips` and `shopIds` (null = every location; set to every shop but Dubuque where a Dubuque shop exists).
+  - `core_0069_email_design`: new table `marketing_images` (data URL, alt, size, `source_id` for a refined copy). Campaign `templates` jsonb may carry `emailHeadline`, `emailCta`, `emailImage` (`/mi/{id}` or https) and `emailImageAlt`; older rows read them as blank.
+  - The next free number is `core_0070`.
+- **Mobile, please note:**
+  - `GET /api/v1/me/loyalty` reads `loyaltyBalance`, which now also returns `type`, `visitsGoal` and `shopIds`. With `type = "transaction"`, `progressCents` is **visits** toward `visitsGoal` (not cents), and `remainingCents` is visits left. Please label the card "3 of 10 visits" in that case (`progressLabel` in `src/domain/loyalty.ts` does it). `rules.where` says where the program runs. No route or schema file under `/api/v1` changed.
+  - Checkout through the client API (`finalizeSale`) now earns nothing and refuses a reward at an unassigned location ("Loyalty rewards aren't used at this location").
+  - `importer.ts` still compiles and behaves the same: it uses `LoyaltyConfig`, `rewardExpiry`, `thresholdCents` and `rewardCents`, all unchanged. An imported Squire balance is cents (value based), which matches the current setup.
+- **Public route:** `/mi/{id}` serves email images (public, immutable cache). Nothing else is new outside `/admin`.
+- **Tests:** `tests/email-design.test.ts`, `tests/loyalty-program.test.ts`, `tests/db/loyalty-program.test.ts`, and additions to `tests/marketing.test.ts`, `tests/campaign-center.test.ts` and `tests/db/marketing.test.ts`.
+
 ### 2026-10-25: core (Rebook Rate report), nothing needed from mobile
 
 - **What's new:** a Rebook Rate report by location and barber with the brand rollup (README, "Rebook rate"). It covers rebooked at checkout, return within 30/45/60 days or the client's own gap, future appointments, new-client rebook rate and 2nd-visit retention. It also appears in the Morning Dashboard (new `rebook` section, on by default), on a barber's Today page, as custom report fields and in the assistant.
