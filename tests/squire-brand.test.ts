@@ -5,6 +5,8 @@ import { REPORT_GROUP, REPORT_GROUPS, groupReports } from "@/domain/report-group
 import { lastBusinessDay, presetRange } from "@/domain/report-range";
 import { ANALYTICS_PERIODS, comparePeriod, periodChange, yearBefore } from "@/domain/period-compare";
 import { WATERFALL, waterfallGap } from "@/domain/sales-waterfall";
+import { highProblem } from "@/domain/inventory";
+import { jurisdictionGroups, ratePct } from "@/domain/tax-fees";
 import { matchesFilters, parseAppointmentFilters, paymentOf, platformOf } from "@/domain/appointment-report";
 
 describe("report navigation and defaults", () => {
@@ -136,5 +138,25 @@ describe("analytics period over period", () => {
     expect(periodChange(150, 100)).toEqual({ diff: 50, pct: 0.5 });
     expect(periodChange(50, 0)).toEqual({ diff: 50, pct: null });
     expect(periodChange(null, 10)).toEqual({ diff: null, pct: null });
+  });
+});
+
+describe("brand products and taxes vs card fees", () => {
+  it("a high line can't sit below par; none means no limit", () => {
+    expect(highProblem(6, null)).toBeNull();
+    expect(highProblem(6, 6)).toBeNull();
+    expect(highProblem(6, 5)).toMatch(/below par/);
+  });
+
+  it("groups locations by jurisdiction and flags split rates within one", () => {
+    const row = (shop: string, jurisdiction: string, service: number, product = 0.07) => ({ shopId: shop, shop, jurisdiction, serviceTaxRate: service, productTaxRate: product, verified: true });
+    const g = jurisdictionGroups([row("Moline", "IL · Rock Island County · Moline", 0), row("Silvis", "IA · Scott County", 0.07), row("Utica", "IL · Rock Island County · Moline", 0.01)]);
+    expect(g.map((x) => [x.jurisdiction, x.shops.map((s) => s.shop), x.mismatch])).toEqual([
+      ["IA · Scott County", ["Silvis"], false],
+      ["IL · Rock Island County · Moline", ["Moline", "Utica"], true],
+    ]);
+    expect(ratePct(0.0825)).toBe("8.25%");
+    expect(ratePct(0.07)).toBe("7%");
+    expect(ratePct(0)).toBe("0%");
   });
 });

@@ -53,6 +53,7 @@ export const PAGE_ACCESS = {
   "/admin/shop-logins": ["logins.manage"],
   "/admin/sign-in-security": ["network.settings", "devices.approve"],
   "/admin/services": ["catalog.prices", "catalog.manage"],
+  "/admin/products": ["catalog.manage", "inventory.manage"],
   "/admin/inventory": STOCK_VIEW,
   "/admin/inventory/[id]": STOCK_VIEW,
   "/admin/inventory/low-stock": STOCK_VIEW,
@@ -69,6 +70,7 @@ export const PAGE_ACCESS = {
   "/admin/catalog": ["catalog.manage", "inventory.manage"],
   "/admin/promos": ["promos.manage", "giftcards.issue", "giftcards.void"],
   "/admin/settings": ["settings.shop", "settings.shop_details", "settings.shop_hours", "settings.shop_booking", "settings.shop_checkout", "settings.shop_phone", "settings.taxes", "settings.brand"],
+  "/admin/taxes": ["settings.taxes"],
   "/admin/booking-times": ["scheduling.timing"],
   "/admin/block-reasons": ["blocks.reasons"],
   "/admin/lists": ["settings.lists"],
@@ -154,6 +156,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
   {
     title: "Inventory",
     items: [
+      { href: "/admin/products", label: "Products" },
       { href: "/admin/inventory", label: "Stock" },
       { href: "/admin/inventory/low-stock", label: "Low stock" },
       { href: "/admin/purchase-orders", label: "Purchase orders" },
@@ -213,6 +216,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/catalog", label: "Bulk upload" },
       { href: "/admin/promos", label: "Promos & gift cards" },
       { href: "/admin/settings", label: "Shop settings" },
+      { href: "/admin/taxes", label: "Taxes & card fees" },
       { href: "/admin/setup", label: "Location setup" },
       { href: "/admin/booking-times", label: "Booking times" },
       { href: "/admin/checkout-prompts", label: "Checkout prompts" },

@@ -6,17 +6,23 @@ import { Card, CardHeader, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { can, guardPage } from "@/server/auth/staff";
 import { lookups } from "@/server/lookups";
+import { listCategories } from "@/server/catalog-categories";
+import { CategoryOrder } from "@/components/category-order";
 import { MasterEditor, ShopOverrides } from "./editors";
+import { saveCategoryOrderAction } from "./category-actions";
 
 export const metadata: Metadata = { title: "Services" };
 
 export default async function ServicesPage() {
   const ctx = await guardPage("/admin/services");
-  const [master, overrides, shopRows] = await Promise.all([
+  const [rawMaster, overrides, shopRows, categories] = await Promise.all([
     db.select().from(services).orderBy(asc(services.kind), asc(services.sortOrder), asc(services.name)),
     db.select().from(shopServices),
     db.select({ id: shops.id, name: shops.name }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name)),
+    listCategories("service"),
   ]);
+  const rank = new Map(categories.map((c, i) => [c.name.toLowerCase(), i]));
+  const master = [...rawMaster].sort((a, b) => a.kind.localeCompare(b.kind) || (rank.get(a.category.toLowerCase()) ?? 1e6) - (rank.get(b.category.toLowerCase()) ?? 1e6));
   const visibleShops = shopRows.filter((s) => ctx.shopIds.includes(s.id));
   const shopId = ctx.currentShopId;
 
@@ -89,6 +95,14 @@ export default async function ServicesPage() {
             </tbody>
           </Table>
         </Card>
+      )}
+      {can(ctx, "catalog.manage") && categories.length > 1 && (
+        <CategoryOrder
+          title="Category order"
+          subtitle="The order categories show in on the booking site, at checkout and here. One order for every shop."
+          initial={categories}
+          onSave={saveCategoryOrderAction.bind(null, "service")}
+        />
       )}
       {can(ctx, "catalog.manage") && (
         <MasterEditor

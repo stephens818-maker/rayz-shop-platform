@@ -30,6 +30,8 @@ export interface StockRowView {
   priceCents: number;
   valueCents: number;
   low: boolean;
+  high: number | null;
+  over: boolean;
   vendor: string | null;
 }
 type Perms = { price: boolean; adjust: boolean; levels: boolean };
@@ -82,7 +84,7 @@ export function InventoryTable({ shopId, rows, perms }: { shopId: string; rows: 
               <th className="px-3 py-2 text-right">Available</th>
               <th className="px-3 py-2 text-right">On order</th>
               <th className="px-3 py-2 text-right">In transit</th>
-              <th className="px-3 py-2 text-right">Reorder / par</th>
+              <th className="px-3 py-2 text-right">Reorder / par / high</th>
               <th className="px-3 py-2 text-right">Cost</th>
               <th className="px-3 py-2 text-right">Value</th>
               <th className="px-3 py-2" />
@@ -111,11 +113,17 @@ export function InventoryTable({ shopId, rows, perms }: { shopId: string; rows: 
                         <Badge tone="red">Low</Badge>
                       </div>
                     )}
+                    {r.over && (
+                      <div title={`Above the high line of ${r.high}`}>
+                        <Badge tone="amber">Over</Badge>
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right tabular text-zinc-600">{r.onOrder || ""}</td>
                   <td className="px-3 py-2 text-right tabular text-zinc-600">{r.inTransit || ""}</td>
                   <td className="px-3 py-2 text-right tabular">
                     {r.reorderPoint} / {r.par}
+                    {r.high !== null && <span className="text-zinc-400"> / {r.high}</span>}
                     {(r.reorderOverride !== null || r.parOverride !== null) && <div className="text-[11px] text-violet-600">shop level</div>}
                   </td>
                   <td className="px-3 py-2 text-right tabular text-zinc-600">{$(r.costCents)}</td>

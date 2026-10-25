@@ -63,6 +63,8 @@ export default async function InventoryPage() {
           priceCents: l?.priceCents ?? p.priceCents,
           valueCents: l?.valueCents ?? 0,
           low: l?.low ?? false,
+          high: l?.high ?? p.highStockThreshold,
+          over: l?.over ?? false,
           vendor: l?.preferredVendor?.name ?? null,
         };
       });
@@ -74,7 +76,7 @@ export default async function InventoryPage() {
       <div className="mx-auto max-w-7xl space-y-5">
         <PageHeader title="Stock" subtitle={`${shop}: on hand comes from the stock ledger; every change is recorded with who made it and why.`} actions={links} />
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Stat label="Products carried" value={here.length} hint={`${here.reduce((a, s) => a + Math.max(0, s.onHand), 0)} units on hand`} />
+          <Stat label="Products carried" value={here.length} hint={`${here.reduce((a, s) => a + Math.max(0, s.onHand), 0)} units on hand${here.some((s) => s.over) ? ` · ${here.filter((s) => s.over).length} over the high line` : ""}`} />
           <Stat label="Stock at cost" value={formatCents(value)} />
           <Stat label="Low stock" value={low} hint={low ? "at or below the reorder point" : "nothing low"} tone={low ? "down" : undefined} />
           <Stat label="Coming in" value={here.reduce((a, s) => a + s.onOrder + s.inTransit, 0)} hint={`units on order or in transit${negative ? ` · ${negative} below zero` : ""}`} tone={negative ? "down" : undefined} />

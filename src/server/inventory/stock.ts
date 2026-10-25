@@ -38,6 +38,10 @@ export interface StockRow {
   /** On hand at cost; negative stock counts as zero. */
   valueCents: number;
   low: boolean;
+  /** Overstock line: the shop's own, else the brand's. Null when neither is set. */
+  high: number | null;
+  /** On hand above the high line. */
+  over: boolean;
   preferredVendor: { id: string; name: string } | null;
   lowAlertedAt: Date | null;
 }
@@ -58,6 +62,8 @@ type Raw = {
   sp_par: number | null;
   p_low: number;
   p_par: number;
+  sp_high: number | null;
+  p_high: number | null;
   committed: number;
   on_order: number;
   in_transit: number;
@@ -94,7 +100,7 @@ export async function stockLevels(shopIds: string[], o: { productIds?: string[];
       group by 1, 2
     )
     select sp.shop_id, sh.name shop, p.id product_id, p.sku, p.name, p.brand, p.category, sp.active, sp.stock, sp.cost_cents, sp.price_cents,
-      sp.low_stock_threshold sp_low, sp.par_level sp_par, p.low_stock_threshold p_low, p.par_level p_par, sp.low_alerted_at,
+      sp.low_stock_threshold sp_low, sp.par_level sp_par, p.low_stock_threshold p_low, p.par_level p_par, sp.high_stock_threshold sp_high, p.high_stock_threshold p_high, sp.low_alerted_at,
       coalesce(tk.n, 0) + coalesce(pk.n, 0) committed, coalesce(od.n, 0) on_order, coalesce(tr.n, 0) in_transit,
       v.id vendor_id, v.name vendor
     from shop_products sp
@@ -111,6 +117,7 @@ export async function stockLevels(shopIds: string[], o: { productIds?: string[];
   return raw.map((r) => {
     const levels = effectiveLevels({ lowStockThreshold: r.p_low, parLevel: r.p_par }, { lowStockThreshold: r.sp_low, parLevel: r.sp_par });
     const pos = { onHand: r.stock, committed: r.committed, onOrder: r.on_order, inTransit: r.in_transit };
+    const high = r.sp_high ?? r.p_high;
     return {
       shopId: r.shop_id,
       shop: r.shop,
@@ -131,6 +138,8 @@ export async function stockLevels(shopIds: string[], o: { productIds?: string[];
       priceCents: r.price_cents,
       valueCents: Math.max(0, r.stock) * r.cost_cents,
       low: r.active && isLow(pos, levels),
+      high,
+      over: r.active && high !== null && r.stock > high,
       preferredVendor: r.vendor_id ? { id: r.vendor_id, name: r.vendor! } : null,
       lowAlertedAt: r.low_alerted_at ? new Date(r.low_alerted_at) : null,
     };

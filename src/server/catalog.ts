@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { services, shopHours, shopServices, shops, staff, staffSchedules, staffShops, Shop, TaxCategory } from "@/db/schema";
+import { catalogCategories, services, shopHours, shopServices, shops, staff, staffSchedules, staffShops, Shop, TaxCategory } from "@/db/schema";
 import { notFound } from "./errors";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,8 +37,9 @@ export async function shopCatalog(shopId: string, opts: { onlineOnly?: boolean }
     .select({ s: services, o: shopServices })
     .from(shopServices)
     .innerJoin(services, eq(services.id, shopServices.serviceId))
+    .leftJoin(catalogCategories, and(eq(catalogCategories.kind, "service"), sql`lower(${catalogCategories.name}) = lower(${services.category})`))
     .where(and(eq(shopServices.shopId, shopId), eq(shopServices.enabled, true), eq(services.active, true)))
-    .orderBy(asc(services.kind), asc(services.sortOrder), asc(services.name));
+    .orderBy(asc(services.kind), sql`coalesce(${catalogCategories.sortOrder}, 100000)`, asc(services.sortOrder), asc(services.name));
   return rows
     .map(({ s, o }) => ({
       id: s.id,

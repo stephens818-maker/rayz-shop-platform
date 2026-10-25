@@ -519,6 +519,13 @@
       "when": 1795316400000,
       "tag": "core_0073_analytics_saved_views",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1795402800000,
+      "tag": "core_0074_catalog_brand_stock",
+      "breakpoints": true
     }
   ]
 }

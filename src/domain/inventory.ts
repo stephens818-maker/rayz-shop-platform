@@ -24,6 +24,12 @@ export function levelsProblem(reorderPoint: number, par: number): string | null 
   return null;
 }
 
+/** A high line has to sit at or above par, or every full shelf reads as overstock. */
+export function highProblem(par: number, high: number | null): string | null {
+  if (high === null) return null;
+  return high < par ? "The high threshold can't be below par" : null;
+}
+
 // ───────────────────────────── Stock position ─────────────────────────────
 
 export interface Position {

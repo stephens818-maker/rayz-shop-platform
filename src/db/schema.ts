@@ -877,6 +877,10 @@ export const products = pgTable("products", {
   lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
   /** Brand default par: suggested orders fill up to this. Shops can override it. */
   parLevel: integer("par_level").notNull().default(6),
+  /** Brand default overstock line: above this is more than the shop should hold. Null: no limit. */
+  highStockThreshold: integer("high_stock_threshold"),
+  /** Bought centrally and not yet at any shop. Moves only with a brand_stock_moves row. */
+  unallocatedStock: integer("unallocated_stock").notNull().default(0),
   active: boolean("active").notNull().default(true),
   createdAt: createdAt(),
 });
@@ -895,12 +899,43 @@ export const shopProducts = pgTable(
     lowStockThreshold: integer("low_stock_threshold"),
     /** Shop override of the brand par level; null follows the brand. */
     parLevel: integer("par_level"),
+    /** Shop override of the brand overstock line; null follows the brand. */
+    highStockThreshold: integer("high_stock_threshold"),
     active: boolean("active").notNull().default(true),
     /** When a low-stock alert last went out; cleared once stock is back above the reorder point. */
     lowAlertedAt: ts("low_alerted_at"),
   },
   (t) => [primaryKey({ columns: [t.shopId, t.productId] })],
 );
+
+/** Brand stock in and out: received centrally, allocated to a shop (into its ledger), or corrected. Append-only. */
+export const brandStockMoves = pgTable(
+  "brand_stock_moves",
+  {
+    id: id(),
+    productId: uuid("product_id")
+      .notNull()
+      .references(() => products.id),
+    delta: integer("delta").notNull(),
+    kind: text("kind").$type<"receive" | "allocate" | "adjust">().notNull(),
+    shopId: uuid("shop_id").references(() => shops.id),
+    unitCostCents: integer("unit_cost_cents"),
+    note: text("note"),
+    balanceAfter: integer("balance_after").notNull(),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("brand_stock_moves_product_idx").on(t.productId, t.createdAt)],
+);
+
+/** Category order for the brand catalog: services and products each have their own list. */
+export const catalogCategories = pgTable("catalog_categories", {
+  id: id(),
+  kind: text("kind").$type<"service" | "product">().notNull(),
+  name: text("name").notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: createdAt(),
+});
 
 export type LedgerKind = "opening" | "sale" | "refund" | "void" | "receive" | "transfer_out" | "transfer_in" | "adjust" | "stocktake" | "upload";
 export type AdjustReason = "damage" | "theft" | "count_correction" | "back_bar" | "found" | "other";
