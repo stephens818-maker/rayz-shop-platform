@@ -21,6 +21,7 @@ import { AppError, forbidden, notFound } from "@/server/errors";
 import { offboardStaff } from "@/server/offboarding";
 import { commonOwner } from "@/server/owner-entities";
 import { addBlock, removeBlock } from "@/server/staff-time";
+import { assertCanSchedule } from "@/server/staff-guards";
 
 /** Profile edits: nobody edits a person who holds access they don't have. */
 async function assertCanEditProfile(ctx: StaffContext, staffId: string) {
@@ -31,16 +32,6 @@ async function assertCanEditProfile(ctx: StaffContext, staffId: string) {
   return target;
 }
 
-/** Schedules and time off: people who work at one of your shops, or yourself. */
-async function assertCanSchedule(ctx: StaffContext, staffId: string) {
-  const s = await db.query.staff.findFirst({ where: eq(staff.id, staffId) });
-  if (!s) throw notFound("Staff member");
-  if (ctx.brandWide || s.id === ctx.staff.id) return;
-  const target = await loadStaffAccess(staffId);
-  if (target?.isOwner) throw forbidden("Only someone with access to every shop can change the Brand Owner's schedule");
-  const links = await db.select().from(staffShops).where(and(eq(staffShops.staffId, staffId), inArray(staffShops.shopId, ctx.shopIds)));
-  if (!links.length) throw forbidden("That person isn't on your shops' team");
-}
 
 const ProfileSchema = z.object({
   id: z.string().uuid().nullable(),

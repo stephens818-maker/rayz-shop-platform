@@ -42,6 +42,11 @@ export default async function StaffPage({ searchParams }: { searchParams: Promis
             <Link className="text-sm underline" href={sp.inactive ? "/admin/staff" : "/admin/staff?inactive=1"}>
               {sp.inactive ? "Hide inactive" : "Show inactive"}
             </Link>
+            {(can(ctx, "staff.manage") || can(ctx, "schedules.edit")) && (
+              <LinkButton href={`/admin/bulk-edit?tab=${can(ctx, "staff.manage") ? "staff" : "schedules"}`} variant="secondary">
+                Bulk edit
+              </LinkButton>
+            )}
             {can(ctx, "staff.manage") && <LinkButton href="/admin/staff/new">Add staff</LinkButton>}
           </>
         }

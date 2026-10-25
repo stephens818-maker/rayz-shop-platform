@@ -6,6 +6,7 @@ import { lastBusinessDay, presetRange } from "@/domain/report-range";
 import { ANALYTICS_PERIODS, comparePeriod, periodChange, yearBefore } from "@/domain/period-compare";
 import { WATERFALL, waterfallGap } from "@/domain/sales-waterfall";
 import { highProblem } from "@/domain/inventory";
+import { applyPriceChange, bulkSummary, describePriceChange, templateProblem, weeklyHours } from "@/domain/bulk-edit";
 import { brandDefaults, cleanPartial, columnPatch, effectiveDefaults, overridesFromColumns, parseDefault } from "@/domain/location-defaults";
 import { reminderHours } from "@/domain/staff-notifications";
 import { CONVERSION_EVENTS, trackBookingStep } from "@/lib/conversion-tracking";
@@ -222,5 +223,25 @@ describe("booking-site conversion tracking", () => {
       ["meta", "track", "Schedule", { content_category: "appointment", shop: "moline" }],
     ]);
     expect(Object.keys(CONVERSION_EVENTS)).toContain("details");
+  });
+});
+
+describe("bulk edit", () => {
+  it("applies a price change as a new amount, a step or a percent, never below zero", () => {
+    expect(applyPriceChange(3000, { mode: "set", value: 3500, round: "cent" })).toBe(3500);
+    expect(applyPriceChange(3000, { mode: "add", value: -500, round: "cent" })).toBe(2500);
+    expect(applyPriceChange(3000, { mode: "add", value: -5000, round: "cent" })).toBe(0);
+    expect(applyPriceChange(2499, { mode: "pct", value: 10, round: "cent" })).toBe(2749);
+    expect(applyPriceChange(2499, { mode: "pct", value: 10, round: "dollar" })).toBe(2700);
+    expect(describePriceChange({ mode: "pct", value: 5, round: "dollar" })).toBe("+5% (to the dollar)");
+    expect(describePriceChange({ mode: "add", value: -250, round: "cent" })).toBe("−$2.50");
+  });
+
+  it("a template's shifts end after they start and don't overlap on a day", () => {
+    expect(templateProblem([{ weekday: 1, startMin: 540, endMin: 1020 }])).toBeNull();
+    expect(templateProblem([{ weekday: 1, startMin: 600, endMin: 540 }])).toMatch(/^Mon:/);
+    expect(templateProblem([{ weekday: 2, startMin: 540, endMin: 780 }, { weekday: 2, startMin: 720, endMin: 1020 }])).toBe("Tue: two shifts overlap");
+    expect(weeklyHours([{ weekday: 1, startMin: 540, endMin: 1020 }, { weekday: 2, startMin: 540, endMin: 780 }])).toBe(12);
+    expect(bulkSummary([{ id: "a", label: "A", ok: true }, { id: "b", label: "B", ok: false, error: "x" }])).toBe("Updated 1 of 2");
   });
 });

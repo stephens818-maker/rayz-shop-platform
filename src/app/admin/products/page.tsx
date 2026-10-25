@@ -23,9 +23,16 @@ export default async function ProductsPage() {
         title="Products"
         subtitle="One brand catalog. Supply price is what the brand pays; unallocated stock was bought centrally and hasn't gone to a shop yet, allocated is on hand at the shops."
         actions={
-          <LinkButton href="/admin/inventory" variant="secondary">
-            Stock by shop
-          </LinkButton>
+          <>
+            {catalog && (
+              <LinkButton href="/admin/bulk-edit?tab=products" variant="secondary">
+                Bulk edit
+              </LinkButton>
+            )}
+            <LinkButton href="/admin/inventory" variant="secondary">
+              Stock by shop
+            </LinkButton>
+          </>
         }
       />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

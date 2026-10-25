@@ -3215,6 +3215,20 @@ export const morningDashboardSends = pgTable(
 // ───────────────────────────── Custom reports ─────────────────────────────
 
 /** A person's named filters for one report (dates, shops, barbers, options), as its query string; shared ones show for everyone who can open the report. */
+/** A named week of shifts (TemplateRow in src/domain/bulk-edit.ts), applied to many barbers at one shop from Bulk edit. */
+export const scheduleTemplates = pgTable(
+  "schedule_templates",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    rows: jsonb("rows").$type<{ weekday: number; startMin: number; endMin: number }[]>().notNull().default(sql`'[]'::jsonb`),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("schedule_templates_name_uq").on(sql`lower(${t.name})`), check("schedule_templates_rows_array", sql`jsonb_typeof(${t.rows}) = 'array'`)],
+);
+
 export const reportViews = pgTable(
   "report_views",
   {

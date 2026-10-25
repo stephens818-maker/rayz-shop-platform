@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { asc, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { services, shopServices, shops } from "@/db/schema";
-import { Card, CardHeader, PageHeader, Table, Td, Th } from "@/components/ui";
+import { Card, CardHeader, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { can, guardPage } from "@/server/auth/staff";
 import { lookups } from "@/server/lookups";
@@ -31,6 +31,11 @@ export default async function ServicesPage() {
       <PageHeader
         title="Services"
         subtitle="One brand catalog. Each shop can turn items on or off and override price, length and name."
+        actions={
+          <LinkButton href="/admin/bulk-edit?tab=services" variant="secondary">
+            Bulk edit
+          </LinkButton>
+        }
       />
       {shopId ? (
         <ShopOverrides
