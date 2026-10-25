@@ -103,6 +103,8 @@ pnpm test:db       # integration tests against TEST_DATABASE_URL (migrates + see
 pnpm lint && pnpm typecheck
 pnpm build && pnpm start
 pnpm worker        # local stand-in for the cron job that drains the reminder queue (every 30s; --once for one pass)
+pnpm test:perf     # 50 locations, 500 staff, 500k clients against PERF_DATABASE_URL (a throwaway *perf* database)
+pnpm rollups:backfill 2024-01-01   # build the location rollups for past days (through yesterday)
 pnpm import:squire clients samples/squire/clients.csv            # dry run
 pnpm import:squire clients samples/squire/clients.csv --commit   # write
 pnpm import:squire appointments appts.csv --errors=skipped.csv   # also write skipped rows to a CSV
@@ -2510,6 +2512,48 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 
 ---
 
+## Scaling to 50+ locations
+
+Ray'z corporate runs every location; the platform is built to grow from 8 to 25–50+ without changes to how it's run. Migration `drizzle/core_0063_scale.sql`.
+
+- **One scoping layer.** Every query is scoped by the shop IDs in the person's stored access (`staff_access_shops`, scopes `all`, `selected` and `one`), loaded in `src/server/auth/access.ts` and enforced by the tenant guard (`src/server/tenant.ts`). Adding a location adds rows, not code paths. The tenant canaries (`tests/db/tenant.test.ts`) aim every page, action, route and job at another shop's records and expect "not found" or "outside your access".
+- **Regions (optional).** `regions` groups locations, e.g. "Quad Cities" or a district manager's patch, for the location comparison report. They're managed on **Location setup** by people with every shop (add, rename, delete, and a region picker per location). A location's rolled-up history moves with it, so comparisons always use current regions. Regions don't grant access: a regional manager is still given their shops directly.
+- **Indexes and pagination.** New tables are indexed for their reads: rollups by shop and day and by region and day, job tasks for claiming, shops by region. Lists that grow with clients or tickets (clients, sales, the audit log, report tables, custom reports) are paged or capped. The perf test fails if a hot query needs a sequential scan of a big table.
+- **Background jobs** (`job_tasks`, `src/server/jobs.ts`). Work that grows with the location count is split into small tasks: one location's day for the rollups, one location's campaign triggers per 15-minute slot, and one of 16 slices of the client file for badges. Each cron run (or `pnpm worker`) queues what's due, then claims tasks with `FOR UPDATE SKIP LOCKED` until its time is up, so runs can overlap without double work. A claimed task holds a 5-minute lease; if its run dies, another picks it up. A task stops after 5 failed attempts and stays failed for someone to look at. Crons: `/api/cron/jobs` (rollups), `/api/cron/campaign-center` (triggers) and `/api/cron/badges` (badge slices).
+- **Daily rollups** (`location_daily_stats`, `src/server/rollups.ts`): one row per location and day (tickets, gross, discounts, net services and products, refunds, tax, tips, clients, new clients, appointments, no-shows) with its region. After go-live or a Squire import, build past days once with `pnpm rollups:backfill <first day> [last day]`. It's safe to run again.
+- **Location comparison** (Reports → Location comparison, `/admin/reports/rollup`): locations or regions side by side over a range, ranked on net sales, with net per location, average ticket, growth on the prior period, client visits, new clients and the no-show rate. It reads the rollups, so it stays fast however many tickets there are, and it says which days aren't rolled up yet. Anyone with the KPIs report has it, over their own shops.
+- **Per-location Stripe** is unchanged: each location settles in the brand's account, its own Connect account, or takes cash only ([Card payments](#card-payments-per-location-banking-stripe-connect)).
+
+### Performance test
+
+`tests/perf/scale.test.ts` (`pnpm test:perf`) grows a throwaway database to 50 locations in 5 regions, 500 staff (a Regional Manager per region over its shops, a Shop Manager per location, barbers) and 500k clients with a month of tickets (`scripts/seed-scale.ts`, also `pnpm db:seed-scale`). It checks index use and time budgets. It needs its own database, whose name must contain `perf`:
+
+```bash
+createdb rayz_perf
+PERF_DATABASE_URL=postgres://rayz:rayz@localhost:5432/rayz_perf pnpm test:perf   # PERF_RESEED=1 starts over
+```
+
+Measured on a 4-core cloud VM with local Postgres (median of 3 warm runs; seeding takes about 85 seconds):
+
+| Check | Time | Budget |
+| --- | --- | --- |
+| Load a Regional Manager's access (selected shops) | 3 ms | 150 ms |
+| Search clients by name / by phone | 2 ms / under 1 ms | 400 ms |
+| A client's stats | 1 ms | 300 ms |
+| Sales summary, all 50 locations, a month (combined / by location) | 52 ms / 56 ms | 4 s |
+| One location-day rollup (average of a 7-day backfill) | 3 ms | 250 ms |
+| Compare by location / by region / a regional manager's shops, a week | 1–2 ms | 800 ms |
+| Claim the next job task, 5,000 queued | 3 ms | 50 ms |
+| Badge slice (1/16 of the client file, ~31k clients) | 6.4 s | 15 s |
+| Location setup overview, all 50 locations | 85 ms | 2.5 s |
+| Move a location to another region, history included | 7 ms | 1 s |
+
+Budgets are deliberately loose: the test is there to catch a missing index or a per-row loop, not small regressions.
+
+### Future franchising
+
+Not built: this version is for Ray'z corporate only, with no franchisee entities, royalties or ad fund, franchisee roles or brand-standard locks. The model leaves room for it. `owner_entities` already records the business entity (LLC) that owns each location, through the nullable `shops.owner_entity_id`; today every entity is corporate's (kind `brand`). A franchise layer would add franchisee entities there, scope people to an entity (expanded into `staff_access_shops` like today's shop scopes, so the tenant guard stays as it is), add the entity to the rollups, and take royalties through the per-location Stripe application fee.
+
 ## Architecture
 
 - **Next.js 15 (App Router) + React 19 + Tailwind v4.** Staff pages are server components that call server actions. Every server action re-checks the session, role, and shop scope.
@@ -2521,7 +2565,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
   - Permissions are loaded fresh from the database on every request (role plus overrides, in `src/server/auth/access.ts`), so a change takes effect on the person's next click without signing out. Pages use `guardPage()`, server actions `authorize()`, and route handlers `routeStaff()`; see [Roles and permissions](#roles-and-permissions).
   - Shop scoping is enforced in the server layer on every query; anyone without access to every shop only ever queries the shop IDs in their access.
 - **Time:** everything is stored as `timestamptz` and computed in `America/Chicago` with Luxon. Business dates for sales and payroll are shop-local.
-- **Job queue:** the Postgres `notification_jobs` table, drained with `FOR UPDATE SKIP LOCKED` by Vercel Cron or `pnpm worker`. No extra infrastructure is needed; it can move to a dedicated queue (Inngest, QStash) later if volume calls for it.
+- **Job queue:** Postgres tables drained with `FOR UPDATE SKIP LOCKED` by Vercel Cron or `pnpm worker`: `notification_jobs` for messages and `job_tasks` for per-location work (rollups, campaign triggers, badge slices; see [Scaling to 50+ locations](#scaling-to-50-locations)). No extra infrastructure is needed; it can move to a dedicated queue (Inngest, QStash) later if volume calls for it.
 
 ```
 src/
@@ -2545,7 +2589,7 @@ samples/squire/      example Squire CSV exports for the importer
 
 - `pnpm vercel-build` (which Vercel runs) applies migrations, then builds. With `DEMO_MODE=true` it also loads the sample data into an empty database; without it, it never seeds.
 - `DEMO_MODE=true` keeps a hosted demo safe: the payment simulator or Stripe test keys only, no texts, emails, or calls (they show in the outbox), customer sign-in codes on screen, one-click demo logins, and a banner on every page.
-- `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes and `/api/cron/campaign-center` every 15. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
+- `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes, `/api/cron/campaign-center` every 15, and the daily `/api/cron/badges`, `/api/cron/analytics` and `/api/cron/jobs` (rollups) runs in the early morning. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
 - Keep separate demo, staging, and production databases, and turn on Neon point-in-time restore or Supabase daily backups.
 - Address lookup is optional: set `GOOGLE_MAPS_API_KEY` (Places API (New) and Geocoding API, restricted to the server) or `GEOCODER=census`. Without either, typed addresses are pinned at the ZIP's centre.
 
