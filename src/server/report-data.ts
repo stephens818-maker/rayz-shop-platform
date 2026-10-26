@@ -83,6 +83,7 @@ import { ratingsGivenAt } from "./ratings-report";
 import { grainsFor } from "./report-sql";
 import { analyticsData } from "./analytics-report";
 import { FEE_REASON_LABEL, cardFeeReportData, cardTypeLabel, feePayments } from "./card-fee-report";
+import { SHOP_FEE_FILTERS, ShopFeeFilter, shopsMatchingFee } from "./payments/card-fee";
 import { quickbooksTable } from "./quickbooks-export";
 import { FEE_CHANNEL_LABEL, FeeChannel } from "@/domain/card-fee-policy";
 import type { StaffAccess } from "./auth/access";
@@ -1044,7 +1045,11 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     };
   },
 
-  async card_fees({ scope, loc }) {
+  async card_fees({ scope: all, loc: allLoc, params }) {
+    const filter = params.fee && params.fee in SHOP_FEE_FILTERS ? (params.fee as ShopFeeFilter) : null;
+    const shopIds = filter ? await shopsMatchingFee(all.shopIds, filter) : all.shopIds;
+    const scope = { ...all, shopIds };
+    const loc = { ...allLoc, shops: allLoc.shops.filter((s) => shopIds.includes(s.id)) };
     const [data, pays] = await Promise.all([cardFeeReportData(scope, loc), feePayments(scope)]);
     const shopName = new Map(loc.shops.map((s) => [s.id, s.name]));
     const payments: ReportTable = {
@@ -1109,7 +1114,16 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     return {
       stats: data.stats,
       tables: [...data.tables, payments],
+      options: [
+        {
+          param: "fee",
+          label: "Shops",
+          value: filter ?? "",
+          choices: [{ value: "", label: "All" }, ...Object.entries(SHOP_FEE_FILTERS).map(([value, label]) => ({ value, label }))],
+        },
+      ],
       notes: [
+        ...(filter ? [`${SHOP_FEE_FILTERS[filter]} now: ${loc.shops.map((s) => s.name).join(", ") || "no shops in this selection"}. A shop's setting today decides which group it's in, for the whole range.`] : []),
         "The surcharge is only ever charged on credit cards, never debit, prepaid, gift cards or cash, and never more than the card networks' 3% (or a lower state limit).",
         "Surcharges are kept apart from service and product revenue and tips, and don't count toward commission or tips.",
         ...(pays.length >= 20000 ? ["The card payments download stops at 20,000 payments; pick a shorter range for the rest."] : []),

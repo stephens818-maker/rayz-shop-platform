@@ -1,12 +1,15 @@
 /**
  * The credit card surcharge policy end to end: brand and shop settings (audited, mirrored to the
- * shop columns), waivers at checkout, what each payment records, the refund rule, and the reports.
+ * shop columns), which shops the brand applies it to and the bulk actions on them, who may change a
+ * shop's own, waivers at checkout, what each payment records, the refund rule, and the reports.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TOTAL } from "@/domain/report-views";
 import { Mods, actor, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/headers", async () => (await import("./session")).headersMock);
+vi.mock("next/cache", () => ({ revalidatePath() {}, revalidateTag() {} }));
 
 let m: Mods;
 let fee: typeof import("@/server/payments/card-fee");
@@ -16,6 +19,8 @@ let qbo: typeof import("@/server/quickbooks-export");
 let comp: typeof import("@/server/compensation");
 let shopId: string;
 let barberId: string;
+let otherId: string;
+let saved: { id: string; o: Record<string, unknown> | null }[] = [];
 
 beforeAll(async () => {
   m = await loadModules();
@@ -28,9 +33,15 @@ beforeAll(async () => {
   shopId = shop!.id;
   const [b] = await m.db.db.select({ id: m.schema.staffShops.staffId }).from(m.schema.staffShops).where(m.drizzle.eq(m.schema.staffShops.shopId, shopId)).limit(1);
   barberId = b.id;
+  otherId = (await m.db.db.query.shops.findFirst({ where: m.drizzle.eq(m.schema.shops.slug, "moline") }))!.id;
+  saved = await m.db.db.select({ id: m.schema.shops.id, o: m.schema.shops.cardFeeOverride }).from(m.schema.shops);
 }, 120_000);
 
 afterAll(async () => {
+  if (m) {
+    await fee.saveBrandFeePolicy(actor, brand());
+    for (const r of saved) await m.db.db.update(m.schema.shops).set({ cardFeeOverride: r.o }).where(m.drizzle.eq(m.schema.shops.id, r.id));
+  }
   await m?.db.closeDb();
 });
 
@@ -39,6 +50,7 @@ const brand = (over: Partial<import("@/domain/card-fee-policy").CardFeePolicy> =
 beforeEach(async () => {
   await fee.saveBrandFeePolicy(actor, brand());
   await fee.saveShopFeeOverride(actor, shopId, null);
+  await fee.saveShopFeeOverride(actor, otherId, null);
 });
 
 const credit = { method: "card" as const, paymentMethodId: "pm_card_visa", entryMode: "keyed" as const };
@@ -90,6 +102,145 @@ describe("settings", () => {
     expect((await fee.cardFeeConfigFor(shopId, "app")).off).toBe("channel_off");
     await fee.saveShopFeeOverride(actor, shopId, null);
     expect((await fee.shopFeePolicy(shopId)).override).toBeNull();
+  });
+});
+
+describe("which shops use it", () => {
+  const shopRow = async (id: string) => (await m.db.db.query.shops.findFirst({ where: m.drizzle.eq(m.schema.shops.id, id) }))!;
+  const status = async (id: string) => (await fee.shopFeeRows()).find((r) => r.shopId === id)!;
+
+  it("charges nothing at a shop the brand doesn't apply it to, and audits which shops a change reached", async () => {
+    await fee.saveBrandFeePolicy(actor, { appliesTo: "selected", shopIds: [otherId] });
+    expect((await fee.cardFeeConfigFor(shopId, "pos")).enabled).toBe(false);
+    expect((await fee.cardFeeConfigFor(otherId, "pos")).enabled).toBe(true);
+    expect((await shopRow(shopId)).cardFeeEnabled).toBe(false);
+    expect(await status(shopId)).toMatchObject({ on: false, off: "not_applied", inherits: true });
+    const [a] = await audits("card_fee.brand");
+    const d = a.details as { changes: Record<string, unknown>; shopIds: string[]; shops: { shopId: string; from: { on: boolean }; to: { on: boolean } }[] };
+    expect(d.changes.appliesTo).toEqual({ from: "all", to: "selected" });
+    expect(d.shopIds).toContain(shopId);
+    expect(d.shopIds).not.toContain(otherId);
+    expect(d.shops.find((x) => x.shopId === shopId)).toMatchObject({ from: { on: true }, to: { on: false } });
+    const [own] = await audits("card_fee.shop");
+    expect(own).toMatchObject({ shopId: expect.any(String), details: expect.objectContaining({ via: "brand" }) });
+    const { sale } = await sell();
+    expect(sale.cardFeeCents).toBe(0);
+    await fee.saveBrandFeePolicy(actor, { appliesTo: "none" });
+    expect((await fee.cardFeeConfigFor(otherId, "pos")).enabled).toBe(false);
+    await expect(fee.saveBrandFeePolicy(actor, { appliesTo: "selected", shopIds: ["00000000-0000-4000-8000-000000000000"] })).rejects.toThrow(/no longer exists/);
+  });
+
+  it("a shop's own setting can't turn it on where the brand doesn't apply it", async () => {
+    await fee.saveBrandFeePolicy(actor, { appliesTo: "selected", shopIds: [otherId] });
+    await fee.saveShopFeeOverride(actor, shopId, { enabled: true, rate: 0.02 });
+    expect((await fee.cardFeeConfigFor(shopId, "pos")).enabled).toBe(false);
+    expect((await fee.shopFeePolicy(shopId)).configured).toMatchObject({ enabled: true, rate: 0.02 });
+  });
+
+  it("enable and disable: under all shops, disabling one lists every other shop; audited once and on each shop", async () => {
+    const before = (await shopRow(shopId)).cardFeeChangedAt;
+    const off = await fee.bulkShopFee(actor, "disable", [shopId]);
+    expect(off.map((c) => c.shopId)).toEqual([shopId]);
+    const b = await fee.brandFeePolicy();
+    expect(b.appliesTo).toBe("selected");
+    expect(b.shopIds).toContain(otherId);
+    expect(b.shopIds).not.toContain(shopId);
+    expect(await status(shopId)).toMatchObject({ on: false, off: "not_applied" });
+    expect((await shopRow(shopId)).cardFeeChangedAt!.getTime()).toBeGreaterThan(before?.getTime() ?? 0);
+    const [a] = await audits("card_fee.shops");
+    expect(a.details).toMatchObject({ action: "disable", shopIds: [shopId], appliesTo: { from: { appliesTo: "all" }, to: { appliesTo: "selected" } }, shops: [{ shopId, from: { on: true }, to: { on: false, off: "not_applied" } }] });
+    expect(a.actorLabel).toBe(actor.label);
+
+    await fee.saveShopFeeOverride(actor, shopId, { enabled: false });
+    const on = await fee.bulkShopFee(actor, "enable", [shopId, otherId]);
+    expect(on.map((c) => c.shopId)).toEqual([shopId]);
+    expect(await status(shopId)).toMatchObject({ on: true, inherits: true });
+    expect((await fee.brandFeePolicy()).shopIds).toContain(shopId);
+  });
+
+  it("apply brand rate keeps the shop's other settings; reset drops them all; push resets and applies", async () => {
+    await fee.saveShopFeeOverride(actor, shopId, { rate: 0.02, channels: { app: false } });
+    await fee.saveShopFeeOverride(actor, otherId, { type: "both", rate: 0.01, flatCents: 25 });
+    await fee.bulkShopFee(actor, "brand_rate", [shopId, otherId]);
+    expect((await fee.shopFeePolicy(shopId)).override).toEqual({ channels: { app: false } });
+    expect((await fee.shopFeePolicy(otherId)).override).toBeNull();
+    expect((await status(shopId)).fee).toBe("3%");
+
+    await fee.bulkShopFee(actor, "reset", [shopId]);
+    expect((await fee.shopFeePolicy(shopId)).override).toBeNull();
+
+    await fee.saveBrandFeePolicy(actor, { appliesTo: "selected", shopIds: [otherId] });
+    await fee.saveShopFeeOverride(actor, shopId, { rate: 0.01 });
+    const pushed = await fee.bulkShopFee(actor, "push", [shopId]);
+    expect(pushed[0]).toMatchObject({ shopId, from: { on: false, override: { rate: 0.01 } }, to: { on: true, inherits: true, fee: "3%", override: null } });
+    expect((await fee.brandFeePolicy()).shopIds.sort()).toEqual([shopId, otherId].sort());
+    expect(await fee.bulkShopFee(actor, "push", [shopId])).toEqual([]);
+  });
+
+  it("the report filters to shops by their surcharge", async () => {
+    await fee.saveBrandFeePolicy(actor, { appliesTo: "selected", shopIds: [otherId] });
+    await fee.saveShopFeeOverride(actor, otherId, { rate: 0.025 });
+    expect(await fee.shopsMatchingFee([shopId, otherId], "on")).toEqual([otherId]);
+    expect(await fee.shopsMatchingFee([shopId, otherId], "off")).toEqual([shopId]);
+    expect(await fee.shopsMatchingFee([shopId, otherId], "own")).toEqual([otherId]);
+    expect(await fee.shopsMatchingFee([shopId, otherId], "brand")).toEqual([shopId]);
+    const { REPORT_LOADERS } = await import("@/server/report-data");
+    const day = m.time.todayLocal();
+    const data = await REPORT_LOADERS.card_fees({
+      scope: { shopIds: [shopId, otherId], from: day, to: day },
+      loc: { view: "shops", shops: [{ id: shopId, name: "Coralville" }, { id: otherId, name: "Moline" }] } as never,
+      viewer: { brandWide: true, currentShopId: null, shopIds: [shopId, otherId] },
+      params: { fee: "off" },
+    });
+    expect(data.options?.[0]).toMatchObject({ param: "fee", value: "off" });
+    expect(data.notes?.[0]).toMatch(/Surcharge off now: Coralville/);
+  });
+
+  it("shop managers only see their shop's surcharge unless the brand lets them change it", async () => {
+    const { signInAs } = await import("./session");
+    const actions = await import("@/app/admin/settings/actions");
+    const michelle = (await m.db.db.query.staff.findFirst({ where: m.drizzle.eq(m.schema.staff.email, "michelle@rayz.test") }))!;
+    await signInAs(michelle.id, shopId);
+    expect(await actions.saveShopCardFeeAction(shopId, { rate: 0.02 })).toMatchObject({ ok: false, error: expect.stringMatching(/view only/) });
+    await fee.saveBrandFeePolicy(actor, { shopsCanEdit: true });
+    expect(await actions.saveShopCardFeeAction(shopId, { rate: 0.02 })).toEqual({ ok: true, data: null });
+    expect((await fee.shopFeePolicy(shopId)).override).toEqual({ rate: 0.02 });
+    expect(await actions.saveShopCardFeeAction(otherId, { rate: 0.02 })).toMatchObject({ ok: false });
+    expect(await actions.saveBrandCardFeeAction({ rate: 0.02 })).toMatchObject({ ok: false });
+    const page = await import("@/app/admin/card-fee/actions");
+    expect(await page.bulkShopFeeAction("reset", [shopId])).toMatchObject({ ok: false });
+    expect(fee.canEditShopFee(new Set(["settings.shop_checkout"]), { shopsCanEdit: true })).toBe(true);
+    expect(fee.canEditShopFee(new Set(["settings.shop_checkout"]), { shopsCanEdit: false })).toBe(false);
+    expect(fee.canEditShopFee(new Set(["settings.card_fee"]), { shopsCanEdit: false })).toBe(true);
+    await signInAs(null);
+  });
+
+  it("a location added in the wizard takes the brand's surcharge, with no setting of its own", async () => {
+    const { createLocation } = await import("@/server/location-admin");
+    const { draftDefaults } = await import("@/domain/location-draft");
+    const owner = (await m.db.db.query.staff.findFirst({ where: m.drizzle.eq(m.schema.staff.email, "owner@rayz.test") }))!;
+    const { signInAs } = await import("./session");
+    await signInAs(owner.id);
+    const auth = await import("@/server/auth/staff");
+    const ctx = (await auth.getStaffContext())!;
+    await fee.saveBrandFeePolicy(actor, { rate: 0.025, appliesToTip: true });
+    const admin = { actor, brandWide: true, shopIds: ctx.shopIds, grantor: auth.staffGrantor(ctx) };
+    const slug = `fee-new-${Date.now() % 100000}`;
+    const made = await createLocation(admin, draftDefaults({ name: `Fee New ${slug}`, slug, address: "1 Main St", city: "Davenport", state: "IA", zip: "52801", cardFeeEnabled: false, cardFeeRate: 0.01 }));
+    const row = await shopRow(made.id);
+    expect(row).toMatchObject({ cardFeeOverride: null, cardFeeEnabled: true, cardFeeAppliesToTip: true });
+    expect(Number(row.cardFeeRate)).toBe(0.025);
+    expect(row.cardFeeChangedAt).toBeInstanceOf(Date);
+    expect((await fee.cardFeeConfigFor(made.id, "pos")).rate).toBe(0.025);
+    const [a] = await m.db.db.select().from(m.schema.auditLog).where(m.drizzle.and(m.drizzle.eq(m.schema.auditLog.action, "card_fee.shop"), m.drizzle.eq(m.schema.auditLog.shopId, made.id)));
+    expect(a.details).toMatchObject({ via: "new_location", to: { on: true, inherits: true, fee: "2.5%" } });
+
+    await fee.saveBrandFeePolicy(actor, { appliesTo: "selected", shopIds: [shopId] });
+    const slug2 = `${slug}-b`;
+    const made2 = await createLocation(admin, draftDefaults({ name: `Fee New ${slug2}`, slug: slug2, address: "2 Main St", city: "Davenport", state: "IA", zip: "52801" }));
+    expect((await fee.cardFeeConfigFor(made2.id, "pos")).enabled).toBe(false);
+    expect((await shopRow(made2.id)).cardFeeEnabled).toBe(false);
+    await signInAs(null);
   });
 });
 
