@@ -7,6 +7,7 @@ import { Button, Card, CardHeader, Notice, Table, Td, Th, cx } from "@/component
 import { errorsCsv } from "@/lib/import-errors";
 import { statLines } from "@/lib/import-stats";
 import type { FamilyImportResult } from "@/server/family-import";
+import type { ShopMatchLine } from "@/server/import-match-report";
 import type { ImportKind, ImportResult } from "@/server/importer";
 import type { SquireReconcileResult } from "@/server/squire-reconcile";
 import { importAction } from "./actions";
@@ -59,11 +60,15 @@ const FIELD_LABEL: Record<string, string> = {
   expires: "Expires",
 };
 
-export function Importer() {
+type Result = ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null; reconcile?: SquireReconcileResult | null; matchReport?: ShopMatchLine[] | null };
+
+/** With a shop, a cutover delta import: only that shop's bookings and tickets are taken from the file. */
+export function Importer({ shop, kinds }: { shop?: { id: string; name: string }; kinds?: ImportKind[] } = {}) {
   const router = useRouter();
-  const [kind, setKind] = useState<ImportKind>("clients");
+  const shown = kinds ? KINDS.filter((k) => kinds.includes(k.id)) : KINDS;
+  const [kind, setKind] = useState<ImportKind>(shown[0].id);
   const [file, setFile] = useState<{ name: string; text: string } | null>(null);
-  const [result, setResult] = useState<(ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null; reconcile?: SquireReconcileResult | null }) | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
 
@@ -71,7 +76,7 @@ export function Importer() {
     if (!file) return;
     setError(null);
     start(async () => {
-      const r = await importAction({ kind, csv: file.text, filename: file.name, dryRun });
+      const r = await importAction({ kind, csv: file.text, filename: file.name, dryRun, shopId: shop?.id });
       if (!r.ok) {
         setError(r.error);
         setResult(null);
@@ -90,10 +95,17 @@ export function Importer() {
 
   return (
     <Card>
-      <CardHeader title="Upload a file" subtitle="Import in order: clients, appointments, transactions, loyalty, gift cards." />
+      <CardHeader
+        title={shop ? `Delta import for ${shop.name}` : "Upload a file"}
+        subtitle={
+          shop
+            ? `Squire's exports taken after the freeze. Bookings and tickets of other shops in the file are skipped; loyalty and gift cards are brand-wide.`
+            : "Import in order: clients, appointments, transactions, loyalty, gift cards."
+        }
+      />
       <div className="space-y-4 p-4">
-        <div className="grid gap-2 sm:grid-cols-5">
-          {KINDS.map((k) => (
+        <div className={cx("grid gap-2", shown.length === 5 ? "sm:grid-cols-5" : "sm:grid-cols-4")}>
+          {shown.map((k) => (
             <button
               key={k.id}
               type="button"
@@ -143,7 +155,7 @@ function download(name: string, text: string) {
   URL.revokeObjectURL(url);
 }
 
-function ResultView({ result }: { result: ImportResult & { errorsTruncated: number; family?: FamilyImportResult | null; reconcile?: SquireReconcileResult | null } }) {
+function ResultView({ result }: { result: Result }) {
   const mapped = Object.entries(result.headerMap);
   const reasons = Object.entries(result.skippedByReason).sort((a, b) => b[1] - a[1]);
   return (
@@ -204,6 +216,7 @@ function ResultView({ result }: { result: ImportResult & { errorsTruncated: numb
           ))}
         </div>
       </div>
+      {result.matchReport && result.matchReport.length > 0 && <MatchReportView lines={result.matchReport} />}
       {result.family && <FamilyView family={result.family} dryRun={result.dryRun} />}
       {result.reconcile && <ReconcileView r={result.reconcile} dryRun={result.dryRun} />}
       {result.errors.length > 0 && (
@@ -230,6 +243,50 @@ function ResultView({ result }: { result: ImportResult & { errorsTruncated: numb
           {result.errors.length > 100 && <div className="mt-1 text-xs text-zinc-500">Showing 100 of {result.errors.length}. Download the error file for all of them.</div>}
         </div>
       )}
+    </div>
+  );
+}
+
+function MatchReportView({ lines }: { lines: ShopMatchLine[] }) {
+  return (
+    <div className="rounded-lg ring-1 ring-zinc-200" data-testid="match-report">
+      <div className="border-b border-zinc-100 px-3 py-2 text-sm font-medium">How each shop&apos;s clients will match</div>
+      <Table>
+        <thead>
+          <tr>
+            <Th>Shop</Th>
+            <Th right>Rows</Th>
+            <Th right>New</Th>
+            <Th right>Squire ID</Th>
+            <Th right>Email</Th>
+            <Th right>Phone</Th>
+            <Th right>Shared number</Th>
+            <Th right>Number on another profile</Th>
+            <Th right>No phone or email</Th>
+            <Th right>Skipped</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {lines.map((l) => (
+            <tr key={l.shop}>
+              <Td>{l.shop}</Td>
+              <Td right>{l.rows}</Td>
+              <Td right>{l.newProfiles}</Td>
+              <Td right>{l.bySquireId}</Td>
+              <Td right>{l.byEmail}</Td>
+              <Td right>{l.byPhone}</Td>
+              <Td right>{l.sharedPhone}</Td>
+              <Td right>{l.phoneOnOtherProfile}</Td>
+              <Td right>{l.noContact}</Td>
+              <Td right>{l.skipped}</Td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      <div className="px-3 py-2 text-xs text-zinc-500">
+        Shared numbers and numbers already on another profile are where the wrong person could sign in. Sign-in never lists the profiles on a number; check these with the shop before it moves. Clients
+        with no phone or email can&apos;t sign in until the desk adds one.
+      </div>
     </div>
   );
 }

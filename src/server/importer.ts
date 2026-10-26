@@ -256,7 +256,8 @@ const STORED_ERRORS = 5000;
 interface Run {
   kind: ImportKind;
   get: (r: Record<string, string>, f: string) => string | undefined;
-  findShop: (name?: string) => typeof shops.$inferSelect | null;
+  findShop: (name?: string) => ShopRow | null;
+  onlyShop: string | null;
   now: Date;
   dryRun: boolean;
   cfg: LoyaltyConfig;
@@ -281,9 +282,61 @@ const bump = (c: Row, k: keyof ImportStats, n = 1) => {
   c.stats[k] = (c.stats[k] ?? 0) + n;
 };
 
-export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: boolean; actor: Actor; filename?: string; now?: Date }): Promise<ImportResult> {
+export type SquireGet = (r: Record<string, string>, f: string) => string | undefined;
+
+/** A Squire export read the way the importer reads it, for reconciliation and match reports. */
+export function readSquireCsv(kind: ImportKind, csv: string) {
   const parsed = Papa.parse<Record<string, string>>(csv.replace(/^\uFEFF/, ""), { header: true, skipEmptyLines: "greedy" });
   const headerMap = mapHeaders(parsed.meta.fields ?? [], kind);
+  const get: SquireGet = (r, f) => (headerMap[f] ? r[headerMap[f]]?.trim() || undefined : undefined);
+  return { rows: parsed.data, headerMap, get };
+}
+
+type ShopRow = typeof shops.$inferSelect;
+
+export function shopFinder(allShops: ShopRow[]) {
+  return (name?: string) => {
+    if (!name) return null;
+    const n = name.toLowerCase().replace(/ray'?z|barber ?shop|[^a-z ]/g, "").trim();
+    if (!n) return null;
+    return allShops.find((s) => s.name.toLowerCase() === n || s.slug === n.replace(/\s+/g, "-") || n.includes(s.name.toLowerCase())) ?? null;
+  };
+}
+
+export const squireMoney = money;
+
+/** A Squire ticket's amounts in cents; a missing service total is what's left of the total. */
+export function ticketAmounts(get: SquireGet, r: Record<string, string>) {
+  let service = money(get(r, "serviceTotal"));
+  const product = money(get(r, "productTotal")) ?? 0;
+  const tip = money(get(r, "tip")) ?? 0;
+  const tax = money(get(r, "tax")) ?? 0;
+  const discount = Math.abs(money(get(r, "discount")) ?? 0);
+  let total = money(get(r, "total"));
+  if (service === null && total === null && !product) throw new RowError("Bad amount", "No service, product, or total amount");
+  if (service === null) service = Math.max(0, (total ?? 0) - tip - tax - product);
+  total ??= service + product + tax + tip;
+  if ([service, product, tip, tax, total].some((v) => v < 0)) throw new RowError("Bad amount", "Negative amount (refunds are imported as voided tickets)");
+  return { service, product, tip, tax, discount, total, voided: /void|refund/i.test(get(r, "status") ?? "") };
+}
+
+/** The ticket's Squire ID, or a stable stand-in when the export has none, so re-running a file never duplicates it. */
+export function ticketRef(get: SquireGet, r: Record<string, string>, shopId: string, at: Date, total: number, tip: number) {
+  return (
+    get(r, "transactionId") ??
+    `auto:${createHash("sha256")
+      .update([shopId, at.toISOString(), get(r, "squireId") ?? get(r, "phone") ?? get(r, "email") ?? get(r, "fullName") ?? "", get(r, "barber") ?? "", total, tip].join("|"))
+      .digest("hex")
+      .slice(0, 24)}`
+  );
+}
+
+/** Rows of another shop in a delta import for one shop; clients, loyalty and gift cards are brand-wide. */
+const SHOP_SCOPED: ImportKind[] = ["appointments", "transactions"];
+
+export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: boolean; actor: Actor; filename?: string; now?: Date; shopId?: string }): Promise<ImportResult> {
+  const { rows, headerMap, get } = readSquireCsv(kind, csv);
+  const parsed = { data: rows };
   const result: ImportResult = {
     kind,
     dryRun: opts.dryRun,
@@ -296,19 +349,13 @@ export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: b
     skippedByReason: {},
     headerMap,
   };
-  const get = (r: Record<string, string>, f: string) => (headerMap[f] ? r[headerMap[f]]?.trim() || undefined : undefined);
 
-  const allShops = await db.select().from(shops);
-  const findShop = (name?: string) => {
-    if (!name) return null;
-    const n = name.toLowerCase().replace(/ray'?z|barber ?shop|[^a-z ]/g, "").trim();
-    if (!n) return null;
-    return allShops.find((s) => s.name.toLowerCase() === n || s.slug === n.replace(/\s+/g, "-") || n.includes(s.name.toLowerCase())) ?? null;
-  };
+  const findShop = shopFinder(await db.select().from(shops));
   const run: Run = {
     kind,
     get,
     findShop,
+    onlyShop: opts.shopId && SHOP_SCOPED.includes(kind) ? opts.shopId : null,
     now: opts.now ?? new Date(),
     dryRun: opts.dryRun,
     cfg: await getLoyaltyConfig(),
@@ -365,10 +412,11 @@ export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: b
         errors: result.errors.slice(0, STORED_ERRORS),
         stats: { ...result.stats, ...Object.fromEntries(Object.entries(result.skippedByReason).map(([k, v]) => [`skipped:${k}`, v])) },
         staffId: opts.actor.staffId ?? null,
+        shopId: opts.shopId ?? null,
       })
       .returning();
     result.runId = r.id;
-    await audit(opts.actor, "import.run", "import", r.id, { kind, inserted: result.inserted, updated: result.updated, skipped: result.skipped, stats: result.stats });
+    await audit(opts.actor, "import.run", "import", r.id, { kind, inserted: result.inserted, updated: result.updated, skipped: result.skipped, stats: result.stats, shopId: opts.shopId ?? null }, opts.shopId ?? null);
   }
   return result;
 }
@@ -700,6 +748,7 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
   const squireApptId = c.get(r, "appointmentId");
   const shop = c.findShop(c.get(r, "shop"));
   if (!shop) throw new RowError("Unknown shop", `Unknown shop "${c.get(r, "shop") ?? ""}"`);
+  if (c.onlyShop && shop.id !== c.onlyShop) throw new RowError("Other shop", `${shop.name} isn't the shop being moved; its rows are left for its own cutover`);
   const startsAt = parseSquireDateTime(c.get(r, "date"), c.get(r, "time"), c.get(r, "start"));
   if (!startsAt) throw new RowError("Bad date", "Couldn't read the date/time");
   const isFuture = startsAt > c.now;
@@ -777,25 +826,11 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
 async function importTransaction(c: Row, r: Record<string, string>): Promise<Outcome> {
   const shop = c.findShop(c.get(r, "shop"));
   if (!shop) throw new RowError("Unknown shop", `Unknown shop "${c.get(r, "shop") ?? ""}"`);
+  if (c.onlyShop && shop.id !== c.onlyShop) throw new RowError("Other shop", `${shop.name} isn't the shop being moved; its rows are left for its own cutover`);
   const at = parseSquireDateTime(c.get(r, "date"), c.get(r, "time"), c.get(r, "start"));
   if (!at) throw new RowError("Bad date", "Couldn't read the date/time");
-  let service = money(c.get(r, "serviceTotal"));
-  const product = money(c.get(r, "productTotal")) ?? 0;
-  const tip = money(c.get(r, "tip")) ?? 0;
-  const tax = money(c.get(r, "tax")) ?? 0;
-  const discount = Math.abs(money(c.get(r, "discount")) ?? 0);
-  let total = money(c.get(r, "total"));
-  if (service === null && total === null && !product) throw new RowError("Bad amount", "No service, product, or total amount");
-  if (service === null) service = Math.max(0, (total ?? 0) - tip - tax - product);
-  total ??= service + product + tax + tip;
-  if ([service, product, tip, tax, total].some((v) => v < 0)) throw new RowError("Bad amount", "Negative amount (refunds are imported as voided tickets)");
-
-  const ref =
-    c.get(r, "transactionId") ??
-    `auto:${createHash("sha256")
-      .update([shop.id, at.toISOString(), c.get(r, "squireId") ?? c.get(r, "phone") ?? c.get(r, "email") ?? c.get(r, "fullName") ?? "", c.get(r, "barber") ?? "", total, tip].join("|"))
-      .digest("hex")
-      .slice(0, 24)}`;
+  const { service, product, tip, tax, discount, total, voided } = ticketAmounts(c.get, r);
+  const ref = ticketRef(c.get, r, shop.id, at, total, tip);
   const [dup] = await c.tx.select({ id: sales.id }).from(sales).where(eq(sales.squireRef, ref));
   if (dup) {
     bump(c, "alreadyImported");
@@ -830,7 +865,6 @@ async function importTransaction(c: Row, r: Record<string, string>): Promise<Out
     if (a) [appointmentId, staffId] = [a.id, staffId ?? a.staffId];
   }
 
-  const voided = /void|refund/i.test(c.get(r, "status") ?? "");
   const method = paymentMethodOf(c.get(r, "paymentMethod"));
   const serviceTax = product + service > 0 ? Math.round((tax * service) / (service + product)) : tax;
   const [sale] = await c.tx

@@ -14,6 +14,7 @@ import { normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { assertShopAccess, authorize, can } from "@/server/auth/staff";
+import { squireHistory } from "@/server/cutover";
 import { AppError } from "@/server/errors";
 import { LOYALTY_TYPES } from "@/domain/loyalty";
 import { getLoyaltyConfig, saveLoyaltyConfig } from "@/server/loyalty";
@@ -82,6 +83,9 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
     if (twilioNumber && !line) throw new AppError("bad_request", "The Twilio number doesn't look like a US number");
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
     if (!before) throw new AppError("not_found", "Shop not found");
+    if (v.bookingMode && v.bookingMode !== before.bookingMode && (await squireHistory(shopId))) {
+      throw new AppError("conflict", "This shop has Squire history, so moving its online booking to or from Squire happens on Squire cutover, where bookings, loyalty and gift cards are reconciled first");
+    }
     const values = Object.fromEntries(
       Object.entries({ ...v, phone: v.phone === undefined ? undefined : v.phone || null, email: v.email === undefined ? undefined : v.email || null, description: v.description || null, twilioNumber: line, externalBookingUrl: external }).filter(([, x]) => x !== undefined),
     ) as Partial<typeof shops.$inferInsert>;

@@ -60,6 +60,10 @@ export const CONSENT_COLUMN = {
 
 export type ConsentFlags = { [K in (typeof CONSENT_COLUMN)[ConsentChannel]]: boolean };
 
+/** Only the flags, so nothing else on the record rides along. */
+export const consentFlags = (c: ConsentFlags): ConsentFlags =>
+  Object.fromEntries(Object.values(CONSENT_COLUMN).map((col) => [col, !!c[col]])) as ConsentFlags;
+
 /** Where a request came from, by the app's X-Client header; anything else is the website. */
 export const consentSource = (client: string | null | undefined): ConsentSource => (client === "ios" || client === "android" ? client : "web");
 

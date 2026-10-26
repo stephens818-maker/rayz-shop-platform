@@ -46,6 +46,7 @@ import { NotesCard } from "./notes-card";
 import { ClientIdentity } from "./identity";
 import { ClientTags } from "./tags";
 import { ConsentRecord } from "./consent-record";
+import { consentFlags } from "@/domain/consent-texts";
 
 export const metadata: Metadata = { title: "Client" };
 
@@ -420,7 +421,7 @@ export default async function CustomerPage({
               <ClientTags customerId={c.id} tags={tags.map((t) => t.tag)} known={knownTags.map((t) => t.tag)} canEdit={can(ctx, "clients.edit")} />
             </Card>
           )}
-          {full && !c.guardianId && <ConsentRecord customerId={c.id} flags={c} />}
+          {full && !c.guardianId && <ConsentRecord customerId={c.id} flags={consentFlags(c)} />}
           {c.phone && <CallsAndTexts customerId={c.id} shopIds={ctx.brandWide ? null : ctx.shopIds} canInbox={can(ctx, "inbox.view")} />}
           <MessagesSent ctx={ctx} customerId={c.id} />
           {memberOf.length > 0 && (

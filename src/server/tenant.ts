@@ -12,6 +12,7 @@ import {
   purchaseOrders,
   sales,
   shopPhotos,
+  shops,
   staff,
   staffAccessShops,
   staffShops,
@@ -78,7 +79,8 @@ export type TenantRecord =
   | "tip_payout_batch"
   | "tip_payout"
   | "marketing_campaign"
-  | "shop_photo";
+  | "shop_photo"
+  | "shop";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -97,6 +99,8 @@ export async function recordShops(kind: TenantRecord, id: string, tx: DBorTx = d
       return one(tx.select({ s: appointments.shopId }).from(appointments).where(eq(appointments.id, id)));
     case "sale":
       return one(tx.select({ s: sales.shopId }).from(sales).where(eq(sales.id, id)));
+    case "shop":
+      return one(tx.select({ s: shops.id }).from(shops).where(eq(shops.id, id)));
     case "purchase_order":
       return one(tx.select({ s: purchaseOrders.shopId }).from(purchaseOrders).where(eq(purchaseOrders.id, id)));
     case "stock_count":

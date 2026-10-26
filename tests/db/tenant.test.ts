@@ -477,6 +477,7 @@ function dynamicPages(): [string, Record<string, string>][] {
     ["/admin/campaign-center/blasts/[id]", { id: ids.blast }],
     ["/admin/campaign-center/sequences/[id]", { id: ids.sequence }],
     ["/admin/reports/custom/[id]", { id: ids.savedReport }],
+    ["/admin/cutover/[shopId]", { shopId: shop.coralville }],
   ];
 }
 

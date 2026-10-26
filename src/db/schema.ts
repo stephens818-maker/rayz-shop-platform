@@ -2577,6 +2577,50 @@ export const importRuns = pgTable("import_runs", {
   /** Reconciliation counts (see ImportStats in server/importer.ts). */
   stats: jsonb("stats").$type<Record<string, number>>(),
   staffId: uuid("staff_id"),
+  /** Set for a cutover delta import, which only takes that shop's bookings and tickets. */
+  shopId: uuid("shop_id").references(() => shops.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+});
+
+/** A section of a cutover reconciliation: Squire's final export against what's here, in cents. */
+export interface CutoverSection {
+  expected: { count: number; cents: number };
+  actual: { count: number; cents: number };
+  /** Differences nothing here explains; any one blocks the switch. */
+  differences: { ref: string; label: string; squireCents: number | null; hereCents: number | null }[];
+  /** Differences from activity here since the import (a gift card used at a shop already moved, say). */
+  explained: { ref: string; label: string; squireCents: number | null; hereCents: number | null }[];
+}
+
+export interface CutoverReconciliation {
+  environment: string;
+  at: string;
+  frozenAt: string;
+  sections: Partial<Record<"bookings" | "tickets" | "loyalty" | "gift_cards", CutoverSection>>;
+  files: Partial<Record<"bookings" | "tickets" | "loyalty" | "gift_cards", string>>;
+}
+
+/**
+ * Moving one shop's online booking off Squire (C22): record when Squire booking was frozen, import what
+ * changed after it, reconcile Squire's final exports to the cent, then an owner signs off and switches.
+ */
+export const shopCutovers = pgTable("shop_cutovers", {
+  shopId: uuid("shop_id")
+    .primaryKey()
+    .references(() => shops.id, { onDelete: "cascade" }),
+  squireFrozenAt: ts("squire_frozen_at"),
+  freezeRecordedBy: uuid("freeze_recorded_by").references(() => staff.id, { onDelete: "set null" }),
+  freezeRecordedAt: ts("freeze_recorded_at"),
+  reconciliation: jsonb("reconciliation").$type<CutoverReconciliation>(),
+  reconciledAt: ts("reconciled_at"),
+  reconciledBy: uuid("reconciled_by").references(() => staff.id, { onDelete: "set null" }),
+  matched: boolean("matched").notNull().default(false),
+  signedOffBy: uuid("signed_off_by").references(() => staff.id, { onDelete: "set null" }),
+  signedOffAt: ts("signed_off_at"),
+  switchedAt: ts("switched_at"),
+  handedBackAt: ts("handed_back_at"),
+  handedBackBy: uuid("handed_back_by").references(() => staff.id, { onDelete: "set null" }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: createdAt(),
 });
 

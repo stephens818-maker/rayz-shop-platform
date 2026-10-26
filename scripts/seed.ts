@@ -48,7 +48,7 @@ async function main() {
   await db.execute(sql`TRUNCATE TABLE
     analytics_events, analytics_exports, analytics_customer_moves, visit_satisfaction, client_access_alerts, client_access_log, client_field_rules, client_fields,
     call_logs, messages, message_threads, contact_opt_outs, rebook_links, appointment_outreach, call_ins,
-    audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
+    audit_log, shop_cutovers, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
     tip_ledger, tip_payouts, tip_payout_batches, staff_payout_accounts, cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
     client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, identity_help_requests, api_rate_events, consent_events, customer_devices, customer_squire_ids, customers,
     inventory_ledger, po_receipt_lines, po_receipts, purchase_order_lines, purchase_orders, vendor_products, vendors,
