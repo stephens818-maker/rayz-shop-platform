@@ -8,6 +8,7 @@ import { durationProblem, intervalProblem } from "@/domain/timing";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, assertShopAccess, authorize } from "@/server/auth/staff";
+import { noteShopEdit } from "@/server/brand-sync/engine";
 import { AppError, forbidden, notFound } from "@/server/errors";
 
 function checkInterval(n: number | null) {
@@ -47,6 +48,7 @@ export async function saveShopIntervalAction(shopId: string, minutes: number | n
     if (!before) throw notFound("Shop");
     await db.update(shops).set({ slotIntervalMinutes: minutes }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "timing.shop_interval", "shop", shopId, { from: before.n, to: minutes }, shopId);
+    await noteShopEdit("setting", ["slot_interval"], shopId);
     refresh();
     return null;
   });

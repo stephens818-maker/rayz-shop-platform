@@ -39,6 +39,7 @@ import {
 
 export { rangeLabel };
 import { appBaseUrl } from "@/lib/deployment";
+import { noteShopEdit } from "./brand-sync/engine";
 import { brandColumnAt } from "./brand-sync/settings";
 import { LocalDate, addDays, endOfLocalDay, existingWallTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
@@ -149,6 +150,7 @@ export async function saveRules(shopId: string, patch: Record<string, unknown>, 
   await db.transaction(async (tx) => {
     await tx.update(shops).set({ staffTime: clean }).where(eq(shops.id, shopId));
     await audit(actor, "staff_time.rules", "shop", shopId, { rules: clean }, shopId, tx);
+    await noteShopEdit("setting", ["staff_time"], shopId, tx);
   });
 }
 

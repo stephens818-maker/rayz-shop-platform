@@ -7,6 +7,8 @@ import { ImportRowError, importRuns, products, services, shopProducts, shopServi
 import { Catalog, PlannedRow, ShopRef, UploadMode, UploadPlan, exportRows, parseUpload, planUpload } from "@/domain/catalog-import";
 import { slugify } from "@/lib/ids";
 import { Actor, audit } from "./audit";
+import { ProductInput, ServiceInput } from "./brand-sync/adapters/catalog";
+import { RawChange, commitBrandChange } from "./brand-sync/engine";
 import { AppError } from "./errors";
 import { setOnHand } from "./inventory/ledger";
 
@@ -54,6 +56,14 @@ export async function loadCatalog(tx: DBorTx = db): Promise<Catalog> {
   return { products: p, services: s, shopProducts: shopProductsAt, shopServices: ss };
 }
 
+const SERVICE_BRAND = new Set(Object.keys(ServiceInput.shape));
+const PRODUCT_BRAND = new Set(Object.keys(ProductInput.shape));
+/** A patch split into what the brand change scope syncs and what's only the brand's record (SKU, tax category, barcode). */
+const splitPatch = <T extends object>(patch: T | undefined, synced: ReadonlySet<string>) => {
+  const e = Object.entries(patch ?? {});
+  return { synced: Object.fromEntries(e.filter(([k]) => synced.has(k))), rest: Object.fromEntries(e.filter(([k]) => !synced.has(k))) as Partial<T> };
+};
+
 export const allShops = (tx: DBorTx = db): Promise<ShopRef[]> => tx.select({ id: shops.id, slug: shops.slug, name: shops.name }).from(shops).orderBy(asc(shops.name));
 
 export interface UploadInput {
@@ -100,6 +110,7 @@ export async function uploadCatalog(input: UploadInput): Promise<ClientPlan> {
       .values({ kind: input.mode === "stock" ? "catalog_stock" : "catalog", filename: input.filename, dryRun: false, totalRows: plan.summary.rows, staffId: input.actor.staffId ?? null })
       .returning({ id: importRuns.id });
 
+    const synced: RawChange[] = [];
     for (const r of plan.rows) {
       const op = r.op;
       if (!op) continue;
@@ -107,7 +118,11 @@ export async function uploadCatalog(input: UploadInput): Promise<ClientPlan> {
       if (op.type === "product") {
         let id = op.id;
         if (!id) id = (await tx.insert(products).values(op.create!).returning({ id: products.id }))[0].id;
-        else if (op.patch) await tx.update(products).set(op.patch).where(eq(products.id, id));
+        else if (op.patch) {
+          const { synced: brand, rest } = splitPatch(op.patch, PRODUCT_BRAND);
+          if (Object.keys(rest).length) await tx.update(products).set(rest).where(eq(products.id, id));
+          if (Object.keys(brand).length) synced.push({ type: "product", item: id, value: brand });
+        }
         if (op.create || op.patch) await audit(input.actor, op.create ? "catalog.product_create" : "catalog.product_update", "product", id, { sku: r.sku, line: r.line, runId: run.id, ...(op.create ? { values: op.create } : { changes: brandChanges }) }, null, tx);
         for (const s of op.shops) {
           const where = and(eq(shopProducts.shopId, s.shopId), eq(shopProducts.productId, id));
@@ -129,7 +144,11 @@ export async function uploadCatalog(input: UploadInput): Promise<ClientPlan> {
           takenSlugs.add(slug);
           sort += 10;
           id = (await tx.insert(services).values({ ...op.create!, slug, sortOrder: sort }).returning({ id: services.id }))[0].id;
-        } else if (op.patch) await tx.update(services).set(op.patch).where(eq(services.id, id));
+        } else if (op.patch) {
+          const { synced: brand, rest } = splitPatch(op.patch, SERVICE_BRAND);
+          if (Object.keys(rest).length) await tx.update(services).set(rest).where(eq(services.id, id));
+          if (Object.keys(brand).length) synced.push({ type: "service", item: id, value: brand });
+        }
         if (op.create || op.patch) await audit(input.actor, op.create ? "catalog.service_create" : "catalog.service_update", "service", id, { sku: r.sku, line: r.line, runId: run.id, ...(op.create ? { values: op.create } : { changes: brandChanges }) }, null, tx);
         for (const s of op.shops) {
           if (s.create) await tx.insert(shopServices).values({ shopId: s.shopId, serviceId: id, priceCents: s.create.priceCents });
@@ -137,6 +156,11 @@ export async function uploadCatalog(input: UploadInput): Promise<ClientPlan> {
           await audit(input.actor, s.create ? "catalog.shop_add" : "catalog.shop_price", "service", id, { sku: r.sku, line: r.line, runId: run.id, ...(s.create ? { values: s.create } : { changes: r.changes.filter((c) => c.shop === shopName(s.shopId)) }) }, s.shopId, tx);
         }
       }
+    }
+    // Brand prices, lengths and levels go to the shops the upload is for; the others keep theirs until pushed.
+    if (synced.length) {
+      const targets = [...new Set([...input.targetShopIds, ...parsed.shopIds])].filter((id) => input.allowedShopIds.includes(id));
+      await commitBrandChange({ actor: input.actor, ctx: null }, { changes: synced, scope: targets.length ? "selected" : "brand_only", shopIds: targets, overrides: {}, label: `Catalog upload: ${input.filename}`.slice(0, 120) }, new Date(), tx);
     }
     const { summary } = plan;
     await tx.update(importRuns).set({ inserted: summary.create, updated: summary.update, skipped: summary.error, errors, stats: { unchanged: summary.unchanged, stockChanges: summary.stockChanges } }).where(eq(importRuns.id, run.id));

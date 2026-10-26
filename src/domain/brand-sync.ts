@@ -84,6 +84,8 @@ export const STATUS_LABEL: Record<ShownStatus, string> = { in_sync: "In sync", o
 export interface Native<V = unknown> {
   value: V;
   follows: boolean;
+  /** The shop's own value covers only part of the setting; the rest reads the brand at run time. */
+  partial?: boolean;
 }
 
 /** One shop's state of one setting, as a sync change records it before and after. */

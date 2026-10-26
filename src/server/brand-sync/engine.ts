@@ -80,15 +80,18 @@ function assertBrandMay(who: Who, a: AnyAdapter, item: string) {
 async function nativeOf(tx: DBorTx, a: AnyAdapter, items: readonly string[], shopIds: readonly string[], brand: ReadonlyMap<string, unknown>, states?: ReadonlyMap<string, StateRow>): Promise<Map<string, Native>> {
   if (a.store === "native") return a.shops!(tx, items, shopIds, brand);
   const st = states ?? (await stateRows(tx, items.map((i) => syncKey(a.type, i)), shopIds));
+  const layers = a.layer ? await a.layer.read(tx, items, shopIds) : null;
   const out = new Map<string, Native>();
   for (const item of items) {
     if (a.itemAtShops?.(item) === false) continue;
     const fallback = brand.has(item) ? a.view(brand.get(item)) : a.absent;
     for (const shopId of shopIds) {
       const local = st.get(`${shopId}|${syncKey(a.type, item)}`)?.local ?? null;
-      const value = local ?? fallback;
-      if (value === undefined || value === null) continue;
-      out.set(`${shopId}|${item}`, { value, follows: local === null });
+      const own = layers?.get(`${shopId}|${item}`);
+      const base = local ?? fallback;
+      if (base === undefined || base === null) continue;
+      if (own === undefined) out.set(`${shopId}|${item}`, { value: base, follows: local === null });
+      else out.set(`${shopId}|${item}`, { value: a.layer!.merge(item, base, own), follows: false, ...(local === null ? { partial: true } : {}) });
     }
   }
   return out;
@@ -106,6 +109,7 @@ async function writeCells(
   const key = syncKey(a.type, item);
   const writes = new Map([...cells].filter(([, c]) => c.write).map(([shopId, c]) => [shopId, c.write!] as const));
   await a.write(tx, who, item, brand, a.store === "native" ? writes : new Map());
+  if (a.layer) for (const shopId of writes.keys()) await a.layer.clear(tx, item, shopId);
   for (const [shopId, c] of cells) {
     const local = a.store === "local" && c.write ? (c.write.follow ? null : c.write.value) : undefined;
     if (local !== undefined || !c.hadRow || c.modeWas !== c.mode) await putState(tx, shopId, key, c.mode, local);
@@ -163,7 +167,7 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
       if (!n) continue;
       const st = states.get(`${shopId}|${key}`);
       const mode = existed ? modeOf(st?.mode, n, v0) : (st?.mode ?? "inherit");
-      const p = planCell({ mode, follows: n.follows, live: a.live, targeted: targets.has(shopId), choice: plan.overrides[shopId] });
+      const p = planCell({ mode, follows: n.follows || !!n.partial, live: a.live, targeted: targets.has(shopId), choice: plan.overrides[shopId] });
       const write: ShopWrite | null = p.write === "follow" ? { follow: true, value: v1 } : p.write === "hold" ? { follow: false, value: n.value } : null;
       cells.set(shopId, { write, mode: p.mode, hadRow: !!st, modeWas: st?.mode ?? null });
       if (targets.has(shopId)) (p.mode === "override" ? keptAt : tookAt).add(shopId);
@@ -236,14 +240,15 @@ export interface CommitResult {
 /**
  * Saves a brand change and syncs it to the chosen shops, now or at a set time. Shops it doesn't go
  * to keep their value; shops with their own keep it unless the admin replaced it. Recorded as one
- * batch with every shop's before and after, audited on the brand and on each shop.
+ * batch with every shop's before and after, audited on the brand and on each shop. `within`: as a
+ * savepoint in the caller's transaction (a catalog upload), so both land or neither.
  */
-export async function commitBrandChange(who: Who, input: CommitInput, now = new Date()): Promise<CommitResult> {
+export async function commitBrandChange(who: Who, input: CommitInput, now = new Date(), within?: DBorTx): Promise<CommitResult> {
   if (!input.changes.length) throw new AppError("bad_request", "Nothing to save");
   if (input.scope === "selected" && !input.shopIds.length) throw new AppError("bad_request", `Tick at least one shop, or choose "${SCOPE_LABEL.brand_only}"`);
-  await runDueSyncs(now).catch((e: Error) => console.error(`Scheduled brand syncs: ${e.message}`));
+  if (!within) await runDueSyncs(now).catch((e: Error) => console.error(`Scheduled brand syncs: ${e.message}`));
   let done: ChangeRow[] = [];
-  const result = await db.transaction(async (tx): Promise<CommitResult> => {
+  const result = await (within ?? db).transaction(async (tx): Promise<CommitResult> => {
     const label = input.label?.trim().slice(0, 120) || (await labelFor(input.changes, tx));
     if (input.runAt) {
       const runAt = new Date(input.runAt);

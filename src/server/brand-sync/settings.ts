@@ -1,11 +1,12 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
-import { brandSettings, shopSyncState } from "@/db/schema";
+import { brandSettings, shopSyncState, shops } from "@/db/schema";
 import { BadgeSettingsSchema, badgeSettings, thresholdsProblem } from "@/domain/badges";
 import { SyncArea, clip, money, onOff, syncKey } from "@/domain/brand-sync";
 import { cleanLimits, cleanShopLoginCap, isShopLoginCap, SHOP_LOGIN_CAP_LABEL } from "@/domain/client-privacy";
 import { compensationSettings, settingsProblem as compensationProblem } from "@/domain/compensation";
+import { receiptBranding } from "@/domain/connect";
 import { analyticsSettings } from "@/domain/analytics";
 import { AssistantSettingsSchema, assistantSettings } from "@/domain/assistant";
 import { FamilySettingsSchema, familySettings } from "@/domain/family";
@@ -18,7 +19,7 @@ import { OpeningsSettingsSchema, openingsSettings, openingsTemplatesProblem } fr
 import { cleanOutreachRules, outreachRules, outreachRulesProblem } from "@/domain/outreach";
 import { EXPORT_COLUMNS, FT_BASIS_LABEL, payrollSettings } from "@/domain/payroll/calc";
 import type { Permission } from "@/domain/permissions";
-import { ReviewRulesSchema, reviewRules } from "@/domain/reviews";
+import { ReviewRulesSchema, locationReviewRules, reviewRules } from "@/domain/reviews";
 import { FILING_LABEL, cleanTaxFiling } from "@/domain/sales-tax";
 import { cleanRules, rulesProblem, shopRules } from "@/domain/staff-time";
 import { clockRules, parseColumnMapping } from "@/domain/time-clock";
@@ -73,6 +74,15 @@ export interface SettingDef<V = unknown> {
   labels?: Record<string, string>;
   describe?(v: V): Record<string, string>;
   short?(v: V): string;
+  /**
+   * A column on shops where a shop sets part of this setting itself (its own interval under Booking
+   * times). Readers lay it over the brand's value; a sync to the shop folds it in and clears it.
+   */
+  shopLayer?: {
+    read(tx: DBorTx, shopIds: readonly string[]): Promise<Map<string, unknown>>;
+    merge(v: V, own: unknown): V;
+    clear(tx: DBorTx, shopId: string): Promise<void>;
+  };
 }
 
 const def = <V>(d: SettingDef<V>): SettingDef => d as unknown as SettingDef;
@@ -258,6 +268,16 @@ export const SETTINGS: readonly SettingDef[] = [
     audit: "timing.brand_interval",
     describe: (v) => ({ "Slot interval": `${v} min` }),
     short: (v) => `${v} min`,
+    shopLayer: {
+      async read(tx, shopIds) {
+        const rows = await tx.select({ id: shops.id, n: shops.slotIntervalMinutes }).from(shops).where(and(inArray(shops.id, [...shopIds]), isNotNull(shops.slotIntervalMinutes)));
+        return new Map(rows.map((r) => [r.id, r.n]));
+      },
+      merge: (_v, own) => own as number,
+      clear: async (tx, shopId) => {
+        await tx.update(shops).set({ slotIntervalMinutes: null }).where(eq(shops.id, shopId));
+      },
+    },
   }),
   def<number | null>({
     key: "po_approval",
@@ -292,6 +312,16 @@ export const SETTINGS: readonly SettingDef[] = [
       return shopRules(cleanRules(merged), {});
     },
     audit: "staff_time.rules",
+    shopLayer: {
+      async read(tx, shopIds) {
+        const rows = await tx.select({ id: shops.id, r: shops.staffTime }).from(shops).where(inArray(shops.id, [...shopIds]));
+        return new Map(rows.map((r) => [r.id, cleanRules(r.r)] as const).filter(([, r]) => Object.keys(r).length));
+      },
+      merge: (v, own) => shopRules(v, own),
+      clear: async (tx, shopId) => {
+        await tx.update(shops).set({ staffTime: {} }).where(eq(shops.id, shopId));
+      },
+    },
   }),
   def({
     key: "time_clock",
@@ -388,6 +418,24 @@ export const SETTINGS: readonly SettingDef[] = [
     parse: (raw, before) => zparse(ReviewRulesSchema, { ...before, ...obj(raw) }, "Check the review settings"),
     labels: { minVisits: "From visit", snoozeDays: "Pause after a tap (days)" },
     audit: "brand.review_rules",
+    shopLayer: {
+      async read(tx, shopIds) {
+        const rows = await tx.select({ id: shops.id, r: shops.receipt }).from(shops).where(inArray(shops.id, [...shopIds]));
+        return new Map(
+          rows.flatMap((r) => {
+            const b = receiptBranding(r.r);
+            return b.reviewMinVisits === null && b.reviewSnoozeDays === null ? [] : [[r.id, { reviewMinVisits: b.reviewMinVisits, reviewSnoozeDays: b.reviewSnoozeDays }] as const];
+          }),
+        );
+      },
+      merge: (v, own) => locationReviewRules(v, own as { reviewMinVisits: number | null; reviewSnoozeDays: number | null }),
+      clear: async (tx, shopId) => {
+        await tx
+          .update(shops)
+          .set({ receipt: sql`${shops.receipt} || '{"reviewMinVisits":null,"reviewSnoozeDays":null}'::jsonb` })
+          .where(eq(shops.id, shopId));
+      },
+    },
   }),
   def({
     key: "digest",
@@ -763,5 +811,23 @@ export const settingAdapter: SyncAdapter<unknown, unknown> = {
   itemAtShops: (item) => !BY_KEY.get(item)?.wholeBrand,
   itemPaths: (item) => BY_KEY.get(item)?.paths ?? [],
   itemNoun: (item) => BY_KEY.get(item)?.label ?? "Setting",
+  layer: {
+    async read(tx, items, shopIds) {
+      const out = new Map<string, unknown>();
+      if (!shopIds.length) return out;
+      for (const item of items) {
+        const l = BY_KEY.get(item)?.shopLayer;
+        if (l) for (const [shopId, own] of await l.read(tx, shopIds)) out.set(`${shopId}|${item}`, own);
+      }
+      return out;
+    },
+    merge: (item, v, own) => BY_KEY.get(item)!.shopLayer!.merge(v, own),
+    clear: async (tx, item, shopId) => {
+      await BY_KEY.get(item)?.shopLayer?.clear(tx, shopId);
+    },
+  },
   columns: [...BY_COLUMN.keys()],
 };
+
+/** The settings a shop also sets in a column of its own, for the shop-own editors to note the edit. */
+export const SHOP_LAYERED = SETTINGS.filter((s) => s.shopLayer).map((s) => s.key);

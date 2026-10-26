@@ -81,6 +81,16 @@ export interface SyncAdapter<B = unknown, V = unknown> {
   itemNoun?(item: string): string;
   /** False for an item that's one value for the whole brand: no shop has its own, so nothing is synced to shops. */
   itemAtShops?(item: string): boolean;
+  /**
+   * A local setting a shop can also change in a column of its own (its interval under Booking
+   * times). That part counts as the shop's value; a sync that writes the shop folds it into the
+   * stored value and clears the column, so the value lands. `read` is keyed "<shopId>|<item>".
+   */
+  layer?: {
+    read(tx: DBorTx, items: readonly string[], shopIds: readonly string[]): Promise<Map<string, unknown>>;
+    merge(item: string, value: V, own: unknown): V;
+    clear(tx: DBorTx, item: string, shopId: string): Promise<void>;
+  };
   /** The brand_settings columns and brand_sync_values keys this type owns; every one belongs to exactly one type. */
   columns?: readonly BrandColumn[];
   values?: readonly string[];

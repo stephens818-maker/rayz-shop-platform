@@ -296,6 +296,7 @@ export async function saveReceiptAction(shopId: string, raw: z.input<typeof Rece
     await db.update(shops).set({ receipt: values }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.receipt", "shop", shopId, { before: before ? receiptBranding(before.receipt) : null, after: values }, shopId);
     await noteShopEdit("receipt", ["branding"], shopId);
+    await noteShopEdit("setting", ["reviews"], shopId);
     revalidatePath("/admin/settings");
     return null;
   });
