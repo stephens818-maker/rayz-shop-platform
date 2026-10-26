@@ -22,7 +22,14 @@ export const AppConfig = z.object({
     .nullable()
     .describe("This build's status, from X-Client and X-App-Version; null without X-Client"),
   maintenance: z.object({ active: z.boolean(), message: z.string().nullable() }),
-  links: z.object({ website: z.string(), account: z.string(), privacy: z.string().nullable(), terms: z.string().nullable() }),
+  links: z.object({
+    website: z.string(),
+    account: z.string(),
+    privacy: z.string().describe("Privacy policy. This site's /privacy unless APP_PRIVACY_URL points elsewhere; never null since 1.2"),
+    terms: z.string().describe("Terms of service, including the SMS terms. This site's /terms unless APP_TERMS_URL is set"),
+    support: z.string().describe("Added in 1.2. Help and contact page"),
+    deleteAccount: z.string().describe("Added in 1.2. Public page to delete an account without the app (App Store and Play data-deletion URL)"),
+  }),
   environment: z.enum(["production", "demo", "development"]),
   features: z
     .object({ booking: z.boolean(), payments: z.boolean(), family: z.boolean(), pushMarketing: z.boolean() })
@@ -230,6 +237,23 @@ export const IdentityCheck = z.object({
   lastShop: z.string().max(80).optional().describe("Slug or name of the shop of their last visit"),
 });
 export const IdentityCheckResult = z.object({ verified: z.literal(true) });
+export const DeletionQuery = z.object({ profileId: z.string().uuid().optional().describe("One of your children's profiles; omit for your own") });
+export const DeletionPreview = z.object({
+  profile: z.object({ id: z.string().uuid(), firstName: z.string() }),
+  dependents: z.array(z.object({ id: z.string().uuid(), firstName: z.string() })).describe("Children's profiles deleted with it"),
+  canDelete: z.boolean(),
+  blockers: z.array(z.string()).describe("Why it can't be deleted yet (an active membership)"),
+  forfeited: z.object({ loyaltyProgressCents: Cents, loyaltyRewardsCents: Cents, upcomingAppointments: z.number().int() }),
+  giftCardBalanceCents: Cents.describe("Stays usable by code; only the link to the profile goes"),
+  kept: z.object({ pastTickets: z.number().int(), explanation: z.string() }),
+  timing: z.string(),
+  consequences: z.array(z.string()).describe("Ready-to-show lines for the confirmation screen"),
+});
+export const DeleteAccount = z.object({
+  code: z.string().min(4).max(8).describe("From POST /me/delete/start"),
+  profileId: z.string().uuid().optional().describe("One of your children's profiles; omit for your own (which deletes your children's too)"),
+});
+export const Deleted = z.object({ deleted: z.literal(true), profiles: z.number().int() });
 export const EmailChangeStart = z.object({ email: z.string().email() });
 export const EmailChangeVerify = z.object({ email: z.string().email(), code: z.string().min(4).max(8) });
 export const RefreshBody = z.object({ refreshToken: z.string() });

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, inArray, sql, type SQL } from "drizzle-orm";
+import { and, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { customers } from "@/db/schema";
 import { decodeFilter, filterSees } from "@/domain/client-filters";
 import { EMPTY_SEGMENT, segmentProblem, segmentShopIds, type Segment } from "@/domain/marketing";
@@ -47,7 +47,7 @@ export async function clientListQuery(
     sql`, `,
   )}], ${customers.id})` : null;
   return {
-    where: and(search, scope, filtered ? sql`${customers.id} in ${filtered}` : undefined),
+    where: and(isNull(customers.deletedAt), search, scope, filtered ? sql`${customers.id} in ${filtered}` : undefined),
     relevance,
     seg,
     problem,

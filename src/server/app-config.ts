@@ -55,6 +55,11 @@ export function assertSupportedClient(req: Request) {
   throw new AppError("upgrade_required", "Please update the app to keep booking.", { platform, minVersion, storeUrl });
 }
 
+/** Where clients reach the brand for help, privacy requests and account questions. */
+export function supportContact() {
+  return { email: env("APP_SUPPORT_EMAIL"), phone: env("APP_SUPPORT_PHONE") };
+}
+
 export async function appConfig(platform: AppPlatform | null, version: string | null) {
   return { ...appConfigFromEnv(platform, version), features: await appSwitches() };
 }
@@ -80,8 +85,10 @@ export function appConfigFromEnv(platform: AppPlatform | null, version: string |
     links: {
       website: base,
       account: `${base}/account`,
-      privacy: env("APP_PRIVACY_URL"),
-      terms: env("APP_TERMS_URL"),
+      privacy: env("APP_PRIVACY_URL") ?? `${base}/privacy`,
+      terms: env("APP_TERMS_URL") ?? `${base}/terms`,
+      support: `${base}/support`,
+      deleteAccount: `${base}/account/delete`,
     },
     environment: demoMode() ? ("demo" as const) : process.env.VERCEL_ENV === "production" ? ("production" as const) : ("development" as const),
   };

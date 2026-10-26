@@ -271,6 +271,24 @@ export async function verifyEmailChange(customerId: string, rawEmail: string, co
   await db.update(customers).set({ email, emailVerifiedAt: new Date() }).where(eq(customers.id, customerId));
 }
 
+/** C10: deleting an account needs a fresh code, to the profile's phone or else its verified email. A child's goes to the guardian. */
+export async function startDeletionCode(customerId: string) {
+  const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId) });
+  if (!c || c.deletedAt) throw new AppError("not_found", "Customer not found");
+  const text = (code: string) => `Your Ray'z Barber Shop code to delete your account is ${code}. If you didn't ask for this, ignore it.`;
+  if (c.phone) return sendCode({ identifier: `delete:${c.id}`, to: c.phone, channel: "sms", purpose: "delete", subject: "Delete your account", text });
+  if (c.email && c.emailVerifiedAt) return sendCode({ identifier: `delete:${c.id}`, to: c.email, channel: "email", purpose: "delete", subject: "Delete your account", text });
+  throw new AppError("forbidden", "There's no phone or confirmed email to send a code to. Ask the shop to delete your account.");
+}
+
+export async function checkDeletionCode(customerId: string, code: string) {
+  const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId) });
+  if (!c || c.deletedAt) throw new AppError("not_found", "Customer not found");
+  const to = c.phone ?? c.email;
+  if (!to) throw new AppError("unauthorized", "Code expired. Request a new one.");
+  await consumeCode(`delete:${c.id}`, to, "delete", code);
+}
+
 export async function issueTokens(customerId: string, deviceName: string | null) {
   const accessToken = await signToken({ sub: customerId }, "customer_access", ACCESS_TTL_SECONDS);
   const refreshToken = randomToken(32);
@@ -314,5 +332,7 @@ export async function customerFromRequest(req: Request): Promise<string | null> 
 export async function requireCustomer(req: Request): Promise<string> {
   const id = await customerFromRequest(req);
   if (!id) throw new AppError("unauthorized", "Sign in required (Authorization: Bearer <accessToken>)");
+  const live = await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { deletedAt: true } });
+  if (!live || live.deletedAt) throw new AppError("unauthorized", "This account was deleted");
   return id;
 }

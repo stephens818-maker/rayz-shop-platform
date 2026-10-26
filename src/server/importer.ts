@@ -411,6 +411,8 @@ async function clientForRow(c: Row, r: Record<string, string>, shopId: string): 
   const { phone, email, notes } = contactOf(c, r);
   if (n.placeholder && !squireId && !phone && !email) return { customer: null, label: "Walk-in (Squire)" };
   const m = await matchCustomer(c.tx, { squireIds: squireId ? [squireId] : [], firstName: n.first, lastName: n.last, phone, email });
+  // A client who deleted their account keeps their history, pseudonymized, but never gets their details back.
+  if (m?.customer.deletedAt) return { customer: m.customer, label: null };
   if (m) {
     await attachSquireId(c, m.customer.id, squireId, shopId);
     const patch: Partial<Customer> = {};
@@ -604,6 +606,7 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
   const since = parseWhen(c.get(r, "clientSince"));
 
   const m = await matchCustomer(c.tx, { squireIds: squireId ? [squireId] : [], firstName: n.first, lastName: n.last, phone, email });
+  if (m?.customer.deletedAt) throw new RowError("Deleted account", "This client deleted their account here, so their Squire details aren't brought back");
   let customerId: string;
   let outcome: Outcome;
   if (!m) {

@@ -52,6 +52,9 @@ export function openApiDocument(baseUrl: string) {
     Received: S.Received,
     IdentityCheck: S.IdentityCheck,
     IdentityCheckResult: S.IdentityCheckResult,
+    DeletionPreview: S.DeletionPreview,
+    DeleteAccount: S.DeleteAccount,
+    Deleted: S.Deleted,
     EmailChangeStart: S.EmailChangeStart,
     EmailChangeVerify: S.EmailChangeVerify,
     RefreshBody: S.RefreshBody,
@@ -83,7 +86,7 @@ export function openApiDocument(baseUrl: string) {
         "",
         "**Changes in 1.1 (additive):** `GET /app/config`; `bookingMode` and `externalBookingUrl` on shops (send clients to the external URL while a shop still books on its old site); `preferences` on `/me` with `preferencesNote` and `preferredBarberId` on `PATCH /me`; the `upgrade_required` error code.",
         "",
-        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`).",
+        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site.",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
@@ -227,6 +230,27 @@ export function openApiDocument(baseUrl: string) {
           requestBody: { required: true, content: jsonContent("IdentityCheck") },
           responses: { 200: ok("IdentityCheckResult"), 401: err("Doesn't match (details.attemptsLeft)"), 403: err("Five misses: locked, and the shop has been asked to help") },
         },
+      },
+      "/me/delete": {
+        get: {
+          tags: ["Me"],
+          summary: "What deleting the account (or one of your children's profiles) does: show this before asking for the code",
+          security: bearer,
+          parameters: queryParams(S.DeletionQuery),
+          responses: { 200: ok("DeletionPreview") },
+        },
+        post: {
+          tags: ["Me"],
+          summary: "Delete the account with a fresh code",
+          description:
+            "Deletes only the chosen profile (and, for your own, your children's). Other adults on the same phone are untouched. The profile is anonymized: contact details, notes, photo, preferences, sessions and upcoming bookings go; past tickets stay under \"Deleted client\" for accounting. Every token for it stops working.",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("DeleteAccount") },
+          responses: { 200: ok("Deleted"), 401: err("Bad/expired code"), 409: err("An active membership must be cancelled first (details.blockers)") },
+        },
+      },
+      "/me/delete/start": {
+        post: { tags: ["Me"], summary: "Send the code that confirms a deletion, to the profile's phone (or confirmed email)", security: bearer, responses: { 200: ok("OtpStartResponse"), 403: err("No phone or confirmed email"), 429: err("Rate limited") } },
       },
       "/me/email/start": {
         post: {

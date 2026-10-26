@@ -5,8 +5,8 @@ import { useEffect, useState } from "react";
 import { MyBadges } from "@/components/my-badges";
 import { MyCalendarFeed } from "@/components/my-calendar-feed";
 import { MyFamily } from "@/components/my-family";
-import { EmailCard, EmailStepUp, IdentityCheckCard, type SignInStep, SignInHelpForm, isSignedIn } from "@/components/sign-in-recovery";
-import { Button, Field, Input, StatusBadge } from "@/components/ui";
+import { EmailCard, IdentityCheckCard, PhoneSignIn } from "@/components/sign-in-recovery";
+import { Button, StatusBadge } from "@/components/ui";
 import { VISIT_STATUS_LABEL, cadenceByBarber, cadenceOf } from "@/domain/visit-cadence";
 import { api, dollars, fmtDay, fmtTime, getTokens, setTokens } from "@/lib/api-client";
 import { formatDate, todayLocal } from "@/lib/time";
@@ -44,18 +44,6 @@ export default function AccountPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
   const [appts, setAppts] = useState<{ upcoming: Appt[]; past: Appt[] } | null>(null);
-  const [phone, setPhone] = useState("");
-  const [code, setCode] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [stage, setStage] = useState<"phone" | "code" | "profile" | "stepUp" | "help">("phone");
-  const [devCode, setDevCode] = useState<string | null>(null);
-  const [selection, setSelection] = useState<{
-    token: string;
-    emailHint?: string;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
   async function loadMe() {
     try {
       const [m, l, a] = await Promise.all([api<Me>("/me"), api<Loyalty>("/me/loyalty"), api<{ upcoming: Appt[]; past: Appt[] }>("/me/appointments")]);
@@ -71,75 +59,6 @@ export default function AccountPage() {
     if (getTokens()) loadMe();
   }, []);
 
-  async function start() {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await api<{ devCode?: string }>("/auth/otp/start", {
-        method: "POST",
-        auth: false,
-        body: JSON.stringify({ phone }),
-      });
-      setDevCode(r.devCode ?? null);
-      setStage("code");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function verify() {
-    setBusy(true);
-    setError(null);
-    try {
-      await next(
-        await api<SignInStep>("/auth/otp/verify", {
-          method: "POST",
-          auth: false,
-          body: JSON.stringify({ phone, code, deviceName: "web" }),
-        }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function next(r: SignInStep) {
-    if (isSignedIn(r)) {
-      setTokens(r);
-      setSelection(null);
-      await loadMe();
-      return;
-    }
-    setSelection({
-      token: r.selectionToken,
-      emailHint: "emailHint" in r ? r.emailHint : undefined,
-    });
-    setStage("stepUp" in r ? "stepUp" : "cantSignIn" in r ? "help" : "profile");
-  }
-  async function complete(pick: { firstName: string }) {
-    if (!selection) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await next(
-        await api<SignInStep>("/auth/otp/complete", {
-          method: "POST",
-          auth: false,
-          body: JSON.stringify({
-            selectionToken: selection.token,
-            deviceName: "web",
-            ...pick,
-          }),
-        }),
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function signOut() {
     const t = getTokens();
     if (t)
@@ -150,59 +69,18 @@ export default function AccountPage() {
       }).catch(() => {});
     setTokens(null);
     setMe(null);
-    setStage("phone");
   }
 
   if (!me) {
     return (
-      <div className="mx-auto max-w-sm rounded-xl bg-white p-6 ring-1 ring-zinc-200">
-        <h1 className="text-xl font-bold">My visits & rewards</h1>
-        <p className="mt-1 text-sm text-zinc-500">Sign in with a one-time code — no password.</p>
-        <div className="mt-4 space-y-3">
-          <Field label="Mobile phone">
-            <Input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={stage !== "phone"} placeholder="(319) 555-0100" />
-          </Field>
-          {stage === "stepUp" && selection?.emailHint && (
-            <EmailStepUp selectionToken={selection.token} emailHint={selection.emailHint} deviceName="web" onSignedIn={(t) => next(t)} onHelp={() => setStage("help")} />
-          )}
-          {stage === "help" && (
-            <SignInHelpForm
-              selectionToken={selection?.token}
-              phone={phone}
-              intro={selection ? "This number hasn't been used here in a long time, so the shop needs to confirm it's you." : undefined}
-            />
-          )}
-          {stage === "profile" && (
-            <Field label="First name" hint="What's your first name? If someone else on this phone already has a profile, yours is kept separate.">
-              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-            </Field>
-          )}
-          {stage === "code" && (
-            <Field label="6-digit code" hint={devCode ? `Dev mode: your code is ${devCode}` : "Check your texts."}>
-              <Input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} />
-            </Field>
-          )}
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          {stage === "stepUp" || stage === "help" ? null : stage === "phone" ? (
-            <Button className="w-full" disabled={busy || phone.replace(/\D/g, "").length < 10} onClick={start}>
-              Text me a code
-            </Button>
-          ) : stage === "code" ? (
-            <Button className="w-full" disabled={busy || code.length < 6} onClick={verify}>
-              Sign in
-            </Button>
-          ) : (
-            <Button className="w-full" disabled={busy || !firstName.trim()} onClick={() => complete({ firstName })}>
-              Continue
-            </Button>
-          )}
-          {stage !== "help" && (
-            <button type="button" className="block text-xs text-zinc-500 underline" onClick={() => setStage("help")}>
-              I can&apos;t sign in
-            </button>
-          )}
-        </div>
-      </div>
+      <PhoneSignIn
+        title="My visits & rewards"
+        deviceName="web"
+        onSignedIn={async (t) => {
+          setTokens(t);
+          await loadMe();
+        }}
+      />
     );
   }
 
@@ -252,6 +130,11 @@ export default function AccountPage() {
         }
       />
       <List title="Past visits" list={appts?.past ?? []} />
+      <p className="text-center text-xs text-zinc-500">
+        <Link href="/account/delete" className="underline">
+          Delete my account
+        </Link>
+      </p>
     </div>
   );
 }

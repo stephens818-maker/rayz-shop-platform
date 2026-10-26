@@ -47,6 +47,86 @@ function useStep() {
   return { busy, error, step };
 }
 
+/**
+ * Phone sign-in with a texted code, for the account and delete-account pages: a name when the number
+ * has no single profile, the email step for an idle number, or the "I can't sign in" request.
+ */
+export function PhoneSignIn({ title, subtitle, deviceName, onSignedIn }: { title: string; subtitle?: string; deviceName: string; onSignedIn: (t: SignedIn) => Promise<void> }) {
+  const { busy, error, step } = useStep();
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [stage, setStage] = useState<"phone" | "code" | "profile" | "stepUp" | "help">("phone");
+  const [devCode, setDevCode] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{ token: string; emailHint?: string } | null>(null);
+
+  const next = async (r: SignInStep) => {
+    if (isSignedIn(r)) return onSignedIn(r);
+    setSelection({ token: r.selectionToken, emailHint: "emailHint" in r ? r.emailHint : undefined });
+    setStage("stepUp" in r ? "stepUp" : "cantSignIn" in r ? "help" : "profile");
+  };
+  const start = () =>
+    step(async () => {
+      const r = await api<{ devCode?: string }>("/auth/otp/start", { method: "POST", auth: false, body: JSON.stringify({ phone }) });
+      setDevCode(r.devCode ?? null);
+      setStage("code");
+    });
+  const verify = () => step(async () => next(await api<SignInStep>("/auth/otp/verify", { method: "POST", auth: false, body: JSON.stringify({ phone, code, deviceName }) })));
+  const complete = () =>
+    step(async () =>
+      next(await api<SignInStep>("/auth/otp/complete", { method: "POST", auth: false, body: JSON.stringify({ selectionToken: selection?.token, deviceName, firstName: firstName.trim() }) })),
+    );
+
+  return (
+    <div className="mx-auto max-w-sm rounded-xl bg-white p-6 ring-1 ring-zinc-200" data-testid="phone-sign-in">
+      <h1 className="text-xl font-bold">{title}</h1>
+      <p className="mt-1 text-sm text-zinc-500">{subtitle ?? "Sign in with a one-time code — no password."}</p>
+      <div className="mt-4 space-y-3">
+        <Field label="Mobile phone">
+          <Input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={stage !== "phone"} placeholder="(319) 555-0100" />
+        </Field>
+        {stage === "stepUp" && selection?.emailHint && (
+          <EmailStepUp selectionToken={selection.token} emailHint={selection.emailHint} deviceName={deviceName} onSignedIn={onSignedIn} onHelp={() => setStage("help")} />
+        )}
+        {stage === "help" && (
+          <SignInHelpForm selectionToken={selection?.token} phone={phone} intro={selection ? "This number hasn't been used here in a long time, so the shop needs to confirm it's you." : undefined} />
+        )}
+        {stage === "profile" && (
+          <Field label="First name" hint="What's your first name? If someone else on this phone already has a profile, yours is kept separate.">
+            <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+          </Field>
+        )}
+        {stage === "code" && (
+          <Field label="6-digit code" hint={devCode ? `Dev mode: your code is ${devCode}` : "Check your texts."}>
+            <Input inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} />
+          </Field>
+        )}
+        {error && <p className="text-sm text-red-600">{error}</p>}
+        {stage === "phone" && (
+          <Button className="w-full" disabled={busy || phone.replace(/\D/g, "").length < 10} onClick={start}>
+            Text me a code
+          </Button>
+        )}
+        {stage === "code" && (
+          <Button className="w-full" disabled={busy || code.length < 6} onClick={verify}>
+            Sign in
+          </Button>
+        )}
+        {stage === "profile" && (
+          <Button className="w-full" disabled={busy || !firstName.trim()} onClick={complete}>
+            Continue
+          </Button>
+        )}
+        {stage !== "help" && (
+          <button type="button" className="block text-xs text-zinc-500 underline" onClick={() => setStage("help")}>
+            I can&apos;t sign in
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** A number unused for 18 months: confirm with a code to the profile's verified email. */
 export function EmailStepUp({
   selectionToken,

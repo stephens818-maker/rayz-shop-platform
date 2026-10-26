@@ -1233,6 +1233,8 @@ export const customers = pgTable(
     identityVerifiedAt: ts("identity_verified_at"),
     identityCheckFailures: integer("identity_check_failures").notNull().default(0),
     lastAppSignInAt: ts("last_app_sign_in_at"),
+    /** The client deleted their account: the row stays so sales add up, with every identifying detail cleared. */
+    deletedAt: ts("deleted_at"),
     /** Values of the brand's custom client fields, by client_fields.id. */
     customFields: jsonb("custom_fields").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
     /** Consent is opt-in: nothing is sent until the client (or their Squire record) says yes. */

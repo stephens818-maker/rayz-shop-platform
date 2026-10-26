@@ -35,6 +35,18 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
         ·{" "}
         <Link href="/docs/api" className="underline">
           API
+        </Link>{" "}
+        ·{" "}
+        <Link href="/support" className="underline">
+          Support
+        </Link>{" "}
+        ·{" "}
+        <Link href="/privacy" className="underline">
+          Privacy
+        </Link>{" "}
+        ·{" "}
+        <Link href="/terms" className="underline">
+          Terms
         </Link>
       </footer>
     </div>
