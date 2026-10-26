@@ -1,14 +1,16 @@
-import { and, asc, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { db } from "@/db";
 import { customers, customerSquireIds, identityHelpRequests, otpCodes, refreshTokens } from "@/db/schema";
 import { demoMode } from "@/lib/deployment";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
-import { findOrCreateCustomer, lockIdentity, matchCustomer } from "@/server/customers";
+import { audit } from "@/server/audit";
+import { findOrCreateCustomer, lockIdentity, matchCustomer, mergeCustomers } from "@/server/customers";
 import { AppError } from "@/server/errors";
 import { sendNow } from "@/server/notifications/queue";
 import { rateLimit } from "@/server/rate-limit";
 import { smsOtpProvider, verifyCheck, verifySend } from "./otp-provider";
+import { isReviewIdentifier, issueReviewCode, reviewProfile } from "./review-login";
 import { randomToken, sha256, signToken, verifyToken } from "./tokens";
 
 export const ACCESS_TTL_SECONDS = 60 * 60; // 1 hour
@@ -86,6 +88,10 @@ const SIGN_IN_TEXT = (code: string) => `Your Ray'z Barber Shop code is ${code}. 
 export async function startOtp(input: OtpStartInput) {
   const { identifier, channel } = normalizeIdentifier(input);
   await rateLimit("otp_ip", input.ip ?? null, OTP_PER_IP_HOUR, 3_600_000, "Too many codes requested from this network. Try again later.");
+  if (isReviewIdentifier(identifier)) {
+    if (channel === "sms") return issueReviewCode(identifier, input.ip ?? null);
+    await reviewProfile();
+  }
   return sendCode({ identifier, to: identifier, channel, purpose: "sign_in", subject: "Your Ray'z sign-in code", text: SIGN_IN_TEXT, appHash: input.appHash });
 }
 
@@ -94,17 +100,32 @@ const IDLE_STEP_UP_MS = 548 * 86_400_000; // 18 months
 type Selection = { sub: string; ch: "sms" | "email"; cid?: string };
 type Customer = typeof customers.$inferSelect;
 
+type StepUpReason = "idle_number" | "secured";
 export type SignInResult =
   | { needsProfile: true; selectionToken: string }
-  | { needsProfile: false; stepUp: "email"; selectionToken: string; emailHint: string }
-  | { needsProfile: false; cantSignIn: true; selectionToken: string; reason: "idle_number" }
+  | { needsProfile: false; stepUp: "email"; selectionToken: string; emailHint: string; reason: StepUpReason }
+  | { needsProfile: false; cantSignIn: true; selectionToken: string; reason: StepUpReason }
   | Awaited<ReturnType<typeof signIn>>;
 
-export async function verifyOtp(input: { phone?: string | null; email?: string | null; code: string; firstName?: string | null; lastName?: string | null; deviceName?: string | null }): Promise<SignInResult> {
+/** I16: who may create an account. The app must ask (requireAge); anyone saying they're under 13 is refused. */
+export interface AgeAnswer {
+  ageConfirmed?: boolean | null;
+  requireAge?: boolean;
+}
+
+function checkAge(a: AgeAnswer) {
+  if (a.ageConfirmed === false) throw new AppError("forbidden", "You need to be 13 or older to have an account. A parent or guardian can add you to theirs.", { reason: "under_13" });
+  if (a.requireAge && !a.ageConfirmed) throw new AppError("bad_request", "Confirm you're 13 or older", { reason: "age_confirmation_required", field: "ageConfirmed" });
+}
+
+export async function verifyOtp(
+  input: { phone?: string | null; email?: string | null; code: string; firstName?: string | null; lastName?: string | null; deviceName?: string | null } & AgeAnswer,
+): Promise<SignInResult> {
   const { identifier, channel } = normalizeIdentifier(input);
   await consumeCode(identifier, identifier, "sign_in", input.code);
   const selectionToken = await signToken({ sub: identifier, ch: channel } satisfies Selection, "otp_select", SELECTION_TTL_SECONDS);
-  if (input.firstName?.trim()) return completeSignIn({ selectionToken, firstName: input.firstName, lastName: input.lastName, deviceName: input.deviceName });
+  if (input.firstName?.trim())
+    return completeSignIn({ selectionToken, firstName: input.firstName, lastName: input.lastName, deviceName: input.deviceName, ageConfirmed: input.ageConfirmed, requireAge: input.requireAge });
   const profiles = await profilesFor(identifier, channel);
   if (profiles.length === 1) return gate(profiles[0], { sub: identifier, ch: channel }, false, input.deviceName);
   // None, or a family sharing the number: ask for a name. Never list who else is on a number; it may have been recycled.
@@ -135,15 +156,45 @@ const maskEmail = (e: string) => {
 
 /**
  * Before signing someone in by phone: a number unused for 18 months may belong to someone new now,
- * so it needs a code to the profile's verified email too, or a staff check when there's none.
+ * and a secured profile (I15) always asks, so either needs a code to the profile's verified email
+ * too, or a staff check when there's none.
  */
 async function gate(c: Customer, sel: Selection, isNew: boolean, deviceName?: string | null): Promise<SignInResult> {
-  if (sel.ch === "sms" && !isNew && Date.now() - (await lastActive(c)).getTime() > IDLE_STEP_UP_MS) {
-    const selectionToken = await signToken({ ...sel, cid: c.id } satisfies Selection, "otp_select", SELECTION_TTL_SECONDS);
-    if (c.email && c.emailVerifiedAt) return { needsProfile: false as const, stepUp: "email" as const, selectionToken, emailHint: maskEmail(c.email) };
-    return { needsProfile: false as const, cantSignIn: true as const, selectionToken, reason: "idle_number" as const };
+  if (sel.ch === "sms" && !isNew && !isReviewIdentifier(sel.sub)) {
+    const reason: StepUpReason | null = c.securedAt ? "secured" : Date.now() - (await lastActive(c)).getTime() > IDLE_STEP_UP_MS ? "idle_number" : null;
+    if (reason) {
+      const selectionToken = await signToken({ ...sel, cid: c.id } satisfies Selection, "otp_select", SELECTION_TTL_SECONDS);
+      if (c.email && c.emailVerifiedAt) return { needsProfile: false as const, stepUp: "email" as const, selectionToken, emailHint: maskEmail(c.email), reason };
+      return { needsProfile: false as const, cantSignIn: true as const, selectionToken, reason };
+    }
   }
-  return signIn(c, isNew, deviceName);
+  return signIn(c, isNew, deviceName, sel);
+}
+
+/**
+ * I14: the phone is proven now, so the unverified guest records booked on it under this first
+ * name fold into one profile: the oldest record that isn't a guest one (or this one). Records
+ * under other first names stay apart; they may be someone else sharing the phone.
+ */
+async function foldGuestRecords(c: Customer, phone: string): Promise<Customer> {
+  const same = (
+    await db
+      .select()
+      .from(customers)
+      .where(and(eq(customers.phone, phone), isNull(customers.guardianId), isNull(customers.deletedAt), ne(customers.id, c.id)))
+      .orderBy(asc(customers.createdAt))
+  ).filter((x) => sameName(x.firstName, c.firstName));
+  const all = [c, ...same];
+  const guests = all.filter((x) => x.unverifiedGuestAt);
+  if (!guests.length) return c;
+  const keep = c.unverifiedGuestAt ? (same.find((x) => !x.unverifiedGuestAt) ?? c) : c;
+  for (const g of guests) {
+    if (g.id === keep.id) continue;
+    await mergeCustomers(keep.id, g.id, { staffId: null, label: "system:guest_verified" }).catch((e: Error) => console.error("guest record fold failed", g.id, e.message));
+  }
+  await db.update(customers).set({ unverifiedGuestAt: null }).where(eq(customers.id, keep.id));
+  const after = await db.query.customers.findFirst({ where: eq(customers.id, keep.id) });
+  return after ?? keep;
 }
 
 /** An imported (Squire) profile someone hasn't yet confirmed is theirs. Loyalty redemption stays hidden until they do. */
@@ -154,7 +205,9 @@ export async function needsIdentityCheck(c: Pick<Customer, "id" | "identityVerif
   return !!hit;
 }
 
-async function signIn(customer: Customer, isNew: boolean, deviceName?: string | null) {
+async function signIn(c: Customer, isNew: boolean, deviceName?: string | null, sel?: Selection) {
+  const customer = sel?.ch === "sms" ? await foldGuestRecords(c, sel.sub) : c;
+  if (sel && isReviewIdentifier(sel.sub)) await audit({ staffId: null, label: "review" }, "review.sign_in", "customer", customer.id, { channel: sel.ch }, null);
   const tokens = await issueTokens(customer.id, deviceName ?? null);
   await db.update(customers).set({ lastAppSignInAt: new Date() }).where(eq(customers.id, customer.id));
   return { needsProfile: false as const, isNew, customer, identityCheckRequired: await needsIdentityCheck(customer), ...tokens };
@@ -165,7 +218,9 @@ async function signIn(customer: Customer, isNew: boolean, deviceName?: string | 
  * shared rules, or creates one (a family member on the same phone). By email it matches only a
  * profile whose email is verified, or creates one with the email verified.
  */
-export async function completeSignIn(input: { selectionToken: string; customerId?: string | null; firstName?: string | null; lastName?: string | null; deviceName?: string | null }): Promise<SignInResult> {
+export async function completeSignIn(
+  input: { selectionToken: string; customerId?: string | null; firstName?: string | null; lastName?: string | null; deviceName?: string | null } & AgeAnswer,
+): Promise<SignInResult> {
   const t = await verifyToken<Selection>(input.selectionToken, "otp_select");
   if (!t) throw new AppError("unauthorized", "Code expired. Request a new one.");
   const sel: Selection = { sub: t.sub, ch: t.ch };
@@ -175,7 +230,8 @@ export async function completeSignIn(input: { selectionToken: string; customerId
   if (t.ch === "email") {
     const mine = (await profilesFor(identifier, "email")).find((p) => sameName(p.firstName, firstName));
     if (mine) return gate(mine, sel, false, input.deviceName);
-    const c = await findOrCreateCustomer({ firstName, lastName: input.lastName }, null, db, { allowNoContact: true });
+    checkAge(input);
+    const c = await findOrCreateCustomer({ firstName, lastName: input.lastName, ageConfirmed: !!input.ageConfirmed }, null, db, { allowNoContact: true });
     await db.update(customers).set({ email: identifier, emailVerifiedAt: new Date() }).where(eq(customers.id, c.id));
     return gate({ ...c, email: identifier }, sel, true, input.deviceName);
   }
@@ -183,7 +239,8 @@ export async function completeSignIn(input: { selectionToken: string; customerId
     await lockIdentity(tx, [identifier]);
     const m = await matchCustomer(tx, { firstName, lastName: input.lastName, phone: identifier });
     if (m && m.customer.phone === identifier && !m.customer.guardianId) return { customer: m.customer, isNew: false };
-    const c = await findOrCreateCustomer({ firstName, lastName: input.lastName, phone: identifier }, null, tx);
+    checkAge(input);
+    const c = await findOrCreateCustomer({ firstName, lastName: input.lastName, phone: identifier, ageConfirmed: !!input.ageConfirmed }, null, tx);
     return { customer: c, isNew: c.createdAt.getTime() > Date.now() - 60_000 };
   });
   return gate(customer, sel, isNew, input.deviceName);
@@ -206,7 +263,7 @@ export async function verifyStepUp(selectionToken: string, code: string, deviceN
   const c = await db.query.customers.findFirst({ where: eq(customers.id, t.cid) });
   if (!c?.email || !c.emailVerifiedAt) throw new AppError("forbidden", "There's no verified email on this profile.");
   await consumeCode(`step:${c.id}`, c.email, "step_up", code);
-  return signIn(c, false, deviceName);
+  return signIn(c, false, deviceName, { sub: t.sub, ch: t.ch });
 }
 
 /**

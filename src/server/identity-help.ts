@@ -14,6 +14,7 @@ export const HELP_REASON_LABEL = {
   identity_check: "Missed the identity check five times",
   idle_number: "Number unused 18 months, no confirmed email",
   cant_sign_in: "Asked for help signing in",
+  child_claim: "A parent asked to put a child's profile on their account (Family card: put an existing client on the account)",
 } as const;
 
 export async function helpRequests(status: "open" | "closed" = "open") {

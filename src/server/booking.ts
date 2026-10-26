@@ -3,7 +3,9 @@ import { db, DBorTx } from "@/db";
 import {
   appointmentItems,
   appointments,
+  customerCards,
   customers,
+  notificationJobs,
   services,
   shopClosures,
   shopHours,
@@ -300,6 +302,8 @@ export interface CreateAppointmentInput {
   squeezeIn?: boolean;
   /** Where the client's consent answers came from (the app or website); unset is staff for staff bookings, else the website. */
   consent?: ConsentContext;
+  /** I14: a signed-out web booking. It never lands on an existing profile until that phone signs in with a code. */
+  guest?: boolean;
 }
 
 /** Why this barber can't be booked at this start, in words the front desk can act on. */
@@ -313,6 +317,16 @@ function offGridMessage(day: DayAvailabilityInput, staffId: string, start: Date,
     .sort((x, y) => x - y);
   const suggest = nearby.length ? ` Open nearby: ${nearby.map((x) => formatTime(x)).join(", ")}.` : "";
   return `${formatTime(start)} isn't on ${barber ?? "this barber"}'s ${intervalMin}-minute grid here.${suggest}`;
+}
+
+/** I14: an unverified number gets at most one booking confirmation text a day, so the booking form can't be used to text a stranger over and over. */
+async function confirmedToday(phone: string, now: Date, tx: DBorTx) {
+  const [hit] = await tx
+    .select({ id: notificationJobs.id })
+    .from(notificationJobs)
+    .where(and(eq(notificationJobs.to, phone), eq(notificationJobs.kind, "confirmation"), eq(notificationJobs.channel, "sms"), gt(notificationJobs.createdAt, new Date(now.getTime() - 86_400_000))))
+    .limit(1);
+  return !!hit;
 }
 
 export async function createAppointment(input: CreateAppointmentInput) {
@@ -356,6 +370,7 @@ export async function bookInTx(input: CreateAppointmentInput, tx: DBorTx) {
         ? await findOrCreateCustomer(input.customer, r.shop.id, tx, {
             allowNoContact: input.allowNoContact,
             consent: input.consent ?? (staffOverride ? staffConsentContext(input.actor.staffId) : { source: "web" }),
+            guest: input.guest,
           })
         : null;
     if (input.customerId && !customer) throw notFound("Customer");
@@ -389,6 +404,25 @@ export async function bookInTx(input: CreateAppointmentInput, tx: DBorTx) {
         throw new AppError("forbidden", `${r.requestedStaffId ? name : "The open barbers"} take bookings with a card on file. Book in the Rayz app or call the shop.`);
       }
       free = free.filter((id) => !payFirst.includes(id));
+    }
+    // I1: in the app, a barber who books with a card on file needs a saved card on the household's
+    // account: the guardian's, when the booking is for a dependent.
+    if (input.source === "api" && customer) {
+      const payFirst = free.filter((id) => !r.timing.get(id)!.options.bookWithoutPayment.value);
+      if (payFirst.length) {
+        const [card] = await tx
+          .select({ id: customerCards.id })
+          .from(customerCards)
+          .where(and(eq(customerCards.customerId, customer.guardianId ?? customer.id), isNull(customerCards.detachedAt)))
+          .limit(1);
+        if (!card) {
+          if (payFirst.length === free.length) {
+            const name = r.barbers.find((b) => b.id === free[0])?.displayName ?? "This barber";
+            throw new AppError("forbidden", `${r.requestedStaffId ? name : "The open barbers"} take bookings with a card on file. Add a card in the app first.`, { reason: "card_required" });
+          }
+          free = free.filter((id) => !payFirst.includes(id));
+        }
+      }
     }
     const ordered = r.requestedStaffId ? free : [pickBarber(free, day.appointments, date)!, ...free].filter((v, i, a) => a.indexOf(v) === i);
 
@@ -446,7 +480,12 @@ export async function bookInTx(input: CreateAppointmentInput, tx: DBorTx) {
           );
         }
         if (customer && !input.silent) {
+          const hold = input.guest && customer.unverifiedGuestAt && customer.phone ? await confirmedToday(customer.phone, now, tx) : false;
           await scheduleAppointmentNotifications("created", await messageContext(appt.id, tx), tx, now);
+          if (hold)
+            await tx
+              .delete(notificationJobs)
+              .where(and(eq(notificationJobs.appointmentId, appt.id), eq(notificationJobs.kind, "confirmation"), eq(notificationJobs.channel, "sms"), eq(notificationJobs.status, "pending")));
         }
         if (!input.silent && input.source !== "walk_in") await queueStaffAlert("confirm", appt.id, { actorStaffId: input.actor.staffId, now }, tx);
         return appt;

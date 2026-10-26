@@ -123,6 +123,7 @@ const Split = z.object({
   email: z.string().trim().max(200).optional(),
   smsOptIn: z.boolean().default(false),
   emailOptIn: z.boolean().default(false),
+  confirmedAge: z.boolean().optional(),
 });
 
 /** A child old enough gets their own account, keeping their history. Their phone or email is entered here. */

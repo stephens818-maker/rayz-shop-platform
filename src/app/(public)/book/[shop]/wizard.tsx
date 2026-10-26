@@ -34,6 +34,7 @@ import { togglePartyMember } from "@/domain/family";
 import {
   EMAIL_CONSENT_TEXT,
   SMS_CONSENT_TEXT,
+  AGE_TEXT,
   consentFields,
   initialBookingForm,
 } from "@/domain/booking-consent";
@@ -45,6 +46,9 @@ import {
   saveDraftAction,
 } from "./actions";
 import { VerifyPhone, type SignedIn } from "./verify-phone";
+import { Turnstile } from "@/components/turnstile";
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || null;
 import { trackBookingStep } from "@/lib/conversion-tracking";
 
 interface Service {
@@ -110,6 +114,7 @@ export function BookingWizard({
   const [slot, setSlot] = useState<Slot | null>(null);
   const [step, setStep] = useState<Step>("service");
   const [form, setForm] = useState(initialBookingForm);
+  const [captcha, setCaptcha] = useState<string | null>(null);
   const [signedIn, setSignedIn] = useState<{
     id: string;
     firstName: string;
@@ -527,8 +532,10 @@ export function BookingWizard({
                 lastName: form.lastName || null,
                 phone: form.phone,
                 email: form.email || null,
+                ageConfirmed: form.over13,
                 ...consentFields(form),
               },
+          ...(signedIn || !captcha ? {} : { captchaToken: captcha }),
         }),
       });
       if (coupon) await holdCouponAction(r.appointment.code, coupon.code);
@@ -551,6 +558,8 @@ export function BookingWizard({
     signedIn ||
     (guest &&
       form.firstName.trim() &&
+      form.over13 &&
+      (!TURNSTILE_SITE_KEY || !!captcha) &&
       form.phone.replace(/\D/g, "").length >= 10)
   );
   useEffect(() => {
@@ -608,6 +617,8 @@ export function BookingWizard({
     signedIn ||
     (guest &&
       form.firstName.trim() &&
+      form.over13 &&
+      (!TURNSTILE_SITE_KEY || !!captcha) &&
       form.phone.replace(/\D/g, "").length >= 10);
 
   return (
@@ -941,6 +952,23 @@ export function BookingWizard({
                   />
                   {EMAIL_CONSENT_TEXT}
                 </label>
+              )}
+              <label className="flex items-start gap-2 text-sm text-zinc-600 sm:col-span-2">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  data-testid="guest-over-13"
+                  checked={form.over13}
+                  onChange={(e) =>
+                    setForm({ ...form, over13: e.target.checked })
+                  }
+                />
+                <span>{AGE_TEXT}</span>
+              </label>
+              {TURNSTILE_SITE_KEY && (
+                <div className="sm:col-span-2">
+                  <Turnstile siteKey={TURNSTILE_SITE_KEY} onToken={setCaptcha} />
+                </div>
               )}
             </div>
           )}

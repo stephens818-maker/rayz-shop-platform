@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button, Field, Input } from "@/components/ui";
 import { EmailStepUp, type SignedIn, type SignInStep, SignInHelpForm, isSignedIn } from "@/components/sign-in-recovery";
 import { api } from "@/lib/api-client";
-import { EMAIL_CONSENT_TEXT, SMS_CONSENT_TEXT, initialBookingForm } from "@/domain/booking-consent";
+import { AGE_TEXT, EMAIL_CONSENT_TEXT, SMS_CONSENT_TEXT, initialBookingForm } from "@/domain/booking-consent";
 
 type Form = ReturnType<typeof initialBookingForm>;
 export type { SignedIn };
@@ -81,6 +81,7 @@ export function VerifyPhone({ form, setForm, onSignedIn, onSkip }: { form: Form;
           body: JSON.stringify({
             selectionToken: selection!.token,
             deviceName: "web booking",
+            ageConfirmed: form.over13,
             ...pick,
           }),
         }),
@@ -146,9 +147,13 @@ export function VerifyPhone({ form, setForm, onSignedIn, onSkip }: { form: Form;
                 {EMAIL_CONSENT_TEXT}
               </label>
             )}
+            <label className="flex items-start gap-2 text-sm text-zinc-600 sm:col-span-2">
+              <input type="checkbox" className="mt-1" checked={form.over13} onChange={(e) => setForm({ ...form, over13: e.target.checked })} />
+              <span>{AGE_TEXT}</span>
+            </label>
             <Button
               className="sm:col-span-2 sm:w-auto sm:justify-self-start"
-              disabled={busy || !form.firstName.trim()}
+              disabled={busy || !form.firstName.trim() || !form.over13}
               onClick={() =>
                 complete({
                   firstName: form.firstName.trim(),

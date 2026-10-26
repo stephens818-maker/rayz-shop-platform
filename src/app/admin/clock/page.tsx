@@ -14,8 +14,10 @@ import { ClockPanel, OpensEarlyForm, PinForm, type ClockShop } from "./clock";
 
 export const metadata: Metadata = { title: "Time clock" };
 
-export default async function ClockPage() {
+export default async function ClockPage({ searchParams }: { searchParams: Promise<{ shop?: string; qr?: string; tag?: string }> }) {
   const ctx = await guardPage("/admin/clock");
+  const sp = await searchParams;
+  const proof = sp.shop && (sp.qr || sp.tag) ? { shopId: sp.shop, qr: sp.qr?.slice(0, 64), tag: sp.tag?.slice(0, 64) } : null;
   const me = ctx.staff.id;
   if (ctx.staff.kind !== "person") return <Empty title="Shop logins don't punch">Use the front-desk clock, where each person punches with their own PIN.</Empty>;
   const now = new Date();
@@ -65,6 +67,7 @@ export default async function ClockPage() {
         next={state.next}
         defaultShopId={primary}
         breakReasons={reasons}
+        proof={proof}
       />
       <Card>
         <CardHeader title="Today" subtitle={today.length ? undefined : "No punches yet today."} />

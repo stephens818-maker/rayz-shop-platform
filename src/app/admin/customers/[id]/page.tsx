@@ -235,11 +235,10 @@ export default async function CustomerPage({
   const today = todayLocal();
   const nameOf = (x: { firstName: string; lastName: string | null }) => `${x.firstName} ${x.lastName ?? ""}`.trim();
   const seesAge = policy.level("birthday") !== "hidden";
-  const kidOf = (k: { id: string; firstName: string; lastName: string | null; birthday: string | null; notes: string | null }, extra: Pick<FamilyKid, "age" | "visits" | "lastVisit" | "cadence" | "canSplit">): FamilyKid => ({
+  const kidOf = (k: { id: string; firstName: string; birthYear: number | null; notes: string | null }, extra: Pick<FamilyKid, "age" | "visits" | "lastVisit" | "cadence" | "canSplit">): FamilyKid => ({
     id: k.id,
     firstName: k.firstName,
-    lastName: k.lastName,
-    birthday: policy.level("birthday") === "full" ? k.birthday : null,
+    birthYear: policy.level("birthday") === "full" ? k.birthYear : null,
     notes: policy.level("notes") === "full" ? k.notes : null,
     ...extra,
     age: seesAge ? extra.age : null,

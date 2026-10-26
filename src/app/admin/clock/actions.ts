@@ -3,9 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { z } from "zod";
+import QRCode from "qrcode";
 import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
+import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
 import { type Actor } from "@/server/audit";
 import { forbidden } from "@/server/errors";
 import { type Welcome, clockInWelcome } from "@/server/milestones/day";
@@ -76,6 +78,8 @@ export async function punchAction(
     gps: { lat: number; lng: number; accuracyM: number | null } | null;
     photo: string | null;
     confirmTimeOff?: boolean;
+    /** The front-desk QR code or NFC tag from the address this page was opened with. */
+    proof?: { qr?: string; tag?: string };
   } & BreakPlanInput,
 ) {
   return safe<PunchReply>(async () => {
@@ -87,6 +91,7 @@ export async function punchAction(
         gps: Gps,
         photo: Photo,
         confirmTimeOff: z.boolean().optional(),
+        proof: z.object({ qr: z.string().max(64).optional(), tag: z.string().max(64).optional() }).optional(),
         ...BreakPlan,
       })
       .parse(input);
@@ -101,6 +106,7 @@ export async function punchAction(
         ip: await requestIp(),
         gps: v.gps,
       },
+      proof: v.proof,
       deviceId: device?.shopId === v.shopId ? device.id : null,
       photo: v.photo,
       confirmTimeOff: v.confirmTimeOff,
@@ -121,6 +127,16 @@ async function kioskDevice() {
       "This browser isn't registered as one of your shops' time clock devices.",
     );
   return { ctx, device };
+}
+
+/** P1: the QR code the front-desk clock shows, for phones to scan. It changes every 30 seconds. */
+export async function kioskQrAction() {
+  return safe(async () => {
+    const { device } = await kioskDevice();
+    const { code, expiresAt } = clockQrCode(device.shopId);
+    const svg = await QRCode.toString(clockProofUrl(device.shopId, { qr: code }), { type: "svg", margin: 1, errorCorrectionLevel: "M" });
+    return { svg, expiresAt: expiresAt.toISOString() };
+  });
 }
 
 /** On the front-desk clock: checks someone's PIN and says what they can punch next. */

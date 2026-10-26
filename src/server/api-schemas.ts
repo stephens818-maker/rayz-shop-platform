@@ -30,6 +30,14 @@ export const AppConfig = z.object({
     support: z.string().describe("Added in 1.2. Help and contact page"),
     deleteAccount: z.string().describe("Added in 1.2. Public page to delete an account without the app (App Store and Play data-deletion URL)"),
   }),
+  accounts: z
+    .object({
+      minimumAge: z.number().int().describe("I16: account holders are this age or older. Ask before creating an account; send ageConfirmed. Younger clients are dependents on a parent's account"),
+      guestBooking: z.literal("web_only").describe("I14: the app books signed in; signed-out booking is the website's only"),
+      turnstileSiteKey: z.string().nullable().describe("Website guest booking: the Cloudflare Turnstile site key when bot protection is on, else null"),
+      reviewSignIn: z.boolean().describe("C18 scaffold: the App Review sign-in is switched on (APP_REVIEW_LOGIN). Off unless the owner turns it on"),
+    })
+    .describe("Added in 1.2"),
   environment: z.enum(["production", "demo", "development"]),
   features: z
     .object({ booking: z.boolean(), payments: z.boolean(), family: z.boolean(), pushMarketing: z.boolean() })
@@ -120,6 +128,7 @@ export const CustomerInput = z.object({
   email: z.string().email().optional().nullable(),
   smsOptIn: z.boolean().optional().describe("Omit to keep the client's current choice; false always wins"),
   emailOptIn: z.boolean().optional().describe("Omit to keep the client's current choice; false always wins"),
+  ageConfirmed: z.boolean().optional().describe("I16: they're 13 or older. false is refused (403 under_13); the website sends true from its checkbox"),
 });
 
 export const CreateAppointment = z.object({
@@ -128,7 +137,10 @@ export const CreateAppointment = z.object({
   addonIds: z.array(z.string().uuid()).max(5).optional(),
   barberId: z.string().nullable().optional().describe("Barber ID or slug; null/'any' = any barber"),
   startsAt: Instant,
-  customer: CustomerInput.optional().describe("Required unless authenticated with a customer bearer token"),
+  customer: CustomerInput.optional().describe(
+    "Website guests only. The app must send a customer bearer token (401 sign_in_required otherwise). A guest never lands on an existing profile: a matching phone or email gets a separate unverified record until that phone signs in with a code.",
+  ),
+  captchaToken: z.string().max(4096).optional().describe("Website guests, when bot protection is on (app config accounts.turnstileSiteKey): the Cloudflare Turnstile token"),
   notes: z.string().max(500).optional(),
 });
 
@@ -169,6 +181,12 @@ export const OtpStartResponse = z.object({
   expiresInSeconds: z.number().int(),
   devCode: z.string().optional().describe("Only present when AUTH_DEV_CODES=true (local/dev)"),
 });
+const AgeConfirmed = z
+  .boolean()
+  .optional()
+  .describe(
+    "Added in 1.2 (I16). They said they're 13 or older. Creating an account with false is refused (403 under_13); the app (X-Client ios/android) must send true to create one (400 age_confirmation_required). Ignored when signing into an existing profile",
+  );
 export const OtpVerify = z.object({
   phone: z.string().optional(),
   email: z.string().optional(),
@@ -176,6 +194,7 @@ export const OtpVerify = z.object({
   firstName: z.string().optional().describe("Required the first time (creates the account)"),
   lastName: z.string().optional(),
   deviceName: z.string().max(80).optional(),
+  ageConfirmed: AgeConfirmed,
 });
 const ReceiptDelivery = z
   .enum(["email", "app"])
@@ -187,6 +206,7 @@ export const Me = z.object({
   phone: z.string().nullable(),
   email: z.string().nullable(),
   emailVerified: z.boolean().describe("Added in 1.2. Only a verified email signs in or matches a profile; emails typed at the shop or imported start unverified"),
+  secured: z.boolean().describe("Added in 1.2 (I15). Signing in by phone also needs a code to the verified email. PUT /me/secure turns it on or off"),
   identityCheckRequired: z.boolean().describe("Added in 1.2. As on the token response: POST /me/identity-check before rewards can be redeemed"),
   smsOptIn: z.boolean().describe("Appointment texts"),
   emailOptIn: z.boolean().describe("Appointment emails"),
@@ -220,10 +240,16 @@ export const NeedsProfile = z
   .object({ needsProfile: z.literal(true), selectionToken: SelectionToken })
   .describe("No single adult profile on this number or verified email (none, or a family sharing it). Ask for a first name and send it to /auth/otp/complete. The profiles on a number are never listed");
 export const StepUpRequired = z
-  .object({ needsProfile: z.literal(false), stepUp: z.literal("email"), selectionToken: SelectionToken, emailHint: z.string().describe("e.g. d•••@gmail.com") })
-  .describe("Added in 1.2. The number hasn't been used here in 18 months and may have a new owner: send a code to the profile's verified email with /auth/step-up/start");
+  .object({
+    needsProfile: z.literal(false),
+    stepUp: z.literal("email"),
+    selectionToken: SelectionToken,
+    emailHint: z.string().describe("e.g. d•••@gmail.com"),
+    reason: z.enum(["idle_number", "secured"]).describe("idle_number: unused here in 18 months, it may have a new owner. secured: the client turned on Secure my profile (I15)"),
+  })
+  .describe("Added in 1.2. Send a code to the profile's verified email with /auth/step-up/start, then /auth/step-up/verify");
 export const CantSignIn = z
-  .object({ needsProfile: z.literal(false), cantSignIn: z.literal(true), selectionToken: SelectionToken, reason: z.literal("idle_number") })
+  .object({ needsProfile: z.literal(false), cantSignIn: z.literal(true), selectionToken: SelectionToken, reason: z.enum(["idle_number", "secured"]) })
   .describe("Added in 1.2. As stepUp, but the profile has no verified email: offer POST /auth/help so the shop can confirm and sign them in");
 export const ChooseProfile = z
   .object({
@@ -239,6 +265,17 @@ export const OtpComplete = z.object({
   firstName: z.string().min(1).max(60).optional().describe("Matches an adult profile on this phone (or verified email) by name, else creates one"),
   lastName: z.string().max(60).optional(),
   deviceName: z.string().max(80).optional(),
+  ageConfirmed: AgeConfirmed,
+});
+export const SecureBody = z.object({ secured: z.boolean() });
+export const SecureResult = z.object({ secured: z.boolean() });
+export const ClaimChildBody = z.object({
+  firstName: z.string().trim().min(1).max(60).describe("The child's first name as the shop has it"),
+  birthYear: z.number().int().min(1900).max(2200).optional().describe("Passed to the shop when it has to check first"),
+});
+export const ClaimChildResult = z.object({
+  status: z.enum(["converted", "requested"]).describe("converted: now a dependent on your account. requested: the shop will check and move it"),
+  childId: z.string().uuid().optional(),
 });
 export const StepUpStart = z.object({ selectionToken: z.string() });
 export const StepUpVerify = z.object({ selectionToken: z.string(), code: z.string().min(4).max(8), deviceName: z.string().max(80).optional() });

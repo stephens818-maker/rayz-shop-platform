@@ -65,6 +65,7 @@ import { usableReason } from "./block-reasons";
 import { enqueueShopEmail } from "./notifications/queue";
 import { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings } from "./payroll/groups";
 import { randomToken, sha256 } from "./auth/tokens";
+import { nfcValid, qrValid } from "./clock-codes";
 
 /**
  * The time clock: punches, the shifts and paid time worked out from them, timesheets with the
@@ -126,7 +127,9 @@ export async function shopClocks(shopIds: readonly string[], tx: DBorTx = db): P
 }
 
 export async function saveShopClock(shopId: string, v: { settings: ShopClockSettings; latitude: number | null; longitude: number | null }, actor: Actor) {
-  const s = shopClockSettings(v.settings);
+  const [current] = await db.select({ timeClock: shops.timeClock }).from(shops).where(eq(shops.id, shopId));
+  // The NFC tag's version only moves when a manager retires the tag (src/server/clock-codes.ts).
+  const s = { ...shopClockSettings(v.settings), nfcTagVersion: shopClockSettings(current?.timeClock).nfcTagVersion };
   if (v.settings.networks.length !== s.networks.length) throw bad("One of the network addresses isn't an IP address or range (like 203.0.113.0/24).");
   const lat = v.latitude;
   const lng = v.longitude;
@@ -340,6 +343,8 @@ export interface PunchRequest {
   type: PunchType;
   source: Exclude<PunchSource, "manager">;
   evidence: PunchEvidence;
+  /** P1: the front-desk QR code or NFC tag from the address the phone opened; checked here. */
+  proof?: { qr?: string | null; tag?: string | null };
   deviceId: string | null;
   photo: string | null;
   /** Clock in anyway during time off, after the warning. */
@@ -398,7 +403,12 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
     if (req.evidence.deviceShopId !== req.shopId) throw forbidden(`This isn't one of ${clock.name}'s registered time clock devices.`);
     method = "device";
   } else {
-    const v = verifyPunch(req.shopId, clock, clock.settings, req.evidence);
+    const evidence: PunchEvidence = {
+      ...req.evidence,
+      qrShopId: qrValid(req.shopId, req.proof?.qr, now) ? req.shopId : null,
+      nfcShopId: nfcValid(req.shopId, clock.settings.nfcTagVersion, req.proof?.tag) ? req.shopId : null,
+    };
+    const v = verifyPunch(req.shopId, clock, clock.settings, evidence);
     distanceM = v.distanceM;
     if (!v.ok) throw forbidden(v.problem);
     method = v.method;

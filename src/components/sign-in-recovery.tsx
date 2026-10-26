@@ -20,12 +20,13 @@ export type SignInStep =
       stepUp: "email";
       selectionToken: string;
       emailHint: string;
+      reason?: "idle_number" | "secured";
     }
   | {
       needsProfile: false;
       cantSignIn: true;
       selectionToken: string;
-      reason: "idle_number";
+      reason: "idle_number" | "secured";
     };
 
 export const isSignedIn = (r: SignInStep): r is SignedIn => "accessToken" in r;
@@ -58,11 +59,12 @@ export function PhoneSignIn({ title, subtitle, deviceName, onSignedIn }: { title
   const [firstName, setFirstName] = useState("");
   const [stage, setStage] = useState<"phone" | "code" | "profile" | "stepUp" | "help">("phone");
   const [devCode, setDevCode] = useState<string | null>(null);
-  const [selection, setSelection] = useState<{ token: string; emailHint?: string } | null>(null);
+  const [selection, setSelection] = useState<{ token: string; emailHint?: string; secured?: boolean } | null>(null);
+  const [over13, setOver13] = useState(false);
 
   const next = async (r: SignInStep) => {
     if (isSignedIn(r)) return onSignedIn(r);
-    setSelection({ token: r.selectionToken, emailHint: "emailHint" in r ? r.emailHint : undefined });
+    setSelection({ token: r.selectionToken, emailHint: "emailHint" in r ? r.emailHint : undefined, secured: "reason" in r && r.reason === "secured" });
     setStage("stepUp" in r ? "stepUp" : "cantSignIn" in r ? "help" : "profile");
   };
   const start = () =>
@@ -74,7 +76,7 @@ export function PhoneSignIn({ title, subtitle, deviceName, onSignedIn }: { title
   const verify = () => step(async () => next(await api<SignInStep>("/auth/otp/verify", { method: "POST", auth: false, body: JSON.stringify({ phone, code, deviceName }) })));
   const complete = () =>
     step(async () =>
-      next(await api<SignInStep>("/auth/otp/complete", { method: "POST", auth: false, body: JSON.stringify({ selectionToken: selection?.token, deviceName, firstName: firstName.trim() }) })),
+      next(await api<SignInStep>("/auth/otp/complete", { method: "POST", auth: false, body: JSON.stringify({ selectionToken: selection?.token, deviceName, firstName: firstName.trim(), ageConfirmed: over13 }) })),
     );
 
   return (
@@ -86,15 +88,25 @@ export function PhoneSignIn({ title, subtitle, deviceName, onSignedIn }: { title
           <Input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={stage !== "phone"} placeholder="(319) 555-0100" />
         </Field>
         {stage === "stepUp" && selection?.emailHint && (
-          <EmailStepUp selectionToken={selection.token} emailHint={selection.emailHint} deviceName={deviceName} onSignedIn={onSignedIn} onHelp={() => setStage("help")} />
+          <EmailStepUp selectionToken={selection.token} emailHint={selection.emailHint} secured={selection.secured} deviceName={deviceName} onSignedIn={onSignedIn} onHelp={() => setStage("help")} />
         )}
         {stage === "help" && (
-          <SignInHelpForm selectionToken={selection?.token} phone={phone} intro={selection ? "This number hasn't been used here in a long time, so the shop needs to confirm it's you." : undefined} />
+          <SignInHelpForm
+            selectionToken={selection?.token}
+            phone={phone}
+            intro={selection ? (selection.secured ? "This profile is secured with an email code, and there's no confirmed email to send it to, so the shop needs to confirm it's you." : "This number hasn't been used here in a long time, so the shop needs to confirm it's you.") : undefined}
+          />
         )}
         {stage === "profile" && (
-          <Field label="First name" hint="What's your first name? If someone else on this phone already has a profile, yours is kept separate.">
-            <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-          </Field>
+          <>
+            <Field label="First name" hint="What's your first name? If someone else on this phone already has a profile, yours is kept separate.">
+              <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
+            </Field>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1" checked={over13} onChange={(e) => setOver13(e.target.checked)} data-testid="age-13" />
+              <span>I&apos;m 13 or older. Younger clients are added by a parent or guardian to their account.</span>
+            </label>
+          </>
         )}
         {stage === "code" && (
           <Field label="6-digit code" hint={devCode ? `Dev mode: your code is ${devCode}` : "Check your texts."}>
@@ -113,7 +125,7 @@ export function PhoneSignIn({ title, subtitle, deviceName, onSignedIn }: { title
           </Button>
         )}
         {stage === "profile" && (
-          <Button className="w-full" disabled={busy || !firstName.trim()} onClick={complete}>
+          <Button className="w-full" disabled={busy || !firstName.trim() || !over13} onClick={complete}>
             Continue
           </Button>
         )}
@@ -131,12 +143,15 @@ export function PhoneSignIn({ title, subtitle, deviceName, onSignedIn }: { title
 export function EmailStepUp({
   selectionToken,
   emailHint,
+  secured,
   deviceName,
   onSignedIn,
   onHelp,
 }: {
   selectionToken: string;
   emailHint: string;
+  /** I15: the client secured their profile, so every phone sign-in asks for the email code. */
+  secured?: boolean;
   deviceName: string;
   onSignedIn: (t: SignedIn) => Promise<void>;
   onHelp: () => void;
@@ -147,7 +162,9 @@ export function EmailStepUp({
   const [code, setCode] = useState("");
   return (
     <div className="space-y-3" data-testid="email-step-up">
-      <p className="text-sm text-zinc-600">It&apos;s been a while since this number was used here, so we need to check it&apos;s still you. We&apos;ll email a code to {emailHint}.</p>
+      <p className="text-sm text-zinc-600">
+        {secured ? "This profile is secured: signing in by phone also needs a code from your email." : "It's been a while since this number was used here, so we need to check it's still you."} We&apos;ll email a code to {emailHint}.
+      </p>
       {!sent ? (
         <Button
           disabled={busy}

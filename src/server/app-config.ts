@@ -3,6 +3,7 @@
  * route applies to app builds. Everything comes from environment variables, so a minimum version
  * bump or a maintenance notice is a Vercel env change and a redeploy, with no app release.
  */
+import { reviewLoginOn } from "./auth/review-login";
 import { BRAND_NAME } from "@/domain/location-profile";
 import { appBaseUrl, demoMode } from "@/lib/deployment";
 import { appSwitches } from "./app-switches";
@@ -57,6 +58,9 @@ export function assertSupportedClient(req: Request) {
 }
 
 /** Where clients reach the brand for help, privacy requests and account questions. */
+/** I16: account holders are 13 or older; younger clients are dependents on a parent's account. */
+export const MINIMUM_ACCOUNT_AGE = 13;
+
 export function supportContact() {
   return { email: env("APP_SUPPORT_EMAIL"), phone: env("APP_SUPPORT_PHONE") };
 }
@@ -90,6 +94,12 @@ export function appConfigFromEnv(platform: AppPlatform | null, version: string |
       terms: env("APP_TERMS_URL") ?? `${base}/terms`,
       support: `${base}/support`,
       deleteAccount: `${base}/account/delete`,
+    },
+    accounts: {
+      minimumAge: MINIMUM_ACCOUNT_AGE,
+      guestBooking: "web_only" as const,
+      turnstileSiteKey: env("NEXT_PUBLIC_TURNSTILE_SITE_KEY"),
+      reviewSignIn: reviewLoginOn(),
     },
     environment: demoMode() ? ("demo" as const) : process.env.VERCEL_ENV === "production" ? ("production" as const) : ("development" as const),
   };

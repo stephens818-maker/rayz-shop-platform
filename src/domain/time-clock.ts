@@ -407,11 +407,19 @@ export function forgottenAfter(shiftStart: Date, scheduled: readonly Interval[],
 
 // ───────────────────────────── Verifying a punch ─────────────────────────────
 
-export type ClockMethod = "device" | "gps" | "network";
+/**
+ * How a punch proves the person is at the shop. Never biometric (Illinois BIPA): no fingerprints,
+ * face or hand geometry. The front-desk clock takes a PIN; a phone proves it's there by GPS, the
+ * shop's Wi-Fi, the QR code on the front-desk screen, or a tap on the shop's NFC tag.
+ */
+export type ClockMethod = "device" | "gps" | "network" | "qr" | "nfc";
+export const CLOCK_METHODS: ClockMethod[] = ["device", "gps", "network", "qr", "nfc"];
 export const METHOD_LABEL: Record<ClockMethod | "none" | "manager", string> = {
   device: "Shop device",
   gps: "Phone GPS",
   network: "Shop network",
+  qr: "Front-desk QR code",
+  nfc: "Shop NFC tag",
   none: "Unverified",
   manager: "Manager",
 };
@@ -437,6 +445,8 @@ export interface ShopClockSettings {
   openEarly: boolean;
   /** Managers are told when a barber isn't clocked in this many minutes before their first appointment. Null: off. */
   lateAlertMinutes: number | null;
+  /** Bumped to retire the shop's NFC tag: tags written before stop working. */
+  nfcTagVersion: number;
 }
 
 export const DEFAULT_SHOP_CLOCK: ShopClockSettings = {
@@ -451,10 +461,11 @@ export const DEFAULT_SHOP_CLOCK: ShopClockSettings = {
   notInBlock: false,
   openEarly: false,
   lateAlertMinutes: 10,
+  nfcTagVersion: 1,
 };
 
 export const ShopClockSettingsSchema = z.object({
-  methods: z.array(z.enum(["device", "gps", "network"])).max(3),
+  methods: z.array(z.enum(["device", "gps", "network", "qr", "nfc"])).max(5),
   radiusM: z.number().int().min(25).max(5000),
   networks: z.array(z.string().trim().min(1).max(64)).max(20),
   photo: z.enum(["off", "optional", "required"]),
@@ -465,6 +476,7 @@ export const ShopClockSettingsSchema = z.object({
   notInBlock: z.boolean(),
   openEarly: z.boolean(),
   lateAlertMinutes: z.number().int().min(0).max(120).nullable(),
+  nfcTagVersion: z.number().int().min(1).max(1_000_000),
 });
 
 export function shopClockSettings(raw: unknown): ShopClockSettings {
@@ -484,6 +496,7 @@ export function shopClockSettings(raw: unknown): ShopClockSettings {
     notInBlock: v.notInBlock ?? d.notInBlock,
     openEarly: v.openEarly ?? d.openEarly,
     lateAlertMinutes: v.lateAlertMinutes === undefined ? d.lateAlertMinutes : v.lateAlertMinutes,
+    nfcTagVersion: v.nfcTagVersion ?? d.nfcTagVersion,
   };
 }
 
@@ -561,11 +574,14 @@ export function ipInList(ip: string | null, list: readonly string[]): boolean {
 export interface PunchEvidence {
   /** The registered device this browser holds, and its shop. */
   deviceShopId: string | null;
+  /** The shop whose front-desk QR code (from the last minute) or NFC tag came with the punch, checked by the server. */
+  qrShopId?: string | null;
+  nfcShopId?: string | null;
   ip: string | null;
   gps: (LatLng & { accuracyM: number | null }) | null;
 }
 
-export type Verified = { ok: true; method: "device" | "gps" | "network" | "none"; distanceM: number | null } | { ok: false; problem: string; distanceM: number | null };
+export type Verified = { ok: true; method: ClockMethod | "none"; distanceM: number | null } | { ok: false; problem: string; distanceM: number | null };
 
 /** GPS fixes rougher than this can't prove anything. */
 export const MAX_GPS_ACCURACY_M = 250;
@@ -579,11 +595,13 @@ export function verifyPunch(shopId: string, shop: { name: string; latitude: numb
   if (!s.methods.length) return { ok: true, method: e.deviceShopId === shopId ? "device" : "none", distanceM };
   if (s.methods.includes("device") && e.deviceShopId === shopId) return { ok: true, method: "device", distanceM };
   if (s.methods.includes("network") && ipInList(e.ip, s.networks)) return { ok: true, method: "network", distanceM };
+  if (s.methods.includes("qr") && e.qrShopId === shopId) return { ok: true, method: "qr", distanceM };
+  if (s.methods.includes("nfc") && e.nfcShopId === shopId) return { ok: true, method: "nfc", distanceM };
   if (s.methods.includes("gps") && distanceM !== null && e.gps) {
     const acc = e.gps.accuracyM ?? 0;
     if (acc <= MAX_GPS_ACCURACY_M && distanceM <= s.radiusM + Math.min(acc, 50)) return { ok: true, method: "gps", distanceM };
   }
-  const ways = s.methods.map((m) => (m === "device" ? `from ${shop.name}'s front-desk device` : m === "network" ? "on the shop's Wi-Fi" : `within ${s.radiusM} m of the shop with location on`));
+  const ways = s.methods.map((m) => methodWay(m, s, shop.name));
   const why =
     s.methods.includes("gps") && !e.gps
       ? " Your phone didn't share its location."
@@ -597,10 +615,18 @@ export function verifyPunch(shopId: string, shop: { name: string; latitude: numb
   return { ok: false, problem: `Punch ${ways.join(", or ")}.${why}`, distanceM };
 }
 
+function methodWay(m: ClockMethod, s: ShopClockSettings, shop?: string): string {
+  if (m === "device") return shop ? `from ${shop}'s front-desk device` : "on the shop's front-desk device";
+  if (m === "network") return "on the shop's Wi-Fi";
+  if (m === "qr") return "by scanning the QR code on the front-desk clock";
+  if (m === "nfc") return "by tapping your phone on the shop's NFC tag";
+  return shop ? `within ${s.radiusM} m of the shop with location on` : `within ${s.radiusM} m of the shop (location on)`;
+}
+
 /** What a phone punch at this shop needs, in a sentence for the clock page. */
 export function clockRuleText(s: ShopClockSettings): string {
   if (!s.methods.length) return "Punches from anywhere are accepted here; where you are is still recorded.";
-  const ways = s.methods.map((m) => (m === "device" ? "on the shop's front-desk device" : m === "network" ? "on the shop's Wi-Fi" : `within ${s.radiusM} m of the shop (location on)`));
+  const ways = s.methods.map((m) => methodWay(m, s));
   return `Punch ${ways.join(", or ")}.`;
 }
 

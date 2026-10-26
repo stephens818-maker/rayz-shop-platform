@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Button,
@@ -22,6 +22,7 @@ import {
 import type { Welcome } from "@/server/milestones/day";
 import {
   kioskPunchAction,
+  kioskQrAction,
   kioskStatusAction,
   punchAction,
   registerDeviceAction,
@@ -255,7 +256,10 @@ export function ClockPanel({
   next,
   defaultShopId,
   breakReasons,
+  proof,
 }: {
+  /** Opened from the front-desk QR code or the shop's NFC tag. */
+  proof?: { shopId: string; qr?: string; tag?: string } | null;
   shops: ClockShop[];
   state: "off" | "working" | "on_break";
   shiftShopId: string | null;
@@ -267,7 +271,7 @@ export function ClockPanel({
 }) {
   const router = useRouter();
   const [shopId, setShopId] = useState(
-    shiftShopId ?? defaultShopId ?? shops[0]?.id ?? "",
+    shiftShopId ?? (proof && shops.some((s) => s.id === proof.shopId) ? proof.shopId : null) ?? defaultShopId ?? shops[0]?.id ?? "",
   );
   const [photo, setPhoto] = useState<string | null>(null);
   const [breakReasonId, setBreakReasonId] = useState(breakReasons[0]?.id ?? "");
@@ -295,6 +299,7 @@ export function ClockPanel({
         gps,
         photo,
         confirmTimeOff,
+        ...(proof?.shopId === shopId ? { proof: { qr: proof.qr, tag: proof.tag } } : {}),
         ...planOf(type, breakReasonId, planned),
       });
       if (!r.ok) return setError(r.error);
@@ -740,5 +745,39 @@ export function Kiosk({
         </Card>
       )}
     </div>
+  );
+}
+
+/** P1: the front-desk clock's QR code. Staff scan it with their phone's camera to punch on their own phone. */
+export function ClockQr() {
+  const [qr, setQr] = useState<{ svg: string; expiresAt: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    let live = true;
+    const load = async () => {
+      const r = await kioskQrAction();
+      if (!live) return;
+      if (r.ok) {
+        setQr(r.data);
+        setError(null);
+      } else setError(r.error);
+      const wait = r.ok ? Math.max(1_000, new Date(r.data.expiresAt).getTime() - Date.now() + 250) : 15_000;
+      timer = setTimeout(load, wait);
+    };
+    load();
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, []);
+  return (
+    <Card>
+      <CardHeader title="Punch on your phone" subtitle="Scan with your phone's camera. The code changes every 30 seconds." />
+      <div className="flex justify-center p-4">
+        {qr ? <div className="h-48 w-48" data-testid="clock-qr" dangerouslySetInnerHTML={{ __html: qr.svg }} /> : <div className="h-48 w-48 animate-pulse rounded bg-zinc-100" />}
+      </div>
+      {error && <p className="px-4 pb-4 text-xs text-red-600">{error}</p>}
+    </Card>
   );
 }

@@ -1,3 +1,4 @@
+import { assertReviewCanPay } from "@/server/auth/review-login";
 import type Stripe from "stripe";
 import { randomBytes } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
@@ -96,6 +97,7 @@ export function publicCard(c: SavedCard) {
  */
 export async function startCardSetup(customerId: string, o: { stripeVersion?: string | null } = {}): Promise<CardSetup> {
   const holder = await cardHolder(customerId);
+  await assertReviewCanPay(holder);
   const stripeCustomer = await ensureStripeCustomer(holder);
   const s = stripe();
   const { publishableKey, merchantDisplayName: name, merchantCountryCode, applePayMerchantId, googlePayTestEnv } = appPaymentsConfig();
@@ -162,6 +164,7 @@ async function upsertCard(holderId: string, pmId: string, card: CardDetails, tx:
  */
 export async function saveCard(customerId: string, input: { setupIntentId?: string | null; paymentMethodId?: string | null }) {
   const holder = await cardHolder(customerId);
+  await assertReviewCanPay(holder);
   const stripeCustomer = await ensureStripeCustomer(holder);
   const s = stripe();
   let pmId: string;

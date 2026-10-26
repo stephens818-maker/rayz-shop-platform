@@ -5,8 +5,9 @@
  * seats where, and the public API's shapes.
  *
  * A child is a client record under a parent or guardian (customers.guardian_id): their own visits,
- * badges, ratings, notes and photo, but no login, phone, email or consent. Reminders, receipts and
- * marketing go to the parent, under the parent's consent.
+ * badges, ratings and notes, but no login, phone, email or consent. A dependent keeps a first name
+ * and an optional birth year only (I16): no last name, full birthday, address or photo. Reminders,
+ * receipts and marketing go to the parent, under the parent's consent.
  */
 import { DateTime } from "luxon";
 import { z } from "zod";
@@ -66,6 +67,18 @@ export function ageOn(c: { birthday?: string | null; birthYear?: number | null }
   return null;
 }
 
+/**
+ * True only when they've certainly turned `age`. A birth year alone can't tell a 12-year-old from a
+ * 13-year-old in the year they turn 13, so then it's "maybe" and someone has to confirm.
+ */
+export function atLeast(c: { birthday?: string | null; birthYear?: number | null }, age: number, today: LocalDate): boolean | "maybe" | null {
+  const a = ageOn(c, today);
+  if (a == null) return null;
+  if (a < age) return false;
+  if (!c.birthday && c.birthYear && a === age) return "maybe";
+  return true;
+}
+
 /** "Max, 7" / "Max" for the desk and the parent's portal. */
 export const childLabel = (c: { firstName: string; lastName?: string | null }, age: number | null) =>
   `${[c.firstName, c.lastName].filter(Boolean).join(" ")}${age != null ? `, ${age}` : ""}`;
@@ -82,12 +95,14 @@ const Birthday = z
   .refine((s) => !s || (/^\d{4}-\d{2}-\d{2}$/.test(s) && DateTime.fromISO(s).isValid), "Birthday doesn't look right");
 
 /**
- * Add or edit a child. Give a birthday or an age (the birthday wins); an empty string clears a
- * text field. Contact details aren't part of it: a child has none.
+ * Add or edit a child. Give a birth year, a birthday or an age; only the year is kept. An empty
+ * string clears a text field. Contact details, a last name and a photo aren't kept for a
+ * dependent (I16): lastName and photo are still accepted from older clients and ignored.
  */
 export const ChildInputSchema = z.object({
   firstName: z.string().trim().min(1, "Add the child's first name").max(60),
   lastName: z.string().trim().max(60).optional(),
+  birthYear: z.number().int().min(1900).max(2200).nullable().optional(),
   birthday: Birthday.optional(),
   age: z.number().int().min(0, "Age 0 to 25").max(FAMILY_LIMITS.maxAge, "Age 0 to 25").nullable().optional(),
   notes: z.string().trim().max(2000).optional(),
@@ -101,23 +116,25 @@ export const ChildInputSchema = z.object({
 export type ChildInput = z.output<typeof ChildInputSchema>;
 
 /**
- * The stored birthday and birth year a form gives, checked against `today`: a birthday in the
- * future or more than the maximum age ago is refused, and an age sets the birth year.
+ * The birth year a form gives, checked against `today`: a year (or birthday) in the future or more
+ * than the maximum age ago is refused, and an age sets the year. Only the year is ever stored.
  * `undefined` keeps what's on file.
  */
-export function childDates(
-  input: Pick<ChildInput, "birthday" | "age">,
-  today: LocalDate,
-): { ok: true; birthday?: string | null; birthYear?: number | null } | { ok: false; message: string } {
+export function childDates(input: Pick<ChildInput, "birthday" | "age" | "birthYear">, today: LocalDate): { ok: true; birthYear?: number | null } | { ok: false; message: string } {
+  const thisYear = Number(today.slice(0, 4));
+  const check = (year: number) => {
+    if (year > thisYear) return { ok: false as const, message: "That birth year is in the future" };
+    if (thisYear - year > FAMILY_LIMITS.maxAge + 1) return { ok: false as const, message: `A child profile is for someone ${FAMILY_LIMITS.maxAge} or younger` };
+    return { ok: true as const, birthYear: year };
+  };
+  if (input.birthYear != null) return check(input.birthYear);
   if (input.birthday) {
     if (input.birthday > today) return { ok: false, message: "That birthday is in the future" };
-    const age = ageOn({ birthday: input.birthday }, today)!;
-    if (age > FAMILY_LIMITS.maxAge) return { ok: false, message: `A child profile is for someone ${FAMILY_LIMITS.maxAge} or younger` };
-    return { ok: true, birthday: input.birthday, birthYear: Number(input.birthday.slice(0, 4)) };
+    return check(Number(input.birthday.slice(0, 4)));
   }
-  const out: { ok: true; birthday?: string | null; birthYear?: number | null } = { ok: true };
-  if (input.birthday === "") out.birthday = null;
-  if (input.age != null) out.birthYear = Number(today.slice(0, 4)) - input.age;
+  const out: { ok: true; birthYear?: number | null } = { ok: true };
+  if (input.birthYear === null || input.birthday === "") out.birthYear = null;
+  if (input.age != null) out.birthYear = thisYear - input.age;
   else if (input.age === null) out.birthYear = null;
   return out;
 }
@@ -129,11 +146,15 @@ export function childLimitProblem(current: number, s: FamilySettings): string | 
   return null;
 }
 
-/** Why this child can't get their own account yet, or null when they can. */
-export function splitProblem(c: { birthday?: string | null; birthYear?: number | null }, s: FamilySettings, today: LocalDate): string | null {
-  const age = ageOn(c, today);
-  if (age == null) return `Add their birthday first: a child can get their own account from ${s.splitAge}`;
-  if (age < s.splitAge) return `A child can get their own account from ${s.splitAge}`;
+/**
+ * Why this child can't get their own account yet, or null when they can. With only a birth year,
+ * the year they turn the split age needs someone to confirm they've had the birthday.
+ */
+export function splitProblem(c: { birthday?: string | null; birthYear?: number | null }, s: FamilySettings, today: LocalDate, o: { confirmedAge?: boolean } = {}): string | null {
+  const old = atLeast(c, s.splitAge, today);
+  if (old == null) return `Add their birth year first: a child can get their own account from ${s.splitAge}`;
+  if (old === false) return `A child can get their own account from ${s.splitAge}`;
+  if (old === "maybe" && !o.confirmedAge) return `Confirm they've had their ${s.splitAge}th birthday: a child can get their own account from ${s.splitAge}`;
   return null;
 }
 
@@ -227,13 +248,14 @@ export function togglePartyMember(
 export const FamilyMemberSchema = z.object({
   id: z.string(),
   firstName: z.string(),
-  lastName: z.string().nullable(),
-  birthday: z.string().nullable().describe("YYYY-MM-DD, when known"),
-  age: z.number().int().nullable(),
+  lastName: z.string().nullable().describe("Always null: a dependent keeps a first name only (I16)"),
+  birthday: z.string().nullable().describe("Always null: a dependent keeps a birth year only (I16)"),
+  birthYear: z.number().int().nullable(),
+  age: z.number().int().nullable().describe("From the birth year, so it may be a year high before their birthday"),
   notes: z.string().nullable().describe("Sensory needs, style preferences"),
   preferredStaffId: z.string().nullable(),
   preferredBarber: z.string().nullable(),
-  photo: z.string().nullable().describe("data: URL"),
+  photo: z.string().nullable().describe("Always null: no photos are kept of a dependent (I16)"),
   visits: z.number().int(),
   lastVisit: z.string().nullable().describe("YYYY-MM-DD (shop time)"),
   averageDaysBetween: z.number().int().nullable().describe("Average days between their cuts, from 2 or more visits"),
@@ -248,6 +270,7 @@ export const SplitRequestSchema = z.object({
   email: z.string().trim().max(200).optional(),
   smsOptIn: z.boolean().default(false),
   emailOptIn: z.boolean().default(false),
+  confirmedAge: z.boolean().optional().describe("They've had the birthday that makes them the split age; needed when only the birth year is known"),
 });
 export const FamilySchema = z.object({
   settings: z.object({

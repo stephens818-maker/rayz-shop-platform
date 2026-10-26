@@ -154,6 +154,49 @@ describe("punching", () => {
     expect(second.punchIds).not.toContain(before.punchId);
     expect(second.shops[0].totals.workedCenti).toBe(200);
   });
+
+  it("the front-desk QR code (from the last minute) and the shop's NFC tag prove presence; a retired tag stops working (P1, no biometrics)", async () => {
+    const mk = await staffBy("makenna@rayz.test");
+    const cv = await shop("coralville");
+    const codes = await import("@/server/clock-codes");
+    const saved = cv.timeClock;
+    await m.db.db
+      .update(S().shops)
+      .set({ timeClock: { ...(await import("@/domain/time-clock")).shopClockSettings(saved), methods: ["qr", "nfc"] } as unknown as Record<string, unknown> })
+      .where(eq(S().shops.id, cv.id));
+    try {
+      const day = m.time.addDays(period(12).start, 1);
+      const now = at(day, 9 * 60);
+      const base = { staffId: mk.id, shopId: cv.id, source: "self" as const, evidence: { deviceShopId: null, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk) };
+      await expect(tc.punch({ ...base, type: "in", now })).rejects.toThrow();
+      const stale = codes.clockQrCode(cv.id, new Date(now.getTime() - 2 * codes.QR_STEP_MS)).code;
+      await expect(tc.punch({ ...base, type: "in", now, proof: { qr: stale } })).rejects.toThrow();
+      await expect(tc.punch({ ...base, type: "in", now, proof: { qr: codes.clockQrCode((await shop("moline")).id, now).code } })).rejects.toThrow();
+      const lastStep = codes.clockQrCode(cv.id, new Date(now.getTime() - codes.QR_STEP_MS)).code;
+      const inn = await tc.punch({ ...base, type: "in", now, proof: { qr: lastStep } });
+      expect(inn.kind).toBe("done");
+      const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (inn as { punchId: string }).punchId));
+      expect(p.method).toBe("qr");
+
+      const url = new URL(await codes.nfcTagUrl(cv.id));
+      expect(url.pathname).toBe("/admin/clock");
+      const tag = url.searchParams.get("tag")!;
+      const out = await tc.punch({ ...base, type: "out", now: at(day, 13 * 60), proof: { tag } });
+      expect(out.kind).toBe("done");
+      const [o] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (out as { punchId: string }).punchId));
+      expect(o.method).toBe("nfc");
+
+      const fresh = new URL(await codes.retireNfcTag(cv.id, actorOf(mk))).searchParams.get("tag")!;
+      expect(fresh).not.toBe(tag);
+      await expect(tc.punch({ ...base, type: "in", now: at(day, 14 * 60), proof: { tag } })).rejects.toThrow();
+      expect((await tc.punch({ ...base, type: "in", now: at(day, 14 * 60), proof: { tag: fresh } })).kind).toBe("done");
+      await tc.punch({ ...base, type: "out", now: at(day, 15 * 60), proof: { tag: fresh } });
+      const [retired] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.nfc_retired"), eq(S().auditLog.entityId, cv.id)));
+      expect(retired).toBeTruthy();
+    } finally {
+      await m.db.db.update(S().shops).set({ timeClock: saved }).where(eq(S().shops.id, cv.id));
+    }
+  });
 });
 
 describe("the front-desk clock", () => {

@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql, SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, or, sql, SQL } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import {
   appointments,
@@ -77,6 +77,19 @@ export async function matchCustomer(tx: DBorTx, input: Identity): Promise<{ cust
   return { customer: candidates.find((c) => c.id === m.id)!, via: m.via };
 }
 
+/** A guest's own earlier unverified record on this phone or email, by first name. */
+async function guestRecordFor(tx: DBorTx, firstName: string, phone: string | null, email: string | null): Promise<{ customer: Customer } | null> {
+  const contact = [phone ? eq(customers.phone, phone) : null, email ? eq(customers.email, email) : null].filter((x): x is SQL => !!x);
+  if (!contact.length) return null;
+  const [hit] = await tx
+    .select()
+    .from(customers)
+    .where(and(isNotNull(customers.unverifiedGuestAt), isNull(customers.deletedAt), sql`lower(${customers.firstName}) = lower(${firstName})`, or(...contact)))
+    .orderBy(asc(customers.createdAt))
+    .limit(1);
+  return hit ? { customer: hit } : null;
+}
+
 export interface CustomerInput {
   firstName: string;
   lastName?: string | null;
@@ -85,6 +98,8 @@ export interface CustomerInput {
   /** undefined = no answer given (keeps what's on file); an explicit false always wins. */
   smsOptIn?: boolean;
   emailOptIn?: boolean;
+  /** I16: they said they're 13 or older. */
+  ageConfirmed?: boolean;
 }
 
 /**
@@ -100,6 +115,12 @@ export async function findOrCreateCustomer(
     /** Consent for a brand-new record only (a walk-in who gave a number to be texted). */ smsOptInIfNew?: boolean;
     /** Where a consent change came from, for the record; unset is staff at the shop. */
     consent?: ConsentContext;
+    /**
+     * I14: a web guest nobody has verified. They never land on, or change, an existing profile: a
+     * match gets a new unverified guest record instead, folded in when that phone signs in with a
+     * code. A match that is itself an unverified guest record is reused.
+     */
+    guest?: boolean;
   } = {},
 ): Promise<Customer> {
   const phone = normalizePhone(input.phone);
@@ -109,7 +130,8 @@ export async function findOrCreateCustomer(
   if (!firstName) throw new AppError("bad_request", "First name is required");
   if (!phone && !email && !opts.allowNoContact) throw new AppError("bad_request", "A phone number or email is required");
   await lockIdentity(tx, [phone, email]);
-  const m = phone || email ? await matchCustomer(tx, { firstName, lastName, phone, email }) : null;
+  const found = phone || email ? await matchCustomer(tx, { firstName, lastName, phone, email }) : null;
+  const m = opts.guest && found && !found.customer.unverifiedGuestAt ? await guestRecordFor(tx, firstName, phone, email) : found;
   if (m) {
     const existing = m.customer;
     const patch: Partial<typeof customers.$inferInsert> = {};
@@ -119,6 +141,7 @@ export async function findOrCreateCustomer(
     if (input.smsOptIn !== undefined && input.smsOptIn !== existing.smsOptIn) patch.smsOptIn = input.smsOptIn;
     if (input.emailOptIn !== undefined && input.emailOptIn !== existing.emailOptIn) patch.emailOptIn = input.emailOptIn;
     if (!existing.homeShopId && homeShopId) patch.homeShopId = homeShopId;
+    if (input.ageConfirmed && !existing.ageConfirmedAt) patch.ageConfirmedAt = new Date();
     if (Object.keys(patch).length) await tx.update(customers).set(patch).where(eq(customers.id, existing.id));
     const after = { ...existing, ...patch };
     await recordConsentChange(tx, after, existing, patch, opts.consent ?? { source: "pos", textVersion: CONSENT_MARKERS.staff });
@@ -126,7 +149,17 @@ export async function findOrCreateCustomer(
   }
   const [row] = await tx
     .insert(customers)
-    .values({ firstName, lastName, phone, email, homeShopId, smsOptIn: input.smsOptIn ?? (!!phone && !!opts.smsOptInIfNew), emailOptIn: input.emailOptIn ?? false })
+    .values({
+      firstName,
+      lastName,
+      phone,
+      email,
+      homeShopId,
+      smsOptIn: input.smsOptIn ?? (!!phone && !!opts.smsOptInIfNew),
+      emailOptIn: input.emailOptIn ?? false,
+      unverifiedGuestAt: opts.guest ? new Date() : null,
+      ageConfirmedAt: input.ageConfirmed ? new Date() : null,
+    })
     .returning();
   await recordConsentChange(tx, row, {}, { smsOptIn: row.smsOptIn, emailOptIn: row.emailOptIn }, opts.consent ?? { source: "pos", textVersion: CONSENT_MARKERS.staff });
   return row;
@@ -270,6 +303,8 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
       referredById: [keep.referredById, drop.referredById].find((r) => r && r !== keepId && r !== dropId) ?? null,
       createdAt: keep.createdAt < drop.createdAt ? keep.createdAt : drop.createdAt,
       stripeCustomerId: keep.stripeCustomerId ?? drop.stripeCustomerId,
+      unverifiedGuestAt: keep.unverifiedGuestAt && drop.unverifiedGuestAt ? keep.unverifiedGuestAt : null,
+      ageConfirmedAt: keep.ageConfirmedAt ?? drop.ageConfirmedAt,
     };
     // The event log has no foreign keys; deleting the dropped record would otherwise make its events anonymous.
     await tx.execute(sql`update analytics_events set customer_id = ${keepId} where customer_id = ${dropId}`);

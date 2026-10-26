@@ -101,6 +101,7 @@ export async function publicMe(customerId: string) {
     phone: c.phone,
     email: c.email,
     emailVerified: !!(c.email && c.emailVerifiedAt),
+    secured: !!c.securedAt,
     identityCheckRequired: await needsIdentityCheck(c),
     smsOptIn: c.smsOptIn,
     emailOptIn: c.emailOptIn,

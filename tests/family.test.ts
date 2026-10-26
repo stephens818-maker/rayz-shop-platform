@@ -14,6 +14,7 @@ import {
   nextSeat,
   selectedIds,
   splitProblem,
+  atLeast,
   togglePartyMember,
   type PartySelection,
   type Seat,
@@ -65,12 +66,14 @@ describe("child age and profile", () => {
     expect(childLabel({ firstName: "Maya" }, null)).toBe("Maya");
   });
 
-  it("turns an age into a birth year, and refuses future birthdays and adults", () => {
+  it("keeps a birth year only (I16): an age or birthday becomes the year, and future years and adults are refused", () => {
     expect(childDates({ age: 7 }, TODAY)).toEqual({ ok: true, birthYear: 2019 });
-    expect(childDates({ birthday: "2018-03-02" }, TODAY)).toEqual({ ok: true, birthday: "2018-03-02", birthYear: 2018 });
+    expect(childDates({ birthday: "2018-03-02" }, TODAY)).toEqual({ ok: true, birthYear: 2018 });
+    expect(childDates({ birthYear: 2016 }, TODAY)).toEqual({ ok: true, birthYear: 2016 });
+    expect(childDates({ birthYear: 2027 }, TODAY)).toMatchObject({ ok: false });
     expect(childDates({ birthday: "2027-01-01" }, TODAY)).toMatchObject({ ok: false });
     expect(childDates({ birthday: "1990-01-01" }, TODAY)).toMatchObject({ ok: false });
-    expect(childDates({ birthday: "", age: null }, TODAY)).toEqual({ ok: true, birthday: null, birthYear: null });
+    expect(childDates({ birthday: "", age: null }, TODAY)).toEqual({ ok: true, birthYear: null });
   });
 
   it("takes a first name, an optional last name, notes and a small photo, and no contact details", () => {
@@ -85,8 +88,14 @@ describe("child age and profile", () => {
   it("lets a child have their own account from the brand's split age", () => {
     expect(splitProblem({ birthday: "2013-10-24" }, FAMILY_DEFAULT, TODAY)).toBeNull();
     expect(splitProblem({ birthday: "2013-10-25" }, FAMILY_DEFAULT, TODAY)).toMatch(/from 13/);
-    expect(splitProblem({}, FAMILY_DEFAULT, TODAY)).toMatch(/birthday first/);
+    expect(splitProblem({}, FAMILY_DEFAULT, TODAY)).toMatch(/birth year first/);
     expect(splitProblem({ birthYear: 2010 }, { ...FAMILY_DEFAULT, splitAge: 18 }, TODAY)).toMatch(/from 18/);
+    // A birth year alone: the year they turn 13 needs someone to confirm the birthday has passed.
+    expect(splitProblem({ birthYear: 2013 }, FAMILY_DEFAULT, TODAY)).toMatch(/Confirm they've had their 13th birthday/);
+    expect(splitProblem({ birthYear: 2013 }, FAMILY_DEFAULT, TODAY, { confirmedAge: true })).toBeNull();
+    expect(splitProblem({ birthYear: 2012 }, FAMILY_DEFAULT, TODAY)).toBeNull();
+    expect(atLeast({ birthYear: 2013 }, 13, TODAY)).toBe("maybe");
+    expect(atLeast({ birthYear: 2014 }, 13, TODAY)).toBe(false);
   });
 });
 

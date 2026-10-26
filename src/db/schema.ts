@@ -1250,6 +1250,12 @@ export const customers = pgTable(
     receiptDelivery: text("receipt_delivery").$type<"email" | "app">(),
     /** The platform-level Stripe Customer holding this account holder's saved cards (C6). Never on a child. */
     stripeCustomerId: text("stripe_customer_id"),
+    /** I14: a web guest booking that matched someone else's profile landed here instead. Folded into the profile once the phone signs in with a code. */
+    unverifiedGuestAt: ts("unverified_guest_at"),
+    /** I15: "Secure my profile": a phone sign-in also needs a code to the verified email. */
+    securedAt: ts("secured_at"),
+    /** I16: when the account holder said they're 13 or older. */
+    ageConfirmedAt: ts("age_confirmed_at"),
     homeShopId: uuid("home_shop_id").references(() => shops.id),
     preferredStaffId: uuid("preferred_staff_id").references(() => staff.id, { onDelete: "set null" }),
     /** When their barber calls in, the appointment may be moved to a barber at another shop. */
@@ -1274,8 +1280,9 @@ export const customers = pgTable(
     birthdayHash: text("birthday_hash"),
     addressHash: text("address_hash"),
     /**
-     * Set on a child profile: the parent or guardian whose account it sits under. A child has no
-     * phone, email or consent of their own (a trigger clears them); messages go to the guardian.
+     * Set on a child profile: the parent or guardian whose account it sits under. A child (a
+     * dependent) keeps a first name and an optional birth year only (I16): a trigger clears phone,
+     * email, consent, last name, full birthday, address and nickname. Messages go to the guardian.
      */
     guardianId: uuid("guardian_id").references((): AnyPgColumn => customers.id, { onDelete: "set null" }),
     /** A child's age when the full birthday isn't known. */
@@ -1291,6 +1298,7 @@ export const customers = pgTable(
     index("customers_name_idx").on(t.firstName, t.lastName),
     index("customers_home_shop_idx").on(t.homeShopId),
     uniqueIndex("customers_stripe_customer_idx").on(t.stripeCustomerId).where(sql`${t.stripeCustomerId} is not null`),
+    index("customers_unverified_guest_idx").on(t.phone).where(sql`${t.unverifiedGuestAt} is not null`),
     // Trigram, hash, zip and city indexes live in drizzle/0006_client_search.sql and core_0044_client_search.sql;
     // the created-at and preferred-barber ones for custom reports in core_0047_report_builder.sql.
   ],
@@ -1529,7 +1537,7 @@ export const identityHelpRequests = pgTable("identity_help_requests", {
   firstName: text("first_name").notNull(),
   lastName: text("last_name"),
   message: text("message"),
-  reason: text("reason").$type<"identity_check" | "idle_number" | "cant_sign_in">().notNull(),
+  reason: text("reason").$type<"identity_check" | "idle_number" | "cant_sign_in" | "child_claim">().notNull(),
   candidateIds: jsonb("candidate_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   status: text("status").$type<"open" | "resolved" | "dismissed">().notNull().default("open"),
   createdAt: createdAt(),
@@ -2989,7 +2997,7 @@ export const payrollLockedOt = pgTable(
 
 export type PunchType = "in" | "out" | "break_start" | "break_end";
 export type PunchSource = "self" | "kiosk" | "manager";
-export type PunchMethod = "device" | "gps" | "network" | "none" | "manager";
+export type PunchMethod = "device" | "gps" | "network" | "qr" | "nfc" | "none" | "manager";
 
 /** A shop's registered front-desk device. The browser keeps the token in a cookie; only its hash is stored. */
 export const clockDevices = pgTable("clock_devices", {

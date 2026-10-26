@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { Button, Field, Input, Select, Textarea } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { METHOD_LABEL, type ClockMethod, type ShopClockSettings } from "@/domain/time-clock";
+import { CLOCK_METHODS, METHOD_LABEL, type ClockMethod, type ShopClockSettings } from "@/domain/time-clock";
 import { revokeDeviceAction } from "../clock/actions";
-import { saveClockRulesAction, saveShopClockAction } from "./actions";
+import { nfcTagAction, saveClockRulesAction, saveShopClockAction } from "./actions";
 
 type RulesInput = { unpaidBreakFromMinutes: number; autoMealMinutes: number; autoMealAfterHours: number; forgotOutAfterMinutes: number; maxShiftHours: number; graceMinutes: number; mapping: string };
 
@@ -70,7 +70,46 @@ export function RulesForm({ initial, fields }: { initial: RulesInput; fields: { 
   );
 }
 
-const METHODS: ClockMethod[] = ["device", "gps", "network"];
+const METHOD_TEXT: Record<ClockMethod, string> = {
+  device: "From a registered shop device",
+  gps: "Within the geofence (phone GPS)",
+  network: "From the shop's network (Wi-Fi / IP)",
+  qr: "By scanning the front-desk clock's QR code",
+  nfc: "By tapping the shop's NFC tag",
+};
+
+/** The link to write to an NFC sticker at the shop, and retiring it when a sticker is lost or copied. */
+function NfcTag({ shopId }: { shopId: string }) {
+  const { pending, error, run } = useAction();
+  const [url, setUrl] = useState<string | null>(null);
+  return (
+    <div className="rounded-lg bg-zinc-50 p-3 text-xs ring-1 ring-zinc-200">
+      <div className="mb-1 font-medium text-zinc-700">NFC tag</div>
+      {url ? (
+        <code className="block break-all rounded bg-white p-2 ring-1 ring-zinc-200" data-testid="nfc-url">
+          {url}
+        </code>
+      ) : (
+        <p className="text-zinc-600">Write the tag&apos;s link to an NFC sticker (any NFC writer app) and stick it by the front desk. Tapping it opens the clock with the shop proven.</p>
+      )}
+      <div className="mt-2 flex items-center gap-3">
+        <Button type="button" size="sm" variant="secondary" disabled={pending} onClick={() => run(() => nfcTagAction(shopId), (r) => setUrl(r.url))}>
+          Show the tag&apos;s link
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={pending}
+          onClick={() => confirm("Retire this shop's NFC tag? Every sticker written before stops working; write the new link to a sticker.") && run(() => nfcTagAction(shopId, true), (r) => setUrl(r.url))}
+        >
+          Retire and make a new link
+        </Button>
+        {error && <span className="text-red-700">{error}</span>}
+      </div>
+    </div>
+  );
+}
 
 export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { shopId: string; initial: ShopClockSettings; latitude: number | null; longitude: number | null; myIp: string | null }) {
   const { pending, error, run } = useAction();
@@ -113,6 +152,7 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
                 notInBlock,
                 openEarly,
                 lateAlertMinutes: lateAlert.trim() === "" ? null : num(lateAlert),
+                nfcTagVersion: initial.nfcTagVersion,
               },
               latitude: lat.trim() === "" ? null : num(lat),
               longitude: lng.trim() === "" ? null : num(lng),
@@ -124,17 +164,19 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
       <div className="text-sm">
         <div className="mb-1 text-xs text-zinc-500">Phone punches must come (any one of):</div>
         <div className="flex flex-wrap gap-4">
-          {METHODS.map((m) => (
+          {CLOCK_METHODS.map((m) => (
             <label key={m} className="inline-flex items-center gap-1.5">
               <input type="checkbox" checked={methods.includes(m)} onChange={() => toggle(m)} />
-              {m === "device" ? "From a registered shop device" : m === "gps" ? "Within the geofence (phone GPS)" : "From the shop's network (Wi-Fi / IP)"}
+              {METHOD_TEXT[m]}
             </label>
           ))}
         </div>
         <p className="mt-1 text-xs text-zinc-500">
-          {methods.length ? `Checked: ${methods.map((m) => METHOD_LABEL[m]).join(", ")}.` : "None checked: punches are accepted from anywhere, and where they came from is still recorded."} The front-desk clock always needs a registered device.
+          {methods.length ? `Checked: ${methods.map((m) => METHOD_LABEL[m]).join(", ")}.` : "None checked: punches are accepted from anywhere, and where they came from is still recorded."} The front-desk clock always needs a registered device
+          and each person&apos;s PIN. No fingerprint, face or other biometric clock-in is offered.
         </p>
       </div>
+      {methods.includes("nfc") && <NfcTag shopId={shopId} />}
       <div className="grid gap-3 sm:grid-cols-4">
         <Field label="Shop latitude">
           <Input value={lat} onChange={(e) => setLat(e.target.value)} placeholder="41.5868" inputMode="decimal" />
@@ -152,7 +194,7 @@ export function ShopClockForm({ shopId, initial, latitude, longitude, myIp }: { 
       <Field label="Shop network addresses" hint={`The shop's public IP or range (like 203.0.113.7 or 203.0.113.0/24), one per line.${myIp ? ` You're on ${myIp} right now; add it if you're at the shop.` : ""}`}>
         <Textarea rows={2} value={networks} onChange={(e) => setNetworks(e.target.value)} className="font-mono text-xs" />
       </Field>
-      <Field label="Photo with each punch">
+      <Field label="Photo with each punch" hint="Kept for a manager to look at. Nothing is scanned or matched against a face.">
         <Select value={photo} onChange={(e) => setPhoto(e.target.value as ShopClockSettings["photo"])} className="w-48">
           <option value="off">Off</option>
           <option value="optional">Optional</option>

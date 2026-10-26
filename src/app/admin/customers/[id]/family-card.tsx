@@ -13,8 +13,7 @@ import { addChildAction, attachChildAction, detachChildAction, splitChildAction,
 export interface FamilyKid {
   id: string;
   firstName: string;
-  lastName: string | null;
-  birthday: string | null;
+  birthYear: number | null;
   age: number | null;
   notes: string | null;
   visits: number;
@@ -23,9 +22,9 @@ export interface FamilyKid {
   canSplit: boolean;
 }
 
-type Draft = { firstName: string; lastName: string; birthday: string; age: string; notes: string };
-const blank: Draft = { firstName: "", lastName: "", birthday: "", age: "", notes: "" };
-const draftOf = (k: FamilyKid): Draft => ({ firstName: k.firstName, lastName: k.lastName ?? "", birthday: k.birthday ?? "", age: k.age != null && !k.birthday ? String(k.age) : "", notes: k.notes ?? "" });
+type Draft = { firstName: string; birthYear: string; notes: string };
+const blank: Draft = { firstName: "", birthYear: "", notes: "" };
+const draftOf = (k: FamilyKid): Draft => ({ firstName: k.firstName, birthYear: k.birthYear ? String(k.birthYear) : "", notes: k.notes ?? "" });
 
 /**
  * A client's family on their profile: a parent's children (add, edit, take off, give their own
@@ -52,7 +51,7 @@ export function FamilyCard(props: {
   const [editing, setEditing] = useState<string | "new" | null>(null);
   const [draft, setDraft] = useState<Draft>(blank);
   const [splitting, setSplitting] = useState<string | null>(null);
-  const [split, setSplit] = useState({ phone: "", email: "", smsOptIn: false });
+  const [split, setSplit] = useState({ phone: "", email: "", smsOptIn: false, confirmedAge: false });
   const [attachQ, setAttachQ] = useState("");
   const [hits, setHits] = useState<ClientHit[]>([]);
 
@@ -68,8 +67,7 @@ export function FamilyCard(props: {
     });
   const input = (d: Draft) => ({
     firstName: d.firstName,
-    lastName: d.lastName,
-    ...(props.allow.birthday ? { birthday: d.birthday, ...(d.birthday ? {} : { age: d.age.trim() ? Number(d.age) : null }) } : {}),
+    ...(props.allow.birthday ? { birthYear: d.birthYear.trim() ? Number(d.birthYear) : null } : {}),
     ...(props.allow.notes ? { notes: d.notes } : {}),
   });
   const full = props.kids.length >= props.settings.maxChildren;
@@ -80,20 +78,13 @@ export function FamilyCard(props: {
         <Field label="First name">
           <Input value={draft.firstName} onChange={(e) => setDraft({ ...draft, firstName: e.target.value })} />
         </Field>
-        <Field label="Last name">
-          <Input value={draft.lastName} onChange={(e) => setDraft({ ...draft, lastName: e.target.value })} />
-        </Field>
         {props.allow.birthday && (
-          <>
-            <Field label="Birthday">
-              <Input type="date" value={draft.birthday} onChange={(e) => setDraft({ ...draft, birthday: e.target.value })} />
-            </Field>
-            <Field label="Or age">
-              <Input inputMode="numeric" disabled={!!draft.birthday} value={draft.age} onChange={(e) => setDraft({ ...draft, age: e.target.value.replace(/\D/g, "").slice(0, 2) })} />
-            </Field>
-          </>
+          <Field label="Birth year" hint="Optional">
+            <Input inputMode="numeric" placeholder="e.g. 2017" value={draft.birthYear} onChange={(e) => setDraft({ ...draft, birthYear: e.target.value.replace(/\D/g, "").slice(0, 4) })} />
+          </Field>
         )}
       </div>
+      <p className="text-xs text-zinc-500">For a child we keep a first name and birth year only: no last name, birthday, contact details or photo.</p>
       {props.allow.notes && (
         <Field label="Notes" hint="Sensory needs, style preferences">
           <textarea className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm" rows={2} value={draft.notes} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
@@ -113,7 +104,7 @@ export function FamilyCard(props: {
   const splitForm = (k: FamilyKid) => (
     <div className="mt-2 space-y-2 rounded-lg bg-zinc-50 p-3">
       <p className="text-xs text-zinc-600">
-        {k.firstName} gets their own account: the same record, so every visit, badge, rating, note and photo stays. Rewards already earned stay on the household card.
+        {k.firstName} gets their own account: the same record, so every visit, badge, rating and note stays. Rewards already earned stay on the household card.
       </p>
       <div className="grid grid-cols-2 gap-2">
         {props.allow.phone && (
@@ -131,11 +122,15 @@ export function FamilyCard(props: {
         <input type="checkbox" checked={split.smsOptIn} onChange={(e) => setSplit({ ...split, smsOptIn: e.target.checked })} />
         They agreed to appointment texts
       </label>
+      <label className="flex items-center gap-2 text-xs">
+        <input type="checkbox" checked={split.confirmedAge} onChange={(e) => setSplit({ ...split, confirmedAge: e.target.checked })} />
+        They&apos;ve had their {props.settings.splitAge}th birthday
+      </label>
       <div className="flex gap-2">
         <Button
           size="sm"
           disabled={pending || (!split.phone.trim() && !split.email.trim())}
-          onClick={() => run(() => splitChildAction(k.id, { phone: split.phone || undefined, email: split.email || undefined, smsOptIn: split.smsOptIn && !!split.phone }))}
+          onClick={() => run(() => splitChildAction(k.id, { phone: split.phone || undefined, email: split.email || undefined, smsOptIn: split.smsOptIn && !!split.phone, confirmedAge: split.confirmedAge }))}
         >
           Create their account
         </Button>
@@ -217,7 +212,7 @@ export function FamilyCard(props: {
             <li key={k.id} className="py-2" data-testid="family-kid">
               <div className="flex items-baseline justify-between gap-2">
                 <Link className="font-medium underline" href={`/admin/customers/${k.id}`}>
-                  {[k.firstName, k.lastName].filter(Boolean).join(" ")}
+                  {k.firstName}
                   {k.age != null && <span className="font-normal text-zinc-500">, {k.age}</span>}
                 </Link>
                 <span className="text-xs text-zinc-500">

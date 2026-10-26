@@ -7,7 +7,7 @@ import { Empty, Notice, PageHeader } from "@/components/ui";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { breakReasons } from "@/server/block-reasons";
 import { DEVICE_COOKIE, deviceFromToken, shopClocks } from "@/server/time-clock";
-import { Kiosk, RegisterDevice } from "../clock";
+import { ClockQr, Kiosk, RegisterDevice } from "../clock";
 
 export const metadata: Metadata = { title: "Front-desk clock" };
 
@@ -47,6 +47,7 @@ export default async function KioskPage() {
       ) : (
         <Empty title="Nobody is on this shop's team yet" />
       )}
+      {clock?.settings.methods.includes("qr") && <ClockQr />}
     </div>
   );
 }

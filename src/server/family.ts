@@ -7,6 +7,7 @@ import {
   FamilySettings,
   FamilySettingsSchema,
   ageOn,
+  atLeast,
   childDates,
   childLimitProblem,
   familySettings,
@@ -84,14 +85,11 @@ async function checkBarber(tx: DBorTx, staffId: string | null | undefined) {
   if (staffId && !(await tx.query.staff.findFirst({ where: eq(staff.id, staffId), columns: { id: true } }))) throw new AppError("bad_request", "Unknown barber");
 }
 
-async function setPhoto(tx: DBorTx, customerId: string, photo: string | null | undefined, by: string | null) {
+/** No photo is kept of a dependent (I16): a new one is refused, and clearing one is allowed. */
+async function setPhoto(tx: DBorTx, customerId: string, photo: string | null | undefined) {
   if (photo === undefined) return;
-  if (photo === null) await tx.delete(clientPhotos).where(eq(clientPhotos.customerId, customerId));
-  else
-    await tx
-      .insert(clientPhotos)
-      .values({ customerId, dataUrl: photo, updatedBy: by })
-      .onConflictDoUpdate({ target: clientPhotos.customerId, set: { dataUrl: photo, updatedBy: by, updatedAt: new Date() } });
+  if (photo !== null) throw new AppError("bad_request", "Photos aren't kept for children on a family account");
+  await tx.delete(clientPhotos).where(eq(clientPhotos.customerId, customerId));
 }
 
 /** The Family and Kid badges follow the household. After the change commits; a failure never fails it. */
@@ -125,6 +123,7 @@ export async function addChild(guardianId: string, raw: unknown, actor: Actor, o
   const now = opts.now ?? new Date();
   const dates = childDates(input, todayLocal(now));
   if (!dates.ok) throw new AppError("bad_request", dates.message);
+  if (input.photo && allowed(opts, "photo")) throw new AppError("bad_request", "Photos aren't kept for children on a family account");
   const run = async (tx: DBorTx) => {
     const g = await lockGuardian(tx, guardianId);
     const settings = await loadFamilySettings(tx);
@@ -137,9 +136,7 @@ export async function addChild(guardianId: string, raw: unknown, actor: Actor, o
       .insert(customers)
       .values({
         firstName: input.firstName,
-        lastName: input.lastName || g.lastName || null,
         guardianId,
-        birthday: allowed(opts, "birthday") ? (dates.birthday ?? null) : null,
         birthYear: allowed(opts, "birthday") ? (dates.birthYear ?? null) : null,
         notes: allowed(opts, "notes") ? input.notes || null : null,
         preferredStaffId,
@@ -147,7 +144,7 @@ export async function addChild(guardianId: string, raw: unknown, actor: Actor, o
         source: "Family",
       })
       .returning();
-    if (allowed(opts, "photo")) await setPhoto(tx, row.id, input.photo ?? undefined, actor.staffId ?? null);
+    if (allowed(opts, "photo")) await setPhoto(tx, row.id, input.photo ?? undefined);
     await stampRecordNote(tx, row.id, actor.staffId, g.homeShopId);
     await audit(actor, "customer.child_add", "customer", row.id, { guardianId, firstName: row.firstName }, null, tx);
     return row;
@@ -159,25 +156,21 @@ export async function addChild(guardianId: string, raw: unknown, actor: Actor, o
 export async function updateChild(childId: string, raw: unknown, actor: Actor, opts: ChildOptions & { guardianId?: string } = {}): Promise<Child> {
   const input = ChildInputSchema.partial().extend({ firstName: ChildInputSchema.shape.firstName.optional() }).parse(raw) as Partial<ChildInput>;
   const now = opts.now ?? new Date();
-  const dates = childDates({ birthday: input.birthday, age: input.age }, todayLocal(now));
+  const dates = childDates({ birthday: input.birthday, age: input.age, birthYear: input.birthYear }, todayLocal(now));
   if (!dates.ok) throw new AppError("bad_request", dates.message);
   const run = async (tx: DBorTx) => {
     const [before] = await tx.select().from(customers).where(eq(customers.id, childId)).for("update");
     if (!before || !before.guardianId || (opts.guardianId && before.guardianId !== opts.guardianId)) throw notFound("Child");
     const patch: Partial<typeof customers.$inferInsert> = {};
     if (input.firstName !== undefined) patch.firstName = input.firstName;
-    if (input.lastName !== undefined) patch.lastName = input.lastName || null;
-    if (allowed(opts, "birthday")) {
-      if (dates.birthday !== undefined) patch.birthday = dates.birthday;
-      if (dates.birthYear !== undefined) patch.birthYear = dates.birthYear;
-    }
+    if (allowed(opts, "birthday") && dates.birthYear !== undefined) patch.birthYear = dates.birthYear;
     if (input.notes !== undefined && allowed(opts, "notes")) patch.notes = input.notes || null;
     if (input.preferredStaffId !== undefined && allowed(opts, "preferredBarber")) {
       await checkBarber(tx, input.preferredStaffId);
       patch.preferredStaffId = input.preferredStaffId;
     }
     const [row] = Object.keys(patch).length ? await tx.update(customers).set(patch).where(eq(customers.id, childId)).returning() : [before];
-    if (allowed(opts, "photo")) await setPhoto(tx, childId, input.photo, actor.staffId ?? null);
+    if (allowed(opts, "photo")) await setPhoto(tx, childId, input.photo);
     if (patch.notes !== undefined) await stampRecordNote(tx, childId, actor.staffId, null);
     const changed = Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, { from: before[k as keyof typeof before] ?? null, to: v ?? null }]));
     if (input.photo !== undefined && allowed(opts, "photo")) changed.photo = { from: null, to: input.photo ? "updated" : "removed" };
@@ -225,7 +218,10 @@ export async function attachChild(guardianId: string, childId: string, actor: Ac
       const problem = childLimitProblem(Number(n), await loadFamilySettings(tx));
       if (problem) throw new AppError("bad_request", problem);
     }
+    // Loaded here: saved cards reach back into this module for the household head.
+    await (await import("./payments/saved-cards")).forgetStripeCustomer(childId, tx);
     await tx.update(customers).set({ guardianId, phone: null, email: null, smsOptIn: false, emailOptIn: false }).where(eq(customers.id, childId));
+    await tx.delete(clientPhotos).where(eq(clientPhotos.customerId, childId));
     await recordConsentChange(tx, c, c, CHILD_CONSENT, familyConsentContext(actor));
     await tx.delete(refreshTokens).where(eq(refreshTokens.customerId, childId));
     await tx.update(customerDevices).set({ revokedAt: new Date() }).where(and(eq(customerDevices.customerId, childId), isNull(customerDevices.revokedAt)));
@@ -248,6 +244,8 @@ export interface SplitInput {
   email?: string | null;
   smsOptIn?: boolean;
   emailOptIn?: boolean;
+  /** Needed when only the birth year is known and this is the year they turn the split age. */
+  confirmedAge?: boolean;
 }
 
 /**
@@ -265,7 +263,7 @@ export async function splitChild(childId: string, input: SplitInput, actor: Acto
   return inTx(undefined, async (tx) => {
     const [c] = await tx.select().from(customers).where(eq(customers.id, childId)).for("update");
     if (!c || !c.guardianId || (opts.guardianId && c.guardianId !== opts.guardianId)) throw notFound("Child");
-    const problem = splitProblem(c, await loadFamilySettings(tx), todayLocal(now));
+    const problem = splitProblem(c, await loadFamilySettings(tx), todayLocal(now), { confirmedAge: input.confirmedAge });
     if (problem) throw new AppError("bad_request", problem);
     await lockIdentity(tx, [phone, email]);
     const [g] = await tx.select({ phone: customers.phone, email: customers.email }).from(customers).where(eq(customers.id, c.guardianId));
@@ -279,7 +277,7 @@ export async function splitChild(childId: string, input: SplitInput, actor: Acto
       .set({ guardianId: null, formerGuardianId: c.guardianId, ownAccountAt: now, phone, email, smsOptIn: !!phone && !!input.smsOptIn, emailOptIn: !!email && !!input.emailOptIn })
       .where(eq(customers.id, childId));
     await recordConsentChange(tx, { id: childId, phone, email }, c, { smsOptIn: !!phone && !!input.smsOptIn, emailOptIn: !!email && !!input.emailOptIn }, familyConsentContext(actor));
-    await audit(actor, "customer.child_split", "customer", childId, { guardianId: c.guardianId, phone: !!phone, email: !!email }, null, tx);
+    await audit(actor, "customer.child_split", "customer", childId, { guardianId: c.guardianId, phone: !!phone, email: !!email, confirmedAge: !!input.confirmedAge }, null, tx);
     return { id: childId, guardianId: c.guardianId };
   }, (r) => [r.guardianId, childId]);
 }
@@ -291,6 +289,7 @@ export interface FamilyMemberView {
   firstName: string;
   lastName: string | null;
   birthday: string | null;
+  birthYear: number | null;
   age: number | null;
   notes: string | null;
   preferredStaffId: string | null;
@@ -316,9 +315,8 @@ export async function familyView(guardianId: string, now = new Date(), tx: DBorT
   // Loaded here, not at the top: checkout and refunds import this module outside Next (the worker,
   // scripts), and the badge and cadence modules are server-only and reach back into client records.
   const [{ customerBadges }, { cadenceFor }] = await Promise.all([import("./customer-badges"), import("./visit-cadence")]);
-  const [cadence, photos, barbers, stats, upcoming, badges] = await Promise.all([
+  const [cadence, barbers, stats, upcoming, badges] = await Promise.all([
     cadenceFor(ids, now, tx),
-    tx.select({ id: clientPhotos.customerId, url: clientPhotos.dataUrl }).from(clientPhotos).where(inArray(clientPhotos.customerId, ids)),
     barberIds.length ? tx.select({ id: staff.id, name: staff.displayLabel }).from(staff).where(inArray(staff.id, barberIds)) : [],
     tx
       .select({ id: appointments.customerId, n: sql<number>`count(*)::int`, last: sql<string | null>`max(${appointments.startsAt})` })
@@ -336,7 +334,6 @@ export async function familyView(guardianId: string, now = new Date(), tx: DBorT
   ]);
   const badgesOf = new Map(badges);
   const today = todayLocal(now);
-  const photoOf = new Map(photos.map((p) => [p.id, p.url]));
   const barberOf = new Map(barbers.map((b) => [b.id, b.name]));
   const statOf = new Map(stats.map((s) => [s.id, s]));
   return {
@@ -347,13 +344,14 @@ export async function familyView(guardianId: string, now = new Date(), tx: DBorT
       return {
         id: k.id,
         firstName: k.firstName,
-        lastName: k.lastName,
-        birthday: k.birthday,
+        lastName: null,
+        birthday: null,
+        birthYear: k.birthYear,
         age: ageOn(k, today),
         notes: k.notes,
         preferredStaffId: k.preferredStaffId,
         preferredBarber: k.preferredStaffId ? (barberOf.get(k.preferredStaffId) ?? null) : null,
-        photo: photoOf.get(k.id) ?? null,
+        photo: null,
         visits: Number(s?.n ?? 0),
         lastVisit: s?.last ? localDateOf(s.last) : null,
         averageDaysBetween: cd?.cadenceDays != null ? Math.round(cd.cadenceDays) : null,
@@ -362,7 +360,7 @@ export async function familyView(guardianId: string, now = new Date(), tx: DBorT
           .slice(0, 5)
           .map((u) => ({ id: u.id, startsAt: u.startsAt.toISOString(), shop: u.shop, barber: u.barber, service: u.service })),
         badges: badgesOf.get(k.id) ?? [],
-        canSplit: !splitProblem(k, settings, today),
+        canSplit: !!atLeast(k, settings.splitAge, today),
       };
     }),
   };

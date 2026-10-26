@@ -93,9 +93,12 @@ describe("child profiles", () => {
     const p = await parent();
     await fam.saveFamilySettings({ ...DEFAULTS, maxChildren: 2 }, actor);
     try {
+      await expect(fam.addChild(p.id, { firstName: "Cy", photo: "data:image/jpeg;base64,AAAA" }, actor)).rejects.toMatchObject({ message: expect.stringMatching(/Photos aren't kept/) });
       const a = await fam.addChild(p.id, { firstName: "Ava", age: 7, notes: "Loud clippers upset her", preferredStaffId: fx.makenna }, actor);
-      expect(a).toMatchObject({ guardianId: p.id, lastName: "Family", birthYear: Number(today.slice(0, 4)) - 7, phone: null, email: null, smsOptIn: false, homeShopId: fx.shop, source: "Family" });
-      await fam.addChild(p.id, { firstName: "Ben", birthday: "2018-05-01" }, actor);
+      expect(a).toMatchObject({ guardianId: p.id, lastName: null, birthYear: Number(today.slice(0, 4)) - 7, phone: null, email: null, smsOptIn: false, homeShopId: fx.shop, source: "Family" });
+      const ben = await fam.addChild(p.id, { firstName: "Ben", lastName: "Family", birthday: "2018-05-01" }, actor);
+      // I16: a dependent keeps a first name and a birth year only.
+      expect(ben).toMatchObject({ lastName: null, birthday: null, birthYear: 2018 });
       await expect(fam.addChild(p.id, { firstName: "Cal" }, actor)).rejects.toMatchObject({ message: expect.stringMatching(/up to 2 children/) });
       expect((await fam.childrenOf(p.id)).map((c) => c.firstName)).toEqual(["Ava", "Ben"]);
     } finally {
@@ -106,8 +109,12 @@ describe("child profiles", () => {
   it("the database clears contact details written to a child and refuses grandchildren", async () => {
     const p = await parent();
     const kid = await fam.addChild(p.id, { firstName: "Dee" }, actor);
-    const [w] = await m.db.db.update(s().customers).set({ phone: "+13195550999", email: "dee@kid.test", smsOptIn: true }).where(eq(s().customers.id, kid.id)).returning();
-    expect(w).toMatchObject({ phone: null, email: null, smsOptIn: false });
+    const [w] = await m.db.db
+      .update(s().customers)
+      .set({ phone: "+13195550999", email: "dee@kid.test", smsOptIn: true, lastName: "Kid", birthday: "2017-06-01", address: "1 Main St, Coralville, IA 52241", nickname: "D" })
+      .where(eq(s().customers.id, kid.id))
+      .returning();
+    expect(w).toMatchObject({ phone: null, email: null, smsOptIn: false, lastName: null, birthday: null, birthdayHash: null, address: null, nickname: null, birthYear: 2017 });
     await expect(m.db.db.insert(s().customers).values({ firstName: "Grandkid", guardianId: kid.id })).rejects.toThrow();
     await expect(fam.addChild(kid.id, { firstName: "Nope" }, actor)).rejects.toMatchObject({ message: expect.stringMatching(/child profile/) });
   });
@@ -301,7 +308,7 @@ describe("reports, search and filters", () => {
     const scope = { shopIds: [fx.shop], from: today, to: today };
     const before = await m.reports.kpis(scope);
     const p = await parent("Quentin");
-    const kid = await fam.addChild(p.id, { firstName: "Zebediah", lastName: "Quillfeather" }, actor);
+    const kid = await fam.addChild(p.id, { firstName: "Zebediah" }, actor);
     const loner = await parent("Loner");
     const ka = await appt(kid.id, fx.michelle);
     await m.db.db.update(s().appointments).set({ status: "completed", completedAt: new Date() }).where(eq(s().appointments.id, ka.id));
@@ -327,7 +334,7 @@ describe("reports, search and filters", () => {
 
     await signInAs(fx.frontdesk, fx.shop);
     const { searchCustomersAction } = await import("@/app/admin/calendar/actions");
-    const r = await searchCustomersAction("Zebediah Quillfeather", "booking");
+    const r = await searchCustomersAction("Zebediah", "booking");
     if (!r.ok) throw new Error(r.error);
     const ids = r.data.map((h: { id: string }) => h.id);
     expect(ids.slice(0, 2)).toEqual([kid.id, p.id]);
@@ -392,7 +399,7 @@ describe("Squire families and duplicates", () => {
     expect(r.problems).toEqual([expect.objectContaining({ line: 5, message: expect.stringMatching(/isn't on file/) })]);
     const kids = await fam.childrenOf(mom.id);
     expect(kids.map((k) => k.id).sort()).toEqual([kid1.id, kid2.id].sort());
-    expect(kids.find((k) => k.id === kid1.id)!.birthday).toBe("2016-04-02");
+    expect(kids.find((k) => k.id === kid1.id)).toMatchObject({ birthday: null, birthYear: 2016, lastName: null });
     expect(kids.find((k) => k.id === kid2.id)!.phone).toBeNull();
 
     const again = (await importFamilies(csv, { dryRun: false, actor }))!;
@@ -425,7 +432,11 @@ describe("own account at 13+", () => {
     const teen = await fam.addChild(p.id, { firstName: "Sky", birthday: m.time.addDays(today, -14 * 366) }, actor);
     const young = await fam.addChild(p.id, { firstName: "Tot", age: 8 }, actor);
     const visit = await appt(teen.id, fx.makenna);
-    await m.db.db.update(s().appointments).set({ status: "completed", completedAt: new Date() }).where(eq(s().appointments.id, visit.id));
+    const early = m.time.zonedWallTime(today, 1).toJSDate();
+    await m.db.db
+      .update(s().appointments)
+      .set({ status: "completed", completedAt: new Date(), startsAt: early, endsAt: new Date(early.getTime() + 20 * 60_000) })
+      .where(eq(s().appointments.id, visit.id));
     const scope = { shopIds: [fx.shop], from: today, to: today };
     const kidsBefore = (await m.reports.kpis(scope)).kidsCuts;
 

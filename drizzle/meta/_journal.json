@@ -624,6 +624,13 @@
       "when": 1796198400000,
       "tag": "core_0088_app_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1796202000000,
+      "tag": "core_0089_guest_age_secure_clock",
+      "breakpoints": true
     }
   ]
 }

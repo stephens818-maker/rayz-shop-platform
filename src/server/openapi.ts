@@ -80,6 +80,10 @@ export function openApiDocument(baseUrl: string) {
     RegisterDevice: S.RegisterDevice,
     UpdateDevice: S.UpdateDevice,
     EmailChangeStart: S.EmailChangeStart,
+    SecureBody: S.SecureBody,
+    SecureResult: S.SecureResult,
+    ClaimChildBody: S.ClaimChildBody,
+    ClaimChildResult: S.ClaimChildResult,
     EmailChangeVerify: S.EmailChangeVerify,
     RefreshBody: S.RefreshBody,
     RefreshResponse: S.RefreshResponse,
@@ -110,7 +114,7 @@ export function openApiDocument(baseUrl: string) {
         "",
         "**Changes in 1.1 (additive):** `GET /app/config`; `bookingMode` and `externalBookingUrl` on shops (send clients to the external URL while a shop still books on its old site); `preferences` on `/me` with `preferencesNote` and `preferredBarberId` on `PATCH /me`; the `upgrade_required` error code.",
         "",
-        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`. Receipts: `receiptDelivery` on `/me` (email or app; a counter checkout then sends the receipt with nothing asked), `GET /me/receipts` and `/me/receipts/{id}`, and a push with `data.kind = receipt`. Cards and paying in the app: `/me/payment-methods` (saved cards on a platform-level Stripe Customer, set up with `POST /me/payment-methods/setup` for PaymentSheet), tickets the shop sends to the app at `/me/tickets` (push `data.kind = ticket`), the card fee before authorizing with `POST /me/tickets/{id}/quote`, and `POST /me/tickets/{id}/pay` (`requires_action` for 3-D Secure); `payments` on `/app/config`.",
+        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`. Receipts: `receiptDelivery` on `/me` (email or app; a counter checkout then sends the receipt with nothing asked), `GET /me/receipts` and `/me/receipts/{id}`, and a push with `data.kind = receipt`. Cards and paying in the app: `/me/payment-methods` (saved cards on a platform-level Stripe Customer, set up with `POST /me/payment-methods/setup` for PaymentSheet), tickets the shop sends to the app at `/me/tickets` (push `data.kind = ticket`), the card fee before authorizing with `POST /me/tickets/{id}/quote`, and `POST /me/tickets/{id}/pay` (`requires_action` for 3-D Secure); `payments` on `/app/config`. Accounts: the app books signed in (401 `sign_in_required` otherwise) and signed-out website bookings never join an existing profile until that phone signs in; account holders are 13 or older (`ageConfirmed` on `/auth/otp/verify` and `/auth/otp/complete`, required from the app; `accounts` on `/app/config`); `PUT /me/secure` (`secured` on `/me`, and `stepUp.reason` is `secured` for such a profile); `POST /me/family/claim`; a child (dependent) keeps a first name and birth year only (`birthYear` on family members; their `lastName`, `birthday` and `photo` are always null).",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
@@ -159,10 +163,19 @@ export function openApiDocument(baseUrl: string) {
         post: {
           tags: ["Booking"],
           summary: "Book an appointment",
+          description:
+            "The app (X-Client ios/android) books signed in. Signed-out booking is the website's: limited per IP and per phone or email, behind Cloudflare Turnstile when it's on, never added to an existing profile until the phone signs in with a code, and at most one confirmation text a day to a number nobody has verified. With a barber who books with a card on file, the app needs a saved card on the household's account (the guardian's for a child).",
           security: optionalBearer,
           parameters: [{ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }],
           requestBody: { required: true, content: jsonContent("CreateAppointment") },
-          responses: { 201: ok("AppointmentEnvelope", "Booked"), 400: err("Invalid"), 403: err("Booking is switched off (details.switch)"), 409: err("Slot no longer available") },
+          responses: {
+            201: ok("AppointmentEnvelope", "Booked"),
+            400: err("Invalid"),
+            401: err("The app must sign in to book (details.reason sign_in_required)"),
+            403: err("Booking is switched off (details.switch); under 13 (under_13); the bot check failed (bot_check_required, bot_check_failed); no saved card for a barber who needs one (card_required)"),
+            409: err("Slot no longer available"),
+            429: err("Too many guest bookings from this network or for this phone"),
+          },
         },
       },
       "/appointments/{code}": {
@@ -276,6 +289,27 @@ export function openApiDocument(baseUrl: string) {
       },
       "/me/delete/start": {
         post: { tags: ["Me"], summary: "Send the code that confirms a deletion, to the profile's phone (or confirmed email)", security: bearer, responses: { 200: ok("OtpStartResponse"), 403: err("No phone or confirmed email"), 429: err("Rate limited") } },
+      },
+      "/me/secure": {
+        put: {
+          tags: ["Me"],
+          summary: "Secure my profile (I15): signing in by phone also needs a code to the verified email",
+          description: "For a phone shared with family or one that may change hands. Turning it on needs a verified email (400 email_required). The state is `secured` on /me.",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("SecureBody") },
+          responses: { 200: ok("SecureResult"), 400: err("No verified email"), 403: err("A child profile") },
+        },
+      },
+      "/me/family/claim": {
+        post: {
+          tags: ["Me"],
+          summary: "Make a child's profile on my phone number my dependent (I15)",
+          description:
+            "For a child the shop has as their own profile on the parent's phone. Done at once when the shop's record shows them under 13 and the profile was never used on its own; otherwise the shop checks first (status requested). The profiles on a number are never listed: send the child's first name. Five tries an hour.",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("ClaimChildBody") },
+          responses: { 200: ok("ClaimChildResult"), 404: err("No profile with that first name on this phone"), 429: err("Rate limited") },
+        },
       },
       "/me/email/start": {
         post: {

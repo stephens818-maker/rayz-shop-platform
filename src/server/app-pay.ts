@@ -1,3 +1,4 @@
+import { assertReviewCanPay } from "./auth/review-login";
 import type Stripe from "stripe";
 import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -381,6 +382,7 @@ export async function payTicket(
 ): Promise<AppPayResult> {
   await assertSwitch("payments");
   const { row, holder } = await ownTicket(customerId, id);
+  await assertReviewCanPay(holder);
   const actor = customerActor(holder);
   if (input.paymentIntentId) {
     const [ap] = await db

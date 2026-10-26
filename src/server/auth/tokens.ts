@@ -1,5 +1,5 @@
 import { SignJWT, jwtVerify } from "jose";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 function secret(): Uint8Array {
   const s = process.env.AUTH_SECRET;
@@ -35,6 +35,17 @@ export async function verifyToken<T extends Record<string, unknown>>(token: stri
   } catch {
     return null;
   }
+}
+
+/** HMAC-SHA256 under AUTH_SECRET, base64url: short codes the server can check without storing them. */
+export function hmac(data: string): string {
+  return createHmac("sha256", secret()).update(data).digest("base64url");
+}
+
+export function sameSecret(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
 }
 
 export function randomToken(bytes = 32): string {
