@@ -100,9 +100,9 @@ export const fieldRuleAdapter: SyncAdapter<FieldRuleBrand, Rules> = {
     for (const [k, level] of Object.entries(changes)) {
       const { setting, field } = splitKey(k);
       if (!isSetting(setting) || !(isBuiltinField(field) || custom.some((c) => `custom:${c.id}` === field))) throw new AppError("bad_request", "Unknown field");
-      if (setting !== "view" && !isEntryField(field)) throw new AppError("bad_request", "That field can't be entered");
+      if (setting !== "view" && !isEntryField(field)) throw new AppError("bad_request", "Ratings are entered with the rating tools, not client forms");
       if (level !== null && !(setting === "view" ? isLevel(level) : isEntry(level))) throw new AppError("bad_request", "Pick a level");
-      if (who.ctx && rights && (before.rules[k] ?? null) !== level) {
+      if (who.ctx && rights) {
         const denied = fieldRuleChangeDenied(
           { staffId: who.ctx.staff.id, roleId: who.ctx.access.role.id, isOwner: who.ctx.isOwner, ...rights },
           { field, setting, roleId: item, roleKey: before.roleKey, staffId: null, shopId: null, level, fullContact: before.fullContact },

@@ -337,6 +337,7 @@ export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
     const [dup] = await tx.select({ name: roles.name }).from(roles).where(and(sql`lower(${roles.name}) = lower(${p.name})`, ne(roles.id, item)));
     if (dup) throw new AppError("conflict", `There's already a role called "${dup.name}"`);
     const { brandLevel, ...rest } = p;
+    if (before?.key && brandLevel !== undefined && brandLevel !== before.brandLevel) throw new AppError("bad_request", "Built-in roles can't be made brand-level");
     const after: RoleBrand = { ...rest, key: before?.key ?? null, brandLevel: before?.key ? before.brandLevel : (brandLevel ?? before?.brandLevel ?? false) };
     if (who.ctx) {
       const denied = roleChangeDenied(grantor(who.ctx.access), before ? asDef(before) : null, asDef(after));
