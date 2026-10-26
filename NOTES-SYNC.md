@@ -459,6 +459,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-26: core, credit card surcharge policy (extends C7), for mobile
+
+- **Migration `core_0091_card_fee_policy`.** The next free one is `core_0092`. Brand policy in `brand_settings.card_fee`, a shop's override in `shops.card_fee_override`, fee details and waivers on `payments`, `sales.card_fee_waived_cents`. New permissions `settings.card_fee`, `pos.waive_card_fee` and `report.card_fees.*`.
+- **What the app sees (additive, API 1.2):** the ticket's `cardFee` adds `type`, `flatCents`, `capCents`, `minCents`, `wallets` and `off` (`channel_off` or `state_not_allowed`); `notice` is the brand's wording. The quote's `feeReason` adds `channel_off`, `state_not_allowed` and `waived`. Keep showing `feeLabel`, `feeCents` and `disclosures` from the quote before the customer authorizes, and quote again when the payment method changes. A ticket sent from the counter with the surcharge waived quotes 0 with `feeReason = waived`.
+- **Wallets:** `FEATURE_WALLET_FEE` alone no longer surcharges Apple Pay or Google Pay; the brand also has to turn that wallet on (both off by default).
+- **For Charles:** card-brand registration and notice rules, the state allowlist and limits, and the refund rule (Visa may require refunding it). `STRIPE_SURCHARGE_FIELD` stays off (Stripe preview).
+
 ### 2026-10-26: core, customer app API 1.2 (C1–C22, I1–I16, P1), for mobile
 
 - **Built here at the user's direction**, following the platform delta from the Ray'z App builder (second review). The OpenAPI document is 1.2.0, and its description lists every change. It's backward-compatible except that `chooseProfile` is never returned (treat it like `needsProfile`). Mobile: please rebase onto this branch and drop the overlapping work in PRs #2–#8 (devices, push, consent, saved cards, deletion, the importer changes).

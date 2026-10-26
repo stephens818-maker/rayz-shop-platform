@@ -272,6 +272,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
      - **Shop NFC tag:** write the shop's tag link to an NTAG sticker at the desk, and press **Retire and make a new link** if one is lost or copied.
      - Both are signed with `AUTH_SECRET`, so changing it means rewriting every sticker.
      - The optional punch photo is never face-matched.
+   - **Credit card surcharge policy** (migration `core_0091_card_fee_policy`; see [Credit card surcharge](README.md#credit-card-surcharge-policy)): nothing charges differently after it. The brand policy starts at the old default (on, 3%, credit only, not on tips), and any shop whose fee differed keeps it as its own setting. Brand Admins get **Edit the credit card surcharge**, every role that can change prices gets **Waive the card surcharge**, and the roles that see the Shop P&L get the new **Credit card fees** report. Then, in **Shop settings → Credit card surcharge (brand)**, check the state list (CT, MA, ME and PR are off; CO is capped at 2%) and the notice. Before going live, Charles confirms the card-brand registration and notice rules; leave `STRIPE_SURCHARGE_FIELD` off until Stripe signs off.
    - **Per-shop Squire cutover (C22, C11):** use **Setup → Squire cutover**, one shop at a time:
      1. Run the clients import's dry run first and read its per-shop match report (C21).
      2. In Squire, turn off online booking for that shop and record the time.

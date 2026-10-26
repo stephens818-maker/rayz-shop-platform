@@ -43,6 +43,9 @@ WHERE s."id" = p."sale_id" AND p."method" = 'card' AND p."card_fee_cents" > 0 AN
 -- The amount it was on isn't stored for those, so it's worked back from the fee and the rate (to within a few cents).
 UPDATE "payments" SET "fee_basis_cents" = round("card_fee_cents" / "fee_rate")::int
 WHERE "method" = 'card' AND "card_fee_cents" > 0 AND "fee_rate" > 0 AND "fee_basis_cents" IS NULL;--> statement-breakpoint
+-- A waiver's reason is typed by staff, so it's scrubbed like every other free-text column.
+DROP TRIGGER IF EXISTS "payments_scrub_sensitive" ON "payments";--> statement-breakpoint
+CREATE TRIGGER "payments_scrub_sensitive" BEFORE INSERT OR UPDATE OF "fee_reason", "fee_waived_reason" ON "payments" FOR EACH ROW EXECUTE FUNCTION "scrub_sensitive_row"('fee_reason', 'fee_waived_reason');--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "payments_fee_waived_idx" ON "payments" ("shop_id", "business_date") WHERE "fee_waived";--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["settings.card_fee"]'::jsonb WHERE "key" = 'brand_admin' AND NOT ("permissions" ? 'settings.card_fee');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["pos.waive_card_fee"]'::jsonb WHERE "permissions" ? 'pos.price_override' AND NOT ("permissions" ? 'pos.waive_card_fee');--> statement-breakpoint
