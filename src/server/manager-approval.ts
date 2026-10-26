@@ -2,7 +2,7 @@ import "server-only";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { staff } from "@/db/schema";
-import { type MoneyLimits, type Permission, limitLabel } from "@/domain/permissions";
+import type { MoneyLimits, Permission } from "@/domain/permissions";
 import { Actor } from "./audit";
 import { type StaffAccess, loadStaffAccess, staffWithAccessTo } from "./auth/access";
 import { AppError, forbidden } from "./errors";
@@ -83,16 +83,4 @@ export async function approvedFor(ctx: Ctx, shopId: string, perm: ApprovalPermis
 
 export async function approvedActor(ctx: Ctx, shopId: string, perm: ApprovalPermission, approval: Approval | null | undefined, now = new Date()): Promise<Actor> {
   return (await approvedFor(ctx, shopId, perm, approval, now)).actor;
-}
-
-/** Over the limit: a manager whose limit covers it approves with their PIN. */
-export function overLimit(perm: ApprovalPermission, cents: number, limitCents: number, approved: boolean) {
-  const what = perm === "sales.void" ? "void" : "refund";
-  return new AppError(
-    "forbidden",
-    approved
-      ? `This ${what} is ${limitLabel(cents)}, above ${limitLabel(limitCents)}, the most you and the approving manager can give back. Pick a manager whose limit covers it.`
-      : `This ${what} is ${limitLabel(cents)}, above your ${limitLabel(limitCents)} limit. A manager whose limit covers it approves with their PIN.`,
-    { approval: perm, overLimit: true, limitCents },
-  );
 }

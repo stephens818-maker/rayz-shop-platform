@@ -18,12 +18,12 @@ import {
   lineRefunds,
 } from "@/domain/refunds";
 import type { CardFeeRefundRule, LoyaltyBasis } from "@/domain/checkout";
+import { limitLabel } from "@/domain/permissions";
 import { loyaltyEligibleCents } from "@/domain/loyalty";
 import { formatCents } from "@/lib/money";
 import { localDateOf } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "./audit";
 import { AppError, notFound } from "./errors";
-import { overLimit } from "./manager-approval";
 import { Movement, postMovements } from "./inventory/ledger";
 import { restoreRewardsForSale, reverseSaleLoyalty } from "./loyalty";
 import { ticketAppointmentIds } from "./family-ticket";
@@ -150,6 +150,18 @@ export async function voidSale(saleId: string, reason: string, actor: Actor, now
     });
     if (actor.approvedBy) await tx.update(sales).set({ voidApprovedBy: actor.approvedBy.staffId }).where(eq(sales.id, saleId));
   });
+}
+
+/** Over the limit: a manager whose limit covers it approves with their PIN. */
+function overLimit(perm: "sales.refund" | "sales.void", cents: number, limitCents: number, approved: boolean) {
+  const what = perm === "sales.void" ? "void" : "refund";
+  return new AppError(
+    "forbidden",
+    approved
+      ? `This ${what} is ${limitLabel(cents)}, above ${limitLabel(limitCents)}, the most you and the approving manager can give back. Pick a manager whose limit covers it.`
+      : `This ${what} is ${limitLabel(cents)}, above your ${limitLabel(limitCents)} limit. A manager whose limit covers it approves with their PIN.`,
+    { approval: perm, overLimit: true, limitCents },
+  );
 }
 
 async function lockSale(tx: Tx, saleId: string) {
