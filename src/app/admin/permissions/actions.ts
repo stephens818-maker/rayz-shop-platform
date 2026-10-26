@@ -18,8 +18,10 @@ import {
   roleChangeDenied,
   userAccessChangeDenied,
 } from "@/domain/permissions";
+import { syncKey } from "@/domain/brand-sync";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
+import { dropStates } from "@/server/brand-sync/store";
 import { accessState, activeOwnerCount, loadStaffAccess } from "@/server/auth/access";
 import { authorize, staffGrantor } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
@@ -46,6 +48,7 @@ export async function deleteRoleAction(id: string) {
     if (n) throw new AppError("conflict", `${n} ${n === 1 ? "person has" : "people have"} this role. Give them another role first.`);
     await db.transaction(async (tx) => {
       await tx.delete(roles).where(eq(roles.id, id));
+      await dropStates(tx, syncKey("role", id));
       await audit(ctx.actor, "permissions.role_delete", "role", id, { name: before.name, permissions: permsOf(asDef(before)), maxDiscountPct: before.maxDiscountPct }, null, tx);
     });
     revalidate();

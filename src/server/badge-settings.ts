@@ -20,7 +20,8 @@ const isTone = (v: string): v is CustomBadge["tone"] => (BADGE_TONES as readonly
 export async function listCustomBadges(
   o: {
     active?: boolean;
-    /** Only the ones this shop shows. */ shopId?: string | null;
+    /** Only the ones this shop shows. */
+    shopId?: string | null;
   } = {},
   tx: DBorTx = db,
 ): Promise<CustomBadge[]> {
