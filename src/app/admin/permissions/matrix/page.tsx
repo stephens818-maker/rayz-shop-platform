@@ -18,7 +18,7 @@ export default async function PermissionsMatrixPage() {
     db.execute<{ role_id: string; n: number }>(sql`
       select r.id as role_id, count(distinct s.id)::int as n
       from ${roles} r
-      join ${staff} s on s.removed_at is null and (s.role_id = r.id or exists (select 1 from staff_access_shops a where a.staff_id = s.id and a.role_id = r.id))
+      join ${staff} s on s.active and s.removed_at is null and (s.role_id = r.id or exists (select 1 from staff_access_shops a where a.staff_id = s.id and a.role_id = r.id))
       group by r.id`),
   ]);
   const people = new Map([...counts].map((c) => [c.role_id, c.n]));

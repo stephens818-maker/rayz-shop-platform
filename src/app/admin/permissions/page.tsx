@@ -66,7 +66,7 @@ export default async function PermissionsPage() {
           <tbody>
             {roleRows.map((r) => {
               const a = effectiveAccess(r);
-              const n = people.filter((p) => p.role.id === r.id).length;
+              const n = people.filter((p) => p.role.id === r.id || shopsOf(p.s.id).some((x) => x.roleId === r.id)).length;
               return (
                 <tr key={r.id}>
                   <Td>
