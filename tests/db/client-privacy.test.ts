@@ -487,6 +487,8 @@ describe("exports", () => {
     const mine = await import("@/app/api/v1/me/appointments/route");
     const loyalty = await import("@/app/api/v1/me/loyalty/route");
     const staffOnly = [P.notes, P.ratingNote, ...INSTAGRAM, ...ADDRESS, ...BIRTHDAY, "ratings", "stars", "customFields"];
+    // The client's own birthday is on /me (C16: they set it there); it's still nowhere else.
+    const ownBirthday = new Set<string>(BIRTHDAY);
     for (const [h, url] of [
       [me.GET, "/api/v1/me"],
       [mine.GET, "/api/v1/me/appointments"],
@@ -494,7 +496,7 @@ describe("exports", () => {
     ] as const) {
       const r = await get(h as never, url, undefined, { headers });
       expect(r.status, url).toBe(200);
-      expect(found(r.text, staffOnly), url).toEqual([]);
+      expect(found(r.text, url === "/api/v1/me" ? staffOnly.filter((x) => !ownBirthday.has(x)) : staffOnly), url).toEqual([]);
     }
   });
 });

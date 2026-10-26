@@ -446,7 +446,6 @@ export const FEATURE_PERMISSIONS = [
     label: "Set the credit card fee: the brand's policy and each shop's override",
     hint: "On or off, percent or flat, cap and minimum, channels, waivers, refunds, the notice and the states it's allowed in. Brand-level roles only; every change is in the audit log.",
     brandOnly: true,
-    brandLevel: true,
   },
   {
     key: "scheduling.timing",
