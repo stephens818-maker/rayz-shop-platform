@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, cx } from "@/components/ui";
 import { DEFAULT_TIP_SCREEN, MAX_TIP_PRESETS, type ShopHandoff, THANK_YOU_SECONDS, type TipScreen, tipChoices, tipScreenProblem } from "@/domain/handoff";
-import { saveBrandTipsAction, saveShopHandoffAction } from "./actions";
+import { useSyncSave } from "@/components/brand-sync";
+import { saveShopHandoffAction } from "./actions";
 
 const asText = (t: TipScreen) => t.values.map((v) => (t.type === "percent" ? String(v) : (v / 100).toFixed(v % 100 ? 2 : 0))).join(", ");
 const parse = (type: TipScreen["type"], text: string) =>
@@ -220,7 +221,7 @@ export function ShopHandoffEditor({ shopId, shopName, initial, brandTips, hasRea
 }
 
 export function BrandTipsEditor({ initial }: { initial: TipScreen }) {
-  const { pending, msg, save } = useSave();
+  const { pending, msg, save, dialog } = useSyncSave();
   const [tips, setTips] = useState(initial);
   return (
     <Card>
@@ -228,7 +229,8 @@ export function BrandTipsEditor({ initial }: { initial: TipScreen }) {
       <div className="p-4">
         <TipPresetFields value={tips} onChange={setTips} />
       </div>
-      <SaveBar pending={pending} msg={msg} disabled={!!tipScreenProblem(tips)} onClick={() => save(() => saveBrandTipsAction(tips), () => "Saved")} />
+      <SaveBar pending={pending} msg={msg} disabled={!!tipScreenProblem(tips)} onClick={() => save({ label: "Tip presets", changes: [{ type: "tips", item: "screen", value: tips }] })} />
+      {dialog}
     </Card>
   );
 }

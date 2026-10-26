@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
+import { syncedText, useBrandSync } from "@/components/brand-sync";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, cx } from "@/components/ui";
 import {
   BRAND_ADMIN_ALWAYS,
@@ -119,12 +120,24 @@ export function RoleEditor({
       else router.refresh();
     });
 
-  const save = () =>
+  const sync = useBrandSync();
+  const shopRole = !!initial && !isBrandLevelRole({ key: initial.key, brandLevel: initial.brandLevel }) && !brandLevel && initial.defaultScope !== "all" && scope !== "all";
+  const save = () => {
+    if (shopRole) {
+      setError(null);
+      setSaved(null);
+      return void sync.open({
+        label: `${name} role`,
+        changes: [{ type: "role", item: initial!.id, value: { name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope } }],
+        onDone: (r) => setSaved(r.status === "scheduled" ? syncedText(r) : r.shops ? `Saved. ${syncedText(r)}.` : "Saved to the brand. Shops keep the role as it was until it's pushed."),
+      });
+    }
     run(
       () => saveRoleAction({ id: initial?.id ?? null, name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope, ...(custom ? { brandLevel } : {}) }),
       initial ? "Saved. Everyone with this role has the change now." : "Role created",
       initial ? undefined : (id) => `/admin/permissions/roles/${id}`,
     );
+  };
 
   const tag = (p: Permission) => {
     if (fromTemplate && fromTemplate.has(p) !== perms.has(p)) return <Badge tone="amber">{perms.has(p) ? "added" : "removed"} vs template</Badge>;
@@ -320,8 +333,8 @@ export function RoleEditor({
         <div className="fixed inset-x-0 bottom-0 z-20 border-t border-zinc-200 bg-white/95 backdrop-blur lg:left-60">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3 px-4 py-3">
             <div className="text-sm">
-              {error ? (
-                <span className="text-red-600">{error}</span>
+              {(error ?? sync.error) ? (
+                <span className="text-red-600">{error ?? sync.error}</span>
               ) : saved && !dirty ? (
                 <span className="text-green-700">{saved}</span>
               ) : (
@@ -347,13 +360,14 @@ export function RoleEditor({
                   Delete role
                 </Button>
               )}
-              <Button type="button" variant="dark" disabled={pending || (!dirty && !!initial)} onClick={save}>
+              <Button type="button" variant="dark" disabled={pending || sync.pending || (!dirty && !!initial)} onClick={save}>
                 {pending ? "Saving…" : initial ? "Save role" : "Create role"}
               </Button>
             </div>
           </div>
         </div>
       )}
+      {sync.dialog}
     </div>
   );
 }

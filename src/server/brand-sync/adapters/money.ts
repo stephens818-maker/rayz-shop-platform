@@ -1,11 +1,13 @@
 import { eq, inArray, ne } from "drizzle-orm";
 import { z } from "zod";
+import { db } from "@/db";
 import { brandSettings, shops } from "@/db/schema";
 import { clip, money, onOff, pct } from "@/domain/brand-sync";
 import { CardFeeOverride, CardFeePolicy, OVERRIDE_KEYS, brandCardFeePolicy, cleanOverride, policyDiff, policyProblem, shopCardFeePolicy } from "@/domain/card-fee-policy";
-import { TipScreen, TipScreenSchema, brandHandoff, effectiveTips, shopHandoff } from "@/domain/handoff";
+import { TipScreen, TipScreenSchema, brandHandoff, effectiveTips, shopHandoff, tipScreenProblem } from "@/domain/handoff";
 import { audit } from "../../audit";
 import { AppError } from "../../errors";
+import { syncReaderTipping } from "../../handoff";
 import { auditShops, brandFeePolicy, commitFeeChange, saveBrandRow } from "../../payments/card-fee";
 import { brandValue, putBrandValue } from "../store";
 import type { SyncAdapter } from "../types";
@@ -164,6 +166,8 @@ export const tipsAdapter: SyncAdapter<TipScreen, TipScreen> = {
   view: (b) => ({ type: b.type, values: [...b.values], allowCustom: b.allowCustom, allowNoTip: b.allowNoTip }),
   async parse(_who, raw) {
     const t = TipScreenSchema.parse(raw);
+    const problem = tipScreenProblem(t);
+    if (problem) throw new AppError("bad_request", problem);
     return { type: t.type, values: [...t.values], allowCustom: t.allowCustom, allowNoTip: t.allowNoTip };
   },
   async shops(tx, ids, shopIds, brand) {
@@ -199,6 +203,14 @@ export const tipsAdapter: SyncAdapter<TipScreen, TipScreen> = {
         .set({ ...(w ? { handoff: { ...h, tips } as unknown as Record<string, unknown> } : {}), ...(eff.type === "percent" ? { tipPresets: eff.values } : {}) })
         .where(eq(shops.id, r.id));
       if (w) await audit(who.actor, "handoff.settings", "shop", r.id, { before: h, after: { ...h, tips }, via: "brand_sync" }, r.id, tx);
+    }
+  },
+  async afterCommit(shopIds) {
+    const [b] = await db.select({ h: brandSettings.handoff }).from(brandSettings).where(eq(brandSettings.id, 1));
+    const rows = await db.select({ id: shops.id, h: shops.handoff }).from(shops).where(inArray(shops.id, [...shopIds]));
+    for (const r of rows) {
+      const h = shopHandoff(r.h);
+      if (h.tipEntry === "reader") await syncReaderTipping(r.id, effectiveTips(h, brandHandoff(b?.h)));
     }
   },
   describe: (v) => ({

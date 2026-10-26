@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lte, ne, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { brandSyncBatches, brandSyncChanges, shops, type BrandSyncBatchKind } from "@/db/schema";
 import {
@@ -169,6 +169,17 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
   return out;
 }
 
+/** Runs each adapter's afterCommit for the shops a committed batch changed. Failures are logged; the change stands. */
+async function afterCommit(changes: readonly Pick<ChangeRow, "key" | "shopId" | "action">[]) {
+  const byType = new Map<SyncType, Set<string>>();
+  for (const c of changes) {
+    const k = parseSyncKey(c.key);
+    if (!k || c.action === "keep" || c.action === "freeze" || !ADAPTERS[k.type].afterCommit) continue;
+    byType.set(k.type, (byType.get(k.type) ?? new Set()).add(c.shopId));
+  }
+  for (const [type, ids] of byType) await ADAPTERS[type].afterCommit!([...ids]).catch((e: Error) => console.error(`After ${type} sync: ${e.message}`));
+}
+
 async function recordChanges(tx: DBorTx, batchId: string, changes: ChangeRow[]) {
   for (let i = 0; i < changes.length; i += 500)
     await tx.insert(brandSyncChanges).values(
@@ -217,7 +228,8 @@ export async function commitBrandChange(who: Who, input: CommitInput, now = new 
   if (!input.changes.length) throw new AppError("bad_request", "Nothing to save");
   if (input.scope === "selected" && !input.shopIds.length) throw new AppError("bad_request", `Tick at least one shop, or choose "${SCOPE_LABEL.brand_only}"`);
   await runDueSyncs(now).catch((e: Error) => console.error(`Scheduled brand syncs: ${e.message}`));
-  return db.transaction(async (tx) => {
+  let done: ChangeRow[] = [];
+  const result = await db.transaction(async (tx): Promise<CommitResult> => {
     const label = input.label?.trim().slice(0, 120) || (await labelFor(input.changes, tx));
     if (input.runAt) {
       const runAt = new Date(input.runAt);
@@ -260,8 +272,11 @@ export async function commitBrandChange(who: Who, input: CommitInput, now = new 
     await recordChanges(tx, b.id, r.changes);
     await audit(who.actor, "brand_sync.apply", "brand_sync_batch", b.id, { label, scope: input.scope, shopIds: r.targets, keys: r.keys, brand: r.brand, changed: r.changes.length }, null, tx);
     await auditShops(tx, who, b.id, label, r.changes);
+    done = r.changes;
     return { batchId: b.id, status: "applied", shops: r.targets.length, changed: r.changes.length, runAt: null, paths: [...r.paths] };
   });
+  await afterCommit(done);
+  return result;
 }
 
 /**
@@ -294,7 +309,8 @@ export async function runDueSyncs(now = new Date()): Promise<{ ran: number; fail
 }
 
 async function runScheduled(id: string, now: Date, by?: Who): Promise<boolean> {
-  return db.transaction(async (tx) => {
+  let done: ChangeRow[] = [];
+  const ran = await db.transaction(async (tx) => {
     const [b] = await tx.select().from(brandSyncBatches).where(and(eq(brandSyncBatches.id, id), eq(brandSyncBatches.status, "scheduled"))).for("update", { skipLocked: true });
     if (!b) return false;
     const who: Who = by ?? { actor: { staffId: b.createdBy, label: b.createdByLabel }, ctx: null };
@@ -303,8 +319,11 @@ async function runScheduled(id: string, now: Date, by?: Who): Promise<boolean> {
     await recordChanges(tx, id, r.changes);
     await audit(who.actor, "brand_sync.run", "brand_sync_batch", id, { label: b.label, scheduledFor: b.runAt?.toISOString(), shopIds: r.targets, keys: r.keys, brand: r.brand, changed: r.changes.length }, null, tx);
     await auditShops(tx, who, id, b.label, r.changes);
+    done = r.changes;
     return true;
   });
+  await afterCommit(done);
+  return ran;
 }
 
 /** Runs a scheduled sync now, as the person who pressed it. */
@@ -343,7 +362,8 @@ export interface CellRef {
  */
 export async function bulkSync(who: Who, action: BulkAction, cells: CellRef[], now = new Date()) {
   if (!cells.length) throw new AppError("bad_request", "Pick at least one cell");
-  return db.transaction(async (tx) => {
+  let done: ChangeRow[] = [];
+  const result = await db.transaction(async (tx) => {
     await lockSync(tx);
     const active = new Set((await activeShops(tx)).map((s) => s.id));
     const byKey = new Map<string, Set<string>>();
@@ -376,7 +396,7 @@ export async function bulkSync(who: Who, action: BulkAction, cells: CellRef[], n
       await writeCells(tx, who, a, k.item, null, plan);
       a.paths.forEach((p) => paths.add(p));
     }
-    if (!changes.length) return { batchId: null, changed: 0, paths: [...paths] };
+    if (!changes.length) return { batchId: null as string | null, changed: 0, paths: [...paths] };
     const keys = [...new Set(changes.map((c) => c.key))];
     const shopIds = [...new Set(changes.map((c) => c.shopId))];
     const label = `${BULK_LABEL[action]}: ${keys.length} setting${keys.length === 1 ? "" : "s"} at ${shopIds.length} shop${shopIds.length === 1 ? "" : "s"}`;
@@ -387,8 +407,11 @@ export async function bulkSync(who: Who, action: BulkAction, cells: CellRef[], n
     await recordChanges(tx, b.id, changes);
     await audit(who.actor, `brand_sync.${action}`, "brand_sync_batch", b.id, { label, keys, shopIds, changed: changes.length }, null, tx);
     await auditShops(tx, who, b.id, label, changes);
-    return { batchId: b.id, changed: changes.length, paths: [...paths] };
+    done = changes;
+    return { batchId: b.id as string | null, changed: changes.length, paths: [...paths] };
   });
+  await afterCommit(done);
+  return result;
 }
 
 // ───────────────────────────── Rollback ─────────────────────────────
@@ -398,7 +421,8 @@ export async function bulkSync(who: Who, action: BulkAction, cells: CellRef[], n
  * what changed, if the brand value or any shop's value it touched has changed since.
  */
 export async function rollbackSync(who: Who, batchId: string, now = new Date()) {
-  return db.transaction(async (tx) => {
+  let done: ChangeRow[] = [];
+  const result = await db.transaction(async (tx) => {
     await lockSync(tx);
     const [b] = await tx.select().from(brandSyncBatches).where(eq(brandSyncBatches.id, batchId)).for("update");
     if (!b) throw notFound("Sync");
@@ -470,8 +494,11 @@ export async function rollbackSync(who: Who, batchId: string, now = new Date()) 
     await tx.update(brandSyncBatches).set({ status: "rolled_back", rolledBackAt: now, rolledBackBy: who.actor.label }).where(eq(brandSyncBatches.id, b.id));
     await audit(who.actor, "brand_sync.rollback", "brand_sync_batch", b.id, { label: b.label, rollbackId: r.id, keys, shopIds: [...new Set(restored.map((c) => c.shopId))], changed: restored.length }, null, tx);
     await auditShops(tx, who, r.id, label, restored);
+    done = restored;
     return { batchId: r.id, changed: restored.length, paths: [...paths] };
   });
+  await afterCommit(done);
+  return result;
 }
 
 // ───────────────────────────── Preview ─────────────────────────────

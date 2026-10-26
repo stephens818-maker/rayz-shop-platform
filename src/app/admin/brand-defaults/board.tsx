@@ -1,10 +1,11 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { useBrandSync } from "@/components/brand-sync";
 import { Badge, Button, Card, CardHeader, Input, Select, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { DEFAULT_FIELDS, DEFAULT_SECTIONS, DefaultKey, DefaultSection, DefaultValue, Effective, LocationDefaults, formatDefault, keysIn } from "@/domain/location-defaults";
-import { clearShopOverrideAction, saveBrandDefaultAction, setShopOverrideAction } from "./actions";
+import { clearShopOverrideAction, setShopOverrideAction } from "./actions";
 
 type Shop = { shopId: string; shop: string; effective: Effective };
 type Pick = { key: DefaultKey; shopId: string | null };
@@ -152,7 +153,9 @@ function Editor({
   const current = shop ? shop.effective[k].value : brandValue;
   const own = shop?.effective[k].scope === "shop";
   const [v, setV] = useState(toInput(k, current));
-  const { pending, error, run } = useAction();
+  const { pending: running, error, run } = useAction();
+  const sync = useBrandSync();
+  const pending = running || sync.pending;
   const input =
     f.kind === "hours" ? (
       <Select className="w-40 py-1.5" value={v} onChange={(e) => setV(e.target.value)} aria-label={f.label}>
@@ -204,8 +207,8 @@ function Editor({
             )}
           </>
         ) : (
-          <Button size="sm" disabled={pending} onClick={() => run(() => saveBrandDefaultAction(k, fromInput(k, v)), onDone)}>
-            Save for all shops
+          <Button size="sm" disabled={pending} onClick={() => void sync.open({ label: f.label, changes: [{ type: "location_default", item: k, value: fromInput(k, v) }], onDone })}>
+            Save to brand…
           </Button>
         )}
         <Button size="sm" variant="ghost" onClick={onDone}>
@@ -216,10 +219,11 @@ function Editor({
             ? own
               ? "This shop has its own value. Brand changes won't reach it until you switch it back."
               : "This shop follows the brand. Saving gives it its own value."
-            : `${following} shop${following === 1 ? "" : "s"} follow the brand and change with it; shops with their own value keep it.`}
+            : `${following} shop${following === 1 ? "" : "s"} follow the brand. Next you pick which shops it goes to; shops with their own value keep it unless you replace it.`}
         </span>
       </div>
-      {error && <div className="mt-2 text-xs text-red-600">{error}</div>}
+      {(error ?? sync.error) && <div className="mt-2 text-xs text-red-600">{error ?? sync.error}</div>}
+      {sync.dialog}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSyncSave } from "@/components/brand-sync";
 import { Badge, Button, Field, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import {
@@ -19,7 +20,6 @@ import {
   deleteMilestoneRuleAction,
   saveBaselineAction,
   saveMilestoneRuleAction,
-  saveMilestoneSettingsAction,
 } from "./actions";
 
 type Option = { id: string; name: string };
@@ -106,13 +106,9 @@ export function MilestoneSettingsForm({
 }: {
   initial: MilestoneSettings;
 }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, save, dialog } = useSyncSave();
   const [s, setS] = useState(initial);
-  const [saved, setSaved] = useState(false);
-  const set = (patch: Partial<MilestoneSettings>) => {
-    setS({ ...s, ...patch });
-    setSaved(false);
-  };
+  const set = (patch: Partial<MilestoneSettings>) => setS({ ...s, ...patch });
   const toggle = (t: (typeof TOGGLES)[number]) => (
     <label key={t.key} className="flex items-start gap-2">
       <input
@@ -157,17 +153,12 @@ export function MilestoneSettingsForm({
         <Button
           size="sm"
           disabled={pending}
-          onClick={() =>
-            run(
-              () => saveMilestoneSettingsAction(s),
-              () => setSaved(true),
-            )
-          }
+          onClick={() => save({ label: "Milestone celebrations", changes: [{ type: "milestones", item: "brand", value: s }] })}
         >
           Save
         </Button>
-        {saved && !error && <span className="text-emerald-700">Saved</span>}
-        {error && <span className="text-red-600">{error}</span>}
+        {msg && <span className={msg.ok ? "text-emerald-700" : "text-red-600"}>{msg.text}</span>}
+        {dialog}
       </div>
     </div>
   );

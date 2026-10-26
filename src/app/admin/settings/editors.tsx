@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useSyncSave } from "@/components/brand-sync";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { ReceiptBranding } from "@/domain/connect";
 import { LOYALTY_TYPES, LOYALTY_TYPE_LABEL, type LoyaltyConfig } from "@/domain/loyalty";
@@ -14,7 +15,6 @@ import {
   addReaderAction,
   removeClosureAction,
   saveHoursAction,
-  saveLoyaltyAction,
   saveReceiptAction,
   saveReviewRulesAction,
   saveShopInfoAction,
@@ -162,12 +162,19 @@ export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; init
   );
 }
 
-export function HoursEditor({ shopId, initial, canSetSunday }: { shopId: string; initial: { weekday: number; openMin: number; closeMin: number }[]; canSetSunday: boolean }) {
-  const { pending, msg, save } = useSave();
+/** A shop's opening hours, or with no shop the brand's hours template that new shops start from and a sync pushes. */
+export function HoursEditor({ shopId, initial, canSetSunday }: { shopId: string | null; initial: { weekday: number; openMin: number; closeMin: number }[]; canSetSunday: boolean }) {
+  const shop = useSave();
+  const brand = useSyncSave();
+  const { pending, msg } = shopId ? shop : brand;
   const [rows, setRows] = useState(initial);
   return (
     <Card>
-      <CardHeader title="Opening hours" subtitle={`Barbers can only be booked inside shop hours. All shops are closed Sundays${canSetSunday ? "; opening one is up to you." : "; only the Brand Owner can change that."}`} />
+      {shopId ? (
+        <CardHeader title="Opening hours" subtitle={`Barbers can only be booked inside shop hours. All shops are closed Sundays${canSetSunday ? "; opening one is up to you." : "; only the Brand Owner can change that."}`} />
+      ) : (
+        <CardHeader title="Hours template" subtitle="The weekly hours new shops open with. Saving lets you push them to shops; closed dates stay each shop's own." />
+      )}
       <div className="divide-y divide-zinc-100">
         {[1, 2, 3, 4, 5, 6, 0].map((d) => {
           const r = rows.find((x) => x.weekday === d);
@@ -195,7 +202,13 @@ export function HoursEditor({ shopId, initial, canSetSunday }: { shopId: string;
           );
         })}
       </div>
-      <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveHoursAction(shopId, rows))} label="Save hours" />
+      <SaveBar
+        pending={pending}
+        msg={msg}
+        onClick={() => (shopId ? shop.save(() => saveHoursAction(shopId, rows)) : brand.save({ label: "Hours template", changes: [{ type: "hours", item: "week", value: rows }] }))}
+        label="Save hours"
+      />
+      {brand.dialog}
     </Card>
   );
 }
@@ -243,7 +256,7 @@ export function ClosuresEditor({ shopId, closures, multiShop }: { shopId: string
 }
 
 export function LoyaltyEditor({ initial, shops }: { initial: LoyaltyConfig; shops: { id: string; name: string; status: string }[] }) {
-  const { pending, msg, save } = useSave();
+  const { pending, msg, save, dialog } = useSyncSave();
   const [v, setV] = useState(initial);
   const [th, setTh] = useState(String(initial.thresholdCents / 100));
   const [rw, setRw] = useState(String(initial.rewardCents / 100));
@@ -344,16 +357,24 @@ export function LoyaltyEditor({ initial, shops }: { initial: LoyaltyConfig; shop
         pending={pending}
         msg={msg}
         onClick={() =>
-          save(() =>
-            saveLoyaltyAction({
-              ...v,
-              thresholdCents: Math.round(Number(th) * 100),
-              rewardCents: Math.round(Number(rw) * 100),
-              minVisitCents: min.trim() ? Math.round(Number(min) * 100) : 0,
-            }),
-          )
+          save({
+            label: "Loyalty program",
+            changes: [
+              {
+                type: "loyalty",
+                item: "brand",
+                value: {
+                  ...v,
+                  thresholdCents: Math.round(Number(th) * 100),
+                  rewardCents: Math.round(Number(rw) * 100),
+                  minVisitCents: min.trim() ? Math.round(Number(min) * 100) : 0,
+                },
+              },
+            ],
+          })
         }
       />
+      {dialog}
     </Card>
   );
 }

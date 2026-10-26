@@ -316,9 +316,11 @@ export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
     );
   },
   view: roleValue,
-  async parse(who, raw, _item, before) {
+  async parse(who, raw, item, before, tx) {
     if (!before) throw notFound("Role");
     const p = RoleBrandInput.parse(raw);
+    const [dup] = await tx.select({ name: roles.name }).from(roles).where(and(sql`lower(${roles.name}) = lower(${p.name})`, ne(roles.id, item)));
+    if (dup) throw new AppError("conflict", `There's already a role called "${dup.name}"`);
     const after: RoleBrand = { ...p, key: before.key, brandLevel: before.brandLevel };
     if (who.ctx) {
       const denied = roleChangeDenied(grantor(who.ctx.access), asDef(before), asDef(after));

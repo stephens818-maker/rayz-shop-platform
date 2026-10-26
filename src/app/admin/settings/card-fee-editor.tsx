@@ -5,7 +5,8 @@ import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from
 import { FEE_CHANNELS, FEE_CHANNEL_LABEL, FEE_NOTICE_MAX, SURCHARGE_BLOCKED_STATES, US_STATES, type CardFeeOverride, type CardFeePolicy, feeConfigFor, stateRule } from "@/domain/card-fee-policy";
 import { MAX_CARD_FEE_RATE, type CardFeeConfig, cardFeeFor, feeDisclosure } from "@/domain/checkout";
 import { formatCents } from "@/lib/money";
-import { saveBrandCardFeeAction, saveShopCardFeeAction } from "./actions";
+import { useSyncSave } from "@/components/brand-sync";
+import { saveShopCardFeeAction } from "./actions";
 import { SaveBar, useSave } from "./editors";
 
 type Form = {
@@ -146,7 +147,7 @@ function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) =
 
 /** The brand's surcharge policy: the fee, where it applies, waivers, refunds and the state rules. */
 export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { initial: CardFeePolicy; canEdit: boolean; walletFlag: boolean; shops: { name: string; state: string }[] }) {
-  const { pending, msg, save } = useSave();
+  const { pending, msg, save, dialog } = useSyncSave();
   const [f, setF] = useState(toForm(initial));
   const [waiverAllowed, setWaiverAllowed] = useState(initial.waiverAllowed);
   const [refundRule, setRefundRule] = useState(initial.refundRule);
@@ -262,7 +263,8 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
           </div>
         )}
       </fieldset>
-      {canEdit && <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveBrandCardFeeAction(policy()))} />}
+      {canEdit && <SaveBar pending={pending} msg={msg} onClick={() => save({ label: "Credit card surcharge", changes: [{ type: "card_fee", item: "brand", value: policy() }] })} />}
+      {dialog}
     </Card>
   );
 }

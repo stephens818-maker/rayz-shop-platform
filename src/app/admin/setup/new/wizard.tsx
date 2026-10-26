@@ -53,10 +53,17 @@ export function LocationWizard({
   geocoder,
   brandBooking = { minLeadMinutes: 15, bookingWindowDays: 60, cancelCutoffMinutes: 30 },
   brandFee = null,
+  brandTemplates = null,
 }: {
   options: Options;
   /** The brand defaults a new location starts on. */
   brandBooking?: { minLeadMinutes: number; bookingWindowDays: number; cancelCutoffMinutes: number };
+  /** The brand's hours template, tax rates and receipt branding, which a new location starts from. */
+  brandTemplates?: {
+    hours: { weekday: number; openMin: number; closeMin: number }[];
+    taxes: { serviceRate: number; productRate: number };
+    receipt: { headline: string | null; footer: string | null; showLogo: boolean; showAddress: boolean; showPhone: boolean; allowPrint: boolean };
+  } | null;
   geocoder: "google" | "census" | "zip";
   /** The brand's credit card surcharge, which a new location takes: what it is, whether it applies here, and the states it's allowed in. */
   brandFee?: { fee: string; onTips: boolean; on: boolean; appliesTo: "all" | "selected" | "none"; states: string[] } | null;
@@ -93,12 +100,12 @@ export function LocationWizard({
   });
   const [hours, setHours] = useState<Hours[]>(
     [0, 1, 2, 3, 4, 5, 6].map((weekday) => {
-      const d = DEFAULT_HOURS.find((h) => h.weekday === weekday);
+      const d = (brandTemplates?.hours ?? DEFAULT_HOURS).find((h) => h.weekday === weekday);
       return { weekday, open: !!d, openMin: d?.openMin ?? 9 * 60, closeMin: d?.closeMin ?? 17 * 60 };
     }),
   );
   const [holidays, setHolidays] = useState<{ date: string; reason: string }[]>([]);
-  const [money, setMoney] = useState({ service: "0", product: "0", verified: false });
+  const [money, setMoney] = useState({ service: String(pct(brandTemplates?.taxes.serviceRate ?? 0)), product: String(pct(brandTemplates?.taxes.productRate ?? 0)), verified: false });
   const feeState = basics.state.trim().toUpperCase();
   const feeSummary = !brandFee
     ? null
@@ -127,7 +134,14 @@ export function LocationWizard({
   const [line, setLine] = useState("");
   const [readers, setReaders] = useState<{ label: string; serialNumber: string; registrationCode: string }[]>([]);
   const [pay, setPay] = useState({ mode: "connected" as PaymentsMode, descriptor: "" });
-  const [receipt, setReceipt] = useState({ headline: "", footer: "", showLogo: true, showAddress: true, showPhone: true, reviewUrl: "", reviewFollowUp: { ...REVIEW_FOLLOW_UP_DEFAULT }, reviewMinVisits: null as number | null, reviewSnoozeDays: null as number | null });
+  const [receipt, setReceipt] = useState({
+    headline: brandTemplates?.receipt.headline ?? "",
+    footer: brandTemplates?.receipt.footer ?? "",
+    showLogo: brandTemplates?.receipt.showLogo ?? true,
+    showAddress: brandTemplates?.receipt.showAddress ?? true,
+    showPhone: brandTemplates?.receipt.showPhone ?? true,
+    allowPrint: brandTemplates?.receipt.allowPrint ?? false,
+    reviewUrl: "", reviewFollowUp: { ...REVIEW_FOLLOW_UP_DEFAULT }, reviewMinVisits: null as number | null, reviewSnoozeDays: null as number | null });
   const [brand, setBrand] = useState({ accent: "", logo: "", description: "" });
   const [profile, setProfile] = useState({ social: {} as Record<string, string>, directions: "", amenities: [] as string[] });
   const [jurisdiction, setJurisdiction] = useState<TaxJurisdiction>({ county: null, city: null, district: null, code: null });

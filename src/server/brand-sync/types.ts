@@ -69,6 +69,8 @@ export interface SyncAdapter<B = unknown, V = unknown> {
   describe(v: V, item: string): Record<string, string>;
   /** One line for a matrix cell or tooltip. */
   short(v: V, item: string): string;
+  /** After the change commits, for what can't happen inside it (a card reader's tip screen). Gets the shops whose value changed. */
+  afterCommit?(shopIds: readonly string[]): Promise<void>;
   /** Who may lock or unlock shop edits; card fee keeps its own switch. */
   control?: { get(tx: DBorTx): Promise<boolean>; set(tx: DBorTx, who: Who, on: boolean): Promise<void> };
 }

@@ -2,9 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { useBrandSync } from "@/components/brand-sync";
 import { Badge, Button, Field, Input, Notice, Select } from "@/components/ui";
 import { STOP_LINE, type Channel, type Templates } from "@/domain/marketing";
-import { saveTemplateAction, setTemplateStatusAction } from "../actions";
+import { setTemplateStatusAction } from "../actions";
 import { ChannelPreview } from "../channel-preview";
 import { ChannelOrder, TemplateFields } from "../template-fields";
 
@@ -29,10 +30,9 @@ const BLANK: TemplateRow = {
 };
 
 export function TemplateEditor({ initial, address, onDone }: { initial: TemplateRow | null; address: string; onDone?: () => void }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const sync = useBrandSync();
   const [t, setT] = useState<TemplateRow>(initial ?? BLANK);
+  const [item, setItem] = useState(() => initial?.id || crypto.randomUUID());
   const set = (x: Partial<TemplateRow>) => setT({ ...t, ...x });
   return (
     <div className="space-y-4 p-4" data-testid="template-editor">
@@ -56,22 +56,27 @@ export function TemplateEditor({ initial, address, onDone }: { initial: Template
       <TemplateFields value={t.templates} channels={t.channels} address={address} onChange={(templates) => set({ templates })} />
       <ChannelPreview templates={t.templates} channels={t.channels} address={address} />
       {initial?.status === "approved" && <Notice tone="amber">Changing the wording sends it back to draft until it&apos;s approved again.</Notice>}
-      {error && <Notice tone="red">{error}</Notice>}
+      {sync.error && <Notice tone="red">{sync.error}</Notice>}
       <div className="flex gap-2">
         <Button
-          disabled={pending || !t.name.trim()}
+          disabled={sync.pending || !t.name.trim()}
           onClick={() =>
-            start(async () => {
-              const r = await saveTemplateAction({ id: t.id || null, name: t.name, campaignType: t.campaignType, description: t.description, channels: t.channels, templates: t.templates });
-              if (!r.ok) return setError(r.error);
-              setError(null);
-              onDone?.();
-              router.refresh();
+            void sync.open({
+              label: `${t.name.trim()} template`,
+              changes: [{ type: "campaign_template", item, value: { name: t.name, campaignType: t.campaignType, description: t.description, channels: t.channels, templates: t.templates } }],
+              onDone: () => {
+                if (!initial) {
+                  setT(BLANK);
+                  setItem(crypto.randomUUID());
+                }
+                onDone?.();
+              },
             })
           }
         >
           Save template
         </Button>
+        {sync.dialog}
         {onDone && (
           <Button variant="ghost" onClick={onDone}>
             Close

@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Table, Td, Textarea, Th } from "@/components/ui";
 import { type CheckoutPromptSettings, PROMPT_KINDS, PROMPT_LABEL, PROMPT_MODES, PROMPT_MODE_LABEL, type PromptKind, type PromptMode, RULE_TARGET_LABEL, type RuleTarget, ruleTarget } from "@/domain/checkout-prompts";
-import { savePromptSettingsAction, setPromptRuleAction, setRebookDaysAction, setServiceProductsAction } from "./actions";
+import { useSyncSave } from "@/components/brand-sync";
+import { setPromptRuleAction, setRebookDaysAction, setServiceProductsAction } from "./actions";
 
 type Named = { id: string; name: string };
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -31,24 +32,29 @@ function useAct() {
 export function PromptSettingsCard({ settings }: { settings: CheckoutPromptSettings }) {
   const [s, setS] = useState(settings);
   const [reasons, setReasons] = useState(settings.rebook.reasons.join("\n"));
-  const { pending, error, saved, act } = useAct();
+  const { pending, msg, save: sync, dialog } = useSyncSave();
   const rb = (patch: Partial<CheckoutPromptSettings["rebook"]>) => setS((x) => ({ ...x, rebook: { ...x.rebook, ...patch } }));
   const pr = (patch: Partial<CheckoutPromptSettings["product"]>) => setS((x) => ({ ...x, product: { ...x.product, ...patch } }));
   const save = () =>
-    act(
-      () =>
-        savePromptSettingsAction({
-          ...s,
-          rebook: {
-            ...s.rebook,
-            reasons: reasons
-              .split("\n")
-              .map((r) => r.trim())
-              .filter(Boolean),
+    sync({
+      label: "Checkout prompts",
+      changes: [
+        {
+          type: "checkout_prompts",
+          item: "brand",
+          value: {
+            ...s,
+            rebook: {
+              ...s.rebook,
+              reasons: reasons
+                .split("\n")
+                .map((r) => r.trim())
+                .filter(Boolean),
+            },
           },
-        }),
-      "Saved",
-    );
+        },
+      ],
+    });
   return (
     <Card>
       <CardHeader title="Brand defaults" subtitle="Every location, role and barber, unless an override below says otherwise." action={<Button onClick={save} disabled={pending}>Save</Button>} />
@@ -117,7 +123,8 @@ export function PromptSettingsCard({ settings }: { settings: CheckoutPromptSetti
           <p className="text-xs text-zinc-500">Products come from what the barber tags as used on the ticket, the products set for each service below, and past purchases, with this shop&apos;s stock.</p>
         </div>
       </div>
-      {(error || saved) && <div className="px-4 pb-4">{error ? <Notice tone="red">{error}</Notice> : <Notice tone="green">{saved}</Notice>}</div>}
+      {msg && <div className="px-4 pb-4">{msg.ok ? <Notice tone="green">{msg.text}</Notice> : <Notice tone="red">{msg.text}</Notice>}</div>}
+      {dialog}
     </Card>
   );
 }

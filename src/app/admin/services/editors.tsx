@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Input, Select, Suggestions, cx } from "@/components/ui";
-import { saveMasterServiceAction, saveShopServiceAction } from "./actions";
+import { useBrandSync, syncedText } from "@/components/brand-sync";
+import { saveShopServiceAction } from "./actions";
 
 const dollars = (c: number | null) => (c == null ? "" : (c / 100).toFixed(2));
 const toCents = (s: string) => (s.trim() === "" ? null : Math.round(Number(s) * 100));
@@ -157,11 +158,40 @@ export function MasterEditor({ rows, categories }: { rows: MRow[]; categories: s
 }
 
 function MasterRow({ r }: { r: MRow }) {
-  const router = useRouter();
-  const [pending, start] = useTransition();
+  const sync = useBrandSync();
   const [s, setS] = useState({ ...r, price: dollars(r.defaultPriceCents) });
   const [msg, setMsg] = useState<string | null>(null);
   const isNew = !r.id;
+  const [item, setItem] = useState(() => r.id || crypto.randomUUID());
+  const save = () => {
+    setMsg(null);
+    void sync.open({
+      label: s.name,
+      changes: [
+        {
+          type: "service",
+          item,
+          value: {
+            name: s.name,
+            kind: s.kind,
+            category: s.category,
+            description: s.description,
+            defaultPriceCents: Math.round(Number(s.price) * 100),
+            defaultDurationMin: s.defaultDurationMin,
+            active: s.active,
+            sortOrder: s.sortOrder,
+          },
+        },
+      ],
+      onDone: (res) => {
+        setMsg(syncedText(res));
+        if (isNew) {
+          setS({ ...r, price: dollars(r.defaultPriceCents) });
+          setItem(crypto.randomUUID());
+        }
+      },
+    });
+  };
   return (
     <tr className={cx("border-b border-zinc-100", isNew && "bg-zinc-50/60")}>
       <td className="px-3 py-1.5">
@@ -189,32 +219,11 @@ function MasterRow({ r }: { r: MRow }) {
         <input type="checkbox" checked={s.active} onChange={(e) => setS({ ...s, active: e.target.checked })} />
       </td>
       <td className="px-3 py-1.5">
-        <Button
-          size="sm"
-          variant={isNew ? "primary" : "secondary"}
-          disabled={pending || !s.name}
-          onClick={() =>
-            start(async () => {
-              const res = await saveMasterServiceAction({
-                id: r.id || null,
-                name: s.name,
-                kind: s.kind,
-                category: s.category,
-                description: s.description,
-                defaultPriceCents: Math.round(Number(s.price) * 100),
-                defaultDurationMin: s.defaultDurationMin,
-                active: s.active,
-                sortOrder: s.sortOrder,
-              });
-              setMsg(res.ok ? "Saved" : res.error);
-              if (res.ok && isNew) setS({ ...r, price: dollars(r.defaultPriceCents) });
-              router.refresh();
-            })
-          }
-        >
+        <Button size="sm" variant={isNew ? "primary" : "secondary"} disabled={sync.pending || !s.name} onClick={save}>
           {isNew ? "Add" : "Save"}
         </Button>
-        {msg && <Badge className="ml-2">{msg}</Badge>}
+        {(sync.error ?? msg) && <Badge className="ml-2" tone={sync.error ? "red" : "gray"}>{sync.error ?? msg}</Badge>}
+        {sync.dialog}
       </td>
     </tr>
   );

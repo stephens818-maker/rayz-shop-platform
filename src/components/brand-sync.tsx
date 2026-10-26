@@ -442,3 +442,20 @@ export function syncedText(r: CommitResult) {
   if (r.status === "scheduled") return `Scheduled for ${new Date(r.runAt!).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
   return r.shops ? `Saved and synced to ${r.shops} shop${r.shops === 1 ? "" : "s"}` : "Saved to the brand";
 }
+
+/** useBrandSync with a save-bar message: "Saved and synced to 4 shops", or the error. */
+export function useSyncSave() {
+  const s = useBrandSync();
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const save = (o: OpenSync) => {
+    setMsg(null);
+    void s.open({
+      ...o,
+      onDone: (r) => {
+        setMsg({ ok: true, text: syncedText(r) });
+        o.onDone?.(r);
+      },
+    });
+  };
+  return { pending: s.pending, msg: s.error ? { ok: false, text: s.error } : msg, save, dialog: s.dialog };
+}

@@ -5,7 +5,8 @@ import { Fragment, useState } from "react";
 import { Badge, Button, Card, Field, Input, Select, Suggestions, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import type { BrandProductRow } from "@/server/inventory/brand-stock";
-import { allocateBrandStockAction, receiveBrandStockAction, saveProductDetailsAction } from "./actions";
+import { syncedText, useBrandSync } from "@/components/brand-sync";
+import { allocateBrandStockAction, receiveBrandStockAction } from "./actions";
 
 type Perms = { details: boolean; allocate: boolean; receive: boolean };
 
@@ -143,7 +144,8 @@ function Panel({ title, children, error }: { title: string; children: React.Reac
 }
 
 function DetailsPanel({ r, categories }: { r: BrandProductRow; categories: string[] }) {
-  const { pending, error, run } = useAction();
+  const sync = useBrandSync();
+  const [msg, setMsg] = useState<string | null>(null);
   const [v, setV] = useState({
     sku: r.sku,
     brand: r.brand,
@@ -156,7 +158,7 @@ function DetailsPanel({ r, categories }: { r: BrandProductRow; categories: strin
   });
   const m = marginPct(cents(v.cost), cents(v.price));
   return (
-    <Panel title="Brand details" error={error}>
+    <Panel title="Brand details" error={sync.error}>
       <div className="grid grid-cols-3 gap-2">
         <Field label="SKU">
           <Input className="py-1.5" value={v.sku} onChange={(e) => setV({ ...v, sku: e.target.value })} />
@@ -187,27 +189,39 @@ function DetailsPanel({ r, categories }: { r: BrandProductRow; categories: strin
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-xs text-zinc-500">Brand defaults; a shop can override price and levels.</span>
-        <Button
-          size="sm"
-          disabled={pending}
-          onClick={() =>
-            run(() =>
-              saveProductDetailsAction({
-                productId: r.id,
-                sku: v.sku,
-                brand: v.brand,
-                category: v.category,
-                costCents: cents(v.cost),
-                priceCents: cents(v.price),
-                lowStockThreshold: Number(v.low || 0),
-                parLevel: Number(v.par || 0),
-                highStockThreshold: v.high === "" ? null : Number(v.high),
-              }),
-            )
-          }
-        >
-          Save
-        </Button>
+        <span className="flex items-center gap-2">
+          {msg && <span className="text-xs text-emerald-700">{msg}</span>}
+          <Button
+            size="sm"
+            disabled={sync.pending}
+            onClick={() => {
+              setMsg(null);
+              void sync.open({
+                label: `${r.brand} ${r.name}`,
+                changes: [
+                  {
+                    type: "product",
+                    item: r.id,
+                    value: {
+                      sku: v.sku,
+                      brand: v.brand,
+                      category: v.category,
+                      costCents: cents(v.cost),
+                      priceCents: cents(v.price),
+                      lowStockThreshold: Number(v.low || 0),
+                      parLevel: Number(v.par || 0),
+                      highStockThreshold: v.high === "" ? null : Number(v.high),
+                    },
+                  },
+                ],
+                onDone: (res) => setMsg(syncedText(res)),
+              });
+            }}
+          >
+            Save
+          </Button>
+        </span>
+        {sync.dialog}
       </div>
     </Panel>
   );
