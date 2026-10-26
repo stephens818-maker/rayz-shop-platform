@@ -1,27 +1,12 @@
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import {
-  catalogCategories,
-  services,
-  shopHours,
-  shopServices,
-  shops,
-  staff,
-  staffSchedules,
-  staffShops,
-  Shop,
-  TaxCategory,
-} from "@/db/schema";
-import { notFound } from "./errors";
-import { timingAt } from "./brand-sync/adapters/service-rules";
+import { catalogCategories, services, shopHours, shopServices, shops, staff, staffSchedules, staffShops, Shop, TaxCategory } from "@/db/schema";
+import { notFound } from "./errors"; import { timingAt } from "./brand-sync/adapters/service-rules";
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function getShop(ref: string, tx: DBorTx = db): Promise<Shop> {
-  const where = UUID_RE.test(ref)
-    ? or(eq(shops.id, ref), eq(shops.slug, ref))
-    : eq(shops.slug, ref);
+  const where = UUID_RE.test(ref) ? or(eq(shops.id, ref), eq(shops.slug, ref)) : eq(shops.slug, ref);
   const row = await tx.query.shops.findFirst({ where });
   if (!row) throw notFound("Shop");
   return row;
@@ -47,36 +32,14 @@ export interface EffectiveService {
 }
 
 /** Master catalog merged with the shop's overrides. Only services enabled at the shop are returned. */
-export async function shopCatalog(
-  shopId: string,
-  opts: { onlineOnly?: boolean } = {},
-  tx: DBorTx = db,
-): Promise<EffectiveService[]> {
+export async function shopCatalog(shopId: string, opts: { onlineOnly?: boolean } = {}, tx: DBorTx = db): Promise<EffectiveService[]> {
   const rows = await tx
     .select({ s: services, o: shopServices })
     .from(shopServices)
     .innerJoin(services, eq(services.id, shopServices.serviceId))
-    .leftJoin(
-      catalogCategories,
-      and(
-        eq(catalogCategories.kind, "service"),
-        sql`lower(${catalogCategories.name}) = lower(${services.category})`,
-      ),
-    )
-    .where(
-      and(
-        eq(shopServices.shopId, shopId),
-        eq(shopServices.enabled, true),
-        eq(services.active, true),
-      ),
-    )
-    .orderBy(
-      asc(services.kind),
-      sql`coalesce(${catalogCategories.sortOrder}, 100000)`,
-      asc(services.sortOrder),
-      asc(services.name),
-    );
-  const timing = await timingAt(shopId, tx);
+    .leftJoin(catalogCategories, and(eq(catalogCategories.kind, "service"), sql`lower(${catalogCategories.name}) = lower(${services.category})`))
+    .where(and(eq(shopServices.shopId, shopId), eq(shopServices.enabled, true), eq(services.active, true)))
+    .orderBy(asc(services.kind), sql`coalesce(${catalogCategories.sortOrder}, 100000)`, asc(services.sortOrder), asc(services.name)); const timing = await timingAt(shopId, tx);
   return rows
     .map(({ s, o }) => ({ s: { ...s, ...timing.get(s.id) }, o }))
     .map(({ s, o }) => ({
@@ -109,11 +72,7 @@ export interface PublicBarber {
 }
 
 /** Barbers who are bookable at a shop. Surnames are never selected. */
-export async function shopBarbers(
-  shopId: string,
-  opts: { onlineOnly?: boolean } = {},
-  tx: DBorTx = db,
-): Promise<PublicBarber[]> {
+export async function shopBarbers(shopId: string, opts: { onlineOnly?: boolean } = {}, tx: DBorTx = db): Promise<PublicBarber[]> {
   const rows = await tx
     .select({
       id: staff.id,
@@ -124,13 +83,7 @@ export async function shopBarbers(
     })
     .from(staffShops)
     .innerJoin(staff, eq(staff.id, staffShops.staffId))
-    .where(
-      and(
-        eq(staffShops.shopId, shopId),
-        eq(staff.active, true),
-        eq(staff.isBookable, true),
-      ),
-    )
+    .where(and(eq(staffShops.shopId, shopId), eq(staff.active, true), eq(staff.isBookable, true)))
     .orderBy(asc(staff.displayLabel));
   // Only barbers with weekly hours at this shop can actually take bookings here.
   const scheduled = await tx
@@ -140,28 +93,14 @@ export async function shopBarbers(
   const has = new Set(scheduled.map((s) => s.staffId));
   return rows
     .filter((r) => has.has(r.id) && (!opts.onlineOnly || r.visibleOnline))
-    .map(({ id, slug, displayName, color }) => ({
-      id,
-      slug,
-      displayName,
-      color,
-      photoUrl: null,
-    }));
+    .map(({ id, slug, displayName, color }) => ({ id, slug, displayName, color, photoUrl: null }));
 }
 
 export async function shopWeeklyHours(shopId: string, tx: DBorTx = db) {
-  return tx
-    .select()
-    .from(shopHours)
-    .where(eq(shopHours.shopId, shopId))
-    .orderBy(asc(shopHours.weekday));
+  return tx.select().from(shopHours).where(eq(shopHours.shopId, shopId)).orderBy(asc(shopHours.weekday));
 }
 
-export async function servicesByIds(
-  shopId: string,
-  ids: string[],
-  tx: DBorTx = db,
-): Promise<EffectiveService[]> {
+export async function servicesByIds(shopId: string, ids: string[], tx: DBorTx = db): Promise<EffectiveService[]> {
   if (ids.length === 0) return [];
   const all = await shopCatalog(shopId, {}, tx);
   const byId = new Map(all.map((s) => [s.id, s]));
@@ -173,17 +112,11 @@ export async function servicesByIds(
 }
 
 export async function resolveStaffRef(ref: string, tx: DBorTx = db) {
-  const where = UUID_RE.test(ref)
-    ? or(eq(staff.id, ref), eq(staff.publicSlug, ref))
-    : eq(staff.publicSlug, ref);
+  const where = UUID_RE.test(ref) ? or(eq(staff.id, ref), eq(staff.publicSlug, ref)) : eq(staff.publicSlug, ref);
   return tx.query.staff.findFirst({ where });
 }
 
 export async function shopsByIds(ids: string[]) {
   if (!ids.length) return [];
-  return db
-    .select()
-    .from(shops)
-    .where(inArray(shops.id, ids))
-    .orderBy(asc(shops.name));
+  return db.select().from(shops).where(inArray(shops.id, ids)).orderBy(asc(shops.name));
 }

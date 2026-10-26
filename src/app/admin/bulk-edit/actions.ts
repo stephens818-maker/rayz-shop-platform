@@ -29,27 +29,21 @@ const refresh = (...paths: string[]) => {
 };
 
 /** The brand changes a services bulk edit makes, for the sync dialog to preview and send to the shops picked. */
-export async function bulkServiceChangesAction(
-  raw: z.input<typeof BulkServicesInput>,
-) {
+export async function bulkServiceChangesAction(raw: z.input<typeof BulkServicesInput>) {
   return safe(async () => {
     await authorize("catalog.manage");
     return bulkServiceChanges(raw);
   });
 }
 
-export async function bulkProductChangesAction(
-  raw: z.input<typeof BulkProductsInput>,
-) {
+export async function bulkProductChangesAction(raw: z.input<typeof BulkProductsInput>) {
   return safe(async () => {
     await authorize("catalog.manage");
     return bulkProductChanges(raw);
   });
 }
 
-export async function bulkShopServicesAction(
-  raw: z.input<typeof BulkShopServicesInput>,
-) {
+export async function bulkShopServicesAction(raw: z.input<typeof BulkShopServicesInput>) {
   return safe(async () => {
     const ctx = await authorize(["catalog.prices", "catalog.manage"]);
     assertShopAccess(ctx, raw.shopId);
@@ -64,30 +58,17 @@ export async function bulkShopServicesAction(
 export async function bulkStaffAction(raw: z.input<typeof BulkStaffInput>) {
   return safe(async () => {
     const ctx = await authorize("staff.manage");
-    const r = await bulkStaff(
-      {
-        actor: ctx.actor,
-        staffId: ctx.staff.id,
-        shopIds: ctx.shopIds,
-        brandWide: ctx.brandWide,
-      },
-      raw,
-    );
+    const r = await bulkStaff({ actor: ctx.actor, staffId: ctx.staff.id, shopIds: ctx.shopIds, brandWide: ctx.brandWide }, raw);
     refresh("/admin/staff");
     return r;
   });
 }
 
 /** Templates are shared by every shop's managers, so editing one needs access to all shops. */
-export async function saveScheduleTemplateAction(
-  raw: z.input<typeof ScheduleTemplateInput>,
-) {
+export async function saveScheduleTemplateAction(raw: z.input<typeof ScheduleTemplateInput>) {
   return safe(async () => {
     const ctx = await authorize("schedules.edit");
-    if (!ctx.brandWide && raw.id)
-      throw forbidden(
-        "Templates are shared by every shop; changing one needs access to all shops",
-      );
+    if (!ctx.brandWide && raw.id) throw forbidden("Templates are shared by every shop; changing one needs access to all shops");
     const r = await saveScheduleTemplate(ctx.actor, raw);
     refresh();
     return r;
@@ -97,25 +78,18 @@ export async function saveScheduleTemplateAction(
 export async function deleteScheduleTemplateAction(id: string) {
   return safe(async () => {
     const ctx = await authorize("schedules.edit");
-    if (!ctx.brandWide)
-      throw forbidden(
-        "Templates are shared by every shop; deleting one needs access to all shops",
-      );
+    if (!ctx.brandWide) throw forbidden("Templates are shared by every shop; deleting one needs access to all shops");
     await deleteScheduleTemplate(ctx.actor, z.uuid().parse(id));
     refresh();
     return null;
   });
 }
 
-export async function applyScheduleTemplateAction(
-  raw: z.input<typeof ApplyTemplateInput>,
-) {
+export async function applyScheduleTemplateAction(raw: z.input<typeof ApplyTemplateInput>) {
   return safe(async () => {
     const ctx = await authorize("schedules.edit");
     assertShopAccess(ctx, raw.shopId);
-    const r = await applyScheduleTemplate(ctx.actor, raw, (id) =>
-      assertCanSchedule(ctx, id),
-    );
+    const r = await applyScheduleTemplate(ctx.actor, raw, (id) => assertCanSchedule(ctx, id));
     refresh("/admin/staff", "/admin/calendar");
     return r;
   });

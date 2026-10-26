@@ -41,28 +41,18 @@ const READ_REFRESH_CAP = 200;
 const STALE_DAY = "2000-01-01";
 
 /** One array parameter, so a big batch stays under the bind-parameter limit. */
-const idArray = (ids: readonly string[]) =>
-  sql`${`{${ids.filter((i) => UUID.test(i)).join(",")}}`}::uuid[]`;
+const idArray = (ids: readonly string[]) => sql`${`{${ids.filter((i) => UUID.test(i)).join(",")}}`}::uuid[]`;
 const rowsOf = async <T>(q: Promise<unknown>) => (await q) as unknown as T[];
 
 // ───────────────────────────── Settings ─────────────────────────────
 
-export const markAllStale = (tx: DBorTx = db) =>
-  tx.execute(sql`update client_badges set computed_on = ${STALE_DAY}::date`);
+export const markAllStale = (tx: DBorTx = db) => tx.execute(sql`update client_badges set computed_on = ${STALE_DAY}::date`);
 
 /** Creates or edits a custom badge. The filter must be one the person could run themselves. */
-export async function saveCustomBadge(
-  ctx: StaffContext,
-  raw: unknown,
-): Promise<string> {
-  if (!can(ctx, "badges.settings"))
-    throw forbidden("You can't change client badges");
+export async function saveCustomBadge(ctx: StaffContext, raw: unknown): Promise<string> {
+  if (!can(ctx, "badges.settings")) throw forbidden("You can't change client badges");
   const parsed = CustomBadgeSchema.safeParse(raw);
-  if (!parsed.success)
-    throw new AppError(
-      "bad_request",
-      parsed.error.issues[0]?.message ?? "Check the badge",
-    );
+  if (!parsed.success) throw new AppError("bad_request", parsed.error.issues[0]?.message ?? "Check the badge");
   const b = parsed.data;
   const filter = { ...b.filter, shopIds: [], channel: "any" as const };
   const policy = await clientPolicy(ctx);
@@ -75,15 +65,7 @@ export async function saveCustomBadge(
   };
   const problem = customBadgeProblem(filter) ?? segmentProblem(filter, sees);
   if (problem) throw new AppError("bad_request", problem);
-  const values = {
-    label: b.label,
-    tooltip: b.tooltip,
-    icon: b.icon,
-    tone: b.tone,
-    filter,
-    active: b.active,
-    updatedAt: new Date(),
-  };
+  const values = { label: b.label, tooltip: b.tooltip, icon: b.icon, tone: b.tone, filter, active: b.active, updatedAt: new Date() };
   let id = b.id;
   if (id) {
     const [row] = await db
@@ -93,15 +75,13 @@ export async function saveCustomBadge(
       .returning({ id: customBadges.id });
     if (!row) throw notFound("That badge was removed");
   } else {
-    const [{ n }] = await rowsOf<{ n: number }>(
-      db.execute(sql`select count(*)::int n from custom_badges`),
-    );
+    const [{ n }] = await rowsOf<{ n: number }>(db.execute(sql`select count(*)::int n from custom_badges`));
     if (n >= 30) throw new AppError("bad_request", "Up to 30 custom badges");
     id = await db.transaction(async (tx) => {
       const [row] = await tx
-        .insert(customBadges)
-        .values({ ...values, sortOrder: n, createdBy: ctx.staff.id })
-        .returning({ id: customBadges.id });
+      .insert(customBadges)
+      .values({ ...values, sortOrder: n, createdBy: ctx.staff.id })
+      .returning({ id: customBadges.id });
       await markNewListItem(tx, "custom_badge", row.id, {
         actor: ctx.actor,
         ctx,
@@ -110,20 +90,12 @@ export async function saveCustomBadge(
     });
   }
   await markAllStale();
-  await audit(
-    ctx.actor,
-    b.id ? "badges.custom_update" : "badges.custom_create",
-    "custom_badge",
-    id,
-    { label: b.label, active: b.active },
-    null,
-  );
+  await audit(ctx.actor, b.id ? "badges.custom_update" : "badges.custom_create", "custom_badge", id, { label: b.label, active: b.active }, null);
   return id;
 }
 
 export async function deleteCustomBadge(ctx: StaffContext, id: string) {
-  if (!can(ctx, "badges.settings"))
-    throw forbidden("You can't change client badges");
+  if (!can(ctx, "badges.settings")) throw forbidden("You can't change client badges");
   if (!UUID.test(id)) throw notFound("That badge was removed");
   const [row] = await db
     .delete(customBadges)
@@ -131,17 +103,8 @@ export async function deleteCustomBadge(ctx: StaffContext, id: string) {
     .returning({ label: customBadges.label });
   if (!row) throw notFound("That badge was removed");
   const key = customKey(id);
-  await db.execute(
-    sql`update client_badges set keys = array_remove(keys, ${key}), computed_on = ${STALE_DAY}::date where ${key} = any(keys)`,
-  );
-  await audit(
-    ctx.actor,
-    "badges.custom_delete",
-    "custom_badge",
-    id,
-    { label: row.label },
-    null,
-  );
+  await db.execute(sql`update client_badges set keys = array_remove(keys, ${key}), computed_on = ${STALE_DAY}::date where ${key} = any(keys)`);
+  await audit(ctx.actor, "badges.custom_delete", "custom_badge", id, { label: row.label }, null);
 }
 
 // ───────────────────────────── Facts ─────────────────────────────
@@ -161,19 +124,13 @@ function spendSql(today: LocalDate, cond: SQL): SQL {
 const vipCache = new Map<string, { at: number; cents: number | null }>();
 
 /** The least the top spenders spent: the brand's VIP line. Read every 10 minutes at most. */
-export async function vipCutoff(
-  topPct: number,
-  now: Date,
-  tx: DBorTx = db,
-): Promise<number | null> {
+export async function vipCutoff(topPct: number, now: Date, tx: DBorTx = db): Promise<number | null> {
   const today = todayLocal(now);
   const key = `${topPct}:${today}`;
   const hit = vipCache.get(key);
   if (hit && Math.abs(now.getTime() - hit.at) < 600_000) return hit.cents;
   const [row] = await rowsOf<{ cents: number | null }>(
-    tx.execute(
-      sql`select percentile_disc(${1 - topPct / 100}) within group (order by cents) cents from (${spendSql(today, sql``)}) t where cents > 0`,
-    ),
+    tx.execute(sql`select percentile_disc(${1 - topPct / 100}) within group (order by cents) cents from (${spendSql(today, sql``)}) t where cents > 0`),
   );
   const cents = row?.cents == null ? null : Number(row.cents);
   vipCache.set(key, { at: now.getTime(), cents });
@@ -183,32 +140,14 @@ export async function vipCutoff(
 export const resetBadgeCaches = () => vipCache.clear();
 
 /** What the rules read, for each of these clients, in a handful of queries. */
-export async function badgeFacts(
-  ids: readonly string[],
-  now: Date,
-  t: BadgeSettings["thresholds"],
-  tx: DBorTx = db,
-): Promise<Map<string, BadgeFacts>> {
+export async function badgeFacts(ids: readonly string[], now: Date, t: BadgeSettings["thresholds"], tx: DBorTx = db): Promise<Map<string, BadgeFacts>> {
   const out = new Map<string, BadgeFacts>();
   if (!ids.length) return out;
   const these = idArray(ids);
   const today = todayLocal(now);
   const nowIso = now.toISOString();
   const yearAgo = new Date(now.getTime() - 365 * DAY).toISOString();
-  const [
-    people,
-    visits,
-    appts,
-    spend,
-    products,
-    rewards,
-    cards,
-    coupons,
-    clicks,
-    outs,
-    stars,
-    streaks,
-  ] = await Promise.all([
+  const [people, visits, appts, spend, products, rewards, cards, coupons, clicks, outs, stars, streaks] = await Promise.all([
     rowsOf<{
       id: string;
       created_on: string;
@@ -234,15 +173,7 @@ export async function badgeFacts(
       tx.execute(sql`select a.customer_id, to_char((a.starts_at at time zone ${TZ})::date, 'YYYY-MM-DD') d, (array_agg(a.staff_id order by a.starts_at desc))[1] staff_id
         from appointments a where a.status = 'completed' and a.customer_id = any(${these}) group by 1, 2 order by 1, 2`),
     ),
-    rowsOf<{
-      customer_id: string;
-      next_day: string | null;
-      appts: number;
-      no_shows: number;
-      late: number;
-      bookings: number;
-      online: number;
-    }>(
+    rowsOf<{ customer_id: string; next_day: string | null; appts: number; no_shows: number; late: number; bookings: number; online: number }>(
       tx.execute(sql`select a.customer_id,
           min(to_char((a.starts_at at time zone ${TZ})::date, 'YYYY-MM-DD')) filter (where a.status in ${UPCOMING} and a.starts_at >= ${nowIso}) next_day,
           (count(*) filter (where a.status in ('completed', 'no_show') and a.starts_at >= ${yearAgo} and a.starts_at < ${nowIso}))::int appts,
@@ -253,9 +184,7 @@ export async function badgeFacts(
           (count(*) filter (where a.created_at >= ${yearAgo} and a.source in ('online', 'api')))::int online
         from appointments a where a.customer_id = any(${these}) group by 1`),
     ),
-    rowsOf<{ customer_id: string; cents: number }>(
-      tx.execute(spendSql(today, sql` and s.customer_id = any(${these})`)),
-    ),
+    rowsOf<{ customer_id: string; cents: number }>(tx.execute(spendSql(today, sql` and s.customer_id = any(${these})`))),
     rowsOf<{ customer_id: string; yr: number; ever: number }>(
       tx.execute(sql`select s.customer_id, coalesce(sum(si.qty - si.refunded_qty) filter (where s.business_date > (${today}::date - 365)), 0)::int yr, coalesce(sum(si.qty), 0)::int ever
         from sale_items si join sales s on s.id = si.sale_id where si.kind = 'product' and s.status in ${PAID} and s.customer_id = any(${these}) group by 1`),
@@ -274,9 +203,7 @@ export async function badgeFacts(
           and p.active and (p.ends_on is null or p.ends_on >= ${today}::date) group by 1`),
     ),
     rowsOf<{ customer_id: string; n: number }>(
-      tx.execute(
-        sql`select s.customer_id, count(*)::int n from review_clicks rc join sales s on s.id = rc.sale_id where s.customer_id = any(${these}) group by 1`,
-      ),
+      tx.execute(sql`select s.customer_id, count(*)::int n from review_clicks rc join sales s on s.id = rc.sale_id where s.customer_id = any(${these}) group by 1`),
     ),
     rowsOf<{ id: string; channel: string }>(
       tx.execute(sql`select distinct c.id, u.channel from customers c join marketing_unsubscribes u
@@ -285,9 +212,7 @@ export async function badgeFacts(
         union select c.id, 'sms' from customers c join contact_opt_outs o on o.phone = c.phone and o.channel = 'sms' where c.id = any(${these})`),
     ),
     rowsOf<{ customer_id: string; avg: number; n: number }>(
-      tx.execute(
-        sql`select customer_id, avg(stars)::float8 avg, count(*)::int n from client_ratings where customer_id = any(${these}) group by 1`,
-      ),
+      tx.execute(sql`select customer_id, avg(stars)::float8 avg, count(*)::int n from client_ratings where customer_id = any(${these}) group by 1`),
     ),
     // Kept on time: completed, and arrived within the grace (or no arrival stamped). A no-show, a late cancel or a late arrival ends the run.
     rowsOf<{ customer_id: string; n: number }>(
@@ -303,21 +228,15 @@ export async function badgeFacts(
 
   const staffIds = new Set<string>();
   for (const v of visits) staffIds.add(v.staff_id);
-  for (const p of people)
-    if (p.preferred_staff_id) staffIds.add(p.preferred_staff_id);
+  for (const p of people) if (p.preferred_staff_id) staffIds.add(p.preferred_staff_id);
   const barbers = staffIds.size
     ? await rowsOf<{ id: string; name: string; active: boolean }>(
-        tx.execute(
-          sql`select id, display_label name, (active and removed_at is null) active from staff where id = any(${idArray([...staffIds])})`,
-        ),
+        tx.execute(sql`select id, display_label name, (active and removed_at is null) active from staff where id = any(${idArray([...staffIds])})`),
       )
     : [];
-  const barberMap = Object.fromEntries(
-    barbers.map((b) => [b.id, { name: b.name, active: b.active }]),
-  );
+  const barberMap = Object.fromEntries(barbers.map((b) => [b.id, { name: b.name, active: b.active }]));
 
-  const by = <R extends { customer_id: string }>(rows: R[]) =>
-    new Map(rows.map((r) => [r.customer_id, r]));
+  const by = <R extends { customer_id: string }>(rows: R[]) => new Map(rows.map((r) => [r.customer_id, r]));
   const apptBy = by(appts);
   const spendBy = by(spend);
   const productBy = by(products);
@@ -334,43 +253,27 @@ export async function badgeFacts(
     visitsBy.set(v.customer_id, list);
   }
   const outsBy = new Map<string, string[]>();
-  for (const o of outs)
-    outsBy.set(o.id, [...(outsBy.get(o.id) ?? []), o.channel]);
+  for (const o of outs) outsBy.set(o.id, [...(outsBy.get(o.id) ?? []), o.channel]);
 
   for (const p of people) {
     const a = apptBy.get(p.id);
     const mine = visitsBy.get(p.id) ?? [];
     const own: BadgeFacts["barbers"] = {};
-    for (const id of [p.preferred_staff_id, ...mine.map((v) => v.staffId)])
-      if (id && barberMap[id]) own[id] = barberMap[id];
+    for (const id of [p.preferred_staff_id, ...mine.map((v) => v.staffId)]) if (id && barberMap[id]) own[id] = barberMap[id];
     out.set(p.id, {
       visits: mine,
       nextBooked: a?.next_day ?? null,
-      year: {
-        appointments: a?.appts ?? 0,
-        noShows: a?.no_shows ?? 0,
-        lateCancels: a?.late ?? 0,
-        bookings: a?.bookings ?? 0,
-        online: a?.online ?? 0,
-      },
+      year: { appointments: a?.appts ?? 0, noShows: a?.no_shows ?? 0, lateCancels: a?.late ?? 0, bookings: a?.bookings ?? 0, online: a?.online ?? 0 },
       createdOn: p.created_on,
       birthday: p.bday,
       preferredStaffId: p.preferred_staff_id,
       barbers: own,
       spendCents: Number(spendBy.get(p.id)?.cents ?? 0),
-      products: {
-        year: Number(productBy.get(p.id)?.yr ?? 0),
-        ever: Number(productBy.get(p.id)?.ever ?? 0),
-      },
+      products: { year: Number(productBy.get(p.id)?.yr ?? 0), ever: Number(productBy.get(p.id)?.ever ?? 0) },
       rewardCents: Number(rewardBy.get(p.id)?.cents ?? 0),
       giftCardCents: Number(cardBy.get(p.id)?.cents ?? 0),
       coupons: Number(couponBy.get(p.id)?.n ?? 0),
-      rating: starsBy.has(p.id)
-        ? {
-            avg: Number(starsBy.get(p.id)!.avg),
-            count: Number(starsBy.get(p.id)!.n),
-          }
-        : null,
+      rating: starsBy.has(p.id) ? { avg: Number(starsBy.get(p.id)!.avg), count: Number(starsBy.get(p.id)!.n) } : null,
       reviewClicks: Number(clickBy.get(p.id)?.n ?? 0),
       hasPhone: p.has_phone,
       hasEmail: p.has_email,
@@ -388,12 +291,7 @@ export async function badgeFacts(
 }
 
 /** Who each custom badge's filter matches: these clients, or (ids null) everyone, for the nightly run. */
-export async function customMembers(
-  custom: readonly CustomBadge[],
-  now: Date,
-  ids: readonly string[] | null,
-  tx: DBorTx = db,
-): Promise<Map<string, Set<string>>> {
+export async function customMembers(custom: readonly CustomBadge[], now: Date, ids: readonly string[] | null, tx: DBorTx = db): Promise<Map<string, Set<string>>> {
   const out = new Map<string, Set<string>>();
   for (const c of custom) {
     if (!c.active) continue;
@@ -401,9 +299,7 @@ export async function customMembers(
     if (!where.length) continue;
     if (ids) where.push(sql`c.id = any(${idArray(ids)})`);
     const rows = await rowsOf<{ id: string }>(
-      tx.execute(
-        sql`with ${CLIENT_FACTS} select c.id from customers c left join v on v.customer_id = c.id left join sp on sp.customer_id = c.id where ${sql.join(where, sql` and `)}`,
-      ),
+      tx.execute(sql`with ${CLIENT_FACTS} select c.id from customers c left join v on v.customer_id = c.id left join sp on sp.customer_id = c.id where ${sql.join(where, sql` and `)}`),
     );
     out.set(c.id, new Set(rows.map((r) => r.id)));
   }
@@ -418,25 +314,10 @@ export interface BadgeRun {
   members?: Map<string, Set<string>>;
 }
 
-export async function badgeRun(
-  now: Date,
-  o: { allMembers?: boolean } = {},
-  tx: DBorTx = db,
-): Promise<BadgeRun> {
-  const [settings, custom] = await Promise.all([
-    loadBadgeSettings(null, tx),
-    listCustomBadges({ active: true }, tx),
-  ]);
+export async function badgeRun(now: Date, o: { allMembers?: boolean } = {}, tx: DBorTx = db): Promise<BadgeRun> {
+  const [settings, custom] = await Promise.all([loadBadgeSettings(null, tx), listCustomBadges({ active: true }, tx)]);
   const vip = await vipCutoff(settings.thresholds.vipTopPct, now, tx);
-  return {
-    settings,
-    custom,
-    vip,
-    members:
-      o.allMembers && custom.length
-        ? await customMembers(custom, now, null, tx)
-        : undefined,
-  };
+  return { settings, custom, vip, members: o.allMembers && custom.length ? await customMembers(custom, now, null, tx) : undefined };
 }
 
 export interface Computed {
@@ -445,45 +326,25 @@ export interface Computed {
 }
 
 /** Every badge these clients earn (built-in and custom), whoever may see them, and what progress meters read. */
-export async function computeBadges(
-  ids: readonly string[],
-  now: Date,
-  run: BadgeRun,
-  tx: DBorTx = db,
-): Promise<Map<string, Computed>> {
+export async function computeBadges(ids: readonly string[], now: Date, run: BadgeRun, tx: DBorTx = db): Promise<Map<string, Computed>> {
   const out = new Map<string, Computed>();
   if (!ids.length) return out;
-  const [facts, members] = await Promise.all([
-    badgeFacts(ids, now, run.settings.thresholds, tx),
-    run.members ??
-      (run.custom.length ? customMembers(run.custom, now, ids, tx) : new Map()),
-  ]);
+  const [facts, members] = await Promise.all([badgeFacts(ids, now, run.settings.thresholds, tx), run.members ?? (run.custom.length ? customMembers(run.custom, now, ids, tx) : new Map())]);
   const today = todayLocal(now);
   for (const [id, f] of facts) {
-    const list = deriveBadges(f, {
-      today,
-      t: run.settings.thresholds,
-      vipCutoffCents: run.vip,
-    });
-    for (const c of run.custom)
-      if (members.get(c.id)?.has(id)) list.push({ k: customKey(c.id) });
+    const list = deriveBadges(f, { today, t: run.settings.thresholds, vipCutoffCents: run.vip });
+    for (const c of run.custom) if (members.get(c.id)?.has(id)) list.push({ k: customKey(c.id) });
     out.set(id, { badges: list, progress: progressFacts(f) });
   }
   return out;
 }
 
-const hashOf = (b: readonly StoredBadge[], p: BadgeProgressFacts) =>
-  createHash("sha256")
-    .update(JSON.stringify([b, p]))
-    .digest("hex")
-    .slice(0, 32);
+const hashOf = (b: readonly StoredBadge[], p: BadgeProgressFacts) => createHash("sha256").update(JSON.stringify([b, p])).digest("hex").slice(0, 32);
 
 /** The day a badge was earned when we first see it: the day it became true if the rule knows it, otherwise today. */
 function earnedHint(b: StoredBadge, today: LocalDate): LocalDate {
   const at = b.k === "anniversary" ? b.d?.on : b.d?.at;
-  return typeof at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(at) && at <= today
-    ? at
-    : today;
+  return typeof at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(at) && at <= today ? at : today;
 }
 
 /**
@@ -492,25 +353,14 @@ function earnedHint(b: StoredBadge, today: LocalDate): LocalDate {
  * that came or went since the last run is noted for Badge news (never on a client's first run, so
  * the first fill messages nobody). Returns how many changed.
  */
-export async function refreshBadges(
-  ids: readonly string[],
-  now: Date,
-  run?: BadgeRun,
-  tx: DBorTx = db,
-): Promise<number> {
+export async function refreshBadges(ids: readonly string[], now: Date, run?: BadgeRun, tx: DBorTx = db): Promise<number> {
   const clean = [...new Set(ids.filter((i) => UUID.test(i)))];
   if (!clean.length) return 0;
   const r = run ?? (await badgeRun(now, {}, tx));
   const [computed, before] = await Promise.all([
     computeBadges(clean, now, r, tx),
-    rowsOf<{
-      customer_id: string;
-      keys: string[];
-      since: Record<string, string>;
-    }>(
-      tx.execute(
-        sql`select customer_id, keys, since from client_badges where customer_id = any(${idArray(clean)})`,
-      ),
+    rowsOf<{ customer_id: string; keys: string[]; since: Record<string, string> }>(
+      tx.execute(sql`select customer_id, keys, since from client_badges where customer_id = any(${idArray(clean)})`),
     ),
   ]);
   if (!computed.size) return 0;
@@ -521,31 +371,13 @@ export async function refreshBadges(
   const rows = [...computed].map(([id, c]) => {
     const was = old.get(id);
     const since: Record<string, string> = {};
-    for (const b of c.badges)
-      since[b.k] =
-        was?.keys.includes(b.k) && was.since?.[b.k]
-          ? was.since[b.k]
-          : earnedHint(b, today);
+    for (const b of c.badges) since[b.k] = was?.keys.includes(b.k) && was.since?.[b.k] ? was.since[b.k] : earnedHint(b, today);
     if (was) {
       const has = new Set(c.badges.map((b) => b.k));
-      const changes = [
-        ...[...has]
-          .filter((k) => !was.keys.includes(k))
-          .map((k) => [k, "earned"] as const),
-        ...was.keys.filter((k) => !has.has(k)).map((k) => [k, "lost"] as const),
-      ];
-      for (const [key, change] of changes)
-        if (notifies(r.settings, key, change, custom.get(key)))
-          notices.push({ id, key, change });
+      const changes = [...[...has].filter((k) => !was.keys.includes(k)).map((k) => [k, "earned"] as const), ...was.keys.filter((k) => !has.has(k)).map((k) => [k, "lost"] as const)];
+      for (const [key, change] of changes) if (notifies(r.settings, key, change, custom.get(key))) notices.push({ id, key, change });
     }
-    return {
-      id,
-      keys: c.badges.map((x) => x.k),
-      badges: c.badges,
-      progress: c.progress,
-      since,
-      hash: hashOf(c.badges, c.progress),
-    };
+    return { id, keys: c.badges.map((x) => x.k), badges: c.badges, progress: c.progress, since, hash: hashOf(c.badges, c.progress) };
   });
   const changed = await rowsOf<{ customer_id: string }>(
     tx.execute(sql`insert into client_badges (customer_id, keys, badges, progress, since, hash, computed_on, computed_at, changed_at)
@@ -558,10 +390,7 @@ export async function refreshBadges(
   );
   const changedIds = new Set(changed.map((c) => c.customer_id));
   const same = rows.map((x) => x.id).filter((id) => !changedIds.has(id));
-  if (same.length)
-    await tx.execute(
-      sql`update client_badges set computed_on = ${today}::date, computed_at = now() where customer_id = any(${idArray(same)})`,
-    );
+  if (same.length) await tx.execute(sql`update client_badges set computed_on = ${today}::date, computed_at = now() where customer_id = any(${idArray(same)})`);
   if (notices.length)
     await tx.execute(sql`insert into client_badge_notices (customer_id, badge_key, change, occurred_on)
       select (x->>'id')::uuid, x->>'key', x->>'change', ${today}::date from jsonb_array_elements(${JSON.stringify(notices)}::jsonb) x
@@ -576,11 +405,7 @@ export async function refreshBadges(
  */
 export async function runBadgeJob(
   now = new Date(),
-  o: {
-    budgetMs?: number;
-    batch?: number;
-    bucket?: { k: number; of: number };
-  } = {},
+  o: { budgetMs?: number; batch?: number; bucket?: { k: number; of: number } } = {},
 ): Promise<{ scanned: number; changed: number; remaining: number }> {
   const started = Date.now();
   const budget = o.budgetMs ?? 240_000;
@@ -588,76 +413,45 @@ export async function runBadgeJob(
   const today = todayLocal(now);
   const cols = await consentColumns();
   const alive = cols.deleted ? sql` and c.deleted_at is null` : sql``;
-  const slice = o.bucket
-    ? sql` and mod(abs(hashtext(c.id::text)::bigint), ${o.bucket.of}) = ${o.bucket.k}`
-    : sql``;
-  const pending = () =>
-    sql`from customers c left join client_badges b on b.customer_id = c.id where (b.customer_id is null or b.computed_on < ${today}::date)${alive}${slice}`;
+  const slice = o.bucket ? sql` and mod(abs(hashtext(c.id::text)::bigint), ${o.bucket.of}) = ${o.bucket.k}` : sql``;
+  const pending = () => sql`from customers c left join client_badges b on b.customer_id = c.id where (b.customer_id is null or b.computed_on < ${today}::date)${alive}${slice}`;
   const run = await badgeRun(now, { allMembers: true });
   let scanned = 0;
   let changed = 0;
   while (Date.now() - started < budget) {
-    const ids = (
-      await rowsOf<{ id: string }>(
-        db.execute(
-          sql`select c.id ${pending()} order by b.computed_on nulls first, c.id limit ${batch}`,
-        ),
-      )
-    ).map((r) => r.id);
+    const ids = (await rowsOf<{ id: string }>(db.execute(sql`select c.id ${pending()} order by b.computed_on nulls first, c.id limit ${batch}`))).map((r) => r.id);
     if (!ids.length) break;
     changed += await refreshBadges(ids, now, run);
     scanned += ids.length;
   }
-  const [{ n }] = await rowsOf<{ n: number }>(
-    db.execute(sql`select count(*)::int n ${pending()}`),
-  );
+  const [{ n }] = await rowsOf<{ n: number }>(db.execute(sql`select count(*)::int n ${pending()}`));
   return { scanned, changed, remaining: Number(n) };
 }
 
 export async function badgeCacheStatus(now = new Date()) {
   const today = todayLocal(now);
-  const [row] = await rowsOf<{
-    cached: number;
-    fresh: number;
-    clients: number;
-    last: Date | null;
-  }>(
+  const [row] = await rowsOf<{ cached: number; fresh: number; clients: number; last: Date | null }>(
     db.execute(sql`select (select count(*)::int from client_badges) cached, (select count(*)::int from client_badges where computed_on >= ${today}::date) fresh,
       (select count(*)::int from customers) clients, (select max(computed_at) from client_badges) last`),
   );
-  return {
-    cached: Number(row.cached),
-    fresh: Number(row.fresh),
-    clients: Number(row.clients),
-    last: row.last ? new Date(row.last) : null,
-  };
+  return { cached: Number(row.cached), fresh: Number(row.fresh), clients: Number(row.clients), last: row.last ? new Date(row.last) : null };
 }
 
 // ───────────────────────────── Reading ─────────────────────────────
 
 /** The cached badges for these clients; missing or stale ones are recomputed first (up to a cap). */
-export async function storedBadges(
-  ids: readonly (string | null | undefined)[],
-  now = new Date(),
-  tx: DBorTx = db,
-): Promise<Map<string, StoredBadge[]>> {
-  const clean = [
-    ...new Set(ids.filter((i): i is string => !!i && UUID.test(i))),
-  ];
+export async function storedBadges(ids: readonly (string | null | undefined)[], now = new Date(), tx: DBorTx = db): Promise<Map<string, StoredBadge[]>> {
+  const clean = [...new Set(ids.filter((i): i is string => !!i && UUID.test(i)))];
   const out = new Map<string, StoredBadge[]>();
   if (!clean.length) return out;
   const today = todayLocal(now);
   const read = () =>
     rowsOf<{ customer_id: string; badges: StoredBadge[]; fresh: boolean }>(
-      tx.execute(
-        sql`select customer_id, badges, computed_on >= ${today}::date fresh from client_badges where customer_id = any(${idArray(clean)})`,
-      ),
+      tx.execute(sql`select customer_id, badges, computed_on >= ${today}::date fresh from client_badges where customer_id = any(${idArray(clean)})`),
     );
   let rows = await read();
   const have = new Map(rows.map((r) => [r.customer_id, r]));
-  const todo = clean
-    .filter((id) => !have.get(id)?.fresh)
-    .slice(0, READ_REFRESH_CAP);
+  const todo = clean.filter((id) => !have.get(id)?.fresh).slice(0, READ_REFRESH_CAP);
   if (todo.length) {
     await refreshBadges(todo, now, undefined, tx);
     rows = await read();
@@ -667,19 +461,11 @@ export async function storedBadges(
 }
 
 /** The badges each client shows to this person, in catalog order. */
-export async function shownBadges(
-  policy: Pick<ClientPolicy, "badges" | "level" | "customBadges">,
-  ids: readonly (string | null | undefined)[],
-  now = new Date(),
-): Promise<Map<string, ShownBadge[]>> {
+export async function shownBadges(policy: Pick<ClientPolicy, "badges" | "level" | "customBadges">, ids: readonly (string | null | undefined)[], now = new Date()): Promise<Map<string, ShownBadge[]>> {
   const out = new Map<string, ShownBadge[]>();
   if (!policy.badges.size) return out;
   const stored = await storedBadges(ids, now);
-  const view = {
-    keys: policy.badges,
-    level: policy.level,
-    custom: policy.customBadges,
-  };
+  const view = { keys: policy.badges, level: policy.level, custom: policy.customBadges };
   for (const [id, b] of stored) out.set(id, showBadges(b, view));
   return out;
 }
@@ -696,10 +482,7 @@ export async function badgeCounts(
 ): Promise<{ key: string; count: number }[]> {
   const want = MORNING_BADGES.filter((k) => keys.includes(k));
   if (!shopIds.length || !want.length) return [];
-  const mine =
-    o.staffId && UUID.test(o.staffId)
-      ? sql` and a.staff_id = ${o.staffId}::uuid`
-      : sql``;
+  const mine = o.staffId && UUID.test(o.staffId) ? sql` and a.staff_id = ${o.staffId}::uuid` : sql``;
   const ids = (
     await rowsOf<{ id: string }>(
       db.execute(sql`select distinct a.customer_id id from appointments a where a.shop_id = any(${idArray([...shopIds])}) and a.customer_id is not null
@@ -709,11 +492,6 @@ export async function badgeCounts(
   if (!ids.length) return [];
   const stored = await storedBadges(ids, o.now);
   const n = new Map<string, number>();
-  for (const b of stored.values())
-    for (const s of b)
-      if (want.includes(s.k as (typeof want)[number]))
-        n.set(s.k, (n.get(s.k) ?? 0) + 1);
-  return want
-    .filter((k) => n.get(k))
-    .map((k) => ({ key: k, count: n.get(k)! }));
+  for (const b of stored.values()) for (const s of b) if (want.includes(s.k as (typeof want)[number])) n.set(s.k, (n.get(s.k) ?? 0) + 1);
+  return want.filter((k) => n.get(k)).map((k) => ({ key: k, count: n.get(k)! }));
 }

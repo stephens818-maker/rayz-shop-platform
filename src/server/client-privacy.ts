@@ -3,15 +3,7 @@ import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { offeredAt } from "./brand-sync/lists";
 import { settingAt } from "./brand-sync/settings";
-import {
-  clientAccessAlerts,
-  clientAccessLog,
-  clientFieldRules,
-  clientFields,
-  notificationJobs,
-  roles,
-  staff,
-} from "@/db/schema";
+import { clientAccessAlerts, clientAccessLog, clientFieldRules, clientFields, notificationJobs, roles, staff } from "@/db/schema";
 import {
   ACCESS_KINDS,
   AccessKind,
@@ -78,50 +70,22 @@ export interface ClientPolicy {
   /** Client badges this person may see (visibleBadges in src/domain/badges.ts). */
   badges: ReadonlySet<string>;
   /** Custom badges' names and looks, by id. */
-  customBadges: ReadonlyMap<
-    string,
-    Pick<CustomBadge, "label" | "tooltip" | "icon" | "tone">
-  >;
+  customBadges: ReadonlyMap<string, Pick<CustomBadge, "label" | "tooltip" | "icon" | "tone">>;
 }
 
-type Working = {
-  shopId: string | null;
-  roleId: string;
-  roleKey: string | null;
-  brandLevel: boolean;
-};
+type Working = { shopId: string | null; roleId: string; roleKey: string | null; brandLevel: boolean };
 
 /** Whose role applies where: the shop they're in, every shop they're working across, or brand-wide. */
 function workingAs(ctx: StaffContext): Working[] {
   const main = ctx.access.role;
   if (ctx.currentShopId) {
     const r = ctx.access.byShop.get(ctx.currentShopId)?.role ?? main;
-    return [
-      {
-        shopId: ctx.currentShopId,
-        roleId: ctx.staff.roleId,
-        roleKey: ctx.staff.roleKey,
-        brandLevel: !!r.brandLevel,
-      },
-    ];
+    return [{ shopId: ctx.currentShopId, roleId: ctx.staff.roleId, roleKey: ctx.staff.roleKey, brandLevel: !!r.brandLevel }];
   }
-  if (ctx.brandWide || !ctx.shopIds.length)
-    return [
-      {
-        shopId: null,
-        roleId: main.id,
-        roleKey: main.key,
-        brandLevel: !!main.brandLevel,
-      },
-    ];
+  if (ctx.brandWide || !ctx.shopIds.length) return [{ shopId: null, roleId: main.id, roleKey: main.key, brandLevel: !!main.brandLevel }];
   return ctx.shopIds.map((s) => {
     const r = ctx.access.byShop.get(s)?.role ?? main;
-    return {
-      shopId: s,
-      roleId: r.id,
-      roleKey: r.key,
-      brandLevel: !!r.brandLevel,
-    };
+    return { shopId: s, roleId: r.id, roleKey: r.key, brandLevel: !!r.brandLevel };
   });
 }
 
@@ -135,85 +99,34 @@ export async function activeCustomFields(shopId?: string | null) {
   return offeredAt("client_field", shopId, rows);
 }
 
-export async function rulesFor(
-  staffId: string,
-  roleIds: string[],
-): Promise<FieldRule[]> {
+export async function rulesFor(staffId: string, roleIds: string[]): Promise<FieldRule[]> {
   const rows = await db
     .select()
     .from(clientFieldRules)
-    .where(
-      or(
-        eq(clientFieldRules.staffId, staffId),
-        roleIds.length
-          ? and(
-              inArray(clientFieldRules.roleId, roleIds),
-              isNull(clientFieldRules.staffId),
-            )
-          : undefined,
-      ),
-    );
+    .where(or(eq(clientFieldRules.staffId, staffId), roleIds.length ? and(inArray(clientFieldRules.roleId, roleIds), isNull(clientFieldRules.staffId)) : undefined));
   return rows.filter(validRule);
 }
 
 /** Combined across the shops someone works in at once, the strictest level wins. */
-export function levelsFor(
-  rules: readonly FieldRule[],
-  staffId: string,
-  working: readonly Working[],
-  fields: readonly FieldKey[],
-): Map<FieldKey, Level> {
-  return new Map(
-    fields.map((f) => [
-      f,
-      minLevel(
-        ...working.map((w) =>
-          resolveLevel(
-            rules,
-            { staffId, roleId: w.roleId, roleKey: w.roleKey },
-            w.shopId,
-            f,
-          ),
-        ),
-      ),
-    ]),
-  );
+export function levelsFor(rules: readonly FieldRule[], staffId: string, working: readonly Working[], fields: readonly FieldKey[]): Map<FieldKey, Level> {
+  return new Map(fields.map((f) => [f, minLevel(...working.map((w) => resolveLevel(rules, { staffId, roleId: w.roleId, roleKey: w.roleKey }, w.shopId, f)))]));
 }
 
 /** Entry rights keyed `add:<field>` and `edit:<field>`; across several shops at once, every one must allow it. */
-export function entriesFor(
-  rules: readonly FieldRule[],
-  staffId: string,
-  working: readonly Working[],
-  fields: readonly FieldKey[],
-): Map<string, boolean> {
+export function entriesFor(rules: readonly FieldRule[], staffId: string, working: readonly Working[], fields: readonly FieldKey[]): Map<string, boolean> {
   const out = new Map<string, boolean>();
   for (const f of fields)
     for (const s of ["add", "edit"] as EntrySetting[])
       out.set(
         `${s}:${f}`,
-        working.every((w) =>
-          resolveEntry(
-            rules,
-            { staffId, roleId: w.roleId, roleKey: w.roleKey },
-            w.shopId,
-            f,
-            s,
-          ),
-        ),
+        working.every((w) => resolveEntry(rules, { staffId, roleId: w.roleId, roleKey: w.roleKey }, w.shopId, f, s)),
       );
   return out;
 }
 
-const FULL_DISPLAY: Partial<Record<FieldKey, (v: string) => string>> = {
-  phone: (v) => formatPhone(v) || v,
-  birthday: (v) => formatBirthday(v) ?? v,
-};
+const FULL_DISPLAY: Partial<Record<FieldKey, (v: string) => string>> = { phone: (v) => formatPhone(v) || v, birthday: (v) => formatBirthday(v) ?? v };
 
-export function displayFull(
-  f: FieldKey,
-  raw: string | null | undefined,
-): string | null {
+export function displayFull(f: FieldKey, raw: string | null | undefined): string | null {
   if (raw == null || raw === "") return null;
   return FULL_DISPLAY[f]?.(raw) ?? raw;
 }
@@ -230,18 +143,11 @@ export function makePolicy(o: {
   levels: Map<FieldKey, Level>;
   entries?: Map<string, boolean>;
   badges?: Iterable<string>;
-  customBadges?: readonly Pick<
-    CustomBadge,
-    "id" | "label" | "tooltip" | "icon" | "tone"
-  >[];
+  customBadges?: readonly Pick<CustomBadge, "id" | "label" | "tooltip" | "icon" | "tone">[];
 }): ClientPolicy {
   const fullContact = o.isOwner || !!o.fullContact || !!o.grantedContact;
-  const level = (f: FieldKey): Level =>
-    o.isOwner || (o.grantedContact && isContactField(f))
-      ? "full"
-      : contactCeiling(f, o.levels.get(f) ?? "hidden", fullContact);
-  const may = (s: EntrySetting, f: FieldKey) =>
-    f !== "ratings" && (o.isOwner || (o.entries?.get(`${s}:${f}`) ?? false));
+  const level = (f: FieldKey): Level => (o.isOwner || (o.grantedContact && isContactField(f)) ? "full" : contactCeiling(f, o.levels.get(f) ?? "hidden", fullContact));
+  const may = (s: EntrySetting, f: FieldKey) => f !== "ratings" && (o.isOwner || (o.entries?.get(`${s}:${f}`) ?? false));
   const canAdd = (f: FieldKey) => may("add", f);
   const canEdit = (f: FieldKey) => may("edit", f);
   return {
@@ -249,11 +155,7 @@ export function makePolicy(o: {
     isOwner: o.isOwner,
     fullContact,
     canReveal: o.canReveal,
-    mayReveal: (f) =>
-      o.canReveal &&
-      isRevealable(f) &&
-      level(f) === "masked" &&
-      (fullContact || !isContactField(f)),
+    mayReveal: (f) => o.canReveal && isRevealable(f) && level(f) === "masked" && (fullContact || !isContactField(f)),
     custom: o.custom,
     level,
     canAdd,
@@ -267,42 +169,24 @@ export function makePolicy(o: {
     stars: (r) => (level("ratings") === "hidden" ? null : (r ?? null)),
     ratingDetail: level("ratings") === "full",
     badges: new Set(o.badges ?? []),
-    customBadges: new Map(
-      (o.customBadges ?? []).map((c) => [
-        c.id,
-        { label: c.label, tooltip: c.tooltip, icon: c.icon, tone: c.tone },
-      ]),
-    ),
+    customBadges: new Map((o.customBadges ?? []).map((c) => [c.id, { label: c.label, tooltip: c.tooltip, icon: c.icon, tone: c.tone }])),
   };
 }
 
-type Viewer = Pick<
-  StaffContext,
-  "isOwner" | "scope" | "staff" | "access" | "permissions"
->;
+type Viewer = Pick<StaffContext, "isOwner" | "scope" | "staff" | "access" | "permissions">;
 
 /** The Brand Owner, a Brand Admin or a brand-level custom role, with every shop, and not a shared shop login. */
-export const isBrandLevelViewer = (ctx: Omit<Viewer, "permissions">) =>
-  ctx.isOwner ||
-  isBrandLevelPerson({
-    kind: ctx.staff.kind,
-    scope: ctx.scope,
-    role: ctx.access.role,
-  });
+export const isBrandLevelViewer = (ctx: Omit<Viewer, "permissions">) => ctx.isOwner || isBrandLevelPerson({ kind: ctx.staff.kind, scope: ctx.scope, role: ctx.access.role });
 
 /**
  * A shop login or someone in a shop or staff role whom the brand gave full contact details with a
  * contact access grant, where they're working now. Nobody else below brand level ever sees phone,
  * email or address in full, whatever their role, overrides or rules say.
  */
-export const contactGranted = (ctx: Viewer) =>
-  !isBrandLevelViewer(ctx) &&
-  ctx.permissions.has("clients.contact_full") &&
-  !!ctx.access.granted?.has("clients.contact_full");
+export const contactGranted = (ctx: Viewer) => !isBrandLevelViewer(ctx) && ctx.permissions.has("clients.contact_full") && !!ctx.access.granted?.has("clients.contact_full");
 
 /** Whether phone, email and address may show in full: brand-level (as the rules set them) or by a grant. */
-export const seesFullContact = (ctx: Viewer) =>
-  isBrandLevelViewer(ctx) || contactGranted(ctx);
+export const seesFullContact = (ctx: Viewer) => isBrandLevelViewer(ctx) || contactGranted(ctx);
 
 export const CLIENT_LIST_REFUSED =
   "Client lists can only be downloaded by brand-level roles, or by shop logins and staff the brand has given exporting under Client data protection → Contact access.";
@@ -314,20 +198,11 @@ export const CLIENT_LIST_REFUSED =
  */
 export function clientListDenied(ctx: Viewer): string | null {
   if (isBrandLevelViewer(ctx)) return null;
-  return ctx.permissions.has("clients.export") &&
-    ctx.access.granted?.has("clients.export")
-    ? null
-    : CLIENT_LIST_REFUSED;
+  return ctx.permissions.has("clients.export") && ctx.access.granted?.has("clients.export") ? null : CLIENT_LIST_REFUSED;
 }
 
 /** Sees no client details: for code paths that weren't handed the viewer's policy. */
-export const LOCKED_POLICY: ClientPolicy = makePolicy({
-  staffId: "",
-  isOwner: false,
-  canReveal: false,
-  custom: [],
-  levels: new Map(),
-});
+export const LOCKED_POLICY: ClientPolicy = makePolicy({ staffId: "", isOwner: false, canReveal: false, custom: [], levels: new Map() });
 
 const policies = new WeakMap<StaffContext, Promise<ClientPolicy>>();
 
@@ -336,22 +211,13 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
   if (!p) {
     p = (async () => {
       const custom = await activeCustomFields(ctx.currentShopId);
-      const fields: FieldKey[] = [
-        ...BUILTIN_FIELDS.map((f) => f.key),
-        ...custom.map((c) => customFieldKey(c.id)),
-      ];
+      const fields: FieldKey[] = [...BUILTIN_FIELDS.map((f) => f.key), ...custom.map((c) => customFieldKey(c.id))];
       const working = workingAs(ctx);
-      const rules = ctx.isOwner
-        ? []
-        : await rulesFor(ctx.staff.id, [
-            ...new Set(working.map((w) => w.roleId)),
-          ]);
+      const rules = ctx.isOwner ? [] : await rulesFor(ctx.staff.id, [...new Set(working.map((w) => w.roleId))]);
       let levels = levelsFor(rules, ctx.staff.id, working, fields);
       if (ctx.staff.kind === "shop") {
         const cap = await shopLoginCap(ctx.currentShopId);
-        levels = new Map(
-          [...levels].map(([f, l]) => [f, shopLoginLevel(cap, f, l)]),
-        );
+        levels = new Map([...levels].map(([f, l]) => [f, shopLoginLevel(cap, f, l)]));
       }
       const o = {
         staffId: ctx.staff.id,
@@ -369,11 +235,7 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
       ]);
       const badges = visibleBadges(settings, customBadges, {
         isOwner: ctx.isOwner,
-        roles: working.map((w) => ({
-          id: w.roleId,
-          key: w.roleKey,
-          brandLevel: w.brandLevel,
-        })),
+        roles: working.map((w) => ({ id: w.roleId, key: w.roleKey, brandLevel: w.brandLevel })),
         money: ctx.permissions.has("clients.view_all"),
         level: makePolicy(o).level,
       });
@@ -385,10 +247,7 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
 }
 
 /** Search by part of a phone or email only for people who see it in full; see SearchReach. */
-export const searchReach = (p: ClientPolicy) => ({
-  phone: p.level("phone") === "full",
-  email: p.level("email") === "full",
-});
+export const searchReach = (p: ClientPolicy) => ({ phone: p.level("phone") === "full", email: p.level("email") === "full" });
 
 /** One client's fields as a person may see them. Nothing else from the record should be rendered. */
 export interface ShownClient {
@@ -436,13 +295,9 @@ export function showClient(
     custom: p.custom.flatMap((f) => {
       const key = customFieldKey(f.id);
       const value = p.show(key, c.customFields?.[f.id]);
-      return value
-        ? [{ id: f.id, label: f.label, value, level: p.level(key) }]
-        : [];
+      return value ? [{ id: f.id, label: f.label, value, level: p.level(key) }] : [];
     }),
-    levels: Object.fromEntries(
-      BUILTIN_FIELDS.map((f) => [f.key, p.level(f.key)]),
-    ) as ShownClient["levels"],
+    levels: Object.fromEntries(BUILTIN_FIELDS.map((f) => [f.key, p.level(f.key)])) as ShownClient["levels"],
     hasPhone: !!c.phone,
     hasEmail: !!c.email,
   };
@@ -451,66 +306,33 @@ export function showClient(
 // ───────────────────────────── Entering details ─────────────────────────────
 
 /** One field for a form or an action's result: as the person may see it, whether something is on file, and what they may enter. */
-export function shownField(
-  p: ClientPolicy,
-  f: FieldKey,
-  raw: string | null | undefined,
-  label = fieldLabel(f, p.custom),
-): ShownField {
-  return {
-    key: f,
-    label,
-    level: p.level(f),
-    value: p.show(f, raw),
-    saved: raw != null && raw !== "",
-    canAdd: p.canAdd(f),
-    canEdit: p.canEdit(f),
-  };
+export function shownField(p: ClientPolicy, f: FieldKey, raw: string | null | undefined, label = fieldLabel(f, p.custom)): ShownField {
+  return { key: f, label, level: p.level(f), value: p.show(f, raw), saved: raw != null && raw !== "", canAdd: p.canAdd(f), canEdit: p.canEdit(f) };
 }
 
 /**
  * The value a form leaves in a field (`next` undefined: left alone). Refuses what the person may
  * not enter; see entryDenied. The old value is never part of the answer.
  */
-export function entered(
-  p: ClientPolicy,
-  f: FieldKey,
-  before: string | null | undefined,
-  next: string | null | undefined,
-): string | null {
+export function entered(p: ClientPolicy, f: FieldKey, before: string | null | undefined, next: string | null | undefined): string | null {
   const denied = entryDenied(p.entry(f), before, next);
   const label = fieldLabel(f, p.custom)
     .toLowerCase()
     .replace(/^client /, "");
-  if (denied === "add")
-    throw new AppError("forbidden", `You can't add a client's ${label}`);
-  if (denied === "edit")
-    throw new AppError(
-      "forbidden",
-      `You can't change a client's ${label} once it's on file`,
-    );
+  if (denied === "add") throw new AppError("forbidden", `You can't add a client's ${label}`);
+  if (denied === "edit") throw new AppError("forbidden", `You can't change a client's ${label} once it's on file`);
   return next === undefined ? (before ?? null) : next || null;
 }
 
 // ───────────────────────────── Audit details ─────────────────────────────
 
-const CLIENT_KEYS: Partial<Record<string, FieldKey>> = {
-  phone: "phone",
-  email: "email",
-  address: "address",
-  birthday: "birthday",
-  notes: "notes",
-};
+const CLIENT_KEYS: Partial<Record<string, FieldKey>> = { phone: "phone", email: "email", address: "address", birthday: "birthday", notes: "notes" };
 
 /**
  * Client values recorded in the audit log (an edit's before and after, a merged record) shown as
  * the reader may see them, so the log can't be used to read what the profile masks.
  */
-export function redactAuditDetails(
-  p: ClientPolicy,
-  entity: string,
-  details: unknown,
-): unknown {
+export function redactAuditDetails(p: ClientPolicy, entity: string, details: unknown): unknown {
   if (p.isOwner || !details || typeof details !== "object") return details;
   if (entity === "client_rating") {
     if (p.ratingDetail) return details;
@@ -523,28 +345,14 @@ export function redactAuditDetails(
   const walk = (v: unknown, field?: FieldKey): unknown => {
     if (field) {
       if (typeof v === "string") return p.show(field, v) ?? "(hidden)";
-      if (v && typeof v === "object" && !Array.isArray(v))
-        return Object.fromEntries(
-          Object.entries(v).map(([k, x]) => [k, walk(x, field)]),
-        );
+      if (v && typeof v === "object" && !Array.isArray(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, field)]));
       return v;
     }
     if (Array.isArray(v)) return v.map((x) => walk(x));
     if (!v || typeof v !== "object") return v;
     return Object.fromEntries(
       Object.entries(v).map(([k, x]) => {
-        if (k === "customFields")
-          return [
-            k,
-            typeof x === "object" && x
-              ? Object.fromEntries(
-                  Object.entries(x).map(([id, y]) => [
-                    id,
-                    walk(y, customFieldKey(id)),
-                  ]),
-                )
-              : x,
-          ];
+        if (k === "customFields") return [k, typeof x === "object" && x ? Object.fromEntries(Object.entries(x).map(([id, y]) => [id, walk(y, customFieldKey(id))])) : x];
         const f = CLIENT_KEYS[k];
         return [k, f ? walk(x, f) : walk(x)];
       }),
@@ -553,77 +361,44 @@ export function redactAuditDetails(
   return walk(details);
 }
 
-const IMPORT_COLUMNS: Partial<Record<string, FieldKey>> = {
-  phone: "phone",
-  email: "email",
-  notes: "notes",
-  preferredBarber: "preferred_barber",
-};
+const IMPORT_COLUMNS: Partial<Record<string, FieldKey>> = { phone: "phone", email: "email", notes: "notes", preferredBarber: "preferred_barber" };
 
 /**
  * Skipped import rows carry the original CSV row so it can be fixed and re-imported; client details
  * in it show as the reader may see them. `headerMap` is the importer's field → column mapping.
  */
-export function redactImportErrors<E extends { data?: Record<string, string> }>(
-  p: ClientPolicy,
-  headerMap: Record<string, string>,
-  errors: E[],
-): E[] {
+export function redactImportErrors<E extends { data?: Record<string, string> }>(p: ClientPolicy, headerMap: Record<string, string>, errors: E[]): E[] {
   if (p.isOwner) return errors;
   const columns = Object.entries(headerMap).flatMap(([field, col]) =>
-    IMPORT_COLUMNS[field] && p.level(IMPORT_COLUMNS[field]) !== "full"
-      ? [[col, IMPORT_COLUMNS[field]] as const]
-      : [],
+    IMPORT_COLUMNS[field] && p.level(IMPORT_COLUMNS[field]) !== "full" ? [[col, IMPORT_COLUMNS[field]] as const] : [],
   );
   if (!columns.length) return errors;
   return errors.map((e) =>
-    e.data
-      ? {
-          ...e,
-          data: {
-            ...e.data,
-            ...Object.fromEntries(
-              columns
-                .filter(([c]) => c in e.data!)
-                .map(([c, f]) => [c, p.show(f, e.data![c]) ?? ""]),
-            ),
-          },
-        }
-      : e,
+    e.data ? { ...e, data: { ...e.data, ...Object.fromEntries(columns.filter(([c]) => c in e.data!).map(([c, f]) => [c, p.show(f, e.data![c]) ?? ""])) } } : e,
   );
 }
 
 /** Whether the audit log search may look inside client entries (it would confirm a number the reader can't see). */
-export const searchesClientDetails = (p: ClientPolicy) =>
-  p.isOwner ||
-  (["phone", "email", "address", "birthday", "notes"] as const).every(
-    (f) => p.level(f) === "full",
-  );
+export const searchesClientDetails = (p: ClientPolicy) => p.isOwner || (["phone", "email", "address", "birthday", "notes"] as const).every((f) => p.level(f) === "full");
 
 // ───────────────────────────── Access log, limits and alerts ─────────────────────────────
 
 /** How much of a client's contact details shop logins see at a shop (the shop_login_contact setting): masked to start, or hidden. Never in full. */
-export async function shopLoginCap(
-  shopId?: string | null,
-): Promise<ShopLoginCap> {
+export async function shopLoginCap(shopId?: string | null): Promise<ShopLoginCap> {
   return settingAt<ShopLoginCap>("shop_login_contact", shopId);
 }
 
 /** The client lookup limits at a shop (the lookup_limits setting); no shop, the brand's. */
-export async function lookupLimits(
-  shopId?: string | null,
-): Promise<LookupLimits> {
+export async function lookupLimits(shopId?: string | null): Promise<LookupLimits> {
   return settingAt<LookupLimits>("lookup_limits", shopId);
 }
 
 const PROFILE_KINDS: AccessKind[] = ["view", "reveal"];
 const SEARCH_KINDS: AccessKind[] = ["search", "list"];
 
-export const isPaused = (e: unknown) =>
-  e instanceof AppError && e.code === "rate_limited";
+export const isPaused = (e: unknown) => e instanceof AppError && e.code === "rate_limited";
 
-export const PAUSED_MESSAGE =
-  "You've looked up a lot of clients in a short time, so client lookups are paused for a few minutes. A brand admin has been notified.";
+export const PAUSED_MESSAGE = "You've looked up a lot of clients in a short time, so client lookups are paused for a few minutes. A brand admin has been notified.";
 
 /** People who get unusual-lookup alerts: the Brand Owner and anyone across all shops whose role manages client data. */
 async function alertRecipients(except: string) {
@@ -636,59 +411,38 @@ async function alertRecipients(except: string) {
         eq(staff.active, true),
         eq(staff.kind, "person"),
         sql`${staff.email} is not null and ${staff.id} <> ${except}`,
-        or(
-          eq(roles.key, OWNER_ROLE_KEY),
-          and(
-            eq(staff.shopScope, "all"),
-            sql`${roles.permissions} ? 'clients.privacy'`,
-          ),
-        ),
+        or(eq(roles.key, OWNER_ROLE_KEY), and(eq(staff.shopScope, "all"), sql`${roles.permissions} ? 'clients.privacy'`)),
       ),
     );
 }
 
-async function raiseAlert(
-  ctx: StaffContext,
-  kind: "unusual" | "paused",
-  counts: { profiles: number; searches: number },
-  limits: LookupLimits,
-  since: Date,
-) {
+async function raiseAlert(ctx: StaffContext, kind: "unusual" | "paused", counts: { profiles: number; searches: number }, limits: LookupLimits, since: Date) {
   const [open] = await db
     .select({ id: clientAccessAlerts.id })
     .from(clientAccessAlerts)
-    .where(
-      and(
-        eq(clientAccessAlerts.staffId, ctx.staff.id),
-        eq(clientAccessAlerts.kind, kind),
-        gt(clientAccessAlerts.at, since),
-      ),
-    )
+    .where(and(eq(clientAccessAlerts.staffId, ctx.staff.id), eq(clientAccessAlerts.kind, kind), gt(clientAccessAlerts.at, since)))
     .limit(1);
   if (open) return;
-  await db.insert(clientAccessAlerts).values({
-    staffId: ctx.staff.id,
-    actorLabel: ctx.actor.label,
-    kind,
-    profiles: counts.profiles,
-    searches: counts.searches,
-    windowMinutes: limits.windowMinutes,
-  });
+  await db
+    .insert(clientAccessAlerts)
+    .values({ staffId: ctx.staff.id, actorLabel: ctx.actor.label, kind, profiles: counts.profiles, searches: counts.searches, windowMinutes: limits.windowMinutes });
   const who = ctx.staff.displayLabel;
   const what = `${counts.profiles} client profile${counts.profiles === 1 ? "" : "s"} and ${counts.searches} search${counts.searches === 1 ? "" : "es"} in ${limits.windowMinutes} minutes`;
   const body = `${kind === "paused" ? `Client lookups for ${who} were paused` : `Unusual client lookups by ${who}`}: ${what}. See who viewed what: ${appBaseUrl()}/admin/client-data/access`;
   const to = (await alertRecipients(ctx.staff.id)).map((r) => r.email!);
   if (to.length)
-    await db.insert(notificationJobs).values(
-      to.map((email) => ({
-        kind: "privacy_alert",
-        channel: "email",
-        to: email,
-        subject: `Ray'z: ${kind === "paused" ? "client lookups paused" : "unusual client lookups"} (${who})`,
-        body,
-        runAt: new Date(),
-      })),
-    );
+    await db
+      .insert(notificationJobs)
+      .values(
+        to.map((email) => ({
+          kind: "privacy_alert",
+          channel: "email",
+          to: email,
+          subject: `Ray'z: ${kind === "paused" ? "client lookups paused" : "unusual client lookups"} (${who})`,
+          body,
+          runAt: new Date(),
+        })),
+      );
 }
 
 /**
@@ -698,16 +452,9 @@ async function raiseAlert(
  */
 export async function recordClientAccess(
   ctx: StaffContext,
-  e: {
-    kind: AccessKind;
-    customerId?: string | null;
-    field?: string | null;
-    reason?: string | null;
-    detail?: Record<string, unknown>;
-  },
+  e: { kind: AccessKind; customerId?: string | null; field?: string | null; reason?: string | null; detail?: Record<string, unknown> },
 ) {
-  const counted =
-    PROFILE_KINDS.includes(e.kind) || SEARCH_KINDS.includes(e.kind);
+  const counted = PROFILE_KINDS.includes(e.kind) || SEARCH_KINDS.includes(e.kind);
   const row = {
     staffId: ctx.staff.id,
     actorLabel: ctx.actor.label,
@@ -729,40 +476,18 @@ export async function recordClientAccess(
       count(*) filter (where kind in ('search', 'list'))::int as searches,
       bool_or(customer_id = ${e.customerId ?? null}::uuid and kind in ('view', 'reveal')) as seen
     from client_access_log where staff_id = ${ctx.staff.id} and at > ${since.toISOString()}
-  `)) as unknown as {
-    profiles: number;
-    searches: number;
-    seen: boolean | null;
-  }[];
-  const profiles =
-    c.profiles + (PROFILE_KINDS.includes(e.kind) && !c.seen ? 1 : 0);
+  `)) as unknown as { profiles: number; searches: number; seen: boolean | null }[];
+  const profiles = c.profiles + (PROFILE_KINDS.includes(e.kind) && !c.seen ? 1 : 0);
   const searches = c.searches + (SEARCH_KINDS.includes(e.kind) ? 1 : 0);
   const counts = { profiles, searches };
-  if (
-    !ctx.isOwner &&
-    (profiles > limits.blockProfiles || searches > limits.blockSearches)
-  ) {
-    await db.insert(clientAccessLog).values({
-      ...row,
-      kind: "blocked",
-      detail: { ...e.detail, wanted: e.kind, field: e.field ?? null },
-    });
+  if (!ctx.isOwner && (profiles > limits.blockProfiles || searches > limits.blockSearches)) {
+    await db.insert(clientAccessLog).values({ ...row, kind: "blocked", detail: { ...e.detail, wanted: e.kind, field: e.field ?? null } });
     await raiseAlert(ctx, "paused", counts, limits, since);
     throw new AppError("rate_limited", PAUSED_MESSAGE);
   }
   await db.insert(clientAccessLog).values({ ...row, kind: e.kind });
-  if (
-    !ctx.isOwner &&
-    (profiles >= limits.alertProfiles || searches >= limits.alertSearches)
-  )
-    await raiseAlert(ctx, "unusual", counts, limits, since);
+  if (!ctx.isOwner && (profiles >= limits.alertProfiles || searches >= limits.alertSearches)) await raiseAlert(ctx, "unusual", counts, limits, since);
 }
 
-export const accessLabel = (
-  kind: string,
-  field: string | null,
-  fieldName: (f: string) => string,
-) =>
-  kind === "reveal" && field
-    ? `Revealed ${fieldName(field).toLowerCase()}`
-    : (ACCESS_KINDS[kind as AccessKind] ?? kind);
+export const accessLabel = (kind: string, field: string | null, fieldName: (f: string) => string) =>
+  kind === "reveal" && field ? `Revealed ${fieldName(field).toLowerCase()}` : (ACCESS_KINDS[kind as AccessKind] ?? kind);

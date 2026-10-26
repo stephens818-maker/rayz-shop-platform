@@ -154,20 +154,11 @@ export function MilestoneSettingsForm({
         <Button
           size="sm"
           disabled={pending}
-          onClick={() =>
-            save({
-              label: "Milestone celebrations",
-              changes: [{ type: "milestones", item: "brand", value: s }],
-            })
-          }
+          onClick={() => save({ label: "Milestone celebrations", changes: [{ type: "milestones", item: "brand", value: s }] })}
         >
           Save
         </Button>
-        {msg && (
-          <span className={msg.ok ? "text-emerald-700" : "text-red-600"}>
-            {msg.text}
-          </span>
-        )}
+        {msg && <span className={msg.ok ? "text-emerald-700" : "text-red-600"}>{msg.text}</span>}
         {dialog}
       </div>
     </div>
@@ -428,7 +419,7 @@ export function NewRule({
               : undefined
           }
         >
-          Add your own
+        Add your own
         </Button>
         {shops.dialog}
       </span>

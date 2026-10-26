@@ -4,29 +4,11 @@ import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { services, staff, staffMilestoneBaselines } from "@/db/schema";
 import { Card, CardHeader, PageHeader, Table, Td, Th } from "@/components/ui";
-import {
-  KIND_LABEL,
-  METRICS,
-  MILESTONE_KINDS,
-  type MilestoneMetric,
-  type RuleLike,
-  ruleUnit,
-} from "@/domain/milestones";
+import { KIND_LABEL, METRICS, MILESTONE_KINDS, type MilestoneMetric, type RuleLike, ruleUnit } from "@/domain/milestones";
 import { formatDate, todayLocal } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
-import {
-  loadMilestoneSettings,
-  loadRules,
-  people,
-} from "@/server/milestones/engine";
-import {
-  BaselineForm,
-  CheckNow,
-  MilestoneSettingsForm,
-  NewRule,
-  RemoveBaseline,
-  RuleRowView,
-} from "./client";
+import { loadMilestoneSettings, loadRules, people } from "@/server/milestones/engine";
+import { BaselineForm, CheckNow, MilestoneSettingsForm, NewRule, RemoveBaseline, RuleRowView } from "./client";
 
 export const metadata: Metadata = { title: "Staff milestones" };
 export const dynamic = "force-dynamic";
@@ -34,11 +16,8 @@ export const dynamic = "force-dynamic";
 function summary(r: RuleLike, serviceNames: Map<string, string>): string {
   const info = METRICS[r.metric as MilestoneMetric];
   const numbers = r.thresholds.map((t) => t.toLocaleString("en-US")).join(", ");
-  const only = r.serviceIds.length
-    ? ` · only ${r.serviceIds.map((id) => serviceNames.get(id) ?? "a removed service").join(", ")}`
-    : "";
-  if (r.kind === "count" || r.kind === "streak")
-    return `${numbers} ${ruleUnit(r)}${only}`;
+  const only = r.serviceIds.length ? ` · only ${r.serviceIds.map((id) => serviceNames.get(id) ?? "a removed service").join(", ")}` : "";
+  if (r.kind === "count" || r.kind === "streak") return `${numbers} ${ruleUnit(r)}${only}`;
   if (r.kind === "anniversary") return `${numbers} years from the hire date`;
   return info?.hint ?? "";
 }
@@ -48,17 +27,9 @@ export default async function MilestoneSettingsPage() {
   const [s, rules, serviceRows, team, baselineRows] = await Promise.all([
     loadMilestoneSettings(),
     loadRules(),
-    db
-      .select({ id: services.id, name: services.name })
-      .from(services)
-      .where(and(eq(services.active, true), eq(services.kind, "service")))
-      .orderBy(asc(services.name)),
+    db.select({ id: services.id, name: services.name }).from(services).where(and(eq(services.active, true), eq(services.kind, "service"))).orderBy(asc(services.name)),
     people(),
-    db
-      .select({ b: staffMilestoneBaselines, label: staff.displayLabel })
-      .from(staffMilestoneBaselines)
-      .innerJoin(staff, eq(staff.id, staffMilestoneBaselines.staffId))
-      .orderBy(asc(staff.displayLabel), asc(staffMilestoneBaselines.metric)),
+    db.select({ b: staffMilestoneBaselines, label: staff.displayLabel }).from(staffMilestoneBaselines).innerJoin(staff, eq(staff.id, staffMilestoneBaselines.staffId)).orderBy(asc(staff.displayLabel), asc(staffMilestoneBaselines.metric)),
   ]);
   const serviceNames = new Map(serviceRows.map((x) => [x.id, x.name]));
   const noHire = team.filter((p) => !p.hireDate);
@@ -94,9 +65,7 @@ export default async function MilestoneSettingsPage() {
             if (!list.length) return null;
             return (
               <section key={k} className="space-y-3 px-4 py-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                  {KIND_LABEL[k]}
-                </h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">{KIND_LABEL[k]}</h3>
                 {list.map((r) => (
                   <RuleRowView
                     key={r.id}
@@ -132,9 +101,7 @@ export default async function MilestoneSettingsPage() {
                 {baselineRows.map(({ b, label }) => (
                   <tr key={`${b.staffId}:${b.metric}`}>
                     <Td>{label}</Td>
-                    <Td>
-                      {METRICS[b.metric as MilestoneMetric]?.label ?? b.metric}
-                    </Td>
+                    <Td>{METRICS[b.metric as MilestoneMetric]?.label ?? b.metric}</Td>
                     <Td right className="tabular-nums">
                       {b.count.toLocaleString("en-US")}
                     </Td>
@@ -147,17 +114,11 @@ export default async function MilestoneSettingsPage() {
               </tbody>
             </Table>
           )}
-          <BaselineForm
-            people={team.map((p) => ({ id: p.id, name: p.label }))}
-            today={today}
-          />
+          <BaselineForm people={team.map((p) => ({ id: p.id, name: p.label }))} today={today} />
         </div>
       </Card>
       <Card>
-        <CardHeader
-          title="Hire dates"
-          subtitle="Work anniversaries come from the hire date on each staff profile."
-        />
+        <CardHeader title="Hire dates" subtitle="Work anniversaries come from the hire date on each staff profile." />
         {noHire.length ? (
           <div className="p-4 text-sm">
             <p className="mb-2 text-zinc-600">
@@ -168,10 +129,7 @@ export default async function MilestoneSettingsPage() {
             <ul className="flex flex-wrap gap-x-4 gap-y-1">
               {noHire.map((p) => (
                 <li key={p.id}>
-                  <Link
-                    href={`/admin/staff/${p.id}`}
-                    className="text-brand-700 hover:underline"
-                  >
+                  <Link href={`/admin/staff/${p.id}`} className="text-brand-700 hover:underline">
                     {p.label}
                   </Link>
                 </li>
@@ -179,9 +137,7 @@ export default async function MilestoneSettingsPage() {
             </ul>
           </div>
         ) : (
-          <p className="px-4 py-4 text-sm text-zinc-500">
-            Everyone has a hire date.
-          </p>
+          <p className="px-4 py-4 text-sm text-zinc-500">Everyone has a hire date.</p>
         )}
       </Card>
     </div>

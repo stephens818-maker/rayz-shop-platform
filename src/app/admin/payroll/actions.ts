@@ -41,11 +41,7 @@ const fail = (msg: string | null) => {
 export async function approveAndLockAction(start: string, end: string) {
   return safe(async () => {
     const ctx = await authorize("payroll.approve");
-    const r = await approveAndLock(
-      date.parse(start),
-      date.parse(end),
-      ctx.actor,
-    );
+    const r = await approveAndLock(date.parse(start), date.parse(end), ctx.actor);
     if ("error" in r) {
       const m = (r.mismatches ?? []) as Mismatch[];
       throw new AppError(
@@ -63,39 +59,13 @@ export async function approveAndLockAction(start: string, end: string) {
   });
 }
 
-export async function setOverrideAction(input: {
-  shopId: string;
-  periodStart: string;
-  staffId: string;
-  field: string;
-  value: number | null;
-  reason: string;
-}) {
+export async function setOverrideAction(input: { shopId: string; periodStart: string; staffId: string; field: string; value: number | null; reason: string }) {
   return safe(async () => {
     const ctx = await authorize("payroll.run");
     const v = z
-      .object({
-        shopId: z.string().uuid(),
-        periodStart: date,
-        staffId: z.string().uuid(),
-        field: z.enum(
-          OVERRIDABLE as unknown as [Overridable, ...Overridable[]],
-        ),
-        value: z.number().nullable(),
-        reason: z.string().max(300),
-      })
+      .object({ shopId: z.string().uuid(), periodStart: date, staffId: z.string().uuid(), field: z.enum(OVERRIDABLE as unknown as [Overridable, ...Overridable[]]), value: z.number().nullable(), reason: z.string().max(300) })
       .parse(input);
-    fail(
-      await setOverride(
-        v.shopId,
-        v.periodStart,
-        v.staffId,
-        v.field,
-        v.value,
-        v.reason,
-        ctx.actor,
-      ),
-    );
+    fail(await setOverride(v.shopId, v.periodStart, v.staffId, v.field, v.value, v.reason, ctx.actor));
     refresh();
     return null;
   });
@@ -135,13 +105,7 @@ export async function savePayGroupAction(input: {
           label: v.label,
           legalEntity: v.legalEntity,
           exportTab: v.exportTab,
-          calendar: {
-            anchorStart: v.anchorStart,
-            anchorNumber: v.anchorNumber,
-            periodDays: v.periodDays,
-            checkOffsetDays: v.checkOffsetDays,
-            numberResetsYearly: v.numberResetsYearly,
-          },
+          calendar: { anchorStart: v.anchorStart, anchorNumber: v.anchorNumber, periodDays: v.periodDays, checkOffsetDays: v.checkOffsetDays, numberResetsYearly: v.numberResetsYearly },
         },
         ctx.actor,
       ),
@@ -179,78 +143,25 @@ export async function saveProfileAction(input: {
         trainingRate: z.number().nullable(),
       })
       .parse(input);
-    fail(
-      await saveProfile(
-        v.staffId,
-        {
-          employeeNumber: v.employeeNumber,
-          keyIsText: v.keyIsText,
-          isolvedName: v.isolvedName,
-          exportPosition: v.exportPosition,
-        },
-        ctx.actor,
-      ),
-    );
-    fail(
-      await saveRate(
-        v.staffId,
-        v.shopId,
-        {
-          hourlyRate: v.hourlyRate,
-          servicePct: v.servicePct,
-          productPct: v.productPct,
-          trainingRate: v.trainingRate,
-        },
-        ctx.actor,
-      ),
-    );
+    fail(await saveProfile(v.staffId, { employeeNumber: v.employeeNumber, keyIsText: v.keyIsText, isolvedName: v.isolvedName, exportPosition: v.exportPosition }, ctx.actor));
+    fail(await saveRate(v.staffId, v.shopId, { hourlyRate: v.hourlyRate, servicePct: v.servicePct, productPct: v.productPct, trainingRate: v.trainingRate }, ctx.actor));
     refresh();
     return null;
   });
 }
 
-const local = (d: string, t: string) =>
-  DateTime.fromISO(`${d}T${t}`, { zone: SHOP_TZ });
+const local = (d: string, t: string) => DateTime.fromISO(`${d}T${t}`, { zone: SHOP_TZ });
 
-export async function addTimeEntryAction(input: {
-  staffId: string;
-  shopId: string;
-  kind: string;
-  date: string;
-  start: string;
-  end: string;
-  note: string;
-}) {
+export async function addTimeEntryAction(input: { staffId: string; shopId: string; kind: string; date: string; start: string; end: string; note: string }) {
   return safe(async () => {
     const ctx = await authorize("payroll.run");
     const v = z
-      .object({
-        staffId: z.string().uuid(),
-        shopId: z.string().uuid(),
-        kind: z.enum(["worked", "training", "pto"]),
-        date,
-        start: z.string().regex(/^\d{2}:\d{2}$/),
-        end: z.string().regex(/^\d{2}:\d{2}$/),
-        note: z.string().max(200),
-      })
+      .object({ staffId: z.string().uuid(), shopId: z.string().uuid(), kind: z.enum(["worked", "training", "pto"]), date, start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/), note: z.string().max(200) })
       .parse(input);
     const s = local(v.date, v.start);
     let e = local(v.date, v.end);
     if (e <= s) e = e.plus({ days: 1 });
-    const r = await addTimeEntries(
-      [
-        {
-          staffId: v.staffId,
-          shopId: v.shopId,
-          kind: v.kind,
-          startsAt: s.toJSDate(),
-          endsAt: e.toJSDate(),
-          note: v.note || null,
-          source: "manual",
-        },
-      ],
-      ctx.actor,
-    );
+    const r = await addTimeEntries([{ staffId: v.staffId, shopId: v.shopId, kind: v.kind, startsAt: s.toJSDate(), endsAt: e.toJSDate(), note: v.note || null, source: "manual" }], ctx.actor);
     if ("error" in r) throw new AppError("bad_request", r.error);
     refresh();
     return r.added;
@@ -263,12 +174,8 @@ export async function importTimeCsvAction(csv: string) {
     const ctx = await authorize("payroll.run");
     const { staffRows, shopRows } = await lookups();
     const parsed = parseTimeCsv(csv, { staff: staffRows, shops: shopRows });
-    if (parsed.errors.length)
-      throw new AppError("bad_request", parsed.errors.slice(0, 5).join(" "));
-    const list: TimeEntryInput[] = parsed.rows.map((r) => ({
-      ...r,
-      source: "import",
-    }));
+    if (parsed.errors.length) throw new AppError("bad_request", parsed.errors.slice(0, 5).join(" "));
+    const list: TimeEntryInput[] = parsed.rows.map((r) => ({ ...r, source: "import" }));
     const res = await addTimeEntries(list, ctx.actor);
     if ("error" in res) throw new AppError("bad_request", res.error);
     refresh();
@@ -287,19 +194,10 @@ export async function deleteTimeEntryAction(id: string) {
 
 async function lookups() {
   const staffRows = await db
-    .select({
-      id: staff.id,
-      label: staff.displayLabel,
-      first: staff.firstName,
-      last: staff.lastName,
-      number: payrollProfiles.employeeNumber,
-      isolvedName: payrollProfiles.isolvedName,
-    })
+    .select({ id: staff.id, label: staff.displayLabel, first: staff.firstName, last: staff.lastName, number: payrollProfiles.employeeNumber, isolvedName: payrollProfiles.isolvedName })
     .from(staff)
     .leftJoin(payrollProfiles, eq(payrollProfiles.staffId, staff.id))
     .where(eq(staff.kind, "person"));
-  const shopRows = await db
-    .select({ id: shops.id, name: shops.name, slug: shops.slug })
-    .from(shops);
+  const shopRows = await db.select({ id: shops.id, name: shops.name, slug: shops.slug }).from(shops);
   return { staffRows, shopRows };
 }

@@ -17,17 +17,12 @@ const PAGE = "/admin/campaign-center/openings";
 const NEED = "Sending openings needs Campaign Center: We have openings";
 
 export async function previewOpeningsAction(input: unknown) {
-  return safe(async () =>
-    previewOpenings(await authorize("campaign_center.openings", NEED), input),
-  );
+  return safe(async () => previewOpenings(await authorize("campaign_center.openings", NEED), input));
 }
 
 export async function sendOpeningsAction(input: unknown) {
   return safe(async () => {
-    const r = await sendOpenings(
-      await authorize("campaign_center.openings", NEED),
-      input,
-    );
+    const r = await sendOpenings(await authorize("campaign_center.openings", NEED), input);
     revalidatePath(PAGE);
     return r;
   });
@@ -35,10 +30,7 @@ export async function sendOpeningsAction(input: unknown) {
 
 export async function approveOpeningsAction(id: string) {
   return safe(async () => {
-    const r = await approveOpenings(
-      await authorize("campaign_center.send"),
-      String(id),
-    );
+    const r = await approveOpenings(await authorize("campaign_center.send"), String(id));
     revalidatePath(PAGE);
     return r;
   });
@@ -46,11 +38,7 @@ export async function approveOpeningsAction(id: string) {
 
 export async function rejectOpeningsAction(id: string, note: string) {
   return safe(async () => {
-    await rejectOpenings(
-      await authorize("campaign_center.send"),
-      String(id),
-      String(note ?? ""),
-    );
+    await rejectOpenings(await authorize("campaign_center.send"), String(id), String(note ?? ""));
     revalidatePath(PAGE);
     return null;
   });
@@ -58,10 +46,7 @@ export async function rejectOpeningsAction(id: string, note: string) {
 
 export async function withdrawOpeningsAction(id: string) {
   return safe(async () => {
-    await withdrawOpenings(
-      await authorize("campaign_center.openings", NEED),
-      String(id),
-    );
+    await withdrawOpenings(await authorize("campaign_center.openings", NEED), String(id));
     revalidatePath(PAGE);
     return null;
   });
@@ -69,10 +54,7 @@ export async function withdrawOpeningsAction(id: string) {
 
 export async function textOpeningsWaitlistAction(id: string) {
   return safe(async () => {
-    const r = await textOpeningsWaitlist(
-      await authorize("campaign_center.openings", NEED),
-      String(id),
-    );
+    const r = await textOpeningsWaitlist(await authorize("campaign_center.openings", NEED), String(id));
     revalidatePath(PAGE);
     return r;
   });
@@ -80,10 +62,7 @@ export async function textOpeningsWaitlistAction(id: string) {
 
 export async function removeOpeningsWaitlistAction(entryId: string) {
   return safe(async () => {
-    await removeFromOpeningsWaitlist(
-      await authorize("campaign_center.openings", NEED),
-      String(entryId),
-    );
+    await removeFromOpeningsWaitlist(await authorize("campaign_center.openings", NEED), String(entryId));
     revalidatePath(PAGE);
     return null;
   });

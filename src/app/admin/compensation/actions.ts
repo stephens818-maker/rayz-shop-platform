@@ -19,18 +19,10 @@ function refresh() {
   revalidatePath("/admin/staff", "layout");
 }
 
-export async function saveFieldAction(
-  id: string | null,
-  input: z.input<typeof field>,
-) {
+export async function saveFieldAction(id: string | null, input: z.input<typeof field>) {
   return safe(async () => {
     const ctx = await authorize("compensation.settings");
-    const saved = await saveCustomField(
-      id === null ? null : z.uuid().parse(id),
-      field.parse(input),
-      ctx.actor,
-      ctx,
-    );
+    const saved = await saveCustomField(id === null ? null : z.uuid().parse(id), field.parse(input), ctx.actor, ctx);
     refresh();
     return saved;
   });
@@ -39,11 +31,7 @@ export async function saveFieldAction(
 export async function setFieldActiveAction(id: string, active: boolean) {
   return safe(async () => {
     const ctx = await authorize("compensation.settings");
-    await setCustomFieldActive(
-      z.uuid().parse(id),
-      z.boolean().parse(active),
-      ctx.actor,
-    );
+    await setCustomFieldActive(z.uuid().parse(id), z.boolean().parse(active), ctx.actor);
     refresh();
   });
 }

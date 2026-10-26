@@ -54,8 +54,7 @@ import {
 import { recordEvent } from "../analytics";
 import { SYSTEM, audit } from "../audit";
 import { type StaffAccess, loadStaffAccess } from "../auth/access";
-import { hiddenAtShops, offeredAt } from "../brand-sync/lists";
-import { brandColumn } from "../brand-sync/settings";
+import { hiddenAtShops, offeredAt } from "../brand-sync/lists"; import { brandColumn } from "../brand-sync/settings";
 import { localValue } from "../brand-sync/store";
 import { processDueJobs } from "../notifications/queue";
 import { rows, uuids } from "../report-sql";
@@ -65,24 +64,11 @@ export async function loadMilestoneSettings(): Promise<MilestoneSettings> {
 }
 
 /** At one shop: the brand's settings with the shop's own on-the-day banners, badges and toasts (Setup → Sync status). */
-export async function milestoneSettingsAt(
-  shopId: string | null | undefined,
-): Promise<MilestoneSettings> {
-  const [s, own] = await Promise.all([
-    loadMilestoneSettings(),
-    localValue<Partial<MilestoneSettings>>("milestones", "brand", shopId),
-  ]);
+export async function milestoneSettingsAt(shopId: string | null | undefined): Promise<MilestoneSettings> {
+  const [s, own] = await Promise.all([loadMilestoneSettings(), localValue<Partial<MilestoneSettings>>("milestones", "brand", shopId)]);
   if (!own) return s;
-  const pick = (
-    k: "calendarBanner" | "posBanner" | "columnBadge" | "liveToast",
-  ) => (typeof own[k] === "boolean" ? own[k] : s[k]);
-  return {
-    ...s,
-    calendarBanner: pick("calendarBanner"),
-    posBanner: pick("posBanner"),
-    columnBadge: pick("columnBadge"),
-    liveToast: pick("liveToast"),
-  };
+  const pick = (k: "calendarBanner" | "posBanner" | "columnBadge" | "liveToast") => (typeof own[k] === "boolean" ? own[k] : s[k]);
+  return { ...s, calendarBanner: pick("calendarBanner"), posBanner: pick("posBanner"), columnBadge: pick("columnBadge"), liveToast: pick("liveToast") };
 }
 
 /**
@@ -110,18 +96,21 @@ export async function ensureMilestoneDefaults() {
       .where(eq(marketingTemplates.purpose, "milestone"))
       .limit(1);
     if (!t)
-      await tx.insert(marketingTemplates).values({
-        ...MILESTONE_TEMPLATE,
-        templates: { ...MILESTONE_TEMPLATE.templates },
-        channels: ["sms", "email", "push"],
-        status: "approved",
-        approvedAt: new Date(),
-        purpose: "milestone",
-      });
+      await tx
+        .insert(marketingTemplates)
+        .values({
+          ...MILESTONE_TEMPLATE,
+          templates: { ...MILESTONE_TEMPLATE.templates },
+          channels: ["sms", "email", "push"],
+          status: "approved",
+          approvedAt: new Date(),
+          purpose: "milestone",
+        });
   });
 }
 
 /** With a shop, only the rules that shop has. */
+
 export async function loadRules(
   o: { activeOnly?: boolean; shopId?: string | null } = {},
 ): Promise<RuleLike[]> {
@@ -496,13 +485,8 @@ export async function findMilestones(
   const ids = team.map((p) => p.id);
   const home = new Map(team.map((p) => [p.id, p.workShops[0] ?? null]));
   const out: Found[] = [];
-  const hidden = await hiddenAtShops(
-    "milestone_rule",
-    [...home.values()].filter((x): x is string => !!x),
-  );
-  const add = (f: Found) => {
-    if (have.has(f.dedupeKey) || hidden(home.get(f.staffId)).has(f.ruleId))
-      return;
+  const hidden = await hiddenAtShops("milestone_rule", [...home.values()].filter((x): x is string => !!x)); const add = (f: Found) => {
+    if (have.has(f.dedupeKey) || hidden(home.get(f.staffId)).has(f.ruleId)) return;
     have.add(f.dedupeKey);
     out.push(f);
   };
@@ -897,12 +881,7 @@ export async function upcomingFor(
   if (!settings.enabled || !team.length) return [];
   const today = todayLocal(now);
   const rules = await loadRules({ activeOnly: true });
-  const everyone = team.map((p) => p.id);
-  const home = new Map(team.map((p) => [p.id, p.workShops[0] ?? null]));
-  const hidden = await hiddenAtShops(
-    "milestone_rule",
-    [...home.values()].filter((x): x is string => !!x),
-  );
+  const everyone = team.map((p) => p.id); const home = new Map(team.map((p) => [p.id, p.workShops[0] ?? null])); const hidden = await hiddenAtShops("milestone_rule", [...home.values()].filter((x): x is string => !!x));
   const out: Upcoming[] = [];
   for (const rule of rules) {
     const ids = everyone.filter((id) => !hidden(home.get(id)).has(rule.id));

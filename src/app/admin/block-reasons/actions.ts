@@ -9,14 +9,7 @@ import { archiveReason, moveReason, saveReason } from "@/server/block-reasons";
 const NO_EDIT = "You can't edit the block reasons list";
 
 function refresh() {
-  for (const p of [
-    "/admin/block-reasons",
-    "/admin/calendar",
-    "/admin/my-time",
-    "/admin/time-off",
-    "/admin",
-  ])
-    revalidatePath(p);
+  for (const p of ["/admin/block-reasons", "/admin/calendar", "/admin/my-time", "/admin/time-off", "/admin"]) revalidatePath(p);
 }
 
 const Reason = z.object({
@@ -51,11 +44,7 @@ export async function archiveReasonAction(id: string, archived: boolean) {
 export async function moveReasonAction(id: string, dir: -1 | 1) {
   return safe(async () => {
     const ctx = await authorize("blocks.reasons", NO_EDIT);
-    await moveReason(
-      z.string().uuid().parse(id),
-      dir === -1 ? -1 : 1,
-      ctx.actor,
-    );
+    await moveReason(z.string().uuid().parse(id), dir === -1 ? -1 : 1, ctx.actor);
     refresh();
     return null;
   });
