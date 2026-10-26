@@ -23,6 +23,7 @@ import {
   reportExport,
   reportView,
   roleChangeDenied,
+  sharedLoginAccess,
   staffEditDenied,
   templateFor,
   templateRow,
@@ -137,6 +138,18 @@ describe("permission catalog and templates", () => {
     ]);
     expect(access("front_desk").maxDiscountPct).toBe(10);
     expect(access("barber").maxDiscountPct).toBe(0);
+  });
+
+  it("each person's tips, payroll, payouts and commission are the brand's to show: no shop role or shop login starts with them, and the brand can give them", () => {
+    const pay = ["tips_payroll", "tip_payouts", "commission_payout"].flatMap((k) => [`report.${k}.view`, `report.${k}.export`]) as Permission[];
+    for (const key of ["shop_manager", "regional_manager", "franchisee_manager", "front_desk", "shop_login", "barber", "apprentice", "marketing"])
+      for (const p of pay) expect(access(key).permissions.has(p), `${key} ${p}`).toBe(false);
+    for (const p of pay.slice(0, 4)) expect(access("franchisee_owner").permissions.has(p), p).toBe(true);
+    for (const p of pay) expect(access("bookkeeper").permissions.has(p), p).toBe(true);
+    expect(access("shop_manager", { "report.tips_payroll.view": true }).permissions.has("report.tips_payroll.view")).toBe(true);
+    expect(sharedLoginAccess(effectiveAccess(role("shop_login"), { "report.tips_payroll.view": true }, null, "one")).permissions.has("report.tips_payroll.view")).toBe(false);
+    // Approving and locking hours and tip payouts is the manager's job; it isn't the report.
+    for (const p of ["timesheet.approve", "tips.approve"] as Permission[]) expect(access("shop_manager").permissions.has(p), p).toBe(true);
   });
 
   it("the migrations seed exactly the templates in code", () => {

@@ -687,6 +687,13 @@
       "when": 1796230800000,
       "tag": "core_0097_dashboard_refunds",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1796234400000,
+      "tag": "core_0098_pay_reports_brand",
+      "breakpoints": true
     }
   ]
 }

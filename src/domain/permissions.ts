@@ -938,8 +938,12 @@ const grantOnlyDenied = (p: Permission) => `"${permissionLabel(p)}" isn't part o
 
 const reports = (keys: ReportKey[], exportToo = true): ReportPermission[] => keys.flatMap((k) => (exportToo ? [reportView(k), reportExport(k)] : [reportView(k)]));
 const ALL_REPORTS = REPORTS.map((r) => r.key);
-/** Pay that's the brand's to show: no location role has these reports to start. */
-const BRAND_PAY_REPORTS: readonly ReportKey[] = ["commission_payout"];
+/**
+ * Pay that's the brand's to show: no location role has these reports to start (each person's tips,
+ * payroll export, payouts and commission). The brand can still give any of them to a role or a
+ * person under Roles and permissions.
+ */
+export const BRAND_PAY_REPORTS: readonly ReportKey[] = ["tips_payroll", "tip_payouts", "commission_payout"];
 const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)) && !BRAND_PAY_REPORTS.includes(k));
 const MANAGER_FEATURES: FeaturePermission[] = [
   "calendar.view_all",
@@ -1048,13 +1052,13 @@ const TEMPLATES: RoleTemplate[] = [
     description:
       "Owns a franchisee business (an owner entity) and runs all its locations: everything a regional manager does there, plus voiding gift cards and managing its people's access. Brand-wide settings, the catalog, client exports and Stripe setup stay the brand's.",
     defaultScope: "entity",
-    permissions: [...REGIONAL_FEATURES, "giftcards.void", "permissions.manage", "exports.accounting", ...reports(LOCATION_REPORTS)],
+    permissions: [...REGIONAL_FEATURES, "giftcards.void", "permissions.manage", "exports.accounting", ...reports(LOCATION_REPORTS), ...reports(["tips_payroll", "tip_payouts"])],
     maxDiscountPct: 100,
   },
   {
     key: "franchisee_manager",
     name: "Franchisee Manager",
-    description: "Manages a franchisee's locations day to day: front desk, POS, clients, staff and shop settings, with every report for those locations but the brand's marketing reports.",
+    description: "Manages a franchisee's locations day to day: front desk, POS, clients, staff and shop settings, with every report for those locations but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission).",
     defaultScope: "entity",
     permissions: [...REGIONAL_FEATURES, ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
@@ -1062,7 +1066,7 @@ const TEMPLATES: RoleTemplate[] = [
   {
     key: "regional_manager",
     name: "Regional / District Manager",
-    description: "Manages several shops: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with every report for those shops but the brand's marketing reports.",
+    description: "Manages several shops: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with every report for those shops but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission).",
     defaultScope: "selected",
     permissions: [...REGIONAL_FEATURES, "giftcards.void", ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
@@ -1070,7 +1074,7 @@ const TEMPLATES: RoleTemplate[] = [
   {
     key: "shop_manager",
     name: "Shop Manager",
-    description: "Manages one shop: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with that shop's reports but the brand's marketing reports.",
+    description: "Manages one shop: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with that shop's reports but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission).",
     defaultScope: "one",
     permissions: [...MANAGER_FEATURES, ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
@@ -1151,7 +1155,6 @@ const TEMPLATES: RoleTemplate[] = [
           "sales_by_barber",
           "leaderboard",
           "services_vs_products",
-          "tips_payroll",
           "card_vs_cash",
           "sales_tax",
           "discounts_refunds",
@@ -1365,8 +1368,8 @@ export const roleFitsShop = (role: Pick<RoleDef, "ownerEntityId">, shopOwnerEnti
 /**
  * A shop login is shared by everyone at the desk, so nothing it does can be traced to one person.
  * Whatever its role or overrides say, it never refunds, voids or reassigns a ticket on its own (a
- * manager's PIN approves those), never reveals client details, never sees staff contact details,
- * and never manages people, pay or sign-in. Its role can't let it export clients either: only a
+ * manager's PIN approves those), never reveals client details, never sees staff contact details or
+ * each person's tips and pay, and never manages people, pay or sign-in. Its role can't let it export clients either: only a
  * contact access grant to it or its location does (contact-grants.ts), added after this list.
  */
 export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
@@ -1393,6 +1396,10 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   "compensation.own",
   "report.commission_payout.view",
   "report.commission_payout.export",
+  "report.tips_payroll.view",
+  "report.tips_payroll.export",
+  "report.tip_payouts.view",
+  "report.tip_payouts.export",
   "payments.banking",
   "timesheet.edit",
   "timesheet.approve",
