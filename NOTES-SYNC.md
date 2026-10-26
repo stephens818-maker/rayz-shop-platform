@@ -459,6 +459,14 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-26: core, roles and permissions, FYI for mobile
+
+- **Migration `core_0095_roles_permissions`.** The next free one is `core_0096`. Adds `roles.money_limits` and `roles.owner_entity_id`, and `staff.money_limits`, `staff.permission_override_expires` and `staff.scope_region_id` (with `shop_scope = 'region'`, kept in step with `shops.region_id` by triggers). New templates `bookkeeper` and `marketing`; `regional_manager` is now named "Regional / District Manager".
+- **New permissions:** `sales.void` (split from `sales.refund`), `calendar.view_all` (from `calendar.manage`), `staff.view` (from `staff.manage`) and `exports.accounting` (the QuickBooks journal). Everyone who had the original got the new one, so nothing changes for staff using the app today.
+- **If the staff app refunds or voids:** call the same server code. A refund or void over the person's dollar limit is refused with `forbidden` and details `{ approval, overLimit: true, limitCents }`; send a manager's approval (`{ staffId, pin }`) from someone whose limit covers it. Voids now check `sales.void`, not `sales.refund`.
+- **Overrides can expire.** Read effective permissions through `loadStaffAccess` / `accessFor` (they drop an override after its end date). Don't read `staff.permission_overrides` directly.
+- **Customer API:** no change.
+
 ### 2026-10-26: core, brand change scope, FYI for mobile
 
 - **Migration `core_0094_brand_sync`.** The next free one is `core_0095`. Adds `shop_sync_state` (each shop's inherit or override per setting, and its own value for settings that used to be brand-only), `brand_sync_values` (brand templates for hours, taxes and receipt branding), `brand_sync_batches` and `brand_sync_changes` (every sync with each shop's old and new value, for undo), and `brand_sync_controls` (which settings shop managers may change). No new permission: each area uses the permission its brand editor already needed. New page `/admin/sync-status`, new cron `/api/cron/brand-sync` (every 5 minutes, runs scheduled syncs).
