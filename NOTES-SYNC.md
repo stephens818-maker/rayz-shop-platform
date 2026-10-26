@@ -466,6 +466,12 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - **Wallets:** `FEATURE_WALLET_FEE` alone no longer surcharges Apple Pay or Google Pay; the brand also has to turn that wallet on (both off by default).
 - **For Charles:** card-brand registration and notice rules, the state allowlist and limits, and the refund rule (Visa may require refunding it). `STRIPE_SURCHARGE_FIELD` stays off (Stripe preview).
 
+### 2026-10-26: core, which shops use the credit card surcharge, for mobile
+
+- **Migration `core_0093_card_fee_shops`.** The next free one is `core_0094`. Adds `shops.card_fee_changed_at`, filled from the audit log. `brand_settings.card_fee` gains `appliesTo` (`all`, `selected` or `none`; default `all`), `shopIds` and `shopsCanEdit` (default false). No new permission: `settings.card_fee` manages it on the new `/admin/card-fee` page.
+- **No API change.** A shop the brand doesn't apply the surcharge to sends `cardFee.enabled = false`, and the quote's `feeReason` is `disabled`, as for a shop that turned it off. The app keeps reading both from the server.
+- **Audit:** `card_fee.shops` (one per bulk action, with each shop's before and after), `card_fee.shop` per shop with `via` (`brand`, the bulk action, or `new_location`), and `card_fee.brand` lists which shops a brand save changed.
+
 ### 2026-10-26: core, customer app API 1.2 (C1–C22, I1–I16, P1), for mobile
 
 - **Built here at the user's direction**, following the platform delta from the Ray'z App builder (second review). The OpenAPI document is 1.2.0, and its description lists every change. It's backward-compatible except that `chooseProfile` is never returned (treat it like `needsProfile`). Mobile: please rebase onto this branch and drop the overlapping work in PRs #2–#8 (devices, push, consent, saved cards, deletion, the importer changes).
