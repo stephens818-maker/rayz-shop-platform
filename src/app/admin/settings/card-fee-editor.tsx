@@ -2,17 +2,7 @@
 
 import { useState } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
-import {
-  FEE_CHANNELS,
-  FEE_CHANNEL_LABEL,
-  FEE_NOTICE_MAX,
-  SURCHARGE_BLOCKED_STATES,
-  US_STATES,
-  type CardFeeOverride,
-  type CardFeePolicy,
-  feeConfigFor,
-  stateRule,
-} from "@/domain/card-fee-policy";
+import { FEE_CHANNELS, FEE_CHANNEL_LABEL, FEE_NOTICE_MAX, SURCHARGE_BLOCKED_STATES, US_STATES, type CardFeeOverride, type CardFeePolicy, feeConfigFor, stateRule } from "@/domain/card-fee-policy";
 import { MAX_CARD_FEE_RATE, type CardFeeConfig, cardFeeFor, feeDisclosure } from "@/domain/checkout";
 import { formatCents } from "@/lib/money";
 import { saveBrandCardFeeAction, saveShopCardFeeAction } from "./actions";
@@ -127,10 +117,16 @@ function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) =
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={f.funding.googlePay} onChange={(e) => set({ ...f, funding: { ...f.funding, googlePay: e.target.checked } })} /> Credit cards in Google Pay
           </label>
-          {!walletFlag && (f.funding.applePay || f.funding.googlePay) && <span className="text-xs text-amber-700">Wallet surcharges also need FEATURE_WALLET_FEE turned on; until then wallets pay none.</span>}
+          {!walletFlag && (f.funding.applePay || f.funding.googlePay) && (
+            <span className="text-xs text-amber-700">Wallet surcharges also need FEATURE_WALLET_FEE turned on; until then wallets pay none.</span>
+          )}
         </div>
       </div>
-      <Field label="Notice at checkout and on receipts" className="sm:col-span-2 lg:col-span-4" hint={`Optional; must say "surcharge". {fee} becomes the rate or amount. Up to ${FEE_NOTICE_MAX} characters.`}>
+      <Field
+        label="Notice at checkout and on receipts"
+        className="sm:col-span-2 lg:col-span-4"
+        hint={`Optional; must say "surcharge". {fee} becomes the rate or amount. Up to ${FEE_NOTICE_MAX} characters.`}
+      >
         <Textarea rows={2} maxLength={FEE_NOTICE_MAX} value={f.notice} placeholder="The built-in notice" onChange={(e) => set({ ...f, notice: e.target.value })} />
       </Field>
       <div className="space-y-1 text-xs text-zinc-600 sm:col-span-2 lg:col-span-4">
@@ -173,8 +169,8 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
         subtitle={canEdit ? "Applies to every shop unless a shop sets its own. Every change is in the audit log." : "Brand admins change the card surcharge."}
       />
       <Notice tone="blue">
-        Only credit cards are ever surcharged: Stripe reports each card&apos;s funding type, and debit, prepaid, gift cards and cash never pay it. It never goes over {MAX_CARD_FEE_RATE * 100}% of the charge
-        or a state&apos;s lower limit, and it&apos;s off in any state not ticked below. Confirm card-brand registration and notice rules before turning it on.
+        Only credit cards are ever surcharged: Stripe reports each card&apos;s funding type, and debit, prepaid, gift cards and cash never pay it. It never goes over {MAX_CARD_FEE_RATE * 100}% of the
+        charge or a state&apos;s lower limit, and it&apos;s off in any state not ticked below. Confirm card-brand registration and notice rules before turning it on.
       </Notice>
       <FeeFields f={f} set={setF} disabled={!canEdit} walletFlag={walletFlag} />
       <fieldset disabled={!canEdit} className="grid gap-3 border-t border-zinc-100 p-4 sm:grid-cols-2">
@@ -208,7 +204,11 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
           </div>
           <div className="grid grid-cols-6 gap-1 text-xs sm:grid-cols-9 lg:grid-cols-13">
             {US_STATES.map((s) => (
-              <label key={s} className={blocked.includes(s) ? "flex items-center gap-1 text-red-700" : "flex items-center gap-1"} title={blocked.includes(s) ? "Surcharges are restricted here" : undefined}>
+              <label
+                key={s}
+                className={blocked.includes(s) ? "flex items-center gap-1 text-red-700" : "flex items-center gap-1"}
+                title={blocked.includes(s) ? "Surcharges are restricted here" : undefined}
+              >
                 <input
                   type="checkbox"
                   checked={states.has(s)}
@@ -296,12 +296,12 @@ export function ShopCardFeeEditor({
     <Card>
       <CardHeader title={`Credit card surcharge at ${shopName}`} subtitle={canEdit ? "Follow the brand, or set this shop's own fee. Audited." : "Brand admins change the card surcharge."} />
       <div className="space-y-2 px-4 pt-4">
-        {!rule.allowed && (
-          <Notice tone="red">
-            No surcharge here: {shopState ? `${shopState} isn't` : "the shop has no state, so it isn't"} on the brand&apos;s state list.
+        {!rule.allowed && <Notice tone="red">No surcharge here: {shopState ? `${shopState} isn't` : "the shop has no state, so it isn't"} on the brand&apos;s state list.</Notice>}
+        {rule.allowed && rule.maxRate < MAX_CARD_FEE_RATE && (
+          <Notice>
+            {shopState} limits the surcharge to {pct(rule.maxRate)}%; a higher rate is charged at that.
           </Notice>
         )}
-        {rule.allowed && rule.maxRate < MAX_CARD_FEE_RATE && <Notice>{shopState} limits the surcharge to {pct(rule.maxRate)}%; a higher rate is charged at that.</Notice>}
         {rule.allowed && <p className="text-xs text-zinc-600">{live ? `At the counter now: “${live}”` : "No surcharge at the counter."}</p>}
       </div>
       <fieldset disabled={!canEdit} className="flex gap-4 px-4 pt-3 text-sm">

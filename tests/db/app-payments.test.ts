@@ -175,11 +175,18 @@ describe("paying a ticket in the app (C7, C8)", () => {
     expect(await quote("ctoken_sim_visa_debit")).toMatchObject({ feeCents: 0, feeReason: "not_credit" });
     expect(await quote("ctoken_sim_mastercard_prepaid")).toMatchObject({ feeCents: 0, feeReason: "not_credit" });
     expect(await quote("ctoken_sim_apple_pay")).toMatchObject({ feeCents: 0, feeReason: "wallet_fee_off", card: { wallet: "apple_pay" } });
+    // A wallet pays it only with the flag on and the brand's policy turning that wallet on.
+    const cf = await import("@/server/payments/card-fee");
+    const { DEFAULT_CARD_FEE_POLICY } = await import("@/domain/card-fee-policy");
     process.env.FEATURE_WALLET_FEE = "true";
     try {
+      expect((await quote("ctoken_sim_google_pay")).feeReason).toBe("wallet_fee_off");
+      await cf.saveBrandFeePolicy(actor, { ...DEFAULT_CARD_FEE_POLICY, funding: { ...DEFAULT_CARD_FEE_POLICY.funding, googlePay: true } });
       expect((await quote("ctoken_sim_google_pay")).feeReason).toBe("applies");
+      expect((await quote("ctoken_sim_apple_pay")).feeReason).toBe("wallet_fee_off");
     } finally {
       delete process.env.FEATURE_WALLET_FEE;
+      await cf.saveBrandFeePolicy(actor, DEFAULT_CARD_FEE_POLICY);
     }
     const r = await quoteRoute.POST(
       req(`/api/v1/me/tickets/${t.id}/quote`, { method: "POST", headers: await auth(c.id), body: JSON.stringify({ tipChoice: "none", paymentMethodId: "pm_card_amex" }) }),

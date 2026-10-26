@@ -48,7 +48,19 @@ export interface FeeTotals {
   costSurchargedCents: number;
 }
 
-const ZERO = (): FeeTotals => ({ charges: 0, surcharged: 0, waivers: 0, amountCents: 0, feeChargedCents: 0, feeRefundedCents: 0, feeCents: 0, waivedCents: 0, basisCents: 0, costCents: 0, costSurchargedCents: 0 });
+const ZERO = (): FeeTotals => ({
+  charges: 0,
+  surcharged: 0,
+  waivers: 0,
+  amountCents: 0,
+  feeChargedCents: 0,
+  feeRefundedCents: 0,
+  feeCents: 0,
+  waivedCents: 0,
+  basisCents: 0,
+  costCents: 0,
+  costSurchargedCents: 0,
+});
 
 function add(t: FeeTotals, r: Fine) {
   t.charges += r.charges;
@@ -76,7 +88,7 @@ const DIMS = sql`coalesce(p.fee_channel, 'pos') channel, coalesce(nullif(lower(p
 export async function cardFeeRows(s: ReportScope): Promise<Fine[]> {
   const [pay, ref] = await Promise.all([
     rows<Omit<Fine, "fee_refunded">>(sql`
-      select p.shop_id, s.staff_id, p.business_date::text day, ${DIMS},
+      select p.shop_id, s.staff_id, p.business_date::text as day, ${DIMS},
         count(*) filter (where p.status <> 'voided' and s.status <> 'voided')::int charges,
         count(*) filter (where p.card_fee_cents > 0 and p.status <> 'voided' and s.status <> 'voided')::int surcharged,
         count(*) filter (where p.fee_waived and p.status <> 'voided' and s.status <> 'voided')::int waivers,
@@ -91,7 +103,7 @@ export async function cardFeeRows(s: ReportScope): Promise<Fine[]> {
       ${staffFilter(sql`s.staff_id`, s)}
       group by 1, 2, 3, 4, 5, 6`),
     rows<Pick<Fine, "shop_id" | "staff_id" | "day" | "channel" | "brand" | "funding" | "fee_refunded">>(sql`
-      select r.shop_id, s.staff_id, r.business_date::text day, ${DIMS}, coalesce(sum(r.card_fee_cents), 0)::int fee_refunded
+      select r.shop_id, s.staff_id, r.business_date::text as day, ${DIMS}, coalesce(sum(r.card_fee_cents), 0)::int fee_refunded
       from refunds r join sales s on s.id = r.sale_id join payments p on p.id = r.payment_id
       where r.method = 'card' and r.kind = 'refund' and r.card_fee_cents <> 0 and r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to}
       ${staffFilter(sql`s.staff_id`, s)}
@@ -120,7 +132,16 @@ export function feeTotalsAt(fine: Fine[], loc: ViewCtx): Record<string, FeeTotal
   return out;
 }
 
-const BRAND_LABEL: Record<string, string> = { visa: "Visa", mastercard: "Mastercard", amex: "American Express", discover: "Discover", jcb: "JCB", diners: "Diners Club", unionpay: "UnionPay", unknown: "Unknown" };
+const BRAND_LABEL: Record<string, string> = {
+  visa: "Visa",
+  mastercard: "Mastercard",
+  amex: "American Express",
+  discover: "Discover",
+  jcb: "JCB",
+  diners: "Diners Club",
+  unionpay: "UnionPay",
+  unknown: "Unknown",
+};
 export const cardTypeLabel = (brand: string, funding: string) => `${BRAND_LABEL[brand] ?? brand} ${funding === "unknown" ? "(funding unknown)" : funding}`;
 
 const money = (label: string): Column => ({ label, kind: "money" });
@@ -200,7 +221,8 @@ export async function cardFeeReportData(scope: ReportScope, loc: ViewCtx) {
   const summary = metricTable(loc, {
     id: "summary",
     title: `Card surcharges${{ combined: "", shops: " by location", barbers: " by barber", shops_barbers: " by location and barber" }[viewOf(loc)]}`,
-    subtitle: "Collected is after surcharge refunds. The effective rate is what was charged over the amounts it was charged on. Net cost recovery is collected less the processing cost of every card charge.",
+    subtitle:
+      "Collected is after surcharge refunds. The effective rate is what was charged over the amounts it was charged on. Net cost recovery is collected less the processing cost of every card charge.",
     metrics: [
       m("Card charges", "int", (x) => x.charges),
       m("Card takings", "money", (x) => x.amountCents),
@@ -251,7 +273,11 @@ export async function cardFeeReportData(scope: ReportScope, loc: ViewCtx) {
   );
   return {
     stats: [
-      { label: "Surcharges collected", value: formatCents(t.feeCents), hint: `${t.surcharged} of ${t.charges} card charges${t.feeRefundedCents ? `, after ${formatCents(t.feeRefundedCents)} refunded` : ""}` },
+      {
+        label: "Surcharges collected",
+        value: formatCents(t.feeCents),
+        hint: `${t.surcharged} of ${t.charges} card charges${t.feeRefundedCents ? `, after ${formatCents(t.feeRefundedCents)} refunded` : ""}`,
+      },
       { label: "Waived", value: formatCents(t.waivedCents), hint: `${t.waivers} waiver${t.waivers === 1 ? "" : "s"}` },
       { label: "Effective rate", value: effectiveRate(t) === null ? "—" : `${((effectiveRate(t) ?? 0) * 100).toFixed(2)}%`, hint: `on ${formatCents(t.basisCents)} surcharged` },
       {
@@ -299,7 +325,7 @@ export interface FeePaymentRow {
 /** Every card payment in the range with how its surcharge was worked out: the payments export. */
 export async function feePayments(s: ReportScope, limit = 20000): Promise<FeePaymentRow[]> {
   return rows<FeePaymentRow>(sql`
-    select p.id, p.shop_id "shopId", s.staff_id "staffId", p.business_date::text day, s.number ticket, coalesce(p.fee_channel, 'pos') channel,
+    select p.id, p.shop_id "shopId", s.staff_id "staffId", p.business_date::text as day, s.number ticket, coalesce(p.fee_channel, 'pos') channel,
       p.card_brand brand, p.card_last4 last4, p.card_funding funding, s.pricing->>'cardWallet' wallet, p.status::text status,
       p.amount_cents "amountCents", p.tip_cents "tipCents", p.card_fee_cents "feeCents", p.fee_rate::float8 "feeRate", p.fee_flat_cents "feeFlatCents",
       p.fee_basis "feeBasis", p.fee_basis_cents "feeBasisCents", p.fee_reason "feeReason", p.fee_waived waived, p.fee_waived_cents "waivedCents",

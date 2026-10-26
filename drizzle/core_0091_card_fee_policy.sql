@@ -1,7 +1,7 @@
 -- The credit card fee policy (extends C7). The brand sets it in brand_settings.card_fee; a shop can override parts of it in
 -- shops.card_fee_override. Shops whose own fee settings differ from the old defaults (on, 3%, not on tips) keep them as an
 -- override, so nothing charges differently after this. Each payment records how its surcharge was worked out, and any waiver.
--- Two permissions: the policy (brand-level roles) and waiving the fee at the register (every role that can change prices),
+-- Two permissions: the policy (Brand Admin; the Brand Owner has every permission) and waiving the fee at the register (every role that can change prices),
 -- and the new card fee report for the roles that see the Shop P&L.
 ALTER TABLE "brand_settings" ADD COLUMN IF NOT EXISTS "card_fee" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
 ALTER TABLE "shops" ADD COLUMN IF NOT EXISTS "card_fee_override" jsonb;--> statement-breakpoint
@@ -44,6 +44,6 @@ WHERE s."id" = p."sale_id" AND p."method" = 'card' AND p."card_fee_cents" > 0 AN
 UPDATE "payments" SET "fee_basis_cents" = round("card_fee_cents" / "fee_rate")::int
 WHERE "method" = 'card' AND "card_fee_cents" > 0 AND "fee_rate" > 0 AND "fee_basis_cents" IS NULL;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "payments_fee_waived_idx" ON "payments" ("shop_id", "business_date") WHERE "fee_waived";--> statement-breakpoint
-UPDATE "roles" SET "permissions" = "permissions" || '["settings.card_fee"]'::jsonb WHERE "key" IN ('brand_owner', 'brand_admin') AND NOT ("permissions" ? 'settings.card_fee');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["settings.card_fee"]'::jsonb WHERE "key" = 'brand_admin' AND NOT ("permissions" ? 'settings.card_fee');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["pos.waive_card_fee"]'::jsonb WHERE "permissions" ? 'pos.price_override' AND NOT ("permissions" ? 'pos.waive_card_fee');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["report.card_fees.view","report.card_fees.export"]'::jsonb WHERE "permissions" ? 'report.shop_accounts.view' AND NOT ("permissions" ? 'report.card_fees.view');

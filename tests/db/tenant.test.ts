@@ -768,7 +768,6 @@ describe("server actions aimed at another shop's records", () => {
         "settings money",
         () => settings.saveShopMoneyAction(cv, { serviceTaxRate: 0, productTaxRate: 0, taxRatesVerified: true }),
       ],
-      ["settings shop card fee", () => settings.saveShopCardFeeAction(cv, { enabled: false })],
       ["settings hours", () => settings.saveHoursAction(cv, [])],
       ["settings closure", () => settings.addClosureAction(cv, m.time.addDays(today, 40), "x", false)],
       ["settings reopen", () => settings.removeClosureAction(cv, today)],

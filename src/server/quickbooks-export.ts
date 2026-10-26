@@ -53,12 +53,12 @@ export async function quickbooksDays(s: ReportScope): Promise<DayRow[]> {
   const sf = staffFilter(sql`s.staff_id`, s);
   return rows<DayRow>(sql`
     with sale as (
-      select s.shop_id, s.business_date day, sum(s.service_net_cents)::int sn, sum(s.product_net_cents)::int pn, sum(s.gift_card_sales_cents)::int gc,
+      select s.shop_id, s.business_date as day, sum(s.service_net_cents)::int sn, sum(s.product_net_cents)::int pn, sum(s.gift_card_sales_cents)::int gc,
         sum(s.service_tax_cents + s.product_tax_cents)::int tax, sum(s.tip_cents)::int tips, sum(s.card_fee_cents)::int fee
       from sales s where s.shop_id in ${ids(s)} and s.business_date between ${s.from} and ${s.to} and s.status in ('paid', 'refunded', 'partially_refunded') ${sf}
       group by 1, 2
     ), ref as (
-      select r.shop_id, r.business_date day, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn, sum(r.gift_card_sales_cents)::int gc,
+      select r.shop_id, r.business_date as day, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn, sum(r.gift_card_sales_cents)::int gc,
         sum(r.tax_cents)::int tax, sum(r.tip_cents)::int tips, sum(r.card_fee_cents)::int fee,
         coalesce(sum(r.amount_cents) filter (where r.method = 'card'), 0)::int card, coalesce(sum(r.amount_cents) filter (where r.method = 'cash'), 0)::int cash,
         coalesce(sum(r.amount_cents) filter (where r.method = 'gift_card'), 0)::int gift
@@ -66,7 +66,7 @@ export async function quickbooksDays(s: ReportScope): Promise<DayRow[]> {
       where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} and r.kind = 'refund' ${sf}
       group by 1, 2
     ), pay as (
-      select p.shop_id, p.business_date day,
+      select p.shop_id, p.business_date as day,
         coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.status <> 'voided'), 0)::int card,
         coalesce(sum(p.amount_cents) filter (where p.method = 'cash' and p.status <> 'voided'), 0)::int cash,
         coalesce(sum(p.amount_cents) filter (where p.method = 'gift_card' and p.status <> 'voided'), 0)::int gift,
@@ -75,7 +75,7 @@ export async function quickbooksDays(s: ReportScope): Promise<DayRow[]> {
       where p.shop_id in ${ids(s)} and p.business_date between ${s.from} and ${s.to} and p.status not in ('pending', 'failed') and s.status <> 'voided' ${sf}
       group by 1, 2
     ), days as (select shop_id, day from sale union select shop_id, day from ref union select shop_id, day from pay)
-    select d.shop_id, sh.name shop, sh.slug, d.day::text day,
+    select d.shop_id, sh.name shop, sh.slug, d.day::text as day,
       coalesce(sale.sn, 0) sn, coalesce(sale.pn, 0) pn, coalesce(sale.gc, 0) gc, coalesce(sale.tax, 0) tax, coalesce(sale.tips, 0) tips, coalesce(sale.fee, 0) fee,
       coalesce(ref.sn, 0) r_sn, coalesce(ref.pn, 0) r_pn, coalesce(ref.gc, 0) r_gc, coalesce(ref.tax, 0) r_tax, coalesce(ref.tips, 0) r_tips, coalesce(ref.fee, 0) r_fee,
       coalesce(pay.card, 0) card, coalesce(pay.cash, 0) cash, coalesce(pay.gift, 0) gift,
@@ -127,7 +127,15 @@ export async function quickbooksTable(s: ReportScope): Promise<ReportTable> {
     subtitle: "One journal entry per location per day for QuickBooks Online's journal entry import. Map the account names to yours when importing.",
     exportOnly: true,
     downloadLabel: "Download QuickBooks journal CSV",
-    columns: [{ label: "Journal No" }, { label: "Journal Date" }, { label: "Account" }, { label: "Debits", kind: "money" }, { label: "Credits", kind: "money" }, { label: "Description" }, { label: "Location" }],
+    columns: [
+      { label: "Journal No" },
+      { label: "Journal Date" },
+      { label: "Account" },
+      { label: "Debits", kind: "money" },
+      { label: "Credits", kind: "money" },
+      { label: "Description" },
+      { label: "Location" },
+    ],
     rows: out,
   };
 }
