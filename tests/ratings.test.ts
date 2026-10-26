@@ -169,12 +169,15 @@ describe("client ratings never reach customers", () => {
     const mentions = [...files].filter((f) => /clientRatings|client_ratings/.test(readFileSync(f, "utf8"))).map(rel).sort();
     expect(mentions.filter((f) => f !== "src/domain/permissions.ts")).toEqual([
       "src/db/schema.ts",
+      "src/domain/assistant.ts",
       "src/server/account-deletion.ts",
       "src/server/badges.ts",
       "src/server/client-filters.ts",
       "src/server/customers.ts",
       "src/server/report-builder/engine.ts",
     ]);
+    // The assistant names the ratings report only to leave it out.
+    expect(readFileSync(join(SRC, "domain", "assistant.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l))).toEqual(['  (r) => !["audit_log", "client_ratings", "morning_dashboard"].includes(r.key),']);
     // A client deleting their account removes the ratings about them, and reads nothing from the table.
     const deletion = readFileSync(join(SRC, "server", "account-deletion.ts"), "utf8").split("\n").filter((l) => /clientRatings|client_ratings/.test(l) && !/^\s*clientRatings,$/.test(l));
     expect(deletion).toEqual(["  await tx.delete(clientRatings).where(eq(clientRatings.customerId, id));"]);
