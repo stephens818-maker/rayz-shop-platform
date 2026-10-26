@@ -147,7 +147,8 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
     const states = await stateRows(tx, [key], all);
     const native = await nativeOf(tx, a, [raw.item], all, brandMap, states);
     const cells = new Map<string, { write: ShopWrite | null; mode: SyncMode; hadRow: boolean; modeWas: SyncMode | null }>();
-    for (const shopId of all) {
+    const shopsSeeChange = !existed || !same(v0, v1);
+    for (const shopId of shopsSeeChange ? all : []) {
       const n = native.get(`${shopId}|${raw.item}`);
       if (!n) continue;
       const st = states.get(`${shopId}|${key}`);
