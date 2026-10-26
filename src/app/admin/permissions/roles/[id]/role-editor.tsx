@@ -297,7 +297,7 @@ export function RoleEditor({
                         min={0}
                         step="0.01"
                         aria-label={`${l.label} limit in dollars`}
-                        className="h-8 w-28"
+                        className="w-28"
                         value={dollars(v)}
                         onChange={(e) => setLimit(l.key, Math.max(0, Math.round((Number(e.target.value) || 0) * 100)))}
                       />

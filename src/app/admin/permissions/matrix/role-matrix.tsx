@@ -120,8 +120,8 @@ export function RoleMatrix({ roles, mine, isOwner, readOnly }: { roles: MatrixRo
     <div className="space-y-3 pb-24">
       {readOnly && <Notice tone="blue">{readOnly}</Notice>}
       <div className="flex flex-wrap items-center gap-2">
-        <Input className="h-9 max-w-xs" placeholder="Search permissions, e.g. refund or quickbooks" aria-label="Search permissions" value={q} onChange={(e) => setQ(e.target.value)} />
-        <Select className="h-9 w-60 py-1 text-sm" aria-label="Area" value={area} onChange={(e) => setArea(e.target.value)}>
+        <Input className="max-w-xs" placeholder="Search permissions, e.g. refund or quickbooks" aria-label="Search permissions" value={q} onChange={(e) => setQ(e.target.value)} />
+        <Select className="w-60" aria-label="Area" value={area} onChange={(e) => setArea(e.target.value)}>
           <option value="">Every area</option>
           {AREAS.map((a) => (
             <option key={a.key} value={a.key}>
@@ -190,7 +190,7 @@ export function RoleMatrix({ roles, mine, isOwner, readOnly }: { roles: MatrixRo
                               <td key={r.id} className={cx("border-b border-l border-zinc-100 px-1 py-1", changed && "bg-amber-50")}>
                                 <Select
                                   aria-label={`${r.name}: ${row.label}`}
-                                  className={cx("h-7 w-full py-0 pl-2 text-xs", i <= 0 && row.levels[0]?.key === "none" ? "text-zinc-400" : "font-medium text-zinc-800")}
+                                  className={cx("w-full pl-2 text-xs", i <= 0 && row.levels[0]?.key === "none" ? "text-zinc-400" : "font-medium text-zinc-800")}
                                   value={i}
                                   disabled={locked}
                                   onChange={(e) => setLevel(r, row, Number(e.target.value))}

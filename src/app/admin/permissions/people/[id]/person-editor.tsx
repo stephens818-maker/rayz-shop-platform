@@ -277,7 +277,7 @@ export function PersonAccessEditor({
                     {perShop && covered.includes(shop.id) && (
                       <Select
                         aria-label={`Role at ${shop.name}`}
-                        className="h-8 w-48 py-1 text-xs"
+                        className="w-48 text-xs"
                         value={s.shopRoles[shop.id] ?? s.roleId}
                         onChange={(e) => {
                           const { [shop.id]: _, ...rest } = s.shopRoles;
@@ -378,7 +378,7 @@ export function PersonAccessEditor({
                     <span className="w-36">{l.label}</span>
                     <Select
                       aria-label={`${l.label} limit`}
-                      className="h-8 w-44 py-1 text-sm"
+                      className="w-44"
                       disabled={locked}
                       value={mode}
                       onChange={(e) => setLimit(l.key, e.target.value === "role" ? undefined : e.target.value === "none" ? null : (fromRoleLimit ?? mine ?? 0))}
@@ -395,7 +395,7 @@ export function PersonAccessEditor({
                           min={0}
                           step="0.01"
                           aria-label={`${l.label} limit in dollars`}
-                          className="h-8 w-28"
+                          className="w-28"
                           disabled={locked}
                           value={dollars(own)}
                           onChange={(e) => setLimit(l.key, Math.max(0, Math.round((Number(e.target.value) || 0) * 100)))}
@@ -471,7 +471,7 @@ export function PersonAccessEditor({
                               type="date"
                               min={today()}
                               aria-label={`${permissionLabel(p)}: until`}
-                              className="h-7 w-36 py-0 text-xs"
+                              className="w-36 text-xs"
                               disabled={locked}
                               value={s.expires[p] ?? ""}
                               onChange={(e) => setExpiry(p, e.target.value)}

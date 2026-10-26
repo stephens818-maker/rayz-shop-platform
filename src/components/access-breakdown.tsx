@@ -97,8 +97,8 @@ export function AccessBreakdown({
         }
       />
       <div className="flex flex-wrap gap-2 border-b border-zinc-100 px-4 py-3">
-        <Input className="h-8 max-w-xs" placeholder="Search permissions" aria-label="Search permissions" value={q} onChange={(e) => setQ(e.target.value)} />
-        <Select className="h-8 w-56 py-1 text-sm" aria-label="Area" value={area} onChange={(e) => setArea(e.target.value)}>
+        <Input className="max-w-xs" placeholder="Search permissions" aria-label="Search permissions" value={q} onChange={(e) => setQ(e.target.value)} />
+        <Select className="w-56" aria-label="Area" value={area} onChange={(e) => setArea(e.target.value)}>
           <option value="">Every area</option>
           {AREAS.map((a) => (
             <option key={a.key} value={a.key}>
