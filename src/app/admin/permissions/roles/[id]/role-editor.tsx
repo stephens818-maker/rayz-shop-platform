@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { syncedText, useBrandSync } from "@/components/brand-sync";
-import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, cx } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, Field, Input, LinkButton, Notice, Select, Textarea, cx } from "@/components/ui";
 import {
   BRAND_ADMIN_ALWAYS,
   BRAND_ADMIN_ROLE_KEY,
@@ -13,6 +13,9 @@ import {
   OWNER_GRANTS,
   OWNER_ONLY,
   GRANT_ONLY,
+  MONEY_LIMITS,
+  MoneyLimitKey,
+  MoneyLimits,
   PERMISSION_GROUPS,
   Permission,
   REPORTS,
@@ -20,30 +23,51 @@ import {
   SHOP_SCOPES,
   ShopScope,
   isBrandLevelRole,
+  limitLabel,
   reportExport,
   reportView,
 } from "@/domain/permissions";
 import { deleteRoleAction } from "../../actions";
 
-type RoleForm = { id: string; key: string | null; name: string; description: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope; brandLevel: boolean };
-type Starter = { name: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope };
+type RoleForm = {
+  id: string;
+  key: string | null;
+  name: string;
+  description: string;
+  permissions: string[];
+  maxDiscountPct: number;
+  defaultScope: ShopScope;
+  brandLevel: boolean;
+  moneyLimits: Partial<MoneyLimits>;
+  ownerEntityId: string | null;
+};
+type Starter = { name: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope; moneyLimits: Partial<MoneyLimits> };
+const dollars = (c: number | null | undefined) => (c == null ? "" : String(c / 100));
 
 export function RoleEditor({
   initial,
+  seed = null,
   template,
   starters,
   mine,
   isOwner = false,
   myMaxDiscount,
+  myLimits,
+  entities = [],
   people,
   readOnly,
 }: {
   initial: RoleForm | null;
+  /** A new role cloned from this one. */
+  seed?: Omit<RoleForm, "id" | "key"> | null;
   template: { permissions: string[]; maxDiscountPct: number } | null;
   starters: Starter[];
   mine: string[];
   isOwner?: boolean;
   myMaxDiscount: number;
+  myLimits: MoneyLimits;
+  /** Owner entities a custom role can belong to. */
+  entities?: { id: string; name: string }[];
   people: number;
   readOnly: string | null;
 }) {
@@ -51,21 +75,39 @@ export function RoleEditor({
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [name, setName] = useState(initial?.name ?? "");
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [scope, setScope] = useState<ShopScope>(initial?.defaultScope ?? "one");
-  const [maxPct, setMaxPct] = useState(initial?.maxDiscountPct ?? 0);
-  const [brandLevel, setBrandLevel] = useState(initial?.brandLevel ?? false);
+  const start0 = initial ?? seed;
+  const [name, setName] = useState(start0?.name ?? "");
+  const [description, setDescription] = useState(start0?.description ?? "");
+  const [scope, setScope] = useState<ShopScope>(start0?.defaultScope ?? "one");
+  const [maxPct, setMaxPct] = useState(start0?.maxDiscountPct ?? 0);
+  const [brandLevel, setBrandLevel] = useState(start0?.brandLevel ?? false);
+  const [limits, setLimits] = useState<Partial<MoneyLimits>>(start0?.moneyLimits ?? {});
+  const [ownerEntityId, setOwnerEntityId] = useState<string | null>(start0?.ownerEntityId ?? null);
   const custom = !initial?.key;
   const roleIsBrandLevel = isBrandLevelRole({ key: initial?.key ?? null, brandLevel });
-  const [perms, setPerms] = useState<Set<string>>(new Set([...(initial?.permissions ?? []), ...(initial?.key === BRAND_ADMIN_ROLE_KEY ? BRAND_ADMIN_ALWAYS : [])]));
+  const [perms, setPerms] = useState<Set<string>>(new Set([...(start0?.permissions ?? []), ...(initial?.key === BRAND_ADMIN_ROLE_KEY ? BRAND_ADMIN_ALWAYS : [])]));
   const has = useMemo(() => new Set(mine), [mine]);
   const original = useMemo(() => new Set(initial?.permissions ?? []), [initial]);
   const fromTemplate = useMemo(() => (template ? new Set(template.permissions) : null), [template]);
   const locked = !!readOnly;
 
   const changed = [...new Set([...perms, ...original])].filter((p) => perms.has(p) !== original.has(p));
-  const dirty = changed.length > 0 || brandLevel !== (initial?.brandLevel ?? false) || name !== (initial?.name ?? "") || description !== (initial?.description ?? "") || scope !== (initial?.defaultScope ?? "one") || maxPct !== (initial?.maxDiscountPct ?? 0);
+  const limitsChanged = MONEY_LIMITS.some((l) => (limits[l.key] ?? null) !== (initial?.moneyLimits[l.key] ?? null));
+  const dirty =
+    changed.length > 0 ||
+    limitsChanged ||
+    ownerEntityId !== (initial?.ownerEntityId ?? null) ||
+    brandLevel !== (initial?.brandLevel ?? false) ||
+    name !== (initial?.name ?? "") ||
+    description !== (initial?.description ?? "") ||
+    scope !== (initial?.defaultScope ?? "one") ||
+    maxPct !== (initial?.maxDiscountPct ?? 0);
+  const setLimit = (k: MoneyLimitKey, v: number | null) => {
+    const next = { ...limits };
+    if (v === null) delete next[k];
+    else next[k] = v;
+    setLimits(next);
+  };
 
   /** Why this toggle can't be flipped by the person editing, if it can't. */
   const brandAdmin = initial?.key === BRAND_ADMIN_ROLE_KEY;
@@ -137,7 +179,10 @@ export function RoleEditor({
     });
   };
   const save = () =>
-    syncRole({ name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope, ...(custom ? { brandLevel } : {}) }, initial ? `${name} role` : `New role: ${name}`);
+    syncRole(
+      { name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope, moneyLimits: limits, ...(custom ? { brandLevel, ownerEntityId } : {}) },
+      initial ? `${name} role` : `New role: ${name}`,
+    );
 
   const tag = (p: Permission) => {
     if (fromTemplate && fromTemplate.has(p) !== perms.has(p)) return <Badge tone="amber">{perms.has(p) ? "added" : "removed"} vs template</Badge>;
@@ -161,6 +206,7 @@ export function RoleEditor({
                   setPerms(new Set(s.permissions.filter((p) => !blocked(p as Permission))));
                   setMaxPct(Math.min(s.maxDiscountPct, myMaxDiscount));
                   setScope(s.defaultScope);
+                  setLimits(s.moneyLimits);
                 }}
               >
                 {s.name}
@@ -202,6 +248,7 @@ export function RoleEditor({
                 onChange={(e) => {
                   setBrandLevel(e.target.checked);
                   if (!e.target.checked) setPerms(new Set([...perms].filter((p) => !BRAND_LEVEL_ONLY.has(p as Permission))));
+                  if (e.target.checked) setOwnerEntityId(null);
                 }}
               />
               <span>
@@ -213,8 +260,60 @@ export function RoleEditor({
               </span>
             </label>
           )}
+          {custom && entities.length > 0 && (
+            <Field label="Belongs to" hint="A role for one owner (a franchisee's own role) gives nothing at shops that owner doesn't run." className="sm:col-span-2">
+              <Select aria-label="Belongs to" value={ownerEntityId ?? ""} disabled={brandLevel} onChange={(e) => setOwnerEntityId(e.target.value || null)}>
+                <option value="">The brand: any shop</option>
+                {entities.map((x) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name} only
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
         </fieldset>
       </Card>
+
+      {MONEY_LIMITS.some((l) => l.perms.some((p) => perms.has(p))) && (
+        <Card>
+          <CardHeader title="Dollar limits" subtitle="On top of the percent limit. Leave one off for no dollar limit. People can have their own limits instead." />
+          <fieldset disabled={locked} className="divide-y divide-zinc-100" data-testid="role-limits">
+            {MONEY_LIMITS.filter((l) => l.perms.some((p) => perms.has(p))).map((l) => {
+              const v = limits[l.key];
+              const mine = myLimits[l.key];
+              const over = !isOwner && mine !== null && (v === undefined || v === null || v > mine) && (v ?? null) !== (initial?.moneyLimits[l.key] ?? null);
+              return (
+                <div key={l.key} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
+                  <label className="flex w-48 items-center gap-2">
+                    <input type="checkbox" className="h-4 w-4 accent-ink-900" checked={typeof v === "number"} onChange={(e) => setLimit(l.key, e.target.checked ? (mine ?? 10000) : null)} />
+                    {l.label}
+                  </label>
+                  {typeof v === "number" ? (
+                    <span className="flex items-center gap-1">
+                      Up to $
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        aria-label={`${l.label} limit in dollars`}
+                        className="h-8 w-28"
+                        value={dollars(v)}
+                        onChange={(e) => setLimit(l.key, Math.max(0, Math.round((Number(e.target.value) || 0) * 100)))}
+                      />
+                      {l.key === "refundCents" ? "a refund or void" : "a ticket"}
+                    </span>
+                  ) : (
+                    <span className="text-zinc-500">No dollar limit</span>
+                  )}
+                  {over && <span className="text-xs text-red-600">above your own ({limitLabel(mine)})</span>}
+                  <span className="basis-full text-xs text-zinc-500">{l.hint}</span>
+                </div>
+              );
+            })}
+          </fieldset>
+        </Card>
+      )}
 
       {PERMISSION_GROUPS.map((g) => (
         <Card key={g}>
@@ -349,6 +448,11 @@ export function RoleEditor({
                 <Button type="button" variant="secondary" disabled={pending} onClick={() => syncRole({ reset: true }, `${initial.name} role: reset to template`, "Reset to template")}>
                   Reset to template
                 </Button>
+              )}
+              {initial && (
+                <LinkButton variant="secondary" href={`/admin/permissions/roles/new?from=${initial.id}`}>
+                  Clone
+                </LinkButton>
               )}
               {initial && !initial.key && (
                 <Button

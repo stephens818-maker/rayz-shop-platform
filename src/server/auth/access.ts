@@ -75,6 +75,30 @@ function applyGrants<A extends Access>(byShop: Map<string, A>, union: Access, he
   return { byShop: granted, union: list.length ? unionAccess(list) : withGrantKinds(union, held.everywhere), uniform: list.every((x) => sameAccess(x, list[0])) };
 }
 
+type Variant = { permissions: string[]; maxDiscountPct: number; moneyLimits?: Role["moneyLimits"] };
+
+/** A role as one shop runs it: the shop's own version, with the brand role's brand-only permissions. */
+const withVariant = (base: Role, v: Variant): Role => ({
+  ...base,
+  permissions: [...new Set([...v.permissions.filter((p) => !BRAND_ONLY.has(p as Permission)), ...base.permissions.filter((p) => BRAND_ONLY.has(p as Permission))])],
+  maxDiscountPct: v.maxDiscountPct,
+  moneyLimits: v.moneyLimits ?? base.moneyLimits,
+});
+
+/**
+ * What someone holding only this role (no overrides, no grants) could do at a shop, as that shop
+ * runs the role, with the role's default shop access; without a shop, at every shop.
+ */
+export async function roleAccessAt(role: Role, shopId: string | null, tx: DBorTx = db): Promise<Access & { role: Role; scope: ShopScope }> {
+  const scope: ShopScope = role.key === OWNER_ROLE_KEY || role.defaultScope === "all" ? "all" : "one";
+  if (!shopId) return { ...effectiveAccess(role, {}, null, "all"), role, scope: "all" };
+  const [shop] = await tx.select({ ownerEntityId: shops.ownerEntityId }).from(shops).where(eq(shops.id, shopId));
+  const v = role.key === OWNER_ROLE_KEY ? undefined : (await localValues<Variant>("role", [shopId], tx)).get(`${shopId}|${role.id}`);
+  const here = v ? withVariant(role, v) : role;
+  const a = accessByShop(here, [{ shopId, role: null, ownerEntityId: shop?.ownerEntityId ?? null }], {}, null, scope).byShop.get(shopId)!;
+  return { ...a, scope };
+}
+
 /** A person's effective permissions and shop scope, straight from the database. */
 export async function loadStaffAccess(staffId: string, tx: DBorTx = db): Promise<StaffAccess | null> {
   const [row] = await tx.select({ s: staff, r: roles }).from(staff).innerJoin(roles, eq(roles.id, staff.roleId)).where(eq(staff.id, staffId));
@@ -104,13 +128,11 @@ export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DB
   // A shop can run its own version of a role the brand synced to it (Setup → Sync status), for
   // everyone working there under the role, brand-wide people included. Brand-only permissions work
   // on what every shop shares, so they stay the brand role's.
-  type Variant = { permissions: string[]; maxDiscountPct: number; moneyLimits?: Role["moneyLimits"] };
   const variants = role.key === OWNER_ROLE_KEY ? new Map<string, Variant>() : await localValues<Variant>("role", shopRows.map((r) => r.id), tx);
   const roleAt = (shopId: string, r: Role | null): Role | null => {
     const base = r ?? role;
     const v = variants.get(`${shopId}|${base.id}`);
-    if (!v) return r;
-    return { ...base, permissions: [...new Set([...v.permissions.filter((p) => !BRAND_ONLY.has(p as Permission)), ...base.permissions.filter((p) => BRAND_ONLY.has(p as Permission))])], maxDiscountPct: v.maxDiscountPct, moneyLimits: v.moneyLimits ?? base.moneyLimits };
+    return v ? withVariant(base, v) : r;
   };
   const computed = accessByShop(
     role,

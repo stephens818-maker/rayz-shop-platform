@@ -215,6 +215,34 @@ export function clientListDenied(ctx: Viewer): string | null {
   return ctx.permissions.has("clients.export") && ctx.access.granted?.has("clients.export") ? null : CLIENT_LIST_REFUSED;
 }
 
+/**
+ * What a role (or a person in it) would see of each client field at a shop, for the "view as"
+ * preview: the same rules, ceilings, shop login cap and contact grants as clientPolicy.
+ */
+export async function clientViewPreview(o: {
+  staffId: string | null;
+  roleId: string;
+  roleKey: string | null;
+  shopId: string | null;
+  isOwner: boolean;
+  brandLevel: boolean;
+  shopLogin: boolean;
+  grantedContact: boolean;
+  canReveal: boolean;
+}) {
+  const custom = await activeCustomFields(o.shopId);
+  const fields: FieldKey[] = [...BUILTIN_FIELDS.map((f) => f.key), ...custom.map((c) => customFieldKey(c.id))];
+  const rules = o.isOwner ? [] : o.staffId ? await rulesFor(o.staffId, [o.roleId]) : (await rulesFor("00000000-0000-0000-0000-000000000000", [o.roleId])).filter((r) => !r.staffId);
+  const who = { staffId: o.staffId ?? "", roleId: o.roleId, roleKey: o.roleKey };
+  let levels = new Map(fields.map((f) => [f, resolveLevel(rules, who, o.shopId, f)]));
+  if (o.shopLogin) {
+    const cap = await shopLoginCap(o.shopId);
+    levels = new Map([...levels].map(([f, l]) => [f, shopLoginLevel(cap, f, l)]));
+  }
+  const p = makePolicy({ staffId: who.staffId, isOwner: o.isOwner, fullContact: o.brandLevel, grantedContact: o.grantedContact, canReveal: o.canReveal, custom, levels });
+  return fields.map((f) => ({ field: f, label: fieldLabel(f, custom), level: p.level(f), reveal: p.mayReveal(f) }));
+}
+
 /** Sees no client details: for code paths that weren't handed the viewer's policy. */
 export const LOCKED_POLICY: ClientPolicy = makePolicy({ staffId: "", isOwner: false, canReveal: false, custom: [], levels: new Map() });
 

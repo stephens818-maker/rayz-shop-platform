@@ -4,7 +4,8 @@ import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { roles, shops, staff, staffAccessShops } from "@/db/schema";
 import { Badge, Card, CardHeader, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
-import { OWNER_ROLE_KEY, SCOPE_LABEL, cleanOverrides, effectiveAccess } from "@/domain/permissions";
+import { OWNER_ROLE_KEY, SCOPE_LABEL, cleanExpiries, cleanLimits, cleanOverrides, effectiveAccess, liveOverrides } from "@/domain/permissions";
+import { todayLocal } from "@/lib/time";
 import { seesStaffContact, staffContact } from "@/domain/staff-contact";
 import { guardPage } from "@/server/auth/staff";
 import { OTHER_SHOP, hasShop } from "@/server/tenant";
@@ -24,6 +25,7 @@ export default async function PermissionsPage() {
     db.select({ staffId: staffAccessShops.staffId, name: shops.name, shopId: shops.id, roleId: staffAccessShops.roleId }).from(staffAccessShops).innerJoin(shops, eq(shops.id, staffAccessShops.shopId)),
   ]);
   const viewer = { permissions: ctx.permissions, staffId: ctx.staff.id };
+  const today = todayLocal();
   const shopsOf = (id: string) => access.filter((a) => a.staffId === id);
   const visible = people.filter(({ s, role }) => ctx.brandWide || (s.shopScope !== "all" && role.key !== OWNER_ROLE_KEY && shopsOf(s.id).some((a) => ctx.shopIds.includes(a.shopId))));
 
@@ -31,13 +33,21 @@ export default async function PermissionsPage() {
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Permissions"
-        subtitle="Roles are editable templates. Each person gets a role, optional per-person overrides, and access to all shops, selected shops or one shop. Every change is in the audit log."
+        subtitle="Roles are editable templates. Each person gets a role, optional per-person overrides (with an end date if they're temporary), and access to all shops, a region's or an owner's shops, selected shops or one shop, with a different role at some shops if needed. Every change is in the audit log."
         actions={
-          ctx.brandWide ? (
-            <LinkButton href="/admin/permissions/roles/new" variant="dark">
-              New custom role
+          <div className="flex flex-wrap gap-2">
+            <LinkButton href="/admin/permissions/matrix" variant="secondary">
+              Permissions matrix
             </LinkButton>
-          ) : undefined
+            <LinkButton href="/admin/permissions/view-as" variant="secondary">
+              View as
+            </LinkButton>
+            {ctx.brandWide && (
+              <LinkButton href="/admin/permissions/roles/new" variant="dark">
+                New custom role
+              </LinkButton>
+            )}
+          </div>
         }
       />
       <Card>
@@ -70,9 +80,19 @@ export default async function PermissionsPage() {
                   <Td right>{a.permissions.has("pos.discount") ? `${a.maxDiscountPct}%` : "None"}</Td>
                   <Td right>{n}</Td>
                   <Td right>
-                    <Link className="text-sm underline" href={`/admin/permissions/roles/${r.id}`}>
-                      {r.key === OWNER_ROLE_KEY || !ctx.brandWide ? "View" : "Edit"}
-                    </Link>
+                    <span className="flex justify-end gap-3 text-sm">
+                      <Link className="underline" href={`/admin/permissions/view-as?as=role:${r.id}`}>
+                        View as
+                      </Link>
+                      {ctx.brandWide && r.key !== OWNER_ROLE_KEY && (
+                        <Link className="underline" href={`/admin/permissions/roles/new?from=${r.id}`}>
+                          Clone
+                        </Link>
+                      )}
+                      <Link className="underline" href={`/admin/permissions/roles/${r.id}`}>
+                        {r.key === OWNER_ROLE_KEY || !ctx.brandWide ? "View" : "Edit"}
+                      </Link>
+                    </span>
                   </Td>
                 </tr>
               );
@@ -96,9 +116,11 @@ export default async function PermissionsPage() {
           </thead>
           <tbody>
             {visible.map(({ s, role }) => {
-              const o = cleanOverrides(s.permissionOverrides);
+              const ends = cleanExpiries(s.permissionOverrideExpires);
+              const o = liveOverrides(cleanOverrides(s.permissionOverrides), ends, today);
               const scope = role.key === OWNER_ROLE_KEY ? "all" : s.shopScope;
-              const a = effectiveAccess(role, o, s.maxDiscountPct, scope);
+              const a = effectiveAccess(role, o, s.maxDiscountPct, scope, cleanLimits(s.moneyLimits));
+              const temporary = Object.keys(o).filter((p) => p in ends).length;
               return (
                 <tr key={s.id}>
                   <Td>
@@ -115,12 +137,20 @@ export default async function PermissionsPage() {
                           ),
                         ),
                       ].join(", ") || <span className="text-red-600">No shops</span>}</Td>
-                  <Td right>{Object.keys(o).length || "—"}</Td>
+                  <Td right>
+                    {Object.keys(o).length || "—"}
+                    {temporary > 0 && <span className="block text-xs text-zinc-500">{temporary} temporary</span>}
+                  </Td>
                   <Td right>{a.permissions.has("pos.discount") ? `${a.maxDiscountPct}%${s.maxDiscountPct !== null ? " (own)" : ""}` : "None"}</Td>
                   <Td right>
-                    <Link className="text-sm underline" href={`/admin/permissions/people/${s.id}`}>
-                      {s.id === ctx.staff.id || (role.key === OWNER_ROLE_KEY && !ctx.isOwner) ? "View" : "Edit"}
-                    </Link>
+                    <span className="flex justify-end gap-3 text-sm">
+                      <Link className="underline" href={`/admin/permissions/view-as?as=staff:${s.id}`}>
+                        View as
+                      </Link>
+                      <Link className="underline" href={`/admin/permissions/people/${s.id}`}>
+                        {s.id === ctx.staff.id || (role.key === OWNER_ROLE_KEY && !ctx.isOwner) ? "View" : "Edit"}
+                      </Link>
+                    </span>
                   </Td>
                 </tr>
               );

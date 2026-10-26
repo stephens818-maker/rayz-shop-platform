@@ -8,9 +8,13 @@ import {
   BRAND_ONLY,
   FEATURE_PERMISSIONS,
   GRANT_ONLY,
+  MONEY_LIMITS,
+  MoneyLimitKey,
+  MoneyLimits,
   OWNER_GRANTS,
   OWNER_ONLY,
   OWNER_ROLE_KEY,
+  OverrideExpiry,
   Overrides,
   PERMISSION_GROUPS,
   Permission,
@@ -23,6 +27,7 @@ import {
   diffPermissions,
   effectiveAccess,
   isBrandLevelPerson,
+  limitLabel,
   permissionLabel,
   reportExport,
   reportView,
@@ -34,24 +39,38 @@ type RoleOption = RoleDef & { id: string; defaultScope: ShopScope };
 type State = {
   roleId: string;
   overrides: Overrides;
+  /** The last day each override counts; none is until it's changed. */
+  expires: OverrideExpiry;
   maxDiscountPct: number | null;
+  /** Their own dollar limits, key by key; a missing key follows the role, null is no limit. */
+  moneyLimits: Partial<MoneyLimits>;
   scope: ShopScope;
   scopeEntityId: string | null;
+  scopeRegionId: string | null;
   shopIds: string[];
   shopRoles: Record<string, string>;
 };
-type ShopOption = { id: string; name: string; ownerEntityId: string | null };
+type ShopOption = { id: string; name: string; ownerEntityId: string | null; regionId: string | null };
 
-/** The shops a scope covers: chosen ones, or every shop of the owner entity. */
-const scopeShopIds = (s: State, shops: ShopOption[]) => (s.scope === "entity" ? shops.filter((x) => x.ownerEntityId === s.scopeEntityId).map((x) => x.id) : s.shopIds);
-const multiShop = (sc: ShopScope) => sc === "selected" || sc === "entity";
+/** The shops a scope covers: chosen ones, or every shop of the owner entity or region. */
+const scopeShopIds = (s: State, shops: ShopOption[]) =>
+  s.scope === "entity"
+    ? shops.filter((x) => x.ownerEntityId === s.scopeEntityId).map((x) => x.id)
+    : s.scope === "region"
+      ? shops.filter((x) => x.regionId === s.scopeRegionId).map((x) => x.id)
+      : s.shopIds;
+const multiShop = (sc: ShopScope) => sc === "selected" || sc === "entity" || sc === "region";
+const today = () => new Date().toLocaleDateString("en-CA");
+const dollars = (c: number | null | undefined) => (c == null ? "" : String(c / 100));
 
 /** Everything they could do at one of their shops, under each shop's role. */
 function accessOf(roles: RoleOption[], s: State, all: ShopOption[]) {
   const main = roles.find((r) => r.id === s.roleId)!;
   const owner = main.key === OWNER_ROLE_KEY;
-  const shops = multiShop(s.scope) ? scopeShopIds(s, all).map((shopId) => ({ shopId, role: roles.find((r) => r.id === s.shopRoles[shopId]) ?? null })) : [];
-  return accessByShop(main, shops, owner ? {} : s.overrides, owner ? null : s.maxDiscountPct, owner ? "all" : s.scope);
+  const shops = multiShop(s.scope)
+    ? scopeShopIds(s, all).map((shopId) => ({ shopId, role: roles.find((r) => r.id === s.shopRoles[shopId]) ?? null, ownerEntityId: all.find((x) => x.id === shopId)?.ownerEntityId ?? null }))
+    : [];
+  return accessByShop(main, shops, owner ? {} : s.overrides, owner ? null : s.maxDiscountPct, owner ? "all" : s.scope, owner ? {} : s.moneyLimits);
 }
 
 const GROUPS: { title: string; perms: Permission[] }[] = [
@@ -65,9 +84,11 @@ export function PersonAccessEditor({
   roles,
   shops,
   entities = [],
+  regions = [],
   worksAt,
   mine,
   myMaxDiscount,
+  myLimits,
   iAmOwner,
   iAmBrandWide,
   readOnly,
@@ -79,9 +100,12 @@ export function PersonAccessEditor({
   shops: ShopOption[];
   /** Owner entities the editor may scope people to. */
   entities?: { id: string; name: string }[];
+  /** Regions the editor may scope people to. */
+  regions?: { id: string; name: string }[];
   worksAt: string[];
   mine: string[];
   myMaxDiscount: number;
+  myLimits: MoneyLimits;
   iAmOwner: boolean;
   iAmBrandWide: boolean;
   readOnly: string | null;
@@ -106,17 +130,34 @@ export function PersonAccessEditor({
   const shopRoleOptions = roles.filter((r) => r.key !== OWNER_ROLE_KEY);
   const covered = scopeShopIds(s, shops);
   const byEntity = s.scope === "entity";
+  const byRegion = s.scope === "region";
+  const follows = byEntity || byRegion;
   const perShop = multiShop(s.scope) && !isOwnerRole && covered.length > 1;
-  const scopes = SHOP_SCOPES.filter((sc) => sc !== "entity" || entities.length || s.scope === sc);
+  const scopes = SHOP_SCOPES.filter((sc) => (sc !== "entity" || entities.length || s.scope === sc) && (sc !== "region" || regions.length || s.scope === sc));
   const diff = diffPermissions(before.permissions, after.permissions);
   const locked = !!readOnly;
   const brandLevel = isBrandLevelPerson({ kind, scope: isOwnerRole ? "all" : s.scope, role });
 
   const setOverride = (p: Permission, v: boolean | null) => {
     const o: Overrides = { ...s.overrides };
-    if (v === null) delete o[p];
-    else o[p] = v;
-    set({ overrides: o });
+    const e: OverrideExpiry = { ...s.expires };
+    if (v === null) {
+      delete o[p];
+      delete e[p];
+    } else o[p] = v;
+    set({ overrides: o, expires: e });
+  };
+  const setExpiry = (p: Permission, d: string) => {
+    const e: OverrideExpiry = { ...s.expires };
+    if (d) e[p] = d;
+    else delete e[p];
+    set({ expires: e });
+  };
+  const setLimit = (k: MoneyLimitKey, v: number | null | undefined) => {
+    const m: Partial<MoneyLimits> = { ...s.moneyLimits };
+    if (v === undefined) delete m[k];
+    else m[k] = v;
+    set({ moneyLimits: m });
   };
   const toggleShop = (id: string) => {
     if (s.scope === "one") return set({ shopIds: [id] });
@@ -129,7 +170,8 @@ export function PersonAccessEditor({
     start(async () => {
       setError(null);
       const overrides = Object.fromEntries(Object.entries(s.overrides).filter(([p, v]) => brandLevel || !v || !BRAND_LEVEL_ONLY.has(p as Permission)));
-      const r = await saveUserAccessAction({ staffId, ...s, shopIds: covered, overrides: overrides as Record<string, boolean> });
+      const expires = Object.fromEntries(Object.entries(s.expires).filter(([p]) => p in overrides)) as Record<string, string>;
+      const r = await saveUserAccessAction({ staffId, ...s, shopIds: covered, overrides: overrides as Record<string, boolean>, expires });
       if (!r.ok) return setError(r.error);
       setSaved(true);
       router.refresh();
@@ -175,6 +217,7 @@ export function PersonAccessEditor({
                       scope: sc,
                       shopIds: sc === "one" ? covered.slice(0, 1) : covered,
                       scopeEntityId: sc === "entity" ? (s.scopeEntityId ?? entities[0]?.id ?? null) : null,
+                      scopeRegionId: sc === "region" ? (s.scopeRegionId ?? regions[0]?.id ?? null) : null,
                     })
                   }
                   className={cx(
@@ -201,9 +244,24 @@ export function PersonAccessEditor({
                 </p>
               </div>
             )}
+            {byRegion && !isOwnerRole && (
+              <div className="space-y-1">
+                <Select aria-label="Region" value={s.scopeRegionId ?? ""} onChange={(e) => set({ scopeRegionId: e.target.value || null, shopRoles: {} })}>
+                  {regions.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </Select>
+                <p className="text-xs text-zinc-500">
+                  Every location in this region, including locations moved into it later.{" "}
+                  {covered.length ? `Now: ${covered.length} location${covered.length === 1 ? "" : "s"}.` : "It has no locations yet."}
+                </p>
+              </div>
+            )}
             {s.scope !== "all" && !isOwnerRole && (
               <div className={cx("grid gap-1.5", !perShop && "sm:grid-cols-2")}>
-                {(byEntity ? shops.filter((x) => covered.includes(x.id)) : shops).map((shop) => (
+                {(follows ? shops.filter((x) => covered.includes(x.id)) : shops).map((shop) => (
                   <div key={shop.id} className="flex min-h-8 items-center justify-between gap-2 text-sm">
                     <label className="flex min-w-0 items-center gap-2">
                       <input
@@ -211,7 +269,7 @@ export function PersonAccessEditor({
                         name="shop"
                         className="h-4 w-4 accent-ink-900"
                         checked={covered.includes(shop.id)}
-                        disabled={byEntity}
+                        disabled={follows}
                         onChange={() => toggleShop(shop.id)}
                       />
                       {shop.name}
@@ -267,7 +325,7 @@ export function PersonAccessEditor({
             title="Permissions for this person"
             subtitle={
               uniform
-                ? "Leave a permission on the role default, or allow or deny it for this person only."
+                ? "Leave a permission on the role default, or allow or deny it for this person only, with an end date for temporary access."
                 : "Overrides apply at every shop. With a different role at some shops, “on” means on at one or more of them; each shop's role decides there."
             }
             action={
@@ -304,6 +362,52 @@ export function PersonAccessEditor({
               ) : (
                 <span className="text-zinc-500">Uses the role&apos;s {role.maxDiscountPct}%</span>
               )}
+            </div>
+          )}
+          {MONEY_LIMITS.some((l) => l.perms.some((p) => after.permissions.has(p))) && (
+            <div className="space-y-2 border-b border-zinc-100 px-4 py-3 text-sm" data-testid="money-limits">
+              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Dollar limits</div>
+              {MONEY_LIMITS.filter((l) => l.perms.some((p) => after.permissions.has(p))).map((l) => {
+                const own = s.moneyLimits[l.key];
+                const mode = !(l.key in s.moneyLimits) ? "role" : own === null ? "none" : "own";
+                const fromRoleLimit = role.moneyLimits?.[l.key] ?? null;
+                const mine = myLimits[l.key];
+                const over = !iAmOwner && mine !== null && mode !== "role" && (own === null || (own ?? 0) > mine);
+                return (
+                  <div key={l.key} className="flex flex-wrap items-center gap-2">
+                    <span className="w-36">{l.label}</span>
+                    <Select
+                      aria-label={`${l.label} limit`}
+                      className="h-8 w-44 py-1 text-sm"
+                      disabled={locked}
+                      value={mode}
+                      onChange={(e) => setLimit(l.key, e.target.value === "role" ? undefined : e.target.value === "none" ? null : (fromRoleLimit ?? mine ?? 0))}
+                    >
+                      <option value="role">Role&apos;s ({limitLabel(fromRoleLimit)})</option>
+                      <option value="own">Their own limit</option>
+                      <option value="none">No limit</option>
+                    </Select>
+                    {mode === "own" && (
+                      <span className="flex items-center gap-1">
+                        $
+                        <Input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          aria-label={`${l.label} limit in dollars`}
+                          className="h-8 w-28"
+                          disabled={locked}
+                          value={dollars(own)}
+                          onChange={(e) => setLimit(l.key, Math.max(0, Math.round((Number(e.target.value) || 0) * 100)))}
+                        />
+                        <span className="text-zinc-500">{l.key === "refundCents" ? "a refund or void" : "a ticket"}</span>
+                      </span>
+                    )}
+                    {over && <span className="text-xs text-red-600">above your own ({limitLabel(mine)})</span>}
+                  </div>
+                );
+              })}
+              <p className="text-xs text-zinc-500">Above a refund or void limit, a manager whose own limit covers it approves with their PIN.</p>
             </div>
           )}
           {GROUPS.map((g) => {
@@ -360,6 +464,20 @@ export function PersonAccessEditor({
                             </button>
                           ))}
                         </span>
+                        {o !== undefined && (
+                          <label className="flex items-center gap-1 text-xs text-zinc-500">
+                            until
+                            <Input
+                              type="date"
+                              min={today()}
+                              aria-label={`${permissionLabel(p)}: until`}
+                              className="h-7 w-36 py-0 text-xs"
+                              disabled={locked}
+                              value={s.expires[p] ?? ""}
+                              onChange={(e) => setExpiry(p, e.target.value)}
+                            />
+                          </label>
+                        )}
                         <span className="w-14 text-right">
                           {after.permissions.has(p) ? <Badge tone="green">on</Badge> : <Badge>{exportWithoutView && o === true ? "needs view" : "off"}</Badge>}
                         </span>
@@ -386,6 +504,9 @@ export function PersonAccessEditor({
                 {diff.added.length ? ` · +${diff.added.length}` : ""}
                 {diff.removed.length ? ` · −${diff.removed.length}` : ""}
                 {after.maxDiscountPct !== before.maxDiscountPct ? ` · discount limit ${before.maxDiscountPct}% → ${after.maxDiscountPct}%` : ""}
+                {MONEY_LIMITS.filter((l) => after.limits[l.key] !== before.limits[l.key])
+                  .map((l) => ` · ${l.label.toLowerCase()} ${limitLabel(before.limits[l.key])} → ${limitLabel(after.limits[l.key])}`)
+                  .join("")}
               </span>
             )}
             <Button type="button" variant="dark" className="ml-auto" disabled={pending} onClick={save}>

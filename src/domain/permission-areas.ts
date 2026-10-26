@@ -2,11 +2,16 @@ import {
   BRAND_LEVEL_ONLY,
   BRAND_ONLY,
   GRANT_ONLY,
+  INCLUDES,
   OWNER_GRANTS,
   OWNER_ONLY,
+  OverrideExpiry,
+  Overrides,
   Permission,
   REPORTS,
   ReportKey,
+  SHOP_LOGIN_NEVER,
+  ShopScope,
   permissionLabel,
   reportExport,
   reportView,
@@ -316,6 +321,61 @@ export function rowMatches(r: AreaRow & { area: Area }, q: string): boolean {
   if (!s) return true;
   const text = [r.label, r.hint ?? "", r.area.label, ...r.levels.map((l) => l.label), ...rowPermissions(r).flatMap((p) => [p, permissionLabel(p)])].join(" ").toLowerCase();
   return s.split(/\s+/).every((w) => text.includes(w));
+}
+
+export interface SourceContext {
+  isOwner: boolean;
+  /** Their final permissions at this shop. */
+  held: ReadonlySet<Permission>;
+  /** What the role itself lists (as this shop runs it). */
+  fromRole: ReadonlySet<Permission>;
+  overrides: Overrides;
+  expires: OverrideExpiry;
+  /** Permissions only a contact access grant gives them. */
+  granted: ReadonlySet<Permission>;
+  scope: ShopScope;
+  brandLevel: boolean;
+  shopLogin: boolean;
+  /** Their role here belongs to an owner entity that doesn't own this shop. */
+  ownerMismatch: boolean;
+}
+
+export type SourceKind = "owner" | "role" | "allowed" | "denied" | "grant" | "included" | "blocked" | "none";
+export interface Source {
+  kind: SourceKind;
+  text: string;
+}
+
+/** Why a permission the role or an override gives isn't in force, if it isn't. */
+export function blockedBecause(p: Permission, c: Pick<SourceContext, "held" | "scope" | "brandLevel" | "shopLogin" | "ownerMismatch">): string | null {
+  if (c.ownerMismatch) return "their role here belongs to another owner";
+  if (OWNER_ONLY.has(p)) return "Brand Owner only";
+  if (GRANT_ONLY.has(p)) return "only with a contact access grant";
+  if (BRAND_LEVEL_ONLY.has(p) && !c.brandLevel) return "brand-level roles only";
+  if (BRAND_ONLY.has(p) && c.scope !== "all") return "needs access to all shops";
+  if (c.shopLogin && SHOP_LOGIN_NEVER.has(p)) return "never for a shared shop login";
+  const report = p.match(/^report\.(.+)\.export$/);
+  if (report && !c.held.has(`report.${report[1]}.view` as Permission)) return "needs the report's view permission";
+  if (p === "exports.accounting" && !c.held.has(reportView("sales_summary"))) return "needs the Sales summary report";
+  if (p === "report_builder.export" && !c.held.has("report_builder.view") && !c.held.has("report_builder.build")) return "needs custom reports";
+  return null;
+}
+
+/** Where a permission comes from at a shop: the role, an override (with its end date), a grant, or why it's off. */
+export function permissionSource(p: Permission, c: SourceContext): Source {
+  if (c.isOwner) return { kind: "owner", text: "Brand Owner: every permission" };
+  const held = c.held.has(p);
+  const o = c.overrides[p];
+  const until = c.expires[p] ? ` until ${c.expires[p]}` : "";
+  if (held && c.granted.has(p)) return { kind: "grant", text: "Contact access grant" };
+  if (o === false) return { kind: "denied", text: `Denied for them${until}` };
+  if (o === true) return held ? { kind: "allowed", text: `Allowed for them${until}` } : { kind: "blocked", text: `Allowed for them${until}, but off: ${blockedBecause(p, c) ?? "not available"}` };
+  if (c.fromRole.has(p)) return held ? { kind: "role", text: "From the role" } : { kind: "blocked", text: `The role has it, but off: ${blockedBecause(p, c) ?? "not available"}` };
+  if (held) {
+    const via = INCLUDES.find(([q, x]) => x === p && c.held.has(q));
+    return { kind: "included", text: via ? `Comes with "${permissionLabel(via[0])}"` : "Always on for this role" };
+  }
+  return { kind: "none", text: "Not given" };
 }
 
 /** A short tag for permissions with rules of their own. */
