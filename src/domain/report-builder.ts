@@ -1098,7 +1098,6 @@ export const DEFAULT_SALES_REPORT: ReportDefinition = ReportDefinition.parse({
   source: "sales",
   columns: [
     { field: "location" },
-    { field: "tickets", agg: "sum" },
     { field: "services", agg: "sum" },
     { field: "products", agg: "sum" },
     { field: "net_sales", agg: "sum" },
@@ -1112,7 +1111,6 @@ export const DEFAULT_APPOINTMENT_REPORT: ReportDefinition = ReportDefinition.par
   source: "appointments",
   columns: [
     { field: "barber" },
-    { field: "appointments", agg: "sum" },
     { field: "completed", agg: "sum" },
     { field: "no_shows", agg: "sum" },
     { field: "cancellations", agg: "sum" },
