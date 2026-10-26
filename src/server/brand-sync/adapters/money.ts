@@ -54,7 +54,8 @@ export const cardFeeAdapter: SyncAdapter<CardFeePolicy, CardFeeValue> = {
     const b = brand.get("brand");
     if (!ids.includes("brand") || !b || !shopIds.length) return new Map();
     const rows = await tx.select({ id: shops.id, o: shops.cardFeeOverride }).from(shops).where(inArray(shops.id, [...shopIds]));
-    return new Map(rows.map((r) => [`${r.id}|brand`, { value: feeValue(shopCardFeePolicy(b, r.o)), follows: !cleanOverride(b, r.o) }]));
+    // An override covers some keys; the rest read the brand's.
+    return new Map(rows.map((r) => [`${r.id}|brand`, { value: feeValue(shopCardFeePolicy(b, r.o)), follows: !cleanOverride(b, r.o), ...(cleanOverride(b, r.o) ? { partial: true } : {}) }]));
   },
   async write(tx, who, _item, brand, writes) {
     const before = brand?.from ?? (await brandFeePolicy(tx));

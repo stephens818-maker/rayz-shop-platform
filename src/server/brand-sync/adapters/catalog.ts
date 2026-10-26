@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { products, services, shopProducts, shopServices } from "@/db/schema";
-import { money } from "@/domain/brand-sync";
+import { Native, money } from "@/domain/brand-sync";
 import {
   effectiveLevels,
   highProblem,
@@ -76,7 +76,7 @@ export const serviceAdapter: SyncAdapter<ServiceBrand, ServiceValue> = {
   async shops(tx, ids, shopIds, brand) {
     const rows = ids.length && shopIds.length ? await tx.select().from(shopServices).where(and(inArray(shopServices.serviceId, [...ids]), inArray(shopServices.shopId, [...shopIds]))) : [];
     const byKey = new Map(rows.map((r) => [`${r.shopId}|${r.serviceId}`, r]));
-    const out = new Map<string, { value: ServiceValue; follows: boolean }>();
+    const out = new Map<string, Native<ServiceValue>>();
     for (const id of ids) {
       const b = brand.get(id);
       for (const shopId of shopIds) {
@@ -86,6 +86,7 @@ export const serviceAdapter: SyncAdapter<ServiceBrand, ServiceValue> = {
           out.set(`${shopId}|${id}`, {
             value: { offered: true, priceCents: r.priceCents ?? b.defaultPriceCents, durationMin: r.durationMin ?? b.defaultDurationMin },
             follows: r.priceCents === null && r.durationMin === null,
+            ...((r.priceCents === null) !== (r.durationMin === null) ? { partial: true } : {}),
           });
       }
     }
@@ -139,6 +140,7 @@ export type ProductValue = {
   priceCents: number;
   reorderPoint: number;
   par: number;
+  high: number | null;
 };
 
 export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
@@ -146,7 +148,8 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
   noun: "Product",
   area: "products",
   store: "native",
-  live: false,
+  // A shop's levels are null while they're the brand's, and read the brand's at run time.
+  live: true,
   brandPerms: ["catalog.manage"],
   lockable: true,
   note: "Only shops that carry the product get its retail price and stock levels. The SKU, maker, category and supply price stay brand-wide: the brand buys it once for every shop.",
@@ -169,7 +172,7 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
       ]),
     );
   },
-  view: (b) => ({ priceCents: b.priceCents, ...effectiveLevels(b) }),
+  view: (b) => ({ priceCents: b.priceCents, ...effectiveLevels(b), high: b.highStockThreshold }),
   async parse(_who, raw, item, before, tx) {
     if (!before) throw notFound("Product");
     const v = ProductInput.parse({ ...before, ...(raw as object) });
@@ -191,23 +194,27 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
         price: shopProducts.priceCents,
         low: shopProducts.lowStockThreshold,
         par: shopProducts.parLevel,
+        high: shopProducts.highStockThreshold,
       })
       .from(shopProducts)
       .where(and(inArray(shopProducts.productId, [...ids]), inArray(shopProducts.shopId, [...shopIds]), eq(shopProducts.active, true)));
-    const out = new Map<string, { value: ProductValue; follows: boolean }>();
+    const out = new Map<string, Native<ProductValue>>();
     for (const r of rows) {
       const b = brand.get(r.productId);
-      if (b)
-        out.set(`${r.shopId}|${r.productId}`, {
-          value: {
-            priceCents: r.price,
-            ...effectiveLevels(b, {
-              lowStockThreshold: r.low,
-              parLevel: r.par,
-            }),
-          },
-          follows: false,
-        });
+      if (!b) continue;
+      const brandLevels = [r.low, r.par, r.high].filter((x) => x === null).length;
+      out.set(`${r.shopId}|${r.productId}`, {
+        value: {
+          priceCents: r.price,
+          ...effectiveLevels(b, {
+            lowStockThreshold: r.low,
+            parLevel: r.par,
+          }),
+          high: r.high ?? b.highStockThreshold,
+        },
+        follows: false,
+        ...(brandLevels ? { partial: true } : {}),
+      });
     }
     return out;
   },
@@ -230,6 +237,7 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
           .select({
             lowStockThreshold: products.lowStockThreshold,
             parLevel: products.parLevel,
+            highStockThreshold: products.highStockThreshold,
           })
           .from(products)
           .where(eq(products.id, item))
@@ -246,6 +254,7 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
               : w.value.reorderPoint,
           parLevel:
             levels && w.value.par === levels.parLevel ? null : w.value.par,
+          highStockThreshold: levels && (w.value.high ?? null) === levels.highStockThreshold ? null : (w.value.high ?? null),
         })
         .where(and(eq(shopProducts.shopId, shopId), eq(shopProducts.productId, item)));
   },
@@ -253,6 +262,7 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
     "Retail price": money(v.priceCents),
     "Reorder point": String(v.reorderPoint),
     Par: String(v.par),
+    "Overstock above": v.high === null || v.high === undefined ? "—" : String(v.high),
   }),
   short: (v) =>
     `${money(v.priceCents)} · reorder ${v.reorderPoint}, par ${v.par}`,

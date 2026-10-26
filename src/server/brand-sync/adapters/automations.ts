@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { marketingCampaigns, marketingLocationSettings } from "@/db/schema";
-import { clip, onOff } from "@/domain/brand-sync";
+import { Native, clip, onOff } from "@/domain/brand-sync";
 import { type Channel, TRIGGERS, type Templates, TemplatesSchema, isTriggerKey, templatesProblem, triggerSettings } from "@/domain/marketing";
 import type { DBorTx } from "@/db";
 import { audit } from "../../audit";
@@ -104,7 +104,7 @@ export const automationAdapter: SyncAdapter<Brand, Value> = {
     const at = new Map(rows.map((r) => [`${r.shopId}|${r.campaignId}`, r]));
     const wording = new Map<string, WordingBrand>();
     for (const c of await campaigns(tx, campaignIds)) wording.set(c.id, wordingOf(c));
-    const out = new Map<string, { value: Value; follows: boolean }>();
+    const out = new Map<string, Native<Value>>();
     for (const item of ids) {
       const { part, id } = split(item);
       const w = (brand.get(`wording:${id}`) as WordingBrand | undefined) ?? wording.get(id);
@@ -116,6 +116,8 @@ export const automationAdapter: SyncAdapter<Brand, Value> = {
           out.set(`${shopId}|${item}`, {
             value: { templates: templatesOf(w.templates, l?.templates), settings: isTriggerKey(w.trigger) ? triggerSettings(w.trigger, { ...w.settings, ...(l?.settings ?? {}) }) : { ...w.settings } },
             follows: !l || (l.templates === null && l.settings === null),
+            // Wording or timings the location left blank read the brand's.
+            ...(l && (l.templates !== null || l.settings !== null) ? { partial: true } : {}),
           });
       }
     }

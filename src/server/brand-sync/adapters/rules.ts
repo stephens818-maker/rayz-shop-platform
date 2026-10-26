@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
 import { checkoutPromptRules, clientFieldRules, clientFields, roles } from "@/db/schema";
-import { onOff } from "@/domain/brand-sync";
+import { Native, onOff } from "@/domain/brand-sync";
 import { PROMPT_KINDS, type PromptKind, type PromptRule } from "@/domain/checkout-prompts";
 import {
   type FieldKey,
@@ -120,13 +120,14 @@ export const fieldRuleAdapter: SyncAdapter<FieldRuleBrand, Rules> = {
       .select()
       .from(clientFieldRules)
       .where(and(inArray(clientFieldRules.roleId, [...ids]), isNull(clientFieldRules.staffId), inArray(clientFieldRules.shopId, [...shopIds])));
-    const out = new Map<string, { value: Rules; follows: boolean }>();
+    const out = new Map<string, Native<Rules>>();
     for (const id of ids) {
       const b = brand.get(id);
       if (!b) continue;
       for (const shopId of shopIds) {
         const own = rows.filter((r) => r.roleId === id && r.shopId === shopId);
-        out.set(`${shopId}|${id}`, { value: normalize(b.roleKey, { ...b.rules, ...Object.fromEntries(own.map((r) => [ruleKey(r.setting, r.field), r.level])) }), follows: !own.length });
+        // Fields the shop has no rule for read the brand's.
+        out.set(`${shopId}|${id}`, { value: normalize(b.roleKey, { ...b.rules, ...Object.fromEntries(own.map((r) => [ruleKey(r.setting, r.field), r.level])) }), follows: !own.length, ...(own.length ? { partial: true } : {}) });
       }
     }
     return out;
