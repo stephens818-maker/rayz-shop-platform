@@ -129,23 +129,27 @@ describe("regions", () => {
 
 describe("daily rollups and the location comparison", () => {
   it("roll a location's day up to match its tickets", async () => {
-    await jobs.enqueue("rollup", [shop.coralville], yesterday);
-    await m.db.db.execute(sql`delete from location_daily_stats where shop_id = ${shop.coralville}::uuid and day = ${yesterday}::date`);
+    // The last day Coralville had tickets: yesterday is a closed Sunday when the suite runs on a Monday.
+    const [{ day }] = await rows<{ day: string }>(
+      sql`select max(business_date)::text as day from sales where shop_id = ${shop.coralville}::uuid and business_date < ${today}::date and status = 'paid'`,
+    );
+    await jobs.enqueue("rollup", [shop.coralville], day);
+    await m.db.db.execute(sql`delete from location_daily_stats where shop_id = ${shop.coralville}::uuid and day = ${day}::date`);
     const { computeDailyStats } = await import("@/server/rollups");
-    await computeDailyStats(shop.coralville, yesterday);
+    await computeDailyStats(shop.coralville, day);
     const [want] = await rows<{ tickets: number; net: number; tips: number }>(
       sql`select count(*)::int tickets, coalesce(sum(service_net_cents + product_net_cents), 0)::int net, coalesce(sum(tip_cents), 0)::int tips from sales
-        where shop_id = ${shop.coralville}::uuid and business_date = ${yesterday}::date and status in ('paid', 'refunded', 'partially_refunded')`,
+        where shop_id = ${shop.coralville}::uuid and business_date = ${day}::date and status in ('paid', 'refunded', 'partially_refunded')`,
     );
     const [got] = await rows<{ tickets: number; net: number; tips: number; region: string }>(
-      sql`select tickets, (service_net_cents + product_net_cents)::int net, tip_cents::int tips, region_id::text region from location_daily_stats where shop_id = ${shop.coralville}::uuid and day = ${yesterday}::date`,
+      sql`select tickets, (service_net_cents + product_net_cents)::int net, tip_cents::int tips, region_id::text region from location_daily_stats where shop_id = ${shop.coralville}::uuid and day = ${day}::date`,
     );
     expect(got).toEqual({ ...want, region: region["Eastern Iowa"] });
     expect(want.tickets).toBeGreaterThan(0);
-    await computeDailyStats(shop.coralville, yesterday);
-    const [{ n }] = await rows<{ n: number }>(sql`select count(*)::int n from location_daily_stats where shop_id = ${shop.coralville}::uuid and day = ${yesterday}::date`);
+    await computeDailyStats(shop.coralville, day);
+    const [{ n }] = await rows<{ n: number }>(sql`select count(*)::int n from location_daily_stats where shop_id = ${shop.coralville}::uuid and day = ${day}::date`);
     expect(n).toBe(1);
-    await m.db.db.execute(sql`delete from job_tasks where kind = 'rollup' and run_on = ${yesterday}::date`);
+    await m.db.db.execute(sql`delete from job_tasks where kind = 'rollup' and run_on = ${day}::date`);
   });
 
   it("compare locations and regions, adding up to the same totals", async () => {

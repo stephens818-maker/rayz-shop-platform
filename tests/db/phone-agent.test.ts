@@ -105,7 +105,8 @@ describe("phone agent", () => {
     await line.handleOperatorChoice({ callSid, digits: "1" }, at(22 * 60 + 21));
     const [c] = await m.db.db.insert(m.schema.customers).values({ firstName: "Caller", lastName: `Agent${seq}`, phone, homeShopId: shop.id }).returning();
     const barber = (await m.db.db.select({ id: m.schema.staffShops.staffId }).from(m.schema.staffShops).where(eq(m.schema.staffShops.shopId, shop.id)).limit(1))[0].id;
-    const startsAt = m.time.zonedWallTime(m.time.addDays(mon, 2), 10 * 60).toJSDate();
+    // Before opening, so it can't land on a seeded booking when this week's Monday is today.
+    const startsAt = m.time.zonedWallTime(m.time.addDays(mon, 2), 5 * 60).toJSDate();
     await m.db.db.insert(m.schema.appointments).values({
       code: `P${crypto.randomUUID().replace(/-/g, "").slice(0, 9).toUpperCase()}`,
       shopId: shop.id,
