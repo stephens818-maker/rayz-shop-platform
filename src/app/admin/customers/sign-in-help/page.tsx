@@ -27,7 +27,7 @@ export default async function SignInHelpPage() {
           {open.map((r) => (
             <Card key={r.id}>
               <CardHeader
-                title={`${r.firstName} ${r.lastName ?? ""}`.trim()}
+                title={policy.name(r.firstName, r.lastName)}
                 subtitle={`${HELP_REASON_LABEL[r.reason]} · ${formatDate(r.createdAt, "MMM d, h:mm a")}`}
               />
               <div className="grid gap-4 p-4 md:grid-cols-2">

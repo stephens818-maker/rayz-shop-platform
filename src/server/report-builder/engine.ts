@@ -272,8 +272,13 @@ async function fieldSql(f: FieldDef, policy: ClientPolicy): Promise<Piece> {
       needs: [],
     };
   switch (f.key) {
-    case "name":
-      return raw("btrim(c.first_name || ' ' || coalesce(c.last_name, ''))");
+    case "name": {
+      // The last name as the viewer sees it everywhere else: in full, its initial, or left off.
+      const last = policy.level("last_name");
+      if (last === "full") return raw("btrim(c.first_name || ' ' || coalesce(c.last_name, ''))");
+      if (last === "masked") return raw("btrim(c.first_name || coalesce(' ' || upper(left(nullif(btrim(c.last_name), ''), 1)) || '.', ''))");
+      return raw("btrim(c.first_name)");
+    }
     case "first_name":
       return raw("c.first_name");
     case "last_name":
@@ -315,10 +320,11 @@ async function fieldSql(f: FieldDef, policy: ClientPolicy): Promise<Piece> {
       return { expr: day("c.created_at"), needs: [] };
     case "is_child":
       return raw("c.guardian_id is not null");
-    case "parent":
-      return raw(
-        "(select btrim(pg.first_name || ' ' || coalesce(pg.last_name, '')) from customers pg where pg.id = c.guardian_id)",
-      );
+    case "parent": {
+      const last = policy.level("last_name");
+      const shown = last === "full" ? "coalesce(pg.last_name, '')" : last === "masked" ? "coalesce(upper(left(nullif(btrim(pg.last_name), ''), 1)) || '.', '')" : "''";
+      return raw(`(select btrim(pg.first_name || ' ' || ${shown}) from customers pg where pg.id = c.guardian_id)`);
+    }
     case "kids":
       return raw(
         "(select count(*)::int from customers kc where kc.guardian_id = c.id)",

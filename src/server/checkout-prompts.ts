@@ -1,4 +1,5 @@
 import { and, asc, eq, gte, inArray, isNull, lte, notInArray, sql } from "drizzle-orm";
+import { clientName, maskLastName } from "@/domain/client-privacy";
 import { db, type DBorTx } from "@/db";
 import {
   appointmentItems,
@@ -293,7 +294,7 @@ async function ticketClients(sale: Sale, now: Date): Promise<Person[]> {
   return [
     {
       customerId: sale.customerId,
-      name: [c?.first, c?.last].filter(Boolean).join(" ") || "Client",
+      name: clientName(c?.first, maskLastName(c?.last)) || "Client",
       isChild: !!c?.guardianId,
       appointmentId: null,
       staffId: sale.staffId,

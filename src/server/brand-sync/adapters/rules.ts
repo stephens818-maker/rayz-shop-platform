@@ -44,14 +44,14 @@ const splitKey = (k: string) => {
   const i = k.indexOf(":");
   return { setting: k.slice(0, i) as Setting, field: k.slice(i + 1) as FieldKey };
 };
-const defaultOf = (roleKey: string | null, k: string) => {
+const defaultOf = (roleKey: string | null, k: string, brandLevel = false) => {
   const { setting, field } = splitKey(k);
-  return setting === "view" ? defaultLevel(roleKey, field) : defaultEntry(roleKey, field, setting) ? "allow" : "deny";
+  return setting === "view" ? defaultLevel(roleKey, field, brandLevel) : defaultEntry(roleKey, field, setting) ? "allow" : "deny";
 };
-const normalize = (roleKey: string | null, rules: Rules): Rules =>
+const normalize = (roleKey: string | null, rules: Rules, brandLevel = false): Rules =>
   Object.fromEntries(
     Object.entries(rules)
-      .filter(([k, l]) => l !== defaultOf(roleKey, k))
+      .filter(([k, l]) => l !== defaultOf(roleKey, k, brandLevel))
       .sort(([a], [b]) => a.localeCompare(b)),
   );
 
@@ -89,7 +89,7 @@ export const fieldRuleAdapter: SyncAdapter<FieldRuleBrand, Rules> = {
       .where(and(inArray(clientFieldRules.roleId, rs.length ? rs.map((r) => r.id) : [crypto.randomUUID()]), isNull(clientFieldRules.staffId), isNull(clientFieldRules.shopId)));
     return new Map(rs.map((r) => [r.id, { roleKey: r.key, fullContact: isBrandLevelRole(r), rules: Object.fromEntries(rows.filter((x) => x.roleId === r.id).map((x) => [ruleKey(x.setting, x.field), x.level])) }]));
   },
-  view: (b) => normalize(b.roleKey, b.rules),
+  view: (b) => normalize(b.roleKey, b.rules, b.fullContact),
   async parse(who, raw, item, before, tx) {
     if (!before) throw notFound("Role");
     const changes = z.record(z.string(), z.string().nullable()).parse(raw);
@@ -127,7 +127,7 @@ export const fieldRuleAdapter: SyncAdapter<FieldRuleBrand, Rules> = {
       for (const shopId of shopIds) {
         const own = rows.filter((r) => r.roleId === id && r.shopId === shopId);
         // Fields the shop has no rule for read the brand's.
-        out.set(`${shopId}|${id}`, { value: normalize(b.roleKey, { ...b.rules, ...Object.fromEntries(own.map((r) => [ruleKey(r.setting, r.field), r.level])) }), follows: !own.length, ...(own.length ? { partial: true } : {}) });
+        out.set(`${shopId}|${id}`, { value: normalize(b.roleKey, { ...b.rules, ...Object.fromEntries(own.map((r) => [ruleKey(r.setting, r.field), r.level])) }, b.fullContact), follows: !own.length, ...(own.length ? { partial: true } : {}) });
       }
     }
     return out;
@@ -147,7 +147,7 @@ export const fieldRuleAdapter: SyncAdapter<FieldRuleBrand, Rules> = {
       if (!w.follow) {
         // Every key the brand or the shop sets is written at the shop, so a later brand change doesn't reach it.
         const keys = [...new Set([...Object.keys(brandRules), ...Object.keys(w.value)])];
-        const rows = keys.map((k) => ({ ...splitKey(k), level: w.value[k] ?? defaultOf(role.key, k), roleId: item, staffId: null, shopId, updatedBy: who.actor.staffId ?? null }));
+        const rows = keys.map((k) => ({ ...splitKey(k), level: w.value[k] ?? defaultOf(role.key, k, isBrandLevelRole(role)), roleId: item, staffId: null, shopId, updatedBy: who.actor.staffId ?? null }));
         if (rows.length) await tx.insert(clientFieldRules).values(rows as (typeof clientFieldRules.$inferInsert)[]);
       }
       await audit(who.actor, "client_data.role_rules", "role", item, { role: role.name, rules: w.follow ? "brand" : w.value, via: "brand_sync" }, shopId, tx);

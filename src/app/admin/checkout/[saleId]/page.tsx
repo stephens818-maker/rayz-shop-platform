@@ -99,7 +99,7 @@ export default async function CheckoutPage({
     shownBadges(policy, [c.customer?.id]),
     shopDay([c.shop.id]),
   ]);
-  const people = await ticketPeople(c.sale);
+  const people = (await ticketPeople(c.sale)).map((p) => (p.first ? { ...p, name: policy.name(p.first, p.last) } : p));
   const memberCoverage = await checkoutCoverage(
     [c.sale.customerId, ...people.map((p) => p.customerId)].filter((x): x is string => !!x),
     c.shop.id,
@@ -136,7 +136,7 @@ export default async function CheckoutPage({
       ? [
           {
             customerId: c.customer.id,
-            name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(),
+            name: policy.name(c.customer.firstName, c.customer.lastName),
           },
         ]
       : []),
@@ -269,7 +269,7 @@ export default async function CheckoutPage({
           c.customer
             ? {
                 id: c.customer.id,
-                name: `${c.customer.firstName} ${c.customer.lastName ?? ""}`.trim(),
+                name: policy.name(c.customer.firstName, c.customer.lastName),
                 phone: policy.show("phone", c.customer.phone),
                 rating: policy.stars(ratings.get(c.customer.id)),
                 badges: badges.get(c.customer.id) ?? [],

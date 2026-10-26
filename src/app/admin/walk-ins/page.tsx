@@ -78,7 +78,7 @@ export default async function WalkInsPage() {
           barbers={board}
           waitlist={waitlist.map((w) => ({
             id: w.id,
-            name: w.name,
+            name: policy.typedName(w.name),
             hasPhone: !!w.phone,
             status: w.status,
             service: svcNames.find((s) => s.id === w.serviceId)?.name ?? "—",

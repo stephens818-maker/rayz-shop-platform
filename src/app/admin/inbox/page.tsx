@@ -23,7 +23,7 @@ export default async function InboxPage() {
       ) : (
         <Card className="divide-y divide-zinc-100">
           {threads.map((t) => {
-            const name = t.firstName ? `${t.firstName}${t.lastName ? ` ${t.lastName}` : ""}` : (policy.show("phone", t.phone) ?? "A client");
+            const name = t.firstName ? policy.name(t.firstName, t.lastName) : (policy.show("phone", t.phone) ?? "A client");
             return (
               <Link key={t.id} href={`/admin/inbox/${t.id}`} className={cx("flex items-start gap-3 px-4 py-3 hover:bg-zinc-50", t.unread > 0 && "bg-brand-50/40")}>
                 <div className="min-w-0 flex-1">

@@ -33,7 +33,7 @@ export default async function DuplicatesPage({ searchParams }: { searchParams: P
   const pairs = await duplicatePairs({ limit: 300, squireOnly });
   const person = (c: DuplicateClient): DupPerson => ({
     id: c.id,
-    label: `${c.firstName} ${c.lastName ?? ""}`.trim() + (c.nickname ? ` (${c.nickname})` : ""),
+    label: policy.name(c.firstName, c.lastName) + (c.nickname ? ` (${c.nickname})` : ""),
     detail: [policy.show("phone", c.phone), policy.show("email", c.email), `since ${formatDate(c.createdAt, "MMM yyyy")}`].filter(Boolean).join(" · "),
     squire: c.squire,
     visits: c.visits,

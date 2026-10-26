@@ -5,6 +5,7 @@ import { ledgerLabel } from "@/domain/gift-cards";
 import { formatCents } from "@/lib/money";
 import { formatDateTime } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
+import { clientPolicy } from "@/server/client-privacy";
 import { giftCardDetail, giftCardStats, searchGiftCards } from "@/server/gift-cards";
 import { CardActions, IssueCompCard } from "./tools";
 
@@ -24,9 +25,11 @@ export default async function GiftCardsPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const q = (sp.q ?? "").trim().slice(0, 60);
   const status = (sp.status && sp.status in STATUSES ? sp.status : q ? "all" : "active") as keyof typeof STATUSES;
-  const [stats, rows] = await Promise.all([giftCardStats(ctx), searchGiftCards(ctx, { q, status })]);
+  const policy = await clientPolicy(ctx);
+  const viewer = { brandWide: ctx.brandWide, shopIds: ctx.shopIds, name: policy.name };
+  const [stats, rows] = await Promise.all([giftCardStats(ctx), searchGiftCards(viewer, { q, status })]);
   const exact = q ? rows.find((r) => r.code === q.toUpperCase()) : undefined;
-  const detail = sp.card && UUID.test(sp.card) ? await giftCardDetail(ctx, { id: sp.card }) : exact ? await giftCardDetail(ctx, { code: exact.code }) : null;
+  const detail = sp.card && UUID.test(sp.card) ? await giftCardDetail(viewer, { id: sp.card }) : exact ? await giftCardDetail(viewer, { code: exact.code }) : null;
   const working = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
   const homeShop = ctx.currentShopId ?? working[0]?.id ?? null;
   const canIssue = can(ctx, "giftcards.issue");

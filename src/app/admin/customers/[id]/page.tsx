@@ -203,9 +203,9 @@ export default async function CustomerPage({
   const homeShopName = homeShop?.name ?? null;
   const shopRows = (await db.select({ id: shops.id, name: shops.name, status: shops.status }).from(shops).orderBy(asc(shops.name))).filter((s) => s.status !== "archived" || s.id === c.homeShopId);
   const editorShops = scoped ? shopRows.filter((s) => hasShop(ctx, s.id) || s.id === c.homeShopId) : shopRows;
-  const stored = { phone: c.phone, email: c.email, address: c.address, birthday: c.birthday, notes: c.notes };
+  const stored = { last_name: c.lastName, phone: c.phone, email: c.email, address: c.address, birthday: c.birthday, notes: c.notes };
   const fields: ShownField[] = [
-    ...(["phone", "email", "address", "birthday", "notes"] as const).map((f) => shownField(policy, f, stored[f])),
+    ...(["last_name", "phone", "email", "address", "birthday", "notes"] as const).map((f) => shownField(policy, f, stored[f])),
     ...policy.custom.map((f) => shownField(policy, customFieldKey(f.id), c.customFields[f.id], f.label)),
   ];
   const preferredShown: ShownField = { ...shownField(policy, "preferred_barber", preferred), saved: !!c.preferredStaffId };
@@ -233,7 +233,7 @@ export default async function CustomerPage({
     c.formerGuardianId ? db.query.customers.findFirst({ where: eq(customers.id, c.formerGuardianId), columns: { id: true, firstName: true, lastName: true } }) : null,
   ]);
   const today = todayLocal();
-  const nameOf = (x: { firstName: string; lastName: string | null }) => `${x.firstName} ${x.lastName ?? ""}`.trim();
+  const nameOf = (x: { firstName: string; lastName: string | null }) => policy.name(x.firstName, x.lastName);
   const seesAge = policy.level("birthday") !== "hidden";
   const kidOf = (k: { id: string; firstName: string; birthYear: number | null; notes: string | null }, extra: Pick<FamilyKid, "age" | "visits" | "lastVisit" | "cadence" | "canSplit">): FamilyKid => ({
     id: k.id,
@@ -274,7 +274,7 @@ export default async function CustomerPage({
       <PageHeader
         title={
           <span className="flex items-center gap-2">
-            {`${c.firstName} ${c.lastName ?? ""}`}
+            {policy.name(c.firstName, c.lastName)}
             {c.nickname && <span className="text-base font-normal text-zinc-500">&ldquo;{c.nickname}&rdquo;</span>}
             {rating && <StarBadge rating={rating} />}
           </span>
@@ -338,11 +338,11 @@ export default async function CustomerPage({
           <ClientIdentity
             id={c.id}
             firstName={c.firstName}
-            lastName={c.lastName}
+            lastName={policy.show("last_name", c.lastName)}
             number={c.number}
             nickname={c.nickname}
             source={c.source}
-            referredBy={referrer ? { id: referrer.id, name: `${referrer.firstName} ${referrer.lastName ?? ""}`.trim() } : null}
+            referredBy={referrer ? { id: referrer.id, name: nameOf(referrer) } : null}
             referrals={referrals}
             sources={[...lists.clientSources]}
             photo={{ has: hasPhoto, shown: policy.level("photo") === "full", canAdd: policy.canAdd("photo"), canEdit: policy.canEdit("photo") }}
@@ -358,7 +358,7 @@ export default async function CustomerPage({
               values={fullValues}
               initial={{
                 firstName: c.firstName,
-                lastName: c.lastName ?? "",
+                lastName: isFull("last_name") ? (c.lastName ?? "") : "",
                 smsOptIn: c.smsOptIn,
                 emailOptIn: c.emailOptIn,
                 allowOtherShop: c.allowOtherShop,
@@ -379,7 +379,7 @@ export default async function CustomerPage({
               id={c.id}
               initial={isFull("notes") ? (c.notes ?? "") : ""}
               notes={fields.find((f) => f.key === "notes")!}
-              fields={fields.filter((f) => f.key !== "notes")}
+              fields={fields.filter((f) => f.key !== "notes" && f.key !== "last_name")}
               revealable={revealable}
               preferred={preferredShown.value}
               usual={usual}
@@ -468,7 +468,7 @@ export default async function CustomerPage({
                     return (
                       <li key={other.id} className="flex items-center justify-between gap-2 px-4 py-2">
                         <Link className="truncate underline" href={`/admin/customers/${other.id}`}>
-                          {other.firstName} {other.lastName}
+                          {nameOf(other)}
                         </Link>
                         <Badge tone={d.kind === "likely" ? "amber" : "gray"}>
                           {{ likely: "likely same", same_name: "same name", similar_name: "similar name", shared_contact: "shares contact" }[d.kind]}
@@ -480,8 +480,8 @@ export default async function CustomerPage({
               )}
               <MergeInto
                 keepId={c.id}
-                keepName={`${c.firstName} ${c.lastName ?? ""}`.trim()}
-                suggestions={dupes.map((d) => (d.a.id === c.id ? d.b : d.a)).map((o) => ({ id: o.id, label: `${o.firstName} ${o.lastName ?? ""}`.trim() }))}
+                keepName={nameOf(c)}
+                suggestions={dupes.map((d) => (d.a.id === c.id ? d.b : d.a)).map((o) => ({ id: o.id, label: nameOf(o) }))}
               />
             </Card>
           )}

@@ -76,7 +76,7 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
   const fieldName = (f: string) => fields.find((x) => x.key === f)?.label ?? fieldRows.find((x) => customFieldKey(x.id) === f)?.label ?? f;
 
   const cell = (role: (typeof roleRows)[number], field: FieldKey) => {
-    const who = { staffId: "", roleId: role.id, roleKey: role.key };
+    const who = { staffId: "", roleId: role.id, roleKey: role.key, brandLevel: !!role.brandLevel };
     const same = (r: (typeof rules)[number]) => r.field === field && ruleSetting(r) === setting && r.roleId === role.id && !r.staffId;
     const own = rules.find((r) => same(r) && r.shopId === shopId);
     const rest = rules.filter((r) => r !== own);
@@ -96,10 +96,10 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
     : [];
   const whoColumns = who
     ? who.scope === "all" || !whoShops.length
-      ? [{ shopId: null as string | null, roleId: who.roleId, roleKey: who.roleKey }]
+      ? [{ shopId: null as string | null, roleId: who.roleId, roleKey: who.roleKey, brandLevel: !!who.roleBrandLevel }]
       : whoShops.map((s) => {
           const r = s.roleId ? roleRows.find((x) => x.id === s.roleId) : null;
-          return { shopId: s.shopId as string | null, roleId: r?.id ?? who.roleId, roleKey: r ? r.key : who.roleKey };
+          return { shopId: s.shopId as string | null, roleId: r?.id ?? who.roleId, roleKey: r ? r.key : who.roleKey, brandLevel: r ? !!r.brandLevel : !!who.roleBrandLevel };
         })
     : [];
   const here = (p: { shop?: string | null; who?: string | null; setting?: (typeof SETTINGS)[number] }) => {
@@ -294,10 +294,10 @@ export default async function ClientDataPage({ searchParams }: { searchParams: P
                 <tr key={f.key}>
                   <Td>{f.label}</Td>
                   {whoColumns.map((c) => {
-                    const w = { staffId: who.id, roleId: c.roleId, roleKey: c.roleKey };
+                    const w = { staffId: who.id, roleId: c.roleId, roleKey: c.roleKey, brandLevel: c.brandLevel };
                     const l = contactCeiling(f.key, resolveLevel(rules, w, c.shopId, f.key), fullContactOf(who));
                     const entry = (t: EntrySetting) => resolveEntry(rules, w, c.shopId, f.key, t);
-                    const changed = l !== defaultLevel(c.roleKey, f.key) || (["add", "edit"] as const).some((t) => entry(t) !== defaultEntry(c.roleKey, f.key, t));
+                    const changed = l !== defaultLevel(c.roleKey, f.key, c.brandLevel) || (["add", "edit"] as const).some((t) => entry(t) !== defaultEntry(c.roleKey, f.key, t));
                     return (
                       <Td key={c.shopId ?? "all"}>
                         <Badge tone={TONE[l]}>{LEVEL_LABEL[l]}</Badge>

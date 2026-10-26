@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, lte, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
 import { customers, membershipInvoices, membershipPlans, memberships, membershipUses, services, shops } from "@/db/schema";
+import { clientName, maskLastName } from "@/domain/client-privacy";
 import { MemberCoverage, PlanInput, periodEnd, planProblem, visitsLeft } from "@/domain/memberships";
 import { appBaseUrl } from "@/lib/deployment";
 import { todayLocal } from "@/lib/time";
@@ -15,7 +16,11 @@ import { hasShop } from "./tenant";
 export interface MembershipViewer {
   brandWide: boolean;
   shopIds: string[];
+  /** Client names at the viewer's level (ClientPolicy.name); without it, the last initial. */
+  name?: (first: string | null, last: string | null) => string;
 }
+
+const initialOnly = (first: string | null, last: string | null) => clientName(first, maskLastName(last));
 
 type Plan = typeof membershipPlans.$inferSelect;
 type Membership = typeof memberships.$inferSelect;
@@ -100,7 +105,7 @@ export async function checkoutCoverage(customerIds: string[], shopId: string): P
     .map(({ m, p, first, last }) => ({
       membershipId: m.id,
       customerId: m.customerId,
-      memberName: `${first} ${last ?? ""}`.trim(),
+      memberName: initialOnly(first, last),
       planName: p.name,
       serviceIds: p.serviceIds,
       visitsLeft: visitsLeft(p.visitsPerPeriod, used.get(m.id) ?? 0),
@@ -326,7 +331,7 @@ export async function membershipBoard(v: MembershipViewer, o: { status?: string;
     members: rows.map(({ m, plan, visitsPerPeriod, shop, first, last }) => ({
       id: m.id,
       customerId: m.customerId,
-      client: `${first} ${last ?? ""}`.trim(),
+      client: (v.name ?? initialOnly)(first, last),
       plan,
       shop,
       status: m.status,
@@ -341,7 +346,7 @@ export async function membershipBoard(v: MembershipViewer, o: { status?: string;
       visitsPerPeriod,
       createdAt: m.createdAt,
     })),
-    invoices: invoices.map(({ i, first, last, plan }) => ({ ...i, client: `${first} ${last ?? ""}`.trim(), plan })),
+    invoices: invoices.map(({ i, first, last, plan }) => ({ ...i, client: (v.name ?? initialOnly)(first, last), plan })),
   };
 }
 

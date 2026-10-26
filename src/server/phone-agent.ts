@@ -3,7 +3,7 @@ import { and, asc, eq, gte, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
 import { appointments, callLogs, callTranscriptLines, notificationJobs, shops, type TranscriptSpeaker } from "@/db/schema";
-import { maskPhone } from "@/domain/client-privacy";
+import { clientName, maskLastName, maskPhone } from "@/domain/client-privacy";
 import { ATTRIBUTION_DAYS, CallOutcome, PhoneOperator, callOutcome, cleanOperator, needsFollowUp, operatorMetrics } from "@/domain/phone-operator";
 import { Actor, audit } from "./audit";
 import { AppError, forbidden, notFound } from "./errors";
@@ -19,7 +19,13 @@ import { hasShop } from "./tenant";
 export interface PhoneViewer {
   brandWide: boolean;
   shopIds: string[];
+  /** Client names at the viewer's level (ClientPolicy.name); without it, the last initial. */
+  name?: Namer;
 }
+
+type Namer = (first: string, last: string | null) => string;
+const callerName = (c: Pick<CallRow, "clientFirst" | "clientLast">, name?: Namer) =>
+  c.clientFirst ? (name ? name(c.clientFirst, c.clientLast) : clientName(c.clientFirst, maskLastName(c.clientLast))) : null;
 
 /** Adds lines to a call's transcript, unless the shop keeps outcomes only. */
 export async function transcribe(callLogId: string | null | undefined, op: Pick<PhoneOperator, "transcripts">, lines: [TranscriptSpeaker, string][], now = new Date(), tx: DBorTx = db) {
@@ -34,7 +40,8 @@ type CallRow = {
   shop: string;
   phone: string;
   customerId: string | null;
-  client: string | null;
+  clientFirst: string | null;
+  clientLast: string | null;
   operator: boolean;
   status: string;
   choice: string | null;
@@ -55,13 +62,14 @@ type CallRow = {
 export type AgentFilter = CallOutcome | "follow_up" | "agent" | "all";
 
 /** Calls to the shops' numbers in the window, newest first, each with its outcome. */
-export async function phoneAgentCalls(o: { shopIds: string[]; start: Date; end: Date; filter?: AgentFilter; limit?: number }) {
+export async function phoneAgentCalls(o: { shopIds: string[]; start: Date; end: Date; filter?: AgentFilter; limit?: number; name?: Namer }) {
   if (!o.shopIds.length) return { calls: [], metrics: operatorMetrics([], 0), counts: {} as Partial<Record<AgentFilter, number>> };
   const all = await rows<CallRow>(callsSql(o.shopIds, o.start, o.end));
   const ops = new Map((await db.select({ id: shops.id, op: shops.phoneOperator }).from(shops)).map((s) => [s.id, cleanOperator(s.op)]));
   const calls = all.map((c) => {
     const outcome = callOutcome({ ...c, endedAt: c.endedAt });
-    return { ...c, outcome, caller: c.client ?? maskPhone(c.phone) ?? "Unknown caller", phone: maskPhone(c.phone), followUp: needsFollowUp(outcome, c.status) && !c.followedUpAt };
+    const client = callerName(c, o.name);
+    return { ...c, client, outcome, caller: client ?? maskPhone(c.phone) ?? "Unknown caller", phone: maskPhone(c.phone), followUp: needsFollowUp(outcome, c.status) && !c.followedUpAt };
   });
   const counts: Partial<Record<AgentFilter, number>> = { all: calls.length, agent: calls.filter((c) => c.operator).length, follow_up: calls.filter((c) => c.followUp).length };
   for (const c of calls) counts[c.outcome] = (counts[c.outcome] ?? 0) + 1;
@@ -74,7 +82,7 @@ export async function phoneAgentCalls(o: { shopIds: string[]; start: Date; end: 
 function callsSql(shopIds: string[], start: Date, end: Date) {
   return sql`
     select c.id, c.shop_id "shopId", sh.name shop, c.phone, c.customer_id "customerId",
-      nullif(trim(coalesce(cu.first_name, '') || ' ' || coalesce(cu.last_name, '')), '') client,
+      nullif(trim(cu.first_name), '') "clientFirst", nullif(trim(cu.last_name), '') "clientLast",
       c.operator, c.status, c.operator_choice choice, c.digits, c.auto_text_sent "autoTextSent", c.duration_sec "durationSec",
       c.created_at "createdAt", c.ended_at "endedAt", b.estimate_cents "bookedCents", b.id "bookedAppointmentId",
       c.followed_up_at "followedUpAt", c.follow_up_note "followUpNote", st.display_label "followedUpBy",
@@ -115,7 +123,7 @@ export async function phoneAgentCall(v: PhoneViewer, id: string) {
   return {
     id: call.id,
     shop: row?.shop ?? "",
-    caller: row?.client ?? maskPhone(call.phone) ?? "Unknown caller",
+    caller: (row && callerName(row, v.name)) ?? maskPhone(call.phone) ?? "Unknown caller",
     customerId: call.customerId,
     phone: maskPhone(call.phone),
     operator: call.operator,

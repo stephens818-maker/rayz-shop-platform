@@ -41,7 +41,7 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
         <div className="flex flex-wrap gap-2 text-sm">
           {v.people.map((p) => (
             <Link key={p.id} href={`/admin/customers/${p.id}`} className="rounded-full px-3 py-1 ring-1 ring-zinc-300 hover:bg-zinc-50">
-              {p.firstName} {p.lastName}
+              {policy.name(p.firstName, p.lastName)}
               {!p.smsOptIn && <span className="text-zinc-500"> · no texts</span>}
             </Link>
           ))}

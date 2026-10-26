@@ -36,7 +36,8 @@ const Birthday = z
  */
 const Profile = z.object({
   firstName: z.string().trim().min(1),
-  lastName: z.string().trim(),
+  /** Left out by someone who sees only the initial and didn't retype it. */
+  lastName: z.string().trim().optional(),
   phone: z.string().trim().optional(),
   email: z.string().trim().optional(),
   address: z.string().trim().max(200).optional(),
@@ -58,11 +59,12 @@ function contact(p: { phone?: string; email?: string }) {
   return { phone, email };
 }
 
-type Stored = { phone: string | null; email: string | null; address: string | null; birthday: string | null; notes: string | null; customFields: Record<string, string> };
+type Stored = { lastName: string | null; phone: string | null; email: string | null; address: string | null; birthday: string | null; notes: string | null; customFields: Record<string, string> };
 
 /** A client's details as the person who just saved them may see them: never more than their level. */
 function savedFields(policy: ClientPolicy, c: Stored): ShownField[] {
   return [
+    shownField(policy, "last_name", c.lastName),
     ...(["phone", "email", "address", "birthday", "notes"] as const).map((f) => shownField(policy, f, c[f])),
     ...policy.custom.map((f) => shownField(policy, customFieldKey(f.id), c.customFields[f.id], f.label)),
   ];
@@ -108,7 +110,7 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
     }
     const values = {
       firstName: p.firstName,
-      lastName: p.lastName || null,
+      lastName: entered(policy, "last_name", before.lastName, p.lastName),
       phone: entered(policy, "phone", before.phone, c.phone),
       email: entered(policy, "email", before.email, c.email),
       address: entered(policy, "address", before.address, p.address),
@@ -277,6 +279,7 @@ export async function revealClientFieldAction(raw: z.input<typeof RevealInput>) 
     let stored: string | null;
     if (field === "preferred_barber")
       stored = c.preferredStaffId ? ((await db.query.staff.findFirst({ where: eq(staff.id, c.preferredStaffId), columns: { displayLabel: true } }))?.displayLabel ?? null) : null;
+    else if (field === "last_name") stored = c.lastName;
     else if (isBuiltinField(field)) stored = (c as Record<string, unknown>)[field] as string | null;
     else stored = c.customFields[customFieldId(field)!] ?? null;
     if (level === "full") return { value: displayFull(field, stored) };

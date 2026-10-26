@@ -51,9 +51,9 @@ let brandAdminRoleId: string;
 
 /** What each restricted person must never receive about the client, with the rules set below. */
 const NEVER: Record<"makenna" | "frontdesk" | "michelle" | "admin", string[]> = {
-  makenna: [...PHONE, ...EMAIL, ...ADDRESS, ...BIRTHDAY, ...INSTAGRAM, P.notes, P.ratingNote],
-  frontdesk: [...PHONE, ...EMAIL, ...ADDRESS, ...BIRTHDAY, ...INSTAGRAM, P.ratingNote],
-  michelle: [...PHONE, ...EMAIL, "4242 Hidden", "1 Old Road"],
+  makenna: [P.last, ...PHONE, ...EMAIL, ...ADDRESS, ...BIRTHDAY, ...INSTAGRAM, P.notes, P.ratingNote],
+  frontdesk: [P.last, ...PHONE, ...EMAIL, ...ADDRESS, ...BIRTHDAY, ...INSTAGRAM, P.ratingNote],
+  michelle: [P.last, ...PHONE, ...EMAIL, "4242 Hidden", "1 Old Road"],
   admin: [...PHONE, ...EMAIL, ...ADDRESS, ...BIRTHDAY, ...INSTAGRAM, P.notes, P.ratingNote],
 };
 
@@ -236,7 +236,8 @@ describe("hidden and masked values never reach a restricted person's browser", (
       }
       expect(leaks).toEqual([]);
       expect(opened).toBeGreaterThanOrEqual(who === "makenna" ? 5 : 9);
-      expect(profile, "the profile opened").toContain(P.last);
+      // Below brand level a client's last name is an initial; a brand-level custom role sees it in full.
+      expect(profile, "the profile opened").toContain(who === "admin" ? `${P.first} ${P.last}` : `${P.first} S.`);
       expect(profile).toContain("***-***-9876");
       if (who === "makenna") expect(profile).not.toContain("p***@");
       if (who === "frontdesk" || who === "michelle") expect(profile).toContain("p***@example.test");

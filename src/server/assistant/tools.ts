@@ -933,7 +933,7 @@ function clientNotesTool(): AssistantTool {
       const nameOf = (id: string) => {
         const c = named.find((x) => x.id === id)!;
         return {
-          label: `${c.firstName} ${c.lastName ?? ""}`.trim(),
+          label: policy.name(c.firstName, c.lastName),
           number: c.number,
         };
       };

@@ -64,7 +64,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
   const personOf = new Map((people ?? []).flatMap((p) => p.lines.flatMap((l) => (l.id ? [[l.id, `${p.name}${l.barber ? ` · ${l.barber}` : ""}`] as [string, string]] : []))));
   const payerOf = (p: (typeof pays)[number]) => {
     const c = p.payerCustomerId ? payerRows.find((x) => x.id === p.payerCustomerId) : null;
-    return c ? `${c.first} ${c.last ?? ""}`.trim() : p.payerLabel;
+    return c ? policy.name(c.first, c.last) : p.payerLabel;
   };
   const tipShares = screen.shares.length ? splitCents(sale.tipCents, screen.shares.map((x) => ({ id: x.staffId, weight: x.weight }))) : null;
   const splitName = new Map(screen.shares.map((x) => [x.staffId, x.label]));
@@ -166,7 +166,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
               Ticket #{sale.number} · {formatDateTime(sale.paidAt ?? sale.createdAt)}
               {barber && ` · Barber: ${barber.displayLabel}`}
             </div>
-            {customer && <div className="text-xs text-zinc-500">Client: {customer.firstName} {customer.lastName}</div>}
+            {customer && <div className="text-xs text-zinc-500">Client: {policy.name(customer.firstName, customer.lastName)}</div>}
             <div className="mt-2">
               <Badge tone={sale.status === "paid" ? "green" : sale.status === "voided" ? "gray" : "red"}>{sale.status.replace("_", " ")}</Badge>
             </div>
@@ -309,7 +309,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           {customer && (
             <div className="flex items-center justify-between rounded-xl bg-white px-4 py-3 text-sm ring-1 ring-zinc-200">
               <Link className="font-medium underline" href={`/admin/customers/${customer.id}`}>
-                {customer.firstName} {customer.lastName}
+                {policy.name(customer.firstName, customer.lastName)}
               </Link>
               <StarBadge rating={policy.stars(ratingMap.get(customer.id))} />
             </div>

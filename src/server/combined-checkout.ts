@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { clientName, maskLastName } from "@/domain/client-privacy";
 import { db, type DBorTx, type Tx } from "@/db";
 import { appointments, bookingGroups, checkoutHandoffs, customers, payments, saleAppointments, saleItems, sales, staff, type Sale } from "@/db/schema";
 import { mergeProblem, readiness } from "@/domain/combined-checkout";
@@ -307,7 +308,7 @@ export async function openTickets(shopIds: string[], o: { excludeSaleId?: string
       number: r.number,
       shopId: r.shopId,
       createdAt: r.createdAt,
-      client: [r.first, r.last].filter(Boolean).join(" ") || null,
+      client: clientName(r.first, maskLastName(r.last)) || null,
       barber: r.barber,
       people: mine.map((m) => ({ appointmentId: m.appointmentId, name: m.name, staffName: m.staffName, readyAt: m.readyAt })),
       ...readiness(mine),

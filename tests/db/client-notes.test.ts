@@ -472,7 +472,8 @@ describe("the assistant", () => {
     expect(result).toMatch(/Allergic to talc/);
     expect(result).not.toMatch(/Owes a no-show fee|555-4411/);
     expect(JSON.stringify(p.seen)).not.toContain("555-4411");
-    expect(r.messages[1].cards[0]).toMatchObject({ kind: "report", title: "Notes: Thaddeus Quillfeather" });
+    expect(result).not.toContain("Quillfeather");
+    expect(r.messages[1].cards[0]).toMatchObject({ kind: "report", title: "Notes: Thaddeus Q." });
 
     const q = scripted([{ name: "client_notes", args: { client: "Thaddeus Quillfeather", kind: "private" } }]);
     await assistant.askAssistant(await ctxAs("michelle"), { question: "Any private notes on Thaddeus?" }, { provider: q });

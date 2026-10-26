@@ -322,7 +322,9 @@ describe("lowest- and highest-rated clients by shop", () => {
     expect(all.ratedClients).toBe(5);
     expect(all.lowest.map((x) => x.customerId)).toEqual([old.id, low.id, mid.id]);
     expect(all.highest.map((x) => x.customerId)).toEqual([high.id, good.id]);
-    expect(all.lowest[1]).toMatchObject({ name: "Lowe Dubuque", avg: 1.5, count: 2, lastNote: "Lowe 2" });
+    expect(all.lowest[1]).toMatchObject({ name: "Lowe D.", avg: 1.5, count: 2, lastNote: "Lowe 2" });
+    const [named] = await r.ratingsByShop({ shopIds: [dubuque.id], limit: 10, name: (f, l) => `${f} ${l}` });
+    expect(named.lowest[1].name).toBe("Lowe Dubuque");
 
     const [top] = await r.ratingsByShop({ shopIds: [dubuque.id], limit: 1 });
     expect(top.lowest.map((x) => x.customerId)).toEqual([old.id]);

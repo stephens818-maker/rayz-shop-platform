@@ -6,6 +6,7 @@ import { reportView } from "@/domain/permissions";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDateTime, formatTime, localDateOf, startOfLocalDay, todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
+import { clientPolicy } from "@/server/client-privacy";
 import { type AgentFilter, agentSettings, phoneAgentCall, phoneAgentCalls } from "@/server/phone-agent";
 import { PhoneOperatorEditor } from "../settings/part-editors";
 import { FollowUp } from "./follow-up";
@@ -42,9 +43,10 @@ export default async function PhoneAgentPage({ searchParams }: { searchParams: P
   const today = todayLocal();
   const start = startOfLocalDay(addDays(today, 1 - Number(days)));
   const end = startOfLocalDay(addDays(today, 1));
+  const { name } = await clientPolicy(ctx);
   const [data, detail, settings] = await Promise.all([
-    seeCalls ? phoneAgentCalls({ shopIds: inView, start, end, filter }) : null,
-    seeCalls && sp.call ? phoneAgentCall(ctx, sp.call) : null,
+    seeCalls ? phoneAgentCalls({ shopIds: inView, start, end, filter, name }) : null,
+    seeCalls && sp.call ? phoneAgentCall({ brandWide: ctx.brandWide, shopIds: ctx.shopIds, name }, sp.call) : null,
     agentSettings(inView),
   ]);
   const href = (o: Partial<Record<"shop" | "days" | "show" | "call", string | null>>) => {

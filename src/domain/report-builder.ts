@@ -153,7 +153,7 @@ export interface FieldDef {
 export const CUSTOMER_FIELDS: FieldDef[] = [
   { key: "name", label: "Name", group: "Client", type: "text" },
   { key: "first_name", label: "First name", group: "Client", type: "text" },
-  { key: "last_name", label: "Last name", group: "Client", type: "text" },
+  { key: "last_name", label: "Last name", group: "Client", type: "text", reads: "last_name" },
   { key: "nickname", label: "Nickname", group: "Client", type: "text" },
   { key: "number", label: "Client #", group: "Client", type: "int" },
   {

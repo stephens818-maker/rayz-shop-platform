@@ -30,6 +30,7 @@ import {
   todayLocal,
 } from "@/lib/time";
 import { can, guardPage, reportShopIds } from "@/server/auth/staff";
+import { clientPolicy } from "@/server/client-privacy";
 import { openTickets } from "@/server/combined-checkout";
 import { shopDay } from "@/server/milestones/day";
 import { byBarber } from "@/server/reports";
@@ -54,6 +55,7 @@ export default async function SalesPage({
   const ctx = await guardPage("/admin/sales");
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : todayLocal();
   const shopIds = reportShopIds(ctx);
+  const policy = await clientPolicy(ctx);
   const rows = await db
     .select({
       id: sales.id,
@@ -296,7 +298,7 @@ export default async function SalesPage({
                   {ctx.currentShopId === null && <Td>{r.shop}</Td>}
                   <Td>
                     {r.firstName ? (
-                      `${r.firstName} ${r.lastName ?? ""}`
+                      policy.name(r.firstName, r.lastName)
                     ) : (
                       <span className="text-zinc-400">Walk-in</span>
                     )}

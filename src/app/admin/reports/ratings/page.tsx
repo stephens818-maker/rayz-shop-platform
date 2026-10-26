@@ -58,7 +58,7 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
   const policy = await clientPolicy(ctx);
   const clients = policy.stars({ avg: 0, count: 0 }) !== null;
   const t0 = performance.now();
-  const [rated, given] = await Promise.all([clients ? ratingsByShop(p.query) : [], ratingsGivenTable(p.scope, p.loc)]);
+  const [rated, given] = await Promise.all([clients ? ratingsByShop({ ...p.query, name: policy.name }) : [], ratingsGivenTable(p.scope, p.loc)]);
   const noteless = (rows: RatedClientRow[]) => rows.map((r) => ({ ...r, lastNote: null }));
   const shops = policy.ratingDetail ? rated : rated.map((s) => ({ ...s, lowest: noteless(s.lowest), highest: noteless(s.highest) }));
   const ms = Math.round(performance.now() - t0);

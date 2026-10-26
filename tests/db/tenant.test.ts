@@ -511,7 +511,8 @@ describe("direct URLs to another shop's records", () => {
       const profile = await open("/admin/customers/[id]", { id: ids.client });
       expect(profile.kind).toBe("ok");
       const text = profile.text!;
-      expect(text).toContain(CLIENT_NAME);
+      expect(text).toContain(`${CANARY.first} ${CANARY.last[0]}.`);
+      expect(text).not.toContain(CANARY.last);
       for (const s of ["Coralville", CANARY.barber, CANARY.item, "at every Ray'z shop", "Loyalty progress", "★ 2.0"]) expect(text, s).toContain(s);
       // A shared shop login sees when, where and what at other shops, but not what it cost.
       if (o.login === "moline") {
@@ -547,7 +548,7 @@ describe("finding a brand client to book them", () => {
       for (const term of [CANARY.phone, "(319) 555-7731", CANARY.email, CLIENT_NAME, CLIENT_NAME.toLowerCase(), CANARY.last, CANARY.first, "Quillon Canary", "7731"]) {
         const r = await searchCustomersAction(term);
         expect(r.ok && r.data.some((c) => c.id === ids.client), `${login} ${term}`).toBe(true);
-        expect(found(JSON.stringify(r), [CANARY.email, "555-7731", "5557731"]), `${login} ${term}`).toEqual([]);
+        expect(found(JSON.stringify(r), [CANARY.email, "555-7731", "5557731", CANARY.last]), `${login} ${term}`).toEqual([]);
       }
       // Partial digits and email letters need the full detail, which nobody below brand level sees.
       for (const term of ["5557731", "email:quillon.canary"]) {

@@ -1,4 +1,5 @@
 import { and, asc, eq, gte, inArray, lt, ne, notInArray, sql } from "drizzle-orm";
+import { clientName, maskLastName } from "@/domain/client-privacy";
 import { db, type DBorTx } from "@/db";
 import { appointmentItems, appointments, customers, saleAppointments, saleItems, sales, staff, type Appointment, type Sale } from "@/db/schema";
 import type { LineKind } from "@/domain/checkout";
@@ -16,6 +17,9 @@ export interface FamilyTicketMember {
   /** Null for a walk-in with no client on file, combined in from their own ticket. */
   customerId: string | null;
   name: string;
+  /** The parts of the name, for showing the last name at the viewer's level. */
+  first: string | null;
+  last: string | null;
   isChild: boolean;
   staffId: string | null;
   staffName: string | null;
@@ -66,7 +70,9 @@ export async function members(ids: string[], tx: DBorTx): Promise<FamilyTicketMe
   return rows.map((r) => ({
     appointmentId: r.appointmentId,
     customerId: r.customerId,
-    name: [r.first, r.last].filter(Boolean).join(" ") || "Walk-in",
+    name: clientName(r.first, maskLastName(r.last)) || "Walk-in",
+    first: r.first,
+    last: r.last,
     isChild: !!r.guardianId,
     staffId: r.staffId,
     staffName: r.staffName,

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BUILTIN_FIELDS,
   CONTACT_FIELDS,
+  clientName,
+  maskLastName,
   DEFAULT_LIMITS,
   FieldRule,
   cleanLimits,
@@ -280,6 +282,38 @@ describe("the contact ceiling", () => {
     const brand = makePolicy({ staffId: "a", isOwner: false, fullContact: true, canReveal: true, custom: [], levels: new Map([...levels, ["phone", "masked"]]) });
     expect(brand.level("email")).toBe("full");
     expect(brand.mayReveal("phone")).toBe(true);
+  });
+});
+
+describe("last names", () => {
+  it("below brand level a client's last name shows as an initial by default", () => {
+    expect(maskLastName("Stephens")).toBe("S.");
+    expect(maskLastName("  de la Cruz")).toBe("D.");
+    expect(maskLastName(" ")).toBeNull();
+    expect(maskValue("last_name", "Stephens")).toBe("S.");
+    expect(clientName("Jordan", "S.")).toBe("Jordan S.");
+    expect(clientName("Jordan", null)).toBe("Jordan");
+    for (const role of ["shop_manager", "regional_manager", "franchisee_manager", "front_desk", "shop_login", "barber", "apprentice", "bookkeeper", "marketing", null])
+      expect(defaultLevel(role, "last_name"), String(role)).toBe("masked");
+    for (const role of ["brand_owner", "brand_admin"]) expect(defaultLevel(role, "last_name"), role).toBe("full");
+    expect(defaultEntry("barber", "last_name", "edit")).toBe(false);
+    expect(defaultEntry("front_desk", "last_name", "edit")).toBe(true);
+  });
+
+  it("a policy names the client with what the person may see of the last name", async () => {
+    const { makePolicy, entered } = await import("@/server/client-privacy");
+    const shop = makePolicy({ staffId: "m", isOwner: false, canReveal: false, custom: [], levels: new Map([["last_name", "masked"]]) });
+    expect(shop.name("Jordan", "Stephens")).toBe("Jordan S.");
+    expect(shop.name("Jordan", null)).toBe("Jordan");
+    const hidden = makePolicy({ staffId: "m", isOwner: false, canReveal: false, custom: [], levels: new Map([["last_name", "hidden"]]) });
+    expect(hidden.name("Jordan", "Stephens")).toBe("Jordan");
+    expect(shop.typedName("  Jordan  de la Cruz ")).toBe("Jordan D.");
+    expect(shop.typedName("Jordan")).toBe("Jordan");
+    const brand = makePolicy({ staffId: "a", isOwner: false, fullContact: true, canReveal: true, custom: [], levels: new Map([["last_name", "full"]]) });
+    expect(brand.name("Jordan", "Stephens")).toBe("Jordan Stephens");
+    const desk = makePolicy({ staffId: "d", isOwner: false, canReveal: false, custom: [], levels: new Map([["last_name", "masked"]]), entries: new Map([["edit:last_name", false]]) });
+    expect(entered(desk, "last_name", "Stephens", undefined)).toBe("Stephens");
+    expect(() => entered(desk, "last_name", "Stephens", "Smith")).toThrow(/last name/i);
   });
 });
 

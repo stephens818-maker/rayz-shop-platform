@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   const policy = await clientPolicy(ctx);
   if (!policy.stars({ avg: 0, count: 0 })) return new Response("Client ratings aren't shown to you", { status: 403 });
   const notes = policy.ratingDetail;
-  const shops = await ratingsByShop(p.query);
+  const shops = await ratingsByShop({ ...p.query, name: policy.name });
   const byLocation = p.loc.view === "shops";
   const rows = shops.flatMap((s) =>
     (

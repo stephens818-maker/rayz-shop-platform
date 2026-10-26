@@ -1,6 +1,7 @@
 "use server";
 
 import { eq, inArray } from "drizzle-orm";
+import { clientName, maskLastName } from "@/domain/client-privacy";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
@@ -209,7 +210,7 @@ export async function householdMembersAction(appointmentId: string) {
         ? [
             {
               id,
-              name: [r.firstName, r.lastName].filter(Boolean).join(" "),
+              name: clientName(r.firstName, maskLastName(r.lastName)),
               child: !!r.guardianId,
               age: r.guardianId ? ageOn(r, today) : null,
               current: id === a.customerId,

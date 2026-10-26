@@ -305,8 +305,9 @@ describe("client badges", () => {
     if (r.kind !== "ok") throw new Error(r.kind);
     expect(r.text).toContain("Your clients today");
     expect(r.text).toMatch(/at-risk client/);
-    expect(r.text).toMatch(/Ana Badgetest.{0,1500}at_risk/);
-    expect(r.text).not.toMatch(/Ana Badgetest.{0,1500}data-badge="?missing_info/);
+    expect(r.text).toMatch(/Ana B\..{0,1500}at_risk/);
+    expect(r.text).not.toMatch(/Ana B\..{0,1500}data-badge="?missing_info/);
+    expect(r.text).not.toContain("Badgetest");
 
     const md = await import("@/server/morning-dashboard");
     const access = await import("@/server/auth/access");

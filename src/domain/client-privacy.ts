@@ -12,6 +12,7 @@ export const LEVEL_LABEL: Record<Level, string> = { hidden: "Hidden", masked: "M
 export const isLevel = (v: unknown): v is Level => typeof v === "string" && (LEVELS as readonly string[]).includes(v);
 
 export const BUILTIN_FIELDS = [
+  { key: "last_name", label: "Last name", revealable: true, example: "S." },
   { key: "phone", label: "Phone", revealable: true, example: "***-***-4321" },
   { key: "email", label: "Email", revealable: true, example: "j***@gmail.com" },
   { key: "address", label: "Address", revealable: true, example: "***, Moline, IL 61265" },
@@ -44,13 +45,14 @@ export const RATINGS_MASKED_HINT = "Average stars only, no individual ratings or
 // ───────────────────────────── Built-in brand defaults ─────────────────────────────
 
 type Defaults = Record<BuiltinField | "custom", Level>;
-const FULL: Defaults = { phone: "full", email: "full", address: "full", birthday: "full", notes: "full", preferred_barber: "full", ratings: "full", photo: "full", custom: "full" };
-const MANAGER: Defaults = { ...FULL, phone: "masked", email: "masked", address: "masked" };
+const FULL: Defaults = { last_name: "full", phone: "full", email: "full", address: "full", birthday: "full", notes: "full", preferred_barber: "full", ratings: "full", photo: "full", custom: "full" };
+const MANAGER: Defaults = { ...FULL, last_name: "masked", phone: "masked", email: "masked", address: "masked" };
 
 /**
  * Brand defaults for each built-in role, used wherever the brand portal has no rule. No shop or
  * staff role sees contact details in full (see CONTACT_FIELDS); calls and texts go through the shop
- * line instead.
+ * line instead. Below brand level a client's last name shows as its initial ("Marcus S."); the
+ * brand can give the full name to a role or a person like any other field.
  */
 export const ROLE_FIELD_DEFAULTS: Record<RoleTemplateKey, Defaults> = {
   brand_owner: FULL,
@@ -59,14 +61,14 @@ export const ROLE_FIELD_DEFAULTS: Record<RoleTemplateKey, Defaults> = {
   franchisee_manager: MANAGER,
   regional_manager: MANAGER,
   shop_manager: MANAGER,
-  front_desk: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
-  shop_login: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
-  barber: { ...FULL, phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
-  apprentice: { ...FULL, phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
+  front_desk: { ...FULL, last_name: "masked", phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
+  shop_login: { ...FULL, last_name: "masked", phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
+  barber: { ...FULL, last_name: "masked", phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
+  apprentice: { ...FULL, last_name: "masked", phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
   // The books need tickets and totals, never who the client is beyond a name.
-  bookkeeper: { phone: "hidden", email: "hidden", address: "hidden", birthday: "hidden", notes: "hidden", preferred_barber: "hidden", ratings: "hidden", photo: "hidden", custom: "hidden" },
+  bookkeeper: { last_name: "masked", phone: "hidden", email: "hidden", address: "hidden", birthday: "hidden", notes: "hidden", preferred_barber: "hidden", ratings: "hidden", photo: "hidden", custom: "hidden" },
   // Campaigns are sent by the system; contact details show only once the brand grants contact access.
-  marketing: { phone: "hidden", email: "hidden", address: "hidden", birthday: "masked", notes: "hidden", preferred_barber: "full", ratings: "masked", photo: "hidden", custom: "hidden" },
+  marketing: { last_name: "masked", phone: "hidden", email: "hidden", address: "hidden", birthday: "masked", notes: "hidden", preferred_barber: "full", ratings: "masked", photo: "hidden", custom: "hidden" },
 };
 
 /**
@@ -99,8 +101,11 @@ export function shopLoginLevel(cap: ShopLoginCap, field: FieldKey, level: Level)
 /** Custom roles start as locked down as a barber's contact details, with masked email. */
 export const CUSTOM_ROLE_DEFAULTS: Defaults = { ...ROLE_FIELD_DEFAULTS.barber, email: "masked" };
 
-export function defaultLevel(roleKey: string | null, field: FieldKey): Level {
-  const d = (roleKey && ROLE_FIELD_DEFAULTS[roleKey as RoleTemplateKey]) || CUSTOM_ROLE_DEFAULTS;
+/** A brand-level custom role sees a client's full last name, like a Brand Admin; every other custom role, the initial. */
+export function defaultLevel(roleKey: string | null, field: FieldKey, brandLevel = false): Level {
+  const template = roleKey ? ROLE_FIELD_DEFAULTS[roleKey as RoleTemplateKey] : undefined;
+  if (!template && brandLevel && field === "last_name") return "full";
+  const d = template || CUSTOM_ROLE_DEFAULTS;
   return isBuiltinField(field) ? d[field] : d.custom;
 }
 
@@ -128,6 +133,7 @@ export const isEntryField = (f: FieldKey) => f !== "ratings";
 
 type EntryDefaults = Record<EntrySetting, Record<BuiltinField | "custom", boolean>>;
 const ANY: Record<BuiltinField | "custom", boolean> = {
+  last_name: true,
   phone: true,
   email: true,
   address: true,
@@ -138,7 +144,7 @@ const ANY: Record<BuiltinField | "custom", boolean> = {
   photo: true,
   custom: true,
 };
-const NOTES_ONLY: Record<BuiltinField | "custom", boolean> = { ...ANY, phone: false, email: false, address: false, birthday: false, preferred_barber: false, photo: false, custom: false };
+const NOTES_ONLY: Record<BuiltinField | "custom", boolean> = { ...ANY, last_name: false, phone: false, email: false, address: false, birthday: false, preferred_barber: false, photo: false, custom: false };
 const NONE: Record<BuiltinField | "custom", boolean> = { ...NOTES_ONLY, notes: false };
 const DESK: EntryDefaults = { add: ANY, edit: ANY };
 
@@ -188,7 +194,7 @@ export interface FieldRule {
 export const ruleSetting = (r: Pick<FieldRule, "setting">): Setting => r.setting ?? "view";
 export const validRule = (r: FieldRule) => (ruleSetting(r) === "view" ? isLevel(r.level) : isEntry(r.level));
 
-type Who = { staffId: string; roleId: string; roleKey: string | null };
+type Who = { staffId: string; roleId: string; roleKey: string | null; brandLevel?: boolean };
 
 /** The most specific rule: theirs at this shop, theirs brand-wide, their role's at this shop, their role's brand-wide. */
 function pickRule(rules: readonly FieldRule[], who: Who, shopId: string | null, field: FieldKey, setting: Setting): string | undefined {
@@ -214,7 +220,7 @@ export const atLeast = (l: Level, want: Level) => RANK[l] >= RANK[want];
 export function resolveLevel(rules: readonly FieldRule[], who: Who, shopId: string | null, field: FieldKey): Level {
   if (who.roleKey === OWNER_ROLE_KEY || who.roleKey === BRAND_ADMIN_ROLE_KEY) return "full";
   const l = pickRule(rules, who, shopId, field, "view");
-  return isLevel(l) ? l : defaultLevel(who.roleKey, field);
+  return isLevel(l) ? l : defaultLevel(who.roleKey, field, who.brandLevel);
 }
 
 /** Whether a person may add or edit a field at a shop, by the same precedence as viewing. */
@@ -349,8 +355,21 @@ export function maskText(v: string | null | undefined): string | null {
   return `${t[0]}***`;
 }
 
+/** Smith → S. */
+export function maskLastName(v: string | null | undefined): string | null {
+  const t = v?.trim();
+  return t ? `${t[0].toUpperCase()}.` : null;
+}
+
+/** A client's name with the last name as the viewer may see it: "Marcus Smith", "Marcus S." or "Marcus". */
+export function clientName(first: string | null | undefined, shownLast: string | null | undefined): string {
+  return [first?.trim(), shownLast?.trim()].filter(Boolean).join(" ");
+}
+
 export function maskValue(field: FieldKey, raw: string | null | undefined): string | null {
   switch (field) {
+    case "last_name":
+      return maskLastName(raw);
     case "phone":
       return maskPhone(raw);
     case "email":

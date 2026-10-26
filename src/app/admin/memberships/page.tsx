@@ -11,6 +11,7 @@ import { can, guardPage, openShops } from "@/server/auth/staff";
 import { stripe } from "@/server/payments/processor";
 import { listPlans, membershipBoard, membershipsEnabled } from "@/server/memberships";
 import { EnrollForm, MemberActions, MembershipsSwitch, PlanEditor, PlanRow } from "./editors";
+import { clientPolicy } from "@/server/client-privacy";
 
 export const metadata: Metadata = { title: "Memberships" };
 
@@ -25,7 +26,8 @@ export default async function MembershipsPage({ searchParams }: { searchParams: 
   const sell = can(ctx, "memberships.sell");
   const [on, plans] = await Promise.all([membershipsEnabled(ctx.currentShopId), listPlans()]);
   const planId = plans.some((p) => p.id === sp.plan) ? sp.plan : undefined;
-  const board = await membershipBoard(ctx, { status: filter === "live" ? undefined : filter, planId });
+  const policy = await clientPolicy(ctx);
+  const board = await membershipBoard({ brandWide: ctx.brandWide, shopIds: ctx.shopIds, name: policy.name }, { status: filter === "live" ? undefined : filter, planId });
   const svc = manage ? await db.select({ id: services.id, name: services.name }).from(services).where(eq(services.active, true)).orderBy(asc(services.sortOrder), asc(services.name)) : [];
   const working = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
   const shopName = new Map(working.map((s) => [s.id, s.name]));

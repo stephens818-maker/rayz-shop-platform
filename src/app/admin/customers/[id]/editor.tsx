@@ -177,12 +177,15 @@ export function CustomerEditor({
   const [msg, setMsg] = useState<string | null>(null);
   const prot = useProtected(fields, values);
   const notHere = prot.shown.filter((f) => f.level === "hidden" && !f.saved && !f.canAdd);
+  // Seen as an initial below brand level: it goes through the same masked-field handling as phone.
+  const last = prot.shown.find((f) => f.key === "last_name");
   const save = () =>
     start(async () => {
       const e = prot.entries();
       const custom = Object.fromEntries(Object.entries(e).flatMap(([k, v]) => (k.startsWith("custom:") ? [[k.slice(7), v]] : [])));
       const r = await updateCustomerAction(id, {
         ...p,
+        lastName: last ? e.last_name : p.lastName,
         phone: e.phone,
         email: e.email,
         address: e.address,
@@ -202,10 +205,14 @@ export function CustomerEditor({
         <Field label="First name">
           <Input value={p.firstName} onChange={(e) => setP({ ...p, firstName: e.target.value })} />
         </Field>
-        <Field label="Last name">
-          <Input value={p.lastName} onChange={(e) => setP({ ...p, lastName: e.target.value })} />
-        </Field>
-        {prot.shown.filter((f) => f.key !== "notes" && !notHere.includes(f)).map((f) => prot.field(f, id, revealable.includes(f.key)))}
+        {last ? (
+          prot.field(last, id, revealable.includes(last.key))
+        ) : (
+          <Field label="Last name">
+            <Input value={p.lastName} onChange={(e) => setP({ ...p, lastName: e.target.value })} />
+          </Field>
+        )}
+        {prot.shown.filter((f) => f.key !== "notes" && f.key !== "last_name" && !notHere.includes(f)).map((f) => prot.field(f, id, revealable.includes(f.key)))}
         {notHere.length > 0 && <p className="col-span-2 text-xs text-zinc-500">Not shown to you: {notHere.map((f) => f.label.toLowerCase()).join(", ")}.</p>}
         <Field label="Home shop">
           <Select value={p.homeShopId ?? ""} onChange={(e) => setP({ ...p, homeShopId: e.target.value || null })}>

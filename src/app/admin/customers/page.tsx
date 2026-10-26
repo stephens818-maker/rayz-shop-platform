@@ -169,7 +169,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   <tr key={c.id} className="hover:bg-zinc-50">
                     <Td>
                       <Link className="font-medium hover:underline" href={`/admin/customers/${c.id}`}>
-                        {c.firstName} {c.lastName}
+                        {policy.name(c.firstName, c.lastName)}
                       </Link>
                       {c.nickname && <span className="ml-1.5 text-zinc-500">&ldquo;{c.nickname}&rdquo;</span>}
                       <span className="ml-1.5 font-mono text-[11px] text-zinc-400">C{c.number}</span>

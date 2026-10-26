@@ -460,7 +460,7 @@ export default async function Dashboard({
                         className="font-medium hover:underline"
                       >
                         {a.first
-                          ? `${a.first} ${a.last ?? ""}`
+                          ? policy.name(a.first, a.last)
                           : (a.notes?.replace("Walk-in: ", "") ?? "Walk-in")}
                       </Link>
                       <div className="text-xs text-zinc-500">{a.services}</div>

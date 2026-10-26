@@ -3,6 +3,7 @@
  * (tests/ratings.test.ts checks the imports, tests/db/ratings.test.ts the payloads).
  */
 import { and, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { clientName, maskLastName } from "@/domain/client-privacy";
 import { db, DBorTx } from "@/db";
 import { appointments, clientRatings, sales, shops, staff } from "@/db/schema";
 import {
@@ -329,6 +330,8 @@ export async function ratingsByShop(opts: {
   limit?: number;
   since?: Date | null;
   combined?: { label: string } | null;
+  /** Client names at the viewer's level (ClientPolicy.name); without it, the last initial. */
+  name?: (first: string, last: string | null) => string;
 }): Promise<ShopRatings[]> {
   if (!opts.shopIds.length || opts.staffIds?.length === 0) return [];
   const shopCol = opts.combined ? sql`null::uuid` : sql`r.shop_id`;
@@ -364,7 +367,7 @@ export async function ratingsByShop(opts: {
     const split = splitLowHigh(rated, limit);
     const toRow = (r: (typeof mine)[number]): RatedClientRow => ({
       customerId: r.customer_id,
-      name: `${r.first_name}${r.last_name ? ` ${r.last_name}` : ""}`,
+      name: opts.name ? opts.name(r.first_name, r.last_name) : clientName(r.first_name, maskLastName(r.last_name)),
       avg: Number(r.avg),
       count: r.n,
       lastRatedAt: new Date(r.last_at),

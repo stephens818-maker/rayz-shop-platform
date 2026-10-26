@@ -8,6 +8,7 @@ import {
   ACCESS_KINDS,
   AccessKind,
   BUILTIN_FIELDS,
+  clientName,
   EntrySetting,
   FieldEntry,
   FieldKey,
@@ -63,6 +64,10 @@ export interface ClientPolicy {
   entry(f: FieldKey): FieldEntry;
   /** The value as this person may see it: the full value (formatted), the masked form, or null. */
   show(f: FieldKey, raw: string | null | undefined): string | null;
+  /** A client's name with the last name at this person's level: "Marcus Smith" or "Marcus S.". */
+  name(first: string | null | undefined, last: string | null | undefined): string;
+  /** A name typed as one string (a waitlist entry): everything after the first word is the last name. */
+  typedName(full: string): string;
   /** A client's star average: dropped when ratings are hidden. */
   stars<R extends RatingSummary>(r: R | null | undefined): R | null;
   /** Individual ratings and notes, not just the average. */
@@ -113,7 +118,7 @@ export async function callerRights(ctx: StaffContext) {
   const rules = ctx.isOwner ? [] : await rulesFor(ctx.staff.id, [...new Set(roleIds)]);
   const who = (shopId: string | null) => {
     const role = (shopId && ctx.access.byShop.get(shopId)?.role) || ctx.access.role;
-    return { staffId: ctx.staff.id, roleId: role.id, roleKey: role.key };
+    return { staffId: ctx.staff.id, roleId: role.id, roleKey: role.key, brandLevel: !!role.brandLevel };
   };
   return {
     levelAt: (shopId: string | null, field: FieldKey): Level => resolveLevel(rules, who(shopId), shopId, field),
@@ -123,7 +128,7 @@ export async function callerRights(ctx: StaffContext) {
 
 /** Combined across the shops someone works in at once, the strictest level wins. */
 export function levelsFor(rules: readonly FieldRule[], staffId: string, working: readonly Working[], fields: readonly FieldKey[]): Map<FieldKey, Level> {
-  return new Map(fields.map((f) => [f, minLevel(...working.map((w) => resolveLevel(rules, { staffId, roleId: w.roleId, roleKey: w.roleKey }, w.shopId, f)))]));
+  return new Map(fields.map((f) => [f, minLevel(...working.map((w) => resolveLevel(rules, { staffId, roleId: w.roleId, roleKey: w.roleKey, brandLevel: w.brandLevel }, w.shopId, f)))]));
 }
 
 /** Entry rights keyed `add:<field>` and `edit:<field>`; across several shops at once, every one must allow it. */
@@ -164,6 +169,11 @@ export function makePolicy(o: {
   const may = (s: EntrySetting, f: FieldKey) => f !== "ratings" && (o.isOwner || (o.entries?.get(`${s}:${f}`) ?? false));
   const canAdd = (f: FieldKey) => may("add", f);
   const canEdit = (f: FieldKey) => may("edit", f);
+  const show = (f: FieldKey, raw: string | null | undefined) => {
+    const l = level(f);
+    if (l === "hidden") return null;
+    return l === "full" ? displayFull(f, raw) : maskValue(f, raw);
+  };
   return {
     staffId: o.staffId,
     isOwner: o.isOwner,
@@ -175,10 +185,11 @@ export function makePolicy(o: {
     canAdd,
     canEdit,
     entry: (f) => ({ level: level(f), canAdd: canAdd(f), canEdit: canEdit(f) }),
-    show(f, raw) {
-      const l = level(f);
-      if (l === "hidden") return null;
-      return l === "full" ? displayFull(f, raw) : maskValue(f, raw);
+    show,
+    name: (first, last) => clientName(first, show("last_name", last)),
+    typedName: (full) => {
+      const [first, ...rest] = full.trim().split(/\s+/);
+      return clientName(first, show("last_name", rest.join(" ")));
     },
     stars: (r) => (level("ratings") === "hidden" ? null : (r ?? null)),
     ratingDetail: level("ratings") === "full",
@@ -233,7 +244,7 @@ export async function clientViewPreview(o: {
   const custom = await activeCustomFields(o.shopId);
   const fields: FieldKey[] = [...BUILTIN_FIELDS.map((f) => f.key), ...custom.map((c) => customFieldKey(c.id))];
   const rules = o.isOwner ? [] : o.staffId ? await rulesFor(o.staffId, [o.roleId]) : (await rulesFor("00000000-0000-0000-0000-000000000000", [o.roleId])).filter((r) => !r.staffId);
-  const who = { staffId: o.staffId ?? "", roleId: o.roleId, roleKey: o.roleKey };
+  const who = { staffId: o.staffId ?? "", roleId: o.roleId, roleKey: o.roleKey, brandLevel: o.brandLevel };
   let levels = new Map(fields.map((f) => [f, resolveLevel(rules, who, o.shopId, f)]));
   if (o.shopLogin) {
     const cap = await shopLoginCap(o.shopId);
@@ -327,7 +338,7 @@ export function showClient(
   return {
     id: c.id,
     firstName: c.firstName,
-    lastName: c.lastName,
+    lastName: p.show("last_name", c.lastName),
     phone: p.show("phone", c.phone),
     email: p.show("email", c.email),
     address: p.show("address", c.address),

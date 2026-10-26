@@ -7,13 +7,18 @@ import { giftCardCode } from "@/lib/ids";
 import { formatCents } from "@/lib/money";
 import { Actor, audit } from "./audit";
 import { openBlankSale } from "./checkout";
+import { clientName, maskLastName } from "@/domain/client-privacy";
 import { AppError, forbidden, notFound } from "./errors";
 import { OTHER_SHOP, hasShop, inShops } from "./tenant";
 
 export interface GiftCardViewer {
   brandWide: boolean;
   shopIds: string[];
+  /** Client names at the viewer's level (ClientPolicy.name); without it, the last initial. */
+  name?: (first: string | null, last: string | null) => string;
 }
+
+const nameFor = (v: GiftCardViewer, first: string | null, last: string | null) => (v.name ?? ((f, l) => clientName(f, maskLastName(l))))(first, last);
 
 type Card = typeof giftCards.$inferSelect;
 
@@ -88,7 +93,7 @@ export async function searchGiftCards(v: GiftCardViewer, raw: z.input<typeof Gif
       status: g.status,
       source: g.source,
       issuedAt: mine ? (shop ?? "—") : OTHER_SHOP,
-      client: mine && first ? `${first} ${lastName ?? ""}`.trim() : null,
+      client: mine && first ? nameFor(v, first, lastName) : null,
       lastUsedAt: last.find((l) => l.id === g.id)?.at ?? null,
       createdAt: g.createdAt,
       expiresAt: g.expiresAt,
@@ -126,7 +131,7 @@ export async function giftCardDetail(v: GiftCardViewer, by: { id?: string; code?
     expiresAt: g.expiresAt,
     createdAt: g.createdAt,
     issuedAt: mine ? (shop?.name ?? "—") : OTHER_SHOP,
-    client: client ? { id: client.id, name: `${client.first} ${client.last ?? ""}`.trim() } : null,
+    client: client ? { id: client.id, name: nameFor(v, client.first, client.last) } : null,
     manageable: mine,
     ledger: ledger.map(({ l, saleShopId, saleNumber, shop: at }) => {
       const here = v.brandWide || !saleShopId || hasShop(v, saleShopId);

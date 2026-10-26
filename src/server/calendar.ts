@@ -15,6 +15,7 @@ import { refreshClockBlocks } from "./clock-blocks";
 import { liveClock } from "./clock-live";
 import { shownBadges } from "./badges";
 import type { ClientPolicy } from "./client-privacy";
+import { clientName } from "@/domain/client-privacy";
 import { Tenant, hasShop } from "./tenant";
 import { staffIntervals } from "./timing";
 import { ratingSummaries } from "./ratings";
@@ -362,11 +363,11 @@ export async function loadDayCalendar(
           status: r.a.status,
           source: r.a.source,
           customerId: r.a.customerId,
-          customerName: r.firstName ? `${r.firstName}${r.lastName ? ` ${r.lastName}` : ""}` : (r.a.notes?.replace(/^Walk-in: /, "") ?? "Walk-in"),
+          customerName: r.firstName ? clientName(r.firstName, privacy.show("last_name", r.lastName)) : (r.a.notes?.replace(/^Walk-in: /, "") ?? "Walk-in"),
           phone: privacy.show("phone", r.phone),
           hasPhone: !!r.phone,
           smsOptIn: !!r.smsOptIn,
-          guardian: r.guardianId ? { id: r.guardianId, name: [r.guardianFirst, r.guardianLast].filter(Boolean).join(" ") } : null,
+          guardian: r.guardianId ? { id: r.guardianId, name: clientName(r.guardianFirst, privacy.show("last_name", r.guardianLast)) } : null,
           services: items.filter((i) => i.appointmentId === r.a.id).map((i) => i.name),
           estimateCents: r.a.estimateCents,
           notes: r.a.notes,

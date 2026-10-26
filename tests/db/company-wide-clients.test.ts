@@ -158,14 +158,16 @@ describe("the client list is the brand's", () => {
     for (const who of ["frontdesk", "coralville", "michelle", "manager.moline"] as const) {
       const text = await listText(who);
       expect(text, who).toContain("Every Ray'z client");
-      expect(text, who).toContain("Otto Molineonly");
-      expect(text, who).toContain("Mollie Crosstown");
+      expect(text, who).toContain("Otto M.");
+      expect(text, who).toContain("Mollie C.");
+      expect(text, who).not.toContain("Molineonly");
       expect(text, who).toContain("Coralville, Moline");
       expect(text, who).toContain("Shops visited");
       expect(text, who).not.toContain("mollie.crosstown@example.test");
       expect(text, who).not.toContain("555-8701");
     }
-    expect(await listText("frontdesk", { q: "molineonly" })).toContain("Otto Molineonly");
+    expect(await listText("frontdesk", { q: "molineonly" })).toContain("Otto M.");
+    expect(await listText("owner")).toContain("Otto Molineonly");
   });
 
   it("barbers' own list stays the people they've cut", async () => {
