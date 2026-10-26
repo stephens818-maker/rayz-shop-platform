@@ -42,7 +42,9 @@ async function client(o: Partial<typeof m.schema.customers.$inferInsert> = {}) {
 }
 
 let codes = 0;
-async function appt(customerId: string, startsAt: Date, status: "completed" | "booked" | "cancelled" | "no_show" = "completed") {
+async function appt(customerId: string, at: Date, status: "completed" | "booked" | "cancelled" | "no_show" = "completed") {
+  // 10:00 UTC is before opening in Central, on the same local day, so it never lands on a seeded booking.
+  const startsAt = new Date(`${m.time.localDateOf(at)}T10:00:00Z`);
   const [a] = await m.db.db
     .insert(s().appointments)
     .values({
