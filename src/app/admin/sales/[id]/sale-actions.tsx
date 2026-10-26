@@ -139,8 +139,11 @@ export function SaleActions({
         )}
         {cardFeeRemainingCents > 0 && (
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> Refund the card surcharge ({formatCents(cardFeeRemainingCents)})
+            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> Refund all of the card surcharge ({formatCents(cardFeeRemainingCents)})
           </label>
+        )}
+        {cardFeeRemainingCents > 0 && !fee && total > 0 && (
+          <p className="text-xs text-zinc-500">Otherwise its share of what you refund goes back with it.</p>
         )}
         {items.some((i) => i.kind === "product" && (qty[i.id] ?? 0) > 0) && (
           <label className="flex items-center gap-2 text-sm">
@@ -164,7 +167,7 @@ export function SaleActions({
             disabled={pending || !reason || total <= 0 || !pinOk}
             onClick={() =>
               run(() =>
-                refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee, reason, restock }, given),
+                refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee || "proportional", reason, restock }, given),
               )
             }
             className={status !== "paid" ? "col-span-2" : ""}

@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import { applyStaffAccountUpdate, applyStaffExternalAccount, refreshStaffAccount, staffAccountByStripeId } from "@/server/tips/accounts";
 import { applyStaffPayoutEvent } from "@/server/tips/payouts";
 import { accountHolder, applyAccountUpdate, markDeauthorized, recordPayout, refreshAccount, refreshEntityAccount } from "./connect";
+import { onceOnly } from "./stripe-events";
 
 /**
  * Events from the shops' connected accounts (a Connect webhook endpoint, its own signing secret):
@@ -17,6 +18,10 @@ export async function handleConnectWebhook(rawBody: string, signature: string, s
   } catch {
     return { status: 400, body: "Bad signature" };
   }
+  return onceOnly(event, () => connectEvent(event));
+}
+
+async function connectEvent(event: Stripe.Event) {
   const account = event.account;
   if (account && (await staffAccountByStripeId(account))) return staffEvent(event, account);
   const holder = account ? await accountHolder(account) : null;

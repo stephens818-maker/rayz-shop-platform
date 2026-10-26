@@ -7,6 +7,7 @@ import { BRAND_NAME } from "@/domain/location-profile";
 import { appBaseUrl, demoMode } from "@/lib/deployment";
 import { appSwitches } from "./app-switches";
 import { AppError } from "./errors";
+import { appPaymentsConfig } from "./payments/saved-cards";
 
 export type AppPlatform = "ios" | "android";
 
@@ -61,7 +62,7 @@ export function supportContact() {
 }
 
 export async function appConfig(platform: AppPlatform | null, version: string | null) {
-  return { ...appConfigFromEnv(platform, version), features: await appSwitches() };
+  return { ...appConfigFromEnv(platform, version), features: await appSwitches(), payments: appPaymentsConfig() };
 }
 
 export function appConfigFromEnv(platform: AppPlatform | null, version: string | null) {

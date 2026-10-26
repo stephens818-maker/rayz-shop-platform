@@ -6,7 +6,10 @@ import { SYSTEM, audit } from "@/server/audit";
 import { recordProcessorRefund } from "@/server/refunds";
 import { applyMembershipEvent } from "@/server/memberships";
 import { applyTransferReversed } from "@/server/tips/payouts";
+import { completeFromWebhook, failFromWebhook } from "@/server/app-pay";
 import { PLATFORM_ACCOUNT, recordPayout } from "./connect";
+import { recordDetached, recordSetupIntent } from "./saved-cards";
+import { onceOnly } from "./stripe-events";
 
 /**
  * The brand's own (platform) account. Sales are recorded synchronously at checkout. The webhook
@@ -17,6 +20,9 @@ import { PLATFORM_ACCOUNT, recordPayout } from "./connect";
  * transfer of a tip payout puts its tips back into the next batch. Events from shops' and
  * employees' own accounts come to the Connect webhook. Membership sign-ups, invoices and cancellations
  * (Stripe Billing, on the brand account) keep each membership's status and month in step.
+ * App payments (I11): a payment that succeeded after 3-D Secure is finished here if the app never
+ * came back, one that failed tells the client, and saved cards follow setup_intent.succeeded and
+ * payment_method.detached. Every event is handled once (onceOnly).
  */
 export async function handleStripeWebhook(rawBody: string, signature: string, secret: string | undefined) {
   if (!secret) return { status: 400, body: "Stripe webhook secret not configured" };
@@ -26,7 +32,20 @@ export async function handleStripeWebhook(rawBody: string, signature: string, se
   } catch {
     return { status: 400, body: "Bad signature" };
   }
-  if (event.type === "charge.refunded") {
+  return onceOnly(event, () => platformEvent(event));
+}
+
+export async function platformEvent(event: Stripe.Event) {
+  let outcome = "ok";
+  if (event.type === "payment_intent.succeeded") {
+    outcome = (await completeFromWebhook(event.data.object as Stripe.PaymentIntent)).outcome;
+  } else if (event.type === "payment_intent.payment_failed") {
+    outcome = (await failFromWebhook(event.data.object as Stripe.PaymentIntent)).outcome;
+  } else if (event.type === "setup_intent.succeeded") {
+    outcome = (await recordSetupIntent(event.data.object as Stripe.SetupIntent)).outcome;
+  } else if (event.type === "payment_method.detached") {
+    outcome = (await recordDetached((event.data.object as Stripe.PaymentMethod).id)).outcome;
+  } else if (event.type === "charge.refunded") {
     const charge = event.data.object as Stripe.Charge;
     const pi = typeof charge.payment_intent === "string" ? charge.payment_intent : (charge.payment_intent?.id ?? null);
     if (pi) {
@@ -46,5 +65,5 @@ export async function handleStripeWebhook(rawBody: string, signature: string, se
   } else if (!event.account && (event.type === "checkout.session.completed" || event.type.startsWith("invoice.") || event.type.startsWith("customer.subscription."))) {
     await applyMembershipEvent(event);
   }
-  return { status: 200, body: "ok" };
+  return { status: 200, body: outcome };
 }

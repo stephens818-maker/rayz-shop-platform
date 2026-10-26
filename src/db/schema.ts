@@ -1248,6 +1248,8 @@ export const customers = pgTable(
     pushTransactional: boolean("push_transactional").notNull().default(false),
     /** The client's standing receipt choice (C9): sent on paying with nothing asked at the counter. Null: asked at checkout. */
     receiptDelivery: text("receipt_delivery").$type<"email" | "app">(),
+    /** The platform-level Stripe Customer holding this account holder's saved cards (C6). Never on a child. */
+    stripeCustomerId: text("stripe_customer_id"),
     homeShopId: uuid("home_shop_id").references(() => shops.id),
     preferredStaffId: uuid("preferred_staff_id").references(() => staff.id, { onDelete: "set null" }),
     /** When their barber calls in, the appointment may be moved to a barber at another shop. */
@@ -1288,6 +1290,7 @@ export const customers = pgTable(
     index("customers_email_idx").on(t.email),
     index("customers_name_idx").on(t.firstName, t.lastName),
     index("customers_home_shop_idx").on(t.homeShopId),
+    uniqueIndex("customers_stripe_customer_idx").on(t.stripeCustomerId).where(sql`${t.stripeCustomerId} is not null`),
     // Trigram, hash, zip and city indexes live in drizzle/0006_client_search.sql and core_0044_client_search.sql;
     // the created-at and preferred-barber ones for custom reports in core_0047_report_builder.sql.
   ],
@@ -2085,8 +2088,11 @@ export const checkoutHandoffs = pgTable(
     /** When the device stops being locked: null while it is. After paying it's the end of the thank-you screen. */
     endedAt: ts("ended_at"),
     endedBy: uuid("ended_by").references(() => staff.id, { onDelete: "set null" }),
+    /** device: a customer screen at the counter. app: sent to the client's phone to pay in the app (C7). */
+    via: text("via").$type<"device" | "app">().notNull().default("device"),
   },
   (t) => [
+    check("checkout_handoffs_via", sql`${t.via} in ('device', 'app')`),
     check("checkout_handoffs_status", sql`${t.status} in ('active', 'paid', 'returned')`),
     check("checkout_handoffs_tip_source", sql`${t.tipSource} is null or ${t.tipSource} in ('screen', 'reader')`),
     check("checkout_handoffs_receipt_channel", sql`${t.receiptChannel} is null or ${t.receiptChannel} in ('sms', 'email', 'none')`),
@@ -2096,6 +2102,94 @@ export const checkoutHandoffs = pgTable(
   ],
 );
 export type HandoffStatus = "active" | "paid" | "returned";
+
+export type AppPaymentStatus = "pending" | "requires_action" | "succeeded" | "failed" | "refunded";
+
+/**
+ * A payment from the app for a ticket sent there (C7). Kept so a payment that needed the bank's
+ * check (3-D Secure) can be finished by the payment_intent webhook if the app never comes back.
+ */
+export const appPayments = pgTable(
+  "app_payments",
+  {
+    id: id(),
+    handoffId: uuid("handoff_id")
+      .notNull()
+      .references(() => checkoutHandoffs.id, { onDelete: "cascade" }),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    payerCustomerId: uuid("payer_customer_id").references(() => customers.id, { onDelete: "set null" }),
+    stripePaymentIntentId: text("stripe_payment_intent_id"),
+    /** The saved card (pm_...) or the app's ConfirmationToken (ctoken_...) it was paid with. */
+    paymentMethodRef: text("payment_method_ref").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    cardFeeCents: integer("card_fee_cents").notNull().default(0),
+    tipCents: integer("tip_cents").notNull(),
+    tipChoice: text("tip_choice"),
+    tipByStaff: jsonb("tip_by_staff").$type<{ staffId: string; cents: number }[]>(),
+    cardFunding: text("card_funding"),
+    wallet: text("wallet"),
+    status: text("status").$type<AppPaymentStatus>().notNull().default("pending"),
+    failureCode: text("failure_code"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("app_payments_status", sql`${t.status} in ('pending', 'requires_action', 'succeeded', 'failed', 'refunded')`),
+    uniqueIndex("app_payments_intent_idx").on(t.stripePaymentIntentId).where(sql`${t.stripePaymentIntentId} is not null`),
+    index("app_payments_sale_idx").on(t.saleId),
+  ],
+);
+
+/**
+ * A client's saved cards (C6), on their platform-level Stripe Customer so one card works at every
+ * shop. A child's cards are the parent's: only the account holder has any. Stripe keeps the card;
+ * this is what the app lists, and what a payment is checked against.
+ */
+export const customerCards = pgTable(
+  "customer_cards",
+  {
+    id: id(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    stripePaymentMethodId: text("stripe_payment_method_id").notNull(),
+    brand: text("brand").notNull(),
+    last4: text("last4").notNull(),
+    funding: text("funding").$type<"credit" | "debit" | "prepaid" | "unknown">().notNull(),
+    expMonth: integer("exp_month"),
+    expYear: integer("exp_year"),
+    wallet: text("wallet"),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    detachedAt: ts("detached_at"),
+  },
+  (t) => [
+    unique("customer_cards_pm_unique").on(t.customerId, t.stripePaymentMethodId),
+    check("customer_cards_funding", sql`${t.funding} in ('credit', 'debit', 'prepaid', 'unknown')`),
+    index("customer_cards_pm_idx").on(t.stripePaymentMethodId),
+    uniqueIndex("customer_cards_one_default").on(t.customerId).where(sql`${t.isDefault} and ${t.detachedAt} is null`),
+  ],
+);
+
+/** Every Stripe webhook event once (I11): a redelivery of one already handled is a no-op. */
+export const stripeEvents = pgTable(
+  "stripe_events",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    account: text("account"),
+    receivedAt: ts("received_at").notNull().defaultNow(),
+    processedAt: ts("processed_at"),
+    attempts: integer("attempts").notNull().default(1),
+    outcome: text("outcome"),
+  },
+  (t) => [index("stripe_events_unprocessed_idx").on(t.receivedAt).where(sql`${t.processedAt} is null`)],
+);
 
 /**
  * Every digital receipt sent for a ticket, and the client's "no receipt" choice. A sent receipt has

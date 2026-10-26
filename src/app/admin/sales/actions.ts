@@ -50,7 +50,7 @@ export async function sendReceiptAction(saleId: string, input: StaffReceiptInput
 }
 
 export async function refundAction(
-  input: { saleId: string; items: { saleItemId: string; qty: number }[]; tipCents: number; refundCardFee: boolean; reason: string; restock: boolean },
+  input: { saleId: string; items: { saleItemId: string; qty: number }[]; tipCents: number; refundCardFee: boolean | "proportional"; reason: string; restock: boolean },
   approval?: Approval | null,
 ) {
   return safe(async () => {

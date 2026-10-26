@@ -21,6 +21,7 @@ import { AppError, forbidden, notFound } from "@/server/errors";
 import { sameHousehold } from "@/server/family";
 import { addAppointmentToTicket, removeAppointmentFromTicket, ticketAppointmentIds, ticketPeople } from "@/server/family-ticket";
 import { HandoffDraftInput, endHandoffFromCounter, startHandoff } from "@/server/handoff";
+import { sendToApp } from "@/server/app-pay";
 import { holdRetail } from "@/server/inventory/stock";
 import { requireInTenant } from "@/server/tenant";
 import { inspectPaymentMethod, terminal } from "@/server/payments/processor";
@@ -264,6 +265,24 @@ export async function handToCustomerAction(saleId: string, draft: HandoffDraftIn
       maxAge: HANDOFF_TTL,
     });
     return { id: h.id };
+  });
+}
+
+/** Sends the ticket as it stands to the client's phone to tip and pay in the app (C7). Ended from here like a customer screen. */
+export async function sendToAppAction(saleId: string, draft: HandoffDraftInput) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    await loadSale(ctx, saleId);
+    const r = await sendToApp(saleId, draft, {
+      actor: ctx.actor,
+      staffId: ctx.staff.id,
+      canDiscount: can(ctx, "pos.discount"),
+      canOverridePrice: can(ctx, "pos.price_override"),
+      canCustomCharge: can(ctx, "pos.custom_charge"),
+      maxManualDiscountPct: ctx.maxDiscountPct,
+    });
+    revalidatePath(`/admin/checkout/${saleId}`);
+    return r;
   });
 }
 

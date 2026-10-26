@@ -215,6 +215,7 @@ export default async function CheckoutPage({
             ? {
                 by: withClient.by,
                 startedAt: withClient.startedAt.toISOString(),
+                via: withClient.via,
               }
             : null
         }

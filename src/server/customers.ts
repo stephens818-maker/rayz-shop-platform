@@ -217,6 +217,9 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     await tx.execute(sql`update client_badges set computed_on = computed_on - 1 where customer_id = ${keepId}`);
     await tx.execute(sql`delete from client_badge_notices d where d.customer_id = ${dropId} and exists (select 1 from client_badge_notices k
       where k.customer_id = ${keepId} and k.badge_key = d.badge_key and k.change = d.change and k.occurred_on = d.occurred_on)`);
+    // Saved cards are on a Stripe Customer: the kept record takes the dropped one's when it has none.
+    // With both, the dropped record's cards can't be charged as the kept Customer, so they go and the client re-adds them.
+    if (drop.stripeCustomerId && keep.stripeCustomerId) await tx.execute(sql`delete from customer_cards where customer_id = ${dropId}`);
     // Everything else that points at a client, found in the catalog so a table added later (the
     // customer app's too) moves with the merge instead of being deleted with the dropped record.
     // A new table with a unique key on the client fails the merge rather than losing rows.
@@ -266,6 +269,7 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
       source: keep.source ?? drop.source,
       referredById: [keep.referredById, drop.referredById].find((r) => r && r !== keepId && r !== dropId) ?? null,
       createdAt: keep.createdAt < drop.createdAt ? keep.createdAt : drop.createdAt,
+      stripeCustomerId: keep.stripeCustomerId ?? drop.stripeCustomerId,
     };
     // The event log has no foreign keys; deleting the dropped record would otherwise make its events anonymous.
     await tx.execute(sql`update analytics_events set customer_id = ${keepId} where customer_id = ${dropId}`);

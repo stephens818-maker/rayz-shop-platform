@@ -148,9 +148,9 @@ export interface HandingOver {
 }
 
 type Row = typeof checkoutHandoffs.$inferSelect;
-const draftOf = (r: Pick<Row, "draft">) => r.draft as unknown as HandoffDraft;
+export const draftOf = (r: Pick<Row, "draft">) => r.draft as unknown as HandoffDraft;
 
-function finalizeFields(d: HandoffDraft) {
+export function finalizeFields(d: HandoffDraft) {
   return {
     lines: d.lines as CheckoutLineInput[],
     promoCode: d.promoCode,
@@ -168,7 +168,7 @@ function finalizeFields(d: HandoffDraft) {
 }
 
 /** Turns the ticket to the client. The draft is priced now, so anything wrong with it is caught at the counter. */
-export async function startHandoff(saleId: string, raw: HandoffDraftInput, by: HandingOver) {
+export async function startHandoff(saleId: string, raw: HandoffDraftInput, by: HandingOver, via: "device" | "app" = "device") {
   const input = HandoffDraftInput.parse(raw);
   if (input.manualDiscount && input.manualDiscount.value > 0) {
     if (!by.canDiscount) throw forbidden("You don't have permission to give discounts");
@@ -186,9 +186,9 @@ export async function startHandoff(saleId: string, raw: HandoffDraftInput, by: H
     if (active) throw new AppError("conflict", "This ticket is already with the client on another device. End that hand-off first.");
     const [r] = await tx
       .insert(checkoutHandoffs)
-      .values({ saleId, shopId: sale.shopId, startedBy: by.staffId, draft: draft as unknown as Record<string, unknown> })
+      .values({ saleId, shopId: sale.shopId, startedBy: by.staffId, draft: draft as unknown as Record<string, unknown>, via })
       .returning();
-    await audit(by.actor, "handoff.start", "sale", saleId, { handoffId: r.id, lines: draft.lines.length }, sale.shopId, tx);
+    await audit(by.actor, "handoff.start", "sale", saleId, { handoffId: r.id, lines: draft.lines.length, via }, sale.shopId, tx);
     return r;
   });
   return row;
@@ -197,7 +197,7 @@ export async function startHandoff(saleId: string, raw: HandoffDraftInput, by: H
 /** The active hand-off for a ticket, if it's with the client right now (on any device). */
 export async function activeHandoffFor(saleId: string) {
   const [r] = await db
-    .select({ id: checkoutHandoffs.id, startedAt: checkoutHandoffs.startedAt, by: staff.displayLabel })
+    .select({ id: checkoutHandoffs.id, startedAt: checkoutHandoffs.startedAt, by: staff.displayLabel, via: checkoutHandoffs.via })
     .from(checkoutHandoffs)
     .innerJoin(staff, eq(staff.id, checkoutHandoffs.startedBy))
     .where(and(eq(checkoutHandoffs.saleId, saleId), eq(checkoutHandoffs.status, "active")));

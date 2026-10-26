@@ -77,6 +77,7 @@ import {
   giftCardAction,
   handToCustomerAction,
   holdRetailAction,
+  sendToAppAction,
   inspectCardAction,
   mergeTicketsAction,
   newClientAtCheckoutAction,
@@ -250,7 +251,7 @@ export function Pos(props: {
   reasons?: { discount: string[]; priceChange: string[] };
   handoff: { signature: boolean; unlock: "staff" | "manager" };
   /** The ticket is with the client on a customer screen right now. */
-  withClient: { by: string; startedAt: string } | null;
+  withClient: { by: string; startedAt: string; via?: "device" | "app" } | null;
   /** Back from the customer screen: the ticket as handed over, with the client's tip. */
   resume: Resume | null;
   /** The coupon held from the online booking, and coupons that apply automatically for this client. */
@@ -803,51 +804,63 @@ export function Pos(props: {
       },
     );
 
+  const handoffDraft = () => ({
+    lines: lines.map(
+      ({
+        kind,
+        refId,
+        name,
+        unitPriceCents,
+        qty,
+        override,
+        staffId,
+        appointmentId,
+        custom,
+      }) => ({
+        kind,
+        refId,
+        name,
+        unitPriceCents,
+        qty,
+        priceOverride: override ?? null,
+        staffId: staffId ?? null,
+        appointmentId: appointmentId ?? null,
+        ...(custom ? { custom: true } : {}),
+      }),
+    ),
+    promoCode: coupons[0]?.code ?? null,
+    promoCodes: coupons.slice(1).map((c) => c.code),
+    manualDiscount: manual.value
+      ? { type: manual.type, value: manualValue, reason: manual.reason }
+      : null,
+    loyaltyRewardId: rewardId,
+    membershipId: usedMembershipId,
+    giftCard: gift
+      ? { code: gift.code, amountCents: gift.balanceCents }
+      : null,
+    rebookInWeeks: rebookWeeks,
+    tipSplit: splitIds.length
+      ? tipSplit === "per_barber"
+        ? "services"
+        : tipSplit
+      : null,
+  });
   const handToCustomer = () =>
     act(
-      () =>
-        handToCustomerAction(props.sale.id, {
-          lines: lines.map(
-            ({
-              kind,
-              refId,
-              name,
-              unitPriceCents,
-              qty,
-              override,
-              staffId,
-              appointmentId,
-              custom,
-            }) => ({
-              kind,
-              refId,
-              name,
-              unitPriceCents,
-              qty,
-              priceOverride: override ?? null,
-              staffId: staffId ?? null,
-              appointmentId: appointmentId ?? null,
-              ...(custom ? { custom: true } : {}),
-            }),
-          ),
-          promoCode: coupons[0]?.code ?? null,
-          promoCodes: coupons.slice(1).map((c) => c.code),
-          manualDiscount: manual.value
-            ? { type: manual.type, value: manualValue, reason: manual.reason }
-            : null,
-          loyaltyRewardId: rewardId,
-          membershipId: usedMembershipId,
-          giftCard: gift
-            ? { code: gift.code, amountCents: gift.balanceCents }
-            : null,
-          rebookInWeeks: rebookWeeks,
-          tipSplit: splitIds.length
-            ? tipSplit === "per_barber"
-              ? "services"
-              : tipSplit
-            : null,
-        }),
+      () => handToCustomerAction(props.sale.id, handoffDraft()),
       (d) => window.location.replace(`/handoff/${d.id}`),
+    );
+  const sendToApp = () =>
+    act(
+      () => sendToAppAction(props.sale.id, handoffDraft()),
+      (d) => {
+        setMsg(
+          d.notified
+            ? "Sent to the client's app. It closes here when they pay."
+            : "Sent to the client's app. Their notifications are off, so ask them to open the app.",
+        );
+        router.refresh();
+      },
     );
 
   const waiting = props.prompts?.waiting ?? [];
@@ -955,15 +968,27 @@ export function Pos(props: {
           className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900 ring-1 ring-blue-200"
           role="status"
         >
-          <span>
-            This ticket is with the client on the customer screen (handed over
-            by {props.withClient.by} at{" "}
-            {new Date(props.withClient.startedAt).toLocaleTimeString([], {
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-            ). A staff PIN on that screen takes it back.
-          </span>
+          {props.withClient.via === "app" ? (
+            <span>
+              Sent to the client&apos;s app by {props.withClient.by} at{" "}
+              {new Date(props.withClient.startedAt).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+              . It closes here when they pay. End it to take payment here
+              instead.
+            </span>
+          ) : (
+            <span>
+              This ticket is with the client on the customer screen (handed
+              over by {props.withClient.by} at{" "}
+              {new Date(props.withClient.startedAt).toLocaleTimeString([], {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+              ). A staff PIN on that screen takes it back.
+            </span>
+          )}
           <Button
             size="sm"
             variant="secondary"
@@ -2527,6 +2552,22 @@ export function Pos(props: {
               >
                 Hand to customer
               </Button>
+              {props.customer && (
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  disabled={
+                    !!props.withClient ||
+                    lines.length === 0 ||
+                    pending ||
+                    waiting.length > 0
+                  }
+                  onClick={() => (setMsg(null), sendToApp())}
+                  data-testid="send-to-app"
+                >
+                  Send to the client&apos;s app
+                </Button>
+              )}
               <p className="text-xs text-zinc-500">
                 The client picks a tip{props.handoff.signature ? ", signs" : ""}
                 , chooses a receipt and pays on this device. It locks to this

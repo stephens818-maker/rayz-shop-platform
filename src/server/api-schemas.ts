@@ -34,6 +34,17 @@ export const AppConfig = z.object({
   features: z
     .object({ booking: z.boolean(), payments: z.boolean(), family: z.boolean(), pushMarketing: z.boolean() })
     .describe("Added in 1.2. Kill switches: hide the matching screens when false. The server refuses those calls too (403, details.switch), so this is for a tidy UI, not the guard. Per-shop booking is Shop.bookingEnabled"),
+  payments: z
+    .object({
+      mode: z.enum(["stripe", "simulator"]).describe("simulator: no Stripe keys on this server; use the test cards and tokens the endpoints list"),
+      publishableKey: z.string().nullable(),
+      merchantDisplayName: z.string(),
+      merchantCountryCode: z.literal("US"),
+      applePayMerchantId: z.string().nullable().describe("null: don't offer Apple Pay yet"),
+      googlePayTestEnv: z.boolean(),
+      walletFee: z.boolean().describe("Whether the credit card surcharge applies to Apple Pay and Google Pay. Off unless the owner turns it on"),
+    })
+    .describe("Added in 1.2. PaymentSheet settings for saved cards and paying tickets"),
 });
 
 export const ShopHours = z.object({ weekday: z.number().int().min(0).max(6).describe("0 = Sunday"), open: z.string(), close: z.string() });
@@ -351,6 +362,114 @@ export const ReceiptDetail = z.object({
   disclosures: z.array(z.string()),
   loyalty: z.string().nullable(),
   rebookPath: z.string().nullable().describe("Web path to book the same again, when the shop takes online bookings"),
+});
+const CardFundingEnum = z.enum(["credit", "debit", "prepaid", "unknown"]);
+export const SavedCardSchema = z.object({
+  id: z.string().uuid(),
+  paymentMethodId: z.string().describe("Stripe PaymentMethod (pm_...): pay with it as paymentMethodId"),
+  brand: z.string(),
+  last4: z.string(),
+  funding: CardFundingEnum.describe("Only credit pays the shop's card surcharge"),
+  expMonth: z.number().int().nullable(),
+  expYear: z.number().int().nullable(),
+  wallet: z.string().nullable(),
+  isDefault: z.boolean(),
+  createdAt: Instant,
+});
+export const SavedCardList = z.object({
+  paymentMethods: z.array(SavedCardSchema),
+  reAddPrompt: z.boolean().describe("The client came over from Squire and has no card here yet: Squire's saved cards don't carry over, so ask them to add one"),
+});
+export const CardSetupBody = z.object({ stripeVersion: z.string().max(40).nullable().optional().describe("The Stripe API version of the app's Stripe SDK, for the ephemeral key. Required with Stripe keys") });
+export const CardSetupSchema = z.object({
+  mode: z.enum(["stripe", "simulator"]),
+  publishableKey: z.string().nullable(),
+  customerId: z.string().describe("The account holder's Stripe Customer (platform-level: one card works at every shop)"),
+  ephemeralKeySecret: z.string().nullable(),
+  setupIntentId: z.string(),
+  setupIntentClientSecret: z.string(),
+  merchantDisplayName: z.string(),
+  merchantCountryCode: z.literal("US"),
+  applePayMerchantId: z.string().nullable(),
+  googlePayTestEnv: z.boolean(),
+  testCards: z.array(z.object({ id: z.string(), label: z.string() })).describe("Simulator only: send one as paymentMethodId to POST /me/payment-methods"),
+});
+export const SaveCardBody = z.object({
+  setupIntentId: z.string().max(255).nullable().optional().describe("The SetupIntent PaymentSheet completed"),
+  paymentMethodId: z.string().max(255).nullable().optional().describe("Simulator: a test card id. With Stripe: a PaymentMethod already attached to your Customer"),
+});
+const TipChoice = {
+  tipChoice: z.string().max(40).describe("A tips.choices key, custom, none, or per_barber"),
+  tipCents: z.number().int().min(0).max(100_000).optional().describe("For custom"),
+  tipByStaff: z
+    .array(z.object({ staffId: z.string().uuid(), cents: z.number().int().min(0) }))
+    .max(10)
+    .nullable()
+    .optional()
+    .describe("For per_barber: each barber's tip, one per tipBarbers entry"),
+};
+export const QuoteBody = z.object({ ...TipChoice, paymentMethodId: z.string().min(3).max(255).describe("A saved card (pm_...) or the ConfirmationToken (ctoken_...) FlowController made") });
+export const PayBody = z.object({
+  ...TipChoice,
+  paymentMethodId: z.string().min(3).max(255).optional(),
+  expectedTotalCents: z.number().int().min(0).optional().describe("totalCents from the quote. Required unless paymentIntentId"),
+  paymentIntentId: z.string().max(255).optional().describe("After handling requires_action: the intent to finish. The tip and card are the ones sent first"),
+});
+export const AppTicketSummary = z.object({
+  id: z.string().uuid(),
+  shop: z.string(),
+  ticketNumber: z.number().int(),
+  forFirstName: z.string().nullable(),
+  dueCents: Cents,
+  sentAt: Instant,
+});
+export const AppTicketSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(["open", "paid", "withdrawn"]).describe("withdrawn: the shop took it back to pay at the counter"),
+  saleId: z.string().uuid().describe("The receipt id once paid"),
+  shop: z.object({ name: z.string(), logoUrl: z.string().nullable() }),
+  ticketNumber: z.number().int(),
+  barbers: z.array(z.string()),
+  lines: z.array(z.object({ name: z.string(), qty: z.number().int(), cents: z.number().int() })),
+  discounts: z.array(z.object({ label: z.string(), cents: z.number().int() })),
+  servicesCents: Cents,
+  taxCents: Cents,
+  giftCardCents: Cents,
+  dueCents: Cents.describe("Before any card surcharge, the tip chosen so far included"),
+  tip: z.object({ cents: z.number().int().nullable(), choice: z.string().nullable() }),
+  tips: z.object({
+    choices: z.array(z.object({ key: z.string(), label: z.string(), detail: z.string().nullable(), cents: Cents })),
+    allowCustom: z.boolean(),
+    allowNoTip: z.boolean(),
+  }),
+  tipBarbers: z.array(z.object({ staffId: z.string().uuid(), label: z.string(), servicesCents: Cents })),
+  cardFee: z.object({ enabled: z.boolean(), rate: z.number(), appliesToTip: z.boolean(), walletFee: z.boolean(), notice: z.string().nullable() }),
+  pay: z.object({
+    mode: z.enum(["stripe", "simulator"]),
+    cards: z.boolean().describe("false: this shop can't take cards right now; pay at the counter"),
+    publishableKey: z.string().nullable(),
+    merchantDisplayName: z.string(),
+    applePayMerchantId: z.string().nullable(),
+    testTokens: z.array(z.object({ id: z.string(), label: z.string() })).describe("Simulator only: stand-ins for FlowController's ConfirmationToken"),
+  }),
+  paidAt: Instant.nullable(),
+});
+export const AppQuoteSchema = z.object({
+  card: z.object({ brand: z.string(), last4: z.string(), funding: CardFundingEnum, wallet: z.string().nullable(), saved: z.boolean() }),
+  tipCents: Cents,
+  dueCents: Cents,
+  feeCents: Cents,
+  feeReason: z.enum(["applies", "not_credit", "wallet_fee_off", "disabled", "zero_amount"]),
+  feeLabel: z.string().nullable(),
+  chargeCents: Cents.describe("What goes on the card"),
+  totalCents: Cents.describe("Send as expectedTotalCents"),
+  disclosures: z.array(z.string()),
+});
+export const AppPayResultSchema = z.object({
+  status: z.enum(["paid", "requires_action"]),
+  receipt: ReceiptDetail.optional().describe("When paid"),
+  paymentIntentId: z.string().optional().describe("requires_action: handle it with the client secret, then POST again with this"),
+  clientSecret: z.string().optional(),
 });
 export const RefreshBody = z.object({ refreshToken: z.string() });
 export const RefreshResponse = z.object({ accessToken: z.string(), refreshToken: z.string(), tokenType: z.literal("Bearer"), expiresIn: z.number().int() });

@@ -12,6 +12,8 @@ const err = (description: string) => ({ description, content: jsonContent("Error
 const ok = (name: string, description = "OK") => ({ description, content: jsonContent(name) });
 
 const shopParam = { name: "shop", in: "path", required: true, description: "Shop slug (e.g. coralville) or ID", schema: { type: "string" } };
+const cardParam = { name: "id", in: "path", required: true, description: "Card id from GET /me/payment-methods", schema: { type: "string", format: "uuid" } };
+const ticketParam = { name: "id", in: "path", required: true, description: "Ticket id from GET /me/tickets or the push", schema: { type: "string", format: "uuid" } };
 const deviceParam = { name: "id", in: "path", required: true, description: "Device ID from POST /me/devices", schema: { type: "string", format: "uuid" } };
 const codeParam = { name: "code", in: "path", required: true, description: "Appointment code", schema: { type: "string" } };
 const queryParams = (s: z.ZodObject) =>
@@ -63,6 +65,18 @@ export function openApiDocument(baseUrl: string) {
     DeviceResponse: z.object({ device: S.DeviceSchema }),
     ReceiptList: z.object({ receipts: z.array(S.ReceiptSummary), nextBefore: z.string().nullable().describe("Pass as ?before= for the next page; null at the end") }),
     ReceiptResponse: z.object({ receipt: S.ReceiptDetail }),
+    SavedCard: S.SavedCardSchema,
+    SavedCardList: S.SavedCardList,
+    SavedCardResponse: z.object({ paymentMethod: S.SavedCardSchema }),
+    CardSetupBody: S.CardSetupBody,
+    CardSetup: S.CardSetupSchema,
+    SaveCardBody: S.SaveCardBody,
+    AppTicketList: z.object({ tickets: z.array(S.AppTicketSummary) }),
+    AppTicketResponse: z.object({ ticket: S.AppTicketSchema }),
+    QuoteBody: S.QuoteBody,
+    QuoteResponse: z.object({ quote: S.AppQuoteSchema }),
+    PayBody: S.PayBody,
+    PayResult: S.AppPayResultSchema,
     RegisterDevice: S.RegisterDevice,
     UpdateDevice: S.UpdateDevice,
     EmailChangeStart: S.EmailChangeStart,
@@ -96,7 +110,7 @@ export function openApiDocument(baseUrl: string) {
         "",
         "**Changes in 1.1 (additive):** `GET /app/config`; `bookingMode` and `externalBookingUrl` on shops (send clients to the external URL while a shop still books on its old site); `preferences` on `/me` with `preferencesNote` and `preferredBarberId` on `PATCH /me`; the `upgrade_required` error code.",
         "",
-        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`. Receipts: `receiptDelivery` on `/me` (email or app; a counter checkout then sends the receipt with nothing asked), `GET /me/receipts` and `/me/receipts/{id}`, and a push with `data.kind = receipt`.",
+        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`. Receipts: `receiptDelivery` on `/me` (email or app; a counter checkout then sends the receipt with nothing asked), `GET /me/receipts` and `/me/receipts/{id}`, and a push with `data.kind = receipt`. Cards and paying in the app: `/me/payment-methods` (saved cards on a platform-level Stripe Customer, set up with `POST /me/payment-methods/setup` for PaymentSheet), tickets the shop sends to the app at `/me/tickets` (push `data.kind = ticket`), the card fee before authorizing with `POST /me/tickets/{id}/quote`, and `POST /me/tickets/{id}/pay` (`requires_action` for 3-D Secure); `payments` on `/app/config`.",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
@@ -106,6 +120,7 @@ export function openApiDocument(baseUrl: string) {
       { name: "Booking" },
       { name: "Auth" },
       { name: "Me" },
+      { name: "Payments" },
     ],
     paths: {
       "/app/config": {
@@ -327,6 +342,61 @@ export function openApiDocument(baseUrl: string) {
           security: bearer,
           parameters: [{ name: "id", in: "path", required: true, description: "Receipt id from GET /me/receipts", schema: { type: "string", format: "uuid" } }],
           responses: { 200: ok("ReceiptResponse"), 404: err("Not found") },
+        },
+      },
+      "/me/payment-methods": {
+        get: { tags: ["Payments"], summary: "My saved cards (a child's cards are the parent's)", security: bearer, responses: { 200: ok("SavedCardList") } },
+        post: {
+          tags: ["Payments"],
+          summary: "Record the card PaymentSheet just saved",
+          description: "Send the SetupIntent PaymentSheet completed. It's checked against your own Stripe Customer. setup_intent.succeeded records the same card if this call never arrives. Up to 10 cards; the first is the default.",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("SaveCardBody") },
+          responses: { 201: ok("SavedCardResponse"), 403: err("Not your card, or payments are switched off (details.switch)"), 409: err("Not finished, or 10 cards already") },
+        },
+      },
+      "/me/payment-methods/setup": {
+        post: {
+          tags: ["Payments"],
+          summary: "Start saving a card: Customer, ephemeral key and SetupIntent for PaymentSheet",
+          description: "Cards are on the account holder's platform-level Stripe Customer, so one card works at every shop. A child's account uses the parent's.",
+          security: bearer,
+          requestBody: { required: false, content: jsonContent("CardSetupBody") },
+          responses: { 200: ok("CardSetup"), 400: err("stripeVersion missing (details.field)") },
+        },
+      },
+      "/me/payment-methods/{id}": {
+        delete: { tags: ["Payments"], summary: "Remove a card (detached from Stripe)", security: bearer, parameters: [cardParam], responses: { 204: { description: "Removed" }, 404: err("Not found") } },
+      },
+      "/me/payment-methods/{id}/default": {
+        post: { tags: ["Payments"], summary: "Make this card the default", security: bearer, parameters: [cardParam], responses: { 200: ok("SavedCardResponse"), 404: err("Not found") } },
+      },
+      "/me/tickets": { get: { tags: ["Payments"], summary: "Tickets the shop sent to the app to tip and pay, mine and my children's", security: bearer, responses: { 200: ok("AppTicketList") } } },
+      "/me/tickets/{id}": {
+        get: { tags: ["Payments"], summary: "One ticket: lines, tax, tip choices and the shop's card surcharge", security: bearer, parameters: [ticketParam], responses: { 200: ok("AppTicketResponse"), 404: err("Not found") } },
+      },
+      "/me/tickets/{id}/quote": {
+        post: {
+          tags: ["Payments"],
+          summary: "The tip and the card fee for the card picked, before the client authorizes",
+          description:
+            "Use PaymentSheet's FlowController: the client picks a saved card or enters one (a ConfirmationToken), this returns the fee and total from the card's funding, and your own Pay button calls /pay. Only credit cards pay the surcharge: never debit or prepaid, and not Apple Pay or Google Pay unless /app/config payments.walletFee.",
+          security: bearer,
+          parameters: [ticketParam],
+          requestBody: { required: true, content: jsonContent("QuoteBody") },
+          responses: { 200: ok("QuoteResponse"), 400: err("Not a tip choice, or not a card"), 403: err("Not your saved card, or payments switched off"), 409: err("Paid already, or the shop took it back (details.reason)") },
+        },
+      },
+      "/me/tickets/{id}/pay": {
+        post: {
+          tags: ["Payments"],
+          summary: "Pay the ticket",
+          description:
+            "Send the card and the quote's totalCents as expectedTotalCents (409 with details.totalCents if it changed). status requires_action: run the bank's check with clientSecret (handleNextAction), then POST again with paymentIntentId. A payment that succeeds after the app closes is finished by Stripe's webhook, and the receipt arrives by push.",
+          security: bearer,
+          parameters: [ticketParam],
+          requestBody: { required: true, content: jsonContent("PayBody") },
+          responses: { 200: ok("PayResult"), 402: err("Declined (details.reason)"), 409: err("Total changed, paid already, or taken back") },
         },
       },
       "/me/loyalty": { get: { tags: ["Me"], summary: "Loyalty progress and available rewards (brand-wide)", security: bearer, responses: { 200: ok("Loyalty") } } },

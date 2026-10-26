@@ -18,6 +18,7 @@ import {
   clientPhotos,
   clientRatings,
   consentEvents,
+  customerCards,
   customerDevices,
   customerTags,
   customers,
@@ -35,6 +36,7 @@ import { Actor, audit } from "./audit";
 import { recordConsentChange } from "./consent-events";
 import { AppError, notFound } from "./errors";
 import { loyaltyBalance } from "./loyalty";
+import { forgetStripeCustomer } from "./payments/saved-cards";
 
 export const DELETED_NAME = "Deleted client";
 
@@ -63,7 +65,7 @@ export async function deletionPreview(customerId: string, profileId?: string | n
   const kids = target.guardianId ? [] : await childrenOf(target.id);
   const ids = [target.id, ...kids.map((k) => k.id)];
   const now = new Date();
-  const [loyalty, upcoming, cards, active, [paid]] = await Promise.all([
+  const [loyalty, upcoming, cards, active, [paid], saved] = await Promise.all([
     target.guardianId ? null : loyaltyBalance(target.id),
     db
       .select({ id: appointments.id })
@@ -81,6 +83,10 @@ export async function deletionPreview(customerId: string, profileId?: string | n
       .select({ n: sql<number>`count(*)::int` })
       .from(sales)
       .where(inArray(sales.customerId, ids)),
+    db
+      .select({ id: customerCards.id })
+      .from(customerCards)
+      .where(and(inArray(customerCards.customerId, ids), isNull(customerCards.detachedAt))),
   ]);
   const blockers = active.length ? ["Cancel your membership first (ask the shop, or use the link in your membership emails). Then you can delete your account."] : [];
   return {
@@ -105,6 +111,7 @@ export async function deletionPreview(customerId: string, profileId?: string | n
       ...(upcoming.length ? [`${upcoming.length} upcoming appointment${upcoming.length === 1 ? " is" : "s are"} cancelled.`] : []),
       ...(loyalty && !loyalty.household && (loyalty.progressCents > 0 || loyalty.availableCents > 0) ? ["Your rewards progress and any unused rewards are lost."] : []),
       ...(cards.length ? ["Gift cards keep their balance and still work with their code, but they're no longer linked to you."] : []),
+      ...(saved.length ? [`Your saved card${saved.length === 1 ? " is" : "s are"} removed from Stripe.`] : []),
       "You're signed out everywhere, your devices stop getting notifications, and your phone and email are removed. Booking again later starts a new profile.",
     ],
   };
@@ -177,6 +184,7 @@ export async function deleteAccount(actor: Actor, customerId: string, o: { profi
   const now = new Date();
   const ids = [preview.profile.id, ...preview.dependents.map((d) => d.id)];
   await db.transaction(async (tx) => {
+    for (const id of ids) await forgetStripeCustomer(id, tx);
     for (const id of ids) await anonymize(tx, id, now);
     await audit(
       actor,

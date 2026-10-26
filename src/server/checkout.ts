@@ -49,6 +49,7 @@ import { reloadProblem } from "@/domain/gift-cards";
 import { membershipDiscounts } from "@/domain/memberships";
 import { DEFAULT_LOYALTY, LoyaltyConfig, loyaltyAtShop } from "@/domain/loyalty";
 import { giftCardCode } from "@/lib/ids";
+import { flags } from "@/lib/flags";
 import { formatCents } from "@/lib/money";
 import { localDateOf, toZoned, todayLocal } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "./audit";
@@ -325,6 +326,12 @@ export type TenderInput =
       paymentMethodId: string;
       entryMode: "keyed" | "terminal";
       readerId?: string | null;
+      /** App payments: the payer's platform-level Stripe Customer, for a saved card. */
+      stripeCustomerId?: string | null;
+      /** App payments: a 3-D Secure check comes back to the app instead of cancelling the charge. */
+      onAction?: "cancel" | "return";
+      /** App payments: the intent the app already confirmed with the bank. */
+      confirmedIntentId?: string | null;
     }
   | { method: "none" };
 
@@ -368,6 +375,10 @@ export interface FinalizeInput {
   tipSplit?: TipSplitMode | null;
   /** The customer screen paying for its own ticket. Without it, a ticket that's with the client can't be paid. */
   handoffId?: string | null;
+  /** Who paid, when it's one payment: the app's account holder (a child's ticket is the parent's to pay). */
+  payerCustomerId?: string | null;
+  /** More metadata on the card charge, e.g. the app payment it belongs to. */
+  chargeMetadata?: Record<string, string>;
   /** Set by the caller from the signed-in person's permissions, never from the request body. */
   canOverridePrice?: boolean;
   /** Set like canOverridePrice: may ring up custom charges. */
@@ -519,6 +530,7 @@ export interface PricedLineMeta {
 export async function priceCart(
   input: Omit<FinalizeInput, "actor">,
   funding: CardFunding | null,
+  card: { wallet?: boolean } = {},
 ) {
   const ctx = await loadCheckoutContext(input.saleId);
   const gift = input.giftCard?.code
@@ -741,6 +753,8 @@ export async function priceCart(
     tender: {
       method: input.tender.method,
       cardFunding: funding,
+      cardWallet: !!card.wallet,
+      walletFeeOn: flags.walletFee(),
       giftCardCents: gift ? input.giftCard!.amountCents : 0,
       giftCardBalanceCents: gift?.balanceCents ?? 0,
     },
@@ -811,6 +825,7 @@ export async function finalizeSale(input: FinalizeInput) {
   const priced = await priceCart(
     split ? { ...input, tender: { method: "cash" } } : input,
     card?.funding ?? null,
+    { wallet: !!card?.wallet },
   );
   const { ctx, promoId, coupons, rewardId, rewardOwnerId, gift, meta, membershipUse } = priced;
   let totals = priced.totals;
@@ -832,6 +847,7 @@ export async function finalizeSale(input: FinalizeInput) {
       method: t.method,
       amountCents: t.amountCents,
       funding: splitCards[i]?.funding ?? null,
+      wallet: !!splitCards[i]?.wallet,
     }));
     const problem = splitTenderProblem(totals.primaryBaseCents, parts);
     if (problem) throw new AppError("bad_request", problem);
@@ -839,6 +855,7 @@ export async function finalizeSale(input: FinalizeInput) {
       tipCents: Math.min(totals.tipCents, totals.primaryBaseCents),
       cardFee: ctx.config.cardFee,
       tenders: parts,
+      walletFeeOn: flags.walletFee(),
     });
     const payers = new Set(
       [ctx.sale.customerId, ...people.values()].filter((x): x is string => !!x),
@@ -877,7 +894,7 @@ export async function finalizeSale(input: FinalizeInput) {
       tipCents: Math.min(totals.tipCents, totals.primaryBaseCents),
       feeCents: totals.cardFeeCents,
       funding: card?.funding ?? null,
-      payerCustomerId: null,
+      payerCustomerId: input.payerCustomerId ?? null,
       payerLabel: null,
     });
   }
@@ -1236,6 +1253,7 @@ export async function finalizeSale(input: FinalizeInput) {
           amountCents: l.chargeCents,
           description: `Ray'z ${ctx.shop.name} ticket #${ctx.sale.number}${split ? ` (payment ${i + 1} of ${legs.length})` : ""}`,
           metadata: {
+            ...input.chargeMetadata,
             saleId: ctx.sale.id,
             shop: ctx.shop.slug,
             cardFeeCents: String(l.feeCents),
@@ -1246,6 +1264,10 @@ export async function finalizeSale(input: FinalizeInput) {
             : `sale-${ctx.sale.id}-${attempt}`,
           destination: l.route?.destination ?? null,
           statementDescriptorSuffix: l.route?.descriptorSuffix ?? null,
+          customerId: l.tender.stripeCustomerId ?? null,
+          surchargeCents: l.feeCents,
+          onAction: l.tender.onAction ?? "cancel",
+          confirmedIntentId: l.tender.confirmedIntentId ?? null,
         });
       }
 
@@ -1329,6 +1351,7 @@ export async function finalizeSale(input: FinalizeInput) {
             discounts: totals.discountBreakdown,
             disclosures: totals.disclosures,
             cardFunding: card?.funding ?? null,
+            ...(card?.wallet ? { cardWallet: card.wallet } : {}),
             ...(split
               ? {
                   split: legs.map((l) => ({

@@ -18,6 +18,7 @@ export interface SplitTenderIn {
   amountCents: number;
   /** Card tenders: from the processor. Only credit carries the surcharge. */
   funding?: CardFunding | null;
+  wallet?: boolean;
 }
 
 export interface SplitTenderPart {
@@ -58,7 +59,7 @@ export function splitTenderProblem(dueCents: number, tenders: readonly SplitTend
  * largest first, so a per-barber tip stays exact (each payment's tip is split by the same weights).
  * Each credit card carries the surcharge on its own part, as it would paying alone.
  */
-export function planSplitTenders(o: { tipCents: number; cardFee: CardFeeConfig; tenders: readonly SplitTenderIn[] }): SplitTenderPlan {
+export function planSplitTenders(o: { tipCents: number; cardFee: CardFeeConfig; tenders: readonly SplitTenderIn[]; walletFeeOn?: boolean }): SplitTenderPlan {
   let tipLeft = Math.max(0, o.tipCents);
   const tipOf = new Map<string, number>();
   const order = o.tenders.map((t, i) => ({ t, i })).sort((a, b) => b.t.amountCents - a.t.amountCents || a.i - b.i);
@@ -69,7 +70,7 @@ export function planSplitTenders(o: { tipCents: number; cardFee: CardFeeConfig; 
   }
   const parts = o.tenders.map((t): SplitTenderPart => {
     const tipCents = tipOf.get(t.key) ?? 0;
-    const fee = t.method === "card" ? cardFeeFor(o.cardFee, t.funding ?? null, { chargeCents: t.amountCents, tipCents }) : null;
+    const fee = t.method === "card" ? cardFeeFor(o.cardFee, t.funding ?? null, { chargeCents: t.amountCents, tipCents }, { wallet: t.wallet, walletFeeOn: o.walletFeeOn }) : null;
     const feeCents = fee?.feeCents ?? 0;
     return { key: t.key, method: t.method, baseCents: t.amountCents, tipCents, feeCents, feeBasisCents: fee?.reason === "applies" ? fee.basisCents : 0, chargeCents: t.amountCents + feeCents };
   });

@@ -77,6 +77,16 @@ export function lineRefunds(lines: RefundableLine[], requested: { saleItemId: st
   return out;
 }
 
+/**
+ * The card surcharge that goes back with a partial refund: its share of what's left, in proportion
+ * to the part of the surcharged amount refunded. Refunding the rest of it returns the rest of the fee.
+ */
+export function proportionalCardFee(o: { feeLeftCents: number; refundBaseCents: number; baseLeftCents: number }): number {
+  if (o.feeLeftCents <= 0 || o.refundBaseCents <= 0 || o.baseLeftCents <= 0) return 0;
+  if (o.refundBaseCents >= o.baseLeftCents) return o.feeLeftCents;
+  return Math.min(o.feeLeftCents, Math.round((o.feeLeftCents * o.refundBaseCents) / o.baseLeftCents));
+}
+
 export function componentsFromLines(lines: LineRefund[], tipCents: number, cardFeeCents: number): RefundComponents {
   const c = { ...ZERO, tipCents, cardFeeCents };
   for (const l of lines) {

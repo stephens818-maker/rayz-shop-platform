@@ -58,6 +58,9 @@ export interface TenderPlan {
   method: PrimaryMethod;
   /** From Stripe: PaymentMethod.card.funding (or card_present.funding for Terminal). */
   cardFunding?: CardFunding | null;
+  /** The card came through Apple Pay or Google Pay: no surcharge unless walletFeeOn. */
+  cardWallet?: boolean;
+  walletFeeOn?: boolean;
 }
 
 /** Loyalty at the ticket's location: whether it runs there, and what counts beyond services. */
@@ -249,7 +252,7 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
 
   const cfg = input.cardFee;
   const cardFeeRate = Math.min(Math.max(cfg.rate, 0), MAX_CARD_FEE_RATE);
-  const fee = input.tender.method === "card" ? cardFeeFor(cfg, input.tender.cardFunding, { chargeCents: primaryBaseCents, tipCents }) : null;
+  const fee = input.tender.method === "card" ? cardFeeFor(cfg, input.tender.cardFunding, { chargeCents: primaryBaseCents, tipCents }, { wallet: input.tender.cardWallet, walletFeeOn: input.tender.walletFeeOn }) : null;
   const cardFeeBaseCents = fee?.reason === "applies" ? fee.basisCents : 0;
   const cardFeeCents = fee?.feeCents ?? 0;
 

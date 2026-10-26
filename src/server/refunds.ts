@@ -13,6 +13,7 @@ import {
   allocateAmount,
   allocateToTenders,
   componentsFromLines,
+  proportionalCardFee,
   componentsTotal,
   lineRefunds,
 } from "@/domain/refunds";
@@ -39,8 +40,8 @@ export interface RefundRequest {
   /** Lines (and how many units of each) to refund. */
   items: { saleItemId: string; qty: number }[];
   tipCents: number;
-  /** Give back what's left of the credit card fee. */
-  refundCardFee: boolean;
+  /** Give back what's left of the credit card fee (true), its share of what's refunded ("proportional"), or none of it. */
+  refundCardFee: boolean | "proportional";
   reason: string;
   restock: boolean;
   actor: Actor;
@@ -147,7 +148,7 @@ interface ReverseOpts {
   source: "staff";
   items: { saleItemId: string; qty: number }[];
   tipCents: number;
-  refundCardFee: boolean;
+  refundCardFee: boolean | "proportional";
   reason: string;
   restock: boolean;
   actor: Actor;
@@ -211,7 +212,12 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
 
   // A dashboard refund takes value without naming a line, so never give back more of a component than is left.
   const left = remainingComponents(sale, st.done);
-  const asked = componentsFromLines(lines, o.tipCents, o.refundCardFee ? st.cardFeeRemainingCents : 0);
+  const asked = componentsFromLines(lines, o.tipCents, o.refundCardFee === true ? st.cardFeeRemainingCents : 0);
+  if (o.refundCardFee === "proportional") {
+    const withTip = !!(sale.pricing as { cardFee?: { appliesToTip?: boolean } } | null)?.cardFee?.appliesToTip;
+    const base = (c: RefundComponents) => c.serviceNetCents + c.productNetCents + c.giftCardSalesCents + c.taxCents + (withTip ? c.tipCents : 0);
+    asked.cardFeeCents = proportionalCardFee({ feeLeftCents: st.cardFeeRemainingCents, refundBaseCents: base(asked), baseLeftCents: base(left) });
+  }
   const components = Object.fromEntries(Object.entries(asked).map(([k, v]) => [k, Math.max(0, Math.min(v, left[k as keyof RefundComponents]))])) as unknown as RefundComponents;
   if (o.kind === "refund" && componentsTotal(components) <= 0) throw new AppError("bad_request", "Nothing left to refund on what you picked");
 
