@@ -24,8 +24,10 @@ import {
 } from "@/db/schema";
 import { TipSplitMode, splitBarbers, tipWeights } from "@/domain/handoff";
 import { operational } from "@/domain/location-lifecycle";
+import { FeeChannel, feeConfigFor } from "@/domain/card-fee-policy";
 import {
   CardFeeConfig,
+  CardFeeResult,
   LoyaltyBasis,
   CardFunding,
   CartLine,
@@ -85,6 +87,7 @@ import { recordCheckout } from "./service-times";
 import { syncTipLedger } from "./tips/ledger";
 import { cashAwaiting, cashTipPayoutsCents } from "./tips/payouts";
 import { defaultOpening, movesOutCents } from "./drawer";
+import { saleFeeChannel, shopCardFeeConfig, shopFeePolicy } from "./payments/card-fee";
 
 export {
   refundEverything,
@@ -96,6 +99,7 @@ export {
 export function pricingConfig(
   shop: Shop,
   loyalty: LoyaltyConfig = DEFAULT_LOYALTY,
+  cardFee: CardFeeConfig = shopCardFeeConfig(shop),
 ): {
   taxRates: TaxRates;
   cardFee: CardFeeConfig;
@@ -112,11 +116,7 @@ export function pricingConfig(
       serviceRate: Number(shop.serviceTaxRate),
       productRate: Number(shop.productTaxRate),
     },
-    cardFee: {
-      enabled: shop.cardFeeEnabled,
-      rate: Number(shop.cardFeeRate),
-      appliesToTip: shop.cardFeeAppliesToTip,
-    },
+    cardFee,
     tipPresets: shop.tipPresets,
   };
 }
@@ -264,6 +264,8 @@ export async function loadCheckoutContext(saleId: string) {
           ].filter((x): x is string => !!x),
         )
       : null;
+  const feePolicy = await shopFeePolicy(shop.id);
+  const feeChannel = await saleFeeChannel(sale.id, "pos");
   return {
     sale,
     shop,
@@ -274,7 +276,9 @@ export async function loadCheckoutContext(saleId: string) {
     barber,
     family,
     groupDeposit,
-    config: pricingConfig(shop, await getLoyaltyConfig()),
+    feePolicy,
+    feeChannel,
+    config: pricingConfig(shop, await getLoyaltyConfig(), feeConfigFor(feePolicy.policy, feePolicy.state, feeChannel)),
     negativeStock: shop.negativeStock,
   };
 }
@@ -385,6 +389,12 @@ export interface FinalizeInput {
   canCustomCharge?: boolean;
   /** Largest manual discount allowed, in whole percent of the ticket (gift cards excluded). Defaults to no limit. */
   maxManualDiscountPct?: number;
+  /** Where the charge is taken, for the card fee's channels. Defaults to pos; a booking deposit ticket is always deposit. */
+  channel?: FeeChannel | null;
+  /** Staff waive the credit card surcharge, with a reason. `byStaffId` is who waived it when that isn't the actor (a hand-off). */
+  waiveCardFee?: { reason: string; byStaffId?: string | null } | null;
+  /** Set like canOverridePrice: may waive the card surcharge. */
+  canWaiveCardFee?: boolean;
   actor: Actor;
   now?: Date;
 }
@@ -530,7 +540,7 @@ export interface PricedLineMeta {
 export async function priceCart(
   input: Omit<FinalizeInput, "actor">,
   funding: CardFunding | null,
-  card: { wallet?: boolean } = {},
+  card: { wallet?: boolean | string | null } = {},
 ) {
   const ctx = await loadCheckoutContext(input.saleId);
   const gift = input.giftCard?.code
@@ -743,18 +753,27 @@ export async function priceCart(
     membershipUse = { membershipId: coverage.membershipId, periodStart: coverage.periodStart, visits: r.visits };
   }
 
+  const channel: FeeChannel = ctx.feeChannel === "deposit" ? "deposit" : (input.channel ?? "pos");
+  const cardFee = channel === ctx.feeChannel ? ctx.config.cardFee : feeConfigFor(ctx.feePolicy.policy, ctx.feePolicy.state, channel);
+  const waive = input.waiveCardFee ?? null;
+  if (waive) {
+    if (!input.canWaiveCardFee) throw forbidden("You don't have permission to waive the card surcharge");
+    if (cardFee.waiverAllowed === false) throw new AppError("forbidden", "The brand doesn't allow waiving the card surcharge", { reason: "waiver_not_allowed" });
+    if (!waive.reason?.trim()) throw new AppError("bad_request", "Add a reason for waiving the card surcharge", { field: "waiveCardFee.reason" });
+  }
   const totals = computeCheckout({
     lines,
     discounts,
     taxRates: ctx.config.taxRates,
     tipCents: input.tipCents,
-    cardFee: ctx.config.cardFee,
+    cardFee,
     loyalty: ctx.config.loyalty,
     tender: {
       method: input.tender.method,
       cardFunding: funding,
-      cardWallet: !!card.wallet,
+      cardWallet: card.wallet ?? null,
       walletFeeOn: flags.walletFee(),
+      waiveFee: !!waive,
       giftCardCents: gift ? input.giftCard!.amountCents : 0,
       giftCardBalanceCents: gift?.balanceCents ?? 0,
     },
@@ -775,6 +794,8 @@ export async function priceCart(
   return {
     ctx,
     totals,
+    cardFee,
+    channel,
     promoId: coupons[0]?.promoId ?? null,
     coupons: used,
     rewardId,
@@ -825,9 +846,9 @@ export async function finalizeSale(input: FinalizeInput) {
   const priced = await priceCart(
     split ? { ...input, tender: { method: "cash" } } : input,
     card?.funding ?? null,
-    { wallet: !!card?.wallet },
+    { wallet: card?.wallet ?? null },
   );
-  const { ctx, promoId, coupons, rewardId, rewardOwnerId, gift, meta, membershipUse } = priced;
+  const { ctx, promoId, coupons, rewardId, rewardOwnerId, gift, meta, membershipUse, cardFee, channel } = priced;
   let totals = priced.totals;
   const people = new Map<string, string>(
     ctx.family.members.flatMap((m) =>
@@ -847,15 +868,16 @@ export async function finalizeSale(input: FinalizeInput) {
       method: t.method,
       amountCents: t.amountCents,
       funding: splitCards[i]?.funding ?? null,
-      wallet: !!splitCards[i]?.wallet,
+      wallet: splitCards[i]?.wallet ?? null,
     }));
     const problem = splitTenderProblem(totals.primaryBaseCents, parts);
     if (problem) throw new AppError("bad_request", problem);
     const plan = planSplitTenders({
       tipCents: Math.min(totals.tipCents, totals.primaryBaseCents),
-      cardFee: ctx.config.cardFee,
+      cardFee,
       tenders: parts,
       walletFeeOn: flags.walletFee(),
+      waive: !!input.waiveCardFee,
     });
     const payers = new Set(
       [ctx.sale.customerId, ...people.values()].filter((x): x is string => !!x),
@@ -869,6 +891,7 @@ export async function finalizeSale(input: FinalizeInput) {
         chargeCents: p.chargeCents,
         tipCents: p.tipCents,
         feeCents: p.feeCents,
+        fee: p.fee,
         funding: splitCards[i]?.funding ?? null,
         payerCustomerId: t.payerCustomerId ?? null,
         payerLabel: t.payerCustomerId ? null : cleanPayerLabel(t.payerLabel),
@@ -877,12 +900,13 @@ export async function finalizeSale(input: FinalizeInput) {
     const disclosures = [...totals.disclosures];
     if (plan.cardFeeCents > 0)
       disclosures.push(
-        `${feeLabel({ rate: totals.cardFeeRate })}: ${formatCents(plan.cardFeeCents)}`,
+        `${feeLabel(cardFee)}: ${formatCents(plan.cardFeeCents)}`,
       );
     totals = {
       ...totals,
       cardFeeCents: plan.cardFeeCents,
       cardFeeBaseCents: plan.cardFeeBaseCents,
+      cardFeeWaivedCents: plan.cardFeeWaivedCents,
       totalCents: totals.preFeeTotalCents + plan.cardFeeCents,
       primaryChargeCents: plan.chargeCents,
       disclosures,
@@ -893,11 +917,13 @@ export async function finalizeSale(input: FinalizeInput) {
       chargeCents: totals.primaryChargeCents,
       tipCents: Math.min(totals.tipCents, totals.primaryBaseCents),
       feeCents: totals.cardFeeCents,
+      fee: input.tender.method === "card" ? totals.cardFee : null,
       funding: card?.funding ?? null,
       payerCustomerId: input.payerCustomerId ?? null,
       payerLabel: null,
     });
   }
+  const waivedCents = legs.reduce((a, l) => a + (l.fee?.waivedCents ?? 0), 0);
 
   if (
     input.expectedTotalCents != null &&
@@ -1294,6 +1320,24 @@ export async function finalizeSale(input: FinalizeInput) {
           amountCents: l.chargeCents,
           tipCents: l.tipCents,
           cardFeeCents: l.feeCents,
+          ...(l.tender.method === "card" && l.fee
+            ? {
+                feeRate: l.fee.rate.toFixed(5),
+                feeFlatCents: l.fee.flatCents,
+                feeBasis: l.fee.basis,
+                feeBasisCents: l.fee.basisCents,
+                feeReason: l.fee.reason,
+                feeChannel: channel,
+                ...(l.fee.waivedCents > 0
+                  ? {
+                      feeWaived: true,
+                      feeWaivedCents: l.fee.waivedCents,
+                      feeWaivedBy: input.waiveCardFee?.byStaffId ?? input.actor.staffId ?? null,
+                      feeWaivedReason: input.waiveCardFee!.reason.trim().slice(0, 200),
+                    }
+                  : {}),
+              }
+            : {}),
           cashTenderedCents:
             l.tender.method === "cash"
               ? (l.tender.cashTenderedCents ?? l.chargeCents)
@@ -1341,6 +1385,7 @@ export async function finalizeSale(input: FinalizeInput) {
           productTaxCents: totals.productTaxCents,
           tipCents: totals.tipCents,
           cardFeeCents: totals.cardFeeCents,
+          cardFeeWaivedCents: waivedCents,
           totalCents: totals.totalCents,
           promoCodeId: promoId,
           loyaltyEarnedCents: ctx.sale.customerId
@@ -1348,6 +1393,9 @@ export async function finalizeSale(input: FinalizeInput) {
             : 0,
           pricing: {
             ...ctx.config,
+            cardFee,
+            feeChannel: channel,
+            ...(waivedCents > 0 ? { cardFeeWaived: { cents: waivedCents, reason: input.waiveCardFee!.reason.trim().slice(0, 200) } } : {}),
             discounts: totals.discountBreakdown,
             disclosures: totals.disclosures,
             cardFunding: card?.funding ?? null,
@@ -1407,6 +1455,17 @@ export async function finalizeSale(input: FinalizeInput) {
         ctx.shop.id,
         tx,
       );
+      if (waivedCents > 0) {
+        await audit(
+          input.actor,
+          "sale.card_fee_waived",
+          "sale",
+          ctx.sale.id,
+          { waivedCents, reason: input.waiveCardFee!.reason.trim().slice(0, 200), waivedBy: input.waiveCardFee?.byStaffId ?? input.actor.staffId ?? null, channel },
+          ctx.shop.id,
+          tx,
+        );
+      }
       if (input.manualDiscount && input.manualDiscount.value > 0) {
         await audit(
           input.actor,
@@ -1483,6 +1542,8 @@ interface Leg {
   chargeCents: number;
   tipCents: number;
   feeCents: number;
+  /** How the card's surcharge was worked out; null for cash. */
+  fee: CardFeeResult | null;
   funding: CardFunding | null;
   payerCustomerId: string | null;
   payerLabel: string | null;

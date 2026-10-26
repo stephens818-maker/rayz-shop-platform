@@ -41,14 +41,40 @@ export interface TaxRates {
   productRate: number;
 }
 
+export type CardFeeType = "percent" | "flat" | "both";
+export type CardFeeRefundRule = "proportional" | "keep";
+
+/**
+ * The surcharge as it applies to one charge. The optional fields come from the brand's card fee
+ * policy (src/domain/card-fee-policy.ts); left out, the fee is a plain percent as before it existed.
+ */
 export interface CardFeeConfig {
   enabled: boolean;
-  /** Fraction, e.g. 0.03. Clamped to MAX_CARD_FEE_RATE. */
+  /** Fraction, e.g. 0.03. Clamped to MAX_CARD_FEE_RATE (and the shop's state limit). */
   rate: number;
   /** Whether the fee is charged on the tip portion paid by card. */
   appliesToTip: boolean;
+  type?: CardFeeType;
+  /** The flat part, for type flat or both. */
+  flatCents?: number;
+  /** Most one charge's fee can be. */
+  capCents?: number | null;
+  /** Least one charge's fee can be, still never above the legal limit. */
+  minCents?: number | null;
+  /** Apple Pay and Google Pay, each on or off. Left out, a wallet pays it only when walletFeeOn. */
+  wallets?: { applePay: boolean; googlePay: boolean };
+  /** The highest rate allowed where the shop is; MAX_CARD_FEE_RATE when unset. */
+  maxRate?: number;
+  /** Turned off for this charge: the channel isn't one the fee applies to, or the shop's state isn't allowed. */
+  off?: "channel_off" | "state_not_allowed";
+  /** The brand's own notice; null uses the built-in one. "{fee}" becomes the rate or amount. */
+  notice?: string | null;
+  /** Whether staff may waive it on a ticket. Left out, they may. */
+  waiverAllowed?: boolean;
+  refundRule?: CardFeeRefundRule;
 }
 
+/** The card networks' cap on a credit card surcharge, and the most any state allows. */
 export const MAX_CARD_FEE_RATE = 0.03;
 
 export interface TenderPlan {
@@ -58,9 +84,11 @@ export interface TenderPlan {
   method: PrimaryMethod;
   /** From Stripe: PaymentMethod.card.funding (or card_present.funding for Terminal). */
   cardFunding?: CardFunding | null;
-  /** The card came through Apple Pay or Google Pay: no surcharge unless walletFeeOn. */
-  cardWallet?: boolean;
+  /** The card came through Apple Pay or Google Pay ("apple_pay", "google_pay"): no surcharge unless walletFeeOn and the brand has that wallet on. */
+  cardWallet?: boolean | string | null;
   walletFeeOn?: boolean;
+  /** Staff waived the surcharge on this ticket. */
+  waiveFee?: boolean;
 }
 
 /** Loyalty at the ticket's location: whether it runs there, and what counts beyond services. */
@@ -109,6 +137,10 @@ export interface CheckoutTotals {
   cardFeeBaseCents: number;
   cardFeeCents: number;
   cardFeeRate: number;
+  /** The surcharge staff waived, what it would have been. */
+  cardFeeWaivedCents: number;
+  /** Why the surcharge is what it is on the primary card; null without a card. */
+  cardFee: CardFeeResult | null;
   totalCents: number;
   primaryChargeCents: number;
   /** Net service dollars after discounts, before tax, plus products and tips when the brand counts them; 0 where loyalty doesn't run. Gift cards never count. */
@@ -141,51 +173,118 @@ export function manualDiscountProblem(d: { type: "percent" | "amount"; value: nu
   return d.value > cap ? `Your discount limit is ${maxPct}% of the ticket (${formatCents(cap)} here)` : null;
 }
 
-export function feeLabel(cfg: Pick<CardFeeConfig, "rate">): string {
-  return `Credit card surcharge (${formatRate(cfg.rate)})`;
+type FeeShape = Pick<CardFeeConfig, "rate"> & Partial<Pick<CardFeeConfig, "type" | "flatCents" | "maxRate">>;
+
+/** The legal ceiling for one config: the networks' 3%, or lower where the shop's state says so. */
+export const feeMaxRate = (cfg: Pick<CardFeeConfig, "maxRate">) => Math.min(MAX_CARD_FEE_RATE, Math.max(0, cfg.maxRate ?? MAX_CARD_FEE_RATE));
+
+function feeParts(cfg: FeeShape) {
+  const type = cfg.type ?? "percent";
+  const rate = type === "flat" ? 0 : Math.min(Math.max(cfg.rate, 0), feeMaxRate(cfg));
+  const flatCents = type === "percent" ? 0 : Math.max(0, Math.round(cfg.flatCents ?? 0));
+  return { type, rate, flatCents };
 }
 
-export function feeDisclosure(cfg: Pick<CardFeeConfig, "rate" | "enabled">): string | null {
-  if (!cfg.enabled || cfg.rate <= 0) return null;
-  const r = formatRate(Math.min(cfg.rate, MAX_CARD_FEE_RATE));
-  return `A ${r} surcharge applies to credit card payments only. It does not exceed our cost of acceptance. No surcharge on debit, prepaid, gift card, or cash.`;
+/** "3%", "$0.30" or "3% + $0.30". */
+export function describeFee(cfg: FeeShape): string {
+  const p = feeParts(cfg);
+  return p.type === "flat" ? formatCents(p.flatCents) : p.type === "both" ? `${formatRate(p.rate)} + ${formatCents(p.flatCents)}` : formatRate(p.rate);
+}
+
+export function feeLabel(cfg: FeeShape): string {
+  return `Credit card surcharge (${describeFee(cfg)})`;
+}
+
+export const DEFAULT_FEE_NOTICE = "A {fee} surcharge applies to credit card payments only. It does not exceed our cost of acceptance. No surcharge on debit, prepaid, gift card, or cash.";
+
+/** The notice shown at checkout and printed on receipts: the brand's own wording, or the built-in one. */
+export function feeDisclosure(cfg: Pick<CardFeeConfig, "rate" | "enabled"> & Partial<CardFeeConfig>): string | null {
+  const p = feeParts(cfg);
+  if (!cfg.enabled || cfg.off || (p.rate <= 0 && p.flatCents <= 0)) return null;
+  return (cfg.notice?.trim() || DEFAULT_FEE_NOTICE).replaceAll("{fee}", describeFee(cfg));
 }
 
 export type CardFeeBasis = "charge_excluding_tip" | "charge_including_tip";
 
 export interface CardFeeResult {
   feeCents: number;
-  /** The rate used, after clamping to MAX_CARD_FEE_RATE; 0 when no fee applies. */
+  /** The percent part used, after clamping to the legal limit; 0 when no fee applies. */
   rate: number;
+  /** The flat part used; 0 when no fee applies. */
+  flatCents: number;
+  /** feeCents (or what was waived) over basisCents. */
+  effectiveRate: number;
   basis: CardFeeBasis;
   /** The amount the rate was applied to. */
   basisCents: number;
-  /** A surcharge is the shop's option, never required: staff may drop any fee that applies. Nothing to waive when the fee is 0. */
+  /** A surcharge is the shop's option, never required: staff may drop one that applies, unless the brand turned waivers off. */
   waivable: boolean;
+  /** What a waived fee would have been. */
+  waivedCents: number;
+  /** What held the fee back from rate + flat: the brand's cap or minimum, or the legal limit. */
+  limitedBy: "cap" | "min" | "legal" | null;
   /** Why no fee applies, when it doesn't. */
-  reason: "applies" | "disabled" | "not_credit" | "wallet_fee_off" | "zero_amount";
+  reason: "applies" | "disabled" | "channel_off" | "state_not_allowed" | "not_credit" | "wallet_fee_off" | "zero_amount" | "waived";
   label: string | null;
   disclosure: string | null;
+}
+
+function walletAllowed(cfg: CardFeeConfig, wallet: boolean | string, walletFeeOn: boolean): boolean {
+  if (!walletFeeOn) return false;
+  if (!cfg.wallets) return true;
+  if (wallet === "apple_pay") return cfg.wallets.applePay;
+  if (wallet === "google_pay") return cfg.wallets.googlePay;
+  return wallet === true && cfg.wallets.applePay && cfg.wallets.googlePay;
 }
 
 /**
  * The credit-card surcharge on one card charge. `chargeCents` is what goes on the card before the
  * fee, tip included; the tip is treated as the last thing paid, so at most `chargeCents` of it is on the card.
+ * Percent and flat add up, then the minimum and the cap apply, and the legal limit always has the last word.
  */
-export function cardFeeFor(cfg: CardFeeConfig, funding: CardFunding | null | undefined, amounts: { chargeCents: number; tipCents?: number }, opts: { wallet?: boolean; walletFeeOn?: boolean } = {}): CardFeeResult {
-  const rate = Math.min(Math.max(cfg.rate, 0), MAX_CARD_FEE_RATE);
+export function cardFeeFor(
+  cfg: CardFeeConfig,
+  funding: CardFunding | null | undefined,
+  amounts: { chargeCents: number; tipCents?: number },
+  opts: { wallet?: boolean | string | null; walletFeeOn?: boolean; waive?: boolean } = {},
+): CardFeeResult {
+  const { rate, flatCents } = feeParts(cfg);
   const basis: CardFeeBasis = cfg.appliesToTip ? "charge_including_tip" : "charge_excluding_tip";
   const charge = Math.max(0, Math.round(amounts.chargeCents));
   const tipOnCharge = Math.min(Math.max(0, Math.round(amounts.tipCents ?? 0)), charge);
   const basisCents = charge - (cfg.appliesToTip ? 0 : tipOnCharge);
-  const disclosure = feeDisclosure({ ...cfg, rate });
-  const none = (reason: CardFeeResult["reason"]): CardFeeResult => ({ feeCents: 0, rate: 0, basis, basisCents: 0, waivable: false, reason, label: null, disclosure });
-  if (!cfg.enabled || rate <= 0) return none("disabled");
+  const disclosure = feeDisclosure(cfg);
+  const none = (reason: CardFeeResult["reason"]): CardFeeResult => ({
+    feeCents: 0,
+    rate: 0,
+    flatCents: 0,
+    effectiveRate: 0,
+    basis,
+    basisCents: 0,
+    waivable: false,
+    waivedCents: 0,
+    limitedBy: null,
+    reason,
+    label: null,
+    disclosure,
+  });
+  if (!cfg.enabled || (rate <= 0 && flatCents <= 0)) return none("disabled");
+  if (cfg.off) return none(cfg.off);
   if (funding !== "credit") return none("not_credit");
-  if (opts.wallet && !opts.walletFeeOn) return none("wallet_fee_off");
-  const feeCents = applyRate(basisCents, rate);
-  if (feeCents <= 0) return none("zero_amount");
-  return { feeCents, rate, basis, basisCents, waivable: true, reason: "applies", label: feeLabel({ rate }), disclosure };
+  if (opts.wallet && !walletAllowed(cfg, opts.wallet, !!opts.walletFeeOn)) return none("wallet_fee_off");
+  if (basisCents <= 0) return none("zero_amount");
+  const raw = applyRate(basisCents, rate) + flatCents;
+  let fee = raw;
+  let limitedBy: CardFeeResult["limitedBy"] = null;
+  if (cfg.minCents && cfg.minCents > 0 && fee < cfg.minCents) [fee, limitedBy] = [Math.round(cfg.minCents), "min"];
+  if (cfg.capCents && cfg.capCents > 0 && fee > cfg.capCents) [fee, limitedBy] = [Math.round(cfg.capCents), "cap"];
+  const legal = applyRate(basisCents, feeMaxRate(cfg));
+  if (fee > legal) [fee, limitedBy] = [legal, "legal"];
+  if (fee <= 0) return none("zero_amount");
+  const waivable = cfg.waiverAllowed !== false;
+  const base = { rate, flatCents, effectiveRate: fee / basisCents, basis, basisCents, waivable, limitedBy, disclosure };
+  if (opts.waive && waivable) return { ...base, feeCents: 0, waivedCents: fee, reason: "waived", label: null };
+  return { ...base, feeCents: fee, waivedCents: 0, reason: "applies", label: feeLabel(cfg) };
 }
 
 export function computeCheckout(input: CheckoutInput): CheckoutTotals {
@@ -251,13 +350,16 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
   const primaryBaseCents = preFeeTotalCents - giftCardAppliedCents;
 
   const cfg = input.cardFee;
-  const cardFeeRate = Math.min(Math.max(cfg.rate, 0), MAX_CARD_FEE_RATE);
-  const fee = input.tender.method === "card" ? cardFeeFor(cfg, input.tender.cardFunding, { chargeCents: primaryBaseCents, tipCents }, { wallet: input.tender.cardWallet, walletFeeOn: input.tender.walletFeeOn }) : null;
+  const cardFeeRate = (cfg.type ?? "percent") === "flat" ? 0 : Math.min(Math.max(cfg.rate, 0), feeMaxRate(cfg));
+  const fee =
+    input.tender.method === "card"
+      ? cardFeeFor(cfg, input.tender.cardFunding, { chargeCents: primaryBaseCents, tipCents }, { wallet: input.tender.cardWallet, walletFeeOn: input.tender.walletFeeOn, waive: input.tender.waiveFee })
+      : null;
   const cardFeeBaseCents = fee?.reason === "applies" ? fee.basisCents : 0;
   const cardFeeCents = fee?.feeCents ?? 0;
 
   const disclosures: string[] = [];
-  const d = feeDisclosure({ ...cfg, rate: cardFeeRate });
+  const d = feeDisclosure(cfg);
   if (d) disclosures.push(d);
   if (fee?.label) disclosures.push(`${fee.label}: ${formatCents(cardFeeCents)}`);
 
@@ -280,6 +382,8 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
     cardFeeBaseCents,
     cardFeeCents,
     cardFeeRate,
+    cardFeeWaivedCents: fee?.waivedCents ?? 0,
+    cardFee: fee,
     totalCents: preFeeTotalCents + cardFeeCents,
     primaryChargeCents: primaryBaseCents + cardFeeCents,
     loyaltyEligibleCents: !input.loyalty ? serviceNetCents : input.loyalty.on ? loyaltyEligibleCents({ serviceNetCents, productNetCents, tipCents }, input.loyalty) : 0,

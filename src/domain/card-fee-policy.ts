@@ -1,0 +1,199 @@
+/**
+ * The credit card fee (surcharge) policy: set by the brand, with an optional override per shop.
+ *
+ * Guardrails that no setting can get around: the fee only ever applies to credit cards (never
+ * debit, prepaid, gift cards or cash), it never exceeds MAX_CARD_FEE_RATE of the amount it's on
+ * (or a lower state limit), and it's off in any state not on the allowlist.
+ */
+import { CardFeeConfig, CardFeeRefundRule, CardFeeType, MAX_CARD_FEE_RATE } from "./checkout";
+
+export const FEE_CHANNELS = ["pos", "app", "deposit", "card_on_file"] as const;
+export type FeeChannel = (typeof FEE_CHANNELS)[number];
+export const FEE_CHANNEL_LABEL: Record<FeeChannel, string> = {
+  pos: "POS (counter and customer screen)",
+  app: "In the app",
+  deposit: "Booking deposits",
+  card_on_file: "Charges to a card on file",
+};
+
+export const US_STATES = [
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO",
+  "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "PR", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+] as const;
+
+/** States where we don't surcharge by default; to be confirmed by Charles (state law changes). */
+export const SURCHARGE_BLOCKED_STATES = ["CT", "MA", "ME", "PR"] as const;
+/** States that allow a surcharge but cap it lower than the networks do. */
+export const DEFAULT_STATE_MAX_RATES: Record<string, number> = { CO: 0.02 };
+
+export const FEE_NOTICE_MAX = 400;
+export const FEE_FLAT_MAX_CENTS = 1000;
+
+export interface CardFeePolicy {
+  enabled: boolean;
+  type: CardFeeType;
+  /** Fraction, e.g. 0.03; for type percent or both. */
+  rate: number;
+  /** For type flat or both. */
+  flatCents: number;
+  appliesToTip: boolean;
+  capCents: number | null;
+  minCents: number | null;
+  channels: Record<FeeChannel, boolean>;
+  /**
+   * Card types beyond credit. Debit and prepaid stay off: card network rules and federal law don't
+   * allow surcharging them, so saving them on is refused. Wallets also need FEATURE_WALLET_FEE.
+   */
+  funding: { debit: boolean; prepaid: boolean; applePay: boolean; googlePay: boolean };
+  /** Brand only: whether staff may waive the fee on a ticket, with a reason. */
+  waiverAllowed: boolean;
+  /** Brand only: on a refund, give back the fee's share of what's refunded, or keep it. A void always gives it back. */
+  refundRule: CardFeeRefundRule;
+  /** The notice at checkout and on receipts; null uses the built-in wording. "{fee}" becomes the rate or amount. */
+  notice: string | null;
+  /** Brand only: the states (two-letter codes) where the fee may apply. A shop elsewhere, or with no state, charges none. */
+  states: string[];
+  /** Brand only: lower limits for states that set one. */
+  stateMaxRates: Record<string, number>;
+}
+
+/** What a shop may change. Waivers, refunds and the state rules are the brand's alone. */
+export type CardFeeOverride = Partial<Pick<CardFeePolicy, "enabled" | "type" | "rate" | "flatCents" | "appliesToTip" | "capCents" | "minCents" | "notice">> & {
+  channels?: Partial<CardFeePolicy["channels"]>;
+  funding?: Partial<CardFeePolicy["funding"]>;
+};
+export const OVERRIDE_KEYS = ["enabled", "type", "rate", "flatCents", "appliesToTip", "capCents", "minCents", "notice", "channels", "funding"] as const;
+
+export const DEFAULT_CARD_FEE_POLICY: CardFeePolicy = {
+  enabled: true,
+  type: "percent",
+  rate: 0.03,
+  flatCents: 0,
+  appliesToTip: false,
+  capCents: null,
+  minCents: null,
+  channels: { pos: true, app: true, deposit: true, card_on_file: true },
+  funding: { debit: false, prepaid: false, applePay: false, googlePay: false },
+  waiverAllowed: true,
+  refundRule: "proportional",
+  notice: null,
+  states: US_STATES.filter((s) => !(SURCHARGE_BLOCKED_STATES as readonly string[]).includes(s)),
+  stateMaxRates: DEFAULT_STATE_MAX_RATES,
+};
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+const bool = (v: unknown, d: boolean) => (typeof v === "boolean" ? v : d);
+const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v.trim() && Number.isFinite(Number(v)) ? Number(v) : d);
+const centsOrNull = (v: unknown, d: number | null) => (v === null ? null : typeof v === "number" && Number.isInteger(v) && v > 0 ? v : d);
+
+function mergeLayer(base: CardFeePolicy, raw: unknown, brand: boolean): CardFeePolicy {
+  if (!isObj(raw)) return base;
+  const ch = isObj(raw.channels) ? raw.channels : {};
+  const fu = isObj(raw.funding) ? raw.funding : {};
+  const out: CardFeePolicy = {
+    ...base,
+    enabled: bool(raw.enabled, base.enabled),
+    type: raw.type === "percent" || raw.type === "flat" || raw.type === "both" ? raw.type : base.type,
+    rate: num(raw.rate, base.rate),
+    flatCents: Math.max(0, Math.round(num(raw.flatCents, base.flatCents))),
+    appliesToTip: bool(raw.appliesToTip, base.appliesToTip),
+    capCents: "capCents" in raw ? centsOrNull(raw.capCents, base.capCents) : base.capCents,
+    minCents: "minCents" in raw ? centsOrNull(raw.minCents, base.minCents) : base.minCents,
+    channels: Object.fromEntries(FEE_CHANNELS.map((c) => [c, bool(ch[c], base.channels[c])])) as CardFeePolicy["channels"],
+    funding: {
+      debit: bool(fu.debit, base.funding.debit),
+      prepaid: bool(fu.prepaid, base.funding.prepaid),
+      applePay: bool(fu.applePay, base.funding.applePay),
+      googlePay: bool(fu.googlePay, base.funding.googlePay),
+    },
+    notice: "notice" in raw ? (typeof raw.notice === "string" && raw.notice.trim() ? raw.notice.trim().slice(0, FEE_NOTICE_MAX) : null) : base.notice,
+  };
+  if (!brand) return out;
+  return {
+    ...out,
+    waiverAllowed: bool(raw.waiverAllowed, base.waiverAllowed),
+    refundRule: raw.refundRule === "keep" || raw.refundRule === "proportional" ? raw.refundRule : base.refundRule,
+    states: Array.isArray(raw.states) ? [...new Set(raw.states.filter((s): s is string => typeof s === "string").map((s) => s.trim().toUpperCase()))].filter((s) => (US_STATES as readonly string[]).includes(s)).sort() : base.states,
+    stateMaxRates: isObj(raw.stateMaxRates)
+      ? Object.fromEntries(Object.entries(raw.stateMaxRates).flatMap(([k, v]) => (typeof v === "number" && v >= 0 && v <= MAX_CARD_FEE_RATE ? [[k.toUpperCase(), v]] : [])))
+      : base.stateMaxRates,
+  };
+}
+
+/** The brand's policy (brand_settings.card_fee); missing keys use the defaults. */
+export const brandCardFeePolicy = (raw: unknown): CardFeePolicy => mergeLayer(DEFAULT_CARD_FEE_POLICY, raw, true);
+
+/** A shop's policy: the brand's, with the shop's override (shops.card_fee_override) on top. */
+export const shopCardFeePolicy = (brand: CardFeePolicy, override: unknown): CardFeePolicy => mergeLayer(brand, override, false);
+
+/** Only the keys a shop may set, and only those that differ from the brand's. Null when nothing does. */
+export function cleanOverride(brand: CardFeePolicy, raw: unknown): CardFeeOverride | null {
+  if (!isObj(raw)) return null;
+  const merged = shopCardFeePolicy(brand, raw);
+  const out: Record<string, unknown> = {};
+  for (const k of OVERRIDE_KEYS) {
+    if (!(k in raw)) continue;
+    if (k === "channels" || k === "funding") {
+      const diff = Object.fromEntries(Object.entries(merged[k]).filter(([kk, v]) => v !== (brand[k] as Record<string, boolean>)[kk]));
+      if (Object.keys(diff).length) out[k] = diff;
+    } else if (merged[k] !== brand[k]) out[k] = merged[k];
+  }
+  return Object.keys(out).length ? (out as CardFeeOverride) : null;
+}
+
+export const normalState = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
+
+/** Where the shop is decides whether the fee may apply there at all, and the highest rate. */
+export function stateRule(p: CardFeePolicy, shopState: string | null | undefined): { allowed: boolean; maxRate: number } {
+  const st = normalState(shopState);
+  return { allowed: !!st && p.states.includes(st), maxRate: Math.min(MAX_CARD_FEE_RATE, p.stateMaxRates[st] ?? MAX_CARD_FEE_RATE) };
+}
+
+/** The fee config for one charge: this shop's policy on this channel. */
+export function feeConfigFor(p: CardFeePolicy, shopState: string | null | undefined, channel: FeeChannel): CardFeeConfig {
+  const st = stateRule(p, shopState);
+  return {
+    enabled: p.enabled,
+    type: p.type,
+    rate: Math.min(p.rate, st.maxRate),
+    flatCents: p.flatCents,
+    appliesToTip: p.appliesToTip,
+    capCents: p.capCents,
+    minCents: p.minCents,
+    wallets: { applePay: p.funding.applePay, googlePay: p.funding.googlePay },
+    maxRate: st.maxRate,
+    ...(!p.channels[channel] ? { off: "channel_off" as const } : !st.allowed ? { off: "state_not_allowed" as const } : {}),
+    notice: p.notice,
+    waiverAllowed: p.waiverAllowed,
+    refundRule: p.refundRule,
+  };
+}
+
+/** Why a policy (the brand's, or a shop's merged with it) can't be saved, or null. */
+export function policyProblem(p: CardFeePolicy): string | null {
+  if (p.funding.debit || p.funding.prepaid) return "Surcharges are only allowed on credit cards. Card network rules and federal law don't allow them on debit or prepaid cards.";
+  if (!Number.isFinite(p.rate) || p.rate < 0) return "The rate can't be negative";
+  if (p.rate > MAX_CARD_FEE_RATE) return `The card fee can't exceed ${MAX_CARD_FEE_RATE * 100}%, the card networks' limit`;
+  if (!Number.isInteger(p.flatCents) || p.flatCents < 0 || p.flatCents > FEE_FLAT_MAX_CENTS) return `The flat fee is from $0.00 to $${(FEE_FLAT_MAX_CENTS / 100).toFixed(2)}`;
+  if (p.enabled && p.type !== "flat" && p.rate <= 0) return "Set a rate above 0%, or turn the fee off";
+  if (p.enabled && p.type !== "percent" && p.flatCents <= 0) return "Set a flat amount above $0.00, or choose percent";
+  if (p.capCents != null && (!Number.isInteger(p.capCents) || p.capCents <= 0)) return "The cap must be more than $0.00";
+  if (p.minCents != null && (!Number.isInteger(p.minCents) || p.minCents <= 0)) return "The minimum must be more than $0.00";
+  if (p.capCents != null && p.minCents != null && p.minCents > p.capCents) return "The minimum can't be more than the cap";
+  if (p.notice != null && p.notice.length > FEE_NOTICE_MAX) return `The notice is at most ${FEE_NOTICE_MAX} characters`;
+  if (p.notice != null && !/surcharge/i.test(p.notice)) return 'The notice must call it a surcharge (the card networks require the word "surcharge")';
+  const bad = p.states.find((s) => !(US_STATES as readonly string[]).includes(s));
+  if (bad) return `${bad} isn't a US state code`;
+  const over = Object.entries(p.stateMaxRates).find(([, r]) => !(r >= 0 && r <= MAX_CARD_FEE_RATE));
+  if (over) return `The limit for ${over[0]} must be from 0% to ${MAX_CARD_FEE_RATE * 100}%`;
+  return null;
+}
+
+/** What's different between two policies, for the audit log. */
+export function policyDiff(before: unknown, after: unknown): Record<string, { from: unknown; to: unknown }> {
+  const a = (isObj(before) ? before : {}) as Record<string, unknown>;
+  const b = (isObj(after) ? after : {}) as Record<string, unknown>;
+  const out: Record<string, { from: unknown; to: unknown }> = {};
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null)) out[k] = { from: a[k] ?? null, to: b[k] ?? null };
+  return out;
+}

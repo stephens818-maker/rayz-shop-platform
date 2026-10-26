@@ -3,7 +3,7 @@ import type Stripe from "stripe";
 import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appPayments, checkoutHandoffs, customerDevices, customers, notificationJobs, payments, refreshTokens, sales, shops } from "@/db/schema";
-import { type CardFunding, cardFeeFor } from "@/domain/checkout";
+import { type CardFunding } from "@/domain/checkout";
 import { flags } from "@/lib/flags";
 import { formatCents } from "@/lib/money";
 import { assertSwitch } from "./app-switches";
@@ -14,7 +14,7 @@ import { householdHead, householdIds } from "./family";
 import { type HandingOver, type HandoffDraftInput, type HandoffView, chooseTip, draftOf, finalizeFields, handoffView, startHandoff } from "./handoff";
 import { myReceipt } from "./my-receipts";
 import { pushDevices } from "./notifications/queue";
-import { shopCardFeeConfig } from "./payments/card-fee";
+import { cardFeeConfigFor, saleFeeChannel } from "./payments/card-fee";
 import { SIM_CONFIRMATION_TOKENS, inspectPaymentMethod, isRequiresAction, refundCard, simulatedIntent, stripe } from "./payments/processor";
 import { cardForPayment, ensureStripeCustomer, merchantDisplayName } from "./payments/saved-cards";
 import { deliverReceipt } from "./receipts";
@@ -108,15 +108,33 @@ export interface AppTicket {
   tip: { cents: number | null; choice: string | null };
   tips: HandoffView["tips"];
   tipBarbers: HandoffView["tipBarbers"];
-  /** The shop's credit card surcharge. Only credit pays it; never debit or prepaid, and not wallets unless walletFee. */
-  cardFee: { enabled: boolean; rate: number; appliesToTip: boolean; walletFee: boolean; notice: string | null };
+  /**
+   * The shop's credit card surcharge in the app. Only credit pays it; never debit or prepaid, and not
+   * wallets unless walletFee (then only the wallets in `wallets`). `type`, `flatCents`, `capCents` and
+   * `minCents` describe it; the quote works out the amount. `off` says why it's off here when it is.
+   */
+  cardFee: {
+    enabled: boolean;
+    rate: number;
+    appliesToTip: boolean;
+    walletFee: boolean;
+    notice: string | null;
+    type: "percent" | "flat" | "both";
+    flatCents: number;
+    capCents: number | null;
+    minCents: number | null;
+    wallets: { applePay: boolean; googlePay: boolean };
+    off: "channel_off" | "state_not_allowed" | null;
+  };
   pay: { mode: "stripe" | "simulator"; cards: boolean; publishableKey: string | null; merchantDisplayName: string; applePayMerchantId: string | null; testTokens: { id: string; label: string }[] };
   paidAt: string | null;
 }
 
 async function toAppTicket(v: HandoffView, row: Row): Promise<AppTicket> {
-  const shop = await db.query.shops.findFirst({ where: eq(shops.id, row.shopId), columns: { cardFeeEnabled: true, cardFeeRate: true, cardFeeAppliesToTip: true } });
-  const fee = shop ? shopCardFeeConfig(shop) : { enabled: false, rate: 0, appliesToTip: false };
+  const fee = await cardFeeConfigFor(row.shopId, await saleFeeChannel(row.saleId, "app"));
+  const type = fee.type ?? "percent";
+  const wallets = fee.wallets ?? { applePay: false, googlePay: false };
+  const on = fee.enabled && !fee.off && ((type !== "flat" && fee.rate > 0) || (type !== "percent" && (fee.flatCents ?? 0) > 0));
   return {
     id: v.id,
     status: statusOf(row.status),
@@ -133,7 +151,19 @@ async function toAppTicket(v: HandoffView, row: Row): Promise<AppTicket> {
     tip: { cents: v.tip.cents, choice: v.tip.choice },
     tips: v.tips,
     tipBarbers: v.tipBarbers,
-    cardFee: { enabled: fee.enabled && fee.rate > 0, rate: fee.rate, appliesToTip: fee.appliesToTip, walletFee: flags.walletFee(), notice: v.feeNotice },
+    cardFee: {
+      enabled: on,
+      rate: type === "flat" ? 0 : fee.rate,
+      appliesToTip: fee.appliesToTip,
+      walletFee: flags.walletFee() && (wallets.applePay || wallets.googlePay),
+      notice: on ? v.feeNotice : null,
+      type,
+      flatCents: type === "percent" ? 0 : (fee.flatCents ?? 0),
+      capCents: fee.capCents ?? null,
+      minCents: fee.minCents ?? null,
+      wallets,
+      off: fee.off ?? null,
+    },
     pay: {
       mode: v.pay.mode,
       cards: v.pay.cards,
@@ -202,19 +232,13 @@ async function priceWith(row: Row, ref: string, card: { funding: CardFunding; wa
       ...(fresh.tipByStaff ? { tipSplit: "per_barber" as const, tipByStaff: fresh.tipByStaff } : {}),
       tipCents,
       tender: { method: "card", paymentMethodId: ref, entryMode: "keyed" },
+      channel: "app",
     },
     card.funding,
-    { wallet: !!card.wallet },
+    { wallet: card.wallet ?? null },
   );
-  const shop = await db.query.shops.findFirst({ where: eq(shops.id, row.shopId), columns: { cardFeeEnabled: true, cardFeeRate: true, cardFeeAppliesToTip: true } });
   const t = priced.totals;
-  const fee = cardFeeFor(
-    shopCardFeeConfig(shop!),
-    card.funding,
-    { chargeCents: t.primaryBaseCents, tipCents: Math.min(t.tipCents, t.primaryBaseCents) },
-    { wallet: !!card.wallet, walletFeeOn: flags.walletFee() },
-  );
-  return { totals: t, fee, fresh };
+  return { totals: t, fee: t.cardFee!, fresh };
 }
 
 export interface AppQuote {
@@ -223,7 +247,7 @@ export interface AppQuote {
   /** Before the surcharge, the tip included. */
   dueCents: number;
   feeCents: number;
-  /** applies, not_credit (debit and prepaid), wallet_fee_off (Apple Pay, Google Pay), disabled, zero_amount. */
+  /** applies, not_credit (debit and prepaid), wallet_fee_off (Apple Pay, Google Pay), disabled, channel_off, state_not_allowed, zero_amount, waived. */
   feeReason: string;
   feeLabel: string | null;
   /** What goes on the card. */
@@ -310,6 +334,7 @@ async function finish(
       ...(ap.tipByStaff ? { tipSplit: "per_barber" as const, tipByStaff: ap.tipByStaff } : {}),
       tipCents: ap.tipCents,
       tender,
+      channel: "app",
       expectedTotalCents: o.expectedTotalCents ?? null,
       handoffId: row.id,
       payerCustomerId: holder,

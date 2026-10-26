@@ -4,7 +4,7 @@
  * several, with the tip split per barber.
  */
 
-import { CardFeeConfig, CardFunding, cardFeeFor } from "./checkout";
+import { CardFeeConfig, CardFeeResult, CardFunding, cardFeeFor } from "./checkout";
 
 // ───────────────────────────── Split payment ─────────────────────────────
 
@@ -18,7 +18,8 @@ export interface SplitTenderIn {
   amountCents: number;
   /** Card tenders: from the processor. Only credit carries the surcharge. */
   funding?: CardFunding | null;
-  wallet?: boolean;
+  /** True, or the wallet type: "apple_pay", "google_pay". */
+  wallet?: boolean | string | null;
 }
 
 export interface SplitTenderPart {
@@ -29,6 +30,10 @@ export interface SplitTenderPart {
   feeCents: number;
   /** What the surcharge rate was applied to; 0 without one. */
   feeBasisCents: number;
+  /** The surcharge staff waived on this card, what it would have been. */
+  feeWaivedCents: number;
+  /** Why this card's surcharge is what it is; null for cash. */
+  fee: CardFeeResult | null;
   /** baseCents + feeCents: what's charged to the card, or taken in cash. */
   chargeCents: number;
 }
@@ -37,6 +42,7 @@ export interface SplitTenderPlan {
   parts: SplitTenderPart[];
   cardFeeCents: number;
   cardFeeBaseCents: number;
+  cardFeeWaivedCents: number;
   chargeCents: number;
 }
 
@@ -59,7 +65,7 @@ export function splitTenderProblem(dueCents: number, tenders: readonly SplitTend
  * largest first, so a per-barber tip stays exact (each payment's tip is split by the same weights).
  * Each credit card carries the surcharge on its own part, as it would paying alone.
  */
-export function planSplitTenders(o: { tipCents: number; cardFee: CardFeeConfig; tenders: readonly SplitTenderIn[]; walletFeeOn?: boolean }): SplitTenderPlan {
+export function planSplitTenders(o: { tipCents: number; cardFee: CardFeeConfig; tenders: readonly SplitTenderIn[]; walletFeeOn?: boolean; waive?: boolean }): SplitTenderPlan {
   let tipLeft = Math.max(0, o.tipCents);
   const tipOf = new Map<string, number>();
   const order = o.tenders.map((t, i) => ({ t, i })).sort((a, b) => b.t.amountCents - a.t.amountCents || a.i - b.i);
@@ -70,12 +76,22 @@ export function planSplitTenders(o: { tipCents: number; cardFee: CardFeeConfig; 
   }
   const parts = o.tenders.map((t): SplitTenderPart => {
     const tipCents = tipOf.get(t.key) ?? 0;
-    const fee = t.method === "card" ? cardFeeFor(o.cardFee, t.funding ?? null, { chargeCents: t.amountCents, tipCents }, { wallet: t.wallet, walletFeeOn: o.walletFeeOn }) : null;
+    const fee = t.method === "card" ? cardFeeFor(o.cardFee, t.funding ?? null, { chargeCents: t.amountCents, tipCents }, { wallet: t.wallet, walletFeeOn: o.walletFeeOn, waive: o.waive }) : null;
     const feeCents = fee?.feeCents ?? 0;
-    return { key: t.key, method: t.method, baseCents: t.amountCents, tipCents, feeCents, feeBasisCents: fee?.reason === "applies" ? fee.basisCents : 0, chargeCents: t.amountCents + feeCents };
+    return {
+      key: t.key,
+      method: t.method,
+      baseCents: t.amountCents,
+      tipCents,
+      feeCents,
+      feeBasisCents: fee?.reason === "applies" ? fee.basisCents : 0,
+      feeWaivedCents: fee?.waivedCents ?? 0,
+      fee,
+      chargeCents: t.amountCents + feeCents,
+    };
   });
   const sum = (f: (p: SplitTenderPart) => number) => parts.reduce((a, p) => a + f(p), 0);
-  return { parts, cardFeeCents: sum((p) => p.feeCents), cardFeeBaseCents: sum((p) => p.feeBasisCents), chargeCents: sum((p) => p.chargeCents) };
+  return { parts, cardFeeCents: sum((p) => p.feeCents), cardFeeBaseCents: sum((p) => p.feeBasisCents), cardFeeWaivedCents: sum((p) => p.feeWaivedCents), chargeCents: sum((p) => p.chargeCents) };
 }
 
 /** Evenly by number of payers, the remainder on the first ones: the "split evenly" button. */

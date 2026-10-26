@@ -35,6 +35,8 @@ export interface ReportTable {
   totalColumn?: boolean;
   /** Shown as stat tiles on the page; still downloadable. */
   exportOnly?: boolean;
+  /** An export-only table with its own download link on the page. */
+  downloadLabel?: string;
 }
 
 export type LocationView = "combined" | "shops";

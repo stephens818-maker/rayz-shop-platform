@@ -208,7 +208,7 @@ export async function ReportPage({
   const csv = (table: string) => (canExport ? `/admin/reports/export?${reportQuery(scope, { ...optionValues(data.options), type: report, table, from: scope.from, to: scope.to })}` : null);
   const view = viewOf(scope.loc);
   const barberLabel = scope.barbers?.pickable && scope.barbers.selection.staffIds ? scope.barbers.label : null;
-  const exportAll = data.tables.find((t) => t.exportOnly && t.id !== "heatmap");
+  const exportAll = data.tables.find((t) => t.exportOnly && !t.downloadLabel && t.id !== "heatmap");
   const heatmapCsv = data.heatmaps && data.tables.some((t) => t.id === "heatmap") ? csv("heatmap") : null;
   const actions = rowActions?.(data, ctx) ?? {};
 
@@ -272,6 +272,17 @@ export async function ReportPage({
         .map((t) => (
           <ReportTableCard key={t.id} t={t} csv={csv(t.id)} rowAction={actions[t.id]} />
         ))}
+      {canExport && data.tables.some((t) => t.exportOnly && t.downloadLabel) && (
+        <p className="mt-2 flex flex-wrap justify-end gap-4 text-xs">
+          {data.tables
+            .filter((t) => t.exportOnly && t.downloadLabel)
+            .map((t) => (
+              <a key={t.id} className="underline" href={csv(t.id)!} title={t.subtitle}>
+                {t.downloadLabel}
+              </a>
+            ))}
+        </p>
+      )}
       {heatmapCsv && (
         <p className="mt-2 text-right text-xs">
           <a className="underline" href={heatmapCsv}>

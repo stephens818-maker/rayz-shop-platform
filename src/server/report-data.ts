@@ -21,6 +21,7 @@ import {
   segKey,
   segments,
   splitTable,
+  staffName,
   viewOf,
 } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
@@ -81,6 +82,9 @@ import { morningDashboardFor } from "./morning-dashboard";
 import { ratingsGivenAt } from "./ratings-report";
 import { grainsFor } from "./report-sql";
 import { analyticsData } from "./analytics-report";
+import { FEE_REASON_LABEL, cardFeeReportData, cardTypeLabel, feePayments } from "./card-fee-report";
+import { quickbooksTable } from "./quickbooks-export";
+import { FEE_CHANNEL_LABEL, FeeChannel } from "@/domain/card-fee-policy";
 import type { StaffAccess } from "./auth/access";
 
 /**
@@ -188,7 +192,13 @@ const tilesOnly = (v: ViewCtx) => v.view !== "shops" && !v.byBarber;
 
 async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
   const g = grainsFor(loc);
-  const [x, tender, daily, monthly] = await Promise.all([salesTotalsAt(scope, g), tenderAt(scope, g), dailyTotals(scope, listGrain(loc)), monthlyTotals(scope, listGrain(loc))]);
+  const [x, tender, daily, monthly, qbo] = await Promise.all([
+    salesTotalsAt(scope, g),
+    tenderAt(scope, g),
+    dailyTotals(scope, listGrain(loc)),
+    monthlyTotals(scope, listGrain(loc)),
+    quickbooksTable(scope),
+  ]);
   const s = x[TOTAL] ?? ZERO_SALES();
   const t = tender[TOTAL] ?? ZERO_TENDER();
   const summary = metricTable(loc, {
@@ -208,6 +218,7 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
       m("Tax", "money", x, (v) => v.taxCents),
       m("Tips", "money", x, (v) => v.tipsCents),
       m("Card surcharges", "money", x, (v) => v.cardFeeCents),
+      m("Card surcharges waived", "money", x, (v) => v.cardFeeWaivedCents),
       m("Gift cards sold", "money", x, (v) => v.giftCardsSoldCents),
       m("Card", "money", tender, (v) => v.cardCents),
       m("Card (credit)", "money", tender, (v) => v.cardCreditCents),
@@ -219,8 +230,13 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
   const dailyTable = listTable(loc, {
     id: "daily",
     title: "Daily totals",
-    columns: [text("Date"), int("Tickets"), money("Gross"), money("Refunds"), money("Net"), money("Tips"), money("Card"), money("Cash")],
-    rows: daily.map((d) => ({ shopId: d.shopId!, staffId: d.staffId, key: d.day, cells: [d.day, d.tickets, d.grossCents, d.refundCents, d.netCents, d.tipsCents, d.cardCents, d.cashCents] })),
+    columns: [text("Date"), int("Tickets"), money("Gross"), money("Refunds"), money("Net"), money("Tips"), money("Card surcharges"), money("Surcharges waived"), money("Card"), money("Cash")],
+    rows: daily.map((d) => ({
+      shopId: d.shopId!,
+      staffId: d.staffId,
+      key: d.day,
+      cells: [d.day, d.tickets, d.grossCents, d.refundCents, d.netCents, d.tipsCents, d.cardFeeCents, d.cardFeeWaivedCents, d.cardCents, d.cashCents],
+    })),
     merge: true,
     sort: byDay,
   });
@@ -259,10 +275,10 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
       { label: "Tips", value: formatCents(s.tipsCents), hint: `card ${formatCents(t.cardTipsCents)} · cash ${formatCents(t.cashTipsCents)}` },
       { label: "Tax collected", value: formatCents(s.taxCents), hint: `gift cards sold ${formatCents(s.giftCardsSoldCents)}` },
       { label: "Refunds", value: formatCents(s.refundCents) },
-      { label: "Card surcharges", value: formatCents(s.cardFeeCents) },
+      { label: "Card surcharges", value: formatCents(s.cardFeeCents), hint: s.cardFeeWaivedCents ? `${formatCents(s.cardFeeWaivedCents)} waived` : undefined },
       { label: "Card / cash", value: `${formatCents(t.cardCents)} / ${formatCents(t.cashCents)}` },
     ],
-    tables: [waterfallTable, summary, dailyTable, monthlyTable],
+    tables: [waterfallTable, summary, dailyTable, monthlyTable, qbo],
   };
 }
 
@@ -929,8 +945,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       money("Card takings"),
       money("Card tips"),
       money("Surcharges"),
+      money("Surcharges waived"),
       money("Card refunds"),
       money("Processing fees"),
+      money("Surcharges less processing fees"),
       money("To Stripe accounts"),
       money("Payouts paid"),
       money("Payouts in transit"),
@@ -942,15 +960,17 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       r.cardNetCents,
       r.cardTipsCents,
       r.surchargeCents,
+      r.surchargeWaivedCents,
       r.cardRefundsCents,
       r.processingFeesCents,
+      r.surchargeCents - r.processingFeesCents,
       r.toAccountCents,
       r.payoutsPaidCents,
       r.payoutsPendingCents,
       r.cashCents,
       r.giftCardCents,
     ];
-    const add = (xs: ShopAccountRow[]) => Array.from({ length: 11 }, (_, i) => xs.reduce((a, r) => a + nums(r)[i], 0));
+    const add = (xs: ShopAccountRow[]) => Array.from({ length: 13 }, (_, i) => xs.reduce((a, r) => a + nums(r)[i], 0));
     const rowsOut: Cell[][] = [];
     const styles: ("subtotal" | "total" | undefined)[] = [];
     const owners = [...new Map(accounts.map((r) => [r.ownerId ?? "none", r.ownerName])).entries()];
@@ -983,10 +1003,14 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     const brandSettled = accounts.reduce((a, r) => a + r.brandSettledCents, 0);
     return {
       stats: [
-        { label: "Card takings", value: formatCents(total[1]), hint: `${total[0]} charges, after ${formatCents(total[4])} refunds` },
-        { label: "Processing fees", value: formatCents(total[5]), hint: total[1] ? `${((total[5] / total[1]) * 100).toFixed(2)}% of card takings` : undefined },
-        { label: "To Stripe accounts", value: formatCents(total[6]), hint: brandSettled ? `card takings less fees; ${formatCents(brandSettled)} in the brand's account` : "card takings less fees" },
-        { label: "Paid out to banks", value: formatCents(total[7]), hint: total[8] ? `${formatCents(total[8])} in transit` : undefined },
+        { label: "Card takings", value: formatCents(total[1]), hint: `${total[0]} charges, after ${formatCents(total[5])} refunds` },
+        {
+          label: "Processing fees",
+          value: formatCents(total[6]),
+          hint: total[1] ? `${((total[6] / total[1]) * 100).toFixed(2)}% of card takings; surcharges covered ${formatCents(total[3])}` : undefined,
+        },
+        { label: "To Stripe accounts", value: formatCents(total[8]), hint: brandSettled ? `card takings less fees; ${formatCents(brandSettled)} in the brand's account` : "card takings less fees" },
+        { label: "Paid out to banks", value: formatCents(total[9]), hint: total[10] ? `${formatCents(total[10])} in transit` : undefined },
       ],
       tables: [
         {
@@ -1016,6 +1040,79 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         ...(brandSettled ? [`Shops on the brand's account are paid out together to the brand's bank, so their payout columns stay empty; the brand account's deposits are on the Payouts page.`] : []),
         ...(unrouted ? [`${formatCents(unrouted)} of card takings in this range settled before shops had their own accounts, so it isn't in "To Stripe accounts".`] : []),
         "Processing fees are kept on refunded and voided charges, the same as Stripe's own fee.",
+      ],
+    };
+  },
+
+  async card_fees({ scope, loc }) {
+    const [data, pays] = await Promise.all([cardFeeReportData(scope, loc), feePayments(scope)]);
+    const shopName = new Map(loc.shops.map((s) => [s.id, s.name]));
+    const payments: ReportTable = {
+      id: "payments",
+      title: "Card payments",
+      subtitle: "Every card payment with how its surcharge was worked out: the payments export.",
+      exportOnly: true,
+      downloadLabel: "Download card payments CSV",
+      columns: [
+        text("Date"),
+        text("Location"),
+        text("Barber"),
+        id("Ticket"),
+        text("Channel"),
+        text("Card"),
+        text("Last 4"),
+        text("Wallet"),
+        text("Status"),
+        money("Amount"),
+        money("Tip"),
+        money("Fee basis amount"),
+        text("Fee basis"),
+        { label: "Fee rate", kind: "pct", sum: false },
+        money("Flat fee"),
+        money("Fee amount"),
+        text("Fee outcome"),
+        { label: "Waived", kind: "bool" },
+        money("Waived amount"),
+        text("Waived by"),
+        text("Waive reason"),
+        money("Fee refunded"),
+        money("Processing cost"),
+        text("Settled to"),
+      ],
+      rows: pays.map((p) => [
+        p.day,
+        shopName.get(p.shopId) ?? "",
+        p.staffId ? staffName(loc, p.staffId) : "",
+        p.ticket,
+        FEE_CHANNEL_LABEL[p.channel as FeeChannel] ?? p.channel,
+        cardTypeLabel((p.brand ?? "unknown").toLowerCase(), p.funding ?? "unknown"),
+        p.last4,
+        p.wallet,
+        p.status.replace("_", " "),
+        p.amountCents,
+        p.tipCents,
+        p.feeBasisCents,
+        p.feeBasis === "charge_including_tip" ? "Including tip" : p.feeBasis === "charge_excluding_tip" ? "Excluding tip" : null,
+        p.feeRate,
+        p.feeFlatCents,
+        p.feeCents,
+        p.feeReason ? (FEE_REASON_LABEL[p.feeReason] ?? p.feeReason) : p.feeCents > 0 ? FEE_REASON_LABEL.applies : null,
+        p.waived,
+        p.waivedCents,
+        p.waivedBy,
+        p.waivedReason,
+        p.feeRefundedCents,
+        p.costCents,
+        p.settlement === "platform" ? "Brand account" : (p.stripeAccountId ?? null),
+      ]),
+    };
+    return {
+      stats: data.stats,
+      tables: [...data.tables, payments],
+      notes: [
+        "The surcharge is only ever charged on credit cards, never debit, prepaid, gift cards or cash, and never more than the card networks' 3% (or a lower state limit).",
+        "Surcharges are kept apart from service and product revenue and tips, and don't count toward commission or tips.",
+        ...(pays.length >= 20000 ? ["The card payments download stops at 20,000 payments; pick a shorter range for the rest."] : []),
       ],
     };
   },

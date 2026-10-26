@@ -638,6 +638,13 @@
       "when": 1796205600000,
       "tag": "core_0090_customer_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1796209200000,
+      "tag": "core_0091_card_fee_policy",
+      "breakpoints": true
     }
   ]
 }

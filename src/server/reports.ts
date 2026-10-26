@@ -71,6 +71,8 @@ export interface SalesTotals {
   taxCents: number;
   tipsCents: number;
   cardFeeCents: number;
+  /** Card surcharges staff waived: what they would have been. */
+  cardFeeWaivedCents: number;
   giftCardsSoldCents: number;
   productTickets: number;
   /** Before refunds: what was rung up per ticket. */
@@ -89,12 +91,13 @@ type SaleAgg = {
   tax: number;
   tips: number;
   fee: number;
+  waived: number;
   gc: number;
   ptk: number;
 };
 type RefundAgg = { shop_id: string | null; staff_id: string | null; sn: number; pn: number; tax: number; tips: number; fee: number; gc: number };
 type Keyless<T> = Omit<T, "shop_id" | "staff_id">;
-const ZERO_SALE: Keyless<SaleAgg> = { tickets: 0, sg: 0, pg: 0, disc: 0, sn: 0, pn: 0, tax: 0, tips: 0, fee: 0, gc: 0, ptk: 0 };
+const ZERO_SALE: Keyless<SaleAgg> = { tickets: 0, sg: 0, pg: 0, disc: 0, sn: 0, pn: 0, tax: 0, tips: 0, fee: 0, waived: 0, gc: 0, ptk: 0 };
 const ZERO_REFUND: Keyless<RefundAgg> = { sn: 0, pn: 0, tax: 0, tips: 0, fee: 0, gc: 0 };
 
 function salesTotals(a: Keyless<SaleAgg>, r: Keyless<RefundAgg>): SalesTotals {
@@ -113,6 +116,7 @@ function salesTotals(a: Keyless<SaleAgg>, r: Keyless<RefundAgg>): SalesTotals {
     taxCents: a.tax - r.tax,
     tipsCents: a.tips - r.tips,
     cardFeeCents: a.fee - r.fee,
+    cardFeeWaivedCents: a.waived,
     giftCardsSoldCents: a.gc - r.gc,
     productTickets: a.ptk,
     avgTicketCents: a.tickets ? Math.round((a.sn + a.pn) / a.tickets) : 0,
@@ -134,7 +138,7 @@ async function salesTotalsBy(s: ReportScope, o?: Grain): Promise<Map<string, Sal
         coalesce(sum(service_gross_cents),0)::int sg, coalesce(sum(product_gross_cents),0)::int pg,
         coalesce(sum(discount_cents),0)::int disc, coalesce(sum(service_net_cents),0)::int sn,
         coalesce(sum(product_net_cents),0)::int pn, coalesce(sum(service_tax_cents+product_tax_cents),0)::int tax,
-        coalesce(sum(tip_cents),0)::int tips, coalesce(sum(card_fee_cents),0)::int fee,
+        coalesce(sum(tip_cents),0)::int tips, coalesce(sum(card_fee_cents),0)::int fee, coalesce(sum(card_fee_waived_cents),0)::int waived,
         coalesce(sum(gift_card_sales_cents),0)::int gc,
         count(*) filter (where product_gross_cents > 0)::int ptk
       from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
@@ -348,10 +352,12 @@ export async function dailyTotals(s: ReportScope, o?: Grain) {
     tipsCents: number;
     cardCents: number;
     cashCents: number;
+    cardFeeCents: number;
+    cardFeeWaivedCents: number;
   }>(sql`
     with d as (
       select ${grp(o, sql`shop_id`)} shop_id, ${sgrp(o, sql`staff_id`)} staff_id, business_date as day, count(*)::int tickets, sum(service_gross_cents+product_gross_cents)::int gross,
-        sum(service_net_cents+product_net_cents)::int net, sum(tip_cents)::int tips
+        sum(service_net_cents+product_net_cents)::int net, sum(tip_cents)::int tips, sum(card_fee_cents)::int fee, sum(card_fee_waived_cents)::int waived
       from sales where shop_id in ${ids(s)} and business_date between ${s.from} and ${s.to} and status in ${PAID}
       ${staffFilter(sql`staff_id`, s)}
       group by 1, 2, 3
@@ -364,6 +370,7 @@ export async function dailyTotals(s: ReportScope, o?: Grain) {
       group by 1, 2, 3
     ), rf as (
       select ${grp(o, sql`r.shop_id`)} shop_id, ${sgrp(o, sql`s.staff_id`)} staff_id, r.business_date as day, sum(r.service_net_cents + r.product_net_cents)::int net, sum(r.tip_cents)::int tips,
+        sum(r.card_fee_cents)::int fee,
         sum(case when r.method='card' then r.amount_cents else 0 end)::int card,
         sum(case when r.method='cash' then r.amount_cents else 0 end)::int cash
       from refunds r join sales s on s.id = r.sale_id
@@ -382,7 +389,8 @@ export async function dailyTotals(s: ReportScope, o?: Grain) {
       union select shop_id, staff_id, day from lm where sn <> 0 or rsn <> 0 or sg <> 0)
     select days.shop_id "shopId", days.staff_id "staffId", to_char(days.day, 'YYYY-MM-DD') as day, coalesce(d.tickets,0) tickets, (coalesce(d.gross,0) + coalesce(lm.sg,0)) "grossCents",
       (coalesce(rf.net,0) + coalesce(lm.rsn,0)) "refundCents", (coalesce(d.net,0) + coalesce(lm.sn,0) - coalesce(rf.net,0) - coalesce(lm.rsn,0)) "netCents", (coalesce(d.tips,0) - coalesce(rf.tips,0) + coalesce(mv.tips,0)) "tipsCents",
-      (coalesce(p.card,0) - coalesce(rf.card,0)) "cardCents", (coalesce(p.cash,0) - coalesce(rf.cash,0)) "cashCents"
+      (coalesce(p.card,0) - coalesce(rf.card,0)) "cardCents", (coalesce(p.cash,0) - coalesce(rf.cash,0)) "cashCents",
+      (coalesce(d.fee,0) - coalesce(rf.fee,0)) "cardFeeCents", coalesce(d.waived,0) "cardFeeWaivedCents"
     from days
       left join d on d.day = days.day and ${same(sql`d.shop_id`, sql`days.shop_id`)} and ${same(sql`d.staff_id`, sql`days.staff_id`)}
       left join p on p.day = days.day and ${same(sql`p.shop_id`, sql`days.shop_id`)} and ${same(sql`p.staff_id`, sql`days.staff_id`)}

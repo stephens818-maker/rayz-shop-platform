@@ -22,6 +22,7 @@ export const REPORT_GROUP: Record<ReportKey, ReportGroupId> = {
   sales_summary: "sales",
   end_of_day: "sales",
   card_vs_cash: "sales",
+  card_fees: "sales",
   discounts_refunds: "sales",
   sales_tax: "sales",
   cash_drawer: "sales",

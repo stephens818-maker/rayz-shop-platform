@@ -30,6 +30,8 @@ export interface ShopAccountRow {
   entityFeesCents: number;
   cardTipsCents: number;
   surchargeCents: number;
+  /** Surcharges staff waived on card charges: what they would have been. */
+  surchargeWaivedCents: number;
   cardRefundsCents: number;
   /**
    * The shop's processing cost: application fees on charges to its own account, Stripe's fee on charges
@@ -60,6 +62,7 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
         coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.settlement = 'platform' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int brand,
         coalesce(sum(p.tip_cents) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int tips,
         coalesce(sum(p.card_fee_cents) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int surcharge,
+        coalesce(sum(p.fee_waived_cents) filter (where p.method = 'card' and p.status <> 'voided' and sa.status <> 'voided'), 0)::int waived,
         coalesce(sum(case when p.settlement = 'platform' then p.processor_fee_cents else p.application_fee_cents end) filter (where p.method = 'card'), 0)::int fees,
         coalesce(sum(p.processor_fee_cents) filter (where p.method = 'card' and p.settlement = 'platform'), 0)::int brand_fees,
         coalesce(sum(p.amount_cents) filter (where p.method = 'card' and p.stripe_account_id in (select * from eacct) and p.status <> 'voided' and sa.status <> 'voided'), 0)::int entity,
@@ -98,6 +101,7 @@ export async function shopAccountRows(s: ReportScope): Promise<ShopAccountRow[]>
       coalesce(pay.brand, 0) - coalesce(ref.brand, 0) "brandSettledCents",
       coalesce(pay.tips, 0) - coalesce(ref.tips, 0) "cardTipsCents",
       coalesce(pay.surcharge, 0) - coalesce(ref.surcharge, 0) "surchargeCents",
+      coalesce(pay.waived, 0) "surchargeWaivedCents",
       coalesce(ref.card, 0) "cardRefundsCents",
       coalesce(pay.fees, 0) "processingFeesCents",
       coalesce(pay.brand_fees, 0) "brandFeesCents",

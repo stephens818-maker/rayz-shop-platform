@@ -104,6 +104,12 @@ export const FEATURE_PERMISSIONS = [
   { key: "pos.discount", group: "Point of sale", label: "Give manual discounts", hint: "Up to the role's discount limit." },
   { key: "pos.price_override", group: "Point of sale", label: "Change a menu price on a ticket" },
   {
+    key: "pos.waive_card_fee",
+    group: "Point of sale",
+    label: "Waive the credit card surcharge on a ticket",
+    hint: "Only where the brand allows waivers. Each waiver needs a reason and is in the audit log.",
+  },
+  {
     key: "handoff.unlock",
     group: "Point of sale",
     label: "Take back a device handed to a client, where the location asks for a manager PIN",
@@ -433,7 +439,15 @@ export const FEATURE_PERMISSIONS = [
     hint: "The customer screen, card readers, receipts and the cash drawer's opening balance.",
   },
   { key: "settings.shop_phone", group: "Settings and data", label: "Shop settings: the phone line and the phone operator", hint: "The shop's Twilio number and how the phone operator answers." },
-  { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates and card fees" },
+  { key: "settings.taxes", group: "Settings and data", label: "Edit tax rates" },
+  {
+    key: "settings.card_fee",
+    group: "Settings and data",
+    label: "Set the credit card fee: the brand's policy and each shop's override",
+    hint: "On or off, percent or flat, cap and minimum, channels, waivers, refunds, the notice and the states it's allowed in. Brand-level roles only; every change is in the audit log.",
+    brandOnly: true,
+    brandLevel: true,
+  },
   {
     key: "scheduling.timing",
     group: "Settings and data",
@@ -532,6 +546,12 @@ export const REPORTS = [
     label: "Sales tax by state",
     href: "/admin/reports/sales-tax",
     hint: "Taxable sales and tax collected per state, location and month or quarter, after refunds, for each state's filing.",
+  },
+  {
+    key: "card_fees",
+    label: "Credit card fees",
+    href: "/admin/reports/card-fees",
+    hint: "Surcharges collected and waived by location, barber, day, channel and card type, the effective rate, and what they recovered of Stripe's processing cost.",
   },
   { key: "shop_accounts", label: "Shop P&L by Stripe account", href: "/admin/reports/shop-accounts", hint: "Each shop's card sales, fees, refunds, tips and payouts through its own, its owner's or the brand's Stripe account, grouped by owner." },
   {
@@ -808,6 +828,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "checkout.any",
   "pos.discount",
   "pos.price_override",
+  "pos.waive_card_fee",
   "handoff.unlock",
   "sales.view",
   "sales.refund",

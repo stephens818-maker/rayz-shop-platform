@@ -128,6 +128,8 @@ export const HandoffDraftInput = z.object({
   giftCard: z.object({ code: z.string().max(40), amountCents: z.number().int().min(0) }).nullable(),
   rebookInWeeks: z.number().int().min(1).max(26).nullable(),
   tipSplit: z.enum(TIP_SPLIT_MODES).nullable(),
+  /** Staff waived the credit card surcharge, with the reason. */
+  waiveCardFee: z.object({ reason: z.string().max(200) }).nullable().optional(),
 });
 export type HandoffDraftInput = z.infer<typeof HandoffDraftInput>;
 
@@ -136,6 +138,9 @@ export interface HandoffDraft extends HandoffDraftInput {
   canOverridePrice: boolean;
   canCustomCharge?: boolean;
   maxManualDiscountPct: number;
+  canWaiveCardFee?: boolean;
+  /** Who handed it over, so a waiver is theirs. */
+  staffId?: string;
 }
 
 export interface HandingOver {
@@ -145,6 +150,7 @@ export interface HandingOver {
   canOverridePrice: boolean;
   canCustomCharge?: boolean;
   maxManualDiscountPct: number;
+  canWaiveCardFee?: boolean;
 }
 
 type Row = typeof checkoutHandoffs.$inferSelect;
@@ -164,6 +170,8 @@ export function finalizeFields(d: HandoffDraft) {
     canOverridePrice: d.canOverridePrice,
     canCustomCharge: d.canCustomCharge ?? false,
     maxManualDiscountPct: d.maxManualDiscountPct,
+    waiveCardFee: d.waiveCardFee?.reason ? { reason: d.waiveCardFee.reason, byStaffId: d.staffId ?? null } : null,
+    canWaiveCardFee: d.canWaiveCardFee ?? false,
   };
 }
 
@@ -174,7 +182,14 @@ export async function startHandoff(saleId: string, raw: HandoffDraftInput, by: H
     if (!by.canDiscount) throw forbidden("You don't have permission to give discounts");
     if (!input.manualDiscount.reason.trim()) throw new AppError("bad_request", "Add a reason for the discount");
   }
-  const draft: HandoffDraft = { ...input, canOverridePrice: by.canOverridePrice, canCustomCharge: by.canCustomCharge ?? false, maxManualDiscountPct: by.maxManualDiscountPct };
+  const draft: HandoffDraft = {
+    ...input,
+    canOverridePrice: by.canOverridePrice,
+    canCustomCharge: by.canCustomCharge ?? false,
+    maxManualDiscountPct: by.maxManualDiscountPct,
+    canWaiveCardFee: by.canWaiveCardFee ?? false,
+    staffId: by.staffId,
+  };
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
   if (!sale) throw notFound("Sale");
   if (sale.status !== "open") throw new AppError("conflict", `This ticket is already ${sale.status}`);

@@ -105,6 +105,8 @@ export const brandSettings = pgTable("brand_settings", {
   milestones: jsonb("milestones").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** What every location inherits (LocationDefaults in src/domain/location-defaults.ts); missing keys use the built-in values. */
   locationDefaults: jsonb("location_defaults").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** The credit card fee policy (CardFeePolicy in src/domain/card-fee-policy.ts); missing keys use the defaults. Shops can override parts of it. */
+  cardFee: jsonb("card_fee").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Memberships (src/server/memberships.ts) are optional: off, no plans are sold and checkout doesn't offer them. */
   membershipsEnabled: boolean("memberships_enabled").notNull().default(false),
   updatedAt: ts("updated_at").notNull().defaultNow(),
@@ -203,9 +205,12 @@ export const shops = pgTable("shops", {
   serviceTaxRate: numeric("service_tax_rate", { precision: 7, scale: 5 }).notNull().default("0"),
   productTaxRate: numeric("product_tax_rate", { precision: 7, scale: 5 }).notNull().default("0"),
   taxRatesVerified: boolean("tax_rates_verified").notNull().default(false),
+  /** The shop's card fee as it stands (the brand policy with card_fee_override), kept in step on every save for the tax and fee summary. Checkout reads the policy. */
   cardFeeEnabled: boolean("card_fee_enabled").notNull().default(true),
   cardFeeRate: numeric("card_fee_rate", { precision: 6, scale: 5 }).notNull().default("0.03"),
   cardFeeAppliesToTip: boolean("card_fee_applies_to_tip").notNull().default(false),
+  /** This shop's changes to the brand's card fee policy (CardFeeOverride in src/domain/card-fee-policy.ts); null follows the brand. */
+  cardFeeOverride: jsonb("card_fee_override").$type<Record<string, unknown>>(),
   /** Superseded by handoff.tips, and kept in step with it while the presets are percents. */
   tipPresets: jsonb("tip_presets").$type<number[]>().notNull().default(sql`'[20,25,30]'::jsonb`),
   cancelCutoffMinutes: integer("cancel_cutoff_minutes").notNull().default(30),
@@ -1902,6 +1907,8 @@ export const sales = pgTable(
     productTaxCents: integer("product_tax_cents").notNull().default(0),
     tipCents: integer("tip_cents").notNull().default(0),
     cardFeeCents: integer("card_fee_cents").notNull().default(0),
+    /** The card surcharge staff waived on this ticket: what it would have been. */
+    cardFeeWaivedCents: integer("card_fee_waived_cents").notNull().default(0),
     totalCents: integer("total_cents").notNull().default(0),
     /** Snapshot of rates/fee config used, for receipts and audits. */
     pricing: jsonb("pricing"),
@@ -2009,7 +2016,24 @@ export const payments = pgTable(
     /** Total collected by this tender (incl. tip and card fee). */
     amountCents: integer("amount_cents").notNull(),
     tipCents: integer("tip_cents").notNull().default(0),
+    /** The credit card surcharge in amountCents: the payment's fee_amount. */
     cardFeeCents: integer("card_fee_cents").notNull().default(0),
+    /** Card payments: the surcharge's percent part as applied (after any state limit); 0 for a flat fee. */
+    feeRate: numeric("fee_rate", { precision: 6, scale: 5 }),
+    feeFlatCents: integer("fee_flat_cents"),
+    /** What the surcharge was on: charge_excluding_tip or charge_including_tip. */
+    feeBasis: text("fee_basis").$type<"charge_excluding_tip" | "charge_including_tip">(),
+    /** The amount the surcharge was worked out on. */
+    feeBasisCents: integer("fee_basis_cents"),
+    /** Why there's no surcharge when there isn't (CardFeeResult reason): not_credit, waived, state_not_allowed and so on. */
+    feeReason: text("fee_reason"),
+    /** Where the charge was taken: pos, app, deposit or card_on_file. */
+    feeChannel: text("fee_channel"),
+    feeWaived: boolean("fee_waived").notNull().default(false),
+    /** What the waived surcharge would have been. */
+    feeWaivedCents: integer("fee_waived_cents").notNull().default(0),
+    feeWaivedBy: uuid("fee_waived_by").references(() => staff.id, { onDelete: "set null" }),
+    feeWaivedReason: text("fee_waived_reason"),
     cashTenderedCents: integer("cash_tendered_cents"),
     /** Card data is never stored — only Stripe references and display metadata. */
     processor: text("processor"), // stripe | simulator | stripe_terminal_sim
@@ -2040,6 +2064,9 @@ export const payments = pgTable(
   (t) => [
     check("payments_payer_label", sql`${t.payerLabel} is null or char_length(${t.payerLabel}) <= 40`),
     check("payments_settlement", sql`${t.settlement} is null or ${t.settlement} in ('platform', 'connected')`),
+    check("payments_fee_basis", sql`${t.feeBasis} is null or ${t.feeBasis} in ('charge_excluding_tip', 'charge_including_tip')`),
+    check("payments_fee_channel", sql`${t.feeChannel} is null or ${t.feeChannel} in ('pos', 'app', 'deposit', 'card_on_file')`),
+    check("payments_fee_waived", sql`not ${t.feeWaived} or (${t.method} = 'card' and ${t.cardFeeCents} = 0 and ${t.feeWaivedCents} > 0 and ${t.feeWaivedReason} is not null)`),
     index("payments_shop_date_idx").on(t.shopId, t.businessDate),
     index("payments_account_idx").on(t.stripeAccountId),
     index("payments_sale_idx").on(t.saleId),
