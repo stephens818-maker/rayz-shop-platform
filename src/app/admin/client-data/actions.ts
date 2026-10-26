@@ -4,7 +4,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { brandSettings, clientAccessAlerts, clientFieldRules, clientFields, roles, shops, staff } from "@/db/schema";
+import { clientAccessAlerts, clientFieldRules, clientFields, roles, shops, staff } from "@/db/schema";
 import {
   Entry,
   EntrySetting,

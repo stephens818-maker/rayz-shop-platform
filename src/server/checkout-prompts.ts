@@ -3,7 +3,6 @@ import { db, type DBorTx } from "@/db";
 import {
   appointmentItems,
   appointments,
-  brandSettings,
   checkoutPromptRules,
   checkoutPrompts,
   customers,
@@ -20,7 +19,6 @@ import {
   staff,
 } from "@/db/schema";
 import {
-  CheckoutPromptSettingsSchema,
   type CheckoutPromptSettings,
   type DayChoices,
   type ProductSuggested,
@@ -52,6 +50,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
 import { type LocalDate, addDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, zonedWallTime } from "@/lib/time";
 import { type Actor, audit } from "./audit";
+import { brandColumn } from "./brand-sync/settings";
 import { localValue } from "./brand-sync/store";
 import { createAppointment, dayOpenings } from "./booking";
 import { AppError, notFound } from "./errors";
@@ -78,24 +77,13 @@ const NEXT_VISIT = ["booked", "confirmed"] as const;
 // ───────────────────────────── Settings ─────────────────────────────
 
 export async function loadPromptSettings(tx: DBorTx = db): Promise<CheckoutPromptSettings> {
-  const [b] = await tx.select({ p: brandSettings.checkoutPrompts }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return promptSettings(b?.p);
+  return promptSettings(await brandColumn("checkoutPrompts", null, tx));
 }
 
 /** The settings at one shop: its own (Setup → Sync status) or the brand's. */
 export async function promptSettingsAt(shopId: string | null | undefined, tx: DBorTx = db): Promise<CheckoutPromptSettings> {
   const own = await localValue<unknown>("checkout_prompts", "brand", shopId, tx);
   return own ? promptSettings(own) : loadPromptSettings(tx);
-}
-
-export async function savePromptSettings(input: unknown, actor: Actor): Promise<CheckoutPromptSettings> {
-  const r = CheckoutPromptSettingsSchema.safeParse(input);
-  if (!r.success) throw new AppError("bad_request", r.error.issues[0]?.message ?? "Check the checkout prompt settings");
-  const after = { rebook: { ...r.data.rebook, reasons: [...new Set(r.data.rebook.reasons)] }, product: r.data.product };
-  const before = await loadPromptSettings();
-  await db.update(brandSettings).set({ checkoutPrompts: after, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(actor, "brand.checkout_prompts", "brand_settings", "1", { before, after }, null);
-  return after;
 }
 
 export async function promptRules(tx: DBorTx = db): Promise<(PromptRule & { id: string })[]> {

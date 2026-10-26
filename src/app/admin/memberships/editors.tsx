@@ -3,22 +3,24 @@
 import { useState } from "react";
 import { ItemPicker, Chips, toggle } from "@/components/chips";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { useAction } from "@/components/use-action";
 import type { PlanInput } from "@/domain/memberships";
 import { parseDollars } from "@/lib/money";
 import { searchCustomersAction } from "../calendar/actions";
-import { cancelMembershipAction, enrollAction, keepMembershipAction, savePlanAction, setMembershipsEnabledAction } from "./actions";
+import { cancelMembershipAction, enrollAction, keepMembershipAction, savePlanAction } from "./actions";
 
 type Option = { id: string; name: string };
 
 export function MembershipsSwitch({ on }: { on: boolean }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("memberships", on ? "Turn memberships off" : "Turn memberships on");
   return (
     <div className="flex items-center gap-3">
-      <Button size="sm" variant={on ? "secondary" : "primary"} disabled={pending} onClick={() => run(() => setMembershipsEnabledAction(!on))}>
+      <Button size="sm" variant={on ? "secondary" : "primary"} disabled={pending} onClick={() => saveSetting(!on)}>
         {on ? "Turn memberships off" : "Turn memberships on"}
       </Button>
-      {error && <span className="text-xs text-red-600">{error}</span>}
+      <SyncMsg msg={msg} />
+      {dialog}
     </div>
   );
 }

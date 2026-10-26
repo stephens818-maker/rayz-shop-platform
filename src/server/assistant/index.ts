@@ -1,17 +1,15 @@
 import "server-only";
 import { and, asc, count, desc, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
-import { assistantActions, assistantConversations, assistantMessages, brandSettings, shops } from "@/db/schema";
+import { assistantActions, assistantConversations, assistantMessages, shops } from "@/db/schema";
 import {
   ACTION_TTL_MS,
   ASSISTANT_REPORTS,
-  AssistantSettingsSchema,
   HISTORY_MESSAGES,
   MAX_ROUNDS,
   MAX_TOOL_CALLS,
   QUESTION_MAX,
   assistantOn,
-  assistantSettings,
   suggestions,
   systemPrompt,
   type AssistantCard,
@@ -28,26 +26,17 @@ import { AppError, forbidden, notFound } from "../errors";
 import { whoOf } from "../inventory/ledger";
 import { createPos } from "../inventory/purchasing";
 import { saveBlast } from "../marketing/campaigns";
+import { settingAt } from "../brand-sync/settings";
 import { assistantProvider, type ChatMessage, type Provider, type ToolCall } from "./providers";
 import { toolsFor } from "./tools";
 
-export async function loadAssistantSettings(): Promise<AssistantSettings> {
-  const [b] = await db.select({ a: brandSettings.assistant }).from(brandSettings).limit(1);
-  return assistantSettings(b?.a);
+export async function loadAssistantSettings(shopId?: string | null): Promise<AssistantSettings> {
+  return settingAt<AssistantSettings>("assistant", shopId);
 }
 
-export async function saveAssistantSettings(ctx: StaffContext, raw: unknown) {
-  if (!can(ctx, "assistant.settings")) throw forbidden("You can't change Rayz Assistant's settings");
-  const parsed = AssistantSettingsSchema.safeParse(raw);
-  if (!parsed.success) throw new AppError("bad_request", parsed.error.issues[0]?.message ?? "Check the assistant settings");
-  await db.update(brandSettings).set({ assistant: parsed.data, updatedAt: new Date() });
-  await audit(ctx.actor, "settings.assistant", "brand_settings", "assistant", parsed.data, null);
-  return parsed.data;
-}
-
-/** Whether this person gets the assistant right now: it's on for the role they're working under, and a provider is set up. */
+/** Whether this person gets the assistant right now: it's on for the role they're working under at their shop, and a provider is set up. */
 export async function assistantAccess(ctx: StaffContext, provider: Provider | null = assistantProvider()) {
-  const settings = await loadAssistantSettings();
+  const settings = await loadAssistantSettings(ctx.currentShopId);
   const on = !!provider && assistantOn(settings, ctx.staff.roleId);
   return { on, settings, provider };
 }

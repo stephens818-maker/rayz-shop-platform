@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Button, Field, Input, Select, Table, Td, Th } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { saveBrandLevelsAction, saveInventorySettingsAction, savePoApprovalThresholdAction } from "../actions";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
+import { saveBrandLevelsAction, saveInventorySettingsAction } from "../actions";
 
 export function ShopSettingsRow({ shop }: { shop: { id: string; name: string; email: string | null; negativeStock: "block" | "warn"; inventoryAlertEmail: string | null } }) {
   const { pending, error, run } = useAction();
@@ -49,9 +50,8 @@ export function ShopSettingsRow({ shop }: { shop: { id: string; name: string; em
 }
 
 export function ApprovalLimit({ cents }: { cents: number | null }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("po_approval");
   const [val, setVal] = useState(cents === null ? "" : (cents / 100).toFixed(2));
-  const [saved, setSaved] = useState(false);
   return (
     <div className="flex flex-wrap items-end gap-3 p-4">
       <Field label="Approve orders over" hint="Blank: no approval step. Orders at or under the limit are approved as they're sent." className="w-72">
@@ -59,17 +59,14 @@ export function ApprovalLimit({ cents }: { cents: number | null }) {
           inputMode="decimal"
           value={val}
           placeholder="No approval step"
-          onChange={(e) => {
-            setSaved(false);
-            setVal(e.target.value);
-          }}
+          onChange={(e) => setVal(e.target.value)}
         />
       </Field>
-      <Button disabled={pending} onClick={() => run(() => savePoApprovalThresholdAction(val.trim() === "" ? null : Math.round((Number(val.replace(/[^0-9.]/g, "")) || 0) * 100)), () => setSaved(true))}>
+      <Button disabled={pending} onClick={() => saveSetting(val.trim() === "" ? null : Math.round((Number(val.replace(/[^0-9.]/g, "")) || 0) * 100))}>
         Save limit
       </Button>
-      {saved && <span className="text-sm text-green-700">Saved.</span>}
-      {error && <span className="text-sm text-red-600">{error}</span>}
+      <SyncMsg msg={msg} className="text-sm" />
+      {dialog}
     </div>
   );
 }

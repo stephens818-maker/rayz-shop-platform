@@ -18,6 +18,8 @@ export interface OpenSync {
   /** Shown in the dialog title and the history, e.g. "Skin fade price". Defaults to the setting's name. */
   label?: string;
   onDone?: (r: CommitResult) => void;
+  /** The dialog was closed without saving, or the save failed (with the error). */
+  onCancel?: (error?: string) => void;
 }
 
 const STATUS_DOT: Record<CellStatus, string> = { in_sync: "bg-emerald-500", overridden: "bg-violet-500", out_of_sync: "bg-amber-500" };
@@ -104,13 +106,19 @@ export function useBrandSync() {
       setBusy(true);
       const r = await previewBrandSyncAction(o.changes);
       setBusy(false);
-      if (!r.ok) return setError(r.error);
+      if (!r.ok) {
+        o.onCancel?.(r.error);
+        return setError(r.error);
+      }
       const shopsAffected = r.data.keys.some((k) => !k.brandOnly && k.cells.length);
       if (!shopsAffected) {
         setBusy(true);
         const c = await commitBrandSyncAction({ changes: o.changes, scope: "brand_only", shopIds: [], overrides: {}, label: o.label });
         setBusy(false);
-        if (!c.ok) return setError(c.error);
+        if (!c.ok) {
+          o.onCancel?.(c.error);
+          return setError(c.error);
+        }
         o.onDone?.(c.data);
         router.refresh();
         return;
@@ -123,7 +131,10 @@ export function useBrandSync() {
   const dialog = req ? (
     <BrandSyncDialog
       req={req}
-      onClose={() => setReq(null)}
+      onClose={() => {
+        req.onCancel?.();
+        setReq(null);
+      }}
       onDone={(r) => {
         const done = req.onDone;
         setReq(null);
@@ -480,6 +491,15 @@ export function SyncMsg({ msg, className }: { msg: { ok: boolean; text: string }
 /** useSyncSave for an editor of one setting in the settings registry (src/server/brand-sync/settings.ts). */
 export function useSettingSync(key: string, label?: string) {
   const s = useSyncSave();
-  const saveSetting = (value: unknown, onDone?: (r: CommitResult) => void) => s.save({ label, changes: [{ type: "setting", item: key, value }], onDone });
-  return { ...s, saveSetting };
+  const saveSetting = (value: unknown, onDone?: (r: CommitResult) => void, onCancel?: (error?: string) => void) => s.save({ label, changes: [{ type: "setting", item: key, value }], onDone, onCancel });
+  /** saveSetting as a promise, for inline pickers that save on click: ok once synced, not ok when closed or failed. */
+  const saveAsync = (value: unknown) =>
+    new Promise<{ ok: true; data: null } | { ok: false; error: string }>((resolve) =>
+      saveSetting(
+        value,
+        () => resolve({ ok: true, data: null }),
+        (error) => resolve({ ok: false, error: error ?? "" }),
+      ),
+    );
+  return { ...s, saveSetting, saveAsync };
 }

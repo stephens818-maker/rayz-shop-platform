@@ -11,7 +11,7 @@ import { audit } from "@/server/audit";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { assertShopMayEdit, noteShopEdit } from "@/server/brand-sync/engine";
 import { AppError, forbidden } from "@/server/errors";
-import { AdjustInput, BrandLevelsInput, ShopInventorySettings, ShopLevelsInput, adjustStock, saveBrandLevels, savePoApprovalThreshold, saveShopInventorySettings, saveShopLevels, sendLowStockAlerts } from "@/server/inventory/adjust";
+import { AdjustInput, BrandLevelsInput, ShopInventorySettings, ShopLevelsInput, adjustStock, saveBrandLevels, saveShopInventorySettings, saveShopLevels, sendLowStockAlerts } from "@/server/inventory/adjust";
 import { whoOf } from "@/server/inventory/ledger";
 
 async function staffFor(perms: Permission | Permission[], shopId?: string) {
@@ -79,16 +79,6 @@ export async function saveInventorySettingsAction(raw: z.input<typeof ShopInvent
   return safe(async () => {
     const { who } = await staffFor(["inventory.manage", "settings.shop"], raw.shopId);
     await saveShopInventorySettings(who, raw);
-    revalidatePath("/admin/inventory/settings");
-    return null;
-  });
-}
-
-export async function savePoApprovalThresholdAction(cents: number | null) {
-  return safe(async () => {
-    const { ctx, who } = await staffFor("settings.brand");
-    if (!ctx.brandWide) throw forbidden("The approval limit applies at every shop, so it needs access to all shops");
-    await savePoApprovalThreshold(who, cents);
     revalidatePath("/admin/inventory/settings");
     return null;
   });

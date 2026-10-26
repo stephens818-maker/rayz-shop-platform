@@ -4,13 +4,12 @@ import { and, eq, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { brandSettings, services, shopServices, shops, staff, staffServiceDurations, staffShops } from "@/db/schema";
+import { services, shopServices, shops, staff, staffServiceDurations, staffShops } from "@/db/schema";
 import { BUFFER_MAX, DURATION_STEPS, bufferProblem, durationProblem, intervalProblem } from "@/domain/timing";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, assertShopAccess, authorize } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
-import { brandInterval } from "@/server/timing";
 
 const ALL_SHOPS = "That's a brand setting every shop shares, so changing it needs access to all shops";
 
@@ -39,19 +38,6 @@ async function barberScope(ctx: StaffContext, staffId: string, shopId: string | 
     throw forbidden(`${person.displayLabel} also works at shops outside your access, so set their interval for one of your shops instead`);
   }
   return person;
-}
-
-export async function saveBrandIntervalAction(minutes: number) {
-  return safe(async () => {
-    const ctx = await authorize("scheduling.timing");
-    if (!ctx.brandWide) throw forbidden(ALL_SHOPS);
-    checkInterval(minutes);
-    const before = await brandInterval();
-    await db.update(brandSettings).set({ slotIntervalMinutes: minutes, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-    await audit(ctx.actor, "timing.brand_interval", "brand", "1", { from: before, to: minutes }, null);
-    refresh();
-    return null;
-  });
 }
 
 /** Null: follow the brand default. */

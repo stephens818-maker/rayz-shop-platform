@@ -4,6 +4,7 @@ import { Fragment, useState } from "react";
 import { ClientBadge } from "@/components/client-badges";
 import { SegmentFilters } from "@/components/segment-filters";
 import { Badge, Button, Card, CardHeader, Field, Input, Select, Textarea, cx } from "@/components/ui";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { useAction } from "@/components/use-action";
 import type { FilterOptions, PanelSees } from "@/domain/client-filters";
 import {
@@ -26,16 +27,16 @@ import {
 } from "@/domain/badges";
 import { NOTIFY_DEFAULT, canNotify, customerMayShow, customerSetting, type BadgeChange } from "@/domain/customer-badges";
 import { EMPTY_SEGMENT, type Segment } from "@/domain/marketing";
-import { deleteCustomBadgeAction, recomputeBadgesAction, saveBadgeSettingsAction, saveCustomBadgeAction } from "./actions";
+import { deleteCustomBadgeAction, recomputeBadgesAction, saveCustomBadgeAction } from "./actions";
 
 type Role = BadgeRole & { name: string };
 type Row = { key: string; label: string; icon: BadgeIcon; tone: BadgeTone; hint: string; sensitive?: boolean; money?: boolean; filter?: Segment };
 
-export function BadgeSettingsEditor({ initial, roles, custom }: { initial: BadgeSettings; roles: Role[]; custom: CustomBadge[] }) {
-  const { pending, error, run } = useAction();
+export function BadgeSettingsEditor({ initial, roles, custom, readOnly }: { initial: BadgeSettings; roles: Role[]; custom: CustomBadge[]; readOnly?: boolean }) {
+  const { pending, msg, saveSetting, dialog } = useSettingSync("badges");
   const [s, setS] = useState(initial);
-  const [saved, setSaved] = useState(false);
-  const dirty = JSON.stringify(s) !== JSON.stringify(initial);
+  const [base, setBase] = useState(initial);
+  const dirty = JSON.stringify(s) !== JSON.stringify(base);
   const on = (key: string) => !(s.off as string[]).includes(key);
   const setOn = (key: string, v: boolean) => setS((x) => ({ ...x, off: v ? x.off.filter((k) => k !== key) : ([...x.off, key] as BadgeSettings["off"]) }));
   const setRole = (key: string, roleId: string, v: boolean) => setS((x) => ({ ...x, roles: { ...x.roles, [key]: { ...x.roles[key], [roleId]: v } } }));
@@ -172,12 +173,16 @@ export function BadgeSettingsEditor({ initial, roles, custom }: { initial: Badge
             ))}
           </div>
         </div>
-        {error && <p className="text-sm text-red-700">{error}</p>}
-        {saved && !dirty && <p className="text-sm text-emerald-700">Saved.</p>}
-        <Button disabled={pending || !dirty} onClick={() => run(() => saveBadgeSettingsAction(s), () => setSaved(true))}>
-          Save
-        </Button>
+        <SyncMsg msg={msg} className="block text-sm" />
+        {readOnly ? (
+          <p className="text-sm text-zinc-500">Set by the brand for every shop.</p>
+        ) : (
+          <Button disabled={pending || !dirty} onClick={() => saveSetting(s, () => setBase(s))}>
+            Save
+          </Button>
+        )}
       </div>
+      {dialog}
     </Card>
   );
 }

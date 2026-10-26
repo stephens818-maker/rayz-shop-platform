@@ -116,7 +116,7 @@ export async function handleInboundSms(i: InboundSms, now = new Date()) {
   if (reply === "help") {
     // With Twilio Advanced Opt-Out on, Twilio answers HELP with the same text (set in the Messaging Service).
     if (process.env.TWILIO_ADVANCED_OPT_OUT !== "1") {
-      const jobId = await queueShopText({ shopId: shop.id, to: phone, body: (await loadMarketingSettings()).helpText, kind: "shop_reply", auto: true }, db, now);
+      const jobId = await queueShopText({ shopId: shop.id, to: phone, body: (await loadMarketingSettings(shop.id)).helpText, kind: "shop_reply", auto: true }, db, now);
       await sendDue([jobId]);
     }
     return { twiml: EMPTY_RESPONSE, threadId: thread.id, handled: reply };

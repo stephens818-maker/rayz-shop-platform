@@ -2,22 +2,13 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { brandSettings, services, staff, staffMilestoneBaselines, staffMilestoneRules } from "@/db/schema";
+import { services, staff, staffMilestoneBaselines, staffMilestoneRules } from "@/db/schema";
 import { BirthdayInput, COUNT_METRICS, CUSTOM_KINDS, MilestoneSettings, RuleInput, cleanThresholds, ruleProblem } from "@/domain/milestones";
 import { isValidLocalDate, todayLocal } from "@/lib/time";
 import { audit } from "../audit";
 import { type StaffContext, assertCan } from "../auth/staff";
 import { AppError, forbidden, notFound } from "../errors";
 import { loadMilestoneSettings } from "./engine";
-
-export async function saveMilestoneSettings(ctx: StaffContext, raw: unknown) {
-  assertCan(ctx, "milestones.settings");
-  const parsed = MilestoneSettings.safeParse(raw);
-  if (!parsed.success) throw new AppError("bad_request", parsed.error.issues[0]?.message ?? "Check the milestone settings");
-  await db.update(brandSettings).set({ milestones: parsed.data, updatedAt: new Date() });
-  await audit(ctx.actor, "settings.milestones", "brand_settings", "milestones", parsed.data, null);
-  return parsed.data;
-}
 
 export async function saveRule(ctx: StaffContext, raw: unknown) {
   assertCan(ctx, "milestones.settings");

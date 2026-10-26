@@ -6,7 +6,6 @@ import {
   analyticsEvents,
   analyticsExports,
   appointments,
-  brandSettings,
   sales,
   shops,
   staff,
@@ -23,8 +22,8 @@ import {
   deviceClass,
 } from "@/domain/analytics";
 import { scrubText } from "@/lib/sensitive";
-import { type Actor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
+import { brandColumn, noteBackfilled } from "./brand-sync/settings";
 import { resolveReceipt } from "./receipts";
 import { toCsv } from "./reports";
 
@@ -89,38 +88,12 @@ export async function recordEvent(e: EventInput, tx: DBorTx = db) {
 
 // ───────────────────────────── Settings ─────────────────────────────
 
+/** The brand's settings and bookkeeping, with `satisfaction` as the shop has it when one is given. */
 export async function loadAnalyticsSettings(
+  shopId?: string | null,
   tx: DBorTx = db,
 ): Promise<AnalyticsSettings> {
-  const [b] = await tx
-    .select({ a: brandSettings.analytics })
-    .from(brandSettings)
-    .where(eq(brandSettings.id, 1));
-  return analyticsSettings(b?.a);
-}
-
-export async function saveAnalyticsSettings(
-  input: { satisfaction: boolean; warehouse: boolean },
-  actor: Actor,
-) {
-  const before = await loadAnalyticsSettings();
-  const after = {
-    ...before,
-    satisfaction: input.satisfaction,
-    warehouse: input.warehouse,
-  };
-  await db
-    .update(brandSettings)
-    .set({
-      analytics: sql`${brandSettings.analytics} || ${JSON.stringify({ satisfaction: after.satisfaction, warehouse: after.warehouse })}::jsonb`,
-      updatedAt: new Date(),
-    })
-    .where(eq(brandSettings.id, 1));
-  await audit(actor, "analytics.settings", "brand_settings", "1", {
-    before: { satisfaction: before.satisfaction, warehouse: before.warehouse },
-    after: input,
-  });
-  return after;
+  return analyticsSettings(await brandColumn("analytics", shopId, tx));
 }
 
 // ───────────────────────────── Booking funnel ─────────────────────────────
@@ -302,8 +275,7 @@ export async function runBackfill(
       sql`select analytics_backfill(${t})::int n`,
     )) as unknown as { n: number }[];
     done[t] = r.n;
-    await db.execute(sql`update brand_settings set analytics = jsonb_set(analytics, '{backfilled}', coalesce(analytics->'backfilled', '[]'::jsonb) || to_jsonb(${t}::text))
-      where id = 1 and not coalesce(analytics->'backfilled', '[]'::jsonb) ? ${t}`);
+    await noteBackfilled(t);
   }
   return {
     done,
@@ -546,12 +518,12 @@ export async function warehouseRuns(limit = 10) {
 
 /** The receipt's "How was your visit?", when the brand asks it and this ticket was paid. */
 export async function receiptSatisfaction(saleId: string) {
-  if (!(await loadAnalyticsSettings()).satisfaction) return null;
   const [s] = await db
-    .select({ status: sales.status, paidAt: sales.paidAt })
+    .select({ status: sales.status, paidAt: sales.paidAt, shopId: sales.shopId })
     .from(sales)
     .where(eq(sales.id, saleId));
   if (!s || !s.paidAt || s.status === "voided") return null;
+  if (!(await loadAnalyticsSettings(s.shopId)).satisfaction) return null;
   const [v] = await db
     .select({ stars: visitSatisfaction.stars })
     .from(visitSatisfaction)

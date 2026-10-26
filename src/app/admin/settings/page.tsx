@@ -49,7 +49,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     db.select().from(shopHours).where(eq(shopHours.shopId, shopId)),
     db.select().from(shopClosures).where(and(eq(shopClosures.shopId, shopId), gte(shopClosures.date, todayLocal()))).orderBy(asc(shopClosures.date)),
     getLoyaltyConfig(),
-    brandInterval(),
+    brandInterval(shopId),
     db.select().from(terminalReaders).where(eq(terminalReaders.shopId, shopId)).orderBy(asc(terminalReaders.createdAt)),
     shopHandoffConfig(shopId),
     brandHandoffConfig(),

@@ -23,7 +23,7 @@ export default async function MembershipsPage({ searchParams }: { searchParams: 
   const filter = (sp.status && sp.status in FILTERS ? sp.status : "live") as keyof typeof FILTERS;
   const manage = can(ctx, "memberships.manage");
   const sell = can(ctx, "memberships.sell");
-  const [on, plans] = await Promise.all([membershipsEnabled(), listPlans()]);
+  const [on, plans] = await Promise.all([membershipsEnabled(ctx.currentShopId), listPlans()]);
   const planId = plans.some((p) => p.id === sp.plan) ? sp.plan : undefined;
   const board = await membershipBoard(ctx, { status: filter === "live" ? undefined : filter, planId });
   const svc = manage ? await db.select({ id: services.id, name: services.name }).from(services).where(eq(services.active, true)).orderBy(asc(services.sortOrder), asc(services.name)) : [];
@@ -37,7 +37,7 @@ export default async function MembershipsPage({ searchParams }: { searchParams: 
       <PageHeader
         title="Memberships"
         subtitle="Monthly plans like an unlimited buzz cut. Members pay through Stripe Billing, and checkout covers their plan's services automatically at every shop that honors the plan."
-        actions={manage ? <MembershipsSwitch on={on} /> : undefined}
+        actions={manage && ctx.brandWide ? <MembershipsSwitch on={on} /> : undefined}
       />
       {!on && (
         <Notice tone="amber">

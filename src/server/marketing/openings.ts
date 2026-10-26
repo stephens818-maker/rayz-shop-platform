@@ -250,7 +250,7 @@ export interface OpeningsSetup {
 export async function openingsSetup(ctx: StaffContext, shopId: string, now = new Date()): Promise<OpeningsSetup> {
   if (!mayOpenings(ctx)) throw forbidden("Sending openings needs Campaign Center: We have openings");
   const shop = await shopFor(ctx, shopId);
-  const [s, os, team, used] = await Promise.all([loadMarketingSettings(), loadOpeningsSettings(), shopBarbers(shop.id, { onlineOnly: true }), usedAt(shop.id, now)]);
+  const [s, os, team, used] = await Promise.all([loadMarketingSettings(shop.id), loadOpeningsSettings(shop.id), shopBarbers(shop.id, { onlineOnly: true }), usedAt(shop.id, now)]);
   const today = todayLocal(now);
   const tomorrow = addDays(today, 1);
   const barbers = [];
@@ -303,7 +303,7 @@ export async function previewOpenings(ctx: StaffContext, input: unknown, now = n
   const v = parse(OpeningsInputSchema, input);
   const shop = await shopFor(ctx, v.shopId);
   await bookableHere(shop.id, v.staffIds);
-  const [s, os, used] = await Promise.all([loadMarketingSettings(), loadOpeningsSettings(), usedAt(shop.id, now)]);
+  const [s, os, used] = await Promise.all([loadMarketingSettings(shop.id), loadOpeningsSettings(shop.id), usedAt(shop.id, now)]);
   const rules = rulesFor(os, shop.id);
   const today = todayLocal(now);
   const problem = windowProblem(v.dates, today);
@@ -415,7 +415,7 @@ export async function sendOpenings(ctx: StaffContext, input: unknown, now = new 
   const today = todayLocal(now);
   const wp = windowProblem(v.dates, today);
   if (wp) throw new AppError("bad_request", wp);
-  const [s, os] = await Promise.all([loadMarketingSettings(), loadOpeningsSettings()]);
+  const [s, os] = await Promise.all([loadMarketingSettings(shop.id), loadOpeningsSettings(shop.id)]);
   if (v.channels.includes("email") && !s.address.trim() && !v.channels.includes("sms")) throw new AppError("bad_request", "Email needs the brand's postal address. Send by text, or ask the brand to add it.");
   const rules = rulesFor(os, shop.id);
   const staffIds = [...new Set(v.staffIds)];
@@ -492,7 +492,7 @@ export async function approveOpenings(ctx: StaffContext, id: string, now = new D
   if (!c) throw new AppError("conflict", "Someone already handled this one");
   const seg = OpeningsSegmentSchema.parse(c.segment);
   const [shop] = await db.select().from(shops).where(eq(shops.id, c.shopIds[0]));
-  const [s, os] = await Promise.all([loadMarketingSettings(), loadOpeningsSettings()]);
+  const [s, os] = await Promise.all([loadMarketingSettings(c.shopIds[0]), loadOpeningsSettings(c.shopIds[0])]);
   const left = seg.dates.filter((d) => d >= todayLocal(now));
   const p = shop && left.length ? await planFor(shop, seg.staffId, { ...seg, dates: left }, s, os, now) : null;
   if (!shop || !p || p.problem) {
@@ -726,7 +726,7 @@ export async function textOpeningsWaitlist(ctx: StaffContext, id: string, now = 
   const waiting = await db.select().from(openingsWaitlist).where(and(eq(openingsWaitlist.campaignId, id), eq(openingsWaitlist.status, "waiting")));
   if (!waiting.length) throw new AppError("bad_request", "Nobody is waiting");
   const [shop] = await db.select().from(shops).where(eq(shops.id, c.shopIds[0]));
-  const s = await loadMarketingSettings();
+  const s = await loadMarketingSettings(shop.id);
   const runAt = nextSendAt(now, shop.timezone, s);
   const body = `Ray'z ${shop.name}: a time with ${live.barber.firstName} just opened up. First come, first served: ${appBaseUrl()}/book/${shop.slug}/openings/${id}`;
   const jobs = await db.transaction(async (tx) => {

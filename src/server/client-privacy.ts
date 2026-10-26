@@ -230,7 +230,7 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
         levels,
         entries: entriesFor(rules, ctx.staff.id, working, fields),
       };
-      const [settings, customBadges] = await Promise.all([loadBadgeSettings(), listCustomBadges({ active: true })]);
+      const [settings, customBadges] = await Promise.all([loadBadgeSettings(ctx.currentShopId), listCustomBadges({ active: true })]);
       const badges = visibleBadges(settings, customBadges, {
         isOwner: ctx.isOwner,
         roles: working.map((w) => ({ id: w.roleId, key: w.roleKey, brandLevel: w.brandLevel })),

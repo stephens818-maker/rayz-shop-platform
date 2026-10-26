@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
 import { brandSettings, shopSyncState } from "@/db/schema";
@@ -6,7 +6,7 @@ import { BadgeSettingsSchema, badgeSettings, thresholdsProblem } from "@/domain/
 import { SyncArea, clip, money, onOff, syncKey } from "@/domain/brand-sync";
 import { cleanLimits, cleanShopLoginCap, isShopLoginCap, SHOP_LOGIN_CAP_LABEL } from "@/domain/client-privacy";
 import { compensationSettings, settingsProblem as compensationProblem } from "@/domain/compensation";
-import { analyticsSettings, analyticsSettingsInput } from "@/domain/analytics";
+import { analyticsSettings } from "@/domain/analytics";
 import { AssistantSettingsSchema, assistantSettings } from "@/domain/assistant";
 import { FamilySettingsSchema, familySettings } from "@/domain/family";
 import { LOOKUP_DEFS, LOOKUP_KEYS, LookupKey, cleanList, listProblem } from "@/domain/lookups";
@@ -227,8 +227,6 @@ const lookupSetting = (key: LookupKey) => {
     short: (v) => `${v.length} entr${v.length === 1 ? "y" : "ies"}`,
   });
 };
-
-const ANALYTICS_KEYS = ["satisfaction", "warehouse"] as const;
 
 export const SETTINGS: readonly SettingDef[] = [
   def<string>({
@@ -509,7 +507,7 @@ export const SETTINGS: readonly SettingDef[] = [
     column: "family",
     perms: ["settings.brand"],
     paths: ["/admin/settings"],
-    note: "A family booked or checked out at a shop follows that shop's rules; the app outside a shop uses the brand's.",
+    note: "A family booked or checked out at a shop follows that shop's rules; the app outside a shop uses the brand's. Whose loyalty card a child's visits earn on is the brand's, since a card covers every shop.",
     read: familySettings,
     parse: (raw, before) => zparse(FamilySettingsSchema, { ...before, ...obj(raw) }, "Check the family settings"),
     audit: "brand.family_settings",
@@ -569,21 +567,35 @@ export const SETTINGS: readonly SettingDef[] = [
     describe: (v) => ({ Memberships: onOff(v) }),
     short: onOff,
   }),
-  def({
-    key: "analytics",
-    label: "Event log options",
+  def<boolean>({
+    key: "visit_question",
+    label: "Post-visit 1-5 question",
     area: "features",
     column: "analytics",
     perms: ["analytics.settings"],
     paths: ["/admin/analytics"],
-    read: (col) => {
-      const a = analyticsSettings(col);
-      return { satisfaction: a.satisfaction, warehouse: a.warehouse };
-    },
-    parse: (raw, before) => analyticsSettingsInput.parse({ ...before, ...obj(raw) }),
-    toColumn: (v, col) => ({ ...obj(col), ...Object.fromEntries(ANALYTICS_KEYS.map((k) => [k, v[k]])) }),
-    labels: { satisfaction: "Post-visit 1-5 question", warehouse: "Nightly warehouse copy" },
+    hint: "Asked on the receipt",
+    read: (col) => analyticsSettings(col).satisfaction,
+    parse: (raw) => zparse(z.boolean(), raw, "Turn the question on or off"),
+    toColumn: (v, col) => ({ ...obj(col), satisfaction: v }),
     audit: "analytics.settings",
+    describe: (v) => ({ "Post-visit question": onOff(v) }),
+    short: onOff,
+  }),
+  def<boolean>({
+    key: "warehouse",
+    label: "Nightly warehouse copy",
+    area: "features",
+    column: "analytics",
+    perms: ["analytics.settings"],
+    paths: ["/admin/analytics"],
+    wholeBrand: "The brand's whole event log goes to one warehouse in one nightly copy, so this is the same at every shop.",
+    read: (col) => analyticsSettings(col).warehouse,
+    parse: (raw) => zparse(z.boolean(), raw, "Turn the warehouse copy on or off"),
+    toColumn: (v, col) => ({ ...obj(col), warehouse: v }),
+    audit: "analytics.settings",
+    describe: (v) => ({ "Warehouse copy": onOff(v) }),
+    short: onOff,
   }),
 ];
 
@@ -627,6 +639,17 @@ export async function brandColumn<C extends BrandColumn>(column: C, shopId?: str
     if (d) v = toColumn(d, r.local, v);
   }
   return v as BrandRow[C] | undefined;
+}
+
+/**
+ * Writes one brand_settings column. Only the brand change scope calls it (this module and the
+ * adapters), so every brand-level change has a scope, history and undo.
+ */
+export async function writeBrandColumn<C extends BrandColumn>(tx: DBorTx, column: C, value: BrandRow[C]) {
+  await tx
+    .insert(brandSettings)
+    .values({ id: 1, loyalty: {}, [column]: value })
+    .onConflictDoUpdate({ target: brandSettings.id, set: { [column]: value, updatedAt: new Date() } });
 }
 
 /** brandColumn for several shops at once: `at(shopId)` is the column as that shop has it, `at(null)` the brand's. */
@@ -689,6 +712,15 @@ export async function settingAtShops<V>(key: string, shopIds: readonly string[],
   return { brand, byShop: new Map(rows.map((r) => [r.shopId, d.read(toColumn(d, r.local, col)) as V])) };
 }
 
+/**
+ * Bookkeeping the app keeps in brand_settings that isn't a setting anyone edits: which history
+ * tables the event log has already backfilled.
+ */
+export async function noteBackfilled(table: string, tx: DBorTx = db) {
+  await tx.execute(sql`update brand_settings set analytics = jsonb_set(analytics, '{backfilled}', coalesce(analytics->'backfilled', '[]'::jsonb) || to_jsonb(${table}::text))
+    where id = 1 and not coalesce(analytics->'backfilled', '[]'::jsonb) ? ${table}`);
+}
+
 // ───────────────────────────── The adapter ─────────────────────────────
 
 export const settingAdapter: SyncAdapter<unknown, unknown> = {
@@ -714,11 +746,7 @@ export const settingAdapter: SyncAdapter<unknown, unknown> = {
     if (!brand || brand.to === null) return;
     const d = settingOf(item);
     const col = (await brandRow(tx))[d.column];
-    const next = toColumn(d, brand.to, col) as never;
-    await tx
-      .insert(brandSettings)
-      .values({ id: 1, loyalty: {}, [d.column]: next })
-      .onConflictDoUpdate({ target: brandSettings.id, set: { [d.column]: next, updatedAt: new Date() } });
+    await writeBrandColumn(tx, d.column, toColumn(d, brand.to, col) as never);
     await d.after?.(tx, brand.from, brand.to);
     await audit(who.actor, d.audit, "brand_settings", d.key, { setting: d.key, before: brand.from, after: brand.to, via: "brand_sync" }, null, tx);
   },

@@ -9,8 +9,8 @@ import type { Permission } from "@/domain/permissions";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { assertShopMayEdit, noteShopEdit } from "@/server/brand-sync/engine";
-import { AppError, forbidden } from "@/server/errors";
-import { clearShopOverride, saveBrandDefault, setShopOverride } from "@/server/location-defaults";
+import { AppError } from "@/server/errors";
+import { clearShopOverride, setShopOverride } from "@/server/location-defaults";
 
 function keyOf(raw: string): DefaultKey {
   if (!isDefaultKey(raw)) throw new AppError("bad_request", "Unknown setting");
@@ -28,19 +28,6 @@ const refresh = () => {
   revalidatePath("/admin/brand-defaults");
   revalidatePath("/admin/settings");
 };
-
-/** Brand values reach every following location, so they need brand settings and every shop. */
-export async function saveBrandDefaultAction(rawKey: string, value: unknown) {
-  return safe(async () => {
-    const ctx = await authorize("settings.brand");
-    if (!ctx.brandWide) throw forbidden("Brand defaults apply at every shop, so they need access to all shops");
-    const key = keyOf(rawKey);
-    await checkRole(key, value);
-    const r = await saveBrandDefault(ctx.actor, key, value);
-    refresh();
-    return r;
-  });
-}
 
 const shopPerms = (key: DefaultKey) => [...SECTION_SHOP_PERMISSIONS[DEFAULT_FIELDS[key].section]] as Permission[];
 

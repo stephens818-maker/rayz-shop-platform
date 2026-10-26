@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Card, CardHeader, PageHeader } from "@/components/ui";
-import { db } from "@/db";
+import { brandColumn } from "@/server/brand-sync/settings";
 import { APP_SWITCHES, APP_SWITCH_LABEL, envKilled, switchesFrom } from "@/server/app-switches";
 import { guardPage } from "@/server/auth/staff";
 import { SwitchToggle } from "./client";
@@ -9,8 +9,7 @@ export const metadata: Metadata = { title: "App switches" };
 
 export default async function AppSwitchesPage() {
   await guardPage("/admin/app-switches");
-  const row = await db.query.brandSettings.findFirst({ columns: { appSwitches: true } });
-  const stored = row?.appSwitches ?? {};
+  const stored = (await brandColumn("appSwitches")) ?? {};
   const killed = envKilled();
   const now = switchesFrom(stored);
   return (

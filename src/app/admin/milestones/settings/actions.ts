@@ -4,22 +4,13 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
-import { deleteBaseline, deleteRule, saveBaseline, saveMilestoneSettings, saveRule } from "@/server/milestones/admin";
+import { deleteBaseline, deleteRule, saveBaseline, saveRule } from "@/server/milestones/admin";
 import { runMilestones } from "@/server/milestones/engine";
 
 const done = () => {
   revalidatePath("/admin/milestones/settings");
   revalidatePath("/admin/milestones");
 };
-
-export async function saveMilestoneSettingsAction(input: unknown) {
-  return safe(async () => {
-    const ctx = await authorize("milestones.settings");
-    await saveMilestoneSettings(ctx, input);
-    done();
-    return null;
-  });
-}
 
 export async function saveMilestoneRuleAction(input: unknown) {
   return safe(async () => {

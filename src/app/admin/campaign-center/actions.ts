@@ -22,7 +22,6 @@ import {
 } from "@/server/marketing/campaigns";
 import { saveTemplate, setTemplateStatus } from "@/server/marketing/templates";
 import { deleteSequence, previewSequence, saveSequence, setSequenceEnabled } from "@/server/marketing/sequences";
-import { saveMarketingSettings } from "@/server/marketing/settings";
 
 const ANY = ["campaign_center.create", "campaign_center.send"] as const;
 
@@ -162,16 +161,6 @@ export async function sendTestAction(o: { campaignId: string; shopId: string; ch
     const ctx = await authorize([...ANY], "You can't use the Campaign Center");
     const r = await sendTest(ctx, o);
     return { to: r.to };
-  });
-}
-
-export async function saveMarketingSettingsAction(input: unknown) {
-  return safe(async () => {
-    const ctx = await authorize("campaign_center.create", "Only the brand changes the Campaign Center settings");
-    if (!ctx.brandWide) throw forbidden("Only the brand changes the Campaign Center settings");
-    await saveMarketingSettings(input, ctx.actor);
-    revalidatePath("/admin/campaign-center");
-    return null;
   });
 }
 

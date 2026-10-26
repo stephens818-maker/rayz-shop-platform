@@ -164,7 +164,7 @@ export async function ticketCoupons(sale: { id: string; shopId: string; customer
 async function campaignFor(tx: DBorTx, promoId: string, customerId: string | null, issued: Issued | null, now: Date): Promise<string | null> {
   if (issued?.campaignId) return issued.campaignId;
   if (!customerId) return null;
-  const s = await loadMarketingSettings(tx);
+  const s = await loadMarketingSettings(null, tx);
   const [r] = await tx
     .select({ id: marketingSends.campaignId })
     .from(marketingSends)

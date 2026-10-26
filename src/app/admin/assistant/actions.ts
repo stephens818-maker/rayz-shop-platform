@@ -1,9 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { safe } from "@/server/action";
-import { askAssistant, assistantConversation, assistantStart, decideAssistantAction, saveAssistantSettings } from "@/server/assistant";
-import { authorize, requireStaff } from "@/server/auth/staff";
+import { askAssistant, assistantConversation, assistantStart, decideAssistantAction } from "@/server/assistant";
+import { requireStaff } from "@/server/auth/staff";
 
 export async function askAssistantAction(conversationId: string | null, question: string) {
   return safe(async () => {
@@ -24,14 +23,5 @@ export async function decideAssistantActionAction(id: string, confirm: boolean) 
   return safe(async () => {
     const ctx = await requireStaff();
     return decideAssistantAction(ctx, id, confirm);
-  });
-}
-
-export async function saveAssistantSettingsAction(settings: unknown) {
-  return safe(async () => {
-    const ctx = await authorize("assistant.settings", "You can't change Rayz Assistant's settings");
-    const r = await saveAssistantSettings(ctx, settings);
-    revalidatePath("/admin/assistant/settings");
-    return r;
   });
 }

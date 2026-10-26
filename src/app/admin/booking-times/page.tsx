@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { services, shopServices, shops, staffServiceDurations } from "@/db/schema";
 import { Empty, Notice, PageHeader } from "@/components/ui";
 import { guardPage, workingShopId } from "@/server/auth/staff";
+import { settingFor } from "@/server/brand-sync/settings";
 import { barberIntervalRows, brandInterval } from "@/server/timing";
 import { BarberDurationRow, BarberDurationsCard, BarberIntervalsCard, BrandIntervalCard, ServiceTimingCard, ShopIntervalsCard } from "./editors";
 
@@ -14,8 +15,9 @@ export default async function BookingTimesPage({ searchParams }: { searchParams:
   const ctx = await guardPage("/admin/booking-times");
   const { shop: requested } = await searchParams;
   const shopId = workingShopId(ctx, requested);
-  const [brand, shopRows] = await Promise.all([brandInterval(), db.select({ id: shops.id, name: shops.name, minutes: shops.slotIntervalMinutes }).from(shops).where(and(inArray(shops.id, ctx.shopIds), ne(shops.status, "archived"))).orderBy(asc(shops.name))]);
+  const [brand, shopRows] = await Promise.all([brandInterval(ctx.brandWide ? null : ctx.currentShopId), db.select({ id: shops.id, name: shops.name, minutes: shops.slotIntervalMinutes }).from(shops).where(and(inArray(shops.id, ctx.shopIds), ne(shops.status, "archived"))).orderBy(asc(shops.name))]);
   if (!shopRows.length) return <Empty title="No shops in your access" />;
+  const brandAt = await settingFor<number>("slot_interval", shopRows.map((s) => s.id));
   const shopById = new Map(shopRows.map((s) => [s.id, s]));
 
   const barbers = await barberIntervalRows(ctx);
@@ -74,7 +76,7 @@ export default async function BookingTimesPage({ searchParams }: { searchParams:
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <div className="space-y-5">
           <BrandIntervalCard minutes={brand} canEdit={ctx.brandWide} />
-          <ShopIntervalsCard brand={brand} shops={shopRows} />
+          <ShopIntervalsCard shops={shopRows.map((s) => ({ ...s, brand: brandAt(s.id) }))} />
         </div>
         <BarberIntervalsCard barbers={barbers} />
       </div>

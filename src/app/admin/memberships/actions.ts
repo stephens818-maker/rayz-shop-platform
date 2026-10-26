@@ -5,18 +5,9 @@ import { z } from "zod";
 import { PlanInput } from "@/domain/memberships";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
-import { CancelInput, EnrollInput, cancelMembership, enroll, keepMembership, savePlan, setMembershipsEnabled } from "@/server/memberships";
+import { CancelInput, EnrollInput, cancelMembership, enroll, keepMembership, savePlan } from "@/server/memberships";
 
 const refresh = () => revalidatePath("/admin/memberships");
-
-export async function setMembershipsEnabledAction(on: boolean) {
-  return safe(async () => {
-    const ctx = await authorize("memberships.manage");
-    await setMembershipsEnabled(ctx.actor, on);
-    refresh();
-    return null;
-  });
-}
 
 export async function savePlanAction(id: string | null, raw: z.input<typeof PlanInput>) {
   return safe(async () => {

@@ -2,7 +2,6 @@ import "server-only";
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { type DBorTx, db } from "@/db";
 import {
-  brandSettings,
   marketingTemplates,
   notificationJobs,
   staff,
@@ -55,16 +54,13 @@ import {
 import { recordEvent } from "../analytics";
 import { SYSTEM, audit } from "../audit";
 import { type StaffAccess, loadStaffAccess } from "../auth/access";
+import { brandColumn } from "../brand-sync/settings";
 import { localValue } from "../brand-sync/store";
 import { processDueJobs } from "../notifications/queue";
 import { rows, uuids } from "../report-sql";
 
 export async function loadMilestoneSettings(): Promise<MilestoneSettings> {
-  const [b] = await db
-    .select({ m: brandSettings.milestones })
-    .from(brandSettings)
-    .limit(1);
-  return milestoneSettings(b?.m);
+  return milestoneSettings(await brandColumn("milestones"));
 }
 
 /** At one shop: the brand's settings with the shop's own on-the-day banners, badges and toasts (Setup → Sync status). */

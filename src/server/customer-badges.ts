@@ -38,7 +38,8 @@ async function homeOf(customerId: string) {
 
 /** The customer's own badges and progress: only what the brand shows customers. */
 export async function customerBadges(customerId: string, now = new Date()): Promise<CustomerBadges> {
-  const [stored, settings, custom, home] = await Promise.all([storedBadges([customerId], now), loadBadgeSettings(), listCustomBadges({ active: true }), homeOf(customerId)]);
+  const [stored, custom, home] = await Promise.all([storedBadges([customerId], now), listCustomBadges({ active: true }), homeOf(customerId)]);
+  const settings = await loadBadgeSettings(home.shop?.id);
   const [row] = await rowsOf<{ since: Record<string, string>; progress: BadgeProgressFacts | Record<string, never> }>(
     db.execute(sql`select since, progress from client_badges where customer_id = ${customerId}::uuid`),
   );

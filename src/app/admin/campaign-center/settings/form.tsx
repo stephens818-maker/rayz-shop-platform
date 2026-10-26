@@ -2,16 +2,14 @@
 
 import { useState } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, buttonClass } from "@/components/ui";
-import { useAction } from "@/components/use-action";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { ATTRIBUTE_ON_LABEL, type MarketingSettings } from "@/domain/marketing";
-import { saveMarketingSettingsAction } from "../actions";
 
 export function MarketingSettingsForm({ initial, mayEdit, mayExport, campaigns }: { initial: MarketingSettings; mayEdit: boolean; mayExport: boolean; campaigns: { id: string; name: string }[] }) {
-  const { pending, error, run } = useAction();
-  const [saved, setSaved] = useState(false);
+  const { pending, msg, saveSetting, dialog } = useSettingSync("marketing");
   const [v, setV] = useState(initial);
   const [campaign, setCampaign] = useState("");
-  const set = <K extends keyof MarketingSettings>(k: K, x: MarketingSettings[K]) => (setSaved(false), setV({ ...v, [k]: x }));
+  const set = <K extends keyof MarketingSettings>(k: K, x: MarketingSettings[K]) => setV({ ...v, [k]: x });
   const n = (s: string) => (s === "" ? 0 : Number(s));
   return (
     <>
@@ -72,21 +70,13 @@ export function MarketingSettingsForm({ initial, mayEdit, mayExport, campaigns }
           </div>
         </Card>
       </fieldset>
-      {error && <Notice tone="red">{error}</Notice>}
-      {saved && <Notice tone="green">Saved.</Notice>}
       {mayEdit && (
-        <div className="flex justify-end">
-          <Button
-            disabled={pending}
-            onClick={() =>
-              run(
-                () => saveMarketingSettingsAction(v),
-                () => setSaved(true),
-              )
-            }
-          >
+        <div className="flex items-center justify-end gap-3">
+          <SyncMsg msg={msg} />
+          <Button disabled={pending} onClick={() => saveSetting(v)}>
             Save settings
           </Button>
+          {dialog}
         </div>
       )}
       {mayExport && (

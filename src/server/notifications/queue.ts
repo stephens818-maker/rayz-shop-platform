@@ -5,12 +5,12 @@ import { MergeValues, SavedTemplates, cutoffText, fill, isTemplateKind, template
 import { icsCalendar, locationDescription } from "@/domain/ics";
 import { OPT_OUT_REASON, clientEmailHtml, reminderTimes, withUnsubscribe } from "@/domain/notification-delivery";
 import type { OutreachRules } from "@/domain/outreach";
-import { brandColumn, settingAt } from "../brand-sync/settings";
+import type { MarketingSettings } from "@/domain/marketing";
+import { brandColumn, settingAt, settingFor } from "../brand-sync/settings";
 import { appBaseUrl } from "@/lib/deployment";
 import { nextMarketingTime } from "@/domain/quiet-hours";
 import { SHOP_TZ, formatDateTime } from "@/lib/time";
 import { SUPPRESSION_ERROR, oneClickUnsubscribeUrl, suppressedEmails, takesUnsubscribe, unsubscribeUrl } from "./email-events";
-import { loadMarketingSettings } from "../marketing/settings";
 import { emailProvider, pushProvider, smsProvider, voiceProvider } from "./providers";
 import { PermanentSendError } from "./push";
 
@@ -422,7 +422,7 @@ export async function processDueJobs(
     const lines = new Map(shopRows.map((r) => [r.id, r.n]));
     const zones = new Map(shopRows.map((r) => [r.id, r.tz]));
     const timed = due.filter((j) => quietHoursApply(j));
-    const brandQuiet = timed.length ? await loadMarketingSettings(tx) : null;
+    const quietAt = timed.length ? await settingFor<MarketingSettings>("marketing", timed.map((j) => j.shopId), tx) : null;
     const pushPhones = await householdPhones(timed.filter((j) => j.channel === "push" && j.customerId).map((j) => j.customerId!), tx);
     const marketingService = process.env.TWILIO_MARKETING_MESSAGING_SERVICE_SID?.trim() || null;
     const phones = [...new Set(due.filter((j) => j.channel !== "email").map((j) => j.to))];
@@ -448,7 +448,7 @@ export async function processDueJobs(
       }
       if (quietHoursApply(job)) {
         const phone = job.channel === "sms" ? job.to : job.customerId ? (pushPhones.get(job.customerId) ?? null) : null;
-        const at = nextMarketingTime(now, phone, (job.shopId && zones.get(job.shopId)) || SHOP_TZ, brandQuiet);
+        const at = nextMarketingTime(now, phone, (job.shopId && zones.get(job.shopId)) || SHOP_TZ, quietAt ? quietAt(job.shopId) : null);
         if (!at || at.getTime() !== now.getTime()) {
           await tx
             .update(notificationJobs)

@@ -1,9 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import { useSyncSave } from "@/components/brand-sync";
+import { useSettingSync, useSyncSave } from "@/components/brand-sync";
 import { Card, CardHeader, Field, Input } from "@/components/ui";
 import { SaveBar } from "../settings/editors";
+
+/** The name a shop prints for the brand on purchase orders and brand emails. */
+export function BrandNameEditor({ initial }: { initial: string }) {
+  const { pending, msg, saveSetting, dialog } = useSettingSync("brand_name");
+  const [v, setV] = useState(initial);
+  return (
+    <Card>
+      <CardHeader title="Brand name" subtitle="Printed on purchase orders and brand emails." />
+      <div className="p-4">
+        <Field label="Name">
+          <Input maxLength={60} value={v} onChange={(e) => setV(e.target.value)} data-testid="brand-name" />
+        </Field>
+      </div>
+      <SaveBar pending={pending} msg={msg} onClick={() => saveSetting(v)} />
+      {dialog}
+    </Card>
+  );
+}
 
 const pctText = (r: number) => (r * 100).toFixed(3).replace(/\.?0+$/, "");
 

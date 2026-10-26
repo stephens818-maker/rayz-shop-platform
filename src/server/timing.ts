@@ -1,21 +1,22 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, shops, staff, staffServiceDurations, staffShops, Shop } from "@/db/schema";
+import { shops, staff, staffServiceDurations, staffShops, Shop } from "@/db/schema";
 import type { StaffPlan } from "@/domain/availability";
 import { EffectiveOptions, ShopBookingDefaults, cleanBookingOptions, effectiveBookingOptions } from "@/domain/staff-booking";
 import { BookingPlan, IntervalSource, bookingPlan, resolveDuration, resolveInterval } from "@/domain/timing";
+import { settingAt, settingFor } from "./brand-sync/settings";
 import type { EffectiveService } from "./catalog";
 
 export const DEFAULT_INTERVAL = 15;
 
-export async function brandInterval(tx: DBorTx = db): Promise<number> {
-  const [row] = await tx.select({ n: brandSettings.slotIntervalMinutes }).from(brandSettings).limit(1);
-  return row?.n ?? DEFAULT_INTERVAL;
+/** The brand's default interval as a shop has it (no shop: the brand's own). */
+export async function brandInterval(shopId?: string | null, tx: DBorTx = db): Promise<number> {
+  return (await settingAt<number | null>("slot_interval", shopId, tx)) ?? DEFAULT_INTERVAL;
 }
 
 /** The shop's interval and where it comes from (its own setting or the brand default). */
-export async function shopInterval(shop: Pick<Shop, "slotIntervalMinutes">, tx: DBorTx = db) {
-  return resolveInterval({ brand: await brandInterval(tx), shop: shop.slotIntervalMinutes });
+export async function shopInterval(shop: Pick<Shop, "id" | "slotIntervalMinutes">, tx: DBorTx = db) {
+  return resolveInterval({ brand: await brandInterval(shop.id, tx), shop: shop.slotIntervalMinutes });
 }
 
 export interface ResolvedInterval {
@@ -25,7 +26,7 @@ export interface ResolvedInterval {
 
 /** Each barber's slot interval at this shop: barber at this shop, then barber, then shop, then brand. */
 export async function staffIntervals(shop: Pick<Shop, "id" | "slotIntervalMinutes">, staffIds: string[], tx: DBorTx = db): Promise<Map<string, ResolvedInterval>> {
-  const brand = await brandInterval(tx);
+  const brand = await brandInterval(shop.id, tx);
   const out = new Map<string, ResolvedInterval>();
   if (!staffIds.length) return out;
   const rows = await tx
@@ -123,7 +124,7 @@ export interface BarberRow {
 
 /** Barbers working at these shops (or one barber), with their interval at each of these shops and where it comes from. */
 export async function barberIntervalRows(viewer: { shopIds: string[]; brandWide: boolean }, onlyStaffId?: string): Promise<BarberRow[]> {
-  const brand = await brandInterval();
+  const brandAt = await settingFor<number>("slot_interval", viewer.shopIds);
   const shopRows = await db.select({ id: shops.id, name: shops.name, minutes: shops.slotIntervalMinutes }).from(shops).where(inArray(shops.id, viewer.shopIds));
   const shopById = new Map(shopRows.map((s) => [s.id, s]));
   const links = await db
@@ -148,6 +149,7 @@ export async function barberIntervalRows(viewer: { shopIds: string[]; brandWide:
           .filter((l) => shopById.has(l.shopId))
           .map((l) => {
             const shop = shopById.get(l.shopId)!;
+            const brand = brandAt(l.shopId);
             const shopLevel = resolveInterval({ brand, shop: shop.minutes });
             return {
               shopId: l.shopId,

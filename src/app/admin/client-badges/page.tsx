@@ -19,7 +19,7 @@ export default async function ClientBadgesPage() {
   const ctx = await guardPage("/admin/client-badges");
   const policy = await clientPolicy(ctx);
   const [settings, custom, roleRows, status, options] = await Promise.all([
-    loadBadgeSettings(),
+    loadBadgeSettings(ctx.brandWide ? null : ctx.currentShopId),
     listCustomBadges(),
     db.select({ id: roles.id, name: roles.name, key: roles.key, brandLevel: roles.brandLevel }).from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)),
     badgeCacheStatus(),
@@ -33,7 +33,7 @@ export default async function ClientBadgesPage() {
         subtitle="Small labels on client profiles, calendar appointments, checkout, the client list and search results that say where each client stands: due, at risk, 2nd visit, VIP, birthday this week. Hover a badge to see why the client has it. A badge never shows a client detail the person can't see under Client data."
       />
       <div className="grid gap-4 lg:grid-cols-[1fr_18rem]">
-        <BadgeSettingsEditor initial={settings} roles={shownRoles} custom={custom} />
+        <BadgeSettingsEditor initial={settings} roles={shownRoles} custom={custom} readOnly={!ctx.brandWide} />
         <div className="space-y-4 self-start">
           <Card>
             <CardHeader title="Cache" subtitle="Worked out every night and right after each checkout, so screens read them instantly." />

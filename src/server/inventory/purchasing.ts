@@ -5,7 +5,6 @@ import { db, DBorTx, Tx } from "@/db";
 import {
   EmailAttachment,
   auditLog,
-  brandSettings,
   notificationJobs,
   poReceiptLines,
   poReceipts,
@@ -24,6 +23,7 @@ import { PoDocument, poCsv, poPdf } from "@/domain/po-document";
 import { formatCents } from "@/lib/money";
 import { formatDate, isValidLocalDate, localDateOf, todayLocal } from "@/lib/time";
 import { audit } from "../audit";
+import { settingAt } from "../brand-sync/settings";
 import { AppError, notFound } from "../errors";
 import { enqueueShopEmail } from "../notifications/queue";
 import { Who, assertOwnRecord, assertShop, lockStock, postMovements } from "./ledger";
@@ -230,10 +230,8 @@ async function lockPo(tx: Tx, who: Who, id: string): Promise<Po> {
   return po;
 }
 
-async function threshold(tx: DBorTx = db) {
-  const [b] = await tx.select({ t: brandSettings.poApprovalThresholdCents }).from(brandSettings).limit(1);
-  return b?.t ?? null;
-}
+/** The approval limit at the order's shop. */
+const threshold = (shopId: string, tx: DBorTx = db) => settingAt<number | null>("po_approval", shopId, tx);
 
 /**
  * Draft orders for each shop and vendor picked, filled with what's suggested for that vendor (or
@@ -368,7 +366,7 @@ export async function poDocument(id: string, tx: DBorTx = db): Promise<PoDocumen
     .leftJoin(shopVendors, and(eq(shopVendors.shopId, purchaseOrders.shopId), eq(shopVendors.vendorId, purchaseOrders.vendorId)))
     .where(eq(purchaseOrders.id, id));
   if (!row) throw notFound("Purchase order");
-  const [brand] = await tx.select({ name: brandSettings.name }).from(brandSettings).limit(1);
+  const brandName = await settingAt<string>("brand_name", row.po.shopId, tx);
   const lines = await tx
     .select({ vendorSku: purchaseOrderLines.vendorSku, sku: products.sku, brand: products.brand, name: products.name, casePack: purchaseOrderLines.casePack, qtyOrdered: purchaseOrderLines.qtyOrdered, unitCostCents: purchaseOrderLines.unitCostCents })
     .from(purchaseOrderLines)
@@ -381,7 +379,7 @@ export async function poDocument(id: string, tx: DBorTx = db): Promise<PoDocumen
     date: localDateOf(po.sentAt ?? new Date()),
     expectedOn: po.expectedOn,
     notes: po.notes,
-    brand: brand?.name ?? "Ray'z Barber Shop",
+    brand: brandName,
     shop: { name: shop.name, address: shop.address, city: shop.city, state: shop.state, zip: shop.zip, phone: shop.phone, email: shop.email },
     vendor: {
       name: vendor.name,
@@ -438,7 +436,7 @@ export async function sendPo(who: Who, id: string, raw: z.input<typeof SendInput
     const po = await lockPo(tx, who, id);
     const lines = await tx.select().from(purchaseOrderLines).where(eq(purchaseOrderLines.purchaseOrderId, id));
     const total = poTotalCents(lines);
-    const limit = await threshold(tx);
+    const limit = await threshold(po.shopId, tx);
     const problem = poActionProblem(po.status, "send", { lines: lines.length, overLimit: needsApproval(total, limit) });
     if (problem) throw new AppError("conflict", problem);
     const [vendor] = await tx.select().from(vendors).where(eq(vendors.id, po.vendorId));
@@ -712,7 +710,7 @@ export async function loadPo(id: string) {
       .from(auditLog)
       .where(and(eq(auditLog.entity, "purchase_order"), eq(auditLog.entityId, id)))
       .orderBy(desc(auditLog.at)),
-    threshold(),
+    threshold(row.po.shopId),
     db
       .select({ productId: vendorProducts.productId, vendorSku: vendorProducts.vendorSku, casePack: vendorProducts.casePack, costCents: vendorProducts.costCents })
       .from(vendorProducts)

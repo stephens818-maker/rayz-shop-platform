@@ -2,9 +2,8 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, customBadges } from "@/db/schema";
+import { customBadges } from "@/db/schema";
 import {
-  BadgeSettingsSchema,
   CustomBadgeSchema,
   MORNING_BADGES,
   customBadgeProblem,
@@ -12,7 +11,6 @@ import {
   deriveBadges,
   showBadges,
   progressFacts,
-  thresholdsProblem,
   type BadgeFacts,
   type BadgeProgressFacts,
   type BadgeSettings,
@@ -48,20 +46,6 @@ const rowsOf = async <T>(q: Promise<unknown>) => (await q) as unknown as T[];
 // ───────────────────────────── Settings ─────────────────────────────
 
 export const markAllStale = (tx: DBorTx = db) => tx.execute(sql`update client_badges set computed_on = ${STALE_DAY}::date`);
-
-export async function saveBadgeSettings(ctx: StaffContext, raw: unknown): Promise<BadgeSettings> {
-  if (!can(ctx, "badges.settings")) throw forbidden("You can't change client badges");
-  const parsed = BadgeSettingsSchema.safeParse(raw);
-  if (!parsed.success) throw new AppError("bad_request", parsed.error.issues[0]?.message ?? "Check the badge settings");
-  const order = thresholdsProblem(parsed.data.thresholds);
-  if (order) throw new AppError("bad_request", order);
-  const before = await loadBadgeSettings();
-  await db.update(brandSettings).set({ badges: parsed.data, updatedAt: new Date() });
-  // Thresholds decide who has which badge; on, off and roles only decide who sees them.
-  if (JSON.stringify(before.thresholds) !== JSON.stringify(parsed.data.thresholds)) await markAllStale();
-  await audit(ctx.actor, "settings.badges", "brand_settings", "badges", parsed.data, null);
-  return parsed.data;
-}
 
 /** Creates or edits a custom badge. The filter must be one the person could run themselves. */
 export async function saveCustomBadge(ctx: StaffContext, raw: unknown): Promise<string> {
@@ -324,7 +308,7 @@ export interface BadgeRun {
 }
 
 export async function badgeRun(now: Date, o: { allMembers?: boolean } = {}, tx: DBorTx = db): Promise<BadgeRun> {
-  const [settings, custom] = await Promise.all([loadBadgeSettings(tx), listCustomBadges({ active: true }, tx)]);
+  const [settings, custom] = await Promise.all([loadBadgeSettings(null, tx), listCustomBadges({ active: true }, tx)]);
   const vip = await vipCutoff(settings.thresholds.vipTopPct, now, tx);
   return { settings, custom, vip, members: o.allMembers && custom.length ? await customMembers(custom, now, null, tx) : undefined };
 }

@@ -2,15 +2,14 @@
 
 import { useState } from "react";
 import { Button, Card, CardHeader, Field, Input } from "@/components/ui";
-import { useAction } from "@/components/use-action";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import type { AssistantSettings } from "@/domain/assistant";
-import { saveAssistantSettingsAction } from "../actions";
 
 export function AssistantSettingsEditor({ initial, roles }: { initial: AssistantSettings; roles: { id: string; name: string; key: string | null }[] }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("assistant");
   const [s, setS] = useState(initial);
-  const [saved, setSaved] = useState(false);
-  const dirty = JSON.stringify(s) !== JSON.stringify(initial);
+  const [base, setBase] = useState(initial);
+  const dirty = JSON.stringify(s) !== JSON.stringify(base);
   const setRole = (id: string, on: boolean) =>
     setS((x) => {
       const next = { ...x.roles };
@@ -51,12 +50,12 @@ export function AssistantSettingsEditor({ initial, roles }: { initial: Assistant
             <span className="block text-xs text-zinc-500">Only for people who could make them themselves, and nothing is created until they press Confirm. A confirmed blast is saved as a draft; it never sends.</span>
           </span>
         </label>
-        {error && <p className="text-sm text-red-700">{error}</p>}
-        {saved && !dirty && <p className="text-sm text-emerald-700">Saved.</p>}
-        <Button disabled={pending || !dirty} onClick={() => run(() => saveAssistantSettingsAction(s), () => setSaved(true))}>
+        <SyncMsg msg={msg} />
+        <Button disabled={pending || !dirty} onClick={() => saveSetting(s, () => setBase(s))}>
           Save
         </Button>
       </div>
+      {dialog}
     </Card>
   );
 }

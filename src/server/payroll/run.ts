@@ -1,6 +1,6 @@
 import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { brandSettings, payGroups, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, staff, timeEntries } from "@/db/schema";
+import { payGroups, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, staff, timeEntries } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,

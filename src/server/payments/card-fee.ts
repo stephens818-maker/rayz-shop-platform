@@ -1,6 +1,6 @@
 import { eq, inArray, ne } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { bookingGroups, brandSettings, shops } from "@/db/schema";
+import { bookingGroups, shops } from "@/db/schema";
 import {
   BULK_FEE_ACTION_LABEL,
   BulkFeeAction,
@@ -24,6 +24,7 @@ import {
 import { type CardFeeConfig, type CardFeeResult, type CardFunding, cardFeeFor } from "@/domain/checkout";
 import { flags } from "@/lib/flags";
 import { Actor, audit } from "@/server/audit";
+import { brandColumn, writeBrandColumn } from "@/server/brand-sync/settings";
 import { AppError, notFound } from "@/server/errors";
 
 export type { CardFeeBasis, CardFeeResult, CardFunding } from "@/domain/checkout";
@@ -34,8 +35,7 @@ export function shopCardFeeConfig(shop: { cardFeeEnabled: boolean; cardFeeRate: 
 }
 
 export async function brandFeePolicy(tx: DBorTx = db): Promise<CardFeePolicy> {
-  const [row] = await tx.select({ f: brandSettings.cardFee }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return brandCardFeePolicy(row?.f ?? {});
+  return brandCardFeePolicy((await brandColumn("cardFee", null, tx)) ?? {});
 }
 
 export interface ShopFeePolicy {
@@ -139,10 +139,7 @@ export async function commitFeeChange(tx: DBorTx, before: CardFeePolicy, after: 
 }
 
 export async function saveBrandRow(tx: DBorTx, p: CardFeePolicy) {
-  await tx
-    .insert(brandSettings)
-    .values({ id: 1, loyalty: {}, cardFee: p as unknown as Record<string, unknown> })
-    .onConflictDoUpdate({ target: brandSettings.id, set: { cardFee: p as unknown as Record<string, unknown>, updatedAt: new Date() } });
+  await writeBrandColumn(tx, "cardFee", p as unknown as Record<string, unknown>);
 }
 
 /** Each shop's own audit trail gets the change too, so a shop's history shows brand and bulk changes that reached it. */

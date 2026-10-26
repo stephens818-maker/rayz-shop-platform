@@ -3,18 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
-import { deleteCustomBadge, runBadgeJob, saveBadgeSettings, saveCustomBadge } from "@/server/badges";
+import { deleteCustomBadge, runBadgeJob, saveCustomBadge } from "@/server/badges";
 
 const MESSAGE = "You can't change client badges";
-
-export async function saveBadgeSettingsAction(settings: unknown) {
-  return safe(async () => {
-    const ctx = await authorize("badges.settings", MESSAGE);
-    const r = await saveBadgeSettings(ctx, settings);
-    revalidatePath("/admin/client-badges");
-    return r;
-  });
-}
 
 export async function saveCustomBadgeAction(badge: unknown) {
   return safe(async () => {

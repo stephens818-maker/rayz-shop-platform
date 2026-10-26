@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import { Button, Card, CardHeader } from "@/components/ui";
+import { SyncMsg, useSyncSave } from "@/components/brand-sync";
 import { useAction } from "@/components/use-action";
-import { runBackfillAction, saveAnalyticsSettingsAction } from "./actions";
+import { runBackfillAction } from "./actions";
 
 export function AnalyticsSettingsEditor({
   initial,
@@ -12,12 +13,13 @@ export function AnalyticsSettingsEditor({
   initial: { satisfaction: boolean; warehouse: boolean };
   warehouseAddress: boolean;
 }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, save, dialog } = useSyncSave();
   const [s, setS] = useState(initial);
-  const [saved, setSaved] = useState(false);
-  const dirty =
-    s.satisfaction !== initial.satisfaction ||
-    s.warehouse !== initial.warehouse;
+  const [base, setBase] = useState(initial);
+  const changes = [
+    ...(s.satisfaction !== base.satisfaction ? [{ type: "setting" as const, item: "visit_question", value: s.satisfaction }] : []),
+    ...(s.warehouse !== base.warehouse ? [{ type: "setting" as const, item: "warehouse", value: s.warehouse }] : []),
+  ];
   return (
     <Card>
       <CardHeader title="Settings" />
@@ -54,20 +56,17 @@ export function AnalyticsSettingsEditor({
             </span>
           </span>
         </label>
-        {error && <p className="text-sm text-red-700">{error}</p>}
-        {saved && !dirty && <p className="text-sm text-emerald-700">Saved.</p>}
+        <SyncMsg msg={msg} />
         <Button
-          disabled={pending || !dirty}
+          disabled={pending || !changes.length}
           onClick={() =>
-            run(
-              () => saveAnalyticsSettingsAction(s),
-              () => setSaved(true),
-            )
+            save({ label: "Event log options", changes, onDone: () => setBase(s) })
           }
         >
           Save
         </Button>
       </div>
+      {dialog}
     </Card>
   );
 }

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, shops } from "@/db/schema";
+import { shops } from "@/db/schema";
 import {
   DEFAULT_FIELDS,
   DefaultKey,
@@ -15,11 +15,11 @@ import {
   valuesOf,
 } from "@/domain/location-defaults";
 import { Actor, audit } from "./audit";
+import { brandColumn } from "./brand-sync/settings";
 import { AppError, notFound } from "./errors";
 
 export async function loadBrandDefaults(tx: DBorTx = db): Promise<LocationDefaults> {
-  const [b] = await tx.select({ d: brandSettings.locationDefaults }).from(brandSettings).limit(1);
-  return brandDefaults(b?.d);
+  return brandDefaults(await brandColumn("locationDefaults", null, tx));
 }
 
 export interface LocationDefaultsRow {
@@ -56,36 +56,6 @@ function parsed<K extends DefaultKey>(key: K, raw: unknown) {
 }
 
 const jsonKey = (key: DefaultKey) => sql`${key}::text`;
-
-/** Changes the brand value; every location that follows the brand gets it, ones with their own keep theirs. */
-export async function saveBrandDefault(actor: Actor, key: DefaultKey, raw: unknown) {
-  if (!isDefaultKey(key)) throw new AppError("bad_request", "Unknown setting");
-  const value = parsed(key, raw);
-  return db.transaction(async (tx) => {
-    const before = await loadBrandDefaults(tx);
-    await tx
-      .update(brandSettings)
-      .set({ locationDefaults: sql`${brandSettings.locationDefaults} || jsonb_build_object(${jsonKey(key)}, ${JSON.stringify(value)}::jsonb)`, updatedAt: new Date() })
-      .where(eq(brandSettings.id, 1));
-    const patch = columnPatch({ [key]: value });
-    const following = await tx
-      .select({ id: shops.id })
-      .from(shops)
-      .where(sql`not (${shops.brandOverrides} ? ${key})`);
-    if (Object.keys(patch).length && following.length)
-      await tx
-        .update(shops)
-        .set(patch)
-        .where(
-          inArray(
-            shops.id,
-            following.map((s) => s.id),
-          ),
-        );
-    await audit(actor, "brand.location_default", "brand_settings", key, { key, from: before[key], to: value, following: following.length }, null, tx);
-    return { following: following.length };
-  });
-}
 
 /** Gives one location its own value ("this shop only"). */
 export async function setShopOverride(actor: Actor, shopId: string, key: DefaultKey, raw: unknown, tx?: DBorTx) {

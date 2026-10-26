@@ -2,11 +2,12 @@ import type Stripe from "stripe";
 import { and, asc, desc, eq, inArray, lte, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
-import { brandSettings, customers, membershipInvoices, membershipPlans, memberships, membershipUses, services, shops } from "@/db/schema";
+import { customers, membershipInvoices, membershipPlans, memberships, membershipUses, services, shops } from "@/db/schema";
 import { MemberCoverage, PlanInput, periodEnd, planProblem, visitsLeft } from "@/domain/memberships";
 import { appBaseUrl } from "@/lib/deployment";
 import { todayLocal } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "./audit";
+import { settingAt } from "./brand-sync/settings";
 import { AppError, forbidden, notFound } from "./errors";
 import { stripe } from "./payments/processor";
 import { hasShop } from "./tenant";
@@ -23,14 +24,9 @@ const PAID = sql`('paid', 'partially_refunded')`;
 const soldAt = (p: Pick<Plan, "shopIds">, shopId: string) => !p.shopIds.length || p.shopIds.includes(shopId);
 const sees = (v: MembershipViewer, m: Pick<Membership, "homeShopId">) => v.brandWide || hasShop(v, m.homeShopId);
 
-export async function membershipsEnabled(): Promise<boolean> {
-  const [b] = await db.select({ on: brandSettings.membershipsEnabled }).from(brandSettings).limit(1);
-  return !!b?.on;
-}
-
-export async function setMembershipsEnabled(actor: Actor, on: boolean) {
-  await db.update(brandSettings).set({ membershipsEnabled: on, updatedAt: new Date() });
-  await audit(actor, on ? "memberships.enable" : "memberships.disable", "brand_settings", null, {});
+/** Whether memberships are on at a shop (no shop: for the brand). */
+export async function membershipsEnabled(shopId?: string | null): Promise<boolean> {
+  return settingAt<boolean>("memberships", shopId);
 }
 
 export async function listPlans() {
@@ -91,7 +87,7 @@ async function usedThisPeriod(ids: string[], tx: DBorTx = db) {
 /** Live memberships of these clients that checkout at this shop can use. */
 export async function checkoutCoverage(customerIds: string[], shopId: string): Promise<MemberCoverage[]> {
   const ids = [...new Set(customerIds.filter(Boolean))];
-  if (!ids.length || !(await membershipsEnabled())) return [];
+  if (!ids.length || !(await membershipsEnabled(shopId))) return [];
   const rows = await db
     .select({ m: memberships, p: membershipPlans, first: customers.firstName, last: customers.lastName })
     .from(memberships)
@@ -128,8 +124,8 @@ export const EnrollInput = z.object({ planId: z.uuid(), customerId: z.uuid(), ho
  */
 export async function enroll(actor: Actor, v: MembershipViewer, raw: z.input<typeof EnrollInput>) {
   const c = EnrollInput.parse(raw);
-  if (!(await membershipsEnabled())) throw new AppError("bad_request", "Memberships are turned off for the brand");
   if (!hasShop(v, c.homeShopId)) throw forbidden("That shop is outside your access");
+  if (!(await membershipsEnabled(c.homeShopId))) throw new AppError("bad_request", "Memberships are turned off at that shop");
   const plan = await db.query.membershipPlans.findFirst({ where: eq(membershipPlans.id, c.planId) });
   if (!plan || !plan.active) throw notFound("Plan");
   if (!soldAt(plan, c.homeShopId)) throw new AppError("bad_request", `${plan.name} isn't sold at that shop`);

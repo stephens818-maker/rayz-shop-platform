@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { brandSettings, products, shopProducts, shops } from "@/db/schema";
+import { products, shopProducts, shops } from "@/db/schema";
+import { settingAt } from "@/server/brand-sync/settings";
 import { Card, CardHeader, Notice, PageHeader, Table, Th } from "@/components/ui";
 import { can, guardPage } from "@/server/auth/staff";
 import { ApprovalLimit, BrandLevels, ShopSettingsRow } from "./forms";
@@ -11,13 +12,13 @@ export const metadata: Metadata = { title: "Inventory settings" };
 export default async function InventorySettingsPage() {
   const ctx = await guardPage("/admin/inventory/settings");
   const shopIds = ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds;
-  const [shopRows, [brand], levels] = await Promise.all([
+  const [shopRows, approvalLimit, levels] = await Promise.all([
     db
       .select({ id: shops.id, name: shops.name, email: shops.email, negativeStock: shops.negativeStock, inventoryAlertEmail: shops.inventoryAlertEmail })
       .from(shops)
       .where(and(inArray(shops.id, shopIds), ne(shops.status, "archived")))
       .orderBy(asc(shops.name)),
-    db.select({ t: brandSettings.poApprovalThresholdCents }).from(brandSettings).limit(1),
+    settingAt<number | null>("po_approval", ctx.currentShopId),
     ctx.brandWide
       ? db
           .select({
@@ -60,9 +61,9 @@ export default async function InventorySettingsPage() {
       <Card>
         <CardHeader title="Purchase order approval" subtitle="Sending needs “Send purchase orders”. Above the limit, someone with “Approve purchase orders” approves first." />
         {ctx.brandWide && can(ctx, "settings.brand") ? (
-          <ApprovalLimit cents={brand?.t ?? null} />
+          <ApprovalLimit cents={approvalLimit} />
         ) : (
-          <div className="p-4 text-sm text-zinc-600">{brand?.t != null ? `Orders over $${(brand.t / 100).toFixed(2)} need approval.` : "No approval step is set."} The limit is a brand setting, changed by the Brand Owner.</div>
+          <div className="p-4 text-sm text-zinc-600">{approvalLimit != null ? `Orders over $${(approvalLimit / 100).toFixed(2)} need approval.` : "No approval step is set."} The limit is a brand setting, changed by the Brand Owner.</div>
         )}
       </Card>
       <Card>

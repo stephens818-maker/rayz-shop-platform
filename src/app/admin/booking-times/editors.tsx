@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, Card, CardHeader, Input, Select, Table, Td, Th, cx } from "@/components/ui";
+import { useSettingSync } from "@/components/brand-sync";
 import { useAction } from "@/components/use-action";
 import { DURATION_STEPS, INTERVAL_PRESETS, INTERVAL_SOURCE_LABEL, IntervalSource, durationProblem, intervalProblem } from "@/domain/timing";
 import type { BarberRow } from "@/server/timing";
-import { saveBarberDurationAction, saveBarberIntervalAction, saveBrandIntervalAction, saveServiceTimingAction, saveShopDurationAction, saveShopIntervalAction } from "./actions";
+import { saveBarberDurationAction, saveBarberIntervalAction, saveServiceTimingAction, saveShopDurationAction, saveShopIntervalAction } from "./actions";
 
 function Status({ pending, error, saved }: { pending: boolean; error: string | null; saved: boolean }) {
   if (pending) return <span className="text-xs text-zinc-400">Saving…</span>;
@@ -36,7 +37,7 @@ export function IntervalPicker({
   /** What following the level above gives, and its name; omit when there's nothing to follow. */
   inherited?: { minutes?: number; label: string };
   disabled?: boolean;
-  onSave: (minutes: number | null) => ReturnType<typeof saveShopIntervalAction>;
+  onSave: (minutes: number | null) => Promise<{ ok: true; data: unknown } | { ok: false; error: string }>;
 }) {
   const { pending, error, setError, run } = useAction();
   const [shown, setShown] = useState(value);
@@ -107,12 +108,14 @@ export function IntervalPicker({
 }
 
 export function BrandIntervalCard({ minutes, canEdit }: { minutes: number; canEdit: boolean }) {
+  const { saveAsync, dialog } = useSettingSync("slot_interval");
   return (
     <Card>
-      <CardHeader title="Brand default" subtitle={canEdit ? "Every shop and barber without their own interval uses this." : "Set by someone with access to all shops."} />
+      <CardHeader title="Brand default" subtitle={canEdit ? "Every shop and barber without their own interval uses this. Pick the shops it goes to when you change it." : "Set by someone with access to all shops."} />
       <div className="p-4">
-        <IntervalPicker label="Brand default interval" value={minutes} disabled={!canEdit} onSave={(n) => saveBrandIntervalAction(n ?? minutes)} />
+        <IntervalPicker label="Brand default interval" value={minutes} disabled={!canEdit} onSave={(n) => saveAsync(n ?? minutes)} />
       </div>
+      {dialog}
     </Card>
   );
 }
@@ -126,7 +129,7 @@ export function SourceBadge({ source, minutes }: { source: IntervalSource; minut
   );
 }
 
-export function ShopIntervalsCard({ brand, shops }: { brand: number; shops: { id: string; name: string; minutes: number | null }[] }) {
+export function ShopIntervalsCard({ shops }: { shops: { id: string; name: string; minutes: number | null; brand: number }[] }) {
   return (
     <Card>
       <CardHeader title="Shops" subtitle="A shop's interval applies to its barbers unless they have their own." />
@@ -134,7 +137,7 @@ export function ShopIntervalsCard({ brand, shops }: { brand: number; shops: { id
         {shops.map((s) => (
           <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
             <span className="text-sm font-medium text-zinc-900">{s.name}</span>
-            <IntervalPicker label={`${s.name} interval`} value={s.minutes} inherited={{ minutes: brand, label: "Brand" }} onSave={(n) => saveShopIntervalAction(s.id, n)} />
+            <IntervalPicker label={`${s.name} interval`} value={s.minutes} inherited={{ minutes: s.brand, label: "Brand" }} onSave={(n) => saveShopIntervalAction(s.id, n)} />
           </li>
         ))}
       </ul>

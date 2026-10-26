@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { appointments, brandSettings, checkoutHandoffs, customers, saleTipShares, sales, shops, staff, terminalReaders } from "@/db/schema";
+import { appointments, checkoutHandoffs, customers, saleTipShares, sales, shops, staff, terminalReaders } from "@/db/schema";
 import { feeDisclosure, feeLabel, type CardFeeConfig } from "@/domain/checkout";
 import { perBarberTipProblem } from "@/domain/combined-checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
@@ -33,14 +33,14 @@ import { assertPromptsAnswered } from "./checkout-prompts";
 import { AppError, forbidden, notFound } from "./errors";
 import { settlementAccount } from "./payments/connect";
 import { TEST_CARDS, inspectPaymentMethod, paymentsMode, stripe, terminal } from "./payments/processor";
+import { brandColumn } from "./brand-sync/settings";
 import { deliverReceipt, isOptedOut } from "./receipts";
 import { checkPin } from "./time-clock";
 
 // ───────────────────────────── Settings ─────────────────────────────
 
 export async function brandHandoffConfig(): Promise<BrandHandoff> {
-  const [b] = await db.select({ h: brandSettings.handoff }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return brandHandoff(b?.h);
+  return brandHandoff(await brandColumn("handoff"));
 }
 
 export async function shopHandoffConfig(shopId: string): Promise<{ shop: ShopHandoff; brand: BrandHandoff; tips: TipScreen }> {
@@ -49,21 +49,6 @@ export async function shopHandoffConfig(shopId: string): Promise<{ shop: ShopHan
   const shop = shopHandoff(s.h);
   const brand = await brandHandoffConfig();
   return { shop, brand, tips: effectiveTips(shop, brand) };
-}
-
-export async function saveBrandHandoff(tips: TipScreen, actor: Actor) {
-  const problem = tipScreenProblem(tips);
-  if (problem) throw new AppError("bad_request", problem);
-  const before = await brandHandoffConfig();
-  const clean: BrandHandoff = { tips: { type: tips.type, values: [...tips.values], allowCustom: tips.allowCustom, allowNoTip: tips.allowNoTip } };
-  await db.update(brandSettings).set({ handoff: clean as unknown as Record<string, unknown>, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(actor, "handoff.brand_settings", "brand_settings", "1", { before, after: clean }, null);
-  const onReader = (await db.select({ id: shops.id, h: shops.handoff }).from(shops)).filter((s) => {
-    const h = shopHandoff(s.h);
-    return h.tipEntry === "reader" && !h.tips;
-  });
-  for (const s of onReader) await syncReaderTipping(s.id, clean.tips).catch((e: Error) => console.error(`Reader tips for shop ${s.id}: ${e.message}`));
-  return clean;
 }
 
 export async function saveShopHandoff(shopId: string, raw: ShopHandoff, actor: Actor) {

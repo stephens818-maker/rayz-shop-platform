@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { brandSettings, vendors } from "@/db/schema";
+import { vendors } from "@/db/schema";
+import { settingFor } from "@/server/brand-sync/settings";
 import { Badge, Card, Empty, LinkButton, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
 import { PO_STATUSES, PO_STATUS_LABEL, PoStatus, needsApproval, poNumber } from "@/domain/inventory";
 import { formatCents } from "@/lib/money";
@@ -19,15 +20,15 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
   const sp = await searchParams;
   const shopIds = ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds;
   const status = sp.status === "all" ? undefined : (PO_STATUSES.find((s) => s === sp.status) ?? (sp.batch || sp.vendor ? undefined : "open"));
-  const [list, all, vendorRows, [brand]] = await Promise.all([
+  const [list, all, vendorRows, limitAt] = await Promise.all([
     listPos(shopIds, { status, batchId: sp.batch, vendorId: sp.vendor }),
     listPos(shopIds, { status: "open", limit: 1000 }),
     db.select({ id: vendors.id, name: vendors.name }).from(vendors).where(eq(vendors.active, true)).orderBy(asc(vendors.name)),
-    db.select({ t: brandSettings.poApprovalThresholdCents }).from(brandSettings).limit(1),
+    settingFor<number | null>("po_approval", shopIds),
   ]);
-  const limit = brand?.t ?? null;
+  const limit = limitAt(ctx.currentShopId);
   const count = (s: PoStatus) => all.filter((p) => p.status === s).length;
-  const awaiting = all.filter((p) => p.status === "draft" && needsApproval(p.totalCents, limit)).length;
+  const awaiting = all.filter((p) => p.status === "draft" && needsApproval(p.totalCents, limitAt(p.shopId))).length;
   const tabs: { key: string; label: string }[] = [
     { key: "open", label: "Open" },
     ...PO_STATUSES.map((s) => ({ key: s, label: PO_STATUS_LABEL[s] })),
@@ -106,7 +107,7 @@ export default async function PurchaseOrdersPage({ searchParams }: { searchParam
                   </Td>
                   <Td>
                     <Badge tone={PO_TONE[p.status]}>{PO_STATUS_LABEL[p.status]}</Badge>
-                    {p.status === "draft" && needsApproval(p.totalCents, limit) && <div className="mt-0.5 text-[11px] text-amber-700">needs approval</div>}
+                    {p.status === "draft" && needsApproval(p.totalCents, limitAt(p.shopId)) && <div className="mt-0.5 text-[11px] text-amber-700">needs approval</div>}
                     {p.closedShort && <div className="mt-0.5 text-[11px] text-zinc-500">closed short</div>}
                   </Td>
                   <Td>{p.vendor}</Td>

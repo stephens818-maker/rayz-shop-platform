@@ -1,14 +1,14 @@
 import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, customers, loyaltyAccounts, loyaltyLedger, loyaltyRewards, shops } from "@/db/schema";
-import { FamilyLoyalty, familySettings } from "@/domain/family";
+import { customers, loyaltyAccounts, loyaltyLedger, loyaltyRewards, shops } from "@/db/schema";
+import type { FamilyLoyalty, FamilySettings } from "@/domain/family";
 import { LoyaltyConfig, accrue, convertProgress, goalOf, loyaltyConfig, loyaltyRules, progressExpired, reverseAccrual, rewardExpiry, usableRewards } from "@/domain/loyalty";
+import { brandColumn, settingAt, writeBrandColumn } from "./brand-sync/settings";
 import { localValue } from "./brand-sync/store";
 import { AppError } from "./errors";
 
 export async function getLoyaltyConfig(tx: DBorTx = db): Promise<LoyaltyConfig> {
-  const row = await tx.query.brandSettings.findFirst({ where: eq(brandSettings.id, 1) });
-  return loyaltyConfig(row?.loyalty);
+  return loyaltyConfig(await brandColumn("loyalty", null, tx));
 }
 
 /** The program at one shop: the brand's, with the shop's own earning rules (minimum visit, products and tips counting) where it has them. */
@@ -25,10 +25,7 @@ export async function loyaltyConfigAt(shopId: string | null | undefined, tx: DBo
  */
 export async function saveLoyaltyConfig(cfg: LoyaltyConfig, tx: DBorTx = db): Promise<{ converted: number }> {
   const before = await getLoyaltyConfig(tx);
-  await tx
-    .insert(brandSettings)
-    .values({ id: 1, loyalty: cfg })
-    .onConflictDoUpdate({ target: brandSettings.id, set: { loyalty: cfg, updatedAt: new Date() } });
+  await writeBrandColumn(tx, "loyalty", cfg as never);
   if (before.type === cfg.type) return { converted: 0 };
   const rows = await tx.select({ id: loyaltyAccounts.customerId, p: loyaltyAccounts.progressCents }).from(loyaltyAccounts).where(gt(loyaltyAccounts.progressCents, 0)).for("update");
   let converted = 0;
@@ -48,8 +45,7 @@ const unitOf = (cfg: Pick<LoyaltyConfig, "type">): LoyaltyUnit => (cfg.type === 
 const inUnit = (n: number, from: LoyaltyUnit, cfg: LoyaltyConfig): number =>
   from === unitOf(cfg) ? n : convertProgress(n, from === "visits" ? { ...cfg, type: "transaction" } : { ...cfg, type: "value" }, cfg);
 async function familyLoyalty(tx: DBorTx): Promise<FamilyLoyalty> {
-  const [b] = await tx.select({ f: brandSettings.family }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return familySettings(b?.f).loyalty;
+  return (await settingAt<FamilySettings>("family", null, tx)).loyalty;
 }
 
 /**

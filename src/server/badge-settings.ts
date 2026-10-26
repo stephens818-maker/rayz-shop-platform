@@ -1,13 +1,15 @@
 import "server-only";
 import { asc, eq } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, customBadges } from "@/db/schema";
-import { BADGE_ICONS, BADGE_TONES, BadgeSettings, CustomBadge, badgeSettings } from "@/domain/badges";
+import { customBadges } from "@/db/schema";
+import { BADGE_ICONS, BADGE_TONES, BadgeSettings, CustomBadge } from "@/domain/badges";
 import { SegmentSchema } from "@/domain/marketing";
+import { settingAt } from "./brand-sync/settings";
 
-export async function loadBadgeSettings(tx: DBorTx = db): Promise<BadgeSettings> {
-  const [row] = await tx.select({ badges: brandSettings.badges }).from(brandSettings).limit(1);
-  return badgeSettings(row?.badges);
+/** Which badges are on and who sees them at a shop (no shop: the brand's). Thresholds are always the brand's. */
+export async function loadBadgeSettings(shopId?: string | null, tx: DBorTx = db): Promise<BadgeSettings> {
+  const [at, brand] = await Promise.all([settingAt<BadgeSettings>("badges", shopId, tx), shopId ? settingAt<BadgeSettings>("badges", null, tx) : null]);
+  return brand ? { ...at, thresholds: brand.thresholds } : at;
 }
 
 const isIcon = (v: string): v is CustomBadge["icon"] => (BADGE_ICONS as readonly string[]).includes(v);

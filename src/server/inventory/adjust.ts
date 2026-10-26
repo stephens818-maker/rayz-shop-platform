@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { brandSettings, products, shopProducts, shops } from "@/db/schema";
+import { products, shopProducts, shops } from "@/db/schema";
 import { ADJUST_DIRECTION, ADJUST_REASONS, ADJUST_REASON_LABEL, levelsProblem } from "@/domain/inventory";
 import { formatCents } from "@/lib/money";
 import { audit } from "../audit";
@@ -106,14 +106,6 @@ export async function saveShopInventorySettings(who: Who, raw: z.input<typeof Sh
   if (!before) throw notFound("Shop");
   await db.update(shops).set({ negativeStock: v.negativeStock, inventoryAlertEmail: v.inventoryAlertEmail }).where(eq(shops.id, v.shopId));
   await audit(who.actor, "inventory.settings", "shop", v.shopId, { from: before, to: { negativeStock: v.negativeStock, inventoryAlertEmail: v.inventoryAlertEmail } }, v.shopId);
-}
-
-/** Purchase orders above this need approval before they're sent; null turns the approval step off. */
-export async function savePoApprovalThreshold(who: Who, cents: number | null) {
-  if (cents !== null && (!Number.isInteger(cents) || cents < 0)) throw new AppError("bad_request", "Enter a dollar amount, or leave it blank for no approval step");
-  const [before] = await db.select({ t: brandSettings.poApprovalThresholdCents }).from(brandSettings).limit(1);
-  await db.update(brandSettings).set({ poApprovalThresholdCents: cents, updatedAt: new Date() });
-  await audit(who.actor, "inventory.po_approval_limit", "brand", null, { from: before?.t ?? null, to: cents }, null);
 }
 
 // ───────────────────────────── Low-stock alerts ─────────────────────────────

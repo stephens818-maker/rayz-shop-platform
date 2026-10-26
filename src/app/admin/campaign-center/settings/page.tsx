@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 export default async function MarketingSettingsPage() {
   const ctx = await guardPage("/admin/campaign-center/settings");
-  const [settings, openings, automations] = await Promise.all([loadMarketingSettings(), loadOpeningsSettings(), listAutomations(ctx)]);
+  const [settings, openings, automations] = await Promise.all([loadMarketingSettings(ctx.currentShopId), loadOpeningsSettings(ctx.currentShopId), listAutomations(ctx)]);
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <PageHeader

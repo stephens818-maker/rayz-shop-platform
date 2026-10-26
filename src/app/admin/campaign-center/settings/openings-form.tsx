@@ -1,11 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Card, CardHeader, Field, Input, Notice, Table, Td, Textarea, Th } from "@/components/ui";
-import { useAction } from "@/components/use-action";
+import { Button, Card, CardHeader, Field, Input, Table, Td, Textarea, Th } from "@/components/ui";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { OPENINGS_FIELDS, OPENINGS_TEMPLATES, type OpeningsSettings, type OpeningsShopRules } from "@/domain/openings";
 import { MARKETING_FIELDS } from "@/domain/marketing";
-import { saveOpeningsSettingsAction } from "../openings/actions";
 
 const FIELDS = ["first_name", "barber", "shop", "day", "book_link"] as const;
 const num = (s: string) => (s === "" ? 0 : Number(s));
@@ -13,10 +12,9 @@ const optNum = (s: string) => (s.trim() === "" ? null : Number(s));
 
 /** We have openings' rules for every location, with each location's own limits and approval rule. */
 export function OpeningsSettingsForm({ initial, shops, mayEdit }: { initial: OpeningsSettings; shops: { id: string; name: string }[]; mayEdit: boolean }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("openings");
   const [v, setV] = useState(initial);
-  const [saved, setSaved] = useState(false);
-  const set = <K extends keyof OpeningsSettings>(k: K, x: OpeningsSettings[K]) => (setSaved(false), setV({ ...v, [k]: x }));
+  const set = <K extends keyof OpeningsSettings>(k: K, x: OpeningsSettings[K]) => setV({ ...v, [k]: x });
   const shopRule = (id: string): OpeningsShopRules => v.shops[id] ?? { perDay: null, perWeek: null, approval: null };
   const setShop = (id: string, r: Partial<OpeningsShopRules>) => set("shops", { ...v.shops, [id]: { ...shopRule(id), ...r } });
   const help = (f: (typeof FIELDS)[number]) => (f === "day" ? OPENINGS_FIELDS.day : MARKETING_FIELDS[f]);
@@ -115,13 +113,13 @@ export function OpeningsSettingsForm({ initial, shops, mayEdit }: { initial: Ope
           </Table>
         </Card>
       </fieldset>
-      {error && <Notice tone="red">{error}</Notice>}
-      {saved && <Notice tone="green">Saved.</Notice>}
       {mayEdit && (
-        <div className="flex justify-end">
-          <Button disabled={pending} onClick={() => run(() => saveOpeningsSettingsAction(v), () => setSaved(true))}>
+        <div className="flex items-center justify-end gap-3">
+          <SyncMsg msg={msg} />
+          <Button disabled={pending} onClick={() => saveSetting(v)}>
             Save openings rules
           </Button>
+          {dialog}
         </div>
       )}
     </section>
