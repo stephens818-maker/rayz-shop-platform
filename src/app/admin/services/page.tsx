@@ -5,6 +5,7 @@ import { services, shopServices, shops } from "@/db/schema";
 import { Card, CardHeader, LinkButton, PageHeader, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { can, guardPage } from "@/server/auth/staff";
+import { shopMayEdit } from "@/server/brand-sync/engine";
 import { lookups } from "@/server/lookups";
 import { listCategories } from "@/server/catalog-categories";
 import { CategoryOrder } from "@/components/category-order";
@@ -40,6 +41,7 @@ export default async function ServicesPage() {
       {shopId ? (
         <ShopOverrides
           shopId={shopId}
+          locked={!(await shopMayEdit(ctx, "service"))}
           shopName={visibleShops.find((s) => s.id === shopId)?.name ?? ""}
           rows={master.map((m) => {
             const o = overrides.find((x) => x.shopId === shopId && x.serviceId === m.id);

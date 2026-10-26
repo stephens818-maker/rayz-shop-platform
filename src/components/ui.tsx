@@ -184,6 +184,18 @@ export function Notice({ tone = "amber", children }: { tone?: "amber" | "blue" |
   return <div className={cx("rounded-lg px-3 py-2 text-sm ring-1 ring-inset", c)}>{children}</div>;
 }
 
+/** A brand-controlled setting a shop manager can see but not change (Setup → Sync status → Shop edits). */
+export function BrandLock({ what, plural, className }: { what: string; plural?: boolean; className?: string }) {
+  return (
+    <span className={cx("inline-flex items-center gap-1.5 rounded-md bg-zinc-100 px-2 py-1 text-xs text-zinc-600", className)} data-testid="brand-lock">
+      <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0" fill="currentColor" aria-hidden>
+        <path d="M5 7V5a3 3 0 1 1 6 0v2h.5A1.5 1.5 0 0 1 13 8.5v5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 13.5v-5A1.5 1.5 0 0 1 4.5 7H5Zm1.5 0h3V5a1.5 1.5 0 0 0-3 0v2Z" />
+      </svg>
+      {what} {plural ? "are" : "is"} set by the brand. A brand admin can let shops change {plural ? "them" : "it"} under Setup → Sync status.
+    </span>
+  );
+}
+
 export function Logo({ dark }: { dark?: boolean }) {
   return (
     <span className={cx("inline-flex items-center gap-2 font-semibold tracking-tight", dark ? "text-white" : "text-zinc-900")}>

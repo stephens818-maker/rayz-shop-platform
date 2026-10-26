@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { useSyncSave } from "@/components/brand-sync";
-import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
+import { BrandLock, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { ReceiptBranding } from "@/domain/connect";
 import { LOYALTY_TYPES, LOYALTY_TYPE_LABEL, type LoyaltyConfig } from "@/domain/loyalty";
 import type { ShopSettingPart } from "@/domain/permissions";
@@ -71,7 +71,7 @@ type Info = {
 const PART_LABEL: Record<ShopSettingPart, string> = { details: "shop details", hours: "hours", booking: "online booking rules", checkout: "checkout", phone: "phone line" };
 
 /** Each part (details, booking rules, phone line) is editable only with its permission; the rest shows read-only. */
-export function ShopInfoEditor({ shopId, initial, editable }: { shopId: string; initial: Info; editable: readonly ShopSettingPart[] }) {
+export function ShopInfoEditor({ shopId, initial, editable, policiesLocked }: { shopId: string; initial: Info; editable: readonly ShopSettingPart[]; policiesLocked: boolean }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState(initial);
   const num = (k: keyof Info) => (e: React.ChangeEvent<HTMLInputElement>) => setV({ ...v, [k]: Number(e.target.value) || 0 });
@@ -82,6 +82,7 @@ export function ShopInfoEditor({ shopId, initial, editable }: { shopId: string; 
   return (
     <Card>
       <CardHeader title="Shop & online booking" subtitle={locked.length ? `You can see but not change the ${locked.map((p) => PART_LABEL[p]).join(" or ")}.` : undefined} />
+      {booking && policiesLocked && <BrandLock what="The cutoff, notice, booking window and buffer" plural className="mx-4 mt-3" />}
       <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Name">
           <Input disabled={!details} value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} />
@@ -107,16 +108,16 @@ export function ShopInfoEditor({ shopId, initial, editable }: { shopId: string; 
           <Textarea disabled={!details} rows={2} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
         </Field>
         <Field label="Online cancel/reschedule cutoff (min)">
-          <Input disabled={!booking} inputMode="numeric" value={v.cancelCutoffMinutes} onChange={num("cancelCutoffMinutes")} />
+          <Input disabled={!booking || policiesLocked} inputMode="numeric" value={v.cancelCutoffMinutes} onChange={num("cancelCutoffMinutes")} />
         </Field>
         <Field label="Minimum notice (min)">
-          <Input disabled={!booking} inputMode="numeric" value={v.minLeadMinutes} onChange={num("minLeadMinutes")} />
+          <Input disabled={!booking || policiesLocked} inputMode="numeric" value={v.minLeadMinutes} onChange={num("minLeadMinutes")} />
         </Field>
         <Field label="Book up to (days ahead)">
-          <Input disabled={!booking} inputMode="numeric" value={v.bookingWindowDays} onChange={num("bookingWindowDays")} />
+          <Input disabled={!booking || policiesLocked} inputMode="numeric" value={v.bookingWindowDays} onChange={num("bookingWindowDays")} />
         </Field>
         <Field label="Buffer between appts (min)">
-          <Input disabled={!booking} inputMode="numeric" value={v.bufferMinutes} onChange={num("bufferMinutes")} />
+          <Input disabled={!booking || policiesLocked} inputMode="numeric" value={v.bufferMinutes} onChange={num("bufferMinutes")} />
         </Field>
       </div>
       <SaveBar
@@ -132,7 +133,7 @@ export function ShopInfoEditor({ shopId, initial, editable }: { shopId: string; 
 
 type Money = { serviceTaxRate: number; productTaxRate: number; taxRatesVerified: boolean };
 
-export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; initial: Money; canEdit: boolean }) {
+export function MoneyEditor({ shopId, initial, canEdit, ratesLocked }: { shopId: string; initial: Money; canEdit: boolean; ratesLocked: boolean }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState(initial);
   const [svc, setSvc] = useState((initial.serviceTaxRate * 100).toFixed(3).replace(/\.?0+$/, ""));
@@ -140,12 +141,13 @@ export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; init
   return (
     <Card>
       <CardHeader title="Tax" subtitle={canEdit ? "Rates are stored per shop and snapshotted on every receipt." : "You can see but not change taxes."} />
+      {canEdit && ratesLocked && <BrandLock what="Tax rates" plural className="mx-4 mt-3" />}
       <fieldset disabled={!canEdit} className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Service tax %">
-          <Input inputMode="decimal" value={svc} onChange={(e) => setSvc(e.target.value)} />
+          <Input inputMode="decimal" value={svc} disabled={ratesLocked} onChange={(e) => setSvc(e.target.value)} />
         </Field>
         <Field label="Product tax %">
-          <Input inputMode="decimal" value={prd} onChange={(e) => setPrd(e.target.value)} />
+          <Input inputMode="decimal" value={prd} disabled={ratesLocked} onChange={(e) => setPrd(e.target.value)} />
         </Field>
         <label className="flex items-center gap-2 self-end pb-2 text-sm sm:col-span-2">
           <input type="checkbox" checked={v.taxRatesVerified} onChange={(e) => setV({ ...v, taxRatesVerified: e.target.checked })} /> Rates verified for this location
@@ -163,7 +165,7 @@ export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; init
 }
 
 /** A shop's opening hours, or with no shop the brand's hours template that new shops start from and a sync pushes. */
-export function HoursEditor({ shopId, initial, canSetSunday }: { shopId: string | null; initial: { weekday: number; openMin: number; closeMin: number }[]; canSetSunday: boolean }) {
+export function HoursEditor({ shopId, initial, canSetSunday, locked = false }: { shopId: string | null; initial: { weekday: number; openMin: number; closeMin: number }[]; canSetSunday: boolean; locked?: boolean }) {
   const shop = useSave();
   const brand = useSyncSave();
   const { pending, msg } = shopId ? shop : brand;
@@ -175,7 +177,8 @@ export function HoursEditor({ shopId, initial, canSetSunday }: { shopId: string 
       ) : (
         <CardHeader title="Hours template" subtitle="The weekly hours new shops open with. Saving lets you push them to shops; closed dates stay each shop's own." />
       )}
-      <div className="divide-y divide-zinc-100">
+      {locked && <BrandLock what="Opening hours" plural className="mx-4 mt-3" />}
+      <fieldset disabled={locked} className="divide-y divide-zinc-100">
         {[1, 2, 3, 4, 5, 6, 0].map((d) => {
           const r = rows.find((x) => x.weekday === d);
           return (
@@ -201,13 +204,15 @@ export function HoursEditor({ shopId, initial, canSetSunday }: { shopId: string 
             </div>
           );
         })}
-      </div>
+      </fieldset>
+      {!locked && (
       <SaveBar
         pending={pending}
         msg={msg}
         onClick={() => (shopId ? shop.save(() => saveHoursAction(shopId, rows)) : brand.save({ label: "Hours template", changes: [{ type: "hours", item: "week", value: rows }] }))}
         label="Save hours"
       />
+      )}
       {brand.dialog}
     </Card>
   );
@@ -383,10 +388,12 @@ export function ProfileEditor({
   shopId,
   initial,
   canChangeLink,
+  accentLocked,
 }: {
   shopId: string;
   initial: { slug: string; timezone: string; accentColor: string; logoUrl: string };
   canChangeLink: boolean;
+  accentLocked: boolean;
 }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState(initial);
@@ -406,8 +413,8 @@ export function ProfileEditor({
             ))}
           </Select>
         </Field>
-        <Field label="Accent color" hint="Blank uses the brand's.">
-          <Input value={v.accentColor} placeholder="#1f2937" onChange={(e) => setV({ ...v, accentColor: e.target.value })} />
+        <Field label="Accent color" hint={accentLocked ? "Set by the brand (Setup → Sync status)." : "Blank uses the brand's."}>
+          <Input value={v.accentColor} placeholder="#1f2937" disabled={accentLocked} onChange={(e) => setV({ ...v, accentColor: e.target.value })} />
         </Field>
         <Field label="Logo web address">
           <Input type="url" value={v.logoUrl} onChange={(e) => setV({ ...v, logoUrl: e.target.value })} />
@@ -501,20 +508,21 @@ export function ReadersEditor({ shopId, shopName, terminalLocationId, readers }:
   );
 }
 
-export function ReceiptEditor({ shopId, shopName, initial, brandReviews }: { shopId: string; shopName: string; initial: ReceiptBranding; brandReviews: ReviewRules }) {
+export function ReceiptEditor({ shopId, shopName, initial, brandReviews, locked }: { shopId: string; shopName: string; initial: ReceiptBranding; brandReviews: ReviewRules; locked: boolean }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState({ ...initial, headline: initial.headline ?? "", footer: initial.footer ?? "", reviewUrl: initial.reviewUrl ?? "" });
   return (
     <Card>
       <CardHeader title="Receipts" subtitle={`What ${shopName}'s digital receipts show. Clients get a text with a link or an email, or no receipt.`} />
+      {locked && <BrandLock what="The headline, footer, what's shown and the Print button" plural className="mx-4 mt-3" />}
       <div className="grid gap-3 p-4 sm:grid-cols-2">
         <Field label="Headline" hint={`Blank prints "Ray'z Barber Shop · ${shopName}".`}>
-          <Input maxLength={60} value={v.headline} onChange={(e) => setV({ ...v, headline: e.target.value })} />
+          <Input maxLength={60} value={v.headline} disabled={locked} onChange={(e) => setV({ ...v, headline: e.target.value })} />
         </Field>
         <Field label="Footer" hint="Blank prints the brand's thank-you line.">
-          <Input maxLength={200} value={v.footer} onChange={(e) => setV({ ...v, footer: e.target.value })} />
+          <Input maxLength={200} value={v.footer} disabled={locked} onChange={(e) => setV({ ...v, footer: e.target.value })} />
         </Field>
-        <div className="flex flex-wrap gap-4 text-sm text-zinc-700 sm:col-span-2">
+        <fieldset disabled={locked} className="flex flex-wrap gap-4 text-sm text-zinc-700 sm:col-span-2">
           {(
             [
               ["showLogo", "Logo"],
@@ -526,10 +534,10 @@ export function ReceiptEditor({ shopId, shopName, initial, brandReviews }: { sho
               <input type="checkbox" checked={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.checked })} /> {label}
             </label>
           ))}
-        </div>
+        </fieldset>
         <ReviewFields value={v} brand={brandReviews} onChange={(r) => setV({ ...v, ...r })} />
         <label className="flex items-center gap-2 text-sm text-zinc-700 sm:col-span-2">
-          <input type="checkbox" checked={v.allowPrint} onChange={(e) => setV({ ...v, allowPrint: e.target.checked })} /> Show a Print button on the staff receipt (paper is off by default)
+          <input type="checkbox" checked={v.allowPrint} disabled={locked} onChange={(e) => setV({ ...v, allowPrint: e.target.checked })} /> Show a Print button on the staff receipt (paper is off by default)
         </label>
       </div>
       <SaveBar

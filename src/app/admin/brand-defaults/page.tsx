@@ -2,11 +2,12 @@ import type { Metadata } from "next";
 import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { roles } from "@/db/schema";
-import { PageHeader } from "@/components/ui";
+import { BrandLock, PageHeader } from "@/components/ui";
 import { DEFAULT_SECTIONS, SECTION_SHOP_PERMISSIONS } from "@/domain/location-defaults";
 import type { Permission } from "@/domain/permissions";
 import { can, canAny, guardPage, openShops } from "@/server/auth/staff";
 import { hoursAdapter, receiptAdapter } from "@/server/brand-sync/adapters/location";
+import { shopMayEdit } from "@/server/brand-sync/engine";
 import { taxesAdapter } from "@/server/brand-sync/adapters/money";
 import { locationDefaultsBoard } from "@/server/location-defaults";
 import { HoursEditor } from "../settings/editors";
@@ -26,18 +27,21 @@ export default async function BrandDefaultsPage() {
     receiptAdapter.brand(db, ["branding"]),
   ]);
   const brandEditor = ctx.brandWide && can(ctx, "settings.brand");
+  const shopSections = DEFAULT_SECTIONS.map((s) => s.id).filter((id) => canAny(ctx, [...SECTION_SHOP_PERMISSIONS[id]] as Permission[]));
+  const shopsLocked = shopSections.length > 0 && !(await shopMayEdit(ctx, "location_default"));
   return (
     <div className="mx-auto max-w-7xl space-y-5">
       <PageHeader
         title="Brand defaults"
         subtitle="Set it once for every location. When you change one, you pick which shops it goes to. A location follows the brand until it has its own value; switching it back puts it on the brand again. New shops start from all of these. Every change is audited, and Setup → Sync status shows where each shop stands."
       />
+      {shopsLocked && <BrandLock what="Location defaults" plural />}
       <DefaultsBoard
         brand={board.brand}
         shops={board.shops}
         roles={roleRows.flatMap((r) => (r.key && r.key !== "shop_login" && r.scope !== "all" ? [{ key: r.key, name: r.name }] : []))}
         canBrand={can(ctx, "settings.brand") && ctx.brandWide}
-        shopSections={DEFAULT_SECTIONS.map((s) => s.id).filter((id) => canAny(ctx, [...SECTION_SHOP_PERMISSIONS[id]] as Permission[]))}
+        shopSections={shopsLocked ? [] : shopSections}
       />
       {brandEditor && (
         <div className="grid gap-5 lg:grid-cols-2" data-testid="brand-templates">

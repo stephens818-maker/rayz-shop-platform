@@ -298,6 +298,24 @@ describe("brand change scope", () => {
     expect(await actions.setSyncControlAction("service", false)).toMatchObject({ ok: true });
   });
 
+  it("staff with every shop change a shop's own hours; its manager can't until the brand allows it", async () => {
+    const { signInAs } = await import("./session");
+    const settings = await import("@/app/admin/settings/actions");
+    const { eq } = m.drizzle;
+    const staffId = async (email: string) => (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, email) }))!.id;
+    const hours = (await m.db.db.select().from(m.schema.shopHours).where(eq(m.schema.shopHours.shopId, shopB))).map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }));
+    expect(hours.length).toBeGreaterThan(0);
+    const later = hours.map((h, i) => (i === 0 ? { ...h, closeMin: h.closeMin - 60 } : h));
+
+    await signInAs(await staffId("manager.moline@rayz.test"));
+    expect(await settings.saveHoursAction(shopB, later)).toMatchObject({ ok: false, error: expect.stringMatching(/set by the brand/) });
+
+    await signInAs(await staffId("admin@rayz.test"));
+    expect(await settings.saveHoursAction(shopB, later)).toMatchObject({ ok: true });
+    expect((await cellAt("hours:week", shopB))?.s).toBe("overridden");
+    expect(await settings.saveHoursAction(shopB, hours)).toMatchObject({ ok: true });
+  });
+
   it("refuses a role name another role has", async () => {
     const roles = await m.db.db.select().from(m.schema.roles);
     const target = roles.find((r) => r.key === "barber")!;

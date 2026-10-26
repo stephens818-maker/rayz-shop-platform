@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Badge, Button, Card, CardHeader, Input, Select, Suggestions, cx } from "@/components/ui";
+import { Badge, BrandLock, Button, Card, CardHeader, Input, Select, Suggestions, cx } from "@/components/ui";
 import { useBrandSync, syncedText } from "@/components/brand-sync";
 import { saveShopServiceAction } from "./actions";
 
@@ -24,14 +24,14 @@ type OvRow = {
   nameOverride: string | null;
 };
 
-export function ShopOverrides({ shopId, shopName, rows }: { shopId: string; shopName: string; rows: OvRow[] }) {
+export function ShopOverrides({ shopId, shopName, rows, locked }: { shopId: string; shopName: string; rows: OvRow[]; locked: boolean }) {
   const [showOff, setShowOff] = useState(false);
   const list = rows.filter((r) => r.active && (showOff || r.enabled));
   return (
     <Card>
       <CardHeader
         title={`${shopName} menu`}
-        subtitle="Leave price or length blank to use the brand default."
+        subtitle={locked ? <BrandLock what="Which services are on, prices and lengths" plural className="mt-1" /> : "Leave price or length blank to use the brand default."}
         action={
           <label className="flex items-center gap-1.5 text-xs text-zinc-600">
             <input type="checkbox" checked={showOff} onChange={(e) => setShowOff(e.target.checked)} /> Show services that are off here
@@ -53,7 +53,7 @@ export function ShopOverrides({ shopId, shopName, rows }: { shopId: string; shop
           </thead>
           <tbody>
             {list.map((r) => (
-              <OverrideRow key={r.id} shopId={shopId} r={r} />
+              <OverrideRow key={r.id} shopId={shopId} r={r} locked={locked} />
             ))}
           </tbody>
         </table>
@@ -62,7 +62,7 @@ export function ShopOverrides({ shopId, shopName, rows }: { shopId: string; shop
   );
 }
 
-function OverrideRow({ shopId, r }: { shopId: string; r: OvRow }) {
+function OverrideRow({ shopId, r, locked }: { shopId: string; r: OvRow; locked: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [s, setS] = useState({ enabled: r.enabled, bookableOnline: r.bookableOnline, price: dollars(r.priceCents), dur: r.durationMin?.toString() ?? "", name: r.nameOverride ?? "" });
@@ -81,16 +81,16 @@ function OverrideRow({ shopId, r }: { shopId: string; r: OvRow }) {
         </div>
       </td>
       <td className="px-3 py-2">
-        <input type="checkbox" checked={s.enabled} onChange={(e) => setS({ ...s, enabled: e.target.checked })} />
+        <input type="checkbox" checked={s.enabled} disabled={locked} onChange={(e) => setS({ ...s, enabled: e.target.checked })} />
       </td>
       <td className="px-3 py-2">
         <input type="checkbox" checked={s.bookableOnline} disabled={!s.enabled} onChange={(e) => setS({ ...s, bookableOnline: e.target.checked })} />
       </td>
       <td className="px-3 py-2">
-        <Input className="w-24 py-1" inputMode="decimal" placeholder={dollars(r.defaultPriceCents)} value={s.price} onChange={(e) => setS({ ...s, price: e.target.value })} />
+        <Input className="w-24 py-1" inputMode="decimal" placeholder={dollars(r.defaultPriceCents)} value={s.price} disabled={locked} onChange={(e) => setS({ ...s, price: e.target.value })} />
       </td>
       <td className="px-3 py-2">
-        <Input className="w-20 py-1" inputMode="numeric" placeholder={String(r.defaultDurationMin)} value={s.dur} onChange={(e) => setS({ ...s, dur: e.target.value })} />
+        <Input className="w-20 py-1" inputMode="numeric" placeholder={String(r.defaultDurationMin)} value={s.dur} disabled={locked} onChange={(e) => setS({ ...s, dur: e.target.value })} />
       </td>
       <td className="px-3 py-2">
         <Input className="w-48 py-1" placeholder={r.name} value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} />

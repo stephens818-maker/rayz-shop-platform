@@ -7,18 +7,18 @@ import { FILING_LABEL, FilingFrequency, stateName } from "@/domain/sales-tax";
 import { saveDrawerOpeningAction, savePhoneOperatorAction, saveTaxFilingAction } from "./actions";
 import { SaveBar, useSave } from "./editors";
 
-export function DrawerOpeningEditor({ shopId, initialCents }: { shopId: string; initialCents: number }) {
+export function DrawerOpeningEditor({ shopId, initialCents, locked }: { shopId: string; initialCents: number; locked: boolean }) {
   const { pending, msg, save } = useSave();
   const [amount, setAmount] = useState((initialCents / 100).toFixed(2));
   return (
     <Card>
       <CardHeader title="Cash drawer" subtitle="What the drawer opens with each day. Whoever opens it can count a different amount; the day keeps what they counted." />
       <div className="grid gap-3 p-4 sm:grid-cols-3">
-        <Field label="Usual opening balance">
-          <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <Field label="Usual opening balance" hint={locked ? "Set by the brand (Setup → Sync status)." : undefined}>
+          <Input inputMode="decimal" value={amount} disabled={locked} onChange={(e) => setAmount(e.target.value)} />
         </Field>
       </div>
-      <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveDrawerOpeningAction(shopId, Math.round((Number(amount) || 0) * 100)))} />
+      {!locked && <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveDrawerOpeningAction(shopId, Math.round((Number(amount) || 0) * 100)))} />}
     </Card>
   );
 }

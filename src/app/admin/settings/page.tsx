@@ -5,6 +5,7 @@ import { shopClosures, shopHours, shops, terminalReaders } from "@/db/schema";
 import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader } from "@/components/ui";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
+import { shopMayEdit } from "@/server/brand-sync/engine";
 import { getLoyaltyConfig } from "@/server/loyalty";
 import { loadFamilySettings } from "@/server/family";
 import { FamilyEditor } from "./family-editor";
@@ -60,6 +61,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const canCardFee = can(ctx, "settings.card_fee");
   const seesCardFee = canCardFee || can(ctx, "settings.taxes") || part("checkout");
   const fee = seesCardFee ? await shopFeePolicy(shop.id) : null;
+  const [policiesLocked, hoursLocked, taxesLocked, tipsLocked, receiptLocked] = await Promise.all(
+    (["location_default", "hours", "taxes", "tips", "receipt"] as const).map(async (t) => !(await shopMayEdit(ctx, t))),
+  );
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader title={`${shop.name} settings`} subtitle={ctx.currentShopId === null && shop.id === ctx.shopIds[0] ? "All-shops view: editing the first shop. Use the switcher to pick another." : undefined} />
@@ -68,6 +72,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <ShopInfoEditor
         shopId={shop.id}
         editable={parts}
+        policiesLocked={policiesLocked}
         initial={{
           name: shop.name,
           twilioNumber: shop.twilioNumber ?? "",
@@ -120,6 +125,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         <ProfileEditor
           shopId={shop.id}
           canChangeLink={can(ctx, "locations.setup")}
+          accentLocked={policiesLocked}
           initial={{ slug: shop.slug, timezone: shop.timezone, accentColor: shop.accentColor ?? "", logoUrl: shop.logoUrl ?? "" }}
         />
       )}
@@ -127,6 +133,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       <MoneyEditor
         shopId={shop.id}
         canEdit={can(ctx, "settings.taxes")}
+        ratesLocked={taxesLocked}
         initial={{
           serviceTaxRate: Number(shop.serviceTaxRate),
           productTaxRate: Number(shop.productTaxRate),
@@ -149,9 +156,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           walletFlag={flags.walletFee()}
         />
       )}
-      {part("hours") && <HoursEditor shopId={shop.id} canSetSunday={brand} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />}
+      {part("hours") && <HoursEditor shopId={shop.id} canSetSunday={brand} locked={hoursLocked} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />}
       {part("hours") && <ClosuresEditor shopId={shop.id} multiShop={ctx.shopIds.length > 1} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />}
-      {part("checkout") && <DrawerOpeningEditor shopId={shop.id} initialCents={shop.drawerOpeningCents} />}
+      {part("checkout") && <DrawerOpeningEditor shopId={shop.id} initialCents={shop.drawerOpeningCents} locked={policiesLocked} />}
       {part("checkout") && (
         <ReadersEditor
           shopId={shop.id}
@@ -167,10 +174,11 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           initial={handoff.shop}
           brandTips={brandHandoff.tips}
           hasReaders={readers.some((r) => r.active && r.stripeReaderId)}
+          tipsLocked={tipsLocked}
         />
       )}
       {part("phone") && <PhoneOperatorEditor shopId={shop.id} initial={cleanOperator(shop.phoneOperator)} hasLine={!!shop.twilioNumber} />}
-      {part("checkout") && <ReceiptEditor key={receiptBranding(shop.receipt).reviewUrl ?? ""} shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} brandReviews={reviewRules} />}
+      {part("checkout") && <ReceiptEditor key={receiptBranding(shop.receipt).reviewUrl ?? ""} shopId={shop.id} shopName={shop.name} initial={receiptBranding(shop.receipt)} brandReviews={reviewRules} locked={receiptLocked} />}
       {can(ctx, "network.settings") && (
         <Card>
           <CardHeader

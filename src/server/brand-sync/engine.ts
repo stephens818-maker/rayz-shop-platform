@@ -813,10 +813,10 @@ export async function setSyncControl(who: Who, type: SyncType, on: boolean) {
   return a.paths;
 }
 
-/** Whether this person may change their shop's own value of a brand-controlled setting: brand admins always; shop managers where the brand allows it. */
+/** Whether this person may change a shop's own value of a brand-controlled setting: staff with every shop always; shop managers where the brand allows it. */
 export async function shopMayEdit(ctx: Who["ctx"], type: SyncType, tx: DBorTx = db): Promise<boolean> {
   const a = adapterOf(type);
-  if (ctx?.brandWide && a.brandPerms.some((p) => ctx.permissions.has(p))) return true;
+  if (ctx?.brandWide) return true;
   if (a.control) return a.control.get(tx);
   return (await controlRows(tx)).get(type) ?? false;
 }

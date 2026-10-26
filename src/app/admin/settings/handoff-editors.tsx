@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Button, Card, CardHeader, Field, Input, cx } from "@/components/ui";
+import { BrandLock, Button, Card, CardHeader, Field, Input, cx } from "@/components/ui";
 import { DEFAULT_TIP_SCREEN, MAX_TIP_PRESETS, type ShopHandoff, THANK_YOU_SECONDS, type TipScreen, tipChoices, tipScreenProblem } from "@/domain/handoff";
 import { useSyncSave } from "@/components/brand-sync";
 import { saveShopHandoffAction } from "./actions";
@@ -175,7 +175,7 @@ function SaveBar({ pending, msg, onClick, disabled }: { pending: boolean; msg: {
   );
 }
 
-export function ShopHandoffEditor({ shopId, shopName, initial, brandTips, hasReaders }: { shopId: string; shopName: string; initial: ShopHandoff; brandTips: TipScreen; hasReaders: boolean }) {
+export function ShopHandoffEditor({ shopId, shopName, initial, brandTips, hasReaders, tipsLocked }: { shopId: string; shopName: string; initial: ShopHandoff; brandTips: TipScreen; hasReaders: boolean; tipsLocked: boolean }) {
   const { pending, msg, save } = useSave();
   const { tips: initialTips, ...rules0 } = initial;
   const [own, setOwn] = useState(!!initialTips);
@@ -188,8 +188,9 @@ export function ShopHandoffEditor({ shopId, shopName, initial, brandTips, hasRea
         subtitle={`"Hand to customer" turns the device to the client for the tip, signature, receipt and payment, locked to that ticket until a staff PIN. These are ${shopName}'s rules.`}
       />
       <div className="space-y-5 p-4">
-        <fieldset className="space-y-2">
+        <fieldset className="space-y-2" disabled={tipsLocked}>
           <legend className="mb-1.5 text-xs font-medium text-zinc-700">Tip buttons</legend>
+          {tipsLocked && <BrandLock what="Tip buttons" plural />}
           <label className="flex items-center gap-2 text-sm text-zinc-700">
             <input type="radio" name="tipsource" checked={!own} onChange={() => setOwn(false)} /> The brand&apos;s: {describeTips(brandTips)}
           </label>

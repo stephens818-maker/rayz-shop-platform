@@ -6,6 +6,7 @@ import { products } from "@/db/schema";
 import { Card, CardHeader, LinkButton, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { can, canAny, guardPage } from "@/server/auth/staff";
+import { shopMayEdit } from "@/server/brand-sync/engine";
 import { stockLevels } from "@/server/inventory/stock";
 import { lookups } from "@/server/lookups";
 import { InventoryTable, NewProductForm, StockRowView } from "./editors";
@@ -84,7 +85,7 @@ export default async function InventoryPage() {
         <InventoryTable
           shopId={shopId}
           rows={rows}
-          perms={{ price: canAny(ctx, ["catalog.prices", "catalog.manage"]), adjust: can(ctx, "inventory.adjust"), levels: can(ctx, "inventory.manage") }}
+          perms={{ price: canAny(ctx, ["catalog.prices", "catalog.manage"]), priceLocked: !(await shopMayEdit(ctx, "product")), adjust: can(ctx, "inventory.adjust"), levels: can(ctx, "inventory.manage") }}
         />
         {canCreate && <NewProductForm categories={(await lookups()).productCategories} />}
       </div>

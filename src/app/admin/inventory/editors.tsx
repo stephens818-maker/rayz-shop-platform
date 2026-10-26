@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useState } from "react";
-import { Badge, Button, Card, CardHeader, Field, Input, Select, Suggestions, cx } from "@/components/ui";
+import { Badge, BrandLock, Button, Card, CardHeader, Field, Input, Select, Suggestions, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { ADJUST_DIRECTION, ADJUST_REASONS, ADJUST_REASON_LABEL, AdjustReasonKey } from "@/domain/inventory";
 import { adjustStockAction, createProductAction, saveShopLevelsAction, saveShopProductAction } from "./actions";
@@ -34,7 +34,7 @@ export interface StockRowView {
   over: boolean;
   vendor: string | null;
 }
-type Perms = { price: boolean; adjust: boolean; levels: boolean };
+type Perms = { price: boolean; priceLocked: boolean; adjust: boolean; levels: boolean };
 
 const d = (c: number) => (c / 100).toFixed(2);
 const $ = (c: number) => `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -142,7 +142,7 @@ export function InventoryTable({ shopId, rows, perms }: { shopId: string; rows: 
                       <div className="grid gap-3 lg:grid-cols-3">
                         {perms.adjust && r.stocked && <AdjustPanel shopId={shopId} r={r} />}
                         {perms.levels && r.stocked && <LevelsPanel shopId={shopId} r={r} />}
-                        {perms.price && <PricePanel shopId={shopId} r={r} />}
+                        {perms.price && <PricePanel shopId={shopId} r={r} locked={perms.priceLocked} />}
                       </div>
                     </td>
                   </tr>
@@ -250,7 +250,7 @@ function LevelsPanel({ shopId, r }: { shopId: string; r: StockRowView }) {
   );
 }
 
-function PricePanel({ shopId, r }: { shopId: string; r: StockRowView }) {
+function PricePanel({ shopId, r, locked }: { shopId: string; r: StockRowView; locked: boolean }) {
   const { pending, error, run } = useAction();
   const [s, setS] = useState({ cost: d(r.costCents), price: d(r.priceCents), active: r.stocked ? r.active : true });
   const cost = Math.round(Number(s.cost) * 100);
@@ -263,9 +263,10 @@ function PricePanel({ shopId, r }: { shopId: string; r: StockRowView }) {
           <Input className="py-1.5" inputMode="decimal" value={s.cost} onChange={(e) => setS({ ...s, cost: e.target.value })} />
         </Field>
         <Field label="Price" hint={<span className={margin < 30 ? "text-amber-700" : undefined}>{margin}% margin</span>}>
-          <Input className="py-1.5" inputMode="decimal" value={s.price} onChange={(e) => setS({ ...s, price: e.target.value })} />
+          <Input className="py-1.5" inputMode="decimal" value={s.price} disabled={locked} onChange={(e) => setS({ ...s, price: e.target.value })} />
         </Field>
       </div>
+      {locked && <BrandLock what="The retail price" className="mt-2" />}
       <div className="mt-2 flex items-center justify-between gap-2">
         <label className="flex items-center gap-1.5 text-sm">
           <input type="checkbox" checked={s.active} onChange={(e) => setS({ ...s, active: e.target.checked })} /> Sell at this shop
