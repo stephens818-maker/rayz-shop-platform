@@ -286,7 +286,7 @@ describe("P1#20 a refund issued in the Stripe dashboard reaches the books", () =
     return m.webhook.handleStripeWebhook(payload, header, secret);
   }
 
-  it("records the refund, reverses loyalty, and ignores redelivery and the POS's own refunds", async () => {
+  it("books the money back on the card with no lines, leaves loyalty alone until staff assign lines, and ignores redelivery and the POS's own refunds", async () => {
     const c = await client("Dashboard");
     const t = await ticket({ customerId: c.id });
     await m.checkout.finalizeSale({ saleId: t.sale.id, lines: [{ kind: "service", refId: t.svc.id, qty: 1 }], tipCents: 0, tender: credit, actor });
@@ -299,14 +299,27 @@ describe("P1#20 a refund issued in the Stripe dashboard reaches the books", () =
 
     let refs = await m.db.db.select().from(m.schema.refunds).where(eq(m.schema.refunds.saleId, t.sale.id));
     expect(refs).toHaveLength(1);
-    expect(refs[0]).toMatchObject({ source: "stripe_dashboard", amountCents: 1000, method: "card" });
-    expect(refs[0].serviceNetCents + refs[0].taxCents + refs[0].cardFeeCents).toBe(1000);
-    expect((await m.loyalty.loyaltyBalance(c.id)).progressCents).toBe(t.svc.priceCents - refs[0].serviceNetCents);
+    expect(refs[0]).toMatchObject({ source: "stripe_dashboard", amountCents: 1000, method: "card", awaitingLines: true, serviceNetCents: 0, taxCents: 0, tipCents: 0, cardFeeCents: 0 });
+    expect((await m.loyalty.loyaltyBalance(c.id)).progressCents).toBe(t.svc.priceCents);
+    expect((await m.db.db.query.payments.findFirst({ where: eq(m.schema.payments.id, pay.id) }))!.refundedCents).toBe(1000);
     expect((await m.db.db.query.sales.findFirst({ where: eq(m.schema.sales.id, t.sale.id) }))!.status).toBe("partially_refunded");
 
     await deliver(pay.stripePaymentIntentId!, 1000);
     refs = await m.db.db.select().from(m.schema.refunds).where(eq(m.schema.refunds.saleId, t.sale.id));
     expect(refs).toHaveLength(1);
+
+    await expect(m.checkout.refundEverything(t.sale.id, "Rest of it", false, actor)).rejects.toThrow(/needs its lines first/);
+    const st = await m.checkout.refundableState(t.sale.id);
+    expect(st.awaiting).toEqual([expect.objectContaining({ id: refs[0].id, amountCents: 1000 })]);
+    const svcItem = st.items.find((i) => i.kind === "service")!;
+    await expect(m.checkout.assignRefundLines({ refundId: refs[0].id, items: [], tipCents: 0, refundCardFee: false, restock: false, actor })).rejects.toThrow(/comes to \$0\.00, but \$10\.00 went back/);
+    const assigned = await m.checkout.assignRefundLines({ refundId: refs[0].id, items: [{ saleItemId: svcItem.id, qty: 1 }], tipCents: 0, refundCardFee: "proportional", restock: false, actor });
+    expect(assigned.components.serviceNetCents + assigned.components.taxCents + assigned.components.cardFeeCents).toBe(1000);
+    const [after] = await m.db.db.select().from(m.schema.refunds).where(eq(m.schema.refunds.id, refs[0].id));
+    expect(after).toMatchObject({ awaitingLines: false, amountCents: 1000, serviceNetCents: assigned.components.serviceNetCents });
+    expect(after.linesAssignedAt).toBeInstanceOf(Date);
+    expect((await m.loyalty.loyaltyBalance(c.id)).progressCents).toBe(t.svc.priceCents - assigned.components.serviceNetCents);
+    await expect(m.checkout.assignRefundLines({ refundId: refs[0].id, items: [{ saleItemId: svcItem.id, qty: 1 }], tipCents: 0, refundCardFee: false, restock: false, actor })).rejects.toThrow(/already assigned/);
 
     const pos = await m.checkout.refundEverything(t.sale.id, "Rest of it", false, actor);
     const p2 = await m.db.db.query.payments.findFirst({ where: eq(m.schema.payments.id, pay.id) });
@@ -317,6 +330,37 @@ describe("P1#20 a refund issued in the Stripe dashboard reaches the books", () =
     expect(refs.reduce((a, r) => a + r.amountCents, 0)).toBe(1000 + pos.refundedCents);
     expect((await m.db.db.query.sales.findFirst({ where: eq(m.schema.sales.id, t.sale.id) }))!.status).toBe("refunded");
     expect((await m.loyalty.loyaltyBalance(c.id)).progressCents).toBe(0);
+  });
+
+  it("a gift card sold on the ticket keeps its balance until staff say the refund was for it", async () => {
+    const c = await client("DashGift");
+    const t = await ticket({ customerId: c.id });
+    await m.checkout.finalizeSale({
+      saleId: t.sale.id,
+      lines: [
+        { kind: "service", refId: t.svc.id, qty: 1 },
+        { kind: "gift_card", unitPriceCents: 5000, qty: 1 },
+      ],
+      tipCents: 0,
+      tender: credit,
+      actor,
+    });
+    const [pay] = await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, t.sale.id));
+    const [card] = await giftCardsFor(t.sale.id);
+    const ledger = async () => (await m.db.db.select().from(m.schema.giftCardLedger).where(eq(m.schema.giftCardLedger.giftCardId, card.id))).length;
+    const before = await ledger();
+    await deliver(pay.stripePaymentIntentId!, 5000);
+    expect((await m.checkout.lookupGiftCard(card.code)).balanceCents).toBe(5000);
+    expect(await ledger()).toBe(before);
+    const loyaltyBefore = (await m.loyalty.loyaltyBalance(c.id)).progressCents;
+
+    const st = await m.checkout.refundableState(t.sale.id);
+    const gc = st.items.find((i) => i.kind === "gift_card")!;
+    const out = await m.checkout.assignRefundLines({ refundId: st.awaiting[0].id, items: [{ saleItemId: gc.id, qty: 1 }], tipCents: 0, refundCardFee: false, restock: false, actor });
+    expect(out.components).toMatchObject({ giftCardSalesCents: 5000, serviceNetCents: 0 });
+    expect(out.giftCardsCut).toEqual([{ code: card.code, cutCents: 5000 }]);
+    expect(await m.db.db.query.giftCards.findFirst({ where: eq(m.schema.giftCards.id, card.id) })).toMatchObject({ balanceCents: 0, status: "void" });
+    expect((await m.loyalty.loyaltyBalance(c.id)).progressCents).toBe(loyaltyBefore);
   });
 });
 

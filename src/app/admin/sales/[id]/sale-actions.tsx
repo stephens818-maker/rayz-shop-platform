@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Suggestions } from "@/components/ui";
 import { unitsShare } from "@/domain/refunds";
 import { formatCents } from "@/lib/money";
-import { reassignAction, refundAction, voidAction } from "../actions";
+import { assignRefundLinesAction, reassignAction, refundAction, voidAction } from "../actions";
 import { ApprovalValue, ManagerPin, approvalReady } from "./manager-pin";
 
 export function PrintButton() {
@@ -28,6 +28,127 @@ export interface RefundableItem {
   giftCardBalances: number[];
   /** On a combined ticket: whose visit the line was, and their barber. */
   person?: string | null;
+}
+
+const left = (i: RefundableItem) => (i.kind === "gift_card" ? Math.min(i.qty - i.refundedQty, i.giftCardBalances.filter((b) => b > 0).length) : i.qty - i.refundedQty);
+const lineValue = (i: RefundableItem, k: number) =>
+  i.kind === "gift_card" ? i.giftCardBalances.slice(0, k).reduce((a, b) => a + b, 0) : unitsShare(i.netCents, i.qty, i.refundedQty, k) + unitsShare(i.taxCents, i.qty, i.refundedQty, k);
+
+function LinePicker({ items, qty, onChange }: { items: RefundableItem[]; qty: Record<string, number>; onChange: (q: Record<string, number>) => void }) {
+  return (
+    <ul className="divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-200">
+      {items.map((i) => {
+        const max = left(i);
+        const n = qty[i.id] ?? 0;
+        return (
+          <li key={i.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+            <input
+              type="checkbox"
+              disabled={max === 0}
+              checked={n > 0}
+              onChange={(e) => onChange({ ...qty, [i.id]: e.target.checked ? max : 0 })}
+              aria-label={`Refund ${i.name}`}
+            />
+            <span className={max === 0 ? "flex-1 text-zinc-400 line-through" : "flex-1"}>
+              {i.name}
+              {i.qty > 1 && <span className="text-zinc-500"> × {i.qty}</span>}
+              {i.person && <span className="block text-[11px] text-zinc-500">{i.person}</span>}
+              {i.kind === "gift_card" && max > 0 && <span className="block text-[11px] text-zinc-500">Voids the card; refunds what&apos;s unused</span>}
+            </span>
+            {max > 1 && n > 0 && (
+              <Input className="w-14 py-1" inputMode="numeric" value={String(n)} onChange={(e) => onChange({ ...qty, [i.id]: Math.max(0, Math.min(max, Number(e.target.value) || 0)) })} />
+            )}
+            <span className="w-16 text-right tabular text-zinc-600">{max === 0 ? "refunded" : formatCents(lineValue(i, n || max))}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * A refund made in the Stripe dashboard came back with no lines. Until someone says what it was
+ * for, loyalty, gift cards, commission and tip pay stay as they were, and other refunds wait.
+ */
+export function AssignDashboardRefund({
+  saleId,
+  refundId,
+  amountCents,
+  items,
+  tipRemainingCents,
+  cardFeeRemainingCents,
+  feeRefundRule = null,
+  needsPin = false,
+  approvers = [],
+}: {
+  saleId: string;
+  refundId: string;
+  amountCents: number;
+  items: RefundableItem[];
+  tipRemainingCents: number;
+  cardFeeRemainingCents: number;
+  feeRefundRule?: "proportional" | "keep" | null;
+  needsPin?: boolean;
+  approvers?: { id: string; label: string }[];
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [qty, setQty] = useState<Record<string, number>>({});
+  const [tip, setTip] = useState("");
+  const [fee, setFee] = useState(false);
+  const [restock, setRestock] = useState(false);
+  const [approval, setApproval] = useState<ApprovalValue>({ staffId: "", pin: "" });
+  const tipCents = Math.min(tipRemainingCents, Math.round((Number(tip.replace(/[^0-9.]/g, "")) || 0) * 100));
+  const total = items.reduce((a, i) => a + lineValue(i, qty[i.id] ?? 0), 0) + tipCents + (fee ? cardFeeRemainingCents : 0);
+  const short = total < amountCents;
+  const pinOk = approvalReady(true, approval);
+  return (
+    <Card data-testid="assign-refund">
+      <CardHeader title={`Assign a ${formatCents(amountCents)} card refund`} subtitle="It was made in the Stripe dashboard. Pick what it was for; loyalty, gift cards, commission and tip pay change once you do." />
+      <div className="space-y-3 p-4">
+        <LinePicker items={items} qty={qty} onChange={setQty} />
+        {tipRemainingCents > 0 && (
+          <Field label={`Tip it included (up to ${formatCents(tipRemainingCents)})`}>
+            <Input inputMode="decimal" value={tip} placeholder="0.00" onChange={(e) => setTip(e.target.value)} />
+          </Field>
+        )}
+        {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> It included all of the card surcharge ({formatCents(cardFeeRemainingCents)})
+          </label>
+        )}
+        {items.some((i) => i.kind === "product" && (qty[i.id] ?? 0) > 0) && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} /> Return products to stock
+          </label>
+        )}
+        <p className="text-xs text-zinc-500" data-testid="assign-total">
+          Picked {formatCents(total)} of {formatCents(amountCents)}.{!short && total > amountCents && " The refund is spread over what you picked."}
+        </p>
+        {needsPin && <ManagerPin approvers={approvers} value={approval} onChange={setApproval} what="assigning this refund" />}
+        {error && <Notice tone="red">{error}</Notice>}
+        <Button
+          className="w-full"
+          disabled={pending || short || (needsPin && !pinOk)}
+          onClick={() =>
+            start(async () => {
+              setError(null);
+              const r = await assignRefundLinesAction(
+                { saleId, refundId, items: Object.entries(qty).filter(([, n]) => n > 0).map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee || "proportional", restock },
+                needsPin ? approval : null,
+              );
+              setApproval((a) => ({ ...a, pin: "" }));
+              if (!r.ok) setError(r.error ?? "Failed");
+              else router.refresh();
+            })
+          }
+        >
+          Assign lines
+        </Button>
+      </div>
+    </Card>
+  );
 }
 
 export function SaleActions({
@@ -81,9 +202,6 @@ export function SaleActions({
     );
   }
 
-  const left = (i: RefundableItem) => (i.kind === "gift_card" ? Math.min(i.qty - i.refundedQty, i.giftCardBalances.filter((b) => b > 0).length) : i.qty - i.refundedQty);
-  const lineValue = (i: RefundableItem, k: number) =>
-    i.kind === "gift_card" ? i.giftCardBalances.slice(0, k).reduce((a, b) => a + b, 0) : unitsShare(i.netCents, i.qty, i.refundedQty, k) + unitsShare(i.taxCents, i.qty, i.refundedQty, k);
   const tipCents = Math.min(tipRemainingCents, Math.round((Number(tip.replace(/[^0-9.]/g, "")) || 0) * 100));
   const total = items.reduce((a, i) => a + lineValue(i, qty[i.id] ?? 0), 0) + tipCents + (fee ? cardFeeRemainingCents : 0);
   const picked = Object.entries(qty).filter(([, n]) => n > 0);
@@ -127,33 +245,7 @@ export function SaleActions({
             Everything left
           </button>
         </div>
-        <ul className="divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-200">
-          {items.map((i) => {
-            const max = left(i);
-            const n = qty[i.id] ?? 0;
-            return (
-              <li key={i.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                <input
-                  type="checkbox"
-                  disabled={max === 0}
-                  checked={n > 0}
-                  onChange={(e) => setQty({ ...qty, [i.id]: e.target.checked ? max : 0 })}
-                  aria-label={`Refund ${i.name}`}
-                />
-                <span className={max === 0 ? "flex-1 text-zinc-400 line-through" : "flex-1"}>
-                  {i.name}
-                  {i.qty > 1 && <span className="text-zinc-500"> × {i.qty}</span>}
-                  {i.person && <span className="block text-[11px] text-zinc-500">{i.person}</span>}
-                  {i.kind === "gift_card" && max > 0 && <span className="block text-[11px] text-zinc-500">Voids the card; refunds what&apos;s unused</span>}
-                </span>
-                {max > 1 && n > 0 && (
-                  <Input className="w-14 py-1" inputMode="numeric" value={String(n)} onChange={(e) => setQty({ ...qty, [i.id]: Math.max(0, Math.min(max, Number(e.target.value) || 0)) })} />
-                )}
-                <span className="w-16 text-right tabular text-zinc-600">{max === 0 ? "refunded" : formatCents(lineValue(i, n || max))}</span>
-              </li>
-            );
-          })}
-        </ul>
+        <LinePicker items={items} qty={qty} onChange={setQty} />
         {tipRemainingCents > 0 && (
           <Field label={`Tip to refund (up to ${formatCents(tipRemainingCents)})`}>
             <Input inputMode="decimal" value={tip} placeholder="0.00" onChange={(e) => setTip(e.target.value)} />

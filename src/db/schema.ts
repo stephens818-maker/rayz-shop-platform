@@ -2354,9 +2354,20 @@ export const refunds = pgTable(
     createdBy: uuid("created_by"),
     /** The manager whose PIN approved it, when the person issuing it couldn't on their own. */
     approvedBy: uuid("approved_by"),
+    /**
+     * Money back on the card with nothing said about what for (a Stripe dashboard refund): the
+     * components stay zero, and loyalty and gift cards are untouched, until staff assign lines.
+     */
+    awaitingLines: boolean("awaiting_lines").notNull().default(false),
+    linesAssignedAt: ts("lines_assigned_at"),
+    linesAssignedBy: uuid("lines_assigned_by"),
     createdAt: createdAt(),
   },
-  (t) => [index("refunds_shop_date_idx").on(t.shopId, t.businessDate), index("refunds_sale_idx").on(t.saleId)],
+  (t) => [
+    index("refunds_shop_date_idx").on(t.shopId, t.businessDate),
+    index("refunds_sale_idx").on(t.saleId),
+    index("refunds_awaiting_idx").on(t.shopId).where(sql`${t.awaitingLines}`),
+  ],
 );
 
 export const cashDrawers = pgTable(

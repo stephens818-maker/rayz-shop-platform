@@ -26,7 +26,7 @@ import { QuickRate } from "../../customers/ratings";
 import { ReceiptPanel } from "./receipt-panel";
 import { approvers, needsManager, ownLimit } from "@/server/manager-approval";
 import { reassignments } from "@/server/reassign";
-import { PrintButton, ReassignPanel, SaleActions } from "./sale-actions";
+import { AssignDashboardRefund, PrintButton, ReassignPanel, SaleActions } from "./sale-actions";
 
 export const metadata: Metadata = { title: "Receipt" };
 
@@ -75,7 +75,8 @@ export default async function SalePage({ params, searchParams }: { params: Promi
   const voidPin = needsManager(ctx, "sales.void");
   const refundLimit = refundPin ? 0 : ownLimit(ctx, sale.shopId, "sales.refund");
   const voidLimit = voidPin ? 0 : ownLimit(ctx, sale.shopId, "sales.void");
-  const reversible = manager && ["paid", "partially_refunded"].includes(sale.status);
+  const awaiting = refs.filter((r) => r.awaitingLines);
+  const reversible = manager && (["paid", "partially_refunded"].includes(sale.status) || awaiting.length > 0);
   const reassignPin = needsManager(ctx, "sales.reassign");
   const mayReassign = !sale.isImported && ["paid", "partially_refunded", "refunded"].includes(sale.status) && (can(ctx, "sales.reassign") || worksTickets);
   const [refundable, refundApprovers, voidApprovers, reassignApprovers, shopBarbers, moves] = await Promise.all([
@@ -94,6 +95,17 @@ export default async function SalePage({ params, searchParams }: { params: Promi
     reassignments(id),
   ]);
 
+  const refundItems = (refundable?.items ?? []).map((i) => ({
+    id: i.id,
+    name: i.name,
+    kind: i.kind,
+    qty: i.qty,
+    refundedQty: i.refundedQty,
+    netCents: i.netCents,
+    taxCents: i.taxCents,
+    person: personOf.get(i.id) ?? null,
+    giftCardBalances: i.giftCards.filter((g) => g.status === "active").map((g) => (g.reload ? Math.min(g.balanceCents, i.unitPriceCents) : g.balanceCents)).sort((a, b) => b - a),
+  }));
   const mergedInto = sale.mergedIntoSaleId ? await db.query.sales.findFirst({ where: eq(sales.id, sale.mergedIntoSaleId), columns: { id: true, number: true } }) : null;
   return (
     <div className="mx-auto max-w-4xl">
@@ -256,6 +268,11 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                   <td>
                     {r.kind === "void" ? "Voided" : "Refund"} to {r.method.replace("_", " ")}
                     {r.source === "stripe_dashboard" ? " (Stripe dashboard)" : ""}: {r.reason}
+                    {r.awaitingLines && (
+                      <span className="block text-[11px] text-amber-700" data-testid="awaiting-lines">
+                        Lines not assigned yet
+                      </span>
+                    )}
                   </td>
                   <td className="text-right">-{formatCents(r.amountCents)}</td>
                 </tr>
@@ -299,7 +316,20 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           )}
           {customer && rateable && <QuickRate customerId={customer.id} firstName={customer.firstName} appointmentId={rateable.appointmentId} saleId={id} myRating={rateable.myRating} />}
           {mayReassign && <ReassignPanel saleId={sale.id} current={sale.staffId} barbers={shopBarbers} needsPin={reassignPin} approvers={reassignApprovers} />}
-          {manager && refundable && (
+          {manager && refundable && awaiting[0] && (
+            <AssignDashboardRefund
+              saleId={sale.id}
+              refundId={awaiting[0].id}
+              amountCents={awaiting[0].amountCents}
+              tipRemainingCents={refundable.tipRemainingCents}
+              cardFeeRemainingCents={refundable.cardFeeRemainingCents}
+              feeRefundRule={refundable.feeRefundRule}
+              needsPin={refundPin}
+              approvers={refundApprovers.map((a) => ({ id: a.id, label: a.label }))}
+              items={refundItems}
+            />
+          )}
+          {manager && refundable && !awaiting.length && (
             <SaleActions
               reasons={(await lookups(sale.shopId)).refundReasons}
               refundPin={refundPin}
@@ -318,17 +348,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
               tipRemainingCents={refundable.tipRemainingCents}
               cardFeeRemainingCents={refundable.cardFeeRemainingCents}
               feeRefundRule={refundable.feeRefundRule}
-              items={refundable.items.map((i) => ({
-                id: i.id,
-                name: i.name,
-                kind: i.kind,
-                qty: i.qty,
-                refundedQty: i.refundedQty,
-                netCents: i.netCents,
-                taxCents: i.taxCents,
-                person: personOf.get(i.id) ?? null,
-                giftCardBalances: i.giftCards.filter((g) => g.status === "active").map((g) => g.balanceCents).sort((a, b) => b - a),
-              }))}
+              items={refundItems}
             />
           )}
         </div>

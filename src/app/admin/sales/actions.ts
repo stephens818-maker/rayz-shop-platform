@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { sales } from "@/db/schema";
+import { refunds, sales } from "@/db/schema";
 import { safe } from "@/server/action";
 import { canAny, requireStaff } from "@/server/auth/staff";
-import { refundSale, voidSale } from "@/server/checkout";
+import { assignRefundLines, refundSale, voidSale } from "@/server/checkout";
 import { forbidden, notFound } from "@/server/errors";
 import { Approval, ApprovalPermission, approvedFor } from "@/server/manager-approval";
 import { reassignSale } from "@/server/reassign";
@@ -66,6 +66,22 @@ export async function refundAction(
     const r = await refundSale({ ...input, actor, maxCents: limitCents });
     revalidatePath(`/admin/sales/${input.saleId}`);
     return { refundedCents: r.refundedCents, giftCardsVoided: r.giftCardsVoided };
+  });
+}
+
+/** Says what a Stripe dashboard refund was for, with the same authority as refunding; no money moves, so no dollar limit applies. */
+export async function assignRefundLinesAction(
+  input: { saleId: string; refundId: string; items: { saleItemId: string; qty: number }[]; tipCents: number; refundCardFee: boolean | "proportional"; restock: boolean },
+  approval?: Approval | null,
+) {
+  return safe(async () => {
+    const { actor } = await guard(input.saleId, "sales.refund", approval);
+    const ref = await db.query.refunds.findFirst({ where: eq(refunds.id, input.refundId), columns: { saleId: true } });
+    if (!ref || ref.saleId !== input.saleId) throw notFound("Refund");
+    const r = await assignRefundLines({ refundId: input.refundId, items: input.items, tipCents: input.tipCents, refundCardFee: input.refundCardFee, restock: input.restock, actor });
+    revalidatePath(`/admin/sales/${input.saleId}`);
+    revalidatePath("/admin/sales");
+    return { status: r.status };
   });
 }
 

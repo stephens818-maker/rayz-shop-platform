@@ -91,6 +91,7 @@ import { defaultOpening, movesOutCents } from "./drawer";
 import { saleFeeChannel, shopCardFeeConfig, shopFeePolicy } from "./payments/card-fee";
 
 export {
+  assignRefundLines,
   refundEverything,
   refundSale,
   refundableState,

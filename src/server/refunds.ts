@@ -85,8 +85,15 @@ export async function refundableState(saleId: string, tx: Tx | typeof db = db) {
     cardFeeRemainingCents: sale.cardFeeCents - done.cardFeeCents,
     feeRefundRule: feeRefundRule(sale),
     refundedCents: prior.reduce((a, r) => a + r.amountCents, 0),
+    /** Card refunds made in the Stripe dashboard that staff haven't said were for what yet. */
+    awaiting: prior.filter((r) => r.awaitingLines).map((r) => ({ id: r.id, amountCents: r.amountCents, paymentId: r.paymentId, createdAt: r.createdAt })),
     done,
   };
+}
+
+function awaitingProblem(st: { awaiting: { amountCents: number }[] }) {
+  const a = st.awaiting[0];
+  return a ? new AppError("conflict", `A ${formatCents(a.amountCents)} card refund made in the Stripe dashboard needs its lines first. Say what it was for, then refund anything else.`, { reason: "awaiting_lines" }) : null;
 }
 
 export async function refundSale(req: RefundRequest) {
@@ -187,6 +194,8 @@ interface ReverseOpts {
 
 async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   const st = await refundableState(sale.id, tx);
+  const waiting = awaitingProblem(st);
+  if (waiting) throw waiting;
   if (o.tipCents > st.tipRemainingCents) throw new AppError("bad_request", `Only ${formatCents(st.tipRemainingCents)} of tip is left to refund`);
   let lines: LineRefund[];
   try {
@@ -402,45 +411,130 @@ async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "r
   return { status, loyalty };
 }
 
+const DASHBOARD_REASON = "Refunded in the Stripe dashboard";
+
 /**
  * A refund made outside the POS (Stripe dashboard). `amountRefundedCents` is Stripe's running total
- * for the charge; anything above what we've already recorded is booked as a refund on that card,
- * split across what's left of the ticket, with the same loyalty and gift-card handling as the POS.
+ * for the charge; anything above what we've already recorded is booked as money back on that card
+ * with no lines. Guessing which lines it was for would move loyalty, gift card balances, commission
+ * and tip pay on a guess, so none of them change until staff assign lines (assignRefundLines).
  */
 export async function recordProcessorRefund(paymentIntentId: string, amountRefundedCents: number, ref: { eventId: string; stripeRefundId?: string | null }, now = new Date()) {
   const p0 = await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, paymentIntentId) });
   if (!p0) return { recorded: 0, reason: "unknown_payment" as const };
   return db.transaction(async (tx) => {
     const sale = await lockSale(tx, p0.saleId);
-    const pays = await tx.select().from(payments).where(eq(payments.saleId, sale.id)).orderBy(asc(payments.createdAt)).for("update");
-    const p = pays.find((x) => x.id === p0.id)!;
+    const [p] = await tx.select().from(payments).where(eq(payments.id, p0.id)).for("update");
     const delta = Math.min(amountRefundedCents, p.amountCents) - p.refundedCents;
     if (delta <= 0) return { recorded: 0, reason: "already_recorded" as const };
 
+    const [row] = await tx
+      .insert(refunds)
+      .values({
+        saleId: sale.id,
+        paymentId: p.id,
+        shopId: sale.shopId,
+        businessDate: localDateOf(now),
+        method: p.method,
+        amountCents: delta,
+        reason: DASHBOARD_REASON,
+        kind: "refund",
+        source: "stripe_dashboard",
+        stripeRefundId: ref.stripeRefundId ?? null,
+        awaitingLines: true,
+      })
+      .returning({ id: refunds.id });
+    const refunded = p.refundedCents + delta;
+    await tx.update(payments).set({ refundedCents: refunded, status: refunded >= p.amountCents ? "refunded" : "partially_refunded" }).where(eq(payments.id, p.id));
+    const [{ total }] = await tx.select({ total: sql<number>`coalesce(sum(${refunds.amountCents}),0)::int` }).from(refunds).where(eq(refunds.saleId, sale.id));
+    const status = total >= sale.totalCents ? "refunded" : "partially_refunded";
+    await tx.update(sales).set({ status }).where(eq(sales.id, sale.id));
+    await audit(SYSTEM, "sale.refund", "sale", sale.id, { source: "stripe_dashboard", eventId: ref.eventId, amountCents: delta, refundId: row.id, awaitingLines: true }, sale.shopId, tx);
+    return { recorded: delta, reason: "recorded" as const, refundId: row.id, status };
+  });
+}
+
+export interface AssignLinesRequest {
+  refundId: string;
+  items: { saleItemId: string; qty: number }[];
+  tipCents: number;
+  /** As on a POS refund: all that's left of the surcharge, its share of the lines, or none. */
+  refundCardFee: boolean | "proportional";
+  restock: boolean;
+  actor: Actor;
+  now?: Date;
+}
+
+/**
+ * Says what a Stripe dashboard refund was for. The lines picked must cover what went back on the
+ * card; if they come to more, the refund is spread over them and they stay open for the rest.
+ * Then everything a POS refund does happens: lines marked refunded (when covered in full),
+ * products back in stock if asked, gift cards sold on the ticket cut, tip pay and loyalty
+ * adjusted, and the updated receipt sent.
+ */
+export async function assignRefundLines(req: AssignLinesRequest) {
+  const now = req.now ?? new Date();
+  if (!Number.isInteger(req.tipCents) || req.tipCents < 0) throw new AppError("bad_request", "Tip must be zero or more");
+  return db.transaction(async (tx) => {
+    const r0 = await tx.query.refunds.findFirst({ where: eq(refunds.id, req.refundId) });
+    if (!r0) throw notFound("Refund");
+    const sale = await lockSale(tx, r0.saleId);
+    const [r] = await tx.select().from(refunds).where(eq(refunds.id, r0.id)).for("update");
+    if (!r.awaitingLines) throw new AppError("conflict", "This refund's lines are already assigned");
+    const pays = await tx.select().from(payments).where(eq(payments.saleId, sale.id)).orderBy(asc(payments.createdAt)).for("update");
     const st = await refundableState(sale.id, tx);
-    const tender = (await tenderStates(tx, sale.id, pays)).find((t) => t.id === p.id)!;
+    let lines: LineRefund[];
+    try {
+      lines = lineRefunds(
+        st.items.map((i) => ({ id: i.id, kind: i.kind, name: i.name, qty: i.qty, refundedQty: i.refundedQty, netCents: i.netCents, taxCents: i.taxCents })),
+        req.items.filter((i) => i.qty > 0),
+      );
+    } catch (e) {
+      throw new AppError("bad_request", (e as Error).message);
+    }
+    for (const l of lines.filter((x) => x.kind === "gift_card")) {
+      const item = st.items.find((i) => i.id === l.itemId)!;
+      const live = item.giftCards.filter((g) => g.status === "active").map((g) => (g.reload ? Math.min(g.balanceCents, item.unitPriceCents) : g.balanceCents));
+      l.netCents = live.sort((a, b) => b - a).slice(0, l.qty).reduce((a, b) => a + b, 0);
+    }
+
+    const tender = (await tenderStates(tx, sale.id, pays)).find((t) => t.id === r.paymentId);
     const left = remainingComponents(sale, st.done);
-    const remaining: RefundComponents = { ...left, tipCents: Math.min(tender.tipAvailableCents, left.tipCents), cardFeeCents: Math.min(tender.feeAvailableCents, left.cardFeeCents) };
-    // Under "keep" the surcharge is the last thing a dashboard refund reaches.
-    const keep = feeRefundRule(sale) === "keep";
-    const first = allocateAmount(keep ? { ...remaining, cardFeeCents: 0 } : remaining, delta);
-    const components = keep ? { ...first, cardFeeCents: Math.min(remaining.cardFeeCents, Math.max(0, delta - componentsTotal(first))) } : first;
+    const cap: RefundComponents = tender ? { ...left, tipCents: Math.min(tender.tipAvailableCents, left.tipCents), cardFeeCents: Math.min(tender.feeAvailableCents, left.cardFeeCents) } : left;
+    if (req.tipCents > cap.tipCents) throw new AppError("bad_request", `Only ${formatCents(cap.tipCents)} of tip is left on that card`);
+    const asked = componentsFromLines(lines, req.tipCents, req.refundCardFee === true ? cap.cardFeeCents : 0);
+    if (st.feeRefundRule === "keep") asked.cardFeeCents = 0;
+    else if (req.refundCardFee === "proportional") {
+      const withTip = !!(sale.pricing as { cardFee?: { appliesToTip?: boolean } } | null)?.cardFee?.appliesToTip;
+      const base = (c: RefundComponents) => c.serviceNetCents + c.productNetCents + c.giftCardSalesCents + c.taxCents + (withTip ? c.tipCents : 0);
+      asked.cardFeeCents = proportionalCardFee({ feeLeftCents: cap.cardFeeCents, refundBaseCents: base(asked), baseLeftCents: base(left) });
+    }
+    const clamped = Object.fromEntries(Object.entries(asked).map(([k, v]) => [k, Math.max(0, Math.min(v, cap[k as keyof RefundComponents]))])) as unknown as RefundComponents;
+    const picked = componentsTotal(clamped);
+    if (picked < r.amountCents)
+      throw new AppError("bad_request", `What you picked comes to ${formatCents(picked)}, but ${formatCents(r.amountCents)} went back on the card. Pick more lines, or add the tip or surcharge.`, { pickedCents: picked });
+    const whole = picked === r.amountCents;
+    const components = whole ? clamped : allocateAmount(clamped, r.amountCents);
+
+    // Spread thinner than the lines' value, they stay refundable for the rest (capped per component above).
+    const itemsJson = lines.map((l) => ({ saleItemId: l.itemId, name: l.name, kind: l.kind, qty: l.qty, cents: l.netCents + l.taxCents, netCents: l.netCents, ...(whole ? {} : { partial: true }) }));
+    await tx
+      .update(refunds)
+      .set({ ...components, items: itemsJson, awaitingLines: false, linesAssignedAt: now, linesAssignedBy: req.actor.staffId ?? null })
+      .where(eq(refunds.id, r.id));
+    const restock: Movement[] = [];
+    for (const l of lines) {
+      if (whole) await tx.update(saleItems).set({ refundedQty: sql`${saleItems.refundedQty} + ${l.qty}` }).where(eq(saleItems.id, l.itemId));
+      const item = st.items.find((i) => i.id === l.itemId)!;
+      if (l.kind === "product" && req.restock && item.refId) restock.push({ shopId: sale.shopId, productId: item.refId, delta: l.qty, kind: "refund", saleId: sale.id });
+    }
+    await postMovements(tx, restock, { actor: req.actor, at: now, audit: { action: "inventory.refund", entity: "sale", entityId: sale.id, details: { reason: DASHBOARD_REASON } } });
     const cut = await cutSoldGiftCards(tx, sale.id, components.giftCardSalesCents);
-    const recorded = componentsTotal(components);
-    await recordSteps(tx, sale, pays, [{ tenderId: p.id, method: "card", amountCents: recorded, components }], {
-      kind: "refund",
-      source: "stripe_dashboard",
-      reason: "Refunded in the Stripe dashboard",
-      actor: SYSTEM,
-      now,
-      items: null,
-      stripeIds: new Map(ref.stripeRefundId ? [[p.id, ref.stripeRefundId]] : []),
-    });
     await syncTipLedger(tx, { saleId: sale.id });
-    const result = await settle(tx, sale, components, "refund", "Refunded in the Stripe dashboard", now);
-    await sendUpdatedReceipt(sale.id, { kind: "refund", refundedCents: recorded }, tx, now);
-    await audit(SYSTEM, "sale.refund", "sale", sale.id, { source: "stripe_dashboard", eventId: ref.eventId, amountCents: recorded, components, giftCardsCut: cut, loyalty: result.loyalty }, sale.shopId, tx);
-    return { recorded, reason: "recorded" as const, components, status: result.status };
+    const result = await settle(tx, sale, components, "refund", DASHBOARD_REASON, now);
+    await sendUpdatedReceipt(sale.id, { kind: "refund", refundedCents: r.amountCents }, tx, now);
+    await audit(req.actor, "sale.refund_lines", "sale", sale.id, { refundId: r.id, amountCents: r.amountCents, components, items: itemsJson, giftCardsCut: cut, loyalty: result.loyalty }, sale.shopId, tx);
+    return { components, status: result.status, giftCardsCut: cut };
   });
 }
 
