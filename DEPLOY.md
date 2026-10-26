@@ -34,7 +34,7 @@ Both run on **Vercel** (the app) and **Neon** (Postgres). Supabase works in plac
 
    Leave `NOTIFICATIONS_*` and `APP_BASE_URL` unset. Links default to the project's production URL.
 4. **Deploy.** Click **Deploy**, or push to the production branch. The build applies the migrations and, because the database is empty, loads the demo data. That adds about a minute to the first build. Later builds only apply new migrations and keep the data. If the demo data was loaded before Stripe Connect, the next build gives each shop with card history a simulated Stripe account (`scripts/demo-connect.ts`), so checkout keeps working.
-5. **Keep it private.** Anyone with the URL can use the demo logins. Under **Settings → Deployment Protection**, turn on **Vercel Authentication** for all deployments, so only people on your Vercel team can open it, or **Password Protection** (a Pro add-on) to share one password.
+5. **Keep it private.** Anyone with the URL can use the demo logins. Under **Settings → Deployment Protection**, turn on **Vercel Authentication** for all deployments, so only people on your Vercel team can open it, or **Password Protection** (a Pro add-on) to share one password. Vercel Authentication also locks out automated testers. For one (such as Testing Bot), turn on **Protection Bypass for Automation** in the same place and give it the secret. It sends that secret as the `x-vercel-protection-bypass` header, adding `x-vercel-set-bypass-cookie: true` to browse in a browser.
 6. **Open it.** Go to the production URL and use the **Staff** link at the bottom, or open `/login` directly. Pick a demo login.
 
 ### Demo logins

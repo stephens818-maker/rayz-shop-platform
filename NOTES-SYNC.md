@@ -459,6 +459,35 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-26: core, sandbox status for Testing Bot (Charles asked)
+
+1. **What's deployed or runnable today**
+   - **Nothing is on Vercel or Neon.** No Vercel project is linked to the repo: PR #1 has no preview deployments and no deployment checks. The app runs anywhere with Postgres (`DEMO_MODE=true pnpm build && pnpm start`), and DEPLOY.md has the demo-preview steps.
+   - **A temporary sandbox is up now:** https://stamp-appeared-coal-secrets.trycloudflare.com. It's a demo-mode production build of `ab1d0e9`, served from the core agent's VM through a Cloudflare quick tunnel, with its own database (`rayz_sandbox`) and the full demo seed. Cards run on the simulator. No texts, emails, calls or push go out; they show under **Notifications** as suppressed.
+   - **Limits of the temporary sandbox:**
+     - It's up only while the core agent's VM is running, and the URL changes if the tunnel restarts. Check this entry for the current URL.
+     - It doesn't pick up new pushes on its own. Core rebuilds it after each push in the mobile list below.
+     - It has no password. The data is sample data only, but anyone with the link can use the demo logins.
+   - **Test logins:**
+     - **Staff** at `/login` (one-click buttons on the page), password `rayz2026!`: `owner@rayz.test`, `admin@rayz.test`, `michelle@rayz.test` (Coralville manager), `frontdesk@rayz.test`, `makenna@rayz.test` (barber), and shop logins such as `coralville@rayz.test`. Time clock and customer-screen PIN: `2468`.
+     - **Customers** on the web at `/account`, or through the API (`POST /api/v1/auth/otp/start` with `{"phone":"319-555-0100"}`, then `/verify`). In demo mode the code comes back as `devCode` and shows on screen. Other phones: `319-555-0201` (the Hayes family, one phone, three profiles), `309-555-0202`, `563-555-0203`.
+     - **Test data:** card "Visa (credit)" in checkout, gift card `DEMO-GIFT-2500`, promo `WELCOME5`. The OpenAPI document is at `/api/v1/openapi.json`.
+   - **What the API at this URL covers:** today's `/api/v1` (booking, OTP sign-in, `/me`, appointments). The mobile gaps C1–C16 and I1–I13 aren't built yet, so it doesn't have device push, saved cards, app checkout, receipts, account deletion, `/app/config` or the rest. PR #7's sandbox is separate: a mock API on a laptop with code `123456`, not this platform.
+2. **What's still needed for a lasting sandbox URL with test logins**
+   - **From Charles (Vercel and Neon accounts, about 20 minutes, following DEPLOY.md, "Demo preview, step by step"):**
+     - Create a Vercel project from `stephens818-maker/rayz-shop-platform`. Use the Pro plan, or Hobby with the cron schedules changed to daily.
+     - Set **Production Branch** to `cursor/rayz-barbershop-v1-8f0b`.
+     - Add Neon from **Storage**, in US East 2.
+     - Set `DEMO_MODE=true`, `AUTH_SECRET` and `CRON_SECRET`, then deploy.
+     - For protection, Vercel Authentication would also lock Testing Bot out. Use **Password Protection**, or **Protection Bypass for Automation** and give Testing Bot the bypass secret (sent as the `x-vercel-protection-bypass` header).
+   - **Or** add a `VERCEL_TOKEN` (and optionally a Neon `DATABASE_URL`) under Cursor Dashboard → Cloud Agents → Secrets, and core does the setup.
+   - **Then core:** checks every login and the API on the real URL, then posts the URL and the bypass instructions here.
+   - **Optional:** Stripe test keys (`sk_test_…`, `pk_test_…`), to test real Stripe test mode instead of the simulator.
+3. **Time estimate (hours of work, honest)**
+   - **Temporary sandbox:** live now.
+   - **Lasting Vercel sandbox:** about 1–2 hours after Charles finishes his part or adds the token: the first build with the seed, a login and API check, and the handoff note. The blocker is the accounts, not code.
+   - **Mobile endpoints on the sandbox:** C1–C16 are roughly 12–20 hours, and I1–I13 another 8–12. The payments items (C6–C8, I10–I11) are the least certain. Each group is pushed and the sandbox rebuilt as it lands, so Testing Bot can start on the existing v1 flows now and pick up new endpoints as they appear.
+
 ### 2026-10-25: core (email delivery, calendar feed, delivery tracking), requests for mobile
 
 - **What's new** (README, "Notifications"): real Resend and Postmark email (off until a key is set), client emails in the brand layout with a stop link, bounce and complaint webhooks, Google and Outlook add-to-calendar links, cancelled calendar events on cancel emails, a per-customer calendar feed, reminders kept out of quiet hours, and delivery status on the client profile, the appointment panel and Notifications → By shop. Migration `core_0081_email_delivery` (additive).
