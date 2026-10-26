@@ -301,6 +301,9 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - It adds the **Apprentice** template (nobody has it yet) and renames **Bookkeeper** to **Bookkeeper / Accountant** with its new read-only description, unless the brand had already renamed it. A custom role named Apprentice gets " (custom)" added.
    - **App switches now need App config** (`settings.app`). Only the Brand Owner has it until they grant it to someone under **Permissions**.
    - Before go-live, decide with Charles which roles should report on every shop and which should see dollar amounts, and check them with **View as**.
+33. Refunds made in the Stripe Dashboard (migration `core_0097_dashboard_refunds`): it only adds columns. From then on, a refund someone makes in Stripe's Dashboard shows at the top of the sales list as "A card refund made in the Stripe dashboard needs its lines". It counts as money back on the card at once, but loyalty points, gift card balances, commission and tip pay don't move until staff open the ticket and say which lines it was for.
+34. Pay reports are brand-only (migration `core_0098_pay_reports_brand`): **this one takes access away.** Shop Managers, Regional / District Managers, Franchisee Managers and shop logins lose **Tips and payroll export** and **Tip payouts** (view and export), as they already had for commission. Franchisee Owners keep them, and custom roles and per-person overrides are left as set. To give a role or a person their pay reports back, use **Permissions**. Tell shop managers before the deploy.
+35. Set `APP_ENV=production` on the production project (see step 2). From then on `DEMO_MODE` can't be turned on there by mistake.
 
 ## Running the production build locally
 

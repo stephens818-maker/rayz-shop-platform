@@ -14,7 +14,8 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Mobile workstream C1–C22 and I1–I16, except where noted below | mobile |
 | Admin back office (`src/app/admin/**`), booking engine (`src/server/booking.ts`, `src/domain/availability.ts`, `src/domain/timing.ts`), POS and checkout, refunds, reports, inventory, permissions and roles, client data protection, notifications back office | core |
 | Card fee config and `computeCardFee` | core (mobile reads only) |
-| I10 Stripe Connect: platform account, connected account per shop, destination charges, onboarding, per-shop P&L, per-location banking (payments mode, descriptor, Terminal Locations and readers, payouts) | core, except the platform Customer and saved-card side, which is mobile's |
+| I10 Stripe Connect per shop: `stripeAccountId`, hosted onboarding, destination charges, the `owner_entity_id` hook, and the one charge path every card payment goes through | mobile (bc-645fbcc0), reassigned 2026-10-26. The POS calls mobile's published charge path; it doesn't keep a second one |
+| Per-location banking screens around Connect (payments mode, descriptor, Terminal Locations and readers, payouts) and per-shop P&L | core, reading mobile's Connect records |
 | Payroll (`src/domain/payroll/**`, `src/server/payroll/**`, `src/app/admin/payroll/**`) and service times (`src/domain/service-times.ts`, `src/server/service-times*.ts`) | core |
 | Time clock and timesheets (`src/domain/time-clock.ts`, `src/server/time-clock*.ts`, `src/server/labor-report.ts`, `src/app/admin/clock/**`, `src/app/admin/timesheets/**`, `src/app/admin/time-clock/**`) | core |
 | Tip payouts (`src/domain/tips.ts`, `src/server/tips/**`, `src/app/admin/tips/**`, `src/app/admin/my-tips/**`), including employees' Stripe Express accounts | core |
@@ -458,6 +459,33 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-26: core, claude bot review 2 fixes, Connect handed to mobile, FYI for mobile
+
+- **Stripe Connect per shop is mobile's now** (Charles's reassignment). That covers `stripeAccountId`, hosted onboarding, destination charges and the `owner_entity_id` hook. Until you publish the shared charge path here, the POS charges through `chargeCard` (`src/server/payments/processor.ts`), which routes through `chargeRoute` and `chargeDestination` (`src/server/payments/connect.ts`). When you publish it (its name, arguments, and what it returns for Terminal and keyed cards), core switches the POS, the customer screen and split tender to call it and deletes its own routing. Core won't change `connect.ts` in the meantime, other than for a bug you ask for.
+- **Also yours, and core isn't touching them:** the consent overwrite fix (`customers.ts:110` and the importer), rate limits on `/api/v1`, the token check on `/appointments/{code}`, the other mobile API gaps, and the batched importer.
+- **Core edited files you own, at Charles's request (review fix 10).** Please review:
+  - `src/server/api.ts`: CORS is no longer `*`. `allowedOrigin()` echoes the app's own origin (`APP_BASE_URL`), anything in `CORS_ORIGINS` (comma-separated), and localhost when `NODE_ENV` isn't production. `withCors()` adds the headers and `Vary: Origin`; `route()` applies it to every response, and `options(req)` now takes the request.
+  - Three 204 routes dropped their hard-coded `Access-Control-Allow-Origin: *`: `me/payment-methods/[id]`, `me/devices/[id]`, and `auth/logout`.
+  - Requests without an `Origin` (the apps) are unaffected. If the app's web build or Expo web calls the API from another origin, add that origin to `CORS_ORIGINS`.
+- **`DEMO_MODE` can't run in production** (`assertDemoModeAllowed` in `src/lib/deployment.ts`). The build (`scripts/deploy-db.ts`) and the server (`src/instrumentation.ts`) stop if `DEMO_MODE=true` comes with `APP_ENV=production`, a live Stripe key, or a real `NOTIFICATIONS_*` provider. Set `APP_ENV=production` on the production project.
+- **Other review fixes (core):**
+  - The web booking SMS box starts unticked.
+  - A refund made in the Stripe Dashboard waits as an unallocated card refund until staff assign its lines. Loyalty and gift card balances don't move until then.
+  - Pay reports are brand-only by default (`core_0098`).
+  - Last names show as an initial for shop and barber roles.
+  - The sales list pages 100 tickets at a time by key.
+  - A job table fans work out per shop: badges, campaigns, scheduled reports, nudges and tip payout drafts.
+  - Split tender charges the card fee on the credit part only.
+  - A personal block covers all of the barber's shops by default.
+- **The staff app's look (no API change):**
+  - Inter, and an opt-in dark mode under `/admin` only.
+  - A Cmd-K palette and keyboard shortcuts.
+  - `loading.tsx` skeletons and toasts.
+  - A day board that pages barbers instead of scrolling sideways.
+  - Checkout side by side on tablets.
+  - Bar charts on reports.
+- **Next migration number: `core_0099`.**
 
 ### 2026-10-26: core, report scope and dollar amounts, FYI for mobile
 

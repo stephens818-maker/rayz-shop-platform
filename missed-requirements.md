@@ -13,18 +13,18 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 
 ## 2. UX and design standard (applies to every screen)
 
-- [ ] Design tokens for color, type, spacing, radius, and shadow, with light and dark mode; Inter.
-- [ ] Consistent components, with shadcn/ui-style primitives on Tailwind.
-- [ ] Micro-interactions and transitions; skeleton loaders instead of spinners; optimistic updates.
-- [ ] Empty states with helpful calls to action; toast feedback.
-- [ ] Cmd/Ctrl-K command palette and global search.
-- [ ] Keyboard shortcuts on the calendar and checkout.
-- [ ] Drag-and-drop on the calendar.
-- [ ] Touch-friendly tablet layouts for the front desk, checkout, and the tip hand-off.
-- [ ] Fully responsive mobile views for barbers.
-- [ ] Fast page loads.
-- [ ] WCAG AA accessibility.
-- [ ] Polish pass on the calendar, checkout, client profile, reports, and brand portal, with before and after screenshots in the PR.
+- [x] Design tokens for color, type, spacing, radius, and shadow, with light and dark mode; Inter. Tokens live in the `@theme` in `src/app/globals.css`, and dark mode in `src/app/dark.css`. Inter is self-hosted with `next/font`. The theme is Light, Dark or Auto, chosen per device, and Light by default.
+- [x] Consistent components, with shadcn/ui-style primitives on Tailwind (`src/components/ui.tsx`, plus `skeleton.tsx`, `toast.tsx`, `bar-chart.tsx`).
+- [x] Micro-interactions and transitions; skeleton loaders instead of spinners; optimistic updates. Every staff page has a `loading.tsx` skeleton, with page-shaped ones for the calendar, checkout, reports, clients and sales. A calendar drag shows at its new time before the server answers.
+- [x] Empty states with helpful calls to action; toast feedback (`toast()`, used by `useAction` when the caller passes a confirmation).
+- [x] Cmd/Ctrl-K command palette and global search: pages, reports, shop switching, actions and clients (masked as on `/`). It opens from **Search…** in the sidebar on touch screens.
+- [x] Keyboard shortcuts on the calendar and checkout, plus `G` then a letter to jump, and `?` for the list (`src/domain/shortcuts.ts`).
+- [x] Drag-and-drop on the calendar: moving to another time or barber, or onto the pager arrows to reach barbers on another page.
+- [x] Touch-friendly tablet layouts for the front desk, checkout, and the tip hand-off. The day board fits its barbers across the screen and pages them. Checkout shows the ticket and payment side by side from 768 px, with a total bar on phones. The customer screen was already full-screen on a tablet.
+- [ ] Fully responsive mobile views for barbers. Calendar, checkout, My time and My tips work at 390 px. Settings and report filter rows still wrap long.
+- [ ] Fast page loads. Skeletons show at once, and reports print their load time. A Lighthouse pass hasn't been done.
+- [ ] WCAG AA accessibility. Done: a skip link, focus rings everywhere, reduced motion, `aria-pressed` on tip and tender buttons, and combobox, listbox and status roles. Not yet run: an automated contrast audit (axe).
+- [x] Polish pass on the calendar, checkout, client profile, reports, and brand portal, with before and after screenshots in the PR.
 
 ## 3. Customer notifications and calendar integrations
 
