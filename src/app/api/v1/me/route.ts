@@ -5,7 +5,9 @@ import { normalizeEmail } from "@/lib/phone";
 import { body, json, options, route } from "@/server/api";
 import { UpdateMe } from "@/server/api-schemas";
 import { requireCustomer } from "@/server/auth/customer";
-import { resolveStaffRef } from "@/server/catalog";
+import { listedPublicly } from "@/domain/location-lifecycle";
+import { todayLocal } from "@/lib/time";
+import { getShop, resolveStaffRef } from "@/server/catalog";
 import { recordConsentChange, requestConsentContext } from "@/server/consent-events";
 import { AppError, notFound } from "@/server/errors";
 import { publicMe } from "@/server/public";
@@ -36,6 +38,20 @@ export const PATCH = route(async (req) => {
       if (!c?.email || !c.emailVerifiedAt) throw new AppError("bad_request", "Verify an email first: POST /me/email/start, then /me/email/verify", { field: "receiptDelivery" });
     }
     patch.receiptDelivery = b.receiptDelivery;
+  }
+  if (b.homeShopId !== undefined) {
+    const shop = b.homeShopId ? await getShop(b.homeShopId).catch(() => null) : null;
+    if (b.homeShopId && (!shop || !listedPublicly(shop))) throw notFound("Shop");
+    patch.homeShopId = shop?.id ?? null;
+  }
+  if (b.birthday !== undefined) {
+    if (b.birthday) {
+      const today = todayLocal();
+      const age = Number(today.slice(0, 4)) - Number(b.birthday.slice(0, 4)) - (today.slice(5) < b.birthday.slice(5) ? 1 : 0);
+      if (Number.isNaN(Date.parse(`${b.birthday}T00:00:00Z`)) || age > 120) throw new AppError("bad_request", "Enter a real birthday", { field: "birthday" });
+      if (age < 13) throw new AppError("bad_request", "Account holders are 13 or older", { field: "birthday", reason: "under_13" });
+    }
+    patch.birthday = b.birthday;
   }
   if (b.preferredBarberId !== undefined) {
     const barber = b.preferredBarberId ? await resolveStaffRef(b.preferredBarberId) : null;

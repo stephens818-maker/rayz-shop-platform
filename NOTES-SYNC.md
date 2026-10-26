@@ -474,7 +474,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - The family, badges and locations endpoints are now mounted under `/api/v1`. The family ones answer 403 `details.switch = family` when the switch is off.
   - Sessions (I12, `core_0090`): `GET /me/sessions`, `DELETE /me/sessions` (everywhere else), `DELETE /me/sessions/{id}`. Signing out or ending a session now stops its access token at once (401) and revokes the push devices registered in it, so register devices after sign-in with the new token. Access tokens issued before this deploy carry no session and run out within the hour.
   - `/me/appointments` takes `status` (upcoming, past, cancelled), `limit`, `cursor` and `family=true`, and returns `nextCursor` (I6). With no parameters the shape is as before.
-  - `GET /me/loyalty/ledger` (I7), `GET /me/suggested-rebook` (I8) and `policies` on `GET /shops/{shop}` (I9).
+  - `GET /me/loyalty/ledger` (I7), `GET /me/suggested-rebook` (I8) and `policies` on `GET /shops/{shop}` (I9). `homeShop` and `birthday` on `/me`, set with `homeShopId` and `birthday` on `PATCH /me` (C16; under 13 is refused).
   - `/app/config` adds `features` (kill switches), `links` (privacy, terms, support, deleteAccount), `payments` and `accounts`.
 - **Flags that stay off until Charles decides:**
   - `FEATURE_REVIEW_LOGIN` (C18 App Review sign-in, with `APP_REVIEW_PHONE`, `APP_REVIEW_CODE`, `APP_REVIEW_SHOP` and `APP_REVIEW_EMAIL`), read through `flags.reviewLogin()`.

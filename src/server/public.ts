@@ -98,6 +98,7 @@ export async function publicServices(ref: string) {
 export async function publicMe(customerId: string) {
   const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId) });
   if (!c) throw notFound("Customer");
+  const home = c.homeShopId ? await db.query.shops.findFirst({ where: eq(shops.id, c.homeShopId), columns: { id: true, slug: true, name: true, status: true } }) : null;
   const barber = c.preferredStaffId
     ? await db.query.staff.findFirst({ where: and(eq(staff.id, c.preferredStaffId), eq(staff.active, true), eq(staff.isBookable, true)), columns: { id: true, publicSlug: true, displayLabel: true } })
     : null;
@@ -117,6 +118,8 @@ export async function publicMe(customerId: string) {
     emailMarketingOptIn: c.emailMarketingOptIn,
     pushMarketing: c.pushMarketing,
     receiptDelivery: c.receiptDelivery ?? null,
+    homeShop: home && listedPublicly(home) ? { id: home.id, slug: home.slug, name: home.name } : null,
+    birthday: c.birthday ?? null,
     preferences: {
       note: c.preferencesNote,
       updatedAt: c.preferencesUpdatedAt?.toISOString() ?? null,

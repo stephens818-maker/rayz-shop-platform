@@ -239,6 +239,8 @@ export const Me = z.object({
   emailMarketingOptIn: z.boolean().describe("Added in 1.2"),
   pushMarketing: z.boolean().describe("Added in 1.2"),
   receiptDelivery: ReceiptDelivery.nullable().describe("Added in 1.2. Where receipts go on paying at the counter; null asks at checkout"),
+  homeShop: z.object({ id: z.string().uuid(), slug: z.string(), name: z.string() }).nullable().describe("Added in 1.2. The client's usual shop"),
+  birthday: LocalDateStr.nullable().describe("Added in 1.2"),
   preferences: z
     .object({
       note: z.string().nullable().describe("The client's own note to their barber. Staff see it beside, never mixed with, their own notes"),
@@ -557,6 +559,8 @@ export const UpdateMe = z.object({
   preferencesNote: z.string().max(500).nullable().optional().describe("The client's note to their barber (e.g. 'low fade, no product'). null or '' clears it. Card numbers and contact details are removed"),
   preferredBarberId: z.string().nullable().optional().describe("Barber ID or slug; null clears it"),
   receiptDelivery: ReceiptDelivery.nullable().optional().describe("Added in 1.2. email needs a verified email; null goes back to being asked at checkout"),
+  homeShopId: z.string().max(80).nullable().optional().describe("Added in 1.2. Shop ID or slug; null clears it"),
+  birthday: LocalDateStr.nullable().optional().describe("Added in 1.2. Account holders are 13 or older; null clears it"),
 });
 
 export const Loyalty = z.object({

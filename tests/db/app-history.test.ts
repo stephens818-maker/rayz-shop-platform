@@ -2,7 +2,7 @@
  * Sessions (I12): a session outlives refreshes, lists where I'm signed in, and ending one (or signing
  * out) stops its access token at once and its push devices. My appointments page by cursor, by
  * status, and with the children on my account (I6). The loyalty card's history (I7). Book again (I8).
- * The shop's policies on GET /shops/{shop} (I9).
+ * The shop's policies on GET /shops/{shop} (I9). Home shop and birthday on /me (C16).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Mods, actor, loadModules } from "./setup";
@@ -271,5 +271,26 @@ describe("shop policies (I9)", () => {
         .set({ brandOverrides: before ?? {} })
         .where(eq(s().shops.id, fx.shopId));
     }
+  });
+});
+
+describe("profile fields (C16)", () => {
+  it("sets and clears the home shop and birthday; a birthday under 13 or a hidden shop is refused", async () => {
+    const c = await client();
+    const t = (await m.auth.issueTokens(c.id, null)).accessToken;
+    const patch = (b: object) => meRoute.PATCH(req("/api/v1/me", { method: "PATCH", headers: bearer(t), body: JSON.stringify(b) }), ctx({}));
+    const set = await patch({ homeShopId: "coralville", birthday: "1990-04-12" });
+    expect(set.status).toBe(200);
+    expect(await set.json()).toMatchObject({ homeShop: { id: fx.shopId, slug: "coralville" }, birthday: "1990-04-12" });
+    const young = m.time.addDays(m.time.todayLocal(), -12 * 366);
+    const under = await patch({ birthday: young });
+    expect(under.status).toBe(400);
+    expect((await under.json()).error.details).toMatchObject({ field: "birthday", reason: "under_13" });
+    const [hidden] = await m.db.db
+      .insert(s().shops)
+      .values({ slug: `hidden-${crypto.randomUUID().slice(0, 6)}`, name: "Hidden", address: "1 Main", city: "Iowa City", state: "IA", zip: "52240", status: "setup" })
+      .returning();
+    expect((await patch({ homeShopId: hidden.slug })).status).toBe(404);
+    expect(await (await patch({ homeShopId: null, birthday: null })).json()).toMatchObject({ homeShop: null, birthday: null });
   });
 });
