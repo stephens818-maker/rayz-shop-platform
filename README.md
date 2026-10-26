@@ -2788,7 +2788,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
   3. `POST /auth/refresh` rotates the refresh token. Re-using an old refresh token revokes every session for that customer, which is the standard defense against stolen tokens.
   4. `POST /auth/logout` revokes the session.
 - **Signed-in endpoints:** `GET /me`, `GET /me/appointments`, `GET /me/loyalty`. Booking while signed in links the appointment to the account.
-- Errors share one shape: `{ error: { code, message, details? } }`. CORS is open on every v1 endpoint. That's safe because auth is a Bearer token, never a cookie. Times are ISO 8601 with offsets, and shop-local dates are `YYYY-MM-DD` in America/Chicago.
+- Errors share one shape: `{ error: { code, message, details? } }`. CORS on v1 answers only allowed browser origins: the app's own (`APP_BASE_URL`), those in `CORS_ORIGINS`, and localhost in development (`allowedOrigin` in `src/server/api.ts`). Other sites get no CORS headers, so a browser blocks them; every response sends `Vary: Origin`. The apps send no `Origin`, so they're unaffected. Auth is a Bearer token, never a cookie. Times are ISO 8601 with offsets, and shop-local dates are `YYYY-MM-DD` in America/Chicago.
 - **Customer app additions (API 1.1, additive)** <a id="customer-app-api"></a> for the Ray'z app's move off Squire. The audit's critical and important gaps (C1–C16, I1–I13) are tracked in PR #1's checklist. Built so far:
   - **`GET /app/config`:** minimum and latest app versions, store links, a maintenance notice, support and legal links, all from env vars (`.env.example`, "Customer app").
   - **Version gate:** app builds send `X-Client: ios|android` and `X-App-Version`. Below the platform's minimum, every v1 route but the config answers `426` with `error.code = upgrade_required` and the store link. Requests without `X-Client` (the website) are never gated.
@@ -2982,7 +2982,7 @@ samples/squire/      example Squire CSV exports for the importer
 [DEPLOY.md](DEPLOY.md) has the exact steps, for both a private demo preview on sample data and production.
 
 - `pnpm vercel-build` (which Vercel runs) applies migrations, then builds. With `DEMO_MODE=true` it also loads the sample data into an empty database; without it, it never seeds.
-- `DEMO_MODE=true` keeps a hosted demo safe: the payment simulator or Stripe test keys only, no texts, emails, or calls (they show in the outbox), customer sign-in codes on screen, one-click demo logins, and a banner on every page.
+- `DEMO_MODE=true` keeps a hosted demo safe: the payment simulator or Stripe test keys only, no texts, emails, or calls (they show in the outbox), customer sign-in codes on screen, one-click demo logins, and a banner on every page. It can't be turned on in production: with `APP_ENV=production`, a live Stripe key, or a real `NOTIFICATIONS_*` provider, the build and the server stop at startup (`assertDemoModeAllowed` in `src/lib/deployment.ts`).
 - `vercel.json` runs the functions in `cle1` (Cleveland, next to Neon's US East 2) and schedules `/api/cron/notifications` every 5 minutes, `/api/cron/campaign-center` every 15, and the daily `/api/cron/badges`, `/api/cron/analytics` and `/api/cron/jobs` (rollups) runs in the early morning. Vercel sends `CRON_SECRET` as a Bearer token. A 5-minute cron needs Vercel Pro.
 - Keep separate demo, staging, and production databases, and turn on Neon point-in-time restore or Supabase daily backups.
 - Address lookup is optional: set `GOOGLE_MAPS_API_KEY` (Places API (New) and Geocoding API, restricted to the server) or `GEOCODER=census`. Without either, typed addresses are pinned at the ZIP's centre.
@@ -3025,7 +3025,7 @@ samples/squire/      example Squire CSV exports for the importer
 - Try Resend or Postmark against a real account with a verified domain, and real push (Expo, and Web Push for the booking site, both the mobile workstream's).
 - Shops outside Central time: today a shop in another zone can be saved but not opened.
 - More custom report sources: sales, appointments, staff, inventory, tips and campaigns are listed in the builder but not yet built. Each needs its whitelisted fields and their SQL in `src/server/report-builder/engine.ts`; the definitions, sharing, schedules and exports already take any source.
-- Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training flag stays off; merging PR #8; `DEMO_MODE` in production (it would break the Vercel demo).
+- Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training flag stays off; merging PR #8. `DEMO_MODE` in production is now refused at startup (see Deployment).
 - Deposits or no-show fees on the saved card, if the shop wants them (Squire had none). Saved cards and 3-D Secure are in place (API 1.2).
 - Barber photos and bios on booking pages, using first-name image files.
 - Barcode scanning for counts and receiving, and vendor price lists by upload.

@@ -6,5 +6,5 @@ export const OPTIONS = options;
 export const POST = route(async (req) => {
   const { refreshToken } = await body(req, RefreshBody);
   await revoke(refreshToken);
-  return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*" } });
+  return new Response(null, { status: 204 });
 });

@@ -10,5 +10,5 @@ export const PATCH = route<{ id: string }>(async (req, { id }) => {
 });
 export const DELETE = route<{ id: string }>(async (req, { id }) => {
   await revokeDevice(await requireCustomer(req), id);
-  return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": "*" } });
+  return new Response(null, { status: 204 });
 });

@@ -30,7 +30,7 @@ Both run on **Vercel** (the app) and **Neon** (Postgres). Supabase works in plac
    | `AUTH_SECRET` | the first random secret |
    | `CRON_SECRET` | the second random secret |
    | `SEED_PASSWORD` | optional: your own password for every demo login. Without it, the password is `rayz2026!` and it's shown on the sign-in page. |
-   | `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | optional: Stripe **test** keys. In demo mode a live key is ignored and the simulator runs. |
+   | `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | optional: Stripe **test** keys. A live key with `DEMO_MODE` stops the build. |
 
    Leave `NOTIFICATIONS_*` and `APP_BASE_URL` unset. Links default to the project's production URL.
 4. **Deploy.** Click **Deploy**, or push to the production branch. The build applies the migrations and, because the database is empty, loads the demo data. That adds about a minute to the first build. Later builds only apply new migrations and keep the data. If the demo data was loaded before Stripe Connect, the next build gives each shop with card history a simulated Stripe account (`scripts/demo-connect.ts`), so checkout keeps working.
@@ -72,14 +72,14 @@ Either way, the reload wipes everything in the database, including anything type
 
 `DEMO_MODE=true` (see `src/lib/deployment.ts`):
 
-- **Cards:** the payment simulator runs, or Stripe if the key is a test key (`sk_test_…`). A live key is ignored.
+- **Cards:** the payment simulator runs, or Stripe if the key is a test key (`sk_test_…`).
 - **Texts, emails, and calls:** none are sent, whatever the `NOTIFICATIONS_*` variables say. They're queued and shown in the outbox as "suppressed".
 - **Customer sign-in codes** are shown on screen, because nothing is texted.
 - **The sign-in page** lists the demo logins, with one-click sign-in.
 - **A banner** on every page says it's a demo.
 - **The build** loads the sample data into an empty database.
 
-Never set `DEMO_MODE` on a deployment with real clients.
+Never set `DEMO_MODE` on a deployment with real clients. It can't run there: with `APP_ENV=production`, a live Stripe key (`sk_live_…`), or a real `NOTIFICATIONS_*` provider (`twilio`, `resend`, `postmark`, `expo`), the build (`scripts/deploy-db.ts`) and the server (`src/instrumentation.ts`) stop with "DEMO_MODE=true can't run in production".
 
 ## Production
 
@@ -93,6 +93,8 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    | `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | set by the Neon integration (or `MIGRATE_DATABASE_URL` for the direct string) |
    | `AUTH_SECRET`, `CRON_SECRET` | new random secrets, not the demo's |
    | `APP_BASE_URL` | the public URL, e.g. `https://book.rayzbarbershop.com` |
+   | `APP_ENV` | `production`: with it, `DEMO_MODE` stops the build and the server |
+   | `CORS_ORIGINS` | optional: other websites whose pages call `/api/v1` from the browser, comma-separated (e.g. `https://rayzbarbershop.com`). `APP_BASE_URL` is always allowed; the mobile apps don't need it. |
    | `AUTH_DEV_CODES` | `false` |
    | `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` | live keys at cutover |
    | `STRIPE_CONNECT_WEBHOOK_SECRET` | the signing secret of the Connect webhook (step 4) |

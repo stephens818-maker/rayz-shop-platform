@@ -6,12 +6,14 @@
 import "dotenv/config";
 import { execFileSync } from "node:child_process";
 import postgres from "postgres";
+import { assertDemoModeAllowed } from "../src/lib/deployment";
 
 function run(script: string) {
   execFileSync(process.execPath, ["--import", "tsx", script], { stdio: "inherit", env: process.env });
 }
 
 async function main() {
+  assertDemoModeAllowed();
   if (process.env.SKIP_DB_MIGRATE === "true") return console.log("SKIP_DB_MIGRATE=true: leaving the database alone.");
   const url = process.env.MIGRATE_DATABASE_URL ?? process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set. Add it in Vercel → Settings → Environment Variables (see DEPLOY.md).");
