@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CARD_FEE_POLICY, brandCardFeePolicy, cleanOverride, feeConfigFor, policyDiff, policyProblem, shopCardFeePolicy, stateRule } from "@/domain/card-fee-policy";
+import {
+  DEFAULT_CARD_FEE_POLICY,
+  brandCardFeePolicy,
+  bulkOverride,
+  cleanOverride,
+  effectiveShopPolicy,
+  feeConfigFor,
+  policyDiff,
+  policyProblem,
+  shopCardFeePolicy,
+  shopFeeFingerprint,
+  shopFeeState,
+  stateRule,
+  withShopsApplied,
+} from "@/domain/card-fee-policy";
 import { CardFeeConfig, CartLine, cardFeeFor, computeCheckout, describeFee, feeDisclosure } from "@/domain/checkout";
 import { planSplitTenders } from "@/domain/combined-checkout";
 
@@ -117,6 +131,64 @@ describe("the card fee policy", () => {
 
   it("lists what changed, for the audit log", () => {
     expect(policyDiff({ rate: 0.03, enabled: true }, { rate: 0.02, enabled: true })).toEqual({ rate: { from: 0.03, to: 0.02 } });
+  });
+});
+
+describe("which shops use the fee", () => {
+  const A = "00000000-0000-4000-8000-00000000000a";
+  const B = "00000000-0000-4000-8000-00000000000b";
+  const C = "00000000-0000-4000-8000-00000000000c";
+
+  it("defaults to every shop, managers view only, and keeps only real shop ids", () => {
+    expect(brandCardFeePolicy({})).toMatchObject({ appliesTo: "all", shopIds: [], shopsCanEdit: false });
+    const p = brandCardFeePolicy({ appliesTo: "selected", shopIds: [B, "nope", A.toUpperCase(), B], shopsCanEdit: true });
+    expect(p).toMatchObject({ appliesTo: "selected", shopIds: [A, B], shopsCanEdit: true });
+    expect(brandCardFeePolicy({ appliesTo: "some" }).appliesTo).toBe("all");
+  });
+
+  it("turns the fee off where the brand doesn't apply it, whatever the shop's own setting", () => {
+    const brand = brandCardFeePolicy({ appliesTo: "selected", shopIds: [A] });
+    expect(effectiveShopPolicy(brand, null, A).enabled).toBe(true);
+    expect(effectiveShopPolicy(brand, { enabled: true, rate: 0.02 }, B)).toMatchObject({ enabled: false, rate: 0.02 });
+    expect(effectiveShopPolicy({ ...brand, appliesTo: "none" }, null, A).enabled).toBe(false);
+  });
+
+  it("says why a shop is off and whether it follows the brand", () => {
+    const brand = brandCardFeePolicy({ appliesTo: "selected", shopIds: [A, C] });
+    expect(shopFeeState(brand, null, A, "IA")).toMatchObject({ on: true, off: null, applied: true, inherits: true, ownKeys: [], fee: "3%" });
+    expect(shopFeeState(brand, null, B, "IA")).toMatchObject({ on: false, off: "not_applied", applied: false });
+    expect(shopFeeState(brand, { enabled: false }, A, "IA")).toMatchObject({ on: false, off: "turned_off", inherits: false, ownKeys: ["enabled"] });
+    expect(shopFeeState(brand, null, C, "MA")).toMatchObject({ on: false, off: "state_not_allowed" });
+    expect(shopFeeState(brand, { rate: 0.025 }, A, "CO")).toMatchObject({ fee: "2%", ownKeys: ["rate"] });
+  });
+
+  it("adds and removes shops from the list", () => {
+    const all = [A, B, C];
+    expect(withShopsApplied({ appliesTo: "all", shopIds: [] }, [B], true, all)).toEqual({ appliesTo: "all", shopIds: [] });
+    expect(withShopsApplied({ appliesTo: "all", shopIds: [] }, [B], false, all)).toEqual({ appliesTo: "selected", shopIds: [A, C] });
+    expect(withShopsApplied({ appliesTo: "none", shopIds: [] }, [C, A], true, all)).toEqual({ appliesTo: "selected", shopIds: [A, C] });
+    expect(withShopsApplied({ appliesTo: "none", shopIds: [] }, [A], false, all)).toEqual({ appliesTo: "none", shopIds: [] });
+    expect(withShopsApplied({ appliesTo: "selected", shopIds: [A] }, [A], false, all)).toEqual({ appliesTo: "selected", shopIds: [] });
+  });
+
+  it("changes a shop's override per bulk action", () => {
+    const brand = brandCardFeePolicy({ rate: 0.03 });
+    const own = { enabled: false, rate: 0.02, notice: "A 2% surcharge applies to credit cards." };
+    expect(bulkOverride("enable", brand, own)).toEqual({ rate: 0.02, notice: own.notice });
+    expect(bulkOverride("enable", brand, { rate: 0.02 })).toEqual({ rate: 0.02 });
+    expect(bulkOverride("disable", brand, own)).toEqual(own);
+    expect(bulkOverride("brand_rate", brand, { ...own, type: "both", flatCents: 30 })).toEqual({ enabled: false, notice: own.notice });
+    expect(bulkOverride("brand_rate", brand, { rate: 0.02 })).toBeNull();
+    expect(bulkOverride("reset", brand, own)).toBeNull();
+    expect(bulkOverride("push", brand, own)).toBeNull();
+  });
+
+  it("sees a fee change only when what the shop charges changes", () => {
+    const p = brandCardFeePolicy({});
+    expect(shopFeeFingerprint(p, "IA")).toBe(shopFeeFingerprint({ ...p, notice: p.notice }, "IA"));
+    expect(shopFeeFingerprint(p, "IA")).not.toBe(shopFeeFingerprint({ ...p, rate: 0.02 }, "IA"));
+    // Colorado's 2% limit already holds the fee there.
+    expect(shopFeeFingerprint({ ...p, rate: 0.025 }, "CO")).toBe(shopFeeFingerprint(p, "CO"));
   });
 });
 

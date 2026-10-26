@@ -211,6 +211,8 @@ export const shops = pgTable("shops", {
   cardFeeAppliesToTip: boolean("card_fee_applies_to_tip").notNull().default(false),
   /** This shop's changes to the brand's card fee policy (CardFeeOverride in src/domain/card-fee-policy.ts); null follows the brand. */
   cardFeeOverride: jsonb("card_fee_override").$type<Record<string, unknown>>(),
+  /** When what this shop charges last changed: its own setting, a brand change that reached it, or the brand turning it on or off here. */
+  cardFeeChangedAt: timestamp("card_fee_changed_at", { withTimezone: true }),
   /** Superseded by handoff.tips, and kept in step with it while the presets are percents. */
   tipPresets: jsonb("tip_presets").$type<number[]>().notNull().default(sql`'[20,25,30]'::jsonb`),
   cancelCutoffMinutes: integer("cancel_cutoff_minutes").notNull().default(30),

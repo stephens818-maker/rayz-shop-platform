@@ -5,7 +5,7 @@
  * debit, prepaid, gift cards or cash), it never exceeds MAX_CARD_FEE_RATE of the amount it's on
  * (or a lower state limit), and it's off in any state not on the allowlist.
  */
-import { CardFeeConfig, CardFeeRefundRule, CardFeeType, MAX_CARD_FEE_RATE } from "./checkout";
+import { CardFeeConfig, CardFeeRefundRule, CardFeeType, MAX_CARD_FEE_RATE, describeFee } from "./checkout";
 
 export const FEE_CHANNELS = ["pos", "app", "deposit", "card_on_file"] as const;
 export type FeeChannel = (typeof FEE_CHANNELS)[number];
@@ -25,6 +25,11 @@ export const US_STATES = [
 export const SURCHARGE_BLOCKED_STATES = ["CT", "MA", "ME", "PR"] as const;
 /** States that allow a surcharge but cap it lower than the networks do. */
 export const DEFAULT_STATE_MAX_RATES: Record<string, number> = { CO: 0.02 };
+
+/** Which shops the brand's surcharge is used at. A new location is in "all", and not in "selected" until it's ticked. */
+export const FEE_APPLY_TO = ["all", "selected", "none"] as const;
+export type FeeApplyTo = (typeof FEE_APPLY_TO)[number];
+export const FEE_APPLY_TO_LABEL: Record<FeeApplyTo, string> = { all: "All shops", selected: "Selected shops", none: "No shops" };
 
 export const FEE_NOTICE_MAX = 400;
 export const FEE_FLAT_MAX_CENTS = 1000;
@@ -55,9 +60,15 @@ export interface CardFeePolicy {
   states: string[];
   /** Brand only: lower limits for states that set one. */
   stateMaxRates: Record<string, number>;
+  /** Brand only: the shops that use the fee. A shop it doesn't apply to charges none, whatever its own setting says. */
+  appliesTo: FeeApplyTo;
+  /** Brand only: the shops for "selected". */
+  shopIds: string[];
+  /** Brand only: whether people who edit a shop's checkout settings may change that shop's own fee. Otherwise they only see it. */
+  shopsCanEdit: boolean;
 }
 
-/** What a shop may change. Waivers, refunds and the state rules are the brand's alone. */
+/** What a shop may change. Waivers, refunds, the state rules and which shops use it are the brand's alone. */
 export type CardFeeOverride = Partial<Pick<CardFeePolicy, "enabled" | "type" | "rate" | "flatCents" | "appliesToTip" | "capCents" | "minCents" | "notice">> & {
   channels?: Partial<CardFeePolicy["channels"]>;
   funding?: Partial<CardFeePolicy["funding"]>;
@@ -79,7 +90,12 @@ export const DEFAULT_CARD_FEE_POLICY: CardFeePolicy = {
   notice: null,
   states: US_STATES.filter((s) => !(SURCHARGE_BLOCKED_STATES as readonly string[]).includes(s)),
   stateMaxRates: DEFAULT_STATE_MAX_RATES,
+  appliesTo: "all",
+  shopIds: [],
+  shopsCanEdit: false,
 };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const bool = (v: unknown, d: boolean) => (typeof v === "boolean" ? v : d);
@@ -117,6 +133,9 @@ function mergeLayer(base: CardFeePolicy, raw: unknown, brand: boolean): CardFeeP
     stateMaxRates: isObj(raw.stateMaxRates)
       ? Object.fromEntries(Object.entries(raw.stateMaxRates).flatMap(([k, v]) => (typeof v === "number" && v >= 0 && v <= MAX_CARD_FEE_RATE ? [[k.toUpperCase(), v]] : [])))
       : base.stateMaxRates,
+    appliesTo: (FEE_APPLY_TO as readonly unknown[]).includes(raw.appliesTo) ? (raw.appliesTo as FeeApplyTo) : base.appliesTo,
+    shopIds: Array.isArray(raw.shopIds) ? [...new Set(raw.shopIds.filter((s): s is string => typeof s === "string" && UUID.test(s)).map((s) => s.toLowerCase()))].sort() : base.shopIds,
+    shopsCanEdit: bool(raw.shopsCanEdit, base.shopsCanEdit),
   };
 }
 
@@ -144,7 +163,7 @@ export function cleanOverride(brand: CardFeePolicy, raw: unknown): CardFeeOverri
 export const normalState = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
 
 /** Where the shop is decides whether the fee may apply there at all, and the highest rate. */
-export function stateRule(p: CardFeePolicy, shopState: string | null | undefined): { allowed: boolean; maxRate: number } {
+export function stateRule(p: Pick<CardFeePolicy, "states" | "stateMaxRates">, shopState: string | null | undefined): { allowed: boolean; maxRate: number } {
   const st = normalState(shopState);
   return { allowed: !!st && p.states.includes(st), maxRate: Math.min(MAX_CARD_FEE_RATE, p.stateMaxRates[st] ?? MAX_CARD_FEE_RATE) };
 }
@@ -187,6 +206,85 @@ export function policyProblem(p: CardFeePolicy): string | null {
   const over = Object.entries(p.stateMaxRates).find(([, r]) => !(r >= 0 && r <= MAX_CARD_FEE_RATE));
   if (over) return `The limit for ${over[0]} must be from 0% to ${MAX_CARD_FEE_RATE * 100}%`;
   return null;
+}
+
+export const feeAppliesToShop = (brand: Pick<CardFeePolicy, "appliesTo" | "shopIds">, shopId: string) =>
+  brand.appliesTo === "all" || (brand.appliesTo === "selected" && brand.shopIds.includes(shopId));
+
+/** What a shop charges: its own policy, turned off where the brand doesn't apply the fee. */
+export function effectiveShopPolicy(brand: CardFeePolicy, override: unknown, shopId: string): CardFeePolicy {
+  const p = shopCardFeePolicy(brand, override);
+  return feeAppliesToShop(brand, shopId) ? p : { ...p, enabled: false };
+}
+
+/** Why a shop charges no surcharge: the brand doesn't apply it there, it's turned off, or the shop's state isn't allowed. */
+export type ShopFeeOff = "not_applied" | "turned_off" | "state_not_allowed";
+export const SHOP_FEE_OFF_LABEL: Record<ShopFeeOff, string> = {
+  not_applied: "Not applied by the brand",
+  turned_off: "Turned off",
+  state_not_allowed: "State not allowed",
+};
+
+export interface ShopFeeState {
+  on: boolean;
+  off: ShopFeeOff | null;
+  /** The brand applies the fee at this shop. */
+  applied: boolean;
+  /** No override: the shop uses the brand's settings. */
+  inherits: boolean;
+  /** The settings the shop sets itself, when it doesn't inherit. */
+  ownKeys: string[];
+  /** "3%", "$0.30" or "3% + $0.30", after the state's limit. */
+  fee: string;
+  appliesToTip: boolean;
+}
+
+export function shopFeeState(brand: CardFeePolicy, override: unknown, shopId: string, shopState: string | null | undefined): ShopFeeState {
+  const p = shopCardFeePolicy(brand, override);
+  const applied = feeAppliesToShop(brand, shopId);
+  const off: ShopFeeOff | null = !applied ? "not_applied" : !p.enabled ? "turned_off" : !stateRule(p, shopState).allowed ? "state_not_allowed" : null;
+  const own = cleanOverride(brand, override);
+  return { on: !off, off, applied, inherits: !own, ownKeys: own ? Object.keys(own) : [], fee: describeFee(feeConfigFor(p, shopState, "pos")), appliesToTip: p.appliesToTip };
+}
+
+/** Everything that decides what a shop charges, on every channel: if this changes, the shop's fee changed. */
+export const shopFeeFingerprint = (p: CardFeePolicy, shopState: string | null | undefined) => JSON.stringify(FEE_CHANNELS.map((c) => feeConfigFor(p, shopState, c)));
+
+export const BULK_FEE_ACTIONS = ["enable", "disable", "brand_rate", "reset", "push"] as const;
+export type BulkFeeAction = (typeof BULK_FEE_ACTIONS)[number];
+export const BULK_FEE_ACTION_LABEL: Record<BulkFeeAction, string> = {
+  enable: "Enable",
+  disable: "Disable",
+  brand_rate: "Apply brand rate",
+  reset: "Reset to brand default",
+  push: "Push brand settings",
+};
+
+/**
+ * Which shops the brand applies the fee to after turning it on or off at some. Turning one off under
+ * "all" lists every other shop, so locations added later aren't included until they're ticked.
+ */
+export function withShopsApplied(brand: Pick<CardFeePolicy, "appliesTo" | "shopIds">, ids: readonly string[], on: boolean, allShopIds: readonly string[]): Pick<CardFeePolicy, "appliesTo" | "shopIds"> {
+  if (brand.appliesTo === "all" && on) return { appliesTo: "all", shopIds: brand.shopIds };
+  if (brand.appliesTo === "none" && !on) return { appliesTo: "none", shopIds: brand.shopIds };
+  const set = new Set(brand.appliesTo === "all" ? allShopIds : brand.appliesTo === "selected" ? brand.shopIds : []);
+  for (const id of ids) if (on) set.add(id);
+    else set.delete(id);
+  return { appliesTo: "selected", shopIds: [...set].sort() };
+}
+
+/**
+ * A shop's override after a bulk action. Enable turns the shop's own "off" back on; Apply brand rate
+ * drops its own fee type, rate and flat amount; Reset and Push drop the override altogether.
+ * Disable leaves it alone (the brand stops applying the fee there instead).
+ */
+export function bulkOverride(action: BulkFeeAction, brand: CardFeePolicy, override: unknown): CardFeeOverride | null {
+  const cur = cleanOverride(brand, override);
+  if (action === "reset" || action === "push") return null;
+  if (action === "disable") return cur;
+  if (action === "enable") return shopCardFeePolicy(brand, cur).enabled ? cur : cleanOverride(brand, { ...cur, enabled: true });
+  const { type: _t, rate: _r, flatCents: _f, ...rest } = cur ?? {};
+  return cleanOverride(brand, rest);
 }
 
 /** What's different between two policies, for the audit log. */
