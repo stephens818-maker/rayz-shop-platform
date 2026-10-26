@@ -1,7 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
+import { BarChartCard } from "@/components/bar-chart";
 import { TrendChart } from "@/components/trend-chart";
+import { reportBarChart } from "@/domain/report-charts";
 import { reportFor, reportsFor } from "@/domain/navigation";
 import { ReportKey, reportExport } from "@/domain/permissions";
 import { MONEY_HIDDEN_NOTE } from "@/domain/report-money";
@@ -163,7 +165,7 @@ function Heatmap({ title, cells }: { title: string; cells: { dow: number; hour: 
                       <div
                         title={`${WEEKDAYS[d]} ${h}:00 — ${n}`}
                         className={cx("grid h-7 w-9 place-items-center rounded tabular", a > 0.55 ? "text-white" : "text-zinc-700")}
-                        style={{ background: n ? `rgba(200, 30, 30, ${0.08 + a * 0.85})` : "#f4f4f5" }}
+                        style={{ background: n ? `rgba(200, 30, 30, ${0.08 + a * 0.85})` : "var(--color-zinc-100)" }}
                       >
                         {n || ""}
                       </div>
@@ -214,6 +216,7 @@ export async function ReportPage({
   const exportAll = data.tables.find((t) => t.exportOnly && !t.downloadLabel && t.id !== "heatmap");
   const heatmapCsv = data.heatmaps && data.tables.some((t) => t.id === "heatmap") ? csv("heatmap") : null;
   const actions = rowActions?.(data, ctx) ?? {};
+  const bars = data.charts?.length || data.heatmaps?.length ? null : reportBarChart(data.tables);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -264,6 +267,7 @@ export async function ReportPage({
           ))}
         </div>
       )}
+      {bars && <BarChartCard chart={bars} />}
       {data.heatmaps && (
         <div className={cx(data.heatmaps.length > 1 && "grid gap-x-4 xl:grid-cols-2")}>
           {data.heatmaps.map((h) => (

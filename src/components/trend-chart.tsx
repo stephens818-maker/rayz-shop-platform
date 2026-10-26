@@ -10,7 +10,7 @@ export interface TrendSeries {
 const W = 720;
 const H = 220;
 const PAD = { l: 40, r: 12, t: 12, b: 28 };
-const COLOR = { main: "#18181b", brand: "#a1a1aa", alt: "#b91c1c" };
+const COLOR = { main: "var(--color-zinc-900)", brand: "var(--color-zinc-400)", alt: "var(--color-red-700)" };
 const colorOf = (s: TrendSeries) => (s.dashed ? COLOR.brand : s.tone === "alt" ? COLOR.alt : COLOR.main);
 
 /** A line chart of rates (0 to 100%) by period. Gaps where a period has nothing; the same numbers are in the table below it. */
@@ -42,15 +42,15 @@ export function TrendChart({ id, title, labels, series }: { id: string; title: s
           <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={title}>
             {[0, 0.25, 0.5, 0.75, 1].map((g) => (
               <g key={g}>
-                <line x1={PAD.l} x2={W - PAD.r} y1={y(g)} y2={y(g)} stroke="#e4e4e7" strokeWidth={1} />
-                <text x={PAD.l - 6} y={y(g) + 4} textAnchor="end" fontSize={11} fill="#71717a">
+                <line x1={PAD.l} x2={W - PAD.r} y1={y(g)} y2={y(g)} className="stroke-zinc-200" strokeWidth={1} />
+                <text x={PAD.l - 6} y={y(g) + 4} textAnchor="end" fontSize={11} className="fill-zinc-500">
                   {Math.round(g * 100)}%
                 </text>
               </g>
             ))}
             {labels.map((l, i) =>
               i % every === 0 || i === n - 1 ? (
-                <text key={i} x={x(i)} y={H - 8} textAnchor={n > 1 && i === n - 1 ? "end" : n > 1 && i === 0 ? "start" : "middle"} fontSize={11} fill="#71717a">
+                <text key={i} x={x(i)} y={H - 8} textAnchor={n > 1 && i === n - 1 ? "end" : n > 1 && i === 0 ? "start" : "middle"} fontSize={11} className="fill-zinc-500">
                   {l.replace(/^Week of /, "")}
                 </text>
               ) : null,
@@ -61,14 +61,14 @@ export function TrendChart({ id, title, labels, series }: { id: string; title: s
                   {run.length > 1 && (
                     <polyline
                       fill="none"
-                      stroke={colorOf(s)}
+                      style={{ stroke: colorOf(s) }}
                       strokeWidth={2}
                       strokeDasharray={s.dashed ? "5 4" : undefined}
                       points={run.map((p) => `${x(p.i)},${y(p.v)}`).join(" ")}
                     />
                   )}
                   {run.map((p) => (
-                    <circle key={p.i} cx={x(p.i)} cy={y(p.v)} r={s.dashed ? 2 : 3} fill={colorOf(s)}>
+                    <circle key={p.i} cx={x(p.i)} cy={y(p.v)} r={s.dashed ? 2 : 3} style={{ fill: colorOf(s) }}>
                       <title>{`${labels[p.i]}: ${s.label} ${Math.round(p.v * 100)}%`}</title>
                     </circle>
                   ))}
@@ -81,7 +81,7 @@ export function TrendChart({ id, title, labels, series }: { id: string; title: s
           {series.map((s) => (
             <span key={s.label} className="inline-flex items-center gap-1.5">
               <svg width="18" height="6" aria-hidden>
-                <line x1="0" x2="18" y1="3" y2="3" stroke={colorOf(s)} strokeWidth={2} strokeDasharray={s.dashed ? "4 3" : undefined} />
+                <line x1="0" x2="18" y1="3" y2="3" style={{ stroke: colorOf(s) }} strokeWidth={2} strokeDasharray={s.dashed ? "4 3" : undefined} />
               </svg>
               {s.label}
             </span>
