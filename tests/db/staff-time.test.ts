@@ -332,3 +332,30 @@ describe("limits, notice and who decides", () => {
     expect(await request(all.requestId)).toMatchObject({ status: "denied", decisionNote: "Covering Rock Island that day", decidedVia: "manager" });
   });
 });
+
+describe("a block a manager makes at one shop (review #23)", () => {
+  it("closes the barber's book at every shop they work at, and only its maker or someone with all their shops takes it off", async () => {
+    const calendar = await import("@/app/admin/calendar/actions");
+    const kat = await staffBy({ email: "kat@rayz.test" });
+    const moline = await shop("moline");
+    const date = dayOn(3, 70);
+    await as("manager.moline@rayz.test");
+    const r = await calendar.createBlockAction({ shopId: moline.id, staffId: kat.id, date, startMin: 13 * 60, endMin: 14 * 60, reasonId: rid("doctor"), allShops: true, confirm: true });
+    expect(r).toMatchObject({ ok: true, data: { saved: true } });
+    const [b] = await m.db.db.select().from(m.schema.timeBlocks).where(m.drizzle.and(eq(m.schema.timeBlocks.staffId, kat.id), eq(m.schema.timeBlocks.startsAt, at(date, 13 * 60))));
+    expect(b.shopId).toBeNull();
+    // No shop on the block: availability at each of her shops leaves it out (shopId null applies everywhere).
+    expect(clear(await starts("moline", kat.id, date), 13 * 60, 14 * 60)).toBe(true);
+
+    await as("michelle@rayz.test");
+    expect(await calendar.deleteBlockAction(b.id)).toMatchObject({ ok: false });
+    await as("manager.moline@rayz.test");
+    expect(await calendar.deleteBlockAction(b.id)).toMatchObject({ ok: true });
+
+    const one = await calendar.createBlockAction({ shopId: moline.id, staffId: kat.id, date, startMin: 15 * 60, endMin: 16 * 60, reasonId: rid("meeting"), allShops: false, confirm: true });
+    expect(one).toMatchObject({ ok: true, data: { saved: true } });
+    const [shopOnly] = await m.db.db.select().from(m.schema.timeBlocks).where(m.drizzle.and(eq(m.schema.timeBlocks.staffId, kat.id), eq(m.schema.timeBlocks.startsAt, at(date, 15 * 60))));
+    expect(shopOnly.shopId).toBe(moline.id);
+    await calendar.deleteBlockAction(shopOnly.id);
+  });
+});

@@ -733,7 +733,6 @@ export function DayCalendar({
               data={data}
               startMin={panel.startMin}
               services={services}
-              own={panel.col.id === meId}
               entry={canManage.entry}
               canFamily={canManage.family}
               reasons={reasons}
@@ -2125,7 +2124,6 @@ function NewPanel({
   data,
   startMin,
   services,
-  own,
   entry,
   canFamily,
   reasons,
@@ -2135,7 +2133,6 @@ function NewPanel({
   data: DayCalendarData;
   startMin: number;
   services: Svc[];
-  own: boolean;
   entry: EntryField[];
   canFamily: boolean;
   reasons: PickReason[];
@@ -2173,8 +2170,8 @@ function NewPanel({
   );
   const [note, setNote] = useState("");
   const [conflicts, setConflicts] = useState<BookedConflict[] | null>(null);
-  // Your own time off (doctor, errands) should close your book everywhere, not just here.
-  const [allShops, setAllShops] = useState(own);
+  // A barber can't be in two places at once: a block closes their book at every shop unless narrowed.
+  const [allShops, setAllShops] = useState(true);
   const block = (confirm: boolean) =>
     run(
       () =>
@@ -2696,8 +2693,12 @@ function NewPanel({
               type="checkbox"
               checked={allShops}
               onChange={(e) => setAllShops(e.target.checked)}
+              data-testid="block-all-shops"
             />{" "}
             Block at all shops
+            <span className="text-xs text-zinc-500">
+              (untick to block this shop only)
+            </span>
           </label>
           {error && <Notice tone="red">{error}</Notice>}
           {conflicts ? (

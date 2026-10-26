@@ -158,7 +158,16 @@ describe("who may block time and decide time off", () => {
     expect(blockChangeDenied({ ...barber, blocksOwn: false }, { staffId: "barber", shopId: null }, [coralville])).toMatch(/can't block out your own/);
     expect(blockChangeDenied(manager, { staffId: "other", shopId: coralville }, [coralville])).toBeNull();
     expect(blockChangeDenied(manager, { staffId: "other", shopId: moline }, [coralville, moline])).toMatch(/outside your access/);
-    expect(blockChangeDenied(manager, { staffId: "other", shopId: null }, [coralville, moline])).toMatch(/shops you don't manage/);
+    expect(blockChangeDenied(manager, { staffId: "other", shopId: null }, [moline])).toMatch(/shops you don't manage/);
+  });
+
+  it("a manager at one of a barber's shops blocks them at every shop, and only they take that block off (review #23)", () => {
+    expect(blockChangeDenied(manager, { staffId: "other", shopId: null }, [coralville, moline])).toBeNull();
+    expect(blockChangeDenied(manager, { staffId: "other", shopId: null, createdBy: "manager" }, [coralville, moline])).toBeNull();
+    expect(blockChangeDenied(manager, { staffId: "other", shopId: null, createdBy: "moline-manager" }, [coralville, moline])).toMatch(/Another manager/);
+    expect(blockChangeDenied(manager, { staffId: "other", shopId: null, createdBy: null }, [coralville, moline])).toMatch(/Another manager/);
+    expect(blockChangeDenied(manager, { staffId: "other", shopId: null, createdBy: "moline-manager" }, [coralville])).toBeNull();
+    expect(blockChangeDenied({ ...manager, blocksOthers: false }, { staffId: "other", shopId: null }, [coralville, moline])).toMatch(/only block out your own/);
   });
 
   it("a block from the time clock is a manager's to change, even for a barber's own time", () => {

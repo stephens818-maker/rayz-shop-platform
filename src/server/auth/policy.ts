@@ -32,17 +32,25 @@ export function timeBlockChangeDenied(
 
 /**
  * Adding or removing a block: your own time needs "Block out their own time" (or "for anyone"),
- * anyone else's needs "Block out time for anyone", and the shop rules above apply either way.
+ * anyone else's needs "Block out time for anyone", and the shop rules above apply either way, with
+ * one exception. A barber can't be in two places at once, so a manager at one of their shops may
+ * block them at every shop (the calendar's default) and remove that block again. Someone else's
+ * block at every shop still needs access to all of the barber's shops. `createdBy` is undefined
+ * for a new block.
  */
 export function blockChangeDenied(
   caller: Caller & { blocksOwn: boolean; blocksOthers: boolean },
-  block: { staffId: string; shopId: string | null },
+  block: { staffId: string; shopId: string | null; createdBy?: string | null },
   barberShopIds: string[],
 ): string | null {
   if (block.staffId === caller.staffId) {
     if (!caller.blocksOwn && !caller.blocksOthers) return "You can't block out your own time";
   } else if (!caller.blocksOthers) return "You can only block out your own time";
-  return timeBlockChangeDenied(caller, block, barberShopIds);
+  const denied = timeBlockChangeDenied(caller, block, barberShopIds);
+  if (!denied || block.shopId !== null) return denied;
+  if (!barberShopIds.some((s) => caller.shopIds.includes(s))) return denied;
+  if (block.createdBy === undefined || block.createdBy === caller.staffId) return null;
+  return "Another manager blocked this barber at every shop. Ask them, or someone with access to all the barber's shops.";
 }
 
 /**
