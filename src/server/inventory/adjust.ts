@@ -9,6 +9,7 @@ import { AppError, notFound } from "../errors";
 import { enqueueShopEmail } from "../notifications/queue";
 import { Who, assertShop, postMovements, setOnHand } from "./ledger";
 import { StockRow, stockLevels } from "./stock";
+import { noteShopSetting } from "../brand-sync/shop-settings";
 
 export const AdjustInput = z.object({
   shopId: z.uuid(),
@@ -103,6 +104,7 @@ export async function saveShopInventorySettings(who: Who, raw: z.input<typeof Sh
   if (!before) throw notFound("Shop");
   await db.update(shops).set({ negativeStock: v.negativeStock, inventoryAlertEmail: v.inventoryAlertEmail }).where(eq(shops.id, v.shopId));
   await audit(who.actor, "inventory.settings", "shop", v.shopId, { from: before, to: { negativeStock: v.negativeStock, inventoryAlertEmail: v.inventoryAlertEmail } }, v.shopId);
+  await noteShopSetting("negative_stock", v.shopId);
 }
 
 // ───────────────────────────── Low-stock alerts ─────────────────────────────

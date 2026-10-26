@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { SyncMsg, useSettingSync, useSyncSave } from "@/components/brand-sync";
-import { Button, Card, CardHeader, Field, Input } from "@/components/ui";
+import { Button, Card, CardHeader, Field, Input, Select } from "@/components/ui";
+import type { SyncFormField } from "@/domain/brand-sync";
 import { SaveBar } from "../settings/editors";
 
 /** The name a shop prints for the brand on purchase orders and brand emails. */
@@ -99,6 +100,79 @@ export function BrandReceiptEditor({ initial, canEdit }: { initial: Receipt; can
 type Closure = { date: string; reason: string | null };
 
 /** Holiday closures the brand sets: each date goes to the shops picked, and can open them again the same way. */
+export interface BrandShopSetting {
+  key: string;
+  label: string;
+  hint: string | null;
+  note: string | null;
+  fields: readonly SyncFormField[];
+  value: Record<string, unknown>;
+  canEdit: boolean;
+}
+
+/** Settings each shop keeps in its own record (online booking, phone operator, customer screen): set once here and sent to the shops you pick. */
+export function BrandShopSettingsEditor({ settings }: { settings: BrandShopSetting[] }) {
+  return (
+    <Card>
+      <CardHeader title="Shop settings" subtitle="Each shop has its own of these. Set one here, then pick the shops it goes to. A shop that changed its own shows as overridden." />
+      <div className="divide-y divide-zinc-100" data-testid="brand-shop-settings">
+        {settings.map((s) => (
+          <ShopSettingForm key={s.key} setting={s} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function ShopSettingForm({ setting }: { setting: BrandShopSetting }) {
+  const { pending, msg, save, dialog } = useSyncSave();
+  const [v, setV] = useState(setting.value);
+  const set = (k: string, x: unknown) => setV((p) => ({ ...p, [k]: x }));
+  return (
+    <div className="space-y-3 p-4" data-testid={`shop-setting-${setting.key}`}>
+      <div>
+        <div className="text-sm font-medium">{setting.label}</div>
+        {(setting.note || setting.hint) && <div className="text-xs text-zinc-500">{setting.note ?? setting.hint}</div>}
+      </div>
+      <fieldset disabled={!setting.canEdit || pending} className="grid gap-3 sm:grid-cols-2">
+        {setting.fields.map((f) =>
+          f.kind === "bool" ? (
+            <label key={f.key} className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={v[f.key] === true} onChange={(e) => set(f.key, e.target.checked)} />
+              {f.label}
+            </label>
+          ) : (
+            <Field key={f.key} label={f.label}>
+              {f.kind === "choice" ? (
+                <Select value={String(v[f.key] ?? "")} onChange={(e) => set(f.key, e.target.value)}>
+                  {f.options.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+              ) : f.kind === "number" ? (
+                <Input type="number" min={f.min} max={f.max} value={String(v[f.key] ?? "")} onChange={(e) => set(f.key, e.target.value === "" ? null : Number(e.target.value))} />
+              ) : (
+                <Input maxLength={f.max} value={String(v[f.key] ?? "")} onChange={(e) => set(f.key, e.target.value || null)} />
+              )}
+            </Field>
+          ),
+        )}
+      </fieldset>
+      {setting.canEdit && (
+        <div className="flex items-center gap-3">
+          <Button disabled={pending} onClick={() => save({ label: setting.label, changes: [{ type: "shop_setting", item: setting.key, value: v }] })}>
+            Save at…
+          </Button>
+          <SyncMsg msg={msg} />
+        </div>
+      )}
+      {dialog}
+    </div>
+  );
+}
+
 export function BrandClosuresEditor({ closures }: { closures: Closure[] }) {
   const { pending, msg, save, dialog } = useSyncSave();
   const [date, setDate] = useState("");

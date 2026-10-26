@@ -62,9 +62,17 @@ export const SYNC_TYPES = [
   "automation",
   "field_rule",
   "prompt_rule",
+  "shop_setting",
 ] as const;
 export type SyncType = (typeof SYNC_TYPES)[number];
 export const isSyncType = (s: string): s is SyncType => (SYNC_TYPES as readonly string[]).includes(s);
+
+/** One input of a registered setting's brand form, for a key of its value. */
+export type SyncFormField =
+  | { key: string; label: string; kind: "bool" }
+  | { key: string; label: string; kind: "choice"; options: readonly { value: string; label: string }[] }
+  | { key: string; label: string; kind: "number"; min: number; max: number }
+  | { key: string; label: string; kind: "text"; max: number };
 
 export const syncKey = (type: SyncType, item: string) => `${type}:${item}`;
 export function parseSyncKey(key: string): { type: SyncType; item: string } | null {

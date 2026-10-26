@@ -187,13 +187,16 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
 
 /** Runs each adapter's afterCommit for the shops a committed batch changed. Failures are logged; the change stands. */
 async function afterCommit(changes: readonly Pick<ChangeRow, "key" | "shopId" | "action">[]) {
-  const byType = new Map<SyncType, Set<string>>();
+  const byType = new Map<SyncType, { shops: Set<string>; items: Set<string> }>();
   for (const c of changes) {
     const k = parseSyncKey(c.key);
     if (!k || c.action === "keep" || c.action === "freeze" || !ADAPTERS[k.type].afterCommit) continue;
-    byType.set(k.type, (byType.get(k.type) ?? new Set()).add(c.shopId));
+    const t = byType.get(k.type) ?? { shops: new Set<string>(), items: new Set<string>() };
+    t.shops.add(c.shopId);
+    t.items.add(k.item);
+    byType.set(k.type, t);
   }
-  for (const [type, ids] of byType) await ADAPTERS[type].afterCommit!([...ids]).catch((e: Error) => console.error(`After ${type} sync: ${e.message}`));
+  for (const [type, t] of byType) await ADAPTERS[type].afterCommit!([...t.shops], [...t.items]).catch((e: Error) => console.error(`After ${type} sync: ${e.message}`));
 }
 
 async function recordChanges(tx: DBorTx, batchId: string, changes: ChangeRow[]) {

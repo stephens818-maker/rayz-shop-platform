@@ -13,6 +13,7 @@ import {
 } from "@/domain/tips";
 import { addDays, todayLocal, type LocalDate } from "@/lib/time";
 import { settingAt, settingFor } from "../brand-sync/settings";
+import { noteShopSetting } from "../brand-sync/shop-settings";
 import { Actor, audit } from "@/server/audit";
 import { tipOverrides } from "@/server/compensation";
 import { AppError, notFound } from "@/server/errors";
@@ -117,6 +118,7 @@ export async function saveShopTipSettings(shopId: string, raw: ShopTipSettings, 
   const before = await shopTipConfig(shopId, db, policy);
   await db.update(shops).set({ tipPayouts: clean as unknown as Record<string, unknown> }).where(eq(shops.id, shopId));
   await audit(actor, "tips.settings", "shop", shopId, { before, after: clean }, shopId);
+  await noteShopSetting("tip_schedule", shopId);
   return clean;
 }
 

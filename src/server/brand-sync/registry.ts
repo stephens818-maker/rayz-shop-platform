@@ -9,6 +9,7 @@ import { fieldRuleAdapter, promptRuleAdapter } from "./adapters/rules";
 import { serviceRuleAdapter } from "./adapters/service-rules";
 import { listAdapter } from "./lists";
 import { settingAdapter } from "./settings";
+import { shopSettingAdapter } from "./shop-settings";
 import type { AnyAdapter, SyncItem } from "./types";
 
 export const ADAPTERS: Record<SyncType, AnyAdapter> = {
@@ -33,6 +34,7 @@ export const ADAPTERS: Record<SyncType, AnyAdapter> = {
   automation: automationAdapter,
   field_rule: fieldRuleAdapter,
   prompt_rule: promptRuleAdapter,
+  shop_setting: shopSettingAdapter,
 };
 
 export const areaOf = (a: AnyAdapter, item?: Pick<SyncItem, "area"> | null): SyncArea => item?.area ?? a.area;

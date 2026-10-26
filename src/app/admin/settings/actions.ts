@@ -17,6 +17,7 @@ import { audit } from "@/server/audit";
 import { assertShopAccess, authorize, can } from "@/server/auth/staff";
 import { squireHistory } from "@/server/cutover";
 import { assertShopMayEdit, noteShopEdit } from "@/server/brand-sync/engine";
+import { noteShopSetting } from "@/server/brand-sync/shop-settings";
 import { receiptValue } from "@/server/brand-sync/adapters/location";
 import { AppError } from "@/server/errors";
 import { same } from "@/domain/brand-sync";
@@ -99,6 +100,7 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
     await db.update(shops).set(values).where(eq(shops.id, shopId));
     await noteShopColumnChanges(shopId, overridesFromColumns(values));
     await noteShopEdit("location_default", Object.keys(overridesFromColumns(values)), shopId);
+    if ("bookingEnabled" in values) await noteShopSetting("online_booking", shopId);
     await audit(ctx.actor, "shop.update", "shop", shopId, values, shopId);
     revalidatePath("/admin/settings");
     return null;
@@ -312,6 +314,7 @@ export async function saveShopHandoffAction(shopId: string, raw: z.input<typeof 
     if (!same(current.shop.tips, next.tips)) await assertShopMayEdit(ctx, "tips");
     const r = await saveShopHandoff(shopId, next, ctx.actor);
     await noteShopEdit("tips", ["screen"], shopId);
+    await noteShopSetting("customer_screen", shopId);
     revalidatePath("/admin/settings");
     return r.reader;
   });
@@ -356,6 +359,7 @@ export async function savePhoneOperatorAction(shopId: string, raw: z.input<typeo
     const after = cleanOperator({ ...v, greeting: v.greeting || null });
     await db.update(shops).set({ phoneOperator: { ...after } }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.phone_operator", "shop", shopId, { before: cleanOperator(before.phoneOperator), after }, shopId);
+    await noteShopSetting("phone_operator", shopId);
     revalidatePath("/admin/settings");
     revalidatePath("/admin/phone-agent");
     return null;

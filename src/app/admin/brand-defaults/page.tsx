@@ -14,7 +14,8 @@ import { closureAdapter } from "@/server/brand-sync/adapters/closures";
 import { locationDefaultsBoard } from "@/server/location-defaults";
 import { HoursEditor } from "../settings/editors";
 import { DefaultsBoard } from "./board";
-import { BrandClosuresEditor, BrandNameEditor, BrandReceiptEditor, BrandTaxEditor } from "./templates";
+import { brandShopSettings } from "@/server/brand-sync/shop-settings";
+import { BrandClosuresEditor, BrandNameEditor, BrandReceiptEditor, BrandShopSettingsEditor, BrandTaxEditor } from "./templates";
 
 export const metadata: Metadata = { title: "Brand defaults" };
 
@@ -32,6 +33,7 @@ export default async function BrandDefaultsPage() {
   const brandEditor = ctx.brandWide && can(ctx, "settings.brand");
   const closureItems = brandEditor ? await closureAdapter.items(db) : [];
   const closures = brandEditor ? await closureAdapter.brand(db, closureItems.map((i) => i.id)) : new Map();
+  const shopSettings = ctx.brandWide ? (await brandShopSettings()).map((s) => ({ ...s, canEdit: canAny(ctx, [...s.perms]) })).filter((s) => s.canEdit) : [];
   const shopSections = DEFAULT_SECTIONS.map((s) => s.id).filter((id) => canAny(ctx, [...SECTION_SHOP_PERMISSIONS[id]] as Permission[]));
   const shopsLocked = shopSections.length > 0 && !(await shopMayEdit(ctx, "location_default"));
   return (
@@ -61,6 +63,7 @@ export default async function BrandDefaultsPage() {
           </div>
         </div>
       )}
+      {shopSettings.length > 0 && <BrandShopSettingsEditor settings={shopSettings.map(({ perms: _, ...s }) => s)} />}
     </div>
   );
 }
