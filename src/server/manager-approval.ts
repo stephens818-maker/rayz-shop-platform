@@ -91,7 +91,7 @@ export function overLimit(perm: ApprovalPermission, cents: number, limitCents: n
   return new AppError(
     "forbidden",
     approved
-      ? `This ${what} is ${limitLabel(cents)}, above the approving manager's ${limitLabel(limitCents)} limit. Pick a manager whose limit covers it.`
+      ? `This ${what} is ${limitLabel(cents)}, above ${limitLabel(limitCents)}, the most you and the approving manager can give back. Pick a manager whose limit covers it.`
       : `This ${what} is ${limitLabel(cents)}, above your ${limitLabel(limitCents)} limit. A manager whose limit covers it approves with their PIN.`,
     { approval: perm, overLimit: true, limitCents },
   );

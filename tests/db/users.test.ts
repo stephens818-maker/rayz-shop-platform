@@ -90,7 +90,7 @@ describe("inviting", () => {
     expect(job.body).toContain("[sign-up link removed]");
     expect(job.body).not.toContain(token);
     const [log] = await audits("user.invite", rita);
-    expect(log).toMatchObject({ actorStaffId: people.owner, details: { role: "Regional Manager", twoFactorRequired: true, remoteAccess: true } });
+    expect(log).toMatchObject({ actorStaffId: people.owner, details: { role: "Regional / District Manager", twoFactorRequired: true, remoteAccess: true } });
     expect(JSON.stringify(log.details)).not.toContain(token);
     ids.ritaToken = token;
   });
