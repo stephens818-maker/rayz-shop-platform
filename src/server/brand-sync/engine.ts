@@ -104,12 +104,13 @@ async function writeCells(
   a: AnyAdapter,
   item: string,
   brand: { from: unknown; to: unknown } | null,
-  cells: Map<string, { write: ShopWrite | null; mode: SyncMode; hadRow: boolean; modeWas: SyncMode | null }>,
+  cells: Map<string, { write: ShopWrite | null; mode: SyncMode; hadRow: boolean; modeWas: SyncMode | null; hold?: boolean }>,
 ) {
   const key = syncKey(a.type, item);
   const writes = new Map([...cells].filter(([, c]) => c.write).map(([shopId, c]) => [shopId, c.write!] as const));
   await a.write(tx, who, item, brand, a.store === "native" ? writes : new Map());
-  if (a.layer) for (const shopId of writes.keys()) await a.layer.clear(tx, item, shopId);
+  // A hold writes the shop's current value, which already has its own layer folded in, so the layer can stay.
+  if (a.layer) for (const [shopId, c] of cells) if (c.write && !c.hold) await a.layer.clear(tx, item, shopId);
   for (const [shopId, c] of cells) {
     const local = a.store === "local" && c.write ? (c.write.follow ? null : c.write.value) : undefined;
     if (local !== undefined || !c.hadRow || c.modeWas !== c.mode) await putState(tx, shopId, key, c.mode, local);
@@ -160,7 +161,7 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
     const v1 = a.view(after);
     const states = await stateRows(tx, [key], all);
     const native = await nativeOf(tx, a, [raw.item], all, brandMap, states);
-    const cells = new Map<string, { write: ShopWrite | null; mode: SyncMode; hadRow: boolean; modeWas: SyncMode | null }>();
+    const cells = new Map<string, { write: ShopWrite | null; mode: SyncMode; hadRow: boolean; modeWas: SyncMode | null; hold?: boolean }>();
     const shopsSeeChange = !existed || !same(v0, v1);
     for (const shopId of shopsSeeChange ? all : []) {
       const n = native.get(`${shopId}|${raw.item}`);
@@ -169,7 +170,7 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
       const mode = existed ? modeOf(st?.mode, n, v0) : (st?.mode ?? "inherit");
       const p = planCell({ mode, follows: n.follows || !!n.partial, live: a.live, targeted: targets.has(shopId), choice: plan.overrides[shopId] });
       const write: ShopWrite | null = p.write === "follow" ? { follow: true, value: v1 } : p.write === "hold" ? { follow: false, value: n.value } : null;
-      cells.set(shopId, { write, mode: p.mode, hadRow: !!st, modeWas: st?.mode ?? null });
+      cells.set(shopId, { write, mode: p.mode, hadRow: !!st, modeWas: st?.mode ?? null, hold: p.write === "hold" });
       if (targets.has(shopId)) (p.mode === "override" ? keptAt : tookAt).add(shopId);
       const from: CellState = { value: n.value, follows: n.follows, mode };
       const to: CellState = write ? { value: write.value, follows: write.follow && a.live, mode: p.mode } : { ...from, mode: p.mode };
