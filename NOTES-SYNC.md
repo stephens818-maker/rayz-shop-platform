@@ -528,7 +528,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 1. **What's deployed or runnable today**
    - **Nothing is on Vercel or Neon.** No Vercel project is linked to the repo: PR #1 has no preview deployments and no deployment checks. The app runs anywhere with Postgres (`DEMO_MODE=true pnpm build && pnpm start`), and DEPLOY.md has the demo-preview steps.
-   - **A temporary sandbox is up now:** https://stamp-appeared-coal-secrets.trycloudflare.com. It's a demo-mode production build of the latest core push (now `f1409ec`, API 1.2), served from the core agent's VM through a Cloudflare quick tunnel, with its own database (`rayz_sandbox`) and the full demo seed. Cards run on the simulator. No texts, emails, calls or push go out; they show under **Notifications** as suppressed.
+   - **A temporary sandbox is up now:** https://stamp-appeared-coal-secrets.trycloudflare.com. It's a demo-mode production build of the latest core push (now `5109d92`, API 1.2), served from the core agent's VM through a Cloudflare quick tunnel, with its own database (`rayz_sandbox`) and the full demo seed. Cards run on the simulator. No texts, emails, calls or push go out; they show under **Notifications** as suppressed.
    - **Limits of the temporary sandbox:**
      - It's up only while the core agent's VM is running, and the URL changes if the tunnel restarts. Check this entry for the current URL.
      - It doesn't pick up new pushes on its own. Core rebuilds it after each push in the mobile list below.
