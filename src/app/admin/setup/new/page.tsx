@@ -7,13 +7,15 @@ import { wizardOptions } from "@/server/location-admin";
 import { geocoderName } from "@/server/geo";
 import { brandInterval } from "@/server/timing";
 import { loadBrandDefaults } from "@/server/location-defaults";
+import { brandFeePolicy } from "@/server/payments/card-fee";
+import { describeFee } from "@/domain/checkout";
 import { LocationWizard } from "./wizard";
 
 export const metadata: Metadata = { title: "Add a location" };
 
 export default async function NewLocationPage() {
   const ctx = await guardPage("/admin/setup/new");
-  const [options, interval, brand] = await Promise.all([wizardOptions(staffGrantor(ctx)), brandInterval(), loadBrandDefaults()]);
+  const [options, interval, brand, fee] = await Promise.all([wizardOptions(staffGrantor(ctx)), brandInterval(), loadBrandDefaults(), brandFeePolicy()]);
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
@@ -30,6 +32,7 @@ export default async function NewLocationPage() {
         brandIntervalMinutes={interval}
         brandBooking={{ minLeadMinutes: brand.minLeadMinutes, bookingWindowDays: brand.bookingWindowDays, cancelCutoffMinutes: brand.cancelCutoffMinutes }}
         canBank={can(ctx, "payments.banking")}
+        brandFee={{ fee: describeFee(fee), onTips: fee.appliesToTip, on: fee.enabled, appliesTo: fee.appliesTo, states: fee.states }}
         geocoder={geocoderName()}
         network={can(ctx, "network.settings") ? { myIp: clientIp(await headers()), exempt: ctx.isOwner || can(ctx, "access.remote") } : null}
       />

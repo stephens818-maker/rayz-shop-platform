@@ -52,11 +52,14 @@ export function LocationWizard({
   network,
   geocoder,
   brandBooking = { minLeadMinutes: 15, bookingWindowDays: 60, cancelCutoffMinutes: 30 },
+  brandFee = null,
 }: {
   options: Options;
   /** The brand defaults a new location starts on. */
   brandBooking?: { minLeadMinutes: number; bookingWindowDays: number; cancelCutoffMinutes: number };
   geocoder: "google" | "census" | "zip";
+  /** The brand's credit card surcharge, which a new location takes: what it is, whether it applies here, and the states it's allowed in. */
+  brandFee?: { fee: string; onTips: boolean; on: boolean; appliesTo: "all" | "selected" | "none"; states: string[] } | null;
   brandIntervalMinutes: number;
   canBank: boolean;
   /** Set when they may limit where staff sign in from. */
@@ -95,7 +98,17 @@ export function LocationWizard({
     }),
   );
   const [holidays, setHolidays] = useState<{ date: string; reason: string }[]>([]);
-  const [money, setMoney] = useState({ service: "0", product: "0", verified: false, feeOn: true, fee: "3", feeOnTip: false });
+  const [money, setMoney] = useState({ service: "0", product: "0", verified: false });
+  const feeState = basics.state.trim().toUpperCase();
+  const feeSummary = !brandFee
+    ? null
+    : !brandFee.on || brandFee.appliesTo === "none"
+      ? "Off: the brand doesn't add a surcharge at any shop."
+      : brandFee.appliesTo === "selected"
+        ? `Off until a brand admin applies the brand's surcharge (${brandFee.fee}) to this shop.`
+        : feeState && !brandFee.states.includes(feeState)
+          ? `Off: the brand doesn't surcharge in ${feeState}.`
+          : `The brand's ${brandFee.fee} surcharge on credit cards${brandFee.onTips ? ", tips included" : ""}.`;
   const [screen, setScreen] = useState<{ own: boolean; tips: TipScreen; rules: Omit<ShopHandoff, "tips"> }>(() => {
     const { tips: _, ...rules } = DEFAULT_SHOP_HANDOFF;
     return { own: false, tips: options.brandTips, rules };
@@ -176,9 +189,6 @@ export function LocationWizard({
       serviceTaxRate: Number(money.service) / 100,
       productTaxRate: Number(money.product) / 100,
       taxRatesVerified: money.verified,
-      cardFeeEnabled: money.feeOn,
-      cardFeeRate: Number(money.fee) / 100,
-      cardFeeAppliesToTip: money.feeOnTip,
       tipPresets: (screen.own ? screen.tips : options.brandTips).type === "percent" ? (screen.own ? screen.tips : options.brandTips).values : [20, 25, 30],
       handoff: { ...screen.rules, tips: screen.own ? screen.tips : null },
       slotIntervalMinutes: booking.interval ? (Number(booking.interval) as 5 | 10 | 15 | 20 | 30) : null,
@@ -527,17 +537,10 @@ export function LocationWizard({
                 )}
               </fieldset>
               {pay.mode !== "cash_only" && (
-                <fieldset className="grid gap-3 sm:grid-cols-2">
+                <fieldset>
                   <legend className="mb-2 text-sm font-semibold text-zinc-800">Card fee</legend>
-                  <label className="flex items-center gap-2 text-sm text-zinc-700">
-                    <input type="checkbox" checked={money.feeOn} onChange={(e) => setMoney({ ...money, feeOn: e.target.checked })} /> Add a credit card surcharge
-                  </label>
-                  <Field label="Credit card surcharge % (max 3)" hint="Credit cards only. Anything that differs from the brand's surcharge is saved as this shop's own setting; the rest (channels, waivers, states) follows the brand.">
-                    <Input inputMode="decimal" disabled={!money.feeOn} value={money.fee} onChange={(e) => setMoney({ ...money, fee: e.target.value })} />
-                  </Field>
-                  <label className="flex items-center gap-2 text-sm text-zinc-700">
-                    <input type="checkbox" disabled={!money.feeOn} checked={money.feeOnTip} onChange={(e) => setMoney({ ...money, feeOnTip: e.target.checked })} /> Charge the fee on tips too
-                  </label>
+                  <p className="text-sm text-zinc-700">{feeSummary ?? "Follows the brand's credit card surcharge."}</p>
+                  <p className="mt-1 text-xs text-zinc-500">A new location takes the brand&apos;s surcharge. Brand admins change it, or which shops use it, under Credit card surcharge.</p>
                 </fieldset>
               )}
               {pay.mode !== "cash_only" && (
@@ -1034,7 +1037,7 @@ export function LocationWizard({
                 <Item k="Closed days" v={holidays.filter((h) => h.date).length ? `${holidays.filter((h) => h.date).length}` : "None"} />
                 <Item k="Tax" v={`Services ${money.service}%, products ${money.product}%${money.verified ? "" : " (flagged until confirmed)"}`} />
                 <Item k="Card money" v={PAYMENTS_MODE_LABEL[canBank ? pay.mode : "connected"]} />
-                <Item k="Card fee" v={pay.mode === "cash_only" ? "No cards" : money.feeOn ? `${money.fee}%${money.feeOnTip ? ", on tips too" : ""}` : "Off"} />
+                <Item k="Card fee" v={pay.mode === "cash_only" ? "No cards" : (feeSummary ?? "The brand's")} />
                 <Item
                   k="Customer screen"
                   v={`${describeTips(screen.own ? screen.tips : options.brandTips)}${screen.rules.tipEntry === "reader" ? ", tips on the reader" : ""}${screen.rules.signature ? ", signature" : ""}, ${screen.rules.unlock === "manager" ? "manager" : "staff"} PIN`}

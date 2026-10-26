@@ -42,7 +42,7 @@ import { defaultOwnerEntity } from "./owner-entities";
 import { createShopLogin, shopLoginRoles } from "./shop-logins";
 import { loadBrandDefaults, noteShopColumnChanges } from "./location-defaults";
 import { overridesFromColumns } from "@/domain/location-defaults";
-import { cleanOverride } from "@/domain/card-fee-policy";
+import { shopCardFeePolicy, shopFeeState } from "@/domain/card-fee-policy";
 import { brandFeePolicy } from "./payments/card-fee";
 
 /** Adding, opening and retiring locations needs locations.setup, which only people who see every shop can hold. */
@@ -171,7 +171,8 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
   const looked = d.latitude === null ? await geocodeAddress(d) : null;
   const brand = await loadBrandDefaults();
   const feeBrand = await brandFeePolicy();
-  const feeOverride = cleanOverride(feeBrand, { enabled: d.cardFeeEnabled, rate: d.cardFeeRate, appliesToTip: d.cardFeeAppliesToTip });
+  // A new location takes the brand's surcharge with no setting of its own; under "selected shops" it's off until the brand ticks it.
+  const fee = { ...shopCardFeePolicy(feeBrand, null), enabled: feeBrand.enabled && feeBrand.appliesTo === "all" };
   const pin =
     d.latitude !== null && d.longitude !== null
       ? { latitude: d.latitude, longitude: d.longitude, geocodeSource: d.geocodeSource ?? "manual", geocodedAt: new Date() }
@@ -208,10 +209,11 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         serviceTaxRate: String(d.serviceTaxRate),
         productTaxRate: String(d.productTaxRate),
         taxRatesVerified: d.taxRatesVerified,
-        cardFeeEnabled: d.cardFeeEnabled,
-        cardFeeRate: String(d.cardFeeRate),
-        cardFeeAppliesToTip: d.cardFeeAppliesToTip,
-        cardFeeOverride: feeOverride as Record<string, unknown> | null,
+        cardFeeEnabled: fee.enabled,
+        cardFeeRate: (fee.type === "flat" ? 0 : fee.rate).toFixed(5),
+        cardFeeAppliesToTip: fee.appliesToTip,
+        cardFeeOverride: null,
+        cardFeeChangedAt: new Date(),
         tipPresets: d.handoff.tips?.type === "percent" ? d.handoff.tips.values : d.tipPresets,
         handoff: d.handoff as unknown as Record<string, unknown>,
         paymentsMode: d.paymentsMode,
@@ -279,6 +281,16 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         statementDescriptor: d.statementDescriptor,
         networkAccess: d.networkAccess,
       },
+      s.id,
+      tx,
+    );
+    const feeNow = shopFeeState(feeBrand, null, s.id, d.state);
+    await audit(
+      m.actor,
+      "card_fee.shop",
+      "shop",
+      s.id,
+      { via: "new_location", from: null, to: { on: feeNow.on, off: feeNow.off, fee: feeNow.fee, inherits: true, appliesToTip: feeNow.appliesToTip, override: null } },
       s.id,
       tx,
     );

@@ -105,9 +105,10 @@ export const LocationDraft = z.object({
   productTaxRate: rate,
   /** Ticked only when someone has checked the rates with the state; until then the shop is flagged. */
   taxRatesVerified: z.boolean(),
-  cardFeeEnabled: z.boolean(),
-  cardFeeRate: z.number().min(0).max(MAX_CARD_FEE_RATE, `The card fee can't exceed ${MAX_CARD_FEE_RATE * 100}%`),
-  cardFeeAppliesToTip: z.boolean(),
+  /** Ignored: a new location takes the brand's credit card surcharge. Kept so older drafts and API calls still parse. */
+  cardFeeEnabled: z.boolean().optional(),
+  cardFeeRate: z.number().min(0).max(MAX_CARD_FEE_RATE, `The card fee can't exceed ${MAX_CARD_FEE_RATE * 100}%`).optional(),
+  cardFeeAppliesToTip: z.boolean().optional(),
   tipPresets: z.array(z.number().int().min(0).max(100)).min(1).max(4),
   /** The customer screen at checkout: tip presets (null uses the brand's), tips on the reader, signature, and whose PIN takes the device back. */
   handoff: ShopHandoffSchema.default(DEFAULT_SHOP_HANDOFF),
@@ -212,9 +213,6 @@ export function draftDefaults(over: Partial<LocationDraftInput> & Pick<LocationD
     serviceTaxRate: 0,
     productTaxRate: 0,
     taxRatesVerified: false,
-    cardFeeEnabled: true,
-    cardFeeRate: 0.03,
-    cardFeeAppliesToTip: false,
     tipPresets: [20, 25, 30],
     paymentsMode: "connected",
     statementDescriptor: null,
