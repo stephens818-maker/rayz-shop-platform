@@ -121,7 +121,7 @@ export function RoleMatrix({ roles, mine, isOwner, readOnly }: { roles: MatrixRo
       {readOnly && <Notice tone="blue">{readOnly}</Notice>}
       <p className="text-xs text-zinc-500">
         Under each level, how far it reaches: <b>Own data only</b> (their own column, clients, timesheet or numbers), <b>Assigned shops</b> (the shops each person is given) or{" "}
-        <b>All shops</b> (records every shop shares, or every shop's reports). Reports reach as far as the role&apos;s Report scope.
+        <b>All shops</b> (records every shop shares, or every shop&apos;s reports). Reports reach as far as the role&apos;s Report scope.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <Input className="max-w-xs" placeholder="Search permissions, e.g. refund or quickbooks" aria-label="Search permissions" value={q} onChange={(e) => setQ(e.target.value)} />
