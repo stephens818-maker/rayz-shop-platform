@@ -161,16 +161,22 @@ function eligible(line: CartLine, target: DiscountTarget, refIds?: string[] | nu
 }
 
 /**
- * A manual discount must stay within the person's limit: a percent no higher than it, or an
- * amount no more than that share of the ticket (gift cards excluded).
+ * A manual discount must stay within the person's limits: a percent no higher than theirs, or an
+ * amount no more than that share of the ticket (gift cards excluded), and never more dollars off
+ * than their dollar limit when they have one.
  */
-export function manualDiscountProblem(d: { type: "percent" | "amount"; value: number } | null, lines: CartLine[], maxPct: number): string | null {
+export function manualDiscountProblem(d: { type: "percent" | "amount"; value: number } | null, lines: CartLine[], maxPct: number, maxCents: number | null = null): string | null {
   if (!d || !(d.value > 0)) return null;
-  if (maxPct <= 0) return "You can't give manual discounts";
-  if (d.type === "percent") return d.value > maxPct ? `Your discount limit is ${maxPct}%` : null;
+  if (maxPct <= 0 || maxCents === 0) return "You can't give manual discounts";
   const gross = lines.filter((l) => l.kind !== "gift_card").reduce((a, l) => a + Math.max(0, Math.round(l.unitPriceCents * l.qty)), 0);
+  if (d.type === "percent") {
+    if (d.value > maxPct) return `Your discount limit is ${maxPct}%`;
+    if (maxCents !== null && Math.round((gross * d.value) / 100) > maxCents) return `Your discount limit is ${formatCents(maxCents)} a ticket`;
+    return null;
+  }
   const cap = Math.floor((gross * maxPct) / 100);
-  return d.value > cap ? `Your discount limit is ${maxPct}% of the ticket (${formatCents(cap)} here)` : null;
+  if (d.value > cap) return `Your discount limit is ${maxPct}% of the ticket (${formatCents(cap)} here)`;
+  return maxCents !== null && d.value > maxCents ? `Your discount limit is ${formatCents(maxCents)} a ticket` : null;
 }
 
 type FeeShape = Pick<CardFeeConfig, "rate"> & Partial<Pick<CardFeeConfig, "type" | "flatCents" | "maxRate">>;

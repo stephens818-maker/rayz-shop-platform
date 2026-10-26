@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { CelebrationBanner } from "@/components/celebration";
 import { feeDisclosure } from "@/domain/checkout";
-import { can, guardPage } from "@/server/auth/staff";
+import { can, guardPage, limitsAt } from "@/server/auth/staff";
 import { shownBadges } from "@/server/badges";
 import { noteBriefs, noteViewer } from "@/server/client-notes";
 import { entryFields } from "@/server/client-entry";
@@ -334,8 +334,10 @@ export default async function CheckoutPage({
           ...c.retail.map((p) => [p.productId, p.taxCategory] as const),
         ])}
         perms={{
-          discount: can(ctx, "pos.discount") && ctx.maxDiscountPct > 0,
+          discount: can(ctx, "pos.discount") && ctx.maxDiscountPct > 0 && limitsAt(ctx, c.shop.id).discountCents !== 0,
           maxDiscountPct: ctx.maxDiscountPct,
+          maxDiscountCents: limitsAt(ctx, c.shop.id).discountCents,
+          maxWaiverCents: limitsAt(ctx, c.shop.id).waiverCents,
           priceOverride: can(ctx, "pos.price_override"),
           customCharge: can(ctx, "pos.custom_charge"),
           waiveCardFee: can(ctx, "pos.waive_card_fee"),

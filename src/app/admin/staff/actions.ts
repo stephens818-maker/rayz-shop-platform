@@ -19,7 +19,8 @@ import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, authorize, caller, staffGrantor } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { offboardStaff } from "@/server/offboarding";
-import { commonOwner } from "@/server/owner-entities";
+import { commonOwner, roleFitProblem } from "@/server/owner-entities";
+import { commonRegion } from "@/server/regions";
 import { addBlock, removeBlock } from "@/server/staff-time";
 import { assertCanSchedule } from "@/server/staff-guards";
 
@@ -108,14 +109,19 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
         // An owner-entity role covers the owner of the shops they work at, when that's one owner the adder reaches as a whole.
         const owner = r.defaultScope === "entity" ? await commonOwner(p.shopIds, tx) : null;
         const entityId = owner && scopeWithin(staffGrantor(ctx), { scope: "entity", scopeEntityId: owner }) ? owner : null;
-        const scope = r.defaultScope === "all" ? "all" : r.defaultScope === "one" ? "one" : entityId ? "entity" : "selected";
+        // A region role covers the region of the shops they work at, the same way.
+        const region = r.defaultScope === "region" ? await commonRegion(p.shopIds, tx) : null;
+        const regionId = region && scopeWithin(staffGrantor(ctx), { scope: "region", scopeRegionId: region }) ? region : null;
+        const scope = r.defaultScope === "all" ? "all" : r.defaultScope === "one" ? "one" : entityId ? "entity" : regionId ? "region" : "selected";
+        const misfit = await roleFitProblem(r, scope, scope === "one" ? p.shopIds.slice(0, 1) : p.shopIds, tx);
+        if (misfit) throw new AppError("bad_request", misfit);
         const [{ n }] = await tx.select({ n: sql<number>`coalesce(max(substring(${staff.staffCode} from 3)::int), 0)::int` }).from(staff);
         const [row] = await tx
           .insert(staff)
-          .values({ ...values, roleId: r.id, shopScope: scope, scopeEntityId: entityId, staffCode: `S-${String(n + 1).padStart(4, "0")}`, publicSlug: staffPublicSlug(p.firstName) })
+          .values({ ...values, roleId: r.id, shopScope: scope, scopeEntityId: entityId, scopeRegionId: regionId, staffCode: `S-${String(n + 1).padStart(4, "0")}`, publicSlug: staffPublicSlug(p.firstName) })
           .returning({ id: staff.id });
         id = row.id;
-        const accessShops = scope === "all" || scope === "entity" ? [] : scope === "one" ? p.shopIds.slice(0, 1) : p.shopIds;
+        const accessShops = scope === "all" || scope === "entity" || scope === "region" ? [] : scope === "one" ? p.shopIds.slice(0, 1) : p.shopIds;
         if (accessShops.length) await tx.insert(staffAccessShops).values(accessShops.map((shopId) => ({ staffId: row.id, shopId })));
       }
       const editable = ctx.brandWide ? null : ctx.shopIds;

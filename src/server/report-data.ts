@@ -191,14 +191,15 @@ const titled = (v: ViewCtx, title: string) => title + SUFFIX[viewOf(v)];
 /** Metric tables are stat tiles in the combined view, a table otherwise. */
 const tilesOnly = (v: ViewCtx) => v.view !== "shops" && !v.byBarber;
 
-async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+/** The QuickBooks journal is its own permission ("Download the QuickBooks journal"), on top of the report. */
+async function salesData(scope: ReportScope, loc: ViewCtx, withQuickbooks: boolean): Promise<ReportData> {
   const g = grainsFor(loc);
   const [x, tender, daily, monthly, qbo] = await Promise.all([
     salesTotalsAt(scope, g),
     tenderAt(scope, g),
     dailyTotals(scope, listGrain(loc)),
     monthlyTotals(scope, listGrain(loc)),
-    quickbooksTable(scope),
+    withQuickbooks ? quickbooksTable(scope) : null,
   ]);
   const s = x[TOTAL] ?? ZERO_SALES();
   const t = tender[TOTAL] ?? ZERO_TENDER();
@@ -279,7 +280,7 @@ async function salesData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> 
       { label: "Card surcharges", value: formatCents(s.cardFeeCents), hint: s.cardFeeWaivedCents ? `${formatCents(s.cardFeeWaivedCents)} waived` : undefined },
       { label: "Card / cash", value: `${formatCents(t.cardCents)} / ${formatCents(t.cashCents)}` },
     ],
-    tables: [waterfallTable, summary, dailyTable, monthlyTable, qbo],
+    tables: [waterfallTable, summary, dailyTable, monthlyTable, ...(qbo ? [qbo] : [])],
   };
 }
 
@@ -735,12 +736,12 @@ async function morningReportData(access: StaffAccess, scope: ReportScope): Promi
 }
 
 export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<ReportData>> = {
-  async my_sales({ scope, loc }) {
-    return salesData(scope, loc);
+  async my_sales({ scope, loc, viewer }) {
+    return salesData(scope, loc, !!viewer.permissions?.has("exports.accounting"));
   },
 
-  async sales_summary({ scope, loc }) {
-    return salesData(scope, loc);
+  async sales_summary({ scope, loc, viewer }) {
+    return salesData(scope, loc, !!viewer.permissions?.has("exports.accounting"));
   },
 
   async end_of_day({ scope, loc }) {

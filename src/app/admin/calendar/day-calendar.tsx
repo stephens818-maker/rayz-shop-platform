@@ -258,6 +258,7 @@ export function DayCalendar({
   services,
   canManage,
   meId,
+  othersReadOnly = false,
   initialApptId,
   reasons,
   celebrating,
@@ -281,6 +282,8 @@ export function DayCalendar({
     family: boolean;
   };
   meId: string;
+  /** They see every column but act only on their own ("calendar.view_all" without "calendar.manage"). */
+  othersReadOnly?: boolean;
   initialApptId: string | null;
   /** What the block picker offers. */
   reasons: PickReason[];
@@ -628,6 +631,7 @@ export function DayCalendar({
                   hideCancelled={hideCancelled}
                   clocked={clocked}
                   selectedId={panel?.kind === "appt" ? panel.appt.id : null}
+                  readOnly={othersReadOnly && col.id !== meId}
                   onAppt={(appt) => setPanel({ kind: "appt", col, appt })}
                   onBlock={(block) => setPanel({ kind: "block", col, block })}
                   onEmpty={(startMin) =>
@@ -753,6 +757,7 @@ function Column({
   hideCancelled,
   clocked,
   selectedId,
+  readOnly = false,
   onAppt,
   onBlock,
   onEmpty,
@@ -769,6 +774,8 @@ function Column({
   /** Some column has clock data, so headers make room for the status line. */
   clocked: boolean;
   selectedId: string | null;
+  /** Someone else's column they may only look at. */
+  readOnly?: boolean;
   onAppt: (a: CalAppt) => void;
   onBlock: (b: CalColumn["blocks"][number]) => void;
   onEmpty: (startMin: number) => void;
@@ -871,14 +878,16 @@ function Column({
         {col.clock && <ClockLine clock={col.clock} />}
       </div>
       <div
-        className="relative cursor-crosshair"
+        className={cx("relative", readOnly ? "cursor-default" : "cursor-crosshair")}
         style={{ height }}
+        data-readonly={readOnly || undefined}
         onClick={(e) => {
+          if (readOnly) return;
           const y = e.clientY - e.currentTarget.getBoundingClientRect().top;
           onEmpty(snapToGrid(col, data, data.rangeStart + y / PX));
         }}
         onDragOver={(e) => {
-          if (!drag.active) return;
+          if (!drag.active || readOnly) return;
           e.preventDefault();
           e.dataTransfer.dropEffect = "move";
           const m = dropStart(e);
@@ -886,6 +895,7 @@ function Column({
         }}
         onDrop={(e) => {
           e.preventDefault();
+          if (readOnly) return;
           drag.drop(dropStart(e));
         }}
       >
@@ -955,7 +965,7 @@ function Column({
             key={b.id}
             onClick={(e) => {
               e.stopPropagation();
-              onBlock(b);
+              if (!readOnly) onBlock(b);
             }}
             title={blockTitle(b)}
             aria-label={blockTitle(b)}
@@ -997,7 +1007,7 @@ function Column({
             return null;
           const shownStart =
             drag.moved?.id === a.id ? drag.moved.startMin : a.startMin;
-          const movable = a.status === "booked" || a.status === "confirmed";
+          const movable = !readOnly && (a.status === "booked" || a.status === "confirmed");
           const hh = h(a.startMin, a.endMin);
           return (
             <button
@@ -1016,7 +1026,7 @@ function Column({
               aria-label={`${a.customerName}, ${label(a.startMin)} to ${label(a.endMin)}${movable ? ". Drag to move" : ""}`}
               onClick={(e) => {
                 e.stopPropagation();
-                onAppt(a);
+                if (!readOnly) onAppt(a);
               }}
               className={cx(
                 "absolute inset-x-1 overflow-hidden rounded-md border-l-4 px-1.5 py-0.5 text-left text-xs shadow-xs ring-1 transition hover:z-10 hover:shadow-md",

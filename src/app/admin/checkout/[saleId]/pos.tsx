@@ -244,6 +244,9 @@ export function Pos(props: {
   perms: {
     discount: boolean;
     maxDiscountPct: number;
+    /** Dollar limits; null or missing is none. */
+    maxDiscountCents?: number | null;
+    maxWaiverCents?: number | null;
     priceOverride: boolean;
     reassign: boolean;
     customCharge?: boolean;
@@ -475,6 +478,7 @@ export function Pos(props: {
         { type: manual.type, value: manualValue },
         priced,
         props.perms.maxDiscountPct,
+        props.perms.maxDiscountCents ?? null,
       )
     : null;
   const preview = (
@@ -886,8 +890,13 @@ export function Pos(props: {
     !!props.perms.waiveCardFee &&
     props.config.cardFee.waiverAllowed !== false &&
     (creditPreview.cardFeeCents > 0 || creditPreview.cardFeeWaivedCents > 0);
+  const waiverOver =
+    waive.on &&
+    props.perms.maxWaiverCents != null &&
+    creditPreview.cardFeeWaivedCents > props.perms.maxWaiverCents;
   const ready =
     !(waive.on && !waive.reason.trim()) &&
+    !waiverOver &&
     !waiting.length &&
     !props.withClient &&
     lines.length > 0 &&
@@ -1790,8 +1799,16 @@ export function Pos(props: {
                     )}
                   >
                     {discountProblem ??
-                      (props.perms.maxDiscountPct < 100
-                        ? `Your discount limit: ${props.perms.maxDiscountPct}%`
+                      ([
+                        props.perms.maxDiscountPct < 100 ? `${props.perms.maxDiscountPct}%` : null,
+                        props.perms.maxDiscountCents != null ? "limit" : null,
+                      ].filter(Boolean).length
+                        ? `Your discount limit: ${[
+                            props.perms.maxDiscountPct < 100 ? `${props.perms.maxDiscountPct}%` : null,
+                            props.perms.maxDiscountCents != null ? `${$(props.perms.maxDiscountCents)} a ticket` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" and ")}`
                         : null)}
                   </div>
                 </div>
@@ -2448,6 +2465,18 @@ export function Pos(props: {
                     />
                     Waive the card surcharge
                   </label>
+                  {props.perms.maxWaiverCents != null && (
+                    <div
+                      className={cx(
+                        "text-xs",
+                        waiverOver ? "text-red-600" : "text-zinc-500",
+                      )}
+                    >
+                      Your waiver limit: {$(props.perms.maxWaiverCents)} a
+                      ticket
+                      {waiverOver ? ". A manager can waive this one." : ""}
+                    </div>
+                  )}
                   {waive.on && (
                     <input
                       className="w-full rounded-md border border-zinc-200 px-2 py-1 text-sm"

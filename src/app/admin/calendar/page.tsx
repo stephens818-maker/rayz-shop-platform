@@ -48,6 +48,8 @@ export default async function CalendarPage({
   const today = todayLocal();
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : today;
   const manages = can(ctx, "calendar.manage");
+  // "See every barber's column" without managing the calendar: everyone's day, only their own to act on.
+  const seesAll = manages || can(ctx, "calendar.view_all");
   const header = ctx.currentShopId === null && (
     <PageHeader
       title="Calendar"
@@ -69,14 +71,14 @@ export default async function CalendarPage({
   );
 
   if (sp.view === "week") {
-    // Without "calendar.manage", people see only their own week.
+    // Without "calendar.manage" or "calendar.view_all", people see only their own week.
     const weekStart = addDays(date, -weekdayOf(date));
     const [data, day] = await Promise.all([
       loadWeekCalendar(
         shopId,
         weekStart,
-        manages ? (sp.staff ?? null) : ctx.staff.id,
-        manages ? null : [ctx.staff.id],
+        seesAll ? (sp.staff ?? null) : ctx.staff.id,
+        seesAll ? null : [ctx.staff.id],
         reasonViewer(ctx),
       ),
       today >= weekStart && today < addDays(weekStart, 7)
@@ -87,7 +89,7 @@ export default async function CalendarPage({
       <div className="space-y-3">
         {header}
         <CelebrationBanner items={day?.calendar ?? []} />
-        <WeekCalendar data={data} today={today} canPickBarber={manages} />
+        <WeekCalendar data={data} today={today} canPickBarber={seesAll} />
       </div>
     );
   }
@@ -97,7 +99,7 @@ export default async function CalendarPage({
     loadDayCalendar(
       shopId,
       date,
-      manages ? null : ctx.staff.id,
+      seesAll ? null : ctx.staff.id,
       ctx,
       policy,
       reasonViewer(ctx),
@@ -136,6 +138,7 @@ export default async function CalendarPage({
           family: can(ctx, "clients.family"),
         }}
         meId={ctx.staff.id}
+        othersReadOnly={!manages}
         initialApptId={sp.appt ?? null}
         reasons={reasons}
       />

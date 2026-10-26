@@ -4,7 +4,20 @@ import QRCode from "qrcode";
 import { and, asc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { clientContactGrants, roles, shops, staff, staffAccessShops, staffInvites } from "@/db/schema";
-import { OWNER_ROLE_KEY, Overrides, ShopScope, UserAccessState, accessByShop, effectiveAccess, isBrandLevelPerson, userAccessChangeDenied } from "@/domain/permissions";
+import {
+  OWNER_ROLE_KEY,
+  Overrides,
+  ShopScope,
+  UserAccessState,
+  accessByShop,
+  cleanExpiries,
+  cleanOverrides,
+  effectiveAccess,
+  isBrandLevelPerson,
+  liveOverrides,
+  userAccessChangeDenied,
+} from "@/domain/permissions";
+import { todayLocal } from "@/lib/time";
 import { seesStaffContact } from "@/domain/staff-contact";
 import { AccountChange, AccountTarget, INVITE_TTL_DAYS, accountChangeDenied, accountStatus, passwordProblem } from "@/domain/users";
 import { appBaseUrl } from "@/lib/deployment";
@@ -18,6 +31,7 @@ import { randomToken, sha256 } from "./auth/tokens";
 import { AppError, forbidden, notFound } from "./errors";
 import { sendNow } from "./notifications/queue";
 import { futureBookings } from "./offboarding";
+import { roleFitProblem } from "./owner-entities";
 import { inTenant } from "./tenant";
 
 const DAY = 86_400_000;
@@ -61,11 +75,12 @@ export async function listUsers(ctx: StaffContext) {
       .where(and(isNull(staffInvites.usedAt), isNull(staffInvites.revokedAt), gt(staffInvites.expiresAt, new Date()))),
   ]);
   const viewer = { permissions: ctx.permissions, staffId: ctx.staff.id };
+  const today = todayLocal();
   return rows
     .map(({ s, role }) => {
       const scope: ShopScope = role.key === OWNER_ROLE_KEY ? "all" : s.shopScope;
       const mine = links.filter((l) => l.staffId === s.id);
-      const a = effectiveAccess(role, s.permissionOverrides as Overrides, s.maxDiscountPct, scope);
+      const a = effectiveAccess(role, liveOverrides(cleanOverrides(s.permissionOverrides), cleanExpiries(s.permissionOverrideExpires), today), s.maxDiscountPct, scope);
       return {
         id: s.id,
         label: s.displayLabel,
@@ -135,6 +150,8 @@ export async function inviteUser(ctx: StaffContext, p: InviteInput) {
     const found = await db.select({ id: shops.id }).from(shops).where(inArray(shops.id, shopIds));
     if (found.length !== shopIds.length) throw notFound("Location");
   }
+  const misfit = await roleFitProblem(role, scope, shopIds);
+  if (misfit) throw new AppError("bad_request", misfit);
   const roleRemote = effectiveAccess(role, {}, null, scope).permissions.has("access.remote");
   const overrides: Overrides = owner || p.remote === roleRemote ? {} : { "access.remote": p.remote };
   const { union: next } = accessByShop(role, shopIds.map((shopId) => ({ shopId, role: null })), overrides, null, scope);

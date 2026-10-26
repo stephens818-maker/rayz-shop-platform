@@ -9,7 +9,7 @@ import { sales } from "@/db/schema";
 import { safe } from "@/server/action";
 import { HANDOFF_COOKIE } from "@/server/auth/cookies";
 import { HANDOFF_TTL, handoffToken } from "@/server/auth/handoff-lock";
-import { StaffContext, authorize, can, requireStaff, workingShopId } from "@/server/auth/staff";
+import { StaffContext, authorize, can, limitsAt, requireStaff, workingShopId } from "@/server/auth/staff";
 import { CheckoutLineInput, SplitTenderInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale } from "@/server/checkout";
 import { acceptRebook, addPromptProduct, declinePrompt, tagUsedProduct, untagUsedProduct } from "@/server/checkout-prompts";
 import { mergeTickets, openTickets, splitOffTicket, splitTicketApart } from "@/server/combined-checkout";
@@ -218,12 +218,17 @@ export async function finalizeAction(input: {
 }) {
   return safe(async () => {
     const ctx = await requireStaff();
-    await loadSale(ctx, input.saleId);
+    const sale = await loadSale(ctx, input.saleId);
+    const limits = limitsAt(ctx, sale.shopId);
     if (input.manualDiscount && input.manualDiscount.value > 0 && !can(ctx, "pos.discount")) throw forbidden("You don't have permission to give discounts");
     if (input.manualDiscount && input.manualDiscount.value > 0 && !input.manualDiscount.reason.trim()) {
       throw new AppError("bad_request", "Add a reason for the discount");
     }
-    const r = await finalizeSale({ ...input, canOverridePrice: can(ctx, "pos.price_override"), canCustomCharge: can(ctx, "pos.custom_charge"), canWaiveCardFee: can(ctx, "pos.waive_card_fee"), waiveCardFee: input.waiveCardFee?.reason ? { reason: input.waiveCardFee.reason, byStaffId: ctx.staff.id } : null, maxManualDiscountPct: ctx.maxDiscountPct, actor: ctx.actor });
+    const r = await finalizeSale({ ...input, canOverridePrice: can(ctx, "pos.price_override"), canCustomCharge: can(ctx, "pos.custom_charge"), canWaiveCardFee: can(ctx, "pos.waive_card_fee"), waiveCardFee: input.waiveCardFee?.reason ? { reason: input.waiveCardFee.reason, byStaffId: ctx.staff.id } : null, maxManualDiscountPct: ctx.maxDiscountPct,
+      maxManualDiscountCents: limits.discountCents,
+      maxCardFeeWaiverCents: limits.waiverCents,
+      actor: ctx.actor,
+    });
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     revalidatePath("/admin/sales");
@@ -249,7 +254,7 @@ export async function holdRetailAction(saleId: string, lines: { productId: strin
 export async function handToCustomerAction(saleId: string, draft: HandoffDraftInput) {
   return safe(async () => {
     const ctx = await requireStaff();
-    await loadSale(ctx, saleId);
+    const sale = await loadSale(ctx, saleId);
     const h = await startHandoff(saleId, draft, {
       actor: ctx.actor,
       staffId: ctx.staff.id,
@@ -258,6 +263,8 @@ export async function handToCustomerAction(saleId: string, draft: HandoffDraftIn
       canCustomCharge: can(ctx, "pos.custom_charge"),
       canWaiveCardFee: can(ctx, "pos.waive_card_fee"),
       maxManualDiscountPct: ctx.maxDiscountPct,
+      maxManualDiscountCents: limitsAt(ctx, sale.shopId).discountCents,
+      maxCardFeeWaiverCents: limitsAt(ctx, sale.shopId).waiverCents,
     });
     (await cookies()).set(HANDOFF_COOKIE, await handoffToken(h.id), {
       httpOnly: true,
@@ -274,7 +281,7 @@ export async function handToCustomerAction(saleId: string, draft: HandoffDraftIn
 export async function sendToAppAction(saleId: string, draft: HandoffDraftInput) {
   return safe(async () => {
     const ctx = await requireStaff();
-    await loadSale(ctx, saleId);
+    const sale = await loadSale(ctx, saleId);
     const r = await sendToApp(saleId, draft, {
       actor: ctx.actor,
       staffId: ctx.staff.id,
@@ -283,6 +290,8 @@ export async function sendToAppAction(saleId: string, draft: HandoffDraftInput) 
       canCustomCharge: can(ctx, "pos.custom_charge"),
       canWaiveCardFee: can(ctx, "pos.waive_card_fee"),
       maxManualDiscountPct: ctx.maxDiscountPct,
+      maxManualDiscountCents: limitsAt(ctx, sale.shopId).discountCents,
+      maxCardFeeWaiverCents: limitsAt(ctx, sale.shopId).waiverCents,
     });
     revalidatePath(`/admin/checkout/${saleId}`);
     return r;

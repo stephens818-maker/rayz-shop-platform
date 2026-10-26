@@ -8,28 +8,36 @@ import { safe } from "@/server/action";
 import { canAny, requireStaff } from "@/server/auth/staff";
 import { refundSale, voidSale } from "@/server/checkout";
 import { forbidden, notFound } from "@/server/errors";
-import { Approval, ApprovalPermission, approvedActor } from "@/server/manager-approval";
+import { Approval, ApprovalPermission, approvedFor } from "@/server/manager-approval";
 import { reassignSale } from "@/server/reassign";
 import { type StaffReceiptInput, sendReceiptFromStaff } from "@/server/receipts";
 import { requireInTenant } from "@/server/tenant";
 
 /**
- * Refunds, voids and reassigning a ticket: people with the permission do it themselves; anyone
- * else who works the tickets (and every shop login) needs a manager's PIN for each one.
+ * Refunds, voids and reassigning a ticket: people with the permission do it themselves, up to their
+ * dollar limit; anyone else who works the tickets (and every shop login), or anyone going over
+ * their limit, needs the PIN of a manager whose limit covers it.
  */
+const DENIED: Record<ApprovalPermission, string> = {
+  "sales.refund": "You don't have permission to refund sales",
+  "sales.void": "You don't have permission to void sales",
+  "sales.reassign": "You don't have permission to reassign tickets",
+};
+
 async function guard(saleId: string, perm: ApprovalPermission, approval: Approval | null | undefined) {
   const ctx = await requireStaff();
   await requireInTenant(ctx, "sale", saleId);
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId), columns: { shopId: true, staffId: true } });
   if (!sale) throw notFound("Sale");
-  if (!ctx.permissions.has(perm) && !canAny(ctx, ["sales.view", "checkout.any"])) throw forbidden(perm === "sales.refund" ? "You don't have permission to refund or void sales" : "You don't have permission to reassign tickets");
-  return { ctx, actor: await approvedActor(ctx, sale.shopId, perm, approval) };
+  if (!ctx.permissions.has(perm) && !canAny(ctx, ["sales.view", "checkout.any"])) throw forbidden(DENIED[perm]);
+  const { actor, limitCents } = await approvedFor(ctx, sale.shopId, perm, approval);
+  return { ctx, actor, limitCents };
 }
 
 export async function voidAction(saleId: string, reason: string, approval?: Approval | null) {
   return safe(async () => {
-    const { actor } = await guard(saleId, "sales.refund", approval);
-    await voidSale(saleId, reason, actor);
+    const { actor, limitCents } = await guard(saleId, "sales.void", approval);
+    await voidSale(saleId, reason, actor, new Date(), limitCents);
     revalidatePath(`/admin/sales/${saleId}`);
     return null;
   });
@@ -54,8 +62,8 @@ export async function refundAction(
   approval?: Approval | null,
 ) {
   return safe(async () => {
-    const { actor } = await guard(input.saleId, "sales.refund", approval);
-    const r = await refundSale({ ...input, actor });
+    const { actor, limitCents } = await guard(input.saleId, "sales.refund", approval);
+    const r = await refundSale({ ...input, actor, maxCents: limitCents });
     revalidatePath(`/admin/sales/${input.saleId}`);
     return { refundedCents: r.refundedCents, giftCardsVoided: r.giftCardsVoided };
   });

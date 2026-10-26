@@ -1,7 +1,8 @@
 import "server-only";
-import { asc, eq, sql } from "drizzle-orm";
-import { db } from "@/db";
-import { locationDailyStats, regions, shops } from "@/db/schema";
+import { asc, eq, inArray, sql } from "drizzle-orm";
+import { type DBorTx, db } from "@/db";
+import { locationDailyStats, regions, shops, staff } from "@/db/schema";
+import type { ShopScope } from "@/domain/permissions";
 import { regionNameProblem } from "@/domain/regions";
 import { slugify } from "@/lib/ids";
 import { type Actor, audit } from "./audit";
@@ -42,6 +43,8 @@ export async function saveRegion(actor: Actor, id: string | null, rawName: strin
 
 /** Its locations, and their rolled-up days, are left without a region. */
 export async function deleteRegion(actor: Actor, id: string) {
+  const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(staff).where(eq(staff.scopeRegionId, id));
+  if (n) throw new AppError("conflict", `${n} ${n === 1 ? "person's" : "people's"} access covers this region's shops. Change their shop access first.`);
   const [row] = await db.delete(regions).where(eq(regions.id, id)).returning();
   if (!row) throw notFound("Region");
   await audit(actor, "region.delete", "region", id, { name: row.name });
@@ -59,4 +62,25 @@ export async function setShopRegion(actor: Actor, shopId: string, regionId: stri
     await tx.update(locationDailyStats).set({ regionId }).where(eq(locationDailyStats.shopId, shopId));
   });
   await audit(actor, "shop.region", "shop", shopId, { shop: shop.name, from: shop.regionId, to: regionId, region: region?.name ?? null }, shopId);
+}
+
+/** A region's shops right now. */
+export async function regionShopIds(regionId: string, tx: DBorTx = db): Promise<string[]> {
+  return (await tx.select({ id: shops.id }).from(shops).where(eq(shops.regionId, regionId)).orderBy(asc(shops.name))).map((r) => r.id);
+}
+
+/** A scope as stored: the region a region scope points at (which must exist), or none. */
+export async function resolveRegionScope(scope: ShopScope, regionId: string | null | undefined, tx: DBorTx = db): Promise<string | null> {
+  if (scope !== "region") return null;
+  if (!regionId) throw new AppError("bad_request", "Pick the region");
+  const r = await tx.query.regions.findFirst({ where: eq(regions.id, regionId), columns: { id: true } });
+  if (!r) throw notFound("Region");
+  return r.id;
+}
+
+/** The one region all these shops are in, or null when they're split or some have none. */
+export async function commonRegion(shopIds: readonly string[], tx: DBorTx = db): Promise<string | null> {
+  if (!shopIds.length) return null;
+  const rows = await tx.selectDistinct({ id: shops.regionId }).from(shops).where(inArray(shops.id, [...shopIds]));
+  return rows.length === 1 ? rows[0].id : null;
 }

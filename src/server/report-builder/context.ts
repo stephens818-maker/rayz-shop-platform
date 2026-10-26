@@ -33,6 +33,7 @@ export async function staffContextFor(staffId: string): Promise<StaffContext | n
     currentShopId,
     scope: access.scope,
     scopeEntityId: access.scopeEntityId,
+    scopeRegionId: access.scopeRegionId,
     brandWide: access.scope === "all",
     isOwner: access.isOwner,
     permissions: access.permissions,

@@ -49,3 +49,12 @@ export async function commonOwner(shopIds: readonly string[], tx: DBorTx = db): 
   const rows = await tx.selectDistinct({ id: shops.ownerEntityId }).from(shops).where(inArray(shops.id, [...shopIds]));
   return rows.length === 1 ? rows[0].id : null;
 }
+
+/** Why a role that belongs to one owner entity can't be held with this access, or null. Brand roles fit anywhere. */
+export async function roleFitProblem(role: { name: string; ownerEntityId: string | null }, scope: ShopScope, shopIds: readonly string[], tx: DBorTx = db): Promise<string | null> {
+  if (!role.ownerEntityId) return null;
+  if (scope === "all") return `"${role.name}" belongs to one owner, so it can't cover every shop`;
+  const rows = shopIds.length ? await tx.select({ name: shops.name, owner: shops.ownerEntityId }).from(shops).where(inArray(shops.id, [...shopIds])) : [];
+  const off = rows.find((r) => r.owner !== role.ownerEntityId);
+  return off ? `"${role.name}" belongs to another owner, so it can't be held at ${off.name}` : null;
+}

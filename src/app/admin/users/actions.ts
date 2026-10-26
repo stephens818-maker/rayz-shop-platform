@@ -122,7 +122,19 @@ export async function setRemoteAccessAction(staffId: string, on: boolean) {
     const fromRole = effectiveAccess(access.role, {}, null, access.scope).permissions.has("access.remote");
     if (on === fromRole) delete overrides["access.remote"];
     else overrides["access.remote"] = on;
-    const r = await saveUserAccessAction({ staffId: id, roleId: access.role.id, overrides, maxDiscountPct: row.maxDiscountPct, scope: access.scope, shopIds: access.scope === "all" ? [] : access.shopIds, shopRoles: access.shopRoles });
+    const r = await saveUserAccessAction({
+      staffId: id,
+      roleId: access.role.id,
+      overrides,
+      expires: row.permissionOverrideExpires,
+      maxDiscountPct: row.maxDiscountPct,
+      moneyLimits: row.moneyLimits,
+      scope: access.scope,
+      scopeEntityId: access.scopeEntityId,
+      scopeRegionId: access.scopeRegionId,
+      shopIds: access.scope === "all" ? [] : access.shopIds,
+      shopRoles: access.shopRoles,
+    });
     if (!r.ok) throw new AppError("forbidden", r.error);
     await audit(ctx.actor, "user.remote_access", "staff", id, { name: row.displayLabel, remoteAccess: on }, null);
     revalidate();

@@ -39,13 +39,23 @@ export function SaleActions({
   feeRefundRule = null,
   imported,
   reasons = [],
-  needsPin = false,
+  refundPin = false,
+  voidPin = false,
+  refundLimitCents = null,
+  voidLimitCents = null,
+  voidCents = 0,
   approvers = [],
 }: {
   reasons?: string[];
-  /** Refunds and voids here need a manager's PIN: a shop login, or someone without the refund permission. */
-  needsPin?: boolean;
-  approvers?: { id: string; label: string }[];
+  /** Refunds or voids here need a manager's PIN: a shop login, or someone without the permission. */
+  refundPin?: boolean;
+  voidPin?: boolean;
+  /** Their own dollar limits; null is none. Above one, a manager whose limit covers it approves. */
+  refundLimitCents?: number | null;
+  voidLimitCents?: number | null;
+  /** What voiding the ticket gives back. */
+  voidCents?: number;
+  approvers?: { id: string; label: string; limitCents: number | null; refund: boolean; void: boolean }[];
   saleId: string;
   status: string;
   items: RefundableItem[];
@@ -64,8 +74,6 @@ export function SaleActions({
   const [fee, setFee] = useState(false);
   const [restock, setRestock] = useState(true);
   const [approval, setApproval] = useState<ApprovalValue>({ staffId: "", pin: "" });
-  const pinOk = approvalReady(needsPin, approval);
-  const given = needsPin ? approval : null;
   if (!["paid", "partially_refunded"].includes(status)) return null;
   if (imported) {
     return (
@@ -79,6 +87,17 @@ export function SaleActions({
   const tipCents = Math.min(tipRemainingCents, Math.round((Number(tip.replace(/[^0-9.]/g, "")) || 0) * 100));
   const total = items.reduce((a, i) => a + lineValue(i, qty[i.id] ?? 0), 0) + tipCents + (fee ? cardFeeRemainingCents : 0);
   const picked = Object.entries(qty).filter(([, n]) => n > 0);
+  const over = (limit: number | null, cents: number) => limit !== null && cents > limit;
+  const refundNeedsPin = refundPin || over(refundLimitCents, total);
+  const voidNeedsPin = status === "paid" && (voidPin || over(voidLimitCents, voidCents));
+  const needsPin = (refundNeedsPin && total > 0) || voidNeedsPin;
+  const covers = (a: (typeof approvers)[number], cents: number) => a.limitCents === null || cents <= a.limitCents;
+  const pinApprovers = approvers
+    .filter((a) => (refundNeedsPin && total > 0 && a.refund && covers(a, total)) || (voidNeedsPin && a.void && covers(a, voidCents)))
+    .map((a) => ({ id: a.id, label: a.limitCents === null ? a.label : `${a.label} (up to ${formatCents(a.limitCents)})` }));
+  const pinOk = approvalReady(true, approval);
+  const given = needsPin && pinOk ? approval : null;
+  const pinWhat = refundNeedsPin && total > 0 && voidNeedsPin ? "this refund or void" : voidNeedsPin ? "voiding this ticket" : "this refund";
   const everything = () => {
     setQty(Object.fromEntries(items.map((i) => [i.id, left(i)])));
     setTip((tipRemainingCents / 100).toFixed(2));
@@ -160,20 +179,25 @@ export function SaleActions({
           <Input list="refund-reasons" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Rang up wrong service" />
           <Suggestions id="refund-reasons" items={reasons} />
         </Field>
-        {needsPin && <ManagerPin approvers={approvers} value={approval} onChange={setApproval} what="refunds and voids" />}
+        {(refundLimitCents !== null && refundLimitCents > 0 && !refundPin) || (voidLimitCents !== null && voidLimitCents > 0 && !voidPin) ? (
+          <p className="text-xs text-zinc-500" data-testid="refund-limit">
+            Your limit: {formatCents(refundLimitCents ?? voidLimitCents ?? 0)} per refund or void. Above it, a manager whose limit covers it approves.
+          </p>
+        ) : null}
+        {needsPin && <ManagerPin approvers={pinApprovers} value={approval} onChange={setApproval} what={pinWhat} />}
         {error && <Notice tone="red">{error}</Notice>}
         <div className="grid grid-cols-2 gap-2">
           {status === "paid" && (
-            <Button variant="danger" disabled={pending || !reason || !pinOk} onClick={() => confirm("Void this whole ticket?") && run(() => voidAction(saleId, reason, given))}>
+            <Button variant="danger" disabled={pending || !reason || (voidNeedsPin && !pinOk)} onClick={() => confirm("Void this whole ticket?") && run(() => voidAction(saleId, reason, voidNeedsPin ? given : null))}>
               Void ticket
             </Button>
           )}
           <Button
             variant="secondary"
-            disabled={pending || !reason || total <= 0 || !pinOk}
+            disabled={pending || !reason || total <= 0 || (refundNeedsPin && !pinOk)}
             onClick={() =>
               run(() =>
-                refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee || "proportional", reason, restock }, given),
+                refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee || "proportional", reason, restock }, refundNeedsPin ? given : null),
               )
             }
             className={status !== "paid" ? "col-span-2" : ""}

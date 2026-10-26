@@ -24,7 +24,7 @@ import { ratingSummaries, visitForSale } from "@/server/ratings";
 import { receiptData, saleReceiptState } from "@/server/receipts";
 import { QuickRate } from "../../customers/ratings";
 import { ReceiptPanel } from "./receipt-panel";
-import { approvers, needsManager } from "@/server/manager-approval";
+import { approvers, needsManager, ownLimit } from "@/server/manager-approval";
 import { reassignments } from "@/server/reassign";
 import { PrintButton, ReassignPanel, SaleActions } from "./sale-actions";
 
@@ -70,13 +70,18 @@ export default async function SalePage({ params, searchParams }: { params: Promi
   const splitName = new Map(screen.shares.map((x) => [x.staffId, x.label]));
   const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; taxRates?: { serviceRate: number; productRate: number }; cardFee?: { rate: number } };
   const worksTickets = can(ctx, "sales.view") || can(ctx, "checkout.any");
-  const manager = can(ctx, "sales.refund") || worksTickets;
+  const manager = can(ctx, "sales.refund") || can(ctx, "sales.void") || worksTickets;
   const refundPin = needsManager(ctx, "sales.refund");
+  const voidPin = needsManager(ctx, "sales.void");
+  const refundLimit = refundPin ? 0 : ownLimit(ctx, sale.shopId, "sales.refund");
+  const voidLimit = voidPin ? 0 : ownLimit(ctx, sale.shopId, "sales.void");
+  const reversible = manager && ["paid", "partially_refunded"].includes(sale.status);
   const reassignPin = needsManager(ctx, "sales.reassign");
   const mayReassign = !sale.isImported && ["paid", "partially_refunded", "refunded"].includes(sale.status) && (can(ctx, "sales.reassign") || worksTickets);
-  const [refundable, refundApprovers, reassignApprovers, shopBarbers, moves] = await Promise.all([
-    manager && ["paid", "partially_refunded"].includes(sale.status) ? refundableState(id) : null,
-    manager && refundPin ? approvers(sale.shopId, "sales.refund", ctx.staff.id) : [],
+  const [refundable, refundApprovers, voidApprovers, reassignApprovers, shopBarbers, moves] = await Promise.all([
+    reversible ? refundableState(id) : null,
+    reversible && refundLimit !== null ? approvers(sale.shopId, "sales.refund", ctx.staff.id) : [],
+    reversible && sale.status === "paid" && voidLimit !== null ? approvers(sale.shopId, "sales.void", ctx.staff.id) : [],
     mayReassign && reassignPin ? approvers(sale.shopId, "sales.reassign", ctx.staff.id) : [],
     mayReassign
       ? db
@@ -297,8 +302,16 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           {manager && refundable && (
             <SaleActions
               reasons={(await lookups(sale.shopId)).refundReasons}
-              needsPin={refundPin}
-              approvers={refundApprovers}
+              refundPin={refundPin}
+              voidPin={voidPin}
+              refundLimitCents={refundLimit}
+              voidLimitCents={voidLimit}
+              voidCents={sale.totalCents - refundable.refundedCents}
+              approvers={[...new Map([...refundApprovers, ...voidApprovers].map((a) => [a.id, a])).values()].map((a) => ({
+                ...a,
+                refund: refundApprovers.some((r) => r.id === a.id),
+                void: voidApprovers.some((v) => v.id === a.id),
+              }))}
               saleId={sale.id}
               status={sale.status}
               imported={sale.isImported}

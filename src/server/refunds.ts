@@ -23,6 +23,7 @@ import { formatCents } from "@/lib/money";
 import { localDateOf } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "./audit";
 import { AppError, notFound } from "./errors";
+import { overLimit } from "./manager-approval";
 import { Movement, postMovements } from "./inventory/ledger";
 import { restoreRewardsForSale, reverseSaleLoyalty } from "./loyalty";
 import { ticketAppointmentIds } from "./family-ticket";
@@ -45,6 +46,8 @@ export interface RefundRequest {
   reason: string;
   restock: boolean;
   actor: Actor;
+  /** The most this refund may give back, in cents: the refunder's limit or the approving manager's. */
+  maxCents?: number | null;
   now?: Date;
 }
 
@@ -95,12 +98,12 @@ export async function refundSale(req: RefundRequest) {
     const sale = await lockSale(tx, req.saleId);
     if (sale.isImported) throw new AppError("conflict", "This ticket was imported from Squire. Refund it in Squire.");
     if (!["paid", "partially_refunded"].includes(sale.status)) throw new AppError("conflict", `Can't refund a ${sale.status.replace("_", " ")} ticket`);
-    return reverse(tx, sale, { kind: "refund", source: "staff", items: req.items, tipCents: req.tipCents, refundCardFee: req.refundCardFee, reason: req.reason, restock: req.restock, actor: req.actor, now });
+    return reverse(tx, sale, { kind: "refund", source: "staff", items: req.items, tipCents: req.tipCents, refundCardFee: req.refundCardFee, reason: req.reason, restock: req.restock, actor: req.actor, maxCents: req.maxCents, now });
   });
 }
 
 /** Everything still refundable on a ticket. */
-export async function refundEverything(saleId: string, reason: string, restock: boolean, actor: Actor, now = new Date()) {
+export async function refundEverything(saleId: string, reason: string, restock: boolean, actor: Actor, now = new Date(), maxCents: number | null = null) {
   const st = await refundableState(saleId);
   return refundSale({
     saleId,
@@ -110,11 +113,12 @@ export async function refundEverything(saleId: string, reason: string, restock: 
     reason,
     restock,
     actor,
+    maxCents,
     now,
   });
 }
 
-export async function voidSale(saleId: string, reason: string, actor: Actor, now = new Date()) {
+export async function voidSale(saleId: string, reason: string, actor: Actor, now = new Date(), maxCents: number | null = null) {
   if (!reason.trim()) throw new AppError("bad_request", "A reason is required");
   await db.transaction(async (tx) => {
     const sale = await lockSale(tx, saleId);
@@ -140,6 +144,7 @@ export async function voidSale(saleId: string, reason: string, actor: Actor, now
       reason,
       restock: true,
       actor,
+      maxCents,
       now,
       strictGiftCards: true,
     });
@@ -162,6 +167,7 @@ interface ReverseOpts {
   reason: string;
   restock: boolean;
   actor: Actor;
+  maxCents?: number | null;
   now: Date;
   /** Void: refuse if a gift card sold on the ticket has been used at all. */
   strictGiftCards?: boolean;
@@ -231,6 +237,7 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   }
   const components = Object.fromEntries(Object.entries(asked).map(([k, v]) => [k, Math.max(0, Math.min(v, left[k as keyof RefundComponents]))])) as unknown as RefundComponents;
   if (o.kind === "refund" && componentsTotal(components) <= 0) throw new AppError("bad_request", "Nothing left to refund on what you picked");
+  if (o.maxCents != null && componentsTotal(components) > o.maxCents) throw overLimit(o.kind === "void" ? "sales.void" : "sales.refund", componentsTotal(components), o.maxCents, !!o.actor.approvedBy);
 
   const pays = await tx.select().from(payments).where(eq(payments.saleId, sale.id)).orderBy(asc(payments.createdAt)).for("update");
   let plan: TenderRefund[];

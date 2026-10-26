@@ -42,6 +42,8 @@ export interface StaffContext {
   scope: ShopScope;
   /** The owner entity an entity scope covers. */
   scopeEntityId: string | null;
+  /** The region a region scope covers. */
+  scopeRegionId: string | null;
   /** Access to every shop, including brand-level records that belong to no shop. */
   brandWide: boolean;
   isOwner: boolean;
@@ -111,7 +113,7 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   else currentShopId = assigned.scope === "all" && combinedView ? null : (open[0]?.id ?? assigned.shopIds[0] ?? null);
   // A different role at each shop: the tenant is the shop they're in, under that shop's role. Brand-wide people keep every shop in scope.
   const here = currentShopId ? assigned.byShop.get(currentShopId) : undefined;
-  const access = assigned.uniform || !currentShopId ? assigned : assigned.scope === "all" && here ? { ...assigned, isOwner: here.isOwner, permissions: here.permissions, maxDiscountPct: here.maxDiscountPct } : atShop(assigned, currentShopId);
+  const access = assigned.uniform || !currentShopId ? assigned : assigned.scope === "all" && here ? { ...assigned, isOwner: here.isOwner, permissions: here.permissions, maxDiscountPct: here.maxDiscountPct, limits: here.limits } : atShop(assigned, currentShopId);
   const role = (currentShopId && assigned.byShop.get(currentShopId)?.role) || row.r;
 
   return {
@@ -125,6 +127,7 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
     currentShopId,
     scope: access.scope,
     scopeEntityId: access.scopeEntityId,
+    scopeRegionId: access.scopeRegionId,
     brandWide: access.scope === "all",
     isOwner: access.isOwner,
     permissions: access.permissions,
@@ -133,6 +136,9 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
 });
 
 export const can = (ctx: Pick<StaffContext, "permissions">, p: Permission) => ctx.permissions.has(p);
+
+/** Their dollar limits at a shop, under the role they hold there. */
+export const limitsAt = (ctx: Pick<StaffContext, "access">, shopId: string) => (ctx.access.byShop.get(shopId) ?? ctx.access).limits;
 
 /** Their shops that are still open for business (not archived), for pickers and day-to-day lists. Reports use all of ctx.shops. */
 export const openShops = (ctx: Pick<StaffContext, "shops">) => ctx.shops.filter((s) => s.status !== "archived");

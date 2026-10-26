@@ -122,6 +122,9 @@ export interface HandoffDraft extends HandoffDraftInput {
   canOverridePrice: boolean;
   canCustomCharge?: boolean;
   maxManualDiscountPct: number;
+  /** Dollar limits of whoever handed it over; null or missing is none. */
+  maxManualDiscountCents?: number | null;
+  maxCardFeeWaiverCents?: number | null;
   canWaiveCardFee?: boolean;
   /** Who handed it over, so a waiver is theirs. */
   staffId?: string;
@@ -134,6 +137,8 @@ export interface HandingOver {
   canOverridePrice: boolean;
   canCustomCharge?: boolean;
   maxManualDiscountPct: number;
+  maxManualDiscountCents?: number | null;
+  maxCardFeeWaiverCents?: number | null;
   canWaiveCardFee?: boolean;
 }
 
@@ -154,6 +159,8 @@ export function finalizeFields(d: HandoffDraft) {
     canOverridePrice: d.canOverridePrice,
     canCustomCharge: d.canCustomCharge ?? false,
     maxManualDiscountPct: d.maxManualDiscountPct,
+    maxManualDiscountCents: d.maxManualDiscountCents ?? null,
+    maxCardFeeWaiverCents: d.maxCardFeeWaiverCents ?? null,
     waiveCardFee: d.waiveCardFee?.reason ? { reason: d.waiveCardFee.reason, byStaffId: d.staffId ?? null } : null,
     canWaiveCardFee: d.canWaiveCardFee ?? false,
   };
@@ -171,6 +178,8 @@ export async function startHandoff(saleId: string, raw: HandoffDraftInput, by: H
     canOverridePrice: by.canOverridePrice,
     canCustomCharge: by.canCustomCharge ?? false,
     maxManualDiscountPct: by.maxManualDiscountPct,
+    maxManualDiscountCents: by.maxManualDiscountCents ?? null,
+    maxCardFeeWaiverCents: by.maxCardFeeWaiverCents ?? null,
     canWaiveCardFee: by.canWaiveCardFee ?? false,
     staffId: by.staffId,
   };

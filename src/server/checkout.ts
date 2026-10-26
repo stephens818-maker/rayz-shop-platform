@@ -390,6 +390,10 @@ export interface FinalizeInput {
   canCustomCharge?: boolean;
   /** Largest manual discount allowed, in whole percent of the ticket (gift cards excluded). Defaults to no limit. */
   maxManualDiscountPct?: number;
+  /** Largest manual discount in cents, set like maxManualDiscountPct; null or missing is no dollar limit. */
+  maxManualDiscountCents?: number | null;
+  /** Largest card surcharge waiver in cents, set like canWaiveCardFee; null or missing is no limit. */
+  maxCardFeeWaiverCents?: number | null;
   /** Where the charge is taken, for the card fee's channels. Defaults to pos; a booking deposit ticket is always deposit. */
   channel?: FeeChannel | null;
   /** Staff waive the credit card surcharge, with a reason. `byStaffId` is who waived it when that isn't the actor (a hand-off). */
@@ -720,6 +724,7 @@ export async function priceCart(
     input.manualDiscount ?? null,
     lines,
     input.maxManualDiscountPct ?? 100,
+    input.maxManualDiscountCents ?? null,
   );
   if (problem) throw forbidden(problem);
   const { discounts, coupons, rewardId, rewardOwnerId } = await buildDiscounts(
@@ -925,6 +930,8 @@ export async function finalizeSale(input: FinalizeInput) {
     });
   }
   const waivedCents = legs.reduce((a, l) => a + (l.fee?.waivedCents ?? 0), 0);
+  if (input.maxCardFeeWaiverCents != null && waivedCents > input.maxCardFeeWaiverCents)
+    throw new AppError("forbidden", `This waives ${formatCents(waivedCents)} of card surcharge, above your ${formatCents(input.maxCardFeeWaiverCents)} limit`, { reason: "waiver_over_limit" });
 
   if (
     input.expectedTotalCents != null &&
