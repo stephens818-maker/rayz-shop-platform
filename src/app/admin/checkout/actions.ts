@@ -14,7 +14,8 @@ import { CheckoutLineInput, SplitTenderInput, TenderInput, assertStaffAtShop, fi
 import { acceptRebook, addPromptProduct, declinePrompt, tagUsedProduct, untagUsedProduct } from "@/server/checkout-prompts";
 import { mergeTickets, openTickets, splitOffTicket, splitTicketApart } from "@/server/combined-checkout";
 import { resolveCoupon } from "@/server/coupons";
-import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
+import { clientPolicy } from "@/server/client-privacy";
+import { checkEntry, fillEntry, type EntryDetails } from "@/server/client-entry";
 import { findOrCreateCustomer } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { sameHousehold } from "@/server/family";
@@ -91,17 +92,19 @@ export async function attachCustomerAction(saleId: string, customerId: string | 
 }
 
 /** A client who isn't on file yet: matched by phone or email if they are, otherwise created, then put on the ticket. */
-export async function newClientAtCheckoutAction(saleId: string, input: { firstName: string; lastName?: string; phone?: string; email?: string }) {
+export async function newClientAtCheckoutAction(saleId: string, input: { firstName: string; lastName?: string } & EntryDetails) {
   return safe(async () => {
     const ctx = await requireStaff();
     const sale = await loadSale(ctx, saleId);
     if (sale.status !== "open") throw new AppError("conflict", "Ticket is closed");
-    assertCanEnter(await clientPolicy(ctx), input);
+    const { firstName, lastName, ...details } = input;
+    const typed = checkEntry(await clientPolicy(ctx), details);
     const c = await db.transaction(async (tx) => {
-      const row = await findOrCreateCustomer(input, sale.shopId, tx, { allowNoContact: true });
+      const row = await findOrCreateCustomer({ firstName, lastName, phone: typed.phone, email: typed.email }, sale.shopId, tx, { allowNoContact: true });
       await tx.update(sales).set({ customerId: row.id }).where(and(eq(sales.id, saleId), eq(sales.status, "open")));
       return row;
     });
+    await fillEntry(c.id, typed, { actor: ctx.actor, staffId: ctx.staff.id, shopId: sale.shopId });
     revalidatePath(`/admin/checkout/${saleId}`);
     return { id: c.id };
   });

@@ -214,6 +214,105 @@ describe("a restricted person enters a phone number", () => {
   });
 });
 
+describe("the other details at the desk", () => {
+  const ADDRESS = "12 Desk Lane, Coralville, IA 52241";
+  let instagram: string;
+  const audits = async (id: string) =>
+    m.db.db.select().from(m.schema.auditLog).where(m.drizzle.and(eq(m.schema.auditLog.entityId, id), eq(m.schema.auditLog.action, "customer.details_added")));
+
+  beforeAll(async () => {
+    instagram = (await m.db.db.query.clientFields.findFirst({ where: eq(m.schema.clientFields.label, "Instagram") }))!.id;
+  });
+
+  it("checkout takes email, address, birthday, notes and custom fields for a new client, and audits which were added", async () => {
+    const { newClientAtCheckoutAction } = await import("@/app/admin/checkout/actions");
+    const sale = await m.checkout.openBlankSale(cv, actor);
+    await as("frontdesk");
+    const r = await newClientAtCheckoutAction(sale.id, {
+      firstName: "Dana",
+      lastName: "Details",
+      phone: "(319) 555-7801",
+      email: "Dana.Details@Example.test",
+      address: ADDRESS,
+      birthday: "1990-04-12",
+      notes: "Low taper",
+      custom: { [instagram]: "@dana.cuts" },
+    });
+    expect(r).toMatchObject({ ok: true });
+    const c = (await byPhone("3195557801"))!;
+    expect(c).toMatchObject({ email: "dana.details@example.test", address: ADDRESS, birthday: "1990-04-12", notes: "Low taper", customFields: { [instagram]: "@dana.cuts" } });
+    const [a] = await audits(c.id);
+    expect((a.details as { fields: string[] }).fields.sort()).toEqual(["address", "birthday", "customFields", "notes"]);
+  });
+
+  it("a walk-in takes them too, and a bad birthday is refused before anyone is added", async () => {
+    const { walkInAction } = await import("@/app/admin/walk-ins/actions");
+    await as("michelle");
+    const bad = await walkInAction({ shopId: cv, serviceId, name: "Wes Walk", phone: "(319) 555-7802", preferredStaffId: null, details: { birthday: "2999-01-01" } });
+    expect(bad).toEqual({ ok: false, error: expect.stringContaining("Birthday") });
+    expect(await byPhone("3195557802")).toBeUndefined();
+    const r = await walkInAction({ shopId: cv, serviceId, name: "Wes Walk", phone: "(319) 555-7802", preferredStaffId: null, details: { address: ADDRESS, email: "wes@walk.test" } });
+    expect(r).toMatchObject({ ok: true });
+    expect(await byPhone("3195557802")).toMatchObject({ address: ADDRESS, email: "wes@walk.test" });
+  });
+
+  it("booking on the calendar fills what's empty on a returning client and keeps what's on file", async () => {
+    const { createStaffAppointmentAction } = await import("@/app/admin/calendar/actions");
+    const c = (await byPhone("3195557801"))!;
+    const today = m.time.todayLocal();
+    let slot: string | undefined;
+    for (let i = 3; i < 30 && !slot; i++)
+      slot = (await m.booking.getAvailability({ shopRef: "coralville", date: m.time.addDays(today, i), serviceId, barberRef: people.makenna })).slots.at(-1)?.startsAt;
+    await as("frontdesk");
+    await m.db.db.update(m.schema.customers).set({ birthday: null }).where(eq(m.schema.customers.id, c.id));
+    const r = await createStaffAppointmentAction({
+      shopId: cv,
+      staffId: people.makenna,
+      date: m.time.localDateOf(slot!),
+      startMin: m.time.localMinutesOf(slot!),
+      serviceId,
+      addonIds: [],
+      customer: { firstName: "Dana", lastName: "Details", phone: "(319) 555-7801" },
+      details: { address: "1 Other Road, Iowa City, IA", birthday: "1990-04-13" },
+    });
+    expect(r).toMatchObject({ ok: true });
+    expect(await client(c.id)).toMatchObject({ address: ADDRESS, birthday: "1990-04-13" });
+  });
+
+  it("a detail someone can't add isn't offered on the calendar, walk-ins or checkout, and is refused if sent", async () => {
+    const { createStaffAppointmentAction } = await import("@/app/admin/calendar/actions");
+    const { DayCalendar } = await import("@/app/admin/calendar/day-calendar");
+    const { WalkIns } = await import("@/app/admin/walk-ins/walk-ins");
+    const { Pos } = await import("@/app/admin/checkout/[saleId]/pos");
+    await as("owner");
+    expect(await rule("address", "add", "deny", { roleKey: "front_desk", shopId: cv })).toMatchObject({ ok: true });
+    await as("frontdesk");
+    const keys = (fs: { key: string }[]) => fs.map((f) => f.key);
+    const [cal] = await propsOf<{ canManage: { entry: { key: string }[] } }>(DayCalendar, "/admin/calendar", {}, { shop: cv });
+    expect(keys(cal.canManage.entry)).toEqual(expect.arrayContaining(["phone", "email", "birthday", "notes", `custom:${instagram}`]));
+    expect(keys(cal.canManage.entry)).not.toContain("address");
+    const [board] = await propsOf<{ entry: { key: string }[] }>(WalkIns, "/admin/walk-ins");
+    expect(keys(board.entry)).not.toContain("address");
+    const sale = await m.checkout.openBlankSale(cv, actor);
+    const [pos] = await propsOf<{ entry: { key: string }[] }>(Pos, "/admin/checkout/[saleId]", { saleId: sale.id });
+    expect(keys(pos.entry)).not.toContain("address");
+    const r = await createStaffAppointmentAction({
+      shopId: cv,
+      staffId: people.makenna,
+      date: m.time.todayLocal(),
+      startMin: 600,
+      serviceId,
+      addonIds: [],
+      customer: { firstName: "Nell", phone: "(319) 555-7803" },
+      details: { address: ADDRESS },
+    });
+    expect(r).toEqual({ ok: false, error: "You can't add a client's address" });
+    expect(await byPhone("3195557803")).toBeUndefined();
+    await as("owner");
+    expect(await rule("address", "add", null, { roleKey: "front_desk", shopId: cv })).toMatchObject({ ok: true });
+  });
+});
+
 describe("add and edit are their own rules", () => {
   it("without \"can add\", a phone can't be entered anywhere, and the forms don't offer it", async () => {
     const { createCustomerAction } = await import("@/app/admin/customers/actions");

@@ -9,6 +9,7 @@ import { estimateWait, waitlistForShop } from "@/server/booking";
 import { briefsFor } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
+import { entryFields } from "@/server/client-entry";
 import { WalkIns } from "./walk-ins";
 
 export const metadata: Metadata = { title: "Walk-ins" };
@@ -71,6 +72,7 @@ export default async function WalkInsPage() {
         <WalkIns
           shopId={shopId}
           canAddPhone={policy.canAdd("phone")}
+          entry={entryFields(policy)}
           canFamily={can(ctx, "clients.family")}
           services={catalog.filter((s) => s.kind === "service").map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin, priceCents: s.priceCents }))}
           barbers={board}

@@ -15,7 +15,8 @@ import { createAppointment, getAvailability, rescheduleAppointment, setAppointme
 import { openSaleForAppointment } from "@/server/checkout";
 import { clockPulse } from "@/server/clock-live";
 import { sendToCheckout } from "@/server/combined-checkout";
-import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
+import { clientPolicy } from "@/server/client-privacy";
+import { checkEntry, fillEntry, type EntryDetails } from "@/server/client-entry";
 import { searchClients } from "@/server/client-search";
 import { usableReason } from "@/server/block-reasons";
 import { AppError, forbidden, notFound } from "@/server/errors";
@@ -193,6 +194,8 @@ export async function createStaffAppointmentAction(input: {
   addonIds: string[];
   customerId?: string | null;
   customer?: { firstName: string; lastName?: string; phone?: string; email?: string } | null;
+  /** A new client's details, each needing "add"; ones already on a matched client stay as they are. */
+  details?: EntryDetails | null;
   notes?: string;
   /** Off the barber's grid, into buffer time or outside hours. Needs "calendar.squeeze_in"; logged. */
   squeezeIn?: boolean;
@@ -203,7 +206,7 @@ export async function createStaffAppointmentAction(input: {
     assertSqueeze(ctx, input.squeezeIn);
     if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only book into your own column");
     if (!input.customerId && !input.customer?.firstName) throw new AppError("bad_request", "Pick a client or enter a name");
-    if (!input.customerId && input.customer) assertCanEnter(await clientPolicy(ctx), input.customer);
+    const typed = !input.customerId && input.customer ? checkEntry(await clientPolicy(ctx), { ...input.details, phone: input.details?.phone ?? input.customer.phone, email: input.details?.email ?? input.customer.email }) : null;
     const startsAt = staffWallTime(input.date, input.startMin);
     const appt = await createAppointment({
       shopRef: input.shopId,
@@ -212,13 +215,14 @@ export async function createStaffAppointmentAction(input: {
       barberRef: input.staffId,
       startsAt,
       customerId: input.customerId ?? null,
-      customer: input.customerId ? null : (input.customer ?? null),
+      customer: input.customerId || !input.customer ? null : { ...input.customer, phone: typed?.phone, email: typed?.email },
       allowNoContact: true,
       notes: input.notes || null,
       source: "staff",
       squeezeIn: input.squeezeIn,
       actor: ctx.actor,
     });
+    if (typed && appt.customer) await fillEntry(appt.customer.id, typed, { actor: ctx.actor, staffId: ctx.staff.id, shopId: input.shopId });
     revalidatePath("/admin/calendar");
     return { code: appt.code };
   });

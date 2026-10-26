@@ -13,6 +13,7 @@ import type { ClientHit } from "@/domain/client-search";
 import { noteBriefsAction } from "../notes/actions";
 import { FAMILY_BOOKING_MAX } from "@/domain/family";
 import { searchCustomersAction, startCheckoutAction } from "../calendar/actions";
+import { ClientEntryFields, entryPayload, type EntryField, type EntryValues } from "@/components/client-entry-fields";
 import { linkWalkInsAction, notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
 
 type Barber = { id: string; label: string; color: string; state: "free" | "busy" | "off"; note: string; until: string | null; untilKind: "busy" | "next" | null };
@@ -34,6 +35,7 @@ const t = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "nu
 export function WalkIns({
   shopId,
   canAddPhone,
+  entry = [],
   canFamily = false,
   services,
   barbers,
@@ -41,12 +43,14 @@ export function WalkIns({
 }: {
   shopId: string;
   canAddPhone: boolean;
+  entry?: EntryField[];
   canFamily?: boolean;
   services: { id: string; name: string; durationMin: number; priceCents: number }[]; barbers: Barber[]; waitlist: Entry[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [details, setDetails] = useState<EntryValues>({});
   const [picked, setPickedHit] = useState<ClientHit | null>(null);
   /** Who's here: the picked client, or several of a family (the parent and kids, in the order picked). */
   const [forWho, setForWho] = useState<string[]>([]);
@@ -122,7 +126,7 @@ export function WalkIns({
                 setError(null);
                 const done: Result[] = [];
                 for (const id of who) {
-                  const r = await walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: id });
+                  const r = await walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: id, details: id ? null : entryPayload(entry, details) });
                   if (!r.ok) {
                     setError(done.length ? `${r.error} (the others above are in)` : r.error);
                     break;
@@ -194,6 +198,14 @@ export function WalkIns({
               </div>
             )}
             {canAddPhone && !picked && <Input placeholder="Mobile (optional, for text when ready)" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />}
+            {!picked && entry.some((f) => f.key !== "phone") && (
+              <details className="rounded-lg ring-1 ring-zinc-200">
+                <summary className="cursor-pointer px-3 py-2 text-sm text-zinc-600">More details (email, birthday, notes…)</summary>
+                <div className="grid grid-cols-2 gap-2 p-3 pt-0">
+                  <ClientEntryFields fields={entry} values={details} onChange={setDetails} skip={["phone"]} />
+                </div>
+              </details>
+            )}
             <div className="grid grid-cols-2 gap-2">
               {top.map((s) => (
                 <button

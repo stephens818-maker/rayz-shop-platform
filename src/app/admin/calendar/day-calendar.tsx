@@ -94,6 +94,7 @@ import {
 import { ContactClient } from "../customers/privacy";
 import { ServiceTimesBox } from "./service-times-panel";
 import { AppointmentMessages } from "./appointment-messages";
+import { ClientEntryFields, entryPayload, type EntryField, type EntryValues } from "@/components/client-entry-fields";
 
 const PX = 1.6; // pixels per minute
 const SNAP = 15;
@@ -273,7 +274,7 @@ export function DayCalendar({
     schedules: boolean;
     clients: boolean;
     message: boolean;
-    addPhone: boolean;
+    entry: EntryField[];
     correctTimes: boolean;
     callIns: boolean;
     clockBlocks: boolean;
@@ -729,7 +730,7 @@ export function DayCalendar({
               startMin={panel.startMin}
               services={services}
               own={panel.col.id === meId}
-              canAddPhone={canManage.addPhone}
+              entry={canManage.entry}
               canFamily={canManage.family}
               reasons={reasons}
               onDone={() => setPanel(null)}
@@ -2115,7 +2116,7 @@ function NewPanel({
   startMin,
   services,
   own,
-  canAddPhone,
+  entry,
   canFamily,
   reasons,
   onDone,
@@ -2125,7 +2126,7 @@ function NewPanel({
   startMin: number;
   services: Svc[];
   own: boolean;
-  canAddPhone: boolean;
+  entry: EntryField[];
   canFamily: boolean;
   reasons: PickReason[];
   onDone: () => void;
@@ -2154,7 +2155,7 @@ function NewPanel({
   const [finderError, setFinderError] = useState<string | null>(null);
   const [first, setFirst] = useState("");
   const [last, setLast] = useState("");
-  const [phone, setPhone] = useState("");
+  const [details, setDetails] = useState<EntryValues>({});
   const [notes, setNotes] = useState("");
   const [endTime, setEndTime] = useState(hhmm(startMin + 60));
   const [reasonId, setReasonId] = useState<string | null>(
@@ -2576,15 +2577,7 @@ function NewPanel({
                     value={last}
                     onChange={(e) => setLast(e.target.value)}
                   />
-                  {canAddPhone && (
-                    <Input
-                      className="col-span-2"
-                      placeholder="Mobile (for reminders)"
-                      inputMode="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                    />
-                  )}
+                  <ClientEntryFields fields={entry} values={details} onChange={setDetails} />
                 </div>
               </>
             )}
@@ -2647,8 +2640,8 @@ function NewPanel({
                               : {
                                   firstName: first || q.split(" ")[0] || "",
                                   lastName: last,
-                                  phone,
                                 },
+                            details: picked ? null : entryPayload(entry, details),
                             notes,
                             squeezeIn: squeeze && !isOpen,
                           }),

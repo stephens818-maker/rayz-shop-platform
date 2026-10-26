@@ -1,5 +1,6 @@
 "use client";
 
+import { ClientEntryFields, entryPayload, type EntryField, type EntryValues } from "@/components/client-entry-fields";
 import { useRouter } from "next/navigation";
 import {
   type ChangeEvent,
@@ -245,7 +246,7 @@ export function Pos(props: {
     reassign: boolean;
     customCharge?: boolean;
   };
-  canAdd: { phone: boolean; email: boolean };
+  entry: EntryField[];
   reasons?: { discount: string[]; priceChange: string[] };
   handoff: { signature: boolean; unlock: "staff" | "manager" };
   /** The ticket is with the client on a customer screen right now. */
@@ -998,7 +999,7 @@ export function Pos(props: {
               <CustomerBox
                 saleId={props.sale.id}
                 customer={props.customer}
-                canAdd={props.canAdd}
+                entry={props.entry}
                 onError={setError}
               />
               <div>
@@ -2798,31 +2799,28 @@ function QuickCutNote({
 function CustomerBox({
   saleId,
   customer,
-  canAdd,
+  entry,
   onError,
 }: {
   saleId: string;
   customer: PosCustomer | null;
-  canAdd: { phone: boolean; email: boolean };
+  entry: EntryField[];
   onError: (e: string) => void;
 }) {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState({
-    firstName: "",
-    lastName: "",
-    phone: "",
-    email: "",
-  });
+  const [draft, setDraft] = useState({ firstName: "", lastName: "" });
+  const [details, setDetails] = useState<EntryValues>({});
   const set = (k: keyof typeof draft) => (e: ChangeEvent<HTMLInputElement>) =>
     setDraft((d) => ({ ...d, [k]: e.target.value }));
   const create = async (e: FormEvent) => {
     e.preventDefault();
-    const r = await newClientAtCheckoutAction(saleId, draft);
+    const r = await newClientAtCheckoutAction(saleId, { ...draft, ...entryPayload(entry, details) });
     if (!r.ok) return onError(r.error);
     setAdding(false);
-    setDraft({ firstName: "", lastName: "", phone: "", email: "" });
+    setDraft({ firstName: "", lastName: "" });
+    setDetails({});
     router.refresh();
   };
   const [found, setFound] = useState<ClientHit[]>([]);
@@ -2896,24 +2894,7 @@ function CustomerBox({
               value={draft.lastName}
               onChange={set("lastName")}
             />
-            {canAdd.phone && (
-              <Input
-                className="col-span-2"
-                placeholder="Mobile"
-                inputMode="tel"
-                value={draft.phone}
-                onChange={set("phone")}
-              />
-            )}
-            {canAdd.email && (
-              <Input
-                className="col-span-2"
-                placeholder="Email"
-                type="email"
-                value={draft.email}
-                onChange={set("email")}
-              />
-            )}
+            <ClientEntryFields fields={entry} values={details} onChange={setDetails} />
           </div>
           <div className="flex justify-end gap-2">
             <Button

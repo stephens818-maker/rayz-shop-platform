@@ -6,6 +6,7 @@ import { feeDisclosure } from "@/domain/checkout";
 import { can, guardPage } from "@/server/auth/staff";
 import { shownBadges } from "@/server/badges";
 import { noteBriefs, noteViewer } from "@/server/client-notes";
+import { entryFields } from "@/server/client-entry";
 import { clientPolicy } from "@/server/client-privacy";
 import { writableKinds } from "@/domain/client-notes";
 import { inTenant } from "@/server/tenant";
@@ -336,10 +337,7 @@ export default async function CheckoutPage({
           customCharge: can(ctx, "pos.custom_charge"),
           reassign: can(ctx, "checkout.any"),
         }}
-        canAdd={{
-          phone: policy.canAdd("phone"),
-          email: policy.canAdd("email"),
-        }}
+        entry={entryFields(policy)}
       />
     </>
   );

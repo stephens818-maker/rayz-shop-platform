@@ -9,19 +9,31 @@ import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { quickWalkIn, seatFromWaitlist, updateWaitlistStatus } from "@/server/booking";
 import { linkWalkIns } from "@/server/booking-groups";
-import { assertCanEnter, clientPolicy } from "@/server/client-privacy";
+import { clientPolicy } from "@/server/client-privacy";
+import { checkEntry, fillEntry, type EntryDetails } from "@/server/client-entry";
 import { textingDeclined } from "@/server/customers";
 import { AppError, notFound } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
 import { requireInTenant } from "@/server/tenant";
 
-export async function walkInAction(input: { shopId: string; serviceId: string; name: string; phone: string; preferredStaffId: string | null; customerId?: string | null }) {
+export async function walkInAction(input: {
+  shopId: string;
+  serviceId: string;
+  name: string;
+  phone: string;
+  preferredStaffId: string | null;
+  customerId?: string | null;
+  /** A new client's other details, each needing "add"; a matched client keeps what's on file. */
+  details?: EntryDetails | null;
+}) {
   return safe(async () => {
     const ctx = await authorize("walkins.manage");
     assertShopAccess(ctx, input.shopId);
     const customerId = input.customerId ? z.uuid().parse(input.customerId) : null;
-    if (!customerId) assertCanEnter(await clientPolicy(ctx), { phone: input.phone });
-    const r = await quickWalkIn({ ...input, customerId, phone: customerId ? null : input.phone || null, actor: ctx.actor });
+    const typed = customerId ? null : checkEntry(await clientPolicy(ctx), { ...input.details, phone: input.phone });
+    const r = await quickWalkIn({ shopId: input.shopId, serviceId: input.serviceId, name: input.name, preferredStaffId: input.preferredStaffId, customerId, phone: customerId ? null : (typed?.phone ?? null), actor: ctx.actor });
+    const clientId = r.seated ? r.appointment.customer?.id : r.entry.customerId;
+    if (typed && clientId) await fillEntry(clientId, typed, { actor: ctx.actor, staffId: ctx.staff.id, shopId: input.shopId });
     revalidatePath("/admin/walk-ins");
     revalidatePath("/admin/calendar");
     return r.seated

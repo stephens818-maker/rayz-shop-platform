@@ -21,6 +21,7 @@ import { noteViewer } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
 import { shopCatalog } from "@/server/catalog";
 import { shopDay } from "@/server/milestones/day";
+import { entryFields } from "@/server/client-entry";
 import { DayCalendar } from "./day-calendar";
 import { WeekCalendar } from "./week-calendar";
 
@@ -128,7 +129,7 @@ export default async function CalendarPage({
           schedules: can(ctx, "schedules.edit"),
           clients: can(ctx, "clients.view_all"),
           message: can(ctx, "clients.message"),
-          addPhone: policy.canAdd("phone"),
+          entry: entryFields(policy),
           correctTimes: can(ctx, "service_times.correct"),
           callIns: can(ctx, "callins.mark"),
           clockBlocks: can(ctx, "blocks.others"),

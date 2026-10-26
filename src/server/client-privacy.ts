@@ -321,11 +321,6 @@ export function entered(p: ClientPolicy, f: FieldKey, before: string | null | un
   return next === undefined ? (before ?? null) : next || null;
 }
 
-/** Contact details typed into a booking, walk-in or checkout: each one given needs "add". */
-export function assertCanEnter(p: ClientPolicy, given: Partial<Record<"phone" | "email", string | null | undefined>>) {
-  for (const f of ["phone", "email"] as const) if (given[f]?.trim()) entered(p, f, null, given[f]);
-}
-
 // ───────────────────────────── Audit details ─────────────────────────────
 
 const CLIENT_KEYS: Partial<Record<string, FieldKey>> = { phone: "phone", email: "email", address: "address", birthday: "birthday", notes: "notes" };
