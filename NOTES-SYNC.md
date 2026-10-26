@@ -323,16 +323,17 @@ Called "Marketing / Engage" at first. The UI, routes, permissions and report now
 
 ### Brand-to-shop settings ("brand-sync registry")
 
-There's no module by that name yet. These are the places where a brand setting flows down to shops today:
+`src/server/brand-sync` is the registry. Every brand-level option and permission is a sync type there (`SYNC_TYPES` in `src/domain/brand-sync.ts`), and the brand sends a change to the shops it picks:
 
-- **Catalog:** `services` and `products` hold the brand records. `shop_services` and `shop_products` hold each shop's price, duration, enabled flag and stock. `catalog.manage` pushes brand items to shops.
+- **Settings registry** (`settings.ts`, type `setting`): one entry per brand setting in `brand_settings`. A shop's own value is in `shop_sync_state.local` under `setting:<key>`; read it with `settingAt(key, shopId)` or `brandColumn(column, shopId)`, never `brand_settings` directly.
+- **Shop settings registry** (`shop-settings.ts`, type `shop_setting`): settings each shop keeps in its own `shops` column (online booking, selling with no stock, phone operator, customer screen, tip payout schedule). The brand's value is in `brand_sync_values` under `shop_setting:<key>`.
+- **Roles** (type `role`): every role but the Brand Owner; a shop's own version of a role lives in `shop_sync_state.local`.
+- **Brand lists** (`lists.ts`, type `list`), catalog (`service`, `product`, `service_rule`), money (`card_fee`, `taxes`, `tips`), location (`location_default`, `hours`, `receipt`, `closure`), rules (`field_rule`, `prompt_rule`), marketing (`campaign_template`, `automation`) and the feature switches (`app`, `checkout_prompts`, `milestones`, `loyalty`).
 - **Booking times:**
-  - Interval precedence is in `resolveInterval` in `src/domain/timing.ts`: barber at shop, then barber, then shop, then brand (`brand_settings.slot_interval_minutes`).
+  - Interval precedence is in `resolveInterval` in `src/domain/timing.ts`: barber at shop, then barber, then shop, then brand (the `slot_interval` setting at that shop).
   - Duration precedence is in `resolveDuration`: barber at shop, then barber, then the shop menu, then the service default.
-- **Loyalty:** brand-wide, in `brand_settings`.
-- **Client data protection:** brand policy, with per-role and per-person rules.
 
-If the mobile side means a specific registry from the plan, say which items it should cover and the core agent will build it.
+`tests/db/brand-sync-coverage.test.ts` fails when a table, column, brand value, permission or role isn't registered.
 
 ### Schema notes the mobile side may read
 
@@ -446,7 +447,6 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Open questions
 
-- Which C/I/S items does "brand-sync registry" refer to? See above.
 - C18 review login and the wallet fee: flags are off until Charles decides.
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 - Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).

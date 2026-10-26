@@ -1535,22 +1535,32 @@ Migration `core_0036_network_access` adds the rules (off for every shop), the de
 
 ### Brand change scope
 
-Every brand-level change asks which shops it goes to. One dialog does this everywhere a brand setting flows down to shops:
+Every brand-level option and every permission goes to shops the same way: change it once in the brand login, pick the shops, and it updates all of them together. No one has to sign in to each shop. One dialog does this for everything a shop uses that the brand sets:
 
-| Area | Where it's changed |
+| Area | What goes to shops |
 | --- | --- |
-| Services & prices | Services (a brand service's price, duration, name) and Bulk edit → Services |
-| Products & retail prices | Products → a product, and Bulk edit → Products |
-| Card fee | Setup → Credit card surcharge |
-| Checkout prompts | Checkout prompts |
-| Milestones & celebrations | Milestones → Settings (what a shop shows on the day) |
-| Loyalty rules | Settings → Loyalty (minimum visit, products and tips counting) |
-| Booking & cancellation policies | Brand defaults |
-| Hours template, Taxes, Receipt & branding | Brand defaults → Templates |
-| Campaign Center templates | Campaign Center → Templates |
-| Tip presets | Settings → Tip buttons on the customer screen |
-| Roles & permissions | Permissions → Roles → a brand role |
-| App config | Setup → App switches (booking and payments per shop) |
+| Services & products | A brand service's price and length, booking timing (increment, buffers), rebook days and suggested products; a product's retail price and stock levels (reorder, par, overstock). From Services, Products, Booking times, Checkout prompts, Bulk edit and the catalog upload |
+| Roles & permissions | Every role but the Brand Owner (shop, all-shops and brand-level roles): every permission toggle, the discount limit, the default access level. Creating and resetting a role go through it too. Client data access per role and checkout prompts per role |
+| Settings registry | Each brand setting in `src/server/brand-sync/settings.ts` (`SETTINGS`): staff time and time clock rules, payroll, compensation, tip payout policy, call-in outreach, message wording, picklists, review timing, Morning Dashboard, Campaign Center and openings rules, client lookup limits, shop login contact cap, client badges, family accounts, tax filing, sign-in alerts, the assistant, memberships, the post-visit question, the slot interval, the PO approval limit, the brand name |
+| Shop settings registry | What each shop keeps in its own record, in `src/server/brand-sync/shop-settings.ts` (`SHOP_SETTINGS`): online booking, selling with no stock, the phone operator, the customer screen, the tip payout schedule. Set under Brand defaults → Shop settings |
+| Brand lists | Block reasons, client fields, employee fields, custom badges and milestones (`src/server/brand-sync/lists.ts`). A new entry starts at no shop until it's sent |
+| Money | Card surcharge, tax rates, tip presets |
+| Location | Brand defaults (policies, booking site, reminders, integrations, starting role), the hours, receipt and closure templates |
+| Feature switches | App config (booking and payments per shop), checkout prompts, milestones on the day, loyalty earning rules |
+| Marketing | Campaign templates and automated campaigns (on or off, and the wording) |
+
+A setting that can only be one value for the whole brand (the Morning Dashboard email, the warehouse copy) still saves through the scope, with history and undo, and says why it reaches every shop.
+
+**Adding a setting.** A new brand setting is a `SETTINGS` entry (its `brand_settings` column, permission, editor path, how to read and check it); a new per-shop column is a `SHOP_SETTINGS` entry. The editor saves with `useSyncSave`, readers call `settingAt` / `brandColumn(column, shopId)`, and it appears in the dialog, the matrix and history. Nothing else is needed.
+
+**The coverage test** (`tests/db/brand-sync-coverage.test.ts`) fails when something a shop uses isn't registered with the scope:
+
+- every database table is classified (`src/server/brand-sync/coverage.ts`): sent to shops, a brand list, shared, the shop's own, a person, a record, or structure;
+- every column of the tables that mix settings with other things (`shops`, `services`, `products`, roles, campaign tables, ...) is classified, and every `shops` column marked as a setting has a registry entry;
+- every `brand_settings` column and every stored brand value has exactly one owner;
+- every permission is part of what a role sends to shops (or brand-only, and the brand's at every shop), and every role but the Brand Owner is a sync item;
+- nothing outside `src/server/brand-sync` reads or writes the brand's storage, and every other write to a table the scope carries is listed with why it isn't a brand change;
+- a role change, a shop setting and the slot interval sent to one shop change it there and nowhere else.
 
 **The sync dialog** opens on save and shows:
 
@@ -1560,7 +1570,7 @@ Every brand-level change asks which shops it goes to. One dialog does this every
 - **Apply now or schedule** for a date and time (default tomorrow at 9 AM). Scheduled syncs run from the brand-sync cron every 5 minutes, and can be run early or cancelled from History.
 - ⌘↵ applies and Esc closes. A change no shop would see (a brand-only rename, say) saves without asking.
 
-**Inheritance.** Each shop's setting either follows the brand (inherited) or is its own (overridden). A shop's own value wins; otherwise the brand's applies. A shop that's left out of a sync keeps what it had: if it was reading the brand live, its old value is stored as its own so nothing changes under it. When a shop manager saves the same value as the brand, it goes back in sync.
+**Inheritance.** Each shop's setting either follows the brand (inherited) or is its own (overridden). A shop's own value wins; otherwise the brand's applies. A shop that's left out of a sync keeps what it had: if it was reading the brand live, its old value is stored as its own so nothing changes under it. That includes a shop that sets only part of a setting itself (its own price but the brand's length, its own interval or time off rules): the parts it read from the brand are kept too. Its own record isn't touched; only a sync to that shop folds its own part in. When a shop manager saves the same value as the brand, it goes back in sync.
 
 **Sync status** (`/admin/sync-status`, Setup):
 
@@ -1570,7 +1580,7 @@ Every brand-level change asks which shops it goes to. One dialog does this every
 
 **Gating.** New locations start from the brand's hours, taxes and receipt templates in the Add Location wizard, and follow the brand for everything else. Every brand editor needs the same permission it did before. Anyone with one of those permissions can open Sync status; pushing, resetting, undoing and the shop-edit switches need that area's permission and access to every shop. Every sync is audited per shop (`brand_sync.shop`) and per batch.
 
-The bulk catalog upload keeps its own shop picker and dry-run preview (below); it doesn't go through the sync dialog.
+The bulk catalog upload keeps its own shop picker and dry-run preview (below); its brand prices, lengths and stock levels go to the shops it picks through the scope, with history and undo.
 
 <img alt="The sync dialog" src="docs/screenshots/brand-sync-dialog.png" width="800" />
 
