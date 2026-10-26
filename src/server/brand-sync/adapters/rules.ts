@@ -21,7 +21,6 @@ import {
 } from "@/domain/client-privacy";
 import { OWNER_ROLE_KEY, isBrandLevelRole } from "@/domain/permissions";
 import { audit } from "../../audit";
-import { callerRights } from "../../client-privacy";
 import { AppError, forbidden, notFound } from "../../errors";
 import { localValues } from "../store";
 import type { SyncAdapter } from "../types";
@@ -96,7 +95,8 @@ export const fieldRuleAdapter: SyncAdapter<FieldRuleBrand, Rules> = {
     const changes = z.record(z.string(), z.string().nullable()).parse(raw);
     const custom = await fieldNames(tx);
     const next: Rules = { ...before.rules };
-    const rights = who.ctx ? await callerRights(who.ctx) : null;
+    // client-privacy is server-only; the registry is loaded by most of the server, so it comes in only here.
+    const rights = who.ctx ? await (await import("../../client-privacy")).callerRights(who.ctx) : null;
     for (const [k, level] of Object.entries(changes)) {
       const { setting, field } = splitKey(k);
       if (!isSetting(setting) || !(isBuiltinField(field) || custom.some((c) => `custom:${c.id}` === field))) throw new AppError("bad_request", "Unknown field");
