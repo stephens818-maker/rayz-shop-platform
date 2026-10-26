@@ -12,6 +12,7 @@ import {
   useTransition,
 } from "react";
 import { checkMilestonesNow } from "@/components/celebration";
+import { useHotkeys } from "@/components/hotkeys";
 import { ClientBadges } from "@/components/client-badges";
 import { ClientNotesBrief } from "@/components/client-notes-brief";
 import {
@@ -958,9 +959,21 @@ export function Pos(props: {
         `${p.brand} ${p.name}`.toLowerCase().includes(productQ.toLowerCase()),
     )
     .slice(0, 12);
+  const canHandOff = !props.withClient && lines.length > 0 && !pending && waiting.length === 0;
+  const tendersShown = base.primaryBaseCents > 0 && !split;
+  useHotkeys({
+    ...Object.fromEntries(
+      tips.slice(0, 3).map((t, i) => [String(i + 1), () => pickTip(`p${t.percent}`, t.cents)]),
+    ),
+    "0": () => pickTip("none", 0),
+    c: () => (tendersShown ? setTender("cash") : false),
+    d: () => (tendersShown && props.payments.cards ? setTender("card") : false),
+    h: () => (canHandOff ? (setMsg(null), handToCustomer()) : false),
+    "mod+enter": () => (ready && !pending ? (setMsg(null), charge()) : false),
+  });
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="mx-auto max-w-6xl pb-20 md:pb-0">
       <Suggestions
         id="discount-reasons"
         items={props.reasons?.discount ?? []}
@@ -1045,7 +1058,7 @@ export function Pos(props: {
           </Notice>
         </div>
       )}
-      <div className="grid gap-4 lg:grid-cols-[1fr_400px]">
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_320px] lg:grid-cols-[minmax(0,1fr)_400px]">
         {/* Ticket */}
         <div className="space-y-4">
           <Card>
@@ -1818,7 +1831,7 @@ export function Pos(props: {
         </div>
 
         {/* Pay */}
-        <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+        <div id="pay-panel" className="scroll-mt-4 space-y-4 md:sticky md:top-4 md:max-h-[calc(100dvh-2rem)] md:self-start md:overflow-y-auto md:overscroll-contain md:pb-1">
           {props.prompts && !props.withClient && (
             <CheckoutPrompts
               saleId={props.sale.id}
@@ -2689,6 +2702,21 @@ export function Pos(props: {
           </Card>
         </div>
       </div>
+      {lines.length > 0 && (
+        <div className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white/95 px-4 py-3 backdrop-blur md:hidden" data-testid="pos-total-bar">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs text-zinc-500">
+                {lines.length} item{lines.length === 1 ? "" : "s"} · {totals.giftCardAppliedCents > 0 ? "Due now" : "Total"}
+              </div>
+              <div className="tabular text-xl font-semibold">{$(totals.primaryChargeCents)}</div>
+            </div>
+            <Button size="lg" onClick={() => document.getElementById("pay-panel")?.scrollIntoView({ behavior: "smooth" })}>
+              Tip &amp; pay
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2734,6 +2762,7 @@ function TipBtn({
   return (
     <button
       onClick={onClick}
+      aria-pressed={on}
       className={cx(
         "flex h-12 flex-col items-center justify-center rounded-lg ring-1 transition",
         on
@@ -2773,6 +2802,7 @@ function TenderBtn({
     <button
       onClick={onClick}
       disabled={disabled}
+      aria-pressed={on}
       className={cx(
         "rounded-xl px-3 py-3 text-left ring-1 transition disabled:cursor-not-allowed disabled:opacity-50",
         on

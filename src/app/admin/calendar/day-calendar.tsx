@@ -22,6 +22,9 @@ import {
   cx,
 } from "@/components/ui";
 import { ConflictConfirm } from "@/components/conflict-confirm";
+import { useHotkeys } from "@/components/hotkeys";
+import { columnsThatFit } from "@/domain/calendar-layout";
+import { toast } from "@/components/toast";
 import { ClientHitRow, FamilyPickList } from "@/components/client-hit";
 import { togglePartyMember } from "@/domain/family";
 import {
@@ -337,12 +340,32 @@ export function DayCalendar({
     move.run(
       () => moveAppointmentAction(a.id, col.id, data.date, startMin),
       () => setMoved(null),
+      `Moved to ${label(startMin)} with ${col.label}`,
     );
   };
   useEffect(() => {
     if (move.error) setMoved(null);
   }, [move.error]);
   const scroller = useRef<HTMLDivElement>(null);
+  const [perView, setPerView] = useState(data.columns.length);
+  const [page, setPage] = useState(() => {
+    const i = panel?.kind === "appt" ? data.columns.findIndex((c) => c.id === panel.col.id) : -1;
+    return i > 0 ? i : 0;
+  });
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const fit = () => setPerView(columnsThatFit(el.clientWidth));
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [data.columns.length]);
+  const pages = Math.max(1, Math.ceil(data.columns.length / Math.max(1, perView)));
+  const pageAt = Math.min(Math.floor(page / Math.max(1, perView)), pages - 1);
+  const first = pageAt * perView;
+  const visible = pages > 1 ? data.columns.slice(first, first + perView) : data.columns;
+  const turn = (d: number) => setPage(Math.max(0, Math.min(pages - 1, pageAt + d)) * perView);
 
   useEffect(() => {
     const t = setInterval(() => router.refresh(), 60_000);
@@ -415,6 +438,18 @@ export function DayCalendar({
     (c) => c.clock && (c.clock.worked.length > 0 || c.clock.status !== null),
   );
   const go = (d: string) => router.push(`/admin/calendar?date=${d}`);
+  useHotkeys(
+    {
+      t: () => go(today),
+      arrowleft: () => go(shiftDate(data.date, -1)),
+      arrowright: () => go(shiftDate(data.date, 1)),
+      "[": () => (pages > 1 ? turn(-1) : false),
+      "]": () => (pages > 1 ? turn(1) : false),
+      w: () => router.push(`/admin/calendar?${new URLSearchParams({ view: "week", date: data.date, ...(data.columns.length === 1 ? { staff: data.columns[0].id } : {}) })}`),
+      ...(canManage.walkins ? { n: () => router.push("/admin/walk-ins") } : {}),
+    },
+    { enabled: !panel },
+  );
   const legend = [
     ...new Map(
       data.columns
@@ -571,6 +606,41 @@ export function DayCalendar({
           <Notice tone="red">Couldn&apos;t move it: {move.error}</Notice>
         </div>
       )}
+      {pages > 1 && (
+        <div className="flex items-center justify-between gap-2 text-sm" data-testid="barber-pager">
+          <span className="text-zinc-600">
+            Barbers {first + 1}–{first + visible.length} of {data.columns.length}
+            <span className="ml-2 hidden text-xs text-zinc-400 sm:inline">[ and ] to page</span>
+          </span>
+          <div className="flex items-center gap-1">
+            {Array.from({ length: pages }, (_, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setPage(i * perView)}
+                aria-label={`Barbers ${i * perView + 1} to ${Math.min(data.columns.length, (i + 1) * perView)}`}
+                aria-current={i === pageAt ? "true" : undefined}
+                className={cx("size-2.5 rounded-full", i === pageAt ? "bg-ink-900" : "bg-zinc-300 hover:bg-zinc-400")}
+              />
+            ))}
+            <div className="ml-2 flex rounded-lg ring-1 ring-zinc-300">
+              {([-1, 1] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className="h-8 px-3 hover:bg-zinc-100 disabled:opacity-40"
+                  disabled={d < 0 ? pageAt === 0 : pageAt === pages - 1}
+                  onClick={() => turn(d)}
+                  onDragEnter={() => dragging && turn(d)}
+                  aria-label={d < 0 ? "Previous barbers" : "Next barbers"}
+                >
+                  {d < 0 ? "‹" : "›"}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {data.columns.length === 0 ? (
         <div className="rounded-xl border border-dashed border-zinc-300 bg-white px-6 py-12 text-center">
           <div className="text-sm font-medium">
@@ -595,9 +665,9 @@ export function DayCalendar({
         <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
           <div
             ref={scroller}
-            className="max-h-[calc(100dvh-14rem)] overflow-auto"
+            className="max-h-[calc(100dvh-14rem)] overflow-y-auto overflow-x-hidden"
           >
-            <div className="flex w-max min-w-full">
+            <div className="flex min-w-full">
               {/* time gutter */}
               <div className="sticky left-0 z-20 w-14 shrink-0 border-r border-zinc-200 bg-white">
                 <div
@@ -618,7 +688,7 @@ export function DayCalendar({
                   ))}
                 </div>
               </div>
-              {data.columns.map((col) => (
+              {visible.map((col) => (
                 <Column
                   key={col.id}
                   col={col}
@@ -843,7 +913,7 @@ function Column({
     : 0;
 
   return (
-    <div className="min-w-40 max-w-sm flex-1 border-r border-zinc-100 last:border-r-0 sm:min-w-48">
+    <div className="min-w-0 flex-1 border-r border-zinc-100 last:border-r-0">
       <div
         className={cx(
           "sticky top-0 z-10 flex flex-col justify-center gap-0.5 border-b border-zinc-200 bg-white px-2",
@@ -1566,6 +1636,7 @@ function useAction() {
       { ok: true; data: unknown } | { ok: false; error: string }
     >,
     after?: (data: unknown) => void,
+    done?: string,
   ) =>
     start(async () => {
       setError(null);
@@ -1573,6 +1644,7 @@ function useAction() {
       if (!r.ok) return setError(r.error);
       router.refresh();
       after?.(r.data);
+      if (done) toast(done);
     });
   return { pending, error, run, router };
 }

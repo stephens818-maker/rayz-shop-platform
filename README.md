@@ -318,6 +318,25 @@ These came with the Today work, beyond what was asked for:
 - **Per shop:** purchase orders carry the shop's own vendor account number.
 - **One-step changes from the portal:** offboarding, picklists and editable client messages. Reminders use each shop's own cancel cutoff.
 
+### Staff app look and feel
+
+- **Type and theme.** Text is set in Inter, self-hosted through `next/font` (no request to Google). The sidebar has **Light / Dark / Auto**, kept per device, so a shared front-desk tablet keeps its own setting. It's Light until someone picks another. Dark mode flips the colour palette in `src/app/dark.css`: pale tints become deep ones, and solid buttons keep white labels. Printouts stay light.
+- **Cmd-K (Ctrl-K) palette.** It searches every page and report the person can open, the shops they can switch to, and actions (theme, keyboard shortcuts, sign out). For logins that may search clients, it also finds clients the same way as `/`, with the same masking. On a touch screen, **Search…** at the top of the sidebar opens it.
+- **Keyboard shortcuts.** `?` lists them all.
+  - Everywhere: `G` then a letter jumps (`G C` calendar, `G S` sales, `G K` clients, `G R` reports, …).
+  - Calendar: `T` today, `←` `→` days, `[` `]` the next or previous barbers, `W` week, `N` walk-in.
+  - Checkout: `1` `2` `3` tip presets, `0` no tip, `C` cash, `D` card, `H` hand to customer, `⌘/Ctrl-Enter` take payment.
+  - Single keys never fire while typing in a field.
+- **Loading.** Every staff page shows a skeleton shaped like it while it loads (`loading.tsx`): the calendar, checkout, reports, clients and sales each have their own. Short confirmations, such as a calendar drag-and-drop move, show as a toast. Errors stay next to what needs fixing.
+- **Day board.** Barber columns share the width, so the board never scrolls sideways. When there are more barbers than fit at 120 px each, it pages them (`[` `]`, the dots, or dragging an appointment onto the arrows to reach another page).
+- **Checkout on a tablet.** From 768 px the ticket and the payment panel sit side by side, and the payment panel scrolls on its own. On a phone, a bar at the bottom keeps the total and **Tip & pay** in reach.
+- **Report charts.** Reports without their own trend line or heatmap draw their first table as bars, from its money column (else its count, else its hours). Dated rows show over time; other rows are ranked, top 12. Totals and subtotals are left out. The table below still has every row and the exact figures (`src/domain/report-charts.ts`).
+- **Accessibility.**
+  - A **Skip to content** link.
+  - A visible focus ring on every control.
+  - Respect for reduced motion.
+  - Roles on the palette (combobox and listbox), the theme switch (radio group) and loading regions (status).
+
 ### Customer booking (web + API)
 
 - The flow goes shop, then service plus add-ons, then barber or "Any barber", then a time slot, then contact details. There's a confirmation page and a manage page with cancel and reschedule. Online changes close at the 30-minute mark itself, and the page and the API agree on that.
@@ -332,7 +351,7 @@ These came with the Today work, beyond what was asked for:
 
 ### Front desk
 
-- **Day calendar** (per shop): a column per barber who's scheduled or has appointments that day.
+- **Day calendar** (per shop): a column per barber who's scheduled or has appointments that day. The columns fit across the screen, and barbers page when they don't all fit.
   - Time the barber isn't working is shaded, and blocked time (lunch, appointments, etc.) shows hatched with its reason.
   - Time the barber spends at *another* shop shows as "At Moline".
   - A red line marks the current time, the view refreshes every minute, and there are status counts at the top.

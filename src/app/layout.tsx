@@ -1,6 +1,14 @@
 import type { Metadata, Viewport } from "next";
+import localFont from "next/font/local";
 import { demoMode } from "@/lib/deployment";
 import "./globals.css";
+
+const inter = localFont({
+  src: "../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2",
+  weight: "100 900",
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: { default: "Ray'z Barber Shop", template: "%s · Ray'z" },
@@ -11,7 +19,7 @@ export const viewport: Viewport = { width: "device-width", initialScale: 1, them
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body>
         {demoMode() && (
           <div role="note" className="bg-amber-300 px-4 py-1 text-center text-xs font-medium text-amber-950">

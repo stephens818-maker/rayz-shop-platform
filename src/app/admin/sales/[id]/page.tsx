@@ -288,8 +288,8 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           )}
           {screen.screen?.signature && (
             <div className="mt-4 border-t border-dashed border-zinc-300 pt-3">
-              <svg viewBox="0 0 600 200" className="mx-auto block h-16 w-48" role="img" aria-label="Client's signature">
-                <path d={screen.screen.signature} fill="none" stroke="#111318" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+              <svg viewBox="0 0 600 200" className="mx-auto block h-16 w-48 text-zinc-900" role="img" aria-label="Client's signature">
+                <path d={screen.screen.signature} fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <div className="text-center text-[11px] text-zinc-500">Signed on the customer screen{screen.screen.signedAt ? ` · ${formatDateTime(screen.screen.signedAt)}` : ""}</div>
             </div>
