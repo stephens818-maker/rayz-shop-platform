@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, ne, sql } from "dr
 import { db, DBorTx, Tx } from "@/db";
 import { progressLabel, progressShare } from "@/domain/loyalty";
 import { appointments, contactOptOuts, customers, notificationJobs, payments, receiptDeliveries, receiptOptOuts, refunds, saleItems, sales, shops, staff } from "@/db/schema";
-import { feeLabel } from "@/domain/checkout";
+import { feeDisclosure, feeLabel, type CardFeeConfig } from "@/domain/checkout";
 import { groupByPerson } from "@/domain/combined-checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding } from "@/domain/connect";
@@ -77,7 +77,7 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
   if (!shop) throw notFound("Shop");
   const brand = receiptBranding(shop.receipt);
   const loyalty = customer ? await loyaltyBalance(customer.id, now, tx) : null;
-  const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; cardFee?: { rate: number } };
+  const pricing = (sale.pricing ?? {}) as { disclosures?: string[]; discounts?: { label: string; cents: number }[]; cardFee?: CardFeeConfig; cardFeeWaived?: { cents: number } };
   const service = items.find((i) => i.kind === "service" && i.refId);
   const rebook = takesOnlineBookings(shop, todayLocal(now))
     ? (() => {
@@ -119,6 +119,9 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
     taxCents: sale.serviceTaxCents + sale.productTaxCents,
     tipCents: sale.tipCents,
     fee: sale.cardFeeCents > 0 ? { label: pricing.cardFee ? feeLabel(pricing.cardFee) : "Credit card surcharge", cents: sale.cardFeeCents } : null,
+    feeWaivedCents: sale.cardFeeWaivedCents,
+    /** The brand's surcharge notice, on any receipt where a surcharge was charged or waived. */
+    feeNotice: (sale.cardFeeCents > 0 || sale.cardFeeWaivedCents > 0) && pricing.cardFee ? feeDisclosure(pricing.cardFee) : null,
     totalCents: sale.totalCents,
     tenders: pays.map((p) => ({ label: labelOf(p), cents: p.amountCents })),
     refunds: refs.map((r) => {
@@ -193,6 +196,8 @@ export async function composeReceipt(saleId: string, channel: ReceiptSendChannel
     taxCents: d.taxCents,
     tipCents: d.tipCents,
     fee: d.fee,
+    feeWaivedCents: d.feeWaivedCents,
+    feeNotice: d.feeNotice,
     totalCents: d.totalCents,
     tenders: d.tenders,
     refunds: d.refunds,

@@ -304,6 +304,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
               imported={sale.isImported}
               tipRemainingCents={refundable.tipRemainingCents}
               cardFeeRemainingCents={refundable.cardFeeRemainingCents}
+              feeRefundRule={refundable.feeRefundRule}
               items={refundable.items.map((i) => ({
                 id: i.id,
                 name: i.name,

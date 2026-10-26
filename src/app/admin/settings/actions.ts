@@ -8,7 +8,8 @@ import { brandSettings, shopClosures, shopHours, shops, terminalReaders } from "
 import { ReceiptBrandingSchema, receiptBranding } from "@/domain/connect";
 import { US_TIMEZONES } from "@/domain/location-lifecycle";
 import { checkSlug } from "@/server/location-admin";
-import { MAX_CARD_FEE_RATE } from "@/domain/checkout";
+import type { CardFeeOverride, CardFeePolicy } from "@/domain/card-fee-policy";
+import { saveBrandFeePolicy, saveShopFeeOverride } from "@/server/payments/card-fee";
 import { hoursProblem } from "@/domain/hours";
 import { normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
@@ -107,12 +108,9 @@ const Money = z.object({
   serviceTaxRate: z.number().min(0).max(0.2),
   productTaxRate: z.number().min(0).max(0.2),
   taxRatesVerified: z.boolean(),
-  cardFeeEnabled: z.boolean(),
-  cardFeeRate: z.number().min(0).max(MAX_CARD_FEE_RATE, `The card fee can't exceed ${MAX_CARD_FEE_RATE * 100}%`),
-  cardFeeAppliesToTip: z.boolean(),
 });
 
-/** Taxes and card fees are compliance settings with their own permission. */
+/** Taxes are a compliance setting with their own permission. The card fee has its own editor (settings.card_fee). */
 export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Money>) {
   return safe(async () => {
     const ctx = await authorize("settings.taxes");
@@ -121,16 +119,37 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
     await db
       .update(shops)
-      .set({ ...v, serviceTaxRate: v.serviceTaxRate.toFixed(5), productTaxRate: v.productTaxRate.toFixed(5), cardFeeRate: v.cardFeeRate.toFixed(5) })
+      .set({ ...v, serviceTaxRate: v.serviceTaxRate.toFixed(5), productTaxRate: v.productTaxRate.toFixed(5) })
       .where(eq(shops.id, shopId));
     await audit(
       ctx.actor,
       "shop.tax_fee",
       "shop",
       shopId,
-      { before: before && { serviceTaxRate: before.serviceTaxRate, productTaxRate: before.productTaxRate, cardFeeEnabled: before.cardFeeEnabled, cardFeeRate: before.cardFeeRate }, after: v },
+      { before: before && { serviceTaxRate: before.serviceTaxRate, productTaxRate: before.productTaxRate, taxRatesVerified: before.taxRatesVerified }, after: v },
       shopId,
     );
+    revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+/** The brand's credit card surcharge policy. Brand admins only; every save is audited with what changed. */
+export async function saveBrandCardFeeAction(policy: CardFeePolicy) {
+  return safe(async () => {
+    const ctx = await authorize("settings.card_fee");
+    await saveBrandFeePolicy(ctx.actor, policy);
+    revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+/** One shop's own surcharge settings on top of the brand's, or null to follow the brand. Audited. */
+export async function saveShopCardFeeAction(shopId: string, override: CardFeeOverride | null) {
+  return safe(async () => {
+    const ctx = await authorize("settings.card_fee");
+    assertShopAccess(ctx, shopId);
+    await saveShopFeeOverride(ctx.actor, shopId, override);
     revalidatePath("/admin/settings");
     return null;
   });

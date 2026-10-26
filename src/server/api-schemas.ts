@@ -515,7 +515,21 @@ export const AppTicketSchema = z.object({
     allowNoTip: z.boolean(),
   }),
   tipBarbers: z.array(z.object({ staffId: z.string().uuid(), label: z.string(), servicesCents: Cents })),
-  cardFee: z.object({ enabled: z.boolean(), rate: z.number(), appliesToTip: z.boolean(), walletFee: z.boolean(), notice: z.string().nullable() }),
+  cardFee: z
+    .object({
+      enabled: z.boolean().describe("false when the surcharge is off for this shop, this channel or this state"),
+      rate: z.number().describe("Fraction, e.g. 0.03; 0 for a flat fee"),
+      appliesToTip: z.boolean(),
+      walletFee: z.boolean(),
+      notice: z.string().nullable().describe("The brand's surcharge notice; show it before the customer authorizes"),
+      type: z.enum(["percent", "flat", "both"]).optional().describe("Added in 1.2"),
+      flatCents: Cents.optional().describe("Added in 1.2"),
+      capCents: Cents.nullable().optional().describe("Added in 1.2. The most the surcharge can be on one charge"),
+      minCents: Cents.nullable().optional().describe("Added in 1.2. The least it can be (still never above the legal limit)"),
+      wallets: z.object({ applePay: z.boolean(), googlePay: z.boolean() }).optional().describe("Added in 1.2. Wallets that pay it when walletFee is true"),
+      off: z.enum(["channel_off", "state_not_allowed"]).nullable().optional().describe("Added in 1.2. Why it's off here"),
+    })
+    .describe("Only credit cards pay it. The quote (POST .../quote) works out the amount server-side from the card's funding type; re-quote when the payment method changes."),
   pay: z.object({
     mode: z.enum(["stripe", "simulator"]),
     cards: z.boolean().describe("false: this shop can't take cards right now; pay at the counter"),
@@ -531,7 +545,7 @@ export const AppQuoteSchema = z.object({
   tipCents: Cents,
   dueCents: Cents,
   feeCents: Cents,
-  feeReason: z.enum(["applies", "not_credit", "wallet_fee_off", "disabled", "zero_amount"]),
+  feeReason: z.enum(["applies", "not_credit", "wallet_fee_off", "disabled", "zero_amount", "channel_off", "state_not_allowed", "waived"]).describe("channel_off, state_not_allowed and waived added in 1.2"),
   feeLabel: z.string().nullable(),
   chargeCents: Cents.describe("What goes on the card"),
   totalCents: Cents.describe("Send as expectedTotalCents"),

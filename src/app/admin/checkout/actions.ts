@@ -214,6 +214,7 @@ export async function finalizeAction(input: {
   tipByStaff?: StaffTip[] | null;
   tenders?: SplitTenderInput[] | null;
   ticketPeople?: string[] | null;
+  waiveCardFee?: { reason: string } | null;
 }) {
   return safe(async () => {
     const ctx = await requireStaff();
@@ -222,7 +223,7 @@ export async function finalizeAction(input: {
     if (input.manualDiscount && input.manualDiscount.value > 0 && !input.manualDiscount.reason.trim()) {
       throw new AppError("bad_request", "Add a reason for the discount");
     }
-    const r = await finalizeSale({ ...input, canOverridePrice: can(ctx, "pos.price_override"), canCustomCharge: can(ctx, "pos.custom_charge"), maxManualDiscountPct: ctx.maxDiscountPct, actor: ctx.actor });
+    const r = await finalizeSale({ ...input, canOverridePrice: can(ctx, "pos.price_override"), canCustomCharge: can(ctx, "pos.custom_charge"), canWaiveCardFee: can(ctx, "pos.waive_card_fee"), waiveCardFee: input.waiveCardFee?.reason ? { reason: input.waiveCardFee.reason, byStaffId: ctx.staff.id } : null, maxManualDiscountPct: ctx.maxDiscountPct, actor: ctx.actor });
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     revalidatePath("/admin/sales");
@@ -255,6 +256,7 @@ export async function handToCustomerAction(saleId: string, draft: HandoffDraftIn
       canDiscount: can(ctx, "pos.discount"),
       canOverridePrice: can(ctx, "pos.price_override"),
       canCustomCharge: can(ctx, "pos.custom_charge"),
+      canWaiveCardFee: can(ctx, "pos.waive_card_fee"),
       maxManualDiscountPct: ctx.maxDiscountPct,
     });
     (await cookies()).set(HANDOFF_COOKIE, await handoffToken(h.id), {
@@ -279,6 +281,7 @@ export async function sendToAppAction(saleId: string, draft: HandoffDraftInput) 
       canDiscount: can(ctx, "pos.discount"),
       canOverridePrice: can(ctx, "pos.price_override"),
       canCustomCharge: can(ctx, "pos.custom_charge"),
+      canWaiveCardFee: can(ctx, "pos.waive_card_fee"),
       maxManualDiscountPct: ctx.maxDiscountPct,
     });
     revalidatePath(`/admin/checkout/${saleId}`);

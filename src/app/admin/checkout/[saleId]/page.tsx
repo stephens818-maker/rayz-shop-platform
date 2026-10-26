@@ -1,3 +1,4 @@
+import { flags } from "@/lib/flags";
 import { checkoutCoverage } from "@/server/memberships";
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
@@ -179,6 +180,7 @@ export default async function CheckoutPage({
         }}
         config={{
           ...c.config,
+          walletFee: flags.walletFee(),
           tipPresets:
             handoff.tips.type === "percent"
               ? handoff.tips.values
@@ -336,6 +338,7 @@ export default async function CheckoutPage({
           maxDiscountPct: ctx.maxDiscountPct,
           priceOverride: can(ctx, "pos.price_override"),
           customCharge: can(ctx, "pos.custom_charge"),
+          waiveCardFee: can(ctx, "pos.waive_card_fee"),
           reassign: can(ctx, "checkout.any"),
         }}
         entry={entryFields(policy)}

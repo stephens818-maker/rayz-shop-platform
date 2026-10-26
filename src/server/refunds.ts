@@ -17,7 +17,7 @@ import {
   componentsTotal,
   lineRefunds,
 } from "@/domain/refunds";
-import type { LoyaltyBasis } from "@/domain/checkout";
+import type { CardFeeRefundRule, LoyaltyBasis } from "@/domain/checkout";
 import { loyaltyEligibleCents } from "@/domain/loyalty";
 import { formatCents } from "@/lib/money";
 import { localDateOf } from "@/lib/time";
@@ -48,6 +48,15 @@ export interface RefundRequest {
   now?: Date;
 }
 
+/**
+ * The brand's rule for the card surcharge on a refund, as it stood when the sale was paid. "keep"
+ * gives none of it back on a refund (a void still reverses it); null is a sale from before the rule.
+ */
+export function feeRefundRule(sale: Pick<Sale, "pricing">): CardFeeRefundRule | null {
+  const r = (sale.pricing as { cardFee?: { refundRule?: string } } | null)?.cardFee?.refundRule;
+  return r === "keep" || r === "proportional" ? r : null;
+}
+
 /** What's still refundable on a sale, per line and per component. Drives the refund form. */
 export async function refundableState(saleId: string, tx: Tx | typeof db = db) {
   const sale = await tx.query.sales.findFirst({ where: eq(sales.id, saleId) });
@@ -71,6 +80,7 @@ export async function refundableState(saleId: string, tx: Tx | typeof db = db) {
     })),
     tipRemainingCents: sale.tipCents - done.tipCents,
     cardFeeRemainingCents: sale.cardFeeCents - done.cardFeeCents,
+    feeRefundRule: feeRefundRule(sale),
     refundedCents: prior.reduce((a, r) => a + r.amountCents, 0),
     done,
   };
@@ -96,7 +106,7 @@ export async function refundEverything(saleId: string, reason: string, restock: 
     saleId,
     items: st.items.filter((i) => i.refundableQty > 0).map((i) => ({ saleItemId: i.id, qty: i.refundableQty })),
     tipCents: st.tipRemainingCents,
-    refundCardFee: st.cardFeeRemainingCents > 0,
+    refundCardFee: st.cardFeeRemainingCents > 0 && st.feeRefundRule !== "keep",
     reason,
     restock,
     actor,
@@ -213,7 +223,8 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   // A dashboard refund takes value without naming a line, so never give back more of a component than is left.
   const left = remainingComponents(sale, st.done);
   const asked = componentsFromLines(lines, o.tipCents, o.refundCardFee === true ? st.cardFeeRemainingCents : 0);
-  if (o.refundCardFee === "proportional") {
+  if (o.kind === "refund" && st.feeRefundRule === "keep") asked.cardFeeCents = 0;
+  else if (o.refundCardFee === "proportional") {
     const withTip = !!(sale.pricing as { cardFee?: { appliesToTip?: boolean } } | null)?.cardFee?.appliesToTip;
     const base = (c: RefundComponents) => c.serviceNetCents + c.productNetCents + c.giftCardSalesCents + c.taxCents + (withTip ? c.tipCents : 0);
     asked.cardFeeCents = proportionalCardFee({ feeLeftCents: st.cardFeeRemainingCents, refundBaseCents: base(asked), baseLeftCents: base(left) });
@@ -391,7 +402,10 @@ export async function recordProcessorRefund(paymentIntentId: string, amountRefun
     const tender = (await tenderStates(tx, sale.id, pays)).find((t) => t.id === p.id)!;
     const left = remainingComponents(sale, st.done);
     const remaining: RefundComponents = { ...left, tipCents: Math.min(tender.tipAvailableCents, left.tipCents), cardFeeCents: Math.min(tender.feeAvailableCents, left.cardFeeCents) };
-    const components = allocateAmount(remaining, delta);
+    // Under "keep" the surcharge is the last thing a dashboard refund reaches.
+    const keep = feeRefundRule(sale) === "keep";
+    const first = allocateAmount(keep ? { ...remaining, cardFeeCents: 0 } : remaining, delta);
+    const components = keep ? { ...first, cardFeeCents: Math.min(remaining.cardFeeCents, Math.max(0, delta - componentsTotal(first))) } : first;
     const cut = await cutSoldGiftCards(tx, sale.id, components.giftCardSalesCents);
     const recorded = componentsTotal(components);
     await recordSteps(tx, sale, pays, [{ tenderId: p.id, method: "card", amountCents: recorded, components }], {

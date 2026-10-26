@@ -3,7 +3,7 @@ import type Stripe from "stripe";
 import { and, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appPayments, checkoutHandoffs, customerDevices, customers, notificationJobs, payments, refreshTokens, sales, shops } from "@/db/schema";
-import { type CardFunding } from "@/domain/checkout";
+import { type CardFunding, feeDisclosure } from "@/domain/checkout";
 import { flags } from "@/lib/flags";
 import { formatCents } from "@/lib/money";
 import { assertSwitch } from "./app-switches";
@@ -156,7 +156,7 @@ async function toAppTicket(v: HandoffView, row: Row): Promise<AppTicket> {
       rate: type === "flat" ? 0 : fee.rate,
       appliesToTip: fee.appliesToTip,
       walletFee: flags.walletFee() && (wallets.applePay || wallets.googlePay),
-      notice: on ? v.feeNotice : null,
+      notice: on ? feeDisclosure(fee) : null,
       type,
       flatCents: type === "percent" ? 0 : (fee.flatCents ?? 0),
       capCents: fee.capCents ?? null,

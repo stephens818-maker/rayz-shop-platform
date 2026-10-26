@@ -141,6 +141,7 @@ type Card4 = {
   funding: CardFunding;
   brand: string;
   last4: string;
+  wallet?: string | null;
 };
 /** Everyone on the ticket, its own appointment first. */
 type Person = {
@@ -190,7 +191,7 @@ export function Pos(props: {
     times: TimesView | null;
   } | null;
   shop: { id: string; name: string; taxVerified: boolean };
-  config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[]; loyalty?: LoyaltyBasis };
+  config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[]; loyalty?: LoyaltyBasis; walletFee?: boolean };
   feeNotice: string | null;
   /** The tip the client chose while booking; filled in until someone changes it. */
   bookingTipCents?: number;
@@ -246,6 +247,7 @@ export function Pos(props: {
     priceOverride: boolean;
     reassign: boolean;
     customCharge?: boolean;
+    waiveCardFee?: boolean;
   };
   entry: EntryField[];
   reasons?: { discount: string[]; priceChange: string[] };
@@ -346,6 +348,7 @@ export function Pos(props: {
     props.payments.readers[0]?.id ?? null,
   );
   const [card, setCard] = useState<Card4 | null>(null);
+  const [waive, setWaive] = useState({ on: false, reason: "" });
   const [cashTendered, setCashTendered] = useState<number | null>(null);
   const [rebookWeeks, setRebookWeeks] = useState<number | null>(
     r0?.rebookInWeeks ?? null,
@@ -477,6 +480,7 @@ export function Pos(props: {
   const preview = (
     method: "cash" | "card" | "none",
     funding: CardFunding | null,
+    wallet: string | null = null,
   ) =>
     computeCheckout({
       lines: priced,
@@ -488,6 +492,9 @@ export function Pos(props: {
       tender: {
         method,
         cardFunding: funding,
+        cardWallet: wallet,
+        walletFeeOn: props.config.walletFee ?? false,
+        waiveFee: waive.on,
         giftCardCents: gift?.balanceCents ?? 0,
         giftCardBalanceCents: gift?.balanceCents ?? 0,
       },
@@ -499,6 +506,7 @@ export function Pos(props: {
   const single = preview(
     method,
     method === "card" ? (card?.funding ?? null) : null,
+    method === "card" ? (card?.wallet ?? null) : null,
   );
   const creditPreview = preview("card", "credit");
   const tips = tipSuggestions(base.serviceGrossCents, props.config.tipPresets);
@@ -529,6 +537,7 @@ export function Pos(props: {
     method: p.method,
     amountCents: toCents(p.amount),
     funding: p.card?.funding ?? null,
+    wallet: p.card?.wallet ?? null,
   }));
   const splitProblem = split
     ? splitTenderProblem(base.primaryBaseCents, partsIn)
@@ -538,6 +547,8 @@ export function Pos(props: {
         tipCents: Math.min(tipCents, base.primaryBaseCents),
         cardFee: props.config.cardFee,
         tenders: partsIn,
+        walletFeeOn: props.config.walletFee ?? false,
+        waive: waive.on,
       })
     : null;
   const totals =
@@ -545,6 +556,7 @@ export function Pos(props: {
       ? {
           ...base,
           cardFeeCents: plan.cardFeeCents,
+          cardFeeWaivedCents: plan.cardFeeWaivedCents,
           cardFeeRate: creditPreview.cardFeeRate,
           primaryChargeCents: plan.chargeCents,
           totalCents: base.preFeeTotalCents + plan.cardFeeCents,
@@ -790,6 +802,7 @@ export function Pos(props: {
             : null,
           tipByStaff: perBarber ? eachCents : null,
           ticketPeople: props.people.map((p) => p.appointmentId),
+          waiveCardFee: waive.on ? { reason: waive.reason } : null,
         }),
       (d) => {
         const q = new URLSearchParams({ done: "1" });
@@ -844,6 +857,7 @@ export function Pos(props: {
         ? "services"
         : tipSplit
       : null,
+    waiveCardFee: waive.on ? { reason: waive.reason } : null,
   });
   const handToCustomer = () =>
     act(
@@ -867,7 +881,13 @@ export function Pos(props: {
   const waitingMsg = waiting.length
     ? `Answer ${waiting.map((k) => (k === "rebook" ? "the rebook prompt" : "the product suggestions")).join(" and ")} before taking payment.`
     : null;
+  // Waiving is offered only where a surcharge would apply and the brand allows it.
+  const canWaive =
+    !!props.perms.waiveCardFee &&
+    props.config.cardFee.waiverAllowed !== false &&
+    (creditPreview.cardFeeCents > 0 || creditPreview.cardFeeWaivedCents > 0);
   const ready =
+    !(waive.on && !waive.reason.trim()) &&
     !waiting.length &&
     !props.withClient &&
     lines.length > 0 &&
@@ -2416,6 +2436,31 @@ export function Pos(props: {
                   )}
                 </div>
               )}
+              {canWaive && (method === "card" || split) && (
+                <div className="space-y-1 rounded-lg bg-zinc-50 px-3 py-2 ring-1 ring-zinc-200">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={waive.on}
+                      onChange={(e) =>
+                        setWaive({ ...waive, on: e.target.checked })
+                      }
+                    />
+                    Waive the card surcharge
+                  </label>
+                  {waive.on && (
+                    <input
+                      className="w-full rounded-md border border-zinc-200 px-2 py-1 text-sm"
+                      placeholder="Reason (required, kept in the audit log)"
+                      maxLength={200}
+                      value={waive.reason}
+                      onChange={(e) =>
+                        setWaive({ ...waive, reason: e.target.value })
+                      }
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </Card>
 
@@ -2499,9 +2544,16 @@ export function Pos(props: {
               <Row k="Tip" v={$(totals.tipCents)} />
               {totals.cardFeeCents > 0 && (
                 <Row
-                  k={feeLabel({ rate: totals.cardFeeRate })}
+                  k={feeLabel(props.config.cardFee)}
                   v={$(totals.cardFeeCents)}
                   className="text-amber-700"
+                />
+              )}
+              {totals.cardFeeWaivedCents > 0 && (
+                <Row
+                  k="Card surcharge waived"
+                  v={$(-totals.cardFeeWaivedCents)}
+                  className="text-zinc-500"
                 />
               )}
               {totals.giftCardAppliedCents > 0 && (

@@ -530,9 +530,9 @@ export function LocationWizard({
                 <fieldset className="grid gap-3 sm:grid-cols-2">
                   <legend className="mb-2 text-sm font-semibold text-zinc-800">Card fee</legend>
                   <label className="flex items-center gap-2 text-sm text-zinc-700">
-                    <input type="checkbox" checked={money.feeOn} onChange={(e) => setMoney({ ...money, feeOn: e.target.checked })} /> Pass the card fee on to clients
+                    <input type="checkbox" checked={money.feeOn} onChange={(e) => setMoney({ ...money, feeOn: e.target.checked })} /> Add a credit card surcharge
                   </label>
-                  <Field label="Card fee %">
+                  <Field label="Credit card surcharge % (max 3)" hint="Credit cards only. Anything that differs from the brand's surcharge is saved as this shop's own setting; the rest (channels, waivers, states) follows the brand.">
                     <Input inputMode="decimal" disabled={!money.feeOn} value={money.fee} onChange={(e) => setMoney({ ...money, fee: e.target.value })} />
                   </Field>
                   <label className="flex items-center gap-2 text-sm text-zinc-700">

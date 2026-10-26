@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
 import { appointments, brandSettings, checkoutHandoffs, customers, saleTipShares, sales, shops, staff, terminalReaders } from "@/db/schema";
-import { feeDisclosure, feeLabel } from "@/domain/checkout";
+import { feeDisclosure, feeLabel, type CardFeeConfig } from "@/domain/checkout";
 import { perBarberTipProblem } from "@/domain/combined-checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding, takesCards } from "@/domain/connect";
@@ -324,7 +324,7 @@ export async function handoffView(id: string): Promise<HandoffView> {
       ])
     : [[], []];
   const paidSplit = splitCents(sale.tipCents, paidShares.map((x) => ({ id: x.staffId, weight: x.weight })));
-  const pricing = (sale.pricing ?? {}) as { discounts?: { label: string; cents: number }[]; cardFee?: { rate: number } };
+  const pricing = (sale.pricing ?? {}) as { discounts?: { label: string; cents: number }[]; cardFee?: CardFeeConfig };
   // A ticket a gift card covers never reaches the reader, so its tip is asked for on the screen.
   const readerTips = cfg.shop.tipEntry === "reader" && cards && readers.length > 0 && (!t || t.primaryBaseCents - tipCents > 0);
   const receipt = receiptBranding(shop.receipt);
@@ -348,8 +348,8 @@ export async function handoffView(id: string): Promise<HandoffView> {
     totalCents: t?.totalCents ?? sale.totalCents,
     creditTotalCents: credit?.totals.totalCents ?? sale.totalCents,
     creditFeeCents: credit?.totals.cardFeeCents ?? sale.cardFeeCents,
-    feeLabel: credit && credit.totals.cardFeeCents > 0 ? feeLabel({ rate: credit.totals.cardFeeRate }) : paid && sale.cardFeeCents > 0 ? feeLabel({ rate: pricing.cardFee?.rate ?? Number(shop.cardFeeRate) }) : null,
-    feeNotice: cards ? feeDisclosure({ enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate) }) : null,
+    feeLabel: credit && credit.totals.cardFeeCents > 0 ? feeLabel(credit.cardFee) : paid && sale.cardFeeCents > 0 ? feeLabel(pricing.cardFee ?? { rate: Number(shop.cardFeeRate) }) : null,
+    feeNotice: cards ? feeDisclosure(credit?.cardFee ?? pricing.cardFee ?? { enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate) }) : null,
     tips: { choices: tipChoices(cfg.tips, t?.serviceGrossCents ?? 0), allowCustom: cfg.tips.allowCustom, allowNoTip: cfg.tips.allowNoTip },
     tip: { cents: r.tipCents, choice: r.tipChoice, source: r.tipSource, byStaff },
     split: paid ? paidShares.map((x) => ({ label: x.label, cents: paidSplit.get(x.staffId) ?? 0 })) : weights.map((w) => ({ label: names.get(w.staffId) ?? "Barber", cents: shares.get(w.staffId) ?? 0 })),

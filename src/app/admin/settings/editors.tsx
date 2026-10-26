@@ -130,17 +130,16 @@ export function ShopInfoEditor({ shopId, initial, editable }: { shopId: string; 
   );
 }
 
-type Money = { serviceTaxRate: number; productTaxRate: number; taxRatesVerified: boolean; cardFeeEnabled: boolean; cardFeeRate: number; cardFeeAppliesToTip: boolean };
+type Money = { serviceTaxRate: number; productTaxRate: number; taxRatesVerified: boolean };
 
 export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; initial: Money; canEdit: boolean }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState(initial);
   const [svc, setSvc] = useState((initial.serviceTaxRate * 100).toFixed(3).replace(/\.?0+$/, ""));
   const [prd, setPrd] = useState((initial.productTaxRate * 100).toFixed(3).replace(/\.?0+$/, ""));
-  const [fee, setFee] = useState((initial.cardFeeRate * 100).toFixed(2).replace(/\.?0+$/, ""));
   return (
     <Card>
-      <CardHeader title="Tax & card fee" subtitle={canEdit ? "Rates are stored per shop and snapshotted on every receipt." : "You can see but not change taxes and card fees."} />
+      <CardHeader title="Tax" subtitle={canEdit ? "Rates are stored per shop and snapshotted on every receipt." : "You can see but not change taxes."} />
       <fieldset disabled={!canEdit} className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Service tax %">
           <Input inputMode="decimal" value={svc} onChange={(e) => setSvc(e.target.value)} />
@@ -151,26 +150,12 @@ export function MoneyEditor({ shopId, initial, canEdit }: { shopId: string; init
         <label className="flex items-center gap-2 self-end pb-2 text-sm sm:col-span-2">
           <input type="checkbox" checked={v.taxRatesVerified} onChange={(e) => setV({ ...v, taxRatesVerified: e.target.checked })} /> Rates verified for this location
         </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={v.cardFeeEnabled} onChange={(e) => setV({ ...v, cardFeeEnabled: e.target.checked })} /> Charge a credit card fee
-        </label>
-        <Field label="Fee % (max 3)">
-          <Input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
-        </Field>
-        <label className="flex items-center gap-2 self-end pb-2 text-sm">
-          <input type="checkbox" checked={v.cardFeeAppliesToTip} onChange={(e) => setV({ ...v, cardFeeAppliesToTip: e.target.checked })} /> Fee applies to tip
-        </label>
-        <div className="sm:col-span-2 lg:col-span-4">
-          <Notice tone="blue">
-            The fee is added only when Stripe reports the card&apos;s funding type as <b>credit</b>. Debit, prepaid, gift cards and cash never pay it. It&apos;s shown at checkout before charging and printed on the receipt. Check state rules before enabling: surcharging rules differ by state and card brand.
-          </Notice>
-        </div>
       </fieldset>
       {canEdit && (
         <SaveBar
           pending={pending}
           msg={msg}
-          onClick={() => save(() => saveShopMoneyAction(shopId, { ...v, serviceTaxRate: Number(svc) / 100, productTaxRate: Number(prd) / 100, cardFeeRate: Number(fee) / 100 }))}
+          onClick={() => save(() => saveShopMoneyAction(shopId, { ...v, serviceTaxRate: Number(svc) / 100, productTaxRate: Number(prd) / 100 }))}
         />
       )}
     </Card>

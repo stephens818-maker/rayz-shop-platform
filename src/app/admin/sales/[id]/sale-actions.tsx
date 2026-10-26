@@ -36,6 +36,7 @@ export function SaleActions({
   items,
   tipRemainingCents,
   cardFeeRemainingCents,
+  feeRefundRule = null,
   imported,
   reasons = [],
   needsPin = false,
@@ -50,6 +51,8 @@ export function SaleActions({
   items: RefundableItem[];
   tipRemainingCents: number;
   cardFeeRemainingCents: number;
+  /** "keep": the brand keeps the card surcharge on refunds, so none of it is offered back. */
+  feeRefundRule?: "proportional" | "keep" | null;
   imported: boolean;
 }) {
   const router = useRouter();
@@ -79,7 +82,7 @@ export function SaleActions({
   const everything = () => {
     setQty(Object.fromEntries(items.map((i) => [i.id, left(i)])));
     setTip((tipRemainingCents / 100).toFixed(2));
-    setFee(cardFeeRemainingCents > 0);
+    setFee(cardFeeRemainingCents > 0 && feeRefundRule !== "keep");
   };
   const run = (fn: () => Promise<{ ok: boolean; error?: string }>) =>
     start(async () => {
@@ -137,12 +140,15 @@ export function SaleActions({
             <Input inputMode="decimal" value={tip} placeholder="0.00" onChange={(e) => setTip(e.target.value)} />
           </Field>
         )}
-        {cardFeeRemainingCents > 0 && (
+        {cardFeeRemainingCents > 0 && feeRefundRule === "keep" && (
+          <p className="text-xs text-zinc-500">The card surcharge ({formatCents(cardFeeRemainingCents)}) is kept on refunds, as the brand set. A same-day void still gives it back.</p>
+        )}
+        {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> Refund all of the card surcharge ({formatCents(cardFeeRemainingCents)})
           </label>
         )}
-        {cardFeeRemainingCents > 0 && !fee && total > 0 && (
+        {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && !fee && total > 0 && (
           <p className="text-xs text-zinc-500">Otherwise its share of what you refund goes back with it.</p>
         )}
         {items.some((i) => i.kind === "product" && (qty[i.id] ?? 0) > 0) && (

@@ -121,6 +121,8 @@ export interface ReceiptEmailInput {
   taxCents: number;
   tipCents: number;
   fee: { label: string; cents: number } | null;
+  feeWaivedCents?: number;
+  feeNotice?: string | null;
   totalCents: number;
   tenders: { label: string; cents: number }[];
   refunds: { label: string; cents: number }[];
@@ -165,11 +167,13 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
     row("Tax", o.taxCents),
     row("Tip", o.tipCents),
     ...(o.fee ? [row(o.fee.label, o.fee.cents)] : []),
+    ...(o.feeWaivedCents ? [`Card surcharge waived (${formatCents(o.feeWaivedCents)})`] : []),
     row("Total", o.totalCents),
     ...o.tenders.map((t) => row(`Paid with ${t.label}`, t.cents)),
     ...o.refunds.map((r) => row(r.label, r.cents, true)),
     ...(o.refunds.length ? [row("You paid, after refunds", o.totalCents - o.refunds.reduce((a, r) => a + r.cents, 0))] : []),
     ...(o.loyalty ? ["", o.loyalty] : []),
+    ...(o.feeNotice ? ["", o.feeNotice] : []),
     "",
     `See your receipt or rebook: ${o.url}`,
     ...(o.address || o.phone ? ["", ...[o.address, o.phone && `Call ${o.phone}`, o.mapUrl && `Directions: ${o.mapUrl}`].filter((x): x is string => !!x)] : []),

@@ -171,6 +171,12 @@ export default async function ReceiptPage({
                   <td className="text-right">{formatCents(d.fee.cents)}</td>
                 </tr>
               )}
+              {d.feeWaivedCents > 0 && (
+                <tr className="text-zinc-500">
+                  <td>Card surcharge waived</td>
+                  <td className="text-right">{formatCents(d.feeWaivedCents)}</td>
+                </tr>
+              )}
               <tr className="text-base font-bold">
                 <td className="pt-2">Total</td>
                 <td className="pt-2 text-right">{formatCents(d.totalCents)}</td>

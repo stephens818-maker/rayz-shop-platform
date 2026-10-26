@@ -42,6 +42,8 @@ import { defaultOwnerEntity } from "./owner-entities";
 import { createShopLogin, shopLoginRoles } from "./shop-logins";
 import { loadBrandDefaults, noteShopColumnChanges } from "./location-defaults";
 import { overridesFromColumns } from "@/domain/location-defaults";
+import { cleanOverride } from "@/domain/card-fee-policy";
+import { brandFeePolicy } from "./payments/card-fee";
 
 /** Adding, opening and retiring locations needs locations.setup, which only people who see every shop can hold. */
 export interface LocationAdmin {
@@ -168,6 +170,8 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
   if (productRows.length !== new Set(productIds).size) throw new AppError("bad_request", "One of the products no longer exists");
   const looked = d.latitude === null ? await geocodeAddress(d) : null;
   const brand = await loadBrandDefaults();
+  const feeBrand = await brandFeePolicy();
+  const feeOverride = cleanOverride(feeBrand, { enabled: d.cardFeeEnabled, rate: d.cardFeeRate, appliesToTip: d.cardFeeAppliesToTip });
   const pin =
     d.latitude !== null && d.longitude !== null
       ? { latitude: d.latitude, longitude: d.longitude, geocodeSource: d.geocodeSource ?? "manual", geocodedAt: new Date() }
@@ -207,6 +211,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         cardFeeEnabled: d.cardFeeEnabled,
         cardFeeRate: String(d.cardFeeRate),
         cardFeeAppliesToTip: d.cardFeeAppliesToTip,
+        cardFeeOverride: feeOverride as Record<string, unknown> | null,
         tipPresets: d.handoff.tips?.type === "percent" ? d.handoff.tips.values : d.tipPresets,
         handoff: d.handoff as unknown as Record<string, unknown>,
         paymentsMode: d.paymentsMode,

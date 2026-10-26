@@ -40,6 +40,9 @@ UPDATE "payments" p SET
   "fee_channel" = 'pos'
 FROM "sales" s
 WHERE s."id" = p."sale_id" AND p."method" = 'card' AND p."card_fee_cents" > 0 AND p."fee_basis" IS NULL;--> statement-breakpoint
+-- The amount it was on isn't stored for those, so it's worked back from the fee and the rate (to within a few cents).
+UPDATE "payments" SET "fee_basis_cents" = round("card_fee_cents" / "fee_rate")::int
+WHERE "method" = 'card' AND "card_fee_cents" > 0 AND "fee_rate" > 0 AND "fee_basis_cents" IS NULL;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "payments_fee_waived_idx" ON "payments" ("shop_id", "business_date") WHERE "fee_waived";--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["settings.card_fee"]'::jsonb WHERE "key" IN ('brand_owner', 'brand_admin') AND NOT ("permissions" ? 'settings.card_fee');--> statement-breakpoint
 UPDATE "roles" SET "permissions" = "permissions" || '["pos.waive_card_fee"]'::jsonb WHERE "permissions" ? 'pos.price_override' AND NOT ("permissions" ? 'pos.waive_card_fee');--> statement-breakpoint
