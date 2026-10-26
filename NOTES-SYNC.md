@@ -459,11 +459,22 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-26: core, customer app API 1.1 (first part), for mobile
+
+- **Built here at the user's direction**, although `/api/v1` is mobile's area: the user asked core to close the app audit's gaps. Everything is additive and backward-compatible, and the OpenAPI document (now 1.1.0) covers it. Mobile: please rebase PRs #2–#8 onto this branch rather than re-adding these.
+  - **`GET /api/v1/app/config`** (`src/server/app-config.ts`): versions, store links, maintenance, support and legal links, from env vars.
+  - **Version gate in `route()`** (`src/server/api.ts`): `X-Client: ios|android` with an `X-App-Version` below `APP_<PLATFORM>_MIN_VERSION` gets 426 `upgrade_required` with `details.storeUrl`. The config and the spec are exempt, and no `X-Client` is never gated. CORS now allows `X-Client`, `X-App-Version`, `PUT` and `DELETE`.
+  - **Migration `core_0082_customer_app`:** `shops.booking_mode` (`platform|external`) and `external_booking_url` (https, required for external, checked in SQL); `customers.preferences_note` (500 characters, scrubbed and contact-redacted by triggers) and `preferences_updated_at`.
+  - **Booking mode:** `takesOnlineBookings` is false for an external shop, so online and API booking refuse it. Staff booking is unaffected.
+  - **Preferences:** `PATCH /me` takes `preferencesNote` and `preferredBarberId` (`customers.preferred_staff_id`); `/me` returns `preferences: { note, updatedAt, preferredBarber }`. The staff `notes` column is never read or written by the app.
+  - **App link files:** `/.well-known/apple-app-site-association` and `assetlinks.json` (env `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE`, `ANDROID_CERT_SHA256`; 404 until set).
+- **Next from core, in this order:** C1 (OTP delivery providers), C2 and the rest of C13 (rate limits, sessions), C3–C5 (devices, push, consent; this adds `sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing`, `deleted_at` and `customer_devices` with the names `src/server/marketing/consent.ts` already reads), C10 (deletion), C9 (receipts), then C6–C8 and C14 (Stripe), then I1–I13.
+
 ### 2026-10-26: core, sandbox status for Testing Bot (Charles asked)
 
 1. **What's deployed or runnable today**
    - **Nothing is on Vercel or Neon.** No Vercel project is linked to the repo: PR #1 has no preview deployments and no deployment checks. The app runs anywhere with Postgres (`DEMO_MODE=true pnpm build && pnpm start`), and DEPLOY.md has the demo-preview steps.
-   - **A temporary sandbox is up now:** https://stamp-appeared-coal-secrets.trycloudflare.com. It's a demo-mode production build of `ab1d0e9`, served from the core agent's VM through a Cloudflare quick tunnel, with its own database (`rayz_sandbox`) and the full demo seed. Cards run on the simulator. No texts, emails, calls or push go out; they show under **Notifications** as suppressed.
+   - **A temporary sandbox is up now:** https://stamp-appeared-coal-secrets.trycloudflare.com. It's a demo-mode production build of the latest core push (now `ee4bcc6`, API 1.1), served from the core agent's VM through a Cloudflare quick tunnel, with its own database (`rayz_sandbox`) and the full demo seed. Cards run on the simulator. No texts, emails, calls or push go out; they show under **Notifications** as suppressed.
    - **Limits of the temporary sandbox:**
      - It's up only while the core agent's VM is running, and the URL changes if the tunnel restarts. Check this entry for the current URL.
      - It doesn't pick up new pushes on its own. Core rebuilds it after each push in the mobile list below.
@@ -472,7 +483,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
      - **Staff** at `/login` (one-click buttons on the page), password `rayz2026!`: `owner@rayz.test`, `admin@rayz.test`, `michelle@rayz.test` (Coralville manager), `frontdesk@rayz.test`, `makenna@rayz.test` (barber), and shop logins such as `coralville@rayz.test`. Time clock and customer-screen PIN: `2468`.
      - **Customers** on the web at `/account`, or through the API (`POST /api/v1/auth/otp/start` with `{"phone":"319-555-0100"}`, then `/verify`). In demo mode the code comes back as `devCode` and shows on screen. Other phones: `319-555-0201` (the Hayes family, one phone, three profiles), `309-555-0202`, `563-555-0203`.
      - **Test data:** card "Visa (credit)" in checkout, gift card `DEMO-GIFT-2500`, promo `WELCOME5`. The OpenAPI document is at `/api/v1/openapi.json`.
-   - **What the API at this URL covers:** today's `/api/v1` (booking, OTP sign-in, `/me`, appointments). The mobile gaps C1–C16 and I1–I13 aren't built yet, so it doesn't have device push, saved cards, app checkout, receipts, account deletion, `/app/config` or the rest. PR #7's sandbox is separate: a mock API on a laptop with code `123456`, not this platform.
+   - **What the API at this URL covers:** `/api/v1` booking, OTP sign-in, `/me` and appointments, plus the first customer-app pieces: `GET /app/config`, the 426 version gate (`X-Client`, `X-App-Version`), shop `bookingMode` and `externalBookingUrl`, and the preferences note on `/me` (C11, C12, C15 and C16, and the gate from C13). Device push, saved cards, app checkout, receipts, account deletion and the rest of C1–C16 and I1–I13 aren't built yet. PR #7's sandbox is separate: a mock API on a laptop with code `123456`, not this platform.
 2. **What's still needed for a lasting sandbox URL with test logins**
    - **From Charles (Vercel and Neon accounts, about 20 minutes, following DEPLOY.md, "Demo preview, step by step"):**
      - Create a Vercel project from `stephens818-maker/rayz-shop-platform`. Use the Pro plan, or Hobby with the cron schedules changed to daily.
