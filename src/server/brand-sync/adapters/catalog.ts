@@ -10,7 +10,7 @@ import {
 import { durationProblem } from "@/domain/timing";
 import { slugify } from "@/lib/ids";
 import { audit } from "../../audit";
-import { AppError, notFound } from "../../errors";
+import { AppError, forbidden, notFound } from "../../errors";
 import type { SyncAdapter } from "../types";
 
 // ───────────────────────────── Services ─────────────────────────────
@@ -143,6 +143,9 @@ export type ProductValue = {
   high: number | null;
 };
 
+/** What Inventory: manage may change on its own: the brand's stock levels. */
+const LEVEL_FIELDS = new Set<string>(["lowStockThreshold", "parLevel", "highStockThreshold"]);
+
 export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
   type: "product",
   noun: "Product",
@@ -150,7 +153,7 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
   store: "native",
   // A shop's levels are null while they're the brand's, and read the brand's at run time.
   live: true,
-  brandPerms: ["catalog.manage"],
+  brandPerms: ["catalog.manage", "inventory.manage"],
   lockable: true,
   note: "Only shops that carry the product get its retail price and stock levels. The SKU, maker, category and supply price stay brand-wide: the brand buys it once for every shop.",
   paths: ["/admin/products", "/admin/inventory"],
@@ -173,9 +176,13 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
     );
   },
   view: (b) => ({ priceCents: b.priceCents, ...effectiveLevels(b), high: b.highStockThreshold }),
-  async parse(_who, raw, item, before, tx) {
+  async parse(who, raw, item, before, tx) {
     if (!before) throw notFound("Product");
     const v = ProductInput.parse({ ...before, ...(raw as object) });
+    if (who.ctx && !who.ctx.permissions.has("catalog.manage")) {
+      const changed = (Object.keys(v) as (keyof typeof v)[]).filter((k) => v[k] !== undefined && v[k] !== before[k]);
+      if (changed.some((k) => !LEVEL_FIELDS.has(k))) throw forbidden("Changing a product's details or price needs Catalog: manage");
+    }
     const problem = levelsProblem(v.lowStockThreshold, v.parLevel) ?? highProblem(v.parLevel, v.highStockThreshold);
     if (problem) throw new AppError("bad_request", problem);
     const [clash] = await tx
