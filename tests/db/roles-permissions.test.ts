@@ -114,7 +114,7 @@ afterAll(async () => {
 });
 
 describe("templates", () => {
-  it("has every built-in role, Bookkeeper and Marketing included, under the brand's names", async () => {
+  it("has every built-in role, Apprentice, Bookkeeper and Marketing included, under the brand's names", async () => {
     const roles = await m.db.db.select().from(m.schema.roles);
     const names = Object.fromEntries(roles.filter((r) => r.key).map((r) => [r.key, r.name]));
     expect(names).toMatchObject({
@@ -124,7 +124,8 @@ describe("templates", () => {
       shop_manager: "Shop Manager",
       front_desk: "Front Desk",
       barber: "Barber",
-      bookkeeper: "Bookkeeper",
+      apprentice: "Apprentice",
+      bookkeeper: "Bookkeeper / Accountant",
       marketing: "Marketing",
     });
   });

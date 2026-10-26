@@ -146,6 +146,14 @@ describe("the query builder", () => {
     await expect(engine.runReport(michelle, await privacy.clientPolicy(michelle), def({ columns: [{ field: "total_spend" }] }))).rejects.toThrow(/every client/);
   });
 
+  it("refuses spend, tips and gift cards to people whose reports hide dollar amounts", async () => {
+    const admin = without(await ctxOf("admin"), ["reports.money"]);
+    const policy = await privacy.clientPolicy(admin);
+    await expect(engine.runReport(admin, policy, def({ columns: [{ field: "name" }, { field: "total_spend" }] }))).rejects.toThrow(/dollar amounts are hidden from you in reports/i);
+    const r = await engine.runReport(admin, policy, def({ columns: [{ field: "name" }, { field: "visits" }] }));
+    expect(r.total).toBeGreaterThan(0);
+  });
+
   it("applies the segment builder's filters", async () => {
     const owner = await ctxOf("owner");
     const policy = await privacy.clientPolicy(owner);

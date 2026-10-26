@@ -145,6 +145,23 @@ describe("location and barber scope", () => {
     await assistant.askAssistant(login, { question: "today?" }, { provider: p });
     expect(toolResults(p)[0]).not.toMatch(/Moline|Kimberly|Silvis|Utica|Dubuque/);
   });
+
+  it("hides dollar amounts from people without them, and reports on every shop for people with every-shop reports", async () => {
+    const michelle = await ctxOf("michelle");
+    const p = scripted([{ name: "run_report", args: { report: "sales_summary" } }]);
+    await assistant.askAssistant(without(michelle, ["reports.money"]), { question: "sales?" }, { provider: p });
+    expect(toolResults(p)[0]).not.toMatch(/\$\d/);
+    expect(toolResults(p)[0]).toMatch(/Dollar amounts are hidden/);
+    const q = scripted([{ name: "run_report", args: { report: "sales_summary" } }]);
+    await assistant.askAssistant(michelle, { question: "sales?" }, { provider: q });
+    expect(toolResults(q)[0]).toMatch(/\$\d/);
+
+    const wide: Ctx = { ...michelle, permissions: new Set([...michelle.permissions, "reports.all_shops"]) as Ctx["permissions"] };
+    const w = scripted([{ name: "run_report", args: { report: "sales_summary", locations: ["Moline"] } }]);
+    await assistant.askAssistant(wide, { question: "Moline sales?" }, { provider: w });
+    expect(toolResults(w)[0]).not.toMatch(/isn't one of your locations/);
+    expect(toolResults(w)[0]).toMatch(/Moline/);
+  });
 });
 
 describe("what reaches the model", () => {
