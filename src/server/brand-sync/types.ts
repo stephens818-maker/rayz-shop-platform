@@ -57,15 +57,32 @@ export interface SyncAdapter<B = unknown, V = unknown> {
   /** A local setting's value at a shop where nothing applies yet (a new campaign template): stored for shops it doesn't go to. */
   absent?: V;
   /** Validates what the editor sent; `before` is the current brand value (null for a new item). */
-  parse(who: Who, raw: unknown, item: string, before: B | null, tx: DBorTx): Promise<B>;
+  parse(
+    who: Who,
+    raw: unknown,
+    item: string,
+    before: B | null,
+    tx: DBorTx,
+  ): Promise<B>;
   /** Native settings: each shop's value, keyed "<shopId>|<item>". Missing: the setting doesn't apply there (a product it doesn't carry). */
-  shops?(tx: DBorTx, ids: readonly string[], shopIds: readonly string[], brand: ReadonlyMap<string, B>): Promise<Map<string, Native<V>>>;
+  shops?(
+    tx: DBorTx,
+    ids: readonly string[],
+    shopIds: readonly string[],
+    brand: ReadonlyMap<string, B>,
+  ): Promise<Map<string, Native<V>>>;
   /**
    * Writes the brand value (when `brand` is set) and the shops' values, in the order the storage
    * needs. A local setting's shop values are the engine's; it only passes the brand here.
    * `brand.to` null takes back an item a sync created (on undo).
    */
-  write(tx: DBorTx, who: Who, item: string, brand: { from: B | null; to: B | null } | null, shops: ReadonlyMap<string, ShopWrite<V>>): Promise<void>;
+  write(
+    tx: DBorTx,
+    who: Who,
+    item: string,
+    brand: { from: B | null; to: B | null } | null,
+    shops: ReadonlyMap<string, ShopWrite<V>>,
+  ): Promise<void>;
   /** Field label to display text, for previews, the matrix and the history. */
   describe(v: V, item: string): Record<string, string>;
   /** One line for a matrix cell or tooltip. */
@@ -73,7 +90,10 @@ export interface SyncAdapter<B = unknown, V = unknown> {
   /** After the change commits, for what can't happen inside it (a card reader's tip screen). Gets the shops whose value changed. */
   afterCommit?(shopIds: readonly string[]): Promise<void>;
   /** Who may lock or unlock shop edits; card fee keeps its own switch. */
-  control?: { get(tx: DBorTx): Promise<boolean>; set(tx: DBorTx, who: Who, on: boolean): Promise<void> };
+  control?: {
+    get(tx: DBorTx): Promise<boolean>;
+    set(tx: DBorTx, who: Who, on: boolean): Promise<void>;
+  };
   /** For a type whose items are different settings (the settings registry): each item's own permissions, note, pages and name. */
   itemPerms?(item: string): readonly Permission[];
   itemNote?(item: string): string | undefined;
@@ -84,6 +104,8 @@ export interface SyncAdapter<B = unknown, V = unknown> {
   /** The brand_settings columns and brand_sync_values keys this type owns; every one belongs to exactly one type. */
   columns?: readonly BrandColumn[];
   values?: readonly string[];
+  /** brand_sync_values keys this type owns by prefix (one key per item). */
+  valuePrefixes?: readonly string[];
 }
 
 export type AnyAdapter = SyncAdapter<any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any

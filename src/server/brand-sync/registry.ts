@@ -1,8 +1,20 @@
 import type { SyncArea, SyncType } from "@/domain/brand-sync";
-import { appAdapter, campaignTemplateAdapter, checkoutPromptsAdapter, loyaltyAdapter, milestonesAdapter, roleAdapter } from "./adapters/brand-only";
+import {
+  appAdapter,
+  campaignTemplateAdapter,
+  checkoutPromptsAdapter,
+  loyaltyAdapter,
+  milestonesAdapter,
+  roleAdapter,
+} from "./adapters/brand-only";
 import { productAdapter, serviceAdapter } from "./adapters/catalog";
-import { hoursAdapter, locationDefaultAdapter, receiptAdapter } from "./adapters/location";
+import {
+  hoursAdapter,
+  locationDefaultAdapter,
+  receiptAdapter,
+} from "./adapters/location";
 import { cardFeeAdapter, taxesAdapter, tipsAdapter } from "./adapters/money";
+import { listAdapter } from "./lists";
 import { settingAdapter } from "./settings";
 import type { AnyAdapter, SyncItem } from "./types";
 
@@ -22,6 +34,10 @@ export const ADAPTERS: Record<SyncType, AnyAdapter> = {
   receipt: receiptAdapter,
   app: appAdapter,
   setting: settingAdapter,
+  list: listAdapter,
 };
 
-export const areaOf = (a: AnyAdapter, item?: Pick<SyncItem, "area"> | null): SyncArea => item?.area ?? a.area;
+export const areaOf = (
+  a: AnyAdapter,
+  item?: Pick<SyncItem, "area"> | null,
+): SyncArea => item?.area ?? a.area;

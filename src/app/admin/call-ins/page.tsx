@@ -4,13 +4,27 @@ import { and, asc, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops } from "@/db/schema";
 import { ReasonTag } from "@/components/reason-picker";
-import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Table, Td, Th } from "@/components/ui";
+import {
+  Badge,
+  Card,
+  CardHeader,
+  Empty,
+  Notice,
+  PageHeader,
+  Table,
+  Td,
+  Th,
+} from "@/components/ui";
 import { CALL_IN_KIND_LABEL, quietLabel } from "@/domain/outreach";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, reasonViewer } from "@/server/auth/staff";
 import { barbersAt } from "@/server/barbers";
 import { pickerReasons } from "@/server/block-reasons";
-import { clockBlockCallIn, listCallIns, loadOutreachRules } from "@/server/call-ins";
+import {
+  clockBlockCallIn,
+  listCallIns,
+  loadOutreachRules,
+} from "@/server/call-ins";
 import { ClockBlockCallIn, MarkCallIn, OutreachRulesEditor } from "./client";
 
 export const metadata: Metadata = { title: "Call-ins" };
@@ -23,27 +37,59 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * `?block=<id>` opens the rebook flow for clients booked inside a time clock block (from the calendar,
  * Today or the manager email). `?staff=&shop=&from=HH:MM[&to=HH:MM]` fills the form in.
  */
-export default async function CallInsPage({ searchParams }: { searchParams: Promise<{ block?: string; staff?: string; shop?: string; from?: string; to?: string }> }) {
+export default async function CallInsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    block?: string;
+    staff?: string;
+    shop?: string;
+    from?: string;
+    to?: string;
+  }>;
+}) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/call-ins");
   const now = new Date();
   const markOthers = can(ctx, "callins.mark");
   const markOwn = can(ctx, "callins.mark_own");
-  const found = sp.block && UUID.test(sp.block) && (markOthers || markOwn) ? await clockBlockCallIn(sp.block, { shopIds: ctx.shopIds, viewer: reasonViewer(ctx), now }) : null;
-  const fromBlock = found && (markOthers || found.staffId === ctx.staff.id) ? found : null;
+  const found =
+    sp.block && UUID.test(sp.block) && (markOthers || markOwn)
+      ? await clockBlockCallIn(sp.block, {
+          shopIds: ctx.shopIds,
+          viewer: reasonViewer(ctx),
+          now,
+        })
+      : null;
+  const fromBlock =
+    found && (markOthers || found.staffId === ctx.staff.id) ? found : null;
   const [list, barbers, reasons, shopRows, rules] = await Promise.all([
-    listCallIns(ctx.shopIds, { since: new Date(now.getTime() - 14 * 86_400_000), viewer: reasonViewer(ctx) }),
+    listCallIns(ctx.shopIds, {
+      since: new Date(now.getTime() - 14 * 86_400_000),
+      viewer: reasonViewer(ctx),
+    }),
     barbersAt(ctx.shopIds),
-    pickerReasons("time_off"),
-    db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, ctx.shopIds), ne(shops.status, "archived"))).orderBy(asc(shops.name)),
+    pickerReasons("time_off", ctx.currentShopId),
+    db
+      .select({ id: shops.id, name: shops.name })
+      .from(shops)
+      .where(and(inArray(shops.id, ctx.shopIds), ne(shops.status, "archived")))
+      .orderBy(asc(shops.name)),
     loadOutreachRules(),
   ]);
-  const markable = barbers.filter((b) => b.active && (markOthers || (markOwn && b.id === ctx.staff.id)));
+  const markable = barbers.filter(
+    (b) => b.active && (markOthers || (markOwn && b.id === ctx.staff.id)),
+  );
   const preBarber = markable.find((b) => b.id === sp.staff);
   const prefill = preBarber
     ? {
         staffId: preBarber.id,
-        shopId: sp.shop && preBarber.shopIds.includes(sp.shop) && shopRows.some((s) => s.id === sp.shop) ? sp.shop : "",
+        shopId:
+          sp.shop &&
+          preBarber.shopIds.includes(sp.shop) &&
+          shopRows.some((s) => s.id === sp.shop)
+            ? sp.shop
+            : "",
         from: sp.from && HHMM.test(sp.from) ? sp.from : null,
         to: sp.to && HHMM.test(sp.to) ? sp.to : null,
       }
@@ -61,15 +107,33 @@ export default async function CallInsPage({ searchParams }: { searchParams: Prom
         (fromBlock && !fromBlock.over ? (
           <ClockBlockCallIn block={fromBlock} />
         ) : (
-          <Notice tone="blue">{fromBlock ? "That time clock block is over, so there's nobody left to rebook from it." : "That time clock block is gone: the punch was corrected or a manager removed it."}</Notice>
+          <Notice tone="blue">
+            {fromBlock
+              ? "That time clock block is over, so there's nobody left to rebook from it."
+              : "That time clock block is gone: the punch was corrected or a manager removed it."}
+          </Notice>
         ))}
 
       {(markOthers || markOwn) && markable.length > 0 && (
-        <MarkCallIn today={todayLocal(now)} barbers={markable.map((b) => ({ id: b.id, name: b.name, shopIds: b.shopIds }))} shops={shopRows} reasons={reasons} me={ctx.staff.id} prefill={prefill} />
+        <MarkCallIn
+          today={todayLocal(now)}
+          barbers={markable.map((b) => ({
+            id: b.id,
+            name: b.name,
+            shopIds: b.shopIds,
+          }))}
+          shops={shopRows}
+          reasons={reasons}
+          me={ctx.staff.id}
+          prefill={prefill}
+        />
       )}
 
       <Card>
-        <CardHeader title="Current and upcoming" subtitle="Open one to contact the clients." />
+        <CardHeader
+          title="Current and upcoming"
+          subtitle="Open one to contact the clients."
+        />
         {open.length === 0 ? (
           <div className="p-4">
             <Empty title="Nobody is called in" />
@@ -90,14 +154,20 @@ export default async function CallInsPage({ searchParams }: { searchParams: Prom
         <OutreachRulesEditor rules={rules} />
       ) : (
         <p className="text-sm text-zinc-500">
-          Follow-up after {rules.retryAfterHours} h without an answer, then flagged for staff. Quiet hours: {quietLabel(rules)}. Rebook links last {rules.linkTtlHours} h.
+          Follow-up after {rules.retryAfterHours} h without an answer, then
+          flagged for staff. Quiet hours: {quietLabel(rules)}. Rebook links last{" "}
+          {rules.linkTtlHours} h.
         </p>
       )}
     </div>
   );
 }
 
-function CallInTable({ rows }: { rows: Awaited<ReturnType<typeof listCallIns>> }) {
+function CallInTable({
+  rows,
+}: {
+  rows: Awaited<ReturnType<typeof listCallIns>>;
+}) {
   return (
     <Table>
       <thead>
@@ -112,11 +182,15 @@ function CallInTable({ rows }: { rows: Awaited<ReturnType<typeof listCallIns>> }
       </thead>
       <tbody>
         {rows.map((c) => {
-          const done = (c.by.rebooked ?? 0) + (c.by.declined ?? 0) + (c.by.cancelled ?? 0);
+          const done =
+            (c.by.rebooked ?? 0) + (c.by.declined ?? 0) + (c.by.cancelled ?? 0);
           return (
             <tr key={c.id}>
               <Td className="font-medium">
-                <Link className="underline-offset-2 hover:underline" href={`/admin/call-ins/${c.id}`}>
+                <Link
+                  className="underline-offset-2 hover:underline"
+                  href={`/admin/call-ins/${c.id}`}
+                >
                   {c.staffLabel}
                 </Link>
               </Td>
@@ -124,7 +198,13 @@ function CallInTable({ rows }: { rows: Awaited<ReturnType<typeof listCallIns>> }
               <Td>
                 <span className="inline-flex items-center gap-1.5">
                   <ReasonTag reason={c.reasonShown} />
-                  {!c.reasonShown.hidden && c.kind !== "other" && c.reasonShown.label !== CALL_IN_KIND_LABEL[c.kind] && <span className="text-xs text-zinc-500">{CALL_IN_KIND_LABEL[c.kind]}</span>}
+                  {!c.reasonShown.hidden &&
+                    c.kind !== "other" &&
+                    c.reasonShown.label !== CALL_IN_KIND_LABEL[c.kind] && (
+                      <span className="text-xs text-zinc-500">
+                        {CALL_IN_KIND_LABEL[c.kind]}
+                      </span>
+                    )}
                 </span>
               </Td>
               <Td>{c.shopName ?? "All their shops"}</Td>
@@ -136,9 +216,13 @@ function CallInTable({ rows }: { rows: Awaited<ReturnType<typeof listCallIns>> }
                   <span className="text-zinc-500">Nobody booked</span>
                 ) : (
                   <span className="inline-flex flex-wrap gap-1">
-                    {(c.by.pending ?? 0) > 0 && <Badge tone="amber">{c.by.pending} not contacted</Badge>}
+                    {(c.by.pending ?? 0) > 0 && (
+                      <Badge tone="amber">{c.by.pending} not contacted</Badge>
+                    )}
                     {done > 0 && <Badge tone="green">{done} done</Badge>}
-                    {c.flagged > 0 && <Badge tone="red">{c.flagged} need staff</Badge>}
+                    {c.flagged > 0 && (
+                      <Badge tone="red">{c.flagged} need staff</Badge>
+                    )}
                   </span>
                 )}
               </Td>

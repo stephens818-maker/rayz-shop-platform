@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useSyncSave } from "@/components/brand-sync";
+import { SyncMsg, useSyncSave } from "@/components/brand-sync";
+import { ListShops, useListSync } from "@/components/list-sync";
 import { Badge, Button, Field, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import {
@@ -153,11 +154,20 @@ export function MilestoneSettingsForm({
         <Button
           size="sm"
           disabled={pending}
-          onClick={() => save({ label: "Milestone celebrations", changes: [{ type: "milestones", item: "brand", value: s }] })}
+          onClick={() =>
+            save({
+              label: "Milestone celebrations",
+              changes: [{ type: "milestones", item: "brand", value: s }],
+            })
+          }
         >
           Save
         </Button>
-        {msg && <span className={msg.ok ? "text-emerald-700" : "text-red-600"}>{msg.text}</span>}
+        {msg && (
+          <span className={msg.ok ? "text-emerald-700" : "text-red-600"}>
+            {msg.text}
+          </span>
+        )}
         {dialog}
       </div>
     </div>
@@ -186,7 +196,8 @@ export function RuleEditor({
 }: {
   rule: RuleRow;
   services: Option[];
-  onDone?: () => void;
+  /** With what was saved; nothing when cancelled or removed. */
+  onDone?: (saved?: { id: string; name: string }) => void;
 }) {
   const { pending, error, setError, run } = useAction();
   const [r, setR] = useState(rule);
@@ -197,7 +208,7 @@ export function RuleEditor({
     if (!thresholds) return setError("Use whole numbers, separated by commas");
     run(
       () => saveMilestoneRuleAction({ ...r, unit: r.unit ?? "", thresholds }),
-      () => onDone?.(),
+      (saved) => onDone?.({ id: saved.id, name: r.name }),
     );
   };
   return (
@@ -324,7 +335,7 @@ export function RuleEditor({
           {isNew ? "Add milestone" : "Save"}
         </Button>
         {onDone && (
-          <Button size="sm" variant="ghost" onClick={onDone}>
+          <Button size="sm" variant="ghost" onClick={() => onDone()}>
             Cancel
           </Button>
         )}
@@ -359,10 +370,12 @@ export function RuleRowView({
   rule,
   services,
   summary,
+  brand,
 }: {
   rule: RuleRow;
   services: Option[];
   summary: string;
+  brand: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   if (editing)
@@ -382,6 +395,9 @@ export function RuleRowView({
         </div>
         <div className="text-xs text-zinc-500">{summary}</div>
       </div>
+      {brand && rule.id && rule.active && (
+        <ListShops list="milestone_rule" id={rule.id} label={rule.name} />
+      )}
       <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>
         Edit
       </Button>
@@ -389,13 +405,33 @@ export function RuleRowView({
   );
 }
 
-export function NewRule({ services }: { services: Option[] }) {
+export function NewRule({
+  services,
+  brand,
+}: {
+  services: Option[];
+  brand: boolean;
+}) {
   const [open, setOpen] = useState(false);
+  const shops = useListSync("milestone_rule");
   if (!open)
     return (
-      <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
-        Add your own
-      </Button>
+      <span className="inline-flex items-center gap-2">
+        <SyncMsg msg={shops.msg} />
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => setOpen(true)}
+          title={
+            brand
+              ? "A new milestone starts at no shop: pick the shops that get it next"
+              : undefined
+          }
+        >
+          Add your own
+        </Button>
+        {shops.dialog}
+      </span>
     );
   return (
     <RuleEditor
@@ -411,7 +447,10 @@ export function NewRule({ services }: { services: Option[] }) {
         builtIn: false,
       }}
       services={services}
-      onDone={() => setOpen(false)}
+      onDone={(saved) => {
+        setOpen(false);
+        if (brand && saved) shops.offer(saved.id, saved.name);
+      }}
     />
   );
 }

@@ -104,7 +104,7 @@ export default async function CalendarPage({
       noteViewer(ctx, policy),
     ),
     shopCatalog(shopId),
-    pickerReasons("blocks"),
+    pickerReasons("blocks", shopId),
     date === today ? shopDay([shopId]) : null,
   ]);
   return (

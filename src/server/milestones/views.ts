@@ -191,7 +191,7 @@ export async function trophyCase(staffId: string) {
 /** How far they are to the next of each count and streak, and their time with the brand. */
 export async function progressFor(p: Person, now: Date) {
   const today = todayLocal(now);
-  const rules = await loadRules({ activeOnly: true });
+  const rules = await loadRules({ activeOnly: true, shopId: p.workShops[0] });
   const counts = await Promise.all(
     rules
       .filter((r) => r.kind === "count")
