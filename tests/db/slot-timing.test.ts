@@ -5,6 +5,7 @@
  * database constraints behind it, who may change what, and DST days.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 
@@ -301,12 +302,12 @@ describe("service timing", () => {
     expect(await timing.saveShopDurationAction(cv.id, gray.id, null)).toMatchObject({ ok: true });
 
     const fadeTiming = { defaultDurationMin: 45, durationStepMin: 15, bookingIncrementMin: null, bufferBeforeMin: 0, bufferAfterMin: 0 };
-    const r = await timing.saveServiceTimingAction(fade.id, fadeTiming);
+    const r = await brandAction("service_rule", `timing:${fade.id}`, fadeTiming);
     expect(r).toMatchObject({ ok: false, error: expect.stringContaining("Casey (40 min)") });
-    expect(await timing.saveServiceTimingAction(fade.id, { ...fadeTiming, durationStepMin: 5, bufferAfterMin: 5 })).toMatchObject({ ok: true });
+    expect(await brandAction("service_rule", `timing:${fade.id}`, { ...fadeTiming, durationStepMin: 5, bufferAfterMin: 5 })).toMatchObject({ ok: true });
     const log = await m.db.db.query.auditLog.findFirst({ where: and(eq(m.schema.auditLog.action, "timing.service"), eq(m.schema.auditLog.entityId, fade.id)) });
-    expect(log?.details).toMatchObject({ changed: { bufferAfterMin: { from: 0, to: 5 } } });
-    expect(await timing.saveServiceTimingAction(fade.id, { ...fadeTiming, durationStepMin: 5 })).toMatchObject({ ok: true });
+    expect(log?.details).toMatchObject({ before: { bufferAfterMin: 0 }, after: { bufferAfterMin: 5 } });
+    expect(await brandAction("service_rule", `timing:${fade.id}`, { ...fadeTiming, durationStepMin: 5 })).toMatchObject({ ok: true });
   });
 });
 
@@ -324,8 +325,8 @@ describe("who may change booking times", () => {
     expect(await timing.saveBarberIntervalAction(makenna.id, null, 20)).toMatchObject({ ok: true }); // she only works at Coralville
     expect(await timing.saveBarberIntervalAction(casey.id, null, 20)).toMatchObject({ ok: false, error: expect.stringMatching(/outside your access/) });
     expect(await timing.saveShopIntervalAction(moline.id, 30)).toMatchObject({ ok: false });
-    expect(await timing.saveBrandIntervalAction(20)).toMatchObject({ ok: false, error: expect.stringMatching(/every shop shares/) });
-    expect(await timing.saveServiceTimingAction(fade.id, fadeTiming)).toMatchObject({ ok: false, error: expect.stringMatching(/every shop shares/) });
+    expect(await brandAction("setting", "slot_interval", 20)).toMatchObject({ ok: false, error: expect.stringMatching(/every shop/) });
+    expect(await brandAction("service_rule", `timing:${fade.id}`, fadeTiming)).toMatchObject({ ok: false, error: expect.stringMatching(/every shop/) });
     expect(await timing.saveShopIntervalAction(cv.id, 7)).toMatchObject({ ok: false, error: expect.stringMatching(/multiple of 5/) });
     expect(await timing.saveShopIntervalAction(cv.id, 25)).toMatchObject({ ok: true });
     const log = await m.db.db.query.auditLog.findMany({ where: and(eq(m.schema.auditLog.action, "timing.shop_interval"), eq(m.schema.auditLog.entityId, cv.id)) });
@@ -345,9 +346,9 @@ describe("who may change booking times", () => {
     expect(await timing.saveBarberIntervalAction(makenna.id, cv.id, 30)).toMatchObject({ ok: false });
 
     await login("owner@rayz.test");
-    expect(await timing.saveBrandIntervalAction(20)).toMatchObject({ ok: true });
+    expect(await brandAction("setting", "slot_interval", 20)).toMatchObject({ ok: true });
     expect((await serverTiming.staffIntervals(cv, [makenna.id])).get(makenna.id)).toEqual({ minutes: 20, source: "brand" });
-    expect(await timing.saveBrandIntervalAction(15)).toMatchObject({ ok: true });
+    expect(await brandAction("setting", "slot_interval", 15)).toMatchObject({ ok: true });
     expect(await m.db.db.query.shops.findFirst({ where: eq(m.schema.shops.id, cv.id) })).toMatchObject({ slotIntervalMinutes: null });
   });
 });

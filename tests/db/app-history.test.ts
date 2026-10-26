@@ -5,7 +5,8 @@
  * The shop's policies on GET /shops/{shop} (I9). Home shop and birthday on /me (C16).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { Mods, actor, loadModules } from "./setup";
+import { brandSet } from "./brand";
+import { Mods, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -21,7 +22,6 @@ let apptsRoute: typeof import("@/app/api/v1/me/appointments/route");
 let ledgerRoute: typeof import("@/app/api/v1/me/loyalty/ledger/route");
 let rebookRoute: typeof import("@/app/api/v1/me/suggested-rebook/route");
 let shopRoute: typeof import("@/app/api/v1/shops/[shop]/route");
-let switches: typeof import("@/server/app-switches");
 const fx = { shopId: "", michelle: "", cutId: "" };
 const s = () => m.schema;
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
@@ -76,7 +76,6 @@ beforeAll(async () => {
   ledgerRoute = await import("@/app/api/v1/me/loyalty/ledger/route");
   rebookRoute = await import("@/app/api/v1/me/suggested-rebook/route");
   shopRoute = await import("@/app/api/v1/shops/[shop]/route");
-  switches = await import("@/server/app-switches");
   const shop = (await m.db.db.query.shops.findFirst({ where: eq(s().shops.slug, "coralville") }))!;
   fx.shopId = shop.id;
   fx.michelle = (await m.db.db.query.staff.findFirst({ where: eq(s().staff.displayLabel, "Michelle") }))!.id;
@@ -193,14 +192,14 @@ describe("my appointments (I6)", () => {
       [kidVisit.code, "Kip"],
     ]);
 
-    await switches.saveAppSwitches(actor, { family: false });
+    await brandSet("app", "switches", { family: false });
     try {
       const off = await get("?family=true");
       expect(off.status).toBe(403);
       expect((await off.json()).error.details).toMatchObject({ switch: "family" });
       expect((await get()).status).toBe(200);
     } finally {
-      await switches.saveAppSwitches(actor, { family: true });
+      await brandSet("app", "switches", { family: true });
     }
   });
 });

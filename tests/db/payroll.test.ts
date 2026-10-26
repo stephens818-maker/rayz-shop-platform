@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import ExcelJS from "exceljs";
 import { DateTime } from "luxon";
+import { brandSettings } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 
@@ -67,7 +68,7 @@ describe("payroll period", () => {
   it("blocks approve-and-lock while any total doesn't reconcile, and shows why", async () => {
     const moline = (await shop("moline"))!;
     const [a, b] = [await staffBy("Jamie"), await staffBy("Kat")];
-    await run.savePayrollSettings({ ...(await run.loadSettings()), roundExport2dp: true }, actor);
+    await brandSettings({ payroll: { ...(await run.loadSettings()), roundExport2dp: true } });
     for (const s of [a, b]) expect(await run.setOverride(moline.id, START, s.id, "tips", 1.005, "test", actor)).toBeNull();
     const v = (await run.buildPayroll(START, END))!;
     expect(v.mismatches.map((x) => [x.check, x.column])).toContainEqual(["export", "E_Cash Tips Recd_Dollars"]);
@@ -76,7 +77,7 @@ describe("payroll period", () => {
     expect(await m.db.db.select().from(m.schema.payrollRuns)).toEqual([]);
 
     for (const s of [a, b]) await run.setOverride(moline.id, START, s.id, "tips", null, "", actor);
-    await run.savePayrollSettings({ ...(await run.loadSettings()), roundExport2dp: false }, actor);
+    await brandSettings({ payroll: { ...(await run.loadSettings()), roundExport2dp: false } });
     expect((await run.buildPayroll(START, END))!.mismatches).toEqual([]);
   });
 

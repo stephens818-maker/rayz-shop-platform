@@ -3,9 +3,12 @@
  * checkout covering the member's own plan services and counting the visit, the monthly visit limit,
  * a void giving the visit back, cancel and keep, monthly renewals, Stripe Billing events, and who sees what.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type Stripe from "stripe";
+import { brandSettings } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
+
+vi.mock("server-only", () => ({}));
 
 let m: Mods;
 let M: typeof import("@/server/memberships");
@@ -57,12 +60,12 @@ const row = async (id: string) => (await m.db.db.query.memberships.findFirst({ w
 
 describe("memberships", () => {
   it("is off until the brand turns it on: no sign-ups and no checkout coverage", async () => {
-    await M.setMembershipsEnabled(actor, false);
+    await brandSettings({ memberships: false });
     const p = await plan("Off Club");
     const c = await client();
     await expect(M.enroll(actor, brand(), { planId: p.id, customerId: c.id, homeShopId: fx.shop })).rejects.toThrow(/turned off/);
     expect(await M.checkoutCoverage([c.id], fx.shop)).toEqual([]);
-    await M.setMembershipsEnabled(actor, true);
+    await brandSettings({ memberships: true });
     expect(await M.membershipsEnabled()).toBe(true);
   });
 

@@ -5,6 +5,8 @@
  * marketing, at locations that have it on, within its one-per-N-days cap.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSettings } from "./brand";
+import { BadgeSettingsSchema } from "@/domain/badges";
 import { Mods, actor, loadModules } from "./setup";
 import { open } from "./render";
 import { signInAs } from "./session";
@@ -14,6 +16,7 @@ vi.mock("next/headers", async () => (await import("./session")).headersMock);
 vi.mock("next/cache", () => ({ revalidatePath() {}, revalidateTag() {} }));
 
 let m: Mods;
+const saveBadges = (ctx: import("@/server/auth/staff").StaffContext, raw: unknown) => brandSettings({ badges: BadgeSettingsSchema.parse(raw) }, { ctx });
 let bd: typeof import("@/server/badges");
 let cb: typeof import("@/server/customer-badges");
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
@@ -131,11 +134,11 @@ describe("customer badges", () => {
 
   it("follows the brand's customer-visible setting, and refuses tiers out of order", async () => {
     const ctx = (await (await import("@/server/report-builder/context")).staffContextFor(owner))!;
-    await bd.saveBadgeSettings(ctx, { enabled: true, off: [], roles: {}, customer: { gold: false, low_rating: true } });
+    await saveBadges(ctx, { enabled: true, off: [], roles: {}, customer: { gold: false, low_rating: true } });
     const r = await viaApi(c.goldie);
     expect(r.badges.map((b) => b.id)).toEqual(["streak"]);
-    await expect(bd.saveBadgeSettings(ctx, { enabled: true, thresholds: { silverVisits: 20 } })).rejects.toThrow(/Bronze needs fewer visits than Silver/);
-    await bd.saveBadgeSettings(ctx, {});
+    await expect(saveBadges(ctx, { enabled: true, thresholds: { silverVisits: 20 } })).rejects.toThrow(/Bronze needs fewer visits than Silver/);
+    await saveBadges(ctx, {});
     expect((await viaApi(c.goldie)).badges.map((b) => b.id)).toEqual(["gold", "streak"]);
   });
 

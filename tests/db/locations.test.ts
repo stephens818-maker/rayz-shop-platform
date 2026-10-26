@@ -5,6 +5,7 @@
  * stays in every report. Also staff offboarding and brand-editable messages and picklists.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { open } from "./render";
 import { signInAs } from "./session";
@@ -250,9 +251,8 @@ describe("staff offboarding", () => {
 describe("brand-editable messages and picklists", () => {
   it("a saved reminder wording is what the next booking's messages use; reset puts the default back", async () => {
     await signInAs(ids.admin);
-    const msgs = await import("@/app/admin/messages/actions");
-    expect(await msgs.saveTemplateAction("confirmation", { subject: "{shop}", body: "Booked {when} {nope}" })).toMatchObject({ ok: false, error: expect.stringMatching(/\{nope\}/) });
-    expect(await msgs.saveTemplateAction("confirmation", { subject: "{shop}: booked", body: "{shop}: See you {when}, {first_name}! Change it: {link}" })).toMatchObject({ ok: true, data: { custom: true } });
+    expect(await brandAction("setting", "message.confirmation", { subject: "{shop}", body: "Booked {when} {nope}" })).toMatchObject({ ok: false, error: expect.stringMatching(/\{nope\}/) });
+    expect(await brandAction("setting", "message.confirmation", { subject: "{shop}: booked", body: "{shop}: See you {when}, {first_name}! Change it: {link}" })).toMatchObject({ ok: true });
     const avail = await m.booking.getAvailability({ shopRef: "moline", date: bookDate, serviceId, barberRef: "any" });
     const a = await m.booking.createAppointment({
       shopRef: "moline",
@@ -267,21 +267,20 @@ describe("brand-editable messages and picklists", () => {
     const conf = jobs.find((j) => j.kind === "confirmation")!;
     expect(conf.body).toMatch(/^Ray'z Moline: See you .+, Avery! Change it: .+\/a\//);
     expect(jobs.find((j) => j.kind === "reminder_2h")?.body).toMatch(/up to 30 min before/);
-    expect(await msgs.saveTemplateAction("confirmation", null)).toMatchObject({ ok: true, data: { custom: false } });
+    expect(await brandAction("setting", "message.confirmation", null)).toMatchObject({ ok: true });
 
     await signInAs(ids.regional);
-    expect(await msgs.saveTemplateAction("confirmation", { subject: "x", body: "{link}" })).toMatchObject({ ok: false });
+    expect(await brandAction("setting", "message.confirmation", { subject: "x", body: "{link}" })).toMatchObject({ ok: false });
   });
 
   it("picklists save cleaned and show up as suggestions at checkout and refunds", async () => {
     await signInAs(ids.admin);
-    const lists = await import("@/app/admin/lists/actions");
-    expect(await lists.saveLookupAction("discountReasons", [" Veteran ", "veteran", "Teacher"])).toEqual({ ok: true, data: ["Veteran", "Teacher"] });
+    expect(await brandAction("setting", "lookup.discountReasons", [" Veteran ", "veteran", "Teacher"])).toMatchObject({ ok: true });
     const { lookups } = await import("@/server/lookups");
     const l = await lookups();
     expect(l.discountReasons).toEqual(["Veteran", "Teacher"]);
     expect(l.serviceCategories.length).toBeGreaterThan(0);
     await signInAs(ids.regional);
-    expect(await lists.saveLookupAction("discountReasons", ["x"])).toMatchObject({ ok: false });
+    expect(await brandAction("setting", "lookup.discountReasons", ["x"])).toMatchObject({ ok: false });
   });
 });

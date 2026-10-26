@@ -7,6 +7,7 @@
  * checkout or kept on a no-show; each child's cut counted on its own; and the parent's endpoints.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSettings } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
@@ -44,7 +45,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await fam?.saveFamilySettings(DEFAULTS, actor).catch(() => {});
+  await brandSettings({ family: DEFAULTS }).catch(() => {});
   await m?.db.closeDb();
 });
 
@@ -294,7 +295,7 @@ describe("at the shop", () => {
 
 describe("one deposit and one no-show rule for the group", () => {
   it("takes one deposit at the desk, holds it, and applies it on the group's ticket", async () => {
-    await fam.saveFamilySettings({ ...DEFAULTS, groupDepositCents: 2000, groupDepositFrom: 3 }, actor);
+    await brandSettings({ family: { ...DEFAULTS, groupDepositCents: 2000, groupDepositFrom: 3 } });
     try {
       const f = await family(["Tad", "Uli"]);
       const { option, opts } = await findDay(f.ids, "earliest_finish");
@@ -322,12 +323,12 @@ describe("one deposit and one no-show rule for the group", () => {
       });
       expect((await groups.groupView(g.code)).deposit.status).toBe("applied");
     } finally {
-      await fam.saveFamilySettings(DEFAULTS, actor);
+      await brandSettings({ family: DEFAULTS });
     }
   });
 
   it("a whole-group no-show marks everyone and keeps the one deposit; two people get no deposit", async () => {
-    await fam.saveFamilySettings({ ...DEFAULTS, groupDepositCents: 1500, groupDepositFrom: 2 }, actor);
+    await brandSettings({ family: { ...DEFAULTS, groupDepositCents: 1500, groupDepositFrom: 2 } });
     try {
       const f = await family(["Vic"]);
       const { option } = await findDay(f.ids, "earliest_finish");
@@ -343,12 +344,12 @@ describe("one deposit and one no-show rule for the group", () => {
       expect(card).toMatchObject({ status: "void", balanceCents: 0, source: "deposit" });
       await expect(groups.groupNoShow(g.id, actor)).rejects.toMatchObject({ code: "conflict" });
     } finally {
-      await fam.saveFamilySettings(DEFAULTS, actor);
+      await brandSettings({ family: DEFAULTS });
     }
   });
 
   it("cancelling in time leaves a taken deposit due back; one never taken is waived", async () => {
-    await fam.saveFamilySettings({ ...DEFAULTS, groupDepositCents: 1000, groupDepositFrom: 2 }, actor);
+    await brandSettings({ family: { ...DEFAULTS, groupDepositCents: 1000, groupDepositFrom: 2 } });
     try {
       const f = await family(["Wes"]);
       const { option } = await findDay(f.ids, "earliest_finish");
@@ -361,7 +362,7 @@ describe("one deposit and one no-show rule for the group", () => {
       await m.checkout.finalizeSale({ saleId: ds, lines: [{ kind: "gift_card", qty: 1, unitPriceCents: 1000 }], tipCents: 0, tender: cash, actor });
       expect((await groups.cancelGroup(g2.code, { actor, byCustomer: true, customerId: f2.p.id })).deposit.status).toBe("refund_due");
     } finally {
-      await fam.saveFamilySettings(DEFAULTS, actor);
+      await brandSettings({ family: DEFAULTS });
     }
   });
 });

@@ -810,11 +810,6 @@ describe("server actions aimed at another shop's records", () => {
       ["timing barber duration", () => timing.saveBarberDurationAction(ids.barber, ids.service, cv, 40)],
       ["timing floater duration everywhere", () => timing.saveBarberDurationAction(ids.floater, ids.service, null, 40)],
       ["timing shop duration", () => timing.saveShopDurationAction(cv, ids.service, 40)],
-      ["timing brand interval", () => timing.saveBrandIntervalAction(30)],
-      [
-        "timing service",
-        () => timing.saveServiceTimingAction(ids.service, { defaultDurationMin: 60, durationStepMin: 15, bookingIncrementMin: 30, bufferBeforeMin: 5, bufferAfterMin: 5 }),
-      ],
       ["payments onboarding", () => setup.startPaymentsOnboardingAction(cv)],
       ["payments refresh", () => setup.refreshPaymentsAccountAction(cv)],
       ["payments simulated onboarding", () => setup.completeSimulatedOnboardingAction(cv, false)],

@@ -4,6 +4,7 @@
  * settings gated part by part, and the phone operator on the shop line.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 import { open } from "./render";
@@ -146,20 +147,19 @@ describe("the shop login's caps", () => {
   it("client contact details are masked at most, and nobody can lift the cap, not even the Brand Owner", async () => {
     const privacy = await import("@/server/client-privacy");
     const auth = await import("@/server/auth/staff");
-    const actions = await import("@/app/admin/client-data/actions");
     expect(await privacy.shopLoginCap()).toBe("masked");
     await as("coralville@rayz.test");
     const policy = await privacy.clientPolicy(await auth.requireStaff());
     expect(policy.show("phone", "+13195551234")).not.toContain("555-1234");
     for (const who of ["admin@rayz.test", "owner@rayz.test"]) {
       await as(who);
-      expect(await actions.saveShopLoginCapAction("role"), who).toMatchObject({ ok: false, error: expect.stringMatching(/never in full/) });
+      expect(await brandAction("setting", "shop_login_contact", "role"), who).toMatchObject({ ok: false, error: expect.stringMatching(/never in full/) });
     }
     await as("admin@rayz.test");
-    ok(await actions.saveShopLoginCapAction("hidden"));
+    ok(await brandAction("setting", "shop_login_contact", "hidden"));
     expect(await privacy.shopLoginCap()).toBe("hidden");
     await as("owner@rayz.test");
-    ok(await actions.saveShopLoginCapAction("masked"));
+    ok(await brandAction("setting", "shop_login_contact", "masked"));
     const stored = (v: string) => m.db.db.update(m.schema.brandSettings).set({ shopLogin: m.drizzle.sql`${m.schema.brandSettings.shopLogin} || ${JSON.stringify({ clientContact: v })}::jsonb` });
     await stored("role");
     expect(await privacy.shopLoginCap()).toBe("masked");

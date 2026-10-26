@@ -7,6 +7,7 @@
  */
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { brandSet } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { jar, signInAs } from "./session";
 
@@ -462,8 +463,8 @@ describe("split tips", () => {
 
 describe("settings", () => {
   it("validates presets, uses the brand's unless the location sets its own, and keeps the counter's percent buttons in step", async () => {
-    await expect(H.saveBrandHandoff({ type: "percent", values: [], allowCustom: true, allowNoTip: true }, actor)).rejects.toThrow(/at least one/);
-    await H.saveBrandHandoff({ type: "amount", values: [300, 500, 1000], allowCustom: true, allowNoTip: false }, actor);
+    await expect(brandSet("tips", "screen", { type: "percent", values: [], allowCustom: true, allowNoTip: true })).rejects.toThrow(/at least one/);
+    await brandSet("tips", "screen", { type: "amount", values: [300, 500, 1000], allowCustom: true, allowNoTip: false });
     let cfg = await H.shopHandoffConfig(fx.shopId);
     expect(cfg.tips).toMatchObject({ type: "amount", values: [300, 500, 1000] });
     const { id } = await handedOver();
@@ -479,7 +480,7 @@ describe("settings", () => {
     expect((await m.db.db.query.shops.findFirst({ where: eq(s().shops.id, fx.shopId) }))!.tipPresets).toEqual([18, 20, 25]);
     const audits = await m.db.db.select().from(s().auditLog).where(eq(s().auditLog.action, "handoff.settings"));
     expect(audits.length).toBeGreaterThan(0);
-    await H.saveBrandHandoff({ type: "percent", values: [20, 25, 30], allowCustom: true, allowNoTip: true }, actor);
+    await brandSet("tips", "screen", { type: "percent", values: [20, 25, 30], allowCustom: true, allowNoTip: true });
   });
 
   it("writes the text and email receipts from the paid ticket", async () => {

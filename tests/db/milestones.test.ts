@@ -6,6 +6,7 @@
  * celebrate-with-clients draft, the Morning Dashboard section, the report and the pages.
  */
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSet } from "./brand";
 import { Mods, loadModules } from "./setup";
 import { signInAs } from "./session";
 import { open } from "./render";
@@ -30,7 +31,7 @@ const ctxOf = async (who: string) => {
 };
 const viewerOf = async (who: string) => views.milestoneViewer(await ctxOf(who));
 const settings = () => engine.loadMilestoneSettings();
-const setSettings = async (patch: Record<string, unknown>) => admin.saveMilestoneSettings(await ctxOf("admin"), { ...(await settings()), ...patch });
+const setSettings = async (patch: Record<string, unknown>) => brandSet("milestones", "brand", { ...(await settings()), ...patch }, { ctx: await ctxOf("admin") });
 const milestone = async (who: string, title: string) =>
   m.db.db.query.staffMilestones.findFirst({ where: m.drizzle.and(eq(m.schema.staffMilestones.staffId, ids[who]), eq(m.schema.staffMilestones.title, title)) });
 const jobsTo = async (email: string) =>

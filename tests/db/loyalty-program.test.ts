@@ -5,6 +5,7 @@
  * the settings action (audited, progress carried over, visits earned, a void taking a visit back).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 
@@ -13,7 +14,6 @@ vi.mock("next/headers", async () => (await import("./session")).headersMock);
 vi.mock("next/cache", () => ({ revalidatePath() {}, revalidateTag() {} }));
 
 let m: Mods;
-let saveLoyaltyAction: typeof import("@/app/admin/settings/actions").saveLoyaltyAction;
 const fx = { cv: "", dbq: "", owner: "", cut: "", cutCents: 0, product: "", productCents: 0 };
 let seq = 0;
 const s = () => m.schema;
@@ -21,7 +21,6 @@ const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 
 beforeAll(async () => {
   m = await loadModules();
-  saveLoyaltyAction = (await import("@/app/admin/settings/actions")).saveLoyaltyAction;
   const shops = await m.db.db.query.shops.findMany();
   fx.cv = shops.find((x) => x.slug === "coralville")!.id;
   fx.dbq = shops.find((x) => x.slug === "dubuque")!.id;
@@ -106,8 +105,8 @@ describe("loyalty program at brand level", () => {
     const cfg = await m.loyalty.getLoyaltyConfig();
     await signInAs(fx.owner);
     try {
-      const r = await saveLoyaltyAction({ ...cfg, type: "transaction", visitsGoal: 3, minVisitCents: 1000 });
-      expect(r).toEqual({ ok: true, data: null });
+      const r = await brandAction("loyalty", "brand", { ...cfg, type: "transaction", visitsGoal: 3, minVisitCents: 1000 });
+      expect(r).toMatchObject({ ok: true });
       const [a] = await m.db.db.select().from(s().auditLog).where(eq(s().auditLog.action, "loyalty.config")).orderBy(m.drizzle.desc(s().auditLog.at)).limit(1);
       expect(a.details).toMatchObject({ before: { type: "value" }, after: { type: "transaction", visitsGoal: 3 } });
       expect((a.details as { progressConverted?: number }).progressConverted).toBeGreaterThan(0);
@@ -132,7 +131,7 @@ describe("loyalty program at brand level", () => {
       const used = await pay({ customerId: c.id, rewardId: reward.id });
       expect(used.discountCents).toBe(1_500);
 
-      expect((await saveLoyaltyAction({ ...cfg, shopIds: [crypto.randomUUID()] })).ok).toBe(false);
+      expect((await brandAction("loyalty", "brand", { ...cfg, shopIds: [crypto.randomUUID()] })).ok).toBe(false);
     } finally {
       await m.loyalty.saveLoyaltyConfig(cfg);
     }

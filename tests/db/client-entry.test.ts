@@ -8,6 +8,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { fieldRule } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { found, open, propsOf } from "./render";
 import { signInAs } from "./session";
@@ -46,8 +47,7 @@ const byPhone = async (digits: string) => m.db.db.query.customers.findFirst({ wh
 const json = (v: unknown) => JSON.stringify(v);
 
 async function rule(field: string, setting: "view" | "add" | "edit", level: string | null, o: { roleKey?: string; staff?: Login; shopId?: string | null }) {
-  const { setFieldRuleAction } = await import("@/app/admin/client-data/actions");
-  return setFieldRuleAction({ field, setting, level, roleId: o.roleKey ? roleIds[o.roleKey] : null, staffId: o.staff ? people[o.staff] : null, shopId: o.shopId ?? null });
+  return fieldRule({ field, setting, level, roleId: o.roleKey ? roleIds[o.roleKey] : null, staffId: o.staff ? people[o.staff] : null, shopId: o.shopId ?? null });
 }
 
 /** The profile as the signed-in person reloads it: the page's text and props, and the editor's HTML. */

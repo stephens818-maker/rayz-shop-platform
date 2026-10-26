@@ -4,6 +4,7 @@
  * shop's own. The booking page gets the policies, headline and tracking IDs.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSet } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
@@ -34,8 +35,8 @@ describe("brand defaults", () => {
     await L.setShopOverride(actor, shop.moline.id, "cancelCutoffMinutes", 15);
     expect((await row(shop.moline.id)).cancelCutoffMinutes).toBe(15);
 
-    const r = await L.saveBrandDefault(actor, "cancelCutoffMinutes", 120);
-    expect(r.following).toBe(Object.keys(shop).length - 1);
+    const r = await brandSet("location_default", "cancelCutoffMinutes", 120, { keep: true });
+    expect(r.shops).toBe(Object.keys(shop).length - 1);
     expect((await row(shop.coralville.id)).cancelCutoffMinutes).toBe(120);
     expect((await row(shop.moline.id)).cancelCutoffMinutes).toBe(15);
 
@@ -53,9 +54,9 @@ describe("brand defaults", () => {
   });
 
   it("refuses invalid values", async () => {
-    await expect(L.saveBrandDefault(actor, "bookingWindowDays", 0)).rejects.toThrow(/Booking window: At least a day/);
+    await expect(brandSet("location_default", "bookingWindowDays", 0, { keep: true })).rejects.toThrow(/Booking window: At least a day/);
     await expect(L.setShopOverride(actor, shop.moline.id, "ga4MeasurementId", "UA-123")).rejects.toThrow(/GA4 ID/);
-    await expect(L.saveBrandDefault(actor, "nope" as never, 1)).rejects.toThrow(/Unknown setting/);
+    await expect(brandSet("location_default", "nope" as never, 1, { keep: true })).rejects.toThrow(/Unknown setting/);
   });
 
   it("a shop settings save makes a changed value the shop's own, and the brand value keeps following", async () => {
@@ -66,8 +67,8 @@ describe("brand defaults", () => {
   });
 
   it("the booking page and reminders use the location's values", async () => {
-    await L.saveBrandDefault(actor, "cancellationPolicy", "Cancel up to 2 hours before.");
-    await L.saveBrandDefault(actor, "ga4MeasurementId", "G-RAYZ1234");
+    await brandSet("location_default", "cancellationPolicy", "Cancel up to 2 hours before.", { keep: true });
+    await brandSet("location_default", "ga4MeasurementId", "G-RAYZ1234", { keep: true });
     await L.setShopOverride(actor, shop.utica.id, "metaPixelId", "123456789012");
     await L.setShopOverride(actor, shop.utica.id, "bookingHeadline", "Utica's finest fades");
     await L.setShopOverride(actor, shop.utica.id, "reminderFirstHours", 18);

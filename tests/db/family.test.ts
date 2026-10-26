@@ -8,6 +8,7 @@
  * Family and Kid badges; and the parent's family endpoints.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSettings } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 
@@ -49,7 +50,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await fam?.saveFamilySettings(DEFAULTS, actor).catch(() => {});
+  await brandSettings({ family: DEFAULTS }).catch(() => {});
   await m?.db.closeDb();
 });
 
@@ -91,7 +92,7 @@ const statusOf = async (id: string) => (await m.db.db.query.appointments.findFir
 describe("child profiles", () => {
   it("adds children within the brand's limit, with no contact or consent of their own", async () => {
     const p = await parent();
-    await fam.saveFamilySettings({ ...DEFAULTS, maxChildren: 2 }, actor);
+    await brandSettings({ family: { ...DEFAULTS, maxChildren: 2 } });
     try {
       await expect(fam.addChild(p.id, { firstName: "Cy", photo: "data:image/jpeg;base64,AAAA" }, actor)).rejects.toMatchObject({ message: expect.stringMatching(/Photos aren't kept/) });
       const a = await fam.addChild(p.id, { firstName: "Ava", age: 7, notes: "Loud clippers upset her", preferredStaffId: fx.makenna }, actor);
@@ -102,7 +103,7 @@ describe("child profiles", () => {
       await expect(fam.addChild(p.id, { firstName: "Cal" }, actor)).rejects.toMatchObject({ message: expect.stringMatching(/up to 2 children/) });
       expect((await fam.childrenOf(p.id)).map((c) => c.firstName)).toEqual(["Ava", "Ben"]);
     } finally {
-      await fam.saveFamilySettings(DEFAULTS, actor);
+      await brandSettings({ family: DEFAULTS });
     }
   });
 
@@ -273,7 +274,7 @@ describe("family ticket", () => {
   it("individual loyalty earns on each person's card; a void reverses each", async () => {
     const p = await parent();
     const kid = await fam.addChild(p.id, { firstName: "Lu" }, actor);
-    await fam.saveFamilySettings({ ...DEFAULTS, loyalty: "individual" }, actor);
+    await brandSettings({ family: { ...DEFAULTS, loyalty: "individual" } });
     try {
       const pa = await appt(p.id, fx.makenna);
       const ka = await appt(kid.id, fx.michelle);
@@ -298,7 +299,7 @@ describe("family ticket", () => {
       expect([sumFor(rows, p.id), sumFor(rows, kid.id)]).toEqual([0, 0]);
       expect([await statusOf(pa.id), await statusOf(ka.id)]).toEqual(["in_service", "in_service"]);
     } finally {
-      await fam.saveFamilySettings(DEFAULTS, actor);
+      await brandSettings({ family: DEFAULTS });
     }
   });
 });

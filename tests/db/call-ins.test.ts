@@ -6,6 +6,7 @@
  * then flags; missed calls get one auto-text; staff reply from the inbox without seeing the number.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSettings } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 import { open } from "./render";
@@ -36,7 +37,7 @@ beforeAll(async () => {
   inbox = await import("@/app/admin/inbox/actions");
   pub = await import("@/app/(public)/r/[token]/actions");
   closed = new Set((await m.db.db.select().from(m.schema.shopClosures)).map((c) => c.date));
-  await ci.saveOutreachRules({ quietStartMin: 0, quietEndMin: 0 }, actor);
+  await brandSettings({ outreach: { quietStartMin: 0, quietEndMin: 0 } });
 }, 180_000);
 
 afterAll(async () => {

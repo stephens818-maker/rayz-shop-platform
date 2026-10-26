@@ -6,6 +6,7 @@
  * their portal; the brand switches each display and other locations on and off.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSet } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 import { open } from "./render";
@@ -35,10 +36,7 @@ const ctxOf = async (who: string) => {
 };
 const settings = () => engine.loadMilestoneSettings();
 const setSettings = async (patch: Record<string, unknown>) =>
-  admin.saveMilestoneSettings(await ctxOf("admin"), {
-    ...(await settings()),
-    ...patch,
-  });
+  brandSet("milestones", "brand", { ...(await settings()), ...patch }, { ctx: await ctxOf("admin") });
 const milestone = async (who: string, title: string) =>
   m.db.db.query.staffMilestones.findFirst({
     where: m.drizzle.and(

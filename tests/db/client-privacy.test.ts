@@ -8,6 +8,8 @@
  * Reveals and exports are audited, and unusual lookups alert the brand admins and pause.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction } from "./brand";
+import { fieldRule } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { found, get, open } from "./render";
 import { signInAs } from "./session";
@@ -73,9 +75,8 @@ const pageList = (): [string, Record<string, string>, Record<string, string>][] 
 ];
 
 async function rule(field: string, level: "hidden" | "masked" | "full" | null, o: { roleKey?: string; staff?: Login; shopId?: string }) {
-  const { setFieldRuleAction } = await import("@/app/admin/client-data/actions");
   const roleId = o.roleKey ? (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, o.roleKey) }))!.id : null;
-  return setFieldRuleAction({ field, level, roleId, staffId: o.staff ? people[o.staff] : null, shopId: o.shopId ?? null });
+  return fieldRule({ field, level, roleId, staffId: o.staff ? people[o.staff] : null, shopId: o.shopId ?? null });
 }
 
 async function appointment(o: { staffId: string; customerId: string; at: Date; status: "completed" | "booked" }) {
@@ -563,9 +564,9 @@ describe("Brand Admins always see everything", () => {
 
 describe("unusual lookups", () => {
   it("alert the brand admins past the alert level, then pause lookups; the owner is never paused", async () => {
-    const { saveLookupLimitsAction, acknowledgeAlertAction } = await import("@/app/admin/client-data/actions");
+    const { acknowledgeAlertAction } = await import("@/app/admin/client-data/actions");
     await as("owner");
-    expect(await saveLookupLimitsAction({ windowMinutes: 10, alertProfiles: 3, blockProfiles: 5, alertSearches: 150, blockSearches: 300 })).toMatchObject({ ok: true });
+    expect(await brandAction("setting", "lookup_limits", { windowMinutes: 10, alertProfiles: 3, blockProfiles: 5, alertSearches: 150, blockSearches: 300 })).toMatchObject({ ok: true });
     const molineClients = await m.db.db.select({ id: m.schema.customers.id }).from(m.schema.customers).where(eq(m.schema.customers.homeShopId, shop.moline)).limit(8);
     await as("regional");
     const outcomes: string[] = [];
@@ -587,7 +588,7 @@ describe("unusual lookups", () => {
     expect(page.text).toContain("Unusual lookups");
     expect(await acknowledgeAlertAction(alerts[0].id)).toMatchObject({ ok: true });
     expect((await m.db.db.query.clientAccessAlerts.findFirst({ where: eq(m.schema.clientAccessAlerts.id, alerts[0].id) }))!.acknowledgedBy).toBe(people.owner);
-    expect(await saveLookupLimitsAction({ windowMinutes: 10, alertProfiles: 25, blockProfiles: 50, alertSearches: 150, blockSearches: 300 })).toMatchObject({ ok: true });
+    expect(await brandAction("setting", "lookup_limits", { windowMinutes: 10, alertProfiles: 25, blockProfiles: 50, alertSearches: 150, blockSearches: 300 })).toMatchObject({ ok: true });
     expect((await auditOf("client_data.limits")).length).toBe(2);
   });
 });

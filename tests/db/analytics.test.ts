@@ -5,6 +5,7 @@
  * event source in the report builder and Rayz Assistant.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSettings } from "./brand";
 import { Mods, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
@@ -240,7 +241,7 @@ describe("raw export and the warehouse copy", () => {
     await admin.end();
     const url = `${base}/rayz_warehouse_test`;
     expect(await analytics.exportToWarehouse({ url })).toEqual({ skipped: "off" });
-    await analytics.saveAnalyticsSettings({ satisfaction: false, warehouse: true }, actorOf(ids.owner));
+    await brandSettings({ visit_question: false, warehouse: true });
     const first = await analytics.exportToWarehouse({ url });
     if ("failed" in first) console.log((await analytics.warehouseRuns(1))[0]);
     const wh = postgres(url, { max: 1, onnotice: () => {} });
@@ -272,7 +273,7 @@ describe("raw export and the warehouse copy", () => {
     expect(run.status).toBe("failed");
     expect(JSON.stringify(await rows(sql`select * from analytics_exports`))).not.toContain("s3cretpw");
     expect(JSON.stringify(await rows(sql`select analytics from brand_settings`))).not.toContain("rayz_warehouse_test");
-    await analytics.saveAnalyticsSettings({ satisfaction: false, warehouse: false }, actorOf(ids.owner));
+    await brandSettings({ visit_question: false, warehouse: false });
   });
 });
 
@@ -285,7 +286,7 @@ describe("post-visit rating", () => {
     await m.db.db.insert(m.schema.receiptDeliveries).values({ saleId: sale.id, shopId: sale.shop, customerId: sale.customer, channel: "sms", destination: "+13195550000", masked: "•••0000", purpose: "counter", tokenHash: hashToken(token) });
     expect(await analytics.receiptSatisfaction(sale.id)).toBeNull();
     await expect(analytics.rateVisit(token, 4)).rejects.toThrow(/can't be rated/);
-    await analytics.saveAnalyticsSettings({ satisfaction: true, warehouse: false }, actorOf(ids.owner));
+    await brandSettings({ visit_question: true, warehouse: false });
     expect(await analytics.receiptSatisfaction(sale.id)).toEqual({ stars: null });
     await expect(analytics.rateVisit(token, 6)).rejects.toThrow();
     expect(await analytics.rateVisit(token, 4)).toEqual({ stars: 4 });
@@ -293,7 +294,7 @@ describe("post-visit rating", () => {
     const got = await eventsOf(sql`event = 'visit.satisfaction' and sale_id = ${sale.id}`);
     expect(got).toHaveLength(1);
     expect(got[0]).toMatchObject({ value: 4, subtype: "receipt", actor_kind: "client", staff_id: sale.staff, customer_id: sale.customer });
-    await analytics.saveAnalyticsSettings({ satisfaction: false, warehouse: false }, actorOf(ids.owner));
+    await brandSettings({ visit_question: false, warehouse: false });
   });
 });
 

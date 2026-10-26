@@ -5,6 +5,7 @@
  * approve automatically do so only when nothing is booked, and only the right people decide.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 
@@ -270,7 +271,7 @@ describe("limits, notice and who decides", () => {
 
     expect(err(await decide.saveRulesAction((await shop("coralville")).id, { maxLunchMin: 45 }))).toMatch(/can't change the time off rules/);
     await as("michelle@rayz.test");
-    expect(err(await decide.saveRulesAction(null, { maxLunchMin: 45 }))).toMatch(/every shop/);
+    expect(err(await brandAction("setting", "staff_time", { maxLunchMin: 45 }))).toMatch(/every shop/);
     const cv = await shop("coralville");
     ok(await decide.saveRulesAction(cv.id, { maxLunchMin: 45 }));
     expect(ok(await mine.quickBlockAction({ reasonId: rid("lunch"), date: wed, startMin: 11 * 60, minutes: 90 })).saved).toBe(true);

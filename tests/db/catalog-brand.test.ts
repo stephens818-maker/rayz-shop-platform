@@ -3,9 +3,12 @@
  * high line), brand stock received centrally and allocated to shops through the ledger, and the
  * taxes-vs-card-fees view.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Who } from "@/server/inventory/ledger";
+import { brandSet } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
+
+vi.mock("server-only", () => ({}));
 
 let m: Mods;
 let C: typeof import("@/server/catalog-categories");
@@ -69,11 +72,11 @@ describe("brand products", () => {
     const p = await product();
     const other = await product();
     const base = { productId: p.id, sku: `BRAND-NEW-${seq}`, brand: "Newco", category: "Styling", costCents: 1100, priceCents: 2600, lowStockThreshold: 2, parLevel: 6, highStockThreshold: 12 };
-    await BS.saveProductDetails(who, base);
+    await brandSet("product", p.id, base);
     const row = (await BS.brandProducts()).find((r) => r.id === p.id)!;
     expect(row).toMatchObject({ sku: base.sku, brand: "Newco", costCents: 1100, priceCents: 2600, highStockThreshold: 12, unallocated: 0, allocated: 0, shops: 0 });
-    await expect(BS.saveProductDetails(who, { ...base, sku: other.sku.toLowerCase() })).rejects.toThrow(/already/);
-    await expect(BS.saveProductDetails(who, { ...base, highStockThreshold: 4 })).rejects.toThrow(/below par/);
+    await expect(brandSet("product", p.id, { ...base, sku: other.sku.toLowerCase() })).rejects.toThrow(/already/);
+    await expect(brandSet("product", p.id, { ...base, highStockThreshold: 4 })).rejects.toThrow(/below par/);
     const log = await m.db.db.query.auditLog.findFirst({ where: and(eq(m.schema.auditLog.action, "product.details"), eq(m.schema.auditLog.entityId, p.id)) });
     expect(log?.details).toMatchObject({ changed: { brand: { from: "Testco", to: "Newco" } } });
   });

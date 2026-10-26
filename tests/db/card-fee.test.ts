@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { TOTAL } from "@/domain/report-views";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
@@ -206,7 +207,7 @@ describe("which shops use it", () => {
     expect(await actions.saveShopCardFeeAction(shopId, { rate: 0.02 })).toEqual({ ok: true, data: null });
     expect((await fee.shopFeePolicy(shopId)).override).toEqual({ rate: 0.02 });
     expect(await actions.saveShopCardFeeAction(otherId, { rate: 0.02 })).toMatchObject({ ok: false });
-    expect(await actions.saveBrandCardFeeAction({ rate: 0.02 })).toMatchObject({ ok: false });
+    expect(await brandAction("card_fee", "brand", { rate: 0.02 })).toMatchObject({ ok: false });
     const page = await import("@/app/admin/card-fee/actions");
     expect(await page.bulkShopFeeAction("reset", [shopId])).toMatchObject({ ok: false });
     expect(fee.canEditShopFee(new Set(["settings.shop_checkout"]), { shopsCanEdit: true })).toBe(true);

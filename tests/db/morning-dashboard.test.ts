@@ -5,6 +5,7 @@
  * brand settings, the page, and its PDF and CSV downloads.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction, brandSettings } from "./brand";
 import { Mods, loadModules } from "./setup";
 import { signInAs } from "./session";
 import { get, open } from "./render";
@@ -27,7 +28,7 @@ const nextWeekday = (d: string, wd: number) => m.time.addDays(d, (wd - m.time.we
 
 async function settings(patch: Record<string, unknown>) {
   const cur = await md.loadMorningSettings();
-  await md.saveMorningSettings({ ...cur, ...patch }, { staffId: null, label: "test" });
+  await brandSettings({ digest: { ...cur, ...patch } });
 }
 
 beforeAll(async () => {
@@ -252,10 +253,11 @@ describe("Morning Dashboard send job", () => {
 describe("Morning Dashboard in the portal", () => {
   it("is set up by the brand: who gets it, when, and what's in it", async () => {
     await signInAs(ids.owner);
-    const { saveMorningSettingsAction, sendTestMorningAction } = await import("@/app/admin/digest/actions");
-    expect(await saveMorningSettingsAction({ sendAtMin: 2 * 60 })).toMatchObject({ ok: false });
-    expect(await saveMorningSettingsAction({ sendAtMin: 6 * 60 + 33, exclude: [ids.admin], sections: { sales: false } })).toMatchObject({ ok: true, data: { sendAtMin: 393, sections: { sales: false, today: true } } });
+    const { sendTestMorningAction } = await import("@/app/admin/digest/actions");
+    expect(await brandAction("setting", "digest", { sendAtMin: 2 * 60 })).toMatchObject({ ok: false });
+    expect(await brandAction("setting", "digest", { sendAtMin: 6 * 60 + 33, exclude: [ids.admin], sections: { sales: false } })).toMatchObject({ ok: true });
     const s = await md.loadMorningSettings();
+    expect(s).toMatchObject({ sendAtMin: 393, sections: { sales: false, today: true } });
     expect((await md.morningRecipients(s)).map((r) => r.staffId)).not.toContain(ids.admin);
     expect((await dashFor("michelle"))!.sales).toBeNull();
     expect(await sendTestMorningAction()).toMatchObject({ ok: true, data: { to: "owner@rayz.test", versions: 1 } });
@@ -267,7 +269,7 @@ describe("Morning Dashboard in the portal", () => {
     expect(page.text).toContain("Campaign Center");
 
     await signInAs(ids.michelle);
-    expect(await saveMorningSettingsAction({ enabled: false })).toMatchObject({ ok: false });
+    expect(await brandAction("setting", "digest", { enabled: false })).toMatchObject({ ok: false });
     expect((await open("/admin/digest")).kind).toBe("denied");
     await settings({ sendAtMin: 422, exclude: [], sections: {} });
   });

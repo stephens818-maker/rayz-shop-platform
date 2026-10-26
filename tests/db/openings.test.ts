@@ -8,7 +8,8 @@
  * sends, clicks and bookings per blast.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { Mods, actor, loadModules } from "./setup";
+import { brandAction, brandSettings } from "./brand";
+import { Mods, loadModules } from "./setup";
 import { jar, signInAs } from "./session";
 import { navFor } from "@/domain/navigation";
 
@@ -23,7 +24,6 @@ let C: typeof import("@/server/marketing/consent");
 let CP: typeof import("@/server/marketing/campaigns");
 let L: typeof import("@/server/report-data");
 let S: typeof import("@/app/admin/reports/scope");
-let A: typeof import("@/app/admin/campaign-center/openings/actions");
 let PUB: typeof import("@/app/(public)/book/[shop]/openings/[id]/actions");
 let clickRoute: typeof import("@/app/m/[token]/route").GET;
 
@@ -117,7 +117,6 @@ beforeAll(async () => {
   CP = await import("@/server/marketing/campaigns");
   L = await import("@/server/report-data");
   S = await import("@/app/admin/reports/scope");
-  A = await import("@/app/admin/campaign-center/openings/actions");
   PUB = await import("@/app/(public)/book/[shop]/openings/[id]/actions");
   clickRoute = (await import("@/app/m/[token]/route")).GET;
   const byEmail = async (e: string) => (await m.db.db.query.staff.findFirst({ where: eq(s().staff.email, e) }))!;
@@ -258,15 +257,15 @@ describe("We have openings, from the shop login", () => {
     const p = await O.previewOpenings(ctx, input(), NOW);
     expect(p.limit).toBe("This location has sent its 3 openings blasts for today. Try again tomorrow.");
     await expect(O.sendOpenings(ctx, input(), NOW)).rejects.toThrow(/sent its 3 openings blasts for today/);
-    expect(await A.saveOpeningsSettingsAction({ perDay: 10 })).toMatchObject({ ok: false });
+    expect(await brandAction("setting", "openings", { perDay: 10 })).toMatchObject({ ok: false });
     const brand = await ST.loadOpeningsSettings();
-    await ST.saveOpeningsSettings({ ...brand, shops: { [fx.cv]: { perDay: 10, perWeek: null, approval: null } } }, actor);
+    await brandSettings({ openings: { ...brand, shops: { [fx.cv]: { perDay: 10, perWeek: null, approval: null } } } });
     expect((await O.previewOpenings(ctx, input(), NOW)).limit).toBeNull();
   });
 
   it("goes to the brand first when it asks to approve: approve, turn down, withdraw, or expire when the days pass", async () => {
     const brand = await ST.loadOpeningsSettings();
-    await ST.saveOpeningsSettings({ ...brand, shops: { [fx.cv]: { perDay: 10, perWeek: null, approval: true } } }, actor);
+    await brandSettings({ openings: { ...brand, shops: { [fx.cv]: { perDay: 10, perWeek: null, approval: true } } } });
     const desk = await asDesk();
     people.appr = await regular({ sms: true, first: "Approvy" });
     const [r] = await O.sendOpenings(desk, input({ dates: [fx.next] }), NOW);
@@ -294,7 +293,7 @@ describe("We have openings, from the shop login", () => {
     const [late] = await O.sendOpenings(await asDesk(), input({ dates: [fx.day] }), NOW);
     expect(await O.approveOpenings(await asOwner(), late.campaignId!, at(fx.next, 10 * 60))).toMatchObject({ status: "expired", problem: "These openings have passed" });
 
-    await ST.saveOpeningsSettings({ ...brand, shops: { [fx.cv]: { perDay: 10, perWeek: null, approval: null } } }, actor);
+    await brandSettings({ openings: { ...brand, shops: { [fx.cv]: { perDay: 10, perWeek: null, approval: null } } } });
   });
 
   it("the live page drops booked times, says all booked when they're gone, and takes the waitlist", async () => {
@@ -359,8 +358,8 @@ describe("We have openings, from the shop login", () => {
 
   it("saving the rest of the Campaign Center settings keeps the openings rules", async () => {
     const brand = await ST.loadOpeningsSettings();
-    await ST.saveOpeningsSettings({ ...brand, capDays: 10 }, actor);
-    await ST.saveMarketingSettings({ ...(await ST.loadMarketingSettings()), capPerWeek: 3 }, actor);
+    await brandSettings({ openings: { ...brand, capDays: 10 } });
+    await brandSettings({ marketing: { ...(await ST.loadMarketingSettings()), capPerWeek: 3 } });
     expect((await ST.loadOpeningsSettings()).capDays).toBe(10);
     expect((await ST.loadOpeningsSettings()).shops[fx.cv]).toMatchObject({ perDay: 10 });
     expect((await ST.loadMarketingSettings()).capPerWeek).toBe(3);

@@ -6,6 +6,8 @@
  * calendar, Today and the Morning Dashboard.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSettings } from "./brand";
+import { BadgeSettingsSchema } from "@/domain/badges";
 import { Mods, actor, loadModules } from "./setup";
 import { open } from "./render";
 import { signInAs } from "./session";
@@ -15,6 +17,7 @@ vi.mock("next/headers", async () => (await import("./session")).headersMock);
 vi.mock("next/cache", () => ({ revalidatePath() {}, revalidateTag() {} }));
 
 let m: Mods;
+const saveBadges = (ctx: import("@/server/auth/staff").StaffContext, raw: unknown) => brandSettings({ badges: BadgeSettingsSchema.parse(raw) }, { ctx });
 let bd: typeof import("@/server/badges");
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 const people: Record<string, string> = {};
@@ -184,26 +187,26 @@ describe("client badges", () => {
     // VIP starts brand-level only; the brand turns it on for the front desk.
     expect((await policyOf("frontdesk")).badges.has("vip")).toBe(false);
     const role = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, people.frontdesk) }))!.roleId;
-    await bd.saveBadgeSettings(await ctxOf("admin"), { roles: { vip: { [role]: true }, at_risk: { [role]: false } } });
+    await saveBadges(await ctxOf("admin"), { roles: { vip: { [role]: true }, at_risk: { [role]: false } } });
     const desk = await policyOf("frontdesk");
     expect(desk.badges.has("vip")).toBe(true);
     expect(desk.badges.has("at_risk")).toBe(false);
-    await bd.saveBadgeSettings(await ctxOf("admin"), { enabled: false });
+    await saveBadges(await ctxOf("admin"), { enabled: false });
     expect((await policyOf("owner")).badges.size).toBe(0);
-    await bd.saveBadgeSettings(await ctxOf("admin"), {});
-    await expect(bd.saveBadgeSettings(await ctxOf("makenna"), {})).rejects.toMatchObject({ code: "forbidden" });
+    await saveBadges(await ctxOf("admin"), {});
+    await expect(saveBadges(await ctxOf("makenna"), {})).rejects.toMatchObject({ code: "forbidden" });
   });
 
   it("marks every row stale when a threshold changes, but not for who sees what", async () => {
     const stale = async () =>
       ((await m.db.db.execute(m.drizzle.sql`select count(*)::int n from client_badges where computed_on < ${today}::date`)) as unknown as { n: number }[])[0].n;
-    await bd.saveBadgeSettings(await ctxOf("admin"), { off: ["coupon"] });
+    await saveBadges(await ctxOf("admin"), { off: ["coupon"] });
     expect(await stale()).toBe(0);
-    await bd.saveBadgeSettings(await ctxOf("admin"), { thresholds: { lapsedWeeks: 60 } });
+    await saveBadges(await ctxOf("admin"), { thresholds: { lapsedWeeks: 60 } });
     expect(await stale()).toBeGreaterThan(0);
     // Read back lazily: Cy's last visit, 57 weeks ago, isn't lapsed at 60.
     expect((await bd.storedBadges([c.cy.id])).get(c.cy.id)!.map((b) => b.k)).not.toContain("lapsed");
-    await bd.saveBadgeSettings(await ctxOf("admin"), {});
+    await saveBadges(await ctxOf("admin"), {});
     await bd.runBadgeJob(new Date());
     expect(await keysOf(c.cy.id)).toContain("lapsed");
   });

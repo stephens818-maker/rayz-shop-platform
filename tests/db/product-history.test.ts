@@ -6,6 +6,7 @@
  * the profile onto the client's ticket.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSet } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { open } from "./render";
 import { signInAs } from "./session";
@@ -186,7 +187,7 @@ describe("at checkout and on the profile", () => {
   it("puts the history on the product prompt, and what they're running out of first among past purchases", async () => {
     const P = await import("@/server/checkout-prompts");
     const D = await import("@/domain/checkout-prompts");
-    await P.savePromptSettings({ ...D.PROMPT_DEFAULTS, product: { ...D.PROMPT_DEFAULTS.product, max: 5, pastPurchases: true } }, actor);
+    await brandSet("checkout_prompts", "brand", { ...D.PROMPT_DEFAULTS, product: { ...D.PROMPT_DEFAULTS.product, max: 5, pastPurchases: true } });
     const startsAt = m.time.zonedWallTime(today, 150).toJSDate();
     const [a] = await m.db.db
       .insert(s().appointments)
@@ -199,7 +200,7 @@ describe("at checkout and on the profile", () => {
     const past = t.product!.suggested.products.filter((x) => x.sources.includes("past"));
     expect(past[0]).toMatchObject({ productId: fx.p2, refill: { status: "running_out", due: ago(6) } });
     expect(past.find((x) => x.productId === fx.p1)?.refill).toMatchObject({ status: "stocked" });
-    await P.savePromptSettings(D.PROMPT_DEFAULTS, actor);
+    await brandSet("checkout_prompts", "brand", D.PROMPT_DEFAULTS);
   });
 
   it("buys again onto the client's open ticket today, or a new retail ticket, as many as last time", async () => {

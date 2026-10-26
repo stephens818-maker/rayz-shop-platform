@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PAGE_ACCESS, AdminPage, pageAllowed } from "@/domain/navigation";
 import type { Permission } from "@/domain/permissions";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { pageOutcome, signInAs } from "./session";
 
@@ -181,17 +182,16 @@ describe("server actions", () => {
   it("refunds, permissions, uploads and settings are refused without the permission", async () => {
     const sales = await import("@/app/admin/sales/actions");
     const perms = await import("@/app/admin/permissions/actions");
-    const settings = await import("@/app/admin/settings/actions");
     const sale = (await m.db.db.select().from(m.schema.sales).where(eq(m.schema.sales.shopId, shopId.coralville)).limit(1))[0];
     await as("makenna");
     expect(await sales.voidAction(sale.id, "test")).toMatchObject({ ok: false, error: expect.stringMatching(/permission/) });
     await as("frontdesk");
     expect(await sales.refundAction({ saleId: sale.id, items: [], tipCents: 0, reason: "x" } as never)).toMatchObject({ ok: false, error: expect.stringMatching(/manager.s PIN/) });
-    expect(await perms.saveRoleAction({ id: null, name: "Sneaky", permissions: ["sales.refund"], maxDiscountPct: 0, defaultScope: "one" })).toMatchObject({ ok: false });
+    expect(await brandAction("role", crypto.randomUUID(), { name: "Sneaky", permissions: ["sales.refund"], maxDiscountPct: 0, defaultScope: "one" })).toMatchObject({ ok: false });
     await as("regional");
     expect(await perms.saveUserAccessAction({ staffId: people.makenna.id, roleId: (await m.db.db.select().from(m.schema.roles))[0].id, overrides: {}, maxDiscountPct: null, scope: "selected", shopIds: [shopId.moline] })).toMatchObject({ ok: false, error: expect.stringMatching(/permission/) });
     await as("admin");
-    expect(await settings.saveLoyaltyAction({} as never)).toMatchObject({ ok: false, error: expect.stringMatching(/Brand Owner/) });
+    expect(await brandAction("loyalty", "brand", {})).toMatchObject({ ok: false });
   });
 
   it("shop scope: a shop manager can't touch another shop's stock or settings, and taxes need their own permission", async () => {
@@ -240,9 +240,9 @@ describe("permission changes", () => {
   it("a custom role applies at once and every change is audited", async () => {
     const perms = await import("@/app/admin/permissions/actions");
     await as("admin");
-    const made = await perms.saveRoleAction({ id: null, name: "Lead Barber", description: "Senior chair", permissions: ["clients.rate", "clients.reveal", "report.my_sales.view", "report.sales_by_barber.view"], maxDiscountPct: 0, defaultScope: "selected" });
+    const roleId = crypto.randomUUID();
+    const made = await brandAction("role", roleId, { name: "Lead Barber", description: "Senior chair", permissions: ["clients.rate", "clients.reveal", "report.my_sales.view", "report.sales_by_barber.view"], maxDiscountPct: 0, defaultScope: "selected" });
     expect(made).toMatchObject({ ok: true });
-    const roleId = (made as { data: { id: string } }).data.id;
     expect((await auditOf("permissions.role_create", roleId))[0].details).toMatchObject({ name: "Lead Barber", added: expect.arrayContaining(["report.sales_by_barber.view"]) });
 
     const mk = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, people.makenna.id) }))!;
@@ -257,7 +257,7 @@ describe("permission changes", () => {
     expect(await render("/admin/reports/sales")).toBe("denied");
 
     await as("admin");
-    expect(await perms.saveRoleAction({ id: roleId, name: "Lead Barber", permissions: ["clients.rate", "report.my_sales.view"], maxDiscountPct: 0, defaultScope: "selected" })).toMatchObject({ ok: true });
+    expect(await brandAction("role", roleId, { name: "Lead Barber", permissions: ["clients.rate", "report.my_sales.view"], maxDiscountPct: 0, defaultScope: "selected" })).toMatchObject({ ok: true });
     expect((await auditOf("permissions.role_update", roleId))[0].details).toMatchObject({ removed: expect.arrayContaining(["report.sales_by_barber.view", "clients.reveal"]) });
     await as("makenna");
     expect(await render("/admin/reports/barbers")).toBe("denied");
@@ -277,7 +277,7 @@ describe("permission changes", () => {
     await as("admin");
     expect(await perms.saveUserAccessAction({ staffId: people.michelle.id, roleId: ownerRole.id, overrides: {}, maxDiscountPct: null, scope: "all", shopIds: [] })).toMatchObject({ ok: false, error: "Only the Brand Owner can grant Brand Owner" });
     expect(await perms.saveUserAccessAction({ staffId: people.michelle.id, roleId: (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, people.michelle.id) }))!.roleId, overrides: { "settings.brand": true }, maxDiscountPct: null, scope: "one", shopIds: [shopId.coralville] })).toMatchObject({ ok: false });
-    expect(await perms.saveRoleAction({ id: adminRole.id, name: adminRole.name, permissions: [...adminRole.permissions, "settings.brand"], maxDiscountPct: 100, defaultScope: "all" })).toMatchObject({ ok: false });
+    expect(await brandAction("role", adminRole.id, { name: adminRole.name, permissions: [...adminRole.permissions, "settings.brand"], maxDiscountPct: 100, defaultScope: "all" })).toMatchObject({ ok: false });
     expect(await perms.saveUserAccessAction({ staffId: people.owner.id, roleId: adminRole.id, overrides: {}, maxDiscountPct: null, scope: "all", shopIds: [] })).toMatchObject({ ok: false, error: "Only the Brand Owner can change a Brand Owner's access" });
     await as("owner");
     expect(await perms.saveUserAccessAction({ staffId: people.owner.id, roleId: adminRole.id, overrides: {}, maxDiscountPct: null, scope: "all", shopIds: [] })).toMatchObject({ ok: false, error: expect.stringMatching(/your own access/) });

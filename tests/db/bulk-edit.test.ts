@@ -2,8 +2,11 @@
  * Bulk edit: services, a shop's menu, products (with per-row refusals), barbers' options at one
  * shop, and schedule templates applied without double-booking anyone across shops.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandChange } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
+
+vi.mock("server-only", () => ({}));
 
 let m: Mods;
 let B: typeof import("@/server/bulk-edit");
@@ -35,14 +38,15 @@ describe("bulk edit services and products", () => {
       .values([1, 2].map((i) => ({ slug: `bulk-test-${++seq}-${i}`, name: `Bulk Cut ${seq}-${i}`, category: "Haircuts", defaultPriceCents: 2500 + i * 100, defaultDurationMin: 30 })))
       .returning();
     const ids = made.map((s) => s.id);
-    const r = await B.bulkUpdateServices(actor, { ids, price: { mode: "pct", value: 10, round: "dollar" }, durationMin: 45 });
+    const { changes, results: r } = await B.bulkServiceChanges({ ids, price: { mode: "pct", value: 10, round: "dollar" }, durationMin: 45 });
     expect(r.every((x) => x.ok)).toBe(true);
+    await brandChange(changes);
     const after = await m.db.db.select().from(m.schema.services).where(m.drizzle.inArray(m.schema.services.id, ids));
     expect(after.map((s) => [s.defaultPriceCents, s.defaultDurationMin]).sort()).toEqual([
       [2900, 45],
       [3000, 45],
     ]);
-    await expect(B.bulkUpdateServices(actor, { ids })).rejects.toThrow(/Pick something/);
+    await expect(B.bulkServiceChanges({ ids })).rejects.toThrow(/Pick something/);
 
     await B.bulkShopServices(actor, { shopId: shopId.moline, ids, enabled: true, bookableOnline: false });
     const menu = await m.db.db.select().from(m.schema.shopServices).where(and(eq(m.schema.shopServices.shopId, shopId.moline), m.drizzle.inArray(m.schema.shopServices.serviceId, ids)));
@@ -50,7 +54,7 @@ describe("bulk edit services and products", () => {
       [true, false],
       [true, false],
     ]);
-    const logs = await m.db.db.select().from(m.schema.auditLog).where(and(eq(m.schema.auditLog.action, "service.bulk_update"), m.drizzle.inArray(m.schema.auditLog.entityId, ids)));
+    const logs = await m.db.db.select().from(m.schema.auditLog).where(and(eq(m.schema.auditLog.action, "service.update"), m.drizzle.inArray(m.schema.auditLog.entityId, ids)));
     expect(logs).toHaveLength(2);
   });
 
@@ -62,7 +66,8 @@ describe("bulk edit services and products", () => {
         { sku: `BULK-${seq}-B`, name: "Bulk Pomade B", brand: "Testco", category: "Styling", costCents: 1200, priceCents: 2400, lowStockThreshold: 2, parLevel: 10, highStockThreshold: 12 },
       ])
       .returning();
-    const r = await B.bulkUpdateProducts(actor, { ids: made.map((p) => p.id), brand: "Newco", price: { mode: "add", value: 100, round: "cent" }, highStockThreshold: 8 });
+    const { changes, results: r } = await B.bulkProductChanges({ ids: made.map((p) => p.id), brand: "Newco", price: { mode: "add", value: 100, round: "cent" }, highStockThreshold: 8 });
+    await brandChange(changes);
     expect(r.find((x) => x.id === made[0].id)).toMatchObject({ ok: true });
     expect(r.find((x) => x.id === made[1].id)).toMatchObject({ ok: false, error: expect.stringMatching(/below par/) });
     const [a, b] = await Promise.all(made.map((p) => m.db.db.query.products.findFirst({ where: eq(m.schema.products.id, p.id) })));

@@ -8,6 +8,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ReportTable } from "@/domain/report-views";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { open } from "./render";
 import { signInAs } from "./session";
@@ -75,7 +76,7 @@ async function sell(staffId: string, day: string, o: { product?: boolean; discou
 const setOverrides = (staffId: string, o: Record<string, boolean>) => m.db.db.update(m.schema.staff).set({ permissionOverrides: o }).where(eq(m.schema.staff.id, staffId));
 const settings = async (o: Partial<import("@/domain/compensation").CompensationSettings>) => {
   await signInAs(ids.owner);
-  expect(await brand.saveCompensationSettingsAction({ ...(await C.loadCompensationSettings()), ...o })).toMatchObject({ ok: true });
+  expect(await brandAction("setting", "compensation", { ...(await C.loadCompensationSettings()), ...o })).toMatchObject({ ok: true });
 };
 const blocks = (v: Awaited<ReturnType<typeof run.buildPayroll>>) => v!.blocks.map((b) => ({ shop: b.shop, lines: b.lines.map((l) => ({ ...l, input: { ...l.input } })), totals: b.totals, rows: b.exportRows, headers: b.exportHeaders }));
 const molineBlock = async () => (await run.buildPayroll(fx.start, fx.end))!.blocks.find((b) => b.shopId === fx.moline)!;
@@ -171,7 +172,7 @@ describe("who sees and changes compensation", () => {
     expect((await open("/admin/reports/commission-payout")).kind).toBe("denied");
     expect(await tab.addVersionAction(fx.a, plan())).toMatchObject({ ok: false });
     await signInAs(ids.regional);
-    expect(await brand.saveCompensationSettingsAction(D.DEFAULT_COMPENSATION_SETTINGS)).toMatchObject({ ok: false });
+    expect(await brandAction("setting", "compensation", D.DEFAULT_COMPENSATION_SETTINGS)).toMatchObject({ ok: false });
     expect(await C.loadCompensationSettings()).toMatchObject({ enabled: true });
   });
 

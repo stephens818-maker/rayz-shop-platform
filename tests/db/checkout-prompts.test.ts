@@ -9,6 +9,7 @@
  * event log.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { brandAction, brandSet } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 
@@ -57,7 +58,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await P.savePromptSettings(D.PROMPT_DEFAULTS, actor);
+  await brandSet("checkout_prompts", "brand", D.PROMPT_DEFAULTS);
   await m.db.db.delete(s().checkoutPromptRules);
   await m.db.db.delete(s().serviceProductSuggestions);
   await m.db.db.update(s().services).set({ rebookDays: null }).where(eq(s().services.id, fx.cut));
@@ -169,8 +170,8 @@ describe("the rebook prompt", () => {
   });
 
   it("uses the service's own interval, then the client's visit cadence, and refuses a time that's no longer on offer", async () => {
-    await P.setServiceRebookDays(fx.cut, 21, actor);
-    await expect(P.setServiceRebookDays(fx.cut, 3, actor)).rejects.toThrow(/7 to 182/);
+    await brandSet("service_rule", `suggest:${fx.cut}`, { rebookDays: 21 });
+    await expect(brandSet("service_rule", `suggest:${fx.cut}`, { rebookDays: 3 })).rejects.toThrow(/7 to 182/);
     const { saleId } = await ticket();
     const r = (await P.promptsForTicket(saleId, who)).rebook!;
     expect(r.suggested).toMatchObject({ intervalDays: 21, intervalSource: "service", targetDate: m.time.addDays(today, 21) });
@@ -308,8 +309,8 @@ describe("the product prompt", () => {
     const s1 = await m.checkout.openSaleForAppointment(first.id, actor);
     await pay(s1.id, [cutFor(first.id), { kind: "product", refId: past.id, qty: 1 }]);
 
-    await P.setServiceProducts(fx.cut, [mapped.id, used.id], actor);
-    await expect(P.setServiceProducts(fx.cut, [crypto.randomUUID()], actor)).rejects.toThrow(/not found/i);
+    await brandSet("service_rule", `suggest:${fx.cut}`, { productIds: [mapped.id, used.id] });
+    await expect(brandSet("service_rule", `suggest:${fx.cut}`, { productIds: [crypto.randomUUID()] })).rejects.toThrow(/not found/i);
     await setStock(used.id, 12, 3);
     await setStock(mapped.id, 2, 3);
     await setStock(past.id, 0, 3);
@@ -364,19 +365,19 @@ describe("the product prompt", () => {
     await pay(s1.id, [cutFor(first.id), { kind: "product", refId: past.id, qty: 1 }]);
     const a = await appt(c.id, fx.makenna);
     const sale = await m.checkout.openSaleForAppointment(a.id, actor);
-    await P.savePromptSettings({ ...D.PROMPT_DEFAULTS, product: { ...D.PROMPT_DEFAULTS.product, pastPurchases: false } }, actor);
+    await brandSet("checkout_prompts", "brand", { ...D.PROMPT_DEFAULTS, product: { ...D.PROMPT_DEFAULTS.product, pastPurchases: false } });
     const t = await P.promptsForTicket(sale.id, who);
     expect(t.product).toBeNull();
     expect(t.enabled.product).toBe(true);
-    await P.savePromptSettings(D.PROMPT_DEFAULTS, actor);
+    await brandSet("checkout_prompts", "brand", D.PROMPT_DEFAULTS);
     expect((await P.promptsForTicket(sale.id, who)).product!.suggested.products.map((x) => x.productId)).toEqual([past.id]);
   });
 });
 
 describe("required prompts and paying", () => {
   it("a required prompt holds payment and the hand-off until it's answered", async () => {
-    await P.savePromptSettings({ rebook: { ...D.PROMPT_DEFAULTS.rebook, mode: "acknowledge" }, product: { ...D.PROMPT_DEFAULTS.product, mode: "acknowledge" } }, actor);
-    await P.setServiceProducts(fx.cut, [fx.products[0].id], actor);
+    await brandSet("checkout_prompts", "brand", { rebook: { ...D.PROMPT_DEFAULTS.rebook, mode: "acknowledge" }, product: { ...D.PROMPT_DEFAULTS.product, mode: "acknowledge" } });
+    await brandSet("service_rule", `suggest:${fx.cut}`, { productIds: [fx.products[0].id] });
     const { a, saleId } = await ticket("Required");
     const t = await P.promptsForTicket(saleId, who);
     expect(t.rebook!.required && t.product!.required).toBe(true);
@@ -402,7 +403,7 @@ describe("required prompts and paying", () => {
   });
 
   it("a required rebook counts as answered once the next visit is booked some other way, and settles as booked", async () => {
-    await P.savePromptSettings({ ...D.PROMPT_DEFAULTS, rebook: { ...D.PROMPT_DEFAULTS.rebook, mode: "acknowledge" } }, actor);
+    await brandSet("checkout_prompts", "brand", { ...D.PROMPT_DEFAULTS, rebook: { ...D.PROMPT_DEFAULTS.rebook, mode: "acknowledge" } });
     const { c, a, saleId } = await ticket("Elsewhere");
     const r = (await P.promptsForTicket(saleId, who)).rebook!;
     await expect(P.assertPromptsAnswered(saleId)).rejects.toThrow(/rebook prompt/);
@@ -416,7 +417,7 @@ describe("required prompts and paying", () => {
   });
 
   it("prompts paid past without an answer settle as declined (skipped)", async () => {
-    await P.setServiceProducts(fx.cut, [fx.products[0].id], actor);
+    await brandSet("service_rule", `suggest:${fx.cut}`, { productIds: [fx.products[0].id] });
     const { a, saleId } = await ticket("Skipper");
     const t = await P.promptsForTicket(saleId, who);
     await pay(saleId, [cutFor(a.id)]);
@@ -438,19 +439,19 @@ describe("required prompts and paying", () => {
 
 describe("who sees the prompts", () => {
   it("brand off, a location on, a role off, a barber on: the closest setting wins", async () => {
-    await P.setServiceProducts(fx.cut, [fx.products[0].id], actor);
+    await brandSet("service_rule", `suggest:${fx.cut}`, { productIds: [fx.products[0].id] });
     const show = async (roleId: string | null = null, staffId = fx.makenna) => {
       const { saleId } = await ticket("Rule", { staffId });
       const t = await P.promptsForTicket(saleId, { roleId, actor });
       return { enabled: t.enabled, rebook: !!t.rebook, product: !!t.product };
     };
-    await P.savePromptSettings({ rebook: { ...D.PROMPT_DEFAULTS.rebook, enabled: false }, product: { ...D.PROMPT_DEFAULTS.product, enabled: false } }, actor);
+    await brandSet("checkout_prompts", "brand", { rebook: { ...D.PROMPT_DEFAULTS.rebook, enabled: false }, product: { ...D.PROMPT_DEFAULTS.product, enabled: false } });
     expect(await show()).toEqual({ enabled: { rebook: false, product: false }, rebook: false, product: false });
 
     await P.setPromptRule({ prompt: "rebook", target: "location", targetId: fx.shop, enabled: true }, actor);
     expect(await show()).toMatchObject({ enabled: { rebook: true, product: false }, rebook: true, product: false });
 
-    await P.setPromptRule({ prompt: "rebook", target: "role", targetId: fx.barberRole, enabled: false }, actor);
+    await brandSet("prompt_rule", fx.barberRole, { rebook: false });
     expect((await show(fx.barberRole)).enabled.rebook).toBe(false);
     expect((await show(null)).enabled.rebook).toBe(true);
 
@@ -469,7 +470,7 @@ describe("who sees the prompts", () => {
   it("a prompt already on a ticket stays for whoever opens it next", async () => {
     const { saleId } = await ticket("Sticky");
     const shown = (await P.promptsForTicket(saleId, who)).rebook!;
-    await P.setPromptRule({ prompt: "rebook", target: "role", targetId: fx.barberRole, enabled: false }, actor);
+    await brandSet("prompt_rule", fx.barberRole, { rebook: false });
     const t = await P.promptsForTicket(saleId, { roleId: fx.barberRole, actor });
     expect(t.enabled.rebook).toBe(false);
     expect(t.rebook?.id).toBe(shown.id);
@@ -478,23 +479,23 @@ describe("who sees the prompts", () => {
   it("the settings page's actions: the brand's managers only", async () => {
     const actions = await import("@/app/admin/checkout-prompts/actions");
     await signInAs(fx.manager);
-    expect(await actions.savePromptSettingsAction(D.PROMPT_DEFAULTS)).toMatchObject({ ok: false });
+    expect(await brandAction("checkout_prompts", "brand", D.PROMPT_DEFAULTS)).toMatchObject({ ok: false });
     expect(await actions.setPromptRuleAction({ prompt: "rebook", target: "barber", targetId: fx.makenna, enabled: false })).toMatchObject({ ok: false });
-    expect(await actions.setRebookDaysAction(fx.cut, 30)).toMatchObject({ ok: false });
+    expect(await brandAction("service_rule", `suggest:${fx.cut}`, { rebookDays: 30 })).toMatchObject({ ok: false });
 
     await signInAs(fx.owner);
-    const saved = await actions.savePromptSettingsAction({ ...D.PROMPT_DEFAULTS, rebook: { ...D.PROMPT_DEFAULTS.rebook, options: 2, reasons: ["Price", "Price", "Moving"] } });
+    const saved = await brandAction("checkout_prompts", "brand", { ...D.PROMPT_DEFAULTS, rebook: { ...D.PROMPT_DEFAULTS.rebook, options: 2, reasons: ["Price", "Price", "Moving"] } });
     expect(saved).toMatchObject({ ok: true });
     expect((await P.loadPromptSettings()).rebook).toMatchObject({ options: 2, reasons: ["Price", "Moving"] });
-    expect(await actions.savePromptSettingsAction({ rebook: { options: 5 } })).toMatchObject({ ok: false, error: "2 or 3 times" });
-    expect(await actions.setRebookDaysAction(fx.cut, 30)).toMatchObject({ ok: true });
-    expect(await actions.setServiceProductsAction(fx.cut, [fx.products[1].id])).toMatchObject({ ok: true });
+    expect(await brandAction("checkout_prompts", "brand", { rebook: { options: 5 } })).toMatchObject({ ok: false, error: "2 or 3 times" });
+    expect(await brandAction("service_rule", `suggest:${fx.cut}`, { rebookDays: 30 })).toMatchObject({ ok: true });
+    expect(await brandAction("service_rule", `suggest:${fx.cut}`, { productIds: [fx.products[1].id] })).toMatchObject({ ok: true });
     expect(await actions.setPromptRuleAction({ prompt: "product", target: "location", targetId: fx.shop, enabled: false })).toMatchObject({ ok: true });
     const setup = await P.promptSetup();
     expect(setup.services.find((x) => x.id === fx.cut)).toMatchObject({ rebookDays: 30, productIds: [fx.products[1].id] });
     expect(setup.rules).toEqual([expect.objectContaining({ prompt: "product", shopId: fx.shop, enabled: false })]);
-    const audits = await m.db.db.select({ action: s().auditLog.action }).from(s().auditLog).where(m.drizzle.inArray(s().auditLog.action, ["brand.checkout_prompts", "checkout_prompts.rule", "service.rebook_days", "service.suggested_products"]));
-    expect(new Set(audits.map((x) => x.action))).toEqual(new Set(["brand.checkout_prompts", "checkout_prompts.rule", "service.rebook_days", "service.suggested_products"]));
+    const audits = await m.db.db.select({ action: s().auditLog.action }).from(s().auditLog).where(m.drizzle.inArray(s().auditLog.action, ["brand.checkout_prompts", "checkout_prompts.rule", "service.suggestions"]));
+    expect(new Set(audits.map((x) => x.action))).toEqual(new Set(["brand.checkout_prompts", "checkout_prompts.rule", "service.suggestions"]));
     const { saleId } = await ticket("Narrow");
     expect((await P.promptsForTicket(saleId, who)).rebook!.suggested.options).toHaveLength(2);
     await signInAs(null);
@@ -511,7 +512,7 @@ describe("the report", () => {
       return { total: c[TOTAL], michelle: c[segKey(fx.shop, fx.michelle)] };
     };
     const before = await at();
-    await P.setServiceProducts(fx.cut, [fx.products[0].id], actor);
+    await brandSet("service_rule", `suggest:${fx.cut}`, { productIds: [fx.products[0].id] });
 
     // Michelle: one rebooked with a product paid, one declined with a reminder, one skipped, one shown but not paid yet.
     const one = await ticket("ReportA", { staffId: fx.michelle });

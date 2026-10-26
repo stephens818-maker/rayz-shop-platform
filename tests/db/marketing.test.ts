@@ -7,6 +7,7 @@
  * the preview, location scoping, the report and the contact export's permission.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction, brandSet } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 import { BRAND_CAMPAIGN_CENTER } from "@/domain/permissions";
@@ -604,7 +605,7 @@ describe("blasts, location scope and the preview", () => {
     await CP.setLocationAutomation(ctx, { campaignId: birthday.id, shopId: fx.cv, enabled: true, templates: { sms: "{shop}: happy birthday {first_name}! Reply STOP to opt out." } });
     await expect(CP.setLocationAutomation(ctx, { campaignId: birthday.id, shopId: fx.other, enabled: true })).rejects.toThrow();
     await expect(CP.setLocationAutomation(ctx, { campaignId: birthday.id, shopId: fx.cv, enabled: true, templates: { sms: "hi {nickname}" } })).rejects.toThrow(/isn't a merge field/);
-    await expect(CP.saveAutomation(ctx, birthday.id, { name: "x", channels: ["sms"], templates: { sms: "Reply STOP" } })).rejects.toThrow();
+    await expect(brandSet("automation", `wording:${birthday.id}`, { name: "x", channels: ["sms"], templates: { sms: "Reply STOP" } }, { ctx })).rejects.toThrow();
   });
 
   it("create writes and drafts, send switches and sends; neither alone does the other's job", async () => {
@@ -645,17 +646,16 @@ describe("blasts, location scope and the preview", () => {
   });
 
   it("only brand-wide create changes the brand's version and the settings", async () => {
-    const A = await import("@/app/admin/campaign-center/actions");
     const birthday = await campaign("birthday");
     const input = { name: birthday.name, channels: ["sms"], templates: { sms: "{shop}: happy birthday {first_name}! Reply STOP to opt out." } };
     await signInAs(fx.michelle);
     const local = await ctxOf();
     expect(local.brandWide).toBe(false);
     expect(local.permissions.has("campaign_center.create")).toBe(true);
-    await expect(CP.saveAutomation(local, birthday.id, input)).rejects.toThrow(/brand/);
-    expect(await A.saveMarketingSettingsAction({})).toMatchObject({ ok: false, error: expect.stringMatching(/brand/) });
+    await expect(brandSet("automation", `wording:${birthday.id}`, input, { ctx: local })).rejects.toThrow(/brand/);
+    expect(await brandAction("setting", "marketing", {})).toMatchObject({ ok: false, error: expect.stringMatching(/brand/) });
     await signInAs(fx.owner);
-    await CP.saveAutomation(await ctxOf(), birthday.id, { ...input, templates: birthday.templates, channels: birthday.channels, name: birthday.name });
+    await brandSet("automation", `wording:${birthday.id}`, { ...input, templates: birthday.templates, channels: birthday.channels, name: birthday.name }, { ctx: await ctxOf() });
   });
 
   it("a filter on a detail the person can't see is refused", async () => {
@@ -1361,10 +1361,11 @@ describe("Campaign Center v2: A/B, holdout, repeats, opens, attribution, templat
     const brand = await ctxOf();
     const seeded = await T.listTemplates(brand);
     expect(seeded.filter((t) => t.status === "approved").length).toBeGreaterThanOrEqual(4);
-    const id = await T.saveTemplate(brand, { name: `Snow day ${++seq}`, channels: ["sms"], templates: { sms: "{shop}: we're closed today for snow, {first_name}. {book_link} Reply STOP to opt out." } });
+    const id = crypto.randomUUID();
+    await brandSet("campaign_template", id, { name: `Snow day ${++seq}`, channels: ["sms"], templates: { sms: "{shop}: we're closed today for snow, {first_name}. {book_link} Reply STOP to opt out." } }, { ctx: brand });
     await signInAs(fx.michelle);
     const local = await ctxOf();
-    await expect(T.saveTemplate(local, { name: "Mine", channels: ["sms"], templates: { sms: SMS } })).rejects.toThrow(/brand/);
+    await expect(brandSet("campaign_template", crypto.randomUUID(), { name: "Mine", channels: ["sms"], templates: { sms: SMS } }, { ctx: local })).rejects.toThrow(/brand/);
     await expect(T.setTemplateStatus(local, id, "approved")).rejects.toThrow(/brand/);
     expect((await T.listTemplates(local)).some((t) => t.id === id)).toBe(false);
     await expect(CP.saveBlast(local, { name: "From a draft", channels: ["sms"], templates: { sms: SMS }, segment: {}, shopIds: [fx.cv], templateId: id })).rejects.toThrow(/approved/);
@@ -1377,7 +1378,7 @@ describe("Campaign Center v2: A/B, holdout, repeats, opens, attribution, templat
     await CP.saveBlast(await ctxOf(), { name: "From the library", channels: ["sms"], templates: seen.templates, segment: {}, shopIds: [fx.cv], templateId: id });
 
     await signInAs(fx.owner);
-    await T.saveTemplate(await ctxOf(), { id, name: seen.name, channels: ["sms"], templates: { sms: "{shop}: closed for snow until noon, {first_name}. {book_link} Reply STOP to opt out." } });
+    await brandSet("campaign_template", id, { name: seen.name, channels: ["sms"], templates: { sms: "{shop}: closed for snow until noon, {first_name}. {book_link} Reply STOP to opt out." } }, { ctx: await ctxOf() });
     const [row] = await m.db.db.select().from(s().marketingTemplates).where(eq(s().marketingTemplates.id, id));
     expect(row).toMatchObject({ status: "draft", approvedAt: null });
     await T.setTemplateStatus(await ctxOf(), id, "archived", NOW);

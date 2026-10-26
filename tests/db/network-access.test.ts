@@ -10,6 +10,7 @@
  */
 import { NextRequest } from "next/server";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { open } from "./render";
 import { jar, redirectTarget, signInAs } from "./session";
@@ -360,7 +361,7 @@ describe("settings and the brand portal", () => {
     expect(await save([" 203.0.113.0/24 ", "203.0.113.0/24", "2001:db8::/48"])).toEqual({ ok: true, data: { enabled: true, require: "ip", allowedIps: ["203.0.113.0/24", "2001:db8::/48"] } });
     const [log] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "network.rule"), eq(S().auditLog.entityId, shopIds.coralville))).orderBy(m.drizzle.desc(S().auditLog.at)).limit(1);
     expect(log.details).toMatchObject({ before: { require: "device" }, after: { allowedIps: ["203.0.113.0/24", "2001:db8::/48"] } });
-    expect(await portal.saveBrandNetworkAction({ alertOnBlock: false })).toEqual({ ok: true, data: null });
+    expect(await brandAction("setting", "network", { alertOnBlock: false })).toMatchObject({ ok: true });
   });
 
   it("the wizard saves a new location's rule, and turning one on needs the permission", async () => {

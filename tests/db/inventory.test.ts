@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Who } from "@/server/inventory/ledger";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 
@@ -410,7 +411,7 @@ describe("permissions", () => {
     await as("michelle");
     expect(await po.sendPoAction(myPo, { method: "manual" })).toMatchObject({ ok: true });
     expect(await inv.adjustStockAction({ shopId: shopId.moline, productId: p.id, mode: "remove", qty: 1, reason: "damage" })).toMatchObject({ ok: false, error: "That shop is outside your access" });
-    expect(await inv.saveBrandLevelsAction({ productId: p.id, reorderPoint: 1, par: 2 })).toMatchObject({ ok: false, error: expect.stringMatching(/all shops/) });
+    expect(await brandAction("product", p.id, { lowStockThreshold: 1, parLevel: 2 })).toMatchObject({ ok: false, error: expect.stringMatching(/every shop|permission/) });
     expect(await tr.createTransferAction({ fromShopId: shopId.moline, toShopId: shopId.coralville, lines: [] })).toMatchObject({ ok: false, error: "That shop is outside your access" });
     const out = await tr.createTransferAction({ fromShopId: shopId.coralville, toShopId: shopId.moline, lines: [{ productId: p.id, qty: 1 }] });
     expect(out).toMatchObject({ ok: true });

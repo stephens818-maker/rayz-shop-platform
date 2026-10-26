@@ -6,6 +6,7 @@
  * shown: from the client's Nth visit across all locations, and not again for a while after a tap.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
 
@@ -439,10 +440,10 @@ describe("when the review link is shown", () => {
 
   it("the brand sets the visit and each location can set its own", async () => {
     await signInAs(fx.michelle);
-    expect(await settings.saveReviewRulesAction({ minVisits: 2, snoozeDays: 30 })).toMatchObject({ ok: false });
+    expect(await brandAction("setting", "reviews", { minVisits: 2, snoozeDays: 30 })).toMatchObject({ ok: false });
     await signInAs(fx.owner);
-    expect(await settings.saveReviewRulesAction({ minVisits: 0, snoozeDays: 30 })).toMatchObject({ ok: false, error: "Start at visit 1 to 50" });
-    expect(await settings.saveReviewRulesAction({ minVisits: 2, snoozeDays: 30 })).toMatchObject({ ok: true });
+    expect(await brandAction("setting", "reviews", { minVisits: 0, snoozeDays: 30 })).toMatchObject({ ok: false, error: "Start at visit 1 to 50" });
+    expect(await brandAction("setting", "reviews", { minVisits: 2, snoozeDays: 30 })).toMatchObject({ ok: true });
     expect(await RR.loadReviewRules()).toEqual({ minVisits: 2, snoozeDays: 30 });
     const [a] = await m.db.db.select().from(s().auditLog).where(eq(s().auditLog.action, "brand.review_rules")).orderBy(m.drizzle.desc(s().auditLog.at)).limit(1);
     expect(a.details).toMatchObject({ before: { minVisits: 3, snoozeDays: 90 }, after: { minVisits: 2, snoozeDays: 30 } });
@@ -463,7 +464,7 @@ describe("when the review link is shown", () => {
     await settings.saveReceiptAction(fx.cv, { reviewUrl: WRITE, reviewMinVisits: 1 });
     expect(await shown(first.saleId, at("2028-06-02", "12:00"))).toBe(WRITE);
 
-    await settings.saveReviewRulesAction({ minVisits: 3, snoozeDays: 90 });
+    await brandAction("setting", "reviews", { minVisits: 3, snoozeDays: 90 });
     await signInAs(null);
   });
 

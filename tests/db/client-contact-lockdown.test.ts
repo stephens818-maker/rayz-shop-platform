@@ -10,6 +10,7 @@
  * shop) see contact details in full and export without a grant.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandAction, fieldRule } from "./brand";
 import { Mods, loadModules } from "./setup";
 import { found, get, open } from "./render";
 import { signInAs } from "./session";
@@ -177,51 +178,48 @@ describe("shop logins and shop and staff roles, given everything in the database
 
 describe("no role, rule or override gives it to a shop or staff role, not even the Brand Owner's", () => {
   it("full contact rules for a shop or staff role or person are refused", async () => {
-    const { setFieldRuleAction } = await import("@/app/admin/client-data/actions");
     const manager = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "shop_manager") }))!;
     for (const who of ["owner", "admin"] as const) {
       await as(who);
       for (const field of ["phone", "email", "address"]) {
         for (const target of [{ roleId: manager.id, staffId: null }, { roleId: null, staffId: people.michelle }, { roleId: null, staffId: people.coralville }])
-          expect(await setFieldRuleAction({ field, level: "full", shopId: null, ...target }), `${who} ${field}`).toMatchObject({ ok: false, error: expect.stringMatching(/Give a person or a location contact access/) });
-        expect(await setFieldRuleAction({ field, level: "masked", shopId: null, roleId: manager.id, staffId: null })).toMatchObject({ ok: true });
+          expect(await fieldRule({ field, level: "full", shopId: null, ...target }), `${who} ${field}`).toMatchObject({ ok: false, error: expect.stringMatching(/Give a person or a location contact access/) });
+        expect(await fieldRule({ field, level: "masked", shopId: null, roleId: manager.id, staffId: null })).toMatchObject({ ok: true });
       }
     }
   });
 
   it("client-list permissions on a shop or staff role, or as an override, are refused", async () => {
-    const { saveRoleAction, saveUserAccessAction } = await import("@/app/admin/permissions/actions");
+    const { saveUserAccessAction } = await import("@/app/admin/permissions/actions");
     const manager = (await m.db.db.query.roles.findFirst({ where: eq(m.schema.roles.key, "shop_manager") }))!;
     const michelle = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.id, people.michelle) }))!;
     await as("owner");
     for (const p of ["clients.contact_full", "clients.export", "campaign_center.export", "report.client_ratings.export", "import.run", "clients.privacy"]) {
       const role = { id: manager.id, name: manager.name, description: manager.description, permissions: [...manager.permissions, p, "report.client_ratings.view"], maxDiscountPct: manager.maxDiscountPct, defaultScope: manager.defaultScope };
-      expect(await saveRoleAction(role), p).toMatchObject({ ok: false, error: expect.stringMatching(/only for brand-level roles|isn't part of a role/) });
-      expect(await saveRoleAction({ ...role, permissions: manager.permissions, brandLevel: true })).toMatchObject({ ok: false, error: expect.stringMatching(/Built-in roles can't be made brand-level/) });
+      expect(await brandAction("role", role.id, role), p).toMatchObject({ ok: false, error: expect.stringMatching(/only for brand-level roles|isn't part of a role/) });
+      expect(await brandAction("role", role.id, { ...role, permissions: manager.permissions, brandLevel: true })).toMatchObject({ ok: false, error: expect.stringMatching(/Built-in roles can't be made brand-level/) });
       const access = { staffId: michelle.id, roleId: michelle.roleId, maxDiscountPct: null, scope: "one" as const, shopIds: [ids.coralville], overrides: { [p]: true } };
       expect(await saveUserAccessAction(access), p).toMatchObject({ ok: false, error: expect.stringMatching(/only for brand-level roles|isn't part of a role/) });
     }
-    const { saveShopLoginCapAction } = await import("@/app/admin/client-data/actions");
-    expect(await saveShopLoginCapAction("role")).toMatchObject({ ok: false });
+    expect(await brandAction("setting", "shop_login_contact", "role")).toMatchObject({ ok: false });
   });
 
   it("only the Brand Owner makes a role brand-level", async () => {
-    const { saveRoleAction } = await import("@/app/admin/permissions/actions");
     await as("admin");
-    const r = await saveRoleAction({ id: null, name: "Admin's analyst", permissions: ["clients.view_all"], maxDiscountPct: 0, defaultScope: "all", brandLevel: true });
+    const r = await brandAction("role", crypto.randomUUID(), { name: "Admin's analyst", permissions: ["clients.view_all"], maxDiscountPct: 0, defaultScope: "all", brandLevel: true });
     expect(r).toMatchObject({ ok: false, error: expect.stringMatching(/Only the Brand Owner/) });
   });
 });
 
 describe("brand-level people", () => {
   it("a brand-level role the Brand Owner creates sees contact details in full and exports, with every shop", async () => {
-    const { saveRoleAction, saveUserAccessAction } = await import("@/app/admin/permissions/actions");
-    const { setFieldRuleAction } = await import("@/app/admin/client-data/actions");
-    await as("owner");
-    const created = await saveRoleAction({ id: null, name: "Brand analyst", permissions: ["clients.view_all", "clients.export"], maxDiscountPct: 0, defaultScope: "all", brandLevel: true });
+    const { saveUserAccessAction } = await import("@/app/admin/permissions/actions");
+        await as("owner");
+    const analyst = crypto.randomUUID();
+    const created = await brandAction("role", analyst, { name: "Brand analyst", permissions: ["clients.view_all", "clients.export"], maxDiscountPct: 0, defaultScope: "all", brandLevel: true });
     expect(created).toMatchObject({ ok: true });
-    ids.analyst = created.ok ? created.data.id : "";
-    for (const field of ["phone", "email", "address"]) expect(await setFieldRuleAction({ field, level: "full", roleId: ids.analyst, staffId: null, shopId: null })).toMatchObject({ ok: true });
+    ids.analyst = analyst;
+    for (const field of ["phone", "email", "address"]) expect(await fieldRule({ field, level: "full", roleId: ids.analyst, staffId: null, shopId: null })).toMatchObject({ ok: true });
     await m.db.db.update(m.schema.staff).set({ permissionOverrides: {} }).where(eq(m.schema.staff.id, people.regional));
     const base = { staffId: people.regional, roleId: ids.analyst, maxDiscountPct: null, overrides: {}, shopRoles: {} };
     expect(await saveUserAccessAction({ ...base, scope: "all", shopIds: [] })).toMatchObject({ ok: true });
