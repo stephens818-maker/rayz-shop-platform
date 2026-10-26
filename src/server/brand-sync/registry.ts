@@ -3,6 +3,9 @@ import { appAdapter, campaignTemplateAdapter, checkoutPromptsAdapter, loyaltyAda
 import { productAdapter, serviceAdapter } from "./adapters/catalog";
 import { hoursAdapter, locationDefaultAdapter, receiptAdapter } from "./adapters/location";
 import { cardFeeAdapter, taxesAdapter, tipsAdapter } from "./adapters/money";
+import { automationAdapter } from "./adapters/automations";
+import { closureAdapter } from "./adapters/closures";
+import { fieldRuleAdapter, promptRuleAdapter } from "./adapters/rules";
 import { serviceRuleAdapter } from "./adapters/service-rules";
 import { listAdapter } from "./lists";
 import { settingAdapter } from "./settings";
@@ -26,6 +29,10 @@ export const ADAPTERS: Record<SyncType, AnyAdapter> = {
   setting: settingAdapter,
   list: listAdapter,
   service_rule: serviceRuleAdapter,
+  closure: closureAdapter,
+  automation: automationAdapter,
+  field_rule: fieldRuleAdapter,
+  prompt_rule: promptRuleAdapter,
 };
 
 export const areaOf = (a: AnyAdapter, item?: Pick<SyncItem, "area"> | null): SyncArea => item?.area ?? a.area;

@@ -158,7 +158,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         />
       )}
       {part("hours") && <HoursEditor shopId={shop.id} canSetSunday={brand} locked={hoursLocked} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />}
-      {part("hours") && <ClosuresEditor shopId={shop.id} multiShop={ctx.shopIds.length > 1} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />}
+      {part("hours") && <ClosuresEditor shopId={shop.id} multiShop={ctx.shopIds.length > 1} brand={ctx.brandWide} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />}
       {part("checkout") && <DrawerOpeningEditor shopId={shop.id} initialCents={shop.drawerOpeningCents} locked={policiesLocked} />}
       {part("checkout") && (
         <ReadersEditor

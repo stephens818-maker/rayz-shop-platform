@@ -130,7 +130,15 @@ export function PromptSettingsCard({ settings }: { settings: CheckoutPromptSetti
 }
 
 export function PromptRulesCard(props: { rules: { id: string; prompt: PromptKind; shopId: string | null; roleId: string | null; staffId: string | null; enabled: boolean }[]; shops: Named[]; roles: Named[]; barbers: Named[] }) {
-  const { pending, error, act } = useAct();
+  const { pending: acting, error: actError, act } = useAct();
+  const roleSync = useSyncSave();
+  const pending = acting || roleSync.pending;
+  const error = actError ?? (roleSync.msg && !roleSync.msg.ok ? roleSync.msg.text : null);
+  /** A role's rule goes to the shops the brand picks; a location's or a barber's saves straight away. */
+  const setRule = (prompt: PromptKind, target: RuleTarget, targetId: string, enabled: boolean | null) =>
+    target === "role"
+      ? roleSync.save({ label: `Checkout prompts: ${props.roles.find((r) => r.id === targetId)?.name ?? "role"}`, changes: [{ type: "prompt_rule", item: targetId, value: { [prompt]: enabled } }] })
+      : act(() => setPromptRuleAction({ prompt, target, targetId, enabled }));
   const [prompt, setPrompt] = useState<PromptKind>("rebook");
   const [target, setTarget] = useState<RuleTarget>("location");
   const [targetId, setTargetId] = useState("");
@@ -171,7 +179,7 @@ export function PromptRulesCard(props: { rules: { id: string; prompt: PromptKind
                       size="sm"
                       variant="secondary"
                       disabled={pending}
-                      onClick={() => act(() => setPromptRuleAction({ prompt: r.prompt, target: ruleTarget(r), targetId: (r.staffId ?? r.roleId ?? r.shopId)!, enabled: null }))}
+                      onClick={() => setRule(r.prompt, ruleTarget(r), (r.staffId ?? r.roleId ?? r.shopId)!, null)}
                     >
                       Remove
                     </Button>
@@ -210,12 +218,13 @@ export function PromptRulesCard(props: { rules: { id: string; prompt: PromptKind
             <option value="on">On</option>
             <option value="off">Off</option>
           </Select>
-          <Button disabled={!targetId || pending} onClick={() => act(() => setPromptRuleAction({ prompt, target, targetId, enabled: enabled === "on" }))}>
+          <Button disabled={!targetId || pending} onClick={() => setRule(prompt, target, targetId, enabled === "on")}>
             Add
           </Button>
         </div>
         {error && <Notice tone="red">{error}</Notice>}
       </div>
+      {roleSync.dialog}
     </Card>
   );
 }

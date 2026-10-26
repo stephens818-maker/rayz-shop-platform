@@ -42,6 +42,7 @@ export default async function AutomationPage({ params }: { params: Promise<{ id:
         coupons={coupons}
         address={settings.address}
         mayBrand={mayWrite && ctx.brandWide}
+        switchBrand={maySwitch && ctx.brandWide}
         mayWrite={mayWrite}
         maySwitch={maySwitch}
       />

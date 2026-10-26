@@ -64,6 +64,16 @@ export async function putBrandValue(tx: DBorTx, key: string, value: unknown, act
     .onConflictDoUpdate({ target: brandSyncValues.key, set: { value: v, updatedAt: new Date(), updatedBy: actor.staffId ?? null } });
 }
 
+export async function dropBrandValue(tx: DBorTx, key: string) {
+  await tx.delete(brandSyncValues).where(eq(brandSyncValues.key, key));
+}
+
+/** brand_sync_values keys starting with a prefix, with their values. */
+export async function brandValuesLike<T>(prefix: string, tx: DBorTx = db): Promise<Map<string, T>> {
+  const rows = await tx.select({ key: brandSyncValues.key, v: brandSyncValues.value }).from(brandSyncValues).where(like(brandSyncValues.key, `${prefix}%`));
+  return new Map(rows.map((r) => [r.key.slice(prefix.length), r.v as T]));
+}
+
 export async function controlRows(tx: DBorTx = db): Promise<Map<string, boolean>> {
   const rows = await tx.select().from(brandSyncControls);
   return new Map(rows.map((r) => [r.type, r.shopsCanEdit]));

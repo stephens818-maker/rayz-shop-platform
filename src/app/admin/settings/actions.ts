@@ -187,6 +187,7 @@ export async function saveHoursAction(shopId: string, rows: { weekday: number; o
 export async function addClosureAction(shopId: string, date: string, reason: string, allShops: boolean) {
   return safe(async () => {
     const ctx = await authorize(partPerms("hours"));
+    if (allShops && ctx.brandWide) throw new AppError("bad_request", "Closing several shops goes through Brand defaults → Holiday closures, which picks the shops");
     const ids = allShops ? ctx.shopIds : [shopId];
     for (const id of ids) {
       assertShopAccess(ctx, id);

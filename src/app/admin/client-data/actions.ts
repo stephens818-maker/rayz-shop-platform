@@ -7,7 +7,6 @@ import { db } from "@/db";
 import { clientAccessAlerts, clientFieldRules, clientFields, roles, shops, staff } from "@/db/schema";
 import {
   Entry,
-  EntrySetting,
   FieldKey,
   Level,
   SETTINGS,
@@ -16,33 +15,17 @@ import {
   fieldLabel,
   fieldRuleChangeDenied,
   isBuiltinField,
-  resolveEntry,
-  resolveLevel,
 } from "@/domain/client-privacy";
 import { OWNER_ROLE_KEY, isBrandLevelPerson, isBrandLevelRole } from "@/domain/permissions";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
-import { StaffContext, authorize } from "@/server/auth/staff";
+import { authorize } from "@/server/auth/staff";
 import { markNewListItem } from "@/server/brand-sync/lists";
-import { rulesFor } from "@/server/client-privacy";
+import { callerRights } from "@/server/client-privacy";
 import { AppError, forbidden, notFound } from "@/server/errors";
 
 function revalidate() {
   revalidatePath("/admin", "layout");
-}
-
-/** What the caller sees and may enter of a field at a shop (or brand-wide), for "nobody gives more than they have". */
-async function callerRights(ctx: StaffContext) {
-  const roleIds = [ctx.access.role.id, ...[...ctx.access.byShop.values()].map((s) => s.role.id)];
-  const rules = ctx.isOwner ? [] : await rulesFor(ctx.staff.id, [...new Set(roleIds)]);
-  const who = (shopId: string | null) => {
-    const role = (shopId && ctx.access.byShop.get(shopId)?.role) || ctx.access.role;
-    return { staffId: ctx.staff.id, roleId: role.id, roleKey: role.key };
-  };
-  return {
-    levelAt: (shopId: string | null, field: FieldKey): Level => resolveLevel(rules, who(shopId), shopId, field),
-    entryAt: (shopId: string | null, field: FieldKey, setting: EntrySetting) => resolveEntry(rules, who(shopId), shopId, field, setting),
-  };
 }
 
 const FieldSchema = z.string().refine((f) => isBuiltinField(f) || /^custom:[0-9a-f-]{36}$/.test(f), "Unknown field");
@@ -63,6 +46,7 @@ export async function setFieldRuleAction(raw: z.input<typeof RuleSchema>) {
   return safe(async () => {
     const ctx = await authorize("clients.privacy", "You can't change client data protection");
     const p = RuleSchema.parse(raw);
+    if (p.roleId && !p.staffId && !p.shopId) throw new AppError("bad_request", "A role's rule for every shop saves through the brand change scope");
     const field = p.field as FieldKey;
     const custom = await db.select({ id: clientFields.id, label: clientFields.label }).from(clientFields);
     if (!isBuiltinField(field) && !custom.some((c) => c.id === customFieldId(field))) throw notFound("Field");

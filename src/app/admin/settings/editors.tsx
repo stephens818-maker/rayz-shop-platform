@@ -217,14 +217,14 @@ export function HoursEditor({ shopId, initial, canSetSunday, locked = false }: {
   );
 }
 
-export function ClosuresEditor({ shopId, closures, multiShop }: { shopId: string; closures: { date: string; reason: string }[]; multiShop: boolean }) {
+export function ClosuresEditor({ shopId, closures, multiShop, brand = false }: { shopId: string; closures: { date: string; reason: string }[]; multiShop: boolean; brand?: boolean }) {
   const { pending, msg, save } = useSave();
   const [date, setDate] = useState("");
   const [reason, setReason] = useState("");
   const [all, setAll] = useState(false);
   return (
     <Card>
-      <CardHeader title="Holidays & closures" subtitle="Closed dates block all booking for the day." />
+      <CardHeader title="Holidays & closures" subtitle={brand ? "Closed dates block all booking for the day. To close several shops at once, use Brand defaults → Holiday closures." : "Closed dates block all booking for the day."} />
       <ul className="divide-y divide-zinc-100 text-sm">
         {closures.length === 0 && <li className="px-4 py-2 text-zinc-500">No upcoming closures.</li>}
         {closures.map((c) => (
@@ -245,7 +245,7 @@ export function ClosuresEditor({ shopId, closures, multiShop }: { shopId: string
         <Field label="Reason" className="min-w-48 flex-1">
           <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Christmas Day" />
         </Field>
-        {multiShop && (
+        {multiShop && !brand && (
           <label className="flex items-center gap-2 pb-2 text-sm">
             <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> All my shops
           </label>

@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useSettingSync, useSyncSave } from "@/components/brand-sync";
-import { Card, CardHeader, Field, Input } from "@/components/ui";
+import { SyncMsg, useSettingSync, useSyncSave } from "@/components/brand-sync";
+import { Button, Card, CardHeader, Field, Input } from "@/components/ui";
 import { SaveBar } from "../settings/editors";
 
 /** The name a shop prints for the brand on purchase orders and brand emails. */
@@ -91,6 +91,52 @@ export function BrandReceiptEditor({ initial, canEdit }: { initial: Receipt; can
           onClick={() => save({ label: "Receipt branding", changes: [{ type: "receipt", item: "branding", value: { ...v, headline: v.headline.trim() || null, footer: v.footer.trim() || null } }] })}
         />
       )}
+      {dialog}
+    </Card>
+  );
+}
+
+type Closure = { date: string; reason: string | null };
+
+/** Holiday closures the brand sets: each date goes to the shops picked, and can open them again the same way. */
+export function BrandClosuresEditor({ closures }: { closures: Closure[] }) {
+  const { pending, msg, save, dialog } = useSyncSave();
+  const [date, setDate] = useState("");
+  const [reason, setReason] = useState("");
+  const send = (d: string, closed: boolean, why: string | null) => save({ label: `Closed ${d}`, changes: [{ type: "closure", item: d, value: { closed, reason: why } }], onDone: () => (setDate(""), setReason("")) });
+  return (
+    <Card>
+      <CardHeader title="Holiday closures" subtitle="Close the shops you pick on a date: booking stops for the day. Shops' own closed days stay theirs." />
+      <ul className="divide-y divide-zinc-100 text-sm" data-testid="brand-closures">
+        {closures.length === 0 && <li className="px-4 py-2 text-zinc-500">No upcoming brand closures.</li>}
+        {closures.map((c) => (
+          <li key={c.date} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+            <span>
+              <span className="font-medium">{c.date}</span> · {c.reason || "Closed"}
+            </span>
+            <span className="flex gap-3">
+              <button className="text-xs underline" disabled={pending} onClick={() => send(c.date, true, c.reason)}>
+                Close at…
+              </button>
+              <button className="text-xs text-red-600 underline" disabled={pending} onClick={() => send(c.date, false, c.reason)}>
+                Open again at…
+              </button>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-end gap-2 border-t border-zinc-100 p-4">
+        <Field label="Date">
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </Field>
+        <Field label="Reason" className="min-w-48 flex-1">
+          <Input value={reason} maxLength={60} onChange={(e) => setReason(e.target.value)} placeholder="Christmas Day" />
+        </Field>
+        <Button disabled={pending || !date} onClick={() => send(date, true, reason.trim() || null)}>
+          Close shops…
+        </Button>
+        <SyncMsg msg={msg} />
+      </div>
       {dialog}
     </Card>
   );

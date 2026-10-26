@@ -14,7 +14,6 @@ import {
   previewBlast,
   renameCampaign,
   resumeBlast,
-  saveAutomation,
   saveBlast,
   scheduleBlast,
   sendTest,
@@ -24,15 +23,6 @@ import { setTemplateStatus } from "@/server/marketing/templates";
 import { deleteSequence, previewSequence, saveSequence, setSequenceEnabled } from "@/server/marketing/sequences";
 
 const ANY = ["campaign_center.create", "campaign_center.send"] as const;
-
-export async function saveAutomationAction(id: string, input: unknown) {
-  return safe(async () => {
-    const ctx = await authorize("campaign_center.create", "Only the brand changes a campaign's wording for every location");
-    await saveAutomation(ctx, String(id), input);
-    revalidatePath("/admin/campaign-center");
-    return null;
-  });
-}
 
 export async function setLocationAutomationAction(input: unknown) {
   return safe(async () => {

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { SyncMsg, useSettingSync } from "@/components/brand-sync";
+import { SyncMsg, useSettingSync, useSyncSave } from "@/components/brand-sync";
 import { ListShops, useListSync } from "@/components/list-sync";
 import { Button, Field, Input, Select, cx } from "@/components/ui";
 import {
@@ -44,9 +44,22 @@ const RED = "bg-red-50 text-red-800 ring-red-200";
 const GREEN = "bg-emerald-50 text-emerald-900 ring-emerald-200";
 const TONE: Record<Value, string> = { hidden: RED, masked: "bg-amber-50 text-amber-900 ring-amber-200", full: GREEN, allow: GREEN, deny: RED };
 
+/** A role's rule for every shop saves through the brand change scope; one shop's, or one person's, saves straight away. */
+const isRoleBrandRule = (rule: Rule) => !!rule.roleId && !rule.staffId && !rule.shopId;
+
+function useRuleSave() {
+  const { pending, error, run } = useRun();
+  const sync = useSyncSave();
+  const save = (rule: Rule, level: string | null) =>
+    isRoleBrandRule(rule)
+      ? sync.save({ label: "Client data access", changes: [{ type: "field_rule", item: rule.roleId!, value: { [`${rule.setting}:${rule.field}`]: level } }] })
+      : run(() => setFieldRuleAction({ ...rule, level }));
+  return { pending: pending || sync.pending, error: error ?? (sync.msg && !sync.msg.ok ? sync.msg.text : null), save, dialog: sync.dialog };
+}
+
 /** One role × field × setting: a level (or allow / deny) set here, or inherit the brand default / built-in default. `noFull`: a contact field for a role that isn't brand-level. */
 export function RuleCell({ rule, level, inherited, from, noFull }: { rule: Rule; level: Value | null; inherited: Value; from: string; noFull?: boolean }) {
-  const { pending, error, run } = useRun();
+  const { pending, error, save, dialog } = useRuleSave();
   const shown = level ?? inherited;
   return (
     <div>
@@ -54,7 +67,7 @@ export function RuleCell({ rule, level, inherited, from, noFull }: { rule: Rule;
         aria-label={`${rule.field} ${rule.setting}`}
         disabled={pending}
         value={level ?? ""}
-        onChange={(e) => run(() => setFieldRuleAction({ ...rule, level: e.target.value || null }))}
+        onChange={(e) => save(rule, e.target.value || null)}
         className={cx("h-8 rounded-md px-1.5 text-xs ring-1", TONE[shown], !level && "border-dashed opacity-80")}
       >
         <option value="">
@@ -67,18 +80,20 @@ export function RuleCell({ rule, level, inherited, from, noFull }: { rule: Rule;
         ))}
       </select>
       {error && <div className="mt-1 max-w-40 whitespace-normal text-[11px] text-red-600">{error}</div>}
+      {dialog}
     </div>
   );
 }
 
 export function RemoveRule({ rule }: { rule: Rule }) {
-  const { pending, error, run } = useRun();
+  const { pending, error, save, dialog } = useRuleSave();
   return (
     <>
-      <button className="text-xs underline" disabled={pending} onClick={() => run(() => setFieldRuleAction({ ...rule, level: null }))}>
+      <button className="text-xs underline" disabled={pending} onClick={() => save(rule, null)}>
         Remove
       </button>
       {error && <span className="ml-2 text-xs text-red-600">{error}</span>}
+      {dialog}
     </>
   );
 }

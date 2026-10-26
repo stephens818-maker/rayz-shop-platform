@@ -107,6 +107,20 @@ export async function rulesFor(staffId: string, roleIds: string[]): Promise<Fiel
   return rows.filter(validRule);
 }
 
+/** What the caller sees and may enter of a field at a shop (or brand-wide), for "nobody gives more than they have". */
+export async function callerRights(ctx: StaffContext) {
+  const roleIds = [ctx.access.role.id, ...[...ctx.access.byShop.values()].map((s) => s.role.id)];
+  const rules = ctx.isOwner ? [] : await rulesFor(ctx.staff.id, [...new Set(roleIds)]);
+  const who = (shopId: string | null) => {
+    const role = (shopId && ctx.access.byShop.get(shopId)?.role) || ctx.access.role;
+    return { staffId: ctx.staff.id, roleId: role.id, roleKey: role.key };
+  };
+  return {
+    levelAt: (shopId: string | null, field: FieldKey): Level => resolveLevel(rules, who(shopId), shopId, field),
+    entryAt: (shopId: string | null, field: FieldKey, setting: EntrySetting) => resolveEntry(rules, who(shopId), shopId, field, setting),
+  };
+}
+
 /** Combined across the shops someone works in at once, the strictest level wins. */
 export function levelsFor(rules: readonly FieldRule[], staffId: string, working: readonly Working[], fields: readonly FieldKey[]): Map<FieldKey, Level> {
   return new Map(fields.map((f) => [f, minLevel(...working.map((w) => resolveLevel(rules, { staffId, roleId: w.roleId, roleKey: w.roleKey }, w.shopId, f)))]));

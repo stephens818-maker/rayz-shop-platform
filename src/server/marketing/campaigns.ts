@@ -84,7 +84,7 @@ export async function promoOk(promoId: string | null) {
   return p;
 }
 
-const AutomationInput = z.object({
+export const AutomationInput = z.object({
   name: z.string().trim().min(1).max(80),
   channels: ChannelsSchema,
   templates: TemplatesSchema,
@@ -112,23 +112,6 @@ export async function campaignById(id: string): Promise<Campaign> {
   const [c] = await db.select().from(marketingCampaigns).where(eq(marketingCampaigns.id, id));
   if (!c) throw notFound("Campaign");
   return c;
-}
-
-/** The brand's version of an automated campaign. */
-export async function saveAutomation(ctx: StaffContext, id: string, input: unknown) {
-  if (!mayBrand(ctx)) throw forbidden("Only the brand changes a campaign's wording for every location");
-  const c = await campaignById(id);
-  if (c.kind !== "trigger" || !isTriggerKey(c.trigger)) throw new AppError("bad_request", "That isn't an automated campaign");
-  const v = parse(AutomationInput, input);
-  const promo = await promoOk(v.promoId);
-  const problem = templatesProblem(v.templates, v.channels, { hasCoupon: !!promo, extraFields: Object.keys(TRIGGERS[c.trigger].fields ?? {}) });
-  if (problem) throw new AppError("bad_request", problem);
-  const settings = triggerSettings(c.trigger, v.settings);
-  await db
-    .update(marketingCampaigns)
-    .set({ name: v.name, channels: v.channels, templates: { ...v.templates }, settings, promoId: promo?.id ?? null, updatedAt: new Date() })
-    .where(eq(marketingCampaigns.id, id));
-  await audit(ctx.actor, "campaign_center.automation_saved", "marketing_campaign", id, { trigger: c.trigger, channels: v.channels, settings, promoId: promo?.id ?? null }, null);
 }
 
 const LocationInput = z.object({

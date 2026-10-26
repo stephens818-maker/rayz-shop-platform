@@ -58,6 +58,10 @@ export const SYNC_TYPES = [
   "setting",
   "list",
   "service_rule",
+  "closure",
+  "automation",
+  "field_rule",
+  "prompt_rule",
 ] as const;
 export type SyncType = (typeof SYNC_TYPES)[number];
 export const isSyncType = (s: string): s is SyncType => (SYNC_TYPES as readonly string[]).includes(s);

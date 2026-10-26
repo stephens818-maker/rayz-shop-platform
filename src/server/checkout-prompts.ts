@@ -61,6 +61,7 @@ import { stockLevels } from "./inventory/stock";
 import { savedTemplates } from "./notifications/queue";
 import { clientProductHistory } from "./product-history";
 
+import { promptRulesAt } from "./brand-sync/adapters/rules";
 import { suggestAt } from "./brand-sync/adapters/service-rules";
 
 /**
@@ -93,19 +94,18 @@ export async function promptRules(tx: DBorTx = db): Promise<(PromptRule & { id: 
   return rows.map((r) => ({ id: r.id, prompt: r.prompt, shopId: r.shopId, roleId: r.roleId, staffId: r.staffId, enabled: r.enabled }));
 }
 
-/** Turn a prompt on or off for one location, role or barber; null removes the override so it follows the next level up. */
+/** Turn a prompt on or off for one location or barber (a role's goes through the brand change scope); null removes the override so it follows the next level up. */
 export async function setPromptRule(input: { prompt: string; target: RuleTarget; targetId: string; enabled: boolean | null }, actor: Actor) {
   if (!isPromptKind(input.prompt)) throw new AppError("bad_request", "Unknown prompt");
   const prompt = input.prompt;
   const col = { location: "shopId", role: "roleId", barber: "staffId" } as const;
   if (!(input.target in col)) throw new AppError("bad_request", "Pick a location, role or barber");
+  if (input.target === "role") throw new AppError("bad_request", "A role's rule saves through the brand change scope, which picks its shops");
   const exists =
     input.target === "location"
       ? await db.query.shops.findFirst({ where: eq(shops.id, input.targetId), columns: { id: true } })
-      : input.target === "role"
-        ? await db.query.roles.findFirst({ where: eq(roles.id, input.targetId), columns: { id: true } })
-        : await db.query.staff.findFirst({ where: eq(staff.id, input.targetId), columns: { id: true } });
-  if (!exists) throw notFound(input.target === "location" ? "Location" : input.target === "role" ? "Role" : "Barber");
+      : await db.query.staff.findFirst({ where: eq(staff.id, input.targetId), columns: { id: true } });
+  if (!exists) throw notFound(input.target === "location" ? "Location" : "Barber");
   const target = { shopId: null as string | null, roleId: null as string | null, staffId: null as string | null, [col[input.target]]: input.targetId };
   const where = and(
     eq(checkoutPromptRules.prompt, prompt),
@@ -443,7 +443,7 @@ async function productSuggestion(sale: Sale, settings: CheckoutPromptSettings, h
 
 /** Whether each prompt shows for this ticket and whoever has it open, and how. */
 async function enabledFor(sale: Sale, roleId: string | null, settings: CheckoutPromptSettings) {
-  const rules = await promptRules();
+  const rules = await promptRulesAt(await promptRules(), sale.shopId);
   const who = { shopId: sale.shopId, roleId, barberId: sale.staffId };
   return {
     rebook: resolvePrompt("rebook", settings.rebook.enabled, rules, who).enabled,

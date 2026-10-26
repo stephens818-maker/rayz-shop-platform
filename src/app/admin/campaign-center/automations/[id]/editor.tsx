@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { SyncMsg, useSyncSave } from "@/components/brand-sync";
 import { Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { Channel, TRIGGERS, TriggerKey, Templates } from "@/domain/marketing";
-import { saveAutomationAction, setLocationAutomationAction } from "../../actions";
+import { setLocationAutomationAction } from "../../actions";
 import { ChannelOrder, TemplateFields } from "../../template-fields";
 import { TestSend } from "../../test-send";
 
@@ -32,6 +33,7 @@ export function AutomationEditor({
   coupons,
   address,
   mayBrand,
+  switchBrand,
   mayWrite,
   maySwitch,
 }: {
@@ -41,23 +43,25 @@ export function AutomationEditor({
   address: string;
   /** Campaign Center: create, with access to every shop. */
   mayBrand: boolean;
+  /** Campaign Center: send, with access to every shop: switches it on or off at the shops picked. */
+  switchBrand: boolean;
   /** Campaign Center: create. */
   mayWrite: boolean;
   /** Campaign Center: send. */
   maySwitch: boolean;
 }) {
   const def = TRIGGERS[automation.trigger];
-  const { pending, error, run } = useAction();
-  const [saved, setSaved] = useState(false);
+  const { pending, msg, save, dialog } = useSyncSave();
   const [v, setV] = useState(automation);
-  const edit = (x: Partial<Automation>) => (setSaved(false), setV({ ...v, ...x }));
+  const edit = (x: Partial<Automation>) => setV({ ...v, ...x });
+  const switchAt = (enabled: boolean) => save({ label: `${v.name}: ${enabled ? "on" : "off"}`, changes: [{ type: "automation", item: `on:${v.id}`, value: { enabled } }] });
   const shops = locations.map((l) => ({ id: l.shopId, name: l.shopName }));
   return (
     <>
       <Card>
         <CardHeader
           title="The brand's campaign"
-          subtitle={mayBrand ? "Every location uses this unless it has its own wording or settings." : "Written by the brand. Your locations can switch it on and reword it below."}
+          subtitle={mayBrand ? "Saving picks the locations that get the new wording; the others keep what they send now. A location with its own wording keeps it unless you replace it." : "Written by the brand. Your locations can switch it on and reword it below."}
         />
         <div className="space-y-4 p-4">
           <div className="grid gap-3 md:grid-cols-2">
@@ -88,24 +92,31 @@ export function AutomationEditor({
             <ChannelOrder value={v.channels} disabled={!mayBrand} onChange={(channels) => edit({ channels })} />
           </Field>
           <TemplateFields value={v.templates} channels={v.channels} disabled={!mayBrand} address={address} extraFields={def.fields} onChange={(templates) => edit({ templates })} />
-          {error && <Notice tone="red">{error}</Notice>}
-          {saved && <Notice tone="green">Saved. Locations that use the brand&apos;s wording send this from now on.</Notice>}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-3">
             {mayWrite || maySwitch ? <TestSend campaignId={v.id} channels={v.channels} shops={shops} templates={v.templates} /> : <span />}
-            {mayBrand && (
-              <Button
-                disabled={pending}
-                onClick={() =>
-                  run(
-                    () => saveAutomationAction(v.id, { name: v.name, channels: v.channels, templates: v.templates, settings: v.settings, promoId: v.promoId }),
-                    () => setSaved(true),
-                  )
-                }
-              >
-                Save campaign
-              </Button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <SyncMsg msg={msg} />
+              {switchBrand && (
+                <>
+                  <Button variant="secondary" disabled={pending} onClick={() => switchAt(true)}>
+                    Switch on at…
+                  </Button>
+                  <Button variant="secondary" disabled={pending} onClick={() => switchAt(false)}>
+                    Switch off at…
+                  </Button>
+                </>
+              )}
+              {mayBrand && (
+                <Button
+                  disabled={pending}
+                  onClick={() => save({ label: `${v.name}: wording`, changes: [{ type: "automation", item: `wording:${v.id}`, value: { name: v.name, channels: v.channels, templates: v.templates, settings: v.settings, promoId: v.promoId } }] })}
+                >
+                  Save campaign
+                </Button>
+              )}
+            </div>
           </div>
+          {dialog}
         </div>
       </Card>
       <Card>
