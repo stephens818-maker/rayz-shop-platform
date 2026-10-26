@@ -161,6 +161,15 @@ describe.skipIf(!URL)("scale: 50 locations, 500 staff, 500k clients", () => {
     await timed("sales summary by location, all locations, a month", 4_000, () => REPORT_LOADERS.sales_summary(input("shops")));
   });
 
+  it("pages the sales list for every location's day", async () => {
+    const list = await import("@/server/sales-list");
+    const first = await timed("sales list, all locations, a day (first page of 100)", 500, () => list.salesPage({ shopIds: ids.shops, date: today }));
+    expect(first.rows.length).toBe(100);
+    await timed("sales list, the next page", 500, () => list.salesPage({ shopIds: ids.shops, date: today, before: first.next }));
+    const t = await timed("sales list day totals, all locations", 500, () => list.salesDayTotals(ids.shops, today));
+    expect(t.tickets).toBeGreaterThan(100);
+  });
+
   it("rolls up every location's days in the background and compares them quickly", async () => {
     const jobs = await import("@/server/jobs");
     const { REPORT_LOADERS } = await import("@/server/report-data");

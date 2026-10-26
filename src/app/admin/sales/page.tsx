@@ -1,15 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { db } from "@/db";
-import {
-  customers,
-  payments,
-  saleReassignments,
-  sales,
-  shops,
-  staff,
-} from "@/db/schema";
 import { CelebrationBanner } from "@/components/celebration";
 import {
   Badge,
@@ -32,11 +22,21 @@ import {
 import { can, guardPage, reportShopIds } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { openTickets } from "@/server/combined-checkout";
+import {
+  SALES_PAGE_SIZE,
+  combinedSales,
+  openSales,
+  refundsAwaitingLines,
+  salesDayTotals,
+  salesPage,
+} from "@/server/sales-list";
 import { shopDay } from "@/server/milestones/day";
 import { byBarber } from "@/server/reports";
 import { newSaleAction } from "../checkout/actions";
 
 export const metadata: Metadata = { title: "Sales" };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const TONE = {
   paid: "green",
@@ -49,48 +49,23 @@ const TONE = {
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string; before?: string }>;
 }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/sales");
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : todayLocal();
+  const before = sp.before && UUID.test(sp.before) ? sp.before : null;
   const shopIds = reportShopIds(ctx);
   const policy = await clientPolicy(ctx);
-  const rows = await db
-    .select({
-      id: sales.id,
-      number: sales.number,
-      status: sales.status,
-      totalCents: sales.totalCents,
-      tipCents: sales.tipCents,
-      cardFeeCents: sales.cardFeeCents,
-      paidAt: sales.paidAt,
-      createdAt: sales.createdAt,
-      shop: shops.name,
-      barber: staff.displayLabel,
-      firstName: customers.firstName,
-      lastName: customers.lastName,
-      methods: sql<string>`(select string_agg(distinct ${payments.method}::text, ' + ') from ${payments} where ${payments.saleId} = ${sales.id})`,
-      reassigned: sql<boolean>`exists (select 1 from ${saleReassignments} where ${saleReassignments.saleId} = ${sales.id})`,
-      mergedIntoSaleId: sales.mergedIntoSaleId,
-      mergedIntoNumber: sql<
-        number | null
-      >`(select m.number from ${sales} m where m.id = ${sales.mergedIntoSaleId})`,
-    })
-    .from(sales)
-    .innerJoin(shops, eq(shops.id, sales.shopId))
-    .leftJoin(staff, eq(staff.id, sales.staffId))
-    .leftJoin(customers, eq(customers.id, sales.customerId))
-    .where(and(inArray(sales.shopId, shopIds), eq(sales.businessDate, date)))
-    .orderBy(desc(sales.createdAt))
-    .limit(500);
+  const [totals, page, open, combined, awaiting] = await Promise.all([
+    salesDayTotals(shopIds, date),
+    salesPage({ shopIds, date, before }),
+    openSales(shopIds, date),
+    combinedSales(shopIds, date),
+    can(ctx, "sales.refund") ? refundsAwaitingLines(shopIds) : Promise.resolve([]),
+  ]);
+  const closed = page.rows;
   const isToday = date === todayLocal();
-  const open = rows.filter((r) => r.status === "open");
-  const closed = rows.filter((r) => r.status !== "open" && !r.mergedIntoSaleId);
-  const combined = rows.filter((r) => r.mergedIntoSaleId);
-  const paidTotal = closed
-    .filter((r) => r.status !== "voided")
-    .reduce((a, r) => a + r.totalCents, 0);
   // Each service line counts for the barber who did it, so a family ticket with two barbers shows on both.
   const [queue, barberRows, day] = await Promise.all([
     isToday ? openTickets(shopIds) : Promise.resolve(null),
@@ -111,7 +86,7 @@ export default async function SalesPage({
     <div className="mx-auto max-w-6xl">
       <PageHeader
         title="Sales"
-        subtitle={`${formatDate(date, "EEEE, MMM d")} · ${closed.length} tickets · ${formatCents(paidTotal)} collected`}
+        subtitle={`${formatDate(date, "EEEE, MMM d")} · ${totals.tickets} ticket${totals.tickets === 1 ? "" : "s"} · ${formatCents(totals.paidCents)} collected`}
         actions={
           <>
             <Link
@@ -143,6 +118,34 @@ export default async function SalesPage({
         }
       />
       <CelebrationBanner items={day?.pos ?? []} className="mb-4" />
+      {awaiting.length > 0 && (
+        <Card className="mb-4 bg-amber-50" data-testid="refunds-awaiting">
+          <div className="px-4 py-3 text-sm">
+            <div className="font-semibold">
+              {awaiting.length === 1
+                ? "A card refund made in the Stripe dashboard needs its lines"
+                : `${awaiting.length} card refunds made in the Stripe dashboard need their lines`}
+            </div>
+            <p className="mt-0.5 text-xs text-zinc-600">
+              Loyalty, gift cards and tips stay as they were until someone
+              says what went back.
+            </p>
+            <ul className="mt-2 flex flex-wrap gap-2">
+              {awaiting.map((a) => (
+                <li key={a.id}>
+                  <Link
+                    className="rounded-lg bg-white px-3 py-1.5 text-xs ring-1 ring-amber-300 hover:bg-amber-100"
+                    href={`/admin/sales/${a.saleId}`}
+                  >
+                    #{a.number} · {formatCents(a.amountCents)}
+                    {ctx.currentShopId === null && ` · ${a.shop}`}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Card>
+      )}
       {queue && queue.length > 0 ? (
         <Card className="mb-4" data-testid="checkout-queue">
           <div className="flex items-baseline justify-between border-b border-zinc-100 px-4 py-3">
@@ -265,7 +268,13 @@ export default async function SalesPage({
         </Card>
       )}
       {closed.length === 0 ? (
-        <Empty title="No completed sales on this day" />
+        <Empty
+          title={
+            before
+              ? "No older sales on this day"
+              : "No completed sales on this day"
+          }
+        />
       ) : (
         <Card>
           <Table>
@@ -337,6 +346,35 @@ export default async function SalesPage({
             </tbody>
           </Table>
         </Card>
+      )}
+      {(before || page.next) && (
+        <div
+          className="mt-3 flex items-center justify-between text-sm"
+          data-testid="sales-pages"
+        >
+          <span className="text-xs text-zinc-500">
+            {SALES_PAGE_SIZE} per page, newest first
+          </span>
+          <span className="flex gap-2">
+            {before && (
+              <Link
+                className="rounded-lg px-3 py-1.5 ring-1 ring-zinc-300 hover:bg-white"
+                href={`/admin/sales?date=${date}`}
+              >
+                Newest
+              </Link>
+            )}
+            {page.next && (
+              <Link
+                className="rounded-lg px-3 py-1.5 ring-1 ring-zinc-300 hover:bg-white"
+                href={`/admin/sales?date=${date}&before=${page.next}`}
+                data-testid="sales-older"
+              >
+                Older ›
+              </Link>
+            )}
+          </span>
+        </div>
       )}
       {combined.length > 0 && (
         <p

@@ -2887,18 +2887,37 @@ Measured on a 4-core cloud VM with local Postgres (median of 3 warm runs; seedin
 
 | Check | Time | Budget |
 | --- | --- | --- |
-| Load a Regional Manager's access (selected shops) | 3 ms | 150 ms |
-| Search clients by name / by phone | 2 ms / under 1 ms | 400 ms |
+| Load a Regional Manager's access (selected shops) | 4 ms | 150 ms |
+| Search clients by name / by phone (trigram index on `search_name`) | 2 ms / under 1 ms | 400 ms |
 | A client's stats | 1 ms | 300 ms |
-| Sales summary, all 50 locations, a month (combined / by location) | 52 ms / 56 ms | 4 s |
+| Sales summary, all 50 locations, a month (combined / by location) | 60 ms / 61 ms | 4 s |
+| Sales list, all 50 locations, a day: first page of 100 / next page / day totals | 5 ms / 4 ms / 1 ms | 500 ms |
 | One location-day rollup (average of a 7-day backfill) | 3 ms | 250 ms |
-| Compare by location / by region / a regional manager's shops, a week | 1–2 ms | 800 ms |
+| Compare by location / by region / a regional manager's shops, a week | 1–3 ms | 800 ms |
 | Claim the next job task, 5,000 queued | 3 ms | 50 ms |
-| Badge slice (1/16 of the client file, ~31k clients) | 6.4 s | 15 s |
-| Location setup overview, all 50 locations | 85 ms | 2.5 s |
-| Move a location to another region, history included | 7 ms | 1 s |
+| Badge slice (1/16 of the client file, ~30k clients) | 8.1 s | 15 s |
+| Location setup overview, all 50 locations | 86 ms | 2.5 s |
+| Move a location to another region, history included | 9 ms | 1 s |
 
 Budgets are deliberately loose: the test is there to catch a missing index or a per-row loop, not small regressions.
+
+The **Sales** list pages a day's tickets 100 at a time, newest first, with an **Older ›** link (`src/server/sales-list.ts`). The cursor is the last ticket's id, compared on `(created_at, id)` as stored, so nothing is skipped or shown twice. The header's ticket count and total are counted in the database, never from one page.
+
+### Data growth: retention and partitioning
+
+At 50 locations and 25 tickets a location-day, the brand writes about 450k tickets a year. Each ticket adds a few payment, line and ledger rows, and about 10 to 20 event log rows. The perf database (500k clients, a month of tickets) is under 1 GB in total. Nothing is partitioned yet, because every big table is read through a `(shop_id, date)` or owner index, and partitioning before tens of millions of rows only adds planning cost. The plan, table by table:
+
+| Table | Grows with | Kept | When it gets big |
+| --- | --- | --- | --- |
+| `analytics_events` (append-only) | every booking, visit, ticket, stock and staff event | 25 months raw; the nightly warehouse copy and `location_daily_stats` keep the history | Past about 50M rows or 25 GB: range-partition by month on `occurred_at`, with the append-only trigger on the parent. Detach months older than 25 months once the warehouse has them. |
+| `audit_log` (append-only) | every change and every client lookup | 7 years (tax and payment records) | Range-partition by year on `created_at`. Detach years older than 7 to cold storage (`pg_dump` to object storage); never delete rows. |
+| `gift_card_ledger`, `tip_ledger`, `inventory_ledger`, `time_punch_edits` (append-only) | tickets, tips, stock moves and punch fixes | For good: they're the balances | Indexed by card, staff or product. They stay small (a few rows a ticket). |
+| `consent_events` (append-only) | consent changes | For good (TCPA evidence); account deletion clears contact columns only | Small. |
+| `sales`, `payments`, `refunds`, `appointments` | tickets and bookings | For good | Indexed by `(shop_id, business_date)` and customer. Past about 100M rows, partition by year on `business_date`. |
+| `job_tasks` | background work | 14 days after done (`pruneJobs`) | Pruned daily. |
+
+Append-only tables refuse `UPDATE` and `DELETE` with triggers (`core_0026_append_only` and later), so retention works only by detaching a whole partition. A stray `DELETE` can't thin out the record.
+
 
 ### Owner entities and franchising basics
 

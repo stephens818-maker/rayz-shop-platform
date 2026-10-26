@@ -242,3 +242,47 @@ describe("background jobs", () => {
     expect(await jobs.enqueueDue(now, ["triggers"])).toBe(0);
   }, 120_000);
 });
+
+describe("the sales list", () => {
+  const date = "2023-03-14";
+  const made: string[] = [];
+
+  beforeAll(async () => {
+    const at = new Date("2023-03-14T18:00:00.123456Z");
+    const base = { shopId: shop.coralville, businessDate: date, totalCents: 1000 };
+    for (let i = 0; i < 7; i++) {
+      // Three share a timestamp, so the cursor has to break ties on id.
+      const createdAt = new Date(at.getTime() - (i < 3 ? 0 : i * 60_000));
+      const [s] = await m.db.db.insert(m.schema.sales).values({ ...base, status: "paid", paidAt: createdAt, createdAt }).returning();
+      made.push(s.id);
+    }
+    await m.db.db.insert(m.schema.sales).values({ ...base, status: "voided", createdAt: at });
+    await m.db.db.insert(m.schema.sales).values({ ...base, status: "open", createdAt: at });
+  });
+
+  it("pages through a day newest first, never skipping or repeating a ticket, and counts the whole day", async () => {
+    const list = await import("@/server/sales-list");
+    const seen: string[] = [];
+    let before: string | null = null;
+    for (let pages = 0; pages < 10; pages++) {
+      const p: Awaited<ReturnType<typeof list.salesPage>> = await list.salesPage({ shopIds: [shop.coralville], date, before, limit: 3 });
+      seen.push(...p.rows.map((r) => r.id));
+      if (!p.next) break;
+      before = p.next;
+    }
+    expect(seen).toHaveLength(8);
+    expect(new Set(seen).size).toBe(8);
+    expect(made.every((id) => seen.includes(id))).toBe(true);
+    expect(await list.salesDayTotals([shop.coralville], date)).toEqual({ tickets: 8, paidCents: 7000 });
+    expect(await list.openSales([shop.coralville], date)).toHaveLength(1);
+    expect(await list.salesDayTotals([shop.moline], date)).toEqual({ tickets: 0, paidCents: 0 });
+  });
+
+  it("shows the day's totals from every ticket, with a link to the older ones", async () => {
+    await signInAs(people.owner);
+    const r = await open("/admin/sales", {}, { date });
+    if (r.kind !== "ok") throw new Error(r.kind);
+    expect(r.text).toContain("8 tickets · $70.00 collected");
+    expect(r.text).not.toContain("sales-older");
+  });
+});
