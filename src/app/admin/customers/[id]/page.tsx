@@ -384,6 +384,12 @@ export default async function CustomerPage({
               usual={usual}
             />
           )}
+          {notes.mode === "full" && c.preferencesNote && (
+            <Card>
+              <CardHeader title={`${c.firstName}'s own note`} subtitle={`From the app or account page${c.preferencesUpdatedAt ? `, ${formatDate(c.preferencesUpdatedAt, "MMM d, yyyy")}` : ""}. Only they can change it.`} />
+              <p className="whitespace-pre-wrap p-4 text-sm text-zinc-800">{c.preferencesNote}</p>
+            </Card>
+          )}
           <NotesCard customerId={c.id} firstName={c.firstName} list={notes} visits={noteVisits} />
           {showFamily && (
             <FamilyCard

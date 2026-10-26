@@ -71,6 +71,7 @@ interface ShopInfo {
   phone: string | null;
   barberCount: number;
   bookingEnabled: boolean;
+  externalBookingUrl?: string | null;
   cancelCutoffMinutes: number;
   closedNote?: string | null;
   accentColor?: string | null;
@@ -580,6 +581,14 @@ export function BookingWizard({
   }, [step, detailsReady]);
 
   if (shop.closedNote) return <Closed shop={shop} msg={shop.closedNote} />;
+  if (shop.externalBookingUrl)
+    return (
+      <Closed shop={shop} msg="This shop still takes bookings on its current booking site.">
+        <a href={shop.externalBookingUrl} rel="noopener noreferrer" className="mt-4 inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 font-medium text-white hover:bg-brand-700">
+          Book on the shop&apos;s booking site
+        </a>
+      </Closed>
+    );
   if (!shop.bookingEnabled)
     return (
       <Closed
@@ -1220,11 +1229,12 @@ function BarberTile({
   );
 }
 
-function Closed({ shop, msg }: { shop: ShopInfo; msg: string }) {
+function Closed({ shop, msg, children }: { shop: ShopInfo; msg: string; children?: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-lg rounded-xl bg-white p-6 text-center ring-1 ring-zinc-200">
       <h1 className="text-xl font-bold">Ray&apos;z {shop.name}</h1>
       <p className="mt-2 text-zinc-600">{msg}</p>
+      {children && <div>{children}</div>}
       <Link
         href="/"
         className="mt-4 inline-block text-sm font-medium text-brand-600"

@@ -60,6 +60,8 @@ type Info = {
   twilioNumber: string;
   description: string;
   bookingEnabled: boolean;
+  bookingMode: "platform" | "external";
+  externalBookingUrl: string;
   cancelCutoffMinutes: number;
   minLeadMinutes: number;
   bookingWindowDays: number;
@@ -90,6 +92,17 @@ export function ShopInfoEditor({ shopId, initial, editable }: { shopId: string; 
         <label className="flex items-center gap-2 self-end pb-2 text-sm">
           <input type="checkbox" disabled={!booking} checked={v.bookingEnabled} onChange={(e) => setV({ ...v, bookingEnabled: e.target.checked })} /> Online booking on
         </label>
+        <Field label="Where clients book" hint="While a shop moves over, the website and app can send its clients to its current booking site">
+          <Select disabled={!booking} value={v.bookingMode} onChange={(e) => setV({ ...v, bookingMode: e.target.value as Info["bookingMode"] })}>
+            <option value="platform">Here (website and app)</option>
+            <option value="external">On an external booking site</option>
+          </Select>
+        </Field>
+        {v.bookingMode === "external" && (
+          <Field label="External booking link" className="sm:col-span-2 lg:col-span-3">
+            <Input disabled={!booking} value={v.externalBookingUrl} placeholder="https://" onChange={(e) => setV({ ...v, externalBookingUrl: e.target.value })} />
+          </Field>
+        )}
         <Field label="Description" className="sm:col-span-2 lg:col-span-4">
           <Textarea disabled={!details} rows={2} value={v.description} onChange={(e) => setV({ ...v, description: e.target.value })} />
         </Field>

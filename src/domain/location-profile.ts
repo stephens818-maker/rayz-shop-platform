@@ -548,6 +548,8 @@ export const LocationSchema = z.object({
     .nullable()
     .describe("The first open slot in the next 14 days for the first online service (or ?serviceId=); null when booking is off or nothing is open"),
   bookingEnabled: z.boolean(),
+  bookingMode: z.enum(["platform", "external"]).describe("external: the shop still books on its old site; send clients to externalBookingUrl"),
+  externalBookingUrl: z.string().nullable(),
   closedNote: z.string().nullable(),
   closedUntil: z.string().nullable(),
   cancelCutoffMinutes: z.number().int(),

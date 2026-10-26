@@ -28,6 +28,11 @@ export function LocationCard({ l, bookHref, detailHref, target }: { l: PublicLoc
             Book
           </Link>
         )}
+        {l.externalBookingUrl && (
+          <a href={l.externalBookingUrl} target={target} rel="noopener noreferrer" className="inline-flex h-9 items-center rounded-lg bg-brand-600 px-3 font-medium text-white hover:bg-brand-700">
+            Book
+          </a>
+        )}
         {l.phone && (
           <a href={l.phone.href} className="inline-flex h-9 items-center rounded-lg px-3 text-zinc-700 ring-1 ring-inset ring-zinc-300 hover:bg-zinc-50" target={target}>
             Call {l.phone.display}

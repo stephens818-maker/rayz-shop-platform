@@ -136,6 +136,8 @@ async function serialize(rows: ShopRow[], q: LocationQuery): Promise<PublicLocat
         openStatus: { closesAt: status.closesAt, nextOpenAt: status.nextOpenAt, today: status.today, label: status.label },
         nextAvailable: q.nextSlot === false ? null : await nextAvailable(s, q.serviceId, now, base),
         bookingEnabled,
+        bookingMode: s.bookingMode,
+        externalBookingUrl: s.bookingMode === "external" ? s.externalBookingUrl : null,
         closedNote: s.status === "closed" && !bookingEnabled ? (s.closedNote ?? "This shop is temporarily closed.") : null,
         closedUntil: s.status === "closed" ? s.closedUntil : null,
         cancelCutoffMinutes: s.cancelCutoffMinutes,

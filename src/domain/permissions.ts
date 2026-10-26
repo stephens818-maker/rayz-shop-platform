@@ -1161,6 +1161,8 @@ export const SHOP_SETTING_FIELDS = {
   description: "details",
   twilioNumber: "phone",
   bookingEnabled: "booking",
+  bookingMode: "booking",
+  externalBookingUrl: "booking",
   cancelCutoffMinutes: "booking",
   minLeadMinutes: "booking",
   bookingWindowDays: "booking",

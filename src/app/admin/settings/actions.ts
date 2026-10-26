@@ -40,6 +40,8 @@ const FIELD_LABEL: Record<keyof typeof SHOP_SETTING_FIELDS, string> = {
   description: "description",
   twilioNumber: "Twilio number",
   bookingEnabled: "online booking switch",
+  bookingMode: "where clients book",
+  externalBookingUrl: "external booking link",
   cancelCutoffMinutes: "cancel cutoff",
   minLeadMinutes: "minimum notice",
   bookingWindowDays: "booking window",
@@ -59,6 +61,8 @@ const Info = z.object({
   email: z.string().trim().optional(),
   description: z.string().trim(),
   bookingEnabled: z.boolean(),
+  bookingMode: z.enum(["platform", "external"]).optional(),
+  externalBookingUrl: z.string().trim().optional(),
   cancelCutoffMinutes: z.number().int().min(0).max(1440),
   minLeadMinutes: z.number().int().min(0).max(1440),
   bookingWindowDays: z.number().int().min(1).max(365),
@@ -70,13 +74,16 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
   return safe(async () => {
     const ctx = await authorize(partPerms("details", "booking", "phone"));
     assertShopAccess(ctx, shopId);
-    const { twilioNumber, ...v } = Info.parse(raw);
+    const { twilioNumber, externalBookingUrl, ...v } = Info.parse(raw);
+    const external = externalBookingUrl === undefined ? undefined : externalBookingUrl || null;
+    if (external && !/^https:\/\/[^\s/]+\.[^\s]+$/.test(external)) throw new AppError("bad_request", "The external booking link must be a full https:// address");
+    if (v.bookingMode === "external" && !external) throw new AppError("bad_request", "Enter the external booking link, or keep booking here");
     const line = twilioNumber === undefined ? undefined : twilioNumber ? normalizePhone(twilioNumber) : null;
     if (twilioNumber && !line) throw new AppError("bad_request", "The Twilio number doesn't look like a US number");
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
     if (!before) throw new AppError("not_found", "Shop not found");
     const values = Object.fromEntries(
-      Object.entries({ ...v, phone: v.phone === undefined ? undefined : v.phone || null, email: v.email === undefined ? undefined : v.email || null, description: v.description || null, twilioNumber: line }).filter(([, x]) => x !== undefined),
+      Object.entries({ ...v, phone: v.phone === undefined ? undefined : v.phone || null, email: v.email === undefined ? undefined : v.email || null, description: v.description || null, twilioNumber: line, externalBookingUrl: external }).filter(([, x]) => x !== undefined),
     ) as Partial<typeof shops.$inferInsert>;
     const denied = shopSettingsDenied(ctx.permissions, before, values as Partial<Record<keyof typeof SHOP_SETTING_FIELDS, unknown>>);
     if (denied.length) throw new AppError("forbidden", `You can't change the shop's ${denied.map((f) => FIELD_LABEL[f]).join(", ")}`);

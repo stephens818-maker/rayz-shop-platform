@@ -2710,6 +2710,12 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
   4. `POST /auth/logout` revokes the session.
 - **Signed-in endpoints:** `GET /me`, `GET /me/appointments`, `GET /me/loyalty`. Booking while signed in links the appointment to the account.
 - Errors share one shape: `{ error: { code, message, details? } }`. CORS is open on every v1 endpoint. That's safe because auth is a Bearer token, never a cookie. Times are ISO 8601 with offsets, and shop-local dates are `YYYY-MM-DD` in America/Chicago.
+- **Customer app additions (API 1.1, additive)** <a id="customer-app-api"></a> for the Ray'z app's move off Squire. The audit's critical and important gaps (C1–C16, I1–I13) are tracked in PR #1's checklist. Built so far:
+  - **`GET /app/config`:** minimum and latest app versions, store links, a maintenance notice, support and legal links, all from env vars (`.env.example`, "Customer app").
+  - **Version gate:** app builds send `X-Client: ios|android` and `X-App-Version`. Below the platform's minimum, every v1 route but the config answers `426` with `error.code = upgrade_required` and the store link. Requests without `X-Client` (the website) are never gated.
+  - **Shop cutover one at a time:** each shop has `bookingMode` (`platform` or `external`) and `externalBookingUrl`, set under **Shop settings → Shop & online booking**. An external shop shows its link on the website and in the app, and refuses online bookings here (older app builds see `bookingEnabled: false`). The desk still books it.
+  - **The client's own note:** `PATCH /me` takes `preferencesNote` (500 characters) and `preferredBarberId`, returned under `preferences` on `/me`. It's stored in `customers.preferences_note`, never in the staff `notes`. Triggers remove card numbers and contact details. Staff who can read notes see it read-only on the client profile.
+  - **Universal links and App Links:** `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` claim the client pages (`/a`, `/g`, `/book`, `/locations`, `/r`, `/receipt`, `/account`) once `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE` and `ANDROID_CERT_SHA256` are set.
 - The public web booking UI (`/book/{shop}`, `/a/{code}`, `/account`) uses the same endpoints through `src/lib/api-client.ts`, so the mobile app gets exactly what the website gets.
 
 ---

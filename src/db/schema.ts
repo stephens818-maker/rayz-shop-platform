@@ -189,6 +189,10 @@ export const shops = pgTable("shops", {
   archivedAt: ts("archived_at"),
   /** Online booking switch for a live shop. Clients can book only when the shop is live and this is on. */
   bookingEnabled: boolean("booking_enabled").notNull().default(true),
+  /** platform: clients book here. external: online booking here is off and the website and app send clients to externalBookingUrl (the old booking site while shops move over one at a time). */
+  bookingMode: text("booking_mode").$type<BookingMode>().notNull().default("platform"),
+  /** https only; required when bookingMode is external. */
+  externalBookingUrl: text("external_booking_url"),
   /** #rrggbb for this location's booking page; null uses the brand's. */
   accentColor: text("accent_color"),
   logoUrl: text("logo_url"),
@@ -258,6 +262,7 @@ export const shops = pgTable("shops", {
 export type PaymentsMode = "brand" | "connected" | "entity" | "cash_only";
 export type NegativeStockPolicy = "block" | "warn";
 export type ShopStatus = "setup" | "live" | "closed" | "archived";
+export type BookingMode = "platform" | "external";
 export type GeocodeSource = "google" | "census" | "zip" | "manual";
 
 /** A location's photos and uploaded logo (one per shop), as data URLs like client_photos; served from /locations/<slug>/photos/<id>. */
@@ -1216,6 +1221,9 @@ export const customers = pgTable(
     address: text("address"),
     birthday: date("birthday"),
     notes: text("notes"),
+    /** The client's own note to their barber, written in the app or account page. Separate from staff notes; scrubbed and contact-redacted by triggers. */
+    preferencesNote: text("preferences_note"),
+    preferencesUpdatedAt: ts("preferences_updated_at"),
     /** Values of the brand's custom client fields, by client_fields.id. */
     customFields: jsonb("custom_fields").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
     /** Consent is opt-in: nothing is sent until the client (or their Squire record) says yes. */

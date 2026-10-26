@@ -248,6 +248,10 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Reminders keep out of the quiet hours under **Call-ins → Rules**; check them before go-live.
 26. Turn on Neon point-in-time restore. Load the real data with the Squire importer (see the README), not the seed.
 27. Add the custom domain under **Settings → Domains**.
+28. Customer app (migration `core_0082_customer_app`; see [Customer app API](README.md#customer-app-api)):
+   - The migration adds each shop's **Where clients book** (`booking_mode`, `external_booking_url`) and the client's own preferences note. Every shop starts on **Here**. While a shop still books on Squire, set it to **On an external booking site** with the Squire link under **Shop settings → Shop & online booking**: the website and app send its clients there, and online booking here is off for it. The desk keeps booking it either way.
+   - Optional variables (`.env.example`, "Customer app"): `APP_IOS_MIN_VERSION`, `APP_ANDROID_MIN_VERSION` and the latest versions and store links, `APP_MAINTENANCE_MESSAGE`, support and legal links. Raising a minimum version makes older builds answer 426 until they update, so raise it only after the new build is live in the store.
+   - Universal links and App Links: set `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE` and `ANDROID_CERT_SHA256` (Play Console → App integrity → app signing key). Until then `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` answer 404 and links open in the browser. They need the custom domain (step 27), and the app must list it as an associated domain.
 
 ## Running the production build locally
 

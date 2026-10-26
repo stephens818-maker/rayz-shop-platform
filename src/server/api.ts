@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { z, ZodError, ZodType } from "zod";
+import { assertSupportedClient } from "./app-config";
 import { AppError } from "./errors";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
-  "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Client, X-App-Version",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
 };
 
 export function json(data: unknown, status = 200, headers: Record<string, string> = {}) {
@@ -23,10 +24,11 @@ export function errorResponse(e: unknown) {
 
 type Handler<P> = (req: Request, params: P) => Promise<Response>;
 
-/** Wrap a route handler: uniform JSON errors, CORS for API clients. */
+/** Wrap a route handler: uniform JSON errors, CORS for API clients, and the app version gate. */
 export function route<P = Record<string, string>>(fn: Handler<P>) {
   return async (req: Request, ctx: { params: Promise<P> }) => {
     try {
+      assertSupportedClient(req);
       return await fn(req, (await ctx.params) ?? ({} as P));
     } catch (e) {
       return errorResponse(e);

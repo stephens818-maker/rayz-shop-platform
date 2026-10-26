@@ -8,10 +8,22 @@ const Cents = z.number().int().describe("Amount in US cents");
 
 export const ErrorBody = z.object({
   error: z.object({
-    code: z.enum(["bad_request", "unauthorized", "forbidden", "not_found", "conflict", "slot_unavailable", "cutoff_passed", "rate_limited", "payment_failed", "internal"]),
+    code: z.enum(["bad_request", "unauthorized", "forbidden", "not_found", "conflict", "slot_unavailable", "cutoff_passed", "rate_limited", "payment_failed", "upgrade_required", "internal"]),
     message: z.string(),
     details: z.unknown().nullable(),
   }),
+});
+
+export const AppConfig = z.object({
+  brand: z.object({ name: z.string(), supportEmail: z.string().nullable(), supportPhone: z.string().nullable() }),
+  platforms: z.record(z.enum(["ios", "android"]), z.object({ minVersion: z.string().nullable(), latestVersion: z.string().nullable(), storeUrl: z.string().nullable() })),
+  client: z
+    .object({ platform: z.enum(["ios", "android"]), version: z.string().nullable(), updateRequired: z.boolean(), updateAvailable: z.boolean() })
+    .nullable()
+    .describe("This build's status, from X-Client and X-App-Version; null without X-Client"),
+  maintenance: z.object({ active: z.boolean(), message: z.string().nullable() }),
+  links: z.object({ website: z.string(), account: z.string(), privacy: z.string().nullable(), terms: z.string().nullable() }),
+  environment: z.enum(["production", "demo", "development"]),
 });
 
 export const ShopHours = z.object({ weekday: z.number().int().min(0).max(6).describe("0 = Sunday"), open: z.string(), close: z.string() });
@@ -25,7 +37,9 @@ export const Shop = z.object({
   zip: z.string(),
   phone: z.string().nullable(),
   timezone: z.literal("America/Chicago"),
-  bookingEnabled: z.boolean(),
+  bookingEnabled: z.boolean().describe("Clients can book this shop here (through this API). False for an external-booking shop"),
+  bookingMode: z.enum(["platform", "external"]).describe("external: this shop still books on its old site; open externalBookingUrl instead of the booking flow"),
+  externalBookingUrl: z.string().nullable().describe("https URL, set only when bookingMode is external"),
   cancelCutoffMinutes: z.number().int(),
   barberCount: z.number().int(),
   hours: z.array(ShopHours),
@@ -142,6 +156,13 @@ export const Me = z.object({
   email: z.string().nullable(),
   smsOptIn: z.boolean(),
   emailOptIn: z.boolean(),
+  preferences: z
+    .object({
+      note: z.string().nullable().describe("The client's own note to their barber. Staff see it beside, never mixed with, their own notes"),
+      updatedAt: Instant.nullable(),
+      preferredBarber: z.object({ id: z.string().uuid(), slug: z.string(), displayName: z.string() }).nullable(),
+    })
+    .describe("Added in 1.1; older clients can ignore it"),
 });
 export const TokenResponse = z.object({
   needsProfile: z.literal(false),
@@ -177,6 +198,8 @@ export const UpdateMe = z.object({
   email: z.string().email().nullable().optional(),
   smsOptIn: z.boolean().optional(),
   emailOptIn: z.boolean().optional(),
+  preferencesNote: z.string().max(500).nullable().optional().describe("The client's note to their barber (e.g. 'low fade, no product'). null or '' clears it. Card numbers and contact details are removed"),
+  preferredBarberId: z.string().nullable().optional().describe("Barber ID or slug; null clears it"),
 });
 
 export const Loyalty = z.object({

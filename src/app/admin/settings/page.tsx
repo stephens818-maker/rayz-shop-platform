@@ -67,6 +67,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           twilioNumber: shop.twilioNumber ?? "",
           description: shop.description ?? "",
           bookingEnabled: shop.bookingEnabled,
+          bookingMode: shop.bookingMode,
+          externalBookingUrl: shop.externalBookingUrl ?? "",
           cancelCutoffMinutes: shop.cancelCutoffMinutes,
           minLeadMinutes: shop.minLeadMinutes,
           bookingWindowDays: shop.bookingWindowDays,

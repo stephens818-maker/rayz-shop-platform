@@ -84,6 +84,11 @@ export default async function LocationPage({ params }: { params: Promise<{ shop:
                 Book now
               </Link>
             )}
+            {l.externalBookingUrl && (
+              <a href={l.externalBookingUrl} rel="noopener noreferrer" className="inline-flex h-11 items-center rounded-lg bg-brand-600 px-5 font-medium text-white hover:bg-brand-700">
+                Book now
+              </a>
+            )}
             {l.phone && (
               <a href={l.phone.href} className="inline-flex h-11 items-center rounded-lg bg-white/10 px-5 font-medium text-white hover:bg-white/20">
                 Call {l.phone.display}

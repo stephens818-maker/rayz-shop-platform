@@ -22,6 +22,8 @@ interface ShopLike {
   status: ShopStatus;
   bookingEnabled: boolean;
   closedUntil?: LocalDate | null;
+  /** external: clients book on the old site (externalBookingUrl), not here. */
+  bookingMode?: string;
 }
 
 /** A temporary closure with an end date is over once that date has passed. */
@@ -32,8 +34,8 @@ export function effectiveStatus(s: ShopLike, today: LocalDate): ShopStatus {
 /** Clients see it on the website and app: live or temporarily closed (with the closure note). */
 export const listedPublicly = (s: Pick<ShopLike, "status">) => s.status === "live" || s.status === "closed";
 
-/** Clients can book online. */
-export const takesOnlineBookings = (s: ShopLike, today: LocalDate) => effectiveStatus(s, today) === "live" && s.bookingEnabled;
+/** Clients can book online here (not on an external booking site). */
+export const takesOnlineBookings = (s: ShopLike, today: LocalDate) => effectiveStatus(s, today) === "live" && s.bookingEnabled && s.bookingMode !== "external";
 
 /** Closed for business on this date: archived, or inside a temporary closure. */
 export function closedOn(s: Pick<ShopLike, "status" | "closedUntil">, date: LocalDate): boolean {

@@ -49,15 +49,16 @@ export function openApiDocument(baseUrl: string) {
     Me: S.Me,
     UpdateMe: S.UpdateMe,
     Loyalty: S.Loyalty,
+    AppConfig: S.AppConfig,
   };
   const bearer = [{ bearerAuth: [] }];
   const optionalBearer = [{}, { bearerAuth: [] }];
 
-  return {
+  const doc = {
     openapi: "3.1.0",
     info: {
       title: "Ray'z Barber Shop API",
-      version: "1.0.0",
+      version: "1.1.0",
       description: [
         "Public booking + customer API used by rayzbs.com booking pages and the future iOS/Android app.",
         "",
@@ -67,16 +68,33 @@ export function openApiDocument(baseUrl: string) {
         "**Time:** every shop runs on America/Chicago. Dates are local `YYYY-MM-DD`; instants are ISO-8601 UTC.",
         "**Money:** integer cents. **Privacy:** barbers are exposed by first name / admin label only; URLs never contain surnames.",
         "**Retries:** `POST /appointments` honors an `Idempotency-Key` header so a flaky mobile network can't double-book.",
+        "",
+        "**App builds:** send `X-Client: ios|android` and `X-App-Version: 1.2.3` on every request. A build below the platform's minimum gets `426` with `error.code = upgrade_required` and `details.storeUrl` on every route except `GET /app/config` and this document. Requests without `X-Client` (the website) are never gated.",
+        "",
+        "**Changes in 1.1 (additive):** `GET /app/config`; `bookingMode` and `externalBookingUrl` on shops (send clients to the external URL while a shop still books on its old site); `preferences` on `/me` with `preferencesNote` and `preferredBarberId` on `PATCH /me`; the `upgrade_required` error code.",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
     tags: [
+      { name: "App" },
       { name: "Shops" },
       { name: "Booking" },
       { name: "Auth" },
       { name: "Me" },
     ],
     paths: {
+      "/app/config": {
+        get: {
+          tags: ["App"],
+          summary: "App launch config: minimum and latest versions, store links, maintenance notice, support and legal links",
+          description: "Never gated by version, so an outdated build can still read where to update.",
+          parameters: [
+            { name: "X-Client", in: "header", required: false, schema: { type: "string", enum: ["ios", "android"] } },
+            { name: "X-App-Version", in: "header", required: false, schema: { type: "string" }, description: "e.g. 1.2.3" },
+          ],
+          responses: { 200: ok("AppConfig") },
+        },
+      },
       "/shops": { get: { tags: ["Shops"], summary: "List shops", responses: { 200: ok("ShopList") } } },
       "/shops/{shop}": { get: { tags: ["Shops"], summary: "Get a shop", parameters: [shopParam], responses: { 200: ok("Shop"), 404: err("Not found") } } },
       "/shops/{shop}/services": {
@@ -158,14 +176,20 @@ export function openApiDocument(baseUrl: string) {
       "/auth/logout": { post: { tags: ["Auth"], summary: "Revoke a refresh token", requestBody: { required: true, content: jsonContent("RefreshBody") }, responses: { 204: { description: "Revoked" } } } },
       "/me": {
         get: { tags: ["Me"], summary: "Current customer", security: bearer, responses: { 200: ok("Me"), 401: err("Sign in required") } },
-        patch: { tags: ["Me"], summary: "Update profile / notification preferences", security: bearer, requestBody: { required: true, content: jsonContent("UpdateMe") }, responses: { 200: ok("Me") } },
+        patch: { tags: ["Me"], summary: "Update profile, notification preferences, and the client's own preferences note and preferred barber", security: bearer, requestBody: { required: true, content: jsonContent("UpdateMe") }, responses: { 200: ok("Me") } },
       },
       "/me/appointments": { get: { tags: ["Me"], summary: "My upcoming and past appointments", security: bearer, responses: { 200: ok("AppointmentList") } } },
       "/me/loyalty": { get: { tags: ["Me"], summary: "Loyalty progress and available rewards (brand-wide)", security: bearer, responses: { 200: ok("Loyalty") } } },
     },
     components: {
+      responses: { UpgradeRequired: err("This app build is below the minimum version (error.code upgrade_required, details.storeUrl)") },
       securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } },
       schemas: Object.fromEntries(Object.entries(components).map(([k, v]) => [k, schema(v)])),
     },
   };
+  for (const [path, ops] of Object.entries(doc.paths)) {
+    if (path === "/app/config") continue;
+    for (const op of Object.values(ops) as { responses: Record<string, unknown> }[]) op.responses[426] ??= { $ref: "#/components/responses/UpgradeRequired" };
+  }
+  return doc;
 }

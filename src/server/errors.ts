@@ -8,6 +8,7 @@ export type ErrorCode =
   | "cutoff_passed"
   | "rate_limited"
   | "payment_failed"
+  | "upgrade_required"
   | "internal";
 
 const STATUS: Record<ErrorCode, number> = {
@@ -20,6 +21,7 @@ const STATUS: Record<ErrorCode, number> = {
   cutoff_passed: 422,
   rate_limited: 429,
   payment_failed: 402,
+  upgrade_required: 426,
   internal: 500,
 };
 

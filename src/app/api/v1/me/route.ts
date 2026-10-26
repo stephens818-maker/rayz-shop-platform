@@ -5,6 +5,8 @@ import { normalizeEmail } from "@/lib/phone";
 import { body, json, options, route } from "@/server/api";
 import { UpdateMe } from "@/server/api-schemas";
 import { requireCustomer } from "@/server/auth/customer";
+import { resolveStaffRef } from "@/server/catalog";
+import { notFound } from "@/server/errors";
 import { publicMe } from "@/server/public";
 
 export const OPTIONS = options;
@@ -18,6 +20,15 @@ export const PATCH = route(async (req) => {
   if (b.email !== undefined) patch.email = normalizeEmail(b.email);
   if (b.smsOptIn !== undefined) patch.smsOptIn = b.smsOptIn;
   if (b.emailOptIn !== undefined) patch.emailOptIn = b.emailOptIn;
+  if (b.preferencesNote !== undefined) {
+    patch.preferencesNote = b.preferencesNote?.trim() || null;
+    patch.preferencesUpdatedAt = new Date();
+  }
+  if (b.preferredBarberId !== undefined) {
+    const barber = b.preferredBarberId ? await resolveStaffRef(b.preferredBarberId) : null;
+    if (b.preferredBarberId && (!barber || !barber.active || !barber.isBookable)) throw notFound("Barber");
+    patch.preferredStaffId = barber?.id ?? null;
+  }
   if (Object.keys(patch).length) await db.update(customers).set(patch).where(eq(customers.id, id));
   return json(await publicMe(id));
 });

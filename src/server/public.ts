@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appointments, customers, shopHours, shopPhotos, shops, staffSchedules } from "@/db/schema";
+import { appointments, customers, shopHours, shopPhotos, shops, staff, staffSchedules } from "@/db/schema";
 import { listedPublicly, takesOnlineBookings } from "@/domain/location-lifecycle";
 import { shopPhotoUrl } from "@/domain/location-profile";
 import { minutesToHHMM, todayLocal } from "@/lib/time";
@@ -33,6 +33,8 @@ export function serializeShop(s: typeof shops.$inferSelect, hours: (typeof shopH
     phone: s.phone,
     timezone: "America/Chicago" as const,
     bookingEnabled: takesOnlineBookings(s, todayLocal()),
+    bookingMode: s.bookingMode,
+    externalBookingUrl: s.bookingMode === "external" ? s.externalBookingUrl : null,
     cancelCutoffMinutes: s.cancelCutoffMinutes,
     barberCount,
     hours: hours.map((h) => ({ weekday: h.weekday, open: minutesToHHMM(h.openMin), close: minutesToHHMM(h.closeMin) })),
@@ -62,7 +64,7 @@ export async function publicShopPage(ref: string) {
     cancellationPolicy: d.cancellationPolicy || null,
     noShowPolicy: d.noShowPolicy || null,
     tracking: { ga4: d.ga4MeasurementId, metaPixel: d.metaPixelId },
-    closedNote: s.status === "closed" && !shop.bookingEnabled ? (s.closedNote ?? "This shop is temporarily closed.") : null,
+    closedNote: s.status === "closed" && !takesOnlineBookings({ ...s, bookingMode: "platform" }, todayLocal()) ? (s.closedNote ?? "This shop is temporarily closed.") : null,
     closedUntil: s.closedUntil,
     accentColor: s.accentColor,
     logoUrl: logo ? shopPhotoUrl("", s.slug, logo.id) : s.logoUrl,
@@ -88,7 +90,23 @@ export async function publicServices(ref: string) {
 export async function publicMe(customerId: string) {
   const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId) });
   if (!c) throw notFound("Customer");
-  return { id: c.id, firstName: c.firstName, lastName: c.lastName, phone: c.phone, email: c.email, smsOptIn: c.smsOptIn, emailOptIn: c.emailOptIn };
+  const barber = c.preferredStaffId
+    ? await db.query.staff.findFirst({ where: and(eq(staff.id, c.preferredStaffId), eq(staff.active, true), eq(staff.isBookable, true)), columns: { id: true, publicSlug: true, displayLabel: true } })
+    : null;
+  return {
+    id: c.id,
+    firstName: c.firstName,
+    lastName: c.lastName,
+    phone: c.phone,
+    email: c.email,
+    smsOptIn: c.smsOptIn,
+    emailOptIn: c.emailOptIn,
+    preferences: {
+      note: c.preferencesNote,
+      updatedAt: c.preferencesUpdatedAt?.toISOString() ?? null,
+      preferredBarber: barber ? { id: barber.id, slug: barber.publicSlug, displayName: barber.displayLabel } : null,
+    },
+  };
 }
 
 export async function tokenResponse(r: { isNew: boolean; accessToken: string; refreshToken: string; tokenType: "Bearer"; expiresIn: number; customer: { id: string } }) {
