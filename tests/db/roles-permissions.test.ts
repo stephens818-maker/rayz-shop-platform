@@ -370,12 +370,13 @@ describe("matrix, view as and effective permissions", () => {
     const until = m.time.addDays(m.time.todayLocal(), 7);
     await as(who.admin);
     ok(await access(kat.id, { overrides: { "pos.discount": true }, expires: { "pos.discount": until } }));
-    let got: { columns: { label: string; role: string; held: string[] }[]; expires: Record<string, string> } | null = null;
+    type Props = { columns: { label: string; role: string; held: string[] }[]; expires: Record<string, string> };
+    const seen: Props[] = [];
     const page = await open("/admin/permissions/people/[id]", { id: kat.id }, {}, (type, p) => {
-      if (type === AccessBreakdown) got = p as unknown as typeof got;
+      if (type === AccessBreakdown) seen.push(p as unknown as Props);
     });
     expect(page.kind).toBe("ok");
-    const g = got as unknown as NonNullable<typeof got>;
+    const g = seen[0]!;
     expect(g.columns.length).toBeGreaterThan(1);
     expect(new Set(g.columns.map((c) => c.role))).toEqual(new Set(["Barber", "Shop Manager"]));
     expect(g.expires).toEqual({ "pos.discount": until });
