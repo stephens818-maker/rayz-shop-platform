@@ -4578,3 +4578,109 @@ export const staffMilestoneCheers = pgTable(
   },
   (t) => [primaryKey({ columns: [t.milestoneId, t.staffId] })],
 );
+
+// ───────────────────────────── Brand change scope ─────────────────────────────
+
+/**
+ * A shop's inheritance of one brand-controlled setting ("<type>:<item>", src/domain/brand-sync.ts):
+ * following the brand ("inherit", which shows out of sync while its value differs) or its own value
+ * ("override"). `local` holds the shop's value for settings only the brand stored before (checkout
+ * prompts, milestones, loyalty rules, campaign templates, roles, app config); null follows the brand.
+ * No row: worked out from the shop's value, so shops from before this keep what they had.
+ */
+export const shopSyncState = pgTable(
+  "shop_sync_state",
+  {
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    mode: text("mode").$type<"inherit" | "override">().notNull().default("inherit"),
+    local: jsonb("local"),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: "shop_sync_state_pk", columns: [t.shopId, t.key] }),
+    index("shop_sync_state_key_idx").on(t.key),
+    check("shop_sync_state_mode", sql`${t.mode} in ('inherit', 'override')`),
+  ],
+);
+
+/** Brand values for settings that were only ever set per shop: the hours template, tax rates and receipt branding. */
+export const brandSyncValues = pgTable("brand_sync_values", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+  updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+});
+
+export type BrandSyncBatchKind = "apply" | "push" | "reset" | "rollback";
+export type BrandSyncBatchStatus = "applied" | "scheduled" | "cancelled" | "rolled_back" | "failed";
+
+/**
+ * One brand change and where it went: saved from a brand editor ("apply"), the Sync status bulk
+ * actions ("push", "reset") or an undo ("rollback"). A scheduled one keeps what to do in `plan` and
+ * is worked out again when it runs. `brand` holds the brand values before and after.
+ */
+export const brandSyncBatches = pgTable(
+  "brand_sync_batches",
+  {
+    id: id(),
+    kind: text("kind").$type<BrandSyncBatchKind>().notNull(),
+    label: text("label").notNull(),
+    status: text("status").$type<BrandSyncBatchStatus>().notNull(),
+    runAt: ts("run_at"),
+    appliedAt: ts("applied_at"),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdByLabel: text("created_by_label").notNull(),
+    scope: text("scope").$type<"all" | "selected" | "brand_only">().notNull().default("all"),
+    shopIds: uuid("shop_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    keys: text("keys").array().notNull().default(sql`'{}'::text[]`),
+    brand: jsonb("brand").$type<{ key: string; from: unknown; to: unknown }[]>().notNull().default(sql`'[]'::jsonb`),
+    plan: jsonb("plan"),
+    error: text("error"),
+    rolledBackAt: ts("rolled_back_at"),
+    rolledBackBy: text("rolled_back_by"),
+    rollbackOf: uuid("rollback_of").references((): AnyPgColumn => brandSyncBatches.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("brand_sync_batches_created_idx").on(t.createdAt),
+    index("brand_sync_batches_due_idx").on(t.runAt).where(sql`${t.status} = 'scheduled'`),
+    check("brand_sync_batches_kind", sql`${t.kind} in ('apply', 'push', 'reset', 'rollback')`),
+    check("brand_sync_batches_status", sql`${t.status} in ('applied', 'scheduled', 'cancelled', 'rolled_back', 'failed')`),
+    check("brand_sync_batches_scope", sql`${t.scope} in ('all', 'selected', 'brand_only')`),
+    check("brand_sync_batches_run_at", sql`${t.status} <> 'scheduled' or ${t.runAt} is not null`),
+  ],
+);
+
+/** What one sync did at one shop to one setting, with its state before and after, for the history and rollback. */
+export const brandSyncChanges = pgTable(
+  "brand_sync_changes",
+  {
+    id: id(),
+    batchId: uuid("batch_id")
+      .notNull()
+      .references(() => brandSyncBatches.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    action: text("action").$type<"push" | "replace" | "keep" | "freeze" | "reset" | "restore">().notNull(),
+    from: jsonb("from").notNull(),
+    to: jsonb("to").notNull(),
+  },
+  (t) => [
+    index("brand_sync_changes_batch_idx").on(t.batchId),
+    index("brand_sync_changes_shop_idx").on(t.shopId, t.key),
+    check("brand_sync_changes_action", sql`${t.action} in ('push', 'replace', 'keep', 'freeze', 'reset', 'restore')`),
+  ],
+);
+
+/** Whether shop managers may change their shop's own value of a brand-controlled setting. No row: they can't. */
+export const brandSyncControls = pgTable("brand_sync_controls", {
+  type: text("type").primaryKey(),
+  shopsCanEdit: boolean("shops_can_edit").notNull().default(false),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+  updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+});

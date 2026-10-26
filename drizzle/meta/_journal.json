@@ -659,6 +659,13 @@
       "when": 1796216400000,
       "tag": "core_0093_card_fee_shops",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1796220000000,
+      "tag": "core_0094_brand_sync",
+      "breakpoints": true
     }
   ]
 }
