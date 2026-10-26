@@ -6,7 +6,7 @@ import { CheckoutPromptSettings, CheckoutPromptSettingsSchema, PROMPT_MODE_LABEL
 import { LOYALTY_TYPES, LoyaltyConfig, loyaltyConfig } from "@/domain/loyalty";
 import { CHANNELS, CHANNEL_LABEL, type Channel, TemplatesSchema, type Templates, templatesProblem } from "@/domain/marketing";
 import { MilestoneSettings, milestoneSettings } from "@/domain/milestones";
-import { OWNER_ROLE_KEY, RoleDef, isPermission, permissionLabel, roleChangeDenied } from "@/domain/permissions";
+import { BRAND_ONLY, OWNER_ROLE_KEY, RoleDef, isPermission, permissionLabel, roleChangeDenied, templateFor, templateRow } from "@/domain/permissions";
 import { APP_SWITCHES, APP_SWITCH_LABEL, type AppSwitches, resetAppSwitchCache } from "../../app-switches";
 import { audit } from "../../audit";
 import { grantor } from "../../auth/access";
@@ -283,14 +283,17 @@ export const RoleBrandInput = z.object({
   permissions: z.array(z.string()).transform((xs) => [...new Set(xs.filter(isPermission))].sort()),
   maxDiscountPct: z.number().int().min(0).max(100),
   defaultScope: z.enum(["all", "entity", "selected", "one"]),
+  /** Custom roles only; left as it is when not sent. */
+  brandLevel: z.boolean().optional(),
 });
-export type RoleBrand = z.output<typeof RoleBrandInput> & { key: string | null; brandLevel: boolean };
-/** What the role lets someone do at a shop. */
+export type RoleBrand = Omit<z.output<typeof RoleBrandInput>, "brandLevel"> & { key: string | null; brandLevel: boolean };
+/** What the role lets someone do at a shop. Brand-only permissions work on what every shop shares, so they're always the brand's. */
 export type RoleValue = { permissions: string[]; maxDiscountPct: number };
 const asDef = (r: RoleBrand): RoleDef => ({ key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, brandLevel: r.brandLevel });
-const roleValue = (r: { permissions: readonly string[]; maxDiscountPct: number }): RoleValue => ({ permissions: [...new Set(r.permissions.filter(isPermission))].sort(), maxDiscountPct: r.maxDiscountPct });
-/** Roles that work at a shop: not the Brand Owner, a brand-level role or one that covers every shop. */
-const shopRole = sql`${roles.key} is distinct from ${OWNER_ROLE_KEY} and not ${roles.brandLevel} and ${roles.defaultScope} <> 'all'`;
+const roleValue = (r: { permissions: readonly string[]; maxDiscountPct: number }): RoleValue => ({ permissions: [...new Set(r.permissions.filter((p) => isPermission(p) && !BRAND_ONLY.has(p)))].sort(), maxDiscountPct: r.maxDiscountPct });
+/** Every role but the Brand Owner, who always has every permission. */
+const syncedRole = sql`${roles.key} is distinct from ${OWNER_ROLE_KEY}`;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
   type: "role",
@@ -300,18 +303,18 @@ export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
   live: true,
   brandPerms: ["permissions.manage"],
   lockable: false,
-  note: "Applies to people's role at that shop. Brand-level roles are the same everywhere.",
+  note: "Applies to anyone working at that shop under the role, brand-level and all-shops people included. Permissions that work on what every shop shares (brand-only) are the brand's at every shop.",
   paths: ["/admin/permissions"],
   async items(tx) {
-    const rows = await tx.select({ id: roles.id, name: roles.name }).from(roles).where(shopRole).orderBy(asc(roles.sortOrder), asc(roles.name));
-    return rows.map((r) => ({ id: r.id, label: r.name }));
+    const rows = await tx.select({ id: roles.id, name: roles.name, brandLevel: roles.brandLevel, scope: roles.defaultScope }).from(roles).where(syncedRole).orderBy(asc(roles.sortOrder), asc(roles.name));
+    return rows.map((r) => ({ id: r.id, label: r.name, hint: r.brandLevel ? "Brand-level" : r.scope === "all" ? "All shops" : undefined }));
   },
   async brand(tx, ids) {
     if (!ids.length) return new Map();
     const rows = await tx
       .select()
       .from(roles)
-      .where(and(inArray(roles.id, [...ids]), shopRole));
+      .where(and(inArray(roles.id, [...ids]), syncedRole));
     return new Map(
       rows.map((r) => [
         r.id,
@@ -321,29 +324,47 @@ export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
   },
   view: roleValue,
   async parse(who, raw, item, before, tx) {
-    if (!before) throw notFound("Role");
-    const p = RoleBrandInput.parse(raw);
+    if (!before) {
+      const [owner] = await tx.select({ id: roles.id }).from(roles).where(and(eq(roles.id, UUID.test(item) ? item : crypto.randomUUID()), eq(roles.key, OWNER_ROLE_KEY)));
+      if (owner) throw forbidden("The Brand Owner role always has every permission and can't be changed");
+      if (!UUID.test(item)) throw notFound("Role");
+    }
+    const reset = !!raw && typeof raw === "object" && (raw as { reset?: unknown }).reset === true;
+    const t = reset ? templateFor(before?.key) : null;
+    if (reset && (!before || !t)) throw new AppError("bad_request", "Only built-in roles have a template to reset to");
+    const row = t ? templateRow(t) : null;
+    const p = row && t ? { name: t.name, description: row.description ?? "", permissions: [...row.permissions].filter(isPermission).sort(), maxDiscountPct: row.maxDiscountPct, defaultScope: row.defaultScope, brandLevel: undefined } : RoleBrandInput.parse(raw);
     const [dup] = await tx.select({ name: roles.name }).from(roles).where(and(sql`lower(${roles.name}) = lower(${p.name})`, ne(roles.id, item)));
     if (dup) throw new AppError("conflict", `There's already a role called "${dup.name}"`);
-    const after: RoleBrand = { ...p, key: before.key, brandLevel: before.brandLevel };
+    const { brandLevel, ...rest } = p;
+    const after: RoleBrand = { ...rest, key: before?.key ?? null, brandLevel: before?.key ? before.brandLevel : (brandLevel ?? before?.brandLevel ?? false) };
     if (who.ctx) {
-      const denied = roleChangeDenied(grantor(who.ctx.access), asDef(before), asDef(after));
+      const denied = roleChangeDenied(grantor(who.ctx.access), before ? asDef(before) : null, asDef(after));
       if (denied) throw forbidden(denied);
     }
     return after;
   },
   async write(tx, who, item, brand) {
-    if (!brand?.to) return;
+    if (!brand) return;
+    if (brand.to === null) {
+      const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(sql`staff s`).where(sql`s.role_id = ${item} or exists (select 1 from staff_access_shops a where a.staff_id = s.id and a.role_id = ${item})`);
+      if (n) throw new AppError("conflict", `${n} ${n === 1 ? "person has" : "people have"} this role now, so it can't be undone. Give them another role first.`);
+      await tx.delete(roles).where(eq(roles.id, item));
+      await audit(who.actor, "permissions.role_delete", "role", item, { name: brand.from?.name, via: "brand_sync.rollback" }, null, tx);
+      return;
+    }
     const all: string[] = brand.to.permissions;
     const permissions = all.filter((x) => !/^report\..+\.export$/.test(x) || all.includes(x.replace(/\.export$/, ".view")));
-    await tx
-      .update(roles)
-      .set({ name: brand.to.name, description: brand.to.description, permissions, maxDiscountPct: brand.to.maxDiscountPct, defaultScope: brand.to.defaultScope, updatedAt: new Date() })
-      .where(eq(roles.id, item));
+    const values = { name: brand.to.name, description: brand.to.description, permissions, maxDiscountPct: brand.to.maxDiscountPct, defaultScope: brand.to.defaultScope, brandLevel: brand.to.brandLevel, updatedAt: new Date() };
+    if (brand.from) await tx.update(roles).set(values).where(eq(roles.id, item));
+    else {
+      const [{ n }] = await tx.select({ n: sql<number>`coalesce(max(${roles.sortOrder}), 0)::int` }).from(roles);
+      await tx.insert(roles).values({ id: item, ...values, key: null, sortOrder: n + 10 });
+    }
     const was = new Set<string>(brand.from?.permissions ?? []);
     await audit(
       who.actor,
-      "permissions.role_update",
+      brand.from ? "permissions.role_update" : "permissions.role_create",
       "role",
       item,
       {

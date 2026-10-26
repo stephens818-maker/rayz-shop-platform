@@ -23,7 +23,7 @@ import {
   reportExport,
   reportView,
 } from "@/domain/permissions";
-import { deleteRoleAction, resetRoleAction, saveRoleAction } from "../../actions";
+import { deleteRoleAction } from "../../actions";
 
 type RoleForm = { id: string; key: string | null; name: string; description: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope; brandLevel: boolean };
 type Starter = { name: string; permissions: string[]; maxDiscountPct: number; defaultScope: ShopScope };
@@ -121,23 +121,23 @@ export function RoleEditor({
     });
 
   const sync = useBrandSync();
-  const shopRole = !!initial && !isBrandLevelRole({ key: initial.key, brandLevel: initial.brandLevel }) && !brandLevel && initial.defaultScope !== "all" && scope !== "all";
-  const save = () => {
-    if (shopRole) {
-      setError(null);
-      setSaved(null);
-      return void sync.open({
-        label: `${name} role`,
-        changes: [{ type: "role", item: initial!.id, value: { name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope } }],
-        onDone: (r) => setSaved(r.status === "scheduled" || r.shops || r.kept ? syncedText(r) : "Saved to the brand. Shops keep the role as it was until it's pushed."),
-      });
-    }
-    run(
-      () => saveRoleAction({ id: initial?.id ?? null, name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope, ...(custom ? { brandLevel } : {}) }),
-      initial ? "Saved. Everyone with this role has the change now." : "Role created",
-      initial ? undefined : (id) => `/admin/permissions/roles/${id}`,
-    );
+  const [newId] = useState(() => crypto.randomUUID());
+  // Every role but the Brand Owner goes out through the brand change scope: pick the shops it reaches.
+  const syncRole = (value: Record<string, unknown>, label: string, done?: string) => {
+    setError(null);
+    setSaved(null);
+    const id = initial?.id ?? newId;
+    void sync.open({
+      label,
+      changes: [{ type: "role", item: id, value }],
+      onDone: (r) => {
+        if (!initial) return router.push(`/admin/permissions/roles/${id}`);
+        setSaved(done ?? (r.status === "scheduled" || r.shops || r.kept ? syncedText(r) : "Saved to the brand. Shops keep the role as it was until it's pushed."));
+      },
+    });
   };
+  const save = () =>
+    syncRole({ name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope, ...(custom ? { brandLevel } : {}) }, initial ? `${name} role` : `New role: ${name}`);
 
   const tag = (p: Permission) => {
     if (fromTemplate && fromTemplate.has(p) !== perms.has(p)) return <Badge tone="amber">{perms.has(p) ? "added" : "removed"} vs template</Badge>;
@@ -346,7 +346,7 @@ export function RoleEditor({
             </div>
             <div className="ml-auto flex gap-2">
               {initial?.key && (
-                <Button type="button" variant="secondary" disabled={pending} onClick={() => confirm("Put this role back to its built-in template?") && run(() => resetRoleAction(initial.id), "Reset to template")}>
+                <Button type="button" variant="secondary" disabled={pending} onClick={() => syncRole({ reset: true }, `${initial.name} role: reset to template`, "Reset to template")}>
                   Reset to template
                 </Button>
               )}
@@ -354,7 +354,7 @@ export function RoleEditor({
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={pending}
+                  disabled={pending || sync.pending}
                   onClick={() => confirm(`Delete the ${initial.name} role?`) && run(() => deleteRoleAction(initial.id), "Deleted", () => "/admin/permissions")}
                 >
                   Delete role

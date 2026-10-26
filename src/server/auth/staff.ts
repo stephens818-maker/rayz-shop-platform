@@ -100,7 +100,8 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   const verdict = await evaluateNetwork(all, { ip: clientIp(await headers()), deviceShopIds: approvedShopIds(device) });
   if (verdict.full) return null;
   const assigned = withoutShops(all, new Set(verdict.blocked.map((b) => b.shopId)));
-  const combinedView = assigned.uniform && assigned.shopIds.length > 1;
+  // Brand-wide people keep the all-shops view when a shop runs its own version of their role: there they get what they can do somewhere.
+  const combinedView = (assigned.uniform || assigned.scope === "all") && assigned.shopIds.length > 1;
   const pref = jar.get(SHOP_COOKIE)?.value;
   const open = assigned.shops.filter((s) => s.status !== "archived");
   let currentShopId: string | null;
@@ -108,8 +109,9 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   else if (pref && open.some((s) => s.id === pref)) currentShopId = pref;
   // The brand login starts over every shop; everyone else starts in their first shop.
   else currentShopId = assigned.scope === "all" && combinedView ? null : (open[0]?.id ?? assigned.shopIds[0] ?? null);
-  // A different role at each shop: the tenant is the shop they're in, under that shop's role.
-  const access = assigned.uniform || !currentShopId ? assigned : atShop(assigned, currentShopId);
+  // A different role at each shop: the tenant is the shop they're in, under that shop's role. Brand-wide people keep every shop in scope.
+  const here = currentShopId ? assigned.byShop.get(currentShopId) : undefined;
+  const access = assigned.uniform || !currentShopId ? assigned : assigned.scope === "all" && here ? { ...assigned, isOwner: here.isOwner, permissions: here.permissions, maxDiscountPct: here.maxDiscountPct } : atShop(assigned, currentShopId);
   const role = (currentShopId && assigned.byShop.get(currentShopId)?.role) || row.r;
 
   return {

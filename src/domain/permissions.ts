@@ -1225,7 +1225,8 @@ export function accessByShop<R extends RoleDef & { id: string }>(
 ): { byShop: Map<string, Access & { role: R }>; union: Access; uniform: boolean } {
   const byShop = new Map<string, Access & { role: R }>();
   for (const s of shops) {
-    const role = scope !== "all" && s.role && s.role.key !== OWNER_ROLE_KEY ? s.role : main;
+    // All-shops people have their main role everywhere, as that shop runs it.
+    const role = s.role && s.role.key !== OWNER_ROLE_KEY && (scope !== "all" || s.role.id === main.id) ? s.role : main;
     byShop.set(s.shopId, { ...effectiveAccess(role, overrides, maxDiscountOverride, scope), role });
   }
   const list = [...byShop.values()];
