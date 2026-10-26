@@ -413,7 +413,13 @@ function BrandSyncDialog({ req, onClose, onDone }: { req: OpenSync & { preview: 
               <span className="text-xs text-zinc-500" data-testid="brand-sync-summary">
                 {scope === "brand_only"
                   ? `Saved to the brand. All ${lines.length} shops keep what they have.`
-                  : [`${changing.length} update`, keeping.length && `${keeping.length} keep their own`, holding.length && `${holding.length} not synced`].filter(Boolean).join(" · ")}
+                  : [
+                      `${changing.length} shop${changing.length === 1 ? " updates" : "s update"}`,
+                      keeping.length && `${keeping.length} keep${keeping.length === 1 ? "s its" : " their"} own`,
+                      holding.length && `${holding.length} not synced`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -440,7 +446,8 @@ function BrandSyncDialog({ req, onClose, onDone }: { req: OpenSync & { preview: 
 /** For a brand editor's save bar: what the last sync did. */
 export function syncedText(r: CommitResult) {
   if (r.status === "scheduled") return `Scheduled for ${new Date(r.runAt!).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
-  return r.shops ? `Saved and synced to ${r.shops} shop${r.shops === 1 ? "" : "s"}` : "Saved to the brand";
+  const kept = r.kept ? `; ${r.kept} kept ${r.kept === 1 ? "its" : "their"} own` : "";
+  return (r.shops ? `Saved and synced to ${r.shops} shop${r.shops === 1 ? "" : "s"}` : "Saved to the brand") + kept;
 }
 
 /** useBrandSync with a save-bar message: "Saved and synced to 4 shops", or the error. */

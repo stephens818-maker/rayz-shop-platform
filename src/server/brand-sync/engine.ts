@@ -118,6 +118,8 @@ interface Applied {
   brand: { key: string; from: unknown; to: unknown }[];
   changes: ChangeRow[];
   targets: string[];
+  /** Targeted shops that kept their own value for every setting in the change. */
+  kept: number;
   keys: string[];
   paths: Set<string>;
 }
@@ -133,7 +135,9 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
   await lockSync(tx);
   const all = (await activeShops(tx)).map((s) => s.id);
   const targets = targetShops(plan.scope, plan.shopIds, all);
-  const out: Applied = { brand: [], changes: [], targets: [...targets], keys: [], paths: new Set() };
+  const out: Applied = { brand: [], changes: [], targets: [...targets], kept: 0, keys: [], paths: new Set() };
+  const keptAt = new Set<string>();
+  const tookAt = new Set<string>();
   for (const raw of dedupe(plan.changes)) {
     const a = adapterOf(raw.type);
     assertBrandMay(who, a);
@@ -156,6 +160,7 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
       const p = planCell({ mode, follows: n.follows, live: a.live, targeted: targets.has(shopId), choice: plan.overrides[shopId] });
       const write: ShopWrite | null = p.write === "follow" ? { follow: true, value: v1 } : p.write === "hold" ? { follow: false, value: n.value } : null;
       cells.set(shopId, { write, mode: p.mode, hadRow: !!st, modeWas: st?.mode ?? null });
+      if (targets.has(shopId)) (p.mode === "override" ? keptAt : tookAt).add(shopId);
       const from: CellState = { value: n.value, follows: n.follows, mode };
       const to: CellState = write ? { value: write.value, follows: write.follow && a.live, mode: p.mode } : { ...from, mode: p.mode };
       if (p.action && (p.action === "keep" || !same(from, to))) out.changes.push({ shopId, key, action: p.action, from, to });
@@ -166,6 +171,7 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
     out.keys.push(key);
     a.paths.forEach((p) => out.paths.add(p));
   }
+  out.kept = [...keptAt].filter((id) => !tookAt.has(id)).length;
   return out;
 }
 
@@ -213,7 +219,9 @@ export interface CommitInput extends SyncPlan {
 export interface CommitResult {
   batchId: string;
   status: "applied" | "scheduled";
+  /** Shops the change reached, not counting those that kept their own value. */
   shops: number;
+  kept: number;
   changed: number;
   runAt: string | null;
   paths: string[];
@@ -262,7 +270,7 @@ export async function commitBrandChange(who: Who, input: CommitInput, now = new 
         })
         .returning({ id: brandSyncBatches.id });
       await audit(who.actor, "brand_sync.scheduled", "brand_sync_batch", b.id, { label, runAt: runAt.toISOString(), scope: input.scope, shopIds: targets, keys: plan.changes.map((c) => syncKey(c.type, c.item)) }, null, tx);
-      return { batchId: b.id, status: "scheduled", shops: targets.length, changed: 0, runAt: runAt.toISOString(), paths: [...paths] };
+      return { batchId: b.id, status: "scheduled", shops: targets.length, kept: 0, changed: 0, runAt: runAt.toISOString(), paths: [...paths] };
     }
     const r = await applyPlan(tx, who, input);
     const [b] = await tx
@@ -273,7 +281,7 @@ export async function commitBrandChange(who: Who, input: CommitInput, now = new 
     await audit(who.actor, "brand_sync.apply", "brand_sync_batch", b.id, { label, scope: input.scope, shopIds: r.targets, keys: r.keys, brand: r.brand, changed: r.changes.length }, null, tx);
     await auditShops(tx, who, b.id, label, r.changes);
     done = r.changes;
-    return { batchId: b.id, status: "applied", shops: r.targets.length, changed: r.changes.length, runAt: null, paths: [...r.paths] };
+    return { batchId: b.id, status: "applied", shops: r.targets.length - r.kept, kept: r.kept, changed: r.changes.length, runAt: null, paths: [...r.paths] };
   });
   await afterCommit(done);
   return result;

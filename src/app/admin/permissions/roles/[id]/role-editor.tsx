@@ -129,7 +129,7 @@ export function RoleEditor({
       return void sync.open({
         label: `${name} role`,
         changes: [{ type: "role", item: initial!.id, value: { name, description, permissions: [...perms], maxDiscountPct: maxPct, defaultScope: scope } }],
-        onDone: (r) => setSaved(r.status === "scheduled" ? syncedText(r) : r.shops ? `Saved. ${syncedText(r)}.` : "Saved to the brand. Shops keep the role as it was until it's pushed."),
+        onDone: (r) => setSaved(r.status === "scheduled" || r.shops || r.kept ? syncedText(r) : "Saved to the brand. Shops keep the role as it was until it's pushed."),
       });
     }
     run(
