@@ -6,7 +6,7 @@ import { appPayments, checkoutHandoffs, customerDevices, customers, notification
 import { type CardFunding, feeDisclosure } from "@/domain/checkout";
 import { flags } from "@/lib/flags";
 import { formatCents } from "@/lib/money";
-import { assertSwitch } from "./app-switches";
+import { assertShopSwitch } from "./app-switches";
 import { type Actor, SYSTEM, audit, customerActor } from "./audit";
 import { type TenderInput, finalizeSale, priceCart } from "./checkout";
 import { AppError, notFound } from "./errors";
@@ -44,9 +44,9 @@ async function onTheApp(holderId: string, now: Date) {
  * screen is. A child's ticket goes to the parent, who pays with their own cards (I1).
  */
 export async function sendToApp(saleId: string, draft: HandoffDraftInput, by: HandingOver, now = new Date()) {
-  await assertSwitch("payments");
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId), columns: { id: true, shopId: true, customerId: true, number: true } });
   if (!sale) throw notFound("Sale");
+  await assertShopSwitch("payments", sale.shopId);
   if (!sale.customerId) throw new AppError("bad_request", "Add the client to the ticket first");
   const holder = await householdHead(sale.customerId);
   const [c] = await db.select({ first: customers.firstName, deletedAt: customers.deletedAt }).from(customers).where(eq(customers.id, holder));
@@ -262,8 +262,8 @@ export interface AppQuote {
  * card or a ConfirmationToken), its funding decides the surcharge, then our own Pay button confirms.
  */
 export async function quoteTicket(customerId: string, id: string, input: TipChoiceInput & { paymentMethodId: string }): Promise<AppQuote> {
-  await assertSwitch("payments");
   const { row } = await ownTicket(customerId, id);
+  await assertShopSwitch("payments", row.shopId);
   openOrThrow(row);
   await chooseTip(row.id, input.tipChoice, input.tipCents ?? 0, input.tipByStaff ?? null);
   const { saved, card } = await cardFor(customerId, input.paymentMethodId);
@@ -405,8 +405,8 @@ export async function payTicket(
   input: TipChoiceInput & { paymentMethodId?: string | null; paymentIntentId?: string | null; expectedTotalCents?: number | null },
   now = new Date(),
 ): Promise<AppPayResult> {
-  await assertSwitch("payments");
   const { row, holder } = await ownTicket(customerId, id);
+  await assertShopSwitch("payments", row.shopId);
   await assertReviewCanPay(holder);
   const actor = customerActor(holder);
   if (input.paymentIntentId) {

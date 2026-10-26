@@ -25,7 +25,7 @@ import {
 import { addDays, todayLocal } from "@/lib/time";
 import { type Actor, audit } from "../audit";
 import { rows, uuids } from "../report-sql";
-import { loadMilestoneSettings, runMilestones } from "./engine";
+import { loadMilestoneSettings, milestoneSettingsAt, runMilestones } from "./engine";
 
 /** A milestone reached today, as the shop sees it: by first name, nothing about money or ratings. */
 export interface Celebration {
@@ -141,7 +141,7 @@ export async function shopDay(
   shopIds: string[],
   now = new Date(),
 ): Promise<ShopDay> {
-  const s = await loadMilestoneSettings();
+  const s = shopIds.length === 1 ? await milestoneSettingsAt(shopIds[0]) : await loadMilestoneSettings();
   const wanted =
     s.enabled && (s.calendarBanner || s.posBanner || s.columnBadge);
   const list = wanted ? await celebrationsAt(shopIds, { now, s }) : [];

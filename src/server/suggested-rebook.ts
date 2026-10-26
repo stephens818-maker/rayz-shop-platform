@@ -5,7 +5,7 @@ import { rebookInterval } from "@/domain/checkout-prompts";
 import { takesOnlineBookings } from "@/domain/location-lifecycle";
 import { addDays, localDateOf, todayLocal, type LocalDate } from "@/lib/time";
 import { appSwitches } from "./app-switches";
-import { loadPromptSettings } from "./checkout-prompts";
+import { promptSettingsAt } from "./checkout-prompts";
 import { notFound } from "./errors";
 import { cadenceFor } from "./visit-cadence";
 
@@ -30,7 +30,7 @@ export async function suggestedRebooks(customerId: string, now = new Date()) {
     : [];
   const people = [{ ...me, isChild: false }, ...kids.map((k) => ({ ...k, isChild: true }))];
   const ids = people.map((p) => p.id);
-  const [settings, cadence] = await Promise.all([loadPromptSettings(), cadenceFor(ids, now)]);
+  const cadence = await cadenceFor(ids, now);
   const today = todayLocal(now);
   const out = [];
   for (const p of people) {
@@ -58,6 +58,7 @@ export async function suggestedRebooks(customerId: string, now = new Date()) {
         .limit(1),
     ]);
     const main = items.find((i) => i.kind === "service");
+    const settings = await promptSettingsAt(last.shop.id);
     const interval = rebookInterval({ cadenceDays: cadence.get(p.id)?.cadenceDays, serviceDays: main?.rebookDays, defaultDays: settings.rebook.defaultDays });
     const visitDate = localDateOf(last.a.startsAt);
     const suggestedDate = addDays(visitDate, interval.days);

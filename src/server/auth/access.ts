@@ -17,6 +17,7 @@ import {
   sharedLoginAccess,
   unionAccess,
 } from "@/domain/permissions";
+import { localValues } from "../brand-sync/store";
 
 type Role = typeof roles.$inferSelect;
 
@@ -90,9 +91,15 @@ export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DB
           .orderBy(asc(shops.name));
   const otherIds = [...new Set(shopRows.map((r) => r.roleId).filter((id): id is string => !!id && id !== role.id))];
   const others = new Map((otherIds.length ? await tx.select().from(roles).where(inArray(roles.id, otherIds)) : []).map((r) => [r.id, r]));
+  // A shop can run its own version of a role the brand synced to it (Setup → Sync status). Brand-wide people get the brand's.
+  const variants = scope === "all" ? new Map<string, { permissions: string[]; maxDiscountPct: number }>() : await localValues<{ permissions: string[]; maxDiscountPct: number }>("role", shopRows.map((r) => r.id), tx);
+  const roleAt = (shopId: string, r: Role | null): Role | null => {
+    const v = variants.get(`${shopId}|${(r ?? role).id}`);
+    return v ? { ...(r ?? role), permissions: v.permissions, maxDiscountPct: v.maxDiscountPct } : r;
+  };
   const computed = accessByShop(
     role,
-    shopRows.map((r) => ({ shopId: r.id, role: (r.roleId && others.get(r.roleId)) || null })),
+    shopRows.map((r) => ({ shopId: r.id, role: roleAt(r.id, (r.roleId && others.get(r.roleId)) || null) })),
     overrides,
     s.maxDiscountPct,
     scope,

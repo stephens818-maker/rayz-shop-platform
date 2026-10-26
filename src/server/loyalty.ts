@@ -3,11 +3,19 @@ import { db, DBorTx } from "@/db";
 import { brandSettings, customers, loyaltyAccounts, loyaltyLedger, loyaltyRewards, shops } from "@/db/schema";
 import { FamilyLoyalty, familySettings } from "@/domain/family";
 import { LoyaltyConfig, accrue, convertProgress, goalOf, loyaltyConfig, loyaltyRules, progressExpired, reverseAccrual, rewardExpiry, usableRewards } from "@/domain/loyalty";
+import { localValue } from "./brand-sync/store";
 import { AppError } from "./errors";
 
 export async function getLoyaltyConfig(tx: DBorTx = db): Promise<LoyaltyConfig> {
   const row = await tx.query.brandSettings.findFirst({ where: eq(brandSettings.id, 1) });
   return loyaltyConfig(row?.loyalty);
+}
+
+/** The program at one shop: the brand's, with the shop's own earning rules (minimum visit, products and tips counting) where it has them. */
+export async function loyaltyConfigAt(shopId: string | null | undefined, tx: DBorTx = db): Promise<LoyaltyConfig> {
+  const [cfg, own] = await Promise.all([getLoyaltyConfig(tx), localValue<Partial<Pick<LoyaltyConfig, "minVisitCents" | "includeProducts" | "includeTips">>>("loyalty", "brand", shopId, tx)]);
+  if (!own) return cfg;
+  return loyaltyConfig({ ...cfg, minVisitCents: own.minVisitCents ?? cfg.minVisitCents, includeProducts: own.includeProducts ?? cfg.includeProducts, includeTips: own.includeTips ?? cfg.includeTips });
 }
 
 /**
@@ -133,8 +141,8 @@ export async function lockAccount(tx: DBorTx, customerId: string) {
 }
 
 /** Called inside the checkout transaction. Returns the number of rewards issued. */
-export async function accrueForSale(tx: DBorTx, customerId: string, saleId: string, earnCents: number, now = new Date()) {
-  const cfg = await getLoyaltyConfig(tx);
+export async function accrueForSale(tx: DBorTx, customerId: string, saleId: string, earnCents: number, now = new Date(), shopId?: string | null) {
+  const cfg = await loyaltyConfigAt(shopId, tx);
   if (!cfg.enabled || earnCents <= 0) return 0;
   const acct = await lockAccount(tx, customerId);
   const startProgress = !progressExpired(acct.lastEarnAt, now, cfg) ? acct.progressCents : 0;

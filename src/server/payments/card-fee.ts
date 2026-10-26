@@ -109,7 +109,7 @@ const snapshot = (brand: CardFeePolicy, o: unknown, shopId: string, state: strin
  * change date set, and shops.card_fee_enabled / _rate / _applies_to_tip are kept in step for the tax
  * and fee summary and older readers. Returns what changed at each shop, for the audit log.
  */
-async function commitFeeChange(tx: DBorTx, before: CardFeePolicy, after: CardFeePolicy, overrides: ReadonlyMap<string, CardFeeOverride | null>): Promise<ShopFeeChange[]> {
+export async function commitFeeChange(tx: DBorTx, before: CardFeePolicy, after: CardFeePolicy, overrides: ReadonlyMap<string, CardFeeOverride | null>): Promise<ShopFeeChange[]> {
   const rows = await tx
     .select({ id: shops.id, name: shops.name, state: shops.state, o: shops.cardFeeOverride, en: shops.cardFeeEnabled, rate: shops.cardFeeRate, tip: shops.cardFeeAppliesToTip })
     .from(shops);
@@ -138,7 +138,7 @@ async function commitFeeChange(tx: DBorTx, before: CardFeePolicy, after: CardFee
   return out;
 }
 
-async function saveBrandRow(tx: DBorTx, p: CardFeePolicy) {
+export async function saveBrandRow(tx: DBorTx, p: CardFeePolicy) {
   await tx
     .insert(brandSettings)
     .values({ id: 1, loyalty: {}, cardFee: p as unknown as Record<string, unknown> })
@@ -146,7 +146,7 @@ async function saveBrandRow(tx: DBorTx, p: CardFeePolicy) {
 }
 
 /** Each shop's own audit trail gets the change too, so a shop's history shows brand and bulk changes that reached it. */
-async function auditShops(tx: DBorTx, actor: Actor, via: string, changes: ShopFeeChange[]) {
+export async function auditShops(tx: DBorTx, actor: Actor, via: string, changes: ShopFeeChange[]) {
   for (const c of changes) await audit(actor, "card_fee.shop", "shop", c.shopId, { via, from: c.from, to: c.to, override: c.to.override }, c.shopId, tx);
 }
 

@@ -5,7 +5,7 @@ import { Logo } from "@/components/ui";
 import { navFor } from "@/domain/navigation";
 import { assistantAccess } from "@/server/assistant";
 import { requireStaff } from "@/server/auth/staff";
-import { loadMilestoneSettings } from "@/server/milestones/engine";
+import { milestoneSettingsAt } from "@/server/milestones/engine";
 import { logout } from "../login/actions";
 import { AssistantPanel } from "./assistant/panel";
 import { BfcacheGuard } from "./bfcache-guard";
@@ -24,7 +24,7 @@ export default async function AdminLayout({
   const ctx = await requireStaff();
   const [assistant, milestones] = await Promise.all([
     assistantAccess(ctx),
-    loadMilestoneSettings(),
+    milestoneSettingsAt(ctx.currentShopId ?? (ctx.shopIds.length === 1 ? ctx.shopIds[0] : null)),
   ]);
   const here = ctx.shops.find((s) => s.id === ctx.currentShopId) ?? null;
   const address = here

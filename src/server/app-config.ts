@@ -6,7 +6,7 @@
 import { reviewLoginOn } from "./auth/review-login";
 import { BRAND_NAME } from "@/domain/location-profile";
 import { appBaseUrl, demoMode } from "@/lib/deployment";
-import { appSwitches } from "./app-switches";
+import { appFeatures } from "./app-switches";
 import { AppError } from "./errors";
 import { appPaymentsConfig } from "./payments/saved-cards";
 
@@ -66,7 +66,7 @@ export function supportContact() {
 }
 
 export async function appConfig(platform: AppPlatform | null, version: string | null) {
-  return { ...appConfigFromEnv(platform, version), features: await appSwitches(), payments: appPaymentsConfig() };
+  return { ...appConfigFromEnv(platform, version), features: await appFeatures(), payments: appPaymentsConfig() };
 }
 
 export function appConfigFromEnv(platform: AppPlatform | null, version: string | null) {

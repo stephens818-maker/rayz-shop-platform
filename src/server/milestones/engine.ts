@@ -55,6 +55,7 @@ import {
 import { recordEvent } from "../analytics";
 import { SYSTEM, audit } from "../audit";
 import { type StaffAccess, loadStaffAccess } from "../auth/access";
+import { localValue } from "../brand-sync/store";
 import { processDueJobs } from "../notifications/queue";
 import { rows, uuids } from "../report-sql";
 
@@ -64,6 +65,14 @@ export async function loadMilestoneSettings(): Promise<MilestoneSettings> {
     .from(brandSettings)
     .limit(1);
   return milestoneSettings(b?.m);
+}
+
+/** At one shop: the brand's settings with the shop's own on-the-day banners, badges and toasts (Setup → Sync status). */
+export async function milestoneSettingsAt(shopId: string | null | undefined): Promise<MilestoneSettings> {
+  const [s, own] = await Promise.all([loadMilestoneSettings(), localValue<Partial<MilestoneSettings>>("milestones", "brand", shopId)]);
+  if (!own) return s;
+  const pick = (k: "calendarBanner" | "posBanner" | "columnBadge" | "liveToast") => (typeof own[k] === "boolean" ? own[k] : s[k]);
+  return { ...s, calendarBanner: pick("calendarBanner"), posBanner: pick("posBanner"), columnBadge: pick("columnBadge"), liveToast: pick("liveToast") };
 }
 
 /**

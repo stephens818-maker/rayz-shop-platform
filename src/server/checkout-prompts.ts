@@ -52,6 +52,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { formatPhone } from "@/lib/phone";
 import { type LocalDate, addDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, zonedWallTime } from "@/lib/time";
 import { type Actor, audit } from "./audit";
+import { localValue } from "./brand-sync/store";
 import { createAppointment, dayOpenings } from "./booking";
 import { AppError, notFound } from "./errors";
 import { householdHead, householdIds } from "./family";
@@ -79,6 +80,12 @@ const NEXT_VISIT = ["booked", "confirmed"] as const;
 export async function loadPromptSettings(tx: DBorTx = db): Promise<CheckoutPromptSettings> {
   const [b] = await tx.select({ p: brandSettings.checkoutPrompts }).from(brandSettings).where(eq(brandSettings.id, 1));
   return promptSettings(b?.p);
+}
+
+/** The settings at one shop: its own (Setup → Sync status) or the brand's. */
+export async function promptSettingsAt(shopId: string | null | undefined, tx: DBorTx = db): Promise<CheckoutPromptSettings> {
+  const own = await localValue<unknown>("checkout_prompts", "brand", shopId, tx);
+  return own ? promptSettings(own) : loadPromptSettings(tx);
 }
 
 export async function savePromptSettings(input: unknown, actor: Actor): Promise<CheckoutPromptSettings> {
@@ -518,7 +525,7 @@ async function viewOf<S>(row: PromptRow): Promise<PromptView<S>> {
 export async function promptsForTicket(saleId: string, who: { roleId: string | null; actor: Actor }, now = new Date()): Promise<TicketPrompts> {
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
   if (!sale) throw notFound("Sale");
-  const settings = await loadPromptSettings();
+  const settings = await promptSettingsAt(sale.shopId);
   const existing = await db.select().from(checkoutPrompts).where(eq(checkoutPrompts.saleId, saleId));
   const has = (k: PromptKind) => existing.find((r) => r.prompt === k) ?? null;
   const on = sale.status === "open" ? await enabledFor(sale, who.roleId, settings) : { rebook: false, product: false };
@@ -637,7 +644,7 @@ export async function declinePrompt(saleId: string, promptId: string, input: { r
   if (!row) throw notFound("Prompt");
   const sale = await openSale(saleId);
   if (row.outcome === "accepted") throw new AppError("conflict", row.prompt === "rebook" ? "The next visit is already booked; cancel it from the calendar instead" : "A suggested product is already on the ticket; take it off the ticket instead");
-  const settings = await loadPromptSettings();
+  const settings = await promptSettingsAt(sale.shopId);
   const reason = row.prompt === "rebook" ? input.reason?.trim() || null : null;
   const problem = reasonProblem(reason, settings.rebook.reasons);
   if (problem) throw new AppError("bad_request", problem);

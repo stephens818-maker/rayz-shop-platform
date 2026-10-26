@@ -2,7 +2,7 @@ import { clientIp } from "@/lib/client-ip";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { body, json, options, route } from "@/server/api";
 import { clientPlatform } from "@/server/app-config";
-import { assertSwitch } from "@/server/app-switches";
+import { assertShopSwitch } from "@/server/app-switches";
 import { CreateAppointment } from "@/server/api-schemas";
 import { audit, customerActor } from "@/server/audit";
 import { customerFromRequest } from "@/server/auth/customer";
@@ -18,8 +18,8 @@ const GUEST_PER_CONTACT_DAY = 5;
 
 export const OPTIONS = options;
 export const POST = route(async (req) => {
-  await assertSwitch("booking");
   const b = await body(req, CreateAppointment);
+  await assertShopSwitch("booking", b.shopId);
   const customerId = await customerFromRequest(req);
   if (!customerId) {
     // I14: the app books signed in. Only the website takes guest bookings, and those are hardened.

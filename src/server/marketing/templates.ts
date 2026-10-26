@@ -11,6 +11,7 @@ import { CHANNELS, TemplatesSchema, templatesProblem, type Channel, type Templat
 import { z } from "zod";
 import { audit } from "../audit";
 import { StaffContext, assertCan, can } from "../auth/staff";
+import { localValues } from "../brand-sync/store";
 import { AppError, forbidden, notFound } from "../errors";
 import { channelsOf, templatesOf } from "./engine";
 
@@ -105,7 +106,18 @@ export async function listTemplates(ctx: StaffContext, o: { archived?: boolean }
   const rows = await db.select().from(marketingTemplates).where(inArray(marketingTemplates.status, statuses)).orderBy(asc(marketingTemplates.name));
   const ids = [...new Set(rows.map((r) => r.approvedBy).filter((x): x is string => !!x))];
   const names = ids.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, ids)) : [];
-  return rows.map((r) => ({
+  // A location sees the version of each template the brand synced to it (Setup → Sync status).
+  const shopId = brand ? null : (ctx.currentShopId ?? (ctx.shopIds.length === 1 ? ctx.shopIds[0] : null));
+  const own = shopId ? await localValues<{ available: boolean; name: string; description: string | null; channels: Channel[]; templates: Templates }>("campaign_template", [shopId]) : new Map();
+  const shopRows = shopId
+    ? rows
+        .filter((r) => own.get(`${shopId}|${r.id}`)?.available !== false)
+        .map((r) => {
+          const o = own.get(`${shopId}|${r.id}`);
+          return o ? { ...r, name: o.name, description: o.description, channels: o.channels, templates: o.templates } : r;
+        })
+    : rows;
+  return shopRows.map((r) => ({
     id: r.id,
     name: r.name,
     campaignType: r.campaignType,

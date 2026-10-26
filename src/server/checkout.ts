@@ -72,6 +72,7 @@ import {
 import {
   accrueForSale,
   getLoyaltyConfig,
+  loyaltyConfigAt,
   loadRedeemableReward,
   loyaltyShares,
   markRewardRedeemed,
@@ -278,7 +279,7 @@ export async function loadCheckoutContext(saleId: string) {
     groupDeposit,
     feePolicy,
     feeChannel,
-    config: pricingConfig(shop, await getLoyaltyConfig(), feeConfigFor(feePolicy.policy, feePolicy.state, feeChannel)),
+    config: pricingConfig(shop, await loyaltyConfigAt(shop.id), feeConfigFor(feePolicy.policy, feePolicy.state, feeChannel)),
     negativeStock: shop.negativeStock,
   };
 }
@@ -1267,6 +1268,7 @@ export async function finalizeSale(input: FinalizeInput) {
             ctx.sale.id,
             sh.cents,
             now,
+            ctx.sale.shopId,
           );
       }
 
