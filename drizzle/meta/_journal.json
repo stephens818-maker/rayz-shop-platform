@@ -645,6 +645,13 @@
       "when": 1796209200000,
       "tag": "core_0091_card_fee_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1796212800000,
+      "tag": "core_0092_card_fee_backfill",
+      "breakpoints": true
     }
   ]
 }

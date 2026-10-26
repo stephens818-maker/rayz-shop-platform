@@ -102,6 +102,17 @@ describe("checkout", () => {
     expect(pay.feeBasisCents).toBe(pay.amountCents - pay.cardFeeCents - 300);
   });
 
+  it("works the rate and basis of an old payment back from what was charged (core_0092)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { pay } = await sell({ tipCents: 300 });
+    const P = m.schema.payments;
+    await m.db.db.update(P).set({ feeRate: "0", feeBasisCents: null }).where(m.drizzle.eq(P.id, pay.id));
+    for (const q of readFileSync("drizzle/core_0092_card_fee_backfill.sql", "utf8").split("--> statement-breakpoint")) await m.db.db.execute(m.drizzle.sql.raw(q));
+    const [after] = await m.db.db.select().from(P).where(m.drizzle.eq(P.id, pay.id));
+    expect(after.feeBasisCents).toBe(pay.feeBasisCents);
+    expect(Number(after.feeRate)).toBeCloseTo(0.03, 3);
+  });
+
   it("never surcharges cash", async () => {
     const { r, pay } = await sell({ tender: { method: "cash", cashTenderedCents: null } });
     expect(r.totals.cardFeeCents).toBe(0);
