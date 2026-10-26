@@ -1,7 +1,7 @@
 import type { Cell, ReportTable } from "./report-views";
 
 /** "$1,234.56", "-$5", "+$2.00", "$12k": a dollar amount written into text. */
-const DOLLARS = /[-−+]?\$\s?\d[\d,]*(?:\.\d+)?(?:\s?[kKmM]\b)?/g;
+const DOLLARS = /[-−+]?\$\s?\d+(?:,\d{3})*(?:\.\d+)?(?:\s?[kKmM]\b)?/g;
 export const HIDDEN_DOLLARS = "$—";
 export const MONEY_HIDDEN_NOTE = "Dollar amounts are hidden: your role shows counts, rates and hours but not dollar amounts.";
 

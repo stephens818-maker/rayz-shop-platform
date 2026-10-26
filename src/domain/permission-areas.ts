@@ -129,7 +129,7 @@ export const AREAS: readonly Area[] = [
     hint: "Which client details each role sees is set under Client data protection. Every reveal and every view of contact details is logged.",
     rows: [
       row("client_lookup", "Client lookup", [lv("own", [], "Their shops' clients", "shops"), lv("view", ["clients.view_all"], "Every client", "all")]),
-      row("client_edit", "Client profiles", [lv("view"), lv("edit", ["clients.edit"])]),
+      row("client_edit", "Client profiles", [lv("view", [], "View", "shops"), lv("edit", ["clients.edit"])]),
       on("clients.family", "Family members"),
       on("clients.merge", "Merge duplicates"),
       row("notes", "Client notes", [lv("none"), lv("view", ["notes.view"]), lv("edit", ["notes.write"], "Write their own"), lv("approve", ["notes.edit_any"], "Manage anyone's")]),
@@ -325,12 +325,13 @@ export function levelReach(r: AreaRow, i: number): Reach | null {
   if (l.key === "none") return null;
   if (l.key === "own") return "own";
   const perms = levelPermissions(r, i);
-  if (!perms.length || perms.every((p) => p.startsWith("report"))) return null;
+  if (!perms.length || perms.every(followsScope)) return null;
   return perms.some((p) => BRAND_ONLY.has(p) || OWNER_ONLY.has(p)) ? "all" : "shops";
 }
 
-/** A row whose reach is the report scope row's: the reports and dollar amounts. */
-export const followsReportScope = (r: AreaRow) => rowPermissions(r).every((p) => p.startsWith("report.") || p === "reports.money");
+/** The reports and dollar amounts reach as far as the report scope row says; custom reports stay at their shops. */
+const followsScope = (p: Permission) => p.startsWith("report.") || p === "reports.money";
+export const followsReportScope = (r: AreaRow) => rowPermissions(r).every(followsScope);
 
 /** How far this row reaches with these permissions: its level's reach, or the report scope for reports. */
 export function heldReach(r: AreaRow, perms: ReadonlySet<Permission>, brandWide = false): Reach | null {

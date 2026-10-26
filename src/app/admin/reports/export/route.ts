@@ -40,7 +40,7 @@ export async function GET(req: Request) {
   if (!REPORTS.some((r) => r.key === key)) return new Response("Unknown report", { status: 404 });
   if (!can(ctx, reportView(key)) || !can(ctx, reportExport(key))) return new Response("You don't have permission to export this report", { status: 403 });
   if (key === "client_ratings") return Response.redirect(new URL(`/admin/reports/ratings/export?${url.searchParams}`, url), 307);
-  const rctx = await reportContext(ctx);
+  const rctx = await reportContext(ctx, key);
   let scope;
   try {
     scope = await resolveScope(rctx, { ...p, shop: url.searchParams.getAll("shop"), staff: url.searchParams.getAll("staff"), view: p.view ?? alias?.view }, key);

@@ -196,7 +196,7 @@ export async function ReportPage({
 }) {
   const meta = reportFor(report);
   const ctx = await guardPage(meta.href);
-  const rctx = await reportContext(ctx);
+  const rctx = await reportContext(ctx, report);
   const scope = await resolveScope(rctx, searchParams, report);
   const canExport = can(ctx, reportExport(report));
   const t0 = performance.now();

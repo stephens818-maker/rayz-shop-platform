@@ -280,7 +280,7 @@ function runReportTool(ctx: StaffContext): AssistantTool | null {
       const notes: string[] = [];
       let shop: string | undefined;
       let staffIds: string | undefined;
-      const rctx = await reportContext(ctx);
+      const rctx = await reportContext(ctx, report.key);
       try {
         shop = await locationParam(rctx, a.locations);
         if (a.barbers?.length && selfOnly(ctx, a.report))
