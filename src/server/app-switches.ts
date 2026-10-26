@@ -4,11 +4,11 @@
  * var APP_KILL lists it (comma-separated) for an emergency from Vercel. Per-shop booking is each
  * shop's own "Online booking on" switch; force-upgrade is the minimum app version.
  */
-import { and, eq, isNotNull, ne } from "drizzle-orm";
+import { eq, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { shopSyncState, shops } from "@/db/schema";
+import { shops } from "@/db/schema";
 import { brandColumn } from "./brand-sync/settings";
-import { localValue } from "./brand-sync/store";
+import { localValue, localValues } from "./brand-sync/store";
 import { AppError } from "./errors";
 
 export const APP_SWITCHES = ["booking", "payments", "family", "pushMarketing"] as const;
@@ -78,8 +78,8 @@ export async function appFeatures(): Promise<AppSwitches> {
   const all = await appSwitches();
   const env = killedByEnv();
   const open = await db.select({ id: shops.id }).from(shops).where(ne(shops.status, "archived"));
-  const own = await db.select({ shopId: shopSyncState.shopId, local: shopSyncState.local }).from(shopSyncState).where(and(eq(shopSyncState.key, "app:switches"), isNotNull(shopSyncState.local)));
-  const byShop = new Map(own.map((r) => [r.shopId, r.local as Partial<AppSwitches>]));
+  const own = await localValues<Partial<AppSwitches>>("app", open.map((s) => s.id));
+  const byShop = new Map([...own].filter(([k]) => k.endsWith("|switches")).map(([k, v]) => [k.slice(0, k.indexOf("|")), v]));
   const out = { ...all };
   for (const k of APP_SWITCHES) {
     if (!isShopSwitch(k) || env.has(k) || !open.length) continue;

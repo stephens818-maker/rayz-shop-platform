@@ -79,6 +79,7 @@ export interface SettingDef<V = unknown> {
    * times). Readers lay it over the brand's value; a sync to the shop folds it in and clears it.
    */
   shopLayer?: {
+    column: keyof typeof shops.$inferSelect;
     read(tx: DBorTx, shopIds: readonly string[]): Promise<Map<string, unknown>>;
     merge(v: V, own: unknown): V;
     clear(tx: DBorTx, shopId: string): Promise<void>;
@@ -269,6 +270,7 @@ export const SETTINGS: readonly SettingDef[] = [
     describe: (v) => ({ "Slot interval": `${v} min` }),
     short: (v) => `${v} min`,
     shopLayer: {
+      column: "slotIntervalMinutes",
       async read(tx, shopIds) {
         const rows = await tx.select({ id: shops.id, n: shops.slotIntervalMinutes }).from(shops).where(and(inArray(shops.id, [...shopIds]), isNotNull(shops.slotIntervalMinutes)));
         return new Map(rows.map((r) => [r.id, r.n]));
@@ -313,6 +315,7 @@ export const SETTINGS: readonly SettingDef[] = [
     },
     audit: "staff_time.rules",
     shopLayer: {
+      column: "staffTime",
       async read(tx, shopIds) {
         const rows = await tx.select({ id: shops.id, r: shops.staffTime }).from(shops).where(inArray(shops.id, [...shopIds]));
         return new Map(rows.map((r) => [r.id, cleanRules(r.r)] as const).filter(([, r]) => Object.keys(r).length));
@@ -419,6 +422,7 @@ export const SETTINGS: readonly SettingDef[] = [
     labels: { minVisits: "From visit", snoozeDays: "Pause after a tap (days)" },
     audit: "brand.review_rules",
     shopLayer: {
+      column: "receipt",
       async read(tx, shopIds) {
         const rows = await tx.select({ id: shops.id, r: shops.receipt }).from(shops).where(inArray(shops.id, [...shopIds]));
         return new Map(
@@ -828,6 +832,3 @@ export const settingAdapter: SyncAdapter<unknown, unknown> = {
   },
   columns: [...BY_COLUMN.keys()],
 };
-
-/** The settings a shop also sets in a column of its own, for the shop-own editors to note the edit. */
-export const SHOP_LAYERED = SETTINGS.filter((s) => s.shopLayer).map((s) => s.key);
