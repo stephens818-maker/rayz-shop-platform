@@ -104,6 +104,8 @@ describe("brand change scope", () => {
     const replace = await sync.commitBrandChange(who, { changes: [{ type: "service", item: serviceId, value: { ...b, defaultPriceCents: b.defaultPriceCents + 200 } }], scope: "all", shopIds: [], overrides: { [shopB]: "replace" } });
     expect(await priceAt(shopB)).toBe(b.defaultPriceCents + 200);
     expect((await cellAt(key, shopB))?.s).toBe("in_sync");
+    expect(keep.kept).toBeGreaterThanOrEqual(1);
+    expect([replace.kept, replace.shops]).toEqual([keep.kept - 1, keep.shops + 1]);
     await sync.rollbackSync(who, replace.batchId);
     expect(await priceAt(shopB)).toBe(9999);
     expect((await cellAt(key, shopB))?.s).toBe("overridden");
@@ -239,5 +241,67 @@ describe("brand change scope", () => {
     const areas = new Set(mx.rows.map((r) => r.area));
     for (const a of ["services", "products", "card_fee", "checkout_prompts", "milestones", "loyalty", "policies", "hours", "campaign_templates", "taxes", "tips", "roles", "branding", "app"]) expect(areas.has(a as never), a).toBe(true);
     expect(mx.rows.every((r) => r.cells.length === mx.shops.length)).toBe(true);
+  });
+
+  it("a brand edit shops don't see (a service's name) syncs nothing and leaves shops following the brand", async () => {
+    const b = await serviceBrand();
+    const before = await m.db.db.select().from(m.schema.shopServices).where(m.drizzle.eq(m.schema.shopServices.serviceId, serviceId));
+    const preview = await sync.previewBrandChange(who, [{ type: "service", item: serviceId, value: { ...b, name: `${b.name} ` + "(renamed)" } }]);
+    expect(preview.keys[0].brandOnly).toBe(true);
+    const r = await sync.commitBrandChange(who, { changes: [{ type: "service", item: serviceId, value: { ...b, name: `${b.name} (renamed)` } }], scope: "brand_only", shopIds: [], overrides: {} });
+    expect(r.changed).toBe(0);
+    const after = await m.db.db.select().from(m.schema.shopServices).where(m.drizzle.eq(m.schema.shopServices.serviceId, serviceId));
+    expect(after.map((x) => [x.shopId, x.priceCents, x.durationMin]).sort()).toEqual(before.map((x) => [x.shopId, x.priceCents, x.durationMin]).sort());
+    await sync.rollbackSync(who, r.batchId);
+    expect((await serviceBrand()).name).toBe(b.name);
+  });
+
+  it("a bulk edit is one sync: the price change goes to the shops picked and undoes as one", async () => {
+    const bulk = await import("@/server/bulk-edit");
+    const old = (await serviceBrand()).defaultPriceCents;
+    const plan = await bulk.bulkServiceChanges({ ids: [serviceId], price: { mode: "add", value: 300, round: "cent" } });
+    expect(plan.changes).toHaveLength(1);
+    const r = await sync.commitBrandChange(who, { changes: plan.changes, scope: "selected", shopIds: [shopC], overrides: { [shopB]: "replace" } });
+    expect(await priceAt(shopC)).toBe(old + 300);
+    expect(await priceAt(shopA)).not.toBe(old + 300);
+    await sync.rollbackSync(who, r.batchId);
+    expect((await serviceBrand()).defaultPriceCents).toBe(old);
+    expect((await bulk.bulkServiceChanges({ ids: [serviceId], price: { mode: "add", value: 0, round: "cent" } })).changes).toHaveLength(0);
+  });
+
+  it("the actions need the setting's permission and every shop; a shop manager's own edit is refused while the brand controls it", async () => {
+    const { signInAs } = await import("./session");
+    const actions = await import("@/app/admin/sync-status/actions");
+    const services = await import("@/app/admin/services/actions");
+    const { eq } = m.drizzle;
+    const staffId = async (email: string) => (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, email) }))!.id;
+    const b = await serviceBrand();
+    const change = [{ type: "service" as const, item: serviceId, value: { ...b, defaultPriceCents: b.defaultPriceCents + 100 } }];
+
+    await signInAs(await staffId("manager.moline@rayz.test"));
+    expect(await actions.previewBrandSyncAction(change)).toMatchObject({ ok: false });
+    const own = await services.saveShopServiceAction(shopB, serviceId, { enabled: true, priceCents: b.defaultPriceCents + 700, durationMin: null, bookableOnline: true, nameOverride: "" } as never);
+    expect(own).toMatchObject({ ok: false, error: expect.stringMatching(/set by the brand/) });
+
+    await signInAs(await staffId("admin@rayz.test"));
+    const p = await actions.previewBrandSyncAction(change);
+    expect(p.ok && p.data.keys[0].cells.length).toBeGreaterThan(0);
+    const c = await actions.commitBrandSyncAction({ changes: change, scope: "all", shopIds: [], overrides: {} });
+    expect(c.ok && c.data.status).toBe("applied");
+    if (c.ok) expect((await actions.rollbackSyncAction(c.data.batchId)).ok).toBe(true);
+    expect(await actions.setSyncControlAction("service", true)).toMatchObject({ ok: true });
+
+    await signInAs(await staffId("manager.moline@rayz.test"));
+    expect(await actions.setSyncControlAction("service", false)).toMatchObject({ ok: false });
+    await signInAs(await staffId("admin@rayz.test"));
+    expect(await actions.setSyncControlAction("service", false)).toMatchObject({ ok: true });
+  });
+
+  it("refuses a role name another role has", async () => {
+    const roles = await m.db.db.select().from(m.schema.roles);
+    const target = roles.find((r) => r.key === "barber")!;
+    const other = roles.find((r) => r.key === "front_desk")!;
+    const value = { name: other.name, description: target.description ?? "", permissions: target.permissions, maxDiscountPct: target.maxDiscountPct, defaultScope: target.defaultScope };
+    await expect(sync.commitBrandChange(who, { changes: [{ type: "role", item: target.id, value }], scope: "all", shopIds: [], overrides: {} })).rejects.toMatchObject({ code: "conflict" });
   });
 });
