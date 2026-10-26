@@ -62,6 +62,7 @@ export const ROLE_FIELD_DEFAULTS: Record<RoleTemplateKey, Defaults> = {
   front_desk: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
   shop_login: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
   barber: { ...FULL, phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
+  apprentice: { ...FULL, phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
   // The books need tickets and totals, never who the client is beyond a name.
   bookkeeper: { phone: "hidden", email: "hidden", address: "hidden", birthday: "hidden", notes: "hidden", preferred_barber: "hidden", ratings: "hidden", photo: "hidden", custom: "hidden" },
   // Campaigns are sent by the system; contact details show only once the brand grants contact access.
@@ -156,6 +157,7 @@ export const ROLE_ENTRY_DEFAULTS: Record<RoleTemplateKey, EntryDefaults> = {
   // A shared login can take down new details but not replace the phone or email a client signs in with.
   shop_login: { add: ANY, edit: { ...ANY, phone: false, email: false } },
   barber: { add: ANY, edit: NOTES_ONLY },
+  apprentice: { add: ANY, edit: NONE },
   bookkeeper: { add: NONE, edit: NONE },
   marketing: { add: NONE, edit: NONE },
 };

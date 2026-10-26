@@ -27,12 +27,19 @@ export const LEVELS = ["none", "own", "view", "edit", "approve", "export", "on"]
 export type LevelKey = (typeof LEVELS)[number];
 export const LEVEL_LABEL: Record<LevelKey, string> = { none: "None", own: "Own", view: "View", edit: "Edit", approve: "Approve", export: "Export", on: "On" };
 
+/** Whose records a level reaches: the person's own, the shops they're assigned, or every shop. */
+export const REACHES = ["own", "shops", "all"] as const;
+export type Reach = (typeof REACHES)[number];
+export const REACH_LABEL: Record<Reach, string> = { own: "Own data only", shops: "Assigned shops", all: "All shops" };
+
 export interface AreaLevel {
   key: LevelKey;
   /** What the level means on this row, when the bare word isn't enough. */
   label: string;
   /** Permissions this level adds to the ones below it. */
   adds: readonly Permission[];
+  /** Set where levelReach's rule of thumb would be wrong. */
+  reach?: Reach;
 }
 
 export interface AreaRow {
@@ -49,7 +56,7 @@ export interface Area {
   rows: readonly AreaRow[];
 }
 
-const lv = (key: LevelKey, adds: readonly Permission[] = [], label: string = LEVEL_LABEL[key]): AreaLevel => ({ key, label, adds });
+const lv = (key: LevelKey, adds: readonly Permission[] = [], label: string = LEVEL_LABEL[key], reach?: Reach): AreaLevel => ({ key, label, adds, ...(reach ? { reach } : {}) });
 const row = (id: string, label: string, levels: AreaLevel[], hint?: string): AreaRow => ({ id, label, levels, hint });
 /** A yes/no row. */
 const on = (p: Permission, label?: string, hint?: string): AreaRow => row(p, label ?? permissionLabel(p), [lv("none"), lv("on", [p])], hint);
@@ -121,7 +128,7 @@ export const AREAS: readonly Area[] = [
     label: "Client profiles, notes and contact info",
     hint: "Which client details each role sees is set under Client data protection. Every reveal and every view of contact details is logged.",
     rows: [
-      row("client_lookup", "Client lookup", [lv("own", [], "Their shops' clients"), lv("view", ["clients.view_all"], "Every client")]),
+      row("client_lookup", "Client lookup", [lv("own", [], "Their shops' clients", "shops"), lv("view", ["clients.view_all"], "Every client", "all")]),
       row("client_edit", "Client profiles", [lv("view"), lv("edit", ["clients.edit"])]),
       on("clients.family", "Family members"),
       on("clients.merge", "Merge duplicates"),
@@ -149,7 +156,6 @@ export const AREAS: readonly Area[] = [
       row("staff", "Staff profiles", [lv("none"), lv("view", ["staff.view"]), lv("edit", ["staff.manage"])]),
       on("staff.contact", "Staff phone and email"),
       on("milestones.view", "Everyone's milestones"),
-      on("reports.all_staff", "Every barber's numbers in reports"),
       on("barber_groups.manage", "Barber groups"),
     ],
   },
@@ -201,6 +207,20 @@ export const AREAS: readonly Area[] = [
       on("scheduling.timing", "Slot intervals and service timing"),
     ],
   },
+  {
+    key: "reports_scope",
+    label: "Reports: whose numbers and dollar amounts",
+    hint: "For every report below, custom reports, CSV downloads and Rayz Assistant. Which reports they open is set report by report.",
+    rows: [
+      row(
+        "report_scope",
+        "Report scope",
+        [lv("own", [], "Own numbers", "own"), lv("view", ["reports.all_staff"], "Everyone at their shops", "shops"), lv("approve", ["reports.all_shops"], "Every shop", "all")],
+        "Own numbers: reports that break down by barber show only theirs. Every shop: reports cover all shops even when they work at a few.",
+      ),
+      on("reports.money", "Dollar amounts", "Off: counts, rates and hours only, with every dollar amount hidden, on screen and in downloads."),
+    ],
+  },
   ...Object.entries(REPORT_TYPES).map(([key, t]) => ({ key: `reports_${key}`, label: t.label, rows: t.keys.map((k) => report(k)) })),
   {
     key: "custom_reports",
@@ -246,6 +266,11 @@ export const AREAS: readonly Area[] = [
     ],
   },
   {
+    key: "app_config",
+    label: "App config",
+    rows: [on("settings.app", "Customer app switches")],
+  },
+  {
     key: "banking",
     label: "Stripe and banking",
     rows: [on("payments.accounts", "Payment setup and Stripe status"), on("payments.banking", "Connect or change bank and Stripe accounts")],
@@ -287,6 +312,26 @@ export const rowPermissions = (r: AreaRow): Permission[] => r.levels.flatMap((l)
 
 /** The permissions a level holds: its own and every level below it. */
 export const levelPermissions = (r: AreaRow, i: number): Permission[] => r.levels.slice(0, i + 1).flatMap((l) => [...l.adds]);
+
+/**
+ * How far a level reaches, or null when it gives nothing or reaches as far as the report scope row
+ * says (reports). "Own" levels are the person's own; brand-only and Brand Owner permissions work
+ * on every shop; the rest work at the shops they're assigned.
+ */
+export function levelReach(r: AreaRow, i: number): Reach | null {
+  const l = r.levels[i];
+  if (!l) return null;
+  if (l.reach) return l.reach;
+  if (l.key === "none") return null;
+  if (l.key === "own") return "own";
+  const perms = levelPermissions(r, i);
+  if (!perms.length || perms.every((p) => p.startsWith("report."))) return null;
+  return perms.some((p) => BRAND_ONLY.has(p) || OWNER_ONLY.has(p)) ? "all" : "shops";
+}
+
+/** Whose numbers and which shops their reports cover. */
+export const reportReach = (perms: ReadonlySet<Permission>, brandWide = false): Reach =>
+  !perms.has("reports.all_staff") && !perms.has("reports.all_shops") ? "own" : brandWide || perms.has("reports.all_shops") ? "all" : "shops";
 
 /** The level these permissions match on the row, or -1 when they match none ("custom"). */
 export function levelIndex(r: AreaRow, perms: ReadonlySet<Permission>): number {
@@ -357,6 +402,7 @@ export function blockedBecause(p: Permission, c: Pick<SourceContext, "held" | "s
   const report = p.match(/^report\.(.+)\.export$/);
   if (report && !c.held.has(`report.${report[1]}.view` as Permission)) return "needs the report's view permission";
   if (p === "exports.accounting" && !c.held.has(reportView("sales_summary"))) return "needs the Sales summary report";
+  if (p === "exports.accounting" && !c.held.has("reports.money")) return "needs dollar amounts in reports";
   if (p === "report_builder.export" && !c.held.has("report_builder.view") && !c.held.has("report_builder.build")) return "needs custom reports";
   return null;
 }

@@ -377,7 +377,7 @@ describe("granting: people", () => {
 
   it("new hires can be given only roles within the caller's own access", () => {
     const roles = ROLE_TEMPLATES.map((t, i) => ({ ...t, id: String(i) }));
-    expect(assignableRoles(manager, roles).map((r) => r.key)).toEqual(["shop_manager", "front_desk", "shop_login", "barber"]);
+    expect(assignableRoles(manager, roles).map((r) => r.key)).toEqual(["shop_manager", "front_desk", "shop_login", "barber", "apprentice"]);
     expect(assignableRoles(admin, roles).map((r) => r.key)).not.toContain("brand_owner");
     expect(assignableRoles(owner, roles)).toHaveLength(roles.length);
   });

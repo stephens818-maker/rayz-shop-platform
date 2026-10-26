@@ -134,9 +134,10 @@ describe("split permissions keep least privilege", () => {
     expect(effectiveAccess(role(["staff.manage"])).permissions.has("staff.view")).toBe(true);
   });
 
-  it("the QuickBooks journal needs the sales summary report", () => {
+  it("the QuickBooks journal needs the sales summary report and dollar amounts in reports", () => {
     expect(effectiveAccess(role(["exports.accounting"])).permissions.has("exports.accounting")).toBe(false);
-    expect(effectiveAccess(role(["exports.accounting", "report.sales_summary.view"])).permissions.has("exports.accounting")).toBe(true);
+    expect(effectiveAccess(role(["exports.accounting", "report.sales_summary.view"])).permissions.has("exports.accounting")).toBe(false);
+    expect(effectiveAccess(role(["exports.accounting", "report.sales_summary.view", "reports.money"])).permissions.has("exports.accounting")).toBe(true);
   });
 
   it("Bookkeeper and Marketing can't check out, refund, see contact details or export clients", () => {

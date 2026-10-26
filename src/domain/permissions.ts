@@ -323,6 +323,18 @@ export const FEATURE_PERMISSIONS = [
     label: "See every barber's numbers in reports",
     hint: "Without it, reports that break down by barber show only the person's own tickets, appointments, tips and ratings.",
   },
+  {
+    key: "reports.all_shops",
+    group: "Staff",
+    label: "See reports for every shop, not just their own",
+    hint: "For a district manager or bookkeeper who works at a few shops but reports on all of them. Only the reports and their downloads: client ratings, custom reports, the audit log and everything outside reports stay at their shops. Never on shop logins.",
+  },
+  {
+    key: "reports.money",
+    group: "Staff",
+    label: "See dollar amounts in reports",
+    hint: "Without it, reports, custom reports, CSV downloads and Rayz Assistant show counts, rates and hours but every dollar amount is hidden, and the QuickBooks journal is off.",
+  },
   { key: "barber_groups.manage", group: "Staff", label: "Create and edit saved barber groups for reports", brandOnly: true },
   {
     key: "payroll.run",
@@ -488,6 +500,14 @@ export const FEATURE_PERMISSIONS = [
     hint: "One journal entry per location per day, on the Sales summary report, for QuickBooks Online's import. Needs the Sales summary report too. Every download is logged.",
   },
   { key: "settings.brand", group: "Settings and data", label: "Change brand-level settings: loyalty program, new shops, Sunday hours", ownerOnly: true },
+  {
+    key: "settings.app",
+    group: "Settings and data",
+    label: "Change the customer app's config: turn booking, payments, family profiles and marketing pushes on or off",
+    hint: "App switches, for all shops or chosen ones. Takes effect in the app within seconds. Only the Brand Owner can grant it.",
+    brandOnly: true,
+    ownerGrants: true,
+  },
   { key: "import.run", group: "Settings and data", label: "Run the Squire import", hint: "Brand-level roles only: it reads whole client files.", brandOnly: true, brandLevel: true },
   {
     key: "clients.privacy",
@@ -736,6 +756,7 @@ export const BRAND_ADMIN_ALWAYS = new Set<Permission>([
   "clients.filters",
   "clients.saved_searches",
   "reports.all_staff",
+  "reports.money",
   "campaign_center.openings",
   "campaign_center.view",
   "campaign_center.create",
@@ -811,6 +832,7 @@ export const ROLE_TEMPLATE_KEYS = [
   "front_desk",
   "shop_login",
   "barber",
+  "apprentice",
   "bookkeeper",
   "marketing",
 ] as const;
@@ -979,6 +1001,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "inbox.view",
   "notifications.view",
   "reports.all_staff",
+  "reports.money",
   "clients.campaigns",
   "campaign_center.openings",
   "timeclock.punch",
@@ -1075,6 +1098,7 @@ const TEMPLATES: RoleTemplate[] = [
       "notes.view",
       "notes.write",
       "reports.all_staff",
+      "reports.money",
       "po.receive",
       "inventory.stocktake",
       "blocks.own",
@@ -1115,6 +1139,7 @@ const TEMPLATES: RoleTemplate[] = [
       "notes.view",
       "notes.write",
       "reports.all_staff",
+      "reports.money",
       "callins.outreach",
       "inbox.view",
       "timeclock.kiosk",
@@ -1155,18 +1180,42 @@ const TEMPLATES: RoleTemplate[] = [
     name: "Barber",
     description: "Their own column, their own clients and their own sales.",
     defaultScope: "selected",
-    permissions: ["clients.rate", "clients.message", "notes.view", "notes.write", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", ...reports(["my_sales", "service_times"]), reportView("rebook_rate")],
+    permissions: [
+      "clients.rate",
+      "clients.message",
+      "notes.view",
+      "notes.write",
+      "blocks.own",
+      "timeoff.request",
+      "timeclock.punch",
+      "timesheet.own",
+      "tips.own",
+      "reports.money",
+      ...reports(["my_sales", "service_times"]),
+      reportView("rebook_rate"),
+    ],
+    maxDiscountPct: 0,
+  },
+  {
+    key: "apprentice",
+    name: "Apprentice",
+    description:
+      "Learning the trade: their own column and clients at menu prices, client notes to read, the time clock, their own timesheet and tips. No discounts, refunds or blocking time, and their own reports show counts and times but no dollar amounts.",
+    defaultScope: "one",
+    permissions: ["notes.view", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", reportView("my_sales"), reportView("service_times")],
     maxDiscountPct: 0,
   },
   {
     key: "bookkeeper",
-    name: "Bookkeeper",
+    name: "Bookkeeper / Accountant",
     description:
-      "Keeps the books: sales, tax, card fees, P&L by Stripe account and payouts, payroll and tip reports, and the payroll and QuickBooks downloads. Sees tickets but no client contact details, and can't check out, refund or change settings.",
+      "Read-only books for every shop: sales, tax, card fees, P&L by Stripe account and payouts, payroll and tip reports, and the payroll and QuickBooks downloads. Sees tickets and pay rates but no client contact details, and can't check out, refund, edit anything or change settings.",
     defaultScope: "all",
     permissions: [
       "sales.view",
       "reports.all_staff",
+      "reports.all_shops",
+      "reports.money",
       "staff.view",
       "payroll.rates",
       "payroll.export",
@@ -1207,6 +1256,7 @@ const TEMPLATES: RoleTemplate[] = [
       "campaign_center.send",
       "promos.manage",
       "reports.all_staff",
+      "reports.money",
       ...reports(["campaign_center", "openings", "lapsed_clients", "google_reviews", "acquisition", "retention", "rebook_rate"]),
     ],
     maxDiscountPct: 0,
@@ -1268,6 +1318,7 @@ export function liveOverrides(overrides: Overrides, expires: OverrideExpiry, tod
 export const INCLUDES: readonly [Permission, Permission][] = [
   ["calendar.manage", "calendar.view_all"],
   ["staff.manage", "staff.view"],
+  ["reports.all_shops", "reports.all_staff"],
 ];
 
 const clampPct = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 0);
@@ -1298,7 +1349,7 @@ export function effectiveAccess(
   for (const [p, q] of INCLUDES) if (perms.has(p)) perms.add(q);
   for (const r of REPORTS) if (!perms.has(reportView(r.key))) perms.delete(reportExport(r.key));
   if (!perms.has("report_builder.view") && !perms.has("report_builder.build")) perms.delete("report_builder.export");
-  if (!perms.has(reportView("sales_summary"))) perms.delete("exports.accounting");
+  if (!perms.has(reportView("sales_summary")) || !perms.has("reports.money")) perms.delete("exports.accounting");
   const maxDiscountPct = perms.has("pos.discount") ? clampPct(maxDiscountOverride ?? role.maxDiscountPct) : 0;
   return { isOwner: false, permissions: perms, maxDiscountPct, limits: limitsFor(perms, cleanLimits(role.moneyLimits), cleanLimits(personalLimits)) };
 }
@@ -1349,6 +1400,7 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   "notes.private",
   "notes.edit_any",
   "exports.accounting",
+  "reports.all_shops",
 ]);
 
 /** A limit whose permissions are all gone is zero. */
