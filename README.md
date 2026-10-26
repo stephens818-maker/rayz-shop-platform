@@ -1533,6 +1533,49 @@ Migration `core_0036_network_access` adds the rules (off for every shop), the de
 
 <img alt="The sign-in rule in the Add Location wizard" src="docs/screenshots/sign-in-wizard.png" width="800" />
 
+### Brand change scope
+
+Every brand-level change asks which shops it goes to. One dialog does this everywhere a brand setting flows down to shops:
+
+| Area | Where it's changed |
+| --- | --- |
+| Services & prices | Services (a brand service's price, duration, name) and Bulk edit → Services |
+| Products & retail prices | Products → a product, and Bulk edit → Products |
+| Card fee | Setup → Credit card surcharge |
+| Checkout prompts | Checkout prompts |
+| Milestones & celebrations | Milestones → Settings (what a shop shows on the day) |
+| Loyalty rules | Settings → Loyalty (minimum visit, products and tips counting) |
+| Booking & cancellation policies | Brand defaults |
+| Hours template, Taxes, Receipt & branding | Brand defaults → Templates |
+| Campaign Center templates | Campaign Center → Templates |
+| Tip presets | Settings → Tip buttons on the customer screen |
+| Roles & permissions | Permissions → Roles → a brand role |
+| App config | Setup → App switches (booking and payments per shop) |
+
+**The sync dialog** opens on save and shows:
+
+- **Scope:** All shops, Selected shops (checkboxes, with select all, none, or the shops following the brand, and a filter past 8 shops), or Brand only (save the brand value, push nowhere yet).
+- **A per-shop preview** of each setting, old value to new, with each shop's status: In sync, Out of sync, or Overridden.
+- **Local overrides:** a shop with its own value is flagged. Pick **Keep theirs** or **Replace** per shop, or Keep all or Replace all.
+- **Apply now or schedule** for a date and time (default tomorrow at 9 AM). Scheduled syncs run from the brand-sync cron every 5 minutes, and can be run early or cancelled from History.
+- ⌘↵ applies and Esc closes. A change no shop would see (a brand-only rename, say) saves without asking.
+
+**Inheritance.** Each shop's setting either follows the brand (inherited) or is its own (overridden). A shop's own value wins; otherwise the brand's applies. A shop that's left out of a sync keeps what it had: if it was reading the brand live, its old value is stored as its own so nothing changes under it. When a shop manager saves the same value as the brand, it goes back in sync.
+
+**Sync status** (`/admin/sync-status`, Setup):
+
+- **Matrix:** settings down the side, shops across, each cell In sync, Overridden, Out of sync or Pending (a scheduled sync will change it). Filter by area, search, or show only what needs a look. Select cells, a row or a column, then **Push brand value** (shops following the brand get the current brand value; overrides are left alone) or **Reset to brand** (every selected shop drops its own value; it asks first when that clears overrides). A flash offers Undo.
+- **History:** every sync, push, reset and rollback, with who, when, which shops and settings, and the status (applied, scheduled, cancelled, rolled back, failed). Open one for each shop's old and new values. **Undo** rolls the whole batch back where nothing has changed since; a shop or brand value changed after the sync is listed and left as it is.
+- **Shop edits:** per setting, whether shop managers may change it at their own shop. All off to start: a manager sees brand-controlled fields read only, with "set by the brand". People with the area's brand permission can always edit.
+
+**Gating.** New locations start from the brand's hours, taxes and receipt templates in the Add Location wizard, and follow the brand for everything else. Every brand editor needs the same permission it did before. Anyone with one of those permissions can open Sync status; pushing, resetting, undoing and the shop-edit switches need that area's permission and access to every shop. Every sync is audited per shop (`brand_sync.shop`) and per batch.
+
+The bulk catalog upload keeps its own shop picker and dry-run preview (below); it doesn't go through the sync dialog.
+
+<img alt="The sync dialog" src="docs/screenshots/brand-sync-dialog.png" width="800" />
+
+<img alt="Sync status matrix" src="docs/screenshots/sync-status.png" width="800" />
+
 ### Bulk catalog upload
 
 **Bulk upload** (`/admin/catalog`) loads retail products, services, and add-ons from a CSV or Excel file.
@@ -2393,7 +2436,7 @@ Built from a read-only review of Squire's brand admin. It matches what Squire do
 - **One person, many shops.** A barber is one record assigned to several locations. Settings that can differ per shop are labeled **this shop only** or **all shops**.
 - **One catalog.** Services, categories and taxes live once at brand level, with per-location price and duration overrides. Category order is set once for the menu and checkout.
 - **Card fees aren't taxes.** Taxes are grouped by jurisdiction (`/admin/taxes`) beside each location's card fee, which has its own model and its own line on receipts and reports.
-- **Brand defaults.** `/admin/brand-defaults` sets policies, the booking site, client reminders, integrations and the starting role. Locations inherit them, and any override is marked as this shop's.
+- **Brand defaults.** `/admin/brand-defaults` sets policies, the booking site, client reminders, integrations, the starting role, and the hours, tax and receipt templates. Locations inherit them, and any override is marked as this shop's. Each save asks which shops it goes to (see [Brand change scope](#brand-change-scope)).
 - **Bulk edit.** `/admin/bulk-edit` changes staff, services, products and schedules many at a time, and shared schedule templates apply per shop without double-booking. Times are typed, with quarter-hour arrow steps, instead of a 288-option dropdown.
 - **Payouts and deposits.** `/admin/payouts` lists each location's Stripe deposits. Each can be matched to the bank statement (who matched it, when, and the bank reference). It also shows an unmatched-deposits count and what each account still has to pay out.
 - **Gift cards.** See [Gift cards](#gift-cards-page) below.

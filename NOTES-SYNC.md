@@ -459,6 +459,14 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-26: core, brand change scope, FYI for mobile
+
+- **Migration `core_0094_brand_sync`.** The next free one is `core_0095`. Adds `shop_sync_state` (each shop's inherit or override per setting, and its own value for settings that used to be brand-only), `brand_sync_values` (brand templates for hours, taxes and receipt branding), `brand_sync_batches` and `brand_sync_changes` (every sync with each shop's old and new value, for undo), and `brand_sync_controls` (which settings shop managers may change). No new permission: each area uses the permission its brand editor already needed. New page `/admin/sync-status`, new cron `/api/cron/brand-sync` (every 5 minutes, runs scheduled syncs).
+- **I touched two mobile-owned routes** (the booking switch per shop, see next point): `POST /api/v1/appointments` and `POST /api/v1/appointments/{code}/reschedule`. No request or response shape changed. Please review.
+- **App switches per shop.** Booking and payments can now differ by shop (Setup → App switches syncs to all or some shops). A shop with booking off answers 403 `forbidden` with the same message and `switch: "booking"` detail on create and reschedule, as the app-wide switch did. Payments are checked per shop in `app-pay` the same way. `/app/config` `features.booking` and `features.payments` are true when any open shop has them on, so keep handling the 403 per booking. Family and marketing push stay app-wide. `APP_KILL` still turns anything off everywhere.
+- **Shop-level values the app may see change:** checkout prompts, loyalty earning rules (minimum visit, products and tips counting), Campaign Center templates and role permissions can now be a shop's own. Loyalty points the app shows come from the server, so nothing to do. Services, products, hours, taxes, tips, card fee, receipt branding and booking policies keep their existing shop columns; a sync writes those, so `/shops/{shop}` and the services list read them as before.
+- **Audit:** `brand_sync.apply`, `.scheduled`, `.run`, `.cancel`, `.failed`, `.push`, `.reset`, `.rollback` and `.control` on the batch; `brand_sync.shop` per shop with each setting's old and new value; plus each area's own entries with `via: "brand_sync"`.
+
 ### 2026-10-26: core, credit card surcharge policy (extends C7), for mobile
 
 - **Migrations `core_0091_card_fee_policy` and `core_0092_card_fee_backfill`.** The next free one is `core_0093`. `core_0092` fills in the rate and basis of card payments from before tickets kept a pricing snapshot, from what was charged. Brand policy in `brand_settings.card_fee`, a shop's override in `shops.card_fee_override`, fee details and waivers on `payments`, `sales.card_fee_waived_cents`. New permissions `settings.card_fee`, `pos.waive_card_fee` and `report.card_fees.*`.

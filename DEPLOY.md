@@ -16,7 +16,7 @@ Both run on **Vercel** (the app) and **Neon** (Postgres). Supabase works in plac
 | Two random secrets | Run `openssl rand -base64 48` twice | Both |
 | Stripe test keys (optional) | [dashboard.stripe.com/test/apikeys](https://dashboard.stripe.com/test/apikeys) | Only to try real Stripe test mode; without them the built-in simulator runs |
 
-**Vercel plan.** The reminder queue runs every 5 minutes on Vercel Cron, which needs **Vercel Pro**. Pro is also what Vercel's terms require for a business. On the free Hobby plan, a deploy with a cron more frequent than daily is rejected. To try the demo on Hobby anyway, change the three schedules in `vercel.json` (notifications every 5 minutes, Campaign Center every 15, the Morning Dashboard every minute from 4 AM to noon Central) to `"0 12 * * *"` (once a day). The demo doesn't send anything, so nothing is lost.
+**Vercel plan.** The reminder queue runs every 5 minutes on Vercel Cron, which needs **Vercel Pro**. Pro is also what Vercel's terms require for a business. On the free Hobby plan, a deploy with a cron more frequent than daily is rejected. To try the demo on Hobby anyway, change the four schedules in `vercel.json` (notifications and brand sync every 5 minutes, Campaign Center every 15, the Morning Dashboard every minute from 4 AM to noon Central) to `"0 12 * * *"` (once a day). The demo doesn't send anything, so nothing is lost.
 
 ## Demo preview, step by step
 
@@ -283,6 +283,11 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
      - Before the first shop goes live, run the whole runbook for every shop on a staging copy and have Charles sign off (C14).
      - Saved cards don't come over from Squire. If a card copy is ever arranged with Stripe, it targets the final Stripe account only (after the I10 decision).
    - **App Review sign-in (C18, not approved):** leave `FEATURE_REVIEW_LOGIN` and the `APP_REVIEW_*` variables unset until Charles approves it (`.env.example` has the details).
+30. Brand change scope (migration `core_0094_brand_sync`; see [Brand change scope](README.md#brand-change-scope)):
+   - The migration only adds tables. No shop's value changes. A shop whose setting already differs from the brand shows as **Overridden** on **Setup → Sync status**; one that matches shows **In sync**.
+   - **Shop managers lose edits the brand now controls.** Every **Shop edits** switch starts off, so managers see their shop's service prices and durations, retail prices, booking policies, hours, taxes, tips and receipt branding read only (the card surcharge keeps its own setting from step 29). Before go-live, decide with Charles which ones shops may change and turn those on under **Sync status → Shop edits**.
+   - Brand Admins set the hours, tax and receipt templates once under **Brand defaults → Templates** (hours start at the old default week). New locations start from them.
+   - `vercel.json` adds `/api/cron/brand-sync` every 5 minutes with `CRON_SECRET`, for syncs scheduled for later. On the Hobby plan's daily cron, a scheduled sync runs at the next daily run, or press **Run now** in Sync status → History.
 
 ## Running the production build locally
 
