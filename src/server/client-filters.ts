@@ -281,9 +281,9 @@ export function panelSees(ctx: StaffContext, policy: ClientPolicy): PanelSees {
 
 /** panelSees for reports: dollar amounts also need "See dollar amounts in reports". */
 export function reportSees(ctx: StaffContext, policy: ClientPolicy): PanelSees {
-  const sees = panelSees(ctx, policy);
+  const sees = { ...panelSees(ctx, policy), dollars: can(ctx, "reports.money"), pay: can(ctx, "report.tips_payroll.view") };
   if (!sees.money || can(ctx, "reports.money")) return sees;
-  return { ...sees, money: false, moneyWhy: "Dollar amounts are hidden from you in reports" };
+  return { ...sees, money: false, moneyWhy: 'Dollar amounts need "See dollar amounts in reports"' };
 }
 
 /** Does the segment filter anything beyond its locations? */

@@ -37,14 +37,14 @@ export const REPORT_SOURCES = [
   {
     key: "sales",
     label: "Sales",
-    ready: false,
-    hint: "One row per ticket or line: services, products, discounts, refunds and tenders.",
+    ready: true,
+    hint: "One row per paid ticket (refunded ones too; open and voided tickets aren't counted): services, products, discounts, tax, tips, the card fee, refunds and tenders, by business day, location and barber.",
   },
   {
     key: "appointments",
     label: "Appointments",
-    ready: false,
-    hint: "One row per appointment: booked and actual times, source, status and the barber.",
+    ready: true,
+    hint: "One row per appointment: status, how it was booked, services, booked minutes and lead time, by day, location and barber.",
   },
   {
     key: "staff",
@@ -128,6 +128,8 @@ export const FIELD_GROUPS = [
   "Marketing",
   "Custom fields",
   "Event",
+  "Ticket",
+  "Appointment",
   "When",
   "Who and where",
   "Measures",
@@ -146,6 +148,10 @@ export interface FieldDef {
   maskedShows?: boolean;
   /** Spend, tips and gift cards: only for people who see every client (as with the money filters). */
   money?: boolean;
+  /** Sales and appointment dollar amounts: "See dollar amounts in reports", as on the standard reports. */
+  dollars?: boolean;
+  /** Each person's tips: pay data, the brand's unless a role has "Tips and payroll export". */
+  pay?: boolean;
   /** Counts what happened, so it covers the report's dates, locations and barbers. Everything else is the client as they are now. */
   activity?: boolean;
 }
@@ -691,7 +697,227 @@ export const EVENT_FIELDS: FieldDef[] = [
     hint: "Another measure: tip percent on a paid ticket, booked minutes, a rating.",
   },
 ];
-const EVENT_BY_KEY = new Map(EVENT_FIELDS.map((f) => [f.key, f]));
+
+const WHEN_FIELDS: FieldDef[] = [
+  { key: "business_date", label: "Business day", group: "When", type: "date" },
+  { key: "weekday", label: "Day of the week", group: "When", type: "text" },
+  { key: "hour", label: "Hour of day", group: "When", type: "int" },
+  { key: "month", label: "Month", group: "When", type: "text" },
+];
+const WHERE_FIELDS: FieldDef[] = [
+  { key: "location", label: "Location", group: "Who and where", type: "text" },
+  { key: "barber", label: "Barber", group: "Who and where", type: "text" },
+  {
+    key: "client_number",
+    label: "Client #",
+    group: "Who and where",
+    type: "int",
+    hint: 'Blank after a client is erased, and for clients you haven\'t served without "Look up any client". A customer report has names.',
+  },
+];
+
+/** Sales: one row per paid ticket. Client numbers only; amounts need dollar amounts in reports, and tips are pay data. */
+export const SALE_FIELDS: FieldDef[] = [
+  { key: "ticket", label: "Ticket #", group: "Ticket", type: "int" },
+  {
+    key: "status",
+    label: "Status",
+    group: "Ticket",
+    type: "text",
+    hint: "Paid, Partially refunded or Refunded.",
+  },
+  {
+    key: "tender",
+    label: "Paid with",
+    group: "Ticket",
+    type: "text",
+    hint: "Card, Cash, Gift card, or a mix (Card + Cash) on a split ticket.",
+  },
+  {
+    key: "client_type",
+    label: "New or returning",
+    group: "Ticket",
+    type: "text",
+    hint: "New on the client's first paid ticket anywhere in the brand; No client for a walk-in rung up without one.",
+  },
+  {
+    key: "imported",
+    label: "Imported from Squire",
+    group: "Ticket",
+    type: "bool",
+  },
+  {
+    key: "paid",
+    label: "Paid at",
+    group: "When",
+    type: "text",
+    hint: "Local date and time.",
+  },
+  ...WHEN_FIELDS,
+  ...WHERE_FIELDS,
+  {
+    key: "tickets",
+    label: "Tickets",
+    group: "Measures",
+    type: "int",
+    hint: "1 on every row: total it to count tickets.",
+  },
+  {
+    key: "services",
+    label: "Service sales",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+    hint: "Services and add-ons after discounts, before tax.",
+  },
+  {
+    key: "products",
+    label: "Product sales",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+    hint: "After discounts, before tax.",
+  },
+  {
+    key: "net_sales",
+    label: "Net sales",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+    hint: "Service and product sales, less what was refunded of them.",
+  },
+  { key: "discounts", label: "Discounts", group: "Measures", type: "money", dollars: true },
+  { key: "tax", label: "Tax", group: "Measures", type: "money", dollars: true },
+  {
+    key: "gift_card_sales",
+    label: "Gift cards sold",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+  },
+  {
+    key: "tips",
+    label: "Tips",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+    pay: true,
+    hint: "Card and cash tips on the ticket.",
+  },
+  {
+    key: "card_fee",
+    label: "Credit card fee",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+    hint: "The surcharge collected, after any waiver.",
+  },
+  {
+    key: "total",
+    label: "Ticket total",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+    hint: "What the client paid: sales, tax, tips and the card fee.",
+  },
+  {
+    key: "refunded",
+    label: "Refunded",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+    hint: "Every refund on the ticket so far, tips and tax included, whatever day it was made.",
+  },
+  {
+    key: "items",
+    label: "Items",
+    group: "Measures",
+    type: "int",
+    hint: "Services, add-ons and products on the ticket, by quantity.",
+  },
+];
+
+/** Appointments: one row per appointment, whatever its status. Client numbers only. */
+export const APPOINTMENT_FIELDS: FieldDef[] = [
+  {
+    key: "status",
+    label: "Status",
+    group: "Appointment",
+    type: "text",
+    hint: "Booked, Confirmed, Checked in, In service, Completed, Cancelled or No-show.",
+  },
+  {
+    key: "booking_source",
+    label: "Booked through",
+    group: "Appointment",
+    type: "text",
+    hint: "Online, App, Staff, Walk-in, Rebook at checkout or Imported.",
+  },
+  { key: "services", label: "Services", group: "Appointment", type: "text" },
+  {
+    key: "client_type",
+    label: "New or returning",
+    group: "Appointment",
+    type: "text",
+    hint: "New when the client had no completed visit anywhere in the brand before it.",
+  },
+  { key: "any_barber", label: "Booked for any barber", group: "Appointment", type: "bool" },
+  { key: "family", label: "Family booking", group: "Appointment", type: "bool" },
+  {
+    key: "cancel_reason",
+    label: "Cancellation reason",
+    group: "Appointment",
+    type: "text",
+  },
+  {
+    key: "starts",
+    label: "Starts",
+    group: "When",
+    type: "text",
+    hint: "Local date and time.",
+  },
+  ...WHEN_FIELDS,
+  {
+    key: "booked_on",
+    label: "Booked on",
+    group: "When",
+    type: "date",
+    hint: "Blank for imported bookings whose booking date Squire didn't keep.",
+  },
+  ...WHERE_FIELDS,
+  {
+    key: "appointments",
+    label: "Appointments",
+    group: "Measures",
+    type: "int",
+    hint: "1 on every row: total it to count appointments.",
+  },
+  { key: "completed", label: "Completed", group: "Measures", type: "int", hint: "1 when completed." },
+  { key: "no_shows", label: "No-shows", group: "Measures", type: "int", hint: "1 for a no-show." },
+  { key: "cancellations", label: "Cancellations", group: "Measures", type: "int", hint: "1 when cancelled." },
+  { key: "booked_minutes", label: "Booked minutes", group: "Measures", type: "int" },
+  {
+    key: "lead_days",
+    label: "Lead time (days)",
+    group: "Measures",
+    type: "number",
+    hint: "From booking to the start. Blank when the booking date isn't known.",
+  },
+  {
+    key: "estimate",
+    label: "Estimate",
+    group: "Measures",
+    type: "money",
+    dollars: true,
+    hint: "The services' price when it was booked.",
+  },
+];
+
+const FIELDS_BY_SOURCE: Partial<Record<ReportSource, Map<string, FieldDef>>> = {
+  events: new Map(EVENT_FIELDS.map((f) => [f.key, f])),
+  sales: new Map(SALE_FIELDS.map((f) => [f.key, f])),
+  appointments: new Map(APPOINTMENT_FIELDS.map((f) => [f.key, f])),
+};
 
 /** Event types a report can pick: a whole category or one event. */
 export const EVENT_TYPES: { key: string; label: string; category: string }[] = [
@@ -724,7 +950,8 @@ export function fieldDef(
   custom: readonly { id: string; label: string }[],
   source: string = "customers",
 ): FieldDef | null {
-  if (source === "events") return EVENT_BY_KEY.get(key) ?? null;
+  const flat = FIELDS_BY_SOURCE[source as ReportSource];
+  if (flat) return flat.get(key) ?? null;
   if (isCustomField(key)) {
     const c = custom.find((x) => `custom:${x.id}` === key);
     return c ? customDef(c) : null;
@@ -735,10 +962,10 @@ export function fieldDef(
 export const allFields = (
   custom: readonly { id: string; label: string }[],
   source: string = "customers",
-) =>
-  source === "events"
-    ? EVENT_FIELDS
-    : [...CUSTOMER_FIELDS, ...custom.map(customDef)];
+): FieldDef[] => {
+  const flat = FIELDS_BY_SOURCE[source as ReportSource];
+  return flat ? [...flat.values()] : [...CUSTOMER_FIELDS, ...custom.map(customDef)];
+};
 
 /** How one person may use a field: in full, masked (shown as Client data masks it), or not at all and why. */
 export type FieldUse =
@@ -749,6 +976,16 @@ export function fieldUse(f: FieldDef, sees: PanelSees): FieldUse {
     return {
       use: "none",
       why: sees.moneyWhy ?? "Spend, tips and gift cards need access to every client",
+    };
+  if (f.dollars && !sees.dollars)
+    return {
+      use: "none",
+      why: 'Dollar amounts need "See dollar amounts in reports"',
+    };
+  if (f.pay && !sees.pay)
+    return {
+      use: "none",
+      why: 'Each person\'s tips are pay data: they need "Tips and payroll export"',
     };
   if (f.key === "badges" && !sees.badges?.length)
     return { use: "none", why: "No client badges are shown to you" };
@@ -857,11 +1094,43 @@ export const DEFAULT_EVENT_REPORT: ReportDefinition = ReportDefinition.parse({
   range: { preset: "7d" },
 });
 
+export const DEFAULT_SALES_REPORT: ReportDefinition = ReportDefinition.parse({
+  source: "sales",
+  columns: [
+    { field: "location" },
+    { field: "tickets", agg: "sum" },
+    { field: "services", agg: "sum" },
+    { field: "products", agg: "sum" },
+    { field: "net_sales", agg: "sum" },
+  ],
+  groupBy: ["location"],
+  summary: true,
+  range: { preset: "7d" },
+});
+
+export const DEFAULT_APPOINTMENT_REPORT: ReportDefinition = ReportDefinition.parse({
+  source: "appointments",
+  columns: [
+    { field: "barber" },
+    { field: "appointments", agg: "sum" },
+    { field: "completed", agg: "sum" },
+    { field: "no_shows", agg: "sum" },
+    { field: "cancellations", agg: "sum" },
+  ],
+  groupBy: ["barber"],
+  summary: true,
+  range: { preset: "7d" },
+});
+
 /** A starting report for a source, when the builder switches to it. */
 export const defaultReport = (source: string): ReportDefinition =>
   source === "events"
     ? DEFAULT_EVENT_REPORT
-    : { ...DEFAULT_CUSTOMER_REPORT, source: source as ReportSource };
+    : source === "sales"
+      ? DEFAULT_SALES_REPORT
+      : source === "appointments"
+        ? DEFAULT_APPOINTMENT_REPORT
+        : { ...DEFAULT_CUSTOMER_REPORT, source: source as ReportSource };
 
 export const columnLabel = (c: ReportColumn, f: FieldDef | null) =>
   c.label || f?.label || "Removed field";
@@ -912,8 +1181,12 @@ export function definitionProblem(
 ): string | null {
   const src = REPORT_SOURCES.find((s) => s.key === def.source);
   if (!src?.ready)
-    return `${sourceLabel(def.source)} reports are coming next. Customer and event log reports are ready now.`;
+    return `${sourceLabel(def.source)} reports are coming next. ${REPORT_SOURCES.filter((x) => x.ready)
+      .map((x) => x.label.toLowerCase())
+      .join(", ")
+      .replace(/^./, (c) => c.toUpperCase())} reports are ready now.`;
   const events = def.source === "events";
+  const flat = def.source !== "customers";
   const known = (key: string) => fieldDef(key, custom, def.source);
   for (const c of def.columns) {
     const f = known(c.field);
@@ -955,14 +1228,17 @@ export function definitionProblem(
     !PRESETS.some((p) => p.id === def.range.preset)
   )
     return "Pick a date range";
-  if (events) {
+  if (def.eventTypes.length && !events)
+    return "Event types are for event log reports";
+  if (flat) {
     if (filterCount(def.filter) > 0)
-      return "Client filters are for customer reports. Remove them, or pick event types instead.";
+      return events
+        ? "Client filters are for customer reports. Remove them, or pick event types instead."
+        : "Client filters are for customer reports. Remove them, or use a customer report.";
     if (def.eventTypes.some((t) => !isEventType(t)))
       return "One of the event types isn't logged anymore. Remove it.";
     return null;
   }
-  if (def.eventTypes.length) return "Event types are for event log reports";
   if (!o.filters && filterCount(def.filter) > 0)
     return 'Filters need "Use advanced client filters"';
   return segmentProblem(def.filter, filterSees(sees));
@@ -1024,8 +1300,8 @@ export interface ReportResult {
   scopeLabel: string;
   /** More rows than an export takes. */
   truncated: boolean;
-  /** What a row is: a client (linked to their profile) or a logged event. */
-  noun?: "client" | "event";
+  /** What a row is: a client (linked to their profile), a logged event, a ticket or an appointment. */
+  noun?: RowNoun;
 }
 
 const usd = new Intl.NumberFormat("en-US", {
@@ -1099,6 +1375,20 @@ export interface FlatTable {
   rows: { kind: "row" | "group" | "total"; level: number; cells: Cell[] }[];
 }
 
+export type RowNoun = "client" | "event" | "ticket" | "appointment";
+
+export const nounOf = (s: ReportSource): RowNoun =>
+  s === "events"
+    ? "event"
+    : s === "sales"
+      ? "ticket"
+      : s === "appointments"
+        ? "appointment"
+        : "client";
+
+/** "Clients", "Tickets": the count column of a summary. */
+export const nounHeader = (n: RowNoun) => `${n[0].toUpperCase()}${n.slice(1)}s`;
+
 const plural = (n: number, w: string) =>
   `${n.toLocaleString("en-US")} ${w}${n === 1 ? "" : "s"}`;
 
@@ -1142,7 +1432,7 @@ export function flatTable(
     return {
       headers: [
         ...g.map((x) => x.label),
-        noun === "event" ? "Events" : "Clients",
+        nounHeader(noun),
         ...cols.map((x) => totalHeader(x.c)),
       ],
       types: [

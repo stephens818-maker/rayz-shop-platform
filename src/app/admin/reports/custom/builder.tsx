@@ -38,6 +38,8 @@ import {
   aggsFor,
   cellText,
   defaultReport,
+  nounHeader,
+  nounOf,
   totalHeader,
   totalType,
   type Agg,
@@ -215,7 +217,7 @@ export function ResultTable({
                 </th>
               ))}
               <th className="px-3 py-2 text-right font-medium">
-                {noun === "event" ? "Events" : "Clients"}
+                {nounHeader(noun)}
               </th>
               {sumCols.map((x) => (
                 <th key={x.i} className="px-3 py-2 text-right font-medium">
@@ -351,10 +353,10 @@ export function ResultTable({
                         : undefined
                     }
                   >
-                    {i === 0 && noun === "client" ? (
+                    {i === 0 && (noun === "client" || noun === "ticket") ? (
                       <Link
                         className="hover:underline"
-                        href={`/admin/customers/${l.id}`}
+                        href={`/admin/${noun === "client" ? "customers" : "sales"}/${l.id}`}
                       >
                         {cellText(c.type, l.cells[i], c.masked) || "—"}
                       </Link>
@@ -452,7 +454,11 @@ export function ReportBuilder({
   const asked = useRef(0);
 
   const events = def.source === "events";
-  const fields = events ? o.eventFields : o.fields;
+  const clients = def.source === "customers";
+  const fields = useMemo(
+    () => (clients ? o.fields : (o.sourceFields[def.source] ?? [])),
+    [clients, o.fields, o.sourceFields, def.source],
+  );
   const byKey = useMemo(() => new Map(fields.map((f) => [f.key, f])), [fields]);
   const update = (x: Partial<ReportDefinition>) => {
     setDef((d) => ({ ...d, ...x }));
@@ -573,8 +579,8 @@ export function ReportBuilder({
     ? Math.max(1, Math.ceil(result.total / result.pageSize))
     : 1;
   const filters = filterCount(def.filter);
-  const exportNote = events ? o.may.exportEvents : o.may.export;
-  const noun = events ? "event" : "client";
+  const exportNote = clients ? o.may.export : o.may.exportFlat;
+  const noun = nounOf(def.source);
   const pickedCats = def.eventTypes.filter((t) => !t.includes("."));
   const pickedEvents = def.eventTypes.filter((t) => t.includes("."));
   const typeLabel = new Map(o.eventTypes.map((t) => [t.key, t.label]));
@@ -699,7 +705,11 @@ export function ReportBuilder({
       subtitle={
         events
           ? "Which events, over which business days, at which locations and about which barbers."
-          : "Which clients, over which dates, where and with whom. Visits, spend and campaign columns count only what happened in these dates, at these locations, with these barbers."
+          : def.source === "sales"
+            ? "Which paid tickets (refunded ones too), by business day, at which locations and with which barbers."
+            : def.source === "appointments"
+              ? "Which appointments, by the day they start, at which locations and with which barbers."
+              : "Which clients, over which dates, where and with whom. Visits, spend and campaign columns count only what happened in these dates, at these locations, with these barbers."
       }
     >
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -778,7 +788,7 @@ export function ReportBuilder({
             </p>
           </Field>
         )}
-        {!events && (
+        {clients && (
           <Field label="Clients" className="sm:col-span-2 lg:col-span-3">
             <Select
               disabled={!editable}
@@ -1456,7 +1466,7 @@ export function ReportBuilder({
         <div className="min-w-0 space-y-4">
           {columnsCard}
           {rowsCard}
-          {events ? eventTypesCard : filtersCard}
+          {events ? eventTypesCard : clients ? filtersCard : null}
           {resultCard}
           {saveCard}
         </div>

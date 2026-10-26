@@ -25,6 +25,7 @@ import {
   fieldDef,
   fieldUse,
   isEventType,
+  nounOf,
   rangeLabel,
   reportRange,
   type Cell,
@@ -77,6 +78,8 @@ export interface ReportScope {
   range: { from: LocalDate; to: LocalDate } | null;
   /** Without "Look up any client": only clients they've served. */
   ownClientsOf: string | null;
+  /** Each person's tips ("Tips and payroll export"): without it, tip amounts in the event log are blank. */
+  pay: boolean;
   label: string;
   /** What changed for this viewer: a shared report cut down to their locations, or to their own clients. */
   notes: string[];
@@ -224,6 +227,7 @@ export async function resolveReportScope(
     staffIds,
     range,
     ownClientsOf,
+    pay: can(ctx, "report.tips_payroll.view"),
     label: [where, staffLabel && `with ${staffLabel}`]
       .filter(Boolean)
       .join(" "),
@@ -574,7 +578,14 @@ const EVENT_LABELS: [string, string, string][] = [
     ([k, l]) => ["d", k, l] as [string, string, string],
   ),
 ];
-const LOCAL = `(e.occurred_at at time zone coalesce(sh.timezone, '${SHOP_TZ}'))`;
+const local = (col: string) => `(${col} at time zone coalesce(sh.timezone, '${SHOP_TZ}'))`;
+const LOCAL = local("e.occurred_at");
+
+/** The client's number on a ticket, appointment or event; only clients they've served without "Look up any client". */
+const clientNumber = (scope: ReportScope, col: string): SQL =>
+  scope.ownClientsOf
+    ? sql`(case when exists (select 1 from appointments x where x.customer_id = ${sql.raw(col)} and x.staff_id = ${scope.ownClientsOf}::uuid) then cu.number end)`
+    : sql.raw("cu.number");
 
 /** Each event field's SQL over `analytics_events e` and its joins. Client numbers only, never a contact detail. */
 function eventFieldSql(key: string, scope: ReportScope): SQL {
@@ -614,9 +625,7 @@ function eventFieldSql(key: string, scope: ReportScope): SQL {
     case "done_by":
       return sql.raw("coalesce(sa.display_label, initcap(e.actor_kind))");
     case "client_number":
-      return scope.ownClientsOf
-        ? sql`(case when exists (select 1 from appointments x where x.customer_id = e.customer_id and x.staff_id = ${scope.ownClientsOf}::uuid) then cu.number end)`
-        : sql.raw("cu.number");
+      return clientNumber(scope, "e.customer_id");
     case "record":
       return sql.raw("replace(e.entity, '_', ' ')");
     case "record_id":
@@ -624,7 +633,11 @@ function eventFieldSql(key: string, scope: ReportScope): SQL {
     case "events":
       return sql.raw("1");
     case "amount":
-      return sql.raw("e.amount_cents::float8");
+      return sql.raw(
+        scope.pay
+          ? "e.amount_cents::float8"
+          : "(case when e.category = 'tip' then null else e.amount_cents::float8 end)",
+      );
     case "quantity":
       return sql.raw("e.quantity");
     case "minutes":
@@ -635,12 +648,29 @@ function eventFieldSql(key: string, scope: ReportScope): SQL {
   throw new AppError("bad_request", `Unknown field ${key}`);
 }
 
-function buildEvents(def: ReportDefinition, scope: ReportScope): Built {
-  const select: SQL[] = [sql`e.id`];
+/** A source with one row per record (an event, a ticket, an appointment): no client CTEs, no client filters. */
+interface FlatSource {
+  /** `with` parts before the rows, if any. */
+  withs: SQL[];
+  /** `from` and its joins. */
+  from: SQL;
+  /** Conditions after `where true`, each starting with ` and`. */
+  where: SQL;
+  id: string;
+  /** What "newest first" means for the rows, the last tiebreak; null orders by id. */
+  newest: string | null;
+  field: (key: string) => SQL;
+}
+
+function buildFlat(def: ReportDefinition, src: FlatSource): Built {
+  const select: SQL[] = [
+    sql`${sql.raw(src.id)} as id`,
+    ...(src.newest ? [sql`${sql.raw(src.newest)} as k`] : []),
+  ];
   const columns: Built["columns"] = [];
   for (const [i, c] of def.columns.entries()) {
-    const f = fieldDef(c.field, [], "events")!;
-    select.push(sql`${eventFieldSql(f.key, scope)} as ${sql.raw(`c${i}`)}`);
+    const f = fieldDef(c.field, [], def.source)!;
+    select.push(sql`${src.field(f.key)} as ${sql.raw(`c${i}`)}`);
     columns.push({
       key: f.key,
       label: columnLabel(c, f),
@@ -652,12 +682,12 @@ function buildEvents(def: ReportDefinition, scope: ReportScope): Built {
     });
   }
   const groups: Built["groups"] = def.groupBy.map((key, i) => {
-    const f = fieldDef(key, [], "events")!;
-    select.push(sql`${eventFieldSql(f.key, scope)} as ${sql.raw(`g${i}`)}`);
+    const f = fieldDef(key, [], def.source)!;
+    select.push(sql`${src.field(f.key)} as ${sql.raw(`g${i}`)}`);
     return { key: f.key, label: f.label, type: f.type };
   });
   const sorts = def.sort.map((s, i) => {
-    select.push(sql`${eventFieldSql(s.field, scope)} as ${sql.raw(`s${i}`)}`);
+    select.push(sql`${src.field(s.field)} as ${sql.raw(`s${i}`)}`);
     return sql.raw(`s${i} ${s.dir === "desc" ? "desc" : "asc"} nulls last`);
   });
   const groupOrder = def.groupBy.map((g, i) =>
@@ -665,6 +695,17 @@ function buildEvents(def: ReportDefinition, scope: ReportScope): Built {
       `g${i} ${def.sort.find((s) => s.field === g)?.dir === "desc" ? "desc" : "asc"} nulls last`,
     ),
   );
+  const r = sql`r as (select ${sql.join(select, sql`, `)} from ${src.from} where true${src.where})`;
+  return {
+    base: sql`with ${sql.join([...src.withs, r], sql`, `)}`,
+    columns,
+    groups,
+    order: sql.join([...groupOrder, ...sorts, sql.raw(src.newest ? "k desc, id" : "id desc")], sql`, `),
+    clients: false,
+  };
+}
+
+function buildEvents(def: ReportDefinition, scope: ReportScope): Built {
   const types = def.eventTypes.filter(isEventType);
   const names = types.filter((t) => t.includes("."));
   const cats = types.filter((t) => !t.includes("."));
@@ -697,19 +738,183 @@ function buildEvents(def: ReportDefinition, scope: ReportScope): Built {
     ),
     sql`, `,
   )})`;
-  const joins = sql.raw(
-    " left join shops sh on sh.id = e.shop_id left join staff sb on sb.id = e.staff_id left join staff sa on sa.id = e.actor_staff_id left join customers cu on cu.id = e.customer_id" +
-      " left join lb le on le.kind = 'e' and le.k = e.event left join lb lc on lc.kind = 'c' and lc.k = e.category left join lb lh on lh.kind = 'h' and lh.k = e.channel left join lb ld on ld.kind = 'd' and ld.k = e.device",
-  );
-  const r = sql`r as (select ${sql.join(select, sql`, `)} from analytics_events e${joins} where true${scoped(scope, { shop: "e.shop_id", staff: "e.staff_id", date: "e.business_date" })}${typeCond})`;
-  return {
-    base: sql`with ${labels}, ${r}`,
-    columns,
-    groups,
-    order: sql.join([...groupOrder, ...sorts, sql.raw("id desc")], sql`, `),
-    clients: false,
-  };
+  return buildFlat(def, {
+    withs: [labels],
+    from: sql.raw(
+      "analytics_events e left join shops sh on sh.id = e.shop_id left join staff sb on sb.id = e.staff_id left join staff sa on sa.id = e.actor_staff_id left join customers cu on cu.id = e.customer_id" +
+        " left join lb le on le.kind = 'e' and le.k = e.event left join lb lc on lc.kind = 'c' and lc.k = e.category left join lb lh on lh.kind = 'h' and lh.k = e.channel left join lb ld on ld.kind = 'd' and ld.k = e.device",
+    ),
+    where: sql`${scoped(scope, { shop: "e.shop_id", staff: "e.staff_id", date: "e.business_date" })}${typeCond}`,
+    id: "e.id",
+    newest: null,
+    field: (key) => eventFieldSql(key, scope),
+  });
 }
+
+// ───────────────────────────── Sales ─────────────────────────────
+
+const PAID_AT = local("coalesce(s.paid_at, s.created_at)");
+const TENDER = `(case p.method when 'card' then 'Card' when 'cash' then 'Cash' else 'Gift card' end)`;
+
+/** Each sales field's SQL over one paid ticket `sales s` and its shop, barber and client. */
+function saleFieldSql(key: string, scope: ReportScope): SQL {
+  switch (key) {
+    case "ticket":
+      return sql.raw("s.number");
+    case "status":
+      return sql.raw(
+        "(case s.status when 'paid' then 'Paid' when 'partially_refunded' then 'Partially refunded' when 'refunded' then 'Refunded' end)",
+      );
+    case "tender":
+      return sql.raw(
+        `(select string_agg(t.m, ' + ' order by t.m) from (select distinct ${TENDER} m from payments p where p.sale_id = s.id and p.status in ('succeeded', 'partially_refunded', 'refunded')) t)`,
+      );
+    case "client_type":
+      return sql`(case when s.customer_id is null then 'No client' when exists (select 1 from sales p where p.customer_id = s.customer_id and p.status in ${PAID} and p.id <> s.id and (p.business_date, p.created_at) < (s.business_date, s.created_at)) then 'Returning' else 'New' end)`;
+    case "imported":
+      return sql.raw("s.is_imported");
+    case "paid":
+      return sql.raw(`to_char(${PAID_AT}, 'YYYY-MM-DD HH24:MI')`);
+    case "business_date":
+      return sql.raw("to_char(s.business_date, 'YYYY-MM-DD')");
+    case "weekday":
+      return sql.raw("to_char(s.business_date, 'FMDay')");
+    case "hour":
+      return sql.raw(`extract(hour from ${PAID_AT})::int`);
+    case "month":
+      return sql.raw("to_char(s.business_date, 'YYYY-MM')");
+    case "location":
+      return sql.raw("sh.name");
+    case "barber":
+      return sql.raw("sb.display_label");
+    case "client_number":
+      return clientNumber(scope, "s.customer_id");
+    case "tickets":
+      return sql.raw("1");
+    case "services":
+      return sql.raw("s.service_net_cents::float8");
+    case "products":
+      return sql.raw("s.product_net_cents::float8");
+    case "net_sales":
+      return sql.raw(
+        "(s.service_net_cents + s.product_net_cents - coalesce((select sum(r.service_net_cents + r.product_net_cents) from refunds r where r.sale_id = s.id and r.kind = 'refund'), 0))::float8",
+      );
+    case "discounts":
+      return sql.raw("s.discount_cents::float8");
+    case "tax":
+      return sql.raw("(s.service_tax_cents + s.product_tax_cents)::float8");
+    case "gift_card_sales":
+      return sql.raw("s.gift_card_sales_cents::float8");
+    case "tips":
+      return sql.raw("s.tip_cents::float8");
+    case "card_fee":
+      return sql.raw("s.card_fee_cents::float8");
+    case "total":
+      return sql.raw("s.total_cents::float8");
+    case "refunded":
+      return sql.raw(
+        "coalesce((select sum(r.amount_cents) from refunds r where r.sale_id = s.id and r.kind = 'refund'), 0)::float8",
+      );
+    case "items":
+      return sql.raw(
+        "(select coalesce(sum(i.qty), 0) from sale_items i where i.sale_id = s.id and i.kind <> 'gift_card')::int",
+      );
+  }
+  throw new AppError("bad_request", `Unknown field ${key}`);
+}
+
+const buildSales = (def: ReportDefinition, scope: ReportScope): Built =>
+  buildFlat(def, {
+    withs: [],
+    from: sql.raw(
+      "sales s join shops sh on sh.id = s.shop_id left join staff sb on sb.id = s.staff_id left join customers cu on cu.id = s.customer_id",
+    ),
+    where: sql` and s.status in ${PAID}${scoped(scope, { shop: "s.shop_id", staff: "s.staff_id", date: "s.business_date" })}`,
+    id: "s.id",
+    newest: "coalesce(s.paid_at, s.created_at)",
+    field: (key) => saleFieldSql(key, scope),
+  });
+
+// ───────────────────────────── Appointments ─────────────────────────────
+
+const STARTS = local("a.starts_at");
+
+/** Each appointment field's SQL over `appointments a` and its shop, barber and client. */
+function appointmentFieldSql(key: string, scope: ReportScope): SQL {
+  switch (key) {
+    case "status":
+      return sql.raw(
+        "(case a.status when 'booked' then 'Booked' when 'confirmed' then 'Confirmed' when 'checked_in' then 'Checked in' when 'in_service' then 'In service' when 'completed' then 'Completed' when 'cancelled' then 'Cancelled' when 'no_show' then 'No-show' end)",
+      );
+    case "booking_source":
+      return sql.raw(
+        "(case a.source when 'online' then 'Online' when 'api' then 'App' when 'staff' then 'Staff' when 'walk_in' then 'Walk-in' when 'rebook' then 'Rebook at checkout' when 'import' then 'Imported' end)",
+      );
+    case "services":
+      return sql.raw(
+        "(select string_agg(i.name, ' + ' order by i.kind, i.name) from appointment_items i where i.appointment_id = a.id)",
+      );
+    case "client_type":
+      return sql.raw(
+        "(case when a.customer_id is null then 'No client' when exists (select 1 from appointments p where p.customer_id = a.customer_id and p.status = 'completed' and p.starts_at < a.starts_at) then 'Returning' else 'New' end)",
+      );
+    case "any_barber":
+      return sql.raw("a.any_barber");
+    case "family":
+      return sql.raw("(a.group_id is not null)");
+    case "cancel_reason":
+      return sql.raw("a.cancel_reason");
+    case "starts":
+      return sql.raw(`to_char(${STARTS}, 'YYYY-MM-DD HH24:MI')`);
+    case "business_date":
+      return sql.raw(`to_char(${STARTS}, 'YYYY-MM-DD')`);
+    case "weekday":
+      return sql.raw(`to_char(${STARTS}, 'FMDay')`);
+    case "hour":
+      return sql.raw(`extract(hour from ${STARTS})::int`);
+    case "month":
+      return sql.raw(`to_char(${STARTS}, 'YYYY-MM')`);
+    case "booked_on":
+      return sql.raw(
+        `(case when a.booked_at_known then to_char(${local("a.created_at")}, 'YYYY-MM-DD') end)`,
+      );
+    case "location":
+      return sql.raw("sh.name");
+    case "barber":
+      return sql.raw("sb.display_label");
+    case "client_number":
+      return clientNumber(scope, "a.customer_id");
+    case "appointments":
+      return sql.raw("1");
+    case "completed":
+      return sql.raw("(a.status = 'completed')::int");
+    case "no_shows":
+      return sql.raw("(a.status = 'no_show')::int");
+    case "cancellations":
+      return sql.raw("(a.status = 'cancelled')::int");
+    case "booked_minutes":
+      return sql.raw("(extract(epoch from a.ends_at - a.starts_at) / 60)::int");
+    case "lead_days":
+      return sql.raw(
+        "(case when a.booked_at_known then round((extract(epoch from a.starts_at - a.created_at) / 86400)::numeric, 1)::float8 end)",
+      );
+    case "estimate":
+      return sql.raw("a.estimate_cents::float8");
+  }
+  throw new AppError("bad_request", `Unknown field ${key}`);
+}
+
+const buildAppointments = (def: ReportDefinition, scope: ReportScope): Built =>
+  buildFlat(def, {
+    withs: [],
+    from: sql.raw(
+      "appointments a join shops sh on sh.id = a.shop_id left join staff sb on sb.id = a.staff_id left join customers cu on cu.id = a.customer_id",
+    ),
+    where: scoped(scope, { shop: "a.shop_id", staff: "a.staff_id", at: "a.starts_at" }),
+    id: "a.id",
+    newest: "a.starts_at",
+    field: (key) => appointmentFieldSql(key, scope),
+  });
 
 // ───────────────────────────── The query ─────────────────────────────
 
@@ -904,7 +1109,11 @@ export async function runReport(
   const b =
     def.source === "events"
       ? buildEvents(def, scope)
-      : await build(def, scope, policy, now);
+      : def.source === "sales"
+        ? buildSales(def, scope)
+        : def.source === "appointments"
+          ? buildAppointments(def, scope)
+          : await build(def, scope, policy, now);
   const pageSize = o.all
     ? EXPORT_MAX
     : Math.min(MAX_PAGE_SIZE, Math.max(1, o.pageSize ?? PAGE_SIZE));
@@ -1051,7 +1260,7 @@ export async function runReport(
     rangeLabel: rangeLabel(def.range, today),
     scopeLabel: scope.label,
     truncated: !!o.all && total > EXPORT_MAX,
-    noun: b.clients ? "client" : "event",
+    noun: nounOf(def.source),
     scope,
     customerIds,
   };

@@ -478,6 +478,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - A job table fans work out per shop: badges, campaigns, scheduled reports, nudges and tip payout drafts.
   - Split tender charges the card fee on the credit part only.
   - A personal block covers all of the barber's shops by default.
+- **Custom reports gain Sales and Appointments sources** (no migration, no API change). A saved definition's `source` can now be `sales` or `appointments` as well as `customers` and `events`; each has its own field keys (`FIELDS_BY_SOURCE` in `src/domain/report-builder.ts`). A result's `noun` can be `ticket` or `appointment` as well as `client` and `event`. Dollar fields need `reports.money` and each person's tips need `report.tips_payroll.view`; an event log `tip` row's amount is now null without the latter. If Rayz Assistant or the app reads saved reports, expect the new sources.
 - **The staff app's look (no API change):**
   - Inter, and an opt-in dark mode under `/admin` only.
   - A Cmd-K palette and keyboard shortcuts.

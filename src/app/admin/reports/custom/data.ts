@@ -4,13 +4,13 @@ import { db } from "@/db";
 import { roles, staff, staffShops } from "@/db/schema";
 import type { FilterOptions, PanelSees } from "@/domain/client-filters";
 import {
-  EVENT_FIELDS,
   EVENT_TYPES,
   REPORT_SOURCES,
   allFields,
   fieldUse,
   type FieldDef,
   type FieldUse,
+  type ReportSource,
 } from "@/domain/report-builder";
 import { can, openShops, type StaffContext } from "@/server/auth/staff";
 import {
@@ -29,8 +29,9 @@ export interface BuilderOptions {
   sources: { key: string; label: string; ready: boolean; hint: string }[];
   /** Every field, with how this person may use it: hidden details are listed but can't be added. */
   fields: (FieldDef & { use: FieldUse })[];
-  /** The event log's fields and the event types a report can pick; empty without "Use the event log". */
-  eventFields: (FieldDef & { use: FieldUse })[];
+  /** The event log's, sales' and appointments' fields; no event fields without "Use the event log". */
+  sourceFields: Partial<Record<ReportSource, (FieldDef & { use: FieldUse })[]>>;
+  /** The event types an event log report can pick. */
   eventTypes: { key: string; label: string; category: string }[];
   /** Null without "Use advanced client filters". */
   filters: FilterOptions | null;
@@ -46,7 +47,8 @@ export interface BuilderOptions {
   may: {
     build: boolean;
     export: string | null;
-    exportEvents: string | null;
+    /** Why this person can't export a report over a source other than customers. */
+    exportFlat: string | null;
     events: boolean;
     blast: boolean;
     template: boolean;
@@ -102,9 +104,14 @@ export async function builderOptions(
       ...f,
       use: fieldUse(f, sees),
     })),
-    eventFields: events
-      ? EVENT_FIELDS.map((f) => ({ ...f, use: fieldUse(f, sees) }))
-      : [],
+    sourceFields: Object.fromEntries(
+      (["events", "sales", "appointments"] as const)
+        .filter((k) => k !== "events" || events)
+        .map((k) => [
+          k,
+          allFields([], k).map((f) => ({ ...f, use: fieldUse(f, sees) })),
+        ]),
+    ),
     eventTypes: events ? EVENT_TYPES : [],
     filters,
     sees,
@@ -129,7 +136,7 @@ export async function builderOptions(
     may: {
       build: can(ctx, "report_builder.build"),
       export: exportDenied(ctx, "customers"),
-      exportEvents: exportDenied(ctx, "events"),
+      exportFlat: exportDenied(ctx, "events"),
       events,
       blast: can(ctx, "campaign_center.create"),
       template: ctx.brandWide,

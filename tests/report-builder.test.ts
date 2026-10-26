@@ -3,7 +3,9 @@ import type { PanelSees } from "@/domain/client-filters";
 import { EMPTY_SEGMENT } from "@/domain/marketing";
 import {
   CUSTOMER_FIELDS,
+  DEFAULT_APPOINTMENT_REPORT,
   DEFAULT_CUSTOMER_REPORT,
+  DEFAULT_SALES_REPORT,
   ReportDefinition,
   ReportSchedule,
   SavedReportInput,
@@ -15,6 +17,10 @@ import {
   fieldDef,
   fieldUse,
   flatTable,
+  allFields,
+  defaultReport,
+  nounHeader,
+  nounOf,
   nextSend,
   rangeLabel,
   reportRange,
@@ -82,7 +88,7 @@ describe("definitions", () => {
   });
 
   it("refuses sources that aren't ready and fields that don't exist", () => {
-    expect(definitionProblem(def({ source: "sales" }), ALL, CUSTOM)).toMatch(/Sales reports are coming next/);
+    expect(definitionProblem(def({ source: "staff" }), ALL, CUSTOM)).toMatch(/Staff reports are coming next\. Customers, event log, sales, appointments reports are ready now/);
     expect(definitionProblem(def({ columns: [{ field: "c.password_hash" }] }), ALL, CUSTOM)).toMatch(/isn't a field/);
     expect(definitionProblem(def({ sort: [{ field: "1; drop table customers" }] }), ALL, CUSTOM)).toMatch(/sort fields isn't available/);
     expect(definitionProblem(def({ groupBy: ["nope"] }), ALL, CUSTOM)).toMatch(/grouping fields isn't available/);
@@ -121,6 +127,45 @@ describe("definitions", () => {
     expect(reportRange({ preset: "custom", from: "2026-10-10", to: "2026-10-01" }, "2026-10-24")).toEqual({ from: "2026-10-01", to: "2026-10-10" });
     expect(rangeLabel({ preset: "month", from: null, to: null }, "2026-10-24")).toBe("This month (Oct 1 – Oct 24, 2026)");
     expect(rangeLabel({ preset: "all", from: null, to: null }, "2026-10-24")).toBe("All time");
+  });
+});
+
+describe("sales and appointments", () => {
+  const BOTH: PanelSees = { ...ALL, dollars: true, pay: true };
+  const sale = (x: Record<string, unknown>) => ReportDefinition.parse({ ...DEFAULT_SALES_REPORT, ...x });
+
+  it("starts from a working report, with their own fields and a word for a row", () => {
+    expect(definitionProblem(DEFAULT_SALES_REPORT, BOTH, CUSTOM)).toBeNull();
+    expect(definitionProblem(DEFAULT_APPOINTMENT_REPORT, BOTH, CUSTOM)).toBeNull();
+    expect(defaultReport("sales").source).toBe("sales");
+    expect(defaultReport("appointments").source).toBe("appointments");
+    expect(fieldDef("net_sales", CUSTOM, "sales")?.type).toBe("money");
+    expect(fieldDef("net_sales", CUSTOM)).toBeNull();
+    expect(fieldDef("phone", CUSTOM, "sales")).toBeNull();
+    expect(fieldDef("no_shows", CUSTOM, "appointments")?.type).toBe("int");
+    for (const s of ["sales", "appointments"]) {
+      const keys = allFields(CUSTOM, s).map((x) => x.key);
+      expect(new Set(keys).size).toBe(keys.length);
+      expect(keys.some((k) => k.startsWith("custom:"))).toBe(false);
+    }
+    expect([nounOf("sales"), nounOf("appointments"), nounOf("events"), nounOf("customers")]).toEqual(["ticket", "appointment", "event", "client"]);
+    expect(nounHeader("ticket")).toBe("Tickets");
+  });
+
+  it("hides dollar amounts without \"See dollar amounts in reports\", and each person's tips without \"Tips and payroll export\"", () => {
+    const noDollars = { ...BOTH, dollars: false };
+    expect(definitionProblem(DEFAULT_SALES_REPORT, noDollars, CUSTOM)).toMatch(/can't add "Service sales": dollar amounts need "See dollar amounts in reports"/);
+    expect(definitionProblem(sale({ columns: [{ field: "location" }, { field: "tickets", agg: "sum" }] }), noDollars, CUSTOM)).toBeNull();
+    expect(definitionProblem(sale({ columns: [{ field: "tips", agg: "sum" }] }), { ...BOTH, pay: false }, CUSTOM)).toMatch(/tips are pay data/);
+    expect(definitionProblem(sale({ columns: [{ field: "net_sales", agg: "sum" }] }), { ...BOTH, pay: false }, CUSTOM)).toBeNull();
+    expect(fieldUse(fieldDef("estimate", CUSTOM, "appointments")!, noDollars).use).toBe("none");
+    expect(fieldUse(fieldDef("booked_minutes", CUSTOM, "appointments")!, noDollars).use).toBe("full");
+  });
+
+  it("refuses client filters and event types, which are for other sources", () => {
+    expect(definitionProblem(sale({ filter: { ...EMPTY_SEGMENT, minVisits: 2 } }), BOTH, CUSTOM)).toMatch(/Client filters are for customer reports/);
+    expect(definitionProblem(sale({ eventTypes: ["booking"] }), BOTH, CUSTOM)).toMatch(/Event types are for event log reports/);
+    expect(definitionProblem(sale({ columns: [{ field: "name" }] }), BOTH, CUSTOM)).toMatch(/isn't a field/);
   });
 });
 

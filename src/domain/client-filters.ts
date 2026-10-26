@@ -72,6 +72,10 @@ export interface PanelSees {
   money: boolean;
   /** Why money is off, when it isn't the every-client rule. */
   moneyWhy?: string;
+  /** Report builder sales and appointment amounts ("See dollar amounts in reports"). */
+  dollars?: boolean;
+  /** Each person's tips (pay data), for report builder fields marked `pay`. */
+  pay?: boolean;
   /** Badge keys they see. */
   badges?: string[];
 }

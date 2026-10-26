@@ -149,7 +149,7 @@ describe("the query builder", () => {
   it("refuses spend, tips and gift cards to people whose reports hide dollar amounts", async () => {
     const admin = without(await ctxOf("admin"), ["reports.money"]);
     const policy = await privacy.clientPolicy(admin);
-    await expect(engine.runReport(admin, policy, def({ columns: [{ field: "name" }, { field: "total_spend" }] }))).rejects.toThrow(/dollar amounts are hidden from you in reports/i);
+    await expect(engine.runReport(admin, policy, def({ columns: [{ field: "name" }, { field: "total_spend" }] }))).rejects.toThrow(/dollar amounts need "See dollar amounts in reports"/i);
     const r = await engine.runReport(admin, policy, def({ columns: [{ field: "name" }, { field: "visits" }] }));
     expect(r.total).toBeGreaterThan(0);
   });
@@ -190,11 +190,71 @@ describe("the query builder", () => {
     const owner = await ctxOf("owner");
     const policy = await privacy.clientPolicy(owner);
     for (const field of ["c.password_hash", "name; drop table customers", "custom:x' or '1'='1"]) await expect(engine.runReport(owner, policy, def({ columns: [{ field }] }))).rejects.toThrow(/isn't a field/);
-    await expect(engine.runReport(owner, policy, def({ source: "sales" }))).rejects.toThrow(/coming next/);
+    await expect(engine.runReport(owner, policy, def({ source: "staff" }))).rejects.toThrow(/coming next/);
     const every = rb.allFields(policy.custom).map((f) => ({ field: f.key }));
     const r = await engine.runReport(owner, policy, def({ shops: "all", columns: every.slice(0, 40), range: { preset: "30d" } }), { pageSize: 5 });
     expect(r.columns).toHaveLength(Math.min(40, every.length));
     if (every.length > 40) await engine.runReport(owner, policy, def({ shops: "all", columns: every.slice(40) }), { pageSize: 5 });
+  });
+});
+
+describe("sales and appointments", () => {
+  const sales = (x: Record<string, unknown>) => rb.ReportDefinition.parse({ source: "sales", shops: "all", range: { preset: "all" }, columns: [{ field: "ticket" }], ...x });
+  const appts = (x: Record<string, unknown>) => rb.ReportDefinition.parse({ source: "appointments", shops: "all", range: { preset: "all" }, columns: [{ field: "status" }], ...x });
+
+  it("totals paid tickets like the tickets themselves, net of refunds", async () => {
+    const owner = await ctxOf("owner");
+    const policy = await privacy.clientPolicy(owner);
+    const cols = ["tickets", "services", "products", "net_sales", "tips", "card_fee", "refunded"].map((field) => ({ field, agg: "sum" }));
+    const r = await engine.runReport(owner, policy, sales({ columns: [{ field: "ticket" }, ...cols] }), { pageSize: 5 });
+    const [t] = await rows<Record<string, number>>(sql`
+      select count(*)::int n, coalesce(sum(service_net_cents), 0)::float8 services, coalesce(sum(product_net_cents), 0)::float8 products,
+        coalesce(sum(tip_cents), 0)::float8 tips, coalesce(sum(card_fee_cents), 0)::float8 card_fee,
+        (select coalesce(sum(r.service_net_cents + r.product_net_cents), 0)::float8 from refunds r join sales s on s.id = r.sale_id where r.kind = 'refund' and s.status in ('paid', 'partially_refunded', 'refunded')) rnet,
+        (select coalesce(sum(r.amount_cents), 0)::float8 from refunds r join sales s on s.id = r.sale_id where r.kind = 'refund' and s.status in ('paid', 'partially_refunded', 'refunded')) refunded
+      from sales where status in ('paid', 'partially_refunded', 'refunded')`);
+    expect(t.n).toBeGreaterThan(0);
+    expect(r.noun).toBe("ticket");
+    expect(r.total).toBe(t.n);
+    expect(r.totals!.cells.slice(1)).toEqual([t.n, t.services, t.products, t.services + t.products - t.rnet, t.tips, t.card_fee, t.refunded]);
+    const byShop = await engine.runReport(owner, policy, sales({ groupBy: ["location"], summary: true, columns: [{ field: "location" }, { field: "net_sales", agg: "sum" }] }), { all: true });
+    expect(byShop.lines.reduce((a, l) => a + (l.kind === "group" ? l.count : 0), 0)).toBe(t.n);
+    expect(byShop.lines.reduce((a, l) => a + (l.kind === "group" ? Number(l.cells[1]) : 0), 0)).toBeCloseTo(t.services + t.products - t.rnet);
+  });
+
+  it("keeps a barber to their own tickets and appointments, and hides dollars and tips without the permissions", async () => {
+    const own = without(await ctxOf("michelle"), ["reports.all_staff"]);
+    const policy = await privacy.clientPolicy(own);
+    const r = await engine.runReport(own, policy, sales({ shops: null, columns: [{ field: "barber" }, { field: "tickets", agg: "sum" }] }), { all: true });
+    const [mine] = await rows<{ n: number }>(sql`select count(*)::int n from sales where staff_id = ${ids.michelle} and shop_id = ${shop.coralville} and status in ('paid', 'partially_refunded', 'refunded')`);
+    expect(mine.n).toBeGreaterThan(0);
+    expect(r.total).toBe(mine.n);
+    expect(r.scope.staffIds).toEqual([ids.michelle]);
+    const a = await engine.runReport(own, policy, appts({ shops: null }), { pageSize: 1 });
+    const [ma] = await rows<{ n: number }>(sql`select count(*)::int n from appointments where staff_id = ${ids.michelle} and shop_id = ${shop.coralville}`);
+    expect(a.total).toBe(ma.n);
+    const noMoney = without(await ctxOf("admin"), ["reports.money"]);
+    const p2 = await privacy.clientPolicy(noMoney);
+    await expect(engine.runReport(noMoney, p2, rb.DEFAULT_SALES_REPORT)).rejects.toThrow(/See dollar amounts in reports/);
+    await expect(engine.runReport(noMoney, p2, appts({ columns: [{ field: "estimate", agg: "sum" }] }))).rejects.toThrow(/See dollar amounts in reports/);
+    expect((await engine.runReport(noMoney, p2, sales({ columns: [{ field: "tickets", agg: "sum" }] }), { pageSize: 1 })).total).toBeGreaterThan(0);
+    const noPay = without(await ctxOf("admin"), ["report.tips_payroll.view"]);
+    const p3 = await privacy.clientPolicy(noPay);
+    await expect(engine.runReport(noPay, p3, sales({ columns: [{ field: "tips", agg: "sum" }] }))).rejects.toThrow(/Tips and payroll export/);
+    const tips = await engine.runReport(noPay, p3, rb.ReportDefinition.parse({ source: "events", shops: "all", range: { preset: "all" }, eventTypes: ["tip"], columns: [{ field: "event" }, { field: "amount" }] }), { all: true });
+    expect(tips.total).toBeGreaterThan(0);
+    expect(tips.lines.every((l) => l.kind !== "row" || l.cells[1] === null)).toBe(true);
+  });
+
+  it("counts appointments by status like the calendar", async () => {
+    const owner = await ctxOf("owner");
+    const policy = await privacy.clientPolicy(owner);
+    const r = await engine.runReport(owner, policy, appts({ columns: [{ field: "status" }, ...["appointments", "completed", "no_shows", "cancellations"].map((field) => ({ field, agg: "sum" }))] }), { pageSize: 5 });
+    const [c] = await rows<Record<string, number>>(sql`select count(*)::int n, (count(*) filter (where status = 'completed'))::int done, (count(*) filter (where status = 'no_show'))::int ns, (count(*) filter (where status = 'cancelled'))::int cx from appointments`);
+    expect(r.noun).toBe("appointment");
+    expect(r.total).toBe(c.n);
+    expect(r.totals!.cells.slice(1)).toEqual([c.n, c.done, c.ns, c.cx]);
+    await expect(engine.runReport(owner, policy, appts({ filter: { ...EMPTY_SEGMENT, minVisits: 2 } }))).rejects.toThrow(/Client filters are for customer reports/);
   });
 });
 
