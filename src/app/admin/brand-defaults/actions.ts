@@ -8,6 +8,7 @@ import { DEFAULT_FIELDS, DefaultKey, SECTION_SHOP_PERMISSIONS, isDefaultKey } fr
 import type { Permission } from "@/domain/permissions";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
+import { assertShopMayEdit, noteShopEdit } from "@/server/brand-sync/engine";
 import { AppError, forbidden } from "@/server/errors";
 import { clearShopOverride, saveBrandDefault, setShopOverride } from "@/server/location-defaults";
 
@@ -49,7 +50,9 @@ export async function setShopOverrideAction(shopId: string, rawKey: string, valu
     const ctx = await authorize(shopPerms(key));
     assertShopAccess(ctx, shopId);
     await checkRole(key, value);
+    await assertShopMayEdit(ctx, "location_default");
     await setShopOverride(ctx.actor, shopId, key, value);
+    await noteShopEdit("location_default", [key], shopId);
     refresh();
     return null;
   });
@@ -61,6 +64,7 @@ export async function clearShopOverrideAction(shopId: string, rawKey: string) {
     const ctx = await authorize(shopPerms(key));
     assertShopAccess(ctx, shopId);
     await clearShopOverride(ctx.actor, shopId, key);
+    await noteShopEdit("location_default", [key], shopId);
     refresh();
     return null;
   });

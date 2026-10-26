@@ -9,6 +9,7 @@ import { Permission } from "@/domain/permissions";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
+import { assertShopMayEdit, noteShopEdit } from "@/server/brand-sync/engine";
 import { AppError, forbidden } from "@/server/errors";
 import { AdjustInput, BrandLevelsInput, ShopInventorySettings, ShopLevelsInput, adjustStock, saveBrandLevels, savePoApprovalThreshold, saveShopInventorySettings, saveShopLevels, sendLowStockAlerts } from "@/server/inventory/adjust";
 import { whoOf } from "@/server/inventory/ledger";
@@ -32,11 +33,14 @@ export async function saveShopProductAction(shopId: string, productId: string, r
     const { ctx } = await staffFor(["catalog.prices", "catalog.manage"], shopId);
     const v = ShopProduct.parse(raw);
     const before = await db.query.shopProducts.findFirst({ where: and(eq(shopProducts.shopId, shopId), eq(shopProducts.productId, productId)) });
+    if (before ? before.priceCents !== v.priceCents : (await db.query.products.findFirst({ where: eq(products.id, productId), columns: { priceCents: true } }))?.priceCents !== v.priceCents)
+      await assertShopMayEdit(ctx, "product");
     await db
       .insert(shopProducts)
       .values({ shopId, productId, ...v })
       .onConflictDoUpdate({ target: [shopProducts.shopId, shopProducts.productId], set: v });
     await audit(ctx.actor, before ? "inventory.update" : "inventory.carry", "product", productId, { ...v, ...(before ? { from: { costCents: before.costCents, priceCents: before.priceCents, active: before.active } } : {}) }, shopId);
+    await noteShopEdit("product", [productId], shopId);
     refresh();
     return null;
   });

@@ -225,11 +225,14 @@ describe("shop settings, part by part", () => {
       bufferMinutes: cv.bufferMinutes,
     };
     expect(await settings.saveShopInfoAction(cv.id, { ...info, name: "Frankie's" })).toMatchObject({ ok: false, error: expect.stringMatching(/shop's name/) });
+    expect(await settings.saveShopInfoAction(cv.id, { ...info, minLeadMinutes: cv.minLeadMinutes + 15 })).toMatchObject({ ok: false, error: expect.stringMatching(/set by the brand/) });
+    await m.db.db.insert(m.schema.brandSyncControls).values({ type: "location_default", shopsCanEdit: true }).onConflictDoUpdate({ target: m.schema.brandSyncControls.type, set: { shopsCanEdit: true } });
     ok(await settings.saveShopInfoAction(cv.id, { ...info, minLeadMinutes: cv.minLeadMinutes + 15 }));
     expect((await shop("coralville")).minLeadMinutes).toBe(cv.minLeadMinutes + 15);
     expect(await settings.saveDrawerOpeningAction(cv.id, 20_000)).toMatchObject({ ok: false });
     await m.db.db.update(m.schema.staff).set({ permissionOverrides: {} }).where(eq(m.schema.staff.id, frankie.id));
     await m.db.db.update(m.schema.shops).set({ minLeadMinutes: cv.minLeadMinutes }).where(eq(m.schema.shops.id, cv.id));
+    await m.db.db.delete(m.schema.brandSyncControls).where(eq(m.schema.brandSyncControls.type, "location_default"));
   });
 });
 

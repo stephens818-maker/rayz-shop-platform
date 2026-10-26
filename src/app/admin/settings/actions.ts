@@ -16,11 +16,14 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { assertShopAccess, authorize, can } from "@/server/auth/staff";
 import { squireHistory } from "@/server/cutover";
+import { assertShopMayEdit, noteShopEdit } from "@/server/brand-sync/engine";
+import { receiptValue } from "@/server/brand-sync/adapters/location";
 import { AppError } from "@/server/errors";
+import { same } from "@/domain/brand-sync";
 import { LOYALTY_TYPES } from "@/domain/loyalty";
 import { getLoyaltyConfig, saveLoyaltyConfig } from "@/server/loyalty";
 import { ShopHandoffSchema, TipScreenSchema } from "@/domain/handoff";
-import { saveBrandHandoff, saveShopHandoff } from "@/server/handoff";
+import { saveBrandHandoff, saveShopHandoff, shopHandoffConfig } from "@/server/handoff";
 import { saveReviewRules } from "@/server/review-rules";
 import { Permission, SHOP_PART_PERMISSION, SHOP_SETTING_FIELDS, ShopSettingPart, shopSettingsDenied } from "@/domain/permissions";
 import { cleanOperator, operatorProblem } from "@/domain/phone-operator";
@@ -96,12 +99,23 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
       const other = await db.query.shops.findFirst({ where: and(eq(shops.twilioNumber, line), ne(shops.id, shopId)), columns: { name: true } });
       if (other) throw new AppError("conflict", `${other.name} already uses that Twilio number`);
     }
+    await assertDefaultsUnlocked(ctx, before, values);
     await db.update(shops).set(values).where(eq(shops.id, shopId));
     await noteShopColumnChanges(shopId, overridesFromColumns(values));
+    await noteShopEdit("location_default", Object.keys(overridesFromColumns(values)), shopId);
     await audit(ctx.actor, "shop.update", "shop", shopId, values, shopId);
     revalidatePath("/admin/settings");
     return null;
   });
+}
+
+/** A location default saved from the shop's own settings changes only where the brand lets shop managers. */
+async function assertDefaultsUnlocked(ctx: Awaited<ReturnType<typeof authorize>>, before: Record<string, unknown>, values: Record<string, unknown>) {
+  const changed = Object.entries(overridesFromColumns(values)).filter(([k]) => {
+    const col = k as keyof typeof before;
+    return k in before && !same(before[col], values[col]);
+  });
+  if (changed.length) await assertShopMayEdit(ctx, "location_default");
 }
 
 const Money = z.object({
@@ -117,6 +131,7 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
     assertShopAccess(ctx, shopId);
     const v = Money.parse(raw);
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
+    if (before && (Number(before.serviceTaxRate) !== Number(v.serviceTaxRate.toFixed(5)) || Number(before.productTaxRate) !== Number(v.productTaxRate.toFixed(5)))) await assertShopMayEdit(ctx, "taxes");
     await db
       .update(shops)
       .set({ ...v, serviceTaxRate: v.serviceTaxRate.toFixed(5), productTaxRate: v.productTaxRate.toFixed(5) })
@@ -129,6 +144,7 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
       { before: before && { serviceTaxRate: before.serviceTaxRate, productTaxRate: before.productTaxRate, taxRatesVerified: before.taxRatesVerified }, after: v },
       shopId,
     );
+    await noteShopEdit("taxes", ["rates"], shopId);
     revalidatePath("/admin/settings");
     return null;
   });
@@ -156,6 +172,7 @@ export async function saveShopCardFeeAction(shopId: string, override: CardFeeOve
     assertShopAccess(ctx, shopId);
     if (!canEditShopFee(ctx.permissions, await brandFeePolicy())) throw new AppError("forbidden", "The brand keeps the card surcharge view only for shop managers");
     await saveShopFeeOverride(ctx.actor, shopId, override);
+    await noteShopEdit("card_fee", ["brand"], shopId);
     revalidatePath("/admin/settings");
     revalidatePath("/admin/card-fee");
     return null;
@@ -169,11 +186,15 @@ export async function saveHoursAction(shopId: string, rows: { weekday: number; o
     const sunday = await db.query.shopHours.findFirst({ where: and(eq(shopHours.shopId, shopId), eq(shopHours.weekday, 0)) });
     const problem = hoursProblem(rows, { canSetSunday: can(ctx, "settings.brand"), currentSunday: sunday ?? null });
     if (problem) throw new AppError(problem.code, problem.message);
+    const current = await db.select({ weekday: shopHours.weekday, openMin: shopHours.openMin, closeMin: shopHours.closeMin }).from(shopHours).where(eq(shopHours.shopId, shopId));
+    const week = (rs: { weekday: number; openMin: number; closeMin: number }[]) => [...rs].sort((a, b) => a.weekday - b.weekday).map((r) => `${r.weekday}:${r.openMin}-${r.closeMin}`).join(",");
+    if (week(current) !== week(rows)) await assertShopMayEdit(ctx, "hours");
     await db.transaction(async (tx) => {
       await tx.delete(shopHours).where(eq(shopHours.shopId, shopId));
       if (rows.length) await tx.insert(shopHours).values(rows.map((r) => ({ ...r, shopId })));
       await audit(ctx.actor, "shop.hours", "shop", shopId, { rows }, shopId, tx);
     });
+    await noteShopEdit("hours", ["week"], shopId);
     revalidatePath("/admin/settings");
     return null;
   });
@@ -267,8 +288,10 @@ export async function saveShopProfileAction(shopId: string, raw: z.input<typeof 
       if (problem) throw new AppError("bad_request", problem);
     }
     const values = { slug: v.slug, timezone: v.timezone, accentColor: v.accentColor || null, logoUrl: v.logoUrl || null };
+    await assertDefaultsUnlocked(ctx, before, { accentColor: values.accentColor });
     await db.update(shops).set(values).where(eq(shops.id, shopId));
     await noteShopColumnChanges(shopId, overridesFromColumns({ accentColor: values.accentColor }));
+    await noteShopEdit("location_default", ["accentColor"], shopId);
     await audit(ctx.actor, "shop.profile", "shop", shopId, { ...values, previousSlug: v.slug !== before.slug ? before.slug : undefined }, shopId);
     revalidatePath("/admin/settings");
     revalidatePath("/admin/setup");
@@ -316,8 +339,10 @@ export async function saveReceiptAction(shopId: string, raw: z.input<typeof Rece
     const v = ReceiptBrandingSchema.parse(raw);
     const values = { ...v, headline: v.headline?.trim() || null, footer: v.footer?.trim() || null, reviewFollowUp: { ...v.reviewFollowUp, enabled: v.reviewFollowUp.enabled && !!v.reviewUrl } };
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { receipt: true } });
+    if (!same(receiptValue(receiptBranding(before?.receipt)), receiptValue(values))) await assertShopMayEdit(ctx, "receipt");
     await db.update(shops).set({ receipt: values }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.receipt", "shop", shopId, { before: before ? receiptBranding(before.receipt) : null, after: values }, shopId);
+    await noteShopEdit("receipt", ["branding"], shopId);
     revalidatePath("/admin/settings");
     return null;
   });
@@ -338,7 +363,11 @@ export async function saveShopHandoffAction(shopId: string, raw: z.input<typeof 
   return safe(async () => {
     const ctx = await authorize(partPerms("checkout"));
     assertShopAccess(ctx, shopId);
-    const r = await saveShopHandoff(shopId, ShopHandoffSchema.parse(raw), ctx.actor);
+    const next = ShopHandoffSchema.parse(raw);
+    const current = await shopHandoffConfig(shopId);
+    if (!same(current.shop.tips, next.tips)) await assertShopMayEdit(ctx, "tips");
+    const r = await saveShopHandoff(shopId, next, ctx.actor);
+    await noteShopEdit("tips", ["screen"], shopId);
     revalidatePath("/admin/settings");
     return r.reader;
   });
@@ -359,8 +388,11 @@ export async function saveDrawerOpeningAction(shopId: string, cents: number) {
   return safe(async () => {
     const ctx = await authorize(partPerms("checkout"));
     assertShopAccess(ctx, shopId);
+    const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
+    if (shop) await assertDefaultsUnlocked(ctx, shop, { drawerOpeningCents: Math.round(cents) });
     await saveDrawerOpening(shopId, Math.round(cents), ctx.actor);
     await noteShopColumnChanges(shopId, overridesFromColumns({ drawerOpeningCents: Math.round(cents) }));
+    await noteShopEdit("location_default", ["drawerOpeningCents"], shopId);
     revalidatePath("/admin/settings");
     revalidatePath("/admin/drawer");
     return null;
