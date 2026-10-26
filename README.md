@@ -2869,7 +2869,16 @@ Ray'z corporate runs every location; the platform is built to grow from 8 to 25â
 - **One scoping layer.** Every query is scoped by the shop IDs in the person's stored access (`staff_access_shops`, scopes `all`, `entity`, `selected` and `one`), loaded in `src/server/auth/access.ts` and enforced by the tenant guard (`src/server/tenant.ts`). Adding a location adds rows, not code paths. The tenant canaries (`tests/db/tenant.test.ts`) aim every page, action, route and job at another shop's records and expect "not found" or "outside your access".
 - **Regions (optional).** `regions` groups locations, e.g. "Quad Cities" or a district manager's patch, for the location comparison report. They're managed on **Location setup** by people with every shop (add, rename, delete, and a region picker per location). A location's rolled-up history moves with it, so comparisons always use current regions. Regions don't grant access: a regional manager is still given their shops directly.
 - **Indexes and pagination.** New tables are indexed for their reads: rollups by shop and day and by region and day, job tasks for claiming, shops by region. Lists that grow with clients or tickets (clients, sales, the audit log, report tables, custom reports) are paged or capped. The perf test fails if a hot query needs a sequential scan of a big table.
-- **Background jobs** (`job_tasks`, `src/server/jobs.ts`). Work that grows with the location count is split into small tasks: one location's day for the rollups, one location's campaign triggers per 15-minute slot, and one of 16 slices of the client file for badges. Each cron run (or `pnpm worker`) queues what's due, then claims tasks with `FOR UPDATE SKIP LOCKED` until its time is up, so runs can overlap without double work. A claimed task holds a 5-minute lease; if its run dies, another picks it up. A task stops after 5 failed attempts and stays failed for someone to look at. Crons: `/api/cron/jobs` (rollups), `/api/cron/campaign-center` (triggers) and `/api/cron/badges` (badge slices).
+- **Background jobs** (`job_tasks`, `src/server/jobs.ts`). Work that grows with the location count is split into small tasks:
+  - `rollup`: one location's day for the rollups.
+  - `triggers`: one location's campaign triggers per 15-minute slot.
+  - `badges`: one of 16 slices of the client file.
+  - `campaigns`: one blast whose send time has come, or one sequence per 15-minute slot.
+  - `reports`: one scheduled custom report's period, to all its recipients.
+  - `nudges`: one location's call-in follow-ups, Google review asks and rebook reminders per 5-minute slot.
+  - `payouts`: one location's daily or weekly tip payout draft on the day it's due.
+
+  A slow or failing location or campaign doesn't hold up the others. Each cron run (or `pnpm worker`) queues what's due, then claims tasks with `FOR UPDATE SKIP LOCKED` until its time is up, so runs can overlap without double work. A claimed task holds a 5-minute lease; if its run dies, another picks it up. A task stops after 5 failed attempts and stays failed for someone to look at. Crons: `/api/cron/jobs` (rollups), `/api/cron/campaign-center` (triggers, campaigns), `/api/cron/notifications` (nudges, reports, payouts) and `/api/cron/badges` (badge slices). Done tasks are pruned after 14 days, or after 2 days for the many-a-day kinds.
 - **Daily rollups** (`location_daily_stats`, `src/server/rollups.ts`): one row per location and day (tickets, gross, discounts, net services and products, refunds, tax, tips, clients, new clients, appointments, no-shows) with its region. After go-live or a Squire import, build past days once with `pnpm rollups:backfill <first day> [last day]`. It's safe to run again.
 - **Location comparison** (Reports â†’ Location comparison, `/admin/reports/rollup`): locations, regions or owners side by side over a range, ranked on net sales, with net per location, average ticket, growth on the prior period, client visits, new clients and the no-show rate. It reads the rollups, so it stays fast however many tickets there are, and it says which days aren't rolled up yet. Anyone with the KPIs report has it, over their own shops.
 - **Per-location Stripe:** each location settles in the brand's account, its own Connect account, its owner's, or takes cash only ([Card payments](#card-payments-per-location-banking-stripe-connect)).
@@ -2914,7 +2923,7 @@ At 50 locations and 25 tickets a location-day, the brand writes about 450k ticke
 | `gift_card_ledger`, `tip_ledger`, `inventory_ledger`, `time_punch_edits` (append-only) | tickets, tips, stock moves and punch fixes | For good: they're the balances | Indexed by card, staff or product. They stay small (a few rows a ticket). |
 | `consent_events` (append-only) | consent changes | For good (TCPA evidence); account deletion clears contact columns only | Small. |
 | `sales`, `payments`, `refunds`, `appointments` | tickets and bookings | For good | Indexed by `(shop_id, business_date)` and customer. Past about 100M rows, partition by year on `business_date`. |
-| `job_tasks` | background work | 14 days after done (`pruneJobs`) | Pruned daily. |
+| `job_tasks` | background work | 14 days after done, 2 days for triggers, nudges and campaigns (`pruneJobs`) | Pruned daily. |
 
 Append-only tables refuse `UPDATE` and `DELETE` with triggers (`core_0026_append_only` and later), so retention works only by detaching a whole partition. A stray `DELETE` can't thin out the record.
 
@@ -2950,7 +2959,7 @@ Only the basics are built; Ray'z corporate still runs every location today. Migr
   - Permissions are loaded fresh from the database on every request (role plus overrides, in `src/server/auth/access.ts`), so a change takes effect on the person's next click without signing out. Pages use `guardPage()`, server actions `authorize()`, and route handlers `routeStaff()`; see [Roles and permissions](#roles-and-permissions).
   - Shop scoping is enforced in the server layer on every query; anyone without access to every shop only ever queries the shop IDs in their access.
 - **Time:** everything is stored as `timestamptz` and computed in `America/Chicago` with Luxon. Business dates for sales and payroll are shop-local.
-- **Job queue:** Postgres tables drained with `FOR UPDATE SKIP LOCKED` by Vercel Cron or `pnpm worker`: `notification_jobs` for messages and `job_tasks` for per-location work (rollups, campaign triggers, badge slices; see [Scaling to 50+ locations](#scaling-to-50-locations)). No extra infrastructure is needed; it can move to a dedicated queue (Inngest, QStash) later if volume calls for it.
+- **Job queue:** Postgres tables drained with `FOR UPDATE SKIP LOCKED` by Vercel Cron or `pnpm worker`: `notification_jobs` for messages and `job_tasks` for per-location and per-campaign work (rollups, campaign triggers, blasts and sequences, scheduled reports, nudges, tip payout drafts, badge slices; see [Scaling to 50+ locations](#scaling-to-50-locations)). No extra infrastructure is needed; it can move to a dedicated queue (Inngest, QStash) later if volume calls for it.
 
 ```
 src/

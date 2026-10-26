@@ -241,6 +241,32 @@ describe("background jobs", () => {
     expect(new Set(shards.map((s) => s.shard.split("|")[0])).size).toBe(live);
     expect(await jobs.enqueueDue(now, ["triggers"])).toBe(0);
   }, 120_000);
+
+  it("run each location's nudges once per 5-minute slot, and each due blast and sequence as its own task", async () => {
+    const now = new Date();
+    const live = (await m.db.db.select().from(m.schema.shops)).filter((s) => s.status === "live").length;
+    const [blast] = await m.db.db
+      .insert(m.schema.marketingCampaigns)
+      .values({ kind: "blast", name: "Fan-out blast", shopIds: [shop.coralville], channels: ["sms"], segment: { minVisits: 9999 }, status: "scheduled", scheduledAt: new Date(now.getTime() - 60_000) })
+      .returning();
+    const [later] = await m.db.db
+      .insert(m.schema.marketingCampaigns)
+      .values({ kind: "blast", name: "Not yet", shopIds: [shop.coralville], channels: ["sms"], status: "scheduled", scheduledAt: new Date(now.getTime() + 3_600_000) })
+      .returning();
+    const run = await jobs.runJobs(now, { kinds: ["nudges", "campaigns", "reports", "payouts"], budgetMs: 60_000 });
+    expect(run).toMatchObject({ failed: 0, remaining: 0 });
+    const shards = await rows<{ kind: string; shard: string; status: string }>(sql`select kind, shard, status from job_tasks where kind in ('nudges', 'campaigns')`);
+    const nudges = shards.filter((t) => t.kind === "nudges");
+    expect(nudges).toHaveLength(live);
+    expect(new Set(nudges.map((t) => t.shard.split("|")[1]))).toEqual(new Set([jobs.triggerSlot(now, jobs.NUDGE_SLOT_MINUTES)]));
+    const campaigns = shards.filter((t) => t.kind === "campaigns").map((t) => t.shard);
+    expect(campaigns.filter((x) => x.startsWith(`blast:${blast.id}|`))).toHaveLength(1);
+    expect(campaigns.some((x) => x.includes(later.id))).toBe(false);
+    expect((await m.db.db.query.marketingCampaigns.findFirst({ where: eq(m.schema.marketingCampaigns.id, blast.id) }))!.status).toBe("sent");
+    expect(await jobs.enqueueDue(now, ["nudges", "campaigns"])).toBe(0);
+    expect(await jobs.enqueueDue(new Date(now.getTime() + 5 * 60_000), ["nudges"])).toBe(live);
+    await m.db.db.delete(m.schema.marketingCampaigns).where(m.drizzle.inArray(m.schema.marketingCampaigns.id, [blast.id, later.id]));
+  }, 120_000);
 });
 
 describe("the sales list", () => {

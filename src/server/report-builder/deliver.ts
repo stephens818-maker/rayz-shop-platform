@@ -131,28 +131,47 @@ async function deliver(r: Row, schedule: ReportSchedule, staffId: string, period
 }
 
 /**
- * Run by the notifications cron. Each scheduled report that's due goes to each recipient once per
+ * Every due report in one go (the notifications cron fans them out as background tasks instead,
+ * see src/server/jobs.ts). Each scheduled report that's due goes to each recipient once per
  * period: every recipient is claimed first, so overlapping or repeated runs never send twice, and
  * a claim left by a run that died is taken over after ten minutes. Files are dropped from the
  * outbox once sent: they hold client details, and the outbox is for checking deliveries.
  */
 export async function sendDueReports(now: Date = new Date()) {
+  let queued = 0;
+  let skipped = 0;
+  for (const d of await dueReports(now)) {
+    const r = await sendReport(d.id, d.period, now);
+    queued += r.queued;
+    skipped += r.skipped;
+  }
+  return { queued, skipped };
+}
+
+/** The scheduled reports due now, each with the period it's for. */
+export async function dueReports(now: Date = new Date()): Promise<{ id: string; period: LocalDate }[]> {
   const today = todayLocal(now);
   const minute = localMinutesOf(now);
-  const reports = await db.select().from(savedReports).where(isNotNull(savedReports.schedule));
+  const reports = await db.select({ id: savedReports.id, schedule: savedReports.schedule }).from(savedReports).where(isNotNull(savedReports.schedule));
+  return reports.flatMap((r) => {
+    const s = ReportSchedule.safeParse(r.schedule);
+    const period = s.success ? duePeriod(s.data, today, minute) : null;
+    return period ? [{ id: r.id, period }] : [];
+  });
+}
+
+/** One scheduled report's period to each of its recipients, each claimed so it goes once. */
+export async function sendReport(reportId: string, period: LocalDate, now: Date = new Date()) {
+  const r = await db.query.savedReports.findFirst({ where: eq(savedReports.id, reportId) });
+  const s = ReportSchedule.safeParse(r?.schedule);
+  if (!r || !s.success) return { queued: 0, skipped: 0 };
   const jobIds: string[] = [];
   let skipped = 0;
-  for (const r of reports) {
-    const s = ReportSchedule.safeParse(r.schedule);
-    if (!s.success) continue;
-    const period = duePeriod(s.data, today, minute);
-    if (!period) continue;
-    for (const staffId of s.data.recipients.length ? s.data.recipients : [r.ownerId]) {
-      if (!(await claim(r.id, staffId, period, now))) continue;
-      const id = await deliver(r, s.data, staffId, period, now);
-      if (id) jobIds.push(id);
-      else skipped++;
-    }
+  for (const staffId of s.data.recipients.length ? s.data.recipients : [r.ownerId]) {
+    if (!(await claim(r.id, staffId, period, now))) continue;
+    const id = await deliver(r, s.data, staffId, period, now);
+    if (id) jobIds.push(id);
+    else skipped++;
   }
   if (jobIds.length) {
     await processDueJobs({ ids: jobIds, now });

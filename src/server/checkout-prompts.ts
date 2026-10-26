@@ -731,14 +731,20 @@ export async function settlePrompts(saleId: string, actor: Actor, now = new Date
  * Rebook reminders that are due: dropped when the client has booked since, otherwise one message on
  * each channel they agreed to (a child's goes to their parent), from the shop with its booking link.
  */
-export async function sendDueRebookReminders(now = new Date(), limit = 200) {
+export async function sendDueRebookReminders(now = new Date(), limit = 200, shopIds?: string[]) {
   const due = await db
     .select({ r: rebookReminders, shopName: shops.name, shopSlug: shops.slug, shopPhone: shops.phone, barber: staff.displayLabel, firstName: customers.firstName })
     .from(rebookReminders)
     .innerJoin(shops, eq(shops.id, rebookReminders.shopId))
     .innerJoin(customers, eq(customers.id, rebookReminders.customerId))
     .leftJoin(staff, eq(staff.id, rebookReminders.staffId))
-    .where(and(eq(rebookReminders.status, "scheduled"), lte(rebookReminders.runAt, now)))
+    .where(
+      and(
+        eq(rebookReminders.status, "scheduled"),
+        lte(rebookReminders.runAt, now),
+        shopIds ? inArray(rebookReminders.shopId, shopIds.length ? shopIds : [crypto.randomUUID()]) : undefined,
+      ),
+    )
     .orderBy(asc(rebookReminders.runAt))
     .limit(limit);
   const stats = { queued: 0, booked: 0, noContact: 0 };

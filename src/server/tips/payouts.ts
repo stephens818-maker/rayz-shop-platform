@@ -675,26 +675,39 @@ export async function unbatchedByStaff(shopId: string) {
 
 // ───────────────────────────── Cron ─────────────────────────────
 
-/** Builds (or refreshes) each live shop's daily or weekly draft once it's due. Managers still approve every batch. */
-export async function tipPayoutCron(now = new Date()) {
+export type DuePayout = { shopId: string; kind: "daily_delay" | "weekly"; cutoff: LocalDate };
+
+/** Each live shop's daily or weekly draft that's due today, by its own tip payout schedule. */
+export async function duePayouts(now = new Date()): Promise<DuePayout[]> {
   await syncTipLedger();
   const today = todayLocal(now);
   const live = await db.select({ id: shops.id }).from(shops).where(eq(shops.status, "live"));
   const { byShop } = await shopTipConfigs(live.map((s) => s.id));
-  let built = 0;
-  for (const s of live) {
+  return live.flatMap((s) => {
     const due = scheduledBatch(byShop.get(s.id)!, today, weekdayOf(today));
-    if (!due) continue;
-    const [have] = await db
-      .select({ id: tipPayoutBatches.id })
-      .from(tipPayoutBatches)
-      .where(and(eq(tipPayoutBatches.shopId, s.id), eq(tipPayoutBatches.kind, due.kind), gte(tipPayoutBatches.cutoffDate, due.cutoff), notInArray(tipPayoutBatches.status, ["cancelled"])))
-      .limit(1);
-    if (have) continue;
-    await buildBatch({ shopId: s.id, kind: due.kind, cutoff: due.cutoff, asOf: today, actor: SYSTEM, now }).then(
-      () => built++,
+    return due ? [{ shopId: s.id, ...due }] : [];
+  });
+}
+
+/** Builds one shop's due draft unless one already covers it. Managers still approve every batch. */
+export async function buildDuePayout(d: DuePayout, now = new Date()): Promise<boolean> {
+  const [have] = await db
+    .select({ id: tipPayoutBatches.id })
+    .from(tipPayoutBatches)
+    .where(and(eq(tipPayoutBatches.shopId, d.shopId), eq(tipPayoutBatches.kind, d.kind), gte(tipPayoutBatches.cutoffDate, d.cutoff), notInArray(tipPayoutBatches.status, ["cancelled"])))
+    .limit(1);
+  if (have) return false;
+  await buildBatch({ shopId: d.shopId, kind: d.kind, cutoff: d.cutoff, asOf: todayLocal(now), actor: SYSTEM, now });
+  return true;
+}
+
+/** Every due draft in one go, for the local worker and the tests; the cron fans them out as background tasks. */
+export async function tipPayoutCron(now = new Date()) {
+  let built = 0;
+  for (const d of await duePayouts(now))
+    await buildDuePayout(d, now).then(
+      (b) => (built += b ? 1 : 0),
       (e) => console.error(e),
     );
-  }
   return { built };
 }

@@ -445,7 +445,7 @@ export async function abResults(campaignId: string, metric: AbTest["metric"]): P
 }
 
 /** A blast stuck "sending" this long (the run died) is picked up again; the dedupe keys keep it from sending twice. */
-const STALE_SENDING_MS = 10 * 60_000;
+export const STALE_SENDING_MS = 10 * 60_000;
 
 /** Blasts that are due. Each is claimed by moving it to "sending", so two runs don't both work through it. */
 export async function runBlasts(now = new Date(), o: { ids?: string[] } = {}): Promise<RunStats> {

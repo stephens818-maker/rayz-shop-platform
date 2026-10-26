@@ -750,7 +750,7 @@ export async function answerByText(row: OutreachRow, reply: "accept" | "decline"
  * suggestion); no answer after that, the appointment is flagged for staff. Appointments the shop
  * changed or cancelled meanwhile are closed instead.
  */
-export async function runFollowUps(now = new Date()) {
+export async function runFollowUps(now = new Date(), o: { shopIds?: string[] } = {}) {
   const rows = await db
     .select({ o: appointmentOutreach })
     .from(appointmentOutreach)
@@ -761,6 +761,7 @@ export async function runFollowUps(now = new Date()) {
         inArray(appointmentOutreach.option, ["rebook", "voice"]),
         isNull(callIns.cancelledAt),
         or(lte(appointmentOutreach.nextActionAt, now), lte(appointmentOutreach.originalStartsAt, now)),
+        o.shopIds ? inArray(appointmentOutreach.shopId, o.shopIds.length ? o.shopIds : [crypto.randomUUID()]) : undefined,
       ),
     )
     .limit(200);

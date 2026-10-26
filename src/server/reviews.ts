@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, isNotNull, isNull, lte, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, notInArray, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { receiptDeliveries, reviewClicks, sales, shops } from "@/db/schema";
 import { receiptBranding } from "@/domain/connect";
@@ -98,9 +98,12 @@ export async function askForReview(saleId: string, repeatDays: number, now: Date
  * by mistake) are skipped; before the client's Nth visit, or soon after they tapped the link, the
  * skip is recorded. Refunds, ratings, tips and complaints don't change who's asked.
  */
-export async function queueReviewFollowUps(now = new Date()) {
+export async function queueReviewFollowUps(now = new Date(), o: { shopIds?: string[] } = {}) {
   const out = { queued: 0, skipped: 0, quiet: false };
-  const list = await db.select({ id: shops.id, receipt: shops.receipt }).from(shops).where(eq(shops.active, true));
+  const list = await db
+    .select({ id: shops.id, receipt: shops.receipt })
+    .from(shops)
+    .where(and(eq(shops.active, true), o.shopIds ? inArray(shops.id, o.shopIds.length ? o.shopIds : [crypto.randomUUID()]) : undefined));
   const [quietAt, rulesAt] = await Promise.all([settingFor<OutreachRules>("outreach", list.map((s) => s.id)), settingFor<ReviewRules>("reviews", list.map((s) => s.id))]);
   if (list.length && list.every((s) => inQuietHours(localMinutesOf(now), quietAt(s.id)))) return { ...out, quiet: true };
   for (const shop of list) {

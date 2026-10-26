@@ -3,13 +3,12 @@ import { installLogScrubbing } from "@/lib/sensitive";
 import { closeDb } from "@/db";
 import { processDueJobs } from "@/server/notifications/queue";
 import { extendSeries } from "@/server/block-series";
-import { runFollowUps } from "@/server/call-ins";
-import { runMarketing } from "@/server/marketing/engine";
+import { runAbWinners } from "@/server/marketing/engine";
 import { sendBadgeNotices } from "@/server/customer-badges";
 import { runJobs } from "@/server/jobs";
 import { runMilestones } from "@/server/milestones/engine";
 
-/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, works background tasks (rollups, campaign triggers per location, badge slices), runs marketing campaigns and Badge news, records staff milestones hourly, and drains the notification queue every 30 seconds. `--once` for a single pass. */
+/** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, works background tasks (rollups, campaign triggers and nudges per location, badge slices, blasts and sequences, scheduled reports, tip payout drafts), decides A/B tests, queues Badge news, records staff milestones hourly, and drains the notification queue every 30 seconds. `--once` for a single pass. */
 async function main() {
   installLogScrubbing();
   const once = process.argv.includes("--once");
@@ -17,12 +16,10 @@ async function main() {
   do {
     const written = await extendSeries();
     if (written) console.log(new Date().toISOString(), { recurringBlocks: written });
-    const followUps = await runFollowUps();
-    if (followUps.retried || followUps.flagged || followUps.closed) console.log(new Date().toISOString(), { followUps });
+    const abWinners = await runAbWinners(new Date());
+    if (abWinners.queued || abWinners.failed) console.log(new Date().toISOString(), { abWinners });
     const jobs = await runJobs(new Date(), { budgetMs: 20_000 });
     if (jobs.done || jobs.failed) console.log(new Date().toISOString(), { jobs });
-    const marketing = await runMarketing(new Date(), { triggers: false });
-    if (marketing.triggers.queued || marketing.blasts.queued || marketing.triggers.failed || marketing.blasts.failed) console.log(new Date().toISOString(), { marketing });
     const badgeNews = await sendBadgeNotices();
     if (badgeNews.queued) console.log(new Date().toISOString(), { badgeNews });
     if (Date.now() - milestonesAt >= 3_600_000) {
