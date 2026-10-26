@@ -1,4 +1,5 @@
 import { body, json, options, route } from "@/server/api";
+import { assertSwitch } from "@/server/app-switches";
 import { CreateAppointment } from "@/server/api-schemas";
 import { customerActor } from "@/server/audit";
 import { customerFromRequest } from "@/server/auth/customer";
@@ -7,6 +8,7 @@ import { AppError } from "@/server/errors";
 
 export const OPTIONS = options;
 export const POST = route(async (req) => {
+  await assertSwitch("booking");
   const b = await body(req, CreateAppointment);
   const customerId = await customerFromRequest(req);
   if (!customerId && !b.customer) throw new AppError("bad_request", "customer is required when not signed in");

@@ -382,24 +382,25 @@ describe("one client record, matched the same way everywhere", () => {
     expect(fresh).toMatchObject({ smsOptIn: false, emailOptIn: false });
   });
 
-  it("signing in on a shared phone asks who you are instead of picking the newest profile (review P1#15)", async () => {
+  it("signing in on a shared phone asks for a name and never lists who's on the number (review P1#15, C21)", async () => {
     process.env.AUTH_DEV_CODES = "true";
     const phone = nextPhone();
     const mom = await m.customers.findOrCreateCustomer({ firstName: "Dana", lastName: "Quill", phone }, null);
     const son = await m.customers.findOrCreateCustomer({ firstName: "Eli", lastName: "Quill", phone }, null);
     const start = await m.auth.startOtp({ phone });
     const r = await m.auth.verifyOtp({ phone, code: start.devCode! });
-    expect(r).toMatchObject({ needsProfile: false, chooseProfile: true });
-    if (!("profiles" in r) || !r.profiles) throw new Error("expected a profile choice");
-    expect(r.profiles.map((p) => p.firstName).sort()).toEqual(["Dana", "Eli"]);
-    expect(JSON.stringify(r.profiles)).not.toMatch(/Quill/);
+    expect(r).toEqual({ needsProfile: true, selectionToken: expect.any(String) });
+    if (!("selectionToken" in r)) throw new Error("expected a selection token");
+    expect(JSON.stringify(r)).not.toMatch(/Dana|Eli|Quill/);
 
-    const asSon = await m.auth.completeSignIn({ selectionToken: r.selectionToken, customerId: son.id });
+    const asSon = await m.auth.completeSignIn({ selectionToken: r.selectionToken, firstName: "eli" });
+    if (!("accessToken" in asSon)) throw new Error("expected tokens");
     expect(asSon.customer.id).toBe(son.id);
-    const stranger = await m.customers.findOrCreateCustomer({ firstName: "Zed", phone: nextPhone() }, null);
-    await expect(m.auth.completeSignIn({ selectionToken: r.selectionToken, customerId: stranger.id })).rejects.toMatchObject({ code: "forbidden" });
+    // An id from the old profile list is ignored; a name is required.
+    await expect(m.auth.completeSignIn({ selectionToken: r.selectionToken, customerId: mom.id })).rejects.toMatchObject({ code: "bad_request" });
     // A third family member on the same phone gets their own profile.
     const dad = await m.auth.completeSignIn({ selectionToken: r.selectionToken, firstName: "Frank", lastName: "Quill" });
+    if (!("accessToken" in dad)) throw new Error("expected tokens");
     expect(dad.isNew).toBe(true);
     expect([mom.id, son.id]).not.toContain(dad.customer.id);
   });

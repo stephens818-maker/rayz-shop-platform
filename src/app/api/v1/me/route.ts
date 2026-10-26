@@ -6,7 +6,7 @@ import { body, json, options, route } from "@/server/api";
 import { UpdateMe } from "@/server/api-schemas";
 import { requireCustomer } from "@/server/auth/customer";
 import { resolveStaffRef } from "@/server/catalog";
-import { notFound } from "@/server/errors";
+import { AppError, notFound } from "@/server/errors";
 import { publicMe } from "@/server/public";
 
 export const OPTIONS = options;
@@ -17,7 +17,12 @@ export const PATCH = route(async (req) => {
   const patch: Partial<typeof customers.$inferInsert> = {};
   if (b.firstName !== undefined) patch.firstName = b.firstName.trim();
   if (b.lastName !== undefined) patch.lastName = b.lastName?.trim() || null;
-  if (b.email !== undefined) patch.email = normalizeEmail(b.email);
+  if (b.email !== undefined) {
+    const email = normalizeEmail(b.email);
+    const current = await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { email: true } });
+    if (email && email !== current?.email) throw new AppError("bad_request", "Confirm a new email with a code: POST /me/email/start, then /me/email/verify", { field: "email" });
+    if (!email) Object.assign(patch, { email: null, emailVerifiedAt: null });
+  }
   if (b.smsOptIn !== undefined) patch.smsOptIn = b.smsOptIn;
   if (b.emailOptIn !== undefined) patch.emailOptIn = b.emailOptIn;
   if (b.preferencesNote !== undefined) {

@@ -1,12 +1,14 @@
-import { and, asc, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import { randomInt } from "node:crypto";
 import { db } from "@/db";
-import { customers, otpCodes, refreshTokens } from "@/db/schema";
+import { customers, customerSquireIds, identityHelpRequests, otpCodes, refreshTokens } from "@/db/schema";
 import { demoMode } from "@/lib/deployment";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { findOrCreateCustomer, lockIdentity, matchCustomer } from "@/server/customers";
 import { AppError } from "@/server/errors";
 import { sendNow } from "@/server/notifications/queue";
+import { rateLimit } from "@/server/rate-limit";
+import { smsOtpProvider, verifyCheck, verifySend } from "./otp-provider";
 import { randomToken, sha256, signToken, verifyToken } from "./tokens";
 
 export const ACCESS_TTL_SECONDS = 60 * 60; // 1 hour
@@ -14,6 +16,8 @@ export const REFRESH_TTL_DAYS = 60;
 const OTP_TTL_MS = 10 * 60_000;
 const OTP_MAX_ATTEMPTS = 5;
 const OTP_PER_HOUR = 5;
+const OTP_PER_IP_HOUR = 20;
+const IDENTITY_MAX_FAILURES = 5;
 
 export function normalizeIdentifier(input: { phone?: string | null; email?: string | null }) {
   const phone = normalizePhone(input.phone);
@@ -28,104 +32,243 @@ export function devCodesEnabled() {
   return demoMode() || (process.env.NODE_ENV !== "production" && process.env.AUTH_DEV_CODES === "true");
 }
 
-export async function startOtp(input: { phone?: string | null; email?: string | null }) {
-  const { identifier, channel } = normalizeIdentifier(input);
-  const recent = await db
-    .select({ id: otpCodes.id })
-    .from(otpCodes)
-    .where(and(eq(otpCodes.identifier, identifier), gt(otpCodes.createdAt, new Date(Date.now() - 3_600_000))));
-  if (recent.length >= OTP_PER_HOUR) throw new AppError("rate_limited", "Too many codes requested. Try again later.");
-  const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
-  await db.insert(otpCodes).values({ identifier, codeHash: sha256(`${identifier}:${code}`), expiresAt: new Date(Date.now() + OTP_TTL_MS) });
-  const status = await sendNow({
-    kind: "otp",
-    channel,
-    to: identifier,
-    subject: "Your Ray'z sign-in code",
-    body: `Your Ray'z Barber Shop code is ${code}. It expires in 10 minutes.`,
-    storedBody: "Your Ray'z Barber Shop code is ••••••. It expires in 10 minutes.",
-  });
-  if (status === "failed") throw new AppError("internal", "We couldn't send your code. Try again in a minute.");
-  return { channel, expiresInSeconds: OTP_TTL_MS / 1000, ...(devCodesEnabled() ? { devCode: code } : {}) };
-}
-
-export async function verifyOtp(input: {
+/** A US phone, or an email, with the client's IP for the per-IP limit and the Android SMS Retriever hash. */
+export interface OtpStartInput {
   phone?: string | null;
   email?: string | null;
-  code: string;
-  firstName?: string | null;
-  lastName?: string | null;
-  deviceName?: string | null;
-}) {
-  const { identifier, channel } = normalizeIdentifier(input);
+  appHash?: string | null;
+  ip?: string | null;
+}
+
+async function countRecentCodes(identifier: string, purpose: string) {
+  const rows = await db
+    .select({ id: otpCodes.id })
+    .from(otpCodes)
+    .where(and(eq(otpCodes.identifier, identifier), eq(otpCodes.purpose, purpose), gt(otpCodes.createdAt, new Date(Date.now() - 3_600_000))));
+  return rows.length;
+}
+
+/** Make and send a code. Texts go through the configured provider (Twilio Verify in production); emails through the email provider. */
+async function sendCode(o: { identifier: string; to: string; channel: "sms" | "email"; purpose: string; subject: string; text: (code: string) => string; appHash?: string | null }) {
+  if ((await countRecentCodes(o.identifier, o.purpose)) >= OTP_PER_HOUR) throw new AppError("rate_limited", "Too many codes requested. Try again later.");
+  const provider = o.channel === "sms" ? smsOtpProvider() : "local";
+  if (provider === "twilio_verify") {
+    await verifySend(o.to, o.appHash);
+    await db.insert(otpCodes).values({ identifier: o.identifier, codeHash: "twilio_verify", provider, purpose: o.purpose, expiresAt: new Date(Date.now() + OTP_TTL_MS) });
+    return { channel: o.channel, expiresInSeconds: OTP_TTL_MS / 1000 };
+  }
+  const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
+  await db.insert(otpCodes).values({ identifier: o.identifier, codeHash: sha256(`${o.identifier}:${code}`), purpose: o.purpose, expiresAt: new Date(Date.now() + OTP_TTL_MS) });
+  const status = await sendNow({ kind: "otp", channel: o.channel, to: o.to, subject: o.subject, body: o.text(code), storedBody: o.text("••••••") });
+  if (status === "failed") throw new AppError("internal", "We couldn't send your code. Try again in a minute.");
+  return { channel: o.channel, expiresInSeconds: OTP_TTL_MS / 1000, ...(devCodesEnabled() ? { devCode: code } : {}) };
+}
+
+/** Check and use up the newest live code. Wrong codes count toward the attempt limit either way. */
+async function consumeCode(identifier: string, to: string, purpose: string, code: string) {
   const [otp] = await db
     .select()
     .from(otpCodes)
-    .where(and(eq(otpCodes.identifier, identifier), isNull(otpCodes.consumedAt), gt(otpCodes.expiresAt, new Date())))
+    .where(and(eq(otpCodes.identifier, identifier), eq(otpCodes.purpose, purpose), isNull(otpCodes.consumedAt), gt(otpCodes.expiresAt, new Date())))
     .orderBy(desc(otpCodes.createdAt))
     .limit(1);
   if (!otp || otp.attempts >= OTP_MAX_ATTEMPTS) throw new AppError("unauthorized", "Code expired. Request a new one.");
-  if (otp.codeHash !== sha256(`${identifier}:${input.code.trim()}`)) {
+  const ok = otp.provider === "twilio_verify" ? await verifyCheck(to, code.trim()) : otp.codeHash === sha256(`${identifier}:${code.trim()}`);
+  if (!ok) {
     await db.update(otpCodes).set({ attempts: otp.attempts + 1 }).where(eq(otpCodes.id, otp.id));
     throw new AppError("unauthorized", "That code isn't right");
   }
   await db.update(otpCodes).set({ consumedAt: new Date() }).where(eq(otpCodes.id, otp.id));
+}
 
-  const profiles = await profilesFor(identifier, channel);
-  const selectionToken = await signToken({ sub: identifier, ch: channel }, "otp_select", SELECTION_TTL_SECONDS);
-  if (input.firstName?.trim()) return completeSignIn({ selectionToken, firstName: input.firstName, lastName: input.lastName, deviceName: input.deviceName });
-  if (profiles.length === 1) return signIn(profiles[0], false, input.deviceName);
-  if (profiles.length === 0) return { needsProfile: true as const, selectionToken };
-  // Families share phones: never guess which person this is.
-  return {
-    needsProfile: false as const,
-    chooseProfile: true as const,
-    selectionToken,
-    profiles: profiles.map((p) => ({ id: p.id, firstName: p.firstName, lastInitial: p.lastName?.[0]?.toUpperCase() ?? null })),
-  };
+const SIGN_IN_TEXT = (code: string) => `Your Ray'z Barber Shop code is ${code}. It expires in 10 minutes.`;
+
+export async function startOtp(input: OtpStartInput) {
+  const { identifier, channel } = normalizeIdentifier(input);
+  await rateLimit("otp_ip", input.ip ?? null, OTP_PER_IP_HOUR, 3_600_000, "Too many codes requested from this network. Try again later.");
+  return sendCode({ identifier, to: identifier, channel, purpose: "sign_in", subject: "Your Ray'z sign-in code", text: SIGN_IN_TEXT, appHash: input.appHash });
 }
 
 const SELECTION_TTL_SECONDS = 10 * 60;
+const IDLE_STEP_UP_MS = 548 * 86_400_000; // 18 months
+type Selection = { sub: string; ch: "sms" | "email"; cid?: string };
+type Customer = typeof customers.$inferSelect;
 
+export type SignInResult =
+  | { needsProfile: true; selectionToken: string }
+  | { needsProfile: false; stepUp: "email"; selectionToken: string; emailHint: string }
+  | { needsProfile: false; cantSignIn: true; selectionToken: string; reason: "idle_number" }
+  | Awaited<ReturnType<typeof signIn>>;
+
+export async function verifyOtp(input: { phone?: string | null; email?: string | null; code: string; firstName?: string | null; lastName?: string | null; deviceName?: string | null }): Promise<SignInResult> {
+  const { identifier, channel } = normalizeIdentifier(input);
+  await consumeCode(identifier, identifier, "sign_in", input.code);
+  const selectionToken = await signToken({ sub: identifier, ch: channel } satisfies Selection, "otp_select", SELECTION_TTL_SECONDS);
+  if (input.firstName?.trim()) return completeSignIn({ selectionToken, firstName: input.firstName, lastName: input.lastName, deviceName: input.deviceName });
+  const profiles = await profilesFor(identifier, channel);
+  if (profiles.length === 1) return gate(profiles[0], { sub: identifier, ch: channel }, false, input.deviceName);
+  // None, or a family sharing the number: ask for a name. Never list who else is on a number; it may have been recycled.
+  return { needsProfile: true as const, selectionToken };
+}
+
+/** Adults on this number, or on this verified email. Unverified (imported or typed) emails never sign anyone in. */
 async function profilesFor(identifier: string, channel: "sms" | "email") {
   return db
     .select()
     .from(customers)
-    .where(channel === "sms" ? eq(customers.phone, identifier) : eq(customers.email, identifier))
+    .where(and(channel === "sms" ? eq(customers.phone, identifier) : and(eq(customers.email, identifier), isNotNull(customers.emailVerifiedAt)), isNull(customers.guardianId)))
     .orderBy(asc(customers.createdAt))
     .limit(10);
 }
 
-async function signIn(customer: typeof customers.$inferSelect, isNew: boolean, deviceName?: string | null) {
+/** When this profile was last active: its newest visit, app sign-in, staff or self identity confirmation, or creation. */
+async function lastActive(c: Customer): Promise<Date> {
+  const [row] = (await db.execute(sql`select max(starts_at) at from appointments where customer_id = ${c.id} and status <> 'cancelled' and starts_at <= now()`)) as unknown as { at: Date | string | null }[];
+  const times = [c.createdAt, c.lastAppSignInAt, c.identityVerifiedAt, row?.at ? new Date(row.at) : null].filter((d): d is Date => !!d);
+  return new Date(Math.max(...times.map((d) => d.getTime())));
+}
+
+const maskEmail = (e: string) => {
+  const [user, domain] = e.split("@");
+  return `${user.slice(0, 1)}•••@${domain}`;
+};
+
+/**
+ * Before signing someone in by phone: a number unused for 18 months may belong to someone new now,
+ * so it needs a code to the profile's verified email too, or a staff check when there's none.
+ */
+async function gate(c: Customer, sel: Selection, isNew: boolean, deviceName?: string | null): Promise<SignInResult> {
+  if (sel.ch === "sms" && !isNew && Date.now() - (await lastActive(c)).getTime() > IDLE_STEP_UP_MS) {
+    const selectionToken = await signToken({ ...sel, cid: c.id } satisfies Selection, "otp_select", SELECTION_TTL_SECONDS);
+    if (c.email && c.emailVerifiedAt) return { needsProfile: false as const, stepUp: "email" as const, selectionToken, emailHint: maskEmail(c.email) };
+    return { needsProfile: false as const, cantSignIn: true as const, selectionToken, reason: "idle_number" as const };
+  }
+  return signIn(c, isNew, deviceName);
+}
+
+/** An imported (Squire) profile someone hasn't yet confirmed is theirs. Loyalty redemption stays hidden until they do. */
+export async function needsIdentityCheck(c: Pick<Customer, "id" | "identityVerifiedAt" | "source">): Promise<boolean> {
+  if (c.identityVerifiedAt) return false;
+  if (c.source === "Squire import") return true;
+  const [hit] = await db.select({ id: customerSquireIds.customerId }).from(customerSquireIds).where(eq(customerSquireIds.customerId, c.id)).limit(1);
+  return !!hit;
+}
+
+async function signIn(customer: Customer, isNew: boolean, deviceName?: string | null) {
   const tokens = await issueTokens(customer.id, deviceName ?? null);
-  return { needsProfile: false as const, chooseProfile: false as const, isNew, customer, ...tokens };
+  await db.update(customers).set({ lastAppSignInAt: new Date() }).where(eq(customers.id, customer.id));
+  return { needsProfile: false as const, isNew, customer, identityCheckRequired: await needsIdentityCheck(customer), ...tokens };
 }
 
 /**
- * Second step after a verified code: pick one of the profiles on that phone/email, or give a name.
- * A name matches an existing profile with the shared rules, otherwise creates a new one (a family
- * member on the same phone).
+ * Second step after a verified code: a name. By phone it matches a profile on that number with the
+ * shared rules, or creates one (a family member on the same phone). By email it matches only a
+ * profile whose email is verified, or creates one with the email verified.
  */
-export async function completeSignIn(input: { selectionToken: string; customerId?: string | null; firstName?: string | null; lastName?: string | null; deviceName?: string | null }) {
-  const t = await verifyToken<{ sub: string; ch: "sms" | "email" }>(input.selectionToken, "otp_select");
+export async function completeSignIn(input: { selectionToken: string; customerId?: string | null; firstName?: string | null; lastName?: string | null; deviceName?: string | null }): Promise<SignInResult> {
+  const t = await verifyToken<Selection>(input.selectionToken, "otp_select");
   if (!t) throw new AppError("unauthorized", "Code expired. Request a new one.");
+  const sel: Selection = { sub: t.sub, ch: t.ch };
   const identifier = t.sub;
-  if (input.customerId) {
-    const pick = (await profilesFor(identifier, t.ch)).find((p) => p.id === input.customerId);
-    if (!pick) throw new AppError("forbidden", "That profile isn't on this phone number");
-    return signIn(pick, false, input.deviceName);
-  }
   const firstName = input.firstName?.trim();
-  if (!firstName) throw new AppError("bad_request", "Pick a profile or tell us your first name");
-  const contact = t.ch === "sms" ? { phone: identifier } : { email: identifier };
+  if (!firstName) throw new AppError("bad_request", "Tell us your first name");
+  if (t.ch === "email") {
+    const mine = (await profilesFor(identifier, "email")).find((p) => sameName(p.firstName, firstName));
+    if (mine) return gate(mine, sel, false, input.deviceName);
+    const c = await findOrCreateCustomer({ firstName, lastName: input.lastName }, null, db, { allowNoContact: true });
+    await db.update(customers).set({ email: identifier, emailVerifiedAt: new Date() }).where(eq(customers.id, c.id));
+    return gate({ ...c, email: identifier }, sel, true, input.deviceName);
+  }
   const { customer, isNew } = await db.transaction(async (tx) => {
     await lockIdentity(tx, [identifier]);
-    const m = await matchCustomer(tx, { firstName, lastName: input.lastName, ...contact });
-    if (m) return { customer: m.customer, isNew: false };
-    const c = await findOrCreateCustomer({ firstName, lastName: input.lastName, ...contact }, null, tx);
-    return { customer: c, isNew: true };
+    const m = await matchCustomer(tx, { firstName, lastName: input.lastName, phone: identifier });
+    if (m && m.customer.phone === identifier && !m.customer.guardianId) return { customer: m.customer, isNew: false };
+    const c = await findOrCreateCustomer({ firstName, lastName: input.lastName, phone: identifier }, null, tx);
+    return { customer: c, isNew: c.createdAt.getTime() > Date.now() - 60_000 };
   });
-  return signIn(customer, isNew, input.deviceName);
+  return gate(customer, sel, isNew, input.deviceName);
+}
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** Idle number: send a code to the profile's verified email. */
+export async function startStepUp(selectionToken: string) {
+  const t = await verifyToken<Selection>(selectionToken, "otp_select");
+  if (!t?.cid) throw new AppError("unauthorized", "Start again with a new code.");
+  const c = await db.query.customers.findFirst({ where: eq(customers.id, t.cid) });
+  if (!c?.email || !c.emailVerifiedAt) throw new AppError("forbidden", "There's no verified email on this profile. Ask the shop to help you sign in.");
+  return sendCode({ identifier: `step:${c.id}`, to: c.email, channel: "email", purpose: "step_up", subject: "Confirm it's you", text: SIGN_IN_TEXT });
+}
+
+export async function verifyStepUp(selectionToken: string, code: string, deviceName?: string | null) {
+  const t = await verifyToken<Selection>(selectionToken, "otp_select");
+  if (!t?.cid) throw new AppError("unauthorized", "Start again with a new code.");
+  const c = await db.query.customers.findFirst({ where: eq(customers.id, t.cid) });
+  if (!c?.email || !c.emailVerifiedAt) throw new AppError("forbidden", "There's no verified email on this profile.");
+  await consumeCode(`step:${c.id}`, c.email, "step_up", code);
+  return signIn(c, false, deviceName);
+}
+
+/**
+ * The light check on an imported profile's first app sign-in: their last name, or the shop of their
+ * last visit. Five misses lock it and open a staff task.
+ */
+export async function checkIdentity(customerId: string, answer: { lastName?: string | null; lastShop?: string | null }) {
+  const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId) });
+  if (!c) throw new AppError("not_found", "Customer not found");
+  if (!(await needsIdentityCheck(c))) return { verified: true };
+  if (c.identityCheckFailures >= IDENTITY_MAX_FAILURES) throw new AppError("forbidden", "We couldn't confirm it's you. The shop will be in touch to help.");
+  const [last] = (await db.execute(
+    sql`select s.slug, s.name from appointments a join shops s on s.id = a.shop_id where a.customer_id = ${c.id} and a.status = 'completed' order by a.starts_at desc limit 1`,
+  )) as unknown as { slug: string; name: string }[];
+  const byName = !!answer.lastName?.trim() && !!c.lastName && sameName(answer.lastName, c.lastName);
+  const byShop = !!answer.lastShop?.trim() && !!last && (sameName(answer.lastShop, last.slug) || sameName(answer.lastShop, last.name));
+  if (byName || byShop) {
+    await db.update(customers).set({ identityVerifiedAt: new Date(), identityCheckFailures: 0 }).where(eq(customers.id, c.id));
+    return { verified: true };
+  }
+  const failures = c.identityCheckFailures + 1;
+  await db.update(customers).set({ identityCheckFailures: failures }).where(eq(customers.id, c.id));
+  if (failures >= IDENTITY_MAX_FAILURES) {
+    await db.insert(identityHelpRequests).values({ phone: c.phone, email: c.email, firstName: c.firstName, lastName: null, reason: "identity_check", candidateIds: [c.id] });
+    throw new AppError("forbidden", "We couldn't confirm it's you. The shop will be in touch to help.");
+  }
+  throw new AppError("unauthorized", "That doesn't match what we have.", { attemptsLeft: IDENTITY_MAX_FAILURES - failures });
+}
+
+/** "I can't sign in": a staff task. With a selection token the number is proven and the profiles on it are attached. */
+export async function requestSignInHelp(input: { selectionToken?: string | null; phone?: string | null; email?: string | null; firstName: string; lastName?: string | null; message?: string | null; ip?: string | null }) {
+  await rateLimit("sign_in_help", input.ip ?? null, 5, 3_600_000);
+  const t = input.selectionToken ? await verifyToken<Selection>(input.selectionToken, "otp_select") : null;
+  const phone = t?.ch === "sms" ? t.sub : normalizePhone(input.phone);
+  const email = t?.ch === "email" ? t.sub : normalizeEmail(input.email);
+  if (!phone && !email) throw new AppError("bad_request", "Give the phone number or email you used at the shop");
+  const candidates = t ? (t.cid ? [t.cid] : (await profilesFor(t.sub, t.ch)).map((p) => p.id)) : [];
+  await db.insert(identityHelpRequests).values({
+    phone,
+    email,
+    firstName: input.firstName.trim(),
+    lastName: input.lastName?.trim() || null,
+    message: input.message?.trim() || null,
+    reason: t?.cid ? "idle_number" : "cant_sign_in",
+    candidateIds: candidates,
+  });
+  return { received: true };
+}
+
+/** C17: a new email is written only once a code sent to it is entered. */
+export async function startEmailChange(customerId: string, rawEmail: string, ip?: string | null) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) throw new AppError("bad_request", "Enter a valid email");
+  await rateLimit("email_change_ip", ip ?? null, OTP_PER_IP_HOUR, 3_600_000);
+  return sendCode({ identifier: `${customerId}:${email}`, to: email, channel: "email", purpose: "email_change", subject: "Confirm your email", text: (code) => `Your Ray'z Barber Shop code to confirm this email is ${code}. It expires in 10 minutes.` });
+}
+
+export async function verifyEmailChange(customerId: string, rawEmail: string, code: string) {
+  const email = normalizeEmail(rawEmail);
+  if (!email) throw new AppError("bad_request", "Enter a valid email");
+  await consumeCode(`${customerId}:${email}`, email, "email_change", code);
+  await db.update(customers).set({ email, emailVerifiedAt: new Date() }).where(eq(customers.id, customerId));
 }
 
 export async function issueTokens(customerId: string, deviceName: string | null) {

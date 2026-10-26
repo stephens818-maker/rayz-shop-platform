@@ -9,6 +9,7 @@ import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { contactOptOuts, marketingUnsubscribes, notificationJobs } from "@/db/schema";
 import type { Channel, Reach } from "@/domain/marketing";
+import { appSwitches } from "@/server/app-switches";
 
 interface Columns {
   sms: boolean;
@@ -107,6 +108,7 @@ export async function contactsFor(customerIds: readonly string[], tx: DBorTx = d
       ),
   ]);
   const stopped = new Set(stops.map((s) => s.phone));
+  const pushOn = (await appSwitches()).pushMarketing;
   const off = (ch: Channel, r: (typeof rows)[number]) =>
     unsubs.some((u) => u.channel === ch && (u.customerId === r.id || u.customerId === r.household_id || (!!u.email && u.email.toLowerCase() === r.email?.toLowerCase()) || (!!u.phone && u.phone === r.phone)));
   for (const r of rows) {
@@ -121,7 +123,7 @@ export async function contactsFor(customerIds: readonly string[], tx: DBorTx = d
       reach: {
         sms: live && !!r.sms && !!r.phone && !stopped.has(r.phone) && !off("sms", r),
         email: live && !!r.em && !!r.email && !off("email", r),
-        push: live && !!r.push && !!r.device_id && !off("push", r),
+        push: pushOn && live && !!r.push && !!r.device_id && !off("push", r),
       },
     });
   }

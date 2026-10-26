@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
+  bigserial,
   boolean,
   check,
   date,
@@ -60,6 +61,8 @@ export const brandSettings = pgTable("brand_settings", {
   slotIntervalMinutes: integer("slot_interval_minutes").notNull().default(15),
   /** Payroll settings (PayrollSettings in src/domain/payroll/calc.ts); missing keys use the defaults. */
   payroll: jsonb("payroll").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Customer app kill switches (AppSwitches in src/server/app-switches.ts); missing keys are on. */
+  appSwitches: jsonb("app_switches").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Lunch, block and time off rules (StaffTimeRules in src/domain/staff-time.ts); missing keys use the defaults. */
   staffTime: jsonb("staff_time").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Call-in outreach rules (OutreachRules in src/domain/outreach.ts); missing keys use the defaults. */
@@ -1224,6 +1227,12 @@ export const customers = pgTable(
     /** The client's own note to their barber, written in the app or account page. Separate from staff notes; scrubbed and contact-redacted by triggers. */
     preferencesNote: text("preferences_note"),
     preferencesUpdatedAt: ts("preferences_updated_at"),
+    /** Set only after a code sent to this address was entered. Only verified emails sign in or match a profile; imported emails start unverified. */
+    emailVerifiedAt: ts("email_verified_at"),
+    /** An imported profile's first app sign-in passed the light check (last name or last shop). Loyalty redemption is hidden until then. */
+    identityVerifiedAt: ts("identity_verified_at"),
+    identityCheckFailures: integer("identity_check_failures").notNull().default(0),
+    lastAppSignInAt: ts("last_app_sign_in_at"),
     /** Values of the brand's custom client fields, by client_fields.id. */
     customFields: jsonb("custom_fields").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
     /** Consent is opt-in: nothing is sent until the client (or their Squire record) says yes. */
@@ -1491,8 +1500,41 @@ export const otpCodes = pgTable(
     attempts: integer("attempts").notNull().default(0),
     consumedAt: ts("consumed_at"),
     createdAt: createdAt(),
+    /** local: our own code, sent through the SMS or email provider. twilio_verify: Twilio Verify holds the code (codeHash is a placeholder). */
+    provider: text("provider").notNull().default("local"),
+    /** sign_in, email_change (identifier is "<customerId>:<new email>"), step_up or delete. */
+    purpose: text("purpose").notNull().default("sign_in"),
   },
   (t) => [index("otp_identifier_idx").on(t.identifier, t.createdAt)],
+);
+
+/** "I can't sign in" and failed identity checks: a staff task to confirm who the person is and merge or fix the profile. */
+export const identityHelpRequests = pgTable("identity_help_requests", {
+  id: id(),
+  phone: text("phone"),
+  email: text("email"),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name"),
+  message: text("message"),
+  reason: text("reason").$type<"identity_check" | "idle_number" | "cant_sign_in">().notNull(),
+  candidateIds: jsonb("candidate_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  status: text("status").$type<"open" | "resolved" | "dismissed">().notNull().default("open"),
+  createdAt: createdAt(),
+  resolvedAt: ts("resolved_at"),
+  resolvedBy: uuid("resolved_by").references(() => staff.id, { onDelete: "set null" }),
+  resolution: text("resolution"),
+});
+
+/** One row per counted request (OTP starts per IP, per number); old rows are pruned as they're read. */
+export const apiRateEvents = pgTable(
+  "api_rate_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    bucket: text("bucket").notNull(),
+    key: text("key").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("api_rate_events_lookup_idx").on(t.bucket, t.key, t.createdAt)],
 );
 
 export const refreshTokens = pgTable("refresh_tokens", {

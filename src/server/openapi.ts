@@ -43,7 +43,17 @@ export function openApiDocument(baseUrl: string) {
     TokenResponse: S.TokenResponse,
     NeedsProfile: S.NeedsProfile,
     ChooseProfile: S.ChooseProfile,
+    StepUpRequired: S.StepUpRequired,
+    CantSignIn: S.CantSignIn,
     OtpComplete: S.OtpComplete,
+    StepUpStart: S.StepUpStart,
+    StepUpVerify: S.StepUpVerify,
+    SignInHelp: S.SignInHelp,
+    Received: S.Received,
+    IdentityCheck: S.IdentityCheck,
+    IdentityCheckResult: S.IdentityCheckResult,
+    EmailChangeStart: S.EmailChangeStart,
+    EmailChangeVerify: S.EmailChangeVerify,
     RefreshBody: S.RefreshBody,
     RefreshResponse: S.RefreshResponse,
     Me: S.Me,
@@ -58,7 +68,7 @@ export function openApiDocument(baseUrl: string) {
     openapi: "3.1.0",
     info: {
       title: "Ray'z Barber Shop API",
-      version: "1.1.0",
+      version: "1.2.0",
       description: [
         "Public booking + customer API used by rayzbs.com booking pages and the future iOS/Android app.",
         "",
@@ -72,6 +82,8 @@ export function openApiDocument(baseUrl: string) {
         "**App builds:** send `X-Client: ios|android` and `X-App-Version: 1.2.3` on every request. A build below the platform's minimum gets `426` with `error.code = upgrade_required` and `details.storeUrl` on every route except `GET /app/config` and this document. Requests without `X-Client` (the website) are never gated.",
         "",
         "**Changes in 1.1 (additive):** `GET /app/config`; `bookingMode` and `externalBookingUrl` on shops (send clients to the external URL while a shop still books on its old site); `preferences` on `/me` with `preferencesNote` and `preferredBarberId` on `PATCH /me`; the `upgrade_required` error code.",
+        "",
+        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`).",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
@@ -122,7 +134,7 @@ export function openApiDocument(baseUrl: string) {
           security: optionalBearer,
           parameters: [{ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } }],
           requestBody: { required: true, content: jsonContent("CreateAppointment") },
-          responses: { 201: ok("AppointmentEnvelope", "Booked"), 400: err("Invalid"), 409: err("Slot no longer available") },
+          responses: { 201: ok("AppointmentEnvelope", "Booked"), 400: err("Invalid"), 403: err("Booking is switched off (details.switch)"), 409: err("Slot no longer available") },
         },
       },
       "/appointments/{code}": {
@@ -156,10 +168,10 @@ export function openApiDocument(baseUrl: string) {
           tags: ["Auth"],
           summary: "Exchange the code for tokens",
           description:
-            "One profile on this phone/email: tokens. None: `{needsProfile: true, selectionToken}`. Several (families share phones): `{chooseProfile: true, selectionToken, profiles}`. Finish either case with /auth/otp/complete; the code is not needed again. Sending firstName here does the same matching up front.",
+            "One adult profile on this phone (or verified email): tokens, unless the number has been unused for 18 months (`stepUp` or `cantSignIn`). None or several: `{needsProfile: true, selectionToken}`; ask for a first name and finish with /auth/otp/complete (the code isn't needed again). Who else is on a number is never shown. Sending firstName here does the same matching up front.",
           requestBody: { required: true, content: jsonContent("OtpVerify") },
           responses: {
-            200: { description: "Tokens, needsProfile, or chooseProfile", content: { "application/json": { schema: { oneOf: [ref("TokenResponse"), ref("NeedsProfile"), ref("ChooseProfile")] } } } },
+            200: { description: "Tokens or the next step", content: { "application/json": { schema: { oneOf: [ref("TokenResponse"), ref("NeedsProfile"), ref("StepUpRequired"), ref("CantSignIn")] } } } },
             401: err("Bad/expired code"),
           },
         },
@@ -167,16 +179,72 @@ export function openApiDocument(baseUrl: string) {
       "/auth/otp/complete": {
         post: {
           tags: ["Auth"],
-          summary: "Pick a profile or create one after verifying a code",
+          summary: "Give a first name after verifying a code: signs in to the matching adult profile on the number, or creates one",
           requestBody: { required: true, content: jsonContent("OtpComplete") },
-          responses: { 200: ok("TokenResponse"), 401: err("Selection expired"), 403: err("Profile isn't on this phone/email") },
+          responses: {
+            200: { description: "Tokens or the next step", content: { "application/json": { schema: { oneOf: [ref("TokenResponse"), ref("StepUpRequired"), ref("CantSignIn")] } } } },
+            400: err("No first name"),
+            401: err("Selection expired"),
+          },
+        },
+      },
+      "/auth/step-up/start": {
+        post: {
+          tags: ["Auth"],
+          summary: "Email a code to the profile's verified email (after a stepUp answer)",
+          requestBody: { required: true, content: jsonContent("StepUpStart") },
+          responses: { 200: ok("OtpStartResponse"), 401: err("Selection expired"), 403: err("No verified email"), 429: err("Rate limited") },
+        },
+      },
+      "/auth/step-up/verify": {
+        post: {
+          tags: ["Auth"],
+          summary: "Finish signing in with the emailed code",
+          requestBody: { required: true, content: jsonContent("StepUpVerify") },
+          responses: { 200: ok("TokenResponse"), 401: err("Bad/expired code or selection") },
+        },
+      },
+      "/auth/help": {
+        post: {
+          tags: ["Auth"],
+          summary: "\"I can't sign in\": ask the shop to confirm who they are",
+          description: "Creates a task for staff. With a selectionToken (the number was proven with a code) the profiles on it are attached for staff; they're never shown to the caller.",
+          requestBody: { required: true, content: jsonContent("SignInHelp") },
+          responses: { 202: ok("Received", "Received"), 400: err("No phone or email"), 429: err("Rate limited") },
         },
       },
       "/auth/refresh": { post: { tags: ["Auth"], summary: "Rotate tokens", requestBody: { required: true, content: jsonContent("RefreshBody") }, responses: { 200: ok("RefreshResponse"), 401: err("Invalid") } } },
       "/auth/logout": { post: { tags: ["Auth"], summary: "Revoke a refresh token", requestBody: { required: true, content: jsonContent("RefreshBody") }, responses: { 204: { description: "Revoked" } } } },
       "/me": {
         get: { tags: ["Me"], summary: "Current customer", security: bearer, responses: { 200: ok("Me"), 401: err("Sign in required") } },
-        patch: { tags: ["Me"], summary: "Update profile, notification preferences, and the client's own preferences note and preferred barber", security: bearer, requestBody: { required: true, content: jsonContent("UpdateMe") }, responses: { 200: ok("Me") } },
+        patch: { tags: ["Me"], summary: "Update profile, notification preferences, and the client's own preferences note and preferred barber", security: bearer, requestBody: { required: true, content: jsonContent("UpdateMe") }, responses: { 200: ok("Me"), 400: err("A new email must go through /me/email/start") } },
+      },
+      "/me/identity-check": {
+        post: {
+          tags: ["Me"],
+          summary: "Confirm an imported profile is theirs: last name or the shop of their last visit",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("IdentityCheck") },
+          responses: { 200: ok("IdentityCheckResult"), 401: err("Doesn't match (details.attemptsLeft)"), 403: err("Five misses: locked, and the shop has been asked to help") },
+        },
+      },
+      "/me/email/start": {
+        post: {
+          tags: ["Me"],
+          summary: "Send a code to a new email",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("EmailChangeStart") },
+          responses: { 200: ok("OtpStartResponse"), 429: err("Rate limited") },
+        },
+      },
+      "/me/email/verify": {
+        post: {
+          tags: ["Me"],
+          summary: "Save the new email, verified, once its code is entered",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("EmailChangeVerify") },
+          responses: { 200: ok("Me"), 401: err("Bad/expired code") },
+        },
       },
       "/me/appointments": { get: { tags: ["Me"], summary: "My upcoming and past appointments", security: bearer, responses: { 200: ok("AppointmentList") } } },
       "/me/loyalty": { get: { tags: ["Me"], summary: "Loyalty progress and available rewards (brand-wide)", security: bearer, responses: { 200: ok("Loyalty") } } },

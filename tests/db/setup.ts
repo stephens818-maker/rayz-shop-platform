@@ -17,6 +17,7 @@ export async function loadModules() {
     importer: await import("@/server/importer"),
     customers: await import("@/server/customers"),
     auth: await import("@/server/auth/customer"),
+    rateLimit: await import("@/server/rate-limit"),
     importErrors: await import("@/lib/import-errors"),
     queue: await import("@/server/notifications/queue"),
     public: await import("@/server/public"),

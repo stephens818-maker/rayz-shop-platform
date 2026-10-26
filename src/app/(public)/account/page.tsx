@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { MyBadges } from "@/components/my-badges";
 import { MyCalendarFeed } from "@/components/my-calendar-feed";
 import { MyFamily } from "@/components/my-family";
+import { EmailCard, EmailStepUp, IdentityCheckCard, type SignInStep, SignInHelpForm, isSignedIn } from "@/components/sign-in-recovery";
 import { Button, Field, Input, StatusBadge } from "@/components/ui";
 import { VISIT_STATUS_LABEL, cadenceByBarber, cadenceOf } from "@/domain/visit-cadence";
 import { api, dollars, fmtDay, fmtTime, getTokens, setTokens } from "@/lib/api-client";
@@ -14,6 +15,8 @@ interface Me {
   firstName: string;
   phone: string | null;
   email: string | null;
+  emailVerified?: boolean;
+  identityCheckRequired?: boolean;
 }
 interface Loyalty {
   enabled: boolean;
@@ -26,6 +29,7 @@ interface Loyalty {
   availableCents: number;
   rewards: { id: string; amountCents: number; expiresAt: string | null }[];
   rules: { earn: string; redeem: string; expiry: string };
+  redemptionLocked?: boolean;
 }
 interface Appt {
   code: string;
@@ -36,14 +40,6 @@ interface Appt {
   items: { name: string }[];
 }
 
-interface Profile {
-  id: string;
-  firstName: string;
-  lastInitial: string | null;
-}
-type Tokens = { needsProfile: false; accessToken: string; refreshToken: string; expiresIn: number };
-type Verified = Tokens | { needsProfile: true; selectionToken: string } | { chooseProfile: true; selectionToken: string; profiles: Profile[] };
-
 export default function AccountPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [loyalty, setLoyalty] = useState<Loyalty | null>(null);
@@ -51,9 +47,12 @@ export default function AccountPage() {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [firstName, setFirstName] = useState("");
-  const [stage, setStage] = useState<"phone" | "code" | "profile">("phone");
+  const [stage, setStage] = useState<"phone" | "code" | "profile" | "stepUp" | "help">("phone");
   const [devCode, setDevCode] = useState<string | null>(null);
-  const [selection, setSelection] = useState<{ token: string; profiles: Profile[] } | null>(null);
+  const [selection, setSelection] = useState<{
+    token: string;
+    emailHint?: string;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -76,7 +75,11 @@ export default function AccountPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<{ devCode?: string }>("/auth/otp/start", { method: "POST", auth: false, body: JSON.stringify({ phone }) });
+      const r = await api<{ devCode?: string }>("/auth/otp/start", {
+        method: "POST",
+        auth: false,
+        body: JSON.stringify({ phone }),
+      });
       setDevCode(r.devCode ?? null);
       setStage("code");
     } catch (e) {
@@ -89,29 +92,48 @@ export default function AccountPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api<Verified>("/auth/otp/verify", { method: "POST", auth: false, body: JSON.stringify({ phone, code, deviceName: "web" }) });
-      if ("selectionToken" in r) {
-        setSelection({ token: r.selectionToken, profiles: "profiles" in r ? r.profiles : [] });
-        setStage("profile");
-        return;
-      }
-      setTokens(r);
-      await loadMe();
+      await next(
+        await api<SignInStep>("/auth/otp/verify", {
+          method: "POST",
+          auth: false,
+          body: JSON.stringify({ phone, code, deviceName: "web" }),
+        }),
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
-  async function complete(pick: { customerId: string } | { firstName: string }) {
+  async function next(r: SignInStep) {
+    if (isSignedIn(r)) {
+      setTokens(r);
+      setSelection(null);
+      await loadMe();
+      return;
+    }
+    setSelection({
+      token: r.selectionToken,
+      emailHint: "emailHint" in r ? r.emailHint : undefined,
+    });
+    setStage("stepUp" in r ? "stepUp" : "cantSignIn" in r ? "help" : "profile");
+  }
+  async function complete(pick: { firstName: string }) {
     if (!selection) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await api<Tokens>("/auth/otp/complete", { method: "POST", auth: false, body: JSON.stringify({ selectionToken: selection.token, deviceName: "web", ...pick }) });
-      setTokens(r);
-      setSelection(null);
-      await loadMe();
+      await next(
+        await api<SignInStep>("/auth/otp/complete", {
+          method: "POST",
+          auth: false,
+          body: JSON.stringify({
+            selectionToken: selection.token,
+            deviceName: "web",
+            ...pick,
+          }),
+        }),
+      );
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -120,7 +142,12 @@ export default function AccountPage() {
   }
   async function signOut() {
     const t = getTokens();
-    if (t) await api("/auth/logout", { method: "POST", auth: false, body: JSON.stringify({ refreshToken: t.refreshToken }) }).catch(() => {});
+    if (t)
+      await api("/auth/logout", {
+        method: "POST",
+        auth: false,
+        body: JSON.stringify({ refreshToken: t.refreshToken }),
+      }).catch(() => {});
     setTokens(null);
     setMe(null);
     setStage("phone");
@@ -135,18 +162,18 @@ export default function AccountPage() {
           <Field label="Mobile phone">
             <Input type="tel" inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={stage !== "phone"} placeholder="(319) 555-0100" />
           </Field>
-          {stage === "profile" && selection && selection.profiles.length > 0 && (
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Who&apos;s signing in?</div>
-              {selection.profiles.map((p) => (
-                <Button key={p.id} variant="secondary" className="w-full" disabled={busy} onClick={() => complete({ customerId: p.id })}>
-                  {p.firstName} {p.lastInitial ? `${p.lastInitial}.` : ""}
-                </Button>
-              ))}
-            </div>
+          {stage === "stepUp" && selection?.emailHint && (
+            <EmailStepUp selectionToken={selection.token} emailHint={selection.emailHint} deviceName="web" onSignedIn={(t) => next(t)} onHelp={() => setStage("help")} />
+          )}
+          {stage === "help" && (
+            <SignInHelpForm
+              selectionToken={selection?.token}
+              phone={phone}
+              intro={selection ? "This number hasn't been used here in a long time, so the shop needs to confirm it's you." : undefined}
+            />
           )}
           {stage === "profile" && (
-            <Field label="First name" hint={selection?.profiles.length ? "Someone else on this phone? Add your name." : "New here? Tell us what to call you."}>
+            <Field label="First name" hint="What's your first name? If someone else on this phone already has a profile, yours is kept separate.">
               <Input value={firstName} onChange={(e) => setFirstName(e.target.value)} />
             </Field>
           )}
@@ -156,7 +183,7 @@ export default function AccountPage() {
             </Field>
           )}
           {error && <p className="text-sm text-red-600">{error}</p>}
-          {stage === "phone" ? (
+          {stage === "stepUp" || stage === "help" ? null : stage === "phone" ? (
             <Button className="w-full" disabled={busy || phone.replace(/\D/g, "").length < 10} onClick={start}>
               Text me a code
             </Button>
@@ -168,6 +195,11 @@ export default function AccountPage() {
             <Button className="w-full" disabled={busy || !firstName.trim()} onClick={() => complete({ firstName })}>
               Continue
             </Button>
+          )}
+          {stage !== "help" && (
+            <button type="button" className="block text-xs text-zinc-500 underline" onClick={() => setStage("help")}>
+              I can&apos;t sign in
+            </button>
           )}
         </div>
       </div>
@@ -185,6 +217,7 @@ export default function AccountPage() {
           Sign out
         </Button>
       </div>
+      {me.identityCheckRequired && <IdentityCheckCard onVerified={loadMe} />}
       {loyalty?.enabled && (
         <div className="rounded-xl bg-ink-900 p-5 text-white">
           <div className="flex items-baseline justify-between">
@@ -204,17 +237,30 @@ export default function AccountPage() {
           </p>
         </div>
       )}
+      <EmailCard email={me.email} verified={!!me.emailVerified} onChanged={loadMe} />
       <MyBadges />
       <MyFamily parentName={me.firstName} />
       <MyCalendarFeed />
       {appts && <Rhythm upcoming={appts.upcoming} past={appts.past} />}
-      <List title="Upcoming" list={appts?.upcoming ?? []} empty={<Link href="/" className="text-brand-600 underline">Book a cut</Link>} />
+      <List
+        title="Upcoming"
+        list={appts?.upcoming ?? []}
+        empty={
+          <Link href="/" className="text-brand-600 underline">
+            Book a cut
+          </Link>
+        }
+      />
       <List title="Past visits" list={appts?.past ?? []} />
     </div>
   );
 }
 
-const STATUS_CLASS = { on_track: "bg-emerald-50 text-emerald-700", due: "bg-amber-50 text-amber-800", overdue: "bg-red-50 text-red-700" } as const;
+const STATUS_CLASS = {
+  on_track: "bg-emerald-50 text-emerald-700",
+  due: "bg-amber-50 text-amber-800",
+  overdue: "bg-red-50 text-red-700",
+} as const;
 
 /** How often they come in, from the completed visits the visit list returns (the latest 20 past appointments). */
 function Rhythm({ upcoming, past }: { upcoming: Appt[]; past: Appt[] }) {
@@ -225,7 +271,13 @@ function Rhythm({ upcoming, past }: { upcoming: Appt[]; past: Appt[] }) {
     upcoming.length > 0,
   );
   if (!c.lastVisit) return null;
-  const barbers = cadenceByBarber(done.map((a) => ({ at: a.startsAt, staffId: a.barber.displayName, name: a.barber.displayName })));
+  const barbers = cadenceByBarber(
+    done.map((a) => ({
+      at: a.startsAt,
+      staffId: a.barber.displayName,
+      name: a.barber.displayName,
+    })),
+  );
   return (
     <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200" data-testid="visit-rhythm">
       <div className="flex items-start justify-between gap-3">

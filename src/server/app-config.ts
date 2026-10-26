@@ -5,6 +5,7 @@
  */
 import { BRAND_NAME } from "@/domain/location-profile";
 import { appBaseUrl, demoMode } from "@/lib/deployment";
+import { appSwitches } from "./app-switches";
 import { AppError } from "./errors";
 
 export type AppPlatform = "ios" | "android";
@@ -54,7 +55,11 @@ export function assertSupportedClient(req: Request) {
   throw new AppError("upgrade_required", "Please update the app to keep booking.", { platform, minVersion, storeUrl });
 }
 
-export function appConfig(platform: AppPlatform | null, version: string | null) {
+export async function appConfig(platform: AppPlatform | null, version: string | null) {
+  return { ...appConfigFromEnv(platform, version), features: await appSwitches() };
+}
+
+export function appConfigFromEnv(platform: AppPlatform | null, version: string | null) {
   const ios = platformConfig("ios");
   const android = platformConfig("android");
   const mine = platform === "ios" ? ios : platform === "android" ? android : null;

@@ -4,6 +4,7 @@ import { appointments, customers, shopHours, shopPhotos, shops, staff, staffSche
 import { listedPublicly, takesOnlineBookings } from "@/domain/location-lifecycle";
 import { shopPhotoUrl } from "@/domain/location-profile";
 import { minutesToHHMM, todayLocal } from "@/lib/time";
+import { needsIdentityCheck, type SignInResult } from "./auth/customer";
 import { getAppointmentByCode } from "./booking";
 import { getShop, shopBarbers, shopCatalog } from "./catalog";
 import { notFound } from "./errors";
@@ -99,6 +100,8 @@ export async function publicMe(customerId: string) {
     lastName: c.lastName,
     phone: c.phone,
     email: c.email,
+    emailVerified: !!(c.email && c.emailVerifiedAt),
+    identityCheckRequired: await needsIdentityCheck(c),
     smsOptIn: c.smsOptIn,
     emailOptIn: c.emailOptIn,
     preferences: {
@@ -109,7 +112,7 @@ export async function publicMe(customerId: string) {
   };
 }
 
-export async function tokenResponse(r: { isNew: boolean; accessToken: string; refreshToken: string; tokenType: "Bearer"; expiresIn: number; customer: { id: string } }) {
+export async function tokenResponse(r: { isNew: boolean; accessToken: string; refreshToken: string; tokenType: "Bearer"; expiresIn: number; customer: { id: string }; identityCheckRequired?: boolean }) {
   return {
     needsProfile: false,
     isNew: r.isNew,
@@ -117,8 +120,15 @@ export async function tokenResponse(r: { isNew: boolean; accessToken: string; re
     refreshToken: r.refreshToken,
     tokenType: r.tokenType,
     expiresIn: r.expiresIn,
+    identityCheckRequired: r.identityCheckRequired ?? false,
     customer: await publicMe(r.customer.id),
   };
+}
+
+/** Whatever a sign-in step returned, as the API sends it: tokens, or the next step. */
+export async function signInResponse(r: SignInResult) {
+  if ("accessToken" in r) return tokenResponse(r);
+  return r;
 }
 
 export async function myAppointments(customerId: string, now = new Date()) {
