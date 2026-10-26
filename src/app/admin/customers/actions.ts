@@ -12,6 +12,7 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, authorize, can, requireStaff } from "@/server/auth/staff";
 import { contactClient } from "@/server/client-contact";
+import { recordConsentChange, staffConsentContext } from "@/server/consent-events";
 import { searchClients } from "@/server/client-search";
 import { deleteSearch, saveSearch } from "@/server/saved-searches";
 import { ClientPolicy, clientPolicy, displayFull, entered, recordClientAccess, shownField } from "@/server/client-privacy";
@@ -122,6 +123,7 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
     };
     await db.transaction(async (tx) => {
       await tx.update(customers).set(values).where(eq(customers.id, id));
+      await recordConsentChange(tx, { id, phone: values.phone ?? null, email: values.email ?? null }, before, values, staffConsentContext(ctx.staff.id));
       await stampRecordNote(tx, id, ctx.staff.id, ctx.currentShopId);
     });
     const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -192,7 +194,7 @@ export async function createCustomerAction(raw: z.input<typeof Profile>) {
         { firstName: p.firstName, lastName: p.lastName, phone: fields.phone, email: fields.email, smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn },
         p.homeShopId ?? ctx.currentShopId,
         tx,
-        { allowNoContact: true },
+        { allowNoContact: true, consent: staffConsentContext(ctx.staff.id) },
       );
       await tx
         .update(customers)

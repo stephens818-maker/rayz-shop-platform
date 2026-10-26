@@ -6,6 +6,7 @@ import { body, json, options, route } from "@/server/api";
 import { UpdateMe } from "@/server/api-schemas";
 import { requireCustomer } from "@/server/auth/customer";
 import { resolveStaffRef } from "@/server/catalog";
+import { recordConsentChange, requestConsentContext } from "@/server/consent-events";
 import { AppError, notFound } from "@/server/errors";
 import { publicMe } from "@/server/public";
 
@@ -34,6 +35,11 @@ export const PATCH = route(async (req) => {
     if (b.preferredBarberId && (!barber || !barber.active || !barber.isBookable)) throw notFound("Barber");
     patch.preferredStaffId = barber?.id ?? null;
   }
-  if (Object.keys(patch).length) await db.update(customers).set(patch).where(eq(customers.id, id));
+  if (Object.keys(patch).length)
+    await db.transaction(async (tx) => {
+      const [before] = await tx.select().from(customers).where(eq(customers.id, id)).for("update");
+      await tx.update(customers).set(patch).where(eq(customers.id, id));
+      await recordConsentChange(tx, { id, phone: before.phone, email: patch.email === null ? null : before.email }, before, patch, requestConsentContext(req));
+    });
   return json(await publicMe(id));
 });

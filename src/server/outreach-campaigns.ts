@@ -28,8 +28,8 @@ const MAX_PER_CAMPAIGN = 40;
 let consentCache: { at: number; sms: boolean; email: boolean } | null = null;
 
 /**
- * Whether marketing consent is recorded at all. The consent columns come with the customer API
- * (PR #8); until they exist nobody has agreed, so nothing marketing is texted or emailed.
+ * Whether marketing consent is recorded at all (core_0085). On a database without the columns
+ * nobody has agreed, so nothing marketing is texted or emailed.
  */
 export async function marketingConsent(): Promise<{ sms: boolean; email: boolean }> {
   if (consentCache && Date.now() - consentCache.at < 60_000) return consentCache;

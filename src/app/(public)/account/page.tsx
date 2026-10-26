@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { MyBadges } from "@/components/my-badges";
 import { MyCalendarFeed } from "@/components/my-calendar-feed";
 import { MyFamily } from "@/components/my-family";
+import { ConsentCard } from "@/components/consent-card";
 import { EmailCard, IdentityCheckCard, PhoneSignIn } from "@/components/sign-in-recovery";
 import { Button, StatusBadge } from "@/components/ui";
 import { VISIT_STATUS_LABEL, cadenceByBarber, cadenceOf } from "@/domain/visit-cadence";
@@ -116,6 +117,7 @@ export default function AccountPage() {
         </div>
       )}
       <EmailCard email={me.email} verified={!!me.emailVerified} onChanged={loadMe} />
+      <ConsentCard key={`${me.email}:${me.emailVerified}`} />
       <MyBadges />
       <MyFamily parentName={me.firstName} />
       <MyCalendarFeed />

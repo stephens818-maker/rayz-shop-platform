@@ -50,7 +50,7 @@ async function main() {
     call_logs, messages, message_threads, contact_opt_outs, rebook_links, appointment_outreach, call_ins,
     audit_log, import_runs, notification_jobs, loyalty_ledger, loyalty_rewards, loyalty_accounts,
     tip_ledger, tip_payouts, tip_payout_batches, staff_payout_accounts, cash_drawers, refunds, payments, sale_items, sales, gift_card_ledger, gift_cards, promo_codes,
-    client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, identity_help_requests, api_rate_events, customer_squire_ids, customers,
+    client_ratings, waitlist_entries, appointment_items, appointments, refresh_tokens, otp_codes, identity_help_requests, api_rate_events, consent_events, customer_devices, customer_squire_ids, customers,
     inventory_ledger, po_receipt_lines, po_receipts, purchase_order_lines, purchase_orders, vendor_products, vendors,
     stock_transfer_lines, stock_transfers, stock_count_lines, stock_counts, shop_products, products, shop_services, services, time_blocks, time_block_series, time_off_requests, block_reasons,
     location_group_shops, location_groups, staff_group_members, staff_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours,

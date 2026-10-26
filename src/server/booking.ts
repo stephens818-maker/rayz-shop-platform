@@ -51,6 +51,7 @@ import { queueStaffAlert } from "./staff-alerts";
 import { cleanNotificationPrefs, reminderHours } from "@/domain/staff-notifications";
 import { shopReminderHours } from "./location-defaults";
 import { bookingPlans, shopInterval, staffBookingOptions, staffIntervals, toStaffPlans } from "./timing";
+import { ConsentContext, staffConsentContext } from "./consent-events";
 
 export const ACTIVE_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as const;
 
@@ -297,6 +298,8 @@ export interface CreateAppointmentInput {
    * into buffer time or outside hours. Never over another service or time off. Audit-logged.
    */
   squeezeIn?: boolean;
+  /** Where the client's consent answers came from (the app or website); unset is staff for staff bookings, else the website. */
+  consent?: ConsentContext;
 }
 
 /** Why this barber can't be booked at this start, in words the front desk can act on. */
@@ -350,7 +353,10 @@ export async function bookInTx(input: CreateAppointmentInput, tx: DBorTx) {
     const customer = input.customerId
       ? await tx.query.customers.findFirst({ where: eq(customers.id, input.customerId) })
       : input.customer
-        ? await findOrCreateCustomer(input.customer, r.shop.id, tx, { allowNoContact: input.allowNoContact })
+        ? await findOrCreateCustomer(input.customer, r.shop.id, tx, {
+            allowNoContact: input.allowNoContact,
+            consent: input.consent ?? (staffOverride ? staffConsentContext(input.actor.staffId) : { source: "web" }),
+          })
         : null;
     if (input.customerId && !customer) throw notFound("Customer");
 
@@ -837,7 +843,7 @@ export async function quickWalkIn(input: {
   }
 
   const wait = await estimateWait(shop.id, candidates.map((c) => c.id), now);
-  const client = known ?? (await db.transaction((tx) => findOrCreateCustomer(customer, shop.id, tx, { allowNoContact: true, smsOptInIfNew: true })));
+  const client = known ?? (await db.transaction((tx) => findOrCreateCustomer(customer, shop.id, tx, { allowNoContact: true, smsOptInIfNew: true, consent: staffConsentContext(input.actor.staffId) })));
   const [entry] = await db
     .insert(waitlistEntries)
     .values({

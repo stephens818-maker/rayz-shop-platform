@@ -6,9 +6,12 @@ import { icsCalendar, locationDescription } from "@/domain/ics";
 import { OPT_OUT_REASON, clientEmailHtml, reminderTimes, withUnsubscribe } from "@/domain/notification-delivery";
 import { outreachRules, type OutreachRules } from "@/domain/outreach";
 import { appBaseUrl } from "@/lib/deployment";
-import { formatDateTime } from "@/lib/time";
+import { nextMarketingTime } from "@/domain/quiet-hours";
+import { SHOP_TZ, formatDateTime } from "@/lib/time";
 import { SUPPRESSION_ERROR, oneClickUnsubscribeUrl, suppressedEmails, takesUnsubscribe, unsubscribeUrl } from "./email-events";
+import { loadMarketingSettings } from "../marketing/settings";
 import { emailProvider, pushProvider, smsProvider, voiceProvider } from "./providers";
+import { PermanentSendError } from "./push";
 
 export type NotificationKind =
   | "confirmation"
@@ -65,6 +68,27 @@ export type NotificationKind =
   | "staff_invite"
   /** A staff milestone, to the brand and the person's managers. */
   | "milestone";
+
+/**
+ * Texts and push sent under marketing consent. They go out only 8 AM to 9 PM where the recipient is
+ * (domain/quiet-hours.ts), checked again at send time since a job can wait in the queue, and through
+ * the marketing Messaging Service (its own 10DLC campaign) when TWILIO_MARKETING_MESSAGING_SERVICE_SID is set.
+ */
+const MARKETING_SMS = new Set<string>(["marketing", "fill_offer", "rebook_nudge"]);
+const quietHoursApply = (j: { kind: string; channel: string }) => MARKETING_SMS.has(j.kind) && (j.channel === "sms" || j.channel === "push");
+const QUIET_ERROR = "Not sent: the brand's quiet hours leave no time to send marketing";
+
+/** The number a client's messages go to (the parent's for a child), for their local time. */
+async function householdPhones(customerIds: string[], tx: DBorTx) {
+  if (!customerIds.length) return new Map<string, string | null>();
+  const rows = (await tx.execute(
+    sql`select c.id, coalesce(g.phone, c.phone) phone from customers c left join customers g on g.id = c.guardian_id where c.id in (${sql.join(
+      [...new Set(customerIds)].map((i) => sql`${i}::uuid`),
+      sql`, `,
+    )})`,
+  )) as unknown as { id: string; phone: string | null }[];
+  return new Map(rows.map((r) => [r.id, r.phone]));
+}
 
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
 const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);
@@ -178,11 +202,26 @@ export function inviteAttachment(kind: NotificationKind, c: AppointmentMessageCo
   return [{ filename: `rayz-${c.code}.ics`, contentType: "text/calendar; charset=utf-8; method=PUBLISH", content: Buffer.from(ics, "utf8").toString("base64") }];
 }
 
-function recipients(c: AppointmentMessageContext) {
-  const out: { channel: "sms" | "email"; to: string }[] = [];
+async function recipients(c: AppointmentMessageContext, tx: DBorTx) {
+  const out: { channel: "sms" | "email" | "push"; to: string }[] = [];
   if (c.phone && c.smsOptIn) out.push({ channel: "sms", to: c.phone });
   if (c.email && c.emailOptIn) out.push({ channel: "email", to: c.email });
+  for (const id of await pushDevices(c.customerId, tx)) out.push({ channel: "push", to: id });
   return out;
+}
+
+/**
+ * The app devices that get push about a client's appointments: the household's (a child's go to the
+ * parent's phone), when its holder turned appointment notifications on and the phone allows them.
+ */
+export async function pushDevices(customerId: string | null, tx: DBorTx = db): Promise<string[]> {
+  if (!customerId) return [];
+  const rows = (await tx.execute(sql`
+    select d.id from customer_devices d join customers h on h.id = d.customer_id
+    where h.id = (select coalesce(c.guardian_id, c.id) from customers c where c.id = ${customerId}::uuid)
+      and h.push_transactional and h.deleted_at is null and d.push_enabled and d.revoked_at is null
+    order by d.last_seen_at desc limit 5`)) as unknown as { id: string }[];
+  return rows.map((r) => r.id);
 }
 
 /** Cancel any reminders that haven't gone out yet (used on cancel / reschedule / no-show). */
@@ -246,7 +285,7 @@ export async function moveReminders(appointmentIds: string[], c: AppointmentMess
 }
 
 async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: AppointmentMessageContext, tx: DBorTx, extra?: MergeValues, now: Date = new Date()) {
-  const to = recipients(c);
+  const to = jobs.length ? await recipients(c, tx) : [];
   const saved = jobs.length && to.length ? await savedTemplates(tx) : {};
   const footer = locationFooter(c, mergeValues(c, extra));
   const rows = jobs.flatMap((j) =>
@@ -259,7 +298,7 @@ async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: Ap
         kind: j.kind,
         channel: r.channel,
         to: r.to,
-        subject: r.channel === "email" ? m.subject : null,
+        subject: r.channel === "sms" ? null : m.subject,
         body: r.channel === "email" && isTemplateKind(j.kind) && footer ? `${m.body}\n${footer}` : m.body,
         attachments: r.channel === "email" ? inviteAttachment(j.kind, c, extra, now) : null,
         runAt: j.runAt,
@@ -277,7 +316,7 @@ export async function enqueueAppointmentMessage(kind: NotificationKind, c: Appoi
 
 /** The same, returning the queued jobs' ids so the caller can send them at once. */
 export async function queueAppointmentMessage(kind: NotificationKind, c: AppointmentMessageContext, tx: DBorTx = db, now: Date = new Date(), extra?: MergeValues): Promise<string[]> {
-  const to = recipients(c);
+  const to = await recipients(c, tx);
   if (!to.length) return [];
   const m = renderMessage(kind, c, await savedTemplates(tx), extra);
   const footer = locationFooter(c, mergeValues(c, extra));
@@ -288,7 +327,7 @@ export async function queueAppointmentMessage(kind: NotificationKind, c: Appoint
     kind,
     channel: r.channel,
     to: r.to,
-    subject: r.channel === "email" ? m.subject : null,
+    subject: r.channel === "sms" ? null : m.subject,
     body: r.channel === "email" && isTemplateKind(kind) && footer ? `${m.body}\n${footer}` : m.body,
     attachments: r.channel === "email" ? inviteAttachment(kind, c, extra, now) : null,
     runAt: now,
@@ -363,7 +402,7 @@ export async function processDueJobs(
   const email = emailProvider();
   const voice = voiceProvider();
   const push = pushProvider();
-  const stats = { sent: 0, suppressed: 0, failed: 0 };
+  const stats = { sent: 0, suppressed: 0, failed: 0, deferred: 0 };
 
   await db.transaction(async (tx) => {
     const due = await tx
@@ -382,9 +421,13 @@ export async function processDueJobs(
       .for("update", { skipLocked: true });
 
     const shopIds = [...new Set(due.map((j) => j.shopId).filter((x): x is string => !!x))];
-    const lines = new Map(
-      shopIds.length ? (await tx.select({ id: shops.id, n: shops.twilioNumber }).from(shops).where(inArray(shops.id, shopIds))).map((r) => [r.id, r.n]) : [],
-    );
+    const shopRows = shopIds.length ? await tx.select({ id: shops.id, n: shops.twilioNumber, tz: shops.timezone }).from(shops).where(inArray(shops.id, shopIds)) : [];
+    const lines = new Map(shopRows.map((r) => [r.id, r.n]));
+    const zones = new Map(shopRows.map((r) => [r.id, r.tz]));
+    const timed = due.filter((j) => quietHoursApply(j));
+    const brandQuiet = timed.length ? await loadMarketingSettings(tx) : null;
+    const pushPhones = await householdPhones(timed.filter((j) => j.channel === "push" && j.customerId).map((j) => j.customerId!), tx);
+    const marketingService = process.env.TWILIO_MARKETING_MESSAGING_SERVICE_SID?.trim() || null;
     const phones = [...new Set(due.filter((j) => j.channel !== "email").map((j) => j.to))];
     const optedOut = new Set(
       phones.length ? (await tx.select({ phone: contactOptOuts.phone, channel: contactOptOuts.channel }).from(contactOptOuts).where(inArray(contactOptOuts.phone, phones))).map((o) => `${o.channel}:${o.phone}`) : [],
@@ -406,6 +449,19 @@ export async function processDueJobs(
         stats.suppressed++;
         continue;
       }
+      if (quietHoursApply(job)) {
+        const phone = job.channel === "sms" ? job.to : job.customerId ? (pushPhones.get(job.customerId) ?? null) : null;
+        const at = nextMarketingTime(now, phone, (job.shopId && zones.get(job.shopId)) || SHOP_TZ, brandQuiet);
+        if (!at || at.getTime() !== now.getTime()) {
+          await tx
+            .update(notificationJobs)
+            .set(at ? { runAt: at } : { status: "suppressed", lastError: QUIET_ERROR })
+            .where(eq(notificationJobs.id, job.id));
+          if (at) stats.deferred++;
+          else stats.suppressed++;
+          continue;
+        }
+      }
       if (!provider.enabled) {
         await tx
           .update(notificationJobs)
@@ -418,13 +474,16 @@ export async function processDueJobs(
         const line = job.shopId ? (lines.get(job.shopId) ?? null) : null;
         const r =
           job.channel === "sms"
-            ? await sms.sendSms(job.to, job.body, { from: line })
+            ? await sms.sendSms(job.to, job.body, MARKETING_SMS.has(job.kind) && marketingService ? { from: null, messagingServiceSid: marketingService } : { from: line })
             : job.channel === "voice"
               ? AUTOMATED_CALLS.has(job.kind) && job.outreachId
                 ? await voice.outreachCall(job.to, { outreachId: job.outreachId, jobId: job.id, callerId: line })
                 : await voice.bridgeCall(job.to, job.subject, { jobId: job.id, callerId: line })
               : job.channel === "push"
-                ? await push.sendPush(job.to, job.subject ?? "Ray'z Barber Shop", job.body)
+                ? await push.sendPush(job.to, job.subject ?? "Ray'z Barber Shop", job.body, {
+                    data: { kind: job.kind, ...(job.appointmentId ? { appointmentId: job.appointmentId } : {}) },
+                    marketing: MARKETING_SMS.has(job.kind),
+                  })
                 : await sendEmailJob(email, job);
         await tx
           .update(notificationJobs)
@@ -436,7 +495,7 @@ export async function processDueJobs(
         await tx
           .update(notificationJobs)
           .set({
-            status: attempts >= 5 ? "failed" : "pending",
+            status: attempts >= 5 || e instanceof PermanentSendError ? "failed" : "pending",
             attempts,
             provider: provider.name,
             lastError: (e as Error).message,

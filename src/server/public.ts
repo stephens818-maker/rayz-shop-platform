@@ -104,6 +104,10 @@ export async function publicMe(customerId: string) {
     identityCheckRequired: await needsIdentityCheck(c),
     smsOptIn: c.smsOptIn,
     emailOptIn: c.emailOptIn,
+    pushTransactional: c.pushTransactional,
+    smsMarketingOptIn: c.smsMarketingOptIn,
+    emailMarketingOptIn: c.emailMarketingOptIn,
+    pushMarketing: c.pushMarketing,
     preferences: {
       note: c.preferencesNote,
       updatedAt: c.preferencesUpdatedAt?.toISOString() ?? null,

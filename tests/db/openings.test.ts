@@ -64,13 +64,7 @@ const blast = async (id: string) => (await m.db.db.query.marketingCampaigns.find
 const openTimes = async (now: Date, date = fx.day) => (await m.booking.getAvailability({ shopRef: fx.cv, date, serviceId: fx.service, barberRef: fx.mk, now })).slots.length;
 
 async function consent(on: boolean) {
-  if (on) {
-    await exec(sql`alter table customers add column if not exists sms_marketing_opt_in boolean not null default false`);
-    await exec(sql`alter table customers add column if not exists email_marketing_opt_in boolean not null default false`);
-    await exec(sql`alter table customers add column if not exists push_marketing boolean not null default false`);
-  } else {
-    for (const c of ["sms_marketing_opt_in", "email_marketing_opt_in", "push_marketing"]) await exec(sql.raw(`alter table customers drop column if exists ${c}`));
-  }
+  if (!on) await exec(sql`update customers set sms_marketing_opt_in = false, email_marketing_opt_in = false, push_marketing = false where sms_marketing_opt_in or email_marketing_opt_in or push_marketing`);
   C.resetConsentCache();
 }
 

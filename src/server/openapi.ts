@@ -12,6 +12,7 @@ const err = (description: string) => ({ description, content: jsonContent("Error
 const ok = (name: string, description = "OK") => ({ description, content: jsonContent(name) });
 
 const shopParam = { name: "shop", in: "path", required: true, description: "Shop slug (e.g. coralville) or ID", schema: { type: "string" } };
+const deviceParam = { name: "id", in: "path", required: true, description: "Device ID from POST /me/devices", schema: { type: "string", format: "uuid" } };
 const codeParam = { name: "code", in: "path", required: true, description: "Appointment code", schema: { type: "string" } };
 const queryParams = (s: z.ZodObject) =>
   Object.entries(s.shape).map(([name, f]) => {
@@ -55,6 +56,13 @@ export function openApiDocument(baseUrl: string) {
     DeletionPreview: S.DeletionPreview,
     DeleteAccount: S.DeleteAccount,
     Deleted: S.Deleted,
+    ConsentState: S.ConsentStateSchema,
+    SetConsent: S.SetConsent,
+    Device: S.DeviceSchema,
+    DeviceList: z.object({ devices: z.array(S.DeviceSchema) }),
+    DeviceResponse: z.object({ device: S.DeviceSchema }),
+    RegisterDevice: S.RegisterDevice,
+    UpdateDevice: S.UpdateDevice,
     EmailChangeStart: S.EmailChangeStart,
     EmailChangeVerify: S.EmailChangeVerify,
     RefreshBody: S.RefreshBody,
@@ -86,7 +94,7 @@ export function openApiDocument(baseUrl: string) {
         "",
         "**Changes in 1.1 (additive):** `GET /app/config`; `bookingMode` and `externalBookingUrl` on shops (send clients to the external URL while a shop still books on its old site); `preferences` on `/me` with `preferencesNote` and `preferredBarberId` on `PATCH /me`; the `upgrade_required` error code.",
         "",
-        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site.",
+        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`.",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
@@ -269,6 +277,33 @@ export function openApiDocument(baseUrl: string) {
           requestBody: { required: true, content: jsonContent("EmailChangeVerify") },
           responses: { 200: ok("Me"), 401: err("Bad/expired code") },
         },
+      },
+      "/me/consent": {
+        get: { tags: ["Me"], summary: "Each message channel: on or off, the wording to show, and its version", security: bearer, responses: { 200: ok("ConsentState") } },
+        put: {
+          tags: ["Me"],
+          summary: "Turn channels on or off. Every change is recorded with the wording's version, the app and its version",
+          description:
+            "Marketing on each channel is its own yes, never implied by appointment texts or emails, and Squire imports never grant it. A yes needs the textVersion from GET /me/consent (400 with details.textVersion when the wording changed). A yes to marketing texts after a STOP stays blocked until the number texts START (blockedBy: stop). A yes to marketing email needs a verified email. Turning appointment notifications on (push_transactional) is how the app gets push about its bookings; register the phone with POST /me/devices too.",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("SetConsent") },
+          responses: { 200: ok("ConsentState"), 400: err("Outdated wording, no phone, or unverified email (error.details.field)"), 403: err("A child profile") },
+        },
+      },
+      "/me/devices": {
+        get: { tags: ["Me"], summary: "Signed-in devices that can get push", security: bearer, responses: { 200: ok("DeviceList") } },
+        post: {
+          tags: ["Me"],
+          summary: "Register this phone's push token after sign-in (and on every launch: it updates lastSeenAt)",
+          description: "A token belongs to one account: registering it while signed in as someone else moves it. Keep the returned id to update or revoke it. Up to 10 devices per account; the oldest are revoked.",
+          security: bearer,
+          requestBody: { required: true, content: jsonContent("RegisterDevice") },
+          responses: { 201: ok("DeviceResponse"), 400: err("Provider doesn't match the platform") },
+        },
+      },
+      "/me/devices/{id}": {
+        patch: { tags: ["Me"], summary: "A rotated token, the phone's notification permission, or a new app version", security: bearer, parameters: [deviceParam], requestBody: { required: true, content: jsonContent("UpdateDevice") }, responses: { 200: ok("DeviceResponse"), 404: err("Not found") } },
+        delete: { tags: ["Me"], summary: "Revoke the device: call before signing out", security: bearer, parameters: [deviceParam], responses: { 204: { description: "Revoked" }, 404: err("Not found") } },
       },
       "/me/appointments": { get: { tags: ["Me"], summary: "My upcoming and past appointments", security: bearer, responses: { 200: ok("AppointmentList") } } },
       "/me/loyalty": { get: { tags: ["Me"], summary: "Loyalty progress and available rewards (brand-wide)", security: bearer, responses: { 200: ok("Loyalty") } } },

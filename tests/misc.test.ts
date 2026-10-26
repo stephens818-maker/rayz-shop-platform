@@ -60,6 +60,10 @@ describe("OpenAPI", () => {
       "/me/identity-check",
       "/me/email/start",
       "/me/email/verify",
+      "/me/delete",
+      "/me/consent",
+      "/me/devices",
+      "/me/devices/{id}",
       "/me/loyalty",
     ]) {
       expect(doc.paths).toHaveProperty([p]);

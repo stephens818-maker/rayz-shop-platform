@@ -17,6 +17,8 @@ import {
   clientNotes,
   clientPhotos,
   clientRatings,
+  consentEvents,
+  customerDevices,
   customerTags,
   customers,
   giftCards,
@@ -28,7 +30,9 @@ import {
   refreshTokens,
   sales,
 } from "@/db/schema";
+import { CONSENT_MARKERS } from "@/domain/consent-texts";
 import { Actor, audit } from "./audit";
+import { recordConsentChange } from "./consent-events";
 import { AppError, notFound } from "./errors";
 import { loyaltyBalance } from "./loyalty";
 
@@ -101,10 +105,12 @@ export async function deletionPreview(customerId: string, profileId?: string | n
       ...(upcoming.length ? [`${upcoming.length} upcoming appointment${upcoming.length === 1 ? " is" : "s are"} cancelled.`] : []),
       ...(loyalty && !loyalty.household && (loyalty.progressCents > 0 || loyalty.availableCents > 0) ? ["Your rewards progress and any unused rewards are lost."] : []),
       ...(cards.length ? ["Gift cards keep their balance and still work with their code, but they're no longer linked to you."] : []),
-      "You're signed out everywhere, and your phone and email are removed. Booking again later starts a new profile.",
+      "You're signed out everywhere, your devices stop getting notifications, and your phone and email are removed. Booking again later starts a new profile.",
     ],
   };
 }
+
+const NO_CONSENT = { smsOptIn: false, emailOptIn: false, smsMarketingOptIn: false, emailMarketingOptIn: false, pushMarketing: false, pushTransactional: false };
 
 async function anonymize(tx: DBorTx, id: string, now: Date) {
   await tx
@@ -118,6 +124,11 @@ async function anonymize(tx: DBorTx, id: string, now: Date) {
     .where(and(eq(notificationJobs.customerId, id), eq(notificationJobs.status, "pending")));
   await tx.delete(messageThreads).where(eq(messageThreads.customerId, id));
   await tx.delete(refreshTokens).where(eq(refreshTokens.customerId, id));
+  await tx.update(customerDevices).set({ revokedAt: now, pushEnabled: false }).where(and(eq(customerDevices.customerId, id), isNull(customerDevices.revokedAt)));
+  // The consent record stays as proof of what they agreed to and when, without their phone or email.
+  const [c] = await tx.select().from(customers).where(eq(customers.id, id));
+  if (c) await recordConsentChange(tx, { id, phone: null, email: null }, c, NO_CONSENT, { source: "web", textVersion: CONSENT_MARKERS.deleted });
+  await tx.update(consentEvents).set({ phone: null, email: null }).where(eq(consentEvents.customerId, id));
   await tx.delete(clientPhotos).where(eq(clientPhotos.customerId, id));
   await tx.delete(customerTags).where(eq(customerTags.customerId, id));
   await tx.delete(clientNotes).where(eq(clientNotes.customerId, id));
@@ -147,6 +158,10 @@ async function anonymize(tx: DBorTx, id: string, now: Date) {
       customFields: {},
       smsOptIn: false,
       emailOptIn: false,
+      smsMarketingOptIn: false,
+      emailMarketingOptIn: false,
+      pushMarketing: false,
+      pushTransactional: false,
       preferredStaffId: null,
       referredById: null,
       deletedAt: now,

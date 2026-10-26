@@ -97,7 +97,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   vi.useRealTimers();
-  if (consentColumn) await m.db.db.execute(m.drizzle.sql`alter table customers drop column if exists sms_marketing_opt_in`);
+  if (consentColumn) await m.db.db.execute(m.drizzle.sql`update customers set sms_marketing_opt_in = false where sms_marketing_opt_in`);
   await m?.db.closeDb();
 });
 
@@ -106,7 +106,7 @@ describe("Today alerts", () => {
     const alerts = await alertsFor(ids.michelle);
     const idle = alerts.find((a) => a.key === `idle_chairs:${shop.coralville}:${day}`)!;
     expect(idle.items?.map((i) => i.label)).toContain("Makenna");
-    expect(idle.detail).toMatch(/Marketing-text consent isn't collected yet/);
+    expect(idle.detail).toMatch(/none agreed to marketing texts. Call them through the shop line/);
     expect(idle.action).toBeUndefined();
 
     const behind = alerts.find((a) => a.type === "running_behind" && a.key.includes(ids.makenna))!;
@@ -212,7 +212,6 @@ describe("Today alerts", () => {
   });
 
   it("texts clients due for a cut about the open chair only once they've agreed to marketing, once a week", async () => {
-    await m.db.db.execute(m.drizzle.sql`alter table customers add column if not exists sms_marketing_opt_in boolean not null default false`);
     consentColumn = true;
     await m.db.db.execute(m.drizzle.sql`update customers set sms_marketing_opt_in = true where id = ${fx.regular}`);
     now = new Date(now.getTime() + 2 * 60_000);

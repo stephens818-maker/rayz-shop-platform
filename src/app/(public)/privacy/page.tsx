@@ -101,6 +101,7 @@ export default function PrivacyPage() {
         <li>Sales, payment and tip records: 7 years, as tax law requires. After you delete your account they&apos;re kept without your name, phone or email.</li>
         <li>Text and email logs: up to 2 years. Sign-in codes expire after 10 minutes.</li>
         <li>A phone number that replied STOP stays on our do-not-text list so we keep honoring it.</li>
+        <li>Consent records stay as proof of what you agreed to and when. After you delete your account they&apos;re kept without your phone or email.</li>
         <li>Backups are encrypted and overwritten within 35 days.</li>
       </ul>
 

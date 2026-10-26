@@ -6,6 +6,7 @@ import { db, Tx } from "@/db";
 import {
   appointmentItems,
   appointments,
+  consentEvents,
   customerSquireIds,
   customers,
   giftCardLedger,
@@ -23,6 +24,7 @@ import {
   staffAccessShops,
   staffShops,
 } from "@/db/schema";
+import { CONSENT_MARKERS } from "@/domain/consent-texts";
 import { LoyaltyConfig, rewardExpiry } from "@/domain/loyalty";
 import { appointmentCode } from "@/lib/ids";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
@@ -30,6 +32,7 @@ import { SHOP_TZ, localDateOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { roleByKey } from "./auth/access";
 import { EffectiveService, shopCatalog } from "./catalog";
+import { ConsentContext, recordConsentChange } from "./consent-events";
 import { Customer, matchCustomer, mergeNotes } from "./customers";
 import { isDoubleBookingError } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
@@ -588,6 +591,22 @@ async function applyLoyalty(c: Row, customerId: string, progressCents: number, r
 
 // ───────────────────────────── Clients ─────────────────────────────
 
+
+/**
+ * Squire's "accepts texts" and "accepts email" answers are appointment consent only (C20): marketing always
+ * needs its own yes, given here. Recorded as imported so the record shows where each consent came from.
+ */
+const IMPORT_CONSENT: ConsentContext = { source: "import", textVersion: CONSENT_MARKERS.import };
+
+/** The channels a client has turned on or off themselves, or had staff change, since being imported. */
+async function chosenHere(tx: Tx, customerId: string) {
+  const rows = await tx
+    .selectDistinct({ channel: consentEvents.channel })
+    .from(consentEvents)
+    .where(and(eq(consentEvents.customerId, customerId), ne(consentEvents.source, "import")));
+  return new Set<string>(rows.map((r) => r.channel));
+}
+
 async function importClient(c: Row, r: Record<string, string>): Promise<Outcome> {
   const n = nameOf(c, r);
   if (n.placeholder) throw new RowError("Placeholder client", `"${n.full}" is Squire's walk-in placeholder, not a client`);
@@ -626,6 +645,7 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
       })
       .returning();
     customerId = row.id;
+    await recordConsentChange(c.tx, row, {}, { smsOptIn: row.smsOptIn, emailOptIn: row.emailOptIn }, IMPORT_CONSENT);
     bump(c, "clientsCreated");
     outcome = "inserted";
   } else {
@@ -643,8 +663,10 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
         homeShopId: shop?.id ?? ex.homeShopId,
         preferredStaffId: preferredStaffId ?? ex.preferredStaffId,
       });
-      if (sms !== undefined) patch.smsOptIn = sms;
-      if (mail !== undefined) patch.emailOptIn = mail;
+      // A yes from Squire never overrides a choice the client made here since.
+      const ownChoice = sms || mail ? await chosenHere(c.tx, ex.id) : new Set<string>();
+      if (sms !== undefined && !(sms && ownChoice.has("sms_transactional"))) patch.smsOptIn = sms;
+      if (mail !== undefined && !(mail && ownChoice.has("email"))) patch.emailOptIn = mail;
     } else {
       // Another record for the same person: fill gaps only, and an explicit "no" from any record wins.
       Object.assign(patch, {
@@ -659,6 +681,7 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
     }
     if (since && since < ex.createdAt) patch.createdAt = since;
     await c.tx.update(customers).set(patch).where(eq(customers.id, ex.id));
+    await recordConsentChange(c.tx, { id: ex.id, phone: patch.phone ?? ex.phone, email: patch.email ?? ex.email }, ex, patch, IMPORT_CONSENT);
     bump(c, m.via === "squire_id" ? "clientsUpdated" : "duplicatesMerged");
     outcome = "updated";
   }

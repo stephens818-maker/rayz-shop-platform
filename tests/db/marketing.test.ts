@@ -93,16 +93,11 @@ afterAll(async () => {
   }
 });
 
-/** The customer app's marketing consent columns (PR #8). Core reads them and never writes them. */
+/** Marketing consent only the client gives (core_0085). Off: nobody in the test database has agreed to anything, and no app is signed in. */
 async function consent(on: boolean) {
-  if (on) {
-    await exec(sql`alter table customers add column if not exists sms_marketing_opt_in boolean not null default false`);
-    await exec(sql`alter table customers add column if not exists email_marketing_opt_in boolean not null default false`);
-    await exec(sql`alter table customers add column if not exists push_marketing boolean not null default false`);
-    await exec(sql`create table if not exists customer_devices (id uuid primary key default gen_random_uuid(), customer_id uuid not null references customers(id) on delete cascade, push_enabled boolean not null default true, revoked_at timestamptz, last_seen_at timestamptz)`);
-  } else {
-    await exec(sql`drop table if exists customer_devices`);
-    for (const c of ["sms_marketing_opt_in", "email_marketing_opt_in", "push_marketing"]) await exec(sql.raw(`alter table customers drop column if exists ${c}`));
+  if (!on) {
+    await exec(sql`update customers set sms_marketing_opt_in = false, email_marketing_opt_in = false, push_marketing = false where sms_marketing_opt_in or email_marketing_opt_in or push_marketing`);
+    await exec(sql`delete from customer_devices`);
   }
   C.resetConsentCache();
 }
@@ -126,7 +121,7 @@ async function client(o: ClientOpts = {}) {
     .returning();
   if (o.sms || o.email || o.push) {
     await exec(sql`update customers set sms_marketing_opt_in = ${!!o.sms}, email_marketing_opt_in = ${!!o.email}, push_marketing = ${!!o.push} where id = ${c.id}`);
-    if (o.push) await exec(sql`insert into customer_devices (customer_id, push_enabled, last_seen_at) values (${c.id}, true, now())`);
+    if (o.push) await exec(sql`insert into customer_devices (customer_id, platform, provider, token, push_enabled, last_seen_at) values (${c.id}, 'ios', 'apns', ${`test-token-${c.id}`}, true, now())`);
   }
   return c;
 }
@@ -299,7 +294,7 @@ describe("coupons at checkout", () => {
 });
 
 describe("the marketing engine", () => {
-  it("sends nothing until the customer app's marketing consent exists, then only to clients who agreed", async () => {
+  it("sends nothing to clients who haven't agreed to marketing, then only to clients who agreed", async () => {
     await consent(false);
     const lapsed = await turnOn("lapsed");
     const c = await client();

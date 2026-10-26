@@ -174,8 +174,12 @@ export const Me = z.object({
   email: z.string().nullable(),
   emailVerified: z.boolean().describe("Added in 1.2. Only a verified email signs in or matches a profile; emails typed at the shop or imported start unverified"),
   identityCheckRequired: z.boolean().describe("Added in 1.2. As on the token response: POST /me/identity-check before rewards can be redeemed"),
-  smsOptIn: z.boolean(),
-  emailOptIn: z.boolean(),
+  smsOptIn: z.boolean().describe("Appointment texts"),
+  emailOptIn: z.boolean().describe("Appointment emails"),
+  pushTransactional: z.boolean().describe("Added in 1.2. Appointment notifications in the app. Change consent with PUT /me/consent"),
+  smsMarketingOptIn: z.boolean().describe("Added in 1.2. Offer and opening texts, a separate yes from appointment texts"),
+  emailMarketingOptIn: z.boolean().describe("Added in 1.2"),
+  pushMarketing: z.boolean().describe("Added in 1.2"),
   preferences: z
     .object({
       note: z.string().nullable().describe("The client's own note to their barber. Staff see it beside, never mixed with, their own notes"),
@@ -256,6 +260,54 @@ export const DeleteAccount = z.object({
 export const Deleted = z.object({ deleted: z.literal(true), profiles: z.number().int() });
 export const EmailChangeStart = z.object({ email: z.string().email() });
 export const EmailChangeVerify = z.object({ email: z.string().email(), code: z.string().min(4).max(8) });
+const ConsentChannelEnum = z.enum(["sms_transactional", "email", "push_transactional", "sms_marketing", "email_marketing", "push_marketing"]);
+export const ConsentStateSchema = z.object({
+  channels: z.array(
+    z.object({
+      channel: ConsentChannelEnum,
+      label: z.string(),
+      marketing: z.boolean(),
+      granted: z.boolean(),
+      text: z.string().describe("Show this beside an unchecked box. Changing it changes textVersion"),
+      textVersion: z.string().describe("Send it back with a yes, so the record shows which wording was agreed to"),
+      changedAt: Instant.nullable(),
+      changedVia: z.enum(["ios", "android", "web", "pos", "import", "sms", "email"]).nullable(),
+      blockedBy: z.enum(["stop", "no_phone", "no_verified_email"]).nullable().describe("stop: the number replied STOP, so texts wait until it texts START"),
+    }),
+  ),
+});
+export const SetConsent = z.object({
+  changes: z
+    .array(z.object({ channel: ConsentChannelEnum, granted: z.boolean(), textVersion: z.string().max(60).optional().describe("Required for a yes: the version of the text shown") }))
+    .min(1)
+    .max(6),
+});
+export const DeviceSchema = z.object({
+  id: z.string().uuid(),
+  platform: z.enum(["ios", "android"]),
+  provider: z.enum(["apns", "fcm", "expo"]),
+  appVersion: z.string().nullable(),
+  osVersion: z.string().nullable(),
+  pushEnabled: z.boolean(),
+  lastSeenAt: Instant,
+  createdAt: Instant,
+});
+export const RegisterDevice = z.object({
+  platform: z.enum(["ios", "android"]),
+  provider: z.enum(["apns", "fcm", "expo"]).describe("apns on iOS, fcm on Android. expo tokens are stored but not sent to"),
+  token: z.string().min(8).max(4096),
+  appVersion: z.string().max(40).nullable().optional(),
+  osVersion: z.string().max(40).nullable().optional(),
+  locale: z.string().max(20).nullable().optional(),
+  pushEnabled: z.boolean().optional().describe("The phone's notification permission; default true"),
+});
+export const UpdateDevice = z.object({
+  token: z.string().min(8).max(4096).optional().describe("The OS rotated the token"),
+  pushEnabled: z.boolean().optional(),
+  appVersion: z.string().max(40).nullable().optional(),
+  osVersion: z.string().max(40).nullable().optional(),
+  locale: z.string().max(20).nullable().optional(),
+});
 export const RefreshBody = z.object({ refreshToken: z.string() });
 export const RefreshResponse = z.object({ accessToken: z.string(), refreshToken: z.string(), tokenType: z.literal("Bearer"), expiresIn: z.number().int() });
 export const UpdateMe = z.object({

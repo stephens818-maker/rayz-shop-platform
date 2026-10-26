@@ -20,7 +20,9 @@ import { MatchVia, pickMatch } from "@/domain/customers";
 import { DuplicateKind, DuplicateScore, planMerges, scoreDuplicate } from "@/domain/duplicates";
 import { goalOf, rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
+import { CONSENT_MARKERS } from "@/domain/consent-texts";
 import { Actor, audit } from "./audit";
+import { ConsentContext, recordConsentChange } from "./consent-events";
 import { AppError, notFound } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
 
@@ -93,7 +95,12 @@ export async function findOrCreateCustomer(
   input: CustomerInput,
   homeShopId: string | null,
   tx: DBorTx = db,
-  opts: { allowNoContact?: boolean; /** Consent for a brand-new record only (a walk-in who gave a number to be texted). */ smsOptInIfNew?: boolean } = {},
+  opts: {
+    allowNoContact?: boolean;
+    /** Consent for a brand-new record only (a walk-in who gave a number to be texted). */ smsOptInIfNew?: boolean;
+    /** Where a consent change came from, for the record; unset is staff at the shop. */
+    consent?: ConsentContext;
+  } = {},
 ): Promise<Customer> {
   const phone = normalizePhone(input.phone);
   const email = normalizeEmail(input.email);
@@ -113,12 +120,15 @@ export async function findOrCreateCustomer(
     if (input.emailOptIn !== undefined && input.emailOptIn !== existing.emailOptIn) patch.emailOptIn = input.emailOptIn;
     if (!existing.homeShopId && homeShopId) patch.homeShopId = homeShopId;
     if (Object.keys(patch).length) await tx.update(customers).set(patch).where(eq(customers.id, existing.id));
-    return { ...existing, ...patch };
+    const after = { ...existing, ...patch };
+    await recordConsentChange(tx, after, existing, patch, opts.consent ?? { source: "pos", textVersion: CONSENT_MARKERS.staff });
+    return after;
   }
   const [row] = await tx
     .insert(customers)
     .values({ firstName, lastName, phone, email, homeShopId, smsOptIn: input.smsOptIn ?? (!!phone && !!opts.smsOptInIfNew), emailOptIn: input.emailOptIn ?? false })
     .returning();
+  await recordConsentChange(tx, row, {}, { smsOptIn: row.smsOptIn, emailOptIn: row.emailOptIn }, opts.consent ?? { source: "pos", textVersion: CONSENT_MARKERS.staff });
   return row;
 }
 
@@ -246,6 +256,10 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
       notes: mergeNotes(keep.notes, drop.notes),
       smsOptIn: keep.smsOptIn && drop.smsOptIn,
       emailOptIn: keep.emailOptIn && drop.emailOptIn,
+      smsMarketingOptIn: keep.smsMarketingOptIn && drop.smsMarketingOptIn,
+      emailMarketingOptIn: keep.emailMarketingOptIn && drop.emailMarketingOptIn,
+      pushMarketing: keep.pushMarketing && drop.pushMarketing,
+      pushTransactional: keep.pushTransactional && drop.pushTransactional,
       homeShopId: keep.homeShopId ?? drop.homeShopId,
       preferredStaffId: keep.preferredStaffId ?? drop.preferredStaffId,
       nickname: keep.nickname ?? drop.nickname,
@@ -258,6 +272,7 @@ export async function mergeCustomers(keepId: string, dropId: string, actor: Acto
     await tx.execute(sql`insert into analytics_customer_moves (from_customer, to_customer) values (${dropId}, ${keepId})`);
     await tx.delete(customers).where(eq(customers.id, dropId));
     await tx.update(customers).set(patch).where(eq(customers.id, keepId));
+    await recordConsentChange(tx, { id: keepId, phone: patch.phone, email: patch.email }, keep, patch, { source: "pos", staffId: actor.staffId ?? null, textVersion: CONSENT_MARKERS.merge });
     await audit(actor, "customer.merge", "customer", keepId, { merged: drop, moved, rewardsIssued }, null, tx);
     return { keepId, moved, rewardsIssued };
   });

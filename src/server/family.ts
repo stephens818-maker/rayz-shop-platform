@@ -1,6 +1,6 @@
-import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
-import { appointments, brandSettings, clientPhotos, customers, refreshTokens, shops, staff } from "@/db/schema";
+import { appointments, brandSettings, clientPhotos, customerDevices, customers, refreshTokens, shops, staff } from "@/db/schema";
 import {
   ChildInput,
   ChildInputSchema,
@@ -16,6 +16,7 @@ import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import type { CustomerBadge } from "@/domain/customer-badges";
 import { localDateOf, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
+import { ConsentContext, recordConsentChange, staffConsentContext } from "./consent-events";
 import { stampRecordNote } from "./record-note";
 import { lockIdentity, matchCustomer } from "./customers";
 import { AppError, notFound } from "./errors";
@@ -201,6 +202,9 @@ export async function detachChild(childId: string, actor: Actor, opts: { guardia
   return inTx(opts.tx, run, (r) => [r.guardianId, childId]);
 }
 
+const CHILD_CONSENT = { smsOptIn: false, emailOptIn: false, smsMarketingOptIn: false, emailMarketingOptIn: false, pushMarketing: false, pushTransactional: false };
+const familyConsentContext = (actor: Actor): ConsentContext => (actor.staffId ? staffConsentContext(actor.staffId) : { source: "web" });
+
 /**
  * Put an existing client under a parent's account: a Squire kid record, or a duplicate pair that
  * shares the parent's phone. Their history stays theirs; their own phone, email and consent are
@@ -222,7 +226,9 @@ export async function attachChild(guardianId: string, childId: string, actor: Ac
       if (problem) throw new AppError("bad_request", problem);
     }
     await tx.update(customers).set({ guardianId, phone: null, email: null, smsOptIn: false, emailOptIn: false }).where(eq(customers.id, childId));
+    await recordConsentChange(tx, c, c, CHILD_CONSENT, familyConsentContext(actor));
     await tx.delete(refreshTokens).where(eq(refreshTokens.customerId, childId));
+    await tx.update(customerDevices).set({ revokedAt: new Date() }).where(and(eq(customerDevices.customerId, childId), isNull(customerDevices.revokedAt)));
     await audit(
       actor,
       "customer.child_attach",
@@ -272,6 +278,7 @@ export async function splitChild(childId: string, input: SplitInput, actor: Acto
       .update(customers)
       .set({ guardianId: null, formerGuardianId: c.guardianId, ownAccountAt: now, phone, email, smsOptIn: !!phone && !!input.smsOptIn, emailOptIn: !!email && !!input.emailOptIn })
       .where(eq(customers.id, childId));
+    await recordConsentChange(tx, { id: childId, phone, email }, c, { smsOptIn: !!phone && !!input.smsOptIn, emailOptIn: !!email && !!input.emailOptIn }, familyConsentContext(actor));
     await audit(actor, "customer.child_split", "customer", childId, { guardianId: c.guardianId, phone: !!phone, email: !!email }, null, tx);
     return { id: childId, guardianId: c.guardianId };
   }, (r) => [r.guardianId, childId]);

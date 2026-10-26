@@ -1,15 +1,18 @@
 /**
  * Who can get marketing, on which channel. Marketing needs its own consent, separate from the
- * appointment texts and emails clients agree to when booking: the customer app's columns
- * (sms_marketing_opt_in, email_marketing_opt_in, push_marketing and customer_devices, from the
- * customer API in PR #8). Core reads them and never writes them; until they exist nobody has
- * agreed, so nothing marketing goes out. A STOP, an unsubscribe, or a deleted client always wins.
+ * appointment texts and emails clients agree to when booking: sms_marketing_opt_in,
+ * email_marketing_opt_in, push_marketing and customer_devices (core_0085), which only the client
+ * sets, in the app or account page (PUT /me/consent, recorded in consent_events). Columns are still
+ * looked up at runtime so an older database sends nothing. A STOP, an unsubscribe, or a deleted
+ * client always wins.
  */
 import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { contactOptOuts, marketingUnsubscribes, notificationJobs } from "@/db/schema";
+import { contactOptOuts, customers, marketingUnsubscribes, notificationJobs } from "@/db/schema";
+import { CONSENT_COLUMN, CONSENT_MARKERS } from "@/domain/consent-texts";
 import type { Channel, Reach } from "@/domain/marketing";
 import { appSwitches } from "@/server/app-switches";
+import { ConsentContext, recordConsent } from "@/server/consent-events";
 
 interface Columns {
   sms: boolean;
@@ -166,6 +169,7 @@ export async function unsubscribe(
         ),
       ),
     );
+  if (o.customerId && o.source !== "stop") await revokeMarketing(tx, o.customerId, o.channel, o.source === "staff" ? { source: "pos", textVersion: CONSENT_MARKERS.staff } : { source: o.channel === "email" ? "email" : "web", textVersion: CONSENT_MARKERS.unsubscribe });
   if (dupe) return false;
   await tx.insert(marketingUnsubscribes).values({
     channel: o.channel,
@@ -177,6 +181,16 @@ export async function unsubscribe(
     sendId: o.sendId ?? null,
   });
   return true;
+}
+
+const MARKETING_CHANNEL = { sms: "sms_marketing", email: "email_marketing", push: "push_marketing" } as const;
+
+/** An unsubscribe link or staff turns the client's own marketing yes off too, so the record and the flag agree. */
+async function revokeMarketing(tx: DBorTx, customerId: string, channel: Channel, ctx: ConsentContext) {
+  const ch = MARKETING_CHANNEL[channel];
+  const col = customers[CONSENT_COLUMN[ch]];
+  const [c] = await tx.update(customers).set({ [CONSENT_COLUMN[ch]]: false }).where(and(eq(customers.id, customerId), eq(col, true))).returning({ id: customers.id, phone: customers.phone, email: customers.email });
+  if (c) await recordConsent(tx, c, [{ channel: ch, granted: false }], ctx);
 }
 
 /** START: the number opted back in to texts, so its STOP no longer blocks marketing texts it agreed to. */

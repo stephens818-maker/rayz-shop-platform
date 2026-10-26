@@ -2,13 +2,15 @@ import { randomBytes } from "node:crypto";
 import type { EmailAttachment } from "@/db/schema";
 import { demoMode } from "@/lib/deployment";
 import { TwilioEnv, twilioCall, twilioEnv, twilioSendSms, webhookUrl } from "../twilio/client";
+import { nativePush } from "./push";
 
 /**
  * Pluggable SMS, voice and email providers: `disabled` (default), `console`, `simulator` (dev: the
  * call simulator drives replies, keypresses and delivery) and `twilio`, which is real but stays off
  * until TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are set. Email is `resend` (RESEND_API_KEY) or `postmark`
  * (POSTMARK_SERVER_TOKEN), real and off until its key is set, from EMAIL_FROM on a verified domain.
- * App push (marketing) is `disabled`, `console`, `simulator` or the `expo` stub, by NOTIFICATIONS_PUSH_PROVIDER.
+ * App push is `disabled`, `console`, `simulator`, `native` (APNs and FCM, src/server/notifications/push.ts) or the
+ * `expo` stub, by NOTIFICATIONS_PUSH_PROVIDER.
  */
 export interface SendResult {
   providerMessageId?: string;
@@ -17,6 +19,8 @@ export interface SendResult {
 export interface SmsOptions {
   /** The shop's Twilio number; null uses the brand's sender. */
   from?: string | null;
+  /** Send through this Messaging Service instead (marketing has its own 10DLC campaign). */
+  messagingServiceSid?: string | null;
 }
 
 export interface SmsProvider {
@@ -50,11 +54,17 @@ export interface EmailProvider {
   sendEmail(to: string, subject: string, body: string, attachments?: EmailAttachment[], html?: string | null, o?: EmailOptions): Promise<SendResult>;
 }
 
-/** App push to one of a client's devices (customer_devices, from the customer app), by the device row's id. */
+export interface PushOptions {
+  /** Strings the app reads when the notification is tapped (kind, appointment). */
+  data?: Record<string, string>;
+  marketing?: boolean;
+}
+
+/** App push to one of a client's devices (customer_devices), by the device row's id. */
 export interface PushProvider {
   name: string;
   enabled: boolean;
-  sendPush(deviceId: string, title: string, body: string): Promise<SendResult>;
+  sendPush(deviceId: string, title: string, body: string, o?: PushOptions): Promise<SendResult>;
 }
 
 class DisabledProvider implements SmsProvider, EmailProvider, VoiceProvider, PushProvider {
@@ -128,7 +138,7 @@ class TwilioSms implements SmsProvider {
   enabled = true;
   constructor(private env: TwilioEnv) {}
   sendSms(to: string, body: string, o: SmsOptions = {}) {
-    return twilioSendSms(this.env, to, body, o.from ?? null);
+    return twilioSendSms(o.messagingServiceSid ? { ...this.env, messagingServiceSid: o.messagingServiceSid } : this.env, to, body, o.messagingServiceSid ? null : (o.from ?? null));
   }
 }
 
@@ -274,6 +284,8 @@ export function pushProvider(): PushProvider {
       return new SimulatorProvider();
     case "expo":
       return new ExpoPushStub();
+    case "native":
+      return nativePush() ?? new DisabledProvider();
     default:
       return new DisabledProvider();
   }

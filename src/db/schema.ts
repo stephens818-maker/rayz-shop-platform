@@ -1240,6 +1240,12 @@ export const customers = pgTable(
     /** Consent is opt-in: nothing is sent until the client (or their Squire record) says yes. */
     smsOptIn: boolean("sms_opt_in").notNull().default(false),
     emailOptIn: boolean("email_opt_in").notNull().default(false),
+    /** Marketing is its own yes per channel, never implied by the appointment consent above or by a Squire import. Every change is a consent_events row. */
+    smsMarketingOptIn: boolean("sms_marketing_opt_in").notNull().default(false),
+    emailMarketingOptIn: boolean("email_marketing_opt_in").notNull().default(false),
+    pushMarketing: boolean("push_marketing").notNull().default(false),
+    /** App push about their own appointments and receipts, to their customer_devices. */
+    pushTransactional: boolean("push_transactional").notNull().default(false),
     homeShopId: uuid("home_shop_id").references(() => shops.id),
     preferredStaffId: uuid("preferred_staff_id").references(() => staff.id, { onDelete: "set null" }),
     /** When their barber calls in, the appointment may be moved to a barber at another shop. */
@@ -1526,6 +1532,53 @@ export const identityHelpRequests = pgTable("identity_help_requests", {
   resolvedBy: uuid("resolved_by").references(() => staff.id, { onDelete: "set null" }),
   resolution: text("resolution"),
 });
+
+/** A phone or tablet signed in to the customer app, with its push token. Signing out or deleting the account revokes it. */
+export const customerDevices = pgTable(
+  "customer_devices",
+  {
+    id: id(),
+    customerId: uuid("customer_id")
+      .notNull()
+      .references(() => customers.id, { onDelete: "cascade" }),
+    platform: text("platform").$type<"ios" | "android">().notNull(),
+    provider: text("provider").$type<"apns" | "fcm" | "expo">().notNull(),
+    token: text("token").notNull(),
+    appVersion: text("app_version"),
+    osVersion: text("os_version"),
+    locale: text("locale"),
+    /** The phone's notification permission, as the app last reported it. */
+    pushEnabled: boolean("push_enabled").notNull().default(true),
+    lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
+    revokedAt: ts("revoked_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("customer_devices_token_uq").on(t.token), index("customer_devices_customer_idx").on(t.customerId)],
+);
+
+export type ConsentChannel = "sms_transactional" | "sms_marketing" | "email" | "email_marketing" | "push_transactional" | "push_marketing";
+export type ConsentSource = "ios" | "android" | "web" | "pos" | "import" | "sms" | "email";
+
+/** Every consent given or taken back, with the wording's version, where and when. Append-only (a trigger refuses edits and deletes). */
+export const consentEvents = pgTable(
+  "consent_events",
+  {
+    id: id(),
+    customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
+    phone: text("phone"),
+    email: text("email"),
+    channel: text("channel").$type<ConsentChannel>().notNull(),
+    action: text("action").$type<"granted" | "revoked">().notNull(),
+    /** CONSENT_TEXTS[channel].version for a grant; STOP, START, an import's or a staff edit's own marker otherwise. */
+    textVersion: text("text_version").notNull(),
+    source: text("source").$type<ConsentSource>().notNull(),
+    appVersion: text("app_version"),
+    ip: text("ip"),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("consent_events_customer_idx").on(t.customerId, t.createdAt), index("consent_events_phone_idx").on(t.phone)],
+);
 
 /** One row per counted request (OTP starts per IP, per number); old rows are pruned as they're read. */
 export const apiRateEvents = pgTable(

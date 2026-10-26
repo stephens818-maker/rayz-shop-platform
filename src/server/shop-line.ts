@@ -4,13 +4,14 @@ import { db } from "@/db";
 import { appointmentOutreach, appointments, callIns, callLogs, customers, notificationJobs, shopClosures, shopHours, shops, staff } from "@/db/schema";
 import { advance, isOpen, missedCallText, parseReply, reachable, shopOpenAt, voiceScript } from "@/domain/outreach";
 import { OperatorChoice, SPEECH_HINTS, choiceFromSpeech, cleanOperator, formatCallLength, operatorScript, operatorTakes, spokenHours, strongerChoice } from "@/domain/phone-operator";
-import { EMPTY_RESPONSE, dial, gather, hangup, pause, redirect, response, say } from "@/domain/twiml";
+import { EMPTY_RESPONSE, dial, gather, hangup, message, pause, redirect, response, say } from "@/domain/twiml";
 import { appBaseUrl } from "@/lib/deployment";
 import { normalizePhone } from "@/lib/phone";
 import { formatDate, formatTime, localDateOf } from "@/lib/time";
 import { SYSTEM, audit } from "./audit";
 import { answerByText, loadOutreachRules, noteInThread, openOutreachFor } from "./call-ins";
 import { logCall, logMessage, optedOut, queueShopText, recordOptIn, recordOptOut, sendDue, threadFor, updateCall } from "./messaging";
+import { recordKeyword } from "./consent-events";
 import { resubscribePhone } from "./marketing/consent";
 import { stopFromText } from "./marketing/links";
 import { loadMarketingSettings } from "./marketing/settings";
@@ -38,6 +39,52 @@ export interface InboundSms {
   to: string;
   body: string;
   messageSid?: string | null;
+  /** Twilio Advanced Opt-Out's reading of the text (STOP, START or HELP), custom keywords included. */
+  optOutType?: string | null;
+}
+
+const keywordReply = (t: string | null | undefined) => {
+  const k = t?.trim().toUpperCase();
+  return k === "STOP" ? ("stop" as const) : k === "START" ? ("start" as const) : k === "HELP" ? ("help" as const) : null;
+};
+
+/** STOP turns texts off for the number and records it for each client on file with it (consent_events). */
+async function optOutByText(phone: string, now: Date) {
+  const ids = await db.transaction(async (tx) => {
+    const ids = await recordOptOut(phone, "sms", "reply", tx);
+    await recordKeyword(tx, phone, "stop", ids);
+    return ids;
+  });
+  await stopFromText(phone, ids[0] ?? null, now);
+  return ids;
+}
+
+async function optInByText(phone: string) {
+  return db.transaction(async (tx) => {
+    const ids = await recordOptIn(phone, tx);
+    await resubscribePhone(phone, tx);
+    await recordKeyword(tx, phone, "start", ids);
+    return ids;
+  });
+}
+
+/**
+ * A text to a number that isn't a shop line (the marketing Messaging Service's numbers): STOP, START and
+ * HELP still count for the number, and anything else gets the HELP text, since nobody reads that inbox.
+ */
+async function keywordOnly(phone: string, reply: ReturnType<typeof parseReply>, now: Date) {
+  if (reply === "stop") {
+    const ids = await optOutByText(phone, now);
+    await audit(SYSTEM, "sms.opt_out", "phone", null, { customers: ids.length, line: "marketing" }, null);
+    return EMPTY_RESPONSE;
+  }
+  if (reply === "start") {
+    const ids = await optInByText(phone);
+    await audit(SYSTEM, "sms.opt_in", "phone", null, { customers: ids.length, line: "marketing" }, null);
+    return EMPTY_RESPONSE;
+  }
+  if (process.env.TWILIO_ADVANCED_OPT_OUT === "1" && reply === "help") return EMPTY_RESPONSE;
+  return response(message((await loadMarketingSettings()).helpText));
 }
 
 /**
@@ -46,24 +93,22 @@ export interface InboundSms {
  */
 export async function handleInboundSms(i: InboundSms, now = new Date()) {
   const shop = await shopByLine(i.to);
-  if (!shop) return { twiml: EMPTY_RESPONSE, threadId: null as string | null, handled: "unknown_line" as const };
   const phone = normalizePhone(i.from) ?? i.from;
   const isOut = await optedOut(phone, "sms");
-  const reply = parseReply(i.body, { optedOut: isOut });
+  const reply = keywordReply(i.optOutType) ?? parseReply(i.body, { optedOut: isOut });
+  if (!shop) return { twiml: await keywordOnly(phone, reply, now), threadId: null as string | null, handled: "unknown_line" as const };
   const outreach = reply === "accept" || reply === "decline" ? await openOutreachFor(phone, shop.id) : null;
   const thread = await threadFor(shop.id, phone);
   await logMessage(thread.id, { direction: "in", body: i.body.slice(0, 1600), providerMessageId: i.messageSid ?? null, unread: reply === "message" || ((reply === "accept" || reply === "decline") && !outreach) }, db, now);
   // Carriers and Twilio answer STOP, START and HELP themselves; the shop only records them.
   if (reply === "stop") {
-    const ids = await recordOptOut(phone, "sms", "reply");
-    await stopFromText(phone, ids[0] ?? null, now);
+    const ids = await optOutByText(phone, now);
     await logMessage(thread.id, { direction: "note", body: "Replied STOP: texts to this number are off until it replies START.", auto: true }, db, now);
     await audit(SYSTEM, "sms.opt_out", "message_thread", thread.id, { customers: ids.length }, shop.id);
     return { twiml: EMPTY_RESPONSE, threadId: thread.id, handled: reply };
   }
   if (reply === "start") {
-    const ids = await recordOptIn(phone);
-    await resubscribePhone(phone);
+    const ids = await optInByText(phone);
     await logMessage(thread.id, { direction: "note", body: "Replied START: texts are back on.", auto: true }, db, now);
     await audit(SYSTEM, "sms.opt_in", "message_thread", thread.id, { customers: ids.length }, shop.id);
     return { twiml: EMPTY_RESPONSE, threadId: thread.id, handled: reply };

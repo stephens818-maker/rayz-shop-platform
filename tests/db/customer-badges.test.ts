@@ -33,13 +33,7 @@ const at = (days: number, minutes = 600) => m.time.zonedWallTime(m.time.addDays(
 
 async function consent(on: boolean) {
   const { sql } = m.drizzle;
-  if (on) {
-    await exec(sql`alter table customers add column if not exists sms_marketing_opt_in boolean not null default false`);
-    await exec(sql`alter table customers add column if not exists email_marketing_opt_in boolean not null default false`);
-    await exec(sql`alter table customers add column if not exists push_marketing boolean not null default false`);
-  } else {
-    for (const col of ["sms_marketing_opt_in", "email_marketing_opt_in", "push_marketing"]) await exec(sql.raw(`alter table customers drop column if exists ${col}`));
-  }
+  if (!on) await exec(sql`update customers set sms_marketing_opt_in = false, email_marketing_opt_in = false, push_marketing = false where sms_marketing_opt_in or email_marketing_opt_in or push_marketing`);
   (await import("@/server/marketing/consent")).resetConsentCache();
 }
 

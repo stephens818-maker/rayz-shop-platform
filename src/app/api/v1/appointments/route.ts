@@ -4,6 +4,7 @@ import { CreateAppointment } from "@/server/api-schemas";
 import { customerActor } from "@/server/audit";
 import { customerFromRequest } from "@/server/auth/customer";
 import { createAppointment } from "@/server/booking";
+import { requestConsentContext } from "@/server/consent-events";
 import { AppError } from "@/server/errors";
 
 export const OPTIONS = options;
@@ -22,6 +23,7 @@ export const POST = route(async (req) => {
     customerId,
     customer: customerId ? null : b.customer,
     source: req.headers.get("x-client") === "web" ? "online" : "api",
+    consent: requestConsentContext(req),
     notes: b.notes ?? null,
     idempotencyKey: idem ? `api:${idem.slice(0, 100)}` : null,
     actor: customerActor(customerId ?? b.customer?.firstName ?? "guest"),
