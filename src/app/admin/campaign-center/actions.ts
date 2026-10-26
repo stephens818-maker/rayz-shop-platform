@@ -20,7 +20,7 @@ import {
   sendTest,
   setLocationAutomation,
 } from "@/server/marketing/campaigns";
-import { saveTemplate, setTemplateStatus } from "@/server/marketing/templates";
+import { setTemplateStatus } from "@/server/marketing/templates";
 import {
   deleteSequence,
   previewSequence,
@@ -163,18 +163,6 @@ export async function refineCopyAction(input: unknown) {
       "Refining wording needs Campaign Center: create",
     );
     return refineCopy(ctx, input);
-  });
-}
-
-export async function saveTemplateAction(input: unknown) {
-  return safe(async () => {
-    const ctx = await authorize(
-      "campaign_center.create",
-      "Only the brand writes templates",
-    );
-    const id = await saveTemplate(ctx, input);
-    revalidatePath("/admin/campaign-center/templates");
-    return { id };
   });
 }
 

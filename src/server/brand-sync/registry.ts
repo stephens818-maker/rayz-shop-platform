@@ -14,6 +14,7 @@ import {
   receiptAdapter,
 } from "./adapters/location";
 import { cardFeeAdapter, taxesAdapter, tipsAdapter } from "./adapters/money";
+import { serviceRuleAdapter } from "./adapters/service-rules";
 import { listAdapter } from "./lists";
 import { settingAdapter } from "./settings";
 import type { AnyAdapter, SyncItem } from "./types";
@@ -35,6 +36,7 @@ export const ADAPTERS: Record<SyncType, AnyAdapter> = {
   app: appAdapter,
   setting: settingAdapter,
   list: listAdapter,
+  service_rule: serviceRuleAdapter,
 };
 
 export const areaOf = (

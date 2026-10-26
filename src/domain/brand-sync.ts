@@ -59,6 +59,7 @@ export const SYNC_TYPES = [
   "app",
   "setting",
   "list",
+  "service_rule",
 ] as const;
 export type SyncType = (typeof SYNC_TYPES)[number];
 export const isSyncType = (s: string): s is SyncType =>
