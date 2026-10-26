@@ -485,6 +485,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - A day board that pages barbers instead of scrolling sideways.
   - Checkout side by side on tablets.
   - Bar charts on reports.
+  - WCAG AA contrast in both themes: as text only, `text-zinc-400` and `text-zinc-500` render as darker greys, and the pale 600 accents as their 700 shade. The public booking pages share `globals.css`, so they get the same text colours. No markup change is needed on your side.
 - **Next migration number: `core_0099`.**
 
 ### 2026-10-26: core, report scope and dollar amounts, FYI for mobile

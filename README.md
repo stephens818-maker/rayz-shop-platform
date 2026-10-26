@@ -336,6 +336,11 @@ These came with the Today work, beyond what was asked for:
   - A visible focus ring on every control.
   - Respect for reduced motion.
   - Roles on the palette (combobox and listbox), the theme switch (radio group) and loading regions (status).
+  - Text contrast meets WCAG AA (4.5:1) in both themes. `text-zinc-400` and `text-zinc-500` render as darker greys (`--text-faint`, `--text-muted`), and the pale 600 accents (emerald, green, amber, orange, sky) as their 700 shade, as text only; fills, borders and icons keep their shades. Text on a dark panel (inside `.text-white` or `.theme-fixed`) keeps the light greys. `tests/ux.test.ts` checks the ratios.
+  - Scrolling tables take a `label` (`<Table label="…">`), which names them and lets the keyboard focus and scroll them. Calendar appointments and blocks are named by what they show, with the time for screen readers when the block is too short to show it.
+  - Checked with axe (WCAG 2.1 A and AA) on 14 staff pages in light and dark mode and at 390 px: no violations. Lighthouse accessibility is 100.
+- **Phones.** No staff page scrolls sideways at 390 px. Rows of report categories, report links, date presets and pay periods stay on one line that swipes (`ChipStrip`), with the current one scrolled into view.
+- **Speed.** Lighthouse on the production build with seeded data: performance 94 to 100 on mobile (simulated slow 4G and 4x CPU, LCP 1.2 to 1.8 s, no layout shift) and 100 on desktop.
 
 ### Customer booking (web + API)
 

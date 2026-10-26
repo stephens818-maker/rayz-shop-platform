@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ChipStrip } from "@/components/chip-strip";
 import { Button, Notice, PageHeader, cx } from "@/components/ui";
 import { payPeriodByIndex, payPeriodFor } from "@/domain/payroll";
 import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
@@ -57,18 +58,19 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
         }
       />
       <ReportTabs ctx={ctx} active="tips_payroll" />
-      <div className="no-print mb-4 flex flex-wrap gap-1.5">
+      <ChipStrip className="no-print mb-4 gap-1.5" label="Pay period">
         {choices.map((c) => (
           <Link
             key={c.index}
             href={here({ p: String(c.index) })}
+            aria-current={c.index === period.index ? "true" : undefined}
             className={cx("rounded-full px-3 py-1 text-sm ring-1", c.index === period.index ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
           >
             {formatDate(c.start, "MMM d")} – {formatDate(c.end, "MMM d")}
             {c.index === current.index && " · current"}
           </Link>
         ))}
-      </div>
+      </ChipStrip>
       {filters && (
         <form key={`${l.shopParam ?? ""}|${l.staffParam ?? ""}`} className="no-print mb-4 flex flex-wrap items-end gap-2 text-sm" action="/admin/payroll">
           <input type="hidden" name="p" value={period.index} />

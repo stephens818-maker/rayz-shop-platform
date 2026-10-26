@@ -21,9 +21,9 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Keyboard shortcuts on the calendar and checkout, plus `G` then a letter to jump, and `?` for the list (`src/domain/shortcuts.ts`).
 - [x] Drag-and-drop on the calendar: moving to another time or barber, or onto the pager arrows to reach barbers on another page.
 - [x] Touch-friendly tablet layouts for the front desk, checkout, and the tip hand-off. The day board fits its barbers across the screen and pages them. Checkout shows the ticket and payment side by side from 768 px, with a total bar on phones. The customer screen was already full-screen on a tablet.
-- [ ] Fully responsive mobile views for barbers. Calendar, checkout, My time and My tips work at 390 px. Settings and report filter rows still wrap long.
-- [ ] Fast page loads. Skeletons show at once, and reports print their load time. A Lighthouse pass hasn't been done.
-- [ ] WCAG AA accessibility. Done: a skip link, focus rings everywhere, reduced motion, `aria-pressed` on tip and tender buttons, and combobox, listbox and status roles. Not yet run: an automated contrast audit (axe).
+- [x] Fully responsive mobile views for barbers. No staff page scrolls sideways at 390 px (14 pages checked, plus the public home, locations, shop and booking pages). Report categories, report links, date presets and pay periods stay one row that swipes (`src/components/chip-strip.tsx`), with the current one in view.
+- [x] Fast page loads. Skeletons show at once, and reports print their load time. Lighthouse on Today, calendar, sales, a report and clients (production build, seeded data): performance 94 to 100 on mobile (simulated slow 4G, 4x CPU; LCP 1.2 to 1.8 s, no layout shift) and 100 on desktop; best practices 100.
+- [x] WCAG AA accessibility. A skip link, focus rings everywhere, reduced motion, `aria-pressed` on tip and tender buttons, and combobox, listbox and status roles. axe (WCAG 2.1 A and AA) finds no violations on 14 staff pages in light and dark mode and at phone width, and Lighthouse accessibility is 100. Muted text and the pale accents are darkened as text only (`globals.css`, with a test on the ratios); inputs, scrolling tables and calendar items are named; pager dots are 24 px targets.
 - [x] Polish pass on the calendar, checkout, client profile, reports, and brand portal, with before and after screenshots in the PR.
 
 ## 3. Customer notifications and calendar integrations
