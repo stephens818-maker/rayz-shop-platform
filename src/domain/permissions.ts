@@ -17,6 +17,7 @@ export const PERMISSION_GROUPS = [
   "Custom reports",
   "Settings and data",
   "Banking and Stripe",
+  "Integrations and exports",
   "Locations",
   "Rayz Assistant",
 ] as const;
@@ -44,7 +45,13 @@ interface PermissionDef {
 }
 
 export const FEATURE_PERMISSIONS = [
-  { key: "calendar.manage", group: "Front desk", label: "Book, move and change any barber's appointments", hint: "Without it, people work only in their own column." },
+  {
+    key: "calendar.view_all",
+    group: "Front desk",
+    label: "See every barber's calendar",
+    hint: "Read only: every column at their shops. Without it, people see only their own. Booking or moving anyone else's appointments needs the permission below.",
+  },
+  { key: "calendar.manage", group: "Front desk", label: "Book, move and change any barber's appointments", hint: "Without it, people work only in their own column. Includes seeing every barber's calendar." },
   { key: "walkins.manage", group: "Front desk", label: "Run walk-ins and the waitlist" },
   { key: "schedules.edit", group: "Front desk", label: "Edit schedules and time off" },
   {
@@ -119,8 +126,14 @@ export const FEATURE_PERMISSIONS = [
   {
     key: "sales.refund",
     group: "Point of sale",
-    label: "Refund and void tickets",
-    hint: "Without it, a manager who has it approves each refund or void with their time clock PIN. Shop logins always need a manager's PIN.",
+    label: "Refund tickets",
+    hint: "Up to the role's refund limit, if it has one. Without it, a manager who has it approves each refund with their time clock PIN. Shop logins always need a manager's PIN.",
+  },
+  {
+    key: "sales.void",
+    group: "Point of sale",
+    label: "Void tickets",
+    hint: "Same day, before the drawer is closed, and up to the role's refund limit, if it has one. Without it, a manager who has it approves each void with their PIN. Shop logins always need a manager's PIN.",
   },
   {
     key: "sales.reassign",
@@ -270,7 +283,8 @@ export const FEATURE_PERMISSIONS = [
   { key: "po.approve", group: "Catalog and inventory", label: "Approve purchase orders over the approval limit" },
   { key: "po.send", group: "Catalog and inventory", label: "Send purchase orders to vendors" },
   { key: "po.receive", group: "Catalog and inventory", label: "Receive deliveries against purchase orders" },
-  { key: "staff.manage", group: "Staff", label: "Add and edit staff profiles" },
+  { key: "staff.view", group: "Staff", label: "See staff profiles", hint: "Read only: the team list and each profile at their shops. Contact details, pay and compensation need their own permissions." },
+  { key: "staff.manage", group: "Staff", label: "Add and edit staff profiles", hint: "Includes seeing them." },
   {
     key: "milestones.view",
     group: "Staff",
@@ -339,7 +353,7 @@ export const FEATURE_PERMISSIONS = [
     hint: "Never their own. A period locks once every timesheet in it is approved; then nobody can punch into it or edit it.",
   },
   { key: "payroll.rates", group: "Payroll and time clock", label: "See pay rates and labor cost", hint: "Hourly rates, labor cost and labor % of sales in reports. Without it, reports show hours only." },
-  { key: "payroll.export", group: "Payroll and time clock", label: "Download the payroll export (CSV and the iSolved layout)", hint: "Per pay period, per employee and shop. Every download is logged." },
+  { key: "payroll.export", group: "Integrations and exports", label: "Download the payroll export (CSV and the iSolved layout)", hint: "Per pay period, per employee and shop. Every download is logged." },
   {
     key: "compensation.view",
     group: "Compensation",
@@ -466,6 +480,12 @@ export const FEATURE_PERMISSIONS = [
     label: "Connect or change a shop's banking and Stripe account",
     hint: "Choose the brand account, the shop's own account or cash only; start or redo Stripe onboarding (legal entity, EIN, owner, bank account); open the shop's Stripe dashboard; set the statement descriptor. Only the Brand Owner can grant it.",
     ownerGrants: true,
+  },
+  {
+    key: "exports.accounting",
+    group: "Integrations and exports",
+    label: "Download the QuickBooks journal",
+    hint: "One journal entry per location per day, on the Sales summary report, for QuickBooks Online's import. Needs the Sales summary report too. Every download is logged.",
   },
   { key: "settings.brand", group: "Settings and data", label: "Change brand-level settings: loyalty program, new shops, Sunday hours", ownerOnly: true },
   { key: "import.run", group: "Settings and data", label: "Run the Squire import", hint: "Brand-level roles only: it reads whole client files.", brandOnly: true, brandLevel: true },
@@ -758,15 +778,19 @@ export function permissionLabel(p: Permission): string {
 
 /**
  * Where a person works: the brand (all shops), one owner entity's shops (Ray'z Corporate or a
- * franchisee, including shops it gets later), chosen shops, or one shop.
+ * franchisee, including shops it gets later), one region's shops (including shops added to it
+ * later), chosen shops, or one shop.
  */
-export const SHOP_SCOPES = ["all", "entity", "selected", "one"] as const;
+export const SHOP_SCOPES = ["all", "entity", "region", "selected", "one"] as const;
 export type ShopScope = (typeof SHOP_SCOPES)[number];
-export const SCOPE_LABEL: Record<ShopScope, string> = { all: "All shops", entity: "An owner's shops", selected: "Selected shops", one: "One shop" };
+export const SCOPE_LABEL: Record<ShopScope, string> = { all: "All shops", entity: "An owner's shops", region: "A region's shops", selected: "Selected shops", one: "One shop" };
+/** Scopes whose shops come from the owner entity or region, kept in step by the database. */
+export const scopeFollows = (s: ShopScope) => s === "entity" || s === "region";
 
-export function scopeProblem(scope: ShopScope, shopIds: string[], entityId?: string | null): string | null {
+export function scopeProblem(scope: ShopScope, shopIds: string[], entityId?: string | null, regionId?: string | null): string | null {
   if (scope === "all") return null;
   if (scope === "entity") return entityId ? null : "Pick the owner";
+  if (scope === "region") return regionId ? null : "Pick the region";
   if (scope === "one" && shopIds.length !== 1) return "Pick exactly one shop";
   if (scope === "selected" && shopIds.length === 0) return "Pick at least one shop";
   return null;
@@ -777,7 +801,19 @@ export function scopeProblem(scope: ShopScope, shopIds: string[], entityId?: str
 export const OWNER_ROLE_KEY = "brand_owner";
 export const BRAND_ADMIN_ROLE_KEY = "brand_admin";
 
-export const ROLE_TEMPLATE_KEYS = ["brand_owner", "brand_admin", "franchisee_owner", "franchisee_manager", "regional_manager", "shop_manager", "front_desk", "shop_login", "barber"] as const;
+export const ROLE_TEMPLATE_KEYS = [
+  "brand_owner",
+  "brand_admin",
+  "franchisee_owner",
+  "franchisee_manager",
+  "regional_manager",
+  "shop_manager",
+  "front_desk",
+  "shop_login",
+  "barber",
+  "bookkeeper",
+  "marketing",
+] as const;
 export const SHOP_LOGIN_ROLE_KEY = "shop_login";
 export type RoleTemplateKey = (typeof ROLE_TEMPLATE_KEYS)[number];
 
@@ -788,8 +824,71 @@ export interface RoleDef {
   permissions: readonly string[];
   /** Largest manual discount allowed, in whole percent. */
   maxDiscountPct: number;
+  /** Dollar limits on discounts, refunds and voids, and card fee waivers; a missing one is no limit. */
+  moneyLimits?: Partial<MoneyLimits>;
   /** A custom role the Brand Owner made brand-level; see isBrandLevelRole. */
   brandLevel?: boolean;
+  /** A role that belongs to one owner entity (a franchisee's own role): it gives nothing at shops that entity doesn't own. */
+  ownerEntityId?: string | null;
+}
+
+// ───────────────────────────── Dollar limits ─────────────────────────────
+
+export const MONEY_LIMITS = [
+  { key: "discountCents", label: "Manual discount", perms: ["pos.discount"], hint: "The most one ticket's manual discount may take off, as well as the percent limit." },
+  { key: "refundCents", label: "Refund or void", perms: ["sales.refund", "sales.void"], hint: "The most one refund or void may give back. Above it, a manager whose limit covers it approves with their PIN." },
+  { key: "waiverCents", label: "Card fee waiver", perms: ["pos.waive_card_fee"], hint: "The most card surcharge one ticket's waiver may take off." },
+] as const satisfies readonly { key: string; label: string; perms: readonly FeaturePermission[]; hint: string }[];
+export type MoneyLimitKey = (typeof MONEY_LIMITS)[number]["key"];
+/** In cents; null is no dollar limit. */
+export type MoneyLimits = Record<MoneyLimitKey, number | null>;
+export const NO_LIMITS: MoneyLimits = { discountCents: null, refundCents: null, waiverCents: null };
+export const MONEY_LIMIT_KEYS = MONEY_LIMITS.map((l) => l.key) as MoneyLimitKey[];
+const MAX_LIMIT_CENTS = 10_000_000;
+
+/** Stored limits, keeping only known keys with a whole number of cents or null. */
+export function cleanLimits(raw: unknown): Partial<MoneyLimits> {
+  const out: Partial<MoneyLimits> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const k of MONEY_LIMIT_KEYS) {
+    if (!(k in raw)) continue;
+    const v = (raw as Record<string, unknown>)[k];
+    if (v === null) out[k] = null;
+    else if (typeof v === "number" && Number.isFinite(v)) out[k] = Math.min(MAX_LIMIT_CENTS, Math.max(0, Math.round(v)));
+  }
+  return out;
+}
+
+/** The role's limits with a person's own on top; a limit whose permission they don't have is zero. */
+export function limitsFor(perms: ReadonlySet<Permission>, role: Partial<MoneyLimits> = {}, personal: Partial<MoneyLimits> = {}): MoneyLimits {
+  const out = { ...NO_LIMITS };
+  for (const l of MONEY_LIMITS) {
+    const held = l.perms.some((p) => perms.has(p));
+    out[l.key] = !held ? 0 : l.key in personal ? (personal[l.key] ?? null) : (role[l.key] ?? null);
+  }
+  return out;
+}
+
+/** Whether a limit covers an amount. */
+export const withinLimit = (limit: number | null | undefined, cents: number) => limit == null || cents <= limit;
+/** The larger of two limits; no limit beats any. */
+const looser = (a: number | null, b: number | null) => (a === null || b === null ? null : Math.max(a, b));
+const formatLimit = (c: number | null) => (c === null ? "no limit" : `$${(c / 100).toFixed(2).replace(/\.00$/, "")}`);
+export const limitLabel = formatLimit;
+
+export const fullLimits = (l: Partial<MoneyLimits> | undefined): MoneyLimits => ({ ...NO_LIMITS, ...(l ?? {}) });
+
+/** A limit raised above the caller's own, or lifted while they have one: what nobody may give. */
+function limitAbove(caller: MoneyLimits | undefined, before: MoneyLimits, after: MoneyLimits): string | null {
+  if (!caller) return null;
+  for (const l of MONEY_LIMITS) {
+    const mine = caller[l.key];
+    const [was, now] = [before[l.key], after[l.key]];
+    if (mine === null || now === was) continue;
+    const raised = now === null || (was !== null && now > was);
+    if (raised && (now === null || now > mine)) return `You can't set a ${l.label.toLowerCase()} limit above your own (${formatLimit(mine)})`;
+  }
+  return null;
 }
 
 const TEMPLATE_KEYS = new Set<string>(ROLE_TEMPLATE_KEYS);
@@ -821,6 +920,7 @@ const ALL_REPORTS = REPORTS.map((r) => r.key);
 const BRAND_PAY_REPORTS: readonly ReportKey[] = ["commission_payout"];
 const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)) && !BRAND_PAY_REPORTS.includes(k));
 const MANAGER_FEATURES: FeaturePermission[] = [
+  "calendar.view_all",
   "calendar.manage",
   "walkins.manage",
   "schedules.edit",
@@ -831,6 +931,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "handoff.unlock",
   "sales.view",
   "sales.refund",
+  "sales.void",
   "sales.reassign",
   "drawer.manage",
   "drawer.no_sale",
@@ -858,6 +959,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "po.create",
   "po.send",
   "po.receive",
+  "staff.view",
   "staff.manage",
   "staff.contact",
   "milestones.view",
@@ -923,7 +1025,7 @@ const TEMPLATES: RoleTemplate[] = [
     description:
       "Owns a franchisee business (an owner entity) and runs all its locations: everything a regional manager does there, plus voiding gift cards and managing its people's access. Brand-wide settings, the catalog, client exports and Stripe setup stay the brand's.",
     defaultScope: "entity",
-    permissions: [...REGIONAL_FEATURES, "giftcards.void", "permissions.manage", ...reports(LOCATION_REPORTS)],
+    permissions: [...REGIONAL_FEATURES, "giftcards.void", "permissions.manage", "exports.accounting", ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
   },
   {
@@ -936,7 +1038,7 @@ const TEMPLATES: RoleTemplate[] = [
   },
   {
     key: "regional_manager",
-    name: "Regional Manager",
+    name: "Regional / District Manager",
     description: "Manages several shops: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with every report for those shops but the brand's marketing reports.",
     defaultScope: "selected",
     permissions: [...REGIONAL_FEATURES, "giftcards.void", ...reports(LOCATION_REPORTS)],
@@ -956,6 +1058,7 @@ const TEMPLATES: RoleTemplate[] = [
     description: "Books and checks out every barber's clients, runs walk-ins and the drawer, and sends We have openings. Small discounts only.",
     defaultScope: "one",
     permissions: [
+      "calendar.view_all",
       "calendar.manage",
       "walkins.manage",
       "checkout.any",
@@ -995,6 +1098,7 @@ const TEMPLATES: RoleTemplate[] = [
       "The shared front-desk login for one shop: the calendar, waitlist, checkout, the drawer, clients with masked contact details, the front-desk clock and the shop's reports. Refunds, voids and reassigning tickets need a manager's PIN; no exports.",
     defaultScope: "one",
     permissions: [
+      "calendar.view_all",
       "calendar.manage",
       "walkins.manage",
       "blocks.others",
@@ -1054,6 +1158,59 @@ const TEMPLATES: RoleTemplate[] = [
     permissions: ["clients.rate", "clients.message", "notes.view", "notes.write", "blocks.own", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", ...reports(["my_sales", "service_times"]), reportView("rebook_rate")],
     maxDiscountPct: 0,
   },
+  {
+    key: "bookkeeper",
+    name: "Bookkeeper",
+    description:
+      "Keeps the books: sales, tax, card fees, P&L by Stripe account and payouts, payroll and tip reports, and the payroll and QuickBooks downloads. Sees tickets but no client contact details, and can't check out, refund or change settings.",
+    defaultScope: "all",
+    permissions: [
+      "sales.view",
+      "reports.all_staff",
+      "staff.view",
+      "payroll.rates",
+      "payroll.export",
+      "exports.accounting",
+      ...reports([
+        "sales_summary",
+        "end_of_day",
+        "services_vs_products",
+        "tips_payroll",
+        "card_vs_cash",
+        "sales_tax",
+        "card_fees",
+        "shop_accounts",
+        "rollup",
+        "discounts_refunds",
+        "inventory",
+        "inventory_movement",
+        "purchasing",
+        "gift_cards",
+        "labor",
+        "commission_payout",
+        "cash_drawer",
+        "tip_payouts",
+      ]),
+    ],
+    maxDiscountPct: 0,
+  },
+  {
+    key: "marketing",
+    name: "Marketing",
+    description:
+      "Runs the Campaign Center: automated campaigns, blasts, coupons and We have openings, with the marketing reports. Sends only to clients who agreed to marketing and sees counts, never client contact details, unless the brand gives contact access.",
+    defaultScope: "all",
+    permissions: [
+      "campaign_center.openings",
+      "campaign_center.view",
+      "campaign_center.create",
+      "campaign_center.send",
+      "promos.manage",
+      "reports.all_staff",
+      ...reports(["campaign_center", "openings", "lapsed_clients", "google_reviews", "acquisition", "retention", "rebook_rate"]),
+    ],
+    maxDiscountPct: 0,
+  },
 ];
 
 /** Starting points. Every template except Brand Owner can be edited; "Reset" puts these back. Shop and staff templates never hold brand-level permissions. */
@@ -1077,10 +1234,14 @@ export const templateRow = (t: RoleTemplate) => ({
 /** Per-user overrides: true grants on top of the role, false takes away. */
 export type Overrides = Partial<Record<Permission, boolean>>;
 
+/** When a per-user override stops applying: the last day it counts, as a local date (YYYY-MM-DD). */
+export type OverrideExpiry = Partial<Record<Permission, string>>;
+
 export interface Access {
   isOwner: boolean;
   permissions: Set<Permission>;
   maxDiscountPct: number;
+  limits: MoneyLimits;
 }
 
 export function cleanOverrides(raw: unknown): Overrides {
@@ -1090,6 +1251,25 @@ export function cleanOverrides(raw: unknown): Overrides {
   return out;
 }
 
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+export function cleanExpiries(raw: unknown): OverrideExpiry {
+  const out: OverrideExpiry = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [k, v] of Object.entries(raw)) if (isPermission(k) && typeof v === "string" && DATE.test(v)) out[k] = v;
+  return out;
+}
+
+/** The overrides still in force on this local date: one with an expiry counts through that day. */
+export function liveOverrides(overrides: Overrides, expires: OverrideExpiry, today: string): Overrides {
+  return Object.fromEntries(Object.entries(overrides).filter(([p]) => !expires[p as Permission] || expires[p as Permission]! >= today)) as Overrides;
+}
+
+/** Permissions that include another: whoever can do the first can always see the second. */
+export const INCLUDES: readonly [Permission, Permission][] = [
+  ["calendar.manage", "calendar.view_all"],
+  ["staff.manage", "staff.view"],
+];
+
 const clampPct = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : 0);
 
 /**
@@ -1097,8 +1277,14 @@ const clampPct = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? 
  * the Brand Owner role, brand-only ones only with access to all shops, and exporting a report
  * needs viewing it too. Without a scope it's what the role grants at every shop.
  */
-export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDiscountOverride: number | null = null, scope: ShopScope = "all"): Access {
-  if (role.key === OWNER_ROLE_KEY) return { isOwner: true, permissions: new Set(ALL_PERMISSIONS), maxDiscountPct: 100 };
+export function effectiveAccess(
+  role: RoleDef,
+  overrides: Overrides = {},
+  maxDiscountOverride: number | null = null,
+  scope: ShopScope = "all",
+  personalLimits: Partial<MoneyLimits> = {},
+): Access {
+  if (role.key === OWNER_ROLE_KEY) return { isOwner: true, permissions: new Set(ALL_PERMISSIONS), maxDiscountPct: 100, limits: { ...NO_LIMITS } };
   const perms = new Set<Permission>(role.permissions.filter(isPermission));
   for (const [k, v] of Object.entries(cleanOverrides(overrides))) {
     if (v) perms.add(k as Permission);
@@ -1109,11 +1295,19 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
   if (scope !== "all") for (const p of BRAND_ONLY) perms.delete(p);
   if (!isBrandLevelRole(role)) for (const p of BRAND_LEVEL_ONLY) perms.delete(p);
   if (role.key === BRAND_ADMIN_ROLE_KEY && scope === "all") for (const p of BRAND_ADMIN_ALWAYS) perms.add(p);
+  for (const [p, q] of INCLUDES) if (perms.has(p)) perms.add(q);
   for (const r of REPORTS) if (!perms.has(reportView(r.key))) perms.delete(reportExport(r.key));
   if (!perms.has("report_builder.view") && !perms.has("report_builder.build")) perms.delete("report_builder.export");
+  if (!perms.has(reportView("sales_summary"))) perms.delete("exports.accounting");
   const maxDiscountPct = perms.has("pos.discount") ? clampPct(maxDiscountOverride ?? role.maxDiscountPct) : 0;
-  return { isOwner: false, permissions: perms, maxDiscountPct };
+  return { isOwner: false, permissions: perms, maxDiscountPct, limits: limitsFor(perms, cleanLimits(role.moneyLimits), cleanLimits(personalLimits)) };
 }
+
+/** Nothing at all: a role that belongs to another owner entity, at a shop that owner doesn't own. */
+export const noAccess = (): Access => ({ isOwner: false, permissions: new Set(), maxDiscountPct: 0, limits: { discountCents: 0, refundCents: 0, waiverCents: 0 } });
+
+/** Whether a role may be held at a shop: brand roles anywhere, an owner entity's own roles only at its shops. */
+export const roleFitsShop = (role: Pick<RoleDef, "ownerEntityId">, shopOwnerEntityId: string | null | undefined) => !role.ownerEntityId || role.ownerEntityId === shopOwnerEntityId;
 
 // ───────────────────────────── Shop logins ─────────────────────────────
 
@@ -1127,6 +1321,7 @@ export function effectiveAccess(role: RoleDef, overrides: Overrides = {}, maxDis
 export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   ...BRAND_LEVEL_ONLY,
   "sales.refund",
+  "sales.void",
   "sales.reassign",
   "clients.reveal",
   "clients.export",
@@ -1153,9 +1348,17 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   "tips.approve",
   "notes.private",
   "notes.edit_any",
+  "exports.accounting",
 ]);
 
-export const sharedLoginAccess = <A extends Access>(a: A): A => ({ ...a, isOwner: false, permissions: new Set([...a.permissions].filter((p) => !SHOP_LOGIN_NEVER.has(p))) });
+/** A limit whose permissions are all gone is zero. */
+export const trimLimits = (limits: MoneyLimits, perms: ReadonlySet<Permission>): MoneyLimits =>
+  Object.fromEntries(MONEY_LIMITS.map((l) => [l.key, l.perms.some((p) => perms.has(p)) ? limits[l.key] : 0])) as MoneyLimits;
+
+export const sharedLoginAccess = <A extends Access>(a: A): A => {
+  const permissions = new Set([...a.permissions].filter((p) => !SHOP_LOGIN_NEVER.has(p)));
+  return { ...a, isOwner: false, permissions, limits: trimLimits(a.limits, permissions) };
+};
 
 // ───────────────────────────── Shop settings, part by part ─────────────────────────────
 
@@ -1202,13 +1405,20 @@ export function shopSettingsDenied(perms: ReadonlySet<Permission>, before: Parti
 // ───────────────────────────── Per-shop roles ─────────────────────────────
 
 export const sameAccess = (a: Access, b: Access) =>
-  a.isOwner === b.isOwner && a.maxDiscountPct === b.maxDiscountPct && a.permissions.size === b.permissions.size && [...a.permissions].every((p) => b.permissions.has(p));
+  a.isOwner === b.isOwner &&
+  a.maxDiscountPct === b.maxDiscountPct &&
+  MONEY_LIMIT_KEYS.every((k) => a.limits[k] === b.limits[k]) &&
+  a.permissions.size === b.permissions.size &&
+  [...a.permissions].every((p) => b.permissions.has(p));
 
-/** Everything granted at any of these shops, with the highest discount limit: what someone can do somewhere. */
+/** Everything granted at any of these shops, with the highest limits: what someone can do somewhere. */
 export function unionAccess(list: readonly Access[]): Access {
   const permissions = new Set<Permission>();
   for (const a of list) for (const p of a.permissions) permissions.add(p);
-  return { isOwner: list.some((a) => a.isOwner), permissions, maxDiscountPct: Math.max(0, ...list.map((a) => a.maxDiscountPct)) };
+  const limits = list.length
+    ? (Object.fromEntries(MONEY_LIMIT_KEYS.map((k) => [k, list.map((a) => a.limits[k]).reduce((x, y) => looser(x, y))])) as MoneyLimits)
+    : { discountCents: 0, refundCents: 0, waiverCents: 0 };
+  return { isOwner: list.some((a) => a.isOwner), permissions, maxDiscountPct: Math.max(0, ...list.map((a) => a.maxDiscountPct)), limits };
 }
 
 /**
@@ -1218,19 +1428,21 @@ export function unionAccess(list: readonly Access[]): Access {
  */
 export function accessByShop<R extends RoleDef & { id: string }>(
   main: R,
-  shops: readonly { shopId: string; role: R | null }[],
+  shops: readonly { shopId: string; role: R | null; ownerEntityId?: string | null }[],
   overrides: Overrides,
   maxDiscountOverride: number | null,
   scope: ShopScope,
+  personalLimits: Partial<MoneyLimits> = {},
 ): { byShop: Map<string, Access & { role: R }>; union: Access; uniform: boolean } {
   const byShop = new Map<string, Access & { role: R }>();
   for (const s of shops) {
     // All-shops people have their main role everywhere, as that shop runs it.
     const role = s.role && s.role.key !== OWNER_ROLE_KEY && (scope !== "all" || s.role.id === main.id) ? s.role : main;
-    byShop.set(s.shopId, { ...effectiveAccess(role, overrides, maxDiscountOverride, scope), role });
+    const fits = s.ownerEntityId === undefined || roleFitsShop(role, s.ownerEntityId);
+    byShop.set(s.shopId, { ...(fits ? effectiveAccess(role, overrides, maxDiscountOverride, scope, personalLimits) : noAccess()), role });
   }
   const list = [...byShop.values()];
-  if (!list.length) return { byShop, union: effectiveAccess(main, overrides, maxDiscountOverride, scope), uniform: true };
+  if (!list.length) return { byShop, union: effectiveAccess(main, overrides, maxDiscountOverride, scope, personalLimits), uniform: true };
   return { byShop, union: unionAccess(list), uniform: list.every((a) => sameAccess(a, list[0])) };
 }
 
@@ -1245,16 +1457,24 @@ export interface Grantor {
   shopIds: readonly string[];
   /** The owner entity an entity scope covers. */
   scopeEntityId?: string | null;
+  /** The region a region scope covers. */
+  scopeRegionId?: string | null;
+  /** Their own dollar limits; without them, no limit. */
+  limits?: MoneyLimits;
 }
 
 /**
  * Whether a caller below brand level reaches a scope as a whole, so shops added there later stay
- * theirs: an owner entity's scope only from the same entity. Chosen shops are checked shop by shop.
+ * theirs: an owner entity's or a region's scope only from the same one. Chosen shops are checked shop by shop.
  */
-export function scopeWithin(caller: Pick<Grantor, "scope" | "scopeEntityId">, target: { scope: ShopScope; scopeEntityId?: string | null }): boolean {
+export function scopeWithin(
+  caller: Pick<Grantor, "scope" | "scopeEntityId" | "scopeRegionId">,
+  target: { scope: ShopScope; scopeEntityId?: string | null; scopeRegionId?: string | null },
+): boolean {
   if (caller.scope === "all") return true;
   if (target.scope === "all") return false;
   if (target.scope === "entity") return caller.scope === "entity" && !!target.scopeEntityId && target.scopeEntityId === caller.scopeEntityId;
+  if (target.scope === "region") return caller.scope === "region" && !!target.scopeRegionId && target.scopeRegionId === caller.scopeRegionId;
   return true;
 }
 
@@ -1291,6 +1511,12 @@ export function roleChangeDenied(caller: Grantor, before: RoleDef | null, after:
   if (lack.length) return youLack(lack);
   const nextMax = after?.maxDiscountPct ?? 0;
   if (after && nextMax !== (before?.maxDiscountPct ?? 0) && nextMax > caller.maxDiscountPct) return `You can't set a discount limit above your own (${caller.maxDiscountPct}%)`;
+  if (after) {
+    const over = limitAbove(caller.limits, limitsFor(prev, cleanLimits(before?.moneyLimits)), limitsFor(next, cleanLimits(after.moneyLimits)));
+    if (over) return over;
+    if ((after.ownerEntityId ?? null) !== (before?.ownerEntityId ?? null) && after.key) return "Built-in roles belong to the brand. Create a custom role for one owner.";
+    if (after.ownerEntityId && isBrandLevelRole(after)) return "A brand-level role belongs to the brand, not to one owner";
+  }
   return null;
 }
 
@@ -1302,6 +1528,8 @@ export interface UserAccessState {
   scope: ShopScope;
   shopIds: readonly string[];
   scopeEntityId?: string | null;
+  scopeRegionId?: string | null;
+  limits?: MoneyLimits;
 }
 
 /** Changing someone's role, per-user overrides or shop access. */
@@ -1324,14 +1552,15 @@ export function userAccessChangeDenied(
   if (grantOnly) return grantOnlyDenied(grantOnly);
   const shopLevel = !next.brandLevel && (Object.keys(next.overrides) as Permission[]).find((k) => BRAND_LEVEL_ONLY.has(k) && next.overrides[k]);
   if (shopLevel) return notBrandLevel(shopLevel);
-  const problem = scopeProblem(next.scope, [...next.shopIds], next.scopeEntityId);
+  const problem = scopeProblem(next.scope, [...next.shopIds], next.scopeEntityId, next.scopeRegionId);
   if (problem) return problem;
   if (caller.scope !== "all") {
+    const whole = (s: ShopScope) => (s === "region" ? "region" : "owner");
     if (current.scope === "all" || current.shopIds.some((s) => !caller.shopIds.includes(s))) return "This person has access to shops outside yours";
     if (next.scope === "all") return "Only people with access to all shops can grant it";
     if (next.shopIds.some((s) => !caller.shopIds.includes(s))) return "You can only give access to your own shops";
-    if (!scopeWithin(caller, current)) return "This person's access covers a whole owner's shops, so only the brand or someone over that owner can change it";
-    if (!scopeWithin(caller, next)) return "Only the brand, or someone over that whole owner, can give access to all of an owner's shops";
+    if (!scopeWithin(caller, current)) return `This person's access covers a whole ${whole(current.scope)}'s shops, so only the brand or someone over that ${whole(current.scope)} can change it`;
+    if (!scopeWithin(caller, next)) return `Only the brand, or someone over that whole ${whole(next.scope)}, can give access to all of its shops`;
   }
   const gained = [...next.permissions].filter((p) => !current.permissions.has(p));
   const ownerGrant = [...gained, ...[...current.permissions].filter((p) => !next.permissions.has(p))].find((p) => OWNER_GRANTS.has(p));
@@ -1339,7 +1568,19 @@ export function userAccessChangeDenied(
   const lack = missing(caller, gained);
   if (lack.length) return youLack(lack);
   if (next.maxDiscountPct > current.maxDiscountPct && next.maxDiscountPct > caller.maxDiscountPct) return `You can't set a discount limit above your own (${caller.maxDiscountPct}%)`;
+  if (!caller.isOwner && next.limits) return limitAbove(caller.limits, current.limits ?? next.limits, next.limits);
   return null;
+}
+
+/** Overrides and their expiry dates as an audit entry: each changed one, from and to. */
+export function overrideChanges(before: { overrides: Overrides; expires: OverrideExpiry }, after: { overrides: Overrides; expires: OverrideExpiry }) {
+  const keys = [...new Set([...Object.keys(before.overrides), ...Object.keys(after.overrides)])] as Permission[];
+  const word = (v: boolean | undefined, until: string | undefined) => (v === undefined ? "role default" : `${v ? "allow" : "deny"}${until ? ` until ${until}` : ""}`);
+  return Object.fromEntries(
+    keys
+      .filter((p) => before.overrides[p] !== after.overrides[p] || (before.expires[p] ?? null) !== (after.expires[p] ?? null))
+      .map((p) => [p, { from: word(before.overrides[p], before.expires[p]), to: word(after.overrides[p], after.expires[p]) }]),
+  );
 }
 
 /**
@@ -1365,7 +1606,7 @@ export function assignableRoles<R extends RoleDef & { id: string }>(caller: Gran
   return roles.filter((r) => {
     if (r.key === OWNER_ROLE_KEY) return caller.isOwner;
     const a = effectiveAccess(r, {}, null, caller.scope === "all" ? "all" : "selected");
-    return missing(caller, a.permissions).length === 0 && a.maxDiscountPct <= caller.maxDiscountPct;
+    return missing(caller, a.permissions).length === 0 && a.maxDiscountPct <= caller.maxDiscountPct && !limitAbove(caller.limits, { discountCents: 0, refundCents: 0, waiverCents: 0 }, a.limits);
   });
 }
 

@@ -419,10 +419,14 @@ export const roles = pgTable("roles", {
   /** Permission keys from src/domain/permissions.ts. */
   permissions: jsonb("permissions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   maxDiscountPct: smallint("max_discount_pct").notNull().default(0),
+  /** Dollar limits in cents ({ discountCents, refundCents, waiverCents }); a missing key is no limit. */
+  moneyLimits: jsonb("money_limits").$type<Partial<Record<"discountCents" | "refundCents" | "waiverCents", number | null>>>().notNull().default(sql`'{}'::jsonb`),
   /** Suggested shop access for people given this role. */
-  defaultScope: text("default_scope").$type<"all" | "entity" | "selected" | "one">().notNull().default("one"),
+  defaultScope: text("default_scope").$type<"all" | "entity" | "region" | "selected" | "one">().notNull().default("one"),
   /** Custom roles only, set by the Brand Owner: may see client contact details in full and export client lists. */
   brandLevel: boolean("brand_level").notNull().default(false),
+  /** A custom role of one owner entity (a franchisee's own role): it gives nothing at shops that entity doesn't own. Null is the brand's. */
+  ownerEntityId: uuid("owner_entity_id").references((): AnyPgColumn => ownerEntities.id),
   sortOrder: integer("sort_order").notNull().default(100),
   createdAt: createdAt(),
   updatedAt: ts("updated_at").notNull().defaultNow(),
@@ -446,16 +450,22 @@ export const staff = pgTable("staff", {
     .notNull()
     .references(() => roles.id),
   /**
-   * all = every shop; entity = every shop of scope_entity_id; selected / one = the shops in
-   * staff_access_shops. An entity person's staff_access_shops rows are kept to exactly that
-   * entity's shops by database triggers, so a shop added to the entity is in reach at once.
+   * all = every shop; entity = every shop of scope_entity_id; region = every shop of
+   * scope_region_id; selected / one = the shops in staff_access_shops. An entity or region
+   * person's staff_access_shops rows are kept to exactly those shops by database triggers, so a
+   * shop added to the entity or region is in reach at once.
    */
-  shopScope: text("shop_scope").$type<"all" | "entity" | "selected" | "one">().notNull().default("selected"),
+  shopScope: text("shop_scope").$type<"all" | "entity" | "region" | "selected" | "one">().notNull().default("selected"),
   scopeEntityId: uuid("scope_entity_id").references((): AnyPgColumn => ownerEntities.id),
+  scopeRegionId: uuid("scope_region_id").references((): AnyPgColumn => regions.id),
   /** Per-person changes on top of the role: { "pos.discount": true, "sales.refund": false }. */
   permissionOverrides: jsonb("permission_overrides").$type<Record<string, boolean>>().notNull().default(sql`'{}'::jsonb`),
+  /** The last day an override counts, per permission ({ "sales.refund": "2026-11-02" }); none is no end. */
+  permissionOverrideExpires: jsonb("permission_override_expires").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
   /** Replaces the role's discount limit for this person. */
   maxDiscountPct: smallint("max_discount_pct"),
+  /** Replaces the role's dollar limits for this person, key by key; null is no limit. */
+  moneyLimits: jsonb("money_limits").$type<Partial<Record<"discountCents" | "refundCents" | "waiverCents", number | null>>>().notNull().default(sql`'{}'::jsonb`),
   isBookable: boolean("is_bookable").notNull().default(true),
   /** This barber's slot interval at every shop; null follows each shop. staff_shops can override it per shop. */
   slotIntervalMinutes: integer("slot_interval_minutes"),

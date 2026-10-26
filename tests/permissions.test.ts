@@ -181,6 +181,11 @@ describe("permission catalog and templates", () => {
       to: m[1].replace(/''/g, "'"),
       from: m[3].replace(/''/g, "'"),
     }));
+    const renamedRoles = [...later.matchAll(/UPDATE "roles" SET "name" = '((?:[^']|'')*)' WHERE "key" = '(\w+)' AND "name" = '((?:[^']|'')*)'/g)].map((m) => ({
+      key: m[2],
+      to: m[1].replace(/''/g, "'"),
+      from: m[3].replace(/''/g, "'"),
+    }));
     const grants = changes.filter((c) => c.add.length);
     const rows = [...sql.matchAll(/^\s*\('(\w+)', '((?:[^']|'')*)', '((?:[^']|'')*)', '(\[.*?\])'::jsonb, (\d+), '(\w+)', (\d+)\)/gm)].map((m) => ({
       key: m[1],
@@ -216,7 +221,8 @@ describe("permission catalog and templates", () => {
         renamed.forEach(([, to]) => perms.add(to));
       }
       const description = reworded.filter((w) => w.key === r.key).reduce((d, w) => (d === w.from ? w.to : d), r.description);
-      return { ...r, description, permissions: [...perms].sort() };
+      const name = renamedRoles.filter((w) => w.key === r.key).reduce((n, w) => (n === w.from ? w.to : n), r.name);
+      return { ...r, name, description, permissions: [...perms].sort() };
     });
     expect(grants.length).toBeGreaterThan(0);
     expect(seeded).toEqual(ROLE_TEMPLATES.map(templateRow).map((t) => ({ ...t, permissions: [...t.permissions].sort() })));

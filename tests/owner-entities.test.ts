@@ -12,7 +12,7 @@ const ready = { chargesEnabled: true, payoutsEnabled: true, detailsSubmitted: tr
 
 describe("owner entity scope", () => {
   it("is a shop scope that needs an owner", () => {
-    expect(SHOP_SCOPES).toEqual(["all", "entity", "selected", "one"]);
+    expect(SHOP_SCOPES).toEqual(["all", "entity", "region", "selected", "one"]);
     expect(scopeProblem("entity", [], null)).toMatch(/Pick the owner/);
     expect(scopeProblem("entity", [], E1)).toBeNull();
   });

@@ -62,7 +62,7 @@ export const MATRIX_AREAS: MatrixArea[] = [
       edit: ["checkout.any"],
       modify: ["pos.discount", "pos.price_override"],
       history: ["report.cash_drawer.view"],
-      cancel: ["sales.refund"],
+      cancel: ["sales.refund", "sales.void"],
     },
   },
   { key: "drawer", label: "Open cash drawer", single: ["drawer.no_sale"] },

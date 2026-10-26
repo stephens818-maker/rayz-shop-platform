@@ -1,12 +1,26 @@
 import { and, asc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
-import { brandSettings, marketingTemplates, roles, shops } from "@/db/schema";
+import { brandSettings, marketingTemplates, ownerEntities, roles, shops } from "@/db/schema";
 import { clip, money, onOff } from "@/domain/brand-sync";
 import { CheckoutPromptSettings, CheckoutPromptSettingsSchema, PROMPT_MODE_LABEL, promptSettings } from "@/domain/checkout-prompts";
 import { LOYALTY_TYPES, LoyaltyConfig, loyaltyConfig } from "@/domain/loyalty";
 import { CHANNELS, CHANNEL_LABEL, type Channel, TemplatesSchema, type Templates, templatesProblem } from "@/domain/marketing";
 import { MilestoneSettings, milestoneSettings } from "@/domain/milestones";
-import { BRAND_ONLY, OWNER_ROLE_KEY, RoleDef, isPermission, permissionLabel, roleChangeDenied, templateFor, templateRow } from "@/domain/permissions";
+import {
+  BRAND_ONLY,
+  MONEY_LIMITS,
+  type MoneyLimits,
+  OWNER_ROLE_KEY,
+  RoleDef,
+  SHOP_SCOPES,
+  cleanLimits,
+  isPermission,
+  limitLabel,
+  permissionLabel,
+  roleChangeDenied,
+  templateFor,
+  templateRow,
+} from "@/domain/permissions";
 import { APP_SWITCHES, APP_SWITCH_LABEL, type AppSwitches, resetAppSwitchCache } from "../../app-switches";
 import { audit } from "../../audit";
 import { grantor } from "../../auth/access";
@@ -277,20 +291,40 @@ export const campaignTemplateAdapter: SyncAdapter<TemplateBrand, TemplateValue> 
 
 // ───────────────────────────── Roles ─────────────────────────────
 
+/** A role's stored limits: only the ones that are set, in cents. */
+export const roleLimits = (raw: unknown): Partial<MoneyLimits> => Object.fromEntries(Object.entries(cleanLimits(raw)).filter(([, v]) => v !== null));
 export const RoleBrandInput = z.object({
   name: z.string().trim().min(2, "Give the role a name").max(40),
   description: z.string().trim().max(300).optional().default(""),
   permissions: z.array(z.string()).transform((xs) => [...new Set(xs.filter(isPermission))].sort()),
   maxDiscountPct: z.number().int().min(0).max(100),
-  defaultScope: z.enum(["all", "entity", "selected", "one"]),
+  defaultScope: z.enum(SHOP_SCOPES),
+  /** Cents; a missing or null one is no limit. */
+  moneyLimits: z
+    .object(Object.fromEntries(MONEY_LIMITS.map((l) => [l.key, z.number().int().min(0, "Limits can't be negative").max(10_000_000).nullable().optional()])))
+    .optional()
+    .transform((v) => roleLimits(v)),
+  /** Custom roles only: the owner entity the role belongs to; left as it is when not sent. */
+  ownerEntityId: z.uuid().nullable().optional(),
   /** Custom roles only; left as it is when not sent. */
   brandLevel: z.boolean().optional(),
 });
-export type RoleBrand = Omit<z.output<typeof RoleBrandInput>, "brandLevel"> & { key: string | null; brandLevel: boolean };
+export type RoleBrand = Omit<z.output<typeof RoleBrandInput>, "brandLevel" | "ownerEntityId"> & { key: string | null; brandLevel: boolean; ownerEntityId: string | null };
 /** What the role lets someone do at a shop. Brand-only permissions work on what every shop shares, so they're always the brand's. */
-export type RoleValue = { permissions: string[]; maxDiscountPct: number };
-const asDef = (r: RoleBrand): RoleDef => ({ key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, brandLevel: r.brandLevel });
-const roleValue = (r: { permissions: readonly string[]; maxDiscountPct: number }): RoleValue => ({ permissions: [...new Set(r.permissions.filter((p) => isPermission(p) && !BRAND_ONLY.has(p)))].sort(), maxDiscountPct: r.maxDiscountPct });
+export type RoleValue = { permissions: string[]; maxDiscountPct: number; moneyLimits?: Partial<MoneyLimits> };
+const asDef = (r: RoleBrand): RoleDef => ({ key: r.key, name: r.name, permissions: r.permissions, maxDiscountPct: r.maxDiscountPct, brandLevel: r.brandLevel, moneyLimits: r.moneyLimits, ownerEntityId: r.ownerEntityId });
+const roleValue = (r: { permissions: readonly string[]; maxDiscountPct: number; moneyLimits?: unknown }): RoleValue => {
+  const limits = roleLimits(r.moneyLimits);
+  return {
+    permissions: [...new Set(r.permissions.filter((p) => isPermission(p) && !BRAND_ONLY.has(p)))].sort(),
+    maxDiscountPct: r.maxDiscountPct,
+    ...(Object.keys(limits).length ? { moneyLimits: limits } : {}),
+  };
+};
+const limitsText = (l: Partial<MoneyLimits> | undefined) =>
+  MONEY_LIMITS.filter((m) => typeof l?.[m.key] === "number")
+    .map((m) => `${m.label} ${limitLabel(l![m.key]!)}`)
+    .join(", ") || "None";
 /** Every role but the Brand Owner, who always has every permission. */
 const syncedRole = sql`${roles.key} is distinct from ${OWNER_ROLE_KEY}`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -318,7 +352,17 @@ export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
     return new Map(
       rows.map((r) => [
         r.id,
-        { key: r.key, brandLevel: r.brandLevel, name: r.name, description: r.description ?? "", permissions: [...r.permissions].sort(), maxDiscountPct: r.maxDiscountPct, defaultScope: r.defaultScope },
+        {
+          key: r.key,
+          brandLevel: r.brandLevel,
+          name: r.name,
+          description: r.description ?? "",
+          permissions: [...r.permissions].sort(),
+          maxDiscountPct: r.maxDiscountPct,
+          defaultScope: r.defaultScope,
+          moneyLimits: roleLimits(r.moneyLimits),
+          ownerEntityId: r.ownerEntityId,
+        },
       ]),
     );
   },
@@ -333,15 +377,30 @@ export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
     const t = reset ? templateFor(before?.key) : null;
     if (reset && (!before || !t)) throw new AppError("bad_request", "Only built-in roles have a template to reset to");
     const row = t ? templateRow(t) : null;
-    const p = row && t ? { name: t.name, description: row.description ?? "", permissions: [...row.permissions].filter(isPermission).sort(), maxDiscountPct: row.maxDiscountPct, defaultScope: row.defaultScope, brandLevel: undefined } : RoleBrandInput.parse(raw);
+    const p =
+      row && t
+        ? { name: t.name, description: row.description ?? "", permissions: [...row.permissions].filter(isPermission).sort(), maxDiscountPct: row.maxDiscountPct, defaultScope: row.defaultScope, moneyLimits: roleLimits(t.moneyLimits), brandLevel: undefined, ownerEntityId: undefined }
+        : RoleBrandInput.parse(raw);
     const [dup] = await tx.select({ name: roles.name }).from(roles).where(and(sql`lower(${roles.name}) = lower(${p.name})`, ne(roles.id, item)));
     if (dup) throw new AppError("conflict", `There's already a role called "${dup.name}"`);
-    const { brandLevel, ...rest } = p;
+    const { brandLevel, ownerEntityId, ...rest } = p;
     if (before?.key && brandLevel !== undefined && brandLevel !== before.brandLevel) throw new AppError("bad_request", "Built-in roles can't be made brand-level");
-    const after: RoleBrand = { ...rest, key: before?.key ?? null, brandLevel: before?.key ? before.brandLevel : (brandLevel ?? before?.brandLevel ?? false) };
+    const owner = ownerEntityId === undefined ? (before?.ownerEntityId ?? null) : ownerEntityId;
+    const after: RoleBrand = { ...rest, key: before?.key ?? null, brandLevel: before?.key ? before.brandLevel : (brandLevel ?? before?.brandLevel ?? false), ownerEntityId: owner };
     if (who.ctx) {
       const denied = roleChangeDenied(grantor(who.ctx.access), before ? asDef(before) : null, asDef(after));
       if (denied) throw forbidden(denied);
+    }
+    if (owner && owner !== (before?.ownerEntityId ?? null)) {
+      const [entity] = await tx.select({ id: ownerEntities.id }).from(ownerEntities).where(eq(ownerEntities.id, owner));
+      if (!entity) throw new AppError("bad_request", "Pick an owner from the list");
+      if (before) {
+        // People who hold the role at shops that owner doesn't run would lose everything there.
+        const [{ n }] = await tx.select({ n: sql<number>`count(distinct s.id)::int` }).from(sql`staff s`).where(sql`s.removed_at is null and (
+          (s.role_id = ${item} and (s.shop_scope = 'all' or exists (select 1 from staff_access_shops a join shops sh on sh.id = a.shop_id where a.staff_id = s.id and a.role_id is null and sh.owner_entity_id is distinct from ${owner})))
+          or exists (select 1 from staff_access_shops a join shops sh on sh.id = a.shop_id where a.staff_id = s.id and a.role_id = ${item} and sh.owner_entity_id is distinct from ${owner}))`);
+        if (n) throw new AppError("conflict", `${n} ${n === 1 ? "person holds" : "people hold"} this role at shops that owner doesn't run. Give them another role there first.`);
+      }
     }
     return after;
   },
@@ -356,13 +415,25 @@ export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
     }
     const all: string[] = brand.to.permissions;
     const permissions = all.filter((x) => !/^report\..+\.export$/.test(x) || all.includes(x.replace(/\.export$/, ".view")));
-    const values = { name: brand.to.name, description: brand.to.description, permissions, maxDiscountPct: brand.to.maxDiscountPct, defaultScope: brand.to.defaultScope, brandLevel: brand.to.brandLevel, updatedAt: new Date() };
+    const values = {
+      name: brand.to.name,
+      description: brand.to.description,
+      permissions,
+      maxDiscountPct: brand.to.maxDiscountPct,
+      moneyLimits: roleLimits(brand.to.moneyLimits),
+      defaultScope: brand.to.defaultScope,
+      brandLevel: brand.to.brandLevel,
+      ownerEntityId: brand.to.ownerEntityId ?? null,
+      updatedAt: new Date(),
+    };
     if (brand.from) await tx.update(roles).set(values).where(eq(roles.id, item));
     else {
       const [{ n }] = await tx.select({ n: sql<number>`coalesce(max(${roles.sortOrder}), 0)::int` }).from(roles);
       await tx.insert(roles).values({ id: item, ...values, key: null, sortOrder: n + 10 });
     }
     const was = new Set<string>(brand.from?.permissions ?? []);
+    const from = brand.from;
+    const change = <T>(a: T | undefined, b: T) => (from && JSON.stringify(a ?? null) === JSON.stringify(b ?? null) ? undefined : { from: from ? (a ?? null) : null, to: b ?? null });
     await audit(
       who.actor,
       brand.from ? "permissions.role_update" : "permissions.role_create",
@@ -372,15 +443,21 @@ export const roleAdapter: SyncAdapter<RoleBrand, RoleValue> = {
         name: brand.to.name,
         added: permissions.filter((x) => !was.has(x)),
         removed: [...was].filter((x) => !permissions.includes(x)),
-        maxDiscountPct: brand.from?.maxDiscountPct === brand.to.maxDiscountPct ? undefined : { from: brand.from?.maxDiscountPct ?? null, to: brand.to.maxDiscountPct },
+        maxDiscountPct: change(from?.maxDiscountPct, brand.to.maxDiscountPct),
+        renamed: change(from?.name, brand.to.name),
+        description: change(from?.description, brand.to.description),
+        defaultScope: change(from?.defaultScope, brand.to.defaultScope),
+        moneyLimits: change(from?.moneyLimits && limitsText(from.moneyLimits), limitsText(values.moneyLimits)),
+        ownerEntityId: change(from?.ownerEntityId, values.ownerEntityId),
+        brandLevel: change(from?.brandLevel, brand.to.brandLevel),
         via: "brand_sync",
       },
       null,
       tx,
     );
   },
-  describe: (v) => ({ Permissions: `${v.permissions.length}`, "Max discount": `${v.maxDiscountPct}%` }),
-  short: (v) => `${v.permissions.length} permissions · ${v.maxDiscountPct}%`,
+  describe: (v) => ({ Permissions: `${v.permissions.length}`, "Max discount": `${v.maxDiscountPct}%`, "Dollar limits": limitsText(v.moneyLimits) }),
+  short: (v) => `${v.permissions.length} permissions · ${v.maxDiscountPct}%${v.moneyLimits ? " · limits" : ""}`,
 };
 
 /** For the history: which permissions a role change adds or removes at a shop. */

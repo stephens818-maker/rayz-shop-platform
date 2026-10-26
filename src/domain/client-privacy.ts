@@ -62,6 +62,10 @@ export const ROLE_FIELD_DEFAULTS: Record<RoleTemplateKey, Defaults> = {
   front_desk: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
   shop_login: { ...FULL, phone: "masked", email: "masked", address: "hidden", birthday: "masked", custom: "masked" },
   barber: { ...FULL, phone: "masked", email: "hidden", address: "hidden", birthday: "masked", custom: "hidden" },
+  // The books need tickets and totals, never who the client is beyond a name.
+  bookkeeper: { phone: "hidden", email: "hidden", address: "hidden", birthday: "hidden", notes: "hidden", preferred_barber: "hidden", ratings: "hidden", photo: "hidden", custom: "hidden" },
+  // Campaigns are sent by the system; contact details show only once the brand grants contact access.
+  marketing: { phone: "hidden", email: "hidden", address: "hidden", birthday: "masked", notes: "hidden", preferred_barber: "full", ratings: "masked", photo: "hidden", custom: "hidden" },
 };
 
 /**
@@ -134,6 +138,7 @@ const ANY: Record<BuiltinField | "custom", boolean> = {
   custom: true,
 };
 const NOTES_ONLY: Record<BuiltinField | "custom", boolean> = { ...ANY, phone: false, email: false, address: false, birthday: false, preferred_barber: false, photo: false, custom: false };
+const NONE: Record<BuiltinField | "custom", boolean> = { ...NOTES_ONLY, notes: false };
 const DESK: EntryDefaults = { add: ANY, edit: ANY };
 
 /**
@@ -151,6 +156,8 @@ export const ROLE_ENTRY_DEFAULTS: Record<RoleTemplateKey, EntryDefaults> = {
   // A shared login can take down new details but not replace the phone or email a client signs in with.
   shop_login: { add: ANY, edit: { ...ANY, phone: false, email: false } },
   barber: { add: ANY, edit: NOTES_ONLY },
+  bookkeeper: { add: NONE, edit: NONE },
+  marketing: { add: NONE, edit: NONE },
 };
 export const CUSTOM_ROLE_ENTRY_DEFAULTS: EntryDefaults = ROLE_ENTRY_DEFAULTS.barber;
 
