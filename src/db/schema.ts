@@ -1564,9 +1564,15 @@ export const customerDevices = pgTable(
     pushEnabled: boolean("push_enabled").notNull().default(true),
     lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
     revokedAt: ts("revoked_at"),
+    /** The sign-in it was registered from; ending that session revokes the device. */
+    sessionId: uuid("session_id"),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("customer_devices_token_uq").on(t.token), index("customer_devices_customer_idx").on(t.customerId)],
+  (t) => [
+    uniqueIndex("customer_devices_token_uq").on(t.token),
+    index("customer_devices_customer_idx").on(t.customerId),
+    index("customer_devices_session_idx").on(t.sessionId).where(sql`${t.sessionId} is not null`),
+  ],
 );
 
 export type ConsentChannel = "sms_transactional" | "sms_marketing" | "email" | "email_marketing" | "push_transactional" | "push_marketing";
@@ -1605,16 +1611,22 @@ export const apiRateEvents = pgTable(
   (t) => [index("api_rate_events_lookup_idx").on(t.bucket, t.key, t.createdAt)],
 );
 
-export const refreshTokens = pgTable("refresh_tokens", {
-  id: id(),
-  customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
-  tokenHash: text("token_hash").notNull().unique(),
-  deviceName: text("device_name"),
-  expiresAt: ts("expires_at").notNull(),
-  revokedAt: ts("revoked_at"),
-  replacedBy: uuid("replaced_by"),
-  createdAt: createdAt(),
-});
+export const refreshTokens = pgTable(
+  "refresh_tokens",
+  {
+    id: id(),
+    customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
+    /** The sign-in this token belongs to: the first token's id, carried through every rotation (I12). */
+    sessionId: uuid("session_id").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    deviceName: text("device_name"),
+    expiresAt: ts("expires_at").notNull(),
+    revokedAt: ts("revoked_at"),
+    replacedBy: uuid("replaced_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("refresh_tokens_session_idx").on(t.sessionId).where(sql`${t.revokedAt} is null`), index("refresh_tokens_customer_live_idx").on(t.customerId).where(sql`${t.revokedAt} is null`)],
+);
 
 // ───────────────────────────── Appointments & walk-ins ─────────────────────────────
 

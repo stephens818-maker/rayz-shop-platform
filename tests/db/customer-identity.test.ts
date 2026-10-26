@@ -201,4 +201,19 @@ describe("kill switches (C12)", () => {
     process.env.APP_KILL = "payments, pushMarketing";
     expect((await (await configRoute.GET(req("/api/v1/app/config"), ctx({}))).json()).features).toEqual({ booking: true, payments: false, family: true, pushMarketing: false });
   });
+
+  it("family off refuses the app's family endpoints; the website's account page keeps working", async () => {
+    const c = await m.customers.findOrCreateCustomer({ firstName: "Fay", phone: phone() }, null);
+    const auth = { authorization: `Bearer ${(await m.auth.issueTokens(c.id, null)).accessToken}` };
+    const v1 = await import("@/app/api/v1/me/family/route");
+    const claim = await import("@/app/api/v1/me/family/claim/route");
+    const web = await import("@/app/api/account/family/route");
+    expect((await v1.GET(req("/api/v1/me/family", { headers: auth }), ctx({}))).status).toBe(200);
+    process.env.APP_KILL = "family";
+    const off = await v1.GET(req("/api/v1/me/family", { headers: auth }), ctx({}));
+    expect(off.status).toBe(403);
+    expect((await off.json()).error.details).toEqual({ switch: "family" });
+    expect((await claim.POST(req("/api/v1/me/family/claim", { method: "POST", headers: auth, body: JSON.stringify({ firstName: "Kid" }) }), ctx({}))).status).toBe(403);
+    expect((await web.GET(req("/api/account/family", { headers: auth }), ctx({}))).status).toBe(200);
+  });
 });

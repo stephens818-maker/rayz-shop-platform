@@ -4,6 +4,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { customers } from "@/db/schema";
 import { body, json, options, route } from "./api";
+import { assertSwitch } from "./app-switches";
 import { customerActor } from "./audit";
 import { requireCustomer } from "./auth/customer";
 import { AppError } from "./errors";
@@ -17,6 +18,8 @@ import { bookGroup, cancelGroup, groupRescheduleOptions, myGroup, planGroup, pub
  * (/api/v1/me/family/...). A child has no login: the signed-in parent manages them.
  */
 async function parent(req: Request) {
+  // The app's family switch (C12); the website's account page keeps working.
+  if (new URL(req.url).pathname.startsWith("/api/v1/")) await assertSwitch("family");
   const id = await requireCustomer(req);
   const [c] = await db.select({ id: customers.id, firstName: customers.firstName, guardianId: customers.guardianId }).from(customers).where(eq(customers.id, id));
   if (!c) throw new AppError("unauthorized", "Sign in again");

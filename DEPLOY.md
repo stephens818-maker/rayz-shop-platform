@@ -252,6 +252,36 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - The migration adds each shop's **Where clients book** (`booking_mode`, `external_booking_url`) and the client's own preferences note. Every shop starts on **Here**. While a shop still books on Squire, set it to **On an external booking site** with the Squire link under **Shop settings → Shop & online booking**: the website and app send its clients there, and online booking here is off for it. The desk keeps booking it either way.
    - Optional variables (`.env.example`, "Customer app"): `APP_IOS_MIN_VERSION`, `APP_ANDROID_MIN_VERSION` and the latest versions and store links, `APP_MAINTENANCE_MESSAGE`, support and legal links. Raising a minimum version makes older builds answer 426 until they update, so raise it only after the new build is live in the store.
    - Universal links and App Links: set `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE` and `ANDROID_CERT_SHA256` (Play Console → App integrity → app signing key). Until then `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` answer 404 and links open in the browser. They need the custom domain (step 27), and the app must list it as an associated domain.
+29. Customer app API 1.2 (migrations `core_0083_customer_identity` through `core_0090_customer_sessions`; see [Customer app API 1.2](README.md#customer-app-api-12)):
+   - **Back up first.** Take a Neon branch before migrating. `core_0089` is destructive for children on family accounts: it clears their last name, full birthday (the year is kept), address, nickname, contact details and consent, and deletes their photos. Every other migration in this set only adds.
+   - **Emails start unverified** (`core_0083`). Until a client confirms their email in the app or on the account page, only a phone code signs them in, and an email is never used to match them. Imported Squire opt-ins count as appointment texts and emails only, never marketing (`core_0085`).
+   - **Sessions** (`core_0090`): nobody is signed out. Each existing refresh token becomes its own session, and access tokens from before the deploy keep working until they expire within the hour.
+   - **Sign-in codes by Twilio Verify:** create a Verify service, turn on **Fraud Guard** and limit Geo permissions to the US (and Canada if needed), then set `OTP_SMS_PROVIDER=twilio_verify` and `TWILIO_VERIFY_SERVICE_SID`. Codes sent by Verify don't need 10DLC. Reminders, receipts and marketing still do: register the brand with two campaigns, one for notifications and one for marketing (`TWILIO_MARKETING_MESSAGING_SERVICE_SID`).
+   - **App push:** set the `APNS_*` and `FCM_*` keys and `NOTIFICATIONS_PUSH_PROVIDER=native`. Tokens Apple or Google reject are revoked automatically.
+   - **Paying in the app (test mode until cutover):**
+     - Add `payment_intent.succeeded`, `payment_intent.payment_failed`, `setup_intent.succeeded` and `payment_method.detached` to the platform webhook at `/api/stripe/webhook` (step 4). Every event is stored in `stripe_events`, so a retried event is applied once.
+     - `STRIPE_CHARGE_MODEL` stays `on_behalf_of` until Charles decides the merchant of record (I10); `destination` is the other option, with no code change.
+     - Set `STRIPE_SURCHARGE_FIELD=true` only after Stripe signs off on the surcharge field for the account.
+     - Leave `FEATURE_WALLET_FEE` unset: Apple Pay and Google Pay get no card fee.
+     - For Apple Pay, create the merchant ID in the Apple team and upload Stripe's Apple Pay certificate, then set `APPLE_PAY_MERCHANT_ID`. Web Apple Pay also needs domain verification, which isn't done.
+   - **Kill switches:** **Setup → App switches** turns booking, payments, family or marketing push off at once. `APP_KILL` does the same from Vercel if the app is down.
+   - **Legal and support pages:** `/privacy`, `/terms` (with the SMS terms), `/support` and `/account/delete` ship on this domain, and `/app/config` points to them. Have counsel review the wording before the store listing changes. Set `APP_PRIVACY_URL` or `APP_TERMS_URL` only to point somewhere else.
+   - **Website guest booking:** create a Cloudflare Turnstile widget for the booking domain, then set `TURNSTILE_SECRET_KEY` and `NEXT_PUBLIC_TURNSTILE_SITE_KEY`. Without them there's no bot check. The per-network limit reads `x-real-ip`; self-hosted, it needs `TRUSTED_PROXY_HOPS` (step 9).
+   - **Time clock, no biometrics (Illinois BIPA):** **Payroll → Time clock setup** adds two checks:
+     - **Front-desk QR code:** the front-desk clock shows a code that changes every 30 seconds, and staff scan it with their phone while signed in.
+     - **Shop NFC tag:** write the shop's tag link to an NTAG sticker at the desk, and press **Retire and make a new link** if one is lost or copied.
+     - Both are signed with `AUTH_SECRET`, so changing it means rewriting every sticker.
+     - The optional punch photo is never face-matched.
+   - **Per-shop Squire cutover (C22, C11):** use **Setup → Squire cutover**, one shop at a time:
+     1. Run the clients import's dry run first and read its per-shop match report (C21).
+     2. In Squire, turn off online booking for that shop and record the time.
+     3. Import that shop's bookings, loyalty and gift cards changed after the freeze.
+     4. Upload Squire's final exports and reconcile them to the cent.
+     5. An owner signs off and switches the shop.
+     - **Hand back** returns a shop to Squire with the bookings made here.
+     - Before the first shop goes live, run the whole runbook for every shop on a staging copy and have Charles sign off (C14).
+     - Saved cards don't come over from Squire. If a card copy is ever arranged with Stripe, it targets the final Stripe account only (after the I10 decision).
+   - **App Review sign-in (C18, not approved):** leave `FEATURE_REVIEW_LOGIN` and the `APP_REVIEW_*` variables unset until Charles approves it (`.env.example` has the details).
 
 ## Running the production build locally
 

@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, gt, isNotNull, isNull, ne, sql } from "drizzle-orm";
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { db } from "@/db";
-import { customers, customerSquireIds, identityHelpRequests, otpCodes, refreshTokens } from "@/db/schema";
+import { customerDevices, customers, customerSquireIds, identityHelpRequests, otpCodes, refreshTokens } from "@/db/schema";
 import { demoMode } from "@/lib/deployment";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
-import { audit } from "@/server/audit";
+import { audit, customerActor } from "@/server/audit";
 import { findOrCreateCustomer, lockIdentity, matchCustomer, mergeCustomers } from "@/server/customers";
 import { AppError } from "@/server/errors";
 import { sendNow } from "@/server/notifications/queue";
@@ -346,19 +346,21 @@ export async function checkDeletionCode(customerId: string, code: string) {
   await consumeCode(`delete:${c.id}`, to, "delete", code);
 }
 
-export async function issueTokens(customerId: string, deviceName: string | null) {
-  const accessToken = await signToken({ sub: customerId }, "customer_access", ACCESS_TTL_SECONDS);
+/** A new sign-in starts a session; a refresh continues `sessionId`. The access token names the session (sid). */
+export async function issueTokens(customerId: string, deviceName: string | null, sessionId?: string) {
+  const id = randomUUID();
+  const sid = sessionId ?? id;
   const refreshToken = randomToken(32);
-  const [row] = await db
-    .insert(refreshTokens)
-    .values({
-      customerId,
-      tokenHash: sha256(refreshToken),
-      deviceName,
-      expiresAt: new Date(Date.now() + REFRESH_TTL_DAYS * 86_400_000),
-    })
-    .returning({ id: refreshTokens.id });
-  return { accessToken, refreshToken, tokenType: "Bearer" as const, expiresIn: ACCESS_TTL_SECONDS, refreshTokenId: row.id };
+  await db.insert(refreshTokens).values({
+    id,
+    customerId,
+    sessionId: sid,
+    tokenHash: sha256(refreshToken),
+    deviceName,
+    expiresAt: new Date(Date.now() + REFRESH_TTL_DAYS * 86_400_000),
+  });
+  const accessToken = await signToken({ sub: customerId, sid }, "customer_access", ACCESS_TTL_SECONDS);
+  return { accessToken, refreshToken, tokenType: "Bearer" as const, expiresIn: ACCESS_TTL_SECONDS, refreshTokenId: id };
 }
 
 /** Rotating refresh tokens. Re-using an already-rotated token revokes every session for that customer. */
@@ -366,24 +368,51 @@ export async function refresh(refreshToken: string) {
   const row = await db.query.refreshTokens.findFirst({ where: eq(refreshTokens.tokenHash, sha256(refreshToken)) });
   if (!row) throw new AppError("unauthorized", "Invalid refresh token");
   if (row.revokedAt) {
-    await db.update(refreshTokens).set({ revokedAt: new Date() }).where(and(eq(refreshTokens.customerId, row.customerId), isNull(refreshTokens.revokedAt)));
+    const live = await db.selectDistinct({ sessionId: refreshTokens.sessionId }).from(refreshTokens).where(and(eq(refreshTokens.customerId, row.customerId), isNull(refreshTokens.revokedAt)));
+    for (const s of live) await endSession(s.sessionId);
     throw new AppError("unauthorized", "Refresh token was already used; please sign in again");
   }
   if (row.expiresAt < new Date()) throw new AppError("unauthorized", "Session expired; please sign in again");
-  const next = await issueTokens(row.customerId, row.deviceName);
+  const next = await issueTokens(row.customerId, row.deviceName, row.sessionId);
   await db.update(refreshTokens).set({ revokedAt: new Date(), replacedBy: next.refreshTokenId }).where(eq(refreshTokens.id, row.id));
   return next;
 }
 
+/** Sign out: the session ends, so its access token stops working too, and its push devices stop getting pushes. */
 export async function revoke(refreshToken: string) {
-  await db.update(refreshTokens).set({ revokedAt: new Date() }).where(eq(refreshTokens.tokenHash, sha256(refreshToken)));
+  const row = await db.query.refreshTokens.findFirst({ where: eq(refreshTokens.tokenHash, sha256(refreshToken)), columns: { sessionId: true } });
+  if (row) await endSession(row.sessionId);
+}
+
+export async function endSession(sessionId: string, now = new Date()) {
+  await db.update(refreshTokens).set({ revokedAt: now }).where(and(eq(refreshTokens.sessionId, sessionId), isNull(refreshTokens.revokedAt)));
+  await db.update(customerDevices).set({ revokedAt: now }).where(and(eq(customerDevices.sessionId, sessionId), isNull(customerDevices.revokedAt)));
+}
+
+async function accessOf(req: Request): Promise<{ sub: string; sid?: string } | null> {
+  const h = req.headers.get("authorization");
+  if (!h?.toLowerCase().startsWith("bearer ")) return null;
+  const payload = await verifyToken<{ sub: string; sid?: string }>(h.slice(7).trim(), "customer_access");
+  if (!payload?.sub) return null;
+  // Tokens issued before sessions (no sid) run out within the hour.
+  if (payload.sid) {
+    const [live] = await db
+      .select({ id: refreshTokens.id })
+      .from(refreshTokens)
+      .where(and(eq(refreshTokens.sessionId, payload.sid), isNull(refreshTokens.revokedAt), gt(refreshTokens.expiresAt, new Date())))
+      .limit(1);
+    if (!live) return null;
+  }
+  return payload;
 }
 
 export async function customerFromRequest(req: Request): Promise<string | null> {
-  const h = req.headers.get("authorization");
-  if (!h?.toLowerCase().startsWith("bearer ")) return null;
-  const payload = await verifyToken<{ sub: string }>(h.slice(7).trim(), "customer_access");
-  return payload?.sub ?? null;
+  return (await accessOf(req))?.sub ?? null;
+}
+
+/** The session of the request's access token (I12), when it names one. */
+export async function sessionFromRequest(req: Request): Promise<string | null> {
+  return (await accessOf(req))?.sid ?? null;
 }
 
 export async function requireCustomer(req: Request): Promise<string> {
@@ -392,4 +421,35 @@ export async function requireCustomer(req: Request): Promise<string> {
   const live = await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { deletedAt: true } });
   if (!live || live.deletedAt) throw new AppError("unauthorized", "This account was deleted");
   return id;
+}
+
+/** I12: the customer's signed-in devices. One row per session, newest activity first. */
+export async function listSessions(customerId: string, currentSessionId: string | null) {
+  const rows = (await db.execute(sql`
+    select session_id, max(device_name) filter (where revoked_at is null) device_name, min(created_at) started_at, max(created_at) last_active_at
+    from refresh_tokens
+    where customer_id = ${customerId}
+      and session_id in (select session_id from refresh_tokens where customer_id = ${customerId} and revoked_at is null and expires_at > now())
+    group by session_id
+    order by max(created_at) desc`)) as unknown as { session_id: string; device_name: string | null; started_at: Date | string; last_active_at: Date | string }[];
+  return rows.map((r) => ({
+    id: r.session_id,
+    deviceName: r.device_name,
+    signedInAt: new Date(r.started_at).toISOString(),
+    lastActiveAt: new Date(r.last_active_at).toISOString(),
+    current: r.session_id === currentSessionId,
+  }));
+}
+
+/** Sign out one of the customer's sessions, or every one but this (`except`). */
+export async function endSessions(customerId: string, which: { id: string } | { except: string | null }) {
+  const live = await listSessions(customerId, null);
+  const ids = "id" in which ? live.filter((s) => s.id === which.id).map((s) => s.id) : live.filter((s) => s.id !== which.except).map((s) => s.id);
+  if ("id" in which && !ids.length) throw new AppError("not_found", "Session not found");
+  for (const id of ids) await endSession(id);
+  if (ids.length) {
+    const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId), columns: { firstName: true } });
+    await audit(customerActor(c?.firstName ?? "customer"), "customer.sessions_ended", "customer", customerId, { count: ids.length }, null);
+  }
+  return { ended: ids.length };
 }

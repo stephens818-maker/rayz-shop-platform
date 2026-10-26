@@ -2705,7 +2705,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
   - `GET /appointments/{code}`, `POST /appointments/{code}/cancel`, `POST /appointments/{code}/reschedule`
 - **Customer auth for mobile:**
   1. `POST /auth/otp/start` sends a one-time code by SMS or email.
-  2. `POST /auth/otp/verify` returns `{ accessToken, refreshToken }`. The access token is a JWT valid for 1 hour and is sent as `Authorization: Bearer …`; the refresh token lasts 60 days. When several clients share that phone or email (a family), it returns `chooseProfile: true` with a short-lived `selectionToken` and the first names; the app then calls `POST /auth/otp/complete` with the chosen profile.
+  2. `POST /auth/otp/verify` returns `{ accessToken, refreshToken }`. The access token is a JWT valid for 1 hour and is sent as `Authorization: Bearer …`; the refresh token lasts 60 days. When nobody or several adults are on that phone, it returns `needsProfile: true` with a short-lived `selectionToken` and never lists who's on the number; the app asks for a first name and calls `POST /auth/otp/complete`.
   3. `POST /auth/refresh` rotates the refresh token. Re-using an old refresh token revokes every session for that customer, which is the standard defense against stolen tokens.
   4. `POST /auth/logout` revokes the session.
 - **Signed-in endpoints:** `GET /me`, `GET /me/appointments`, `GET /me/loyalty`. Booking while signed in links the appointment to the account.
@@ -2716,6 +2716,42 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
   - **Shop cutover one at a time:** each shop has `bookingMode` (`platform` or `external`) and `externalBookingUrl`, set under **Shop settings → Shop & online booking**. An external shop shows its link on the website and in the app, and refuses online bookings here (older app builds see `bookingEnabled: false`). The desk still books it.
   - **The client's own note:** `PATCH /me` takes `preferencesNote` (500 characters) and `preferredBarberId`, returned under `preferences` on `/me`. It's stored in `customers.preferences_note`, never in the staff `notes`. Triggers remove card numbers and contact details. Staff who can read notes see it read-only on the client profile.
   - **Universal links and App Links:** `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` claim the client pages (`/a`, `/g`, `/book`, `/locations`, `/r`, `/receipt`, `/account`) once `APPLE_TEAM_ID`, `IOS_BUNDLE_ID`, `ANDROID_PACKAGE` and `ANDROID_CERT_SHA256` are set.
+- **Customer app API 1.2** <a id="customer-app-api-12"></a> closes the rest of the audit's critical gaps and the second review's additions (C17–C22, I14–I16, P1). Migrations `core_0083` to `core_0090`; deployment in [DEPLOY.md](DEPLOY.md) step 29; the checklist with each item's status is in PR #1. Additive for existing clients, except that `chooseProfile` is never returned now.
+  - **Sign-in (C1, C13, C17, C21, I15):**
+    - Codes go by Twilio Verify with Fraud Guard and the Android app hash (`OTP_SMS_PROVIDER=twilio_verify`), or the local sender. They're limited per IP as well as per number.
+    - A phone code never lists the profiles on the number.
+    - A number unused for 18 months, or a profile its owner has secured (`PUT /me/secure`), also needs a code to the profile's verified email (`stepUp`). With no verified email, the client can only ask the shop for help (`cantSignIn`, `POST /auth/help`), which opens a task under **Front desk → App sign-in help**.
+    - An imported profile confirms its last name or last shop before rewards show.
+    - Only a verified email signs in or matches a client. A new email is saved once its code is entered (`/me/email/start`, `/me/email/verify`).
+  - **Accounts and children (I14, I16, I1):**
+    - Account holders are 13 or older: the app must send `ageConfirmed`, and the website asks.
+    - The app books signed in only.
+    - A signed-out website booking says 13+, passes Turnstile once its keys are set, and is limited to 10 an hour per network and 5 a day per phone or email. It never lands on an existing profile: a matching phone gets a separate unverified guest record, which folds into the profile when that phone signs in with a code. An unverified number gets at most one confirmation text a day.
+    - A child on a family account keeps a first name and a birth year only.
+    - `POST /me/family/claim` turns a young child's profile on the parent's phone into a dependent at once when it was never used on its own. Otherwise it asks the shop.
+    - Barbers who need a card on file need one for app bookings, and a child's booking uses the parent's card.
+    - The family, badge and locations endpoints are mounted under `/api/v1` (`/me/family/**`, `/me/badges`, `/locations`).
+  - **Consent and push (C20, C3–C5):**
+    - `consent_events` records every grant and revoke with the wording's version, the channel, the source and the app version. Appointment messages and marketing are separate yeses per channel.
+    - STOP, START and HELP work on every number. Marketing goes out only between 8 AM and 9 PM in the recipient's time zone (8 PM in states with stricter laws) and outside the brand's own quiet hours.
+    - Devices register at `/me/devices`, and APNs and FCM send once their keys are set.
+  - **Receipts (C9):** a standing choice of the app or a verified email sends the receipt on paying, with nothing asked at the counter; a child's receipt goes to the parent. `GET /me/receipts` lists them.
+  - **Cards and paying in the app (C6–C8, I10, I11):**
+    - Saved cards sit on one platform-level Stripe Customer per household, so a card works at every shop.
+    - The fee is quoted from the card's funding type before the client authorizes (FlowController). There's no fee on debit or prepaid cards, or on Apple Pay and Google Pay unless `FEATURE_WALLET_FEE` is on, and fee refunds are proportional.
+    - 3-D Secure returns `requires_action`.
+    - Webhooks finish payments the app didn't see through and are applied once each (`stripe_events`).
+    - `STRIPE_CHARGE_MODEL` keeps the merchant-of-record choice open (`on_behalf_of` or `destination`).
+  - **Account deletion and legal pages (C10, C19):**
+    - `GET /me/delete` shows what's lost and what's kept, and a fresh code confirms.
+    - Only the chosen profile goes, with the children who belong to that parent alone. It's anonymized so tickets still add up, sessions and devices end, upcoming bookings are cancelled and the Stripe Customer is removed.
+    - `/privacy`, `/terms`, `/support` and `/account/delete` (which works without the app) are linked from `/app/config`.
+  - **Sessions (I12):** a session is one sign-in and lasts across token refreshes. `GET /me/sessions` lists them; `DELETE /me/sessions` signs out everywhere else and `DELETE /me/sessions/{id}` one. Signing out or ending a session stops its access token at once and revokes the push devices registered in it, and a reused refresh token ends every session.
+  - **History and book again (I6–I9):** `/me/appointments` pages by cursor, by status (upcoming, past, cancelled) and with the children on the account (`family=true`); with no parameters it answers as before. `GET /me/loyalty/ledger` is the card's history, with the balance brought over from Squire flagged. `GET /me/suggested-rebook` gives me and each child the last visit and when the next is due, by the counter's rebook rule. `GET /shops/{shop}` adds the cancellation and no-show policy.
+  - **Kill switches (C12):** booking, payments, family and marketing push, under **Setup → App switches** or `APP_KILL`. A switched-off feature answers 403 with `details.switch`.
+  - **Per-shop Squire cutover (C22, C11, C21, C14):** **Setup → Squire cutover** records the Squire booking freeze, delta-imports that shop's changes, reconciles Squire's final exports to the cent, and switches after an owner signs off. It can also hand a shop back to Squire with the bookings made here. The clients import's dry run shows a per-shop match report first.
+  - **Time clock without biometrics (P1):** PIN, a front-desk QR code that changes every 30 seconds, or the shop's NFC tag link (retire it if a sticker is lost). There's no face matching.
+  - **Not approved, behind flags that are off:** the App Review sign-in (C18, `FEATURE_REVIEW_LOGIN` with `APP_REVIEW_*`), the wallet fee (`FEATURE_WALLET_FEE`) and the merchant-of-record model (I10, `STRIPE_CHARGE_MODEL`).
 - The public web booking UI (`/book/{shop}`, `/a/{code}`, `/account`) uses the same endpoints through `src/lib/api-client.ts`, so the mobile app gets exactly what the website gets.
 
 ---
@@ -2730,7 +2766,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 - **3-D Secure.** The keyed-card flow doesn't handle `requires_action` yet. That's fine for in-person keyed entry, but it's needed before taking any card-not-present payment.
 - **Tax rates.** The seeded rates are placeholders (IA 7%; IL 0% on services and 8.75% on products) and every shop is marked "unverified". The accountant must confirm each shop's rates before go-live.
 - **Rayz Assistant without a key.** With no `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` (and not in production), a built-in demo stands in for the language model. It picks a tool by keyword and runs it for real, so answers are report summaries rather than written replies. See [Rayz Assistant](#rayz-assistant).
-- **OTP abuse protection.** One-time codes expire after 10 minutes and are single-use, but per-number rate limiting isn't built yet.
+- **OTP abuse protection.** One-time codes expire after 10 minutes, are single-use, and are limited per number and per IP. Twilio Verify's Fraud Guard is turned on in Twilio, not here.
 
 ## Data caveats
 
@@ -2883,10 +2919,9 @@ samples/squire/      example Squire CSV exports for the importer
 - Shops outside Central time: today a shop in another zone can be saved but not opened.
 - More custom report sources: sales, appointments, staff, inventory, tips and campaigns are listed in the builder but not yet built. Each needs its whitelisted fields and their SQL in `src/server/report-builder/engine.ts`; the definitions, sharing, schedules and exports already take any source.
 - Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training flag stays off; merging PR #8; `DEMO_MODE` in production (it would break the Vercel demo).
-- Customer card-on-file and deposits or no-show fees, if the shop wants them (Squire had none). This requires 3DS.
-- OTP rate limiting and bot protection on public booking.
+- Deposits or no-show fees on the saved card, if the shop wants them (Squire had none). Saved cards and 3-D Secure are in place (API 1.2).
 - Barber photos and bios on booking pages, using first-name image files.
 - Barcode scanning for counts and receiving, and vendor price lists by upload.
 - Reading a vendor's confirmation of a purchase order back.
 - Memberships in the mobile app and on the booking site (sign up and manage from the client's side); today staff sign clients up and Stripe's hosted page takes the payment.
-- The mobile app against `/api/v1`, plus push notifications (add an `/me/devices` endpoint).
+- The mobile app against `/api/v1` (API 1.2 has devices, push, cards, receipts and deletion).

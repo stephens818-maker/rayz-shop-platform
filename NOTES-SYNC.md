@@ -459,6 +459,31 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-26: core, customer app API 1.2 (C1–C22, I1–I16, P1), for mobile
+
+- **Built here at the user's direction**, following the platform delta from the Ray'z App builder (second review). The OpenAPI document is 1.2.0, and its description lists every change. It's backward-compatible except that `chooseProfile` is never returned (treat it like `needsProfile`). Mobile: please rebase onto this branch and drop the overlapping work in PRs #2–#8 (devices, push, consent, saved cards, deletion, the importer changes).
+- **Migrations `core_0083` to `core_0090`.** The next free one is `core_0091`. `core_0089` clears dependents' last name, full birthday, address, nickname, contact and consent, and deletes their photos. The `customers_family_guard` trigger now enforces that on every write.
+- **What the app needs to change:**
+  - Send `X-Client`. App booking is signed in only: a request without a token gets 401 `sign_in_required`.
+  - Send `ageConfirmed` when a sign-in creates an account (400 `age_confirmation_required` if it's missing, 403 `under_13`).
+  - Handle `stepUp` (reason `idle_number` or `secured`) and `cantSignIn`, and the identity check (`identityCheckRequired`, `POST /me/identity-check`).
+  - Change email through `/me/email/start` and `/me/email/verify`.
+  - Consent at `/me/consent`, devices at `/me/devices`, receipts at `/me/receipts`.
+  - Cards at `/me/payment-methods` (PaymentSheet or FlowController with the setup response). Pay at `/me/tickets/{id}/quote`, then `/pay` with `expectedTotalCents`, which answers 409 if the total changed.
+  - Deletion at `/me/delete`; "Secure my profile" at `PUT /me/secure`; `POST /me/family/claim`.
+  - The family, badges and locations endpoints are now mounted under `/api/v1`. The family ones answer 403 `details.switch = family` when the switch is off.
+  - Sessions (I12, `core_0090`): `GET /me/sessions`, `DELETE /me/sessions` (everywhere else), `DELETE /me/sessions/{id}`. Signing out or ending a session now stops its access token at once (401) and revokes the push devices registered in it, so register devices after sign-in with the new token. Access tokens issued before this deploy carry no session and run out within the hour.
+  - `/me/appointments` takes `status` (upcoming, past, cancelled), `limit`, `cursor` and `family=true`, and returns `nextCursor` (I6). With no parameters the shape is as before.
+  - `GET /me/loyalty/ledger` (I7), `GET /me/suggested-rebook` (I8) and `policies` on `GET /shops/{shop}` (I9).
+  - `/app/config` adds `features` (kill switches), `links` (privacy, terms, support, deleteAccount), `payments` and `accounts`.
+- **Flags that stay off until Charles decides:**
+  - `FEATURE_REVIEW_LOGIN` (C18 App Review sign-in, with `APP_REVIEW_PHONE`, `APP_REVIEW_CODE`, `APP_REVIEW_SHOP` and `APP_REVIEW_EMAIL`), read through `flags.reviewLogin()`.
+  - `FEATURE_WALLET_FEE`.
+  - `STRIPE_CHARGE_MODEL` (I10; `on_behalf_of` by default, or `destination`).
+  - `STRIPE_SURCHARGE_FIELD`, until Stripe signs off.
+- **Time clock (P1):** QR and NFC checks next to device, network and GPS. No biometrics. The codes are HMACs under `AUTH_SECRET` (`src/server/clock-codes.ts`).
+- **Not done:** deposits and no-show fees (I9 is the owner's decision; the policy text is shown), web Apple Pay domain verification, and Spanish (I13: there's no Spanish copy of service names, policies or message templates to serve, so server strings stay English and the app localizes its own UI). PR #1's checklist has every item with its status.
+
 ### 2026-10-26: core, customer app API 1.1 (first part), for mobile
 
 - **Built here at the user's direction**, although `/api/v1` is mobile's area: the user asked core to close the app audit's gaps. Everything is additive and backward-compatible, and the OpenAPI document (now 1.1.0) covers it. Mobile: please rebase PRs #2–#8 onto this branch rather than re-adding these.

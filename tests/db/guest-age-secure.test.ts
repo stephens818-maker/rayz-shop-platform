@@ -30,7 +30,7 @@ const codeFor = async (p: { phone?: string; email?: string }) => (await m.auth.s
 const bearer = async (customerId: string) => ({ authorization: `Bearer ${(await m.auth.issueTokens(customerId, null)).accessToken}` });
 const row = async (id: string) => (await m.db.db.query.customers.findFirst({ where: eq(S().customers.id, id) }))!;
 
-const REVIEW_ENV = ["APP_REVIEW_LOGIN", "APP_REVIEW_PHONE", "APP_REVIEW_CODE", "APP_REVIEW_EMAIL", "APP_REVIEW_SHOP", "TURNSTILE_SECRET_KEY", "STRIPE_SECRET_KEY"];
+const REVIEW_ENV = ["FEATURE_REVIEW_LOGIN", "APP_REVIEW_PHONE", "APP_REVIEW_CODE", "APP_REVIEW_EMAIL", "APP_REVIEW_SHOP", "TURNSTILE_SECRET_KEY", "STRIPE_SECRET_KEY"];
 
 /** The next open slot at Coralville, at least three days out. */
 async function openSlot() {
@@ -283,14 +283,14 @@ describe("Secure my profile and claiming a child (I15)", () => {
 
 describe("App Review sign-in (C18 scaffold, not approved)", () => {
   const REVIEW_PHONE = "+13198889999";
-  const on = () => Object.assign(process.env, { APP_REVIEW_LOGIN: "true", APP_REVIEW_PHONE: REVIEW_PHONE, APP_REVIEW_CODE: "135790", APP_REVIEW_SHOP: "coralville" });
+  const on = () => Object.assign(process.env, { FEATURE_REVIEW_LOGIN: "true", APP_REVIEW_PHONE: REVIEW_PHONE, APP_REVIEW_CODE: "135790", APP_REVIEW_SHOP: "coralville" });
 
   it("is off by default: the number gets an ordinary code and the fixed one doesn't work", async () => {
     expect((await (await configRoute.GET(req("/api/v1/app/config"), ctx({}))).json()).accounts).toMatchObject({ minimumAge: 13, guestBooking: "web_only", reviewSignIn: false });
     const s = await m.auth.startOtp({ phone: REVIEW_PHONE });
     expect(s.devCode).toBeTruthy();
     if (s.devCode !== "135790") await expect(m.auth.verifyOtp({ phone: REVIEW_PHONE, code: "135790" })).rejects.toMatchObject({ code: "unauthorized" });
-    process.env.APP_REVIEW_LOGIN = "true";
+    process.env.FEATURE_REVIEW_LOGIN = "true";
     expect((await (await configRoute.GET(req("/api/v1/app/config"), ctx({}))).json()).accounts.reviewSignIn).toBe(false);
   });
 

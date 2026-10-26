@@ -1,5 +1,5 @@
 import { json, options, route } from "@/server/api";
-import { publicShop } from "@/server/public";
+import { publicShopDetail } from "@/server/public";
 
 export const OPTIONS = options;
-export const GET = route<{ shop: string }>(async (_req, { shop }) => json(await publicShop(shop)));
+export const GET = route<{ shop: string }>(async (_req, { shop }) => json(await publicShopDetail(shop)));

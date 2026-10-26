@@ -35,7 +35,7 @@ export const AppConfig = z.object({
       minimumAge: z.number().int().describe("I16: account holders are this age or older. Ask before creating an account; send ageConfirmed. Younger clients are dependents on a parent's account"),
       guestBooking: z.literal("web_only").describe("I14: the app books signed in; signed-out booking is the website's only"),
       turnstileSiteKey: z.string().nullable().describe("Website guest booking: the Cloudflare Turnstile site key when bot protection is on, else null"),
-      reviewSignIn: z.boolean().describe("C18 scaffold: the App Review sign-in is switched on (APP_REVIEW_LOGIN). Off unless the owner turns it on"),
+      reviewSignIn: z.boolean().describe("C18 scaffold: the App Review sign-in is switched on (FEATURE_REVIEW_LOGIN). Off unless the owner turns it on"),
     })
     .describe("Added in 1.2"),
   environment: z.enum(["production", "demo", "development"]),
@@ -74,6 +74,15 @@ export const Shop = z.object({
   hours: z.array(ShopHours),
 });
 export const ShopList = z.object({ shops: z.array(Shop) });
+export const ShopDetail = Shop.extend({
+  policies: z
+    .object({
+      cancellation: z.string().nullable().describe("The shop's cancellation policy, as shown on the booking site before a client confirms; null when it has none"),
+      noShow: z.string().nullable(),
+      cancelCutoffMinutes: z.number().int().describe("The same as the shop's cancelCutoffMinutes; a barber's own cutoff shows on each appointment's cancelCutoffAt"),
+    })
+    .describe("Added in 1.2. Plain text (no deposits or no-show fees are charged)"),
+});
 
 export const Service = z.object({
   id: z.string().uuid(),
@@ -162,7 +171,22 @@ export const Appointment = z.object({
   canReschedule: z.boolean(),
 });
 export const AppointmentEnvelope = z.object({ appointment: Appointment });
-export const AppointmentList = z.object({ upcoming: z.array(Appointment), past: z.array(Appointment) });
+export const AppointmentList = z.object({
+  upcoming: z.array(Appointment),
+  past: z.array(Appointment),
+  nextCursor: z
+    .object({ upcoming: z.string().nullable(), past: z.string().nullable() })
+    .optional()
+    .describe("Pass one as ?cursor= for that list's next page (the response is then an AppointmentPage); null at the end"),
+});
+export const AppointmentPage = z.object({ appointments: z.array(Appointment), nextCursor: z.string().nullable().describe("Pass as ?cursor= for the next page; null at the end") });
+const Flag = z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1");
+export const AppointmentListQuery = z.object({
+  status: z.enum(["upcoming", "past", "cancelled"]).optional().describe("One list, paged: upcoming (soonest first), past (any status) or cancelled (any date), newest first"),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+  cursor: z.string().max(400).optional(),
+  family: Flag.optional().describe("Include the children on my account; each appointment's customer says whose it is"),
+});
 
 export const CancelBody = z.object({ reason: z.string().max(200).optional() });
 export const RescheduleBody = z.object({ startsAt: Instant, barberId: z.string().nullable().optional() });
@@ -360,6 +384,15 @@ export const UpdateDevice = z.object({
   osVersion: z.string().max(40).nullable().optional(),
   locale: z.string().max(20).nullable().optional(),
 });
+export const SessionSchema = z.object({
+  id: z.string().uuid(),
+  deviceName: z.string().nullable().describe("deviceName sent at sign-in"),
+  signedInAt: Instant,
+  lastActiveAt: Instant.describe("The last token refresh"),
+  current: z.boolean().describe("The session making this request"),
+});
+export const SessionList = z.object({ sessions: z.array(SessionSchema) });
+export const SessionsEnded = z.object({ ended: z.number().int() });
 export const ReceiptListQuery = z.object({
   before: z.string().datetime({ offset: true }).optional().describe("nextBefore from the previous page"),
   limit: z.coerce.number().int().min(1).max(50).optional(),
@@ -540,3 +573,38 @@ export const Loyalty = z.object({
     .boolean()
     .describe("Added in 1.2. True until an imported profile passes POST /me/identity-check; rewards and availableCents read empty meanwhile (progress still shows)"),
 });
+export const LoyaltyLedgerQuery = z.object({ cursor: z.string().max(400).optional(), limit: z.coerce.number().int().min(1).max(50).optional() });
+export const LoyaltyLedgerEntry = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(["earn", "reverse", "reward_issued", "reward_redeemed", "import", "expire", "merge", "convert"]).describe("New kinds may be added; show label for any you don't know"),
+  label: z.string().describe("Ready to show, e.g. Earned on a visit, Brought over from Squire"),
+  progressDelta: z.number().int().describe("Change in progress, in unit"),
+  unit: z.enum(["cents", "visits"]),
+  rewardCents: z.number().int().describe("Rewards earned (positive) or used (negative)"),
+  imported: z.boolean().describe("The balance brought over from Squire at the switch"),
+  createdAt: Instant,
+  receiptId: z.string().uuid().nullable().describe("GET /me/receipts/{id}; null for imports and adjustments"),
+  receiptNumber: z.number().int().nullable(),
+  forFirstName: z.string().nullable().describe("Whose visit it was (a child on a household card)"),
+  shop: z.object({ id: z.string().uuid(), slug: z.string(), name: z.string() }).nullable(),
+});
+export const LoyaltyLedger = z.object({
+  entries: z.array(LoyaltyLedgerEntry),
+  nextCursor: z.string().nullable().describe("Pass as ?cursor= for the next page; null at the end"),
+  redemptionLocked: z.boolean().describe("True until an imported profile passes POST /me/identity-check; entries are empty meanwhile"),
+});
+export const SuggestedRebook = z.object({
+  customer: z.object({ id: z.string().uuid(), firstName: z.string(), isChild: z.boolean() }),
+  lastVisit: z.object({
+    date: LocalDateStr,
+    shop: z.object({ id: z.string().uuid(), slug: z.string(), name: z.string(), bookable: z.boolean() }),
+    barber: z.object({ id: z.string().uuid(), slug: z.string(), displayName: z.string(), bookable: z.boolean().describe("False when the barber no longer takes bookings; offer any barber") }),
+    services: z.array(z.object({ serviceId: z.string().uuid().nullable(), kind: z.string(), name: z.string(), bookable: z.boolean() })),
+  }),
+  intervalDays: z.number().int(),
+  intervalSource: z.enum(["client", "service", "brand"]).describe("client: their own usual interval; service: the main service's; brand: the default"),
+  suggestedDate: LocalDateStr,
+  daysUntil: z.number().int().describe("Negative when overdue"),
+  nextVisit: z.object({ code: z.string(), startsAt: Instant }).nullable().describe("Already booked: show this instead of a nudge"),
+});
+export const SuggestedRebookList = z.object({ suggestions: z.array(SuggestedRebook) });

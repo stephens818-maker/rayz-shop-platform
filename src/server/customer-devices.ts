@@ -33,7 +33,7 @@ const view = (d: typeof customerDevices.$inferSelect) => ({
 });
 export type DeviceView = ReturnType<typeof view>;
 
-export async function registerDevice(customerId: string, input: DeviceInput, now = new Date()): Promise<DeviceView> {
+export async function registerDevice(customerId: string, input: DeviceInput, now = new Date(), sessionId: string | null = null): Promise<DeviceView> {
   if (input.platform === "ios" && input.provider === "fcm") throw new AppError("bad_request", "iOS devices register an APNs token", { field: "provider" });
   if (input.platform === "android" && input.provider === "apns") throw new AppError("bad_request", "Android devices register an FCM token", { field: "provider" });
   const fields = {
@@ -46,6 +46,7 @@ export async function registerDevice(customerId: string, input: DeviceInput, now
     pushEnabled: input.pushEnabled ?? true,
     lastSeenAt: now,
     revokedAt: null,
+    sessionId,
   };
   return db.transaction(async (tx) => {
     const [d] = await tx

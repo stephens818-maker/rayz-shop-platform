@@ -1,13 +1,14 @@
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, otpCodes, shops } from "@/db/schema";
+import { flags } from "@/lib/flags";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { audit, SYSTEM } from "@/server/audit";
 import { AppError } from "@/server/errors";
 import { sha256 } from "./tokens";
 
 /**
- * C18 scaffold, NOT APPROVED: the App Review sign-in. Off unless APP_REVIEW_LOGIN=true, and then
+ * C18 scaffold, NOT APPROVED: the App Review sign-in. Off unless FEATURE_REVIEW_LOGIN=true (flags.reviewLogin), and then
  * only with APP_REVIEW_PHONE and a 6-digit APP_REVIEW_CODE. That one phone signs in with that
  * fixed code instead of a texted one (nothing is sent, and the code is never shown), onto a
  * sandbox profile ("App Review"). Every code request is audit-logged. Its bookings stay at
@@ -18,7 +19,7 @@ import { sha256 } from "./tokens";
 const env = (k: string) => process.env[k]?.trim() || null;
 
 export function reviewLoginOn(): boolean {
-  return process.env.APP_REVIEW_LOGIN === "true" && !!normalizePhone(env("APP_REVIEW_PHONE")) && /^\d{6}$/.test(env("APP_REVIEW_CODE") ?? "");
+  return flags.reviewLogin() && !!normalizePhone(env("APP_REVIEW_PHONE")) && /^\d{6}$/.test(env("APP_REVIEW_CODE") ?? "");
 }
 
 export function reviewPhone(): string | null {

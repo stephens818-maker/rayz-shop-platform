@@ -73,4 +73,21 @@ describe("OpenAPI", () => {
     expect(doc.components.securitySchemes.bearerAuth.scheme).toBe("bearer");
     expect(JSON.stringify(doc.components.schemas.Barber)).not.toMatch(/lastName/);
   });
+
+  it("documents every route mounted under /api/v1, and each operation has the 426 response", async () => {
+    const { readdirSync } = await import("node:fs");
+    const root = "src/app/api/v1";
+    const mounted = (readdirSync(root, { recursive: true }) as string[])
+      .filter((f) => f.endsWith("route.ts"))
+      .map((f) => `/${f.replace(/\\/g, "/").replace(/\/?route\.ts$/, "")}`.replace(/\[(\w+)\]/g, "{$1}"))
+      .filter((p) => p !== "/openapi.json");
+    const doc = openApiDocument("https://example.test");
+    expect(mounted.filter((p) => !(p in doc.paths))).toEqual([]);
+    for (const [p, ops] of Object.entries(doc.paths)) {
+      if (p === "/app/config") continue;
+      for (const op of Object.values(ops) as { responses: Record<string, unknown> }[]) expect(op.responses[426]).toBeTruthy();
+    }
+    const { LOCATIONS_OPENAPI } = await import("@/domain/location-profile");
+    expect(JSON.stringify(LOCATIONS_OPENAPI.paths)).not.toContain("UpgradeRequired");
+  });
 });

@@ -1,4 +1,7 @@
 import { z, ZodType } from "zod";
+import { CUSTOMER_BADGES_OPENAPI } from "@/domain/customer-badges";
+import { FAMILY_OPENAPI } from "@/domain/family";
+import { LOCATIONS_OPENAPI } from "@/domain/location-profile";
 import * as S from "./api-schemas";
 
 const schema = (s: ZodType) => {
@@ -27,6 +30,7 @@ export function openApiDocument(baseUrl: string) {
   const components = {
     Error: S.ErrorBody,
     Shop: S.Shop,
+    ShopDetail: S.ShopDetail,
     ShopList: S.ShopList,
     Service: S.Service,
     ServiceList: S.ServiceList,
@@ -38,6 +42,7 @@ export function openApiDocument(baseUrl: string) {
     Appointment: S.Appointment,
     AppointmentEnvelope: S.AppointmentEnvelope,
     AppointmentList: S.AppointmentList,
+    AppointmentPage: S.AppointmentPage,
     CancelBody: S.CancelBody,
     RescheduleBody: S.RescheduleBody,
     OtpStart: S.OtpStart,
@@ -62,6 +67,9 @@ export function openApiDocument(baseUrl: string) {
     SetConsent: S.SetConsent,
     Device: S.DeviceSchema,
     DeviceList: z.object({ devices: z.array(S.DeviceSchema) }),
+    Session: S.SessionSchema,
+    SessionList: S.SessionList,
+    SessionsEnded: S.SessionsEnded,
     DeviceResponse: z.object({ device: S.DeviceSchema }),
     ReceiptList: z.object({ receipts: z.array(S.ReceiptSummary), nextBefore: z.string().nullable().describe("Pass as ?before= for the next page; null at the end") }),
     ReceiptResponse: z.object({ receipt: S.ReceiptDetail }),
@@ -90,7 +98,14 @@ export function openApiDocument(baseUrl: string) {
     Me: S.Me,
     UpdateMe: S.UpdateMe,
     Loyalty: S.Loyalty,
+    LoyaltyLedger: S.LoyaltyLedger,
+    LoyaltyLedgerEntry: S.LoyaltyLedgerEntry,
+    SuggestedRebook: S.SuggestedRebook,
+    SuggestedRebookList: S.SuggestedRebookList,
     AppConfig: S.AppConfig,
+    ...FAMILY_OPENAPI.components,
+    ...CUSTOMER_BADGES_OPENAPI.components,
+    ...LOCATIONS_OPENAPI.components,
   };
   const bearer = [{ bearerAuth: [] }];
   const optionalBearer = [{}, { bearerAuth: [] }];
@@ -114,7 +129,7 @@ export function openApiDocument(baseUrl: string) {
         "",
         "**Changes in 1.1 (additive):** `GET /app/config`; `bookingMode` and `externalBookingUrl` on shops (send clients to the external URL while a shop still books on its old site); `preferences` on `/me` with `preferencesNote` and `preferredBarberId` on `PATCH /me`; the `upgrade_required` error code.",
         "",
-        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`. Receipts: `receiptDelivery` on `/me` (email or app; a counter checkout then sends the receipt with nothing asked), `GET /me/receipts` and `/me/receipts/{id}`, and a push with `data.kind = receipt`. Cards and paying in the app: `/me/payment-methods` (saved cards on a platform-level Stripe Customer, set up with `POST /me/payment-methods/setup` for PaymentSheet), tickets the shop sends to the app at `/me/tickets` (push `data.kind = ticket`), the card fee before authorizing with `POST /me/tickets/{id}/quote`, and `POST /me/tickets/{id}/pay` (`requires_action` for 3-D Secure); `payments` on `/app/config`. Accounts: the app books signed in (401 `sign_in_required` otherwise) and signed-out website bookings never join an existing profile until that phone signs in; account holders are 13 or older (`ageConfirmed` on `/auth/otp/verify` and `/auth/otp/complete`, required from the app; `accounts` on `/app/config`); `PUT /me/secure` (`secured` on `/me`, and `stepUp.reason` is `secured` for such a profile); `POST /me/family/claim`; a child (dependent) keeps a first name and birth year only (`birthYear` on family members; their `lastName`, `birthday` and `photo` are always null).",
+        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`. Sessions: `GET /me/sessions` (where I'm signed in), `DELETE /me/sessions` (everywhere else) and `DELETE /me/sessions/{id}`; signing out or ending a session stops its access token at once and revokes the push devices registered in it. Receipts: `receiptDelivery` on `/me` (email or app; a counter checkout then sends the receipt with nothing asked), `GET /me/receipts` and `/me/receipts/{id}`, and a push with `data.kind = receipt`. Cards and paying in the app: `/me/payment-methods` (saved cards on a platform-level Stripe Customer, set up with `POST /me/payment-methods/setup` for PaymentSheet), tickets the shop sends to the app at `/me/tickets` (push `data.kind = ticket`), the card fee before authorizing with `POST /me/tickets/{id}/quote`, and `POST /me/tickets/{id}/pay` (`requires_action` for 3-D Secure); `payments` on `/app/config`. Accounts: the app books signed in (401 `sign_in_required` otherwise) and signed-out website bookings never join an existing profile until that phone signs in; account holders are 13 or older (`ageConfirmed` on `/auth/otp/verify` and `/auth/otp/complete`, required from the app; `accounts` on `/app/config`); `PUT /me/secure` (`secured` on `/me`, and `stepUp.reason` is `secured` for such a profile); `POST /me/family/claim`; the family endpoints (`/me/family`, children, family bookings and booking groups; 403 `details.switch = family` when switched off), `/me/badges` and the public `/locations`; `/me/appointments` pages (`status`, `cursor`, `limit`, `family`, and `nextCursor`); `GET /me/loyalty/ledger`; `GET /me/suggested-rebook`; `policies` on `GET /shops/{shop}`; a child (dependent) keeps a first name and birth year only (`birthYear` on family members; their `lastName`, `birthday` and `photo` are always null).",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
@@ -125,6 +140,7 @@ export function openApiDocument(baseUrl: string) {
       { name: "Auth" },
       { name: "Me" },
       { name: "Payments" },
+      { name: "Locations" },
     ],
     paths: {
       "/app/config": {
@@ -140,7 +156,7 @@ export function openApiDocument(baseUrl: string) {
         },
       },
       "/shops": { get: { tags: ["Shops"], summary: "List shops", responses: { 200: ok("ShopList") } } },
-      "/shops/{shop}": { get: { tags: ["Shops"], summary: "Get a shop", parameters: [shopParam], responses: { 200: ok("Shop"), 404: err("Not found") } } },
+      "/shops/{shop}": { get: { tags: ["Shops"], summary: "Get a shop, with its cancellation and no-show policy", parameters: [shopParam], responses: { 200: ok("ShopDetail"), 404: err("Not found") } } },
       "/shops/{shop}/services": {
         get: { tags: ["Shops"], summary: "Services and add-ons at a shop (shop prices/durations applied)", parameters: [shopParam], responses: { 200: ok("ServiceList") } },
       },
@@ -356,7 +372,45 @@ export function openApiDocument(baseUrl: string) {
         patch: { tags: ["Me"], summary: "A rotated token, the phone's notification permission, or a new app version", security: bearer, parameters: [deviceParam], requestBody: { required: true, content: jsonContent("UpdateDevice") }, responses: { 200: ok("DeviceResponse"), 404: err("Not found") } },
         delete: { tags: ["Me"], summary: "Revoke the device: call before signing out", security: bearer, parameters: [deviceParam], responses: { 204: { description: "Revoked" }, 404: err("Not found") } },
       },
-      "/me/appointments": { get: { tags: ["Me"], summary: "My upcoming and past appointments", security: bearer, responses: { 200: ok("AppointmentList") } } },
+      "/me/sessions": {
+        get: {
+          tags: ["Me"],
+          summary: "Where I'm signed in: one entry per sign-in, newest activity first",
+          description: "A session lasts across token refreshes. Ending one stops its access token at once (401), not just at expiry, and revokes the push devices registered in it.",
+          security: bearer,
+          responses: { 200: ok("SessionList") },
+        },
+        delete: { tags: ["Me"], summary: "Sign out everywhere else (every session but this one)", security: bearer, responses: { 200: ok("SessionsEnded") } },
+      },
+      "/me/sessions/{id}": {
+        delete: {
+          tags: ["Me"],
+          summary: "Sign out one session (it may be this one)",
+          security: bearer,
+          parameters: [{ name: "id", in: "path", required: true, description: "Session id from GET /me/sessions", schema: { type: "string", format: "uuid" } }],
+          responses: { 200: ok("SessionsEnded"), 404: err("Not found, or already signed out") },
+        },
+      },
+      "/me/appointments": {
+        get: {
+          tags: ["Me"],
+          summary: "My upcoming and past appointments",
+          description:
+            "With no status or cursor: the first page of upcoming and of past (AppointmentList, as before, now with nextCursor). With status or a cursor: one list, one page (AppointmentPage). A cursor carries its list, so ?cursor= alone continues it.",
+          security: bearer,
+          parameters: [
+            { name: "status", in: "query", required: false, schema: { type: "string", enum: ["upcoming", "past", "cancelled"] } },
+            { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+            { name: "cursor", in: "query", required: false, description: "nextCursor from the previous page", schema: { type: "string" } },
+            { name: "family", in: "query", required: false, description: "Include the children on my account", schema: { type: "boolean", default: false } },
+          ],
+          responses: {
+            200: { description: "OK", content: { "application/json": { schema: { oneOf: [{ $ref: "#/components/schemas/AppointmentList" }, { $ref: "#/components/schemas/AppointmentPage" }] } } } },
+            400: err("A cursor that isn't valid or is for another list (error.details.field = cursor)"),
+            403: err("family=true while the family feature is switched off (details.switch = family)"),
+          },
+        },
+      },
       "/me/receipts": {
         get: {
           tags: ["Me"],
@@ -434,7 +488,33 @@ export function openApiDocument(baseUrl: string) {
         },
       },
       "/me/loyalty": { get: { tags: ["Me"], summary: "Loyalty progress and available rewards (brand-wide)", security: bearer, responses: { 200: ok("Loyalty") } } },
-    },
+      "/me/loyalty/ledger": {
+        get: {
+          tags: ["Me"],
+          summary: "The card's history, newest first: earned, taken back, rewards earned and used, and the balance brought over from Squire",
+          description: "A child on a household card sees the parent's card, as on GET /me/loyalty.",
+          security: bearer,
+          parameters: [
+            { name: "cursor", in: "query", required: false, description: "nextCursor from the previous page", schema: { type: "string" } },
+            { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+          ],
+          responses: { 200: ok("LoyaltyLedger"), 400: err("A cursor that isn't valid") },
+        },
+      },
+      "/me/suggested-rebook": {
+        get: {
+          tags: ["Me"],
+          summary: "Book again: for me and each child, the last visit and when the next is due",
+          description:
+            "The same rule as the shop's rebook prompt: their own usual interval, else the main service's, else the brand's default. Only people with a completed visit appear. Check availability at lastVisit.shop with the barber and services before offering times.",
+          security: bearer,
+          responses: { 200: ok("SuggestedRebookList") },
+        },
+      },
+      ...structuredClone(FAMILY_OPENAPI.paths),
+      ...structuredClone(CUSTOMER_BADGES_OPENAPI.paths),
+      ...structuredClone(LOCATIONS_OPENAPI.paths),
+    } as Record<string, Record<string, unknown>>,
     components: {
       responses: { UpgradeRequired: err("This app build is below the minimum version (error.code upgrade_required, details.storeUrl)") },
       securitySchemes: { bearerAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } },
