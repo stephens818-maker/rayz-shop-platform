@@ -26,8 +26,8 @@ import { cleanTaxFiling, filingFor, stateCode } from "@/domain/sales-tax";
 import { taxJurisdiction } from "@/domain/location-profile";
 import { appBaseUrl } from "@/lib/deployment";
 import { flags } from "@/lib/flags";
-import { shopFeePolicy } from "@/server/payments/card-fee";
-import { BrandCardFeeEditor, ShopCardFeeEditor } from "./card-fee-editor";
+import { canEditShopFee, shopFeePolicy } from "@/server/payments/card-fee";
+import { ShopCardFeeEditor } from "./card-fee-editor";
 import { shopBarbers, shopCatalog } from "@/server/catalog";
 import { loadLocationProfile } from "@/server/location-profile";
 import { BookingWidgetCard, LocationPhotosEditor, LocationProfileEditor } from "./location-profile-editor";
@@ -58,9 +58,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const [profile, catalog, barbers] = part("details") ? await Promise.all([loadLocationProfile(shopId), shopCatalog(shopId, { onlineOnly: true }), shopBarbers(shopId, { onlineOnly: true })]) : [null, [], []];
   if (!shop) return <Empty title="Shop not found" />;
   const canCardFee = can(ctx, "settings.card_fee");
-  const seesCardFee = canCardFee || can(ctx, "settings.taxes");
+  const seesCardFee = canCardFee || can(ctx, "settings.taxes") || part("checkout");
   const fee = seesCardFee ? await shopFeePolicy(shop.id) : null;
-  const feeShops = canCardFee && ctx.brandWide ? await db.select({ name: shops.name, state: shops.state }).from(shops).where(ne(shops.status, "archived")).orderBy(asc(shops.name)) : [];
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader title={`${shop.name} settings`} subtitle={ctx.currentShopId === null && shop.id === ctx.shopIds[0] ? "All-shops view: editing the first shop. Use the switcher to pick another." : undefined} />
@@ -142,13 +141,14 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           shopName={shop.name}
           shopState={fee.state}
           brand={fee.brand}
-          effective={fee.policy}
+          effective={fee.configured}
           overridden={!!fee.override}
-          canEdit={canCardFee}
+          applied={fee.applied}
+          canEdit={canEditShopFee(ctx.permissions, fee.brand)}
+          brandAdmin={canCardFee && ctx.brandWide}
           walletFlag={flags.walletFee()}
         />
       )}
-      {fee && canCardFee && ctx.brandWide && <BrandCardFeeEditor key={JSON.stringify(fee.brand)} initial={fee.brand} canEdit walletFlag={flags.walletFee()} shops={feeShops} />}
       {part("hours") && <HoursEditor shopId={shop.id} canSetSunday={brand} initial={hours.map((h) => ({ weekday: h.weekday, openMin: h.openMin, closeMin: h.closeMin }))} />}
       {part("hours") && <ClosuresEditor shopId={shop.id} multiShop={ctx.shopIds.length > 1} closures={closures.map((c) => ({ date: c.date, reason: c.reason ?? "" }))} />}
       {part("checkout") && <DrawerOpeningEditor shopId={shop.id} initialCents={shop.drawerOpeningCents} />}

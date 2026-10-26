@@ -153,7 +153,7 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
   const [states, setStates] = useState(new Set(initial.states));
   const [limits, setLimits] = useState(Object.entries(initial.stateMaxRates).map(([s, r]) => ({ state: s, rate: pct(r) })));
   const [addLimit, setAddLimit] = useState("");
-  const policy = (): CardFeePolicy => ({
+  const policy = (): Omit<CardFeePolicy, "appliesTo" | "shopIds" | "shopsCanEdit"> => ({
     ...fromForm(f),
     waiverAllowed,
     refundRule,
@@ -166,7 +166,7 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
     <Card>
       <CardHeader
         title="Credit card surcharge (brand)"
-        subtitle={canEdit ? "Applies to every shop unless a shop sets its own. Every change is in the audit log." : "Brand admins change the card surcharge."}
+        subtitle={canEdit ? "The rules at every shop it applies to, unless a shop sets its own. Every change is in the audit log." : "Brand admins change the card surcharge."}
       />
       <Notice tone="blue">
         Only credit cards are ever surcharged: Stripe reports each card&apos;s funding type, and debit, prepaid, gift cards and cash never pay it. It never goes over {MAX_CARD_FEE_RATE * 100}% of the
@@ -275,34 +275,61 @@ export function ShopCardFeeEditor({
   brand,
   effective,
   overridden,
+  applied,
   canEdit,
+  brandAdmin,
   walletFlag,
 }: {
   shopId: string;
   shopName: string;
   shopState: string;
   brand: CardFeePolicy;
+  /** The brand's settings with this shop's own on top, whether or not the brand applies the fee here. */
   effective: CardFeePolicy;
   overridden: boolean;
+  /** The brand applies the fee at this shop. */
+  applied: boolean;
   canEdit: boolean;
+  /** They set the brand's surcharge too (shown a link to it). */
+  brandAdmin: boolean;
   walletFlag: boolean;
 }) {
   const { pending, msg, save } = useSave();
   const [own, setOwn] = useState(overridden);
   const [f, setF] = useState(toForm(effective));
   const rule = stateRule(effective, shopState);
-  const live = feeDisclosure(feeConfigFor(own ? { ...effective, ...fromForm(f) } : brand, shopState, "pos"));
+  const live = applied ? feeDisclosure(feeConfigFor(own ? { ...effective, ...fromForm(f) } : brand, shopState, "pos")) : null;
+  const subtitle = canEdit
+    ? "Follow the brand, or set this shop's own fee. Audited."
+    : brand.shopsCanEdit
+      ? "Brand admins and shop managers change the card surcharge."
+      : "View only: the brand sets the card surcharge.";
   return (
     <Card>
-      <CardHeader title={`Credit card surcharge at ${shopName}`} subtitle={canEdit ? "Follow the brand, or set this shop's own fee. Audited." : "Brand admins change the card surcharge."} />
+      <CardHeader
+        title={`Credit card surcharge at ${shopName}`}
+        subtitle={subtitle}
+        action={
+          brandAdmin ? (
+            <a href="/admin/card-fee" className="text-xs underline">
+              Brand surcharge and shops
+            </a>
+          ) : undefined
+        }
+      />
       <div className="space-y-2 px-4 pt-4">
+        {!applied && (
+          <Notice tone="red">
+            No surcharge here: the brand doesn&apos;t apply it at {shopName}.{brandAdmin ? " Turn it on under Credit card surcharge → Apply to shops." : ""}
+          </Notice>
+        )}
         {!rule.allowed && <Notice tone="red">No surcharge here: {shopState ? `${shopState} isn't` : "the shop has no state, so it isn't"} on the brand&apos;s state list.</Notice>}
         {rule.allowed && rule.maxRate < MAX_CARD_FEE_RATE && (
           <Notice>
             {shopState} limits the surcharge to {pct(rule.maxRate)}%; a higher rate is charged at that.
           </Notice>
         )}
-        {rule.allowed && <p className="text-xs text-zinc-600">{live ? `At the counter now: “${live}”` : "No surcharge at the counter."}</p>}
+        {rule.allowed && applied && <p className="text-xs text-zinc-600">{live ? `At the counter now: “${live}”` : "No surcharge at the counter."}</p>}
       </div>
       <fieldset disabled={!canEdit} className="flex gap-4 px-4 pt-3 text-sm">
         <label className="flex items-center gap-2">

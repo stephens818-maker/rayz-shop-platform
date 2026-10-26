@@ -9,7 +9,7 @@ import { ReceiptBrandingSchema, receiptBranding } from "@/domain/connect";
 import { US_TIMEZONES } from "@/domain/location-lifecycle";
 import { checkSlug } from "@/server/location-admin";
 import type { CardFeeOverride, CardFeePolicy } from "@/domain/card-fee-policy";
-import { saveBrandFeePolicy, saveShopFeeOverride } from "@/server/payments/card-fee";
+import { brandFeePolicy, canEditShopFee, saveBrandFeePolicy, saveShopFeeOverride } from "@/server/payments/card-fee";
 import { hoursProblem } from "@/domain/hours";
 import { normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
@@ -134,23 +134,30 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
   });
 }
 
-/** The brand's credit card surcharge policy. Brand admins only; every save is audited with what changed. */
-export async function saveBrandCardFeeAction(policy: CardFeePolicy) {
+/** The brand's credit card surcharge policy, which shops use it and whether shop managers may change their own. Brand admins only; every save is audited with what changed. */
+export async function saveBrandCardFeeAction(policy: Partial<CardFeePolicy>) {
   return safe(async () => {
     const ctx = await authorize("settings.card_fee");
+    if (!ctx.brandWide) throw new AppError("forbidden", "The brand's surcharge needs access to all shops");
     await saveBrandFeePolicy(ctx.actor, policy);
     revalidatePath("/admin/settings");
+    revalidatePath("/admin/card-fee");
     return null;
   });
 }
 
-/** One shop's own surcharge settings on top of the brand's, or null to follow the brand. Audited. */
+/**
+ * One shop's own surcharge settings on top of the brand's, or null to follow the brand. Brand admins,
+ * or people who edit the shop's checkout settings when the brand lets shop managers. Audited.
+ */
 export async function saveShopCardFeeAction(shopId: string, override: CardFeeOverride | null) {
   return safe(async () => {
-    const ctx = await authorize("settings.card_fee");
+    const ctx = await authorize(["settings.card_fee", ...partPerms("checkout")]);
     assertShopAccess(ctx, shopId);
+    if (!canEditShopFee(ctx.permissions, await brandFeePolicy())) throw new AppError("forbidden", "The brand keeps the card surcharge view only for shop managers");
     await saveShopFeeOverride(ctx.actor, shopId, override);
     revalidatePath("/admin/settings");
+    revalidatePath("/admin/card-fee");
     return null;
   });
 }
