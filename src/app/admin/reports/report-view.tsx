@@ -1,9 +1,10 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
+import { Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
 import { TrendChart } from "@/components/trend-chart";
 import { reportFor, reportsFor } from "@/domain/navigation";
 import { ReportKey, reportExport } from "@/domain/permissions";
+import { MONEY_HIDDEN_NOTE } from "@/domain/report-money";
 import { REPORT_GROUP, groupReports } from "@/domain/report-groups";
 import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
@@ -248,6 +249,7 @@ export async function ReportPage({
       />
       <SavedViews report={report} base={meta.href} query={query} views={views} canShare={can(ctx, "report_builder.build")} />
       <LocationNotice locations={scope} />
+      {data.notes?.includes(MONEY_HIDDEN_NOTE) && <Notice tone="blue">{MONEY_HIDDEN_NOTE}</Notice>}
       {data.stats.length > 0 && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {data.stats.map((s) => (
@@ -292,11 +294,13 @@ export async function ReportPage({
           </a>
         </p>
       )}
-      {data.notes?.map((n) => (
-        <p key={n} className="mt-3 text-xs text-zinc-500">
-          {n}
-        </p>
-      ))}
+      {data.notes
+        ?.filter((n) => n !== MONEY_HIDDEN_NOTE)
+        .map((n) => (
+          <p key={n} className="mt-3 text-xs text-zinc-500">
+            {n}
+          </p>
+        ))}
     </div>
   );
 }
