@@ -1246,6 +1246,8 @@ export const customers = pgTable(
     pushMarketing: boolean("push_marketing").notNull().default(false),
     /** App push about their own appointments and receipts, to their customer_devices. */
     pushTransactional: boolean("push_transactional").notNull().default(false),
+    /** The client's standing receipt choice (C9): sent on paying with nothing asked at the counter. Null: asked at checkout. */
+    receiptDelivery: text("receipt_delivery").$type<"email" | "app">(),
     homeShopId: uuid("home_shop_id").references(() => shops.id),
     preferredStaffId: uuid("preferred_staff_id").references(() => staff.id, { onDelete: "set null" }),
     /** When their barber calls in, the appointment may be moved to a barber at another shop. */
@@ -2111,12 +2113,12 @@ export const receiptDeliveries = pgTable(
       .notNull()
       .references(() => shops.id),
     customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
-    channel: text("channel").$type<"sms" | "email" | "none">().notNull(),
-    /** E.164 phone or lowercased email; null for "no receipt". Refund and void updates go here. */
+    channel: text("channel").$type<"sms" | "email" | "app" | "none">().notNull(),
+    /** E.164 phone, lowercased email, or for the app the account holder's customer ID; null for "no receipt". Refund and void updates go here. */
     destination: text("destination"),
     masked: text("masked"),
     /** ReceiptPurpose in src/domain/receipts.ts. */
-    purpose: text("purpose").$type<"counter" | "handoff" | "refund" | "void" | "resend" | "request" | "review">().notNull(),
+    purpose: text("purpose").$type<"counter" | "handoff" | "refund" | "void" | "resend" | "request" | "review" | "standing">().notNull(),
     tokenHash: text("token_hash").unique(),
     jobId: uuid("job_id").references(() => notificationJobs.id, { onDelete: "set null" }),
     /**
@@ -2128,8 +2130,8 @@ export const receiptDeliveries = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    check("receipt_deliveries_channel", sql`${t.channel} in ('sms', 'email', 'none')`),
-    check("receipt_deliveries_purpose", sql`${t.purpose} in ('counter', 'handoff', 'refund', 'void', 'resend', 'request', 'review')`),
+    check("receipt_deliveries_channel", sql`${t.channel} in ('sms', 'email', 'app', 'none')`),
+    check("receipt_deliveries_purpose", sql`${t.purpose} in ('counter', 'handoff', 'refund', 'void', 'resend', 'request', 'review', 'standing')`),
     check("receipt_deliveries_skipped", sql`${t.skipped} is null or ${t.skipped} in ('opted_out', 'no_consent', 'recent', 'few_visits', 'snoozed')`),
     check("receipt_deliveries_destination", sql`(${t.channel} = 'none') = (${t.destination} is null)`),
     index("receipt_deliveries_sale_idx").on(t.saleId, t.createdAt),

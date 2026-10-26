@@ -149,6 +149,7 @@ async function anonymize(tx: DBorTx, id: string, now: Date) {
       phone: null,
       email: null,
       emailVerifiedAt: null,
+      receiptDelivery: null,
       address: null,
       birthday: null,
       birthYear: null,

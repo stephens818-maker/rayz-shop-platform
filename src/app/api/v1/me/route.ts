@@ -20,15 +20,22 @@ export const PATCH = route(async (req) => {
   if (b.lastName !== undefined) patch.lastName = b.lastName?.trim() || null;
   if (b.email !== undefined) {
     const email = normalizeEmail(b.email);
-    const current = await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { email: true } });
+    const current = await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { email: true, receiptDelivery: true } });
     if (email && email !== current?.email) throw new AppError("bad_request", "Confirm a new email with a code: POST /me/email/start, then /me/email/verify", { field: "email" });
-    if (!email) Object.assign(patch, { email: null, emailVerifiedAt: null });
+    if (!email) Object.assign(patch, { email: null, emailVerifiedAt: null }, current?.receiptDelivery === "email" ? { receiptDelivery: null } : {});
   }
   if (b.smsOptIn !== undefined) patch.smsOptIn = b.smsOptIn;
   if (b.emailOptIn !== undefined) patch.emailOptIn = b.emailOptIn;
   if (b.preferencesNote !== undefined) {
     patch.preferencesNote = b.preferencesNote?.trim() || null;
     patch.preferencesUpdatedAt = new Date();
+  }
+  if (b.receiptDelivery !== undefined) {
+    if (b.receiptDelivery === "email") {
+      const c = await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { email: true, emailVerifiedAt: true } });
+      if (!c?.email || !c.emailVerifiedAt) throw new AppError("bad_request", "Verify an email first: POST /me/email/start, then /me/email/verify", { field: "receiptDelivery" });
+    }
+    patch.receiptDelivery = b.receiptDelivery;
   }
   if (b.preferredBarberId !== undefined) {
     const barber = b.preferredBarberId ? await resolveStaffRef(b.preferredBarberId) : null;

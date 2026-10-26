@@ -6,6 +6,7 @@ import { MyBadges } from "@/components/my-badges";
 import { MyCalendarFeed } from "@/components/my-calendar-feed";
 import { MyFamily } from "@/components/my-family";
 import { ConsentCard } from "@/components/consent-card";
+import { ReceiptChoiceCard } from "@/components/receipt-choice-card";
 import { EmailCard, IdentityCheckCard, PhoneSignIn } from "@/components/sign-in-recovery";
 import { Button, StatusBadge } from "@/components/ui";
 import { VISIT_STATUS_LABEL, cadenceByBarber, cadenceOf } from "@/domain/visit-cadence";
@@ -18,6 +19,7 @@ interface Me {
   email: string | null;
   emailVerified?: boolean;
   identityCheckRequired?: boolean;
+  receiptDelivery?: "email" | "app" | null;
 }
 interface Loyalty {
   enabled: boolean;
@@ -118,6 +120,7 @@ export default function AccountPage() {
       )}
       <EmailCard email={me.email} verified={!!me.emailVerified} onChanged={loadMe} />
       <ConsentCard key={`${me.email}:${me.emailVerified}`} />
+      <ReceiptChoiceCard current={me.receiptDelivery ?? null} verifiedEmail={!!me.emailVerified} onChanged={loadMe} />
       <MyBadges />
       <MyFamily parentName={me.firstName} />
       <MyCalendarFeed />

@@ -35,12 +35,13 @@ import { contactFor, householdsByContact } from "./household-contact";
 import type { ClientPolicy } from "./client-privacy";
 import { AppError, notFound } from "./errors";
 import { loyaltyBalance } from "./loyalty";
+import { pushDevices } from "./notifications/queue";
 import { reviewTiming } from "./review-rules";
 
 export const receiptUrl = (token: string) => `${appBaseUrl()}/receipt/${token}`;
 
 /** Purposes that are a choice of where the client wants this ticket's receipts; updates follow the latest one. */
-const CHOICES: ReceiptPurpose[] = ["counter", "handoff", "request", "resend"];
+const CHOICES: ReceiptPurpose[] = ["counter", "handoff", "request", "resend", "standing"];
 /** A counter checkout's receipt question is open this long after paying. */
 const CHECKOUT_WINDOW_MS = 12 * 60 * 60 * 1000;
 
@@ -219,8 +220,8 @@ export async function composeReviewRequest(saleId: string, channel: ReceiptSendC
 
 export interface DeliverInput {
   saleId: string;
-  channel: ReceiptSendChannel | "none";
-  /** E.164 or lowercased email; ignored for "none". */
+  channel: ReceiptSendChannel | "app" | "none";
+  /** E.164 or lowercased email; the account holder's customer ID for "app"; ignored for "none". */
   to?: string | null;
   purpose: ReceiptPurpose;
   sentBy?: string | null;
@@ -246,6 +247,7 @@ export async function deliverReceipt(o: DeliverInput, tx: DBorTx = db): Promise<
     await tx.insert(receiptDeliveries).values({ saleId: sale.id, shopId: sale.shopId, customerId: sale.customerId, channel: "none", purpose: o.purpose, sentBy: o.sentBy ?? null, createdAt: now });
     return { status: "none" };
   }
+  if (o.channel === "app") return deliverToApp(sale, o, now, tx);
   const channel = o.channel;
   const to = destinationOf(channel, o.to);
   const masked = maskOf(channel, to);
@@ -281,6 +283,76 @@ export async function deliverReceipt(o: DeliverInput, tx: DBorTx = db): Promise<
     .values({ saleId: sale.id, shopId: sale.shopId, customerId: sale.customerId, channel, destination: to, masked, purpose: o.purpose, tokenHash: hashToken(token), jobId: job.id, sentBy: o.sentBy ?? null, createdAt: now })
     .returning({ id: receiptDeliveries.id });
   return { status: "queued", masked, deliveryId: row.id };
+}
+
+export const APP_MASK = "the Ray'z app";
+
+/**
+ * In the app: the receipt is on the client's receipts list (GET /me/receipts) and, when they turned
+ * appointment notifications on, a push to the household's devices says so. A child's receipt goes to
+ * the parent who holds the account.
+ */
+async function deliverToApp(sale: { id: string; shopId: string; customerId: string | null }, o: DeliverInput, now: Date, tx: DBorTx): Promise<DeliverResult> {
+  const [holder] = sale.customerId
+    ? await tx.select({ id: sql<string>`coalesce(${customers.guardianId}, ${customers.id})` }).from(customers).where(eq(customers.id, sale.customerId))
+    : [];
+  if (!holder || (o.to && o.to !== holder.id)) throw new AppError("conflict", "This ticket isn't on an app account");
+  const d = await receiptData(sale.id, tx, now);
+  const update = o.update ?? null;
+  const body =
+    update?.kind === "void"
+      ? `Ticket #${d.sale.number} was voided and ${formatCents(d.totalCents)} goes back to you.`
+      : update?.kind === "refund"
+        ? `${formatCents(update.refundedCents)} was refunded on ticket #${d.sale.number}.`
+        : `Your receipt: ${formatCents(d.totalCents)}, ticket #${d.sale.number}. Tap to see it.`;
+  const devices = await pushDevices(sale.customerId, tx);
+  const jobs = devices.length
+    ? await tx
+        .insert(notificationJobs)
+        .values(devices.map((to) => ({ kind: "receipt", channel: "push", to, shopId: sale.shopId, customerId: sale.customerId, subject: d.shop.title, body, runAt: now })))
+        .returning({ id: notificationJobs.id })
+    : [];
+  const [row] = await tx
+    .insert(receiptDeliveries)
+    .values({
+      saleId: sale.id,
+      shopId: sale.shopId,
+      customerId: sale.customerId,
+      channel: "app",
+      destination: holder.id,
+      masked: APP_MASK,
+      purpose: o.purpose,
+      tokenHash: hashToken(newRebookToken()),
+      jobId: jobs[0]?.id ?? null,
+      sentBy: o.sentBy ?? null,
+      createdAt: now,
+    })
+    .returning({ id: receiptDeliveries.id });
+  return { status: "queued", masked: APP_MASK, deliveryId: row.id };
+}
+
+/**
+ * Right after paying, with nothing asked at the counter (C9): the receipt goes where the client
+ * (or the parent who holds their account) said in the app, to a verified email or the app. It runs in
+ * a savepoint and never fails the payment.
+ */
+export async function sendStandingReceipt(saleId: string, tx: Tx, now = new Date()): Promise<DeliverResult | null> {
+  try {
+    return await tx.transaction(async (sp) => {
+      const [h] = await sp
+        .select({ id: customers.id, choice: customers.receiptDelivery, email: customers.email, verified: customers.emailVerifiedAt, deleted: customers.deletedAt })
+        .from(sales)
+        .innerJoin(customers, sql`${customers.id} = (select coalesce(c.guardian_id, c.id) from customers c where c.id = ${sales.customerId})`)
+        .where(eq(sales.id, saleId));
+      if (!h?.choice || h.deleted) return null;
+      if (h.choice === "app") return deliverReceipt({ saleId, channel: "app", to: h.id, purpose: "standing", now }, sp);
+      if (!h.email || !h.verified) return null;
+      return deliverReceipt({ saleId, channel: "email", to: h.email.toLowerCase(), purpose: "standing", now }, sp);
+    });
+  } catch (e) {
+    console.error("receipt: standing receipt not sent", saleId, (e as Error).message);
+    return null;
+  }
 }
 
 /** The client's latest choice for this ticket, which refund and void updates follow. */
@@ -325,7 +397,7 @@ export async function checkoutReceiptOpen(saleId: string, tx: DBorTx = db, now =
   const sale = await tx.query.sales.findFirst({ where: eq(sales.id, saleId), columns: { paidAt: true, status: true, isImported: true } });
   if (!sale?.paidAt || sale.isImported || sale.status === "open") return false;
   if (now.getTime() - sale.paidAt.getTime() > CHECKOUT_WINDOW_MS) return false;
-  const asked = await tx.query.receiptDeliveries.findFirst({ where: and(eq(receiptDeliveries.saleId, saleId), inArray(receiptDeliveries.purpose, ["counter", "handoff"])), columns: { id: true } });
+  const asked = await tx.query.receiptDeliveries.findFirst({ where: and(eq(receiptDeliveries.saleId, saleId), inArray(receiptDeliveries.purpose, ["counter", "handoff", "standing"])), columns: { id: true } });
   return !asked;
 }
 

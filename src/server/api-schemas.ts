@@ -166,6 +166,9 @@ export const OtpVerify = z.object({
   lastName: z.string().optional(),
   deviceName: z.string().max(80).optional(),
 });
+const ReceiptDelivery = z
+  .enum(["email", "app"])
+  .describe("email: to the verified email. app: on GET /me/receipts, with a push (data.kind = receipt) when appointment notifications are on. A child's receipts go to the parent");
 export const Me = z.object({
   id: z.string().uuid(),
   firstName: z.string(),
@@ -180,6 +183,7 @@ export const Me = z.object({
   smsMarketingOptIn: z.boolean().describe("Added in 1.2. Offer and opening texts, a separate yes from appointment texts"),
   emailMarketingOptIn: z.boolean().describe("Added in 1.2"),
   pushMarketing: z.boolean().describe("Added in 1.2"),
+  receiptDelivery: ReceiptDelivery.nullable().describe("Added in 1.2. Where receipts go on paying at the counter; null asks at checkout"),
   preferences: z
     .object({
       note: z.string().nullable().describe("The client's own note to their barber. Staff see it beside, never mixed with, their own notes"),
@@ -308,6 +312,46 @@ export const UpdateDevice = z.object({
   osVersion: z.string().max(40).nullable().optional(),
   locale: z.string().max(20).nullable().optional(),
 });
+export const ReceiptListQuery = z.object({
+  before: z.string().datetime({ offset: true }).optional().describe("nextBefore from the previous page"),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+});
+const ReceiptStatus = z.enum(["paid", "voided", "refunded", "partially_refunded"]);
+export const ReceiptSummary = z.object({
+  id: z.string().uuid(),
+  number: z.number().int(),
+  status: ReceiptStatus,
+  paidAt: Instant,
+  totalCents: Cents,
+  refundedCents: Cents,
+  shop: z.object({ id: z.string().uuid(), name: z.string() }),
+  forFirstName: z.string().nullable().describe("Whose visit: the client, or a child on their account"),
+  deliveredBy: z.enum(["sms", "email", "app", "none"]).nullable().describe("Where the latest receipt for it went; none = no receipt wanted"),
+});
+export const ReceiptDetail = z.object({
+  id: z.string().uuid(),
+  number: z.number().int(),
+  status: ReceiptStatus,
+  paidAt: Instant,
+  voidedAt: Instant.nullable(),
+  shop: z.object({ name: z.string(), title: z.string(), address: z.string().nullable(), phone: z.string().nullable(), logoUrl: z.string().nullable(), footer: z.string() }),
+  forFirstName: z.string().nullable(),
+  barber: z.string().nullable(),
+  lines: z.array(z.object({ name: z.string(), kind: z.string(), qty: z.number().int(), cents: z.number().int(), refundedQty: z.number().int() })),
+  people: z.array(z.object({ name: z.string(), barbers: z.array(z.string()), cents: z.number().int() })).nullable().describe("A ticket for several people: the total per person"),
+  discounts: z.array(z.object({ label: z.string(), cents: z.number().int() })),
+  subtotalCents: z.number().int(),
+  taxCents: Cents,
+  tipCents: Cents,
+  fee: z.object({ label: z.string(), cents: Cents }).nullable().describe("The card fee, when one was charged"),
+  totalCents: z.number().int(),
+  tenders: z.array(z.object({ label: z.string(), cents: z.number().int() })).describe("e.g. Visa •••• 4242, Cash, Gift card"),
+  refunds: z.array(z.object({ label: z.string(), cents: Cents, at: Instant })),
+  refundedCents: Cents,
+  disclosures: z.array(z.string()),
+  loyalty: z.string().nullable(),
+  rebookPath: z.string().nullable().describe("Web path to book the same again, when the shop takes online bookings"),
+});
 export const RefreshBody = z.object({ refreshToken: z.string() });
 export const RefreshResponse = z.object({ accessToken: z.string(), refreshToken: z.string(), tokenType: z.literal("Bearer"), expiresIn: z.number().int() });
 export const UpdateMe = z.object({
@@ -323,6 +367,7 @@ export const UpdateMe = z.object({
   emailOptIn: z.boolean().optional(),
   preferencesNote: z.string().max(500).nullable().optional().describe("The client's note to their barber (e.g. 'low fade, no product'). null or '' clears it. Card numbers and contact details are removed"),
   preferredBarberId: z.string().nullable().optional().describe("Barber ID or slug; null clears it"),
+  receiptDelivery: ReceiptDelivery.nullable().optional().describe("Added in 1.2. email needs a verified email; null goes back to being asked at checkout"),
 });
 
 export const Loyalty = z.object({

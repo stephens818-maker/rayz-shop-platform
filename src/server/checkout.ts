@@ -1397,6 +1397,8 @@ export async function finalizeSale(input: FinalizeInput) {
       }
       await syncTipLedger(tx, { saleId: ctx.sale.id });
       await (await import("./booking-groups")).onSalePaid(ctx.sale.id, tx);
+      // The customer screen asks the client itself; at the counter, a standing choice answers for them.
+      if (!input.handoffId) await (await import("./receipts")).sendStandingReceipt(ctx.sale.id, tx, now);
     });
   } catch (e) {
     for (const l of legs)

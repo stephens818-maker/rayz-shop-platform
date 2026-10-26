@@ -13,8 +13,9 @@ export type ReceiptSendChannel = "sms" | "email";
  * - resend: staff sent it again from the ticket or the client's history.
  * - request: the client asked for a copy themselves.
  * - review: the location's Google review follow-up after the visit (src/domain/reviews.ts).
+ * - standing: the client's own standing choice in the app or on their account (email or the app), sent on paying.
  */
-export const RECEIPT_PURPOSES = ["counter", "handoff", "refund", "void", "resend", "request", "review"] as const;
+export const RECEIPT_PURPOSES = ["counter", "handoff", "refund", "void", "resend", "request", "review", "standing"] as const;
 export type ReceiptPurpose = (typeof RECEIPT_PURPOSES)[number];
 export const RECEIPT_PURPOSE_LABEL: Record<ReceiptPurpose, string> = {
   counter: "At checkout",
@@ -24,6 +25,7 @@ export const RECEIPT_PURPOSE_LABEL: Record<ReceiptPurpose, string> = {
   resend: "Sent again by staff",
   request: "Requested by the client",
   review: "Google review request",
+  standing: "The client's standing choice",
 };
 
 /**
@@ -33,7 +35,7 @@ export const RECEIPT_PURPOSE_LABEL: Record<ReceiptPurpose, string> = {
 export type ReceiptSkip = "opted_out" | "no_consent" | "recent" | "few_visits" | "snoozed";
 
 /** Purposes where the client is choosing it right then: their choice is the consent for this one message. */
-const CLIENT_ASKED: readonly ReceiptPurpose[] = ["counter", "handoff", "request"];
+const CLIENT_ASKED: readonly ReceiptPurpose[] = ["counter", "handoff", "request", "standing"];
 
 export type ConsentResult = { ok: true } | { ok: false; code: "opted_out" | "no_consent"; message: string };
 

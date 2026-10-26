@@ -61,6 +61,8 @@ export function openApiDocument(baseUrl: string) {
     Device: S.DeviceSchema,
     DeviceList: z.object({ devices: z.array(S.DeviceSchema) }),
     DeviceResponse: z.object({ device: S.DeviceSchema }),
+    ReceiptList: z.object({ receipts: z.array(S.ReceiptSummary), nextBefore: z.string().nullable().describe("Pass as ?before= for the next page; null at the end") }),
+    ReceiptResponse: z.object({ receipt: S.ReceiptDetail }),
     RegisterDevice: S.RegisterDevice,
     UpdateDevice: S.UpdateDevice,
     EmailChangeStart: S.EmailChangeStart,
@@ -94,7 +96,7 @@ export function openApiDocument(baseUrl: string) {
         "",
         "**Changes in 1.1 (additive):** `GET /app/config`; `bookingMode` and `externalBookingUrl` on shops (send clients to the external URL while a shop still books on its old site); `preferences` on `/me` with `preferencesNote` and `preferredBarberId` on `PATCH /me`; the `upgrade_required` error code.",
         "",
-        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`.",
+        "**Changes in 1.2:** a sign-in code no longer lists the profiles on a number (`chooseProfile` is never returned; treat it like `needsProfile` and ask for a first name). New sign-in steps: `stepUp` (a number unused 18 months confirms with the profile's verified email via `/auth/step-up/*`) and `cantSignIn` (offer `POST /auth/help`). `identityCheckRequired` on tokens and `/me`, with `POST /me/identity-check`; `redemptionLocked` on `/me/loyalty`. Only a verified email signs in: `emailVerified` on `/me`, and a new email goes through `/me/email/start` and `/me/email/verify` (`PATCH /me` only clears it). `appHash` on `/auth/otp/start` for Android. `features` (kill switches) on `/app/config`; a switched-off feature answers 403 with `details.switch`. Code requests are limited per IP as well as per number (429 with `details.retryAfterSeconds`). Account deletion: `GET /me/delete` (what happens), `POST /me/delete/start` (code), `POST /me/delete`; `links` on `/app/config` adds `support` and `deleteAccount` (the web page, which works without the app), and privacy and terms default to pages on this site. Consent: `GET`/`PUT /me/consent` (appointment and marketing texts, emails and app push, each recorded with the wording's version), the four new flags on `/me`, and push devices at `/me/devices`. Receipts: `receiptDelivery` on `/me` (email or app; a counter checkout then sends the receipt with nothing asked), `GET /me/receipts` and `/me/receipts/{id}`, and a push with `data.kind = receipt`.",
       ].join("\n"),
     },
     servers: [{ url: `${baseUrl}/api/v1` }],
@@ -306,6 +308,27 @@ export function openApiDocument(baseUrl: string) {
         delete: { tags: ["Me"], summary: "Revoke the device: call before signing out", security: bearer, parameters: [deviceParam], responses: { 204: { description: "Revoked" }, 404: err("Not found") } },
       },
       "/me/appointments": { get: { tags: ["Me"], summary: "My upcoming and past appointments", security: bearer, responses: { 200: ok("AppointmentList") } } },
+      "/me/receipts": {
+        get: {
+          tags: ["Me"],
+          summary: "My receipts, newest first: mine, my children's, and tickets I paid for",
+          security: bearer,
+          parameters: [
+            { name: "before", in: "query", required: false, description: "nextBefore from the previous page", schema: { type: "string", format: "date-time" } },
+            { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+          ],
+          responses: { 200: ok("ReceiptList") },
+        },
+      },
+      "/me/receipts/{id}": {
+        get: {
+          tags: ["Me"],
+          summary: "One receipt, as the digital receipt shows it",
+          security: bearer,
+          parameters: [{ name: "id", in: "path", required: true, description: "Receipt id from GET /me/receipts", schema: { type: "string", format: "uuid" } }],
+          responses: { 200: ok("ReceiptResponse"), 404: err("Not found") },
+        },
+      },
       "/me/loyalty": { get: { tags: ["Me"], summary: "Loyalty progress and available rewards (brand-wide)", security: bearer, responses: { 200: ok("Loyalty") } } },
     },
     components: {

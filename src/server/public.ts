@@ -108,6 +108,7 @@ export async function publicMe(customerId: string) {
     smsMarketingOptIn: c.smsMarketingOptIn,
     emailMarketingOptIn: c.emailMarketingOptIn,
     pushMarketing: c.pushMarketing,
+    receiptDelivery: c.receiptDelivery ?? null,
     preferences: {
       note: c.preferencesNote,
       updatedAt: c.preferencesUpdatedAt?.toISOString() ?? null,

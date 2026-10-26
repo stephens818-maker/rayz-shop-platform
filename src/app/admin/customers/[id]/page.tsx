@@ -258,7 +258,7 @@ export default async function CustomerPage({
     : null;
   const canFamily = full && can(ctx, "clients.family");
   const showFamily = !!c.guardianId || familyKids.length > 0 || !!c.formerGuardianId || canFamily;
-  const receiptLabel = (r: { channel: string; masked: string | null } | undefined) => (!r ? null : r.channel === "none" ? "No receipt" : `${r.channel === "sms" ? "Texted" : "Emailed"} ${r.masked}`);
+  const receiptLabel = (r: { channel: string; masked: string | null } | undefined) => (!r ? null : r.channel === "none" ? "No receipt" : r.channel === "app" ? "In the app" : `${r.channel === "sms" ? "Texted" : "Emailed"} ${r.masked}`);
   const pager = (key: "v" | "s", pageNo: number, total: number, size: number) =>
     total > size && (
       <div className="flex items-center justify-between px-4 py-3 text-sm">
