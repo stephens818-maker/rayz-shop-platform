@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
 import { BarChartCard } from "@/components/bar-chart";
+import { ChipStrip } from "@/components/chip-strip";
 import { TrendChart } from "@/components/trend-chart";
 import { reportBarChart } from "@/domain/report-charts";
 import { reportFor, reportsFor } from "@/domain/navigation";
@@ -29,7 +30,7 @@ export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportK
   return (
     <nav aria-label="Reports" className="no-print mb-4 border-b border-zinc-200 pb-2">
       {groups.length > 1 && (
-        <div className="mb-1.5 flex flex-wrap gap-1" aria-label="Report categories">
+        <ChipStrip className="mb-1.5" label="Report categories">
           <Link href="/admin/reports" className="rounded-md px-2.5 py-1 text-xs font-medium text-zinc-500 hover:bg-zinc-100">
             All reports
           </Link>
@@ -43,9 +44,9 @@ export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportK
               {g.label} <span className="text-zinc-400">{g.reports.length}</span>
             </Link>
           ))}
-        </div>
+        </ChipStrip>
       )}
-      <div className="flex flex-wrap gap-1">
+      <ChipStrip>
         {current.reports.map((r) => (
           <Link
             key={r.key}
@@ -56,7 +57,7 @@ export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportK
             {r.label}
           </Link>
         ))}
-      </div>
+      </ChipStrip>
     </nav>
   );
 }
@@ -98,7 +99,7 @@ export function ReportTableCard({ t, csv, rowAction }: { t: ReportTable; csv: st
           <Empty title="Nothing in this range" />
         </div>
       ) : (
-        <Table className="max-h-[560px] overflow-y-auto">
+        <Table className="max-h-[560px] overflow-y-auto" label={t.title}>
           <thead>
             <tr>
               {t.columns.map((c, j) => (
@@ -228,7 +229,7 @@ export async function ReportPage({
             {scope.to !== scope.from && ` – ${formatDate(scope.to, "MMM d, yyyy")}`}
             {barberLabel && ` · ${barberLabel}`}
             {view !== "combined" && ` · ${REPORT_VIEWS[view].toLowerCase()}`}
-            <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
+            <span className="ml-2 whitespace-nowrap rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
           </>
         }
         actions={

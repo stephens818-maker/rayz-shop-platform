@@ -349,7 +349,7 @@ export function BookingWidgetCard({ base, slug, services, barbers }: { base: str
           </Field>
         </div>
         <div>
-          <pre className="overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs text-zinc-100" data-testid="widget-snippet">
+          <pre tabIndex={0} role="region" aria-label="Booking widget code" className="theme-fixed overflow-x-auto rounded-md bg-zinc-900 p-3 text-xs text-zinc-100" data-testid="widget-snippet">
             {snippet}
           </pre>
           <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => copy("snippet", snippet)}>

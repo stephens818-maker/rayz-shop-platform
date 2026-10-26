@@ -161,7 +161,7 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
             <Empty title="Nobody is off this month" />
           </div>
         ) : (
-          <Table>
+          <Table label="Who's off this month">
             <thead>
               <tr>
                 <Th>Barber</Th>
@@ -195,7 +195,7 @@ export default async function TimeOffPage({ searchParams }: { searchParams: Prom
       {past.length > 0 && (
         <Card>
           <CardHeader title="Recently decided" />
-          <Table>
+          <Table label="Recently decided">
             <thead>
               <tr>
                 <Th>Barber</Th>

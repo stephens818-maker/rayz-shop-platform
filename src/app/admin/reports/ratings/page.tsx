@@ -76,7 +76,7 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
             {p.label}
             {barbers} · {p.query.combined ? "Lowest- and highest-rated clients across these shops" : "Lowest- and highest-rated clients at each shop"}, from staff ratings
             given there. Staff only.
-            <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
+            <span className="ml-2 whitespace-nowrap rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
           </>
         }
         actions={
@@ -107,7 +107,7 @@ export default async function RatingsReportPage({ searchParams }: { searchParams
           ))}
         </select>
         <button className="h-9 rounded-lg bg-ink-900 px-4 font-medium text-white">Show</button>
-        <div className="ml-auto self-center">
+        <div className="ml-auto min-w-0 max-w-full self-center">
           <ViewToggle l={p} href={here} />
         </div>
       </form>

@@ -45,7 +45,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
             {formatDate(period.end, "MMM d, yyyy")}
             {period.index === current.index && " (in progress)"}
             {view !== "combined" && ` · ${REPORT_VIEWS[view].toLowerCase()}`}
-            <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
+            <span className="ml-2 whitespace-nowrap rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
           </>
         }
         actions={
@@ -78,7 +78,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
           <Button type="submit" variant="dark" size="sm" className="h-9">
             Apply
           </Button>
-          <div className="ml-auto self-center">
+          <div className="ml-auto min-w-0 max-w-full self-center">
             <ViewToggle l={l} href={(v) => here({}, withView(l, v))} />
           </div>
         </form>

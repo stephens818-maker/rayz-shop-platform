@@ -661,7 +661,7 @@ export default async function Dashboard({
       {shopRows.length > 0 && (
         <Card>
           <CardHeader title="By shop today" />
-          <Table>
+          <Table label="By shop today">
             <thead>
               <tr>
                 <Th>Shop</Th>

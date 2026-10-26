@@ -13,7 +13,7 @@ export default async function Home() {
   return (
     <div>
       <section className="mb-6 rounded-2xl bg-ink-900 px-6 py-8 text-white sm:px-10 sm:py-12">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-500">{[...new Set(shops.map((s) => stateName(s.state)))].join(" · ")}</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-red-400">{[...new Set(shops.map((s) => stateName(s.state)))].join(" · ")}</p>
         <h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">Old-school shop. Modern cuts.</h1>
         <p className="mt-3 max-w-xl text-zinc-300">
           Pick a shop to see open times. No payment needed to book, and you can cancel or reschedule

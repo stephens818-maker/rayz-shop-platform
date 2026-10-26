@@ -21,7 +21,7 @@ export function AdminNav({ sections }: { sections: { title: string; items: NavIt
         const items = s.items;
         return (
           <div key={s.title} className="flex gap-1 lg:mb-4 lg:block">
-            <div className="hidden px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 lg:block">{s.title}</div>
+            <div className="hidden px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 lg:block">{s.title}</div>
             {items.map((i) => (
               <Link
                 key={i.href}

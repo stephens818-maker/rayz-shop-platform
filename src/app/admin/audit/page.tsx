@@ -64,7 +64,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
         </Select>
         <button className={buttonClass("secondary")}>Filter</button>
         <ViewInput l={l} />
-        <div className="ml-auto self-center">
+        <div className="ml-auto min-w-0 max-w-full self-center">
           <ViewToggle l={l} href={(v) => `/admin/audit?${reportQuery(withView(l, v), filters)}`} />
         </div>
       </form>

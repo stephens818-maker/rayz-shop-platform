@@ -54,7 +54,7 @@ export default async function AdminLayout({
             <Logo dark />
           </Link>
           <div className="min-w-0 lg:mt-4" data-testid="workspace">
-            <div className="hidden text-[11px] font-semibold uppercase tracking-wider text-zinc-500 lg:block">
+            <div className="hidden text-[11px] font-semibold uppercase tracking-wider text-zinc-400 lg:block">
               {ctx.brandWide
                 ? here
                   ? "Brand · viewing one shop"

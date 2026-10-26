@@ -73,7 +73,7 @@ export function StarBadge({ rating, showCount = true, className }: { rating: { a
       className={cx("inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-px text-[11px] font-semibold tabular ring-1 ring-inset", STAR_TONE[tone], className)}
     >
       ★ {avg}
-      {showCount && <span className="font-normal opacity-70">({rating.count})</span>}
+      {showCount && <span className="font-normal">({rating.count})</span>}
     </span>
   );
 }
@@ -165,9 +165,10 @@ export function Field({ label, hint, children, className }: { label: string; hin
   );
 }
 
-export function Table({ children, className }: { children: ReactNode; className?: string }) {
+/** `label` names a table that scrolls on its own, and lets the keyboard focus and scroll it. */
+export function Table({ children, className, label }: { children: ReactNode; className?: string; label?: string }) {
   return (
-    <div className={cx("overflow-x-auto", className)}>
+    <div className={cx("relative overflow-x-auto", className)} {...(label ? { role: "region", "aria-label": label, tabIndex: 0 } : {})}>
       <table className="min-w-full text-sm">{children}</table>
     </div>
   );

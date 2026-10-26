@@ -494,6 +494,7 @@ export function DayCalendar({
           </div>
           <input
             type="date"
+            aria-label="Go to date"
             value={data.date}
             onChange={(e) => e.target.value && go(e.target.value)}
             className="h-9 rounded-lg px-2 text-sm ring-1 ring-zinc-300"
@@ -612,17 +613,23 @@ export function DayCalendar({
             Barbers {first + 1}–{first + visible.length} of {data.columns.length}
             <span className="ml-2 hidden text-xs text-zinc-400 sm:inline">[ and ] to page</span>
           </span>
-          <div className="flex items-center gap-1">
-            {Array.from({ length: pages }, (_, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => setPage(i * perView)}
-                aria-label={`Barbers ${i * perView + 1} to ${Math.min(data.columns.length, (i + 1) * perView)}`}
-                aria-current={i === pageAt ? "true" : undefined}
-                className={cx("size-2.5 rounded-full", i === pageAt ? "bg-ink-900" : "bg-zinc-300 hover:bg-zinc-400")}
-              />
-            ))}
+          <div className="flex items-center">
+            {Array.from({ length: pages }, (_, i) => {
+              const from = i * perView + 1;
+              const to = Math.min(data.columns.length, (i + 1) * perView);
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setPage(i * perView)}
+                  aria-label={from === to ? `Barber ${from}` : `Barbers ${from} to ${to}`}
+                  aria-current={i === pageAt ? "true" : undefined}
+                  className="group grid size-6 place-items-center rounded-full"
+                >
+                  <span className={cx("size-2.5 rounded-full", i === pageAt ? "bg-ink-900" : "bg-zinc-300 group-hover:bg-zinc-400")} />
+                </button>
+              );
+            })}
             <div className="ml-2 flex rounded-lg ring-1 ring-zinc-300">
               {([-1, 1] as const).map((d) => (
                 <button
@@ -1037,7 +1044,6 @@ function Column({
               if (!readOnly) onBlock(b);
             }}
             title={blockTitle(b)}
-            aria-label={blockTitle(b)}
             className={cx(
               b.clock?.kind === "not_in"
                 ? "shade-reason-soft text-zinc-600"
@@ -1092,7 +1098,6 @@ function Column({
                 );
               }}
               onDragEnd={drag.end}
-              aria-label={`${a.customerName}, ${label(a.startMin)} to ${label(a.endMin)}${movable ? ". Drag to move" : ""}`}
               onClick={(e) => {
                 e.stopPropagation();
                 if (!readOnly) onAppt(a);
@@ -1171,6 +1176,10 @@ function Column({
                   {a.clientNotes.pinned[0].body}
                 </div>
               )}
+              <span className="sr-only">
+                {hh > 48 ? "" : `, ${label(a.startMin)} to ${label(a.endMin)}`}
+                {movable ? ". Drag to move" : ""}
+              </span>
             </button>
           );
         })}

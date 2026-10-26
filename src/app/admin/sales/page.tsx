@@ -289,7 +289,9 @@ export default async function SalesPage({
                 <Th right>Tip</Th>
                 <Th right>Total</Th>
                 <Th>Status</Th>
-                <Th />
+                <Th>
+                  <span className="sr-only">Actions</span>
+                </Th>
               </tr>
             </thead>
             <tbody>

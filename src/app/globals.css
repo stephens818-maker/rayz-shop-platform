@@ -168,6 +168,41 @@ body {
   }
 }
 
+/*
+ * Text contrast (WCAG AA, 4.5:1). Zinc 400 and 500 text, and the 600 accents below, are too pale
+ * as text on white, zinc-50 to zinc-200 and the pale tints, so as text they use darker greys; as
+ * fills, borders and icons they keep their shades. Text on a dark panel (inside `.text-white` or
+ * `.theme-fixed`) keeps the light greys. `:where` keeps the specificity of the plain utility, so
+ * hover and state variants still win.
+ */
+:where(:root) {
+  --text-faint: oklch(50% 0.016 286);
+  --text-muted: oklch(47% 0.016 286);
+}
+@layer utilities {
+  .text-zinc-400:where(:not(.theme-fixed *, .text-white *)) {
+    color: var(--text-faint);
+  }
+  .text-zinc-500:where(:not(.theme-fixed *, .text-white *)) {
+    color: var(--text-muted);
+  }
+  .text-emerald-600:where(:not(.theme-fixed *, .text-white *)) {
+    color: var(--color-emerald-700);
+  }
+  .text-green-600:where(:not(.theme-fixed *, .text-white *)) {
+    color: var(--color-green-700);
+  }
+  .text-amber-600:where(:not(.theme-fixed *, .text-white *)) {
+    color: var(--color-amber-700);
+  }
+  .text-orange-600:where(:not(.theme-fixed *, .text-white *)) {
+    color: var(--color-orange-700);
+  }
+  .text-sky-600:where(:not(.theme-fixed *, .text-white *)) {
+    color: var(--color-sky-700);
+  }
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;

@@ -99,6 +99,8 @@
     --color-pink-800: oklch(89.9% 0.061 343.231);
     --color-pink-900: oklch(94.8% 0.028 342.258);
     --color-pink-950: oklch(97.1% 0.014 343.198);
+    --text-faint: oklch(68% 0.014 286);
+    --text-muted: oklch(75% 0.014 286);
   }
   .dark .theme-fixed {
     color-scheme: light;
@@ -136,6 +138,22 @@
     }
     .dark .text-ink-900:not(.theme-fixed *) {
       color: var(--color-zinc-900);
+    }
+    /* Muted text on a dark panel, and the 600 reds, blues, violets and pinks, which only fall short on dark surfaces. */
+    :where(.dark .text-white) :is(.text-zinc-400, .text-zinc-500):where(:not(.theme-fixed *)) {
+      color: oklch(84% 0.01 286);
+    }
+    :where(.dark) :is(.text-red-600, .text-brand-600):where(:not(.theme-fixed *)) {
+      color: var(--color-red-700);
+    }
+    :where(.dark) .text-blue-600:where(:not(.theme-fixed *)) {
+      color: var(--color-blue-700);
+    }
+    :where(.dark) .text-violet-600:where(:not(.theme-fixed *)) {
+      color: var(--color-violet-700);
+    }
+    :where(.dark) .text-pink-600:where(:not(.theme-fixed *)) {
+      color: var(--color-pink-700);
     }
   }
 }

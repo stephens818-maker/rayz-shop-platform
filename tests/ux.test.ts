@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { columnsThatFit } from "@/domain/calendar-layout";
 import { Command, commandScore, rankCommands, strongMatch } from "@/domain/command-search";
 import { barChartOf, reportBarChart } from "@/domain/report-charts";
@@ -163,5 +164,36 @@ describe("report bar charts", () => {
     const use = t({ id: "b", columns: [{ label: "Service" }, { label: "Sold", kind: "int" }], rows: [["Cut", 5], ["Beard", 3]] });
     expect(reportBarChart([skip, use])?.id).toBe("b");
     expect(reportBarChart([skip])).toBeNull();
+  });
+});
+
+describe("text contrast (WCAG AA)", () => {
+  const css = readFileSync("src/app/globals.css", "utf8");
+  const dark = readFileSync("src/app/dark.css", "utf8");
+  const oklch = (v: string) => {
+    const [L, C, h] = v.match(/oklch\(([\d.]+)%\s+([\d.]+)\s+([\d.]+|none)\)/)!.slice(1).map((x) => (x === "none" ? 0 : Number(x)));
+    const a = C * Math.cos((h * Math.PI) / 180);
+    const b = C * Math.sin((h * Math.PI) / 180);
+    const l = (L / 100 + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+    const m = (L / 100 - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+    const s = (L / 100 - 0.0894841775 * a - 1.291485548 * b) ** 3;
+    const rgb = [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s];
+    const [r, g, bl] = rgb.map((x) => Math.min(1, Math.max(0, x)));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const ratio = (fg: string, bg: string) => {
+    const [x, y] = [oklch(fg), oklch(bg)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  const varIn = (src: string, name: string) => src.match(new RegExp(`${name}:\\s*(oklch\\([^)]*\\))`))![1];
+
+  it("muted greys reach 4.5:1 on white, zinc-50, zinc-100 and zinc-200 in light mode", () => {
+    const surfaces = ["oklch(100% 0 0)", "oklch(98.5% 0 0)", "oklch(96.7% 0.001 286.375)", "oklch(92% 0.004 286.32)"];
+    for (const v of ["--text-faint", "--text-muted"]) for (const bg of surfaces) expect(ratio(varIn(css, v), bg)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("and on the dark card, page, zinc-100 and zinc-200 surfaces in dark mode", () => {
+    const surfaces = ["--color-white", "--color-zinc-50", "--color-zinc-100", "--color-zinc-200"].map((v) => varIn(dark, v));
+    for (const v of ["--text-faint", "--text-muted"]) for (const bg of surfaces) expect(ratio(varIn(dark, v), bg)).toBeGreaterThanOrEqual(4.5);
   });
 });

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ChipStrip } from "@/components/chip-strip";
 import { Button, Notice, cx } from "@/components/ui";
 import { REPORT_VIEWS, ReportView, viewOf } from "@/domain/report-views";
 import type { ReportOption } from "@/server/report-data";
@@ -56,7 +57,7 @@ export function ViewToggle({ l, href }: { l: QueryState; href: (v: ReportView) =
   if (options.length < 2) return null;
   const current = viewOf(l.loc);
   return (
-    <div role="group" aria-label="View" className="inline-flex flex-wrap rounded-full bg-white p-0.5 text-sm ring-1 ring-zinc-300">
+    <div role="group" aria-label="View" className="inline-flex max-w-full overflow-x-auto rounded-full bg-white p-0.5 text-sm ring-1 ring-zinc-300 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0 [&>*]:whitespace-nowrap">
       {options.map((v) => (
         <Link
           key={v}
@@ -160,17 +161,18 @@ export function ReportFilters({
   const range: Record<string, string> = preset ? { preset } : { from, to };
   return (
     <div className="no-print mb-5 space-y-3">
-      <div className="flex flex-wrap items-center gap-1.5">
+      <ChipStrip className="items-center gap-1.5" label="Date range">
         {presets.map((p) => (
           <Link
             key={p.id}
             href={qs({ preset: p.id })}
+            aria-current={preset === p.id ? "true" : undefined}
             className={cx("rounded-full px-3 py-1 text-sm ring-1", preset === p.id ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
           >
             {p.label}
           </Link>
         ))}
-      </div>
+      </ChipStrip>
       {options?.filter((o) => !o.select).map((o) => (
         <div key={o.param} role="group" aria-label={o.label} className="flex flex-wrap items-center gap-1.5 text-sm">
           <span className="mr-1 text-xs text-zinc-500">{o.label}</span>
@@ -217,7 +219,7 @@ export function ReportFilters({
         <Button type="submit" variant="dark" size="sm" className="h-9">
           Apply
         </Button>
-        <div className="ml-auto self-center">
+        <div className="ml-auto min-w-0 max-w-full self-center">
           <ViewToggle l={scope} href={(v) => `${base}?${reportQuery(withView(scope, v), { ...opts, ...range })}`} />
         </div>
       </form>

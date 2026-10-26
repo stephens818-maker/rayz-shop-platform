@@ -193,9 +193,9 @@ export function HoursEditor({ shopId, initial, canSetSunday, locked = false }: {
               </label>
               {r ? (
                 <>
-                  <input type="time" step={900} className="rounded px-2 py-1 ring-1 ring-zinc-300" value={hhmm(r.openMin)} onChange={(e) => setRows(rows.map((x) => (x === r ? { ...r, openMin: mins(e.target.value) } : x)))} />
+                  <input type="time" step={900} aria-label={`${DAYS[d]} opens`} className="rounded px-2 py-1 ring-1 ring-zinc-300" value={hhmm(r.openMin)} onChange={(e) => setRows(rows.map((x) => (x === r ? { ...r, openMin: mins(e.target.value) } : x)))} />
                   <span>to</span>
-                  <input type="time" step={900} className="rounded px-2 py-1 ring-1 ring-zinc-300" value={hhmm(r.closeMin)} onChange={(e) => setRows(rows.map((x) => (x === r ? { ...r, closeMin: mins(e.target.value) } : x)))} />
+                  <input type="time" step={900} aria-label={`${DAYS[d]} closes`} className="rounded px-2 py-1 ring-1 ring-zinc-300" value={hhmm(r.closeMin)} onChange={(e) => setRows(rows.map((x) => (x === r ? { ...r, closeMin: mins(e.target.value) } : x)))} />
                 </>
               ) : (
                 <span className="text-zinc-400">Closed</span>

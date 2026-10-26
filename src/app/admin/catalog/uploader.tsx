@@ -161,7 +161,7 @@ export function CatalogUploader({ mode, shops, canPushAll }: { mode: "catalog" |
               ))}
             </div>
           </div>
-          <Table className="max-h-[560px] overflow-y-auto">
+          <Table className="max-h-[560px] overflow-y-auto" label="Rows to import">
             <thead>
               <tr>
                 <Th>Row</Th>
