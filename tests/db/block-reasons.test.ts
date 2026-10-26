@@ -8,6 +8,7 @@
  * Managers edit the list: renames carry to existing entries, archived reasons can't be picked.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { brandSet } from "./brand";
 import { Mods, loadModules } from "./setup";
 import { found, get, open, propsOf, textOf } from "./render";
 import { signInAs } from "./session";
@@ -71,6 +72,7 @@ beforeAll(async () => {
   ids.quokka = ok(
     await admin.saveReasonAction({ id: null, label: PRIVATE_LABEL, color: "#ef4444", usedFor: "blocks", countsAsLunch: false, noticeExempt: false, private: true }),
   ).id;
+  await brandSet("list", `block_reason:${ids.quokka}`, { available: true });
 
   await as("makenna");
   ok(await mine.quickBlockAction({ reasonId: ids.quokka, note: MARK.secret, date: day, startMin: 13 * 60, minutes: 45, confirm: true }));
