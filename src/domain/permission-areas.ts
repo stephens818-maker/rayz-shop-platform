@@ -215,7 +215,7 @@ export const AREAS: readonly Area[] = [
       row(
         "report_scope",
         "Report scope",
-        [lv("own", [], "Own numbers", "own"), lv("view", ["reports.all_staff"], "Everyone at their shops", "shops"), lv("approve", ["reports.all_shops"], "Every shop", "all")],
+        [lv("own", [], "Own numbers", "own"), lv("view", ["reports.all_staff"], "Their shops", "shops"), lv("approve", ["reports.all_shops"], "Every shop", "all")],
         "Own numbers: reports that break down by barber show only theirs. Every shop: reports cover all shops even when they work at a few.",
       ),
       on("reports.money", "Dollar amounts", "Off: counts, rates and hours only, with every dollar amount hidden, on screen and in downloads."),
@@ -333,12 +333,13 @@ export function levelReach(r: AreaRow, i: number): Reach | null {
 const followsScope = (p: Permission) => p.startsWith("report.") || p === "reports.money";
 export const followsReportScope = (r: AreaRow) => rowPermissions(r).every(followsScope);
 
-/** How far this row reaches with these permissions: its level's reach, or the report scope for reports. */
+/** How far this row reaches with these permissions: its level's reach, or the report scope for reports. For someone with every shop, their shops are all shops. */
 export function heldReach(r: AreaRow, perms: ReadonlySet<Permission>, brandWide = false): Reach | null {
   const i = levelIndex(r, perms);
   if (i <= 0 && r.levels[0]?.key === "none") return null;
   if (followsReportScope(r)) return reportReach(perms, brandWide);
-  return i < 0 ? null : levelReach(r, i);
+  const reach = i < 0 ? null : levelReach(r, i);
+  return brandWide && reach === "shops" ? "all" : reach;
 }
 
 /** Whose numbers and which shops their reports cover. */

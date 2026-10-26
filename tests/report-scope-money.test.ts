@@ -146,6 +146,9 @@ describe("how far each permission reaches", () => {
     expect(heldReach(r, perms(reportView("sales_summary"), "reports.all_shops", "reports.all_staff"))).toBe("all");
     expect(heldReach(rowOf("report_scope"), perms("reports.all_shops", "reports.all_staff"))).toBe("all");
     expect(heldReach(rowOf("report_scope"), perms())).toBe("own");
+    expect(heldReach(rowOf("calendar"), perms("calendar.view_all", "calendar.manage"))).toBe("shops");
+    expect(heldReach(rowOf("calendar"), perms("calendar.view_all", "calendar.manage"), true)).toBe("all");
+    expect(heldReach(rowOf("calendar"), perms(), true)).toBe("own");
   });
 });
 
