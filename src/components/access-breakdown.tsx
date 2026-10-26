@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { Badge, Card, CardHeader, Input, Select, cx } from "@/components/ui";
-import { AREAS, AREA_ROWS, AreaRow, SourceKind, levelIndex, permissionSource, rowMatches, rowPermissions } from "@/domain/permission-areas";
+import { AREAS, AREA_ROWS, AreaRow, REACH_LABEL, SourceKind, heldReach, levelIndex, permissionSource, rowMatches, rowPermissions } from "@/domain/permission-areas";
 import { MONEY_LIMITS, MoneyLimits, OverrideExpiry, Overrides, Permission, ShopScope, limitLabel, permissionLabel } from "@/domain/permissions";
 
 /** One shop (or group of shops with the same access) as a column. */
@@ -88,7 +88,7 @@ export function AccessBreakdown({
     <Card data-testid="access-breakdown">
       <CardHeader
         title={title}
-        subtitle={subtitle ?? "Area by area, at each of their shops. Click a row for each permission and where it comes from."}
+        subtitle={subtitle ?? "Area by area, at each of their shops, with how far each reaches: own data only, their assigned shops or all shops. Click a row for each permission and where it comes from."}
         action={
           <label className="flex items-center gap-1.5 text-xs text-zinc-600">
             <input type="checkbox" checked={onlyHeld} onChange={(e) => setOnlyHeld(e.target.checked)} />
@@ -173,9 +173,15 @@ export function AccessBreakdown({
                             const i = c.isOwner ? r.levels.length - 1 : levelIndex(r, c.heldSet);
                             const lvl = i >= 0 ? r.levels[i] : null;
                             const none = lvl && i === 0 && !lvl.adds.length && lvl.key === "none";
+                            const reach = c.isOwner ? "all" : heldReach(r, c.heldSet, c.scope === "all");
                             return (
                               <td key={c.key} className={cx("border-l border-zinc-100 px-3 py-1.5", none ? "text-zinc-400" : "font-medium text-zinc-800")} data-cell={`${r.id}:${c.key}`}>
                                 {lvl ? lvl.label : "Custom"}
+                                {reach && (
+                                  <span className="ml-1.5 text-[11px] font-normal text-zinc-400" data-reach={reach}>
+                                    {REACH_LABEL[reach]}
+                                  </span>
+                                )}
                               </td>
                             );
                           })}

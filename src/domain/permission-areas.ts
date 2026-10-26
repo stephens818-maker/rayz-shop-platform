@@ -325,8 +325,19 @@ export function levelReach(r: AreaRow, i: number): Reach | null {
   if (l.key === "none") return null;
   if (l.key === "own") return "own";
   const perms = levelPermissions(r, i);
-  if (!perms.length || perms.every((p) => p.startsWith("report."))) return null;
+  if (!perms.length || perms.every((p) => p.startsWith("report"))) return null;
   return perms.some((p) => BRAND_ONLY.has(p) || OWNER_ONLY.has(p)) ? "all" : "shops";
+}
+
+/** A row whose reach is the report scope row's: the reports and dollar amounts. */
+export const followsReportScope = (r: AreaRow) => rowPermissions(r).every((p) => p.startsWith("report.") || p === "reports.money");
+
+/** How far this row reaches with these permissions: its level's reach, or the report scope for reports. */
+export function heldReach(r: AreaRow, perms: ReadonlySet<Permission>, brandWide = false): Reach | null {
+  const i = levelIndex(r, perms);
+  if (i <= 0 && r.levels[0]?.key === "none") return null;
+  if (followsReportScope(r)) return reportReach(perms, brandWide);
+  return i < 0 ? null : levelReach(r, i);
 }
 
 /** Whose numbers and which shops their reports cover. */

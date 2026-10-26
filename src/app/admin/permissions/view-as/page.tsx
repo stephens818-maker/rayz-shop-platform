@@ -7,6 +7,7 @@ import { AccessBreakdown, BreakdownColumn } from "@/components/access-breakdown"
 import { Badge, Button, Card, CardHeader, Empty, Notice, PageHeader, Select } from "@/components/ui";
 import { LEVEL_LABEL } from "@/domain/client-privacy";
 import { navFor, reportsFor } from "@/domain/navigation";
+import { REACH_LABEL, Reach, reportReach } from "@/domain/permission-areas";
 import { MONEY_LIMITS, OWNER_ROLE_KEY, Permission, SCOPE_LABEL, cleanExpiries, cleanOverrides, isBrandLevelPerson, limitLabel, liveOverrides, roleFitsShop } from "@/domain/permissions";
 import { todayLocal } from "@/lib/time";
 import { atShop, loadStaffAccess, roleAccessAt } from "@/server/auth/access";
@@ -51,6 +52,7 @@ export default async function ViewAsPage({ searchParams }: { searchParams: Promi
     client: Awaited<ReturnType<typeof clientViewPreview>>;
     exportsClients: boolean;
     limits: BreakdownColumn;
+    reportReach: Reach;
   } | null = null;
   let problem: string | null = null;
 
@@ -71,6 +73,7 @@ export default async function ViewAsPage({ searchParams }: { searchParams: Promi
         client: await clientViewPreview({ staffId: null, roleId: role.id, roleKey: role.key, shopId, isOwner: a.isOwner, brandLevel, shopLogin: false, grantedContact: false, canReveal: a.permissions.has("clients.reveal") }),
         exportsClients: a.isOwner || brandLevel,
         limits: col,
+        reportReach: reportReach(a.permissions, a.scope === "all"),
       };
     }
   } else if (kind === "staff" && id && UUID.test(id)) {
@@ -109,6 +112,7 @@ export default async function ViewAsPage({ searchParams }: { searchParams: Promi
         }),
         exportsClients: a.isOwner || brandLevel || (a.permissions.has("clients.export") && full.granted.has("clients.export")),
         limits: column("limits", "", a, roleHere, { scope: full.scope, kind: person.kind }),
+        reportReach: reportReach(a.permissions, full.scope === "all"),
       };
     }
   }
@@ -209,6 +213,16 @@ export default async function ViewAsPage({ searchParams }: { searchParams: Promi
             </Card>
             <Card>
               <CardHeader title="Reports" subtitle={`${reports.length} reports, ${reports.filter((r) => r.canExport).length} with export.`} />
+              {reports.length > 0 && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 border-b border-zinc-100 px-4 py-2 text-xs text-zinc-600" data-testid="view-as-report-scope">
+                  <span>
+                    Scope: <b>{preview.reportReach === "own" ? "Own numbers" : REACH_LABEL[preview.reportReach]}</b>
+                  </span>
+                  <span>
+                    Dollar amounts: <b>{preview.perms.has("reports.money") ? "Shown" : "Hidden"}</b>
+                  </span>
+                </div>
+              )}
               <ul className="max-h-[28rem] divide-y divide-zinc-100 overflow-auto text-sm" data-testid="view-as-reports">
                 {reports.length === 0 && <li className="px-4 py-3 text-zinc-500">None.</li>}
                 {reports.map((r) => (

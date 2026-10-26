@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Fragment, useMemo, useState } from "react";
 import { syncedText, useBrandSync } from "@/components/brand-sync";
 import { Button, Card, Input, Notice, Select, cx } from "@/components/ui";
-import { AREAS, AREA_ROWS, AreaRow, levelIndex, permissionTag, rowMatches, rowPermissions, withLevel } from "@/domain/permission-areas";
+import { AREAS, AREA_ROWS, AreaRow, REACH_LABEL, heldReach, levelIndex, permissionTag, rowMatches, rowPermissions, withLevel } from "@/domain/permission-areas";
 import {
   BRAND_ADMIN_ALWAYS,
   BRAND_ADMIN_ROLE_KEY,
@@ -119,6 +119,10 @@ export function RoleMatrix({ roles, mine, isOwner, readOnly }: { roles: MatrixRo
   return (
     <div className="space-y-3 pb-24">
       {readOnly && <Notice tone="blue">{readOnly}</Notice>}
+      <p className="text-xs text-zinc-500">
+        Under each level, how far it reaches: <b>Own data only</b> (their own column, clients, timesheet or numbers), <b>Assigned shops</b> (the shops each person is given) or{" "}
+        <b>All shops</b> (records every shop shares, or every shop's reports). Reports reach as far as the role&apos;s Report scope.
+      </p>
       <div className="flex flex-wrap items-center gap-2">
         <Input className="max-w-xs" placeholder="Search permissions, e.g. refund or quickbooks" aria-label="Search permissions" value={q} onChange={(e) => setQ(e.target.value)} />
         <Select className="w-60" aria-label="Area" value={area} onChange={(e) => setArea(e.target.value)}>
@@ -182,10 +186,12 @@ export function RoleMatrix({ roles, mine, isOwner, readOnly }: { roles: MatrixRo
                               return (
                                 <td key={r.id} className="border-b border-l border-zinc-100 px-2 py-1 text-xs text-zinc-500">
                                   {row.levels[row.levels.length - 1].label}
+                                  <div className="pt-0.5 text-[10px] text-zinc-400">{REACH_LABEL.all}</div>
                                 </td>
                               );
                             const i = levelIndex(row, perms.get(r.id)!);
                             const changed = cellChanged(r, row);
+                            const reach = heldReach(row, perms.get(r.id)!, r.defaultScope === "all");
                             return (
                               <td key={r.id} className={cx("border-b border-l border-zinc-100 px-1 py-1", changed && "bg-amber-50")}>
                                 <Select
@@ -210,6 +216,11 @@ export function RoleMatrix({ roles, mine, isOwner, readOnly }: { roles: MatrixRo
                                     );
                                   })}
                                 </Select>
+                                {reach && (
+                                  <div className="px-1 pt-0.5 text-[10px] text-zinc-400" data-reach={reach}>
+                                    {REACH_LABEL[reach]}
+                                  </div>
+                                )}
                               </td>
                             );
                           })}
