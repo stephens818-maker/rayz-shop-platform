@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
+import { assertShopMayEdit, noteShopEdit } from "@/server/brand-sync/engine";
 import { forbidden } from "@/server/errors";
 import {
   ApplyTemplateInput,
@@ -12,6 +13,8 @@ import {
   BulkShopServicesInput,
   BulkStaffInput,
   applyScheduleTemplate,
+  bulkProductChanges,
+  bulkServiceChanges,
   bulkShopServices,
   bulkStaff,
   bulkUpdateProducts,
@@ -36,11 +39,28 @@ export async function bulkServicesAction(raw: z.input<typeof BulkServicesInput>)
   });
 }
 
+/** The brand changes a services bulk edit makes, for the sync dialog to preview and send to the shops picked. */
+export async function bulkServiceChangesAction(raw: z.input<typeof BulkServicesInput>) {
+  return safe(async () => {
+    await authorize("catalog.manage");
+    return bulkServiceChanges(raw);
+  });
+}
+
+export async function bulkProductChangesAction(raw: z.input<typeof BulkProductsInput>) {
+  return safe(async () => {
+    await authorize("catalog.manage");
+    return bulkProductChanges(raw);
+  });
+}
+
 export async function bulkShopServicesAction(raw: z.input<typeof BulkShopServicesInput>) {
   return safe(async () => {
     const ctx = await authorize(["catalog.prices", "catalog.manage"]);
     assertShopAccess(ctx, raw.shopId);
+    if (raw.enabled !== undefined) await assertShopMayEdit(ctx, "service");
     const r = await bulkShopServices(ctx.actor, raw);
+    await noteShopEdit("service", raw.ids, raw.shopId);
     refresh("/admin/services");
     return r;
   });

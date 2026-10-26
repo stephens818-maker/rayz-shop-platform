@@ -51,6 +51,32 @@ export async function bulkUpdateServices(actor: Actor, raw: z.input<typeof BulkS
   });
 }
 
+/**
+ * The same bulk edit as brand changes for the sync dialog, so the admin picks which shops get the new
+ * prices and lengths. Nothing is saved here; services that wouldn't change are left out.
+ */
+export async function bulkServiceChanges(raw: z.input<typeof BulkServicesInput>): Promise<{ changes: { type: "service"; item: string; value: unknown }[]; results: BulkResult[] }> {
+  const v = BulkServicesInput.parse(raw);
+  if (v.category === undefined && v.active === undefined && !v.price && v.durationMin === undefined) throw new AppError("bad_request", "Pick something to change");
+  const rows = await db.select().from(services).where(inArray(services.id, v.ids));
+  if (rows.length !== new Set(v.ids).size) throw notFound("Service");
+  const changes: { type: "service"; item: string; value: unknown }[] = [];
+  for (const s of rows) {
+    const next = {
+      name: s.name,
+      kind: s.kind,
+      category: v.category ?? s.category,
+      description: s.description,
+      defaultPriceCents: v.price ? applyPriceChange(s.defaultPriceCents, v.price) : s.defaultPriceCents,
+      defaultDurationMin: v.durationMin ?? s.defaultDurationMin,
+      active: v.active ?? s.active,
+      sortOrder: s.sortOrder,
+    };
+    if (Object.keys(changed(s as unknown as Record<string, unknown>, next)).length) changes.push({ type: "service", item: s.id, value: next });
+  }
+  return { changes, results: rows.map((s) => ({ id: s.id, label: s.name, ok: true })) };
+}
+
 export const BulkShopServicesInput = z.object({ shopId: z.uuid(), ids, enabled: z.boolean().optional(), bookableOnline: z.boolean().optional() });
 
 /** One shop's menu: turn many services on or off there, or on or off for online booking. */
@@ -125,6 +151,39 @@ export async function bulkUpdateProducts(actor: Actor, raw: z.input<typeof BulkP
     }
     return out;
   });
+}
+
+/** As bulkServiceChanges, for products: brand changes for the sync dialog; ones whose levels wouldn't hold are skipped with why. */
+export async function bulkProductChanges(raw: z.input<typeof BulkProductsInput>): Promise<{ changes: { type: "product"; item: string; value: unknown }[]; results: BulkResult[] }> {
+  const v = BulkProductsInput.parse(raw);
+  const { ids: _, ...fields } = v;
+  if (Object.values(fields).every((x) => x === undefined)) throw new AppError("bad_request", "Pick something to change");
+  const rows = await db.select().from(products).where(inArray(products.id, v.ids));
+  if (rows.length !== new Set(v.ids).size) throw notFound("Product");
+  const changes: { type: "product"; item: string; value: unknown }[] = [];
+  const results: BulkResult[] = [];
+  for (const p of rows) {
+    const next = {
+      sku: p.sku,
+      brand: v.brand ?? p.brand,
+      category: v.category ?? p.category,
+      active: v.active ?? p.active,
+      costCents: v.cost ? applyPriceChange(p.costCents, v.cost) : p.costCents,
+      priceCents: v.price ? applyPriceChange(p.priceCents, v.price) : p.priceCents,
+      lowStockThreshold: v.lowStockThreshold ?? p.lowStockThreshold,
+      parLevel: v.parLevel ?? p.parLevel,
+      highStockThreshold: v.highStockThreshold !== undefined ? v.highStockThreshold : p.highStockThreshold,
+    };
+    const label = `${p.brand} ${p.name}`;
+    const problem = levelsProblem(next.lowStockThreshold, next.parLevel) ?? highProblem(next.parLevel, next.highStockThreshold);
+    if (problem) {
+      results.push({ id: p.id, label, ok: false, error: problem });
+      continue;
+    }
+    if (Object.keys(changed(p as unknown as Record<string, unknown>, next)).length) changes.push({ type: "product", item: p.id, value: next });
+    results.push({ id: p.id, label, ok: true });
+  }
+  return { changes, results };
 }
 
 // ───────────────────────────── Staff ─────────────────────────────

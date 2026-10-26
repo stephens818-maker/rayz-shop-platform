@@ -119,6 +119,8 @@ export const ProductInput = z.object({
   lowStockThreshold: units,
   parLevel: units,
   highStockThreshold: units.nullable(),
+  /** Left as it is when not sent. */
+  active: z.boolean().optional(),
 });
 export type ProductBrand = z.output<typeof ProductInput>;
 export type ProductValue = { priceCents: number };
@@ -147,7 +149,7 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
     return new Map(
       rows.map((p) => [
         p.id,
-        { sku: p.sku, brand: p.brand, category: p.category, costCents: p.costCents, priceCents: p.priceCents, lowStockThreshold: p.lowStockThreshold, parLevel: p.parLevel, highStockThreshold: p.highStockThreshold },
+        { sku: p.sku, brand: p.brand, category: p.category, costCents: p.costCents, priceCents: p.priceCents, lowStockThreshold: p.lowStockThreshold, parLevel: p.parLevel, highStockThreshold: p.highStockThreshold, active: p.active },
       ]),
     );
   },
@@ -162,7 +164,7 @@ export const productAdapter: SyncAdapter<ProductBrand, ProductValue> = {
       .from(products)
       .where(and(sql`lower(${products.sku}) = lower(${v.sku})`, ne(products.id, item)));
     if (clash) throw new AppError("conflict", `SKU ${v.sku} is already ${clash.brand} ${clash.name}`);
-    return v;
+    return { ...v, active: v.active ?? before.active };
   },
   async shops(tx, ids, shopIds) {
     if (!ids.length || !shopIds.length) return new Map();

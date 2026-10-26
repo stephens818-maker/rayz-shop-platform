@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useBrandSync } from "@/components/brand-sync";
 import { Badge, Button, Card, CardHeader, Field, Input, Select, cx } from "@/components/ui";
 import { TimeInput } from "@/components/time-input";
 import { useAction } from "@/components/use-action";
@@ -9,8 +10,8 @@ import { BOOKING_OPTION_KEYS, BOOKING_OPTION_META, BookingOptionKey, isBoolKey }
 import { WEEKDAYS, minutesToLabel } from "@/lib/time";
 import {
   applyScheduleTemplateAction,
-  bulkProductsAction,
-  bulkServicesAction,
+  bulkProductChangesAction,
+  bulkServiceChangesAction,
   bulkShopServicesAction,
   bulkStaffAction,
   deleteScheduleTemplateAction,
@@ -124,7 +125,10 @@ export interface ServiceRow {
 
 export function ServicesBulk({ rows, categories, shop, canBrand, canShop }: { rows: ServiceRow[]; categories: string[]; shop: { id: string; name: string } | null; canBrand: boolean; canShop: boolean }) {
   const { sel, toggle, setAll, ids } = useSelection();
-  const { pending, error, run } = useAction();
+  const { pending: running, error: actionError, run } = useAction();
+  const sync = useBrandSync();
+  const pending = running || sync.pending;
+  const error = actionError ?? sync.error;
   const [results, setResults] = useState<BulkResult[] | null>(null);
   const [category, setCategory] = useState("");
   const [active, setActive] = useState("");
@@ -167,14 +171,17 @@ export function ServicesBulk({ rows, categories, shop, canBrand, canShop }: { ro
               onClick={() =>
                 run(
                   () =>
-                    bulkServicesAction({
+                    bulkServiceChangesAction({
                       ids,
                       ...(category ? { category } : {}),
                       ...(active ? { active: active === "on" } : {}),
                       ...(price ? { price } : {}),
                       ...(duration ? { durationMin: Number(duration) } : {}),
                     }),
-                  setResults,
+                  (d) => {
+                    if (!d.changes.length) return setResults(d.results);
+                    void sync.open({ label: `Bulk edit: ${d.changes.length} service${d.changes.length === 1 ? "" : "s"}`, changes: d.changes, onDone: () => setResults(d.results) });
+                  },
                 )
               }
             >
@@ -214,6 +221,7 @@ export function ServicesBulk({ rows, categories, shop, canBrand, canShop }: { ro
         <div className="md:col-span-2">
           <Results results={results} />
           {error && <div className="text-xs text-red-600">{error}</div>}
+          {sync.dialog}
         </div>
       </div>
       <BulkTable
@@ -293,7 +301,10 @@ export interface ProductRow {
 
 export function ProductsBulk({ rows, categories }: { rows: ProductRow[]; categories: string[] }) {
   const { sel, toggle, setAll, ids } = useSelection();
-  const { pending, error, run } = useAction();
+  const { pending: running, error: actionError, run } = useAction();
+  const sync = useBrandSync();
+  const pending = running || sync.pending;
+  const error = actionError ?? sync.error;
   const [results, setResults] = useState<BulkResult[] | null>(null);
   const [v, setV] = useState({ category: "", brand: "", active: "", low: "", par: "", high: "", clearHigh: false });
   const [cost, setCost] = useState<PriceChange | null>(null);
@@ -340,7 +351,7 @@ export function ProductsBulk({ rows, categories }: { rows: ProductRow[]; categor
           onClick={() =>
             run(
               () =>
-                bulkProductsAction({
+                bulkProductChangesAction({
                   ids,
                   ...(v.category ? { category: v.category } : {}),
                   ...(v.brand.trim() ? { brand: v.brand.trim() } : {}),
@@ -351,7 +362,10 @@ export function ProductsBulk({ rows, categories }: { rows: ProductRow[]; categor
                   parLevel: num(v.par),
                   ...(v.clearHigh ? { highStockThreshold: null } : v.high ? { highStockThreshold: Number(v.high) } : {}),
                 }),
-              setResults,
+              (d) => {
+                if (!d.changes.length) return setResults(d.results);
+                void sync.open({ label: `Bulk edit: ${d.changes.length} product${d.changes.length === 1 ? "" : "s"}`, changes: d.changes, onDone: () => setResults(d.results) });
+              },
             )
           }
         >
@@ -359,6 +373,7 @@ export function ProductsBulk({ rows, categories }: { rows: ProductRow[]; categor
         </Button>
         <Results results={results} />
         {error && <div className="text-xs text-red-600">{error}</div>}
+        {sync.dialog}
       </div>
       <BulkTable
         head={["SKU", "Product", "Category", "Supply", "Retail", "Low / par / high"]}
