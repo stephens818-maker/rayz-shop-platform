@@ -704,7 +704,7 @@ export async function syncHistory(limit = 60): Promise<HistoryBatch[]> {
   const rows = await db
     .select({
       b: brandSyncBatches,
-      n: sql<number>`(select count(*)::int from brand_sync_changes c where c.batch_id = ${brandSyncBatches.id} and c.action <> 'keep')`,
+      n: sql<number>`(select count(*)::int from brand_sync_changes c where c.batch_id = "brand_sync_batches"."id" and c.action <> 'keep')`,
     })
     .from(brandSyncBatches)
     .orderBy(sql`case when ${brandSyncBatches.status} = 'scheduled' then 0 else 1 end`, desc(sql`coalesce(${brandSyncBatches.appliedAt}, ${brandSyncBatches.createdAt})`))

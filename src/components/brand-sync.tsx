@@ -347,7 +347,7 @@ function BrandSyncDialog({ req, onClose, onDone }: { req: OpenSync & { preview: 
                       {!on ? (
                         <span className="text-xs text-zinc-500">Keeps {single ? single.current : "what it has"} · shows out of sync until pushed</span>
                       ) : keep ? (
-                        <span className="text-xs text-violet-800">Keeps its own {single ? single.current : "values"}</span>
+                        <span className="text-xs text-violet-800">{single ? `Keeps its own: ${single.current}` : "Keeps its own values"}</span>
                       ) : single ? (
                         <Diff changes={single.changes} />
                       ) : (

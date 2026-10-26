@@ -517,7 +517,12 @@ function ControlsView({ controls, mayType }: { controls: ControlRow[]; mayType: 
       )}
       <Card className="divide-y divide-zinc-100" data-testid="sync-controls">
         {controls.map((c) => (
-          <label key={c.type} className="flex items-center justify-between gap-4 px-4 py-3" data-testid={`control-${c.type}`}>
+          <label
+            key={c.type}
+            className="flex items-center justify-between gap-4 px-4 py-3"
+            data-testid={`control-${c.type}`}
+            title={mayType[c.type] ? undefined : "Only someone who can change this setting for the brand can switch it."}
+          >
             <span>
               <span className="block text-sm font-medium text-zinc-900">{c.noun}</span>
               <span className="block text-xs text-zinc-500">{c.areaLabel}</span>

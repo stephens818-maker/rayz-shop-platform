@@ -88,7 +88,8 @@ describe("brand change scope", () => {
     const [shopRow] = await m.db.db.select().from(m.schema.shopServices).where(m.drizzle.and(m.drizzle.eq(m.schema.shopServices.shopId, shopB), m.drizzle.eq(m.schema.shopServices.serviceId, serviceId)));
     expect(shopRow.priceCents).toBeNull();
     const hist = await sync.syncHistory();
-    expect(hist.find((h) => h.id === r.batchId)?.status).toBe("rolled_back");
+    expect(hist.find((h) => h.id === r.batchId)).toMatchObject({ status: "rolled_back", changed: r.changed });
+    expect(r.changed).toBeGreaterThan(0);
     await expect(sync.rollbackSync(who, r.batchId)).rejects.toThrow(/already undone/);
   });
 
