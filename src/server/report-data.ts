@@ -5,6 +5,7 @@ import { auditLog, shops } from "@/db/schema";
 import { NO_PRIVATE, ReasonViewer, redactReasonDetails } from "@/domain/block-reasons";
 import { ClientPolicy, LOCKED_POLICY, redactAuditDetails, searchesClientDetails } from "./client-privacy";
 import { Permission, ReportKey } from "@/domain/permissions";
+import { withoutMoney } from "@/domain/report-money";
 import {
   Cell,
   Column,
@@ -1539,6 +1540,12 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     };
   },
 };
+
+/** A report as this viewer may see it: without "See dollar amounts in reports", every dollar amount is hidden. */
+export async function loadReport(key: ReportKey, input: ReportInput): Promise<ReportData> {
+  const data = await REPORT_LOADERS[key](input);
+  return input.viewer.permissions?.has("reports.money") ? data : withoutMoney(data);
+}
 
 const BRAND_ROW = "brand";
 

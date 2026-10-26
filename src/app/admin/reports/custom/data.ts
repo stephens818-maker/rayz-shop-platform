@@ -19,7 +19,7 @@ import {
   visibleBarberGroups,
 } from "@/server/barbers";
 import { clientPolicy } from "@/server/client-privacy";
-import { filterOptions, panelSees } from "@/server/client-filters";
+import { filterOptions, reportSees } from "@/server/client-filters";
 import { listLocationGroups, visibleGroups } from "@/server/locations";
 import { exportDenied } from "@/server/report-builder/saved";
 
@@ -59,7 +59,7 @@ export async function builderOptions(
   ctx: StaffContext,
 ): Promise<BuilderOptions> {
   const policy = await clientPolicy(ctx);
-  const sees = panelSees(ctx, policy);
+  const sees = reportSees(ctx, policy);
   const allStaff = can(ctx, "reports.all_staff");
   const events = can(ctx, "analytics.events");
   const [filters, locGroups, visible, bGroups, roleRows, people] =

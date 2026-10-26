@@ -748,7 +748,7 @@ export function fieldUse(f: FieldDef, sees: PanelSees): FieldUse {
   if (f.money && !sees.money)
     return {
       use: "none",
-      why: "Spend, tips and gift cards need access to every client",
+      why: sees.moneyWhy ?? "Spend, tips and gift cards need access to every client",
     };
   if (f.key === "badges" && !sees.badges?.length)
     return { use: "none", why: "No client badges are shown to you" };

@@ -70,6 +70,8 @@ export interface PanelSees {
   levels: Record<string, Level>;
   /** Spend, tips and gift cards: people with every client. */
   money: boolean;
+  /** Why money is off, when it isn't the every-client rule. */
+  moneyWhy?: string;
   /** Badge keys they see. */
   badges?: string[];
 }

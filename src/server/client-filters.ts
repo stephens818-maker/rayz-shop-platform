@@ -279,6 +279,13 @@ export function panelSees(ctx: StaffContext, policy: ClientPolicy): PanelSees {
   return { levels, money: can(ctx, "clients.view_all"), badges: [...policy.badges] };
 }
 
+/** panelSees for reports: dollar amounts also need "See dollar amounts in reports". */
+export function reportSees(ctx: StaffContext, policy: ClientPolicy): PanelSees {
+  const sees = panelSees(ctx, policy);
+  if (!sees.money || can(ctx, "reports.money")) return sees;
+  return { ...sees, money: false, moneyWhy: "Dollar amounts are hidden from you in reports" };
+}
+
 /** Does the segment filter anything beyond its locations? */
 export const hasFilters = (seg: Segment) => JSON.stringify({ ...seg, shopIds: [], channel: "any" }) !== JSON.stringify({ ...EMPTY_SEGMENT, barberMatch: seg.barberMatch });
 

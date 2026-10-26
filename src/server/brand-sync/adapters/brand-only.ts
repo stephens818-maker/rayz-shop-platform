@@ -180,7 +180,7 @@ export const appAdapter: SyncAdapter<AppSwitches, AppValue> = {
   area: "app",
   store: "local",
   live: true,
-  brandPerms: ["settings.brand"],
+  brandPerms: ["settings.app"],
   lockable: false,
   note: "Booking and in-app payments can differ by shop. Family profiles and marketing pushes are app-wide. APP_KILL still turns anything off everywhere.",
   paths: ["/admin/app-switches"],

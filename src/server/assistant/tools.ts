@@ -50,7 +50,7 @@ import { formatDate, todayLocal } from "@/lib/time";
 import { resolveScope, selfOnly } from "@/app/admin/reports/scope";
 import { can, reasonViewer, type StaffContext } from "../auth/staff";
 import { barbersAt } from "../barbers";
-import { panelSees } from "../client-filters";
+import { panelSees, reportSees } from "../client-filters";
 import { listNotes, noteViewer, reachesClient } from "../client-notes";
 import { findClients } from "../client-search";
 import { clientPolicy, recordClientAccess } from "../client-privacy";
@@ -58,7 +58,8 @@ import { AppError } from "../errors";
 import { suggestionsFor } from "../inventory/purchasing";
 import { listLocationGroups, visibleGroups } from "../locations";
 import { checkSegment } from "../marketing/campaigns";
-import { REPORT_LOADERS } from "../report-data";
+import { loadReport } from "../report-data";
+import { reportContext } from "../report-access";
 import { reportProblem, runReport } from "../report-builder/engine";
 import type { ToolSpec } from "./providers";
 
@@ -279,13 +280,14 @@ function runReportTool(ctx: StaffContext): AssistantTool | null {
       const notes: string[] = [];
       let shop: string | undefined;
       let staffIds: string | undefined;
+      const rctx = await reportContext(ctx);
       try {
-        shop = await locationParam(ctx, a.locations);
+        shop = await locationParam(rctx, a.locations);
         if (a.barbers?.length && selfOnly(ctx, a.report))
           notes.push(
             "They only see their own numbers in this report, so other barbers were left out.",
           );
-        else staffIds = await barberParam(ctx, a.barbers);
+        else staffIds = await barberParam(rctx, a.barbers);
       } catch (e) {
         if (e instanceof AppError) return fail(e.message);
         throw e;
@@ -298,11 +300,11 @@ function runReportTool(ctx: StaffContext): AssistantTool | null {
         staff: staffIds,
         view: a.view,
       };
-      const scope = await resolveScope(ctx, params, a.report);
-      const data = await REPORT_LOADERS[a.report]({
+      const scope = await resolveScope(rctx, params, a.report);
+      const data = await loadReport(a.report, {
         scope,
         loc: scope.loc,
-        viewer: ctx,
+        viewer: rctx,
         client: await clientPolicy(ctx),
         reasons: reasonViewer(ctx),
         params: { preset: params.preset, from: a.from, to: a.to, view: a.view },
@@ -399,7 +401,7 @@ async function customerReportTool(
 ): Promise<AssistantTool | null> {
   if (!can(ctx, "report_builder.build")) return null;
   const policy = await clientPolicy(ctx);
-  const fields = assistantFields(panelSees(ctx, policy));
+  const fields = assistantFields(reportSees(ctx, policy));
   if (!fields.length) return null;
   const keys = fields.map((f) => f.key) as [string, ...string[]];
   const args = z.object({
@@ -1253,7 +1255,7 @@ export async function toolsFor(
     runReportTool(ctx),
     await customerReportTool(ctx),
     can(ctx, "analytics.events")
-      ? eventReportTool(ctx, panelSees(ctx, await clientPolicy(ctx)))
+      ? eventReportTool(ctx, reportSees(ctx, await clientPolicy(ctx)))
       : null,
     helpTool(),
     can(ctx, "notes.view") ? clientNotesTool() : null,

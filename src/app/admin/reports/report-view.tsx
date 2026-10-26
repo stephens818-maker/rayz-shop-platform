@@ -10,7 +10,8 @@ import { formatCents } from "@/lib/money";
 import { WEEKDAYS, formatDate } from "@/lib/time";
 import { StaffContext, can, guardPage, reasonViewer } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
-import { Cell, ColumnKind, REPORT_LOADERS, ReportData, ReportTable } from "@/server/report-data";
+import { Cell, ColumnKind, ReportData, ReportTable, loadReport } from "@/server/report-data";
+import { reportContext } from "@/server/report-access";
 import { LocationNotice, ReportFilters, locationProps, optionValues, reportQuery } from "./filters";
 import { ReportParams, resolveScope } from "./scope";
 import { SavedViews } from "./saved-views";
@@ -195,12 +196,13 @@ export async function ReportPage({
 }) {
   const meta = reportFor(report);
   const ctx = await guardPage(meta.href);
-  const scope = await resolveScope(ctx, searchParams, report);
+  const rctx = await reportContext(ctx);
+  const scope = await resolveScope(rctx, searchParams, report);
   const canExport = can(ctx, reportExport(report));
   const t0 = performance.now();
   const params = Object.fromEntries(Object.entries(searchParams).map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
   const [data, views] = await Promise.all([
-    REPORT_LOADERS[report]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params }),
+    loadReport(report, { scope, loc: scope.loc, viewer: rctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params }),
     listReportViews(ctx.staff.id, report),
   ]);
   const query = cleanViewQuery(new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => !!e[1])).toString());
@@ -240,7 +242,7 @@ export async function ReportPage({
         from={scope.from}
         to={scope.to}
         scope={scope}
-        location={ctx.shops.length > 1 ? locationProps(ctx, scope) : null}
+        location={rctx.shops.length > 1 ? locationProps(rctx, scope) : null}
         options={data.options}
         presets={data.presets}
       />

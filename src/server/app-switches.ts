@@ -1,5 +1,5 @@
 /**
- * Customer app kill switches. Each is on unless the Brand Owner or a Brand Admin turns it off under
+ * Customer app kill switches. Each is on unless someone with App config (settings.app) turns it off under
  * Setup → App switches (through the brand change scope, so it takes effect at once, no deploy), or the env
  * var APP_KILL lists it (comma-separated) for an emergency from Vercel. Per-shop booking is each
  * shop's own "Online booking on" switch; force-upgrade is the minimum app version.

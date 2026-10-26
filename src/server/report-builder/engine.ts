@@ -46,7 +46,7 @@ import {
   type LocalDate,
 } from "@/lib/time";
 import { can, type StaffContext } from "../auth/staff";
-import { CLIENT_FACTS, panelSees, segmentConditions } from "../client-filters";
+import { CLIENT_FACTS, reportSees, segmentConditions } from "../client-filters";
 import type { ClientPolicy } from "../client-privacy";
 import { forbidden, AppError } from "../errors";
 import { reportLocations } from "../locations";
@@ -866,7 +866,7 @@ export async function reportProblem(
 ): Promise<string | null> {
   const problem = definitionProblem(
     def,
-    panelSees(ctx, policy),
+    reportSees(ctx, policy),
     policy.custom,
     { filters: !o.building || can(ctx, "clients.filters") },
   );

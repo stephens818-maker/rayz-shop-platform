@@ -4,7 +4,8 @@ import { audit } from "@/server/audit";
 import { can, reasonViewer, routeStaff } from "@/server/auth/staff";
 import { clientListDenied, clientPolicy } from "@/server/client-privacy";
 import { AppError } from "@/server/errors";
-import { REPORT_LOADERS, tableCsv } from "@/server/report-data";
+import { reportContext } from "@/server/report-access";
+import { loadReport, tableCsv } from "@/server/report-data";
 import { resolveScope } from "../scope";
 
 /** Older export links, kept working. */
@@ -39,13 +40,14 @@ export async function GET(req: Request) {
   if (!REPORTS.some((r) => r.key === key)) return new Response("Unknown report", { status: 404 });
   if (!can(ctx, reportView(key)) || !can(ctx, reportExport(key))) return new Response("You don't have permission to export this report", { status: 403 });
   if (key === "client_ratings") return Response.redirect(new URL(`/admin/reports/ratings/export?${url.searchParams}`, url), 307);
+  const rctx = await reportContext(ctx);
   let scope;
   try {
-    scope = await resolveScope(ctx, { ...p, shop: url.searchParams.getAll("shop"), staff: url.searchParams.getAll("staff"), view: p.view ?? alias?.view }, key);
+    scope = await resolveScope(rctx, { ...p, shop: url.searchParams.getAll("shop"), staff: url.searchParams.getAll("staff"), view: p.view ?? alias?.view }, key);
   } catch (e) {
     return new Response(e instanceof AppError ? e.message : "Bad request", { status: 403 });
   }
-  const data = await REPORT_LOADERS[key]({ scope, loc: scope.loc, viewer: ctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params: p });
+  const data = await loadReport(key, { scope, loc: scope.loc, viewer: rctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params: p });
   const tableId = p.table ?? alias?.table;
   const found = tableId ? data.tables.find((t) => t.id === tableId) : data.tables[0];
   if (!found) return new Response("Unknown table", { status: 404 });
