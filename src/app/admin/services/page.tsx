@@ -113,7 +113,7 @@ export default async function ServicesPage() {
       )}
       {can(ctx, "catalog.manage") && (
         <MasterEditor
-          categories={(await lookups()).serviceCategories}
+          categories={(await lookups(shopId)).serviceCategories}
           rows={master.map((m) => ({
             id: m.id,
             name: m.name,

@@ -80,7 +80,7 @@ export default async function CheckoutPage({
     getLoyaltyConfig(),
     ratingSummaries([c.customer?.id]),
     timesFor(c.appointment ? [c.appointment.id] : []),
-    lookups(),
+    lookups(c.shop.id),
     settlementAccount(c.shop),
     db
       .select({ id: terminalReaders.id, label: terminalReaders.label })

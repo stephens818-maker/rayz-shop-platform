@@ -47,7 +47,7 @@ const rowsOf = async <T>(q: Promise<unknown>) => (await q) as unknown as T[];
 
 // ───────────────────────────── Settings ─────────────────────────────
 
-const markAllStale = (tx: DBorTx = db) => tx.execute(sql`update client_badges set computed_on = ${STALE_DAY}::date`);
+export const markAllStale = (tx: DBorTx = db) => tx.execute(sql`update client_badges set computed_on = ${STALE_DAY}::date`);
 
 export async function saveBadgeSettings(ctx: StaffContext, raw: unknown): Promise<BadgeSettings> {
   if (!can(ctx, "badges.settings")) throw forbidden("You can't change client badges");

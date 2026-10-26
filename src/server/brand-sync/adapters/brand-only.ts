@@ -18,6 +18,7 @@ import type { SyncAdapter } from "../types";
 
 export const checkoutPromptsAdapter: SyncAdapter<CheckoutPromptSettings, CheckoutPromptSettings> = {
   type: "checkout_prompts",
+  columns: ["checkoutPrompts"],
   noun: "Checkout prompts",
   area: "checkout_prompts",
   store: "local",
@@ -64,6 +65,7 @@ export const milestoneValue = (m: MilestoneSettings): MilestoneValue => ({ calen
 
 export const milestonesAdapter: SyncAdapter<MilestoneSettings, MilestoneValue> = {
   type: "milestones",
+  columns: ["milestones"],
   noun: "Milestone celebrations",
   area: "milestones",
   store: "local",
@@ -120,6 +122,7 @@ export const loyaltyValue = (c: LoyaltyConfig): LoyaltyValue => ({ minVisitCents
 
 export const loyaltyAdapter: SyncAdapter<LoyaltyConfig, LoyaltyValue> = {
   type: "loyalty",
+  columns: ["loyalty"],
   noun: "Loyalty earning rules",
   area: "loyalty",
   store: "local",
@@ -158,6 +161,7 @@ export const loyaltyAdapter: SyncAdapter<LoyaltyConfig, LoyaltyValue> = {
 export type AppValue = Pick<AppSwitches, "booking" | "payments">;
 export const appAdapter: SyncAdapter<AppSwitches, AppValue> = {
   type: "app",
+  columns: ["appSwitches"],
   noun: "App config",
   area: "app",
   store: "local",

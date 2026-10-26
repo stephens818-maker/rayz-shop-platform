@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { Button, Field, Input, Select, cx } from "@/components/ui";
 import {
   RULE_VALUE_LABEL,
@@ -17,7 +18,7 @@ import {
   isContactField,
   ruleValues,
 } from "@/domain/client-privacy";
-import { acknowledgeAlertAction, saveCustomFieldAction, saveLookupLimitsAction, saveShopLoginCapAction, setFieldRuleAction } from "./actions";
+import { acknowledgeAlertAction, saveCustomFieldAction, setFieldRuleAction } from "./actions";
 
 type Rule = { field: string; setting: Setting; roleId: string | null; staffId: string | null; shopId: string | null };
 type Value = Level | Entry;
@@ -187,10 +188,9 @@ export function CustomFields({ fields }: { fields: { id: string; label: string; 
 }
 
 export function LimitsForm({ initial }: { initial: LookupLimits }) {
-  const { pending, error, run } = useRun();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("lookup_limits");
   const [v, setV] = useState(initial);
-  const [saved, setSaved] = useState(false);
-  const num = (k: keyof LookupLimits) => <Input type="number" min={1} value={v[k]} onChange={(e) => (setSaved(false), setV({ ...v, [k]: Number(e.target.value) }))} />;
+  const num = (k: keyof LookupLimits) => <Input type="number" min={1} value={v[k]} onChange={(e) => setV({ ...v, [k]: Number(e.target.value) })} />;
   return (
     <div className="grid grid-cols-2 gap-3 p-4">
       <Field label="Time window (minutes)" className="col-span-2">
@@ -201,32 +201,23 @@ export function LimitsForm({ initial }: { initial: LookupLimits }) {
       <Field label="Alert after searches">{num("alertSearches")}</Field>
       <Field label="Pause after searches">{num("blockSearches")}</Field>
       <div className="col-span-2 flex items-center gap-3">
-        <Button
-          disabled={pending}
-          onClick={() =>
-            run(
-              () => saveLookupLimitsAction(v),
-              () => setSaved(true),
-            )
-          }
-        >
+        <Button disabled={pending} onClick={() => saveSetting(v)}>
           Save limits
         </Button>
-        {saved && <span className="text-sm text-zinc-600">Saved</span>}
-        {error && <span className="text-sm text-red-600">{error}</span>}
+        <SyncMsg msg={msg} className="text-sm" />
       </div>
+      {dialog}
     </div>
   );
 }
 
 export function ShopLoginCapForm({ initial }: { initial: ShopLoginCap }) {
-  const { pending, error, run } = useRun();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("shop_login_contact");
   const [v, setV] = useState(initial);
-  const [saved, setSaved] = useState(false);
   return (
     <div className="space-y-3 p-4">
       <Field label="Client phone, email, address and birthday" hint="Shop logins never see phone, email or address in full, whatever their role.">
-        <Select value={v} onChange={(e) => (setSaved(false), setV(e.target.value as ShopLoginCap))} data-testid="shop-login-cap">
+        <Select value={v} onChange={(e) => setV(e.target.value as ShopLoginCap)} data-testid="shop-login-cap">
           {SHOP_LOGIN_CAPS.map((c) => (
             <option key={c} value={c}>
               {SHOP_LOGIN_CAP_LABEL[c]}
@@ -235,19 +226,11 @@ export function ShopLoginCapForm({ initial }: { initial: ShopLoginCap }) {
         </Select>
       </Field>
       <div className="flex items-center gap-3">
-        <Button
-          disabled={pending || v === initial}
-          onClick={() =>
-            run(
-              () => saveShopLoginCapAction(v),
-              () => setSaved(true),
-            )
-          }
-        >
+        <Button disabled={pending || v === initial} onClick={() => saveSetting(v)}>
           Save
         </Button>
-        {saved && <span className="text-sm text-zinc-600">Saved</span>}
-        {error && <span className="text-sm text-red-600">{error}</span>}
+        <SyncMsg msg={msg} className="text-sm" />
+        {dialog}
       </div>
     </div>
   );

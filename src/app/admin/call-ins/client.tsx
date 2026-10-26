@@ -2,11 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
+import { useSettingSync } from "@/components/brand-sync";
 import { type PickReason, ReasonPicker } from "@/components/reason-picker";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Table, Td, Th, cx } from "@/components/ui";
 import { CALL_IN_KINDS, CALL_IN_KIND_LABEL, CallInKind, OPTION_LABEL, OUTREACH_OPTIONS, OutreachOption, OutreachRules, STATUS_LABEL, STATUS_TONE, isOpen } from "@/domain/outreach";
 import type { OutreachResult, OutreachView } from "@/server/call-ins";
-import { callInFromClockBlockAction, cancelCallInAction, closeOutreachAction, markCallInAction, saveOutreachRulesAction, sendOutreachAction } from "./actions";
+import { callInFromClockBlockAction, cancelCallInAction, closeOutreachAction, markCallInAction, sendOutreachAction } from "./actions";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -243,7 +244,7 @@ export function MarkCallIn({
 }
 
 export function OutreachRulesEditor({ rules }: { rules: OutreachRules }) {
-  const { pending, error, ok, run } = useRun();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("outreach");
   const [retry, setRetry] = useState(String(rules.retryAfterHours));
   const [qs, setQs] = useState(hhmm(rules.quietStartMin));
   const [qe, setQe] = useState(hhmm(rules.quietEndMin));
@@ -268,16 +269,15 @@ export function OutreachRulesEditor({ rules }: { rules: OutreachRules }) {
       <div className="flex items-center gap-3 border-t border-zinc-100 px-4 py-3">
         <Button
           disabled={pending}
-          onClick={() =>
-            run(() => saveOutreachRulesAction({ retryAfterHours: Number(retry), quietStartMin: mins(qs), quietEndMin: mins(qe), linkTtlHours: Number(ttl) }), () => "Saved")
-          }
+          onClick={() => saveSetting({ retryAfterHours: Number(retry), quietStartMin: mins(qs), quietEndMin: mins(qe), linkTtlHours: Number(ttl) })}
         >
           Save rules
         </Button>
         <div className="flex-1">
-          <Messages error={error} ok={ok} />
+          <Messages error={msg && !msg.ok ? msg.text : null} ok={msg?.ok ? msg.text : null} />
         </div>
       </div>
+      {dialog}
     </Card>
   );
 }

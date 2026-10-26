@@ -296,7 +296,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           {mayReassign && <ReassignPanel saleId={sale.id} current={sale.staffId} barbers={shopBarbers} needsPin={reassignPin} approvers={reassignApprovers} />}
           {manager && refundable && (
             <SaleActions
-              reasons={(await lookups()).refundReasons}
+              reasons={(await lookups(sale.shopId)).refundReasons}
               needsPin={refundPin}
               approvers={refundApprovers}
               saleId={sale.id}

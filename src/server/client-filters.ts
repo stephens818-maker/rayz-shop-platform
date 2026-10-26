@@ -256,7 +256,7 @@ export async function filterOptions(ctx: StaffContext, policy: ClientPolicy): Pr
       .where(mine(sql`(${marketingCampaigns.shopIds} = '[]'::jsonb or ${atMine(sql`${marketingCampaigns.shopIds}`)})`))
       .orderBy(desc(marketingCampaigns.createdAt))
       .limit(200),
-    lookups(),
+    lookups(ctx.currentShopId),
   ]);
   return {
     shops: shopList,

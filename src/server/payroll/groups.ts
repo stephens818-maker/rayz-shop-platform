@@ -1,8 +1,9 @@
 import { and, eq, gte, lte } from "drizzle-orm";
 import { db } from "@/db";
-import { brandSettings, payGroups, payrollRuns, shops, timesheetLocks } from "@/db/schema";
+import { payGroups, payrollRuns, shops, timesheetLocks } from "@/db/schema";
 import { periodOf, type PayCalendar } from "@/domain/payroll/calendar";
-import { payrollSettings, type PayrollSettings } from "@/domain/payroll/calc";
+import type { PayrollSettings } from "@/domain/payroll/calc";
+import { settingAt } from "../brand-sync/settings";
 import type { LocalDate } from "@/lib/time";
 import { TEMPLATE_TABS } from "./export";
 
@@ -57,10 +58,8 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
   }));
 }
 
-export async function loadSettings(): Promise<PayrollSettings> {
-  const [b] = await db.select({ payroll: brandSettings.payroll }).from(brandSettings).limit(1);
-  return payrollSettings(b?.payroll);
-}
+/** The payroll rules (the payroll setting): one for the whole brand. */
+export const loadSettings = (): Promise<PayrollSettings> => settingAt<PayrollSettings>("payroll");
 
 /** Whether a shop's pay period holding `date` is locked; time and overrides in it can't change then. */
 export async function isLockedOn(shopId: string, date: LocalDate): Promise<boolean> {

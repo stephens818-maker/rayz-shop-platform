@@ -2,18 +2,10 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { FIELD_KINDS, OPTIONAL_EXPORT, type CompensationSettings } from "@/domain/compensation";
+import { FIELD_KINDS } from "@/domain/compensation";
 import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
-import { saveCompensationSettings, saveCustomField, setCustomFieldActive } from "@/server/compensation";
-
-const settings = z.object({
-  enabled: z.boolean(),
-  payrollUsesPlans: z.boolean(),
-  payEstimate: z.boolean(),
-  exportColumns: z.object(Object.fromEntries(OPTIONAL_EXPORT.map((k) => [k, z.object({ on: z.boolean(), header: z.string().max(60) })])) as Record<(typeof OPTIONAL_EXPORT)[number], z.ZodObject<{ on: z.ZodBoolean; header: z.ZodString }>>),
-  guaranteeHeader: z.string().max(60),
-});
+import { saveCustomField, setCustomFieldActive } from "@/server/compensation";
 
 const field = z.object({
   label: z.string().max(100),
@@ -25,15 +17,6 @@ const field = z.object({
 function refresh() {
   revalidatePath("/admin/compensation");
   revalidatePath("/admin/staff", "layout");
-}
-
-export async function saveCompensationSettingsAction(input: CompensationSettings) {
-  return safe(async () => {
-    const ctx = await authorize("compensation.settings");
-    const s = await saveCompensationSettings(settings.parse(input), ctx.actor);
-    refresh();
-    return s;
-  });
 }
 
 export async function saveFieldAction(id: string | null, input: z.input<typeof field>) {

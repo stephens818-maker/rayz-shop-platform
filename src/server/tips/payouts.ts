@@ -85,7 +85,8 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
   const asOf = o.asOf ?? todayLocal(now);
   await syncTipLedger(db, { shopIds: [o.shopId] });
   return db.transaction(async (tx) => {
-    const { policy, byShop } = await shopTipConfigs([o.shopId], tx);
+    const { policyOf, byShop } = await shopTipConfigs([o.shopId], tx);
+    const policy = policyOf(o.shopId);
     const settings = byShop.get(o.shopId);
     if (!settings) throw notFound("Shop");
     if (settings.schedule === "payroll") throw new AppError("conflict", "This shop pays tips through payroll only, so there's no batch to build.");
@@ -555,7 +556,7 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     .from(tipLedger)
     .leftJoin(tipPayouts, eq(tipPayouts.id, tipLedger.payoutId))
     .where(and(inArray(tipLedger.shopId, [...shopIds]), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end)));
-  const { policy, byShop } = await shopTipConfigs(shopIds, tx);
+  const { policyOf, byShop } = await shopTipConfigs(shopIds, tx);
   const people = [...new Set(rows.map((r) => r.staffId))];
   const [choices, planned] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx)]);
   const out = new Map<string, PayrollTipSplit>();
@@ -563,7 +564,7 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     const k = `${r.staffId}|${r.shopId}`;
     const v = out.get(k) ?? { adjustCents: 0, inPayrollCents: 0, paidOutCents: 0 };
     if (r.kind === "adjust") v.adjustCents += r.amountCents;
-    const viaPayroll = r.payoutId ? r.method === "payroll" : effectiveMethod(byShop.get(r.shopId)!, policy, choices.get(r.staffId)?.method ?? null, planned.get(r.staffId)?.method) === "payroll";
+    const viaPayroll = r.payoutId ? r.method === "payroll" : effectiveMethod(byShop.get(r.shopId)!, policyOf(r.shopId), choices.get(r.staffId)?.method ?? null, planned.get(r.staffId)?.method) === "payroll";
     if (viaPayroll) v.inPayrollCents += r.amountCents;
     else if (r.status === "paid") v.paidOutCents += r.amountCents;
     out.set(k, v);
@@ -578,10 +579,11 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
 export async function lockPayrollTips(tx: Tx, blocks: readonly { shopId: string; lines: readonly { staffId: string; tipsInPayroll?: number }[] }[], start: LocalDate, end: LocalDate, actor: Actor) {
   const shopIds = blocks.map((b) => b.shopId);
   if (!shopIds.length) return;
-  const { policy, byShop } = await shopTipConfigs(shopIds, tx);
+  const { policyOf, byShop } = await shopTipConfigs(shopIds, tx);
   const now = new Date();
   for (const b of blocks) {
     const settings: ShopTipSettings = byShop.get(b.shopId)!;
+    const policy = policyOf(b.shopId);
     const entries = await tx
       .select()
       .from(tipLedger)

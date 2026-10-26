@@ -2,16 +2,16 @@ import { and, asc, eq, gte, isNotNull, isNull, lte, notInArray, sql } from "driz
 import { db, DBorTx } from "@/db";
 import { receiptDeliveries, reviewClicks, sales, shops } from "@/db/schema";
 import { receiptBranding } from "@/domain/connect";
-import { inQuietHours } from "@/domain/outreach";
+import { inQuietHours, type OutreachRules } from "@/domain/outreach";
 import type { ReceiptSendChannel, ReceiptSkip } from "@/domain/receipts";
 import { TOKEN_SHAPE, hashToken } from "@/domain/rebook-token";
 import { FOLLOW_UP_LOOKBACK_HOURS, ReviewRules, isAutomatedOpen } from "@/domain/reviews";
 import { localMinutesOf } from "@/lib/time";
 import { SYSTEM, audit } from "./audit";
-import { loadOutreachRules } from "./call-ins";
+import { settingFor } from "./brand-sync/settings";
 import { contactFor } from "./household-contact";
 import { deliverReceipt, isOptedOut } from "./receipts";
-import { loadReviewRules, reviewTiming } from "./review-rules";
+import { reviewTiming } from "./review-rules";
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -100,10 +100,12 @@ export async function askForReview(saleId: string, repeatDays: number, now: Date
  */
 export async function queueReviewFollowUps(now = new Date()) {
   const out = { queued: 0, skipped: 0, quiet: false };
-  if (inQuietHours(localMinutesOf(now), await loadOutreachRules())) return { ...out, quiet: true };
   const list = await db.select({ id: shops.id, receipt: shops.receipt }).from(shops).where(eq(shops.active, true));
-  const brand = await loadReviewRules();
+  const [quietAt, rulesAt] = await Promise.all([settingFor<OutreachRules>("outreach", list.map((s) => s.id)), settingFor<ReviewRules>("reviews", list.map((s) => s.id))]);
+  if (list.length && list.every((s) => inQuietHours(localMinutesOf(now), quietAt(s.id)))) return { ...out, quiet: true };
   for (const shop of list) {
+    if (inQuietHours(localMinutesOf(now), quietAt(shop.id))) continue;
+    const brand = rulesAt(shop.id);
     const b = receiptBranding(shop.receipt);
     if (!b.reviewUrl || !b.reviewFollowUp.enabled) continue;
     const until = new Date(now.getTime() - b.reviewFollowUp.delayHours * HOUR);

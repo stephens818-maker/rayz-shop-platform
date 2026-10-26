@@ -17,7 +17,6 @@ import {
   deleteTimeEntry,
   ensurePayGroups,
   savePayGroup,
-  savePayrollSettings,
   saveProfile,
   saveRate,
   setOverride,
@@ -55,40 +54,6 @@ export async function setOverrideAction(input: { shopId: string; periodStart: st
       .object({ shopId: z.string().uuid(), periodStart: date, staffId: z.string().uuid(), field: z.enum(OVERRIDABLE as unknown as [Overridable, ...Overridable[]]), value: z.number().nullable(), reason: z.string().max(300) })
       .parse(input);
     fail(await setOverride(v.shopId, v.periodStart, v.staffId, v.field, v.value, v.reason, ctx.actor));
-    refresh();
-    return null;
-  });
-}
-
-export async function saveSettingsAction(input: {
-  trainingCountsTowardOt: boolean;
-  trainingPayInCost: boolean;
-  roundExport2dp: boolean;
-  ftHoursPerWeek: number;
-  ftBasis: string;
-  ftWindowWeeks: number;
-  otThresholdHours: number;
-  dailyOtHours: number | null;
-  otMultiplier: number;
-  tipsInPayrollHeader: string;
-}) {
-  return safe(async () => {
-    const ctx = await authorize("payroll.run");
-    const v = z
-      .object({
-        trainingCountsTowardOt: z.boolean(),
-        trainingPayInCost: z.boolean(),
-        roundExport2dp: z.boolean(),
-        ftHoursPerWeek: z.number().min(1).max(60),
-        ftBasis: z.enum(Object.keys(FT_BASIS_LABEL) as [FtBasis, ...FtBasis[]]),
-        ftWindowWeeks: z.number().int().min(1).max(26),
-        otThresholdHours: z.number().min(1).max(80),
-        dailyOtHours: z.number().min(1).max(24).nullable(),
-        otMultiplier: z.number().min(1).max(3),
-        tipsInPayrollHeader: z.string().trim().min(1, "Name the iSolved earning for tips paid in payroll").max(60),
-      })
-      .parse(input);
-    await savePayrollSettings(v, ctx.actor);
     refresh();
     return null;
   });

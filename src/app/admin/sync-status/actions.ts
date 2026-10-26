@@ -32,7 +32,15 @@ const Commit = z.object({
 const Cells = z.array(z.object({ key: z.string().min(3).max(220), shopId: z.uuid() })).min(1, "Pick at least one cell").max(20_000);
 
 const ANY_SYNC_PERM = [...new Set(Object.values(ADAPTERS).flatMap((a) => a.brandPerms))] as Permission[];
-const permsFor = (types: readonly string[]) => [...new Set(types.flatMap((t) => ADAPTERS[t as keyof typeof ADAPTERS]?.brandPerms ?? []))] as Permission[];
+const permsFor = (changes: readonly { type: string; item: string }[]) =>
+  [
+    ...new Set(
+      changes.flatMap((c) => {
+        const a = ADAPTERS[c.type as keyof typeof ADAPTERS];
+        return a ? (a.itemPerms?.(c.item) ?? a.brandPerms) : [];
+      }),
+    ),
+  ] as Permission[];
 
 async function who(perms: Permission[] = ANY_SYNC_PERM): Promise<Who> {
   const ctx = await authorize(perms.length ? perms : ANY_SYNC_PERM);
@@ -46,14 +54,14 @@ function refresh(paths: readonly string[]) {
 export async function previewBrandSyncAction(raw: z.input<typeof Changes>) {
   return safe(async () => {
     const changes = Changes.parse(raw);
-    return previewBrandChange(await who(permsFor(changes.map((c) => c.type))), changes);
+    return previewBrandChange(await who(permsFor(changes)), changes);
   });
 }
 
 export async function commitBrandSyncAction(raw: z.input<typeof Commit>) {
   return safe(async () => {
     const input = Commit.parse(raw);
-    const r = await commitBrandChange(await who(permsFor(input.changes.map((c) => c.type))), input);
+    const r = await commitBrandChange(await who(permsFor(input.changes)), input);
     refresh(r.paths);
     return r;
   });
@@ -101,7 +109,7 @@ export async function batchDetailAction(batchId: string) {
 export async function setSyncControlAction(type: string, on: boolean) {
   return safe(async () => {
     const t = z.enum(SYNC_TYPES).parse(type);
-    refresh(await setSyncControl(await who(permsFor([t])), t, z.boolean().parse(on)));
+    refresh(await setSyncControl(await who(permsFor([{ type: t, item: "" }])), t, z.boolean().parse(on)));
     return null;
   });
 }

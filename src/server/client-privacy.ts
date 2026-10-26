@@ -1,7 +1,8 @@
 import "server-only";
 import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { brandSettings, clientAccessAlerts, clientAccessLog, clientFieldRules, clientFields, notificationJobs, roles, staff } from "@/db/schema";
+import { settingAt } from "./brand-sync/settings";
+import { clientAccessAlerts, clientAccessLog, clientFieldRules, clientFields, notificationJobs, roles, staff } from "@/db/schema";
 import {
   ACCESS_KINDS,
   AccessKind,
@@ -216,7 +217,7 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
       const rules = ctx.isOwner ? [] : await rulesFor(ctx.staff.id, [...new Set(working.map((w) => w.roleId))]);
       let levels = levelsFor(rules, ctx.staff.id, working, fields);
       if (ctx.staff.kind === "shop") {
-        const cap = await shopLoginCap();
+        const cap = await shopLoginCap(ctx.currentShopId);
         levels = new Map([...levels].map(([f, l]) => [f, shopLoginLevel(cap, f, l)]));
       }
       const o = {
@@ -380,25 +381,14 @@ export const searchesClientDetails = (p: ClientPolicy) => p.isOwner || (["phone"
 
 // ───────────────────────────── Access log, limits and alerts ─────────────────────────────
 
-/** How much of a client's contact details shop logins see: masked to start, or hidden. Never in full. */
-export async function shopLoginCap(): Promise<ShopLoginCap> {
-  const [row] = await db.select({ r: brandSettings.shopLogin }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return cleanShopLoginCap(row?.r?.clientContact);
+/** How much of a client's contact details shop logins see at a shop (the shop_login_contact setting): masked to start, or hidden. Never in full. */
+export async function shopLoginCap(shopId?: string | null): Promise<ShopLoginCap> {
+  return settingAt<ShopLoginCap>("shop_login_contact", shopId);
 }
 
-export async function saveShopLoginCap(cap: ShopLoginCap, actor: Actor) {
-  if (!isShopLoginCap(cap)) throw new AppError("bad_request", "Pick how much shop logins see");
-  const before = await shopLoginCap();
-  await db
-    .update(brandSettings)
-    .set({ shopLogin: sql`${brandSettings.shopLogin} || ${JSON.stringify({ clientContact: cap })}::jsonb`, updatedAt: new Date() })
-    .where(eq(brandSettings.id, 1));
-  await audit(actor, "client_privacy.shop_login_cap", "brand_settings", "1", { before, after: cap });
-}
-
-export async function lookupLimits(): Promise<LookupLimits> {
-  const [row] = await db.select({ l: brandSettings.clientLookupLimits }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return cleanLimits(row?.l);
+/** The client lookup limits at a shop (the lookup_limits setting); no shop, the brand's. */
+export async function lookupLimits(shopId?: string | null): Promise<LookupLimits> {
+  return settingAt<LookupLimits>("lookup_limits", shopId);
 }
 
 const PROFILE_KINDS: AccessKind[] = ["view", "reveal"];
@@ -476,7 +466,7 @@ export async function recordClientAccess(
     await db.insert(clientAccessLog).values({ ...row, kind: e.kind });
     return;
   }
-  const limits = await lookupLimits();
+  const limits = await lookupLimits(ctx.currentShopId);
   const since = new Date(Date.now() - limits.windowMinutes * 60_000);
   const [c] = (await db.execute(sql`
     select

@@ -193,7 +193,7 @@ export async function optionsFor(
   const persons: PersonOpenings[] = people.map((p, i) => ({ customerId: p.customerId, openings: days[i].openings }));
   const results = groupOptions(persons, o.after ?? 0);
   const closed = days.find((d) => d.reason && d.reason !== "No openings on this day")?.reason ?? null;
-  return { results, view: await present(results, closed, people, await loadFamilySettings()) };
+  return { results, view: await present(results, closed, people, await loadFamilySettings((await getShop(shopRef)).id)) };
 }
 
 /** Ways to seat everyone on one day: back to back with one barber, together with several, or done soonest. */
@@ -240,7 +240,7 @@ export async function bookGroup(
     throw new AppError("bad_request", "Pick one time for each person");
   }
   const shop = await getShop(req.shopId);
-  const settings = await loadFamilySettings();
+  const settings = await loadFamilySettings(shop.id);
   const deposit = groupDepositCents(settings, req.people.length);
   let seats = req.seats;
   for (let attempt = 0; ; attempt++) {
@@ -459,7 +459,7 @@ export async function cancelGroup(code: string, o: { actor: Actor; byCustomer: b
   const found = await groupByCode(code);
   await assertGuardian(found, o.customerId);
   const shop = await getShop(found.shopId);
-  const settings = await loadFamilySettings();
+  const settings = await loadFamilySettings(shop.id);
   const people = await db.transaction(async (tx) => {
     const g = await lockGroup(found.id, tx);
     const ms = await membersOf(g.id, tx);
@@ -607,7 +607,7 @@ export async function groupNoShow(groupId: string, actor: Actor, now = new Date(
   if (!missing.length) throw new AppError("conflict", "Everyone in this booking has arrived or is closed");
   for (const m of missing) await setAppointmentStatus(m.id, "no_show", actor, now);
   const arrived = ms.some((m) => ["checked_in", "in_service", "completed"].includes(m.status));
-  const settings = await loadFamilySettings();
+  const settings = await loadFamilySettings(g0.shopId);
   const forfeitedCents = await db.transaction(async (tx) => {
     const g = await lockGroup(g0.id, tx);
     const kept = !arrived && g.depositStatus === "held" && settings.groupNoShowForfeit ? await forfeitDeposit(g, actor, tx) : 0;

@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { FIELD_KINDS, FIELD_KIND_LABEL, OPTIONAL_EXPORT, OPTIONAL_EXPORT_LABEL, type CompensationSettings, type FieldKind } from "@/domain/compensation";
-import { saveCompensationSettingsAction, saveFieldAction, setFieldActiveAction } from "./actions";
+import { saveFieldAction, setFieldActiveAction } from "./actions";
 
 const Check = ({ label, hint, checked, disabled, onChange }: { label: string; hint?: string; checked: boolean; disabled?: boolean; onChange: (v: boolean) => void }) => (
   <label className={`flex items-start gap-2 text-sm ${disabled ? "opacity-50" : ""}`}>
@@ -17,13 +18,9 @@ const Check = ({ label, hint, checked, disabled, onChange }: { label: string; hi
 );
 
 export function SettingsForm({ initial }: { initial: CompensationSettings }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("compensation");
   const [v, setV] = useState(initial);
-  const [saved, setSaved] = useState(false);
-  const put = (x: Partial<CompensationSettings>) => {
-    setSaved(false);
-    setV({ ...v, ...x });
-  };
+  const put = (x: Partial<CompensationSettings>) => setV({ ...v, ...x });
   const off = !v.enabled;
   return (
     <div className="space-y-3 px-4 py-3">
@@ -73,12 +70,12 @@ export function SettingsForm({ initial }: { initial: CompensationSettings }) {
         <p className="text-xs text-zinc-500">The earning codes are to confirm with the payroll provider. A locked period&apos;s file keeps the columns it was approved with.</p>
       </div>
       <div className="flex items-center gap-3">
-        <Button size="sm" disabled={pending} onClick={() => run(() => saveCompensationSettingsAction(v), () => setSaved(true))}>
+        <Button size="sm" disabled={pending} onClick={() => saveSetting(v)}>
           Save settings
         </Button>
-        {saved && !error && <span className="text-xs text-green-700">Saved.</span>}
-        {error && <span className="text-xs text-red-700">{error}</span>}
+        <SyncMsg msg={msg} />
       </div>
+      {dialog}
     </div>
   );
 }

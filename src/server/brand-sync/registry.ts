@@ -3,6 +3,7 @@ import { appAdapter, campaignTemplateAdapter, checkoutPromptsAdapter, loyaltyAda
 import { productAdapter, serviceAdapter } from "./adapters/catalog";
 import { hoursAdapter, locationDefaultAdapter, receiptAdapter } from "./adapters/location";
 import { cardFeeAdapter, taxesAdapter, tipsAdapter } from "./adapters/money";
+import { settingAdapter } from "./settings";
 import type { AnyAdapter, SyncItem } from "./types";
 
 export const ADAPTERS: Record<SyncType, AnyAdapter> = {
@@ -20,6 +21,7 @@ export const ADAPTERS: Record<SyncType, AnyAdapter> = {
   role: roleAdapter,
   receipt: receiptAdapter,
   app: appAdapter,
+  setting: settingAdapter,
 };
 
 export const areaOf = (a: AnyAdapter, item?: Pick<SyncItem, "area"> | null): SyncArea => item?.area ?? a.area;

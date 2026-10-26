@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, lte, gte, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { brandSettings, callIns, morningDashboardSends, notificationJobs, roles, shopClosures, shopHours, shops, staff, staffAccessShops, staffMilestones, staffSchedules, staffShops } from "@/db/schema";
+import { callIns, morningDashboardSends, notificationJobs, roles, shopClosures, shopHours, shops, staff, staffAccessShops, staffMilestones, staffSchedules, staffShops } from "@/db/schema";
 import { todayLine, visibleBadges } from "@/domain/badges";
 import { NO_BARBER } from "@/domain/barbers";
 import type { FieldKey } from "@/domain/client-privacy";
@@ -46,6 +46,7 @@ import { type Permission, reportView } from "@/domain/permissions";
 import { TOTAL, segKey } from "@/domain/report-views";
 import { appBaseUrl } from "@/lib/deployment";
 import { LocalDate, addDays, endOfLocalDay, formatDate, formatTime, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+import { settingAt, settingFor } from "./brand-sync/settings";
 import { Actor, audit } from "./audit";
 import { StaffAccess, loadStaffAccess } from "./auth/access";
 import { loadBadgeSettings } from "./badge-settings";
@@ -72,18 +73,8 @@ const SEND_BY_MIN = 12 * 60;
 /** A claim this old that never got queued belongs to a run that died; the next run may take it. */
 const STALE_CLAIM_MS = 10 * 60_000;
 
-export async function loadMorningSettings(): Promise<MorningSettings> {
-  const [b] = await db.select({ d: brandSettings.digest }).from(brandSettings).limit(1);
-  return morningSettings(b?.d);
-}
-
-export async function saveMorningSettings(raw: unknown, actor: Actor) {
-  const parsed = parseMorningSettings(raw);
-  if (!parsed.success) throw new AppError("bad_request", parsed.error.issues[0]?.message ?? "Check the Morning Dashboard settings");
-  await db.update(brandSettings).set({ digest: parsed.data });
-  await audit(actor, "settings.digest", "brand_settings", "digest", parsed.data, null);
-  return parsed.data;
-}
+/** The Morning Dashboard email settings (the digest setting): one for the whole brand. */
+export const loadMorningSettings = (): Promise<MorningSettings> => settingAt<MorningSettings>("digest");
 
 /** Shares query results across everyone's dashboards in one run: the same shops and days are asked for again and again. */
 export class Memo {
@@ -603,17 +594,19 @@ interface PoFacts {
 }
 
 async function poFacts(ids: string[], today: LocalDate) {
+  const limitAt = await settingFor<number | null>("po_approval", ids);
+  const limits = JSON.stringify(Object.fromEntries(ids.map((id) => [id, limitAt(id)])));
   return sqlRows<PoFacts>(sql`
     with t as (
       select po.id, po.shop_id, po.status, po.expected_on, coalesce((select sum(l.qty_ordered * l.unit_cost_cents) from purchase_order_lines l where l.purchase_order_id = po.id), 0)::int total
       from purchase_orders po where po.shop_id in ${uuids(ids)} and po.status in ('draft', 'approved', 'sent', 'partially_received')
-    ), lim as (select po_approval_threshold_cents t from brand_settings limit 1)
-    select shop_id, count(*) filter (where status = 'draft')::int drafts,
-      count(*) filter (where status = 'draft' and (select t from lim) is not null and total > (select t from lim))::int over_limit,
-      coalesce(sum(total) filter (where status = 'draft' and (select t from lim) is not null and total > (select t from lim)), 0)::int over_limit_cents,
+    ), lim as (select key::uuid shop_id, (value #>> '{}')::int t from jsonb_each(${limits}::jsonb))
+    select t.shop_id, count(*) filter (where status = 'draft')::int drafts,
+      count(*) filter (where status = 'draft' and lim.t is not null and total > lim.t)::int over_limit,
+      coalesce(sum(total) filter (where status = 'draft' and lim.t is not null and total > lim.t), 0)::int over_limit_cents,
       count(*) filter (where status <> 'draft' and expected_on < ${today})::int overdue,
       count(*) filter (where status <> 'draft')::int open
-    from t group by 1`);
+    from t left join lim on lim.shop_id = t.shop_id group by 1`);
 }
 
 async function purchasingExceptions(c: Ctx, shops: ShopRef[]): Promise<ExceptionItem[]> {

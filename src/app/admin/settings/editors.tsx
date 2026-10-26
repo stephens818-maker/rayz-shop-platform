@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { useSyncSave } from "@/components/brand-sync";
+import { useSettingSync, useSyncSave } from "@/components/brand-sync";
 import { BrandLock, Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import type { ReceiptBranding } from "@/domain/connect";
 import { LOYALTY_TYPES, LOYALTY_TYPE_LABEL, type LoyaltyConfig } from "@/domain/loyalty";
@@ -16,7 +16,6 @@ import {
   removeClosureAction,
   saveHoursAction,
   saveReceiptAction,
-  saveReviewRulesAction,
   saveShopInfoAction,
   saveShopMoneyAction,
   saveShopProfileAction,
@@ -551,7 +550,7 @@ export function ReceiptEditor({ shopId, shopName, initial, brandReviews, locked 
 
 /** The brand's rules for the Google review link; each location can set its own under Receipts. */
 export function ReviewRulesEditor({ initial }: { initial: ReviewRules }) {
-  const { pending, msg, save } = useSave();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("reviews");
   const [v, setV] = useState({ minVisits: String(initial.minVisits), snoozeDays: String(initial.snoozeDays) });
   const minVisits = Number(v.minVisits);
   const snoozeDays = Number(v.snoozeDays);
@@ -577,7 +576,8 @@ export function ReviewRulesEditor({ initial }: { initial: ReviewRules }) {
           someone actually posted a review, so a tap on the link counts.
         </p>
       </div>
-      <SaveBar pending={pending} msg={msg} disabled={!valid} onClick={() => save(() => saveReviewRulesAction({ minVisits, snoozeDays }))} />
+      <SaveBar pending={pending} msg={msg} disabled={!valid} onClick={() => saveSetting({ minVisits, snoozeDays })} />
+      {dialog}
     </Card>
   );
 }

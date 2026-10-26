@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { MORNING_SECTIONS, type MorningSettings, SECTION_HINT, SECTION_LABEL, type VersionKind, versionPlans } from "@/domain/morning-dashboard";
-import { saveMorningSettingsAction, sendTestMorningAction } from "./actions";
+import { sendTestMorningAction } from "./actions";
+import { useSettingSync } from "@/components/brand-sync";
 
 export interface MorningPerson {
   id: string;
@@ -29,7 +30,9 @@ const fromTime = (s: string) => {
 };
 
 export function MorningEditor({ initial, roles, people, lastSent }: { initial: MorningSettings; roles: { key: string; name: string }[]; people: MorningPerson[]; lastSent: string }) {
-  const { pending, error, run } = useAction();
+  const { pending: running, error, run } = useAction();
+  const sync = useSettingSync("digest");
+  const pending = running || sync.pending;
   const [s, setS] = useState(initial);
   const [msg, setMsg] = useState<string | null>(null);
   const [everyone, setEveryone] = useState(false);
@@ -218,11 +221,13 @@ export function MorningEditor({ initial, roles, people, lastSent }: { initial: M
       </Card>
 
       {error && <Notice tone="red">{error}</Notice>}
+      {sync.msg && !sync.msg.ok && <Notice tone="red">{sync.msg.text}</Notice>}
       {msg && <Notice tone="green">{msg}</Notice>}
       <div className="flex flex-wrap gap-3">
-        <Button disabled={pending || !dirty} onClick={() => run(() => saveMorningSettingsAction(s), () => setMsg("Saved. The next Morning Dashboard uses these settings."))}>
+        <Button disabled={pending || !dirty} onClick={() => (setMsg(null), sync.saveSetting(s, () => setMsg("Saved. The next Morning Dashboard uses these settings.")))}>
           Save
         </Button>
+        {sync.dialog}
         <Button
           variant="secondary"
           disabled={pending}

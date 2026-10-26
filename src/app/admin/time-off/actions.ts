@@ -72,12 +72,12 @@ export async function askRescheduleAction(appointmentId: string) {
   });
 }
 
-/** The brand's rules (shopId null, access to every shop) or one shop's changes to them. */
-export async function saveRulesAction(shopId: string | null, rules: Record<string, unknown>) {
+/** One shop's changes to its rules. The brand's rules save through the brand change scope (the staff_time setting). */
+export async function saveRulesAction(shopId: string, rules: Record<string, unknown>) {
   return safe(async () => {
     const ctx = await authorize("settings.shop", "You can't change the time off rules");
-    if (shopId) assertShopAccess(ctx, shopId);
-    else if (!ctx.brandWide) throw forbidden("The brand's rules need access to every shop");
+    if (!shopId) throw forbidden("The brand's rules go to every shop you pick: save them from the brand's row");
+    assertShopAccess(ctx, shopId);
     await saveRules(shopId, rules, ctx.actor);
     refresh();
     revalidatePath("/admin/my-time");

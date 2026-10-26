@@ -3,6 +3,7 @@ import type { Native, SyncArea, SyncType } from "@/domain/brand-sync";
 import type { Permission } from "@/domain/permissions";
 import type { Actor } from "../audit";
 import type { StaffContext } from "../auth/staff";
+import type { BrandColumn } from "./settings";
 
 /** Who's making a change: a person in a request, or the scheduler running what they scheduled (no context). */
 export interface Who {
@@ -73,6 +74,16 @@ export interface SyncAdapter<B = unknown, V = unknown> {
   afterCommit?(shopIds: readonly string[]): Promise<void>;
   /** Who may lock or unlock shop edits; card fee keeps its own switch. */
   control?: { get(tx: DBorTx): Promise<boolean>; set(tx: DBorTx, who: Who, on: boolean): Promise<void> };
+  /** For a type whose items are different settings (the settings registry): each item's own permissions, note, pages and name. */
+  itemPerms?(item: string): readonly Permission[];
+  itemNote?(item: string): string | undefined;
+  itemPaths?(item: string): readonly string[];
+  itemNoun?(item: string): string;
+  /** False for an item that's one value for the whole brand: no shop has its own, so nothing is synced to shops. */
+  itemAtShops?(item: string): boolean;
+  /** The brand_settings columns and brand_sync_values keys this type owns; every one belongs to exactly one type. */
+  columns?: readonly BrandColumn[];
+  values?: readonly string[];
 }
 
 export type AnyAdapter = SyncAdapter<any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any

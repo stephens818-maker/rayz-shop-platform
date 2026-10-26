@@ -1,19 +1,17 @@
-import { sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, products, services } from "@/db/schema";
-import { LookupKey, Lookups, SavedLookups, cleanList, listProblem, resolveLookups } from "@/domain/lookups";
-import { Actor, audit } from "./audit";
-import { AppError } from "./errors";
+import { products, services } from "@/db/schema";
+import { Lookups, SavedLookups, cleanList, resolveLookups } from "@/domain/lookups";
+import { brandColumn } from "./brand-sync/settings";
 
-export async function savedLookups(tx: DBorTx = db): Promise<SavedLookups> {
-  const [b] = await tx.select({ l: brandSettings.lookups }).from(brandSettings).limit(1);
-  return (b?.l ?? {}) as SavedLookups;
+/** The pick lists at a shop (the lookup.<key> settings); no shop, the brand's. They change through the brand change scope. */
+export async function savedLookups(shopId?: string | null, tx: DBorTx = db): Promise<SavedLookups> {
+  return ((await brandColumn("lookups", shopId, tx)) ?? {}) as SavedLookups;
 }
 
 /** The lists, plus categories already used on the menu and in retail so nothing in use goes missing. */
-export async function lookups(tx: DBorTx = db): Promise<Lookups> {
+export async function lookups(shopId?: string | null, tx: DBorTx = db): Promise<Lookups> {
   const [saved, svc, prod] = await Promise.all([
-    savedLookups(tx),
+    savedLookups(shopId, tx),
     tx.selectDistinct({ c: services.category }).from(services),
     tx.selectDistinct({ c: products.category }).from(products),
   ]);
@@ -23,14 +21,4 @@ export async function lookups(tx: DBorTx = db): Promise<Lookups> {
     serviceCategories: cleanList([...l.serviceCategories, ...svc.map((r) => r.c)]),
     productCategories: cleanList([...l.productCategories, ...prod.map((r) => r.c)]),
   };
-}
-
-export async function saveLookup(key: LookupKey, items: string[], actor: Actor) {
-  const problem = listProblem(items);
-  if (problem) throw new AppError("bad_request", problem);
-  const clean = cleanList(items);
-  const before = (await savedLookups())[key] ?? null;
-  await db.update(brandSettings).set({ lookups: sql`${brandSettings.lookups} || ${JSON.stringify({ [key]: clean })}::jsonb` });
-  await audit(actor, "settings.lookups", "brand_settings", key, { key, before, after: clean }, null);
-  return clean;
 }

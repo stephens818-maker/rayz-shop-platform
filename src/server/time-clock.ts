@@ -2,7 +2,6 @@ import bcrypt from "bcryptjs";
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
 import {
-  brandSettings,
   clockAlertLog,
   clockDevices,
   ftStatusChanges,
@@ -56,6 +55,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { callInHref, clockBlockTitle } from "@/domain/clock-live";
 import type { Permission } from "@/domain/permissions";
 import { addDays, endOfLocalDay, formatDate, formatTime, isValidLocalDate, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
+import { settingAt, settingFor } from "./brand-sync/settings";
 import { audit, SYSTEM, type Actor } from "./audit";
 import { loadStaffAccess, staffWithAccessTo, workShopIds } from "./auth/access";
 import { AppError, forbidden, notFound } from "./errors";
@@ -96,17 +96,13 @@ const MAX_PHOTO_CHARS = 400_000;
 
 // ───────────────────────────── Settings ─────────────────────────────
 
-export async function loadClockRules(tx: DBorTx = db): Promise<ClockRules> {
-  const [b] = await tx.select({ t: brandSettings.timeClock }).from(brandSettings).limit(1);
-  return clockRules(b?.t);
+/** The time clock rules at a shop (the time_clock setting); no shop, the brand's. They change through the brand change scope. */
+export async function loadClockRules(shopId?: string | null, tx: DBorTx = db): Promise<ClockRules> {
+  return settingAt<ClockRules>("time_clock", shopId, tx);
 }
 
-export async function saveClockRules(next: ClockRules, actor: Actor): Promise<ClockRules> {
-  const clean = clockRules(next);
-  await db.update(brandSettings).set({ timeClock: clean as unknown as Record<string, unknown>, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(actor, "timeclock.rules", "brand_settings", "time_clock", { ...clean, isolvedColumns: clean.isolvedColumns.map((c) => `${c.header}=${c.field}`) });
-  return clean;
-}
+/** Each shop's time clock rules: a shift follows the rules of the shop it was worked at. */
+export const clockRulesAt = (shopIds: readonly string[], tx: DBorTx = db) => settingFor<ClockRules>("time_clock", shopIds, tx);
 
 export interface ShopClock {
   id: string;
@@ -282,7 +278,6 @@ const scheduleFor = (sched: Map<string, ScheduleRow[]>, staffId: string, shopId:
  * have no hours until a manager fixes them.
  */
 export async function rederive(staffId: string, from: Date, to: Date, tx: DBorTx = db, rules?: ClockRules) {
-  const r = rules ?? (await loadClockRules(tx));
   const lo = new Date(from.getTime() - SHIFT_REACH);
   const hi = new Date(to.getTime() + SHIFT_REACH);
   const all = await tx
@@ -291,10 +286,11 @@ export async function rederive(staffId: string, from: Date, to: Date, tx: DBorTx
     .where(and(eq(timePunches.staffId, staffId), gte(timePunches.at, lo), lt(timePunches.at, hi)));
   if (all.length) await tx.delete(timeEntries).where(inArray(timeEntries.punchInId, all.map((p) => p.id)));
   const { shifts } = pairPunches(all.filter((p) => !p.voidedAt).map(asLike));
+  const at = rules ? () => rules : await clockRulesAt([...new Set(all.map((p) => p.shopId))], tx);
   const rows = shifts
     .filter((s) => s.end && s.end.getTime() - s.start.getTime() <= DAY)
     .flatMap((s) =>
-      shiftWork(s, r).segments.map((seg) => ({ staffId, shopId: s.shopId, kind: "worked" as const, startsAt: seg.start, endsAt: seg.end, source: "clock" as const, punchInId: s.inId })),
+      shiftWork(s, at(s.shopId)).segments.map((seg) => ({ staffId, shopId: s.shopId, kind: "worked" as const, startsAt: seg.start, endsAt: seg.end, source: "clock" as const, punchInId: s.inId })),
     );
   if (rows.length) await tx.insert(timeEntries).values(rows);
 }
@@ -442,7 +438,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
     }
     if (state.stale) notes.push(`Your clock-in at ${state.stale.shop} on ${formatDate(state.stale.start)} was never closed. A manager will fix it.`);
   }
-  const rules = await loadClockRules();
+  const rules = await loadClockRules(req.shopId);
   let offScheduleMin: number | null = null;
   if (req.type === "in" || req.type === "out") {
     const sched = await schedulesOf([req.staffId]);
@@ -723,8 +719,9 @@ export interface TimesheetView {
 }
 
 /** Shifts with their paid time, breaks and the flags on their punches. */
-function shiftViews(shifts: Shift[], punches: Map<string, PunchRow>, rules: ClockRules, sched: Map<string, ScheduleRow[]>): ShiftView[] {
+function shiftViews(shifts: Shift[], punches: Map<string, PunchRow>, rulesAt: (shopId: string) => ClockRules, sched: Map<string, ScheduleRow[]>): ShiftView[] {
   return shifts.map((s) => {
+    const rules = rulesAt(s.shopId);
     const w = s.end ? shiftWork(s, rules) : null;
     const date = localDateOf(s.start);
     const ins = punches.get(s.inId);
@@ -759,7 +756,6 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
   const period = periodFor(periodStart);
   const who = await db.query.staff.findFirst({ where: eq(staff.id, staffId) });
   if (!who) throw notFound("Staff member");
-  const rules = await loadClockRules();
   const [punches, { slices, entries }, sched, sheets, locks, names] = await Promise.all([
     punchesBetween([staffId], new Date(period.startsAt.getTime() - DAY), new Date(period.endsAt.getTime() + DAY)),
     hoursSlices(period.start, period.end, [staffId]),
@@ -774,7 +770,7 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
   const working = onTheClock(shifts, byId, new Date());
   const inPeriod = (d: LocalDate) => d >= period.start && d <= period.end;
   const periodShifts = shifts.filter((s) => inPeriod(localDateOf(s.start)));
-  const views = shiftViews(periodShifts, byId, rules, sched);
+  const views = shiftViews(periodShifts, byId, await clockRulesAt([...new Set(periodShifts.map((x) => x.shopId))]), sched);
   const overlapping = shifts.filter((s) => inPeriod(localDateOf(s.start)) || (s.end && inPeriod(localDateOf(new Date(s.end.getTime() - 1)))));
   const owned = new Set<string>([
     ...overlapping.flatMap((s) => [s.inId, s.outId, ...s.breaks.flatMap((b) => [b.startId, b.endId])].filter((x): x is string => !!x)),
@@ -896,7 +892,7 @@ export interface TimesheetRow {
 export async function timesheetList(periodStart: LocalDate, shopIds: readonly string[], staffIds: readonly string[] | null = null): Promise<{ rows: TimesheetRow[]; locks: Record<string, string> }> {
   const period = periodFor(periodStart);
   if (!shopIds.length) return { rows: [], locks: {} };
-  const rules = await loadClockRules();
+  const rules = await clockRulesAt(shopIds);
   const people = await db
     .select({ id: staff.id, label: staff.displayLabel, active: staff.active })
     .from(staff)
@@ -1109,19 +1105,19 @@ export async function checkFtCrossings(now = new Date()): Promise<number> {
 
 /** Open shifts past their scheduled end (plus the allowance) get flagged once, and the shop's managers are told. */
 export async function flagForgottenClockOuts(now = new Date()): Promise<number> {
-  const rules = await loadClockRules();
   const punches = await punchesBetween(null, new Date(now.getTime() - 4 * DAY), new Date(now.getTime() + 60_000));
   const { shifts } = pairPunches(punches.map(asLike));
   const open = shifts.filter((s) => s.end === null);
   if (!open.length) return 0;
   const byId = new Map(punches.map((p) => [p.id, p]));
   const sched = await schedulesOf([...new Set(open.map((s) => s.staffId))]);
+  const rules = await clockRulesAt([...new Set(open.map((s) => s.shopId))]);
   const names = new Map((await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, [...new Set(open.map((s) => s.staffId))]))).map((s) => [s.id, s.label]));
   let n = 0;
   for (const s of open) {
     const p = byId.get(s.inId)!;
     if (p.forgotFlaggedAt) continue;
-    const due = forgottenAfter(s.start, scheduleFor(sched, s.staffId, s.shopId, localDateOf(s.start)), rules);
+    const due = forgottenAfter(s.start, scheduleFor(sched, s.staffId, s.shopId, localDateOf(s.start)), rules(s.shopId));
     if (due > now) continue;
     const flags = [...new Set([...(p.flags as string[]), "forgot_out"])];
     const [hit] = await db

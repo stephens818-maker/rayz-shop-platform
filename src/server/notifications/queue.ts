@@ -1,10 +1,11 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { EmailAttachment, brandSettings, contactOptOuts, notificationJobs, shops } from "@/db/schema";
+import { EmailAttachment, contactOptOuts, notificationJobs, shops } from "@/db/schema";
 import { MergeValues, SavedTemplates, cutoffText, fill, isTemplateKind, templateFor } from "@/domain/message-templates";
 import { icsCalendar, locationDescription } from "@/domain/ics";
 import { OPT_OUT_REASON, clientEmailHtml, reminderTimes, withUnsubscribe } from "@/domain/notification-delivery";
-import { outreachRules, type OutreachRules } from "@/domain/outreach";
+import type { OutreachRules } from "@/domain/outreach";
+import { brandColumn, settingAt } from "../brand-sync/settings";
 import { appBaseUrl } from "@/lib/deployment";
 import { nextMarketingTime } from "@/domain/quiet-hours";
 import { SHOP_TZ, formatDateTime } from "@/lib/time";
@@ -141,10 +142,9 @@ export function mergeValues(c: AppointmentMessageContext, extra: MergeValues = {
   };
 }
 
-/** The brand's saved wording, or none. Read per batch of messages so an edit applies to the next one. */
-export async function savedTemplates(tx: DBorTx = db): Promise<SavedTemplates> {
-  const [b] = await tx.select({ t: brandSettings.messageTemplates }).from(brandSettings).limit(1);
-  return (b?.t ?? {}) as SavedTemplates;
+/** The saved wording at a shop (the message.<kind> settings), or none; no shop, the brand's. Read per batch of messages so an edit applies to the next one. */
+export async function savedTemplates(shopId?: string | null, tx: DBorTx = db): Promise<SavedTemplates> {
+  return ((await brandColumn("messageTemplates", shopId, tx)) ?? {}) as SavedTemplates;
 }
 
 export function renderMessage(kind: NotificationKind, c: AppointmentMessageContext, saved?: SavedTemplates, extra?: MergeValues): { subject: string; body: string } {
@@ -246,18 +246,15 @@ export async function scheduleAppointmentNotifications(
   if (event === "cancelled") jobs.push({ kind: "cancellation", runAt: now });
   else {
     if (event !== "imported" && event !== "reminders") jobs.push({ kind: event === "created" ? "confirmation" : "reschedule", runAt: now });
-    jobs.push(...reminderJobs(c.startsAt, now, c.reminders, await quietRules(tx)));
+    jobs.push(...reminderJobs(c.startsAt, now, c.reminders, await quietRules(c.shopId, tx)));
   }
   return insertJobs(jobs, c, tx, extra, now);
 }
 
 const REMINDER_KINDS = ["reminder_24h", "reminder_2h"] as const;
 
-/** The brand's quiet hours (Call-ins rules), which reminders keep out of. */
-async function quietRules(tx: DBorTx): Promise<OutreachRules> {
-  const [b] = await tx.select({ outreach: brandSettings.outreach }).from(brandSettings).limit(1);
-  return outreachRules(b?.outreach ?? {});
-}
+/** The shop's quiet hours (Call-ins rules), which reminders keep out of. */
+const quietRules = (shopId: string, tx: DBorTx): Promise<OutreachRules> => settingAt<OutreachRules>("outreach", shopId, tx);
 
 /**
  * The first ("day before") and second ("same day") reminders, at the barber's times when they set
@@ -281,12 +278,12 @@ export async function moveReminders(appointmentIds: string[], c: AppointmentMess
       .update(notificationJobs)
       .set({ status: "cancelled" })
       .where(and(inArray(notificationJobs.appointmentId, appointmentIds), eq(notificationJobs.status, "pending"), inArray(notificationJobs.kind, [...REMINDER_KINDS])));
-  return c ? insertJobs(reminderJobs(c.startsAt, now, c.reminders, await quietRules(tx)), c, tx, extra, now) : 0;
+  return c ? insertJobs(reminderJobs(c.startsAt, now, c.reminders, await quietRules(c.shopId, tx)), c, tx, extra, now) : 0;
 }
 
 async function insertJobs(jobs: { kind: NotificationKind; runAt: Date }[], c: AppointmentMessageContext, tx: DBorTx, extra?: MergeValues, now: Date = new Date()) {
   const to = jobs.length ? await recipients(c, tx) : [];
-  const saved = jobs.length && to.length ? await savedTemplates(tx) : {};
+  const saved = jobs.length && to.length ? await savedTemplates(c.shopId, tx) : {};
   const footer = locationFooter(c, mergeValues(c, extra));
   const rows = jobs.flatMap((j) =>
     to.map((r) => {
@@ -318,7 +315,7 @@ export async function enqueueAppointmentMessage(kind: NotificationKind, c: Appoi
 export async function queueAppointmentMessage(kind: NotificationKind, c: AppointmentMessageContext, tx: DBorTx = db, now: Date = new Date(), extra?: MergeValues): Promise<string[]> {
   const to = await recipients(c, tx);
   if (!to.length) return [];
-  const m = renderMessage(kind, c, await savedTemplates(tx), extra);
+  const m = renderMessage(kind, c, await savedTemplates(c.shopId, tx), extra);
   const footer = locationFooter(c, mergeValues(c, extra));
   const rows = to.map((r) => ({
     appointmentId: c.appointmentId,

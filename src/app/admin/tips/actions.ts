@@ -11,7 +11,7 @@ import { safe } from "@/server/action";
 import { StaffContext, assertShopAccess, authorize } from "@/server/auth/staff";
 import { AppError, notFound } from "@/server/errors";
 import { requireInTenant } from "@/server/tenant";
-import { saveBrandTipPolicy, saveShopTipSettings, shopTipConfig } from "@/server/tips/ledger";
+import { saveShopTipSettings, shopTipConfig } from "@/server/tips/ledger";
 import { acknowledgeCashPayout, adjustPayout, approveBatch, buildBatch, cancelBatch, holdPayout, releasePayout, removePayout } from "@/server/tips/payouts";
 
 function refresh(batchId?: string) {
@@ -93,21 +93,6 @@ export async function acknowledgeCashAction(input: { payoutId: string; by: "pin"
     await acknowledgeCashPayout({ payoutId: p.id, by: input.by, pin: input.pin, name: input.name, actor: ctx.actor });
     refresh(p.batchId);
     return null;
-  });
-}
-
-const policySchema = z.object({
-  methods: z.array(z.enum(TIP_METHODS)).min(1, "Allow at least one payout method"),
-  employeeChooses: z.boolean(),
-  instantAllowed: z.boolean(),
-});
-
-export async function saveTipPolicyAction(input: z.input<typeof policySchema>) {
-  return safe(async () => {
-    const ctx = await authorize("tips.settings");
-    const r = await saveBrandTipPolicy(policySchema.parse(input), ctx.actor);
-    revalidatePath("/admin/tips/settings");
-    return r;
   });
 }
 

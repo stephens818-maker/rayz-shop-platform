@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
 import { BrandTipPolicy, DEFAULT_CARD_DELAY, METHOD_LABEL, SCHEDULE_LABEL, ShopTipSettings, TIP_METHODS, TIP_SCHEDULES, TipMethod, TipSchedule } from "@/domain/tips";
-import { saveShopTipSettingsAction, saveTipPolicyAction } from "../actions";
+import { saveShopTipSettingsAction } from "../actions";
+import { useSettingSync } from "@/components/brand-sync";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -32,7 +33,7 @@ function useSave() {
 
 export function PolicyForm({ policy }: { policy: BrandTipPolicy }) {
   const [p, setP] = useState(policy);
-  const { pending, msg, save } = useSave();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("tip_payouts");
   const toggle = (m: TipMethod, on: boolean) => setP({ ...p, methods: on ? TIP_METHODS.filter((x) => x === m || p.methods.includes(x)) : p.methods.filter((x) => x !== m) });
   return (
     <Card>
@@ -54,9 +55,10 @@ export function PolicyForm({ policy }: { policy: BrandTipPolicy }) {
           Allow Stripe instant payouts to an eligible debit card (the employee pays Stripe&rsquo;s instant fee, shown before they choose it)
         </Check>
         {msg && <Notice tone={msg.ok ? "green" : "red"}>{msg.text}</Notice>}
-        <Button disabled={pending || !p.methods.length} onClick={() => save(() => saveTipPolicyAction(p))}>
+        <Button disabled={pending || !p.methods.length} onClick={() => saveSetting(p)}>
           Save brand policy
         </Button>
+        {dialog}
       </div>
     </Card>
   );

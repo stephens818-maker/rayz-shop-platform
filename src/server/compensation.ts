@@ -1,17 +1,16 @@
 import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
-import { brandSettings, payrollRates, payrollRuns, services, staff, staffCompensation, staffCustomFields, staffCustomValues, staffShops } from "@/db/schema";
+import { settingAt } from "./brand-sync/settings";
+import { payrollRates, payrollRuns, services, staff, staffCompensation, staffCustomFields, staffCustomValues, staffShops } from "@/db/schema";
 import {
   NO_RATES,
   blendedHourly,
   commissionBetween,
-  compensationSettings,
   guaranteeForDays,
   lineRate,
   monthStart,
   fieldProblem,
   fieldValue,
-  settingsProblem,
   sortVersions,
   versionOn,
   versionProblem,
@@ -23,8 +22,7 @@ import {
   type FieldKind,
   type VersionInput,
 } from "@/domain/compensation";
-import { EXPORT_COLUMNS, payrollSettings } from "@/domain/payroll/calc";
-import { brandTipPolicy, type TipMethod } from "@/domain/tips";
+import type { BrandTipPolicy, TipMethod } from "@/domain/tips";
 import type { DayHours } from "@/domain/payroll/overtime";
 import { diffDays, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
@@ -34,21 +32,8 @@ import type { StaffContext } from "@/server/auth/staff";
 
 // ───────────────────────────── Settings ─────────────────────────────
 
-export async function loadCompensationSettings(tx: DBorTx = db): Promise<CompensationSettings> {
-  const [b] = await tx.select({ c: brandSettings.compensation }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return compensationSettings(b?.c);
-}
-
-export async function saveCompensationSettings(raw: CompensationSettings, actor: Actor) {
-  const clean = compensationSettings(raw);
-  const [b] = await db.select({ c: brandSettings.compensation, p: brandSettings.payroll }).from(brandSettings).where(eq(brandSettings.id, 1));
-  const problem = settingsProblem(clean, [...EXPORT_COLUMNS.map((c) => c.header), payrollSettings(b?.p).tipsInPayrollHeader]);
-  if (problem) throw new AppError("bad_request", problem);
-  const before = compensationSettings(b?.c);
-  await db.update(brandSettings).set({ compensation: clean as unknown as Record<string, unknown>, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(actor, "compensation.settings", "brand_settings", "1", { before, after: clean });
-  return clean;
-}
+/** The compensation fields (the compensation setting): one for the whole brand. */
+export const loadCompensationSettings = (tx: DBorTx = db): Promise<CompensationSettings> => settingAt<CompensationSettings>("compensation", null, tx);
 
 // ───────────────────────────── Who sees whose ─────────────────────────────
 
@@ -117,7 +102,7 @@ export async function versionContext(staffId: string, now = new Date()) {
   const [shopIds, svc, policy, locked] = await Promise.all([
     db.select({ id: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId)),
     db.select({ id: services.id, category: services.category }).from(services),
-    db.select({ t: brandSettings.tipPayouts }).from(brandSettings).where(eq(brandSettings.id, 1)).then(([b]) => brandTipPolicy(b?.t)),
+    settingAt<BrandTipPolicy>("tip_payouts"),
     lockedThrough(),
   ]);
   return {

@@ -5,7 +5,6 @@ import {
   appointmentOutreach,
   appointments,
   blockReasons,
-  brandSettings,
   callIns,
   customers,
   notificationJobs,
@@ -44,6 +43,7 @@ import {
 import { TimeOffRange, rangeLabel, timeOffSpan } from "@/domain/staff-time";
 import { effectiveEnd } from "@/domain/clock-blocks";
 import { LocalDate, addDays, existingWallTime, formatDate, formatTime, localDateOf, localMinutesOf, minutesToLabel, todayLocal } from "@/lib/time";
+import { settingAt, settingFor } from "./brand-sync/settings";
 import { Actor, SYSTEM, audit, customerActor } from "./audit";
 import { reasonShower, usableReason } from "./block-reasons";
 import { cancelAppointment, createAppointment, getAvailability, messageContext, rescheduleAppointment } from "./booking";
@@ -55,20 +55,9 @@ import { closeLinks, finishOutreach as finish, issueLink } from "./rebook-links"
 
 // ───────────────────────────── Rules ─────────────────────────────
 
-export async function loadOutreachRules(tx: DBorTx = db): Promise<OutreachRules> {
-  const [b] = await tx.select({ outreach: brandSettings.outreach }).from(brandSettings).limit(1);
-  return outreachRules(b?.outreach ?? {});
-}
-
-export async function saveOutreachRules(patch: Record<string, unknown>, actor: Actor) {
-  const problem = outreachRulesProblem(patch);
-  if (problem) throw new AppError("bad_request", problem);
-  const clean = cleanOutreachRules(patch);
-  await db.transaction(async (tx) => {
-    await tx.update(brandSettings).set({ outreach: clean, updatedAt: new Date() });
-    await audit(actor, "callin.rules", "brand_settings", "brand", { rules: clean }, null, tx);
-  });
-  return outreachRules(clean);
+/** The call-in outreach rules at a shop (the outreach setting); no shop, the brand's. */
+export async function loadOutreachRules(shopId?: string | null, tx: DBorTx = db): Promise<OutreachRules> {
+  return settingAt<OutreachRules>("outreach", shopId, tx);
 }
 
 // ───────────────────────────── Marking a call-in ─────────────────────────────
@@ -640,7 +629,6 @@ export async function sendOutreach(callInId: string, choices: readonly OutreachC
   const ci = await db.query.callIns.findFirst({ where: eq(callIns.id, callInId) });
   if (!ci) throw notFound("Call-in");
   if (ci.cancelledAt) throw new AppError("conflict", "This call-in was cancelled");
-  const rules = await loadOutreachRules();
   const out: OutreachResult[] = [];
   const jobIds: string[] = [];
   for (const c of choices) {
@@ -654,7 +642,7 @@ export async function sendOutreach(callInId: string, choices: readonly OutreachC
       continue;
     }
     try {
-      const d = await sendOne(ci, row, c.option, who, rules, now);
+      const d = await sendOne(ci, row, c.option, who, await loadOutreachRules(row.shopId), now);
       jobIds.push(...d.jobIds);
       out.push({ appointmentId: c.appointmentId, ok: true, message: d.summary });
     } catch (e) {
@@ -734,7 +722,7 @@ export async function answerByText(row: OutreachRow, reply: "accept" | "decline"
     await audit(actor, "callin.accepted", "appointment", appt.id, { outreachId: row.id, via: "sms", kept: true }, row.shopId);
     return { reply: `${shopName}: You're all set with ${barber?.displayLabel ?? "your barber"} on ${whenText(appt.startsAt)}. See you then!`, note: "Replied 1: kept the new barber" };
   }
-  const rules = await loadOutreachRules();
+  const rules = await loadOutreachRules(row.shopId);
   const freshLink = async () => (await issueLink({ outreachId: row.id, appointmentId: appt.id }, rules, db, now)).url;
   if (!row.suggestedStartsAt || row.suggestedStartsAt <= now) return { reply: `${shopName}: Pick a new time with any barber here: ${await freshLink()}`, note: "Replied 1: sent a link to pick a time" };
   try {
@@ -756,7 +744,6 @@ export async function answerByText(row: OutreachRow, reply: "accept" | "decline"
  * changed or cancelled meanwhile are closed instead.
  */
 export async function runFollowUps(now = new Date()) {
-  const rules = await loadOutreachRules();
   const rows = await db
     .select({ o: appointmentOutreach })
     .from(appointmentOutreach)
@@ -772,6 +759,7 @@ export async function runFollowUps(now = new Date()) {
     .limit(200);
   const stats = { retried: 0, flagged: 0, closed: 0 };
   const jobIds: string[] = [];
+  const rulesAt = await settingFor<OutreachRules>("outreach", rows.map((r) => r.o.shopId));
   for (const { o: row } of rows) {
     const appt = await db.query.appointments.findFirst({ where: eq(appointments.id, currentId(row)) });
     if (!appt) continue;
@@ -802,7 +790,7 @@ export async function runFollowUps(now = new Date()) {
       stats.flagged++;
       continue;
     }
-    const d = await deliver(row, option, appt, contact, rules, { now, actor: SYSTEM, sentBy: row.sentBy });
+    const d = await deliver(row, option, appt, contact, rulesAt(row.shopId), { now, actor: SYSTEM, sentBy: row.sentBy });
     jobIds.push(...d.jobIds);
     stats.retried++;
   }

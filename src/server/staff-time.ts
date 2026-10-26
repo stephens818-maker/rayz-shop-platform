@@ -6,7 +6,6 @@ import {
   blockReasons,
   appointmentItems,
   appointments,
-  brandSettings,
   customers,
   notificationJobs,
   shops,
@@ -40,6 +39,7 @@ import {
 
 export { rangeLabel };
 import { appBaseUrl } from "@/lib/deployment";
+import { brandColumnAt } from "./brand-sync/settings";
 import { LocalDate, addDays, endOfLocalDay, existingWallTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { extendSeries, insertOccurrences } from "./block-series";
@@ -116,17 +116,12 @@ export type Confirmable<T> = ({ done: false } | ({ done: true } & T)) & { confli
 
 // ───────────────────────────── Rules ─────────────────────────────
 
-async function brandRaw(tx: DBorTx) {
-  const [b] = await tx.select({ staffTime: brandSettings.staffTime }).from(brandSettings).limit(1);
-  return b?.staffTime ?? {};
-}
-
 /** The rules for time that covers these shops: the strictest of them. */
 export async function rulesForShops(shopIds: readonly string[], tx: DBorTx = db): Promise<StaffTimeRules> {
-  const brand = await brandRaw(tx);
-  if (!shopIds.length) return shopRules(brand, {});
-  const rows = await tx.select({ staffTime: shops.staffTime }).from(shops).where(inArray(shops.id, [...shopIds]));
-  return strictestRules(rows.map((r) => shopRules(brand, r.staffTime)));
+  const brand = await brandColumnAt("staffTime", shopIds, tx);
+  if (!shopIds.length) return shopRules(brand(), {});
+  const rows = await tx.select({ id: shops.id, staffTime: shops.staffTime }).from(shops).where(inArray(shops.id, [...shopIds]));
+  return strictestRules(rows.map((r) => shopRules(brand(r.id), r.staffTime)));
 }
 
 /** A block or time off at one shop follows that shop; at every shop, the strictest of the barber's shops. */
@@ -135,26 +130,25 @@ export async function rulesFor(staffId: string, shopId: string | null, tx: DBorT
 }
 
 export async function rulesView(shopIds: readonly string[]) {
-  const brand = await brandRaw(db);
+  const brand = await brandColumnAt("staffTime", shopIds);
   const rows = shopIds.length
     ? await db.select({ id: shops.id, name: shops.name, staffTime: shops.staffTime }).from(shops).where(inArray(shops.id, [...shopIds])).orderBy(asc(shops.name))
     : [];
   return {
-    brand: shopRules(brand, {}),
-    brandOverrides: cleanRules(brand),
-    shops: rows.map((r) => ({ id: r.id, name: r.name, overrides: cleanRules(r.staffTime), effective: shopRules(brand, r.staffTime) })),
+    brand: shopRules(brand(), {}),
+    brandOverrides: cleanRules(brand()),
+    shops: rows.map((r) => ({ id: r.id, name: r.name, overrides: cleanRules(r.staffTime), effective: shopRules(brand(r.id), r.staffTime) })),
   };
 }
 
-/** Replaces the brand's rules (shopId null) or one shop's changes to them. Keys left out follow the defaults, or the brand. */
-export async function saveRules(shopId: string | null, patch: Record<string, unknown>, actor: Actor) {
+/** Replaces one shop's changes to its rules; keys left out follow what the brand sent it. The brand's rules are the staff_time setting. */
+export async function saveRules(shopId: string, patch: Record<string, unknown>, actor: Actor) {
   const problem = rulesProblem(patch);
   if (problem) throw new AppError("bad_request", problem);
   const clean = cleanRules(patch);
   await db.transaction(async (tx) => {
-    if (shopId) await tx.update(shops).set({ staffTime: clean }).where(eq(shops.id, shopId));
-    else await tx.update(brandSettings).set({ staffTime: clean, updatedAt: new Date() });
-    await audit(actor, "staff_time.rules", shopId ? "shop" : "brand_settings", shopId ?? "brand", { rules: clean }, shopId, tx);
+    await tx.update(shops).set({ staffTime: clean }).where(eq(shops.id, shopId));
+    await audit(actor, "staff_time.rules", "shop", shopId, { rules: clean }, shopId, tx);
   });
 }
 

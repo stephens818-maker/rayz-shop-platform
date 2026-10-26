@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, brandSettings, notificationJobs, roles, shops, staff, staffShops, trustedDevices, type TrustedDeviceStatus } from "@/db/schema";
-import { DEFAULT_NETWORK_RULE, GateShop, NetworkVerdict, ShopNetworkRule, blockedWhy, brandNetworkSettings, networkVerdict, shopNetworkRule } from "@/domain/network-access";
+import { auditLog, notificationJobs, roles, shops, staff, staffShops, trustedDevices, type TrustedDeviceStatus } from "@/db/schema";
+import { BrandNetworkSettings, DEFAULT_NETWORK_RULE, GateShop, NetworkVerdict, ShopNetworkRule, blockedWhy, networkVerdict, shopNetworkRule } from "@/domain/network-access";
 import { OWNER_ROLE_KEY } from "@/domain/permissions";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
@@ -183,8 +183,11 @@ export async function recordBlocked(a: BlockedAttempt): Promise<number> {
     if (action === "network.blocked" && since >= ALERT_EVERY_MS) alerts.push({ shopId: b.shopId, why });
   }
   if (!alerts.length) return written;
-  const brand = await db.query.brandSettings.findFirst({ columns: { networkAccess: true }, where: eq(brandSettings.id, 1) });
-  if (!brandNetworkSettings(brand?.networkAccess).alertOnBlock) return written;
+  const { settingFor } = await import("../brand-sync/settings");
+  const alertAt = await settingFor<BrandNetworkSettings>("network", alerts.map((x) => x.shopId));
+  const alerting = alerts.filter((x) => alertAt(x.shopId).alertOnBlock);
+  alerts.splice(0, alerts.length, ...alerting);
+  if (!alerts.length) return written;
   const to = (await alertRecipients(a.staff.id)).map((r) => r.email!);
   if (!to.length) return written;
   const who = a.staff.displayLabel;

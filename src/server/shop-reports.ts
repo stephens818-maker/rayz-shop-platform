@@ -7,7 +7,8 @@ import { ATTRIBUTION_DAYS, OPERATOR_CHOICE_LABEL, OperatorChoice, cleanOperator,
 import { Cell, Column, ColumnKind, ListRow, Metric, ReportTable, TOTAL, ViewCtx, listTable, metricTable, parseSegKey, segKey, staffName, viewOf } from "@/domain/report-views";
 import { priorPeriod } from "@/domain/report-range";
 import { taxJurisdiction, taxJurisdictionLabel } from "@/domain/location-profile";
-import { FILING_LABEL, PERIOD_OF, TaxPeriod, cleanTaxFiling, filingFor, parsePeriod, periodKey, periodLabel, stateCode, stateName } from "@/domain/sales-tax";
+import { settingFor } from "./brand-sync/settings";
+import { FILING_LABEL, PERIOD_OF, TaxPeriod, filingFor, type FilingFrequency, parsePeriod, periodKey, periodLabel, stateCode, stateName } from "@/domain/sales-tax";
 import { formatCents } from "@/lib/money";
 import { addDays, diffDays, endOfLocalDay, formatDate, formatTime, startOfLocalDay } from "@/lib/time";
 import { availableMinutesAt } from "./available-minutes";
@@ -313,13 +314,13 @@ type TaxRefundRow = { shopId: string; staffId: string | null; day: string; ts: n
  * at the time. Refunds count in the period they were issued, the way the return is filed.
  */
 export async function salesTaxData(scope0: ReportScope, loc0: ViewCtx, params: Record<string, string | undefined>): Promise<ReportData> {
-  const [shopRows, brand] = await Promise.all([
+  const [shopRows, filingAt] = await Promise.all([
     scope0.shopIds.length
       ? db.select({ id: shopsTable.id, name: shopsTable.name, state: shopsTable.state, verified: shopsTable.taxRatesVerified, jurisdiction: shopsTable.taxJurisdiction }).from(shopsTable).where(inArray(shopsTable.id, scope0.shopIds))
       : Promise.resolve([]),
-    db.query.brandSettings.findFirst({ columns: { taxFiling: true } }),
+    settingFor<Record<string, FilingFrequency>>("tax_filing", scope0.shopIds),
   ]);
-  const filing = cleanTaxFiling(brand?.taxFiling);
+  const filing = filingAt(scope0.shopIds.length === 1 ? scope0.shopIds[0] : null);
   const stateOf = new Map(shopRows.map((s) => [s.id, stateCode(s.state)]));
   const states = [...new Set(stateOf.values())].sort();
   const state = params.state ? stateCode(params.state) : "";

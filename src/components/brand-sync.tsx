@@ -466,3 +466,20 @@ export function useSyncSave() {
   };
   return { pending: s.pending, msg: s.error ? { ok: false, text: s.error } : msg, save, dialog: s.dialog };
 }
+
+/** A save bar's line from useSyncSave: green when synced, red with the error. */
+export function SyncMsg({ msg, className }: { msg: { ok: boolean; text: string } | null; className?: string }) {
+  if (!msg) return null;
+  return (
+    <span role={msg.ok ? "status" : "alert"} className={cx("text-xs", msg.ok ? "text-emerald-700" : "text-red-700", className)}>
+      {msg.text}
+    </span>
+  );
+}
+
+/** useSyncSave for an editor of one setting in the settings registry (src/server/brand-sync/settings.ts). */
+export function useSettingSync(key: string, label?: string) {
+  const s = useSyncSave();
+  const saveSetting = (value: unknown, onDone?: (r: CommitResult) => void) => s.save({ label, changes: [{ type: "setting", item: key, value }], onDone });
+  return { ...s, saveSetting };
+}

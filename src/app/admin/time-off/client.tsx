@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
 import { ReasonTag } from "@/components/reason-picker";
+import { useSettingSync } from "@/components/brand-sync";
 import type { StaffTimeRules } from "@/domain/staff-time";
 import type { AffectedAppointment, RequestView } from "@/server/staff-time";
 import { askRescheduleAction, cancelTimeOffAction, decideTimeOffAction, reassignAction, reassignOptionsAction, saveRulesAction } from "./actions";
@@ -156,7 +157,11 @@ export function RequestCard({ request: r, affected, canDecide, why }: { request:
 type RulesRow = { key: string; shopId: string | null; name: string; overrides: Partial<StaffTimeRules>; effective: StaffTimeRules };
 
 function RuleRow({ row, inherit }: { row: RulesRow; inherit: StaffTimeRules | null }) {
-  const { pending, error, ok, run } = useRun();
+  const { pending: running, error: runError, ok: runOk, run } = useRun();
+  const sync = useSettingSync("staff_time", "Time off rules");
+  const pending = running || sync.pending;
+  const error = runError ?? (sync.msg && !sync.msg.ok ? sync.msg.text : null);
+  const ok = runOk ?? (sync.msg?.ok ? sync.msg.text : null);
   const o = row.overrides;
   const [approval, setApproval] = useState<string>(o.timeOffApproval ?? "");
   const [lunch, setLunch] = useState(o.maxLunchMin?.toString() ?? "");
@@ -188,15 +193,19 @@ function RuleRow({ row, inherit }: { row: RulesRow; inherit: StaffTimeRules | nu
         <Button
           size="sm"
           disabled={pending}
-          onClick={() =>
-            run(
-              () => saveRulesAction(row.shopId, { timeOffApproval: approval || undefined, maxLunchMin: num(lunch), maxBlockMin: num(block), minNoticeDays: num(notice) }),
-              () => "Saved",
-            )
-          }
+          onClick={() => {
+            const rules = { timeOffApproval: approval || undefined, maxLunchMin: num(lunch), maxBlockMin: num(block), minNoticeDays: num(notice) };
+            if (row.shopId === null) sync.saveSetting(rules);
+            else
+              run(
+                () => saveRulesAction(row.shopId!, rules),
+                () => "Saved",
+              );
+          }}
         >
           Save
         </Button>
+        {sync.dialog}
         {error && <div className="mt-1 max-w-48 text-xs text-red-600">{error}</div>}
         {ok && <div className="mt-1 text-xs text-emerald-700">{ok}</div>}
       </td>

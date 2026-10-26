@@ -1,6 +1,7 @@
 import { and, asc, eq, gte, inArray, isNull, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
-import { appointments, brandSettings, clientPhotos, customerDevices, customers, refreshTokens, shops, staff } from "@/db/schema";
+import { settingAt } from "./brand-sync/settings";
+import { appointments, clientPhotos, customerDevices, customers, refreshTokens, shops, staff } from "@/db/schema";
 import {
   ChildInput,
   ChildInputSchema,
@@ -22,18 +23,9 @@ import { stampRecordNote } from "./record-note";
 import { lockIdentity, matchCustomer } from "./customers";
 import { AppError, notFound } from "./errors";
 
-export async function loadFamilySettings(tx: DBorTx = db): Promise<FamilySettings> {
-  const [b] = await tx.select({ f: brandSettings.family }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return familySettings(b?.f);
-}
-
-export async function saveFamilySettings(input: unknown, actor: Actor): Promise<FamilySettings> {
-  const r = FamilySettingsSchema.safeParse(input);
-  if (!r.success) throw new AppError("bad_request", r.error.issues[0]?.message ?? "Check the family settings");
-  const before = await loadFamilySettings();
-  await db.update(brandSettings).set({ family: { ...r.data }, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(actor, "brand.family_settings", "brand_settings", "1", { before, after: r.data }, null);
-  return r.data;
+/** Family account rules at a shop (the family setting); no shop (the app, a household across shops), the brand's. */
+export async function loadFamilySettings(shopId?: string | null, tx: DBorTx = db): Promise<FamilySettings> {
+  return settingAt<FamilySettings>("family", shopId, tx);
 }
 
 // ───────────────────────────── Who's in the household ─────────────────────────────
@@ -126,7 +118,7 @@ export async function addChild(guardianId: string, raw: unknown, actor: Actor, o
   if (input.photo && allowed(opts, "photo")) throw new AppError("bad_request", "Photos aren't kept for children on a family account");
   const run = async (tx: DBorTx) => {
     const g = await lockGuardian(tx, guardianId);
-    const settings = await loadFamilySettings(tx);
+    const settings = await loadFamilySettings(null, tx);
     const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(customers).where(eq(customers.guardianId, guardianId));
     const problem = childLimitProblem(Number(n), settings);
     if (problem) throw new AppError("bad_request", problem);
@@ -215,7 +207,7 @@ export async function attachChild(guardianId: string, childId: string, actor: Ac
     if (Number(kids) > 0) throw new AppError("bad_request", "That client has children on their own account, so they can't be a child profile");
     if (!opts.ignoreLimit) {
       const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(customers).where(eq(customers.guardianId, guardianId));
-      const problem = childLimitProblem(Number(n), await loadFamilySettings(tx));
+      const problem = childLimitProblem(Number(n), await loadFamilySettings(null, tx));
       if (problem) throw new AppError("bad_request", problem);
     }
     // Loaded here: saved cards reach back into this module for the household head.
@@ -263,7 +255,7 @@ export async function splitChild(childId: string, input: SplitInput, actor: Acto
   return inTx(undefined, async (tx) => {
     const [c] = await tx.select().from(customers).where(eq(customers.id, childId)).for("update");
     if (!c || !c.guardianId || (opts.guardianId && c.guardianId !== opts.guardianId)) throw notFound("Child");
-    const problem = splitProblem(c, await loadFamilySettings(tx), todayLocal(now), { confirmedAge: input.confirmedAge });
+    const problem = splitProblem(c, await loadFamilySettings(null, tx), todayLocal(now), { confirmedAge: input.confirmedAge });
     if (problem) throw new AppError("bad_request", problem);
     await lockIdentity(tx, [phone, email]);
     const [g] = await tx.select({ phone: customers.phone, email: customers.email }).from(customers).where(eq(customers.id, c.guardianId));
@@ -308,7 +300,7 @@ const UPCOMING_STATUSES = ["booked", "confirmed", "checked_in", "in_service"] as
 
 /** A parent's children as the parent sees them (the portal, the app): everything about each child is the parent's to see. */
 export async function familyView(guardianId: string, now = new Date(), tx: DBorTx = db): Promise<{ settings: FamilySettings; children: FamilyMemberView[] }> {
-  const [settings, kids] = await Promise.all([loadFamilySettings(tx), childrenOf(guardianId, tx)]);
+  const [settings, kids] = await Promise.all([loadFamilySettings(null, tx), childrenOf(guardianId, tx)]);
   const ids = kids.map((k) => k.id);
   if (!ids.length) return { settings, children: [] };
   const barberIds = [...new Set(kids.map((k) => k.preferredStaffId).filter((x): x is string => !!x))];

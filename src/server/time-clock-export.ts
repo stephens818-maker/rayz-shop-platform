@@ -9,7 +9,7 @@ import { audit, type Actor } from "./audit";
 import { AppError } from "./errors";
 import { ensurePayGroups } from "./payroll/run";
 import { payrollSalesBetween } from "./reports";
-import { asLike, hoursSlices, loadClockRules, periodFor, punchesBetween } from "./time-clock";
+import { asLike, clockRulesAt, hoursSlices, loadClockRules, periodFor, punchesBetween } from "./time-clock";
 
 /**
  * The time clock's payroll export and labor cost: hours from the time clock with tips and sales
@@ -27,7 +27,7 @@ export type ExportFormat = "generic" | "isolved";
 /** Per employee and shop for one pay period: regular and OT hours, breaks, tips and sales. */
 export async function exportData(periodStart: LocalDate, shopIds: readonly string[]): Promise<{ lines: ExportLine[]; draft: boolean; period: PayPeriod }> {
   const period = periodFor(periodStart);
-  const rules = await loadClockRules();
+  const rules = await clockRulesAt(shopIds);
   const { slices } = await hoursSlices(period.start, period.end, null);
   const mine = slices.filter((s) => s.periodStart === period.start && shopIds.includes(s.shopId));
   const punches = await punchesBetween(null, new Date(period.startsAt.getTime() - DAY), new Date(period.endsAt.getTime() + DAY), db, shopIds);
@@ -36,7 +36,7 @@ export async function exportData(periodStart: LocalDate, shopIds: readonly strin
   for (const s of shifts) {
     const d = localDateOf(s.start);
     if (!s.end || d < period.start || d > period.end) continue;
-    const w = shiftWork(s, rules);
+    const w = shiftWork(s, rules(s.shopId));
     const k = `${s.staffId}|${s.shopId}`;
     const b = breaks.get(k) ?? { all: 0, unpaid: 0 };
     b.all += w.breakMin;

@@ -11,7 +11,7 @@ import { LookupEditor } from "./editor";
 export const metadata: Metadata = { title: "Picklists" };
 
 export default async function ListsPage() {
-  await guardPage("/admin/lists");
+  const ctx = await guardPage("/admin/lists");
   const [saved, svc, prod] = await Promise.all([savedLookups(), db.selectDistinct({ c: services.category }).from(services), db.selectDistinct({ c: products.category }).from(products)]);
   const lists = resolveLookups(saved);
   const inUse: Partial<Record<keyof typeof LOOKUP_DEFS, string[]>> = { serviceCategories: svc.map((r) => r.c), productCategories: prod.map((r) => r.c) };
@@ -34,7 +34,7 @@ export default async function ListsPage() {
         }
       />
       {LOOKUP_KEYS.map((k) => (
-        <LookupEditor key={k} id={k} label={LOOKUP_DEFS[k].label} hint={LOOKUP_DEFS[k].hint} items={lists[k]} inUse={inUse[k] ?? []} />
+        <LookupEditor key={k} id={k} label={LOOKUP_DEFS[k].label} hint={LOOKUP_DEFS[k].hint} items={lists[k]} inUse={inUse[k] ?? []} readOnly={!ctx.brandWide} />
       ))}
     </div>
   );

@@ -1,9 +1,10 @@
 import { and, eq, gt, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
-import { blockReasons, brandSettings, clockBlockReleases, shops, staffSchedules, timeBlocks, timePunches } from "@/db/schema";
+import { blockReasons, clockBlockReleases, shops, staffSchedules, timeBlocks, timePunches } from "@/db/schema";
 import { CLOCK_BLOCK_LABEL, CLOCK_REASON_KEY, CLOCK_ROLL_MS, clockBlocks, clockKindOf, onlyRolled, type ClockBlockSettings, type ClockPunch, type WantedBlock } from "@/domain/clock-blocks";
-import { DEFAULT_SHOP_CLOCK, clockRules, scheduledOn, shopClockSettings } from "@/domain/time-clock";
+import { DEFAULT_SHOP_CLOCK, scheduledOn, shopClockSettings, type ClockRules } from "@/domain/time-clock";
 import { addDays, endOfLocalDay, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
+import { settingFor } from "./brand-sync/settings";
 import { audit, SYSTEM, type Actor } from "./audit";
 import { AppError, notFound } from "./errors";
 
@@ -56,13 +57,12 @@ export async function syncClockBlocks(staffIds: readonly string[], around: { fro
   const from = new Date(around.from.getTime() - DAY);
   const to = new Date(around.to.getTime() + DAY);
 
-  const [punches, sched, [brand], used, off] = await Promise.all([
+  const [punches, sched, used, off] = await Promise.all([
     tx
       .select({ id: timePunches.id, staffId: timePunches.staffId, shopId: timePunches.shopId, type: timePunches.type, at: timePunches.at, reasonId: timePunches.reasonId, plannedMin: timePunches.plannedMin })
       .from(timePunches)
       .where(and(inArray(timePunches.staffId, ids), gte(timePunches.at, new Date(from.getTime() - 36 * HOUR)), lt(timePunches.at, new Date(to.getTime() + 36 * HOUR)), isNull(timePunches.voidedAt))),
     tx.select().from(staffSchedules).where(inArray(staffSchedules.staffId, ids)),
-    tx.select({ t: brandSettings.timeClock }).from(brandSettings).limit(1),
     tx
       .selectDistinct({ staffId: timePunches.staffId })
       .from(timePunches)
@@ -74,11 +74,11 @@ export async function syncClockBlocks(staffIds: readonly string[], around: { fro
   ]);
   const shopIds = [...new Set([...punches.map((p) => p.shopId), ...sched.map((s) => s.shopId)])];
   const shopRows = shopIds.length ? await tx.select({ id: shops.id, timeClock: shops.timeClock }).from(shops).where(inArray(shops.id, shopIds)) : [];
-  const rules = clockRules(brand?.t);
+  const rules = await settingFor<ClockRules>("time_clock", shopIds, tx);
   const byShop = new Map(shopRows.map((s) => [s.id, shopClockSettings(s.timeClock)]));
   const settings = (shopId: string): ClockBlockSettings => {
     const s = byShop.get(shopId) ?? DEFAULT_SHOP_CLOCK;
-    return { blockOnBreak: s.blockOnBreak, breakHoldMinutes: s.breakHoldMinutes, blockAfterClockOut: s.blockAfterClockOut, notInBlock: s.notInBlock, graceMinutes: s.graceMinutes ?? rules.graceMinutes };
+    return { blockOnBreak: s.blockOnBreak, breakHoldMinutes: s.breakHoldMinutes, blockAfterClockOut: s.blockAfterClockOut, notInBlock: s.notInBlock, graceMinutes: s.graceMinutes ?? rules(shopId).graceMinutes };
   };
   const dates: string[] = [];
   for (let d = localDateOf(from); d <= localDateOf(to); d = addDays(d, 1)) dates.push(d);

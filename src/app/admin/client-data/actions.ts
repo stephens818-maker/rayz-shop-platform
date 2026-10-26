@@ -25,7 +25,7 @@ import { OWNER_ROLE_KEY, isBrandLevelPerson, isBrandLevelRole } from "@/domain/p
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, authorize } from "@/server/auth/staff";
-import { rulesFor, saveShopLoginCap } from "@/server/client-privacy";
+import { rulesFor } from "@/server/client-privacy";
 import { AppError, forbidden, notFound } from "@/server/errors";
 
 function revalidate() {
@@ -154,42 +154,6 @@ export async function saveCustomFieldAction(raw: z.input<typeof CustomFieldSchem
     }
     revalidate();
     return { id };
-  });
-}
-
-const LimitsSchema = z.object({
-  windowMinutes: z.number().int().min(1).max(1440),
-  alertProfiles: z.number().int().min(1).max(10_000),
-  blockProfiles: z.number().int().min(1).max(10_000),
-  alertSearches: z.number().int().min(1).max(100_000),
-  blockSearches: z.number().int().min(1).max(100_000),
-});
-
-export async function saveLookupLimitsAction(raw: z.input<typeof LimitsSchema>) {
-  return safe(async () => {
-    const ctx = await authorize("clients.privacy", "You can't change lookup limits");
-    const p = LimitsSchema.parse(raw);
-    if (p.blockProfiles < p.alertProfiles || p.blockSearches < p.alertSearches) throw new AppError("bad_request", "The pause level can't be below the alert level");
-    const limits = cleanLimits(p);
-    const [before] = await db.select({ l: brandSettings.clientLookupLimits }).from(brandSettings).where(eq(brandSettings.id, 1));
-    await db
-      .update(brandSettings)
-      .set({ clientLookupLimits: { ...limits } as Record<string, number> })
-      .where(eq(brandSettings.id, 1));
-    await audit(ctx.actor, "client_data.limits", "brand_settings", "1", { from: cleanLimits(before?.l), to: limits }, null);
-    revalidate();
-    return null;
-  });
-}
-
-/** How much contact detail shared shop logins see: masked or hidden, never more. */
-export async function saveShopLoginCapAction(cap: string) {
-  return safe(async () => {
-    const ctx = await authorize("clients.privacy", "You can't change client data protection");
-    if (!isShopLoginCap(cap)) throw new AppError("bad_request", "Shop logins see contact details masked or hidden, never in full");
-    await saveShopLoginCap(cap, ctx.actor);
-    revalidate();
-    return null;
   });
 }
 

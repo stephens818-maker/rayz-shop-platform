@@ -25,7 +25,7 @@ export default async function TipsPage() {
   const shop = ctx.shops.find((s) => s.id === shopId)!;
   const today = todayLocal();
   await syncTipLedger(db, { shopIds: [shopId] });
-  const [settings, policy, unpaid, batches, accounts] = await Promise.all([shopTipConfig(shopId), tipPolicy(), ledgerRows({ shopIds: [shopId], unpaidOnly: true }), batchesFor([shopId]), shopPayoutAccounts(shopId)]);
+  const [settings, policy, unpaid, batches, accounts] = await Promise.all([shopTipConfig(shopId), tipPolicy(shopId), ledgerRows({ shopIds: [shopId], unpaidOnly: true }), batchesFor([shopId]), shopPayoutAccounts(shopId)]);
   const ids = [...new Set(unpaid.map((e) => e.staffId))];
   const planned = await tipOverrides(accounts.map((a) => a.staffId));
   const names = new Map((ids.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, ids)) : []).map((s) => [s.id, s.label]));

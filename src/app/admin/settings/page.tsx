@@ -6,6 +6,7 @@ import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader } from "@/compo
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
 import { shopMayEdit } from "@/server/brand-sync/engine";
+import { settingAt } from "@/server/brand-sync/settings";
 import { getLoyaltyConfig } from "@/server/loyalty";
 import { loadFamilySettings } from "@/server/family";
 import { FamilyEditor } from "./family-editor";
@@ -23,7 +24,7 @@ import { ClosuresEditor, HoursEditor, LoyaltyEditor, MoneyEditor, ProfileEditor,
 import { DrawerOpeningEditor, PhoneOperatorEditor, TaxFilingEditor } from "./part-editors";
 import { editableShopParts } from "@/domain/permissions";
 import { cleanOperator } from "@/domain/phone-operator";
-import { cleanTaxFiling, filingFor, stateCode } from "@/domain/sales-tax";
+import { FilingFrequency, filingFor, stateCode } from "@/domain/sales-tax";
 import { taxJurisdiction } from "@/domain/location-profile";
 import { appBaseUrl } from "@/lib/deployment";
 import { flags } from "@/lib/flags";
@@ -211,7 +212,6 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
 }
 
 async function taxFilingStates() {
-  const [rows, settings] = await Promise.all([db.select({ state: shops.state }).from(shops).where(eq(shops.active, true)), db.query.brandSettings.findFirst({ columns: { taxFiling: true } })]);
-  const f = cleanTaxFiling(settings?.taxFiling);
+  const [rows, f] = await Promise.all([db.select({ state: shops.state }).from(shops).where(eq(shops.active, true)), settingAt<Record<string, FilingFrequency>>("tax_filing")]);
   return [...new Set(rows.map((r) => stateCode(r.state)).filter(Boolean))].sort().map((state) => ({ state, frequency: filingFor(f, state) }));
 }

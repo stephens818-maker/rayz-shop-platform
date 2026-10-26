@@ -1,11 +1,12 @@
 "use client";
 
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { useState } from "react";
 import { NetworkRuleFields, ruleDraft, ruleFromDraft } from "@/components/network-rule-fields";
 import { Button, Field, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import type { BrandNetworkSettings, ShopNetworkRule } from "@/domain/network-access";
-import { decideDeviceAction, saveBrandNetworkAction, saveShopRuleAction, trustThisDeviceAction } from "./actions";
+import { decideDeviceAction, saveShopRuleAction, trustThisDeviceAction } from "./actions";
 
 function Saved({ ok, error }: { ok: boolean; error: string | null }) {
   if (error) return <span className="text-xs text-red-700">{error}</span>;
@@ -55,9 +56,8 @@ export function ShopRuleEditor({ shopId, shopName, initial, myIp, exempt }: { sh
 }
 
 export function AlertToggle({ initial }: { initial: BrandNetworkSettings }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("network");
   const [on, setOn] = useState(initial.alertOnBlock);
-  const [ok, setOk] = useState(false);
   return (
     <div className="flex flex-wrap items-center gap-3 p-4 text-sm">
       <label className="flex items-center gap-2">
@@ -68,14 +68,14 @@ export function AlertToggle({ initial }: { initial: BrandNetworkSettings }) {
           onChange={(e) => {
             const next = e.target.checked;
             setOn(next);
-            setOk(false);
-            run(() => saveBrandNetworkAction({ alertOnBlock: next }), () => setOk(true));
+            saveSetting({ alertOnBlock: next });
           }}
         />
         Email the Brand Owner and brand admins when a sign-in is blocked
       </label>
       <span className="text-xs text-zinc-500">At most once an hour per person and location. Every attempt is in the list below either way.</span>
-      <Saved ok={ok} error={error} />
+      <SyncMsg msg={msg} />
+      {dialog}
     </div>
   );
 }

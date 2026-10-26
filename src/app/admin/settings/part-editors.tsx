@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Card, CardHeader, Field, Input, Select, Textarea } from "@/components/ui";
 import { OPERATOR_ANSWER_LABEL, OperatorAnswer, PhoneOperator } from "@/domain/phone-operator";
 import { FILING_LABEL, FilingFrequency, stateName } from "@/domain/sales-tax";
-import { saveDrawerOpeningAction, savePhoneOperatorAction, saveTaxFilingAction } from "./actions";
+import { saveDrawerOpeningAction, savePhoneOperatorAction } from "./actions";
+import { useSettingSync } from "@/components/brand-sync";
 import { SaveBar, useSave } from "./editors";
 
 export function DrawerOpeningEditor({ shopId, initialCents, locked }: { shopId: string; initialCents: number; locked: boolean }) {
@@ -74,7 +75,7 @@ export function PhoneOperatorEditor({ shopId, initial, hasLine }: { shopId: stri
 
 /** How often each state's sales tax is filed; the Sales tax report and its saved shortcuts follow it. */
 export function TaxFilingEditor({ states }: { states: { state: string; frequency: FilingFrequency }[] }) {
-  const { pending, msg, save } = useSave();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("tax_filing");
   const [v, setV] = useState(Object.fromEntries(states.map((s) => [s.state, s.frequency])));
   return (
     <Card>
@@ -92,20 +93,8 @@ export function TaxFilingEditor({ states }: { states: { state: string; frequency
           </Field>
         ))}
       </div>
-      <SaveBar
-        pending={pending}
-        msg={msg}
-        onClick={() =>
-          save(async () => {
-            for (const s of states) {
-              if (v[s.state] === s.frequency) continue;
-              const r = await saveTaxFilingAction(s.state, v[s.state]);
-              if (!r.ok) return r;
-            }
-            return { ok: true as const, data: null };
-          })
-        }
-      />
+      <SaveBar pending={pending} msg={msg} onClick={() => saveSetting(v)} />
+      {dialog}
     </Card>
   );
 }

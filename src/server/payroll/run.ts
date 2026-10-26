@@ -384,13 +384,6 @@ export async function lockedExport(payGroupId: string, start: LocalDate, end: Lo
 }
 
 
-export async function savePayrollSettings(next: PayrollSettings, actor: Actor) {
-  const clean = payrollSettings(next);
-  await db.update(brandSettings).set({ payroll: clean as unknown as Record<string, unknown>, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(actor, "payroll.settings", "brand_settings", "1", { ...clean });
-  return clean;
-}
-
 export async function savePayGroup(id: string, v: { label: string; legalEntity: string; exportTab: string; calendar: PayCalendar }, actor: Actor): Promise<string | null> {
   const label = v.label.trim();
   const entity = v.legalEntity.trim();

@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { FT_BASIS_LABEL, type PayrollSettings } from "@/domain/payroll/calc";
-import { savePayGroupAction, saveProfileAction, saveSettingsAction } from "../actions";
+import { savePayGroupAction, saveProfileAction } from "../actions";
 
 const Check = ({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) => (
   <label className="flex items-start gap-2 text-sm">
@@ -17,7 +18,7 @@ const Check = ({ label, hint, checked, onChange }: { label: string; hint?: strin
 );
 
 export function SettingsForm({ initial }: { initial: PayrollSettings }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("payroll");
   const [v, setV] = useState(initial);
   const num = (k: keyof PayrollSettings) => (e: { target: { value: string } }) => setV({ ...v, [k]: Number(e.target.value) });
   return (
@@ -87,10 +88,13 @@ export function SettingsForm({ initial }: { initial: PayrollSettings }) {
       </p>
       <p className="text-xs text-zinc-500">Full time / part time: exactly {v.ftHoursPerWeek} is part time. Defaults (clocked worked hours over a rolling 4 weeks) are pending Charles. Overtime is weekly over 40 (federal FLSA); Iowa and
         Illinois appear to add no daily rule, which is to confirm before a daily threshold is set.</p>
-      <Button size="sm" disabled={pending} onClick={() => run(() => saveSettingsAction(v))}>
-        Save settings
-      </Button>
-      {error && <p className="text-xs text-red-700">{error}</p>}
+      <div className="flex items-center gap-3">
+        <Button size="sm" disabled={pending} onClick={() => saveSetting(v)}>
+          Save settings
+        </Button>
+        <SyncMsg msg={msg} />
+      </div>
+      {dialog}
     </div>
   );
 }

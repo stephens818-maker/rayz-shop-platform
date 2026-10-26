@@ -24,7 +24,6 @@ import { LOYALTY_TYPES } from "@/domain/loyalty";
 import { getLoyaltyConfig, saveLoyaltyConfig } from "@/server/loyalty";
 import { ShopHandoffSchema, TipScreenSchema } from "@/domain/handoff";
 import { saveBrandHandoff, saveShopHandoff, shopHandoffConfig } from "@/server/handoff";
-import { saveReviewRules } from "@/server/review-rules";
 import { Permission, SHOP_PART_PERMISSION, SHOP_SETTING_FIELDS, ShopSettingPart, shopSettingsDenied } from "@/domain/permissions";
 import { cleanOperator, operatorProblem } from "@/domain/phone-operator";
 import { FilingFrequency, cleanTaxFiling, stateName } from "@/domain/sales-tax";
@@ -150,18 +149,6 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
   });
 }
 
-/** The brand's credit card surcharge policy, which shops use it and whether shop managers may change their own. Brand admins only; every save is audited with what changed. */
-export async function saveBrandCardFeeAction(policy: Partial<CardFeePolicy>) {
-  return safe(async () => {
-    const ctx = await authorize("settings.card_fee");
-    if (!ctx.brandWide) throw new AppError("forbidden", "The brand's surcharge needs access to all shops");
-    await saveBrandFeePolicy(ctx.actor, policy);
-    revalidatePath("/admin/settings");
-    revalidatePath("/admin/card-fee");
-    return null;
-  });
-}
-
 /**
  * One shop's own surcharge settings on top of the brand's, or null to follow the brand. Brand admins,
  * or people who edit the shop's checkout settings when the brand lets shop managers. Audited.
@@ -225,40 +212,6 @@ export async function removeClosureAction(shopId: string, date: string) {
   });
 }
 
-const Loyalty = z.object({
-  enabled: z.boolean(),
-  type: z.enum(LOYALTY_TYPES),
-  thresholdCents: z.number().int().min(100, "Set the goal to at least $1"),
-  visitsGoal: z.number().int().min(1, "At least 1 visit").max(100, "At most 100 visits"),
-  minVisitCents: z.number().int().min(0).max(100_000),
-  rewardCents: z.number().int().min(100, "Make the reward at least $1"),
-  includeProducts: z.boolean(),
-  includeTips: z.boolean(),
-  shopIds: z.array(z.uuid()).max(500).nullable(),
-  rewardExpiryDays: z.number().int().min(1).nullable(),
-  progressExpiryDays: z.number().int().min(1).nullable(),
-  redeemableOn: z.enum(["services", "all"]),
-  stackWithPromos: z.boolean(),
-});
-
-export async function saveLoyaltyAction(raw: z.input<typeof Loyalty>) {
-  return safe(async () => {
-    const ctx = await authorize("settings.brand", "Only the Brand Owner can change the loyalty program");
-    const v = Loyalty.parse(raw);
-    if (v.shopIds) {
-      const known = await db.select({ id: shops.id }).from(shops).where(inArray(shops.id, v.shopIds.length ? v.shopIds : [crypto.randomUUID()]));
-      if (known.length !== new Set(v.shopIds).size) throw new AppError("bad_request", "Pick locations from the list");
-      v.shopIds = [...new Set(v.shopIds)];
-    }
-    await db.transaction(async (tx) => {
-      const before = await getLoyaltyConfig(tx);
-      const { converted } = await saveLoyaltyConfig(v, tx);
-      await audit(ctx.actor, "loyalty.config", "brand", "1", { before, after: v, ...(converted ? { progressConverted: converted } : {}) }, null, tx);
-    });
-    revalidatePath("/admin/settings");
-    return null;
-  });
-}
 
 const Profile = z.object({
   slug: z.string().trim().toLowerCase(),
@@ -348,16 +301,6 @@ export async function saveReceiptAction(shopId: string, raw: z.input<typeof Rece
   });
 }
 
-/** The brand's rules for when the Google review link is shown: from which visit, and the pause after a tap. */
-export async function saveReviewRulesAction(raw: { minVisits: number; snoozeDays: number }) {
-  return safe(async () => {
-    const ctx = await authorize("settings.brand");
-    await saveReviewRules(raw, ctx.actor);
-    revalidatePath("/admin/settings");
-    return null;
-  });
-}
-
 /** The customer screen at checkout for one location. With tips on the reader, the presets are pushed to its Stripe Terminal readers. */
 export async function saveShopHandoffAction(shopId: string, raw: z.input<typeof ShopHandoffSchema>) {
   return safe(async () => {
@@ -370,16 +313,6 @@ export async function saveShopHandoffAction(shopId: string, raw: z.input<typeof 
     await noteShopEdit("tips", ["screen"], shopId);
     revalidatePath("/admin/settings");
     return r.reader;
-  });
-}
-
-/** The brand's tip presets: every location's customer screen uses them unless it sets its own. */
-export async function saveBrandTipsAction(raw: z.input<typeof TipScreenSchema>) {
-  return safe(async () => {
-    const ctx = await authorize("handoff.settings");
-    await saveBrandHandoff(TipScreenSchema.parse(raw), ctx.actor);
-    revalidatePath("/admin/settings");
-    return null;
   });
 }
 
@@ -428,19 +361,3 @@ export async function savePhoneOperatorAction(shopId: string, raw: z.input<typeo
   });
 }
 
-/** How often each state's sales tax is filed. Brand-wide, so only for people with every shop. */
-export async function saveTaxFilingAction(state: string, frequency: FilingFrequency) {
-  return safe(async () => {
-    const ctx = await authorize("settings.taxes");
-    if (!ctx.brandWide) throw new AppError("forbidden", "The filing schedule is set for the whole brand");
-    const next = cleanTaxFiling({ [state]: frequency });
-    if (!Object.keys(next).length) throw new AppError("bad_request", "Pick a state and monthly or quarterly");
-    const row = await db.query.brandSettings.findFirst({ columns: { taxFiling: true } });
-    const merged = { ...cleanTaxFiling(row?.taxFiling), ...next };
-    await db.update(brandSettings).set({ taxFiling: merged, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-    await audit(ctx.actor, "brand.tax_filing", "brand", "1", { state: stateName(Object.keys(next)[0]), frequency }, null);
-    revalidatePath("/admin/reports");
-    revalidatePath("/admin/settings");
-    return null;
-  });
-}

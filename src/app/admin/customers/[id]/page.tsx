@@ -196,7 +196,7 @@ export default async function CustomerPage({
     c.referredById ? db.query.customers.findFirst({ where: eq(customers.id, c.referredById), columns: { id: true, firstName: true, lastName: true } }) : null,
     db.select({ referrals: sql<number>`count(*)::int` }).from(customers).where(eq(customers.referredById, c.id)),
     db.query.clientPhotos.findFirst({ where: eq(clientPhotos.customerId, c.id), columns: { customerId: true } }),
-    lookups(),
+    lookups(ctx.currentShopId),
   ]);
   const hasPhoto = !!photoRow;
   const canSeeSale = (shopId: string) => hasShop(ctx, shopId);

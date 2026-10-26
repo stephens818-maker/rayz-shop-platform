@@ -3,17 +3,17 @@
 import { useState } from "react";
 import { Card, CardHeader, Field, Input, Select } from "@/components/ui";
 import { FAMILY_LIMITS, type FamilySettings } from "@/domain/family";
-import { saveFamilySettingsAction } from "../customers/family-actions";
-import { SaveBar, useSave } from "./editors";
+import { useSettingSync } from "@/components/brand-sync";
+import { SaveBar } from "./editors";
 
 export function FamilyEditor({ initial }: { initial: FamilySettings }) {
-  const { pending, msg, save } = useSave();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("family");
   const [v, setV] = useState(initial);
   const [depositText, setDepositText] = useState(initial.groupDepositCents ? (initial.groupDepositCents / 100).toFixed(2) : "0");
   return (
     <Card data-testid="family-settings">
       <CardHeader
-        title="Family accounts (brand-wide)"
+        title="Family accounts"
         subtitle="A parent's profile can hold child profiles. Children have no login or contact details: reminders, receipts and marketing go to the parent, under the parent's consent."
       />
       <div className="grid gap-3 p-4 sm:grid-cols-3">
@@ -61,7 +61,8 @@ export function FamilyEditor({ initial }: { initial: FamilySettings }) {
           </Select>
         </Field>
       </div>
-      <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveFamilySettingsAction(v))} />
+      <SaveBar pending={pending} msg={msg} onClick={() => saveSetting(v)} />
+      {dialog}
     </Card>
   );
 }

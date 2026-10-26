@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { brandSettings, sales, shops, staffPayoutAccounts, tipLedger, tipPayouts } from "@/db/schema";
+import { sales, shops, staffPayoutAccounts, tipLedger, tipPayouts } from "@/db/schema";
 import {
   BrandTipPolicy,
   LedgerEntry,
@@ -13,6 +13,7 @@ import {
   summarize,
 } from "@/domain/tips";
 import { addDays, todayLocal, type LocalDate } from "@/lib/time";
+import { settingAt, settingFor } from "../brand-sync/settings";
 import { Actor, audit } from "@/server/audit";
 import { tipOverrides } from "@/server/compensation";
 import { AppError, notFound } from "@/server/errors";
@@ -88,33 +89,29 @@ export async function recordOpeningTips(before: LocalDate, tx: DBorTx = db) {
 
 // ───────────────────────────── Settings ─────────────────────────────
 
-export async function tipPolicy(tx: DBorTx = db): Promise<BrandTipPolicy> {
-  const [b] = await tx.select({ t: brandSettings.tipPayouts }).from(brandSettings).where(eq(brandSettings.id, 1));
-  return brandTipPolicy(b?.t);
+/** The tip payout policy at a shop (the tip_payouts setting); no shop, the brand's. */
+export async function tipPolicy(shopId?: string | null, tx: DBorTx = db): Promise<BrandTipPolicy> {
+  return settingAt<BrandTipPolicy>("tip_payouts", shopId, tx);
 }
 
 export async function shopTipConfig(shopId: string, tx: DBorTx = db, policy?: BrandTipPolicy): Promise<ShopTipSettings> {
   const [s] = await tx.select({ t: shops.tipPayouts }).from(shops).where(eq(shops.id, shopId));
   if (!s) throw notFound("Shop");
-  return shopTipSettings(s.t, policy ?? (await tipPolicy(tx)));
+  return shopTipSettings(s.t, policy ?? (await tipPolicy(shopId, tx)));
 }
 
-export async function shopTipConfigs(shopIds: readonly string[], tx: DBorTx = db): Promise<{ policy: BrandTipPolicy; byShop: Map<string, ShopTipSettings> }> {
-  const policy = await tipPolicy(tx);
+/** Each shop's tip settings and policy; `policy` is the brand's, for what covers a person at every shop. */
+export async function shopTipConfigs(
+  shopIds: readonly string[],
+  tx: DBorTx = db,
+): Promise<{ policy: BrandTipPolicy; policyOf: (shopId: string) => BrandTipPolicy; byShop: Map<string, ShopTipSettings> }> {
+  const policyOf = await settingFor<BrandTipPolicy>("tip_payouts", shopIds, tx);
   const rows = shopIds.length ? await tx.select({ id: shops.id, t: shops.tipPayouts }).from(shops).where(inArray(shops.id, [...shopIds])) : [];
-  return { policy, byShop: new Map(rows.map((r) => [r.id, shopTipSettings(r.t, policy)])) };
-}
-
-export async function saveBrandTipPolicy(raw: BrandTipPolicy, actor: Actor) {
-  const clean = brandTipPolicy(raw);
-  const before = await tipPolicy();
-  await db.update(brandSettings).set({ tipPayouts: clean as unknown as Record<string, unknown>, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(actor, "tips.policy", "brand_settings", "1", { before, after: clean });
-  return clean;
+  return { policy: policyOf(), policyOf, byShop: new Map(rows.map((r) => [r.id, shopTipSettings(r.t, policyOf(r.id))])) };
 }
 
 export async function saveShopTipSettings(shopId: string, raw: ShopTipSettings, actor: Actor) {
-  const policy = await tipPolicy();
+  const policy = await tipPolicy(shopId);
   const clean = shopTipSettings(raw, policy);
   const problem = settingsProblem(clean, policy);
   if (problem) throw new AppError("bad_request", problem);

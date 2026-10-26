@@ -11,7 +11,7 @@ import { safe } from "@/server/action";
 import { StaffContext, assertShopAccess, authorize, caller, can } from "@/server/auth/staff";
 import { workShopIds } from "@/server/auth/access";
 import { callInDenied } from "@/server/auth/policy";
-import { Who, cancelCallIn, closeByStaff, markCallIn, markCallInFromClockBlock, saveOutreachRules, sendOutreach } from "@/server/call-ins";
+import { Who, cancelCallIn, closeByStaff, markCallIn, markCallInFromClockBlock, sendOutreach } from "@/server/call-ins";
 import { forbidden, notFound } from "@/server/errors";
 import { hasShop, requireInTenant } from "@/server/tenant";
 
@@ -127,13 +127,3 @@ export async function closeOutreachAction(outreachId: string, input: z.input<typ
   });
 }
 
-/** Quiet hours, the follow-up wait and how long links last, for every shop. */
-export async function saveOutreachRulesAction(patch: Record<string, unknown>) {
-  return safe(async () => {
-    const ctx = await authorize("settings.brand", "You can't change the outreach rules");
-    if (!ctx.brandWide) throw forbidden("The outreach rules need access to every shop");
-    const rules = await saveOutreachRules(patch, ctx.actor);
-    refresh();
-    return rules;
-  });
-}

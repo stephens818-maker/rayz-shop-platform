@@ -1,10 +1,11 @@
 import { aliasedTable, and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/db";
-import { auditLog, brandSettings, roles, shops, staff, trustedDevices } from "@/db/schema";
-import { BrandNetworkSchema, NetworkRuleSchema, acceptsDevices, brandNetworkSettings, shopNetworkRule } from "@/domain/network-access";
+import { auditLog, roles, shops, staff, trustedDevices } from "@/db/schema";
+import { type BrandNetworkSettings, NetworkRuleSchema, acceptsDevices, shopNetworkRule } from "@/domain/network-access";
 import { OWNER_ROLE_KEY } from "@/domain/permissions";
 import { Actor, audit, auditScope } from "./audit";
+import { settingAt } from "./brand-sync/settings";
 import { randomToken, sha256 } from "./auth/tokens";
 import { AppError, forbidden } from "./errors";
 
@@ -43,17 +44,9 @@ export async function saveShopRule(m: NetworkManager, shopId: string, raw: z.inp
   return rule;
 }
 
-export async function brandNetwork() {
-  const row = await db.query.brandSettings.findFirst({ columns: { networkAccess: true }, where: eq(brandSettings.id, 1) });
-  return brandNetworkSettings(row?.networkAccess);
-}
-
-export async function saveBrandNetwork(m: NetworkManager, raw: z.input<typeof BrandNetworkSchema>) {
-  if (!m.canSetRules) throw forbidden("Only the brand changes the blocked sign-in alert");
-  const v = BrandNetworkSchema.parse(raw);
-  const before = await brandNetwork();
-  await db.update(brandSettings).set({ networkAccess: { ...v }, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
-  await audit(m.actor, "network.settings", "brand_settings", "1", { before, after: v });
+/** The blocked sign-in alert at a shop (the network setting); no shop, the brand's. */
+export async function brandNetwork(shopId?: string | null): Promise<BrandNetworkSettings> {
+  return settingAt<BrandNetworkSettings>("network", shopId);
 }
 
 const requester = aliasedTable(staff, "requester");

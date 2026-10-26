@@ -25,6 +25,16 @@ export const SYNC_AREAS = [
   { id: "roles", label: "Roles & permissions" },
   { id: "branding", label: "Receipt & branding" },
   { id: "app", label: "App config" },
+  { id: "team", label: "Time off, blocks & time clock" },
+  { id: "payroll", label: "Payroll, pay & tip payouts" },
+  { id: "messages", label: "Client messages & outreach" },
+  { id: "marketing", label: "Campaign Center settings" },
+  { id: "clients", label: "Clients, privacy & badges" },
+  { id: "lists", label: "Pick lists & brand lists" },
+  { id: "security", label: "Sign-in & security" },
+  { id: "features", label: "Features on/off" },
+  { id: "inventory", label: "Inventory & purchasing" },
+  { id: "reports", label: "Reports & Morning Dashboard" },
 ] as const;
 export type SyncArea = (typeof SYNC_AREAS)[number]["id"];
 export const AREA_LABEL = Object.fromEntries(SYNC_AREAS.map((a) => [a.id, a.label])) as Record<SyncArea, string>;
@@ -45,6 +55,7 @@ export const SYNC_TYPES = [
   "role",
   "receipt",
   "app",
+  "setting",
 ] as const;
 export type SyncType = (typeof SYNC_TYPES)[number];
 export const isSyncType = (s: string): s is SyncType => (SYNC_TYPES as readonly string[]).includes(s);

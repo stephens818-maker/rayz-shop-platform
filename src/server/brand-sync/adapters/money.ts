@@ -26,6 +26,7 @@ const listOn = (o: Record<string, boolean>) =>
 
 export const cardFeeAdapter: SyncAdapter<CardFeePolicy, CardFeeValue> = {
   type: "card_fee",
+  columns: ["cardFee"],
   noun: "Card surcharge",
   area: "card_fee",
   store: "native",
@@ -97,6 +98,7 @@ const rate = (n: number) => Number(n.toFixed(5));
 
 export const taxesAdapter: SyncAdapter<TaxValue, TaxValue> = {
   type: "taxes",
+  values: ["taxes"],
   noun: "Tax rates",
   area: "taxes",
   store: "native",
@@ -150,6 +152,7 @@ export const taxesAdapter: SyncAdapter<TaxValue, TaxValue> = {
 
 export const tipsAdapter: SyncAdapter<TipScreen, TipScreen> = {
   type: "tips",
+  columns: ["handoff"],
   noun: "Tip presets",
   area: "tips",
   store: "native",

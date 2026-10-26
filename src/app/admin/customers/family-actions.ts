@@ -23,7 +23,6 @@ import {
   attachChild,
   detachChild,
   householdIds,
-  saveFamilySettings,
   splitChild,
   updateChild,
 } from "@/server/family";
@@ -285,18 +284,5 @@ export async function staffFamilyBookingAction(
     );
     revalidatePath("/admin/calendar");
     return { codes: made.map((a) => a.code) };
-  });
-}
-
-/** Children per account, household or individual loyalty, and the age a child can have their own account. */
-export async function saveFamilySettingsAction(input: unknown) {
-  return safe(async () => {
-    const ctx = await authorize(
-      "settings.brand",
-      "Only the Brand Owner can change family accounts",
-    );
-    const s = await saveFamilySettings(input, ctx.actor);
-    revalidatePath("/admin/settings");
-    return s;
   });
 }

@@ -65,10 +65,15 @@ function adapterOf(type: string): AnyAdapter {
   return a;
 }
 
-function assertBrandMay(who: Who, a: AnyAdapter) {
+const nounOf = (a: AnyAdapter, item: string) => a.itemNoun?.(item) ?? a.noun;
+const pathsFor = (a: AnyAdapter, item: string) => a.itemPaths?.(item) ?? a.paths;
+
+function assertBrandMay(who: Who, a: AnyAdapter, item: string) {
   if (!who.ctx) return;
-  if (!who.ctx.brandWide) throw forbidden(`${a.noun} is set for the whole brand, so it needs access to every shop`);
-  if (!a.brandPerms.some((p) => who.ctx!.permissions.has(p))) throw forbidden(`You can't change the brand's ${a.noun.toLowerCase()}`);
+  const noun = nounOf(a, item);
+  if (!who.ctx.brandWide) throw forbidden(`${noun} is set for the whole brand, so it needs access to every shop`);
+  const perms = a.itemPerms?.(item) ?? a.brandPerms;
+  if (!perms.some((p) => who.ctx!.permissions.has(p))) throw forbidden(`You can't change the brand's ${noun.toLowerCase()}`);
 }
 
 /** Each shop's value of these items, keyed "<shopId>|<item>". A local setting reads the shop's stored value, else the brand's. */
@@ -77,6 +82,7 @@ async function nativeOf(tx: DBorTx, a: AnyAdapter, items: readonly string[], sho
   const st = states ?? (await stateRows(tx, items.map((i) => syncKey(a.type, i)), shopIds));
   const out = new Map<string, Native>();
   for (const item of items) {
+    if (a.itemAtShops?.(item) === false) continue;
     const fallback = brand.has(item) ? a.view(brand.get(item)) : a.absent;
     for (const shopId of shopIds) {
       const local = st.get(`${shopId}|${syncKey(a.type, item)}`)?.local ?? null;
@@ -140,7 +146,7 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
   const tookAt = new Set<string>();
   for (const raw of dedupe(plan.changes)) {
     const a = adapterOf(raw.type);
-    assertBrandMay(who, a);
+    assertBrandMay(who, a, raw.item);
     const key = syncKey(a.type, raw.item);
     const brandMap = await a.brand(tx, [raw.item]);
     const existed = brandMap.has(raw.item);
@@ -169,7 +175,7 @@ async function applyPlan(tx: DBorTx, who: Who, plan: SyncPlan): Promise<Applied>
     await writeCells(tx, who, a, raw.item, brandChanged ? { from: before, to: after } : null, cells);
     if (brandChanged) out.brand.push({ key, from: existed ? before : null, to: after });
     out.keys.push(key);
-    a.paths.forEach((p) => out.paths.add(p));
+    pathsFor(a, raw.item).forEach((p) => out.paths.add(p));
   }
   out.kept = [...keptAt].filter((id) => !tookAt.has(id)).length;
   return out;
@@ -207,7 +213,7 @@ async function labelFor(changes: RawChange[], tx: DBorTx): Promise<string> {
   const a = adapterOf(first.type);
   const items = await a.items(tx);
   const name = items.find((i) => i.id === first.item)?.label ?? (first.value && typeof first.value === "object" && "name" in first.value ? String((first.value as { name: unknown }).name) : null);
-  const head = name && items.length > 1 ? `${a.noun}: ${name}` : a.noun;
+  const head = a.itemNoun ? nounOf(a, first.item) : name && items.length > 1 ? `${a.noun}: ${name}` : a.noun;
   return changes.length > 1 ? `${head} + ${changes.length - 1} more` : head;
 }
 
@@ -247,10 +253,10 @@ export async function commitBrandChange(who: Who, input: CommitInput, now = new 
       const paths = new Set<string>();
       for (const c of dedupe(input.changes)) {
         const a = adapterOf(c.type);
-        assertBrandMay(who, a);
+        assertBrandMay(who, a, c.item);
         const m = await a.brand(tx, [c.item]);
         await a.parse(who, c.value, c.item, m.has(c.item) ? m.get(c.item) : null, tx);
-        a.paths.forEach((p) => paths.add(p));
+        pathsFor(a, c.item).forEach((p) => paths.add(p));
       }
       const targets = [...targetShops(input.scope, input.shopIds, all)];
       const plan: SyncPlan = { changes: dedupe(input.changes), scope: input.scope, shopIds: input.shopIds, overrides: input.overrides };
@@ -339,9 +345,9 @@ export async function runScheduledNow(who: Who, id: string, now = new Date()) {
   const [b] = await db.select().from(brandSyncBatches).where(eq(brandSyncBatches.id, id));
   if (!b) throw notFound("Sync");
   if (b.status !== "scheduled") throw new AppError("conflict", "That sync isn't scheduled any more");
-  for (const c of (b.plan as SyncPlan).changes) assertBrandMay(who, adapterOf(c.type));
+  for (const c of (b.plan as SyncPlan).changes) assertBrandMay(who, adapterOf(c.type), c.item);
   if (!(await runScheduled(id, now, who))) throw new AppError("conflict", "That sync is already running");
-  return pathsOf((b.plan as SyncPlan).changes.map((c) => c.type));
+  return pathsOf((b.plan as SyncPlan).changes);
 }
 
 export async function cancelScheduled(who: Who, id: string) {
@@ -349,13 +355,13 @@ export async function cancelScheduled(who: Who, id: string) {
     const [b] = await tx.select().from(brandSyncBatches).where(eq(brandSyncBatches.id, id)).for("update");
     if (!b) throw notFound("Sync");
     if (b.status !== "scheduled") throw new AppError("conflict", "That sync isn't scheduled any more");
-    for (const c of (b.plan as SyncPlan).changes) assertBrandMay(who, adapterOf(c.type));
+    for (const c of (b.plan as SyncPlan).changes) assertBrandMay(who, adapterOf(c.type), c.item);
     await tx.update(brandSyncBatches).set({ status: "cancelled" }).where(eq(brandSyncBatches.id, id));
     await audit(who.actor, "brand_sync.cancel", "brand_sync_batch", id, { label: b.label, runAt: b.runAt?.toISOString() }, null, tx);
   });
 }
 
-const pathsOf = (types: string[]) => [...new Set(types.flatMap((t) => adapterOf(t).paths))];
+const pathsOf = (changes: readonly Pick<RawChange, "type" | "item">[]) => [...new Set(changes.flatMap((c) => pathsFor(adapterOf(c.type), c.item)))];
 
 // ───────────────────────────── Bulk push and reset ─────────────────────────────
 
@@ -382,7 +388,7 @@ export async function bulkSync(who: Who, action: BulkAction, cells: CellRef[], n
       const k = parseSyncKey(key);
       if (!k) throw new AppError("bad_request", "Unknown setting");
       const a = adapterOf(k.type);
-      assertBrandMay(who, a);
+      assertBrandMay(who, a, k.item);
       const brandMap = await a.brand(tx, [k.item]);
       if (!brandMap.has(k.item)) continue;
       const v = a.view(brandMap.get(k.item));
@@ -402,7 +408,7 @@ export async function bulkSync(who: Who, action: BulkAction, cells: CellRef[], n
       }
       if (!plan.size) continue;
       await writeCells(tx, who, a, k.item, null, plan);
-      a.paths.forEach((p) => paths.add(p));
+      pathsFor(a, k.item).forEach((p) => paths.add(p));
     }
     if (!changes.length) return { batchId: null as string | null, changed: 0, paths: [...paths] };
     const keys = [...new Set(changes.map((c) => c.key))];
@@ -445,7 +451,7 @@ export async function rollbackSync(who: Who, batchId: string, now = new Date()) 
       const k = parseSyncKey(key);
       if (!k) continue;
       const a = adapterOf(k.type);
-      assertBrandMay(who, a);
+      assertBrandMay(who, a, k.item);
       const entry = b.brand.find((x) => x.key === key) ?? null;
       const brandMap = await a.brand(tx, [k.item]);
       const label = await itemLabel(tx, a, k.item);
@@ -479,7 +485,7 @@ export async function rollbackSync(who: Who, batchId: string, now = new Date()) 
       await writeCells(tx, who, w.a, w.item, w.brand, plan);
       if (w.retire) await dropStates(tx, w.key);
       restored.push(...w.cells);
-      w.a.paths.forEach((p) => paths.add(p));
+      pathsFor(w.a, w.item).forEach((p) => paths.add(p));
     }
     const label = `Undo: ${b.label}`.slice(0, 160);
     const [r] = await tx
@@ -567,7 +573,7 @@ export async function previewBrandChange(who: Who, changes: RawChange[]): Promis
   const keys: PreviewKey[] = [];
   for (const raw of dedupe(changes)) {
     const a = adapterOf(raw.type);
-    assertBrandMay(who, a);
+    assertBrandMay(who, a, raw.item);
     const key = syncKey(a.type, raw.item);
     const brandMap = await a.brand(tx, [raw.item]);
     const existed = brandMap.has(raw.item);
@@ -593,10 +599,10 @@ export async function previewBrandChange(who: Who, changes: RawChange[]): Promis
     keys.push({
       key,
       label: await itemLabel(tx, a, raw.item, after),
-      noun: a.noun,
+      noun: nounOf(a, raw.item),
       area,
       areaLabel: AREA_LABEL[area],
-      note: a.note ?? null,
+      note: a.itemNote?.(raw.item) ?? a.note ?? null,
       isNew: !existed,
       brandChanges: fieldChanges(v0 === null ? null : a.describe(v0, raw.item), next),
       brandOnly: existed && same(v0, v1) && !same(before, after),
@@ -804,7 +810,7 @@ export async function syncControls(): Promise<ControlRow[]> {
 export async function setSyncControl(who: Who, type: SyncType, on: boolean) {
   const a = adapterOf(type);
   if (!a.lockable) throw new AppError("bad_request", "Shops don't change that one themselves");
-  assertBrandMay(who, a);
+  assertBrandMay(who, a, "");
   await db.transaction(async (tx) => {
     if (a.control) await a.control.set(tx, who, on);
     else await putControl(tx, a.type, on, who.actor);

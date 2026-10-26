@@ -138,7 +138,7 @@ async function sendMarketing(kind: "fill" | "rebook", shopId: string, who: { act
     .filter((c) => c.canText && !phones.has(c.phone!) && !!phones.add(c.phone!))
     .slice(0, MAX_PER_CAMPAIGN);
   if (!list.length) return { sent: 0 };
-  const template = templateFor(kind === "fill" ? "fill_offer" : "rebook_nudge", await savedTemplates());
+  const template = templateFor(kind === "fill" ? "fill_offer" : "rebook_nudge", await savedTemplates(shopId));
   const values: MergeValues = { shop: `Ray'z ${shop.name}`, book_link: `${appBaseUrl()}/book/${shop.slug}`, ...extra };
   const jobIds = await db.transaction(async (tx) => {
     const rows = await tx

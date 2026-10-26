@@ -11,7 +11,8 @@ import { reportFor, reportsFor } from "@/domain/navigation";
 import { reportView } from "@/domain/permissions";
 import { groupReports } from "@/domain/report-groups";
 import { shortcutsFor } from "@/domain/report-shortcuts";
-import { cleanTaxFiling } from "@/domain/sales-tax";
+import type { FilingFrequency } from "@/domain/sales-tax";
+import { settingAt } from "@/server/brand-sync/settings";
 
 export const metadata: Metadata = { title: "Reports" };
 
@@ -24,11 +25,11 @@ export default async function ReportsHub() {
   if (list.length + (custom ? 1 : 0) === 1) redirect(custom ? "/admin/reports/custom" : list[0].href);
   const [states, settings] = await Promise.all([
     ctx.shopIds.length ? db.select({ state: shops.state }).from(shops).where(inArray(shops.id, ctx.shopIds)) : Promise.resolve([]),
-    db.query.brandSettings.findFirst({ columns: { taxFiling: true } }),
+    settingAt<Record<string, FilingFrequency>>("tax_filing", ctx.currentShopId),
   ]);
   const saved = shortcutsFor(
     states.map((s) => s.state),
-    cleanTaxFiling(settings?.taxFiling),
+    settings,
   ).filter((x) => ctx.permissions.has(reportView(x.report)));
   return (
     <div className="mx-auto max-w-5xl">

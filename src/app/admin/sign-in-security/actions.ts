@@ -9,7 +9,7 @@ import { safe } from "@/server/action";
 import { TRUSTED_DEVICE_COOKIE } from "@/server/auth/cookies";
 import { DEVICE_TTL, deviceCookieValue, devicesFromCookie } from "@/server/auth/network";
 import { authorize, networkManager } from "@/server/auth/staff";
-import { DeviceDecision, decideDevice, saveBrandNetwork, saveShopRule, trustThisDevice } from "@/server/sign-in-security";
+import { DeviceDecision, decideDevice, saveShopRule, trustThisDevice } from "@/server/sign-in-security";
 
 function refresh() {
   revalidatePath("/admin/sign-in-security");
@@ -22,15 +22,6 @@ export async function saveShopRuleAction(shopId: string, rule: ShopNetworkRule) 
     const saved = await saveShopRule(networkManager(ctx), z.uuid().parse(shopId), rule);
     refresh();
     return saved;
-  });
-}
-
-export async function saveBrandNetworkAction(settings: BrandNetworkSettings) {
-  return safe(async () => {
-    const ctx = await authorize("network.settings");
-    await saveBrandNetwork(networkManager(ctx), settings);
-    refresh();
-    return null;
   });
 }
 

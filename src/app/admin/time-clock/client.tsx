@@ -3,9 +3,10 @@
 import { useState } from "react";
 import { Button, Field, Input, Select, Textarea } from "@/components/ui";
 import { useAction } from "@/components/use-action";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { CLOCK_METHODS, METHOD_LABEL, type ClockMethod, type ShopClockSettings } from "@/domain/time-clock";
 import { revokeDeviceAction } from "../clock/actions";
-import { nfcTagAction, saveClockRulesAction, saveShopClockAction } from "./actions";
+import { nfcTagAction, saveShopClockAction } from "./actions";
 
 type RulesInput = { unpaidBreakFromMinutes: number; autoMealMinutes: number; autoMealAfterHours: number; forgotOutAfterMinutes: number; maxShiftHours: number; graceMinutes: number; mapping: string };
 
@@ -17,13 +18,9 @@ function Saved({ ok, error }: { ok: boolean; error: string | null }) {
 }
 
 export function RulesForm({ initial, fields }: { initial: RulesInput; fields: { key: string; label: string }[] }) {
-  const { pending, error, run } = useAction();
+  const { pending, msg, saveSetting, dialog } = useSettingSync("time_clock");
   const [v, setV] = useState(Object.fromEntries(Object.entries(initial).map(([k, x]) => [k, String(x)])) as Record<keyof RulesInput, string>);
-  const [ok, setOk] = useState(false);
-  const set = (k: keyof RulesInput) => (e: { target: { value: string } }) => {
-    setOk(false);
-    setV({ ...v, [k]: e.target.value });
-  };
+  const set = (k: keyof RulesInput) => (e: { target: { value: string } }) => setV({ ...v, [k]: e.target.value });
   const n = (k: keyof RulesInput, label: string, hint?: string) => (
     <Field label={label} hint={hint}>
       <Input type="number" min={0} value={v[k]} onChange={set(k)} className="w-28" />
@@ -34,19 +31,15 @@ export function RulesForm({ initial, fields }: { initial: RulesInput; fields: { 
       className="space-y-4 p-4"
       onSubmit={(e) => {
         e.preventDefault();
-        run(
-          () =>
-            saveClockRulesAction({
-              unpaidBreakFromMinutes: num(v.unpaidBreakFromMinutes),
-              autoMealMinutes: num(v.autoMealMinutes),
-              autoMealAfterHours: num(v.autoMealAfterHours),
-              forgotOutAfterMinutes: num(v.forgotOutAfterMinutes),
-              maxShiftHours: num(v.maxShiftHours),
-              graceMinutes: num(v.graceMinutes),
-              mapping: v.mapping,
-            }),
-          () => setOk(true),
-        );
+        saveSetting({
+          unpaidBreakFromMinutes: num(v.unpaidBreakFromMinutes),
+          autoMealMinutes: num(v.autoMealMinutes),
+          autoMealAfterHours: num(v.autoMealAfterHours),
+          forgotOutAfterMinutes: num(v.forgotOutAfterMinutes),
+          maxShiftHours: num(v.maxShiftHours),
+          graceMinutes: num(v.graceMinutes),
+          mapping: v.mapping,
+        });
       }}
     >
       <div className="grid gap-4 sm:grid-cols-3">
@@ -64,8 +57,9 @@ export function RulesForm({ initial, fields }: { initial: RulesInput; fields: { 
       </div>
       <div className="flex items-center gap-3">
         <Button disabled={pending}>Save rules</Button>
-        <Saved ok={ok} error={error} />
+        <SyncMsg msg={msg} />
       </div>
+      {dialog}
     </form>
   );
 }

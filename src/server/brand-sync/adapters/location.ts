@@ -25,6 +25,7 @@ const jsonKey = (key: string) => sql`${key}::text`;
 /** One location default (booking rules, policies wording, reminders, booking site, tracking IDs, the starting role) per item. */
 export const locationDefaultAdapter: SyncAdapter<DefaultValue, DefaultValue> = {
   type: "location_default",
+  columns: ["locationDefaults"],
   noun: "Location default",
   area: "policies",
   store: "native",
@@ -98,6 +99,7 @@ const clock = (m: number) => {
 
 export const hoursAdapter: SyncAdapter<HoursValue, HoursValue> = {
   type: "hours",
+  values: ["hours"],
   noun: "Hours template",
   area: "hours",
   store: "native",
@@ -166,6 +168,7 @@ export const receiptValue = (r: Pick<ReceiptBranding, keyof ReceiptValue>): Rece
 
 export const receiptAdapter: SyncAdapter<ReceiptValue, ReceiptValue> = {
   type: "receipt",
+  values: ["receipt"],
   noun: "Receipt branding",
   area: "branding",
   store: "native",

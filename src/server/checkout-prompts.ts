@@ -750,8 +750,10 @@ export async function sendDueRebookReminders(now = new Date(), limit = 200) {
     .limit(limit);
   const stats = { queued: 0, booked: 0, noContact: 0 };
   if (!due.length) return stats;
-  const template = templateFor("rebook_reminder", await savedTemplates());
+  const templates = new Map<string, Awaited<ReturnType<typeof savedTemplates>>>();
   for (const { r, shopName, shopSlug, shopPhone, barber, firstName } of due) {
+    if (!templates.has(r.shopId)) templates.set(r.shopId, await savedTemplates(r.shopId));
+    const template = templateFor("rebook_reminder", templates.get(r.shopId));
     const booked = await db
       .select({ id: appointments.id })
       .from(appointments)

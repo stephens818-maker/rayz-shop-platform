@@ -87,7 +87,7 @@ export default async function InventoryPage() {
           rows={rows}
           perms={{ price: canAny(ctx, ["catalog.prices", "catalog.manage"]), priceLocked: !(await shopMayEdit(ctx, "product")), adjust: can(ctx, "inventory.adjust"), levels: can(ctx, "inventory.manage") }}
         />
-        {canCreate && <NewProductForm categories={(await lookups()).productCategories} />}
+        {canCreate && <NewProductForm categories={(await lookups(ctx.currentShopId)).productCategories} />}
       </div>
     );
   }
@@ -161,7 +161,7 @@ export default async function InventoryPage() {
           </tbody>
         </Table>
       </Card>
-      {canCreate && <NewProductForm categories={(await lookups()).productCategories} />}
+      {canCreate && <NewProductForm categories={(await lookups(ctx.currentShopId)).productCategories} />}
     </div>
   );
 }

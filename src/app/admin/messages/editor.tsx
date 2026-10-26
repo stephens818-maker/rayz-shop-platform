@@ -1,10 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Button, Card, CardHeader, Field, Input, Notice, Textarea } from "@/components/ui";
-import { useAction } from "@/components/use-action";
+import { Badge, Button, Card, CardHeader, Field, Input, Textarea } from "@/components/ui";
+import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { MERGE_FIELDS, SAMPLE, SMS_MAX, type TemplateKind, fill, templateProblem } from "@/domain/message-templates";
-import { saveTemplateAction } from "./actions";
 
 export interface TemplateRow {
   kind: TemplateKind;
@@ -33,8 +32,8 @@ export function MergeFieldList() {
   );
 }
 
-export function TemplateEditor({ row }: { row: TemplateRow }) {
-  const { pending, error, run } = useAction();
+export function TemplateEditor({ row, readOnly }: { row: TemplateRow; readOnly?: boolean }) {
+  const { pending, msg, saveSetting, dialog } = useSettingSync(`message.${row.kind}`);
   const [subject, setSubject] = useState(row.subject);
   const [body, setBody] = useState(row.body);
   const [saved, setSaved] = useState<string | null>(null);
@@ -71,22 +70,19 @@ export function TemplateEditor({ row }: { row: TemplateRow }) {
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-3 border-t border-zinc-100 px-4 py-3 text-sm">
-        <Button disabled={pending || !dirty || !!problem} onClick={() => run(() => saveTemplateAction(row.kind, { subject, body }), () => setSaved("Saved. The next messages use it."))}>
+        <Button disabled={readOnly || pending || !dirty || !!problem} onClick={() => saveSetting({ subject, body }, () => setSaved("Saved. The next messages use it."))}>
           Save
         </Button>
         {row.custom && (
           <Button
             variant="secondary"
-            disabled={pending}
+            disabled={readOnly || pending}
             onClick={() =>
-              run(
-                () => saveTemplateAction(row.kind, null),
-                () => {
-                  setSubject(row.defaults.subject);
-                  setBody(row.defaults.body);
-                  setSaved("Back to the default wording.");
-                },
-              )
+              saveSetting(null, () => {
+                setSubject(row.defaults.subject);
+                setBody(row.defaults.body);
+                setSaved("Back to the default wording.");
+              })
             }
           >
             Use default
@@ -94,12 +90,10 @@ export function TemplateEditor({ row }: { row: TemplateRow }) {
         )}
         {problem && dirty && <span className="text-amber-700">{problem}</span>}
         {saved && !dirty && <span className="text-emerald-700">{saved}</span>}
+        {msg && !msg.ok && <SyncMsg msg={msg} />}
+        {readOnly && <span className="text-zinc-500">Set by the brand: changes need access to every shop.</span>}
       </div>
-      {error && (
-        <div className="px-4 pb-3">
-          <Notice tone="red">{error}</Notice>
-        </div>
-      )}
+      {dialog}
     </Card>
   );
 }

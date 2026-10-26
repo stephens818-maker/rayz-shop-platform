@@ -1,9 +1,10 @@
 import { and, asc, eq, gt, gte, inArray, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
-import { appointments, brandSettings, customers, shops, staff, staffSchedules, timeBlocks, timePunches } from "@/db/schema";
+import { appointments, customers, shops, staff, staffSchedules, timeBlocks, timePunches } from "@/db/schema";
 import { type ClockBlockKind, clockKindOf, effectiveEnd } from "@/domain/clock-blocks";
 import { type LiveDay, affectedBy, lateClockIn, liveDay } from "@/domain/clock-live";
-import { clockRules, scheduledOn, shopClockSettings, type ScheduleRow, type ShopClockSettings } from "@/domain/time-clock";
+import { scheduledOn, shopClockSettings, type ClockRules, type ScheduleRow, type ShopClockSettings } from "@/domain/time-clock";
+import { settingAt } from "./brand-sync/settings";
 import { endOfLocalDay, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 
 /**
@@ -26,7 +27,7 @@ export async function liveClock(shop: { id: string; timeClock: unknown }, date: 
   if (!ids.length) return { settings, days };
   const dayStart = startOfLocalDay(date);
   const dayEnd = endOfLocalDay(date);
-  const [punches, scheds, [brand], permits] = await Promise.all([
+  const [punches, scheds, rules, permits] = await Promise.all([
     tx
       .select({ id: timePunches.id, staffId: timePunches.staffId, shopId: timePunches.shopId, type: timePunches.type, at: timePunches.at })
       .from(timePunches)
@@ -35,10 +36,9 @@ export async function liveClock(shop: { id: string; timeClock: unknown }, date: 
       .select({ staffId: staffSchedules.staffId, weekday: staffSchedules.weekday, startMin: staffSchedules.startMin, endMin: staffSchedules.endMin })
       .from(staffSchedules)
       .where(and(inArray(staffSchedules.staffId, ids), eq(staffSchedules.shopId, shop.id), eq(staffSchedules.weekday, weekdayOf(date)))),
-    tx.select({ t: brandSettings.timeClock }).from(brandSettings).limit(1),
+    settingAt<ClockRules>("time_clock", shop.id, tx),
     tx.select({ id: staff.id, early: staff.clockOpensEarly }).from(staff).where(inArray(staff.id, ids)),
   ]);
-  const rules = clockRules(brand?.t);
   const allows = new Map(permits.map((p) => [p.id, p.early]));
   for (const staffId of ids) {
     const rows: ScheduleRow[] = scheds.filter((s) => s.staffId === staffId);

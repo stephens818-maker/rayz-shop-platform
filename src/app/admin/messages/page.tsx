@@ -7,7 +7,7 @@ import { MergeFieldList, TemplateEditor } from "./editor";
 export const metadata: Metadata = { title: "Client messages" };
 
 export default async function MessagesPage() {
-  await guardPage("/admin/messages");
+  const ctx = await guardPage("/admin/messages");
   const rows = await templateRows();
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -17,7 +17,7 @@ export default async function MessagesPage() {
       />
       <MergeFieldList />
       {rows.map((r) => (
-        <TemplateEditor key={r.kind} row={r} />
+        <TemplateEditor key={r.kind} row={r} readOnly={!ctx.brandWide} />
       ))}
     </div>
   );
