@@ -459,6 +459,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-26: core, report scope and dollar amounts, FYI for mobile
+
+- **Migration `core_0096_report_scope_money`.** The next free one is `core_0097`. No schema change: it grants `reports.money` to every role (so nothing changes today) and `reports.all_shops` to `brand_admin` and `bookkeeper`, adds the `apprentice` template and renames `bookkeeper` to "Bookkeeper / Accountant".
+- **New permissions:** `reports.money` (dollar amounts in reports; the QuickBooks journal needs it), `reports.all_shops` (reports on every shop for someone scoped to a few; includes `reports.all_staff`, never on shop logins) and `settings.app` (App switches; brand-only, Brand Owner grants).
+- **If the staff app shows reports:** load them through `loadReport` in `src/server/report-data.ts` (it hides dollar amounts without `reports.money`) with the context from `reportContext(ctx, report)` in `src/server/report-access.ts` (it widens to every shop with `reports.all_shops`). Don't call `REPORT_LOADERS` directly.
+- **Customer API:** no change. App switches read the same values; only who may change them moved to `settings.app`.
+
 ### 2026-10-26: core, roles and permissions, FYI for mobile
 
 - **Migration `core_0095_roles_permissions`.** The next free one is `core_0096`. Adds `roles.money_limits` and `roles.owner_entity_id`, and `staff.money_limits`, `staff.permission_override_expires` and `staff.scope_region_id` (with `shop_scope = 'region'`, kept in step with `shops.region_id` by triggers). New templates `bookkeeper` and `marketing`; `regional_manager` is now named "Regional / District Manager".

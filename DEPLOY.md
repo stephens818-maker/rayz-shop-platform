@@ -294,6 +294,11 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - It adds the **Bookkeeper** and **Marketing** templates (nobody has them yet) and renames **Regional Manager** to **Regional / District Manager**, unless the brand had already renamed it. A custom role with the same name as a new template gets " (custom)" added.
    - It adds dollar limits (`roles.money_limits`, `staff.money_limits`), override end dates (`staff.permission_override_expires`), region scope (`staff.scope_region_id`, kept in step by database triggers as shops move between regions) and owner entity roles (`roles.owner_entity_id`). All start empty: no dollar limits, no end dates, nobody scoped to a region, every role the brand's.
    - Before go-live, review the templates with Charles on **Permissions → Permissions matrix**, set any dollar limits (for example a Front Desk refund limit) and check a few people with **View as**.
+32. Report scope, dollar amounts and App config (migration `core_0096_report_scope_money`; see [Roles and permissions](README.md#roles-and-permissions)):
+   - **Nobody's access changes.** Every built-in role and every custom role gets **Dollar amounts in reports** (`reports.money`), so reports look as they did. Brand Admin and Bookkeeper / Accountant get **Every shop** reports (`reports.all_shops`); nobody else does. Shops' own versions of those roles get the same.
+   - It adds the **Apprentice** template (nobody has it yet) and renames **Bookkeeper** to **Bookkeeper / Accountant** with its new read-only description, unless the brand had already renamed it. A custom role named Apprentice gets " (custom)" added.
+   - **App switches now need App config** (`settings.app`). Only the Brand Owner has it until they grant it to someone under **Permissions**.
+   - Before go-live, decide with Charles which roles should report on every shop and which should see dollar amounts, and check them with **View as**.
 
 ## Running the production build locally
 
