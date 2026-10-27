@@ -19,6 +19,7 @@ import { noteShopSetting } from "../brand-sync/shop-settings";
 import { Actor, audit } from "@/server/audit";
 import { tipOverrides } from "@/server/compensation";
 import { AppError, notFound } from "@/server/errors";
+import { tipPostingDate } from "@/server/payroll/tip-posting";
 import { notSquireEra } from "@/server/squire-era";
 import { recordMissingPayoutPeriods } from "./pay-periods";
 import { railed } from "./payout-model";
@@ -48,7 +49,7 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
     select p.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, p.id, 'tip', p.method::text, coalesce(sh.tip_cents, p.tip_cents),
       case when p.method = 'card' and p.amount_cents > 0
         then round(coalesce(nullif(p.processor_fee_cents, 0), p.application_fee_cents, 0)::numeric * coalesce(sh.tip_cents, p.tip_cents) / p.amount_cents)::int else 0 end,
-      ${cfg.tipDate === "payment_date" ? sql`p.business_date` : sql`s.business_date`}
+      ${cfg.tipDate === "payment_date" ? sql`p.business_date` : tipPostingDate()}
     from payments p join sales s on s.id = p.sale_id
     left join tip_split_shares sh on sh.source = 'payment' and sh.source_id = p.id
     where p.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0

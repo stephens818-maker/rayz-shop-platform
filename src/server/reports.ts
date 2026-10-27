@@ -3,6 +3,7 @@ import { payPeriodsBetween, PayPeriod } from "@/domain/payroll";
 import { TOTAL, segKey } from "@/domain/report-views";
 import { LocalDate, addDays, diffDays, endOfLocalDay, startOfLocalDay } from "@/lib/time";
 import { ByShop, PAID, ReportScope, Grain, atGrains, grp, ids, keyOf, rows, same, sgrp, staffFilter, uuids } from "./report-sql";
+import { tipPostingDate } from "./payroll/tip-posting";
 import { notSquireEra } from "./squire-era";
 
 export { staffSelection } from "./report-sql";
@@ -538,7 +539,7 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
             sum(case when p.method='cash' then p.tip_cents else 0 end)::int cash,
             sum(case when p.method='gift_card' then p.tip_cents else 0 end)::int gc
           from payments p join sales s on s.id = p.sale_id
-          where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
+          where s.shop_id in ${uuids(s.shopIds)} and ${tipPostingDate()} between ${start} and ${end} and s.status in ${PAID}
             and ${NOT_SQUIRE}
             and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
@@ -568,7 +569,7 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
           select lm.staff_id, lm.shop_id, ${lineMoveCols}
           ${lineMoves(s, start, end, sql`and ${NOT_SQUIRE}`)}
           group by 1, 2
-        ), k as (select staff_id, shop_id from v union select staff_id, shop_id from rf union select staff_id, shop_id from mv
+        ), k as (select staff_id, shop_id from v union select staff_id, shop_id from t union select staff_id, shop_id from rf union select staff_id, shop_id from mv
           union select staff_id, shop_id from lm where sn <> 0 or rsn <> 0)
         select st.id "staffId", st.staff_code "staffCode", st.display_label label, sh.id "shopId", sh.name shop, coalesce(v.tickets,0) tickets,
           (coalesce(v.sn,0) + coalesce(lm.sn,0) - coalesce(rf.sn,0) - coalesce(lm.rsn,0)) "serviceSalesCents", (coalesce(v.pn,0) - coalesce(rf.pn,0)) "productSalesCents",

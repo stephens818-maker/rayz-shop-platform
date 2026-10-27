@@ -44,6 +44,7 @@ import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { payrollHoursCheck, type PayrollHoursCheck } from "@/server/time-clock";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
+import { tipPostingDate } from "./tip-posting";
 import { checkPayrollTips, type TipCheck } from "./tip-reconcile";
 import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type LegalEntity, type PayGroup } from "./groups";
 import { groupCalendar, resyncPeriodDates, savePeriodDates as savePeriodDatesFor } from "./period-dates";
@@ -456,6 +457,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       ...sourceFlags.filter((a) => !blocks.find((b) => b.shopId === a.shopId)?.locked),
       ...clockAnomalies(blocks, settings, hoursCheck, days, serviceDays, typed, start, end),
       ...lockAnomalies(blocks),
+      ...(await lateTipsIn(blocks, start, end)),
       ...stateAnomalies(blocks, end, await missedMealsIn([...runShops], start, end)),
     ],
     byEntityState: byEntityState(blocks),
@@ -639,6 +641,24 @@ async function importedAfterLock(runs: readonly (typeof payrollRuns.$inferSelect
     if (n) out.set(r.payGroupId, n);
   }
   return out;
+}
+
+/** Tips on tickets from an earlier, already-locked period that came in afterwards, so they're paid in this one (N7). */
+async function lateTipsIn(blocks: readonly BlockView[], start: LocalDate, end: LocalDate): Promise<Anomaly[]> {
+  const open = blocks.filter((b) => !b.locked);
+  if (!open.length) return [];
+  const rows = await db.execute<{ staff_id: string; shop_id: string; cents: number; from: string; label: string }>(sql`
+    select s.staff_id, s.shop_id, sum(p.tip_cents)::int cents, min(s.business_date)::text "from", st.display_label label
+    from payments p join sales s on s.id = p.sale_id join staff st on st.id = s.staff_id
+    where s.shop_id in (${sql.join(open.map((b) => sql`${b.shopId}::uuid`), sql`, `)}) and p.tip_cents <> 0 and s.status in ('paid', 'partially_refunded', 'refunded')
+      and s.business_date < ${start} and ${tipPostingDate()} between ${start} and ${end} and ${notSquireEra()}
+    group by 1, 2, 5`);
+  return [...rows].map((r) => ({
+    staffId: r.staff_id,
+    shopId: r.shop_id,
+    kind: "late_tip" as const,
+    message: `${r.label} (${open.find((b) => b.shopId === r.shop_id)?.shop ?? "Other shop"}): ${fmtMoney(r.cents / 100)} of tips on tickets from ${formatDate(r.from, "MMM d")} came in after that pay period was locked, so they're paid in this one.`,
+  }));
 }
 
 /** Shifts in the period flagged for a meal period missed under the shop's state rule, per employee and shop. */
