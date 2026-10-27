@@ -996,6 +996,17 @@ Employees clock in and out at the shop, because the Payroll Report's hours come 
 - [ ] The staff app's kiosk mode, by the Rayz App builder (NOTES-SYNC Requests). The API is ready.
 - [ ] Still held: ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules, until iSolved Time is decided.
 
+## 44. Times read 12-hour (Charles: no military time)
+
+README "Times read 12-hour" and DEPLOY step 46. Migration `core_0126_brand_display`.
+
+- [x] Every time on screen reads 12-hour with AM and PM (`9:05 AM`): the time clock, timesheets and punch edits, the calendar, reports and on-screen previews, emails and the staff app's config. Time fields show AM and PM instead of the browser's 24-hour picker.
+- [x] A brand setting, **Time format**, 12-hour by default; 24-hour only if the brand picks it.
+- [x] Times stay UTC instants in the database, shown in the shop's time zone.
+- [x] **Payroll hours** read decimal (the workbook's style, the default) or as hours and minutes; the iSolved file stays decimal.
+- [ ] Which payroll hours style Charles's spreadsheet spec wants: coming with the spec. Decimal until then.
+- [ ] The Ray'z Staff app formats times from `GET /config` `display` (NOTES-SYNC Requests).
+
 ## Deferred by decision
 
 - I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15, 35 and 40) don't move money yet: Stripe can't transfer from a shop's connected account to a barber's, and the redesign as separate charges and transfers (ST-C11) waits for Charles.

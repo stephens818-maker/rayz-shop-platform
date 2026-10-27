@@ -530,6 +530,8 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - Optional, in `push.ts` (yours): a silent "wipe" push to a phone when its session is ended remotely, so it wipes before its next request. Today it wipes on the next 401.
   - **Critical for launch (Charles, 2026-10-27): kiosk mode (ST-I6).** Payroll's hours come from the time clock, so the first release has to run on the shop's tablet: pair by the manager's QR code (`POST /clock/kiosk/pair`), list the team (`GET /clock/kiosk/team`), and punch in, out and breaks with each person's PIN (`/clock/kiosk/status`, `/clock/kiosk/punch`). Phone punches (QR, NFC, GPS) can follow.
 
+- (core → mobile) **12-hour times (Charles, 2026-10-27).** No military time anywhere. In the Ray'z Staff app, format every time (clock, timecards, punch edits, calendar, earnings) with `GET /config` `display`: `clockFormat` (`12h` by default, `24h` only if the brand picks it), `timePattern` (`h:mm a` or `HH:mm`), `timeZone` (the shop's, America/Chicago) and `payrollHours` (`decimal`, like the payroll workbook, or `hm` for "79h 56m"). Use a time picker that shows AM and PM, not the phone's 24-hour setting. Times in every response stay UTC ISO instants. Optional, in the customer app: show booking times as `9:05 AM`; `/api/v1` keeps its `HH:mm` shop hours as data.
+
 - (core → mobile, optional) If the customer app gets an "I'm running late" button, please call `queueStaffAlert("late", appointmentId, { detail: "about N min late" })` from `src/server/staff-alerts.ts`, so the barber gets the same alert as when the desk marks it from the staff app. Nothing goes back to the client.
 
 ## Open questions
@@ -546,6 +548,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-27: core, 12-hour times brand setting (Charles), FYI for mobile
+- **No military time.** Every time on screen reads 12-hour with AM and PM (`9:05 AM`, `5:30 PM`): the time clock, timesheets and punch edits, the calendar, reports and their on-screen previews, emails and the staff app's config. Native `time` and `datetime-local` inputs (which follow the browser's 24-hour setting) are replaced by `ClockInput`, `TimeInput` and `DateTimeInput` in `src/components/time-input.tsx`, which type and show `9:05 AM`.
+- **A brand setting, 12-hour by default:** `display.clock` (`12h` | `24h`, Brand defaults, `settings.brand`) and `display.payroll_hours` (`decimal` | `hm`, Payroll → Setup, `payroll.run`), both whole-brand, in the new column `brand_settings.display` (**migration `core_0126_brand_display`**; the next free one is `core_0127`). Decimal is the default because the payroll workbook uses it; the iSolved file always stays decimal.
+- **Shared formatters:** `formatTime`, `formatDateTime`, `minutesToLabel`, `hhmmLabel` and `localStampLabel` in `src/lib/time.ts` follow the setting, and `formatPayHours` in `src/lib/hours.ts`. The server applies the setting through `loadDisplay()` (`src/server/display.ts`), the browser through `DisplaySync` in the root layout.
+- **Staff API (core's):** `GET /config` adds `display: { clockFormat, timePattern, example, timeZone, payrollHours }`. See Requests.
+- **Unchanged:** times are stored as UTC `timestamptz`, with the shop's time zone (`shops.timezone`). APIs keep ISO instants, and input values and `/api/v1` shop hours keep `HH:mm`. Nothing under `/api/v1`, the customer openapi, `connect.ts`, `processor.ts` or `push.ts` changed.
 
 ### 2026-10-27: core, the basic time clock ships at launch (Charles), FYI for mobile
 - **Decision:** employees clock in and out at the shop, because the Payroll Report's hours come from the time clock. That makes **ST-I6, the front-desk kiosk with a manager's QR pairing, Critical for launch**. It's built (`POST /clock/kiosk/pair`, then `X-Clock-Device` and `X-Device-Id` on `/clock/kiosk/*`, PIN punches with breaks; see the entry below); the staff app's kiosk mode has to ship with the first release. A full Payroll Report spec, from Charles's spreadsheet, is coming.

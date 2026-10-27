@@ -78,6 +78,8 @@ The workbook-shaped columns B to S keep the workbook's own definitions (N is sti
 
 Hours are whole hundredths of an hour ("centi-hours"), the precision iSolved uses. Each time entry is split at local midnights in America/Chicago using real elapsed time, so a DST day is 23 or 25 hours long, and an overnight shift counts on both days. Per person, shop and local date, the minutes are added and then rounded half-up to hundredths once. Every later sum and split works in whole hundredths, so the parts always add back up exactly.
 
+On screen, hours read decimal like the workbook (`79.94`) or as hours and minutes (`79h 56m`), per the **Payroll hours** setting (decimal by default, until Charles's spec says otherwise). The math, the CSV downloads and the iSolved file always use decimal hours. Clock times read 12-hour (`9:05 AM`) unless the brand picks 24-hour.
+
 ### 3.2 Cross-shop overtime (C4)
 
 Ray'z Inc. is one legal company with one FEIN, and each shop is a pay group of it, so overtime is worked out across **all** shops by default.

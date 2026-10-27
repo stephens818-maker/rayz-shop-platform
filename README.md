@@ -802,6 +802,16 @@ Optional pay plans for each employee, for when the brand wants them. Everything 
   - employee fields refusing sensitive data;
   - locked pay.
 
+### Times read 12-hour
+
+Charles doesn't want military time, so every time on screen reads 12-hour with AM and PM (`9:05 AM`, `5:30 PM`), never `17:30` like Squire. That covers the time clock, timesheets and punch edits, the calendar, reports and their on-screen previews, emails and the staff app.
+
+- **Brand defaults → Time format** (`settings.brand`, the whole brand): 12-hour, the default, or 24-hour.
+- **Payroll → Setup → Payroll hours** (`payroll.run`): decimal hours (`79.94`), the default because the payroll workbook uses it, or hours and minutes (`79h 56m`). It changes how hours read on payroll, timesheet and report screens. The iSolved file and its preview are always decimal.
+- Time fields type and show `9:05 AM` (`ClockInput`, `TimeInput` and `DateTimeInput` in `src/components/time-input.tsx`), not the browser's native picker, which follows the computer's 24-hour setting.
+- Times are stored as UTC instants (`timestamptz`) and shown in the shop's time zone (`shops.timezone`, Central). APIs keep ISO times; the staff app reads the format from `GET /config` `display`.
+- Formatters: `formatTime`, `formatDateTime`, `minutesToLabel`, `hhmmLabel` and `localStampLabel` in `src/lib/time.ts`, and `formatPayHours` in `src/lib/hours.ts`.
+
 ### Time clock and timesheets
 
 Everyone is paid hourly. This reverses the earlier "no clock-in" decision.
