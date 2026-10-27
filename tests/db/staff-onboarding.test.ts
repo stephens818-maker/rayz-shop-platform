@@ -6,7 +6,7 @@
  * by themselves once they finish (simulator or account.updated); and the cutover sign-off gate.
  */
 import Stripe from "stripe";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { Mods, actor, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
@@ -273,7 +273,7 @@ describe("tips wait, never lost, until onboarding is done", () => {
     expect(await payout(p.id)).toMatchObject({ status: "paid" });
   });
 
-  it("account.updated that finishes onboarding sends what was waiting through Stripe", async () => {
+  it("account.updated that finishes onboarding moves what was waiting to owed while there's no transfer path, and sends it once one is registered", async () => {
     const utica = await shop("utica");
     await m.db.db.update(s().shops).set({ paymentsMode: "brand" }).where(eq(s().shops.id, utica.id));
     const [kate] = await m.db.db
@@ -312,13 +312,27 @@ describe("tips wait, never lost, until onboarding is done", () => {
       },
     });
     expect((await connectWebhook.handleConnectWebhook(payload, Stripe.webhooks.generateTestHeaderString({ payload, secret }), secret)).status).toBe(200);
-    const sent = await payout(p.id);
-    expect(sent).toMatchObject({ status: "processing", holdKind: null, destinationLast4: "6789" });
-    const mine = calls.filter((c) => (c.params.metadata as { tipPayoutId?: string } | undefined)?.tipPayoutId === p.id);
-    expect(mine.map((c) => [c.op, c.params.amount])).toEqual([
-      ["transfer", 1100],
-      ["payout", 1100],
-    ]);
+    expect(await payout(p.id)).toMatchObject({ status: "held", holdKind: "transfers_pending", stripeTransferId: null });
+    expect(calls.filter((c) => c.op === "transfer" || c.op === "payout")).toEqual([]);
+
+    const mm = await import("@/server/payments/money-movement");
+    const moved: import("@/server/payments/money-movement").TipTransfer[] = [];
+    mm.registerMoneyMovement({
+      name: "fake",
+      async send(t, save) {
+        moved.push(t);
+        const ids = { debitId: null, transferId: `tr_fake_${t.key.slice(-6)}`, payoutId: `po_fake_${t.key.slice(-6)}` };
+        await save(ids);
+        return ids;
+      },
+      async unwind() {
+        return { ok: true, errors: [] };
+      },
+    });
+    onTestFinished(() => mm.registerMoneyMovement(null));
+    await tp.releasePayout(p.id, actor);
+    expect(await payout(p.id)).toMatchObject({ status: "processing", holdKind: null, destinationLast4: "6789", stripeTransferId: expect.stringMatching(/^tr_fake_/) });
+    expect(moved).toEqual([expect.objectContaining({ key: `tip-${p.id}`, amountCents: 1100, shopCostCents: 1100, to: acct, payout: expect.objectContaining({ method: "standard" }) })]);
   });
 });
 

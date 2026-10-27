@@ -84,9 +84,18 @@ describe("tip ledger", () => {
     expect(tip.feeCents).toBe(Math.round(((pay.processorFeeCents || pay.applicationFeeCents || 0) * 1000) / pay.amountCents));
     expect(tip.feeCents).toBeGreaterThan(0);
 
+    // A partial refund doesn't take tip back from the barber: the shop absorbs it (ST-C15).
     await m.checkout.refundSale({ saleId: cardSale.id, items: [], tipCents: 400, refundCardFee: false, reason: "Tip typo", restock: false, actor });
-    const [, back] = await entriesOf(cardSale.id);
-    expect(back).toMatchObject({ kind: "refund", method: "card", amountCents: -400, feeCents: -Math.round((tip.feeCents * 400) / 1000), staffId: b.id });
+    expect(await entriesOf(cardSale.id)).toHaveLength(1);
+    const absorbed = await m.db.db.select().from(s().tipAbsorptions).where(eq(s().tipAbsorptions.saleId, cardSale.id));
+    expect(absorbed).toEqual([expect.objectContaining({ kind: "partial_refund", amountCents: 400, staffId: b.id, shopId: sh.id })]);
+
+    // A full refund within the window reverses the tip, fee and all.
+    const fullSale = await tipSale(sh.id, b.id, 800, card);
+    const [fullTip] = await entriesOf(fullSale.id);
+    await m.refunds.refundEverything(fullSale.id, "Client unhappy", false, actor);
+    const [, back] = await entriesOf(fullSale.id);
+    expect(back).toMatchObject({ kind: "refund", method: "card", amountCents: -800, feeCents: -fullTip.feeCents, staffId: b.id });
 
     const cashSale = await tipSale(sh.id, b.id, 500, cash);
     await m.checkout.voidSale(cashSale.id, "Rang up the wrong client", actor);
@@ -101,8 +110,8 @@ describe("tip ledger", () => {
     expect(await count()).toBe(before);
 
     const t = await tl.myTips(b.id, [sh.id], today);
-    expect(t.total.todayCents - start.todayCents).toBe(600);
-    expect(t.total.availableCents - start.availableCents).toBe(600);
+    expect(t.total.todayCents - start.todayCents).toBe(1000);
+    expect(t.total.availableCents - start.availableCents).toBe(1000);
   });
 
   it("the ledger is append-only: amounts, people and dates can't be edited", async () => {
@@ -285,13 +294,22 @@ describe("Stripe payouts and webhooks", () => {
     const a = (await accounts.staffAccount(c.id))!;
     expect(accounts.staffAccountState(a)).toBe("ready");
     expect(a).toMatchObject({ destinationType: "card", destinationLast4: "5556", destinationName: "Visa" });
-    expect(Object.keys(a).filter((k) => /routing|account_?number|card_?number|ssn|tax|fingerprint|dob|birth/i.test(k))).toEqual([]);
+    expect(a.taxForms).toBe("will_not_file");
+    expect(Object.keys(a).filter((k) => k !== "taxForms" && /routing|account_?number|card_?number|ssn|tax|fingerprint|dob|birth/i.test(k))).toEqual([]);
   });
 
   it("an approved Stripe payout goes out (simulator) and the employee is told", async () => {
     const { shop: sh, barbers: [, c] } = await barbers("silvis", ["Abigail", "Liv"]);
     await m.db.db.update(s().staff).set({ email: "liv.tips@rayz.test" }).where(eq(s().staff.id, c.id));
-    await accounts.setPayoutChoice(c.id, { method: "stripe", instant: true }, actor);
+    const [bs] = await m.db.db.select({ t: s().brandSettings.tipPayouts }).from(s().brandSettings);
+    await m.db.db.update(s().brandSettings).set({ tipPayouts: { ...(bs?.t as object), instantAllowed: true } });
+    onTestFinished(async () => {
+      await m.db.db.update(s().brandSettings).set({ tipPayouts: bs?.t ?? {} });
+    });
+    // Instant payouts are off by default and need Stripe's fee accepted as shown (ST-I12).
+    await expect(accounts.setPayoutChoice(c.id, { method: "stripe", instant: true }, actor)).rejects.toThrow(/Accept the fee/);
+    await accounts.setPayoutChoice(c.id, { method: "stripe", instant: true, acceptInstantFee: accounts.currentInstantFeeTerms() }, actor);
+    expect((await accounts.staffAccount(c.id))!).toMatchObject({ instant: true, instantFeeTerms: accounts.currentInstantFeeTerms() });
     await tipSale(sh.id, c.id, 2500, card);
     await tl.saveShopTipSettings(sh.id, { schedule: "manual", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "cash", netCardFee: false }, actor);
     const r = await tp.buildBatch({ shopId: sh.id, kind: "manual", cutoff: today, actor });
@@ -439,10 +457,10 @@ describe("Stripe payouts and webhooks", () => {
     expect(await notices()).toHaveLength(beforeMethod + 2);
 
     const summary = (await accounts.payoutAccountSummaries([b.id])).get(b.id)!;
-    expect(summary).toEqual({ staffId: b.id, method: "cash", status: "ready", last4: null });
+    expect(summary).toEqual({ staffId: b.id, method: "cash", status: "ready", state: accounts.staffAccountStatus(await accounts.staffAccount(b.id)), last4: null });
     const sh = await shop("silvis");
     const team = await accounts.shopPayoutAccounts(sh.id);
-    expect(Object.keys(team.find((t) => t.staffId === b.id)!).sort()).toEqual(["last4", "method", "name", "staffId", "status"]);
+    expect(Object.keys(team.find((t) => t.staffId === b.id)!).sort()).toEqual(["last4", "method", "name", "staffId", "state", "status"]);
     const activity = await accounts.bankingActivity(b.id, 50);
     expect(activity.map((a) => a.action)).toEqual(expect.arrayContaining(["tips.account_state", "tips.destination_changed", "tips.method"]));
     await accounts.setPayoutChoice(b.id, { method: "stripe", instant: false }, actor);
@@ -475,7 +493,7 @@ describe("payroll export shows tips already paid", () => {
     const row = (staffId: string) => block.exportRows.find((x) => x.staffId === staffId)!.values;
     expect([row(a.id)[2], row(a.id)[6], row(a.id)[7]]).toEqual([la.tipsOutside, 8, la.tipsPaidOut]);
     expect([row(c.id)[2], row(c.id)[6], row(c.id)[7]]).toEqual([lc.tips, 0, lc.tips]);
-    expect(v.mismatches).toEqual([]);
+    expect(v.mismatches, JSON.stringify(v.mismatches)).toEqual([]);
 
     expect(await run.approveAndLock(period.start, period.end, actor)).toMatchObject({ locked: expect.any(Number) });
     const [locked] = await m.db.db.select().from(s().tipPayouts).where(and(eq(s().tipPayouts.staffId, a.id), eq(s().tipPayouts.shopId, sh.id), eq(s().tipPayouts.method, "payroll")));

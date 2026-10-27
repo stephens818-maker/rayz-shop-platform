@@ -428,7 +428,16 @@ describe("tips, earnings, payouts and banking", () => {
     expect(b.stripeAccountId).toBeTruthy();
     expect(b.onboarding.step).toBe("done");
     expect(b.requirements).toMatchObject({ due: [], pending: [], detailsSubmitted: true, payoutsEnabled: true });
-    expect(b.instant).toMatchObject({ allowed: true, eligible: true, to: { type: "card", last4: "5556" }, feePaidBy: "employee", fee: { pct: 1.5, minCents: 50 } });
+    expect(b).toMatchObject({ state: "active", stateLabel: expect.any(String), dashboard: "none", onboardingMode: { mode: "embedded" } });
+    expect(b.instant).toMatchObject({
+      allowed: false,
+      eligible: true,
+      to: { type: "card", last4: "5556" },
+      feePaidBy: "employee",
+      fee: { pct: 1.5, minCents: 50, terms: expect.any(String), ackRequired: true },
+      accepted: false,
+      acceptedAt: null,
+    });
     expect(b.destination.last4).toMatch(/^\d{4}$/);
     expect(Object.keys(b.destination).sort()).toEqual(["label", "last4", "name", "type"]);
     expect(JSON.stringify({ ...b, stripeAccountId: null, shops: null })).not.toMatch(/routing|account_number|\d{8,}/);
