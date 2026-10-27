@@ -24,10 +24,12 @@ async function main() {
   await sql.end();
   if (n > 0 && process.env.DEMO_RESEED !== "true") {
     console.log(`Demo data already loaded (${n} shops). Set DEMO_RESEED=true to reload it.`);
-    return run("scripts/demo-connect.ts");
+    run("scripts/demo-connect.ts");
+  } else {
+    console.log(n > 0 ? "DEMO_RESEED=true: reloading the demo data." : "Empty database: loading the demo data.");
+    run("scripts/seed.ts");
   }
-  console.log(n > 0 ? "DEMO_RESEED=true: reloading the demo data." : "Empty database: loading the demo data.");
-  run("scripts/seed.ts");
+  run("scripts/demo-consent.ts");
 }
 
 main().catch((e) => {

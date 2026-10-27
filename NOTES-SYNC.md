@@ -567,6 +567,12 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-27: core, the lasting sandbox is up; Charles's launch rule (everything tested before any shop goes live)
+- **Sandbox URL (lasting, replaces the Cloudflare tunnel in the 2026-10-26 entry):** https://rayz-shop-platform-git-cursor-rayz-barb-350473-rayz-barber-shop.vercel.app. This is the Vercel branch alias of `cursor/rayz-barbershop-v1-8f0b`. Every push builds, migrates the Neon database (`rayz-sandbox`, US East 2) and moves the alias, so the sandbox always runs the latest core push. It's in demo mode on the demo seed: cards run on the simulator, and no texts, emails, calls or push go out.
+- **Access:** Vercel Authentication is on. Charles shares a link that lets testers in without a Vercel login. Since this repo is public, the link is never written here or in the PR; ask Charles for it. Opening it once sets a cookie for the browser. For scripts, open the share link first with a cookie jar, then send the cookie (curl `-c`/`-b`).
+- **Logins and test data:** unchanged from the 2026-10-26 entry. Staff sign in at `/login` with the one-click buttons (password `rayz2026!`). Customers use `/account`, or `POST /api/v1/auth/otp/start`, with the code returned as `devCode`. The time clock PIN is `2468`. The OpenAPI documents are at `/api/v1/openapi.json` and `/api/staff/v1/openapi.json`.
+- **Charles's launch rule:** the whole scope must be complete and tested in the sandbox before any shop goes live. That covers core, payroll, the staff app, mobile, the card fee, brand sync, roles, reports, Campaign Center, loyalty, gift cards, the location wizard and the franchise basics. Only the direct iSolved integration waits (download-only at launch). Direct Stripe tip payouts are built and tested, but stay behind their flag until the CPA signs off. PR #1's description now has one launch-readiness list with a status for each item, mobile's included. **Mobile, please see the request "Launch rule" under Requests.**
+
 ### 2026-10-27: core, payroll spec review (C2, C4, C5, C6, I2, I4, I10, I12; C1 and C3 need Charles)
 - **Migration `core_0130_payroll_commission_adjustments`:** `payroll_commission_adjustments`, which holds late commission for a locked period, paid in a later open one. The reason is scrubbed like every note. The next free migration is `core_0131`.
 - **Overtime can't be lowered (C6).** An hours or OT adjustment below the punches is refused, and an older one is floored at the punches and flagged `below_punches`. Payroll adjustments stay brand-only (`payroll.run`).
@@ -803,6 +809,8 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - **Next from core, in this order:** C1 (OTP delivery providers), C2 and the rest of C13 (rate limits, sessions), C3–C5 (devices, push, consent; this adds `sms_marketing_opt_in`, `email_marketing_opt_in`, `push_marketing`, `deleted_at` and `customer_devices` with the names `src/server/marketing/consent.ts` already reads), C10 (deletion), C9 (receipts), then C6–C8 and C14 (Stripe), then I1–I13.
 
 ### 2026-10-26: core, sandbox status for Testing Bot (Charles asked)
+
+**Superseded on 2026-10-27:** the lasting Vercel sandbox is up (see that entry). The Cloudflare URL below has expired.
 
 1. **What's deployed or runnable today**
    - **Nothing is on Vercel or Neon.** No Vercel project is linked to the repo: PR #1 has no preview deployments and no deployment checks. The app runs anywhere with Postgres (`DEMO_MODE=true pnpm build && pnpm start`), and DEPLOY.md has the demo-preview steps.

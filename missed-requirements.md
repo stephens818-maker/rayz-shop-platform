@@ -9,7 +9,7 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Demo logins: brand owner, a shop login, a shop manager, a barber, with one-click sign-in.
 - [x] Stripe, texts, and email in safe mock or test mode (`DEMO_MODE=true`).
 - [x] `DEPLOY.md` with the exact steps, accounts, and environment variables.
-- [ ] A permanent preview URL: needs the owner's Vercel project and Neon database (see `DEPLOY.md`). A temporary one is running from the agent's machine.
+- [x] A permanent preview URL: the Vercel branch alias of `cursor/rayz-barbershop-v1-8f0b` on the owner's Neon database, rebuilt and migrated on every push (NOTES-SYNC, 2026-10-27). Vercel Authentication stays on; testers get Charles's share link, which is never written in this public repo. Demo clients get marketing consent on the first build (`scripts/demo-consent.ts`), so Campaign Center can be tried.
 
 ## 2. UX and design standard (applies to every screen)
 
