@@ -1,0 +1,2275 @@
+{
+ "source": "Anonymized from Ray'z payroll workbook golden data: fictional names, keys, rates, hours, sales and tips; the same shops, rows, typed cells, zeros and formula branches",
+ "rows": [
+  {
+   "inputs": {
+    "location": "Utica",
+    "row": 3,
+    "name": "Avery Ashgrove",
+    "first_name": "Avery",
+    "feed_hours": 29.18,
+    "ot_hours": 0.0,
+    "hours": 29.18,
+    "wage": 15.75,
+    "service": 1372.0,
+    "service_pct": 0.38,
+    "product": 16.63,
+    "prod_pct": 0.2,
+    "pto_hours": 0.0,
+    "training_hours": 2.0,
+    "tips": 173.53,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 459.585,
+    "gross_per_hr": 47.01850582590816,
+    "commission": 521.36,
+    "service_total": 61.775000000000034,
+    "product_commission": 3.326,
+    "net_comm": 65.10100000000003,
+    "total_wages": 524.686,
+    "pct_of_gross": 0.3824241982507289
+   }
+  },
+  {
+   "inputs": {
+    "location": "Utica",
+    "row": 4,
+    "name": "Blake Birchwell",
+    "first_name": "Blake",
+    "feed_hours": 45.28,
+    "ot_hours": 0.0,
+    "hours": 45.28,
+    "wage": 21,
+    "service": 2138.66,
+    "service_pct": 0.35,
+    "product": 0.0,
+    "prod_pct": 0.08,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 347.96,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 950.88,
+    "gross_per_hr": 47.23189045936395,
+    "commission": 748.531,
+    "service_total": -202.34900000000005,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 950.88,
+    "pct_of_gross": 0.4446148522906867
+   }
+  },
+  {
+   "inputs": {
+    "location": "Utica",
+    "row": 5,
+    "name": "Corin Coldbrook",
+    "first_name": "Corin",
+    "feed_hours": 49.68,
+    "ot_hours": 0.0,
+    "hours": 49.68,
+    "wage": 31,
+    "service": 4956.86,
+    "service_pct": 0.38,
+    "product": 24.89,
+    "prod_pct": 0.12,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 562.5,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1540.08,
+    "gross_per_hr": 99.77576489533011,
+    "commission": 1883.6067999999998,
+    "service_total": 343.52679999999987,
+    "product_commission": 2.9868,
+    "net_comm": 346.5135999999999,
+    "total_wages": 1886.5935999999997,
+    "pct_of_gross": 0.3806025588779993
+   }
+  },
+  {
+   "inputs": {
+    "location": "Utica",
+    "row": 6,
+    "name": "Dana Dunmore",
+    "first_name": "Dana",
+    "feed_hours": 39.59,
+    "ot_hours": 0.0,
+    "hours": 39.59,
+    "wage": 15.75,
+    "service": 1312.53,
+    "service_pct": 0.42,
+    "product": 0.0,
+    "prod_pct": 0.12,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 420.95,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 623.5425,
+    "gross_per_hr": 33.153068956807275,
+    "commission": 551.2626,
+    "service_total": -72.2799,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 623.5425,
+    "pct_of_gross": 0.47506914127677086
+   }
+  },
+  {
+   "inputs": {
+    "location": "Utica",
+    "row": 7,
+    "name": "Ellis Elmsworth",
+    "first_name": "Ellis",
+    "feed_hours": 20.69,
+    "ot_hours": 0.0,
+    "hours": 20.69,
+    "wage": 15.25,
+    "service": 547.16,
+    "service_pct": 0.52,
+    "product": 0.0,
+    "prod_pct": 0.1,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 376.51,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 315.52250000000004,
+    "gross_per_hr": 26.44562590623489,
+    "commission": 284.5232,
+    "service_total": -30.999300000000062,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 315.52250000000004,
+    "pct_of_gross": 0.5766549089845749
+   }
+  },
+  {
+   "inputs": {
+    "location": "Utica",
+    "row": 8,
+    "name": "Finley Fairhollow",
+    "first_name": "Finley",
+    "feed_hours": 45.31,
+    "ot_hours": 0.0,
+    "hours": 45.31,
+    "wage": 27,
+    "service": 0.0,
+    "service_pct": 0.47,
+    "product": 0.0,
+    "prod_pct": 0.1,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 0.0,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": true,
+     "E": true,
+     "J": true,
+     "R": true,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1223.3700000000001,
+    "gross_per_hr": 0.0,
+    "commission": 0.0,
+    "service_total": -1223.3700000000001,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 1223.3700000000001,
+    "pct_of_gross": "#DIV/0!"
+   }
+  },
+  {
+   "inputs": {
+    "location": "Moline",
+    "row": 13,
+    "name": "Greer Glenrock",
+    "first_name": "Greer",
+    "feed_hours": 36.19,
+    "ot_hours": 0.0,
+    "hours": 36.19,
+    "wage": 16.5,
+    "service": 2181.07,
+    "service_pct": 0.38,
+    "product": 42.1,
+    "prod_pct": 0.2,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 461.09,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 597.135,
+    "gross_per_hr": 60.26720088422217,
+    "commission": 828.8066000000001,
+    "service_total": 231.67160000000013,
+    "product_commission": 8.42,
+    "net_comm": 240.0916000000001,
+    "total_wages": 837.2266000000001,
+    "pct_of_gross": 0.3838604904931983
+   }
+  },
+  {
+   "inputs": {
+    "location": "Moline",
+    "row": 14,
+    "name": "Harper Hartsfield",
+    "first_name": "Harper",
+    "feed_hours": 55.13,
+    "ot_hours": 0.0,
+    "hours": 55.13,
+    "wage": 15.25,
+    "service": 2518.89,
+    "service_pct": 0.44,
+    "product": 87.67,
+    "prod_pct": 0.2,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 477.05,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 840.7325000000001,
+    "gross_per_hr": 45.69000544168329,
+    "commission": 1108.3116,
+    "service_total": 267.5790999999999,
+    "product_commission": 17.534000000000002,
+    "net_comm": 285.1130999999999,
+    "total_wages": 1125.8456,
+    "pct_of_gross": 0.44696100266387184
+   }
+  },
+  {
+   "inputs": {
+    "location": "Moline",
+    "row": 15,
+    "name": "Indigo Ironwood",
+    "first_name": "Indigo",
+    "feed_hours": 58.19,
+    "ot_hours": 0.0,
+    "hours": 58.19,
+    "wage": 17.25,
+    "service": 3183.84,
+    "service_pct": 0.42,
+    "product": 74.47,
+    "prod_pct": 0.18,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 271.78,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1003.7774999999999,
+    "gross_per_hr": 54.71455576559547,
+    "commission": 1337.2128,
+    "service_total": 333.4353000000001,
+    "product_commission": 13.404599999999999,
+    "net_comm": 346.8399000000001,
+    "total_wages": 1350.6174,
+    "pct_of_gross": 0.42421019900497514
+   }
+  },
+  {
+   "inputs": {
+    "location": "Moline",
+    "row": 16,
+    "name": "Jordan Juniper",
+    "first_name": "Jordan",
+    "feed_hours": 34.62,
+    "ot_hours": 0.0,
+    "hours": 34.62,
+    "wage": 21,
+    "service": 2437.74,
+    "service_pct": 0.42,
+    "product": 75.4,
+    "prod_pct": 0.12,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 200.32,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 727.02,
+    "gross_per_hr": 70.41421143847487,
+    "commission": 1023.8507999999998,
+    "service_total": 296.83079999999984,
+    "product_commission": 9.048,
+    "net_comm": 305.87879999999984,
+    "total_wages": 1032.8987999999997,
+    "pct_of_gross": 0.42371163454675226
+   }
+  },
+  {
+   "inputs": {
+    "location": "Moline",
+    "row": 17,
+    "name": "Kendall Kestrel",
+    "first_name": "Kendall",
+    "feed_hours": 58.03,
+    "ot_hours": 0.0,
+    "hours": 58.03,
+    "wage": 23.5,
+    "service": 4133.69,
+    "service_pct": 0.35,
+    "product": 115.08,
+    "prod_pct": 0.1,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 832.28,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1363.705,
+    "gross_per_hr": 71.23367223849732,
+    "commission": 1446.7914999999998,
+    "service_total": 83.08649999999989,
+    "product_commission": 11.508000000000001,
+    "net_comm": 94.59449999999988,
+    "total_wages": 1458.2994999999999,
+    "pct_of_gross": 0.35278395332015705
+   }
+  },
+  {
+   "inputs": {
+    "location": "Moline",
+    "row": 18,
+    "name": "Lane Larkspur",
+    "first_name": "Lane",
+    "feed_hours": 63.08,
+    "ot_hours": 0.0,
+    "hours": 63.08,
+    "wage": 16.25,
+    "service": 2440.07,
+    "service_pct": 0.42,
+    "product": 113.81,
+    "prod_pct": 0.2,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 639.64,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1025.05,
+    "gross_per_hr": 38.68214965123653,
+    "commission": 1024.8294,
+    "service_total": -0.22059999999987667,
+    "product_commission": 22.762,
+    "net_comm": 22.762,
+    "total_wages": 1047.812,
+    "pct_of_gross": 0.42941882814837273
+   }
+  },
+  {
+   "inputs": {
+    "location": "Moline",
+    "row": 19,
+    "name": "Morgan Millbrook",
+    "first_name": "Morgan",
+    "feed_hours": 41.24,
+    "ot_hours": 0.0,
+    "hours": 41.24,
+    "wage": 27,
+    "service": 0.0,
+    "service_pct": 0.0,
+    "product": 93.49,
+    "prod_pct": 0.0,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 0.0,
+    "hourly_total_override": 0.0,
+    "netcomm_override": null,
+    "manual": {
+     "B": true,
+     "E": true,
+     "J": true,
+     "R": true,
+     "D": true,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 0.0,
+    "gross_per_hr": 0.0,
+    "commission": 0.0,
+    "service_total": 0.0,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 0.0,
+    "pct_of_gross": "#DIV/0!"
+   }
+  },
+  {
+   "inputs": {
+    "location": "Kimberly",
+    "row": 24,
+    "name": "Noel Northcote",
+    "first_name": "Noel",
+    "feed_hours": 77.03,
+    "ot_hours": 0.0,
+    "hours": 77.03,
+    "wage": 23.5,
+    "service": 3266.55,
+    "service_pct": 0.47,
+    "product": 0.0,
+    "prod_pct": 0.12,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 440.54,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1810.205,
+    "gross_per_hr": 42.40620537452941,
+    "commission": 1535.2785,
+    "service_total": -274.92650000000003,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 1810.205,
+    "pct_of_gross": 0.5541641793329353
+   }
+  },
+  {
+   "inputs": {
+    "location": "Kimberly",
+    "row": 25,
+    "name": "Oakley Oakhurst",
+    "first_name": "Oakley",
+    "feed_hours": 79.73,
+    "ot_hours": 0.0,
+    "hours": 79.73,
+    "wage": 31,
+    "service": 4164.97,
+    "service_pct": 0.44,
+    "product": 51.05,
+    "prod_pct": 0.12,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 389.88,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 2471.63,
+    "gross_per_hr": 52.23842970023831,
+    "commission": 1832.5868,
+    "service_total": -639.0432000000001,
+    "product_commission": 6.1259999999999994,
+    "net_comm": 6.1259999999999994,
+    "total_wages": 2477.7560000000003,
+    "pct_of_gross": 0.5949036847804426
+   }
+  },
+  {
+   "inputs": {
+    "location": "Kimberly",
+    "row": 26,
+    "name": "Parker Pinecrest",
+    "first_name": "Parker",
+    "feed_hours": 72.25,
+    "ot_hours": 0.0,
+    "hours": 72.25,
+    "wage": 21,
+    "service": 3053.33,
+    "service_pct": 0.47,
+    "product": 0.0,
+    "prod_pct": 0.08,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 248.93,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1517.25,
+    "gross_per_hr": 42.26062283737024,
+    "commission": 1435.0650999999998,
+    "service_total": -82.1849000000002,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 1517.25,
+    "pct_of_gross": 0.4969164813498705
+   }
+  },
+  {
+   "inputs": {
+    "location": "Kimberly",
+    "row": 27,
+    "name": "Quinn Quarrytown",
+    "first_name": "Quinn",
+    "feed_hours": 33.39,
+    "ot_hours": 0.0,
+    "hours": 33.39,
+    "wage": 19.75,
+    "service": 582.09,
+    "service_pct": 0.42,
+    "product": 24.1,
+    "prod_pct": 0.18,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 200.08,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 659.4525,
+    "gross_per_hr": 17.433063791554357,
+    "commission": 244.4778,
+    "service_total": -414.9747,
+    "product_commission": 4.338,
+    "net_comm": 4.338,
+    "total_wages": 663.7905,
+    "pct_of_gross": 1.140357161263722
+   }
+  },
+  {
+   "inputs": {
+    "location": "Kimberly",
+    "row": 28,
+    "name": "Reese Redfern",
+    "first_name": "Reese",
+    "feed_hours": 76.11,
+    "ot_hours": 1.93,
+    "hours": 74.17999999999999,
+    "wage": 16.5,
+    "service": 2145.54,
+    "service_pct": 0.38,
+    "product": 53.29,
+    "prod_pct": 0.12,
+    "pto_hours": 0.0,
+    "training_hours": 3.0,
+    "tips": 585.98,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1223.9699999999998,
+    "gross_per_hr": 28.92342949582098,
+    "commission": 815.3052,
+    "service_total": -408.6647999999998,
+    "product_commission": 6.3948,
+    "net_comm": 6.3948,
+    "total_wages": 1230.3647999999998,
+    "pct_of_gross": 0.5734522777482591
+   }
+  },
+  {
+   "inputs": {
+    "location": "Rock Island",
+    "row": 34,
+    "name": "Sloane Stonebridge",
+    "first_name": "Sloane",
+    "feed_hours": 77.43,
+    "ot_hours": 0.43,
+    "hours": 77.0,
+    "wage": 15.75,
+    "service": 1433.46,
+    "service_pct": 0.38,
+    "product": 96.06,
+    "prod_pct": 0.18,
+    "pto_hours": 0.0,
+    "training_hours": 5.0,
+    "tips": 764.81,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1212.75,
+    "gross_per_hr": 18.616363636363637,
+    "commission": 544.7148,
+    "service_total": -668.0352,
+    "product_commission": 17.2908,
+    "net_comm": 17.2908,
+    "total_wages": 1230.0408,
+    "pct_of_gross": 0.858092168599054
+   }
+  },
+  {
+   "inputs": {
+    "location": "Rock Island",
+    "row": 35,
+    "name": "Tatum Thistlewood",
+    "first_name": "Tatum",
+    "feed_hours": 64.47,
+    "ot_hours": 0.0,
+    "hours": 64.47,
+    "wage": 15.25,
+    "service": 2153.19,
+    "service_pct": 0.35,
+    "product": 25.47,
+    "prod_pct": 0.08,
+    "pto_hours": 0.0,
+    "training_hours": 2.0,
+    "tips": 694.51,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 983.1675,
+    "gross_per_hr": 33.398324802233596,
+    "commission": 753.6165,
+    "service_total": -229.55100000000004,
+    "product_commission": 2.0376,
+    "net_comm": 2.0376,
+    "total_wages": 985.2051,
+    "pct_of_gross": 0.45755604475220485
+   }
+  },
+  {
+   "inputs": {
+    "location": "Rock Island",
+    "row": 36,
+    "name": "Umar Underhill",
+    "first_name": "Umar",
+    "feed_hours": 34.42,
+    "ot_hours": 0.0,
+    "hours": 34.42,
+    "wage": 15.25,
+    "service": 1036.55,
+    "service_pct": 0.42,
+    "product": 28.24,
+    "prod_pct": 0.18,
+    "pto_hours": 0.0,
+    "training_hours": 3.0,
+    "tips": 820.6,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": true,
+     "E": true,
+     "J": true,
+     "R": true,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 524.905,
+    "gross_per_hr": 30.11475886112725,
+    "commission": 435.35099999999994,
+    "service_total": -89.55400000000003,
+    "product_commission": 5.0832,
+    "net_comm": 5.0832,
+    "total_wages": 529.9882,
+    "pct_of_gross": 0.5113001784766774
+   }
+  },
+  {
+   "inputs": {
+    "location": "Rock Island",
+    "row": 37,
+    "name": "Vale Valemont",
+    "first_name": "Vale",
+    "feed_hours": 39.26,
+    "ot_hours": 0.0,
+    "hours": 39.26,
+    "wage": 15.25,
+    "service": 994.87,
+    "service_pct": 0.44,
+    "product": 23.12,
+    "prod_pct": 0.18,
+    "pto_hours": 0.0,
+    "training_hours": 5.0,
+    "tips": 866.05,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 598.7149999999999,
+    "gross_per_hr": 25.340550178298525,
+    "commission": 437.7428,
+    "service_total": -160.97219999999993,
+    "product_commission": 4.1616,
+    "net_comm": 4.1616,
+    "total_wages": 602.8765999999999,
+    "pct_of_gross": 0.6059853046126629
+   }
+  },
+  {
+   "inputs": {
+    "location": "Rock Island",
+    "row": 38,
+    "name": "Wren Westbury",
+    "first_name": "Wren",
+    "feed_hours": 0.0,
+    "ot_hours": 0.0,
+    "hours": 0.0,
+    "wage": 21,
+    "service": 0.0,
+    "service_pct": 0.52,
+    "product": 0.0,
+    "prod_pct": 0.08,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 0.0,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": true,
+     "E": true,
+     "J": true,
+     "R": true,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 0.0,
+    "gross_per_hr": "#DIV/0!",
+    "commission": 0.0,
+    "service_total": 0.0,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 0.0,
+    "pct_of_gross": "#DIV/0!"
+   }
+  },
+  {
+   "inputs": {
+    "location": "Silvis",
+    "row": 43,
+    "name": "Xavi Yarrowby",
+    "first_name": "Xavi",
+    "feed_hours": 27.55,
+    "ot_hours": 0.0,
+    "hours": 27.55,
+    "wage": 23.5,
+    "service": 805.32,
+    "service_pct": 0.52,
+    "product": 0.0,
+    "prod_pct": 0.08,
+    "pto_hours": 0.0,
+    "training_hours": 3.0,
+    "tips": 553.69,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 647.4250000000001,
+    "gross_per_hr": 29.231215970961888,
+    "commission": 418.76640000000003,
+    "service_total": -228.65860000000004,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 647.4250000000001,
+    "pct_of_gross": 0.8039350817066508
+   }
+  },
+  {
+   "inputs": {
+    "location": "Silvis",
+    "row": 44,
+    "name": "Yael Zephyrine",
+    "first_name": "Yael",
+    "feed_hours": 75.18,
+    "ot_hours": 0.48,
+    "hours": 74.7,
+    "wage": 18.5,
+    "service": 2850.01,
+    "service_pct": 0.42,
+    "product": 90.61,
+    "prod_pct": 0.2,
+    "pto_hours": 0.0,
+    "training_hours": 3.0,
+    "tips": 189.41,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1381.95,
+    "gross_per_hr": 38.152744310575635,
+    "commission": 1197.0042,
+    "service_total": -184.94579999999996,
+    "product_commission": 18.122,
+    "net_comm": 18.122,
+    "total_wages": 1400.0720000000001,
+    "pct_of_gross": 0.4912516096434749
+   }
+  },
+  {
+   "inputs": {
+    "location": "Silvis",
+    "row": 45,
+    "name": "Zion Amberly",
+    "first_name": "Zion",
+    "feed_hours": 57.34,
+    "ot_hours": 0.0,
+    "hours": 57.34,
+    "wage": 21,
+    "service": 2585.72,
+    "service_pct": 0.42,
+    "product": 0.0,
+    "prod_pct": 0.1,
+    "pto_hours": 0.0,
+    "training_hours": 2.0,
+    "tips": 386.91,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1204.14,
+    "gross_per_hr": 45.09452389257063,
+    "commission": 1086.0023999999999,
+    "service_total": -118.13760000000025,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 1204.14,
+    "pct_of_gross": 0.46568847361663296
+   }
+  },
+  {
+   "inputs": {
+    "location": "Silvis",
+    "row": 46,
+    "name": "Arden Brookfield",
+    "first_name": "Arden",
+    "feed_hours": 22.55,
+    "ot_hours": 0.0,
+    "hours": 22.55,
+    "wage": 15.75,
+    "service": 661.37,
+    "service_pct": 0.44,
+    "product": 0.0,
+    "prod_pct": 0.2,
+    "pto_hours": 0.0,
+    "training_hours": 4.5,
+    "tips": 589.92,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 355.1625,
+    "gross_per_hr": 29.329046563192904,
+    "commission": 291.0028,
+    "service_total": -64.15970000000004,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 355.1625,
+    "pct_of_gross": 0.5370102968081407
+   }
+  },
+  {
+   "inputs": {
+    "location": "Coralville",
+    "row": 51,
+    "name": "Briar Copperfield",
+    "first_name": "Briar",
+    "feed_hours": 78.5,
+    "ot_hours": 0.0,
+    "hours": 78.5,
+    "wage": 31,
+    "service": 4762.63,
+    "service_pct": 0.44,
+    "product": 73.09,
+    "prod_pct": 0.18,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 304.76,
+    "hourly_total_override": null,
+    "netcomm_override": 149.96,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": true
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 2433.5,
+    "gross_per_hr": 60.670445859872615,
+    "commission": 2095.5572,
+    "service_total": -337.9427999999998,
+    "product_commission": 13.1562,
+    "net_comm": 149.96,
+    "total_wages": 2446.6562,
+    "pct_of_gross": 0.5137195625106296
+   }
+  },
+  {
+   "inputs": {
+    "location": "Coralville",
+    "row": 52,
+    "name": "Cove Driftwood",
+    "first_name": "Cove",
+    "feed_hours": 47.81,
+    "ot_hours": 0.0,
+    "hours": 47.81,
+    "wage": 23.5,
+    "service": 1012.61,
+    "service_pct": 0.52,
+    "product": 7.18,
+    "prod_pct": 0.08,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 289.4,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1123.535,
+    "gross_per_hr": 21.179878686467266,
+    "commission": 526.5572000000001,
+    "service_total": -596.9778,
+    "product_commission": 0.5744,
+    "net_comm": 0.5744,
+    "total_wages": 1124.1094,
+    "pct_of_gross": 1.1101109015316855
+   }
+  },
+  {
+   "inputs": {
+    "location": "Coralville",
+    "row": 53,
+    "name": "Dell Eastwick",
+    "first_name": "Dell",
+    "feed_hours": 29.96,
+    "ot_hours": 0.0,
+    "hours": 29.96,
+    "wage": 16.25,
+    "service": 656.91,
+    "service_pct": 0.44,
+    "product": 28.19,
+    "prod_pct": 0.2,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 165.42,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 486.85,
+    "gross_per_hr": 21.926234979973295,
+    "commission": 289.0404,
+    "service_total": -197.80960000000005,
+    "product_commission": 5.638000000000001,
+    "net_comm": 5.638000000000001,
+    "total_wages": 492.488,
+    "pct_of_gross": 0.7497039168227002
+   }
+  },
+  {
+   "inputs": {
+    "location": "Coralville",
+    "row": 54,
+    "name": "Emery Foxglove",
+    "first_name": "Emery",
+    "feed_hours": 77.82,
+    "ot_hours": 0.0,
+    "hours": 77.82,
+    "wage": 17.25,
+    "service": 2395.5,
+    "service_pct": 0.35,
+    "product": 7.64,
+    "prod_pct": 0.12,
+    "pto_hours": 0.0,
+    "training_hours": 0.0,
+    "tips": 529.19,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1342.395,
+    "gross_per_hr": 30.78257517347726,
+    "commission": 838.425,
+    "service_total": -503.97,
+    "product_commission": 0.9168,
+    "net_comm": 0.9168,
+    "total_wages": 1343.3118,
+    "pct_of_gross": 0.5607646837820914
+   }
+  },
+  {
+   "inputs": {
+    "location": "LeClaire",
+    "row": 61,
+    "name": "Fable Greystone",
+    "first_name": "Fable",
+    "feed_hours": 24.88,
+    "ot_hours": 0.0,
+    "hours": 24.88,
+    "wage": 16.5,
+    "service": 1711.85,
+    "service_pct": 0.35,
+    "product": 93.49,
+    "prod_pct": 0.08,
+    "pto_hours": 0.0,
+    "training_hours": 2.0,
+    "tips": 364.83,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": true,
+     "J": true,
+     "R": true,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 410.52,
+    "gross_per_hr": 68.80426045016077,
+    "commission": 599.1474999999999,
+    "service_total": 188.62749999999994,
+    "product_commission": 7.4792,
+    "net_comm": 196.10669999999993,
+    "total_wages": 606.6266999999999,
+    "pct_of_gross": 0.3543690743932003
+   }
+  },
+  {
+   "inputs": {
+    "location": "LeClaire",
+    "row": 62,
+    "name": "Gale Hollowell",
+    "first_name": "Gale",
+    "feed_hours": 62.62,
+    "ot_hours": 0.0,
+    "hours": 62.62,
+    "wage": 21,
+    "service": 1695.22,
+    "service_pct": 0.44,
+    "product": 0.0,
+    "prod_pct": 0.1,
+    "pto_hours": 0.0,
+    "training_hours": 5.0,
+    "tips": 962.32,
+    "hourly_total_override": null,
+    "netcomm_override": null,
+    "manual": {
+     "B": false,
+     "E": false,
+     "J": true,
+     "R": false,
+     "D": false,
+     "M": false
+    }
+   },
+   "expected_raw": {
+    "hourly_total": 1315.02,
+    "gross_per_hr": 27.071542638134783,
+    "commission": 745.8968,
+    "service_total": -569.1232,
+    "product_commission": 0.0,
+    "net_comm": 0.0,
+    "total_wages": 1315.02,
+    "pct_of_gross": 0.7757223251259423
+   }
+  }
+ ],
+ "export_tabs": {
+  "Rock Island": {
+   "headers": [
+    "Key",
+    null,
+    "E_Regular_Hours",
+    "E_Overtime 1.5_Hours",
+    "E_Cash Tips Recd_Dollars",
+    "E_Comm Sales_Dollars",
+    "E_Ray'z Paid Time_Hours",
+    "E_Training_Hours"
+   ],
+   "rows": [
+    {
+     "row": 2,
+     "key": "786473980",
+     "key_type": "text",
+     "isolved_name": "STONEBRIDGE, SLOANE G",
+     "E_Regular_Hours": 77.0,
+     "E_Overtime_1_5_Hours": 0.43,
+     "E_Cash_Tips_Recd_Dollars": 764.81,
+     "E_Comm_Sales_Dollars": 17.2908,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 5.0,
+     "source_formulas": [
+      "=Locations!B34",
+      "=Locations!Q34",
+      "=Locations!R34",
+      "=Locations!M34",
+      "=Locations!P34",
+      "=Locations!S34"
+     ]
+    },
+    {
+     "row": 3,
+     "key": 884432854,
+     "key_type": "number",
+     "isolved_name": "THISTLEWOOD, TATUM ",
+     "E_Regular_Hours": 64.47,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 694.51,
+     "E_Comm_Sales_Dollars": 2.0376,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 2.0,
+     "source_formulas": [
+      "=Locations!B35",
+      "=Locations!Q35",
+      "=Locations!R35",
+      "=Locations!M35",
+      "=Locations!P35",
+      "=Locations!S35"
+     ]
+    },
+    {
+     "row": 4,
+     "key": "6693331",
+     "key_type": "text",
+     "isolved_name": "UNDERHILL, UMAR",
+     "E_Regular_Hours": 34.42,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 820.6,
+     "E_Comm_Sales_Dollars": 5.0832,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 3.0,
+     "source_formulas": [
+      "=Locations!B36",
+      "=Locations!Q36",
+      "=Locations!R36",
+      "=Locations!M36",
+      "=Locations!P36",
+      "=Locations!S36"
+     ]
+    },
+    {
+     "row": 5,
+     "key": 965312701,
+     "key_type": "number",
+     "isolved_name": "VALEMONT, VALE",
+     "E_Regular_Hours": 39.26,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 866.05,
+     "E_Comm_Sales_Dollars": 4.1616,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 5.0,
+     "source_formulas": [
+      "=Locations!B37",
+      "=Locations!Q37",
+      "=Locations!R37",
+      "=Locations!M37",
+      "=Locations!P37",
+      "=Locations!S37"
+     ]
+    },
+    {
+     "row": 6,
+     "key": 169639025,
+     "key_type": "number",
+     "isolved_name": "WESTBURY, WREN",
+     "E_Regular_Hours": 0.0,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 0.0,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B38",
+      "=Locations!Q38",
+      "=Locations!R38",
+      "=Locations!M38",
+      "=Locations!P38",
+      "=Locations!S38"
+     ]
+    }
+   ]
+  },
+  "Moline": {
+   "headers": [
+    "Key",
+    null,
+    "E_Regular_Hours",
+    "E_Overtime 1.5_Hours",
+    "E_Cash Tips Recd_Dollars",
+    "E_Comm Sales_Dollars",
+    "E_Ray'z Paid Time_Hours",
+    "E_Training_Hours"
+   ],
+   "rows": [
+    {
+     "row": 2,
+     "key": "2839035",
+     "key_type": "text",
+     "isolved_name": "GLENROCK, GREER",
+     "E_Regular_Hours": 36.19,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 461.09,
+     "E_Comm_Sales_Dollars": 240.0916000000001,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B13",
+      "=Locations!Q13",
+      "=Locations!R13",
+      "=Locations!M13",
+      "=Locations!P13",
+      "=Locations!S13"
+     ]
+    },
+    {
+     "row": 3,
+     "key": "790611",
+     "key_type": "text",
+     "isolved_name": "HARTSFIELD, HARPER T",
+     "E_Regular_Hours": 55.13,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 477.05,
+     "E_Comm_Sales_Dollars": 285.1130999999999,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0,
+     "source_formulas": [
+      "=Locations!B14",
+      "=Locations!Q14",
+      "=Locations!R14",
+      "=Locations!M14",
+      "=Locations!P14",
+      0
+     ]
+    },
+    {
+     "row": 4,
+     "key": "2778498",
+     "key_type": "text",
+     "isolved_name": "IRONWOOD, INDIGO",
+     "E_Regular_Hours": 58.19,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 271.78,
+     "E_Comm_Sales_Dollars": 346.8399000000001,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B15",
+      "=Locations!Q15",
+      "=Locations!R15",
+      "=Locations!M15",
+      "=Locations!P15",
+      "=Locations!S15"
+     ]
+    },
+    {
+     "row": 5,
+     "key": 779321425,
+     "key_type": "number",
+     "isolved_name": "JUNIPER,JORDAN",
+     "E_Regular_Hours": 34.62,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 200.32,
+     "E_Comm_Sales_Dollars": 305.87879999999984,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B16",
+      "=Locations!Q16",
+      "=Locations!R16",
+      "=Locations!M16",
+      "=Locations!P16",
+      "=Locations!S16"
+     ]
+    },
+    {
+     "row": 6,
+     "key": "939676",
+     "key_type": "text",
+     "isolved_name": "KESTREL, KENDALL",
+     "E_Regular_Hours": 58.03,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 832.28,
+     "E_Comm_Sales_Dollars": 94.59449999999988,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B17",
+      "=Locations!Q17",
+      "=Locations!R17",
+      "=Locations!M17",
+      "=Locations!P17",
+      "=Locations!S17"
+     ]
+    },
+    {
+     "row": 7,
+     "key": 197477386,
+     "key_type": "number",
+     "isolved_name": "LARKSPUR, LANE",
+     "E_Regular_Hours": 63.08,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 639.64,
+     "E_Comm_Sales_Dollars": 22.762,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B18",
+      "=Locations!Q18",
+      "=Locations!R18",
+      "=Locations!M18",
+      "=Locations!P18",
+      "=Locations!S18"
+     ]
+    },
+    {
+     "row": 8,
+     "key": "429148",
+     "key_type": "text",
+     "isolved_name": "MILLBROOK, MORGAN",
+     "E_Regular_Hours": 41.24,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 0.0,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B19",
+      "=Locations!Q19",
+      "=Locations!R19",
+      "=Locations!M19",
+      "=Locations!P19",
+      "=Locations!S19"
+     ]
+    }
+   ]
+  },
+  "Silvis": {
+   "headers": [
+    "Key",
+    null,
+    "E_Regular_Hours",
+    "E_Overtime 1.5_Hours",
+    "E_Cash Tips Recd_Dollars",
+    "E_Comm Sales_Dollars",
+    "E_Ray'z Paid Time_Hours",
+    "E_Training_Hours"
+   ],
+   "rows": [
+    {
+     "row": 2,
+     "key": 156638803,
+     "key_type": "number",
+     "isolved_name": "YARROWBY, XAVI",
+     "E_Regular_Hours": 27.55,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 553.69,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 3.0,
+     "source_formulas": [
+      "=Locations!B43",
+      "=Locations!Q43",
+      "=Locations!R43",
+      "=Locations!M43",
+      "=Locations!P43",
+      "=Locations!S43"
+     ]
+    },
+    {
+     "row": 3,
+     "key": 244015,
+     "key_type": "number",
+     "isolved_name": "ZEPHYRINE, YAEL",
+     "E_Regular_Hours": 74.7,
+     "E_Overtime_1_5_Hours": 0.48,
+     "E_Cash_Tips_Recd_Dollars": 189.41,
+     "E_Comm_Sales_Dollars": 18.122,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 3.0,
+     "source_formulas": [
+      "=Locations!B44",
+      "=Locations!Q44",
+      "=Locations!R44",
+      "=Locations!M44",
+      "=Locations!P44",
+      "=Locations!S44"
+     ]
+    },
+    {
+     "row": 4,
+     "key": 938846196,
+     "key_type": "number",
+     "isolved_name": "Amberly, Zion",
+     "E_Regular_Hours": 57.34,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 386.91,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 2.0,
+     "source_formulas": [
+      "=Locations!B45",
+      "=Locations!Q45",
+      "=Locations!R45",
+      "=Locations!M45",
+      "=Locations!P45",
+      "=Locations!S45"
+     ]
+    },
+    {
+     "row": 5,
+     "key": 976567321,
+     "key_type": "number",
+     "isolved_name": "BROOKFIELD, ARDEN",
+     "E_Regular_Hours": 22.55,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 589.92,
+     "E_Comm_Sales_Dollars": 0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 4.5,
+     "source_formulas": [
+      "=Locations!B46",
+      "=Locations!Q46",
+      "=Locations!R46",
+      0,
+      "=Locations!P46",
+      "=Locations!S46"
+     ]
+    }
+   ]
+  },
+  "Coralville": {
+   "headers": [
+    "Key",
+    null,
+    "E_Regular_Hours",
+    "E_Overtime 1.5_Hours",
+    "E_Cash Tips Recd_Dollars",
+    "E_Comm Sales_Dollars",
+    "E_Ray'z Paid Time_Hours",
+    "E_Training_Hours"
+   ],
+   "rows": [
+    {
+     "row": 2,
+     "key": 612017050,
+     "key_type": "number",
+     "isolved_name": "Briar Copperfield",
+     "E_Regular_Hours": 78.5,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 304.76,
+     "E_Comm_Sales_Dollars": 149.96,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B51",
+      "=Locations!Q51",
+      "=Locations!R51",
+      "=Locations!M51",
+      "=Locations!P51",
+      "=Locations!S51"
+     ]
+    },
+    {
+     "row": 3,
+     "key": 994084935,
+     "key_type": "number",
+     "isolved_name": "Cove Driftwood",
+     "E_Regular_Hours": 47.81,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 289.4,
+     "E_Comm_Sales_Dollars": 0.5744,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B52",
+      "=Locations!Q52",
+      "=Locations!R52",
+      "=Locations!M52",
+      "=Locations!P52",
+      "=Locations!S52"
+     ]
+    },
+    {
+     "row": 4,
+     "key": 417437262,
+     "key_type": "number",
+     "isolved_name": "Dell Eastwick",
+     "E_Regular_Hours": 29.96,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 165.42,
+     "E_Comm_Sales_Dollars": 5.638000000000001,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B53",
+      "=Locations!Q53",
+      "=Locations!R53",
+      "=Locations!M53",
+      "=Locations!P53",
+      "=Locations!S53"
+     ]
+    },
+    {
+     "row": 5,
+     "key": 362531216,
+     "key_type": "number",
+     "isolved_name": "Emery Foxglove",
+     "E_Regular_Hours": 77.82,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 529.19,
+     "E_Comm_Sales_Dollars": 0.9168,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B54",
+      "=Locations!Q54",
+      "=Locations!R54",
+      "=Locations!M54",
+      "=Locations!P54",
+      "=Locations!S54"
+     ]
+    }
+   ]
+  },
+  "Utica": {
+   "headers": [
+    "Key",
+    null,
+    "E_Regular_Hours",
+    "E_Overtime 1.5_Hours",
+    "E_Cash Tips Recd_Dollars",
+    "E_Comm Sales_Dollars",
+    "E_Ray'z Paid Time_Hours",
+    "E_Training_Hours"
+   ],
+   "rows": [
+    {
+     "row": 2,
+     "key": 172612637,
+     "key_type": "number",
+     "isolved_name": "ASHGROVE, AVERY",
+     "E_Regular_Hours": 29.18,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 173.53,
+     "E_Comm_Sales_Dollars": 65.10100000000003,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 2.0,
+     "source_formulas": [
+      "=Locations!B3",
+      "=Locations!Q3",
+      "=Locations!R3",
+      "=Locations!M3",
+      "=Locations!P3",
+      "=Locations!S3"
+     ]
+    },
+    {
+     "row": 3,
+     "key": "455267151",
+     "key_type": "text",
+     "isolved_name": "BIRCHWELL, BLAKE",
+     "E_Regular_Hours": 45.28,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 347.96,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B4",
+      "=Locations!Q4",
+      "=Locations!R4",
+      "=Locations!M4",
+      "=Locations!P4",
+      "=Locations!S4"
+     ]
+    },
+    {
+     "row": 4,
+     "key": 792584702,
+     "key_type": "number",
+     "isolved_name": "CORIN COLDBROOK",
+     "E_Regular_Hours": 49.68,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 562.5,
+     "E_Comm_Sales_Dollars": 346.5135999999999,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B5",
+      "=Locations!Q5",
+      "=Locations!R5",
+      "=Locations!M5",
+      "=Locations!P5",
+      "=Locations!S5"
+     ]
+    },
+    {
+     "row": 5,
+     "key": 194096772,
+     "key_type": "number",
+     "isolved_name": "DUNMORE, DANA",
+     "E_Regular_Hours": 39.59,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 420.95,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B6",
+      "=Locations!Q6",
+      "=Locations!R6",
+      "=Locations!M6",
+      "=Locations!P6",
+      "=Locations!S6"
+     ]
+    },
+    {
+     "row": 6,
+     "key": 4203346,
+     "key_type": "number",
+     "isolved_name": "ELMSWORTH, ELLIS",
+     "E_Regular_Hours": 20.69,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 376.51,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B7",
+      "=Locations!Q7",
+      "=Locations!R7",
+      "=Locations!M7",
+      "=Locations!P7",
+      "=Locations!S7"
+     ]
+    },
+    {
+     "row": 7,
+     "key": "485209",
+     "key_type": "text",
+     "isolved_name": "FAIRHOLLOW, FINLEY",
+     "E_Regular_Hours": 45.31,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 0.0,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B8",
+      "=Locations!Q8",
+      "=Locations!R8",
+      "=Locations!M8",
+      "=Locations!P8",
+      "=Locations!S8"
+     ]
+    }
+   ]
+  },
+  "Kimberly": {
+   "headers": [
+    "Key",
+    null,
+    "E_Regular_Hours",
+    "E_Overtime 1.5_Hours",
+    "E_Cash Tips Recd_Dollars",
+    "E_Comm Sales_Dollars",
+    "E_Ray'z Paid Time_Hours",
+    "E_Training_Hours"
+   ],
+   "rows": [
+    {
+     "row": 2,
+     "key": "631892919",
+     "key_type": "text",
+     "isolved_name": "NORTHCOTE, NOEL",
+     "E_Regular_Hours": 77.03,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 440.54,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B24",
+      "=Locations!Q24",
+      "=Locations!R24",
+      "=Locations!M24",
+      "=Locations!P24",
+      "=Locations!S24"
+     ]
+    },
+    {
+     "row": 3,
+     "key": "516803678",
+     "key_type": "text",
+     "isolved_name": "OAKHURST, OAKLEY",
+     "E_Regular_Hours": 79.73,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 389.88,
+     "E_Comm_Sales_Dollars": 6.1259999999999994,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B25",
+      "=Locations!Q25",
+      "=Locations!R25",
+      "=Locations!M25",
+      "=Locations!P25",
+      "=Locations!S25"
+     ]
+    },
+    {
+     "row": 4,
+     "key": 602498401,
+     "key_type": "number",
+     "isolved_name": "PINECREST, PARKER",
+     "E_Regular_Hours": 72.25,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 248.93,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B26",
+      "=Locations!Q26",
+      "=Locations!R26",
+      "=Locations!M26",
+      "=Locations!P26",
+      "=Locations!S26"
+     ]
+    },
+    {
+     "row": 5,
+     "key": 988360582,
+     "key_type": "number",
+     "isolved_name": "QUARRYTOWN, QUINN",
+     "E_Regular_Hours": 33.39,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 200.08,
+     "E_Comm_Sales_Dollars": 4.338,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 0.0,
+     "source_formulas": [
+      "=Locations!B27",
+      "=Locations!Q27",
+      "=Locations!R27",
+      "=Locations!M27",
+      "=Locations!P27",
+      "=Locations!S27"
+     ]
+    },
+    {
+     "row": 6,
+     "key": 420800647,
+     "key_type": "number",
+     "isolved_name": "REDFERN, REESE",
+     "E_Regular_Hours": 74.17999999999999,
+     "E_Overtime_1_5_Hours": 1.93,
+     "E_Cash_Tips_Recd_Dollars": 585.98,
+     "E_Comm_Sales_Dollars": 6.3948,
+     "E_Rayz_Paid_Time_Hours": 0.0,
+     "E_Training_Hours": 3.0,
+     "source_formulas": [
+      "=Locations!B28",
+      "=Locations!Q28",
+      "=Locations!R28",
+      "=Locations!M28",
+      "=Locations!P28",
+      "=Locations!S28"
+     ]
+    }
+   ]
+  },
+  "LeClaire": {
+   "headers": [
+    "Key",
+    null,
+    "E_Regular_Hours",
+    "E_Overtime 1.5_Hours",
+    "E_Cash Tips Recd_Dollars",
+    "E_Comm Sales_Dollars",
+    "E_Ray'z Paid Time_Hours",
+    "E_Training_Hours"
+   ],
+   "rows": [
+    {
+     "row": 2,
+     "key": 732141938,
+     "key_type": "number",
+     "isolved_name": "GREYSTONE, FABLE",
+     "E_Regular_Hours": 24.88,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 364.83,
+     "E_Comm_Sales_Dollars": 196.10669999999993,
+     "E_Rayz_Paid_Time_Hours": 0,
+     "E_Training_Hours": 2.0,
+     "source_formulas": [
+      "=Locations!B61",
+      "=Locations!Q61",
+      "=Locations!R61",
+      "=Locations!M61",
+      "=Locations!P63",
+      "=Locations!S61"
+     ]
+    },
+    {
+     "row": 3,
+     "key": 728336476,
+     "key_type": "number",
+     "isolved_name": "Hollowell, Gale",
+     "E_Regular_Hours": 62.62,
+     "E_Overtime_1_5_Hours": 0.0,
+     "E_Cash_Tips_Recd_Dollars": 962.32,
+     "E_Comm_Sales_Dollars": 0.0,
+     "E_Rayz_Paid_Time_Hours": 0,
+     "E_Training_Hours": 5.0,
+     "source_formulas": [
+      "=Locations!B62",
+      "=Locations!Q62",
+      "=Locations!R62",
+      "=Locations!M62",
+      "=Locations!P64",
+      "=Locations!S62"
+     ]
+    }
+   ]
+  }
+ },
+ "workbook_location_totals_cached": {
+  "Utica": {
+   "E": 9780.05,
+   "N": 5524.5946,
+   "formula_E": "=SUM(E3:E6)"
+  },
+  "Moline": {
+   "E": 16895.3,
+   "N": 6852.6999,
+   "formula_E": "=SUM(E13:E19)"
+  },
+  "Kimberly": {
+   "E": 13212.48,
+   "N": 7699.3663,
+   "formula_E": "=SUM(E24:E28)"
+  },
+  "Rock Island": {
+   "E": 4623.2,
+   "N": 2745.2341,
+   "formula_E": "=SUM(E34:E36)"
+  },
+  "Silvis": {
+   "E": 3655.3300000000004,
+   "N": 2047.4970000000003,
+   "formula_E": "=SUM(E43:E44)"
+  },
+  "Coralville": {
+   "E": 5775.24,
+   "N": 3570.7655999999997,
+   "formula_E": "=SUM(E51:E52)"
+  },
+  "LeClaire": {
+   "E": 3407.0699999999997,
+   "N": 606.6266999999999,
+   "formula_E": "=SUM(E61:E62)"
+  }
+ },
+ "workbook_total_ranges": {
+  "Utica": {
+   "E": [
+    3,
+    6
+   ],
+   "N": [
+    3,
+    8
+   ]
+  },
+  "Moline": {
+   "E": [
+    13,
+    18
+   ],
+   "N": [
+    13,
+    18
+   ]
+  },
+  "Kimberly": {
+   "E": [
+    24,
+    28
+   ],
+   "N": [
+    24,
+    28
+   ]
+  },
+  "Rock Island": {
+   "E": [
+    34,
+    36
+   ],
+   "N": [
+    34,
+    36
+   ]
+  },
+  "Silvis": {
+   "E": [
+    43,
+    44
+   ],
+   "N": [
+    43,
+    44
+   ]
+  },
+  "Coralville": {
+   "E": [
+    51,
+    52
+   ],
+   "N": [
+    51,
+    52
+   ]
+  },
+  "LeClaire": {
+   "E": [
+    61,
+    62
+   ],
+   "N": [
+    61,
+    61
+   ]
+  }
+ },
+ "workbook_summary_cached": {
+  "Utica": {
+   "service_sales": 9780.05,
+   "employee_cost": 5524.5946,
+   "gross_profit": 4255.455399999999
+  },
+  "Moline": {
+   "service_sales": 16895.3,
+   "employee_cost": 6852.6999,
+   "gross_profit": 10042.6001
+  },
+  "Kimberly": {
+   "service_sales": 13212.48,
+   "employee_cost": 7699.3663,
+   "gross_profit": 5513.1137
+  },
+  "Rock Island": {
+   "service_sales": 4623.2,
+   "employee_cost": 2745.2341,
+   "gross_profit": 1877.9658999999997
+  },
+  "Silvis": {
+   "service_sales": 3655.3300000000004,
+   "employee_cost": 2047.4970000000003,
+   "gross_profit": 1607.833
+  },
+  "LeClaire": {
+   "service_sales": 3407.0699999999997,
+   "employee_cost": 606.6266999999999,
+   "gross_profit": 2800.4433
+  },
+  "Coralville": {
+   "service_sales": 5775.24,
+   "employee_cost": 3570.7655999999997,
+   "gross_profit": 2204.4744
+  },
+  "Total": {
+   "service_sales": 57348.67,
+   "employee_cost": 29046.7842,
+   "gross_profit": 28301.885799999996
+  }
+ },
+ "corrected_location_totals_all_rows": {
+  "Utica": {
+   "hours": 229.73000000000002,
+   "hourly_total": 5112.9800000000005,
+   "service": 10327.21,
+   "commission": 3989.2835999999998,
+   "net_comm": 411.6145999999999,
+   "total_wages": 5524.5946,
+   "tips": 1881.45,
+   "gross_profit": 4802.615399999999
+  },
+  "Moline": {
+   "hours": 346.48,
+   "hourly_total": 5557.42,
+   "service": 16895.3,
+   "commission": 6769.8027,
+   "net_comm": 1295.2798999999998,
+   "total_wages": 6852.6999,
+   "tips": 2882.16,
+   "gross_profit": 10042.6001
+  },
+  "Kimberly": {
+   "hours": 336.58,
+   "hourly_total": 7682.5075,
+   "service": 13212.48,
+   "commission": 5862.7134,
+   "net_comm": 16.8588,
+   "total_wages": 7699.3663,
+   "tips": 1865.41,
+   "gross_profit": 5513.1137
+  },
+  "Rock Island": {
+   "hours": 215.15,
+   "hourly_total": 3319.5375,
+   "service": 5618.07,
+   "commission": 2171.4251,
+   "net_comm": 28.5732,
+   "total_wages": 3348.1107,
+   "tips": 3145.97,
+   "gross_profit": 2269.9592999999995
+  },
+  "Silvis": {
+   "hours": 182.14000000000001,
+   "hourly_total": 3588.6775000000002,
+   "service": 6902.42,
+   "commission": 2992.7758,
+   "net_comm": 18.122,
+   "total_wages": 3606.7995,
+   "tips": 1719.93,
+   "gross_profit": 3295.6205
+  },
+  "Coralville": {
+   "hours": 234.09,
+   "hourly_total": 5386.28,
+   "service": 8827.65,
+   "commission": 3749.5798000000004,
+   "net_comm": 157.0892,
+   "total_wages": 5406.5653999999995,
+   "tips": 1288.77,
+   "gross_profit": 3421.0846
+  },
+  "LeClaire": {
+   "hours": 87.5,
+   "hourly_total": 1725.54,
+   "service": 3407.0699999999997,
+   "commission": 1345.0443,
+   "net_comm": 196.10669999999993,
+   "total_wages": 1921.6466999999998,
+   "tips": 1327.15,
+   "gross_profit": 1485.4233
+  }
+ }
+}

@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+# Charles's real payroll golden data (names, iSolved keys, pay rates): local only, never committed
+/tests/fixtures/payroll-golden/private/
 
 # next.js
 /.next/
