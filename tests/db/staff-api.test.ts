@@ -301,6 +301,13 @@ describe("pop-ups", () => {
   });
 });
 
+/** The seed puts whoever's shift has already started today on the clock (and leaves one shift yesterday open), so a test that starts off the clock voids those punches first. */
+const offTheClock = (staffId: string) =>
+  m.db.db
+    .update(S().timePunches)
+    .set({ voidedAt: new Date() })
+    .where(m.drizzle.and(eq(S().timePunches.staffId, staffId), m.drizzle.isNull(S().timePunches.voidedAt), m.drizzle.gte(S().timePunches.at, m.time.startOfLocalDay(m.time.addDays(today, -1)))));
+
 describe("the time clock", () => {
   it("punches from the phone with the front-desk QR code or the NFC sticker, with breaks; no proof, no punch", async () => {
     const { clockQrCode, clockProofUrl, nfcTagUrl } = await import("@/server/clock-codes");
@@ -308,6 +315,7 @@ describe("the time clock", () => {
       .update(S().shops)
       .set({ timeClock: { ...coralvilleClock, methods: ["qr", "nfc"] } })
       .where(eq(S().shops.id, shop.coralville));
+    await offTheClock(ids.makenna);
     const t = await login("makenna@rayz.test");
     const over = await call("GET", "clock", { token: t.accessToken });
     expect(over.status).toBe(200);
@@ -428,6 +436,7 @@ describe("the time clock", () => {
     const qr = await call("GET", "clock/kiosk/qr", { token: shopLogin.accessToken, headers: device });
     expect(qr.json.url).toContain(`shop=${shop.coralville}`);
 
+    await offTheClock(ids.makenna);
     expect((await call("POST", "clock/kiosk/status", { token: shopLogin.accessToken, headers: device, body: { staffId: ids.makenna, pin: "1357" } })).status).toBe(400);
     const st = await call("POST", "clock/kiosk/status", { token: shopLogin.accessToken, headers: device, body: { staffId: ids.makenna, pin: PIN } });
     expect(st.json).toMatchObject({ state: "off" });
