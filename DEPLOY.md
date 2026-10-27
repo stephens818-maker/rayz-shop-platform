@@ -334,6 +334,13 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - For the staff app's universal links and App Links, set `STAFF_IOS_BUNDLE_ID` (with `APPLE_TEAM_ID`), `STAFF_ANDROID_PACKAGE` and `STAFF_ANDROID_CERT_SHA256`, then check `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`.
    - Under **Payroll → Setup → Employers**, enter each employer's iSolved company code and the last 4 of its EIN. The Tips paid export stays a draft until they're set.
    - Each January, record the tax form check on **Tips → Payout tracker** after importing the 1099 exclusions in Stripe.
+43. Payroll review fixes (migration `core_0110_payroll_review`): it adds `tip_declarations` (append-only, enforced by a trigger), each employee's `tipped_occupation_code`, the `after_payout` tip absorption kind, and view and export of the W-2 codes and 45B reports for Brand Admin and Bookkeeper. Nothing else changes for anyone's access.
+   - Before the first payroll after deploy, check **Payroll → Setup → Settings → Brand pay calendar** matches iSolved (default: Sun 2026-10-18 is period 23, bi-weekly, checks 6 days after the period ends).
+   - Squire-era tips are left out of payroll from now on. If a period that included Squire tickets was already sent to iSolved, compare its file with the Payroll Report's lock flags before the next run.
+   - **Tip payout settings → Staff payouts → A tip refunded after it was paid** is the shop's cost by default. Switch it to deduct only with counsel's sign-off and each employee's written consent (Illinois WPCA, Iowa 91A).
+   - Ask the CPA and iSolved to confirm: the iSolved earning for declared cash tips (default `E_Cash Tips Declared_Dollars`); that the electronic declaration with its attestation replaces Form 4070 for the brand; the W-2 box 12 codes (TP for qualified tips, TT for qualified overtime) and whether the overtime premium is reported at the base rate or the blended regular rate (the report shows both); and the 45B wage floor ($5.15 an hour) and start date (2026-01-01). The codes, floor and date are in **Payroll → Setup → Settings**.
+   - Enter each barber's Treasury tipped occupation code under **Payroll → Setup → Barbers**. Front desk and others without one aren't reported as having qualified tips.
+   - The monthly declaration reminder runs with the daily notifications cron; nothing to schedule.
 
 ## Running the production build locally
 

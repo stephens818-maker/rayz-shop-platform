@@ -936,6 +936,24 @@ Stripe can't transfer from a shop's connected account to a barber's, so the mone
 - [ ] Embedded components on the web: My banking still uses the Account Link, since `@stripe/connect-js` isn't installed. The staff app uses the Account Session.
 - [ ] A run against real Stripe test mode (recipient accounts, the Account Session, the webhooks); the tests use a stand-in client.
 
+## 41. Payroll review (Claude bot: SB-C1, C2, C3, C6, C7, I2)
+
+README "Payroll reports → Payroll review fixes" has the details. Migration `core_0110_payroll_review`.
+
+- [x] SB-C1: imported Squire tickets and `squire_import` payments are left out of payroll sales, payroll tips, the Payroll Report, the iSolved files and the tip ledger; they're shown only in a reference table on the Tips report.
+- [x] SB-C1: a locked period stays as exported: the snapshot's input hash, drift and late-import flags, and no reassigning tickets or declaring tips in it.
+- [x] SB-C2: a tip refunded after it was paid is a flagged adjustment, never takes the payable below zero, and is the shop's cost by default (a brand setting, with the IL WPCA and Iowa 91A warning on deducting).
+- [x] SB-I2: the brand pay calendar anchor is a payroll setting; `PAYROLL_ANCHOR_END` is gone.
+- [x] SB-C3: cash tip declarations in the staff app (`/api/staff/v1/tips/declarations`), at clock-out (staff app and web), on My tips, and by a manager on the timesheet with a reason. Append-only with corrections, a monthly reminder and close, refused in locked periods. They feed the payroll summary, the tips report and their own iSolved column.
+- [x] SB-C7: Reports → Payroll → W-2 tip and overtime codes: qualified tips (TP) and the overtime premium (TT) per employer and employee, with each employee's tipped occupation code.
+- [x] SB-C6: Reports → Payroll → FICA tip credit (45B): tips above the $5.15 an hour floor and the estimated credit, per pay period, employee and employer.
+- [x] Tests: `tests/db/payroll-review.test.ts`, `tests/db/payroll-reports.test.ts`, `tests/db/staff-api.test.ts`, `tests/tip-declarations.test.ts`, `tests/payroll-engine.test.ts`, `tests/staff-payouts.test.ts`.
+
+**Not done yet:**
+- [ ] The CPA's and iSolved's confirmation of the declared tips earning, the electronic declaration, the TP and TT codes and premium method, and the 45B floor and start date (DEPLOY step 43).
+- [ ] The staff app's own screens for declarations and the clock-out field, by the Rayz App builder: the API and its OpenAPI entries are ready.
+- [ ] A filed W-2 or Form 8846: the reports are figures for the CPA and iSolved, not filings.
+
 ## Deferred by decision
 
 - I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15, 35 and 40) don't move money yet: Stripe can't transfer from a shop's connected account to a barber's, and the redesign as separate charges and transfers (ST-C11) waits for Charles.
