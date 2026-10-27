@@ -24,6 +24,11 @@ function platformConfig(p: AppPlatform) {
   return { minVersion: env(`STAFF_APP_${P}_MIN_VERSION`), latestVersion: env(`STAFF_APP_${P}_LATEST_VERSION`), storeUrl: env(`STAFF_APP_${P}_STORE_URL`) };
 }
 
+export const staffStoreUrls = () => ({ ios: platformConfig("ios").storeUrl, android: platformConfig("android").storeUrl });
+
+/** Who staff reach about the app: STAFF_APP_SUPPORT_EMAIL / _PHONE, else the brand's support contact. */
+export const staffSupport = () => ({ email: env("STAFF_APP_SUPPORT_EMAIL") ?? env("APP_SUPPORT_EMAIL"), phone: env("STAFF_APP_SUPPORT_PHONE") ?? env("APP_SUPPORT_PHONE") });
+
 export const staffSwitches = () => ({
   clock: env("STAFF_APP_CLOCK_OFF") !== "true",
   stripePayouts: stripePayoutsOn(),
@@ -78,7 +83,7 @@ export function staffAppConfig(req: Request) {
       support: `${base}/staff-app/support`,
     },
     legal: STAFF_LEGAL_VERSIONS,
-    support: { email: env("STAFF_APP_SUPPORT_EMAIL") ?? env("APP_SUPPORT_EMAIL"), phone: env("STAFF_APP_SUPPORT_PHONE") ?? env("APP_SUPPORT_PHONE") },
+    support: staffSupport(),
     environment: demoMode() ? ("demo" as const) : process.env.VERCEL_ENV === "production" ? ("production" as const) : ("development" as const),
   };
 }

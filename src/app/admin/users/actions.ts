@@ -8,6 +8,7 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { authorize } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
+import { sendStaffAppInvite, signOutOfStaffApp } from "@/server/staff-api/sign-in";
 import { accountOf, inviteUser, removeUser, resendInvite, resetTwoFactor, revokeInvite, setTwoFactorRequired, setUserActive, updateUserProfile } from "@/server/users";
 
 const MANAGE = "permissions.manage" as const;
@@ -84,6 +85,22 @@ export async function removeUserAction(staffId: string, confirm: string) {
 export async function setTwoFactorRequiredAction(staffId: string, on: boolean) {
   return safe(async () => {
     await setTwoFactorRequired(await authorize(MANAGE, NO), Id.parse(staffId), z.boolean().parse(on));
+    revalidate();
+    return null;
+  });
+}
+
+export async function sendAppInviteAction(staffId: string, channel: "sms" | "email" | null) {
+  return safe(async () => {
+    const r = await sendStaffAppInvite(await authorize(MANAGE, NO), Id.parse(staffId), z.enum(["sms", "email"]).nullable().parse(channel));
+    revalidate();
+    return r;
+  });
+}
+
+export async function appSignOutAction(staffId: string) {
+  return safe(async () => {
+    await signOutOfStaffApp(await authorize(MANAGE, NO), Id.parse(staffId));
     revalidate();
     return null;
   });

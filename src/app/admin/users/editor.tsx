@@ -4,7 +4,9 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
 import {
+  appSignOutAction,
   inviteUserAction,
+  sendAppInviteAction,
   removeUserAction,
   resendInviteAction,
   resetTwoFactorAction,
@@ -37,7 +39,7 @@ function InviteLink({ link }: { link: string | null }) {
   if (!link) return null;
   return (
     <Notice tone="amber">
-      Email isn&apos;t set up, so the invite wasn&apos;t sent. Give them this link yourself; it works once:{" "}
+      The invite couldn&apos;t be sent (email or texting isn&apos;t set up). Give them this link yourself; it works once:{" "}
       <code className="select-all break-all rounded bg-white/70 px-1">{link}</code>
     </Notice>
   );
@@ -208,6 +210,10 @@ export interface AccountView {
   readOnly: string | null;
   self: boolean;
   mayGiveRemote: boolean;
+  /** Phones signed in to the staff app as them. */
+  appSessions: number;
+  hasPhone: boolean;
+  hasEmail: boolean;
 }
 
 function Row({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
@@ -242,6 +248,26 @@ export function AccountControls({ a }: { a: AccountView }) {
             </Button>
             <Button size="sm" variant="secondary" disabled={off} onClick={() => run(() => revokeInviteAction(a.staffId))}>
               Cancel invite
+            </Button>
+          </Row>
+        )}
+        {a.status !== "deactivated" && (
+          <Row
+            title="Ray'z Staff app"
+            hint={`${a.appSessions ? `Signed in on ${a.appSessions} phone${a.appSessions === 1 ? "" : "s"}.` : "Not signed in on any phone."} An invite texts or emails a link that signs them in to the app once (3 days). Signing out ends every phone's session and notifications at once, without deactivating them.`}
+          >
+            {a.hasPhone && (
+              <Button size="sm" variant="secondary" disabled={off} onClick={() => run(() => sendAppInviteAction(a.staffId, "sms"), (d) => setLink(d.link))}>
+                Text app invite
+              </Button>
+            )}
+            {a.hasEmail && (
+              <Button size="sm" variant="secondary" disabled={off} onClick={() => run(() => sendAppInviteAction(a.staffId, "email"), (d) => setLink(d.link))}>
+                Email app invite
+              </Button>
+            )}
+            <Button size="sm" variant="secondary" disabled={off || !a.appSessions} onClick={() => run(() => appSignOutAction(a.staffId))}>
+              Sign out of the app everywhere
             </Button>
           </Row>
         )}

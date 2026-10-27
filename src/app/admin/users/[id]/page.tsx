@@ -11,6 +11,7 @@ import { formatDateTime } from "@/lib/time";
 import { activeOwnerCount } from "@/server/auth/access";
 import { guardPage, staffGrantor } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
+import { listStaffAppSessions } from "@/server/staff-api/sign-in";
 import { inTenant } from "@/server/tenant";
 import { accountOf } from "@/server/users";
 import { PersonAccessSection } from "../../permissions/people/[id]/access-section";
@@ -82,6 +83,9 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
                 readOnly,
                 self,
                 mayGiveRemote: g.permissions.has("access.remote"),
+                appSessions: (await listStaffAppSessions(id, null)).length,
+                hasPhone: !!row.phone,
+                hasEmail: !!row.email,
               }}
             />
           </Card>
