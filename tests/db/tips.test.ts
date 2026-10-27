@@ -6,7 +6,7 @@
 import Stripe from "stripe";
 import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { Mods, actor, loadModules } from "./setup";
+import { Mods, actor, agreeToStripeDeposits, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -359,6 +359,7 @@ describe("Stripe payouts and webhooks", () => {
     await expect(accounts.setPayoutChoice(c.id, { method: "stripe", instant: true }, actor)).rejects.toThrow(/Accept the fee/);
     await accounts.setPayoutChoice(c.id, { method: "stripe", instant: true, acceptInstantFee: accounts.currentInstantFeeTerms() }, actor);
     expect((await accounts.staffAccount(c.id))!).toMatchObject({ instant: true, instantFeeTerms: accounts.currentInstantFeeTerms() });
+    await agreeToStripeDeposits(c.id);
     await tipSale(sh.id, c.id, 2500, card);
     await tl.saveShopTipSettings(sh.id, { schedule: "manual", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "cash" }, actor);
     const r = await tp.buildBatch({ shopId: sh.id, kind: "manual", cutoff: today, actor });
@@ -377,6 +378,7 @@ describe("Stripe payouts and webhooks", () => {
       .insert(s().staffPayoutAccounts)
       .values({ staffId: b.id, method: "stripe", stripeAccountId: acct, simulated: false, payoutsEnabled: true, detailsSubmitted: true })
       .onConflictDoUpdate({ target: s().staffPayoutAccounts.staffId, set: { method: "stripe", stripeAccountId: acct, simulated: false, payoutsEnabled: true, detailsSubmitted: true } });
+    await agreeToStripeDeposits(b.id);
 
     const one = await inFlight(sh.id, b.id, 1000, 1);
     expect((await connectEvent("payout.paid", { id: "po_test_tip_1", object: "payout", status: "paid", metadata: { tipPayoutId: one.payoutId } }, acct)).status).toBe(200);
@@ -519,6 +521,8 @@ describe("Stripe payouts and webhooks", () => {
 describe("payroll export shows tips already paid", () => {
   it("tips paid outside payroll go to iSolved as received; tips paid through payroll get their own column and are locked as paid", async () => {
     const { shop: sh, barbers: [a, c] } = await barbers("rock-island", ["Garrett", "Mercedez"]);
+    await m.db.db.update(s().brandSettings).set({ staffPayouts: { ...savedPayouts, reversalRule: "full_refund_in_window", reversalWindowDays: 7, tipsOnPaycheck: true } });
+    onTestFinished(async () => void (await m.db.db.update(s().brandSettings).set({ staffPayouts: { ...savedPayouts, reversalRule: "full_refund_in_window", reversalWindowDays: 7 } })));
     await accounts.setPayoutChoice(a.id, { method: "payroll", instant: false }, actor);
     await tipSale(sh.id, a.id, 800, card);
     await tipSale(sh.id, c.id, 600, cash);

@@ -117,6 +117,11 @@ export const PayoutMethodBody = z.object({
   acceptInstantFee: z.string().max(200).nullish().describe("Turning instant payouts on: the fee text they were shown (GET /banking instant.fee.terms), exactly. Needed once per fee where the brand asks for it."),
 });
 
+export const DepositConsentBody = z.object({
+  agree: z.boolean().describe("true agrees, false withdraws"),
+  version: z.string().max(40).nullish().describe("Agreeing: the wording's version they were shown (GET /banking depositConsent.version), exactly"),
+});
+
 export const SeenBody = z.object({ ids: z.array(z.uuid()).max(50) });
 
 export const DeviceBody = z.object({

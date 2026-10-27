@@ -124,7 +124,7 @@ describe("every route is guarded", () => {
     expect(open.sort()).toEqual(
       ["POST /auth/login", "POST /auth/login/code", "POST /auth/code/start", "POST /auth/code/verify", "GET /auth/invite", "POST /auth/invite/accept", "POST /auth/refresh", "POST /auth/logout", "GET /config", "POST /clock/kiosk/pair"].sort(),
     );
-    for (const p of ["/banking", "/banking/external-accounts", "/banking/onboarding-link", "/banking/dashboard-link", "/banking/method"])
+    for (const p of ["/banking", "/banking/external-accounts", "/banking/onboarding-link", "/banking/dashboard-link", "/banking/method", "/banking/deposit-consent"])
       expect(Object.values(doc.paths[p])[0].description, p).toMatch(/403 .*FEATURE_STAFF_STRIPE_PAYOUTS=false/);
     const files = STAFF_ROUTE_FILES.map(routePathOf);
     for (const p of ["me/calendar", "me/timecard", "me/earnings", "me/payout-setup", "clients/[id]", "timecards/[id]/approve", "shops/[id]/waitlist", "sales", "manager/board", "config"]) expect(files).toContain(p);

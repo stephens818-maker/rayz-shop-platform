@@ -215,6 +215,7 @@ export const TABLES: Record<string, Coverage> = {
   tax_form_checks: LOG,
   tip_absorptions: PAY,
   tip_declarations: is("record", "Cash tips an employee declared, with their attestation"),
+  tip_deposit_consents: is("person", "One employee's Stripe tip deposit consents and withdrawals, with the wording they saw"),
   tip_ledger: PAY,
   tip_payout_batches: PAY,
   tip_payout_periods: PAY,

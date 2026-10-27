@@ -31,8 +31,10 @@ import {
   StaffPayoutAccount,
   accountDestination,
   currentInstantFeeTerms,
+  depositConsentView,
   externalAccountsView,
   refreshStaffAccount,
+  setDepositConsent,
   setPayoutChoice,
   simulateDestinationChange,
   simulateStaffOnboarding,
@@ -204,12 +206,13 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
   const shopRows = await myShops(me);
   if (o.refresh) await refreshStaffAccount(me).catch(() => null);
   const ids = shopRows.map((s) => s.id);
-  const [{ policy, byShop, policyOf }, acct, planned, waiting, cfg] = await Promise.all([
+  const [{ policy, byShop, policyOf }, acct, planned, waiting, cfg, consent] = await Promise.all([
     shopTipConfigs(ids),
     staffAccount(me),
     tipOverrides([me]),
     waitingForSetup([me]),
     staffPayoutConfig(),
+    depositConsentView(me),
   ]);
   const state = staffAccountState(acct);
   const account = staffAccountStatus(acct);
@@ -252,7 +255,14 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
       acceptedAt: acct?.instantFeeAcceptedAt?.toISOString() ?? null,
     },
     choice: { method: acct?.method ?? null, instant: !!acct?.instant, instantEligible: !!acct?.instantEligible },
-    policy: { methods: policy.methods, employeeChooses: policy.employeeChooses, instantAllowed: policy.instantAllowed, instantFeePassedOn: policy.instantFeePassedOn },
+    depositConsent: { version: consent.version, text: consent.text, agreed: consent.agreed, agreedAt: consent.agreedAt?.toISOString() ?? null, needsRenewal: consent.needsRenewal },
+    policy: {
+      methods: policy.methods.filter((m) => m !== "payroll" || cfg.tipsOnPaycheck || acct?.method === "payroll"),
+      employeeChooses: policy.employeeChooses,
+      instantAllowed: policy.instantAllowed,
+      instantFeePassedOn: policy.instantFeePassedOn,
+      tipsOnPaycheck: cfg.tipsOnPaycheck && policy.methods.includes("payroll"),
+    },
     shops: shopRows.map((s) => {
       const method = effectiveMethod(byShop.get(s.id)!, policyOf(s.id), acct?.method ?? null, planned.get(me)?.method);
       return { shopId: s.id, shop: s.name, method, methodLabel: METHOD_LABEL[method] };
@@ -325,6 +335,11 @@ export async function dashboardLink(ctx: StaffAppContext) {
   const url = await staffDashboardUrl(ctx.staff.id);
   if (!url) throw new AppError("conflict", "Stripe didn't open your payout dashboard. Finish setup first, or try again.");
   return { url, banking: null };
+}
+
+export async function setMyDepositConsent(ctx: StaffAppContext, v: { agree: boolean; version?: string | null }) {
+  await setDepositConsent(ctx.staff.id, { ...v, source: "staff_app" }, ctx.actor);
+  return bankingView(ctx);
 }
 
 export async function setMyPayoutMethod(ctx: StaffAppContext, v: { method: TipMethod | null; instant: boolean; acceptInstantFee?: string | null }) {

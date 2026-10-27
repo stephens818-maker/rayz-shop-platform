@@ -439,6 +439,7 @@ describe("tips, earnings, payouts and banking", () => {
       expect(r.json.error.details).toMatchObject({ feature: "staff_stripe_payouts", enabled: false });
     }
     expect((await call("PUT", "banking/method", { token: t.accessToken, body: { method: "stripe", instant: true } })).status).toBe(403);
+    expect((await call("PUT", "banking/deposit-consent", { token: t.accessToken, body: { agree: true, version: "x" } })).status).toBe(403);
   });
 
   it("sets up their own debit card or bank through Stripe's page (on by default), keeping the account id, status and last 4 only", async () => {
@@ -492,6 +493,26 @@ describe("tips, earnings, payouts and banking", () => {
     const [row] = await m.db.db.select().from(S().staffPayoutAccounts).where(eq(S().staffPayoutAccounts.staffId, ids.makenna));
     const stored = Object.values(row).filter((v) => typeof v === "string") as string[];
     expect(stored.some((v) => /^\d{8,}$/.test(v))).toBe(false);
+  });
+
+  it("agrees to and withdraws from Stripe tip deposits with the wording shown (ST-C17); tips on the paycheck isn't offered by default", async () => {
+    const t = await login("makenna@rayz.test");
+    const before = (await call("GET", "banking", { token: t.accessToken })).json;
+    expect(before.depositConsent).toMatchObject({ version: expect.any(String), text: expect.stringMatching(/voluntary/), needsRenewal: false });
+    expect(before.policy.tipsOnPaycheck).toBe(false);
+    expect(before.policy.methods).not.toContain("payroll");
+    if (before.depositConsent.agreed) expect((await call("PUT", "banking/deposit-consent", { token: t.accessToken, body: { agree: false } })).json.depositConsent.agreed).toBe(false);
+
+    const stale = await call("PUT", "banking/deposit-consent", { token: t.accessToken, body: { agree: true, version: "2020-01-01" } });
+    expect(stale.status).toBe(400);
+    expect(stale.json.error.details).toEqual({ reason: "consent_version", version: before.depositConsent.version });
+    const yes = await call("PUT", "banking/deposit-consent", { token: t.accessToken, body: { agree: true, version: before.depositConsent.version } });
+    expect(yes.status, JSON.stringify(yes.json)).toBe(200);
+    expect(yes.json.depositConsent).toMatchObject({ agreed: true, agreedAt: expect.any(String) });
+    const [kept] = await m.db.db.select().from(S().tipDepositConsents).where(eq(S().tipDepositConsents.staffId, ids.makenna)).orderBy(m.drizzle.desc(S().tipDepositConsents.createdAt)).limit(1);
+    expect(kept).toMatchObject({ action: "granted", source: "staff_app", version: before.depositConsent.version });
+
+    expect((await call("PUT", "banking/method", { token: t.accessToken, body: { method: "payroll", instant: false } })).status).toBe(403);
   });
 });
 

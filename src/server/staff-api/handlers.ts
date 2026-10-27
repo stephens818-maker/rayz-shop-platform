@@ -34,7 +34,7 @@ import {
   withdrawTimeOff,
 } from "./front";
 import { StaffAppContext, guardedStaff, shopOf, signInRoute, staffRoute } from "./http";
-import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyPayoutMethod } from "./money";
+import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyDepositConsent, setMyPayoutMethod } from "./money";
 import { myPeriodEarnings, myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
 import { addAppointmentNote, appointmentNotes, dayRange, myAppointment, myAppointments, mySchedule } from "./schedule";
@@ -523,6 +523,12 @@ export const postDashboardLink = banking(async (_req, ctx) => json(await dashboa
 export const putPayoutMethod = banking(async (req, ctx) => {
   const v = await body(req, S.PayoutMethodBody);
   return json(await setMyPayoutMethod(ctx, v));
+});
+
+/** PUT /banking/deposit-consent */
+export const putDepositConsent = banking(async (req, ctx) => {
+  const v = await body(req, S.DepositConsentBody);
+  return json(await setMyDepositConsent(ctx, v));
 });
 
 // ───────────────────────────── Manager: timecards (ST-C5, ST-I7) ─────────────────────────────

@@ -50,12 +50,13 @@ describe("staff payout settings", () => {
       tipDate: "sale_date",
       taxForms: "will_not_file",
       instantFeeAck: true,
+      tipsOnPaycheck: false,
     });
   });
 
   it("keeps good values and drops bad ones to the default", () => {
     expect(staffPayoutSettings({ dashboard: "express", reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12 })).toMatchObject({ dashboard: "express", reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12 });
-    expect(staffPayoutSettings({ dashboard: "full", reversalWindowDays: 500, owedVia: "twice", taxCheckMonth: 13, taxForms: "file", instantFeeAck: "yes" })).toEqual(DEFAULT_STAFF_PAYOUT_SETTINGS);
+    expect(staffPayoutSettings({ dashboard: "full", reversalWindowDays: 500, owedVia: "twice", taxCheckMonth: 13, taxForms: "file", instantFeeAck: "yes", tipsOnPaycheck: "on" })).toEqual(DEFAULT_STAFF_PAYOUT_SETTINGS);
     expect(staffPayoutSettings({ reversalWindowDays: 2.5 }).reversalWindowDays).toBe(7);
   });
 

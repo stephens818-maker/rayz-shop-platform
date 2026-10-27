@@ -7,7 +7,7 @@
  */
 import Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { Mods, actor, loadModules } from "./setup";
+import { Mods, actor, agreeToStripeDeposits, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -225,6 +225,7 @@ describe("tips wait, never lost, until onboarding is done", () => {
     const jessica = await who("Jessica");
     await contact(jessica, "jessica.tips@rayz.test", null);
     await accounts.setPayoutChoice(jessica, { method: "stripe", instant: false }, actor);
+    await agreeToStripeDeposits(jessica);
     await tipSale(coralville.id, jessica, 1500);
     const one = await tp.buildBatch({ shopId: coralville.id, kind: "manual", cutoff: today, actor });
     const p1 = await payoutOf(one.batchId, jessica);
@@ -261,6 +262,7 @@ describe("tips wait, never lost, until onboarding is done", () => {
     const coralville = await shop("coralville");
     const makenna = await who("Makenna");
     await accounts.setPayoutChoice(makenna, { method: "stripe", instant: false }, actor);
+    await agreeToStripeDeposits(makenna);
     await tipSale(coralville.id, makenna, 900);
     const b = await tp.buildBatch({ shopId: coralville.id, kind: "manual", cutoff: today, actor });
     const p = await payoutOf(b.batchId, makenna);
@@ -286,6 +288,7 @@ describe("tips wait, never lost, until onboarding is done", () => {
       target: s().staffPayoutAccounts.staffId,
       set: { method: "stripe", stripeAccountId: acct, simulated: false, payoutsEnabled: false, detailsSubmitted: false },
     });
+    await agreeToStripeDeposits(kate.id);
     await tipSale(utica.id, kate.id, 1100);
     const b = await tp.buildBatch({ shopId: utica.id, kind: "manual", cutoff: today, actor });
     const p = await payoutOf(b.batchId, kate.id);

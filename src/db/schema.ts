@@ -2869,10 +2869,14 @@ export const staffPayoutAccounts = pgTable(
     /** The instant payout fee, in words, the employee accepted before instant payouts turned on; a new fee needs accepting again. */
     instantFeeTerms: text("instant_fee_terms"),
     instantFeeAcceptedAt: ts("instant_fee_accepted_at"),
+    /** The Stripe tip deposit consent wording they last agreed to (ST-C17), and when; null once withdrawn. History is tip_deposit_consents. */
+    depositConsentVersion: text("deposit_consent_version"),
+    depositConsentAt: ts("deposit_consent_at"),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (t) => [
+    check("staff_payout_accounts_deposit_consent", sql`(${t.depositConsentVersion} is null) = (${t.depositConsentAt} is null)`),
     check("staff_payout_accounts_method", sql`${t.method} is null or ${t.method} in ('cash', 'stripe', 'payroll')`),
     check("staff_payout_accounts_destination_type", sql`${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')`),
     check("staff_payout_accounts_last4", sql`${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$'`),
@@ -2881,6 +2885,26 @@ export const staffPayoutAccounts = pgTable(
     check("staff_payout_accounts_dashboard", sql`${t.dashboard} is null or ${t.dashboard} in ('none', 'express')`),
     check("staff_payout_accounts_service_agreement", sql`${t.serviceAgreement} is null or ${t.serviceAgreement} in ('recipient', 'full')`),
     check("staff_payout_accounts_tax_forms", sql`${t.taxForms} in ('will_not_file')`),
+  ],
+);
+
+/** Every grant and withdrawal of an employee's Stripe tip deposit consent, with the wording they saw. Append-only. */
+export const tipDepositConsents = pgTable(
+  "tip_deposit_consents",
+  {
+    id: id(),
+    staffId: uuid("staff_id").notNull().references(() => staff.id),
+    action: text("action").$type<"granted" | "revoked">().notNull(),
+    version: text("version").notNull(),
+    text: text("text").notNull(),
+    source: text("source").$type<"web" | "staff_app">().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("tip_deposit_consents_action", sql`${t.action} in ('granted', 'revoked')`),
+    check("tip_deposit_consents_source", sql`${t.source} in ('web', 'staff_app')`),
+    check("tip_deposit_consents_text", sql`char_length(${t.text}) <= 2000`),
+    index("tip_deposit_consents_staff_idx").on(t.staffId, t.createdAt),
   ],
 );
 

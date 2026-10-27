@@ -8,7 +8,8 @@
  */
 import Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { Mods, actor, loadModules } from "./setup";
+import { TIP_DEPOSIT_CONSENT_VERSION } from "@/domain/tip-deposit-consent";
+import { Mods, actor, agreeToStripeDeposits, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -141,7 +142,7 @@ const payoutsOf = (batchId: string) => m.db.db.select().from(s().tipPayouts).whe
 const ledgerOf = (saleId: string) => m.db.db.select().from(s().tipLedger).where(eq(s().tipLedger.saleId, saleId));
 
 async function activeOnStripe(staffId: string, acct: string) {
-  const row = { method: "stripe" as const, stripeAccountId: acct, simulated: false, payoutsEnabled: true, detailsSubmitted: true, transfersCapability: "active", feesPayer: "application", destinationType: "bank_account" as const, destinationLast4: "6789", destinationName: "STRIPE TEST BANK" };
+  const row = { method: "stripe" as const, stripeAccountId: acct, simulated: false, payoutsEnabled: true, detailsSubmitted: true, transfersCapability: "active", feesPayer: "application", destinationType: "bank_account" as const, destinationLast4: "6789", destinationName: "STRIPE TEST BANK", depositConsentVersion: TIP_DEPOSIT_CONSENT_VERSION, depositConsentAt: new Date() };
   await m.db.db.insert(s().staffPayoutAccounts).values({ staffId, ...row }).onConflictDoUpdate({ target: s().staffPayoutAccounts.staffId, set: row });
 }
 
@@ -356,11 +357,15 @@ describe("the account state machine from Connect webhooks (ST-C12)", () => {
     expect(await state()).toBe("restricted");
     await updated({ transfers: "active", payouts: true, due: ["individual.verification.additional_document"] });
     expect(await state()).toBe("requirements_due");
+    expect(accounts.stripeReady(await accounts.staffAccount(k))).toBe(true);
+    expect(accounts.canReceive(await accounts.staffAccount(k))).toBe(false);
+    await agreeToStripeDeposits(k);
     expect(accounts.canReceive(await accounts.staffAccount(k))).toBe(true);
     await updated({ transfers: "active", payouts: true });
     expect(await state()).toBe("active");
     expect((await event("account.application.deauthorized", { id: "ca_fake", object: "application" })).status).toBe(200);
     expect(await state()).toBe("rejected");
+    expect(accounts.stripeReady(await accounts.staffAccount(k))).toBe(false);
     expect(accounts.canReceive(await accounts.staffAccount(k))).toBe(false);
 
     const moves = await m.db.db.select().from(s().auditLog).where(and(eq(s().auditLog.action, "tips.account_state"), eq(s().auditLog.entityId, k))).orderBy(s().auditLog.at);

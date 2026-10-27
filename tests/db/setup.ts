@@ -38,3 +38,10 @@ export async function loadModules() {
 
 export type Mods = Awaited<ReturnType<typeof loadModules>>;
 export const actor = { staffId: null, label: "test" };
+
+/** The employee agrees to today's Stripe tip deposit wording, as they would on My banking (ST-C17). */
+export async function agreeToStripeDeposits(staffId: string) {
+  const { setDepositConsent } = await import("@/server/tips/accounts");
+  const { TIP_DEPOSIT_CONSENT_VERSION } = await import("@/domain/tip-deposit-consent");
+  return setDepositConsent(staffId, { agree: true, version: TIP_DEPOSIT_CONSENT_VERSION, source: "web" }, { staffId, label: "employee" });
+}

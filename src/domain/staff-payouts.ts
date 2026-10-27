@@ -61,6 +61,11 @@ export interface StaffPayoutSettings {
   taxCheckMonth: number;
   /** An employee must see and accept Stripe's instant payout fee before instant payouts turn on. */
   instantFeeAck: boolean;
+  /**
+   * Employees may pick "tips on my paycheck" (payroll) themselves instead of Stripe deposits (ST-C17).
+   * Off until Charles decides: a shop, a pay plan or the owed-tips fallback can still pay through payroll.
+   */
+  tipsOnPaycheck: boolean;
 }
 
 export const DEFAULT_STAFF_PAYOUT_SETTINGS: StaffPayoutSettings = {
@@ -75,6 +80,7 @@ export const DEFAULT_STAFF_PAYOUT_SETTINGS: StaffPayoutSettings = {
   taxForms: "will_not_file",
   taxCheckMonth: 1,
   instantFeeAck: true,
+  tipsOnPaycheck: false,
 };
 
 const pick = <T extends string>(list: readonly T[], v: unknown, d: T): T => (list.includes(v as T) ? (v as T) : d);
@@ -95,6 +101,7 @@ export function staffPayoutSettings(raw: unknown): StaffPayoutSettings {
     taxForms: pick(TAX_FORM_FILING, r.taxForms, d.taxForms),
     taxCheckMonth: int(r.taxCheckMonth, 1, 12, d.taxCheckMonth),
     instantFeeAck: typeof r.instantFeeAck === "boolean" ? r.instantFeeAck : d.instantFeeAck,
+    tipsOnPaycheck: typeof r.tipsOnPaycheck === "boolean" ? r.tipsOnPaycheck : d.tipsOnPaycheck,
   };
 }
 

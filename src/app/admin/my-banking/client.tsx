@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { Button, Field, Notice, Select } from "@/components/ui";
 import type { BankingStatus } from "@/domain/banking";
 import { METHOD_LABEL, TipMethod } from "@/domain/tips";
-import { changeDestinationAction, refreshBankingAction, setMyPayoutMethodAction, startStripeSetupAction } from "./actions";
+import { changeDestinationAction, refreshBankingAction, setDepositConsentAction, setMyPayoutMethodAction, startStripeSetupAction } from "./actions";
 
 export function PayoutChoice(p: {
   methods: TipMethod[];
@@ -115,6 +115,55 @@ export function StripeSetup({ status, simulator, hasDestination }: { status: Ban
         </p>
       )}
       {error && <Notice tone="red">{error}</Notice>}
+    </div>
+  );
+}
+
+/** Agree to or withdraw from Stripe tip deposits (ST-C17): the wording as shown, its version, and where they stand. */
+export function DepositConsent(p: { version: string; text: string; agreed: boolean; agreedAt: string | null; needsRenewal: boolean; paycheckOffered: boolean; onPaycheck: boolean }) {
+  const router = useRouter();
+  const [checked, setChecked] = useState(false);
+  const [pending, start] = useTransition();
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const act = (fn: () => Promise<{ ok: true } | { ok: false; error: string }>, done: string) =>
+    start(async () => {
+      const r = await fn();
+      setMsg(r.ok ? { ok: true, text: done } : { ok: false, text: r.error });
+      if (r.ok) {
+        setChecked(false);
+        router.refresh();
+      }
+    });
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="rounded-md bg-zinc-50 p-3 text-zinc-700 ring-1 ring-inset ring-zinc-200">{p.text}</p>
+      {p.agreed ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-emerald-700">You agreed{p.agreedAt ? ` on ${p.agreedAt}` : ""}.</span>
+          <Button size="sm" variant="secondary" disabled={pending} onClick={() => act(() => setDepositConsentAction({ agree: false }), "Withdrawn. Nothing more goes to Stripe for you.")}>
+            Withdraw
+          </Button>
+        </div>
+      ) : (
+        <>
+          {p.needsRenewal && <Notice tone="amber">The wording changed since you agreed. Read it again; until you agree, your tips wait as owed instead of going to Stripe.</Notice>}
+          <label className="flex items-start gap-2">
+            <input type="checkbox" className="mt-0.5" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+            <span>I&rsquo;ve read this and agree to Stripe tip deposits.</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button size="sm" disabled={pending || !checked} onClick={() => act(() => setDepositConsentAction({ agree: true, version: p.version }), "Thanks. Stripe deposits are on.")}>
+              Agree
+            </Button>
+            {p.paycheckOffered && !p.onPaycheck && (
+              <Button size="sm" variant="secondary" disabled={pending} onClick={() => act(() => setMyPayoutMethodAction({ method: "payroll", instant: false }), "Your tips now come with your paycheck.")}>
+                Tips on my paycheck instead
+              </Button>
+            )}
+          </div>
+        </>
+      )}
+      {msg && <span className={`text-sm ${msg.ok ? "text-emerald-700" : "text-red-600"}`}>{msg.text}</span>}
     </div>
   );
 }

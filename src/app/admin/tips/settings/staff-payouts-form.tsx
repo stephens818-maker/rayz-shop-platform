@@ -93,6 +93,15 @@ export function StaffPayoutsForm({ settings, directPayouts }: { settings: StaffP
             <span className="block text-xs text-zinc-500">Instant payouts stay off for everyone until they turn them on.</span>
           </span>
         </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-0.5" checked={s.tipsOnPaycheck} onChange={(e) => put("tipsOnPaycheck")(e.target.checked)} />
+          <span>
+            Employees can choose to get their tips on their paycheck instead of Stripe deposits
+            <span className="block text-xs text-zinc-500">
+              Off until Charles decides. Either way, nobody is paid by Stripe deposit without agreeing to it, and tips of anyone who hasn&rsquo;t agreed follow &ldquo;Tips nobody can pay directly yet&rdquo; above.
+            </span>
+          </span>
+        </label>
         {msg && <Notice tone={msg.ok ? "green" : "red"}>{msg.text}</Notice>}
         <Button disabled={pending} onClick={() => saveSetting(s)}>
           Save staff payouts

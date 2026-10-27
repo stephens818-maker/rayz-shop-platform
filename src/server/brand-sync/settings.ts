@@ -267,6 +267,7 @@ const StaffPayoutsInput = z.object({
   taxForms: z.enum(TAX_FORM_FILING),
   taxCheckMonth: z.number().int().min(1).max(12),
   instantFeeAck: z.boolean(),
+  tipsOnPaycheck: z.boolean(),
 });
 
 const messageSetting = (kind: TemplateKind) => {
@@ -542,6 +543,7 @@ export const SETTINGS: readonly SettingDef[] = [
       taxForms: "1099 tax forms",
       taxCheckMonth: "Yearly tax form check (month)",
       instantFeeAck: "Instant payouts need the fee accepted first",
+      tipsOnPaycheck: "Employees can choose tips on their paycheck",
     },
     describe: (v: StaffPayoutSettings) => ({
       "Barber's Stripe dashboard": DASHBOARD_LABEL[v.dashboard],
@@ -555,6 +557,7 @@ export const SETTINGS: readonly SettingDef[] = [
       "1099 tax forms": TAX_FORMS_LABEL[v.taxForms],
       "Yearly tax form check": `From month ${v.taxCheckMonth}`,
       "Instant payouts need the fee accepted first": onOff(v.instantFeeAck),
+      "Employees can choose tips on their paycheck": onOff(v.tipsOnPaycheck),
     }),
     audit: "tips.staff_payouts",
   }),

@@ -243,6 +243,15 @@ const OPS: Op[] = [
     permission: "tips.own",
     body: S.PayoutMethodBody,
   },
+  {
+    method: "put",
+    path: "/banking/deposit-consent",
+    tag: "Banking",
+    summary:
+      "Agree to, or withdraw from, being paid tips by Stripe deposit (ST-C17). Show depositConsent.text from GET /banking and send its version with agree true; a changed wording answers 400 with details.reason consent_version and details.version. Nothing is sent to Stripe for them without it: their Stripe payouts wait as owed. Withdrawing holds every Stripe payout not yet sent. Only the employee themselves; sends a security notice. Choosing tips on their paycheck (PUT /banking/method with payroll) is offered only where policy.tipsOnPaycheck is true.",
+    permission: "tips.own",
+    body: S.DepositConsentBody,
+  },
   { method: "get", path: "/popups", tag: "Pop-ups", summary: "Milestones they haven't seen, a clock-in reminder when their first client or shift starts within 30 minutes, and an old open shift.", permission: "Signed in" },
   { method: "post", path: "/popups/seen", tag: "Pop-ups", summary: "Milestones shown: they won't pop up again here or on the web.", permission: "Their own", body: S.SeenBody },
   { method: "get", path: "/devices", tag: "Push", summary: "Their phones registered for push.", permission: "Their own" },

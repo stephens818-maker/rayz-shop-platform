@@ -39,6 +39,7 @@ import {
   accountDestination,
   bankingActivity,
   currentInstantFeeTerms,
+  depositConsentView,
   externalAccountsView,
   refreshStaffAccount,
   staffAccount,
@@ -47,7 +48,7 @@ import {
 import { shopTipConfigs, staffPayoutConfig } from "@/server/tips/ledger";
 import { waitingForSetup } from "@/server/tips/payouts";
 import { tipOverrides } from "@/server/compensation";
-import { PayoutChoice, StripeSetup } from "./client";
+import { DepositConsent, PayoutChoice, StripeSetup } from "./client";
 
 export const metadata: Metadata = { title: "My banking" };
 
@@ -92,6 +93,10 @@ function activityText(a: Activity): string {
           ? `Payout account changed from ${destinationLabel(from)} to ${destinationLabel(to)}`
           : `Payout account set to ${destinationLabel(to)}`;
     }
+    case "tips.deposit_consent":
+      return `Agreed to Stripe tip deposits (wording of ${d.version})`;
+    case "tips.deposit_consent_withdrawn":
+      return "Withdrew from Stripe tip deposits";
     case "tips.method": {
       const m = d.method as TipMethod | null;
       return `Payout method set to ${m ? METHOD_LABEL[m] : "the shop's default"}${d.instant ? " (instant)" : ""}${d.instantFeeAccepted ? `, instant fee accepted (${d.instantFeeAccepted})` : ""}`;
@@ -136,6 +141,7 @@ export default async function MyBankingPage({
     planned,
     waitingByStaff,
     cfg,
+    consent,
   ] = await Promise.all([
     shopTipConfigs(shopRows.map((s) => s.id)),
     staffAccount(me),
@@ -143,6 +149,7 @@ export default async function MyBankingPage({
     tipOverrides([me]),
     waitingForSetup([me]),
     staffPayoutConfig(),
+    depositConsentView(me),
   ]);
   const feeTerms = currentInstantFeeTerms();
   const waiting = waitingByStaff.get(me);
@@ -201,6 +208,29 @@ export default async function MyBankingPage({
           Everyone sets up a new Stripe payout account under Ray&rsquo;z, even
           if you had one with Squire. It takes about 5 minutes.
         </Notice>
+      )}
+      {policy.methods.includes("stripe") && (
+        <Card>
+          <CardHeader
+            title="Stripe tip deposits"
+            subtitle={
+              paidByStripe
+                ? "Your agreement to be paid by Stripe deposit. Nothing is sent to Stripe for you without it."
+                : "Only needed if you're paid by Stripe."
+            }
+          />
+          <div className="p-4">
+            <DepositConsent
+              version={consent.version}
+              text={consent.text}
+              agreed={consent.agreed}
+              agreedAt={consent.agreedAt ? formatDateTime(consent.agreedAt) : null}
+              needsRenewal={consent.needsRenewal}
+              paycheckOffered={cfg.tipsOnPaycheck && policy.employeeChooses && policy.methods.includes("payroll")}
+              onPaycheck={acct?.method === "payroll"}
+            />
+          </div>
+        </Card>
       )}
       {policy.methods.includes("stripe") ? (
         <Card>
@@ -333,7 +363,7 @@ export default async function MyBankingPage({
           </ul>
           {policy.employeeChooses && (
             <PayoutChoice
-              methods={policy.methods}
+              methods={policy.methods.filter((m) => m !== "payroll" || cfg.tipsOnPaycheck || acct?.method === "payroll")}
               method={acct?.method ?? null}
               instant={!!acct?.instant}
               instantAllowed={policy.instantAllowed}

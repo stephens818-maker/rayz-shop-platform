@@ -1,7 +1,7 @@
 import type Stripe from "stripe";
 import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { auditLog, staff, staffOnboardingInvites, staffPayoutAccounts, staffShops } from "@/db/schema";
+import { auditLog, staff, staffOnboardingInvites, staffPayoutAccounts, staffShops, tipDepositConsents } from "@/db/schema";
 import {
   BANKING_STATUS_LABEL,
   BankingStatus,
@@ -16,6 +16,8 @@ import {
   storedExternalAccounts,
 } from "@/domain/banking";
 import { AccountState, accountState, bankingStatusOf, canReceiveIn, expectedTransition, instantFeeTerms } from "@/domain/staff-payouts";
+import { SETUP_HOLD_REASON } from "@/domain/staff-onboarding";
+import { CONSENT_HOLD_REASON, TIP_DEPOSIT_CONSENT_TEXT, TIP_DEPOSIT_CONSENT_VERSION, hasDepositConsent, type TipDepositConsentSource } from "@/domain/tip-deposit-consent";
 import { DEFAULT_INSTANT_FEE, METHOD_LABEL, TipMethod, parseInstantFee } from "@/domain/tips";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
@@ -69,9 +71,17 @@ export function staffAccountStatus(a: StaffPayoutAccount | null): AccountState {
 }
 
 /** Stripe can send to this account: active, or active with something due by a deadline. A simulator account never reaches real Stripe. */
-export function canReceive(a: StaffPayoutAccount | null): boolean {
+export function stripeReady(a: StaffPayoutAccount | null): boolean {
   return !!a?.stripeAccountId && a.payoutsEnabled && a.detailsSubmitted && canReceiveIn(staffAccountStatus(a));
 }
+
+/** Tips can go to this account: Stripe can send to it, and the employee agreed to today's Stripe deposit wording (ST-C17). */
+export function canReceive(a: StaffPayoutAccount | null): boolean {
+  return stripeReady(a) && hasDepositConsent(a);
+}
+
+/** Why a Stripe payout waits for the employee: their consent, or their Stripe setup. */
+export const setupHoldReason = (a: StaffPayoutAccount | null) => (stripeReady(a) && !hasDepositConsent(a) ? CONSENT_HOLD_REASON : SETUP_HOLD_REASON);
 
 /** Not set up, pending verification, ready or action needed: the seven states as the staff app and My banking show them. */
 export function staffAccountState(a: StaffPayoutAccount | null): BankingStatus {
@@ -199,8 +209,9 @@ export async function setPayoutChoice(staffId: string, v: { method: TipMethod | 
   const [policy, cfg] = await Promise.all([tipPolicy(), staffPayoutConfig()]);
   if (!policy.employeeChooses && v.method) throw new AppError("forbidden", "The brand sets how tips are paid; ask a manager.");
   if (v.method && !policy.methods.includes(v.method)) throw new AppError("bad_request", "The brand doesn't allow that payout method.");
-  const instant = v.instant && policy.instantAllowed;
   const before = await staffAccount(staffId);
+  if (v.method === "payroll" && !cfg.tipsOnPaycheck && before?.method !== "payroll") throw new AppError("forbidden", "Getting tips on your paycheck isn't offered yet; ask a manager.");
+  const instant = v.instant && policy.instantAllowed;
   const terms = currentInstantFeeTerms();
   const accepting = instant && v.acceptInstantFee === terms && before?.instantFeeTerms !== terms;
   if (instant && cfg.instantFeeAck && before?.instantFeeTerms !== terms && !accepting)
@@ -225,6 +236,68 @@ export async function setPayoutChoice(staffId: string, v: { method: TipMethod | 
       true,
     );
   }
+}
+
+// ───────────────────────────── Stripe deposit consent ─────────────────────────────
+
+/**
+ * The employee agrees to Stripe tip deposits, or withdraws (ST-C17). Only the employee themselves,
+ * for the wording they were shown (`version` must be today's). Each change is kept in
+ * tip_deposit_consents with that wording, audited, and sends a security notice. Agreeing releases
+ * payouts that waited for it; withdrawing holds every Stripe payout not yet sent, whose tips are then
+ * owed (paid through payroll at the cutoff where the brand does that).
+ */
+export async function setDepositConsent(staffId: string, v: { agree: boolean; version?: string | null; source: TipDepositConsentSource }, actor: Actor) {
+  if (actor.staffId !== staffId) throw new AppError("forbidden", "Only the employee can agree to or withdraw from Stripe tip deposits.");
+  if (v.agree && v.version !== TIP_DEPOSIT_CONSENT_VERSION) throw new AppError("bad_request", "The wording changed. Read it again, then agree.", { reason: "consent_version", version: TIP_DEPOSIT_CONSENT_VERSION });
+  const now = new Date();
+  const before = await staffAccount(staffId);
+  if (v.agree === hasDepositConsent(before)) return { changed: false };
+  await db.transaction(async (tx) => {
+    await tx.insert(tipDepositConsents).values({ staffId, action: v.agree ? "granted" : "revoked", version: TIP_DEPOSIT_CONSENT_VERSION, text: TIP_DEPOSIT_CONSENT_TEXT, source: v.source, createdAt: now });
+    const cols = v.agree ? { depositConsentVersion: TIP_DEPOSIT_CONSENT_VERSION, depositConsentAt: now } : { depositConsentVersion: null, depositConsentAt: null };
+    await tx
+      .insert(staffPayoutAccounts)
+      .values({ staffId, ...cols })
+      .onConflictDoUpdate({ target: staffPayoutAccounts.staffId, set: { ...cols, updatedAt: now } });
+    await audit(actor, v.agree ? "tips.deposit_consent" : "tips.deposit_consent_withdrawn", "staff", staffId, { version: TIP_DEPOSIT_CONSENT_VERSION, source: v.source }, null, tx);
+  });
+  const link = `${appBaseUrl()}${MY_BANKING}`;
+  await tellEmployee(
+    staffId,
+    v.agree
+      ? {
+          subject: "Security notice: you agreed to Stripe tip deposits",
+          body: `Hi ${await firstName(staffId)}, on ${formatDateTime(now)} you agreed to get your tips by direct deposit through Stripe. You can withdraw at any time in My banking. If this wasn't you, tell your manager right away: ${link}`,
+          sms: `Ray'z security notice: you agreed to Stripe tip deposits. Not you? Tell your manager now. ${link}`,
+        }
+      : {
+          subject: "Security notice: you withdrew from Stripe tip deposits",
+          body: `Hi ${await firstName(staffId)}, on ${formatDateTime(now)} you withdrew your consent to Stripe tip deposits. Nothing more is sent to Stripe for you; your tips are paid another way. If this wasn't you, tell your manager right away: ${link}`,
+          sms: `Ray'z security notice: Stripe tip deposits are off for you. Not you? Tell your manager now. ${link}`,
+        },
+    true,
+  );
+  const payouts = await import("./payouts");
+  if (v.agree) await payouts.releaseSetupHolds(staffId, now);
+  else await payouts.holdForWithdrawnConsent(staffId, now);
+  return { changed: true };
+}
+
+/** What the employee is asked to agree to, and where they stand. */
+export async function depositConsentView(staffId: string) {
+  const [a, history] = await Promise.all([
+    staffAccount(staffId),
+    db.select({ action: tipDepositConsents.action, version: tipDepositConsents.version, source: tipDepositConsents.source, at: tipDepositConsents.createdAt }).from(tipDepositConsents).where(eq(tipDepositConsents.staffId, staffId)).orderBy(desc(tipDepositConsents.createdAt)).limit(20),
+  ]);
+  return {
+    version: TIP_DEPOSIT_CONSENT_VERSION,
+    text: TIP_DEPOSIT_CONSENT_TEXT,
+    agreed: hasDepositConsent(a),
+    agreedAt: hasDepositConsent(a) ? a!.depositConsentAt : null,
+    needsRenewal: !!a?.depositConsentAt && !hasDepositConsent(a),
+    history,
+  };
 }
 
 // ───────────────────────────── Stripe ─────────────────────────────
@@ -487,6 +560,8 @@ export async function staffDashboardUrl(staffId: string): Promise<string | null>
 
 const BANKING_ACTIONS = [
   "tips.account_created",
+  "tips.deposit_consent",
+  "tips.deposit_consent_withdrawn",
   "tips.onboarding_invite",
   "tips.onboarding_reminder",
   "tips.onboarding_started",

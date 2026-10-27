@@ -7,7 +7,8 @@
  */
 import Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { Mods, actor, loadModules } from "./setup";
+import { CONSENT_HOLD_REASON, TIP_DEPOSIT_CONSENT_TEXT, TIP_DEPOSIT_CONSENT_VERSION } from "@/domain/tip-deposit-consent";
+import { Mods, actor, agreeToStripeDeposits, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -134,7 +135,7 @@ async function tipSale(shopId: string, staffId: string, tipCents: number) {
 const BANK = { id: "ba_fake_bank", type: "bank_account" as const, name: "STRIPE TEST BANK", last4: "6789", default: true, instant: false };
 const CARD = { id: "card_fake_debit", type: "card" as const, name: "Visa", last4: "5556", default: false, instant: true };
 
-/** A real (not simulator) recipient account for the employee, active, with a bank as the default and a debit card for instant payouts; instant with Stripe's fee accepted. */
+/** A real (not simulator) recipient account for the employee, active, agreed to Stripe deposits, with a bank as the default and a debit card for instant payouts; instant with Stripe's fee accepted. */
 async function readyOnStripe(staffId: string, acct: string, instant: boolean) {
   const row = {
     method: "stripe" as const,
@@ -152,6 +153,8 @@ async function readyOnStripe(staffId: string, acct: string, instant: boolean) {
     destinationLast4: "6789",
     destinationName: "STRIPE TEST BANK",
     externalAccounts: [BANK, CARD],
+    depositConsentVersion: TIP_DEPOSIT_CONSENT_VERSION,
+    depositConsentAt: new Date(),
   };
   await m.db.db.insert(s().staffPayoutAccounts).values({ staffId, ...row }).onConflictDoUpdate({ target: s().staffPayoutAccounts.staffId, set: row });
 }
@@ -320,6 +323,7 @@ describe("Connect webhooks for employees' accounts", () => {
       .insert(s().staffPayoutAccounts)
       .values({ staffId, method: "stripe", instant: true, stripeAccountId: acct, simulated: false })
       .onConflictDoUpdate({ target: s().staffPayoutAccounts.staffId, set: { method: "stripe", instant: true, stripeAccountId: acct, simulated: false } });
+    await agreeToStripeDeposits(staffId);
     fakeStripe(true);
     const res = await event(
       "account.updated",
@@ -450,5 +454,92 @@ describe("recipient accounts and no 1099s for employees (their tips are W-2 wage
     expect(lines.slice(1).every((l) => /^acct_[A-Za-z0-9_]+,NOT_REQUIRED,FALSE$/.test(l))).toBe(true);
     expect(count).toBe(lines.length - 1);
     expect(csv).not.toMatch(/sim_acct/);
+  });
+});
+
+describe("recorded, revocable consent to Stripe tip deposits (ST-C17)", () => {
+  it("nothing goes to Stripe without the employee's yes to today's wording; agreeing sends what waited, withdrawing holds what's unsent, and every change is kept", async () => {
+    const { shop, staffId } = await person("utica", "Lindsay");
+    const me = { staffId, label: "Lindsay" };
+    await m.db.db.update(s().staff).set({ email: "lindsay.tips@rayz.test" }).where(eq(s().staff.id, staffId));
+    await readyOnStripe(staffId, "acct_fake_lindsay", false);
+    await m.db.db.update(s().staffPayoutAccounts).set({ depositConsentVersion: null, depositConsentAt: null }).where(eq(s().staffPayoutAccounts.staffId, staffId));
+    expect(accounts.stripeReady(await accounts.staffAccount(staffId))).toBe(true);
+    expect(accounts.canReceive(await accounts.staffAccount(staffId))).toBe(false);
+
+    const { sent: all } = movement();
+    const moved = () => all.filter((t) => t.metadata.staffId === staffId);
+    const { draft, sent } = await payOne(shop.id, staffId, 1400);
+    expect(draft).toMatchObject({ method: "stripe", status: "held", holdKind: "stripe_setup", holdReason: CONSENT_HOLD_REASON });
+    expect(sent).toMatchObject({ status: "held", holdKind: "stripe_setup", stripeTransferId: null, stripeDebitId: null });
+    expect(moved()).toEqual([]);
+    await expect(tp.releasePayout(sent.id, actor)).rejects.toThrow(/haven't agreed to Stripe tip deposits/);
+
+    // Only the employee, and only for the wording they were shown.
+    await expect(accounts.setDepositConsent(staffId, { agree: true, version: TIP_DEPOSIT_CONSENT_VERSION, source: "web" }, actor)).rejects.toThrow(/Only the employee/);
+    await expect(accounts.setDepositConsent(staffId, { agree: true, version: "2020-01-01", source: "web" }, me)).rejects.toMatchObject({ code: "bad_request", details: { reason: "consent_version", version: TIP_DEPOSIT_CONSENT_VERSION } });
+    expect(await accounts.setDepositConsent(staffId, { agree: false, source: "web" }, me)).toEqual({ changed: false });
+
+    expect(await accounts.setDepositConsent(staffId, { agree: true, version: TIP_DEPOSIT_CONSENT_VERSION, source: "staff_app" }, me)).toEqual({ changed: true });
+    expect(await payoutRow(sent.id)).toMatchObject({ status: "processing", holdKind: null, holdReason: null, stripeTransferId: expect.stringMatching(/^tr_mm_/) });
+    expect(moved().map((t) => t.amountCents)).toEqual([1400]);
+    expect(await accounts.setDepositConsent(staffId, { agree: true, version: TIP_DEPOSIT_CONSENT_VERSION, source: "web" }, me)).toEqual({ changed: false });
+
+    // A payout built but not yet sent is held the moment they withdraw; the one already sent is left alone.
+    await tipSale(shop.id, staffId, 600);
+    const next = await tp.buildBatch({ shopId: shop.id, kind: "manual", cutoff: today, actor });
+    const [pending] = await m.db.db.select().from(s().tipPayouts).where(and(eq(s().tipPayouts.batchId, next.batchId), eq(s().tipPayouts.staffId, staffId)));
+    expect(pending).toMatchObject({ status: "pending", method: "stripe" });
+    await accounts.setDepositConsent(staffId, { agree: false, source: "web" }, me);
+    expect(await payoutRow(pending.id)).toMatchObject({ status: "held", holdKind: "stripe_setup", holdReason: CONSENT_HOLD_REASON });
+    expect((await payoutRow(sent.id)).status).toBe("processing");
+    expect((await tp.waitingForSetup([staffId])).get(staffId)).toEqual({ cents: 600, payouts: 1 });
+    await tp.approveBatch(next.batchId, actor);
+    expect(moved().map((t) => t.amountCents)).toEqual([1400]);
+
+    const view = await accounts.depositConsentView(staffId);
+    expect(view).toMatchObject({ version: TIP_DEPOSIT_CONSENT_VERSION, text: TIP_DEPOSIT_CONSENT_TEXT, agreed: false, agreedAt: null, needsRenewal: false });
+    expect(view.history.map((h) => [h.action, h.version, h.source])).toEqual([
+      ["revoked", TIP_DEPOSIT_CONSENT_VERSION, "web"],
+      ["granted", TIP_DEPOSIT_CONSENT_VERSION, "staff_app"],
+    ]);
+    const kept = await m.db.db.select().from(s().tipDepositConsents).where(eq(s().tipDepositConsents.staffId, staffId));
+    expect(kept.every((k) => k.text === TIP_DEPOSIT_CONSENT_TEXT)).toBe(true);
+    await expect(m.db.db.update(s().tipDepositConsents).set({ action: "granted" }).where(eq(s().tipDepositConsents.id, kept[0].id))).rejects.toThrow();
+    await expect(m.db.db.delete(s().tipDepositConsents).where(eq(s().tipDepositConsents.id, kept[0].id))).rejects.toThrow();
+    const trail = await m.db.db.select().from(s().auditLog).where(and(m.drizzle.inArray(s().auditLog.action, ["tips.deposit_consent", "tips.deposit_consent_withdrawn"]), eq(s().auditLog.entityId, staffId)));
+    expect(trail.map((t) => t.action).sort()).toEqual(["tips.deposit_consent", "tips.deposit_consent_withdrawn"]);
+    const notices = await m.db.db.select().from(s().notificationJobs).where(eq(s().notificationJobs.to, "lindsay.tips@rayz.test")).orderBy(s().notificationJobs.createdAt);
+    expect(notices.map((x) => x.subject).filter((x) => /Stripe tip deposits/.test(x ?? ""))).toEqual(["Security notice: you agreed to Stripe tip deposits", "Security notice: you withdrew from Stripe tip deposits"]);
+
+    // Agreeing again sends what waited; a newer wording would need a fresh yes.
+    await accounts.setDepositConsent(staffId, { agree: true, version: TIP_DEPOSIT_CONSENT_VERSION, source: "web" }, me);
+    expect((await payoutRow(pending.id)).status).toBe("processing");
+    expect(moved().map((t) => t.amountCents)).toEqual([1400, 600]);
+    await m.db.db.update(s().staffPayoutAccounts).set({ depositConsentVersion: "2020-01-01" }).where(eq(s().staffPayoutAccounts.staffId, staffId));
+    expect(accounts.canReceive(await accounts.staffAccount(staffId))).toBe(false);
+    expect(await accounts.depositConsentView(staffId)).toMatchObject({ agreed: false, needsRenewal: true });
+    await expect(m.db.db.update(s().staffPayoutAccounts).set({ depositConsentAt: null }).where(eq(s().staffPayoutAccounts.staffId, staffId))).rejects.toThrow();
+    await accounts.setDepositConsent(staffId, { agree: true, version: TIP_DEPOSIT_CONSENT_VERSION, source: "web" }, me);
+  });
+
+  it("tips on the paycheck is offered only when the brand turns it on, off by default", async () => {
+    const { staffId } = await person("utica", "Sarah");
+    const [b] = await m.db.db.select({ v: s().brandSettings.staffPayouts }).from(s().brandSettings);
+    const saved = (b?.v as Record<string, unknown>) ?? {};
+    expect(saved.tipsOnPaycheck ?? false).toBe(false);
+    await expect(accounts.setPayoutChoice(staffId, { method: "payroll", instant: false }, actor)).rejects.toThrow(/isn't offered yet/);
+    await m.db.db.update(s().brandSettings).set({ staffPayouts: { ...saved, tipsOnPaycheck: true } });
+    try {
+      await accounts.setPayoutChoice(staffId, { method: "payroll", instant: false }, actor);
+      expect((await accounts.staffAccount(staffId))!.method).toBe("payroll");
+      await m.db.db.update(s().brandSettings).set({ staffPayouts: saved });
+      // Someone already on payroll keeps it if the brand turns the option back off.
+      await accounts.setPayoutChoice(staffId, { method: "payroll", instant: false }, actor);
+      await accounts.setPayoutChoice(staffId, { method: "cash", instant: false }, actor);
+      await expect(accounts.setPayoutChoice(staffId, { method: "payroll", instant: false }, actor)).rejects.toThrow(/isn't offered yet/);
+    } finally {
+      await m.db.db.update(s().brandSettings).set({ staffPayouts: saved });
+    }
   });
 });

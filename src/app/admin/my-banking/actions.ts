@@ -9,7 +9,7 @@ import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
 import { AppError, forbidden } from "@/server/errors";
 import { connectMode } from "@/server/payments/connect";
-import { refreshStaffAccount, setPayoutChoice, simulateDestinationChange, simulateStaffOnboarding, staffAccount, staffDashboardUrl, staffOnboardingUrl } from "@/server/tips/accounts";
+import { refreshStaffAccount, setDepositConsent, setPayoutChoice, simulateDestinationChange, simulateStaffOnboarding, staffAccount, staffDashboardUrl, staffOnboardingUrl } from "@/server/tips/accounts";
 
 async function origin() {
   const h = await headers();
@@ -80,5 +80,18 @@ export async function refreshBankingAction() {
     await refreshStaffAccount(ctx.staff.id);
     revalidate();
     return { url: null };
+  });
+}
+
+const consentSchema = z.object({ agree: z.boolean(), version: z.string().max(40).nullish() });
+
+/** The employee agrees to, or withdraws from, Stripe tip deposits (ST-C17). */
+export async function setDepositConsentAction(input: z.input<typeof consentSchema>) {
+  return safe(async () => {
+    const ctx = await me();
+    const v = consentSchema.parse(input);
+    await setDepositConsent(ctx.staff.id, { ...v, source: "web" }, ctx.actor);
+    revalidate();
+    return null;
   });
 }
