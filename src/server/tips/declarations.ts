@@ -138,14 +138,16 @@ export async function declaredTipsBetween(shopIds: readonly string[], start: Loc
 }
 
 /**
- * From the 1st to the reminder day: an email to each active employee who clocked hours last month and
- * hasn't declared anything for it (a $0 declaration counts), once a month.
+ * Reminders for last month's cash tips: an email on the first day of the window (the 1st, or the
+ * first day the cron runs in it) and a last call on the reminder day, to each active employee who
+ * clocked hours last month and hasn't declared anything for it (a $0 declaration counts).
  */
 export async function declarationReminderCron(now = new Date()) {
   const out = { sent: 0 };
   const rules = await declarationRules();
   const today = todayLocal(now);
   if (!reminderDue(today, rules, false)) return out;
+  const lastCall = Number(today.slice(8, 10)) === rules.remindUntilDay;
   const month = lastMonthOf(today);
   const from = `${month}-01`;
   const to = addDays(`${monthOf(today)}-01`, -1);
@@ -166,22 +168,31 @@ export async function declarationReminderCron(now = new Date()) {
     ).map((r) => r.staffId),
   );
   const emails = worked.filter((w) => !declared.has(w.staffId) && w.email).map((w) => w.email!.toLowerCase());
-  const sentAlready = new Set(
-    emails.length
-      ? (await db.select({ to: notificationJobs.to }).from(notificationJobs).where(and(eq(notificationJobs.kind, "tip_declaration"), inArray(notificationJobs.to, emails), gte(notificationJobs.createdAt, startOfLocalDay(`${monthOf(today)}-01`))))).map((r) => r.to.toLowerCase())
-      : [],
-  );
+  const sent = new Map<string, { n: number; today: boolean }>();
+  if (emails.length) {
+    const rows = await db
+      .select({ to: notificationJobs.to, at: notificationJobs.createdAt })
+      .from(notificationJobs)
+      .where(and(eq(notificationJobs.kind, "tip_declaration"), inArray(notificationJobs.to, emails), gte(notificationJobs.createdAt, startOfLocalDay(`${monthOf(today)}-01`))));
+    for (const r of rows) {
+      const k = r.to.toLowerCase();
+      const v = sent.get(k) ?? { n: 0, today: false };
+      sent.set(k, { n: v.n + 1, today: v.today || r.at >= startOfLocalDay(today) });
+    }
+  }
   const closes = closesOn(from, rules);
   for (const w of worked) {
-    if (declared.has(w.staffId) || !w.email || sentAlready.has(w.email.toLowerCase())) continue;
+    if (declared.has(w.staffId) || !w.email) continue;
+    const before = sent.get(w.email.toLowerCase());
+    if (before && (before.today || before.n >= 2 || !lastCall)) continue;
     await enqueueRaw({
       kind: "tip_declaration",
       channel: "email",
       to: w.email,
-      subject: "Declare last month's cash tips",
+      subject: before ? `Last day to declare ${month}'s cash tips` : "Declare last month's cash tips",
       body: `Hi ${w.first ?? "there"}, please declare the cash tips you were handed in ${month} (tips that weren't rung up on a ticket), even if it's ${formatCents(0)}. Declarations for ${month} close on ${closes}. Open the staff app's tips screen, or ${appBaseUrl()}/admin/my-tips.`,
       shopId: w.shopId,
-    });
+    }, now);
     out.sent++;
   }
   return out;

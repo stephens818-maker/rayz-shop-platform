@@ -416,8 +416,8 @@ export async function sendNow(job: { kind: NotificationKind; channel: "sms" | "e
   return status;
 }
 
-export async function enqueueRaw(job: { kind: NotificationKind; channel: "sms" | "email"; to: string; subject?: string; body: string; customerId?: string | null; shopId: string }) {
-  await db.insert(notificationJobs).values({ ...job, subject: job.subject ?? null, customerId: job.customerId ?? null, runAt: new Date() });
+export async function enqueueRaw(job: { kind: NotificationKind; channel: "sms" | "email"; to: string; subject?: string; body: string; customerId?: string | null; shopId: string }, at: Date = new Date()) {
+  await db.insert(notificationJobs).values({ ...job, subject: job.subject ?? null, customerId: job.customerId ?? null, runAt: at, createdAt: at });
 }
 
 /** A staff email that belongs to a shop (a purchase order to a vendor, a low-stock alert), sent by the next queue run. */

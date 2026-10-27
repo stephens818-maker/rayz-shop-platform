@@ -185,6 +185,46 @@ describe("SB-C2: a refund of tips already paid", () => {
 });
 
 describe("SB-C3: cash tip declarations", () => {
+  it("remind on the 1st and again on the last reminder day, never twice a day, and stop once they declare (ST-C16)", async () => {
+    const { shop: sh, b } = await barberAt("silvis", 0);
+    const [row] = await m.db.db.select({ email: s().staff.email }).from(s().staff).where(eq(s().staff.id, b.id));
+    const email = `declare-${b.id.slice(0, 8)}@example.test`;
+    await m.db.db.update(s().staff).set({ email }).where(eq(s().staff.id, b.id));
+    const month = today.slice(0, 7);
+    const [shift] = await m.db.db
+      .insert(s().timeEntries)
+      .values({ staffId: b.id, shopId: sh.id, kind: "worked", startsAt: noon(today), endsAt: new Date(noon(today).getTime() + 3_600_000), source: "manual" })
+      .returning({ id: s().timeEntries.id });
+    const jobs = () => m.db.db.select().from(s().notificationJobs).where(and(eq(s().notificationJobs.kind, "tip_declaration"), eq(s().notificationJobs.to, email)));
+    onTestFinished(async () => {
+      await m.db.db.delete(s().notificationJobs).where(and(eq(s().notificationJobs.kind, "tip_declaration"), eq(s().notificationJobs.to, email)));
+      await m.db.db.update(s().staff).set({ email: row.email }).where(eq(s().staff.id, b.id));
+      await m.db.db.delete(s().timeEntries).where(eq(s().timeEntries.id, shift.id));
+    });
+
+    const next = m.time.addDays(`${month}-01`, 32).slice(0, 7);
+    const on = (day: number) => new Date(noon(`${next}-${String(day).padStart(2, "0")}`).getTime() + 3 * 3_600_000);
+    const rules = await dec.declarationRules();
+    expect(rules).toMatchObject({ remindUntilDay: 9, lockDay: 10 });
+
+    await dec.declarationReminderCron(on(1));
+    await dec.declarationReminderCron(on(1));
+    expect((await jobs()).map((j) => j.subject)).toEqual(["Declare last month's cash tips"]);
+    for (const d of [2, 5, 8]) await dec.declarationReminderCron(on(d));
+    expect(await jobs()).toHaveLength(1);
+    await dec.declarationReminderCron(on(9));
+    await dec.declarationReminderCron(on(9));
+    expect((await jobs()).map((j) => j.subject).sort()).toEqual(["Declare last month's cash tips", `Last day to declare ${month}'s cash tips`].sort());
+    await dec.declarationReminderCron(on(10));
+    expect(await jobs()).toHaveLength(2);
+    expect((await jobs())[0].body).toContain(`close on ${next}-10`);
+
+    await m.db.db.delete(s().notificationJobs).where(and(eq(s().notificationJobs.kind, "tip_declaration"), eq(s().notificationJobs.to, email)));
+    await dec.declareCashTips({ staffId: b.id, shopId: sh.id, businessDate: today, amountCents: 0, attested: true, source: "staff_app", actor });
+    await dec.declarationReminderCron(on(1));
+    expect(await jobs()).toHaveLength(0);
+  });
+
   it("count in payroll under their own iSolved column and in the tips report; a correction replaces, and rows never change", async () => {
     const { shop: sh, b } = await barberAt("moline", 1);
     const { cur } = await periods();
