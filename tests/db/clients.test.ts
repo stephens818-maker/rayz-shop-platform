@@ -455,6 +455,13 @@ describe("one client record, matched the same way everywhere", () => {
     expect(await m.customers.textingDeclined(walkIn.id, walkIn.phone!)).toBe(false);
   });
 
+  it("a web booking with the text box left unticked sends no smsOptIn, and the new client isn't opted in (TCPA)", async () => {
+    const shop = await shopNamed("coralville");
+    const c = await m.db.db.transaction((tx) => m.customers.findOrCreateCustomer({ firstName: "Tess", phone: nextPhone() }, shop.id, tx));
+    expect(c).toMatchObject({ smsOptIn: false, emailOptIn: false });
+    expect(await m.customers.textingDeclined(c.id, c.phone!)).toBe(true);
+  });
+
   it("merging two records moves history, tickets, gift cards, loyalty, and Squire IDs, then deletes the duplicate", async () => {
     const keep = await m.customers.findOrCreateCustomer({ firstName: "Gus", lastName: "Merge", phone: nextPhone(), smsOptIn: true }, null);
     const drop = (
