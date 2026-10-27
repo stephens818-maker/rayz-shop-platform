@@ -956,7 +956,7 @@ README "Payroll reports → Payroll review fixes" has the details. Migrations `c
 
 ## 42. Staff delta for Squire (ST-C0a to C18, I10 to I20, N7, N8)
 
-README "Staff app API → Staff delta for Squire" has the details. Migrations `core_0112` to `core_0124`.
+README "Staff app API → Staff delta for Squire" has the details. Migrations `core_0112` to `core_0125`.
 
 - [x] ST-C0a and C0b: Squire-imported tips stay out of the time clock CSV and the payout batches, and payable tip outputs never go below zero.
 - [x] ST-C0c: per-address and per-email limits and an escalating lock, two-step sign-in required for privileged roles, a 15-minute step-up for reveal, export and refund, a session per browser with revoke (**My sign-in security**), new-device emails, a 30-day idle end for app sessions, and front-desk clocks paired by a manager's QR code.

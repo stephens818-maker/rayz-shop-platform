@@ -2963,7 +2963,7 @@ Ray'z is replacing Squire Commander with its own staff app, where staff see thei
 
 ### Staff delta for Squire (ST-C0a to C18, I10 to I20, N7, N8)
 
-The Rayz App builder's second list, verified at c959576. Migrations `core_0112` to `core_0124`. **Held:** ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules, until iSolved Time is decided; the basic time clock stays. **Pending Charles:** ST-C11 / I10, separate charges and transfers; money movement stays abstract.
+The Rayz App builder's second list, verified at c959576. Migrations `core_0112` to `core_0125`. **Held:** ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules, until iSolved Time is decided; the basic time clock stays. **Pending Charles:** ST-C11 / I10, separate charges and transfers; money movement stays abstract.
 
 - **Sign-in hardening (C0c), web and staff app:**
   - Rate limits: 30 attempts per address and 10 wrong passwords per email in 15 minutes. Every 10th wrong password in a row locks the account for 15 minutes, doubling up to a day, and the message reads like the rate limit, so it never shows that an account exists.
