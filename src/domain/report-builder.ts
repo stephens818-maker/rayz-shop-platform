@@ -17,6 +17,7 @@ import {
   segmentProblem,
   type Segment,
 } from "./marketing";
+import { REPORTS, type ReportKey } from "./permissions";
 import { PRESETS, presetRange } from "./report-range";
 
 // ───────────────────────────── Sources ─────────────────────────────
@@ -49,26 +50,30 @@ export const REPORT_SOURCES = [
   {
     key: "staff",
     label: "Staff",
-    ready: false,
-    hint: "One row per barber: hours, sales, rebook rate and utilization.",
+    ready: true,
+    report: "sales_by_barber",
+    hint: "One row per barber and location: appointments, no-shows, booked and clocked hours, utilization, sales, tips, rebook rate and clients, over the report's dates.",
   },
   {
     key: "inventory",
     label: "Inventory",
-    ready: false,
-    hint: "One row per product and location: stock, value, sell-through and shrink.",
+    ready: true,
+    report: "inventory",
+    hint: "One row per product and location: stock on hand now, reorder point and par, value, and what was received, sold, returned, transferred and lost in the report's dates, with sell-through.",
   },
   {
     key: "tips",
     label: "Tips",
-    ready: false,
-    hint: "One row per tip: who earned it, how it was paid and when.",
+    ready: true,
+    report: "tip_payouts",
+    hint: "One row per tip entry: each barber's share of a ticket's tip, a tip given back on a refund, or a manager's adjustment, with how and when it was paid out.",
   },
   {
     key: "campaigns",
     label: "Campaigns",
-    ready: false,
-    hint: "One row per Campaign Center message: sends, clicks, bookings and revenue.",
+    ready: true,
+    report: "campaign_center",
+    hint: "One row per Campaign Center message sent: campaign, channel, delivery, opens, clicks, and the bookings, revenue and coupons credited to it (last touch, within the attribution window).",
   },
 ] as const;
 export type ReportSource = (typeof REPORT_SOURCES)[number]["key"];
@@ -130,6 +135,10 @@ export const FIELD_GROUPS = [
   "Event",
   "Ticket",
   "Appointment",
+  "Barber",
+  "Product",
+  "Tip",
+  "Message",
   "When",
   "Who and where",
   "Measures",
@@ -154,6 +163,8 @@ export interface FieldDef {
   pay?: boolean;
   /** Counts what happened, so it covers the report's dates, locations and barbers. Everything else is the client as they are now. */
   activity?: boolean;
+  /** The standard report whose view permission it needs, beyond the source's own. */
+  report?: ReportKey;
 }
 
 export const CUSTOMER_FIELDS: FieldDef[] = [
@@ -913,10 +924,241 @@ export const APPOINTMENT_FIELDS: FieldDef[] = [
   },
 ];
 
+const DAY_FIELDS = WHEN_FIELDS.filter((f) => f.key !== "hour");
+const measure = (
+  key: string,
+  label: string,
+  type: FieldType,
+  hint: string,
+  x: Partial<FieldDef> = {},
+): FieldDef => ({ key, label, group: "Measures", type, hint, ...x });
+
+/** Staff: one row per barber and location. Measures cover the report's dates; clocked hours follow the Labor report. */
+export const STAFF_FIELDS: FieldDef[] = [
+  { key: "barber", label: "Barber", group: "Barber", type: "text" },
+  { key: "location", label: "Location", group: "Barber", type: "text" },
+  {
+    key: "role",
+    label: "Role",
+    group: "Barber",
+    type: "text",
+    hint: "Their role at this location, or their main role.",
+  },
+  { key: "active", label: "Active", group: "Barber", type: "bool" },
+  { key: "main_location", label: "Main location", group: "Barber", type: "bool" },
+  { key: "hire_date", label: "Hire date", group: "Barber", type: "date" },
+  measure("appointments", "Appointments", "int", "Booked in the dates, whatever their status."),
+  measure("completed", "Completed", "int", "Completed appointments."),
+  measure("no_shows", "No-shows", "int", "No-shows."),
+  measure("cancellations", "Cancellations", "int", "Cancelled appointments."),
+  measure("clients", "Clients served", "int", "Different clients with a completed appointment."),
+  measure(
+    "new_clients",
+    "New clients",
+    "int",
+    "Clients whose first completed visit anywhere in the brand was with them, in the dates.",
+  ),
+  measure("booked_hours", "Booked hours", "number", "Booked time of completed appointments."),
+  measure(
+    "clocked_hours",
+    "Clocked hours",
+    "number",
+    "Worked hours from the time clock, as on the Labor report: breaks out, edits in.",
+    { report: "labor" },
+  ),
+  measure("ot_hours", "Overtime hours", "number", "Overtime hours, as on the Labor report.", {
+    report: "labor",
+  }),
+  measure(
+    "utilization",
+    "Utilization",
+    "pct",
+    "Booked hours of completed appointments over clocked hours.",
+    { report: "labor" },
+  ),
+  measure(
+    "service_sales",
+    "Service sales",
+    "money",
+    "Their services after discounts and refunds, split by line on shared tickets, as payroll counts them.",
+    { dollars: true },
+  ),
+  measure(
+    "product_sales",
+    "Product sales",
+    "money",
+    "Products they sold, after discounts and refunds, as payroll counts them.",
+    { dollars: true },
+  ),
+  measure(
+    "sales_per_hour",
+    "Sales per clocked hour",
+    "money",
+    "Service and product sales over clocked hours.",
+    { dollars: true, report: "labor" },
+  ),
+  measure("tickets", "Tickets", "int", "Paid tickets where they're the ticket's barber."),
+  measure("tips", "Tips", "money", "Their tips less tips given back on refunds, by the tip's business day.", {
+    dollars: true,
+    pay: true,
+  }),
+  measure(
+    "rebook_rate",
+    "Rebooked at checkout",
+    "pct",
+    "Completed visits where the client had their next visit booked by the end of that day, as on the Rebook rate report.",
+  ),
+];
+
+/** Inventory: one row per product and location. Stock is now; movement covers the report's dates, as on the stock movement report. */
+export const INVENTORY_FIELDS: FieldDef[] = [
+  { key: "product", label: "Product", group: "Product", type: "text" },
+  { key: "sku", label: "SKU", group: "Product", type: "text" },
+  { key: "brand", label: "Brand", group: "Product", type: "text" },
+  { key: "category", label: "Category", group: "Product", type: "text" },
+  {
+    key: "active",
+    label: "Sold here",
+    group: "Product",
+    type: "bool",
+    hint: "Active at this location.",
+  },
+  { key: "location", label: "Location", group: "Who and where", type: "text" },
+  measure("on_hand", "On hand", "int", "Stock now, whatever the dates."),
+  measure("reorder_point", "Reorder point", "int", "Low stock at or below this."),
+  measure("par", "Par level", "int", "Suggested orders fill up to this."),
+  measure("low", "Low stock", "bool", "On hand at or below the reorder point."),
+  measure("price", "Price", "money", "This location's price.", { dollars: true }),
+  measure("cost_value", "Value at cost", "money", "On hand × average cost.", { dollars: true }),
+  measure("retail_value", "Value at retail", "money", "On hand × price.", { dollars: true }),
+  measure("received", "Received", "int", "From vendors."),
+  measure("sold", "Sold", "int", "Units rung up."),
+  measure("returned", "Returned", "int", "Back on the shelf from refunds and voids."),
+  measure("transfers_in", "Transferred in", "int", "From other locations."),
+  measure("transfers_out", "Transferred out", "int", "To other locations."),
+  measure("back_bar", "Back bar", "int", "Taken for use in the shop."),
+  measure(
+    "shrink",
+    "Shrink",
+    "int",
+    "Damaged, stolen and net count losses (a count that finds extra lowers it).",
+  ),
+  measure(
+    "shrink_value",
+    "Shrink at cost",
+    "money",
+    "Shrink at the cost on each entry, plus transfers that didn't fully arrive.",
+    { dollars: true },
+  ),
+  measure(
+    "sell_through",
+    "Sell-through",
+    "pct",
+    "Sold less returned, over stock at the start plus what came in.",
+  ),
+  measure("product_sales", "Product sales", "money", "After discounts and refunds.", {
+    dollars: true,
+  }),
+];
+
+/** Tips: one row per tip ledger entry. Amounts need dollar amounts in reports. */
+export const TIP_FIELDS: FieldDef[] = [
+  {
+    key: "entry",
+    label: "Entry",
+    group: "Tip",
+    type: "text",
+    hint: "Tip, Given back (a refund or void) or Adjustment.",
+  },
+  {
+    key: "method",
+    label: "Left by",
+    group: "Tip",
+    type: "text",
+    hint: "Card, Cash, Gift card, or Adjustment.",
+  },
+  { key: "ticket", label: "Ticket #", group: "Tip", type: "int" },
+  {
+    key: "payout_status",
+    label: "Payout",
+    group: "Tip",
+    type: "text",
+    hint: "Not in a payout yet, or the payout's status: Pending, Held, Approved, Processing, Paid, Failed or Cancelled.",
+  },
+  {
+    key: "payout_method",
+    label: "Paid out by",
+    group: "Tip",
+    type: "text",
+    hint: "Cash, Stripe, Payroll, or Before tip payouts (paid outside the platform).",
+  },
+  { key: "paid_out", label: "Paid out on", group: "Tip", type: "date" },
+  { key: "reason", label: "Adjustment reason", group: "Tip", type: "text" },
+  ...DAY_FIELDS,
+  { key: "location", label: "Location", group: "Who and where", type: "text" },
+  { key: "barber", label: "Barber", group: "Who and where", type: "text", hint: "Who earned it." },
+  measure("entries", "Entries", "int", "1 on every row: total it to count them."),
+  measure("amount", "Amount", "money", "Signed: a tip given back is negative.", { dollars: true }),
+  measure(
+    "fee",
+    "Card fee share",
+    "money",
+    "This tip's share of the card processing fee. Taken out of the payout only where the location nets it.",
+    { dollars: true },
+  ),
+];
+
+/** Campaigns: one row per Campaign Center message sent (not tests, skips or the holdout group). */
+export const CAMPAIGN_FIELDS: FieldDef[] = [
+  { key: "campaign", label: "Campaign", group: "Message", type: "text" },
+  {
+    key: "kind",
+    label: "Kind",
+    group: "Message",
+    type: "text",
+    hint: "Automated, Blast, Lapsed sequence or We have openings.",
+  },
+  { key: "channel", label: "Channel", group: "Message", type: "text" },
+  { key: "variant", label: "A/B wording", group: "Message", type: "text" },
+  { key: "sent", label: "Sent at", group: "When", type: "text", hint: "Local date and time." },
+  ...WHEN_FIELDS,
+  ...WHERE_FIELDS.map((f) =>
+    f.key === "barber" ? { ...f, hint: "The barber it's about, or the client's usual barber." } : f,
+  ),
+  measure("messages", "Messages", "int", "1 on every row: total it to count them."),
+  measure("delivered", "Delivered", "int", "1 when the carrier or the email provider took it, or it was opened or clicked."),
+  measure("opened", "Opened", "int", "Emails opened (not by a mail scanner), or clicked."),
+  measure("clicked", "Clicked", "int", "1 when the link was clicked at least once."),
+  measure("bookings", "Bookings", "int", "Appointments credited to it."),
+  measure(
+    "revenue",
+    "Revenue",
+    "money",
+    "Service and product sales credited to it; nothing when the client was already booked.",
+    { dollars: true },
+  ),
+  measure("redemptions", "Coupons used", "int", "Its coupon redeemed."),
+  measure("cost", "Cost", "money", "The message at the brand's rates plus coupon discounts given.", {
+    dollars: true,
+  }),
+  measure("unsubscribes", "Unsubscribes", "int", "Unsubscribes and STOP replies from it."),
+  {
+    key: "already_booked",
+    label: "Already booked",
+    group: "Message",
+    type: "bool",
+    hint: "The client had an appointment coming up when it went.",
+  },
+];
+
 const FIELDS_BY_SOURCE: Partial<Record<ReportSource, Map<string, FieldDef>>> = {
   events: new Map(EVENT_FIELDS.map((f) => [f.key, f])),
   sales: new Map(SALE_FIELDS.map((f) => [f.key, f])),
   appointments: new Map(APPOINTMENT_FIELDS.map((f) => [f.key, f])),
+  staff: new Map(STAFF_FIELDS.map((f) => [f.key, f])),
+  inventory: new Map(INVENTORY_FIELDS.map((f) => [f.key, f])),
+  tips: new Map(TIP_FIELDS.map((f) => [f.key, f])),
+  campaigns: new Map(CAMPAIGN_FIELDS.map((f) => [f.key, f])),
 };
 
 /** Event types a report can pick: a whole category or one event. */
@@ -967,6 +1209,15 @@ export const allFields = (
   return flat ? [...flat.values()] : [...CUSTOMER_FIELDS, ...custom.map(customDef)];
 };
 
+export const reportLabel = (k: ReportKey) =>
+  REPORTS.find((r) => r.key === k)?.label ?? k;
+
+/** The standard report a source needs: its rows are that report's data. */
+export const sourceReport = (s: string): ReportKey | null => {
+  const src = REPORT_SOURCES.find((x) => x.key === s);
+  return src && "report" in src ? src.report : null;
+};
+
 /** How one person may use a field: in full, masked (shown as Client data masks it), or not at all and why. */
 export type FieldUse =
   { use: "full" } | { use: "masked" } | { use: "none"; why: string };
@@ -987,6 +1238,8 @@ export function fieldUse(f: FieldDef, sees: PanelSees): FieldUse {
       use: "none",
       why: 'Each person\'s tips are pay data: they need "Tips and payroll export"',
     };
+  if (f.report && !sees.reports?.includes(f.report))
+    return { use: "none", why: `It needs "${reportLabel(f.report)}"` };
   if (f.key === "badges" && !sees.badges?.length)
     return { use: "none", why: "No client badges are shown to you" };
   if (!f.reads) return { use: "full" };
@@ -1120,15 +1373,76 @@ export const DEFAULT_APPOINTMENT_REPORT: ReportDefinition = ReportDefinition.par
   range: { preset: "7d" },
 });
 
+export const DEFAULT_STAFF_REPORT: ReportDefinition = ReportDefinition.parse({
+  source: "staff",
+  columns: [
+    { field: "barber" },
+    { field: "location" },
+    { field: "completed", agg: "sum" },
+    { field: "no_shows", agg: "sum" },
+    { field: "booked_hours", agg: "sum" },
+    { field: "rebook_rate", agg: "avg" },
+  ],
+  sort: [{ field: "completed", dir: "desc" }],
+  range: { preset: "30d" },
+});
+
+export const DEFAULT_INVENTORY_REPORT: ReportDefinition = ReportDefinition.parse({
+  source: "inventory",
+  columns: [
+    { field: "product" },
+    { field: "location" },
+    { field: "on_hand", agg: "sum" },
+    { field: "sold", agg: "sum" },
+    { field: "received", agg: "sum" },
+    { field: "shrink", agg: "sum" },
+  ],
+  sort: [{ field: "sold", dir: "desc" }],
+  range: { preset: "30d" },
+});
+
+export const DEFAULT_TIP_REPORT: ReportDefinition = ReportDefinition.parse({
+  source: "tips",
+  columns: [
+    { field: "barber" },
+    { field: "amount", agg: "sum" },
+    { field: "fee", agg: "sum" },
+  ],
+  groupBy: ["barber"],
+  summary: true,
+  range: { preset: "7d" },
+});
+
+export const DEFAULT_CAMPAIGN_REPORT: ReportDefinition = ReportDefinition.parse({
+  source: "campaigns",
+  columns: [
+    { field: "campaign" },
+    { field: "delivered", agg: "sum" },
+    { field: "clicked", agg: "sum" },
+    { field: "bookings", agg: "sum" },
+    { field: "unsubscribes", agg: "sum" },
+  ],
+  groupBy: ["campaign"],
+  summary: true,
+  range: { preset: "30d" },
+});
+
+const DEFAULTS: Partial<Record<ReportSource, ReportDefinition>> = {
+  events: DEFAULT_EVENT_REPORT,
+  sales: DEFAULT_SALES_REPORT,
+  appointments: DEFAULT_APPOINTMENT_REPORT,
+  staff: DEFAULT_STAFF_REPORT,
+  inventory: DEFAULT_INVENTORY_REPORT,
+  tips: DEFAULT_TIP_REPORT,
+  campaigns: DEFAULT_CAMPAIGN_REPORT,
+};
+
 /** A starting report for a source, when the builder switches to it. */
 export const defaultReport = (source: string): ReportDefinition =>
-  source === "events"
-    ? DEFAULT_EVENT_REPORT
-    : source === "sales"
-      ? DEFAULT_SALES_REPORT
-      : source === "appointments"
-        ? DEFAULT_APPOINTMENT_REPORT
-        : { ...DEFAULT_CUSTOMER_REPORT, source: source as ReportSource };
+  DEFAULTS[source as ReportSource] ?? {
+    ...DEFAULT_CUSTOMER_REPORT,
+    source: source as ReportSource,
+  };
 
 export const columnLabel = (c: ReportColumn, f: FieldDef | null) =>
   c.label || f?.label || "Removed field";
@@ -1183,6 +1497,9 @@ export function definitionProblem(
       .map((x) => x.label.toLowerCase())
       .join(", ")
       .replace(/^./, (c) => c.toUpperCase())} reports are ready now.`;
+  const needs = sourceReport(def.source);
+  if (needs && !sees.reports?.includes(needs))
+    return `The ${sourceLabel(def.source)} source needs "${reportLabel(needs)}"`;
   const events = def.source === "events";
   const flat = def.source !== "customers";
   const known = (key: string) => fieldDef(key, custom, def.source);
@@ -1373,19 +1690,31 @@ export interface FlatTable {
   rows: { kind: "row" | "group" | "total"; level: number; cells: Cell[] }[];
 }
 
-export type RowNoun = "client" | "event" | "ticket" | "appointment";
+export type RowNoun =
+  | "client"
+  | "event"
+  | "ticket"
+  | "appointment"
+  | "barber"
+  | "product"
+  | "tip"
+  | "message";
 
-export const nounOf = (s: ReportSource): RowNoun =>
-  s === "events"
-    ? "event"
-    : s === "sales"
-      ? "ticket"
-      : s === "appointments"
-        ? "appointment"
-        : "client";
+const NOUNS: Record<ReportSource, RowNoun> = {
+  customers: "client",
+  events: "event",
+  sales: "ticket",
+  appointments: "appointment",
+  staff: "barber",
+  inventory: "product",
+  tips: "tip",
+  campaigns: "message",
+};
+export const nounOf = (s: ReportSource): RowNoun => NOUNS[s] ?? "client";
 
 /** "Clients", "Tickets": the count column of a summary. */
-export const nounHeader = (n: RowNoun) => `${n[0].toUpperCase()}${n.slice(1)}s`;
+export const nounHeader = (n: RowNoun) =>
+  `${n[0].toUpperCase()}${n.slice(1)}s`;
 
 const plural = (n: number, w: string) =>
   `${n.toLocaleString("en-US")} ${w}${n === 1 ? "" : "s"}`;

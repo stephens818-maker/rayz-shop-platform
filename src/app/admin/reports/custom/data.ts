@@ -3,9 +3,13 @@ import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { roles, staff, staffShops } from "@/db/schema";
 import type { FilterOptions, PanelSees } from "@/domain/client-filters";
+import { reportView } from "@/domain/permissions";
 import {
   EVENT_TYPES,
   REPORT_SOURCES,
+  SOURCE_KEYS,
+  reportLabel,
+  sourceReport,
   allFields,
   fieldUse,
   type FieldDef,
@@ -26,7 +30,8 @@ import { exportDenied } from "@/server/report-builder/saved";
 type Option = { id: string; name: string };
 
 export interface BuilderOptions {
-  sources: { key: string; label: string; ready: boolean; hint: string }[];
+  /** `needs`: why this person can't pick a source that's built. */
+  sources: { key: string; label: string; ready: boolean; hint: string; needs?: string }[];
   /** Every field, with how this person may use it: hidden details are listed but can't be added. */
   fields: (FieldDef & { use: FieldUse })[];
   /** The event log's, sales' and appointments' fields; no event fields without "Use the event log". */
@@ -96,17 +101,22 @@ export async function builderOptions(
         .orderBy(asc(staff.displayLabel)),
     ]);
   return {
-    sources: REPORT_SOURCES.map((s) => ({
-      ...s,
-      ready: s.ready && (s.key !== "events" || events),
-    })),
+    sources: REPORT_SOURCES.map((s) => {
+      const report = sourceReport(s.key);
+      const needs =
+        s.key === "events" && !events
+          ? "needs event log access"
+          : report && !can(ctx, reportView(report))
+            ? `needs "${reportLabel(report)}"`
+            : undefined;
+      return { key: s.key, label: s.label, hint: s.hint, ready: s.ready && !needs, needs };
+    }),
     fields: allFields(policy.custom).map((f) => ({
       ...f,
       use: fieldUse(f, sees),
     })),
     sourceFields: Object.fromEntries(
-      (["events", "sales", "appointments"] as const)
-        .filter((k) => k !== "events" || events)
+      SOURCE_KEYS.filter((k) => k !== "customers" && (k !== "events" || events))
         .map((k) => [
           k,
           allFields([], k).map((f) => ({ ...f, use: fieldUse(f, sees) })),

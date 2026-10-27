@@ -7,7 +7,7 @@
  */
 import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
-import { staff, staffGroupMembers, staffGroups, staffShops } from "@/db/schema";
+import { shops, staff, staffGroupMembers, staffGroups, staffShops } from "@/db/schema";
 import {
   BarberError,
   resolveBarbers,
@@ -52,6 +52,9 @@ import type { ClientPolicy } from "../client-privacy";
 import { forbidden, AppError } from "../errors";
 import { reportLocations } from "../locations";
 import { consentColumns } from "../marketing/consent";
+import { outcomesSql } from "../marketing/report";
+import { loadMarketingSettings } from "../marketing/settings";
+import { laborRows } from "../time-clock-export";
 import { cadenceCtes } from "../visit-cadence";
 import { refillCtes } from "../product-history";
 import { DAY_END, nextBookedWhere } from "../rebook-report";
@@ -916,6 +919,404 @@ const buildAppointments = (def: ReportDefinition, scope: ReportScope): Built =>
     field: (key) => appointmentFieldSql(key, scope),
   });
 
+const usedFields = (def: ReportDefinition) =>
+  new Set([
+    ...def.columns.map((c) => c.field),
+    ...def.groupBy,
+    ...def.sort.map((s) => s.field),
+  ]);
+const unknownField = (key: string) =>
+  new AppError("bad_request", `Unknown field ${key}`);
+
+// ───────────────────────────── Staff ─────────────────────────────
+
+const APPT_STAFF = new Set([
+  "appointments",
+  "completed",
+  "no_shows",
+  "cancellations",
+  "clients",
+  "booked_hours",
+  "utilization",
+  "rebook_rate",
+]);
+const LABOR_STAFF = new Set([
+  "clocked_hours",
+  "ot_hours",
+  "utilization",
+  "service_sales",
+  "product_sales",
+  "sales_per_hour",
+]);
+
+/** The first day with a ticket or a punch, for an all-time report's hours and payroll sales. */
+async function firstActivityDay(today: LocalDate): Promise<LocalDate> {
+  const [r] = (await db.execute(sql`select to_char(least(
+      (select min(business_date) from sales),
+      (select min((at at time zone ${SHOP_TZ})::date) from time_punches)), 'YYYY-MM-DD') d`)) as unknown as { d: string | null }[];
+  return (r?.d ?? today) as LocalDate;
+}
+
+/**
+ * One row per barber and location (staff_shops): active barbers, and inactive ones with appointments
+ * in the dates. Hours, OT and payroll sales come from laborRows, so they match the Labor report.
+ */
+async function buildStaff(
+  def: ReportDefinition,
+  scope: ReportScope,
+  today: LocalDate,
+): Promise<Built> {
+  const used = usedFields(def);
+  const withs: SQL[] = [];
+  const joins: string[] = [];
+  const at = (a: string) =>
+    scoped(scope, { shop: `${a}.shop_id`, staff: `${a}.staff_id`, at: `${a}.starts_at` });
+  if ([...used].some((k) => APPT_STAFF.has(k))) {
+    withs.push(sql`ap as (select a.staff_id, a.shop_id, count(*)::int n,
+      (count(*) filter (where a.status = 'completed'))::int done,
+      (count(*) filter (where a.status = 'no_show'))::int no_shows,
+      (count(*) filter (where a.status = 'cancelled'))::int cancels,
+      (count(distinct a.customer_id) filter (where a.status = 'completed'))::int clients,
+      coalesce(sum(extract(epoch from a.ends_at - a.starts_at) / 60) filter (where a.status = 'completed'), 0)::float8 booked_min,
+      (count(*) filter (where a.status = 'completed' and a.customer_id is not null and a.booked_at_known))::int known,
+      (count(*) filter (where a.status = 'completed' and a.customer_id is not null and a.booked_at_known
+        and exists (select 1 from appointments b where ${nextBookedWhere("a", DAY_END)})))::int rebooked
+      from appointments a join shops sh on sh.id = a.shop_id where a.staff_id is not null${at("a")} group by 1, 2)`);
+    joins.push("left join ap on ap.staff_id = ss.staff_id and ap.shop_id = ss.shop_id");
+  }
+  if (used.has("new_clients")) {
+    withs.push(sql`nc as (select f.staff_id, f.shop_id, count(*)::int n from (
+        select distinct on (a.customer_id) a.customer_id, a.staff_id, a.shop_id, a.starts_at from appointments a
+        where a.status = 'completed' and a.customer_id is not null order by a.customer_id, a.starts_at, a.id) f
+      where f.staff_id is not null${at("f")} group by 1, 2)`);
+    joins.push("left join nc on nc.staff_id = ss.staff_id and nc.shop_id = ss.shop_id");
+  }
+  if (used.has("tickets")) {
+    withs.push(sql`tk as (select s.staff_id, s.shop_id, count(*)::int n from sales s
+      where s.status in ${PAID}${scoped(scope, { shop: "s.shop_id", staff: "s.staff_id", date: "s.business_date" })} group by 1, 2)`);
+    joins.push("left join tk on tk.staff_id = ss.staff_id and tk.shop_id = ss.shop_id");
+  }
+  if (used.has("tips")) {
+    withs.push(sql`tp as (select t.staff_id, t.shop_id, sum(t.amount_cents)::float8 cents from tip_ledger t
+      where t.kind in ('tip', 'refund')${scoped(scope, { shop: "t.shop_id", staff: "t.staff_id", date: "t.business_date" })} group by 1, 2)`);
+    joins.push("left join tp on tp.staff_id = ss.staff_id and tp.shop_id = ss.shop_id");
+  }
+  if ([...used].some((k) => LABOR_STAFF.has(k))) {
+    const shopIds =
+      scope.shopIds ??
+      (await db.select({ id: shops.id }).from(shops)).map((s) => s.id);
+    const range = scope.range ?? { from: await firstActivityDay(today), to: today };
+    const labor = await laborRows(shopIds, range.from, range.to, scope.staffIds);
+    withs.push(sql`lr as (select * from jsonb_to_recordset(${JSON.stringify(
+      labor.map((r) => ({
+        staff_id: r.staffId,
+        shop_id: r.shopId,
+        worked_min: r.workedMin,
+        ot_min: r.otMin,
+        service_cents: r.serviceCents,
+        product_cents: r.productCents,
+      })),
+    )}::jsonb) as x(staff_id uuid, shop_id uuid, worked_min int, ot_min int, service_cents int, product_cents int))`);
+    joins.push("left join lr on lr.staff_id = ss.staff_id and lr.shop_id = ss.shop_id");
+  }
+  const field = (key: string): SQL => {
+    switch (key) {
+      case "barber":
+        return sql.raw("st.display_label");
+      case "location":
+        return sql.raw("sh.name");
+      case "role":
+        return sql.raw(
+          "(select r.name from roles r where r.id = coalesce((select x.role_id from staff_access_shops x where x.staff_id = ss.staff_id and x.shop_id = ss.shop_id), st.role_id))",
+        );
+      case "active":
+        return sql.raw("st.active");
+      case "main_location":
+        return sql.raw("ss.is_primary");
+      case "hire_date":
+        return sql.raw("to_char(st.hire_date, 'YYYY-MM-DD')");
+      case "appointments":
+        return sql.raw("coalesce(ap.n, 0)");
+      case "completed":
+        return sql.raw("coalesce(ap.done, 0)");
+      case "no_shows":
+        return sql.raw("coalesce(ap.no_shows, 0)");
+      case "cancellations":
+        return sql.raw("coalesce(ap.cancels, 0)");
+      case "clients":
+        return sql.raw("coalesce(ap.clients, 0)");
+      case "new_clients":
+        return sql.raw("coalesce(nc.n, 0)");
+      case "booked_hours":
+        return sql.raw("(coalesce(ap.booked_min, 0) / 60)::float8");
+      case "clocked_hours":
+        return sql.raw("(coalesce(lr.worked_min, 0) / 60.0)::float8");
+      case "ot_hours":
+        return sql.raw("(coalesce(lr.ot_min, 0) / 60.0)::float8");
+      case "utilization":
+        return sql.raw(
+          "(case when lr.worked_min > 0 then coalesce(ap.booked_min, 0) / lr.worked_min end)::float8",
+        );
+      case "service_sales":
+        return sql.raw("coalesce(lr.service_cents, 0)::float8");
+      case "product_sales":
+        return sql.raw("coalesce(lr.product_cents, 0)::float8");
+      case "sales_per_hour":
+        return sql.raw(
+          "(case when lr.worked_min > 0 then (lr.service_cents + lr.product_cents) / (lr.worked_min / 60.0) end)::float8",
+        );
+      case "tickets":
+        return sql.raw("coalesce(tk.n, 0)");
+      case "tips":
+        return sql.raw("coalesce(tp.cents, 0)::float8");
+      case "rebook_rate":
+        return sql.raw(
+          "(case when ap.known > 0 then ap.rebooked::float8 / ap.known end)",
+        );
+    }
+    throw unknownField(key);
+  };
+  return buildFlat(def, {
+    withs,
+    from: sql.raw(
+      `staff_shops ss join staff st on st.id = ss.staff_id and st.kind = 'person' join shops sh on sh.id = ss.shop_id ${joins.join(" ")}`,
+    ),
+    where: sql`${scoped(scope, { shop: "ss.shop_id", staff: "ss.staff_id" })} and (st.active or exists (select 1 from appointments x where x.staff_id = ss.staff_id and x.shop_id = ss.shop_id${at("x")}))`,
+    id: "ss.staff_id::text || ':' || ss.shop_id::text",
+    newest: null,
+    field,
+  });
+}
+
+// ───────────────────────────── Inventory ─────────────────────────────
+
+const SHRINK = `(kind = 'stocktake' or (kind = 'adjust' and reason in ('damage', 'theft', 'count_correction', 'found')))`;
+
+/** One row per product and location (shop_products). Movement is the ledger in the dates, as on the stock movement and sell-through reports. */
+function buildInventory(def: ReportDefinition, scope: ReportScope): Built {
+  const r = scope.range;
+  const start = r ? startOfLocalDay(r.from).toISOString() : null;
+  const end = r ? endOfLocalDay(r.to).toISOString() : null;
+  const inR = (col: string) =>
+    r ? sql`${sql.raw(col)} >= ${start} and ${sql.raw(col)} < ${end}` : sql`true`;
+  const shopIn = (col: string) =>
+    scope.shopIds ? sql` and ${sql.raw(col)} in ${uuids(scope.shopIds)}` : sql``;
+  const f = (cond: string) => sql`(${sql.raw(cond)}) and ${inR("created_at")}`;
+  const withs = [
+    sql`lg as (select shop_id, product_id,
+      coalesce(sum(delta) filter (where ${r ? sql`created_at < ${start}` : sql`false`}), 0)::int opening,
+      coalesce(sum(delta) filter (where ${f("kind = 'receive'")}), 0)::int received,
+      coalesce(sum(-delta) filter (where ${f("kind = 'sale'")}), 0)::int sold,
+      coalesce(sum(delta) filter (where ${f("kind in ('refund', 'void')")}), 0)::int returned,
+      coalesce(sum(delta) filter (where ${f("kind = 'transfer_in'")}), 0)::int tin,
+      coalesce(sum(-delta) filter (where ${f("kind = 'transfer_out'")}), 0)::int tout,
+      coalesce(sum(-delta) filter (where ${f("kind = 'adjust' and reason = 'back_bar'")}), 0)::int back_bar,
+      coalesce(sum(-delta) filter (where ${f(SHRINK)}), 0)::int shrink,
+      coalesce(sum(-delta * coalesce(unit_cost_cents, 0)) filter (where ${f(SHRINK)}), 0)::float8 shrink_cents,
+      coalesce(sum(delta) filter (where ${f("kind in ('receive', 'transfer_in')")}), 0)::int received_in,
+      coalesce(sum(-delta) filter (where ${f("kind in ('sale', 'refund', 'void')")}), 0)::int sold_net
+      from inventory_ledger where true${shopIn("shop_id")}${r ? sql` and created_at < ${end}` : sql``} group by 1, 2)`,
+    sql`lost as (select t.from_shop_id shop_id, tl.product_id, sum((tl.qty - tl.qty_received) * coalesce(tl.unit_cost_cents, 0))::float8 cents
+      from stock_transfer_lines tl join stock_transfers t on t.id = tl.transfer_id
+      where t.status = 'received' and tl.qty_received < tl.qty and ${inR("t.received_at")}${shopIn("t.from_shop_id")} group by 1, 2)`,
+    sql`pm as (select s.shop_id, si.ref_id product_id, sum(si.net_cents - round(si.net_cents::numeric * si.refunded_qty / greatest(si.qty, 1)))::float8 cents
+      from sale_items si join sales s on s.id = si.sale_id
+      where si.kind = 'product' and s.status in ${PAID}${shopIn("s.shop_id")}${r ? sql` and s.business_date between ${r.from}::date and ${r.to}::date` : sql``} group by 1, 2)`,
+  ];
+  const field = (key: string): SQL => {
+    switch (key) {
+      case "product":
+        return sql.raw("(p.brand || ' ' || p.name)");
+      case "sku":
+        return sql.raw("p.sku");
+      case "brand":
+        return sql.raw("p.brand");
+      case "category":
+        return sql.raw("p.category");
+      case "active":
+        return sql.raw("sp.active");
+      case "location":
+        return sql.raw("sh.name");
+      case "on_hand":
+        return sql.raw("sp.stock");
+      case "reorder_point":
+        return sql.raw("coalesce(sp.low_stock_threshold, p.low_stock_threshold)");
+      case "par":
+        return sql.raw("coalesce(sp.par_level, p.par_level)");
+      case "low":
+        return sql.raw("(sp.stock <= coalesce(sp.low_stock_threshold, p.low_stock_threshold))");
+      case "price":
+        return sql.raw("sp.price_cents::float8");
+      case "cost_value":
+        return sql.raw("(sp.stock * sp.cost_cents)::float8");
+      case "retail_value":
+        return sql.raw("(sp.stock * sp.price_cents)::float8");
+      case "received":
+        return sql.raw("coalesce(lg.received, 0)");
+      case "sold":
+        return sql.raw("coalesce(lg.sold, 0)");
+      case "returned":
+        return sql.raw("coalesce(lg.returned, 0)");
+      case "transfers_in":
+        return sql.raw("coalesce(lg.tin, 0)");
+      case "transfers_out":
+        return sql.raw("coalesce(lg.tout, 0)");
+      case "back_bar":
+        return sql.raw("coalesce(lg.back_bar, 0)");
+      case "shrink":
+        return sql.raw("coalesce(lg.shrink, 0)");
+      case "shrink_value":
+        return sql.raw("(coalesce(lg.shrink_cents, 0) + coalesce(lost.cents, 0))::float8");
+      case "sell_through":
+        return sql.raw(
+          "(case when coalesce(lg.opening, 0) + coalesce(lg.received_in, 0) > 0 then coalesce(lg.sold_net, 0)::float8 / (coalesce(lg.opening, 0) + coalesce(lg.received_in, 0)) end)",
+        );
+      case "product_sales":
+        return sql.raw("coalesce(pm.cents, 0)::float8");
+    }
+    throw unknownField(key);
+  };
+  return buildFlat(def, {
+    withs,
+    from: sql.raw(
+      "shop_products sp join products p on p.id = sp.product_id join shops sh on sh.id = sp.shop_id left join lg on lg.shop_id = sp.shop_id and lg.product_id = sp.product_id left join lost on lost.shop_id = sp.shop_id and lost.product_id = sp.product_id left join pm on pm.shop_id = sp.shop_id and pm.product_id = sp.product_id",
+    ),
+    where: sql`${scoped(scope, { shop: "sp.shop_id" })} and (sp.active or sp.stock <> 0 or lg.product_id is not null)`,
+    id: "sp.shop_id::text || ':' || sp.product_id::text",
+    newest: null,
+    field,
+  });
+}
+
+// ───────────────────────────── Tips ─────────────────────────────
+
+/** One row per tip ledger entry: a barber's share of a ticket's tip, a tip given back, or an adjustment. */
+const buildTips = (def: ReportDefinition, scope: ReportScope): Built =>
+  buildFlat(def, {
+    withs: [],
+    from: sql.raw(
+      "tip_ledger t join shops sh on sh.id = t.shop_id join staff sb on sb.id = t.staff_id left join sales s on s.id = t.sale_id left join tip_payouts tp on tp.id = t.payout_id",
+    ),
+    where: scoped(scope, { shop: "t.shop_id", staff: "t.staff_id", date: "t.business_date" }),
+    id: "t.id",
+    newest: "t.created_at",
+    field: (key) => {
+      switch (key) {
+        case "entry":
+          return sql.raw(
+            "(case t.kind when 'tip' then 'Tip' when 'refund' then 'Given back' else 'Adjustment' end)",
+          );
+        case "method":
+          return sql.raw(
+            "(case t.method when 'card' then 'Card' when 'cash' then 'Cash' when 'gift_card' then 'Gift card' else 'Adjustment' end)",
+          );
+        case "ticket":
+          return sql.raw("s.number");
+        case "payout_status":
+          return sql.raw("(case when tp.id is null then 'Not in a payout' else initcap(tp.status) end)");
+        case "payout_method":
+          return sql.raw(
+            "(case tp.method when 'cash' then 'Cash' when 'stripe' then 'Stripe' when 'payroll' then 'Payroll' when 'prior' then 'Before tip payouts' end)",
+          );
+        case "paid_out":
+          return sql.raw(`to_char(${local("tp.paid_at")}, 'YYYY-MM-DD')`);
+        case "reason":
+          return sql.raw("t.reason");
+        case "business_date":
+          return sql.raw("to_char(t.business_date, 'YYYY-MM-DD')");
+        case "weekday":
+          return sql.raw("to_char(t.business_date, 'FMDay')");
+        case "month":
+          return sql.raw("to_char(t.business_date, 'YYYY-MM')");
+        case "location":
+          return sql.raw("sh.name");
+        case "barber":
+          return sql.raw("sb.display_label");
+        case "entries":
+          return sql.raw("1");
+        case "amount":
+          return sql.raw("t.amount_cents::float8");
+        case "fee":
+          return sql.raw("t.fee_cents::float8");
+      }
+      throw unknownField(key);
+    },
+  });
+
+// ───────────────────────────── Campaigns ─────────────────────────────
+
+const SENT = local("o.created_at");
+
+/** One row per Campaign Center message sent, with what's credited to it, as on the Campaign Center report. */
+async function buildCampaigns(def: ReportDefinition, scope: ReportScope): Promise<Built> {
+  const settings = await loadMarketingSettings();
+  const where = sql`ms.status = 'queued'${scoped(scope, { shop: "ms.shop_id", staff: "ms.staff_id", at: "ms.created_at" })}`;
+  return buildFlat(def, {
+    withs: [
+      sql`o as (${outcomesSql(where, { days: settings.attributionDays, basis: settings.attributeOn })})`,
+    ],
+    from: sql.raw(
+      "o join marketing_sends ms on ms.id = o.id left join marketing_campaigns c on c.id = o.campaign_id left join shops sh on sh.id = o.shop_id left join staff sb on sb.id = o.staff_id left join customers cu on cu.id = ms.customer_id",
+    ),
+    where: sql` and not o.held`,
+    id: "o.id",
+    newest: "o.created_at",
+    field: (key) => {
+      switch (key) {
+        case "campaign":
+          return sql.raw("c.name");
+        case "kind":
+          return sql.raw(
+            "(case c.kind when 'trigger' then 'Automated' when 'blast' then 'Blast' when 'sequence' then 'Lapsed sequence' when 'openings' then 'We have openings' end)",
+          );
+        case "channel":
+          return sql.raw(
+            "(case o.channel when 'sms' then 'Text' when 'email' then 'Email' when 'push' then 'App push' end)",
+          );
+        case "variant":
+          return sql.raw("upper(o.variant)");
+        case "sent":
+          return sql.raw(`to_char(${SENT}, 'YYYY-MM-DD HH24:MI')`);
+        case "business_date":
+          return sql.raw(`to_char(${SENT}, 'YYYY-MM-DD')`);
+        case "weekday":
+          return sql.raw(`to_char(${SENT}, 'FMDay')`);
+        case "hour":
+          return sql.raw(`extract(hour from ${SENT})::int`);
+        case "month":
+          return sql.raw(`to_char(${SENT}, 'YYYY-MM')`);
+        case "location":
+          return sql.raw("sh.name");
+        case "barber":
+          return sql.raw("sb.display_label");
+        case "client_number":
+          return clientNumber(scope, "ms.customer_id");
+        case "messages":
+          return sql.raw("1");
+        case "delivered":
+          return sql.raw("o.delivered::int");
+        case "opened":
+          return sql.raw("o.opened::int");
+        case "clicked":
+          return sql.raw("o.clicked::int");
+        case "bookings":
+          return sql.raw("o.bookings");
+        case "revenue":
+          return sql.raw("o.revenue::float8");
+        case "redemptions":
+          return sql.raw("o.redemptions");
+        case "cost":
+          return sql.raw("(o.cost_cents + o.discount)::float8");
+        case "unsubscribes":
+          return sql.raw("o.unsubs");
+        case "already_booked":
+          return sql.raw("o.already_booked");
+      }
+      throw unknownField(key);
+    },
+  });
+}
+
 // ───────────────────────────── The query ─────────────────────────────
 
 interface Built {
@@ -1113,7 +1514,15 @@ export async function runReport(
         ? buildSales(def, scope)
         : def.source === "appointments"
           ? buildAppointments(def, scope)
-          : await build(def, scope, policy, now);
+          : def.source === "staff"
+            ? await buildStaff(def, scope, today)
+            : def.source === "inventory"
+              ? buildInventory(def, scope)
+              : def.source === "tips"
+                ? buildTips(def, scope)
+                : def.source === "campaigns"
+                  ? await buildCampaigns(def, scope)
+                  : await build(def, scope, policy, now);
   const pageSize = o.all
     ? EXPORT_MAX
     : Math.min(MAX_PAGE_SIZE, Math.max(1, o.pageSize ?? PAGE_SIZE));

@@ -4,8 +4,12 @@ import { EMPTY_SEGMENT } from "@/domain/marketing";
 import {
   CUSTOMER_FIELDS,
   DEFAULT_APPOINTMENT_REPORT,
+  DEFAULT_CAMPAIGN_REPORT,
   DEFAULT_CUSTOMER_REPORT,
+  DEFAULT_INVENTORY_REPORT,
   DEFAULT_SALES_REPORT,
+  DEFAULT_STAFF_REPORT,
+  DEFAULT_TIP_REPORT,
   ReportDefinition,
   ReportSchedule,
   SavedReportInput,
@@ -88,7 +92,6 @@ describe("definitions", () => {
   });
 
   it("refuses sources that aren't ready and fields that don't exist", () => {
-    expect(definitionProblem(def({ source: "staff" }), ALL, CUSTOM)).toMatch(/Staff reports are coming next\. Customers, event log, sales, appointments reports are ready now/);
     expect(definitionProblem(def({ columns: [{ field: "c.password_hash" }] }), ALL, CUSTOM)).toMatch(/isn't a field/);
     expect(definitionProblem(def({ sort: [{ field: "1; drop table customers" }] }), ALL, CUSTOM)).toMatch(/sort fields isn't available/);
     expect(definitionProblem(def({ groupBy: ["nope"] }), ALL, CUSTOM)).toMatch(/grouping fields isn't available/);
@@ -160,6 +163,25 @@ describe("sales and appointments", () => {
     expect(definitionProblem(sale({ columns: [{ field: "net_sales", agg: "sum" }] }), { ...BOTH, pay: false }, CUSTOM)).toBeNull();
     expect(fieldUse(fieldDef("estimate", CUSTOM, "appointments")!, noDollars).use).toBe("none");
     expect(fieldUse(fieldDef("booked_minutes", CUSTOM, "appointments")!, noDollars).use).toBe("full");
+  });
+
+  it("opens staff, inventory, tips and campaigns only with their standard report, and labor fields with the Labor report", () => {
+    const reports = ["sales_by_barber", "inventory", "tip_payouts", "campaign_center", "labor"];
+    const sees: PanelSees = { ...BOTH, reports };
+    const defaults = { staff: DEFAULT_STAFF_REPORT, inventory: DEFAULT_INVENTORY_REPORT, tips: DEFAULT_TIP_REPORT, campaigns: DEFAULT_CAMPAIGN_REPORT };
+    const needs = { staff: "Barber performance", inventory: "Inventory valuation", tips: "Tip payouts", campaigns: "Campaign Center" };
+    for (const [source, d] of Object.entries(defaults)) {
+      expect(defaultReport(source)).toBe(d);
+      expect(definitionProblem(d, sees, CUSTOM)).toBeNull();
+      expect(definitionProblem(d, { ...BOTH, reports: [] }, CUSTOM)).toBe(`The ${source[0].toUpperCase()}${source.slice(1)} source needs "${needs[source as keyof typeof needs]}"`);
+      const keys = allFields(CUSTOM, source).map((x) => x.key);
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+    const staff = (field: string) => ReportDefinition.parse({ ...DEFAULT_STAFF_REPORT, columns: [{ field }], sort: [] });
+    expect(definitionProblem(staff("clocked_hours"), { ...sees, reports: ["sales_by_barber"] }, CUSTOM)).toMatch(/can't add "Clocked hours": it needs "Labor hours and cost"/);
+    expect(definitionProblem(staff("completed"), { ...sees, reports: ["sales_by_barber"] }, CUSTOM)).toBeNull();
+    expect(definitionProblem(staff("tips"), { ...sees, pay: false }, CUSTOM)).toMatch(/pay data/);
+    expect([nounOf("staff"), nounOf("inventory"), nounOf("tips"), nounOf("campaigns")]).toEqual(["barber", "product", "tip", "message"]);
   });
 
   it("refuses client filters and event types, which are for other sources", () => {

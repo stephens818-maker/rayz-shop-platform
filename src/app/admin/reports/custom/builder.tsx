@@ -709,7 +709,15 @@ export function ReportBuilder({
             ? "Which paid tickets (refunded ones too), by business day, at which locations and with which barbers."
             : def.source === "appointments"
               ? "Which appointments, by the day they start, at which locations and with which barbers."
-              : "Which clients, over which dates, where and with whom. Visits, spend and campaign columns count only what happened in these dates, at these locations, with these barbers."
+              : def.source === "staff"
+                ? "Which barbers, at which locations. Their measures cover these dates."
+                : def.source === "inventory"
+                  ? "Which locations' products. Stock is as of now; received, sold and shrink cover these dates."
+                  : def.source === "tips"
+                    ? "Which tip entries, by business day, at which locations and for which barbers."
+                    : def.source === "campaigns"
+                      ? "Which messages, by the day they were sent, at which locations and about which barbers."
+                      : "Which clients, over which dates, where and with whom. Visits, spend and campaign columns count only what happened in these dates, at these locations, with these barbers."
       }
     >
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -770,7 +778,7 @@ export function ReportBuilder({
             </p>
           </Field>
         )}
-        {o.barbers ? (
+        {def.source === "inventory" ? null : o.barbers ? (
           <ScopePicker
             label="Barbers"
             disabled={!editable}
@@ -1391,11 +1399,7 @@ export function ReportBuilder({
                   {o.sources.map((s) => (
                     <option key={s.key} value={s.key} disabled={!s.ready}>
                       {s.label}
-                      {s.ready
-                        ? ""
-                        : s.key === "events"
-                          ? " (needs event log access)"
-                          : " (coming next)"}
+                      {s.ready ? "" : ` (${s.needs ?? "coming next"})`}
                     </option>
                   ))}
                 </Select>

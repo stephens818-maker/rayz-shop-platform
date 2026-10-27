@@ -190,7 +190,6 @@ describe("the query builder", () => {
     const owner = await ctxOf("owner");
     const policy = await privacy.clientPolicy(owner);
     for (const field of ["c.password_hash", "name; drop table customers", "custom:x' or '1'='1"]) await expect(engine.runReport(owner, policy, def({ columns: [{ field }] }))).rejects.toThrow(/isn't a field/);
-    await expect(engine.runReport(owner, policy, def({ source: "staff" }))).rejects.toThrow(/coming next/);
     const every = rb.allFields(policy.custom).map((f) => ({ field: f.key }));
     const r = await engine.runReport(owner, policy, def({ shops: "all", columns: every.slice(0, 40), range: { preset: "30d" } }), { pageSize: 5 });
     expect(r.columns).toHaveLength(Math.min(40, every.length));
@@ -255,6 +254,100 @@ describe("sales and appointments", () => {
     expect(r.total).toBe(c.n);
     expect(r.totals!.cells.slice(1)).toEqual([c.n, c.done, c.ns, c.cx]);
     await expect(engine.runReport(owner, policy, appts({ filter: { ...EMPTY_SEGMENT, minVisits: 2 } }))).rejects.toThrow(/Client filters are for customer reports/);
+  });
+});
+
+describe("staff, inventory, tips and campaigns", () => {
+  const flat = (source: string, x: Record<string, unknown>) => rb.ReportDefinition.parse({ source, shops: "all", range: { preset: "all" }, ...x });
+
+  it("runs every field of every source, over all time and a week", async () => {
+    const owner = await ctxOf("owner");
+    const policy = await privacy.clientPolicy(owner);
+    for (const source of ["sales", "appointments", "staff", "inventory", "tips", "campaigns", "events"])
+      for (const preset of ["all", "7d"]) {
+        const every = rb.allFields([], source).map((f) => ({ field: f.key }));
+        const r = await engine.runReport(owner, policy, flat(source, { columns: every, range: { preset } }), { pageSize: 3 });
+        expect(r.columns).toHaveLength(every.length);
+        expect(r.noun).toBe(rb.nounOf(source as never));
+      }
+  });
+
+  it("counts staff appointments and clocked hours as the calendar and the Labor report do", async () => {
+    const owner = await ctxOf("owner");
+    const policy = await privacy.clientPolicy(owner);
+    const r = await engine.runReport(owner, policy, flat("staff", { columns: [{ field: "barber" }, ...["completed", "no_shows", "clocked_hours", "service_sales", "product_sales"].map((field) => ({ field, agg: "sum" }))], range: { preset: "30d" } }), { pageSize: 5 });
+    const { from, to } = r.scope.range!;
+    const [c] = await rows<{ done: number; ns: number }>(sql`
+      select (count(*) filter (where a.status = 'completed'))::int done, (count(*) filter (where a.status = 'no_show'))::int ns
+      from appointments a join staff_shops ss on ss.staff_id = a.staff_id and ss.shop_id = a.shop_id join staff st on st.id = a.staff_id and st.kind = 'person'
+      where a.starts_at >= ${m.time.startOfLocalDay(from).toISOString()} and a.starts_at < ${m.time.endOfLocalDay(to).toISOString()}`);
+    expect(c.done).toBeGreaterThan(0);
+    expect(r.totals!.cells.slice(1, 3)).toEqual([c.done, c.ns]);
+    const { laborRows } = await import("@/server/time-clock-export");
+    const all = (await m.db.db.select({ id: m.schema.shops.id }).from(m.schema.shops)).map((s) => s.id);
+    const pairs = new Set((await rows<{ k: string }>(sql`select ss.staff_id::text || ss.shop_id::text k from staff_shops ss join staff st on st.id = ss.staff_id and st.kind = 'person'`)).map((x) => x.k));
+    const labor = (await laborRows(all, from, to, null)).filter((l) => pairs.has(l.staffId + l.shopId));
+    expect(r.totals!.cells[3]).toBeCloseTo(labor.reduce((a, l) => a + l.workedMin, 0) / 60, 5);
+    expect(r.totals!.cells[4]).toBe(labor.reduce((a, l) => a + l.serviceCents, 0));
+    expect(r.totals!.cells[5]).toBe(labor.reduce((a, l) => a + l.productCents, 0));
+    const noLabor = without(owner, ["report.labor.view"]);
+    await expect(engine.runReport(noLabor, await privacy.clientPolicy(noLabor), flat("staff", { columns: [{ field: "clocked_hours" }] }))).rejects.toThrow(/can't add "Clocked hours": it needs "Labor hours and cost"/);
+    const noBarbers = without(owner, ["report.sales_by_barber.view"]);
+    await expect(engine.runReport(noBarbers, await privacy.clientPolicy(noBarbers), rb.DEFAULT_STAFF_REPORT)).rejects.toThrow(/The Staff source needs "Barber performance"/);
+    const own = without(await ctxOf("michelle"), ["reports.all_staff"]);
+    const mine = await engine.runReport(own, await privacy.clientPolicy(own), flat("staff", { shops: null, columns: [{ field: "barber" }] }), { all: true });
+    expect(mine.lines.every((l) => l.kind !== "row" || String(l.id).startsWith(ids.michelle))).toBe(true);
+  });
+
+  it("matches the inventory ledger: stock now, and what was sold and received", async () => {
+    const owner = await ctxOf("owner");
+    const policy = await privacy.clientPolicy(owner);
+    const r = await engine.runReport(owner, policy, flat("inventory", { columns: [{ field: "product" }, ...["on_hand", "sold", "received", "returned"].map((field) => ({ field, agg: "sum" }))] }), { pageSize: 5 });
+    const [l] = await rows<Record<string, number>>(sql`select
+      (select coalesce(sum(stock), 0)::int from shop_products) on_hand,
+      coalesce(sum(-delta) filter (where kind = 'sale'), 0)::int sold,
+      coalesce(sum(delta) filter (where kind = 'receive'), 0)::int received,
+      coalesce(sum(delta) filter (where kind in ('refund', 'void')), 0)::int returned from inventory_ledger`);
+    expect(l.sold).toBeGreaterThan(0);
+    expect(r.totals!.cells.slice(1)).toEqual([l.on_hand, l.sold, l.received, l.returned]);
+    const noInv = without(owner, ["report.inventory.view"]);
+    await expect(engine.runReport(noInv, await privacy.clientPolicy(noInv), rb.DEFAULT_INVENTORY_REPORT)).rejects.toThrow(/The Inventory source needs "Inventory valuation"/);
+  });
+
+  it("lists every tip entry, signed, and needs Tip payouts", async () => {
+    const owner = await ctxOf("owner");
+    const policy = await privacy.clientPolicy(owner);
+    const r = await engine.runReport(owner, policy, flat("tips", { columns: [{ field: "entry" }, { field: "entries", agg: "sum" }, { field: "amount", agg: "sum" }] }), { pageSize: 5 });
+    const [t] = await rows<{ n: number; cents: number }>(sql`select count(*)::int n, coalesce(sum(amount_cents), 0)::float8 cents from tip_ledger`);
+    expect(t.n).toBeGreaterThan(0);
+    expect(r.totals!.cells.slice(1)).toEqual([t.n, t.cents]);
+    const noTips = without(owner, ["report.tip_payouts.view"]);
+    await expect(engine.runReport(noTips, await privacy.clientPolicy(noTips), rb.DEFAULT_TIP_REPORT)).rejects.toThrow(/The Tips source needs "Tip payouts"/);
+    const noMoney = without(owner, ["reports.money"]);
+    await expect(engine.runReport(noMoney, await privacy.clientPolicy(noMoney), rb.DEFAULT_TIP_REPORT)).rejects.toThrow(/See dollar amounts in reports/);
+  });
+
+  it("credits campaign messages as the Campaign Center report does", async () => {
+    const owner = await ctxOf("owner");
+    const policy = await privacy.clientPolicy(owner);
+    const [camp] = await m.db.db.insert(m.schema.marketingCampaigns).values({ kind: "blast", name: "Report builder blast" }).returning();
+    const [cu] = await rows<{ id: string }>(sql`select id from customers order by number limit 2`);
+    await m.db.db.insert(m.schema.marketingSends).values([
+      { campaignId: camp.id, customerId: cu.id, shopId: shop.coralville, channel: "sms", status: "queued", dedupeKey: `rb:${camp.id}:1`, token: `rb-${camp.id}-1`, clicks: 2, firstClickAt: new Date(), costCents: 1 },
+      { campaignId: camp.id, customerId: cu.id, shopId: shop.coralville, channel: "email", status: "queued", dedupeKey: `rb:${camp.id}:2`, token: `rb-${camp.id}-2`, costCents: 0.1 },
+      { campaignId: camp.id, customerId: cu.id, shopId: shop.coralville, channel: "sms", status: "holdout", dedupeKey: `rb:${camp.id}:3`, token: `rb-${camp.id}-3` },
+    ]);
+    const r = await engine.runReport(owner, policy, flat("campaigns", { columns: [{ field: "campaign" }, ...["messages", "clicked", "bookings", "revenue"].map((field) => ({ field, agg: "sum" }))] }), { pageSize: 5 });
+    const report = await import("@/server/marketing/report");
+    const settings = await (await import("@/server/marketing/settings")).loadMarketingSettings();
+    const sends = (await report.sendOutcomes(sql`ms.status = 'queued'`, { days: settings.attributionDays, basis: settings.attributeOn })).filter((s) => !s.held);
+    expect(sends.length).toBeGreaterThanOrEqual(2);
+    expect(r.total).toBe(sends.length);
+    expect(r.lines.find((l) => l.kind === "row" && l.cells[0] === "Report builder blast")).toBeTruthy();
+    expect(r.totals!.cells.slice(1)).toEqual([sends.length, sends.filter((s) => s.clicked).length, sends.reduce((a, s) => a + s.bookings, 0), sends.reduce((a, s) => a + s.revenue, 0)]);
+    const noCc = without(owner, ["report.campaign_center.view"]);
+    await expect(engine.runReport(noCc, await privacy.clientPolicy(noCc), rb.DEFAULT_CAMPAIGN_REPORT)).rejects.toThrow(/The Campaigns source needs "Campaign Center"/);
+    await m.db.db.delete(m.schema.marketingCampaigns).where(m.drizzle.eq(m.schema.marketingCampaigns.id, camp.id));
   });
 });
 

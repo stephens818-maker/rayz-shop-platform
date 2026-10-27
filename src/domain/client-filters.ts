@@ -78,6 +78,8 @@ export interface PanelSees {
   pay?: boolean;
   /** Badge keys they see. */
   badges?: string[];
+  /** Standard reports they may view (report keys), for report builder sources and fields that show one's data. */
+  reports?: readonly string[];
 }
 
 /** segmentProblem's view of a person. */

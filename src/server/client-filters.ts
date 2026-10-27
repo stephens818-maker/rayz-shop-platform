@@ -6,6 +6,7 @@ import { marketingCampaigns, products, promoCodes, services, staff, staffShops }
 import { badgeOptions } from "@/domain/badges";
 import { BUILTIN_FIELDS, type FieldKey, type Level } from "@/domain/client-privacy";
 import { EMPTY_SEGMENT, FILTER_FIELDS, type FilterField, type Segment } from "@/domain/marketing";
+import { REPORTS, reportView } from "@/domain/permissions";
 import { upcomingBirthdayKeys, type FilterOptions, type PanelSees } from "@/domain/client-filters";
 import { SHOP_TZ, endOfLocalDay, startOfLocalDay, todayLocal } from "@/lib/time";
 import { can, openShops, type StaffContext } from "./auth/staff";
@@ -281,7 +282,12 @@ export function panelSees(ctx: StaffContext, policy: ClientPolicy): PanelSees {
 
 /** panelSees for reports: dollar amounts also need "See dollar amounts in reports". */
 export function reportSees(ctx: StaffContext, policy: ClientPolicy): PanelSees {
-  const sees = { ...panelSees(ctx, policy), dollars: can(ctx, "reports.money"), pay: can(ctx, "report.tips_payroll.view") };
+  const sees = {
+    ...panelSees(ctx, policy),
+    dollars: can(ctx, "reports.money"),
+    pay: can(ctx, "report.tips_payroll.view"),
+    reports: REPORTS.filter((r) => can(ctx, reportView(r.key))).map((r) => r.key),
+  };
   if (!sees.money || can(ctx, "reports.money")) return sees;
   return { ...sees, money: false, moneyWhy: 'Dollar amounts need "See dollar amounts in reports"' };
 }

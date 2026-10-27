@@ -101,7 +101,7 @@ export async function sendOutcomes(where: SQL, o: { days: number; basis: Basis }
   return (await db.execute(outcomesSql(where, o))) as unknown as SendRow[];
 }
 
-function outcomesSql(where: SQL, { days, basis }: { days: number; basis: Basis }): SQL {
+export function outcomesSql(where: SQL, { days, basis }: { days: number; basis: Basis }): SQL {
   const t0 = basis === "engaged" ? sql.raw("least(x.opened_at, x.first_click_at)") : sql.raw("x.created_at");
   const lastTouch = (customer: SQL, at: SQL, extra = sql``) => sql`(
     select x.id from marketing_sends x where x.customer_id = ${customer} and x.status = 'queued' and ${t0} <= ${at}
