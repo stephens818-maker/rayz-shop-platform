@@ -813,6 +813,13 @@
       "when": 1796594940000,
       "tag": "core_0115_tip_deposit_consent",
       "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1796595000000,
+      "tag": "core_0116_45b_beauty_defaults",
+      "breakpoints": true
     }
   ]
 }

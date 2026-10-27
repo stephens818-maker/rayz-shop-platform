@@ -581,6 +581,8 @@ describe("payroll export shows tips already paid", () => {
     type P = import("@/domain/payroll/calc").PayrollSettings;
     const base = def.read(before?.payroll) as P;
     await expect(Promise.resolve().then(() => def.parse({ tipsPaidOutHeader: "E_Cash Tips Recd_Dollars" }, base, actor as never, m.db.db as never))).rejects.toThrow(/its own name/);
+    await expect(Promise.resolve().then(() => def.parse({ stripeTipsPaidHeader: base.tipsPaidOutHeader }, base, actor as never, m.db.db as never))).rejects.toThrow(/tips paid by Stripe needs its own name/);
+    await expect(Promise.resolve().then(() => def.parse({ owedTipsInPayrollHeader: base.tipsInPayrollHeader }, base, actor as never, m.db.db as never))).rejects.toThrow(/owed tips paid in payroll needs its own name/);
     await expect(Promise.resolve().then(() => def.parse({ markPaidTips: false }, base, actor as never, m.db.db as never))).rejects.toThrow(/can't be turned off while Stripe payouts are on/);
     process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "false";
     onTestFinished(() => void delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS);
@@ -590,8 +592,10 @@ describe("payroll export shows tips already paid", () => {
     const period = (await run.periodChoices()).find((p) => p.current)!;
     const lines = (await run.buildPayroll(period.start, period.end))!.blocks.flatMap((b) => b.lines);
     expect(lines.some((l) => l.tipsPaidOut > 0)).toBe(true);
-    expect(calc.exportExtraColumns(lines, base).map((c) => c.from)).toContain("tipsPaidOut");
-    expect(calc.exportExtraColumns(lines, off).map((c) => c.from)).not.toContain("tipsPaidOut");
+    const paidCols = (p: P) => calc.exportExtraColumns(lines, p).filter((c) => calc.PAID_TIP_COLUMNS.includes(c.from));
+    expect(paidCols(base).length).toBeGreaterThan(0);
+    expect(paidCols(off)).toEqual([]);
     expect(calc.exportHeaders(lines, off)).not.toContain(base.tipsPaidOutHeader);
+    expect(calc.exportHeaders(lines, off)).not.toContain(base.stripeTipsPaidHeader);
   });
 });

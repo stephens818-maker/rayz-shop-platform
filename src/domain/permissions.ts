@@ -786,7 +786,7 @@ export const REPORTS = [
     key: "payroll_fica_tip_credit",
     label: "FICA tip credit (45B)",
     href: "/admin/reports/payroll/fica-tip-credit",
-    hint: "Per pay period, employer and employee: hours, cash wages, tips charged, cash and declared, the tips over the $5.15 an hour floor that count toward the 45B credit, and the estimated credit. For the CPA.",
+    hint: "By month of the paycheck and per pay period, employer and employee: hours, cash wages, tips charged, cash and declared, the tips over the $7.25 an hour floor that count toward the 45B credit, and the estimated credit. For the CPA.",
   },
   {
     key: "payroll_isolved",

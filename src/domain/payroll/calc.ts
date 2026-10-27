@@ -37,8 +37,12 @@ export interface PayrollSettings {
    * part of E_Cash Tips Recd, never paid again. Added only when someone in the file has paid tips.
    */
   markPaidTips: boolean;
-  /** That column's header; the memo code is Charles's to confirm in iSolved. */
+  /** That column's header; the memo code is Charles's to confirm in iSolved. Where anyone in the file was paid by Stripe, it carries only the tips paid out another way. */
   tipsPaidOutHeader: string;
+  /** The memo column for tips paid out by Stripe (ST-C13), apart from cash. Added only when someone in the file has them. */
+  stripeTipsPaidHeader: string;
+  /** The iSolved earning for owed Stripe tips paid through payroll at the cutoff (ST-C14's fallback), apart from tips the employee chose to get there (ST-C13). Added only when someone in the file has them. */
+  owedTipsInPayrollHeader: string;
   /** The brand's pay calendar, matched to iSolved's: new pay groups start on it, and so do the brand-wide pay periods (tips by pay period, timesheets). */
   calendar: PayCalendar;
   /** The iSolved earning for cash tips employees declare (received in hand, not paid by the shop, but taxed). Added only when someone in the file declared any. */
@@ -66,9 +70,9 @@ export interface TipTaxSettings {
   qualifiedTipsCode: string;
   /** W-2 box 12 code for qualified overtime (the FLSA half-time premium). */
   overtimeCode: string;
-  /** Tips from this date count toward 45B (tax years after Dec 31, 2025 for beauty service businesses). */
+  /** Tips from this date count toward 45B (tax years after Dec 31, 2024 for barbering and other beauty services, per the 2025 Form 8846). */
   creditFrom: LocalDate;
-  /** 45B's wage floor per hour, in cents: tips that only bring pay up to it don't count. */
+  /** 45B's wage floor per hour, in cents: tips that only bring pay up to it don't count. For beauty services, the federal minimum wage in effect ($7.25), not the food and beverage $5.15. */
   creditWageCentsPerHour: number;
   /** The employer FICA rate on creditable tips. */
   ficaRate: number;
@@ -97,10 +101,12 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   tipsInPayrollHeader: "E_Tips Paid In Payroll_Dollars",
   markPaidTips: true,
   tipsPaidOutHeader: "M_Tips Paid Out_Dollars",
+  stripeTipsPaidHeader: "M_Tips Paid By Stripe_Dollars",
+  owedTipsInPayrollHeader: "E_Owed Tips Paid In Payroll_Dollars",
   calendar: DEFAULT_BRAND_CALENDAR,
   cashTipsDeclaredHeader: "E_Cash Tips Declared_Dollars",
   declarations: { enabled: true, atClockOut: true, remindUntilDay: 9, lockDay: 10, attestation: DEFAULT_ATTESTATION },
-  tipTax: { qualifiedTipsCode: "TP", overtimeCode: "TT", creditFrom: "2026-01-01", creditWageCentsPerHour: 515, ficaRate: 0.0765 },
+  tipTax: { qualifiedTipsCode: "TP", overtimeCode: "TT", creditFrom: "2025-01-01", creditWageCentsPerHour: 725, ficaRate: 0.0765 },
 };
 
 const header = (v: unknown, d: string) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 60) : d);
@@ -140,6 +146,8 @@ export function payrollSettings(raw: unknown): PayrollSettings {
     tipsInPayrollHeader: header(r.tipsInPayrollHeader, d.tipsInPayrollHeader),
     markPaidTips: bool(r.markPaidTips, d.markPaidTips),
     tipsPaidOutHeader: header(r.tipsPaidOutHeader, d.tipsPaidOutHeader),
+    stripeTipsPaidHeader: header(r.stripeTipsPaidHeader, d.stripeTipsPaidHeader),
+    owedTipsInPayrollHeader: header(r.owedTipsInPayrollHeader, d.owedTipsInPayrollHeader),
     calendar: calendarOf(r.calendar),
     cashTipsDeclaredHeader: header(r.cashTipsDeclaredHeader, d.cashTipsDeclaredHeader),
     declarations: {
@@ -201,6 +209,10 @@ export interface LineInput {
   tipsInPayroll?: number;
   /** Of the tips, those already paid out in cash or by Stripe when the report was built. */
   tipsPaidOut?: number;
+  /** Of tipsPaidOut, those paid by Stripe. */
+  tipsPaidByStripe?: number;
+  /** Of tipsInPayroll, owed Stripe tips going through payroll at the cutoff (ST-C14) rather than by the employee's choice. */
+  owedTipsInPayroll?: number;
   /** What brings the employee up to their guaranteed minimum (compensation plans, when payroll uses them). */
   guaranteeTopUp?: number;
   /** Cash tips the employee declared for the period (handed to them, never rung up). Not the shop's money, so not labor cost. */
@@ -259,6 +271,12 @@ export interface Line {
   tipsOutside: number;
   /** Of tipsOutside, what was already paid out when the report was built. Information only. */
   tipsPaidOut: number;
+  /** tipsPaidOut by how it was paid (ST-C13): by Stripe, and any other way. Absent in periods locked before the split. */
+  tipsPaidOutStripe?: number;
+  tipsPaidOutCash?: number;
+  /** tipsInPayroll by why (ST-C13): owed Stripe tips (ST-C14's fallback), and the employee's or shop's choice. Absent in periods locked before the split. */
+  tipsInPayrollOwed?: number;
+  tipsInPayrollChosen?: number;
   /** Declared cash tips: their own iSolved earning, reported (and taxed), never paid by the shop. */
   declaredCashTips: number;
   /** Of R, card and gift card tips. Information only. */
@@ -300,6 +318,10 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const otPay = s.otMultiplier * wage * otHours;
   const tips = ov(i, "tips", i.tips);
   const tipsInPayroll = i.tipsInPayroll ?? 0;
+  const tipsPaidOut = i.tipsPaidOut ?? 0;
+  const between = (x: number | undefined, max: number) => (max >= 0 ? Math.min(max, Math.max(0, x ?? 0)) : 0);
+  const tipsInPayrollOwed = between(i.owedTipsInPayroll, tipsInPayroll);
+  const tipsPaidOutStripe = between(i.tipsPaidByStripe, tipsPaidOut);
   const trainingPay = s.trainingPayInCost ? (i.trainingRate ?? wage) * trainingHours : 0;
   const guaranteeTopUp = i.guaranteeTopUp ?? 0;
   return {
@@ -327,7 +349,11 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     tips,
     tipsInPayroll,
     tipsOutside: tips - tipsInPayroll,
-    tipsPaidOut: i.tipsPaidOut ?? 0,
+    tipsPaidOut,
+    tipsPaidOutStripe,
+    tipsPaidOutCash: tipsPaidOut - tipsPaidOutStripe,
+    tipsInPayrollOwed,
+    tipsInPayrollChosen: tipsInPayroll - tipsInPayrollOwed,
     declaredCashTips: i.declaredCashTips ?? 0,
     chargedTips: Math.min(tips, Math.max(0, i.chargedTips ?? 0)),
     lateTipRefunds: i.lateTipRefunds ?? 0,
@@ -447,7 +473,23 @@ const hasGuarantee = (lines: readonly Pick<Line, "guaranteeTopUp">[]) => lines.s
 export const hasDeclaredTips = (lines: readonly Pick<Line, "declaredCashTips">[]) => lines.some((l) => (l.declaredCashTips ?? 0) !== 0);
 
 /** What a column after the standard six carries. */
-export type ExtraFrom = "tipsInPayroll" | "tipsPaidOut" | "declaredCashTips" | "guaranteeTopUp" | "commission" | "productTotal" | "wage";
+export type ExtraFrom = "tipsInPayroll" | "tipsInPayrollChosen" | "tipsInPayrollOwed" | "tipsPaidOut" | "tipsPaidOutCash" | "tipsPaidOutStripe" | "declaredCashTips" | "guaranteeTopUp" | "commission" | "productTotal" | "wage";
+
+export const SPLIT_LABEL: Record<"tipsInPayrollChosen" | "tipsInPayrollOwed" | "tipsPaidOutCash" | "tipsPaidOutStripe", string> = {
+  tipsInPayrollChosen: "Tips in payroll by choice",
+  tipsInPayrollOwed: "Owed tips in payroll",
+  tipsPaidOutCash: "Tips paid out, not by Stripe",
+  tipsPaidOutStripe: "Tips paid by Stripe",
+};
+
+/** A file's tips paid through payroll and its tips already paid out, whichever columns carry them (one, or split by ST-C13). */
+export const PAYROLL_TIP_COLUMNS: readonly ExtraFrom[] = ["tipsInPayroll", "tipsInPayrollChosen", "tipsInPayrollOwed"];
+export const PAID_TIP_COLUMNS: readonly ExtraFrom[] = ["tipsPaidOut", "tipsPaidOutCash", "tipsPaidOutStripe"];
+export const sumColumns = (from: readonly ExtraFrom[], values: readonly number[], ks: readonly ExtraFrom[]) =>
+  ks.reduce((a, k) => {
+    const j = from.indexOf(k);
+    return a + (j >= 0 ? (values[EXPORT_COLUMNS.length + j] ?? 0) : 0);
+  }, 0);
 export interface ExtraColumn {
   header: string;
   from: ExtraFrom;
@@ -460,11 +502,33 @@ export interface ExportOptions {
   guaranteeHeader?: string;
 }
 
+const someHave = (lines: readonly Line[], k: "tipsInPayrollOwed" | "tipsInPayrollChosen" | "tipsPaidOutStripe" | "tipsPaidOutCash") => lines.some((l) => (l[k] ?? 0) !== 0);
+
+/**
+ * Tips paid through payroll and tips already paid out, each in one column, or split (ST-C13) where
+ * anyone in the file has owed tips in payroll or was paid by Stripe: the employee's chosen payroll
+ * tips apart from owed ones, and tips paid out by Stripe apart from cash. The usual file is unchanged.
+ */
+function tipColumns(lines: readonly Line[], s: PayrollSettings): ExtraColumn[] {
+  const payroll: ExtraColumn[] = !someHave(lines, "tipsInPayrollOwed")
+    ? hasPayrollTips(lines)
+      ? [{ header: s.tipsInPayrollHeader, from: "tipsInPayroll" }]
+      : []
+    : [...(someHave(lines, "tipsInPayrollChosen") ? [{ header: s.tipsInPayrollHeader, from: "tipsInPayrollChosen" as const }] : []), { header: s.owedTipsInPayrollHeader, from: "tipsInPayrollOwed" }];
+  const paid: ExtraColumn[] = !s.markPaidTips
+    ? []
+    : !someHave(lines, "tipsPaidOutStripe")
+      ? hasPaidTips(lines)
+        ? [{ header: s.tipsPaidOutHeader, from: "tipsPaidOut" }]
+        : []
+      : [...(someHave(lines, "tipsPaidOutCash") ? [{ header: s.tipsPaidOutHeader, from: "tipsPaidOutCash" as const }] : []), { header: s.stripeTipsPaidHeader, from: "tipsPaidOutStripe" }];
+  return [...payroll, ...paid];
+}
+
 /** The columns after the standard six: tips in payroll, tips already paid out (where marked), declared cash tips and the guarantee top-up when someone in the file has them, then the brand's. */
 export function exportExtraColumns(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExtraColumn[] {
   return [
-    ...(hasPayrollTips(lines) ? [{ header: s.tipsInPayrollHeader, from: "tipsInPayroll" as const }] : []),
-    ...(s.markPaidTips && hasPaidTips(lines) ? [{ header: s.tipsPaidOutHeader, from: "tipsPaidOut" as const }] : []),
+    ...tipColumns(lines, s),
     ...(hasDeclaredTips(lines) ? [{ header: s.cashTipsDeclaredHeader, from: "declaredCashTips" as const }] : []),
     ...(hasGuarantee(lines) ? [{ header: o.guaranteeHeader ?? COLUMN_LABEL.guaranteeTopUp, from: "guaranteeTopUp" as const }] : []),
     ...(o.extras ?? []),
@@ -536,7 +600,7 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       const i = from.indexOf(k);
       return i < 0 ? 0 : b.exportRows.reduce((a, r) => a + (r.values[EXPORT_COLUMNS.length + i] ?? 0), 0);
     };
-    const payrollTips = exported("tipsInPayroll");
+    const payrollTips = PAYROLL_TIP_COLUMNS.reduce((a, k) => a + exported(k), 0);
     if (!sameToTheCent(b.totals.tipsInPayroll, payrollTips))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.tipsInPayroll, check: "export", report: b.totals.tipsInPayroll, other: payrollTips, detail: `${b.shop}: the export's tips paid in payroll add up to a different total than the report's` });
     const topUps = exported("guaranteeTopUp");
@@ -549,6 +613,16 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       if (!from.includes(k)) continue;
       const sum = exported(k);
       if (!sameToTheCent(b.totals[k], sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "export", report: b.totals[k], other: sum, detail: `${b.shop}: the export's ${COLUMN_LABEL[k]} column adds up to a different total than the report's` });
+    }
+    if (from.some((k) => k === "tipsPaidOutCash" || k === "tipsPaidOutStripe")) {
+      const sum = exported("tipsPaidOutCash") + exported("tipsPaidOutStripe");
+      if (!sameToTheCent(b.totals.tipsPaidOut, sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL.tipsPaidOut, check: "export", report: b.totals.tipsPaidOut, other: sum, detail: `${b.shop}: the export's tips paid out by Stripe and otherwise add up to a different total than the report's` });
+    }
+    for (const k of ["tipsInPayrollOwed", "tipsPaidOutStripe"] as const) {
+      if (!from.includes(k)) continue;
+      const want = b.lines.reduce((a, l) => a + (l[k] ?? 0), 0);
+      const sum = exported(k);
+      if (!sameToTheCent(want, sum)) out.push({ shopId: b.shopId, column: SPLIT_LABEL[k], check: "export", report: want, other: sum, detail: `${b.shop}: the export's ${SPLIT_LABEL[k].toLowerCase()} add up to a different total than the report's` });
     }
     if (!sameToTheCent(b.totals.tipsInPayroll + b.totals.tipsOutside, b.totals.tips))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.tips, check: "rows", report: b.totals.tips, other: b.totals.tipsInPayroll + b.totals.tipsOutside, detail: `${b.shop}: tips paid separately and in payroll don't add up to TIPS` });

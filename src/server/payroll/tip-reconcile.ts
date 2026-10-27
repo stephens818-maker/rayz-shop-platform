@@ -1,7 +1,7 @@
 import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { staff, tipLedger, tipPayoutPeriods, tipPayouts, type TipPayoutMethod, type TipPayoutStatus } from "@/db/schema";
-import { EXPORT_COLUMNS, extraFromOf, toCents, type ExportRow, type ExtraFrom, type Line, type Mismatch } from "@/domain/payroll/calc";
+import { EXPORT_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, sumColumns, toCents, type ExportRow, type ExtraFrom, type Line, type Mismatch } from "@/domain/payroll/calc";
 import type { LocalDate } from "@/lib/time";
 import { toCsv } from "@/server/reports";
 import { recordMissingPayoutPeriods } from "@/server/tips/pay-periods";
@@ -111,10 +111,7 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
   const mismatches: Mismatch[] = [];
   for (const b of blocks) {
     const from = extraFromOf(b);
-    const at = (r: ExportRow | undefined, k: ExtraFrom) => {
-      const i = from.indexOf(k);
-      return r && i >= 0 ? toCents(r.values[EXPORT_COLUMNS.length + i] ?? 0) : 0;
-    };
+    const at = (r: ExportRow | undefined, ks: readonly ExtraFrom[]) => (r ? toCents(sumColumns(from, r.values, ks)) : 0);
     const lockedAt = b.locked ? new Date(b.locked.at) : null;
     for (const k of [...keys].filter((x) => x.endsWith(`|${b.shopId}`))) {
       const staffId = k.split("|")[0];
@@ -142,8 +139,8 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
         inFlightCents,
         owedCents: directCents - paidCents - inFlightCents,
         exportCashTipsCents: row ? toCents(row.values[CASH_TIPS] ?? 0) : null,
-        exportPaidMemoCents: at(row, "tipsPaidOut"),
-        exportPayrollTipsCents: at(row, "tipsInPayroll"),
+        exportPaidMemoCents: at(row, PAID_TIP_COLUMNS),
+        exportPayrollTipsCents: at(row, PAYROLL_TIP_COLUMNS),
         payouts: mine.map((x) => ({
           id: x.p.id,
           method: x.p.method,

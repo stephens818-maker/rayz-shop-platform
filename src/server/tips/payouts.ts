@@ -744,8 +744,12 @@ export interface PayrollTipSplit {
   lateAbsorbedCents: number;
   /** Tips paid (or to be paid) through payroll rather than separately. */
   inPayrollCents: number;
+  /** Of those, owed Stripe tips going to payroll at the cutoff (ST-C14), not the employee's or shop's choice. Known until the period is locked; its snapshot keeps it. */
+  owedInPayrollCents: number;
   /** Tips already paid out in cash or by Stripe, or before tip payouts. */
   paidOutCents: number;
+  /** Of those, paid by Stripe. */
+  paidByStripeCents: number;
 }
 
 /** Holds that mean "can't be paid directly yet": the employee's Stripe setup, or no transfer path. Their tips are owed. */
@@ -792,7 +796,7 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
   const [choices, planned, cfg] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx), staffPayoutConfig(tx)]);
   const owed = owedRule(cfg.owedVia);
   const out = new Map<string, PayrollTipSplit>();
-  const empty = (): PayrollTipSplit => ({ adjustCents: 0, absorbedCents: 0, lateAbsorbedCents: 0, inPayrollCents: 0, paidOutCents: 0 });
+  const empty = (): PayrollTipSplit => ({ adjustCents: 0, absorbedCents: 0, lateAbsorbedCents: 0, inPayrollCents: 0, owedInPayrollCents: 0, paidOutCents: 0, paidByStripeCents: 0 });
   const absorbed = await tx
     .select({
       shopId: tipAbsorptions.shopId,
@@ -810,9 +814,15 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     const v = out.get(k) ?? empty();
     if (r.kind === "adjust") v.adjustCents += r.amountCents;
     const method = effectiveMethod(byShop.get(r.shopId)!, policyOf(r.shopId), choices.get(r.staffId)?.method ?? null, planned.get(r.staffId)?.method);
-    const viaPayroll = r.payoutId ? r.method === "payroll" || owed.held(r.status, r.holdKind) : method === "payroll" || owed.unclaimed(method, choices.get(r.staffId));
-    if (viaPayroll) v.inPayrollCents += r.amountCents;
-    else if (r.status === "paid") v.paidOutCents += r.amountCents;
+    const owedHere = r.payoutId ? r.method !== "payroll" && owed.held(r.status, r.holdKind) : method !== "payroll" && owed.unclaimed(method, choices.get(r.staffId));
+    const viaPayroll = owedHere || (r.payoutId ? r.method === "payroll" : method === "payroll");
+    if (viaPayroll) {
+      v.inPayrollCents += r.amountCents;
+      if (owedHere) v.owedInPayrollCents += r.amountCents;
+    } else if (r.status === "paid") {
+      v.paidOutCents += r.amountCents;
+      if (r.method === "stripe") v.paidByStripeCents += r.amountCents;
+    }
     out.set(k, v);
   }
   return out;

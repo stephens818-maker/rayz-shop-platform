@@ -2,7 +2,7 @@ import { and, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
 import { payGroups, payrollEmployers, payrollExportSends, payrollProfiles, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
-import { EXPORT_COLUMNS, extraFromOf, toCents, type ExtraFrom, type Line } from "@/domain/payroll/calc";
+import { EXPORT_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
 import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
 import type { Permission } from "@/domain/permissions";
 import type { BarChart } from "@/domain/report-charts";
@@ -1245,11 +1245,6 @@ export interface IsolvedPeriod {
   sentBy: string | null;
 }
 
-const fileAt = (from: readonly ExtraFrom[], k: ExtraFrom, values: readonly number[]) => {
-  const j = from.indexOf(k);
-  return j >= 0 ? (values[EXPORT_COLUMNS.length + j] ?? 0) : 0;
-};
-
 function blockedReason(view: PayrollView): string | null {
   if (view.locked !== "all") return view.locked === "some" ? "Some shops in this period aren't approved and locked yet." : "Approve and lock this period on the Payroll Report first.";
   if (view.tips.mismatches.length) return `${view.tips.mismatches.length} tip difference${view.tips.mismatches.length === 1 ? "" : "s"} against the Stripe payouts: fix them first.`;
@@ -1292,8 +1287,8 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
             toCents(v[3] ?? 0),
             h2(v[4] ?? 0),
             h2(v[5] ?? 0),
-            toCents(fileAt(from, "tipsInPayroll", v)),
-            toCents(fileAt(from, "tipsPaidOut", v)),
+            toCents(sumColumns(from, v, PAYROLL_TIP_COLUMNS)),
+            toCents(sumColumns(from, v, PAID_TIP_COLUMNS)),
             stripe,
             c ? (c.problems.length ? "Difference" : "Matches") : "No tips",
           ],
@@ -1627,13 +1622,15 @@ export async function payrollW2CodesData(i: PayrollReportInput): Promise<ReportD
   };
 }
 
-// ───────────────────────────── 45B FICA tip credit (SB-C6) ─────────────────────────────
+// ───────────────────────────── 45B FICA tip credit (SB-C6, ST-C13) ─────────────────────────────
 
 /**
- * Tips that count toward the 45B credit for employer FICA on tips, per pay period, employer and
- * employee: tips (charged, cash rung up and declared) over what it takes to bring cash wages up to the
- * credit's floor ($5.15 an hour unless the CPA says otherwise), times the employer FICA rate. Only from
- * the date in Payroll setup. The CPA claims it (Form 8846) and confirms barbering qualifies for the year.
+ * Tips that count toward the 45B credit for employer FICA on tips, by employer, employee and month:
+ * tips (charged, cash rung up and declared) over what it takes to bring that month's cash wages up to
+ * the credit's floor ($7.25 an hour for barbering unless the CPA says otherwise), times the employer
+ * FICA rate. A pay period's tips count in the month of its paycheck, when they're reported and FICA
+ * is due on them; the per-period rows show the same figures before the month nets them. Only from the
+ * date in Payroll setup. The CPA claims it (Form 8846) and confirms barbering qualifies for the year.
  */
 export async function payrollFicaTipCreditData(i: PayrollReportInput): Promise<ReportData> {
   const { scope, loc } = i;
@@ -1643,7 +1640,8 @@ export async function payrollFicaTipCreditData(i: PayrollReportInput): Promise<R
   const { creditFrom, creditWageCentsPerHour: floor, ficaRate } = settings.tipTax;
   const employer = await employersOf([...new Set(runs.flatMap((r) => r.blocks.map((b) => b.shopId)))]);
   const rowsOut: ListRow[] = [];
-  const byEmployer = new Map<string, { shopId: string; tips: number; creditable: number; credit: number }>();
+  type Month = { month: string; employer: string; taxId: string; staffId: string; shopId: string; name: string; hours: number; wages: number; charged: number; posCash: number; declared: number; periods: number; locked: number };
+  const months = new Map<string, Month>();
   let skipped = 0;
   for (const r of runs) {
     if (r.ref.end < creditFrom) {
@@ -1661,49 +1659,91 @@ export async function payrollFicaTipCreditData(i: PayrollReportInput): Promise<R
       if (!tips && !hours) continue;
       const shortfall = Math.max(0, Math.round(floor * hours) - wages);
       const creditable = Math.max(0, tips - shortfall);
-      const credit = Math.round(creditable * ficaRate);
+      const locked = !!r.blocks.find((b) => b.shopId === l.shopId)?.locked;
       rowsOut.push({
         shopId: l.shopId,
         staffId: l.staffId,
         key: `${r.key}|${l.staffId}|${l.shopId}`,
-        cells: [r.label, e.name, e.taxId, l.name, h2(hours), ...(rates ? [wages] : []), charged, posCash, declared, tips, shortfall, creditable, credit, r.blocks.find((b) => b.shopId === l.shopId)?.locked ? "Locked" : "Draft"],
+        cells: [r.label, e.name, e.taxId, l.name, h2(hours), ...(rates ? [wages] : []), charged, posCash, declared, tips, shortfall, creditable, Math.round(creditable * ficaRate), locked ? "Locked" : "Draft"],
       });
-      const t = byEmployer.get(e.name) ?? { shopId: l.shopId, tips: 0, creditable: 0, credit: 0 };
-      t.tips += tips;
-      t.creditable += creditable;
-      t.credit += credit;
-      byEmployer.set(e.name, t);
+      const month = (r.ref.groups.find((g) => g.shopId === l.shopId)?.checkDate ?? r.ref.end).slice(0, 7);
+      const k = `${month}|${e.name}|${l.staffId}`;
+      const m = months.get(k) ?? { month, employer: e.name, taxId: e.taxId, staffId: l.staffId, shopId: l.shopId, name: l.name, hours: 0, wages: 0, charged: 0, posCash: 0, declared: 0, periods: 0, locked: 0 };
+      m.hours += hours;
+      m.wages += wages;
+      m.charged += charged;
+      m.posCash += posCash;
+      m.declared += declared;
+      m.periods++;
+      if (locked) m.locked++;
+      months.set(k, m);
     }
   }
+  const byEmployer = new Map<string, { shopId: string; tips: number; creditable: number; credit: number }>();
+  const monthRows: ListRow[] = [...months.values()].map((m) => {
+    const tips = m.charged + m.posCash + m.declared;
+    const shortfall = Math.max(0, Math.round(floor * m.hours) - m.wages);
+    const creditable = Math.max(0, tips - shortfall);
+    const credit = Math.round(creditable * ficaRate);
+    const t = byEmployer.get(m.employer) ?? { shopId: m.shopId, tips: 0, creditable: 0, credit: 0 };
+    t.tips += tips;
+    t.creditable += creditable;
+    t.credit += credit;
+    byEmployer.set(m.employer, t);
+    return {
+      shopId: m.shopId,
+      staffId: m.staffId,
+      key: `${m.month}|${m.employer}|${m.staffId}`,
+      cells: [
+        formatDate(`${m.month}-01`, "MMM yyyy"),
+        m.employer,
+        m.taxId,
+        m.name,
+        h2(m.hours),
+        ...(rates ? [m.wages] : []),
+        m.charged,
+        m.posCash,
+        m.declared,
+        tips,
+        shortfall,
+        creditable,
+        credit,
+        m.locked === m.periods ? "Locked" : `${m.periods - m.locked} of ${m.periods} periods not locked`,
+      ],
+    };
+  });
+  monthRows.sort((a, b) => String(a.key).localeCompare(String(b.key)));
   const total = { tips: sumOf([...byEmployer.values()], (x) => x.tips), creditable: sumOf([...byEmployer.values()], (x) => x.creditable), credit: sumOf([...byEmployer.values()], (x) => x.credit) };
+  const figures = (first: string) => [
+    text(first),
+    text("Employer"),
+    text("FEIN"),
+    text("Employee"),
+    hrs("Hours worked"),
+    ...(rates ? [money("Cash wages")] : []),
+    money("Charged tips"),
+    money("Cash tips rung up"),
+    money("Cash tips declared"),
+    money("Reported tips"),
+    money("Needed to reach the floor"),
+    money("Tips that count"),
+    money("Estimated credit"),
+    text("Status"),
+  ];
   return {
     presets,
     stats: [
       { label: "Tips", value: formatCents(total.tips), hint: "charged, cash rung up and declared" },
-      { label: "Tips that count", value: formatCents(total.creditable), hint: `over ${formatCents(floor)} an hour in cash wages` },
+      { label: "Tips that count", value: formatCents(total.creditable), hint: `over ${formatCents(floor)} an hour in cash wages, by month` },
       { label: "Estimated credit", value: formatCents(total.credit), hint: `${(ficaRate * 100).toFixed(2)}% employer FICA` },
     ],
     tables: [
       listTable(combined(loc), {
-        id: "employees",
-        title: "By pay period and employee",
-        columns: [
-          text("Pay period"),
-          text("Employer"),
-          text("FEIN"),
-          text("Employee"),
-          hrs("Hours worked"),
-          ...(rates ? [money("Cash wages")] : []),
-          money("Charged tips"),
-          money("Cash tips rung up"),
-          money("Cash tips declared"),
-          money("Reported tips"),
-          money("Needed to reach the floor"),
-          money("Tips that count"),
-          money("Estimated credit"),
-          text("Status"),
-        ],
-        rows: rowsOut,
+        id: "months",
+        title: "By month and employee",
+        subtitle: "What Form 8846 adds up: each month's tips and cash wages, by the month of the paycheck.",
+        columns: figures("Month"),
+        rows: monthRows,
         sort: byText(0),
       }),
       listTable(combined(loc), {
@@ -1713,11 +1753,19 @@ export async function payrollFicaTipCreditData(i: PayrollReportInput): Promise<R
         rows: [...byEmployer.entries()].map(([name, t]) => ({ shopId: t.shopId, key: name, cells: [name, t.tips, t.creditable, t.credit] })),
         sort: byText(0),
       }),
+      listTable(combined(loc), {
+        id: "employees",
+        title: "By pay period and employee",
+        subtitle: "Each pay period on its own; the month nets them, so these can add up to a little more or less than the months.",
+        columns: figures("Pay period"),
+        rows: rowsOut,
+        sort: byText(0),
+      }),
     ],
     notes: [
       ...periodNotes(runs, capped),
       ...(skipped ? [`${skipped === 1 ? "A pay period ends" : `${skipped} pay periods end`} before ${formatDate(creditFrom, "MMM d, yyyy")}, when the credit starts in Payroll setup, so ${skipped === 1 ? "it's" : "they're"} left out.`] : []),
-      `Cash wages are hourly, overtime, training and commission pay, never tips. Tips needed to bring them to ${formatCents(floor)} an hour don't count; the rest earn ${(ficaRate * 100).toFixed(2)}% of employer Social Security and Medicare back. The floor, the rate and the start date are set in Payroll setup.`,
+      `Cash wages are hourly, overtime, training and commission pay, never tips. Each month, tips needed to bring them to ${formatCents(floor)} an hour don't count; the rest earn ${(ficaRate * 100).toFixed(2)}% of employer Social Security and Medicare back. Since 2025, barbering and other beauty services qualify at the federal minimum wage. The floor, the rate and the start date are set in Payroll setup.`,
       "An estimate for the CPA, who claims the credit (Form 8846) and confirms the shops qualify for the year and the floor to use. Nothing here changes a paycheck or the iSolved file.",
       ...(rates ? [] : ['Cash wages show only with "See pay rates and labor cost"; the credit still uses them.']),
     ],

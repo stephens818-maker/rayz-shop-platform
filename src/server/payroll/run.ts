@@ -300,6 +300,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       tips: tipsCents / 100,
       tipsInPayroll: (split?.inPayrollCents ?? 0) / 100,
       tipsPaidOut: (split?.paidOutCents ?? 0) / 100,
+      owedTipsInPayroll: (split?.owedInPayrollCents ?? 0) / 100,
+      tipsPaidByStripe: (split?.paidByStripeCents ?? 0) / 100,
       declaredCashTips: (declared.get(k) ?? 0) / 100,
       chargedTips: Math.min(tipsCents, Math.max(0, charged)) / 100,
       lateTipRefunds: late / 100,

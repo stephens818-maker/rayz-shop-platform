@@ -283,7 +283,7 @@ describe("W-2 codes and the 45B credit", () => {
     expect(byEmployee(again, fx.aLabel)[col(again, "Tipped occupation code")]).toBe("302");
   });
 
-  it("45B: tips over the $5.15 an hour floor count, at 7.65%", async () => {
+  it("45B: tips over the $7.25 an hour floor count, at 7.65%, by month of the paycheck (ST-C13)", async () => {
     const a = (await molineLines()).find((l) => l.staffId === fx.a)!;
     const { data } = await report("payroll_fica_tip_credit");
     const t = table(data, "employees");
@@ -292,10 +292,16 @@ describe("W-2 codes and the 45B credit", () => {
     expect(row[col(t, "Hours worked")]).toBe(hours);
     expect(row[col(t, "Cash wages")]).toBe(cents(a.laborCost));
     expect(row[col(t, "Reported tips")]).toBe(cents(a.tips));
-    const shortfall = Math.max(0, Math.round(515 * hours) - cents(a.laborCost));
+    const shortfall = Math.max(0, Math.round(725 * hours) - cents(a.laborCost));
     expect(row[col(t, "Needed to reach the floor")]).toBe(shortfall);
     expect(row[col(t, "Tips that count")]).toBe(Math.max(0, cents(a.tips) - shortfall));
     expect(row[col(t, "Estimated credit")]).toBe(Math.round(Math.max(0, cents(a.tips) - shortfall) * 0.0765));
+    // One pay period here, so its month has the same figures; the month nets every period paid in it.
+    const months = table(data, "months");
+    const mine = body(months).filter((r) => r[col(months, "Employee")] === fx.aLabel);
+    expect(mine).toHaveLength(1);
+    for (const h of ["Hours worked", "Reported tips", "Needed to reach the floor", "Tips that count", "Estimated credit"]) expect([h, mine[0][col(months, h)]]).toEqual([h, row[col(t, h)]]);
+    expect(String(mine[0][col(months, "Month")])).toMatch(/^[A-Z][a-z]{2} \d{4}$/);
   });
 });
 

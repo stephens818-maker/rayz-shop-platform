@@ -186,6 +186,8 @@ const PayrollInput = z.object({
   tipsInPayrollHeader: z.string().trim().min(1, "Name the iSolved earning for tips paid in payroll").max(60),
   markPaidTips: z.boolean(),
   tipsPaidOutHeader: z.string().trim().min(1, "Name the iSolved memo column for tips already paid out").max(60),
+  stripeTipsPaidHeader: z.string().trim().min(1, "Name the iSolved memo column for tips paid by Stripe").max(60),
+  owedTipsInPayrollHeader: z.string().trim().min(1, "Name the iSolved earning for owed tips paid in payroll").max(60),
   calendar: z.object({
     anchorStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the first day of a known pay period"),
     anchorNumber: z.number().int().min(1, "The period number is a whole number from 1").max(60),
@@ -458,8 +460,14 @@ export const SETTINGS: readonly SettingDef[] = [
       if (calProblem) bad(calProblem);
       const v = payrollSettings(parsed);
       const taken = [...EXPORT_COLUMNS.map((c) => c.header), v.tipsInPayrollHeader].map((h) => h.toLowerCase());
-      if (v.markPaidTips && taken.includes(v.tipsPaidOutHeader.toLowerCase())) bad("The column for tips already paid out needs its own name, not another column's.");
-      if ([...taken, ...(v.markPaidTips ? [v.tipsPaidOutHeader.toLowerCase()] : [])].includes(v.cashTipsDeclaredHeader.toLowerCase())) bad("The column for declared cash tips needs its own name, not another column's.");
+      const own = (h: string, what: string) => {
+        if (taken.includes(h.toLowerCase())) bad(`The column for ${what} needs its own name, not another column's.`);
+        taken.push(h.toLowerCase());
+      };
+      own(v.owedTipsInPayrollHeader, "owed tips paid in payroll");
+      if (v.markPaidTips) own(v.tipsPaidOutHeader, "tips already paid out");
+      if (v.markPaidTips) own(v.stripeTipsPaidHeader, "tips paid by Stripe");
+      own(v.cashTipsDeclaredHeader, "declared cash tips");
       if (!v.markPaidTips && stripePayoutsOn())
         bad("Tips are paid straight to employees through Stripe, so the iSolved file has to mark the tips already paid out; that column can't be turned off while Stripe payouts are on.");
       if (v.declarations.remindUntilDay > v.declarations.lockDay) bad("Reminders stop by the day declarations close.");
@@ -483,6 +491,8 @@ export const SETTINGS: readonly SettingDef[] = [
       ftBasis: "Full-time basis",
       markPaidTips: "Mark tips already paid out",
       tipsPaidOutHeader: "Tips paid out column",
+      stripeTipsPaidHeader: "Tips paid by Stripe column",
+      owedTipsInPayrollHeader: "Owed tips in payroll column",
       calendar: "Brand pay calendar",
       cashTipsDeclaredHeader: "Declared cash tips column",
       declarations: "Cash tip declarations",
@@ -503,7 +513,7 @@ export const SETTINGS: readonly SettingDef[] = [
       const clean = compensationSettings({ ...before, ...obj(raw) });
       const [b] = await tx.select({ p: brandSettings.payroll }).from(brandSettings).where(eq(brandSettings.id, 1));
       const ps = payrollSettings(b?.p);
-      const problem = compensationProblem(clean, [...EXPORT_COLUMNS.map((c) => c.header), ps.tipsInPayrollHeader, ...(ps.markPaidTips ? [ps.tipsPaidOutHeader] : [])]);
+      const problem = compensationProblem(clean, [...EXPORT_COLUMNS.map((c) => c.header), ps.tipsInPayrollHeader, ps.owedTipsInPayrollHeader, ps.cashTipsDeclaredHeader, ...(ps.markPaidTips ? [ps.tipsPaidOutHeader, ps.stripeTipsPaidHeader] : [])]);
       if (problem) bad(problem);
       return clean;
     },

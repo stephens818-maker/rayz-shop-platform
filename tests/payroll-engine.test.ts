@@ -329,6 +329,36 @@ describe("tips already paid out", () => {
     expect(reconcile([{ ...blocks[0], exportRows: blocks[0].exportRows.map((r, i) => (i ? r : { ...r, values: [...r.values.slice(0, 6), 400] })) }], grand).map((m) => m.check)).toContain("export");
   });
 
+  it("owed tips paid on the paycheck and tips paid by Stripe get their own codes; a file with neither is unchanged (ST-C13)", () => {
+    const s = DEFAULT_PAYROLL_SETTINGS;
+    const inputs = [
+      input({ tips: 300, tipsInPayroll: 300, owedTipsInPayroll: 120 }),
+      input({ staffId: "b2", employeeNumber: "1002", tips: 200, tipsPaidOut: 200, tipsPaidByStripe: 150 }),
+      input({ staffId: "b3", employeeNumber: "1003", tips: 50, tipsPaidOut: 50 }),
+    ];
+    const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs }], s);
+    expect(blocks[0].exportFrom).toEqual(["tipsInPayrollChosen", "tipsInPayrollOwed", "tipsPaidOutCash", "tipsPaidOutStripe"]);
+    expect(blocks[0].exportHeaders!.slice(6)).toEqual([s.tipsInPayrollHeader, "E_Owed Tips Paid In Payroll_Dollars", s.tipsPaidOutHeader, "M_Tips Paid By Stripe_Dollars"]);
+    expect(blocks[0].exportRows.map((r) => r.values.slice(6))).toEqual([
+      [180, 120, 0, 0],
+      [0, 0, 50, 150],
+      [0, 0, 50, 0],
+    ]);
+    expect(grand).toMatchObject({ tipsInPayroll: 300, tipsPaidOut: 250 });
+    expect(mismatches).toEqual([]);
+    const off = blocks[0].exportRows.map((r, i) => (i ? r : { ...r, values: [...r.values.slice(0, 7), 100, ...r.values.slice(8)] }));
+    expect(reconcile([{ ...blocks[0], exportRows: off }], grand).map((m) => m.column)).toEqual(expect.arrayContaining(["Tips in payroll", "Owed tips in payroll"]));
+
+    // Never more than the tips they're part of.
+    expect(computeLine(input({ tips: 10, tipsInPayroll: 10, owedTipsInPayroll: 25, tipsPaidOut: 0, tipsPaidByStripe: 5 }), s)).toMatchObject({ tipsInPayrollOwed: 10, tipsInPayrollChosen: 0, tipsPaidOutStripe: 0 });
+    const plain = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 300, tipsInPayroll: 300 }), input({ staffId: "b2", employeeNumber: "1002", tips: 50, tipsPaidOut: 50 })] }], s);
+    expect(plain.blocks[0].exportFrom).toEqual(["tipsInPayroll", "tipsPaidOut"]);
+  });
+
+  it("45B starts in 2025 at the $7.25 federal minimum wage for barbering (2025 Form 8846)", () => {
+    expect(DEFAULT_PAYROLL_SETTINGS.tipTax).toMatchObject({ creditFrom: "2025-01-01", creditWageCentsPerHour: 725 });
+  });
+
   it("the column's header is a setting, defaulting until it's confirmed", () => {
     expect(payrollSettings(null).tipsInPayrollHeader).toBe(DEFAULT_PAYROLL_SETTINGS.tipsInPayrollHeader);
     expect(payrollSettings({ tipsInPayrollHeader: "E_Tips_Dollars" }).tipsInPayrollHeader).toBe("E_Tips_Dollars");

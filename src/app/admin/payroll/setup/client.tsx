@@ -83,6 +83,10 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
           <span className="block text-xs text-zinc-500">iSolved column for tips paid in payroll</span>
           <Input value={v.tipsInPayrollHeader} onChange={(e) => setV({ ...v, tipsInPayrollHeader: e.target.value })} className="h-9 w-72" />
         </label>
+        <label>
+          <span className="block text-xs text-zinc-500">iSolved column for owed tips paid in payroll</span>
+          <Input value={v.owedTipsInPayrollHeader} onChange={(e) => setV({ ...v, owedTipsInPayrollHeader: e.target.value })} className="h-9 w-72" />
+        </label>
         <label className="flex items-center gap-2 self-end text-sm" title={memoRequired ? "Required while tips are paid straight to employees through Stripe" : undefined}>
           <input type="checkbox" checked={v.markPaidTips || memoRequired} disabled={memoRequired} onChange={(e) => setV({ ...v, markPaidTips: e.target.checked })} />
           Mark tips already paid out{memoRequired && " (required with Stripe payouts)"}
@@ -93,14 +97,22 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
             <Input value={v.tipsPaidOutHeader} onChange={(e) => setV({ ...v, tipsPaidOutHeader: e.target.value })} className="h-9 w-72" />
           </label>
         )}
+        {(v.markPaidTips || memoRequired) && (
+          <label>
+            <span className="block text-xs text-zinc-500">iSolved memo column for tips paid by Stripe</span>
+            <Input value={v.stripeTipsPaidHeader} onChange={(e) => setV({ ...v, stripeTipsPaidHeader: e.target.value })} className="h-9 w-72" />
+          </label>
+        )}
       </div>
       <p className="text-xs text-zinc-500">
         Tips paid out in cash or by Stripe go to iSolved as E_Cash Tips Recd_Dollars (tips the employee already has). Tips paid through payroll go in this column instead, which a shop&apos;s
-        file gets only when someone there has such tips. The earning code is to confirm with Charles.
+        file gets only when someone there has such tips. Owed Stripe tips paid on the paycheck at the cutoff, because the employee couldn&apos;t be paid directly, get their own earning
+        apart from tips the employee chose to get there. The earning codes are to confirm with Charles.
       </p>
       <p className="text-xs text-zinc-500">
         Marked, the tips already paid out by the time the period is locked (cash from the drawer, or Stripe to the employee&apos;s card or bank) also go in the memo column: part of the tips
-        received, never paid again. A shop&apos;s file gets it only when someone there was paid tips. The memo code is to confirm with Charles before the first upload.
+        received, never paid again. Where anyone in the file was paid by Stripe, those tips go in their own memo column, and this one keeps the tips paid out another way. A shop&apos;s file gets these
+        only when someone there was paid tips. The memo codes are to confirm with Charles before the first upload.
         {memoRequired &&
           " With tips paid straight to employees through Stripe, the column can't be turned off, and approve and lock checks it per employee against every payout in the period, to the cent (the Payroll tip report shows it)."}
       </p>
@@ -200,10 +212,11 @@ function DeclarationFields({ d, header, onChange, onHeader }: { d: TipDeclaratio
 function TipTaxFields({ t, onChange }: { t: TipTaxSettings; onChange: (t: TipTaxSettings) => void }) {
   return (
     <fieldset className="rounded-lg border border-zinc-200 p-3">
-      <legend className="px-1 text-sm font-medium">2026 W-2 tip and overtime codes, 45B FICA tip credit</legend>
+      <legend className="px-1 text-sm font-medium">W-2 tip and overtime codes, 45B FICA tip credit</legend>
       <p className="mb-2 text-xs text-zinc-500">
         For the W-2 codes and 45B reports. Qualified tips and overtime (the FLSA half-time premium) go on the W-2 under their box 12 codes, with each employee&apos;s occupation code (Payroll
-        setup, per barber). The codes, the 45B wage floor and the start date are the CPA&apos;s and iSolved&apos;s to confirm.
+        setup, per barber, for box 14b). 45B covers barbering from 2025 at the $7.25 federal minimum wage (2025 Form 8846). The codes, the floor and the start date are the CPA&apos;s and
+        iSolved&apos;s to confirm.
       </p>
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label>
