@@ -866,7 +866,7 @@ From the builder's `staff-api-gaps.md` and `staff-app-plan.md`. Every route goes
 - [x] ST-C9 the payout cutover report, each barber's confirmation or dispute, the manager's sign-off, the YTD import, and the runbook (SR1 to SR8).
 - [x] ST-C10 app invites by text or email from **Users**, the invite page that opens the app, sessions, and signing someone out of every phone.
 - [x] ST-I1 to I8 and I10: time off requests and decisions (I1), milestones (I2), walk-ins (I3), checkout with the shop's card fee (I4, Tap to Pay behind its flag), calls and texts through the shop line (I5), the front-desk kiosk (I6), the manager board (I7), `/config` with the version and switches (I8), and the staff privacy, terms and support pages (I10).
-- [x] OpenAPI for every path, with its permission and the 426 response. Migrations `core_0102_staff_app_gaps` and `core_0103_staff_app_invite_jobs`. Tests: `tests/db/staff-app-api.test.ts`, `tests/db/staff-api.test.ts`, and the staff app section of `tests/db/tenant.test.ts` (outsiders, Coralville ids and canaries).
+- [x] OpenAPI for every path, with its permission and the 426 response. Migrations `core_0102_staff_app_gaps`, `core_0103_staff_app_invite_jobs` and `core_0104_staff_payout_confirm_scrub`. Tests: `tests/db/staff-app-api.test.ts`, `tests/db/staff-api.test.ts`, and the staff app section of `tests/db/tenant.test.ts` (outsiders, Coralville ids and canaries).
 
 **On hold, pending Charles's decision on W-2 tip withholding:**
 - [ ] ST-I9 (per-employee Stripe recipient accounts with Stripe-hosted onboarding, if Charles chooses them).
