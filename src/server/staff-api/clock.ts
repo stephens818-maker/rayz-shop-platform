@@ -6,10 +6,10 @@ import { clockRuleText } from "@/domain/time-clock";
 import { clientIp } from "@/lib/client-ip";
 import { startOfLocalDay, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
-import { can, openShops } from "@/server/auth/staff";
+import { assertShopAccess, can, openShops } from "@/server/auth/staff";
 import { breakReasons } from "@/server/block-reasons";
 import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
-import { forbidden } from "@/server/errors";
+import { forbidden, notFound } from "@/server/errors";
 import { clockInWelcome } from "@/server/milestones/day";
 import { PunchResult, checkPin, clockState, deviceFromToken, punch, registerDevice, setPin, shopClocks } from "@/server/time-clock";
 import type { StaffAppContext } from "./http";
@@ -85,6 +85,7 @@ const resultView = (r: PunchResult, welcome: Awaited<ReturnType<typeof clockInWe
 
 /** A punch from their own phone. Clocking in returns their congratulations (milestones) to pop up. */
 export async function appPunch(ctx: StaffAppContext, req: Request, v: AppPunchInput) {
+  assertShopAccess(ctx, v.shopId);
   const device = await deviceFromToken(deviceToken(req));
   const r = await punch({
     staffId: ctx.staff.id,
@@ -112,7 +113,7 @@ export async function setMyPin(ctx: StaffAppContext, pin: string) {
 
 /** Makes this install one of a shop's front-desk clocks. The token is shown once; the app keeps it and sends it as X-Clock-Device. */
 export async function registerKiosk(ctx: StaffAppContext, shopId: string, label: string) {
-  if (!ctx.shopIds.includes(shopId)) throw forbidden();
+  assertShopAccess(ctx, shopId);
   return registerDevice(shopId, label, ctx.actor);
 }
 
@@ -120,6 +121,7 @@ export async function registerKiosk(ctx: StaffAppContext, shopId: string, label:
 async function kiosk(ctx: StaffAppContext, req: Request) {
   const device = await deviceFromToken(deviceToken(req));
   if (!device || !ctx.shopIds.includes(device.shopId)) throw forbidden("This device isn't registered as one of your shops' time clocks.");
+  assertShopAccess(ctx, device.shopId);
   return device;
 }
 
@@ -142,15 +144,28 @@ export async function kioskTeam(ctx: StaffAppContext, req: Request) {
   return { shopId: device.shopId, shop: device.shop, device: device.label, team };
 }
 
+/** Only the shop's own team punches on its clock; anyone else is not found, so ids can't be probed. */
+async function onTeam(shopId: string, staffId: string) {
+  const [r] = await db
+    .select({ id: staff.id })
+    .from(staffShops)
+    .innerJoin(staff, eq(staff.id, staffShops.staffId))
+    .where(and(eq(staffShops.shopId, shopId), eq(staffShops.staffId, staffId), eq(staff.active, true), eq(staff.kind, "person")))
+    .limit(1);
+  if (!r) throw notFound("Team member");
+}
+
 /** Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes. */
 export async function kioskStatus(ctx: StaffAppContext, req: Request, v: { staffId: string; pin: string }) {
-  await kiosk(ctx, req);
+  const device = await kiosk(ctx, req);
+  await onTeam(device.shopId, v.staffId);
   await checkPin(v.staffId, v.pin);
   return stateView(await clockState(v.staffId));
 }
 
 export async function kioskPunch(ctx: StaffAppContext, req: Request, v: { staffId: string; pin: string; type: PunchType; photo?: string | null; confirmTimeOff?: boolean; breakReasonId?: string | null; plannedMin?: number | null }) {
   const device = await kiosk(ctx, req);
+  await onTeam(device.shopId, v.staffId);
   await checkPin(v.staffId, v.pin);
   const actor = { staffId: v.staffId, label: `kiosk:${device.label} (${ctx.staff.displayLabel}, staff app)` };
   const r = await punch({
