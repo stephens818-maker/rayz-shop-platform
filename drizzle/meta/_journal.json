@@ -729,6 +729,13 @@
       "when": 1796500800000,
       "tag": "core_0103_staff_app_invite_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1796504400000,
+      "tag": "core_0104_staff_payout_confirm_scrub",
+      "breakpoints": true
     }
   ]
 }

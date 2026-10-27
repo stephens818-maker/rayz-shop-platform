@@ -28,12 +28,20 @@ beforeAll(async () => {
   connectWebhook = await import("@/server/payments/connect-webhook");
   run = await import("@/server/payroll/run");
   today = m.time.todayLocal();
+  // These tests cover batches and Stripe payouts, which a deployment turns on: shops pay through
+  // payroll out of the box, and direct Stripe payouts are held behind the flag.
+  process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
+  await m.db.db
+    .update(m.schema.shops)
+    .set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } })
+    .where(m.drizzle.sql`${m.schema.shops.tipPayouts} = '{}'::jsonb`);
   // The seed's last few days of tips start unpaid; settle them so each test sees only its own.
   await tl.syncTipLedger();
   await tl.recordOpeningTips(m.time.addDays(today, 1));
 }, 180_000);
 
 afterAll(async () => {
+  delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS;
   await m?.db.closeDb();
 });
 

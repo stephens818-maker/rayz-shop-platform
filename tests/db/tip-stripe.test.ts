@@ -61,6 +61,12 @@ beforeAll(async () => {
   mm = await import("@/server/payments/money-movement");
   connectWebhook = await import("@/server/payments/connect-webhook");
   today = m.time.todayLocal();
+  // Direct Stripe payouts and tip batches are what a deployment turns on; out of the box tips go through payroll.
+  process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
+  await m.db.db
+    .update(m.schema.shops)
+    .set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } })
+    .where(m.drizzle.sql`${m.schema.shops.tipPayouts} = '{}'::jsonb`);
   await tl.syncTipLedger();
   await tl.recordOpeningTips(m.time.addDays(today, 1));
 }, 180_000);
@@ -73,6 +79,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS;
   await m?.db.closeDb();
 });
 

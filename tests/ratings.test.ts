@@ -150,9 +150,15 @@ function reachable(entries: string[]): Set<string> {
 }
 
 describe("client ratings never reach customers", () => {
-  const entries = [...walk(join(SRC, "app", "api")), ...walk(join(SRC, "app", "(public)")), join(SRC, "lib", "api-client.ts")];
+  // /api/staff/v1 answers only a staff app token (staffRoute), like the staff web app under /admin.
+  const STAFF_API = join(SRC, "app", "api", "staff", "v1");
+  const entries = [...walk(join(SRC, "app", "api")).filter((f) => !f.startsWith(STAFF_API)), ...walk(join(SRC, "app", "(public)")), join(SRC, "lib", "api-client.ts")];
   const files = reachable(entries);
   const rel = (f: string) => relative(ROOT, f);
+
+  it("nothing customer-facing loads the staff app API's code", () => {
+    expect([...files].map(rel).filter((f) => f.startsWith("src/server/staff-api/") || f.startsWith("src/app/api/staff/v1/"))).toEqual([]);
+  });
 
   it("finds the public site and the API (sanity check for the walker)", () => {
     expect(files.has(join(SRC, "server", "public.ts"))).toBe(true);

@@ -115,16 +115,19 @@ describe("per-shop Squire cutover (C22)", () => {
     expect((await cut.listCutovers()).find((x) => x.shop.id === kimberly.id)).toMatchObject({ stage: "frozen" });
 
     await cut.reconcileShop(actor, kimberly.id, files({ bookings: BOOKINGS_FINAL, loyalty: LOYALTY, gift_cards: CARDS("$25.00") }));
-    // Nobody at the shop has set up Ray'z Stripe payouts yet: only an owner's reason lets it switch.
-    await expect(cut.signOffAndSwitch(actor, kimberly.id)).rejects.toThrow(/haven't finished Stripe payout setup/);
-    await expect(cut.signOffAndSwitch(actor, kimberly.id, new Date(), { staffWaiver: "   " })).rejects.toThrow(/haven't finished Stripe payout setup/);
-    await cut.signOffAndSwitch(actor, kimberly.id, new Date(), { staffWaiver: "Two barbers are on leave; their tips wait for them" });
+    // With direct Stripe payouts on, nobody at the shop has set them up yet: only an owner's reason would let it switch.
+    process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
+    try {
+      await expect(cut.signOffAndSwitch(actor, kimberly.id)).rejects.toThrow(/haven't finished Stripe payout setup/);
+      await expect(cut.signOffAndSwitch(actor, kimberly.id, new Date(), { staffWaiver: "   " })).rejects.toThrow(/haven't finished Stripe payout setup/);
+    } finally {
+      delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS;
+    }
+    // Held (the default), tips go through payroll and there's no payout setup to wait for.
+    await cut.signOffAndSwitch(actor, kimberly.id);
     expect(await shopRow(kimberly.id)).toMatchObject({ bookingMode: "platform" });
     const [sw] = await m.db.db.select().from(m.schema.auditLog).where(m.drizzle.and(eq(m.schema.auditLog.entityId, kimberly.id), eq(m.schema.auditLog.action, "cutover.switch")));
-    const staffPayouts = (sw.details as { staffPayouts: { onboarded: number; total: number; notOnboarded: unknown[]; waiver: string } }).staffPayouts;
-    expect(staffPayouts).toMatchObject({ onboarded: 0, waiver: "Two barbers are on leave; their tips wait for them" });
-    expect(staffPayouts.total).toBeGreaterThan(0);
-    expect(staffPayouts.notOnboarded).toHaveLength(staffPayouts.total);
+    expect((sw.details as { staffPayouts: unknown }).staffPayouts).toEqual({ model: "payroll" });
     const c = await m.db.db.query.shopCutovers.findFirst({ where: eq(m.schema.shopCutovers.shopId, kimberly.id) });
     expect(c).toMatchObject({ matched: true });
     expect(c!.signedOffAt).not.toBeNull();

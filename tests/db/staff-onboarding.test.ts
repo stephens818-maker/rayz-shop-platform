@@ -60,6 +60,12 @@ beforeAll(async () => {
   cut = await import("@/server/cutover");
   connectWebhook = await import("@/server/payments/connect-webhook");
   today = m.time.todayLocal();
+  // Payout onboarding and tip batches are what a deployment turns on; out of the box tips go through payroll.
+  process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
+  await m.db.db
+    .update(m.schema.shops)
+    .set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } })
+    .where(m.drizzle.sql`${m.schema.shops.tipPayouts} = '{}'::jsonb`);
   await tl.syncTipLedger();
   await tl.recordOpeningTips(m.time.addDays(today, 1));
 }, 180_000);
@@ -67,6 +73,7 @@ beforeAll(async () => {
 afterEach(() => fakeStripe(false));
 
 afterAll(async () => {
+  delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS;
   await m?.db.closeDb();
 });
 
@@ -334,6 +341,6 @@ describe("the cutover checklist", () => {
     expect((await ob.shopOnboardingCounts([silvis.id])).get(silvis.id)).toMatchObject({ done: before.total, notDone: [] });
     await cut.signOffAndSwitch(actor, silvis.id, new Date(), { staffWaiver: "not needed" });
     const [sw] = await audits("cutover.switch", silvis.id);
-    expect((sw.details as { staffPayouts: unknown }).staffPayouts).toEqual({ onboarded: before.total, total: before.total, notOnboarded: [], waiver: null });
+    expect((sw.details as { staffPayouts: unknown }).staffPayouts).toEqual({ model: "stripe", onboarded: before.total, total: before.total, notOnboarded: [], waiver: null });
   });
 });

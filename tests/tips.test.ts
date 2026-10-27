@@ -23,6 +23,7 @@ import {
   settingsProblem,
   shopTipSettings,
   summarize,
+  withPayoutRails,
   type LedgerEntry,
   type ShopTipSettings,
 } from "@/domain/tips";
@@ -150,19 +151,31 @@ describe("settings and methods", () => {
 
   it("a shop can't default to a method the brand doesn't allow", () => {
     const policy = brandTipPolicy({ methods: ["stripe"] });
-    expect(shopTipSettings({ defaultMethod: "cash" }, policy).defaultMethod).toBe("stripe");
+    expect(shopTipSettings({ schedule: "daily_delay", defaultMethod: "cash" }, policy).defaultMethod).toBe("stripe");
     expect(settingsProblem({ ...DEFAULT_SHOP_TIP_SETTINGS, schedule: "payroll", defaultMethod: "stripe" }, policy)).toMatch(/through payroll/);
     expect(settingsProblem({ ...DEFAULT_SHOP_TIP_SETTINGS, defaultMethod: "cash" }, policy)).toMatch(/doesn't allow/);
     expect(brandTipPolicy({ methods: [] }).methods).toEqual(DEFAULT_BRAND_TIP_POLICY.methods);
   });
 
   it("employees choose where the brand lets them; payroll-only shops pay everyone through payroll", () => {
-    const shop = settings({ defaultMethod: "cash" });
+    const shop = settings({ schedule: "daily_delay", defaultMethod: "cash" });
     expect(effectiveMethod(shop, DEFAULT_BRAND_TIP_POLICY, "stripe")).toBe("stripe");
     expect(effectiveMethod(shop, DEFAULT_BRAND_TIP_POLICY, null)).toBe("cash");
     expect(effectiveMethod(shop, { ...DEFAULT_BRAND_TIP_POLICY, employeeChooses: false }, "stripe")).toBe("cash");
     expect(effectiveMethod(shop, { ...DEFAULT_BRAND_TIP_POLICY, methods: ["cash"] }, "stripe")).toBe("cash");
     expect(effectiveMethod(settings({ schedule: "payroll" }), DEFAULT_BRAND_TIP_POLICY, "stripe")).toBe("payroll");
+  });
+
+  it("out of the box tips go through payroll; without the Stripe rail, a Stripe choice is paid through payroll or cash", () => {
+    expect(shopTipSettings(null)).toMatchObject({ schedule: "payroll", defaultMethod: "payroll" });
+    expect(effectiveMethod(shopTipSettings(null), DEFAULT_BRAND_TIP_POLICY, "stripe")).toBe("payroll");
+    const held = withPayoutRails(DEFAULT_BRAND_TIP_POLICY, { stripe: false });
+    expect(held).toMatchObject({ methods: ["cash", "payroll"], instantAllowed: false });
+    expect(withPayoutRails(brandTipPolicy({ methods: ["stripe"] }), { stripe: false }).methods).toEqual(["payroll"]);
+    expect(withPayoutRails(DEFAULT_BRAND_TIP_POLICY, { stripe: true })).toBe(DEFAULT_BRAND_TIP_POLICY);
+    const batches = settings({ schedule: "daily_delay", defaultMethod: "stripe" });
+    expect(effectiveMethod(shopTipSettings(batches, held), held, "stripe")).toBe("payroll");
+    expect(effectiveMethod(shopTipSettings(batches, held), held, "cash")).toBe("cash");
   });
 
   it("the instant payout fee is a percentage with a minimum, never more than the payout", () => {
