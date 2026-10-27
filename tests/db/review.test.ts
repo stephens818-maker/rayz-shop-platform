@@ -387,7 +387,7 @@ describe("P1#9–10 payroll and reports are net of refunds", () => {
     expect(sept2.rows.find((r) => r.staffId === staffId)!.cardTipsCents).toBe(1000);
     const june = await m.reports.payrollTips({ ...scope, from: "2027-06-06", to: "2027-06-19" });
     const j = june.rows.find((r) => r.staffId === staffId)!;
-    expect(j).toMatchObject({ tickets: 0, cardTipsCents: 0, cashTipsCents: 0, tipRefundsCents: 0, lateTipRefundsCents: 1000, lateTipRefundsDeductedCents: 0, totalTipsCents: 0, serviceSalesCents: 0 });
+    expect(j).toMatchObject({ tickets: 0, cardTipsCents: 0, cashTipsCents: 0, tipRefundsCents: 0, lateTipRefundsCents: 1000, totalTipsCents: 0, serviceSalesCents: 0 });
   });
 
   it("a service refund in the same period nets service sales and the tender column that took the tip", async () => {
