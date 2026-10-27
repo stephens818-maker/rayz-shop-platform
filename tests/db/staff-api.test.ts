@@ -159,7 +159,7 @@ describe("signing in", () => {
     const me = await call("GET", "me", { token: t.accessToken });
     expect(me.status).toBe(200);
     expect(me.json.staff).toMatchObject({ id: ids.makenna, kind: "person" });
-    expect(me.json.features).toMatchObject({ schedule: true, clock: true, tips: true, payouts: true, banking: false, seeEveryCalendar: false });
+    expect(me.json.features).toMatchObject({ schedule: true, clock: true, tips: true, payouts: true, banking: true, seeEveryCalendar: false });
     expect(me.json.permissions).toContain("timeclock.punch");
     expect(me.json.shops.map((s: { id: string }) => s.id)).toContain(shop.coralville);
     const audits = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "staff.login"), eq(S().auditLog.entityId, ids.makenna)));
@@ -394,8 +394,11 @@ describe("tips, earnings, payouts and banking", () => {
     expect((await call("GET", "earnings?from=2026-01-01&to=2026-12-31", { token: t.accessToken })).status).toBe(400);
   });
 
-  it("with direct Stripe payouts on hold (the default), every banking route is refused and tips go through payroll", async () => {
+  it("with direct Stripe payouts switched off (FEATURE_STAFF_STRIPE_PAYOUTS=false), every banking route is refused and tips go through payroll", async () => {
+    process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "false";
+    onTestFinished(() => void delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS);
     const t = await login("makenna@rayz.test");
+    expect((await call("GET", "me", { token: t.accessToken })).json.features.banking).toBe(false);
     for (const [method, p] of [
       ["GET", "banking"],
       ["GET", "banking/external-accounts"],
@@ -409,9 +412,7 @@ describe("tips, earnings, payouts and banking", () => {
     expect((await call("PUT", "banking/method", { token: t.accessToken, body: { method: "stripe", instant: true } })).status).toBe(403);
   });
 
-  it("sets up their own debit card or bank through Stripe's page, keeping the account id, status and last 4 only", async () => {
-    process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
-    onTestFinished(() => void delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS);
+  it("sets up their own debit card or bank through Stripe's page (on by default), keeping the account id, status and last 4 only", async () => {
     const t = await login("makenna@rayz.test");
     expect((await call("GET", "me", { token: t.accessToken })).json.features.banking).toBe(true);
     await m.db.db.delete(S().staffPayoutAccounts).where(eq(S().staffPayoutAccounts.staffId, ids.makenna));

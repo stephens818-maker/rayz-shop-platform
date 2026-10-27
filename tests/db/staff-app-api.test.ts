@@ -122,18 +122,18 @@ describe("every route is guarded", () => {
       ["POST /auth/login", "POST /auth/login/code", "POST /auth/code/start", "POST /auth/code/verify", "GET /auth/invite", "POST /auth/invite/accept", "POST /auth/refresh", "POST /auth/logout", "GET /config"].sort(),
     );
     for (const p of ["/banking", "/banking/external-accounts", "/banking/onboarding-link", "/banking/dashboard-link", "/banking/method"])
-      expect(Object.values(doc.paths[p])[0].description, p).toMatch(/On hold: 403 .*FEATURE_STAFF_STRIPE_PAYOUTS/);
+      expect(Object.values(doc.paths[p])[0].description, p).toMatch(/403 .*FEATURE_STAFF_STRIPE_PAYOUTS=false/);
     const files = STAFF_ROUTE_FILES.map(routePathOf);
     for (const p of ["me/calendar", "me/timecard", "me/earnings", "me/payout-setup", "clients/[id]", "timecards/[id]/approve", "shops/[id]/waitlist", "sales", "manager/board", "config"]) expect(files).toContain(p);
   });
 });
 
 describe("config, version gate and switches (ST-I8)", () => {
-  it("is open before sign-in, with payroll as the payout default and Stripe payouts and Tap to Pay off", async () => {
+  it("is open before sign-in, with direct Stripe payouts as the default (payroll where they're switched off) and Tap to Pay off", async () => {
     const r = await call("GET", "config");
     expect(r.status).toBe(200);
-    expect(r.json.features).toEqual({ clock: true, stripePayouts: false, tapToPay: false });
-    expect(r.json.payouts).toEqual({ defaultMethod: "payroll", stripe: false });
+    expect(r.json.features).toEqual({ clock: true, stripePayouts: true, tapToPay: false });
+    expect(r.json.payouts).toEqual({ defaultMethod: "stripe", stripe: true });
     expect(r.json.links.privacy).toMatch(/\/staff-app\/privacy$/);
     expect(r.json.legal).toMatchObject({ privacy: expect.any(String), terms: expect.any(String) });
   });
@@ -398,7 +398,7 @@ describe("earnings (ST-C6) and tip payouts (ST-C7)", () => {
     expect(cv.sales).toEqual({ serviceNetCents: c(line?.service), productNetCents: c(line?.product) });
     expect(cv.hours.regular).toBe(line?.hours ?? 0);
     expect(cv.tips.cardCents + cv.tips.cashCents + cv.tips.giftCardCents + cv.tips.adjustmentsCents).toBe(cv.tips.totalCents);
-    expect(r.json.payout.defaultMethod).toBe("payroll");
+    expect(r.json.payout.defaultMethod).toBe("stripe");
 
     await setOverrides("makenna", { "reports.money": false, "compensation.own": false });
     onTestFinished(async () => {
@@ -426,16 +426,20 @@ describe("earnings (ST-C6) and tip payouts (ST-C7)", () => {
     expect(ytd.json.totals.cardTipsCents).toBe(cv.rayz.cardTipsCents + 120050);
   });
 
-  it("payout setup says payroll (iSolved) with Stripe payouts held, and never a bank number", async () => {
+  it("payout setup says Stripe to their own bank by default and payroll where it's switched off, W-2 wages either way, and never a bank number", async () => {
     const t = await login("makenna@rayz.test");
     const r = await call("GET", "me/payout-setup", { token: t.accessToken });
     expect(r.status, r.text).toBe(200);
-    expect(r.json.defaultMethod).toBe("payroll");
-    expect(r.json.stripePayouts).toMatchObject({ enabled: false, message: expect.stringMatching(/payroll/) });
-    expect(r.json.shops.every((s: { method: string }) => s.method !== "stripe")).toBe(true);
+    expect(r.json.defaultMethod).toBe("stripe");
+    expect(r.json.stripePayouts).toEqual({ enabled: true });
+    expect(r.json.shops.every((s: { method: string; path: string }) => s.method === "stripe" && /W-2/.test(s.path))).toBe(true);
     expect(r.text).not.toMatch(/routing|account_number|\d{8,}/);
-    withEnv("FEATURE_STAFF_STRIPE_PAYOUTS", "true");
-    expect((await call("GET", "me/payout-setup", { token: t.accessToken })).json.stripePayouts.enabled).toBe(true);
+    withEnv("FEATURE_STAFF_STRIPE_PAYOUTS", "false");
+    const off = (await call("GET", "me/payout-setup", { token: t.accessToken })).json;
+    expect(off.defaultMethod).toBe("payroll");
+    expect(off.stripePayouts).toMatchObject({ enabled: false, message: expect.stringMatching(/payroll/) });
+    expect(off.shops.every((s: { method: string }) => s.method !== "stripe")).toBe(true);
+    expect((await call("GET", "config")).json.payouts).toEqual({ defaultMethod: "payroll", stripe: false });
   });
 });
 

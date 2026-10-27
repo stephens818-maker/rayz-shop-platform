@@ -100,9 +100,10 @@ export function PolicyForm({
       <div className="space-y-3 p-4">
         {!stripeOn && (
           <Notice tone="blue">
-            Direct Stripe payouts to employees are on hold while the owner
-            decides how W-2 tips are withheld. Tips are paid through payroll
-            (the iSolved export), or in cash where a shop chooses it.
+            Direct Stripe payouts to employees are switched off on this
+            deployment (FEATURE_STAFF_STRIPE_PAYOUTS=false). Tips are paid
+            through payroll (the iSolved export), or in cash where a shop
+            chooses it.
           </Notice>
         )}
         <div className="space-y-2">

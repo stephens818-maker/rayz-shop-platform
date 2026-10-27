@@ -452,8 +452,8 @@ export const getEarnings = staffRoute({ perms: null, person: true }, async (req,
 });
 
 /**
- * Direct Stripe payouts to each employee (ST-I9) are on hold: with FEATURE_STAFF_STRIPE_PAYOUTS off,
- * every /banking route is 403 with details.feature = staff_stripe_payouts, and tips go through payroll.
+ * Direct Stripe payouts to each employee (ST-I9). Where FEATURE_STAFF_STRIPE_PAYOUTS=false switches
+ * them off, every /banking route is 403 with details.feature = staff_stripe_payouts, and tips go through payroll.
  */
 const banking = <P = Record<string, string>>(fn: (req: Request, ctx: StaffAppContext, params: P) => Promise<Response>) =>
   staffRoute<P>(TIPS, async (req, ctx, params) => {

@@ -5,7 +5,7 @@ import { shops, staffYtdImports } from "@/db/schema";
 import { periodOf, type CalendarPeriod } from "@/domain/payroll/calendar";
 import type { Line } from "@/domain/payroll/calc";
 import { reportView } from "@/domain/permissions";
-import { METHOD_LABEL, PAYOUT_PATH_TEXT, effectiveMethod } from "@/domain/tips";
+import { METHOD_LABEL, PAYOUT_PATH_TEXT, defaultShopTipSettings, effectiveMethod } from "@/domain/tips";
 import { isValidLocalDate, todayLocal, type LocalDate } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { can } from "@/server/auth/staff";
@@ -21,8 +21,8 @@ import type { StaffAppContext } from "./http";
 /**
  * Earnings by pay period (ST-C6): their own line of the Payroll Report at each shop, so every amount
  * is the one in the iSolved export to the cent (a locked period is the approved snapshot), with the
- * tips split by tender, refunds already netted, and hours. Plus how tips reach them (ST-C7: payroll
- * by default; direct Stripe payouts are held off by FEATURE_STAFF_STRIPE_PAYOUTS).
+ * tips split by tender, refunds already netted, and hours. Plus how tips reach them (ST-C7: direct to
+ * their own bank or debit card through Stripe by default, payroll where the shop or they choose it).
  */
 
 const cents = (dollars: number) => Math.round(dollars * 100);
@@ -163,8 +163,8 @@ export async function myYearToDate(ctx: StaffAppContext, year: number | undefine
 
 /**
  * GET /payout-setup (ST-C7): how each of their shops pays their tips, where their bank details live
- * (iSolved's employee self-service for payroll), and whether direct Stripe payouts exist here at all.
- * No bank, card or routing numbers ever: the app deep-links to the payroll portal.
+ * (their Stripe account through /banking, or iSolved's employee self-service for payroll), and whether
+ * direct Stripe payouts run here. No bank, card or routing numbers ever.
  */
 export async function payoutSetup(ctx: StaffAppContext) {
   const me = ctx.staff.id;
@@ -177,7 +177,7 @@ export async function payoutSetup(ctx: StaffAppContext) {
     return { shopId: s.id, shop: s.name, method, methodLabel: METHOD_LABEL[method], path: PAYOUT_PATH_TEXT[method === "stripe" ? "stripe" : method === "cash" ? "cash" : "payroll"] };
   });
   return {
-    defaultMethod: "payroll" as const,
+    defaultMethod: defaultShopTipSettings(policy).defaultMethod,
     shops: list,
     payrollPortalUrl: policy.payrollPortalUrl,
     payrollPortalLabel: "Direct deposit and pay stubs (iSolved)",

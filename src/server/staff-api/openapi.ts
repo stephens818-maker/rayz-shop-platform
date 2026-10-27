@@ -44,7 +44,7 @@ const MORE: Op[] = [
     path: "/config",
     tag: "App",
     summary:
-      "Read at launch, before sign-in, and never version-gated: minimum and latest versions per platform (send X-Client: ios|android and X-App-Version; older than the minimum is 426 upgrade_required on every other route), the maintenance message, switches (clock, stripePayouts, tapToPay), the payout default (payroll), links to the staff privacy policy, terms and support, and legal versions.",
+      "Read at launch, before sign-in, and never version-gated: minimum and latest versions per platform (send X-Client: ios|android and X-App-Version; older than the minimum is 426 upgrade_required on every other route), the maintenance message, switches (clock, stripePayouts, tapToPay), the payout default (stripe; payroll where FEATURE_STAFF_STRIPE_PAYOUTS=false), links to the staff privacy policy, terms and support, and legal versions.",
     permission: "Anyone",
     public: true,
   },
@@ -94,7 +94,7 @@ const MORE: Op[] = [
     path: "/me/payout-setup",
     tag: "Tips and pay",
     summary:
-      "How each shop pays their tips: payroll (iSolved, the default), cash or Stripe. With payroll, bank details live in iSolved employee self-service: open payrollPortalUrl. stripePayouts.enabled is false while direct Stripe payouts are on hold.",
+      "How each shop pays their tips: Stripe to their own bank or debit card (the default; set it up through /banking), payroll (iSolved) or cash. Every way, tips are W-2 wages withheld on through payroll. With payroll, bank details live in iSolved employee self-service: open payrollPortalUrl. stripePayouts.enabled is false where the deployment switched direct Stripe payouts off.",
     permission: "tips.own",
   },
   { method: "get", path: "/me/payout-cutover", tag: "Tips and pay", summary: "What Squire still owed them at the switch, Squire's last payout and Ray'z's first, and whether they've confirmed it.", permission: "tips.own" },
@@ -122,7 +122,7 @@ const MORE: Op[] = [
   { method: "post", path: "/staff/{id}/sign-out", tag: "Manager", summary: "Sign someone out of the staff app on every phone (a lost or shared phone) without deactivating them. Deactivating does this too. 204.", permission: "permissions.manage", params: true, empty: true },
 ];
 
-const HELD = " On hold: 403 with details.feature = staff_stripe_payouts until FEATURE_STAFF_STRIPE_PAYOUTS is on. Tips are paid through payroll (iSolved) until then; see GET /me/payout-setup.";
+const RAIL_OFF = " 403 with details.feature = staff_stripe_payouts where FEATURE_STAFF_STRIPE_PAYOUTS=false switches direct Stripe payouts off; tips are paid through payroll (iSolved) there. See GET /me/payout-setup.";
 
 const OPS: Op[] = [
   { method: "post", path: "/auth/login", tag: "Sign-in", summary: "Email and password. Returns { tokens } or, with two-step sign-in, { twoFactor: { ticket, enroll? } } for /auth/login/code.", permission: "Any active staff login", body: S.LoginBody, public: true },
@@ -193,7 +193,7 @@ export function staffOpenApiDocument(baseUrl: string) {
     (paths[op.path] ??= {})[op.method] = {
       tags: [op.tag],
       summary: op.summary,
-      description: `Permission: ${op.permission}.${op.tag === "Banking" ? HELD : ""}`,
+      description: `Permission: ${op.permission}.${op.tag === "Banking" ? RAIL_OFF : ""}`,
       ...(op.public ? { security: [] } : {}),
       ...(parameters.length ? { parameters } : {}),
       ...(op.body ? { requestBody: { required: true, content: { "application/json": { schema: schema(op.body) } } } } : {}),

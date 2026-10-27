@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BRAND_TIP_POLICY,
   DEFAULT_SHOP_TIP_SETTINGS,
+  PAYROLL_TIP_SETTINGS,
+  defaultShopTipSettings,
   REMINDER_DAYS,
   REMINDER_MAX,
   availableOn,
@@ -30,7 +32,7 @@ import {
 
 let n = 0;
 const e = (over: Partial<LedgerEntry>): LedgerEntry => ({ id: `e${++n}`, staffId: "b1", kind: "tip", method: "card", amountCents: 1000, feeCents: 0, businessDate: "2026-10-20", payoutId: null, ...over });
-const settings = (over: Partial<ShopTipSettings> = {}): ShopTipSettings => ({ ...DEFAULT_SHOP_TIP_SETTINGS, ...over });
+const settings = (over: Partial<ShopTipSettings> = {}): ShopTipSettings => ({ ...DEFAULT_SHOP_TIP_SETTINGS, cardDelayDays: 0, ...over });
 
 describe("tip ledger math with refunds", () => {
   it("a refund's reversal nets against the tip; a full refund leaves nothing to pay", () => {
@@ -166,10 +168,15 @@ describe("settings and methods", () => {
     expect(effectiveMethod(settings({ schedule: "payroll" }), DEFAULT_BRAND_TIP_POLICY, "stripe")).toBe("payroll");
   });
 
-  it("out of the box tips go through payroll; without the Stripe rail, a Stripe choice is paid through payroll or cash", () => {
-    expect(shopTipSettings(null)).toMatchObject({ schedule: "payroll", defaultMethod: "payroll" });
-    expect(effectiveMethod(shopTipSettings(null), DEFAULT_BRAND_TIP_POLICY, "stripe")).toBe("payroll");
+  it("out of the box tips go by Stripe in a daily batch, payroll stays a choice; without the Stripe rail, a Stripe choice is paid through payroll or cash", () => {
+    expect(shopTipSettings(null)).toMatchObject({ schedule: "daily_delay", cardDelayDays: 2, defaultMethod: "stripe" });
+    expect(effectiveMethod(shopTipSettings(null), DEFAULT_BRAND_TIP_POLICY, null)).toBe("stripe");
+    expect(effectiveMethod(shopTipSettings(null), DEFAULT_BRAND_TIP_POLICY, "payroll")).toBe("payroll");
+    expect(effectiveMethod(shopTipSettings({ schedule: "payroll" }), DEFAULT_BRAND_TIP_POLICY, "stripe")).toBe("payroll");
     const held = withPayoutRails(DEFAULT_BRAND_TIP_POLICY, { stripe: false });
+    expect(shopTipSettings(null, held)).toEqual(PAYROLL_TIP_SETTINGS);
+    expect(defaultShopTipSettings(held)).toBe(PAYROLL_TIP_SETTINGS);
+    expect(effectiveMethod(shopTipSettings(null, held), held, "stripe")).toBe("payroll");
     expect(held).toMatchObject({ methods: ["cash", "payroll"], instantAllowed: false });
     expect(withPayoutRails(brandTipPolicy({ methods: ["stripe"] }), { stripe: false }).methods).toEqual(["payroll"]);
     expect(withPayoutRails(DEFAULT_BRAND_TIP_POLICY, { stripe: true })).toBe(DEFAULT_BRAND_TIP_POLICY);

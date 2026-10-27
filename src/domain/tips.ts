@@ -74,8 +74,8 @@ export function portalUrl(v: unknown): string | null {
 
 /**
  * The ways tips can leave the platform right now. Direct Stripe payouts to employees are a rail the
- * deployment switches on (FEATURE_STAFF_STRIPE_PAYOUTS); off, the policy behaves as if the brand
- * never allowed them, so nothing is sent or set up and every tip goes through payroll or cash.
+ * deployment can switch off (FEATURE_STAFF_STRIPE_PAYOUTS=false); off, the policy behaves as if the
+ * brand never allowed them, so nothing is sent or set up and every tip goes through payroll or cash.
  */
 export interface PayoutRails {
   stripe: boolean;
@@ -91,8 +91,8 @@ export function withPayoutRails(p: BrandTipPolicy, rails: PayoutRails): BrandTip
 export type PayoutPath = "payroll" | "cash" | "stripe";
 export const PAYOUT_PATH_TEXT: Record<PayoutPath, string> = {
   payroll: "Your tips are paid with your paycheck through payroll (iSolved), with the usual withholding. Pay stubs and W-2s are in iSolved employee self-service.",
-  cash: "Your tips are paid in cash from the drawer, and you confirm each one.",
-  stripe: "Your tips are sent to your own debit card or bank through Stripe.",
+  cash: "Your tips are paid in cash from the drawer, and you confirm each one. They're still wages on your W-2: payroll withholds tax on them from your regular pay.",
+  stripe: "Your tips are sent to your own debit card or bank through Stripe. They're still wages on your W-2: payroll withholds tax on them from your regular pay.",
 };
 
 export const REMINDER_DAYS = { min: 1, max: 14 } as const;
@@ -135,14 +135,22 @@ export interface ShopTipSettings {
 export const DEFAULT_CARD_DELAY: Record<TipSchedule, number> = { end_of_night: 0, daily_delay: 2, weekly: 2, payroll: 0, manual: 0 };
 
 /**
- * Out of the box tips are paid through payroll (the iSolved export), with withholding, and nothing
- * is paid separately. A shop switches to cash or Stripe batches on purpose.
+ * Out of the box (Charles, 2026-10-27) tips are paid straight to each employee's own bank or debit
+ * card through Stripe, in a daily batch once the card money settles. Every direct payout still goes
+ * to iSolved as tips the employee already received (E_Cash Tips Recd), so payroll counts them as W-2
+ * wages and withholds on them from regular pay. Paying through payroll is the alternative a shop
+ * (or an employee, where the brand lets them choose) picks on purpose.
  */
-export const DEFAULT_SHOP_TIP_SETTINGS: ShopTipSettings = { schedule: "payroll", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "payroll", netCardFee: false };
+export const DEFAULT_SHOP_TIP_SETTINGS: ShopTipSettings = { schedule: "daily_delay", cardDelayDays: 2, weeklyDay: 1, defaultMethod: "stripe", netCardFee: false };
+
+/** Where the deployment runs without the Stripe rail: tips go through payroll and nothing is paid separately. */
+export const PAYROLL_TIP_SETTINGS: ShopTipSettings = { schedule: "payroll", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "payroll", netCardFee: false };
+
+export const defaultShopTipSettings = (policy: Pick<BrandTipPolicy, "methods">): ShopTipSettings => (policy.methods.includes("stripe") ? DEFAULT_SHOP_TIP_SETTINGS : PAYROLL_TIP_SETTINGS);
 
 export function shopTipSettings(raw: unknown, policy: BrandTipPolicy = DEFAULT_BRAND_TIP_POLICY): ShopTipSettings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<ShopTipSettings>;
-  const d = DEFAULT_SHOP_TIP_SETTINGS;
+  const d = defaultShopTipSettings(policy);
   const schedule = TIP_SCHEDULES.includes(r.schedule as TipSchedule) ? (r.schedule as TipSchedule) : d.schedule;
   const int = (v: unknown, min: number, max: number, dflt: number) => (typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : dflt);
   const method = TIP_METHODS.includes(r.defaultMethod as TipMethod) && policy.methods.includes(r.defaultMethod as TipMethod) ? (r.defaultMethod as TipMethod) : policy.methods.includes(d.defaultMethod) ? d.defaultMethod : policy.methods[0];

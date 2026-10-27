@@ -13,7 +13,7 @@ import { STAFF_LEGAL_VERSIONS } from "@/domain/legal";
  * - STAFF_APP_{IOS,ANDROID}_{MIN,LATEST}_VERSION and _STORE_URL
  * - STAFF_APP_MAINTENANCE_MESSAGE
  * - STAFF_APP_CLOCK_OFF=true: the app's time clock stands down (the front-desk clock and the web clock keep working)
- * - FEATURE_STAFF_STRIPE_PAYOUTS: direct Stripe tip payouts (on hold; off means payroll)
+ * - FEATURE_STAFF_STRIPE_PAYOUTS: direct Stripe tip payouts (on unless "false"; off means payroll)
  * - FEATURE_STAFF_TAP_TO_PAY: Stripe Terminal Tap to Pay on the phone (off until Apple's entitlement and each shop's Terminal location are ready)
  */
 
@@ -76,7 +76,7 @@ export function staffAppConfig(req: Request) {
       : null,
     maintenance: { active: !!maintenance, message: maintenance },
     features: staffSwitches(),
-    payouts: { defaultMethod: "payroll" as const, stripe: stripePayoutsOn() },
+    payouts: { defaultMethod: stripePayoutsOn() ? ("stripe" as const) : ("payroll" as const), stripe: stripePayoutsOn() },
     links: {
       privacy: `${base}/staff-app/privacy`,
       terms: `${base}/staff-app/terms`,

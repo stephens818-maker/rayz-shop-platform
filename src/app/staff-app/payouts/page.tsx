@@ -27,6 +27,9 @@ export default function Page() {
           and a debit card if you want instant payouts. Stripe collects them on its own secure page; Ray&rsquo;z never sees your bank or card numbers.
         </p>
         <p className="mt-2 text-sm text-zinc-600">Tips approved for you before you finish wait for you, and go out on their own as soon as you&rsquo;re done.</p>
+        <p className="mt-2 text-sm text-zinc-600">
+          You&rsquo;re a Ray&rsquo;z employee, so these tips are wages on your W-2, not 1099 income: payroll reports them and withholds tax on them from your regular pay. Stripe doesn&rsquo;t send you a 1099 for them.
+        </p>
         <div className="mt-4 flex flex-wrap gap-2">
           <a className="inline-block rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white" href={`${scheme}://banking`}>
             Open the Ray&rsquo;z Staff app

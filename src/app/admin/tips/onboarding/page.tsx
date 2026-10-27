@@ -35,8 +35,8 @@ export default async function PayoutOnboardingPage({ searchParams }: { searchPar
   const ctx = await guardPage("/admin/tips/onboarding");
   if (!stripePayoutsOn())
     return (
-      <Empty title="Payout onboarding is on hold">
-        Tips are paid through payroll (the iSolved export) while the owner decides on direct Stripe payouts, so nobody has a payout account to set up.
+      <Empty title="Payout onboarding is switched off">
+        Direct Stripe payouts are switched off on this deployment, so tips are paid through payroll (the iSolved export) and nobody has a payout account to set up.
       </Empty>
     );
   const sp = await searchParams;

@@ -115,16 +115,16 @@ describe("per-shop Squire cutover (C22)", () => {
     expect((await cut.listCutovers()).find((x) => x.shop.id === kimberly.id)).toMatchObject({ stage: "frozen" });
 
     await cut.reconcileShop(actor, kimberly.id, files({ bookings: BOOKINGS_FINAL, loyalty: LOYALTY, gift_cards: CARDS("$25.00") }));
-    // With direct Stripe payouts on, nobody at the shop has set them up yet: only an owner's reason would let it switch.
-    process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
+    // With direct Stripe payouts on (the default), nobody at the shop has set them up yet: only an owner's reason would let it switch.
+    await expect(cut.signOffAndSwitch(actor, kimberly.id)).rejects.toThrow(/haven't finished Stripe payout setup/);
+    await expect(cut.signOffAndSwitch(actor, kimberly.id, new Date(), { staffWaiver: "   " })).rejects.toThrow(/haven't finished Stripe payout setup/);
+    // With the Stripe rail switched off, tips go through payroll and there's no payout setup to wait for.
+    process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "false";
     try {
-      await expect(cut.signOffAndSwitch(actor, kimberly.id)).rejects.toThrow(/haven't finished Stripe payout setup/);
-      await expect(cut.signOffAndSwitch(actor, kimberly.id, new Date(), { staffWaiver: "   " })).rejects.toThrow(/haven't finished Stripe payout setup/);
+      await cut.signOffAndSwitch(actor, kimberly.id);
     } finally {
       delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS;
     }
-    // Held (the default), tips go through payroll and there's no payout setup to wait for.
-    await cut.signOffAndSwitch(actor, kimberly.id);
     expect(await shopRow(kimberly.id)).toMatchObject({ bookingMode: "platform" });
     const [sw] = await m.db.db.select().from(m.schema.auditLog).where(m.drizzle.and(eq(m.schema.auditLog.entityId, kimberly.id), eq(m.schema.auditLog.action, "cutover.switch")));
     expect((sw.details as { staffPayouts: unknown }).staffPayouts).toEqual({ model: "payroll" });
